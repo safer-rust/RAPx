@@ -7,51 +7,64 @@
 #[macro_use]
 extern crate rapx;
 
+use crate::utils::*;
+use clap::builder::styling::{AnsiColor, Effects};
+use clap::{Arg, ArgAction, Args, Command, CommandFactory, Parser, Subcommand};
+use rapx::config;
 use rapx::utils::log::{init_log, rap_error_and_exit};
+use std::env;
 
 mod args;
-mod help;
-
-mod utils;
-use crate::utils::*;
-
 mod cargo_check;
+mod utils;
+
+fn styled_str(s: &str, bold: bool) -> String {
+    let effect = if bold {
+        AnsiColor::BrightCyan.on_default().effects(Effects::BOLD)
+    } else {
+        AnsiColor::BrightCyan.on_default()
+    };
+    format!("\x1b[{}{}\x1b[0m", effect.render(), s)
+}
+
+fn styled_usage() -> String {
+    format!(
+        "{} {}",
+        styled_str("cargo rapx", true),
+        styled_str("[OPTIONS] <COMMAND> [-- [CARGO_FLAGS]]", false)
+    )
+}
 
 fn phase_cargo_rap() {
-    rap_trace!("Start cargo-rapx.");
-
-    // here we skip two args: cargo rapx
-    let Some(arg) = args::get_arg(2) else {
-        rap_error!("Expect command: e.g., `cargo rapx -help`.");
-        return;
-    };
-    match arg {
-        "-version" | "-v" | "--version" => {
-            println!("{}", help::RAPX_VERSION);
-            return;
-        }
-        "-help" | "-h" | "--help" => {
-            println!("{}", help::RAPX_HELP);
-            return;
-        }
-        _ => {}
-    }
-
+    rap_trace!("Start phase cargo-rapx.");
     cargo_check::run();
 }
 
 fn phase_rustc_wrapper() {
     rap_trace!("Launch cargo-rapx again triggered by cargo check.");
 
-    let is_direct = args::is_current_compile_crate();
+    let is_primary = env::var("CARGO_PRIMARY_PACKAGE").is_ok();
+
+    // check `CARGO_PRIMARY_PACKAGE` to make sure we only run
+    // rapx for the local crate, but not dependencies.
     // rapx only checks local crates
-    if is_direct && args::filter_crate_type() {
+    if is_primary && args::filter_crate_type() {
         run_rap();
         return;
     }
 
     // for dependencies and some special crate types, run rustc as usual
     run_rustc();
+}
+
+#[derive(Parser, Debug)]
+#[command(name = "cargo")]
+#[command(bin_name = "cargo")]
+#[command(version, about)]
+#[command(styles = config::CLAP_STYLING)]
+enum CargoCli {
+    #[command(override_usage = styled_usage())]
+    Rapx(config::Config),
 }
 
 fn main() {
@@ -66,8 +79,11 @@ fn main() {
     init_log().expect("Failed to init log.");
 
     match args::get_arg(1).unwrap() {
-        s if s.ends_with("rapx") => phase_cargo_rap(),
-        s if s.ends_with("rustc") => phase_rustc_wrapper(),
+        "rapx" => {
+            CargoCli::command().get_matches_from(env::args().take_while(|args| args != "--"));
+            phase_cargo_rap()
+        }
+        arg if arg.ends_with("rustc") => phase_rustc_wrapper(),
         _ => rap_error_and_exit(
             "rapx must be called with either `rap` or `rustc` as first argument.",
         ),

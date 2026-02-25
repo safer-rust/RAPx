@@ -64,21 +64,6 @@ impl Arguments {
             rap_clean: rap_clean(),
         }
     }
-
-    // In rustc phase:
-    // Determines if we are being invoked to build crate for local crate.
-    // Cargo passes the file name as a relative address when building the local crate,
-    fn is_current_compile_crate(&self) -> bool {
-        let mut args = self.args_group1.iter();
-        let entry_path = match args.find(|s| s.ends_with(".rs")) {
-            Some(path) => Path::new(path),
-            None => return false,
-        };
-        entry_path.is_relative()
-            || entry_path.ends_with("lib/rustlib/src/rust/library/std/src/lib.rs")
-            || entry_path.ends_with("lib/rustlib/src/rust/library/core/src/lib.rs")
-            || entry_path.ends_with("lib/rustlib/src/rust/library/alloc/src/lib.rs")
-    }
 }
 
 pub fn rap_clean() -> bool {
@@ -104,11 +89,6 @@ pub fn get_arg_flag_value(name: &str) -> Option<&'static str> {
 /// Stuff all after the first `--` are arguments forwarding to cargo check.
 pub fn rap_and_cargo_args() -> [&'static [String]; 2] {
     [&ARGS.args_group1, &ARGS.args_group2]
-}
-
-/// If a crate being compiled is local in rustc phase.
-pub fn is_current_compile_crate() -> bool {
-    ARGS.is_current_compile_crate()
 }
 
 /// Returns true for crate types to be checked;

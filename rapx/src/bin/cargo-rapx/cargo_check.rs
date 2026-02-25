@@ -42,10 +42,7 @@ fn cargo_check(dir: &Utf8Path) {
     // This will be read by `phase_rustc_rap` when we go to invoke
     // our actual target crate (the binary or the test we are running).
 
-    cmd.env(
-        "RAP_ARGS",
-        serde_json::to_string(rap_args).expect("Failed to serialize args."),
-    );
+    cmd.env("RAPFLAGS", rap_args.join(" "));
 
     // Invoke actual cargo for the job, but with different flags.
     let cargo_rap_path = args::current_exe_path();
