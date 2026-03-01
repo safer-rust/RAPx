@@ -21,7 +21,7 @@ will perform two kinds of detection in a row.
 
     RAP_LOG          verbosity of logging: trace, debug, info, warn
                      trace: print all the detailed RAP execution traces.
-                     debug: display intermidiate analysis results.
+                     debug: display intermediate analysis results.
                      warn: show bugs detected only.
 
     RAP_CLEAN        run cargo clean before check: true, false
@@ -41,7 +41,7 @@ pub const RAPX_VERSION: &str = concat!(
     "version ",
     env!("CARGO_PKG_VERSION"),
     "\n",
-    "developped by ",
+    "developed by ",
     env!("CARGO_PKG_AUTHORS"),
 );
 

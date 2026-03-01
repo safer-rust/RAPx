@@ -67,7 +67,7 @@ Environment Variables (Values are case insensitive):
 
     RAP_LOG          verbosity of logging: trace, debug, info, warn
                      trace: print all the detailed RAP execution traces.
-                     debug: display intermidiate analysis results.
+                     debug: display intermediate analysis results.
                      warn: show bugs detected only.
 
     RAP_CLEAN        run cargo clean before check: true, false
