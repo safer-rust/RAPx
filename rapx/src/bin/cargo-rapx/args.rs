@@ -1,5 +1,4 @@
 use clap::Parser;
-use rapx::cli;
 use std::{
     env,
     path::{Path, PathBuf},

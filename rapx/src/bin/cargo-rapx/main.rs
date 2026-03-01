@@ -8,7 +8,7 @@
 extern crate rapx;
 
 use crate::utils::*;
-use clap::{Arg, ArgAction, Args, Command, CommandFactory, Parser, Subcommand};
+use clap::Parser;
 use rapx::cli;
 use rapx::help;
 use rapx::utils::log::{init_log, rap_error_and_exit};
