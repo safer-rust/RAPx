@@ -19,13 +19,13 @@ pub fn detected_high_confidence(output: &str) -> bool {
 }
 
 #[inline(always)]
-fn running_tests_with_arg(dir: &str, arg: &str) -> String {
+fn run_with_args(dir: &str, args: &[&str]) -> String {
     let raw_path = "./tests/".to_owned() + dir;
     let project_path = Path::new(&raw_path);
 
     let output = Command::new("cargo")
         .arg("rapx")
-        .arg(arg)
+        .args(args)
         .current_dir(project_path)
         .output()
         .expect("Failed to execute cargo rapx");
@@ -33,10 +33,20 @@ fn running_tests_with_arg(dir: &str, arg: &str) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
+const CHECK_UAF_CMD: &[&str] = &["check", "-f"];
+const CHECK_MLEAK_CMD: &[&str] = &["check", "-m"];
+const ANALYZE_ALIAS_CMD: &[&str] = &["analyze", "alias"];
+const ANALYZE_ALIAS_MFP_CMD: &[&str] = &["analyze", "alias-mfp"];
+const ANALYZE_OWNED_HEAP_CMD: &[&str] = &["analyze", "owned-heap"];
+const ANALYZE_UPG_CMD: &[&str] = &["analyze", "upg"];
+const ANALYZE_SSA_CMD: &[&str] = &["analyze", "ssa"];
+const ANALYZE_RANGE_CMD: &[&str] = &["analyze", "range"];
+const ANALYZE_CALLGRAPH_CMD: &[&str] = &["analyze", "callgraph"];
+
 // ================Dangling Pointer Detection Test=====================
 #[test]
 fn test_dangling_min() {
-    let output = running_tests_with_arg("uaf/dangling_min", "-F");
+    let output = run_with_args("uaf/dangling_min", CHECK_UAF_CMD);
     assert_eq!(
         output.contains("Dangling pointer detected in function \"create_vec\""),
         true
@@ -45,7 +55,7 @@ fn test_dangling_min() {
 
 #[test]
 fn test_df_min() {
-    let output = running_tests_with_arg("uaf/df_min", "-F");
+    let output = run_with_args("uaf/df_min", CHECK_UAF_CMD);
     assert_eq!(
         output.contains("Double free detected in function \"main\""),
         true
@@ -54,13 +64,13 @@ fn test_df_min() {
 
 #[test]
 fn test_df_unwinding() {
-    let output = running_tests_with_arg("uaf/df_unwinding", "-F");
+    let output = run_with_args("uaf/df_unwinding", CHECK_UAF_CMD);
     assert_eq!(output.contains("Double free detected"), true);
 }
 
 #[test]
 fn test_dp_lengthy() {
-    let output = running_tests_with_arg("uaf/dp_lengthy", "-F");
+    let output = run_with_args("uaf/dp_lengthy", CHECK_UAF_CMD);
     assert_eq!(
         output.contains("Dangling pointer detected in function \"call\""),
         true
@@ -69,7 +79,7 @@ fn test_dp_lengthy() {
 
 #[test]
 fn test_uaf_drop() {
-    let output = running_tests_with_arg("uaf/uaf_drop", "-F");
+    let output = run_with_args("uaf/uaf_drop", CHECK_UAF_CMD);
     assert_eq!(
         output.contains("Use-after-free detected in function \"main\""),
         true
@@ -78,7 +88,7 @@ fn test_uaf_drop() {
 
 #[test]
 fn test_uaf_drop2() {
-    let output = running_tests_with_arg("uaf/uaf_drop2", "-F");
+    let output = run_with_args("uaf/uaf_drop2", CHECK_UAF_CMD);
     assert_eq!(
         output.contains("Use-after-free detected in function \"main\""),
         true
@@ -87,7 +97,7 @@ fn test_uaf_drop2() {
 
 #[test]
 fn test_uaf_drop_in_place() {
-    let output = running_tests_with_arg("uaf/uaf_drop_in_place", "-F");
+    let output = run_with_args("uaf/uaf_drop_in_place", CHECK_UAF_CMD);
     assert_eq!(
         output.contains("Use-after-free detected in function \"main\""),
         true
@@ -96,7 +106,7 @@ fn test_uaf_drop_in_place() {
 
 #[test]
 fn test_uaf_lifetime() {
-    let output = running_tests_with_arg("uaf/uaf_lifetime", "-F");
+    let output = run_with_args("uaf/uaf_lifetime", CHECK_UAF_CMD);
     assert_eq!(
         output.contains("Use-after-free detected in function \"main\""),
         true
@@ -105,7 +115,7 @@ fn test_uaf_lifetime() {
 
 #[test]
 fn test_uaf_small() {
-    let output = running_tests_with_arg("uaf/uaf_small", "-F");
+    let output = run_with_args("uaf/uaf_small", CHECK_UAF_CMD);
     assert_eq!(
         output.contains("Use-after-free detected in function \"main\""),
         true
@@ -114,7 +124,7 @@ fn test_uaf_small() {
 
 #[test]
 fn test_uaf_swithint() {
-    let output = running_tests_with_arg("uaf/uaf_swithint", "-F");
+    let output = run_with_args("uaf/uaf_swithint", CHECK_UAF_CMD);
     assert_eq!(
         output.contains("Use-after-free detected in function \"evil_test\""),
         true
@@ -123,92 +133,92 @@ fn test_uaf_swithint() {
 
 #[test]
 fn test_false_wrapper() {
-    let output = running_tests_with_arg("uaf/false_wrapper", "-F");
+    let output = run_with_args("uaf/false_wrapper", CHECK_UAF_CMD);
     assert_eq!(detected_high_confidence(&output), false);
 }
 
 #[test]
 fn test_false_scc1() {
-    let output = running_tests_with_arg("uaf/false_scc1", "-F");
+    let output = run_with_args("uaf/false_scc1", CHECK_UAF_CMD);
     assert_eq!(output.contains("detected"), false);
 }
 
 #[test]
 fn test_false_tuple_transitive() {
-    let output = running_tests_with_arg("uaf/false_tuple_transitive", "-F");
+    let output = run_with_args("uaf/false_tuple_transitive", CHECK_UAF_CMD);
     assert_eq!(detected_high_confidence(&output), false);
 }
 
 #[test]
 fn test_false_arc() {
-    let output = running_tests_with_arg("uaf/false_arc", "-F");
+    let output = run_with_args("uaf/false_arc", CHECK_UAF_CMD);
     assert_eq!(output.contains("detected"), false);
 }
 
 #[test]
 fn test_false_clone1() {
     #[allow(unused)]
-    let output = running_tests_with_arg("uaf/false_clone1", "-F");
+    let output = run_with_args("uaf/false_clone1", CHECK_UAF_CMD);
     assert_eq!(output.contains("detected"), false);
 }
 
 #[test]
 fn test_false_field_clone() {
     #[allow(unused)]
-    let output = running_tests_with_arg("uaf/false_field_clone", "-F");
+    let output = run_with_args("uaf/false_field_clone", CHECK_UAF_CMD);
     assert_eq!(detected_high_confidence(&output), false);
 }
 
 #[test]
 fn test_false_mutate() {
     #[allow(unused)]
-    let output = running_tests_with_arg("uaf/false_mutate", "-F");
+    let output = run_with_args("uaf/false_mutate", CHECK_UAF_CMD);
     assert_eq!(output.contains("detected"), false);
 }
 
 #[test]
 fn test_false_loop_drop() {
     #[allow(unused)]
-    let output = running_tests_with_arg("uaf/false_loop_drop", "-F");
+    let output = run_with_args("uaf/false_loop_drop", CHECK_UAF_CMD);
     assert_eq!(output.contains("detected"), false);
 }
 
 #[test]
 fn test_false_memtake() {
     #[allow(unused)]
-    let output = running_tests_with_arg("uaf/false_memtake", "-F");
+    let output = run_with_args("uaf/false_memtake", CHECK_UAF_CMD);
     assert_eq!(output.contains("detected"), false);
 }
 
 #[test]
 fn test_reference() {
     #[allow(unused)]
-    let output = running_tests_with_arg("uaf/false_reference", "-F");
+    let output = run_with_args("uaf/false_reference", CHECK_UAF_CMD);
     assert_eq!(output.contains("detected"), false);
 }
 
 // ===============Alias(MOP) Analysis Test==============
 #[test]
 fn test_alias_from_raw_parts_in() {
-    let output = running_tests_with_arg("alias/alias_from_raw_parts_in", "-alias");
+    let output = run_with_args("alias/alias_from_raw_parts_in", ANALYZE_ALIAS_CMD);
     assert_eq!(output.contains("foo\": (0.0,1)"), true);
 }
 
 #[test]
 fn test_alias_from_raw_parts() {
-    let output = running_tests_with_arg("alias/alias_from_raw_parts", "-alias");
+    let output = run_with_args("alias/alias_from_raw_parts", ANALYZE_ALIAS_CMD);
     assert_eq!(output.contains("foo\": (0,1)"), true);
 }
 
 #[test]
 fn test_alias_not_alias_iter() {
-    let output = running_tests_with_arg("alias/not_alias_iter", "-alias");
+    let output = run_with_args("alias/not_alias_iter", ANALYZE_ALIAS_CMD);
     assert_eq!(output.contains("foo\": null"), true);
 }
 
 #[test]
 fn test_alias_field() {
-    let output = running_tests_with_arg("alias/alias_field", "-alias");
+    let output = run_with_args("alias/alias_field", ANALYZE_ALIAS_CMD);
     assert_eq!(
         output.contains("\"foo\": (0,1.1), (0,1.0)")
             || output.contains("\"foo\": (0,1.0), (0,1.1)"),
@@ -218,69 +228,69 @@ fn test_alias_field() {
 
 #[test]
 fn test_alias_lib_no_caller() {
-    let output = running_tests_with_arg("alias/alias_lib_no_caller", "-alias");
+    let output = run_with_args("alias/alias_lib_no_caller", ANALYZE_ALIAS_CMD);
     assert_eq!(output.contains("new\": (0.0,1.0)"), true);
 }
 
 #[test]
 fn test_alias_scc() {
-    let output = running_tests_with_arg("alias/alias_scc", "-alias");
+    let output = run_with_args("alias/alias_scc", ANALYZE_ALIAS_CMD);
     assert_eq!(output.contains("foo\": (0,1)"), true);
 }
 
 #[test]
 fn test_alias_sub_scc1() {
-    let output = running_tests_with_arg("alias/alias_sub_scc1", "-alias");
+    let output = run_with_args("alias/alias_sub_scc1", ANALYZE_ALIAS_CMD);
     assert_eq!(output.contains("foo\": (0,1)"), true);
 }
 
 #[test]
 fn test_alias_sub_scc2() {
-    let output = running_tests_with_arg("alias/alias_sub_scc2", "-alias");
+    let output = run_with_args("alias/alias_sub_scc2", ANALYZE_ALIAS_CMD);
     assert_eq!(output.contains("foo\": (0,1), (0,2)"), true);
 }
 
 #[test]
 fn test_alias_switch() {
-    let output = running_tests_with_arg("alias/alias_switch", "-alias");
+    let output = run_with_args("alias/alias_switch", ANALYZE_ALIAS_CMD);
     assert_eq!(output.contains("foo\": (0,1)"), true);
 }
 
 #[test]
 fn test_alias_copy_on_deref() {
-    let output = running_tests_with_arg("alias/alias_copy_for_deref", "-alias");
+    let output = run_with_args("alias/alias_copy_for_deref", ANALYZE_ALIAS_CMD);
     assert_eq!(output.contains("new\": (0.0,1.0)"), true);
 }
 
 #[test]
 fn test_alias_indirect() {
-    let output = running_tests_with_arg("alias/alias_indirect", "-alias");
+    let output = run_with_args("alias/alias_indirect", ANALYZE_ALIAS_CMD);
     assert_eq!(output.contains("iter_prop\": (0.0,1.0)"), true);
 }
 
 // ===============Alias(MFP) Analysis Test==============
 #[test]
 fn test_alias_mfp_from_raw_parts_in() {
-    let output = running_tests_with_arg("alias/alias_from_raw_parts_in", "-alias-mfp");
+    let output = run_with_args("alias/alias_from_raw_parts_in", ANALYZE_ALIAS_MFP_CMD);
     assert_eq!(output.contains("foo\": (0.0,1)"), true);
 }
 
 #[test]
 fn test_alias_mfp_from_raw_parts() {
-    let output = running_tests_with_arg("alias/alias_from_raw_parts", "-alias-mfp");
+    let output = run_with_args("alias/alias_from_raw_parts", ANALYZE_ALIAS_MFP_CMD);
     // assert_eq!(output.contains("foo\": (0,1)"), true);
     assert_eq!(output.contains("foo\": (0.0,1)"), true); // This is slightly different from MOP
 }
 
 #[test]
 fn test_alias_mfp_not_alias_iter() {
-    let output = running_tests_with_arg("alias/not_alias_iter", "-alias-mfp");
+    let output = run_with_args("alias/not_alias_iter", ANALYZE_ALIAS_MFP_CMD);
     assert_eq!(output.contains("foo\": null"), true);
 }
 
 #[test]
 fn test_alias_mfp_field() {
-    let output = running_tests_with_arg("alias/alias_field", "-alias-mfp");
+    let output = run_with_args("alias/alias_field", ANALYZE_ALIAS_MFP_CMD);
     assert_eq!(
         output.contains("\"foo\": (0,1.1), (0,1.0)")
             || output.contains("\"foo\": (0,1.0), (0,1.1)"),
@@ -290,49 +300,49 @@ fn test_alias_mfp_field() {
 
 #[test]
 fn test_alias_mfp_lib_no_caller() {
-    let output = running_tests_with_arg("alias/alias_lib_no_caller", "-alias-mfp");
+    let output = run_with_args("alias/alias_lib_no_caller", ANALYZE_ALIAS_MFP_CMD);
     assert_eq!(output.contains("new\": (0.0,1.0)"), true);
 }
 
 #[test]
 fn test_alias_mfp_scc() {
-    let output = running_tests_with_arg("alias/alias_scc", "-alias-mfp");
+    let output = run_with_args("alias/alias_scc", ANALYZE_ALIAS_MFP_CMD);
     assert_eq!(output.contains("foo\": (0,1)"), true);
 }
 
 #[test]
 fn test_alias_mfp_sub_scc1() {
-    let output = running_tests_with_arg("alias/alias_sub_scc1", "-alias-mfp");
+    let output = run_with_args("alias/alias_sub_scc1", ANALYZE_ALIAS_MFP_CMD);
     assert_eq!(output.contains("foo\": (0,1)"), true);
 }
 
 #[test]
 fn test_alias_mfp_sub_scc2() {
-    let output = running_tests_with_arg("alias/alias_sub_scc2", "-alias-mfp");
+    let output = run_with_args("alias/alias_sub_scc2", ANALYZE_ALIAS_MFP_CMD);
     assert_eq!(output.contains("foo\": (0,1), (0,2)"), true);
 }
 
 #[test]
 fn test_alias_mfp_switch() {
-    let output = running_tests_with_arg("alias/alias_switch", "-alias-mfp");
+    let output = run_with_args("alias/alias_switch", ANALYZE_ALIAS_MFP_CMD);
     assert_eq!(output.contains("foo\": (0,1)"), true);
 }
 
 #[test]
 fn test_alias_mfp_copy_on_deref() {
-    let output = running_tests_with_arg("alias/alias_copy_for_deref", "-alias-mfp");
+    let output = run_with_args("alias/alias_copy_for_deref", ANALYZE_ALIAS_MFP_CMD);
     assert_eq!(output.contains("new\": (0.0,1.0)"), true);
 }
 
 #[test]
 fn test_alias_mfp_indirect() {
-    let output = running_tests_with_arg("alias/alias_indirect", "-alias-mfp");
+    let output = run_with_args("alias/alias_indirect", ANALYZE_ALIAS_MFP_CMD);
     assert_eq!(output.contains("iter_prop\": (0.0,1.0)"), true);
 }
 
 #[test]
 fn test_leak_ctor() {
-    let output = running_tests_with_arg("leak/leak_ctor", "-M");
+    let output = run_with_args("leak/leak_ctor", CHECK_MLEAK_CMD);
     assert_eq!(
         output.contains("Memory Leak detected in function main"),
         false
@@ -341,7 +351,7 @@ fn test_leak_ctor() {
 
 #[test]
 fn test_leak_orphan() {
-    let output = running_tests_with_arg("leak/leak_orphan", "-M");
+    let output = run_with_args("leak/leak_orphan", CHECK_MLEAK_CMD);
     assert_eq!(
         output.contains("Memory Leak detected in function main"),
         true
@@ -350,13 +360,15 @@ fn test_leak_orphan() {
 
 #[test]
 fn test_leak_orphan_timeout() {
-    let output = running_tests_with_arg("leak/leak_orphan", "-timeout=0");
+    let mut args = Vec::from(["--timeout", "0"]);
+    args.extend(CHECK_MLEAK_CMD);
+    let output = run_with_args("leak/leak_orphan", &args);
     assert!(output.contains("Process killed due to timeout"));
 }
 
 #[test]
 fn test_leak_proxy() {
-    let output = running_tests_with_arg("leak/leak_proxy", "-M");
+    let output = run_with_args("leak/leak_proxy", CHECK_MLEAK_CMD);
     assert_eq!(
         output.contains("Memory Leak detected in function main"),
         true
@@ -365,7 +377,7 @@ fn test_leak_proxy() {
 
 #[test]
 fn test_heap_cell() {
-    let output = running_tests_with_arg("ownedheap/heap_cell", "-ownedheap");
+    let output = run_with_args("ownedheap/heap_cell", ANALYZE_OWNED_HEAP_CMD);
     assert_eq!(
         output.contains("Cell\": False, <1>")
             && output.contains("RefCell\": False, <1>")
@@ -379,7 +391,7 @@ fn test_heap_cell() {
 
 #[test]
 fn test_heap_collections() {
-    let output = running_tests_with_arg("ownedheap/heap_collections", "-ownedheap");
+    let output = run_with_args("ownedheap/heap_collections", ANALYZE_OWNED_HEAP_CMD);
     assert_eq!(
         output.contains("Unique\": True, <0>")
             && output.contains("Box\": True, <0,1>")
@@ -396,7 +408,7 @@ fn test_heap_collections() {
 
 #[test]
 fn test_heap_nested() {
-    let output: String = running_tests_with_arg("ownedheap/heap_nested", "-ownedheap");
+    let output: String = run_with_args("ownedheap/heap_nested", ANALYZE_OWNED_HEAP_CMD);
     assert_eq!(
         output.contains("X\": False, <1>")
             && output.contains("Y\": False, <1>")
@@ -407,7 +419,7 @@ fn test_heap_nested() {
 
 #[test]
 fn test_heap_proxy() {
-    let output = running_tests_with_arg("ownedheap/heap_proxy", "-ownedheap");
+    let output = run_with_args("ownedheap/heap_proxy", ANALYZE_OWNED_HEAP_CMD);
     assert_eq!(
         output.contains("Proxy1\": False, <0>")
             && output.contains("Proxy2\": True, <0>")
@@ -420,30 +432,30 @@ fn test_heap_proxy() {
 
 #[test]
 fn test_upg_safe_caller() {
-    let output = running_tests_with_arg("upg/safe_caller", "-upg");
+    let output = run_with_args("upg/safe_caller", ANALYZE_UPG_CMD);
     assert_eq!(output.contains("from_raw_parts"), true);
 }
 
 #[test]
 fn test_upg_raw_ptr() {
-    let output = running_tests_with_arg("upg/raw_ptr", "-upg");
+    let output = run_with_args("upg/raw_ptr", ANALYZE_UPG_CMD);
     assert_eq!(output.contains("raw_ptr_deref_dummy"), true);
 }
 
 #[test]
 fn test_upg_static_mut() {
-    let output = running_tests_with_arg("upg/static_mut", "-upg");
+    let output = run_with_args("upg/static_mut", ANALYZE_UPG_CMD);
     assert_eq!(output.contains("::COUNTER"), true);
 }
 
 #[test]
 fn test_ssa_transform() {
-    let output = running_tests_with_arg("ssa/ssa_transform", "-ssa");
+    let output = run_with_args("ssa/ssa_transform", ANALYZE_SSA_CMD);
     assert_eq!(output.contains("ssa lvalue check true"), true);
 }
 #[test]
 fn test_range_analysis() {
-    let output = running_tests_with_arg("range/range_1", "-range");
+    let output = run_with_args("range/range_1", ANALYZE_RANGE_CMD);
 
     let expected_ranges = vec![
         "_1 => Regular [0, 0]",
@@ -467,7 +479,7 @@ fn test_range_analysis() {
 #[test]
 
 fn test_interprocedual_range_analysis() {
-    let output = running_tests_with_arg("range/range_2", "-range");
+    let output = run_with_args("range/range_2", ANALYZE_RANGE_CMD);
 
     let expected_ranges = vec![
         "_1 => Regular [42, 42]",
@@ -488,7 +500,7 @@ fn test_interprocedual_range_analysis() {
 
 #[test]
 fn test_callgraph_dynamic_dispatch() {
-    let output = running_tests_with_arg("callgraph/dynamic", "-callgraph");
+    let output = run_with_args("callgraph/dynamic", ANALYZE_CALLGRAPH_CMD);
 
     let expected_calls = vec!["-> <Dog as Animal>::speak", "-> <Cat as Animal>::speak"];
 
@@ -504,7 +516,7 @@ fn test_callgraph_dynamic_dispatch() {
 
 #[test]
 fn test_symbolic_interval() {
-    let output = running_tests_with_arg("range/range_symbolic", "-range");
+    let output = run_with_args("range/range_symbolic", ANALYZE_RANGE_CMD);
 
     let expected_ranges = vec![
         "Var: (_5.0: i32). [ Binary(AddWithOverflow, Place(_1), Constant(Val(Scalar(0x00000001), i32))) , Binary(AddWithOverflow, Place(_1), Constant(Val(Scalar(0x00000001), i32))) ]",
