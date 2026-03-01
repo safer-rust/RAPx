@@ -17,7 +17,7 @@ pub enum OptLevel {
     All,
 }
 
-// NOTE: docstring is automatically used to generate help messages, 
+// NOTE: docstring is automatically used to generate help messages,
 // so please use it to explain the command instead of `help` attribute in `arg` macro.
 #[derive(Debug, Clone, Subcommand)]
 pub enum Commands {
@@ -61,13 +61,23 @@ pub enum Commands {
     },
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum AliasStrategyKind {
+    /// meet-over-paths (default)
+    Mop,
+    /// maximum-fixed-point
+    Mfp,
+}
+
 // use command string to automatically generate help messages
 #[derive(Debug, Clone, Copy, Subcommand)]
 pub enum AnalysisKind {
     /// perform alias analysis (meet-over-paths by default)
-    Alias,
-    /// perform alias analysis (maximum-fixed-point)
-    AliasMfp,
+    Alias {
+        /// specify the alias analysis strategy
+        #[arg(short, long, default_value = "mop")]
+        strategy: AliasStrategyKind,
+    },
     /// generate API dependency graphs
     Adg,
     /// generate unsafety propagation graphs for each module

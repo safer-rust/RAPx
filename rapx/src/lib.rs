@@ -32,7 +32,7 @@ extern crate rustc_type_ir;
 extern crate thin_vec;
 use crate::{
     analysis::{core::alias_analysis::mfp::MfpAliasAnalyzer, scan::ScanAnalysis},
-    cli::{AnalysisKind, Commands, OptLevel, RapxArgs},
+    cli::{AliasStrategyKind, AnalysisKind, Commands, OptLevel, RapxArgs},
 };
 use analysis::{
     Analysis,
@@ -53,7 +53,6 @@ use analysis::{
     rcanary::rCanary,
     safedrop::SafeDrop,
     senryx::{CheckLevel, SenryxCheck},
-    test::Test,
     upg::{TargetCrate, UPGAnalysis},
     utils::show_mir::ShowMir,
 };
@@ -193,16 +192,19 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
         }
 
         &Commands::Analyze { kind } => match kind {
-            AnalysisKind::Alias => {
-                let mut analyzer = AliasAnalyzer::new(tcx);
-                analyzer.run();
-                let alias = analyzer.get_local_fn_alias();
-                rap_info!("{}", FnAliasMapWrapper(alias));
-            }
-            AnalysisKind::AliasMfp => {
-                let mut analyzer = MfpAliasAnalyzer::new(tcx);
-                analyzer.run();
-                let alias = analyzer.get_local_fn_alias();
+            AnalysisKind::Alias { strategy } => {
+                let alias = match strategy {
+                    AliasStrategyKind::Mop => {
+                        let mut analyzer = AliasAnalyzer::new(tcx);
+                        analyzer.run();
+                        analyzer.get_local_fn_alias()
+                    }
+                    AliasStrategyKind::Mfp => {
+                        let mut analyzer = MfpAliasAnalyzer::new(tcx);
+                        analyzer.run();
+                        analyzer.get_local_fn_alias()
+                    }
+                };
                 rap_info!("{}", FnAliasMapWrapper(alias));
             }
             AnalysisKind::Adg => {

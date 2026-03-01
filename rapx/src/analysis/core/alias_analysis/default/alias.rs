@@ -203,13 +203,7 @@ impl<'tcx> MopGraph<'tcx> {
     pub fn sync_field_alias(&mut self, lv: usize, rv: usize, depth: usize, clear_left: bool) {
         rap_debug!("sync field aliases for lv:{} rv:{}", lv, rv);
 
-        let max_field_depth = match std::env::var_os("MOP") {
-            Some(val) if val == "0" => 10,
-            Some(val) if val == "1" => 20,
-            Some(val) if val == "2" => 30,
-            Some(val) if val == "3" => 50,
-            _ => 15,
-        };
+        let max_field_depth = 15;
 
         if depth > max_field_depth {
             return;

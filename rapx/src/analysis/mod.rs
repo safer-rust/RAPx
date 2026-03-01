@@ -5,7 +5,6 @@ pub mod rcanary;
 pub mod safedrop;
 pub mod scan;
 pub mod senryx;
-pub mod test;
 pub mod upg;
 pub mod utils;
 

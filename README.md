@@ -7,7 +7,7 @@ RAPx is available on crates.io. [![crates.io](https://img.shields.io/crates/v/ra
 # ![logo](https://raw.githubusercontent.com/Artisan-Lab/RAPx/main/feature.png)
 RAPx is structured into two layers: a core layer offering essential program analysis algorithms (e.g., alias and dataflow analysis), and an application layer implementing specific tasks such as bug detection. This separation of concerns promotes modular development and fosters collaboration between algorithm and application developers.
 
-The project is still under heavy development. For further details, please refer to the [RAPx-Book](https://artisan-lab.github.io/RAPx-Book).
+The project is still under heavy development. For further details, please refer to the [RAPx-Book](https://safer-rust.github.io/RAPx-Book/).
 
 ## Quick Start
 

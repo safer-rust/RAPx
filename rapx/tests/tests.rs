@@ -36,7 +36,7 @@ fn run_with_args(dir: &str, args: &[&str]) -> String {
 const CHECK_UAF_CMD: &[&str] = &["check", "-f"];
 const CHECK_MLEAK_CMD: &[&str] = &["check", "-m"];
 const ANALYZE_ALIAS_CMD: &[&str] = &["analyze", "alias"];
-const ANALYZE_ALIAS_MFP_CMD: &[&str] = &["analyze", "alias-mfp"];
+const ANALYZE_ALIAS_MFP_CMD: &[&str] = &["analyze", "alias", "--strategy", "mfp"];
 const ANALYZE_OWNED_HEAP_CMD: &[&str] = &["analyze", "owned-heap"];
 const ANALYZE_UPG_CMD: &[&str] = &["analyze", "upg"];
 const ANALYZE_SSA_CMD: &[&str] = &["analyze", "ssa"];
