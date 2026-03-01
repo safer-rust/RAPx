@@ -1,12 +1,7 @@
-use crate::help::{RAPX_AFTER_HELP, RAPX_VERSION};
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Args, Subcommand, ValueEnum};
 
-#[derive(Parser, Debug, Clone)] // requires `derive` feature
-#[command(styles = CLAP_STYLING)]
-#[command(version = RAPX_VERSION, about)]
-#[command(about = "RAPx is a static analysis tool for Rust.")]
-#[command(after_help = RAPX_AFTER_HELP)]
-pub struct Config {
+#[derive(Args, Debug, Clone)]
+pub struct RapxArgs {
     #[command(subcommand)]
     pub command: Commands,
     #[arg(long, help = "specify the timeout seconds in running rapx")]
@@ -21,48 +16,47 @@ pub enum OptLevel {
     Default,
     All,
 }
+
+// NOTE: docstring is automatically used to generate help messages, 
+// so please use it to explain the command instead of `help` attribute in `arg` macro.
 #[derive(Debug, Clone, Subcommand)]
 pub enum Commands {
-    /// statically analyze the crate
+    /// perform various analyses on the crate, e.g., alias analysis, callgraph generation
     #[command(arg_required_else_help = true)]
     Analyze {
         #[command(subcommand)]
         kind: AnalysisKind,
     },
     /// check potential vulnerabilities in the crate,
-    /// such as use-after-free and memory leak
+    /// e.g., use-after-free, memory leak
     Check {
+        /// detect use-after-free/double-free
         #[arg(
             short = 'f',
             num_args=0..=1,
             default_missing_value = "1",
             long,
-            help = "detect use-after-free/double-free"
         )]
         uaf: Option<usize>,
-        #[arg(short = 'm', long, help = "detect memory leakage")]
+
+        /// detect memory leakage
+        #[arg(short = 'm', long)]
         mleak: bool,
-        #[arg(
-            short = 'o',
-            long,
-            default_missing_value = "default",
-            help = "automatically detect code optimization chances"
-        )]
+
+        /// automatically detect code optimization chances
+        #[arg(short = 'o', long, default_missing_value = "default")]
         opt: Option<OptLevel>,
-        #[arg(
-            long,
-            help = "(under development) infer the safety properties required by unsafe APIs."
-        )]
+
+        /// (under development) infer the safety properties required by unsafe APIs.
+        #[arg(long)]
         infer: bool,
-        #[arg(
-            long,
-            help = "(under development) verify if the safety requirements of unsafe API are satisfied."
-        )]
+
+        /// (under development) verify if the safety requirements of unsafe API are satisfied.
+        #[arg(long)]
         verify: bool,
-        #[arg(
-            long,
-            help = "(under development) verify if the safety requirements of unsafe API are satisfied."
-        )]
+
+        /// (under development) verify if the safety requirements of unsafe API are satisfied.
+        #[arg(long)]
         verify_std: bool,
     },
 }
@@ -83,13 +77,21 @@ pub enum AnalysisKind {
     /// generate callgraphs
     Callgraph,
     /// generate dataflow graphs
-    Dataflow { debug: bool },
+    Dataflow {
+        /// print debug information during dataflow analysis
+        #[arg(short, long)]
+        debug: bool,
+    },
     /// analyze if the type holds a piece of memory on heap
     OwnedHeap,
     /// extract path constraints
     Pathcond,
     /// perform range analysis
-    Range { debug: bool },
+    Range {
+        /// print debug information during range analysis
+        #[arg(short, long)]
+        debug: bool,
+    },
     /// print basic information of the crate, e.g., the number of APIs
     Scan,
     /// print the SSA form of the crate
@@ -100,17 +102,7 @@ pub enum AnalysisKind {
     DotMir,
 }
 
-// Keep CLI style consistent with cargo's default style
-pub const CLAP_STYLING: clap::builder::styling::Styles = clap::builder::styling::Styles::styled()
-    .header(clap_cargo::style::HEADER)
-    .usage(clap_cargo::style::USAGE)
-    .literal(clap_cargo::style::LITERAL)
-    .placeholder(clap_cargo::style::PLACEHOLDER)
-    .error(clap_cargo::style::ERROR)
-    .valid(clap_cargo::style::VALID)
-    .invalid(clap_cargo::style::INVALID);
-
-impl Config {
+impl RapxArgs {
     pub fn init_env(&self) {
         let Commands::Check {
             uaf: Some(level), ..

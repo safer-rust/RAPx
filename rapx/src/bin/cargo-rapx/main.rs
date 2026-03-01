@@ -8,32 +8,15 @@
 extern crate rapx;
 
 use crate::utils::*;
-use clap::builder::styling::{AnsiColor, Effects};
 use clap::{Arg, ArgAction, Args, Command, CommandFactory, Parser, Subcommand};
-use rapx::config;
+use rapx::cli;
+use rapx::help;
 use rapx::utils::log::{init_log, rap_error_and_exit};
 use std::env;
 
 mod args;
 mod cargo_check;
 mod utils;
-
-fn styled_str(s: &str, bold: bool) -> String {
-    let effect = if bold {
-        AnsiColor::BrightCyan.on_default().effects(Effects::BOLD)
-    } else {
-        AnsiColor::BrightCyan.on_default()
-    };
-    format!("\x1b[{}{}\x1b[0m", effect.render(), s)
-}
-
-fn styled_usage() -> String {
-    format!(
-        "{} {}",
-        styled_str("cargo rapx", true),
-        styled_str("[OPTIONS] <COMMAND> [-- [CARGO_FLAGS]]", false)
-    )
-}
 
 fn phase_cargo_rap() {
     rap_trace!("Start phase cargo-rapx.");
@@ -48,7 +31,7 @@ fn phase_rustc_wrapper() {
     // check `CARGO_PRIMARY_PACKAGE` to make sure we only run
     // rapx for the local crate, but not dependencies.
     // rapx only checks local crates
-    if is_primary && args::filter_crate_type() {
+    if is_primary {
         run_rap();
         return;
     }
@@ -61,10 +44,20 @@ fn phase_rustc_wrapper() {
 #[command(name = "cargo")]
 #[command(bin_name = "cargo")]
 #[command(version, about)]
-#[command(styles = config::CLAP_STYLING)]
+#[command(styles = help::CARGO_RAPX_STYLING)]
 enum CargoCli {
-    #[command(override_usage = styled_usage())]
-    Rapx(config::Config),
+    #[command(override_usage = help::styled_cargo_rapx_usage())]
+    #[command(version= help::RAPX_VERSION)]
+    #[command(after_help = help::RAPX_AFTER_HELP)]
+    Rapx(cli::RapxArgs),
+}
+
+impl CargoCli {
+    fn args(&self) -> &cli::RapxArgs {
+        match self {
+            CargoCli::Rapx(args) => args,
+        }
+    }
 }
 
 fn main() {
@@ -80,7 +73,7 @@ fn main() {
 
     match args::get_arg(1).unwrap() {
         "rapx" => {
-            CargoCli::command().get_matches_from(env::args().take_while(|args| args != "--"));
+            let _ = args::cargo_cli();
             phase_cargo_rap()
         }
         arg if arg.ends_with("rustc") => phase_rustc_wrapper(),

@@ -5,7 +5,7 @@
 #[macro_use]
 pub mod utils;
 pub mod analysis;
-pub mod config;
+pub mod cli;
 pub mod def_id;
 pub mod help;
 pub mod preprocess;
@@ -32,7 +32,7 @@ extern crate rustc_type_ir;
 extern crate thin_vec;
 use crate::{
     analysis::{core::alias_analysis::mfp::MfpAliasAnalyzer, scan::ScanAnalysis},
-    config::{AnalysisKind, Commands, Config, OptLevel},
+    cli::{AnalysisKind, Commands, OptLevel, RapxArgs},
 };
 use analysis::{
     Analysis,
@@ -63,10 +63,8 @@ use rustc_interface::interface::{self, Compiler};
 use rustc_middle::{ty::TyCtxt, util::Providers};
 use rustc_session::search_paths::PathKind;
 use std::path::PathBuf;
-use std::{env, sync::Arc};
+use std::sync::Arc;
 
-// Insert rustc arguments at the beginning of the argument list that RAP wants to be
-// set per default, for maximal validation power.
 pub static RAP_DEFAULT_ARGS: &[&str] = &[
     "-Zalways-encode-mir",
     "-Zmir-opt-level=0",
@@ -79,16 +77,16 @@ pub static RAP_DEFAULT_ARGS: &[&str] = &[
 
 #[derive(Debug, Clone)]
 pub struct RapCallback {
-    config: Config,
+    args: RapxArgs,
 }
 
 impl RapCallback {
-    pub fn new(config: Config) -> Self {
-        Self { config }
+    pub fn new(args: RapxArgs) -> Self {
+        Self { args }
     }
 
     fn is_building_test_crate(&self) -> bool {
-        match &self.config.test_crate {
+        match &self.args.test_crate {
             None => true,
             Some(test_crate) => {
                 let test_crate: &str = test_crate;
@@ -154,7 +152,7 @@ impl Callbacks for RapCallback {
 
 /// Start the analysis with the features enabled.
 pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
-    match &callback.config.command {
+    match &callback.args.command {
         &Commands::Check {
             uaf,
             mleak,
