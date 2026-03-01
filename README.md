@@ -35,48 +35,36 @@ rustup default nightly-2025-12-06
 Check out supported options with `-help`:
 
 ```shell
-$ cargo rapx -help
+$ cargo rapx --help
 
-Usage:
-    cargo rapx [rapx options or rustc options] -- [cargo check options]
+Usage: cargo rapx [OPTIONS] <COMMAND> [-- [CARGO_FLAGS]]
 
-RAPx Options:
+Commands:
+  analyze  perform various analyses on the crate, e.g., alias analysis, callgraph generation
+  check    check potential vulnerabilities in the crate, e.g., use-after-free, memory leak
+  help     Print this message or the help of the given subcommand(s)
 
-Application:
-    -F or -uaf      use-after-free/double free detection.
-    -M or -mleak    memory leakage detection.
-    -O or -opt      automatically detect code optimization chances.
-    -I or -infer    (under development) infer the safety properties required by unsafe APIs.
-    -V or -verify   (under development) verify if the safety requirements of unsafe API are satisfied.
-
-Analysis:
-    -alias          perform alias analysis (meet-over-paths by default)
-    -adg            generate API dependency graphs
-    -upg            generate unsafety propagation graphs for each module.
-    -upg-std        generate unsafety propagation graphs for each module of the Rust standard library
-    -callgraph      generate callgraphs
-    -dataflow       generate dataflow graphs
-    -ownedheap      analyze if the type holds a piece of memory on heap
-    -pathcond       extract path constraints
-    -range          perform range analysis
-
-General command: 
-    -help           show help information
-    -version        show the version of RAPx
+Options:
+      --timeout <TIMEOUT>        specify the timeout seconds in running rapx
+      --test-crate <TEST_CRATE>  specify the tested package in the workspace
+  -h, --help                     Print help
+  -V, --version                  Print version
 
 NOTE: multiple detections can be processed in single run by 
-appending the options to the arguments. Like `cargo rapx -F -M`
+appending the options to the arguments. Like `cargo rapx -f -m`
 will perform two kinds of detection in a row.
 
-e.g.
+Examples:
+
 1. detect use-after-free and memory leak for a riscv target:
-   cargo rapx -F -M -- --target riscv64gc-unknown-none-elf
+   cargo rapx check -f -m -- --target riscv64gc-unknown-none-elf
 2. detect use-after-free and memory leak for tests:
-   cargo rapx -F -M -- --tests
+   cargo rapx check -f -m -- --tests
 3. detect use-after-free and memory leak for all members:
-   cargo rapx -F -M -- --workspace
+   cargo rapx check -f -m -- --workspace
 
 Environment Variables (Values are case insensitive):
+
     RAP_LOG          verbosity of logging: trace, debug, info, warn
                      trace: print all the detailed RAP execution traces.
                      debug: display intermidiate analysis results.
@@ -98,7 +86,7 @@ If RAPx gets stuck after executing `cargo clean`, try manually downloading metad
 
 RAPx supports the following environment variables (values are case insensitive):
 
-| var             | default when absent | one of these values | description                  |
+| var             | default when absent | possible values     | description                  |
 |-----------------|---------------------|---------------------|------------------------------|
 | `RAP_LOG`       | info                | debug, info, warn   | verbosity of logging         |
 | `RAP_CLEAN`     | true                | true, false         | run cargo clean before check |
