@@ -30,7 +30,7 @@ fn run_complier(callback: &mut RapCallback) {
 #[command(styles = help::RAPX_STYLING)]
 struct RapCli {
     #[command(flatten)]
-    config: cli::RapxArgs,
+    args: cli::RapxArgs,
 }
 
 fn main() {
@@ -44,10 +44,10 @@ fn main() {
     // parse arguments from RAPFLAGS
     cli_args.insert(0, "rapx".to_owned());
     let cli = RapCli::parse_from(cli_args);
-    let rapx_config = cli.config;
-    rapx_config.init_env();
+    let rapx_args = cli.args;
+    rapx_args.init_env();
 
-    let mut callback = RapCallback::new(rapx_config);
+    let mut callback = RapCallback::new(rapx_args);
     rap_trace!("rap received arguments: {:#?}", env::args());
     rap_info!("Start analysis with RAPx.");
     run_complier(&mut callback);
