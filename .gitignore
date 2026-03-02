@@ -6,3 +6,4 @@ UPG/
 tests/**/Cargo.lock
 **/*.dot
 **/*.png
+.rapx-test.lock

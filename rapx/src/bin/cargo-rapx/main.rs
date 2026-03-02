@@ -27,15 +27,18 @@ fn phase_rustc_wrapper() {
     rap_trace!("Launch cargo-rapx again triggered by cargo check.");
 
     let is_primary = env::var("CARGO_PRIMARY_PACKAGE").is_ok();
+    let package_name = env::var("CARGO_PKG_NAME").unwrap_or_default();
 
     // check `CARGO_PRIMARY_PACKAGE` to make sure we only run
     // rapx for the local crate, but not dependencies.
     // rapx only checks local crates
     if is_primary {
+        rap_debug!("run rapx for package {}", package_name);
         run_rap();
         return;
     }
 
+    rap_debug!("run rustc for package {}", package_name);
     // for dependencies and some special crate types, run rustc as usual
     run_rustc();
 }

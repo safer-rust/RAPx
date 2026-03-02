@@ -68,12 +68,21 @@ fn cargo_check(dir: &Utf8Path) {
     } else if !child.wait().unwrap().success() {
         rap_error_and_exit("Finished with non-zero exit code.");
     }
+
+    // Run `cargo clean` again to avoid polluting
+    // the output of `cargo check`
+    cargo_clean(dir, args::rap_clean());
 }
 
 fn cargo_clean(dir: &Utf8Path, really: bool) {
     if really {
         rap_trace!("cargo clean in package folder {dir}");
-        if let Err(err) = Command::new("cargo").arg("clean").current_dir(dir).output() {
+        if let Err(err) = Command::new("cargo")
+            .arg("clean")
+            .arg("--workspace") // add --workspace to prevent cleaning dependency artifacts, which is usually not needed and time-consuming to rebuild
+            .current_dir(dir)
+            .output()
+        {
             rap_error_and_exit(format!("`cargo clean` exits unexpectedly:\n{err}"));
         }
     }
