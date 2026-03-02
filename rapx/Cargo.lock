@@ -775,7 +775,7 @@ dependencies = [
 
 [[package]]
 name = "rapx"
-version = "0.6.252"
+version = "0.7.0"
 dependencies = [
  "annotate-snippets",
  "cargo_metadata",
