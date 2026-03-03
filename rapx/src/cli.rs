@@ -27,6 +27,12 @@ pub enum Commands {
         #[command(subcommand)]
         kind: AnalysisKind,
     },
+    /// audit unsafe APIs and output a JSON document
+    #[command(arg_required_else_help = true)]
+    Audit {
+        #[command(subcommand)]
+        kind: AuditKind,
+    },
     /// check potential vulnerabilities in the crate,
     /// e.g., use-after-free, memory leak
     Check {
@@ -110,6 +116,15 @@ pub enum AnalysisKind {
     Mir,
     /// print the MIR of the crate in dot format
     DotMir,
+}
+
+// use command string to automatically generate help messages
+#[derive(Debug, Clone, Copy, Subcommand)]
+pub enum AuditKind {
+    /// output all `pub unsafe` APIs of the current crate as JSON
+    UnsafeApis,
+    /// output all `pub unsafe` APIs of the Rust standard library as JSON
+    StdUnsafeApis,
 }
 
 impl RapxArgs {

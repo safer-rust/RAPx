@@ -1,3 +1,4 @@
+pub mod audit;
 pub mod core;
 pub mod graphs;
 pub mod opt;
