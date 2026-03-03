@@ -29,6 +29,17 @@ pub struct UnsafeApiEntry {
     pub safety_doc: Option<String>,
 }
 
+/// Returns true if `line` is a Markdown heading that should stop content
+/// collection for a `# Safety` section at the given `level` (1 or 2).
+fn is_heading_stop(line: &str, level: usize) -> bool {
+    let is_h1 = line.starts_with("# ") || line == "#";
+    if level == 1 {
+        return is_h1;
+    }
+    // level == 2: stop at `#` or `##` headings
+    is_h1 || line.starts_with("## ") || line == "##"
+}
+
 /// Extract the `# Safety` or `## Safety` section from a Rust doc comment string.
 ///
 /// The `doc` parameter should be the concatenation of all `#[doc = "..."]` attribute
@@ -59,21 +70,11 @@ pub fn extract_safety_doc(doc: &str) -> Option<String> {
     let mut content_lines: Vec<&str> = Vec::new();
     for line in lines.iter().skip(start) {
         let trimmed = line.trim();
-        // Stop at any heading at the same or higher level
-        match safety_level {
-            1 => {
-                if trimmed.starts_with("# ") || trimmed == "#" {
-                    break;
-                }
-            }
-            2 => {
-                if trimmed.starts_with("# ") || trimmed == "#"
-                    || trimmed.starts_with("## ") || trimmed == "##"
-                {
-                    break;
-                }
-            }
-            _ => {}
+        // Stop at any heading at the same or higher level.
+        // For level 1 (`# Safety`), any `#` heading stops the section.
+        // For level 2 (`## Safety`), any `#` or `##` heading stops the section.
+        if is_heading_stop(trimmed, safety_level) {
+            break;
         }
         content_lines.push(trimmed);
     }
