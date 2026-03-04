@@ -32,10 +32,11 @@ extern crate rustc_type_ir;
 extern crate thin_vec;
 use crate::{
     analysis::{core::alias_analysis::mfp::MfpAliasAnalyzer, scan::ScanAnalysis},
-    cli::{AliasStrategyKind, AnalysisKind, Commands, OptLevel, RapxArgs},
+    cli::{AliasStrategyKind, AnalysisKind, AuditKind, Commands, OptLevel, RapxArgs},
 };
 use analysis::{
     Analysis,
+    audit::AuditUnsafeApis,
     core::{
         alias_analysis::{AliasAnalysis, FnAliasMapWrapper, default::AliasAnalyzer},
         api_dependency::ApiDependencyAnalyzer,
@@ -190,6 +191,15 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
                 // SenryxCheck::new(tcx, 2).generate_uig_by_def_id();
             }
         }
+
+        &Commands::Audit { kind } => match kind {
+            AuditKind::UnsafeApis => {
+                AuditUnsafeApis::new(tcx).run_local();
+            }
+            AuditKind::StdUnsafeApis => {
+                AuditUnsafeApis::new(tcx).run_std();
+            }
+        },
 
         &Commands::Analyze { kind } => match kind {
             AnalysisKind::Alias { strategy } => {
