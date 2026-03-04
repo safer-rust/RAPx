@@ -32,11 +32,10 @@ extern crate rustc_type_ir;
 extern crate thin_vec;
 use crate::{
     analysis::{core::alias_analysis::mfp::MfpAliasAnalyzer, scan::ScanAnalysis},
-    cli::{AliasStrategyKind, AnalysisKind, AuditKind, Commands, OptLevel, RapxArgs},
+    cli::{AliasStrategyKind, AnalysisKind, Commands, ExtractKind, OptLevel, RapxArgs},
 };
 use analysis::{
     Analysis,
-    audit::AuditUnsafeApis,
     core::{
         alias_analysis::{AliasAnalysis, FnAliasMapWrapper, default::AliasAnalyzer},
         api_dependency::ApiDependencyAnalyzer,
@@ -50,6 +49,7 @@ use analysis::{
         },
         ssa_transform::SSATrans,
     },
+    extract::ExtractUnsafeApis,
     opt::Opt,
     rcanary::rCanary,
     safedrop::SafeDrop,
@@ -192,12 +192,12 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
             }
         }
 
-        &Commands::Audit { kind } => match kind {
-            AuditKind::UnsafeApis => {
-                AuditUnsafeApis::new(tcx).run_local();
+        &Commands::Extract { kind } => match kind {
+            ExtractKind::UnsafeApis => {
+                ExtractUnsafeApis::new(tcx).run_local();
             }
-            AuditKind::StdUnsafeApis => {
-                AuditUnsafeApis::new(tcx).run_std();
+            ExtractKind::StdUnsafeApis => {
+                ExtractUnsafeApis::new(tcx).run_std();
             }
         },
 

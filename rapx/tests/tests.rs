@@ -68,7 +68,7 @@ const ANALYZE_UPG_CMD: &[&str] = &["analyze", "upg"];
 const ANALYZE_SSA_CMD: &[&str] = &["analyze", "ssa"];
 const ANALYZE_RANGE_CMD: &[&str] = &["analyze", "range"];
 const ANALYZE_CALLGRAPH_CMD: &[&str] = &["analyze", "callgraph"];
-const AUDIT_UNSAFE_APIS_CMD: &[&str] = &["audit", "unsafe-apis"];
+const AUDIT_UNSAFE_APIS_CMD: &[&str] = &["extract", "unsafe-apis"];
 
 // ================Dangling Pointer Detection Test=====================
 #[test]
@@ -549,9 +549,8 @@ fn test_symbolic_interval() {
 }
 
 #[test]
-fn test_audit_unsafe_apis() {
-    let output = run_with_args("audit/unsafe_apis_test", AUDIT_UNSAFE_APIS_CMD);
-    // The audit command outputs JSON to stderr; check that key fields are present.
+fn test_extract_unsafe_apis() {
+    let output = run_with_args("extract/unsafe_apis_test", AUDIT_UNSAFE_APIS_CMD);
     assert_contain(&output, "\"name\"");
     assert_contain(&output, "\"deref_raw\"");
     assert_contain(&output, "\"safety_doc\"");

@@ -27,12 +27,6 @@ pub enum Commands {
         #[command(subcommand)]
         kind: AnalysisKind,
     },
-    /// audit unsafe APIs and output a JSON document
-    #[command(arg_required_else_help = true)]
-    Audit {
-        #[command(subcommand)]
-        kind: AuditKind,
-    },
     /// check potential vulnerabilities in the crate,
     /// e.g., use-after-free, memory leak
     Check {
@@ -64,6 +58,12 @@ pub enum Commands {
         /// (under development) verify if the safety requirements of unsafe API are satisfied.
         #[arg(long)]
         verify_std: bool,
+    },
+    /// extract unsafe APIs and output a JSON document
+    #[command(arg_required_else_help = true)]
+    Extract {
+        #[command(subcommand)]
+        kind: ExtractKind,
     },
 }
 
@@ -120,7 +120,7 @@ pub enum AnalysisKind {
 
 // use command string to automatically generate help messages
 #[derive(Debug, Clone, Copy, Subcommand)]
-pub enum AuditKind {
+pub enum ExtractKind {
     /// output all `pub unsafe` APIs of the current crate as JSON
     UnsafeApis,
     /// output all `pub unsafe` APIs of the Rust standard library as JSON

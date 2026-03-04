@@ -16,10 +16,8 @@ will perform two kinds of detection in a row.
    cargo rapx check -f -m -- --tests
 3. detect use-after-free and memory leak for all members:
    cargo rapx check -f -m -- --workspace
-4. audit all public unsafe APIs in the current crate (outputs JSON to stderr):
-   cargo rapx audit unsafe-apis
-5. audit all public unsafe APIs in the Rust standard library:
-   cargo rapx audit std-unsafe-apis
+4. extract all public unsafe APIs in the current crate (outputs JSON to stderr):
+   cargo rapx extract unsafe-apis
 
 <underline>Environment Variables (Values are case insensitive):</underline>
 

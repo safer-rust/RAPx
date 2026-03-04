@@ -1,5 +1,5 @@
 /*
- * This module implements the `audit unsafe-apis` and `audit std-unsafe-apis` commands.
+ * This module implements the `extract unsafe-apis` and `extract std-unsafe-apis` commands.
  * It collects all public unsafe functions from the current crate or the standard library
  * and outputs them as JSON.
  */
@@ -89,33 +89,37 @@ pub fn extract_safety_doc(doc: &str) -> Option<String> {
     }
 
     let content = content_lines.join("\n");
-    if content.is_empty() { None } else { Some(content) }
+    if content.is_empty() {
+        None
+    } else {
+        Some(content)
+    }
 }
 
-pub struct AuditUnsafeApis<'tcx> {
+pub struct ExtractUnsafeApis<'tcx> {
     tcx: TyCtxt<'tcx>,
 }
 
-impl<'tcx> AuditUnsafeApis<'tcx> {
+impl<'tcx> ExtractUnsafeApis<'tcx> {
     pub fn new(tcx: TyCtxt<'tcx>) -> Self {
         Self { tcx }
     }
 
-    /// Run audit for the current (local) crate and print JSON to stderr.
+    /// Run extract for the current (local) crate and print JSON to stderr.
     pub fn run_local(&self) {
         let entries = self.collect_local();
         match serde_json::to_string_pretty(&entries) {
             Ok(json) => eprintln!("{}", json),
-            Err(e) => eprintln!("audit: JSON serialization error: {}", e),
+            Err(e) => eprintln!("extract JSON serialization error: {}", e),
         }
     }
 
-    /// Run audit for the Rust standard library and print JSON to stderr.
+    /// Run extract for the Rust standard library and print JSON to stderr.
     pub fn run_std(&self) {
         let entries = self.collect_std();
         match serde_json::to_string_pretty(&entries) {
             Ok(json) => eprintln!("{}", json),
-            Err(e) => eprintln!("audit: JSON serialization error: {}", e),
+            Err(e) => eprintln!("extract: JSON serialization error: {}", e),
         }
     }
 

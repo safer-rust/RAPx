@@ -41,8 +41,8 @@ Usage: cargo rapx [OPTIONS] <COMMAND> [-- [CARGO_FLAGS]]
 
 Commands:
   analyze  perform various analyses on the crate, e.g., alias analysis, callgraph generation
-  audit    audit unsafe APIs and output a JSON document
   check    check potential vulnerabilities in the crate, e.g., use-after-free, memory leak
+  extract  audit unsafe APIs and output a JSON document
   help     Print this message or the help of the given subcommand(s)
 
 Options:
@@ -63,10 +63,8 @@ Examples:
    cargo rapx check -f -m -- --tests
 3. detect use-after-free and memory leak for all members:
    cargo rapx check -f -m -- --workspace
-4. audit all public unsafe APIs in the current crate (outputs JSON to stderr):
-   cargo rapx audit unsafe-apis
-5. audit all public unsafe APIs in the Rust standard library:
-   cargo rapx audit std-unsafe-apis
+4. extract all public unsafe APIs in the current crate (outputs JSON to stderr):
+   cargo rapx extract unsafe-apis
 
 Environment Variables (Values are case insensitive):
 
