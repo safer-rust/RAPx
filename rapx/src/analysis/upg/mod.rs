@@ -1,7 +1,6 @@
 /*
  * This module generates the unsafety propagation graph for each Rust module in the target crate.
  */
-pub mod draw_dot;
 pub mod fn_collector;
 pub mod hir_visitor;
 pub mod std_upg;
@@ -9,8 +8,14 @@ pub mod upg_graph;
 pub mod upg_unit;
 
 use crate::{
-    analysis::utils::{draw_dot::render_dot_graphs, fn_info::*},
-    utils::source::{get_fn_name_byid, get_module_name},
+    analysis::utils::{
+        draw_dot::{DotGraph, render_dot_graphs, render_dot_graphs_html},
+        fn_info::*,
+    },
+    utils::{
+        log::{span_to_filename, span_to_line_number},
+        source::{get_fn_name_byid, get_module_name, get_span},
+    },
 };
 use fn_collector::FnCollector;
 use hir_visitor::ContainsUnsafe;
@@ -222,9 +227,27 @@ impl<'tcx> UPGAnalysis<'tcx> {
         let mut final_dots = Vec::new();
         for (mod_name, data) in modules_data {
             let dot = data.upg_unit_string(&mod_name);
-            final_dots.push((mod_name, dot));
+            let url_map = data
+                .nodes_def_ids()
+                .iter()
+                .filter_map(|def_id| {
+                    get_span(self.tcx, *def_id).map(|span| {
+                        let label = format!("{:?}", *def_id);
+                        let mut filename = span_to_filename(span);
+                        filename = filename
+                            .strip_prefix("src/")
+                            .unwrap_or(&filename)
+                            .to_string();
+                        let line_number = span_to_line_number(span);
+                        let url = format!("{}.html#{}", filename, line_number);
+                        (label, url)
+                    })
+                })
+                .collect();
+            final_dots.push(DotGraph::new_with_url_map(mod_name, dot, url_map));
         }
         rap_info!("{:?}", final_dots); // Output required for tests; do not change.
-        render_dot_graphs(final_dots);
+        render_dot_graphs(&final_dots);
+        render_dot_graphs_html(&final_dots);
     }
 }

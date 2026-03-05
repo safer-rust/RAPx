@@ -1,7 +1,8 @@
 use super::{UPGAnalysis, upg_graph::UPGraph};
-use crate::analysis::{
-    upg::draw_dot::render_dot_graphs,
-    utils::{fn_info::*, show_mir::display_mir},
+use crate::analysis::utils::{
+    draw_dot::{DotGraph, render_dot_graphs},
+    fn_info::*,
+    show_mir::display_mir,
 };
 use rustc_hir::{Safety, def::DefKind, def_id::DefId};
 use rustc_middle::{
@@ -28,13 +29,13 @@ impl<'tcx> UPGAnalysis<'tcx> {
     }
 
     pub fn render_dot(&mut self) {
-        let mut dot_strs = Vec::new();
+        let mut dots = Vec::new();
         for upg in &self.upgs {
             let dot_str = UPGraph::generate_dot_from_upg_unit(upg);
             let caller_name = get_cleaned_def_path_name(self.tcx, upg.caller.def_id);
-            dot_strs.push((caller_name, dot_str));
+            dots.push(DotGraph::new(caller_name, dot_str));
         }
-        render_dot_graphs(dot_strs);
+        render_dot_graphs(&dots);
     }
 
     pub fn get_chains(&mut self) {

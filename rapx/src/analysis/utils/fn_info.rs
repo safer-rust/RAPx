@@ -2,9 +2,10 @@ use super::draw_dot::render_dot_string;
 use crate::analysis::{
     core::dataflow::{DataFlowAnalysis, default::DataFlowAnalyzer},
     senryx::{
-        contracts::{property, property::PropertyContract},
+        contracts::property::{self, PropertyContract},
         matcher::parse_unsafe_api,
     },
+    utils::draw_dot::DotGraph,
 };
 use crate::def_id::*;
 use crate::{rap_debug, rap_warn};
@@ -143,19 +144,20 @@ pub fn get_cleaned_def_path_name_ori(tcx: TyCtxt, def_id: DefId) -> String {
 
 pub fn get_sp_tags_json() -> serde_json::Value {
     let json_data: serde_json::Value =
-        serde_json::from_str(include_str!("data/std_sps.json")).expect("Unable to parse JSON");
+        serde_json::from_str(include_str!("assets/std_sps.json")).expect("Unable to parse JSON");
     json_data
 }
 
 pub fn get_std_api_signature_json() -> serde_json::Value {
     let json_data: serde_json::Value =
-        serde_json::from_str(include_str!("data/std_sig.json")).expect("Unable to parse JSON");
+        serde_json::from_str(include_str!("assets/std_sig.json")).expect("Unable to parse JSON");
     json_data
 }
 
 pub fn get_sp_tags_and_args_json() -> serde_json::Value {
     let json_data: serde_json::Value =
-        serde_json::from_str(include_str!("data/std_sps_args.json")).expect("Unable to parse JSON");
+        serde_json::from_str(include_str!("assets/std_sps_args.json"))
+            .expect("Unable to parse JSON");
     json_data
 }
 
@@ -1465,7 +1467,8 @@ pub fn generate_mir_cfg_dot<'tcx>(
     }
     dot_content.push_str("}\n");
     let name = get_cleaned_def_path_name(tcx, def_id);
-    render_dot_string(name, dot_content);
+    let dot_graph = DotGraph::new(name, dot_content);
+    render_dot_string(&dot_graph);
     rap_debug!("render dot for {:?}", def_id);
     Ok(())
 }
