@@ -583,7 +583,7 @@ impl<'tcx> Analysis<'tcx> for FnAliasAnalyzer<'tcx> {
     }
 
     fn apply_primary_statement_effect(
-        &self,
+        &mut self,
         state: &mut Self::Domain,
         statement: &Statement<'tcx>,
         _location: Location,
@@ -626,7 +626,7 @@ impl<'tcx> Analysis<'tcx> for FnAliasAnalyzer<'tcx> {
     }
 
     fn apply_primary_terminator_effect<'mir>(
-        &self,
+        &mut self,
         state: &mut Self::Domain,
         terminator: &'mir Terminator<'tcx>,
         _location: Location,
@@ -721,7 +721,7 @@ impl<'tcx> Analysis<'tcx> for FnAliasAnalyzer<'tcx> {
     }
 
     fn apply_call_return_effect(
-        &self,
+        &mut self,
         _state: &mut Self::Domain,
         _block: rustc_middle::mir::BasicBlock,
         _return_places: CallReturnPlaces<'_, 'tcx>,

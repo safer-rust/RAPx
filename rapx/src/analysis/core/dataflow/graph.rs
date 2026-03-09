@@ -221,7 +221,7 @@ impl Graph {
                     self.add_operand(operand, dst);
                     self.nodes[dst].ops[seq] = NodeOp::UnaryOp;
                 }
-                Rvalue::NullaryOp(_) => {
+                Rvalue::NullaryOp(..) => {
                     self.nodes[dst].ops[seq] = NodeOp::NullaryOp;
                 }
                 Rvalue::ThreadLocalRef(_) => {

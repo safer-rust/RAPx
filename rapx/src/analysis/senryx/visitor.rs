@@ -418,7 +418,7 @@ impl<'tcx> BodyVisitor<'tcx> {
                 }
             }
             // NullaryOp: x = SizeOf(T); This is runtime checks
-            Rvalue::NullaryOp(_null_op) => {
+            Rvalue::NullaryOp(_null_op, ..) => {
                 // todo
             }
             // UnaryOp: x = !y / x = -y

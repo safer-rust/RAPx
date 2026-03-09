@@ -50,7 +50,7 @@ impl<'tcx> GenericChecker<'tcx> {
                         if let ItemKind::Impl(impl_item) = item.kind;
                         if let Some(trait_impl_header) = impl_item.of_trait;
                         if trait_impl_header.polarity == ImplPolarity::Positive;
-                        if let Some(binder) = tcx.impl_opt_trait_ref(def_id);
+                        if let Some(binder) = tcx.impl_trait_ref(def_id);
                         then {
                             let trait_ref = binder.skip_binder();
                             let impl_ty = trait_ref.self_ty();

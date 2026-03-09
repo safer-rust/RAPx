@@ -444,7 +444,7 @@ fn solve_unbound_type_generics<'tcx>(
                 .chain(tcx.inherent_impls(trait_def_id).iter().map(|did| *did))
             {
                 // format: <arg0 as Trait<arg1, arg2>>
-                let impl_trait_ref = tcx.impl_trait_ref(impl_did).skip_binder();
+                let impl_trait_ref = tcx.impl_trait_ref(impl_did).expect("REASON").skip_binder();
 
                 rap_trace!("impl_trait_ref: {}", impl_trait_ref);
                 // filter irrelevant implementation. We only consider implementation if:
