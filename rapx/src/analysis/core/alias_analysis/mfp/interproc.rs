@@ -1,5 +1,4 @@
 /// Interprocedural analysis utilities
-extern crate rustc_mir_dataflow;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{Body, TerminatorKind};
 use rustc_mir_dataflow::ResultsCursor;

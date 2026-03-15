@@ -1,3 +1,4 @@
+mod fuzzable;
 /// NOTE: This analysis module is currently under development and is highly unstable.
 /// The #[allow(unused)] attribute is applied to suppress excessive lint warnings.
 /// Once the analysis stabilizes, this marker should be removed.
@@ -7,33 +8,43 @@ pub mod graph;
 mod mono;
 mod utils;
 #[allow(unused)]
-mod visitor;
+mod visit;
 
 use crate::analysis::Analysis;
 pub use graph::ApiDependencyGraph;
 pub use graph::{DepEdge, DepNode};
-use rustc_hir::def_id::{DefId, LOCAL_CRATE};
+use rustc_hir::def_id::LOCAL_CRATE;
 use rustc_middle::ty::TyCtxt;
-pub use utils::is_fuzzable_ty;
+use serde::Serialize;
+use std::path::PathBuf;
+pub use utils::{is_def_id_public, is_fuzzable_ty};
+pub use visit::Config as VisitConfig;
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Default)]
-pub struct Config {
-    pub pub_only: bool,
-    pub resolve_generic: bool,
-    pub ignore_const_generic: bool,
+#[derive(Debug, Clone, Serialize)]
+pub struct StatsWithCoverage {
+    pub num_apis: usize,
+    pub num_generic_apis: usize,
+    pub num_covered_apis: usize,
+    pub num_covered_generic_apis: usize,
 }
 
-pub fn is_def_id_public(fn_def_id: impl Into<DefId>, tcx: TyCtxt<'_>) -> bool {
-    let fn_def_id: DefId = fn_def_id.into();
-    let local_id = fn_def_id.expect_local();
-    rap_trace!(
-        "vis: {:?} (path: {}) => {:?}",
-        fn_def_id,
-        tcx.def_path_str(fn_def_id),
-        tcx.effective_visibilities(()).effective_vis(local_id)
-    );
-    tcx.effective_visibilities(()).is_directly_public(local_id)
-    // || tcx.effective_visibilities(()).is_exported(local_id)
+#[derive(Debug, Clone, Eq, PartialEq, PartialOrd)]
+pub struct Config {
+    pub resolve_generic: bool,
+    pub visit_config: visit::Config,
+    pub max_generic_search_iteration: usize,
+    pub dump: Option<PathBuf>,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            resolve_generic: true,
+            visit_config: VisitConfig::default(),
+            max_generic_search_iteration: 10,
+            dump: None,
+        }
+    }
 }
 
 pub trait ApiDependencyAnalysis<'tcx> {
@@ -64,41 +75,67 @@ impl<'tcx> Analysis for ApiDependencyAnalyzer<'tcx> {
     fn run(&mut self) {
         let local_crate_name = self.tcx.crate_name(LOCAL_CRATE);
         let local_crate_type = self.tcx.crate_types()[0];
-        let config = self.config;
-        rap_debug!(
+        rap_info!(
             "Build API dependency graph on {} ({}), config = {:?}",
             local_crate_name.as_str(),
             local_crate_type,
-            config,
+            self.config,
         );
 
-        let mut api_graph = ApiDependencyGraph::new(self.tcx);
-        api_graph.build(config);
+        let api_graph = &mut self.api_graph;
+        api_graph.build(&self.config);
 
-        let (estimate, total) = api_graph.estimate_coverage();
+        let stats = api_graph.statistics();
+        stats.info();
+        let mut num_covered_apis = 0;
+        let mut num_covered_generic_apis = 0;
+        let mut num_total = 0;
 
-        let statistics = api_graph.statistics();
-        // print all statistics
+        api_graph.traverse_covered_api_with(
+            &mut |did| {
+                num_covered_apis += 1;
+                if utils::fn_requires_monomorphization(did, self.tcx) {
+                    num_covered_generic_apis += 1;
+                }
+            },
+            &mut |_| {
+                num_total += 1;
+            },
+        );
+
+        rap_info!("uncovered APIs: {:?}", api_graph.uncovered_api());
+
         rap_info!(
-            "API Graph contains {} API nodes, {} type nodes, {} edges",
-            statistics.api_count,
-            statistics.type_count,
-            statistics.edge_cnt
+            "Cov API/Cov GAPI/#API/#GAPI: {}({:.2})/{}({:.2})/{}/{}",
+            num_covered_apis,
+            num_covered_apis as f64 / stats.num_api as f64,
+            num_covered_generic_apis,
+            num_covered_generic_apis as f64 / stats.num_generic_api as f64,
+            stats.num_api,
+            stats.num_generic_api
         );
-        rap_info!(
-            "estimate coverage: {:.2} ({}/{})",
-            estimate as f64 / total as f64,
-            estimate,
-            total
-        );
-        let dot_path = format!("api_graph_{}_{}.dot", local_crate_name, local_crate_type);
-        let json_path = format!("api_graph_{}_{}.json", local_crate_name, local_crate_type);
-        rap_info!("Dump API dependency graph to {}", dot_path);
-        api_graph.dump_to_dot(dot_path, self.tcx);
-        api_graph
-            .dump_to_json(&json_path)
-            .expect("failed to dump API graph to JSON");
-        rap_info!("Dump API dependency graph to {}", json_path);
+
+        let stats_with_coverage = StatsWithCoverage {
+            num_apis: stats.num_api,
+            num_generic_apis: stats.num_generic_api,
+            num_covered_apis,
+            num_covered_generic_apis,
+        };
+
+        // dump adg stats
+        let stats_file = std::fs::File::create("adg_stats.json").unwrap();
+        serde_json::to_writer(stats_file, &stats_with_coverage)
+            .expect("failed to dump stats to JSON");
+
+        // dump API graph, determine the format base on extension name
+        if let Some(dump_path) = &self.config.dump {
+            self.api_graph
+                .dump_to_file(dump_path)
+                .inspect_err(|err| {
+                    rap_error!("{:?}", err);
+                })
+                .expect("failed to dump API graph");
+        }
     }
 
     fn reset(&mut self) {

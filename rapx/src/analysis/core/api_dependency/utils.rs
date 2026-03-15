@@ -1,85 +1,38 @@
 #![allow(warnings, unused)]
-
+use super::fuzzable;
 use rustc_hir::LangItem;
 use rustc_hir::def_id::DefId;
-use rustc_middle::ty::{self, FnSig, Ty, TyCtxt, TyKind};
+use rustc_middle::ty::{self, FnSig, GenericArgsRef, Ty, TyCtxt, TyKind};
 use rustc_span::sym;
 
-fn is_fuzzable_std_ty<'tcx>(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>) -> bool {
-    match ty.kind() {
-        ty::Adt(def, _) => {
-            tcx.is_lang_item(def.did(), LangItem::String)
-                || tcx.is_diagnostic_item(sym::Vec, def.did())
-                || tcx.is_diagnostic_item(sym::Arc, def.did())
-        }
-        _ => false,
-    }
+pub fn is_def_id_public(fn_def_id: impl Into<DefId>, tcx: TyCtxt<'_>) -> bool {
+    let fn_def_id: DefId = fn_def_id.into();
+    let local_id = fn_def_id.expect_local();
+    rap_trace!(
+        "vis: {:?} (path: {}) => {:?}",
+        fn_def_id,
+        tcx.def_path_str(fn_def_id),
+        tcx.effective_visibilities(()).effective_vis(local_id)
+    );
+
+    tcx.effective_visibilities(()).is_directly_public(local_id)
+        || tcx.effective_visibilities(()).is_exported(local_id)
 }
 
 pub fn is_fuzzable_ty<'tcx>(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>) -> bool {
-    if is_fuzzable_std_ty(ty, tcx) {
-        return true;
-    }
-
-    match ty.kind() {
-        // Basical data type
-        TyKind::Bool
-        | TyKind::Char
-        | TyKind::Int(_)
-        | TyKind::Uint(_)
-        | TyKind::Float(_)
-        | TyKind::Str => true,
-
-        // Infer
-        TyKind::Infer(
-            ty::InferTy::IntVar(_)
-            | ty::InferTy::FreshIntTy(_)
-            | ty::InferTy::FloatVar(_)
-            | ty::InferTy::FreshFloatTy(_),
-        ) => true,
-
-        // Reference, Array, Slice
-        TyKind::Ref(_, inner_ty, _) | TyKind::Array(inner_ty, _) | TyKind::Slice(inner_ty) => {
-            is_fuzzable_ty(inner_ty.peel_refs(), tcx)
-        }
-
-        // Tuple
-        TyKind::Tuple(tys) => tys
-            .iter()
-            .all(|inner_ty| is_fuzzable_ty(inner_ty.peel_refs(), tcx)),
-
-        // ADT
-        TyKind::Adt(adt_def, substs) => {
-            if adt_def.variant_list_has_applicable_non_exhaustive() {
-                return false;
-            }
-            if adt_def.is_struct() {
-                // 检查所有字段是否为 pub 且类型可 Fuzz
-                adt_def.all_fields().all(|field| {
-                    field.vis.is_public() && // 字段必须是 pub
-                    is_fuzzable_ty(field.ty(tcx, substs).peel_refs(), tcx)
-                })
-            } else if adt_def.is_enum() {
-                adt_def.variants().iter().all(|variant| {
-                    variant
-                        .fields
-                        .iter()
-                        .all(|field| is_fuzzable_ty(field.ty(tcx, substs).peel_refs(), tcx))
-                })
-            } else {
-                false // union 暂不处理
-            }
-        }
-
-        // 其他类型默认不可 Fuzz
-        _ => false,
-    }
+    rap_trace!("check fuzzable ty: {}.", ty);
+    let is_fuzzable = fuzzable::is_fuzzable_ty(ty, tcx, 0);
+    rap_trace!("is_fuzzable({}) = {}.", ty, is_fuzzable);
+    is_fuzzable
 }
 
-pub fn fn_sig_without_binders<'tcx>(fn_did: DefId, tcx: TyCtxt<'tcx>) -> FnSig<'tcx> {
-    let early_fn_sig = tcx.fn_sig(fn_did);
-    let binder_fn_sig = early_fn_sig.instantiate_identity();
-    tcx.liberate_late_bound_regions(fn_did, binder_fn_sig)
+pub fn is_fuzzable_api<'tcx>(fn_did: DefId, args: GenericArgsRef<'tcx>, tcx: TyCtxt<'tcx>) -> bool {
+    let fn_sig = fn_sig_with_generic_args(fn_did, args, tcx);
+    fn_sig
+        .inputs()
+        .iter()
+        .copied()
+        .all(|ty| is_fuzzable_ty(ty, tcx))
 }
 
 pub fn fn_sig_with_generic_args<'tcx>(
@@ -126,4 +79,8 @@ pub fn ty_complexity<'tcx>(ty: Ty<'tcx>) -> usize {
         // the depth of other primitive type default to 1
         _ => 1,
     }
+}
+
+pub fn is_ty_unstable<'tcx>(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>) -> bool {
+    ty == tcx.types.f16
 }

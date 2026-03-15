@@ -9,7 +9,7 @@ pub mod cli;
 pub mod def_id;
 pub mod help;
 pub mod preprocess;
-extern crate intervals;
+
 extern crate rustc_abi;
 extern crate rustc_ast;
 extern crate rustc_data_structures;
@@ -22,6 +22,7 @@ extern crate rustc_infer;
 extern crate rustc_interface;
 extern crate rustc_metadata;
 extern crate rustc_middle;
+extern crate rustc_mir_dataflow;
 extern crate rustc_public;
 extern crate rustc_session;
 extern crate rustc_span;
@@ -30,8 +31,12 @@ extern crate rustc_trait_selection;
 extern crate rustc_traits;
 extern crate rustc_type_ir;
 extern crate thin_vec;
+
 use crate::{
-    analysis::{core::alias_analysis::mfp::MfpAliasAnalyzer, scan::ScanAnalysis},
+    analysis::{
+        core::{alias_analysis::mfp::MfpAliasAnalyzer, api_dependency},
+        scan::ScanAnalysis,
+    },
     cli::{AliasStrategyKind, AnalysisKind, Commands, ExtractKind, OptLevel, RapxArgs},
 };
 use analysis::{
@@ -132,7 +137,6 @@ impl Callbacks for RapCallback {
     }
     fn after_analysis<'tcx>(&mut self, _compiler: &Compiler, tcx: TyCtxt<'tcx>) -> Compilation {
         rap_trace!("Execute after_analysis() of compiler callbacks");
-
         rustc_public::rustc_internal::run(tcx, || {
             def_id::init(tcx);
             if self.is_building_test_crate() {
@@ -144,8 +148,8 @@ impl Callbacks for RapCallback {
             }
         })
         .expect("Failed to run rustc_public.");
-        rap_trace!("analysis done");
 
+        rap_trace!("analysis done");
         Compilation::Continue
     }
 }
@@ -201,7 +205,7 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
             }
         },
 
-        &Commands::Analyze { kind } => match kind {
+        Commands::Analyze { kind } => match kind {
             AnalysisKind::Alias { strategy } => {
                 let alias = match strategy {
                     AliasStrategyKind::Mop => {
@@ -217,15 +221,20 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
                 };
                 rap_info!("{}", FnAliasMapWrapper(alias));
             }
-            AnalysisKind::Adg => {
-                let mut analyzer = ApiDependencyAnalyzer::new(
-                    tcx,
-                    analysis::core::api_dependency::Config {
-                        pub_only: true,
-                        resolve_generic: true,
+            AnalysisKind::Adg(args) => {
+                let config = api_dependency::Config {
+                    resolve_generic: true,
+                    visit_config: api_dependency::VisitConfig {
+                        pub_only: !args.include_private,
+                        include_generic: true,
                         ignore_const_generic: true,
+                        include_unsafe: args.include_unsafe,
+                        include_drop: args.include_drop,
                     },
-                );
+                    max_generic_search_iteration: args.max_iteration,
+                    dump: args.dump.clone(),
+                };
+                let mut analyzer = ApiDependencyAnalyzer::new(tcx, config);
                 analyzer.run();
             }
             AnalysisKind::Upg => {
@@ -246,7 +255,7 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
                     }
                 );
             }
-            AnalysisKind::Dataflow { debug } => {
+            &AnalysisKind::Dataflow { debug } => {
                 if debug {
                     let mut analyzer = DataFlowAnalyzer::new(tcx, true);
                     analyzer.run();
@@ -271,7 +280,7 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
                 let result = analyzer.get_all_path_constraints();
                 rap_info!("{}", PathConstraintMapWrapper(result));
             }
-            AnalysisKind::Range { debug } => {
+            &AnalysisKind::Range { debug } => {
                 let mut analyzer = RangeAnalyzer::<i64>::new(tcx, debug);
                 analyzer.run();
                 let result = analyzer.get_all_fn_ranges();

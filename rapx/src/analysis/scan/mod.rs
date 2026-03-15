@@ -22,12 +22,17 @@ impl<'tcx> Analysis for ScanAnalysis<'tcx> {
     fn run(&mut self) {
         let crate_name = self.tcx.crate_name(LOCAL_CRATE);
         let crate_type = self.tcx.crate_types()[0];
-        rap_info!("scan crate: {}", crate_name.as_str());
-        rap_info!("crate type: {}", crate_type);
+        rap_info!("======== crate info ========");
+        rap_info!("name: {}", crate_name.as_str());
+        rap_info!("type: {}", crate_type);
+        rap_info!("============================");
+        rap_info!("");
+        rap_info!("======== API info ========");
         let mut fn_visitor = FnVisitor::new(self.tcx);
         self.tcx.hir_visit_all_item_likes_in_crate(&mut fn_visitor);
         let stats = fn_visitor.statistic();
         stats.info().print_log();
+        rap_info!("============================");
     }
 
     fn reset(&mut self) {}
