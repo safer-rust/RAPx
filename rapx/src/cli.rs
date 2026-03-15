@@ -1,3 +1,5 @@
+mod analyze;
+pub use analyze::*;
 use clap::{Args, Subcommand, ValueEnum};
 
 #[derive(Args, Debug, Clone)]
@@ -8,13 +10,6 @@ pub struct RapxArgs {
     pub timeout: Option<u64>,
     #[arg(long, help = "specify the tested package in the workspace")]
     pub test_crate: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum OptLevel {
-    Report,
-    Default,
-    All,
 }
 
 // NOTE: docstring is automatically used to generate help messages,
@@ -68,54 +63,10 @@ pub enum Commands {
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum AliasStrategyKind {
-    /// meet-over-paths (default)
-    Mop,
-    /// maximum-fixed-point
-    Mfp,
-}
-
-// use command string to automatically generate help messages
-#[derive(Debug, Clone, Copy, Subcommand)]
-pub enum AnalysisKind {
-    /// perform alias analysis (meet-over-paths by default)
-    Alias {
-        /// specify the alias analysis strategy
-        #[arg(short, long, default_value = "mop")]
-        strategy: AliasStrategyKind,
-    },
-    /// generate API dependency graphs
-    Adg,
-    /// generate unsafety propagation graphs for each module
-    Upg,
-    /// generate unsafety propagation graphs for each module of the Rust standard library
-    UpgStd,
-    /// generate callgraphs
-    Callgraph,
-    /// generate dataflow graphs
-    Dataflow {
-        /// print debug information during dataflow analysis
-        #[arg(short, long)]
-        debug: bool,
-    },
-    /// analyze if the type holds a piece of memory on heap
-    OwnedHeap,
-    /// extract path constraints
-    Pathcond,
-    /// perform range analysis
-    Range {
-        /// print debug information during range analysis
-        #[arg(short, long)]
-        debug: bool,
-    },
-    /// print basic information of the crate, e.g., the number of APIs
-    Scan,
-    /// print the SSA form of the crate
-    Ssa,
-    /// print the MIR of the crate
-    Mir,
-    /// print the MIR of the crate in dot format
-    DotMir,
+pub enum OptLevel {
+    Report,
+    Default,
+    All,
 }
 
 // use command string to automatically generate help messages

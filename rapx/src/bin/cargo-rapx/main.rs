@@ -28,11 +28,13 @@ fn phase_rustc_wrapper() {
 
     let is_primary = env::var("CARGO_PRIMARY_PACKAGE").is_ok();
     let package_name = env::var("CARGO_PKG_NAME").unwrap_or_default();
+    let is_build_script =
+        env::var("CARGO_CRATE_NAME").map_or(false, |name| name == "build_script_build");
 
     // check `CARGO_PRIMARY_PACKAGE` to make sure we only run
     // rapx for the local crate, but not dependencies.
     // rapx only checks local crates
-    if is_primary {
+    if is_primary && !is_build_script {
         rap_debug!("run rapx for package {}", package_name);
         run_rap();
         return;

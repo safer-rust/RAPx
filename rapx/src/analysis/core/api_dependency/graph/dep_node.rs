@@ -8,22 +8,10 @@ use rustc_middle::{
 
 use rustc_hir::def_id::DefId;
 
-#[derive(Clone, Copy, Eq, PartialEq, Hash, Debug)]
-enum IntrinsicKind {
-    Borrow,
-}
-
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum DepNode<'tcx> {
     Api(DefId, ty::GenericArgsRef<'tcx>),
     Ty(TyWrapper<'tcx>),
-}
-
-pub fn desc_str<'tcx>(node: DepNode<'tcx>, tcx: TyCtxt<'tcx>) -> String {
-    match node {
-        DepNode::Api(def_id, args) => tcx.def_path_str_with_args(def_id, args),
-        DepNode::Ty(ty) => ty.desc_str(tcx),
-    }
 }
 
 impl<'tcx> DepNode<'tcx> {
@@ -60,6 +48,13 @@ impl<'tcx> DepNode<'tcx> {
             _ => {
                 panic!("{self:?} is not an api")
             }
+        }
+    }
+
+    pub fn desc_str(&self, tcx: TyCtxt<'tcx>) -> String {
+        match self {
+            DepNode::Api(def_id, args) => tcx.def_path_str_with_args(*def_id, *args),
+            DepNode::Ty(ty) => ty.desc_str(tcx),
         }
     }
 }

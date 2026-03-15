@@ -1,7 +1,8 @@
 #![allow(clippy::bool_assert_comparison)]
 use fs4::fs_std::FileExt;
+use insta::assert_snapshot;
 use std::fs::File;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Checks if any bug message in the output has confidence > 50
@@ -21,9 +22,15 @@ pub fn detected_high_confidence(output: &str) -> bool {
 }
 
 #[inline(always)]
+fn project_path(dir: &str) -> PathBuf {
+    Path::new("tests").join(dir)
+}
+
+#[inline(always)]
 fn run_with_args(dir: &str, args: &[&str]) -> String {
-    let raw_path = "./tests/".to_owned() + dir;
-    let project_path = Path::new(&raw_path);
+    // let raw_path = "./tests/".to_owned() + dir;
+    // let project_path = Path::new(&raw_path);
+    let project_path = project_path(dir);
 
     let lock_path = project_path.join(".rapx-test.lock");
     let lock_file = File::create(&lock_path).expect("Failed to create lock file");
@@ -69,6 +76,7 @@ const ANALYZE_SSA_CMD: &[&str] = &["analyze", "ssa"];
 const ANALYZE_RANGE_CMD: &[&str] = &["analyze", "range"];
 const ANALYZE_CALLGRAPH_CMD: &[&str] = &["analyze", "callgraph"];
 const AUDIT_UNSAFE_APIS_CMD: &[&str] = &["extract", "unsafe-apis"];
+const ANALYZE_ADG_CMD: &[&str] = &["analyze", "adg", "--dump", "api_graph.yml"];
 
 // ================Dangling Pointer Detection Test=====================
 #[test]
@@ -555,4 +563,18 @@ fn test_extract_unsafe_apis() {
     assert_contain(&output, "\"deref_raw\"");
     assert_contain(&output, "\"safety_doc\"");
     assert_contain(&output, "The pointer must be valid and non-null.");
+}
+
+#[test]
+fn test_adg_bug() {
+    // This test pass if don't panic (e.g., stack overflow) during ADG construction and resolution.
+    let _ = run_with_args("adg/bug-regression", ANALYZE_ADG_CMD);
+}
+
+#[test]
+fn test_adg_simple_graph() {
+    let _ = run_with_args("adg/simple-graph", ANALYZE_ADG_CMD);
+    let graph_str = std::fs::read_to_string(project_path("adg/simple-graph").join("api_graph.yml"))
+        .expect("read api_graph.yml fail");
+    assert_snapshot!(graph_str);
 }

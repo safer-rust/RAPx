@@ -1,0 +1,22 @@
+{
+  "nodes": [
+    {
+      "type": "Api",
+      "path": "dummy",
+      "generic_args": []
+    },
+    {
+      "type": "Ty",
+      "path": "A"
+    }
+  ],
+  "edges": [
+    {
+      "from": 1,
+      "to": 0,
+      "kind": {
+        "Arg": 0
+      }
+    }
+  ]
+}

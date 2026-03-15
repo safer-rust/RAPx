@@ -183,13 +183,6 @@ impl<'tcx> MonoSet<'tcx> {
         self
     }
 
-    fn filter_by_trait_bound(mut self, fn_did: DefId, tcx: TyCtxt<'tcx>) -> Self {
-        //let early_fn_sig = tcx.fn_sig(fn_did);
-        self.monos
-            .retain(|args| is_args_fit_trait_bound(fn_did, &args.value, tcx));
-        self
-    }
-
     pub fn random_sample<R: Rng>(&mut self, rng: &mut R) {
         if self.monos.len() <= MAX_STEP_SET_SIZE {
             return;
@@ -245,12 +238,12 @@ fn is_args_fit_trait_bound<'tcx>(
     tcx: TyCtxt<'tcx>,
 ) -> bool {
     let args = tcx.mk_args(args);
-    // rap_info!(
-    //     "fn: {:?} args: {:?} identity: {:?}",
-    //     fn_did,
-    //     args,
-    //     ty::GenericArgs::identity_for_item(tcx, fn_did)
-    // );
+    rap_trace!(
+        "fn: {:?} args: {:?} identity: {:?}",
+        fn_did,
+        args,
+        ty::GenericArgs::identity_for_item(tcx, fn_did)
+    );
     let infcx = tcx.infer_ctxt().build(ty::TypingMode::PostAnalysis);
     let pred = tcx.predicates_of(fn_did);
     let inst_pred = pred.instantiate(tcx, args);
@@ -267,6 +260,7 @@ fn is_args_fit_trait_bound<'tcx>(
             param_env,
             pred.as_predicate(),
         );
+        rap_trace!("[trait bound] check pred: {:?}", pred);
 
         let res = infcx.evaluate_obligation(&obligation);
         match res {
@@ -313,7 +307,8 @@ fn get_mono_set<'tcx>(
     let mut rng = rand::rng();
 
     // sample from reachable types
-    rap_debug!("[get_mono_set] fn_did: {:?}", fn_did);
+    rap_debug!("[get_mono_set] solve {}", tcx.def_path_str(fn_did));
+    let identity = ty::GenericArgs::identity_for_item(tcx, fn_did);
     let infcx = tcx
         .infer_ctxt()
         .ignoring_regions()
@@ -323,6 +318,7 @@ fn get_mono_set<'tcx>(
     let fresh_args = infcx.fresh_args_for_item(DUMMY_SP, fn_did);
     // this replace generic types in fn_sig to infer var, e.g. fn(Vec<T>, i32) => fn(Vec<?0>, i32)
     let fn_sig = fn_sig_with_generic_args(fn_did, fresh_args, tcx);
+    let identity_fnsig = fn_sig_with_generic_args(fn_did, identity, tcx);
     let generics = tcx.generics_of(fn_did);
 
     // print fresh_args for debugging
@@ -339,42 +335,47 @@ fn get_mono_set<'tcx>(
 
     rap_trace!("[get_mono_set] initialize s: {:?}", s);
 
-    let mut cnt = 0;
-
-    for input_ty in fn_sig.inputs().iter() {
-        cnt += 1;
+    for (no, input_ty) in fn_sig.inputs().iter().enumerate() {
         if !input_ty.has_infer_types() {
             continue;
         }
-        rap_trace!("[get_mono_set] input_ty#{}: {:?}", cnt - 1, input_ty);
-
-        let mut reachable_set =
-            available_ty
-                .iter()
-                .fold(MonoSet::new(), |mut reachable_set, ty| {
-                    if let Some(mono) = unify_ty(
-                        *input_ty,
-                        (*ty).into(),
-                        &fresh_args,
-                        &infcx,
-                        &dummy_cause,
-                        param_env,
-                    ) {
-                        reachable_set.insert(mono);
-                    }
-                    reachable_set
-                });
-        reachable_set.random_sample(&mut rng);
         rap_debug!(
-            "[get_mono_set] size: s = {}, input = {}",
+            "[get_mono_set] input_ty#{}: {}",
+            no,
+            identity_fnsig.inputs()[no]
+        );
+
+        let reachable_set = available_ty
+            .iter()
+            .fold(MonoSet::new(), |mut reachable_set, ty| {
+                if let Some(mono) = unify_ty(
+                    *input_ty,
+                    (*ty).into(),
+                    &fresh_args,
+                    &infcx,
+                    &dummy_cause,
+                    param_env,
+                ) {
+                    reachable_set.insert(mono);
+                }
+                reachable_set
+            });
+        // reachable_set.random_sample(&mut rng);
+        rap_debug!(
+            "[get_mono_set] size of s: {}, size of input: {}",
             s.count(),
             reachable_set.count()
         );
+        rap_trace!("[get_mono_set] input = {:?}", reachable_set);
         s = s.merge(&reachable_set, tcx);
         s.random_sample(&mut rng);
+        rap_trace!("[get_mono_set] after merge s = {:?}", reachable_set);
     }
 
-    rap_trace!("[get_mono_set] after input types: {:?}", s);
+    rap_debug!(
+        "[get_mono_set] after input filter, size of s: {}",
+        s.count()
+    );
 
     let mut res = MonoSet::new();
 
@@ -394,16 +395,8 @@ fn get_mono_set<'tcx>(
     // erase infer region var
     res.erase_region_var(tcx);
 
-    res
-}
-
-fn is_special_std_ty<'tcx>(def_id: DefId, tcx: TyCtxt<'tcx>) -> bool {
-    let allowed_std_ty = [
-        tcx.lang_items().string().unwrap(),
-        path_str_def_id(tcx, "std::vec::Vec"),
-    ];
-
-    allowed_std_ty.contains(&def_id)
+    // if there is still unbound generic type, we try to instantiate it with predefined candidates
+    res.instantiate_unbound(tcx)
 }
 
 fn solve_unbound_type_generics<'tcx>(
@@ -424,6 +417,7 @@ fn solve_unbound_type_generics<'tcx>(
     let mut mset = MonoSet::all(args);
     rap_debug!("[solve_unbound] did = {did:?}, mset={mset:?}");
     for pred in preds.predicates.iter() {
+        rap_debug!("[solve_unbound] pred = {:?}", pred);
         if let Some(trait_pred) = pred.as_trait_clause() {
             let trait_pred = trait_pred.skip_binder();
 
@@ -439,21 +433,18 @@ fn solve_unbound_type_generics<'tcx>(
 
             let mut p = MonoSet::new();
 
-            for impl_did in tcx
-                .all_impls(trait_def_id)
-                .chain(tcx.inherent_impls(trait_def_id).iter().map(|did| *did))
+            for impl_did in tcx.all_impls(trait_def_id)
+            // .chain(tcx.inherent_impls(trait_def_id).iter().map(|did| *did))
             {
                 // format: <arg0 as Trait<arg1, arg2>>
                 let impl_trait_ref = tcx.impl_trait_ref(impl_did).skip_binder();
 
-                rap_trace!("impl_trait_ref: {}", impl_trait_ref);
-                // filter irrelevant implementation. We only consider implementation if:
+                // filter irrelevant implementation. We only consider implementation that:
                 // 1. it is local
                 // 2. it is not local, but its' self_ty is a primitive
                 if !impl_did.is_local() && !impl_trait_ref.self_ty().is_primitive() {
                     continue;
                 }
-                // rap_trace!("impl_trait_ref: {}", impl_trait_ref);
 
                 if let Some(mono) = unify_trait(
                     trait_pred.trait_ref,
@@ -521,10 +512,25 @@ pub fn resolve_mono_apis<'tcx>(
     }
 
     // 2. get mono set from available types
-    let ret = get_mono_set(fn_did, &available_ty, tcx).instantiate_unbound(tcx);
+    let ret = get_mono_set(fn_did, &available_ty, tcx);
 
-    // 3. check trait bound
-    let ret = ret.filter_by_trait_bound(fn_did, tcx);
+    // 3. check trait bound & ty is stable
+    let ret = ret.filter(|mono| {
+        is_args_fit_trait_bound(fn_did, &mono.value, tcx)
+            && mono.value.iter().all(|arg| {
+                if let Some(ty) = arg.as_type() {
+                    !utils::is_ty_unstable(ty, tcx)
+                } else {
+                    true
+                }
+            })
+    });
+
+    rap_debug!(
+        "[resolve_mono_apis] fn_did: {:?}, size of mono: {:?}",
+        fn_did,
+        ret.count()
+    );
 
     ret
 }
@@ -614,23 +620,35 @@ pub fn get_unbound_generic_candidates<'tcx>(tcx: TyCtxt<'tcx>) -> Vec<ty::Ty<'tc
     ]
 }
 
+// calculate the complexity of monomorphic solution,
+// complexity = sum of complexity of each type argument
+pub fn get_mono_complexity<'tcx>(args: &GenericArgsRef<'tcx>) -> usize {
+    args.iter().fold(0, |acc, arg| {
+        if let Some(ty) = arg.as_type() {
+            acc + utils::ty_complexity(ty)
+        } else {
+            acc
+        }
+    })
+}
+
 pub fn get_impls<'tcx>(
     tcx: TyCtxt<'tcx>,
     fn_did: DefId,
     args: GenericArgsRef<'tcx>,
 ) -> HashSet<DefId> {
+    rap_debug!(
+        "get impls for fn: {:?} args: {:?}",
+        tcx.def_path_str_with_args(fn_did, args),
+        args
+    );
     let mut impls = HashSet::new();
     let preds = tcx.predicates_of(fn_did).instantiate(tcx, args);
     for (pred, _) in preds {
         if let Some(trait_pred) = pred.as_trait_clause() {
-            let trait_ref: rustc_type_ir::TraitRef<TyCtxt<'tcx>> =
-                trait_pred.skip_binder().trait_ref;
-            // ignore Sized trait
-            // if tcx.is_lang_item(trait_ref.def_id, LangItem::Sized)
-            //     || tcx.def_path_str(trait_ref.def_id) == "std::default::Default"
-            // {
-            //     continue;
-            // }
+            let trait_ref: rustc_type_ir::TraitRef<TyCtxt<'tcx>> = tcx
+                .liberate_late_bound_regions(fn_did, trait_pred)
+                .trait_ref;
 
             let res = tcx.codegen_select_candidate(
                 TypingEnv::fully_monomorphized().as_query_input(trait_ref),

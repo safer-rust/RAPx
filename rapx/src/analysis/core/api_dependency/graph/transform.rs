@@ -2,6 +2,7 @@ use super::dep_edge::DepEdge;
 use super::{ApiDependencyGraph, DepNode, TyWrapper};
 use petgraph::graph::NodeIndex;
 use rustc_middle::ty::{self};
+use serde::Serialize;
 use std::fmt::Display;
 
 static ALL_TRANSFORMKIND: [TransformKind; 2] = [
@@ -29,6 +30,15 @@ impl Display for TransformKind {
             TransformKind::Ref(mutability) => write!(f, "{}T", mutability.ref_prefix_str()),
             TransformKind::Unwrap => write!(f, "Unwrap"),
         }
+    }
+}
+
+impl Serialize for TransformKind {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
     }
 }
 
@@ -67,5 +77,32 @@ impl<'tcx> ApiDependencyGraph<'tcx> {
             }
         }
         ret
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TransformKind;
+    use rustc_middle::ty;
+
+    #[test]
+    fn serialize_ref_not_matches_expected() {
+        let kind = TransformKind::Ref(ty::Mutability::Not);
+        let serialized = serde_json::to_string(&kind).expect("serialize TransformKind::Ref(Not)");
+        assert_eq!(serialized, "\"&T\"");
+    }
+
+    #[test]
+    fn serialize_ref_mut_matches_expected() {
+        let kind = TransformKind::Ref(ty::Mutability::Mut);
+        let serialized = serde_json::to_string(&kind).expect("serialize TransformKind::Ref(Mut)");
+        assert_eq!(serialized, "\"&mut T\"");
+    }
+
+    #[test]
+    fn serialize_unwrap_matches_expected() {
+        let kind = TransformKind::Unwrap;
+        let serialized = serde_json::to_string(&kind).expect("serialize TransformKind::Unwrap");
+        assert_eq!(serialized, "\"Unwrap\"");
     }
 }

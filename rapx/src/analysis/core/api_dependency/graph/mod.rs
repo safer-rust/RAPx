@@ -1,20 +1,23 @@
 pub mod avail;
 pub mod dep_edge;
 pub mod dep_node;
+mod dump;
 mod resolve;
-mod serialize;
+mod std_tys;
 pub mod transform;
 mod ty_wrapper;
 
 use super::Config;
 use super::utils;
-use super::visitor::FnVisitor;
+use super::visit::{self, FnVisitor};
+use crate::analysis::core::api_dependency::is_fuzzable_ty;
 use crate::analysis::utils::def_path::path_str_def_id;
 use crate::rap_debug;
 use crate::rap_trace;
 use crate::utils::fs::rap_create_file;
+use bit_set::BitSet;
 pub use dep_edge::DepEdge;
-pub use dep_node::{DepNode, desc_str};
+pub use dep_node::DepNode;
 use petgraph::Direction;
 use petgraph::Graph;
 use petgraph::dot;
@@ -40,14 +43,27 @@ pub struct ApiDependencyGraph<'tcx> {
     node_indices: HashMap<DepNode<'tcx>, NodeIndex>,
     ty_nodes: Vec<NodeIndex>,
     api_nodes: Vec<NodeIndex>,
-    all_apis: HashSet<DefId>,
     tcx: TyCtxt<'tcx>,
 }
 
+#[derive(Copy, Clone, Debug)]
 pub struct Statistics {
-    pub api_count: usize,
+    pub num_api: usize,
+    pub num_generic_api: usize,
     pub type_count: usize,
     pub edge_cnt: usize,
+}
+
+impl Statistics {
+    pub fn info(&self) {
+        rap_info!(
+            "API Graph contains {} API nodes, {} generic API nodes, {} type nodes, {} edges",
+            self.num_api,
+            self.num_generic_api,
+            self.type_count,
+            self.edge_cnt
+        );
+    }
 }
 
 impl<'tcx> ApiDependencyGraph<'tcx> {
@@ -58,7 +74,6 @@ impl<'tcx> ApiDependencyGraph<'tcx> {
             ty_nodes: Vec::new(),
             api_nodes: Vec::new(),
             tcx,
-            all_apis: HashSet::new(),
         }
     }
 
@@ -70,28 +85,34 @@ impl<'tcx> ApiDependencyGraph<'tcx> {
         self.ty_nodes.len()
     }
 
-    pub fn api_at(&self, idx: usize) -> (DefId, ty::GenericArgsRef<'tcx>) {
+    pub fn api_node_at(&self, idx: usize) -> DepNode<'tcx> {
         let index = self.api_nodes[idx];
-        self.graph[index].expect_api()
+        self.graph[index]
     }
 
     fn tcx(&self) -> TyCtxt<'tcx> {
         self.tcx
     }
 
-    pub fn build(&mut self, config: Config) {
+    pub fn build(&mut self, config: &Config) {
         let tcx = self.tcx();
-        let mut fn_visitor = FnVisitor::new(self, config, tcx);
+        let mut visitor = FnVisitor::new(config.visit_config, tcx);
 
         // 1. collect APIs
-        tcx.hir_visit_all_item_likes_in_crate(&mut fn_visitor);
-        self.all_apis = fn_visitor.apis().into_iter().collect();
-        // add auxillary API from std
-        // self.add_auxiliary_api();
+        tcx.hir_visit_all_item_likes_in_crate(&mut visitor);
 
-        // 2. resolve generic API to monomorphic API
+        // 2. add non generic APIs
+        visitor.non_generic_apis().iter().for_each(|&fn_did| {
+            self.add_identity_api(fn_did);
+        });
+
+        // 3. resolve generic API to monomorphic API
         if config.resolve_generic {
-            self.resolve_generic_api();
+            self.resolve_generic_api(
+                visitor.non_generic_apis(),
+                visitor.generic_apis(),
+                config.max_generic_search_iteration,
+            );
         } else {
             self.update_transform_edges();
         }
@@ -102,13 +123,19 @@ impl<'tcx> ApiDependencyGraph<'tcx> {
     }
 
     pub fn statistics(&self) -> Statistics {
-        let mut api_cnt = 0;
+        let mut num_api = 0;
+        let mut num_generic_api = 0;
         let mut ty_cnt = 0;
         let mut edge_cnt = 0;
 
         for node in self.graph.node_indices() {
             match self.graph[node] {
-                DepNode::Api(..) => api_cnt += 1,
+                DepNode::Api(did, ..) => {
+                    num_api += 1;
+                    if utils::fn_requires_monomorphization(did, self.tcx) {
+                        num_generic_api += 1;
+                    }
+                }
                 DepNode::Ty(_) => ty_cnt += 1,
             }
         }
@@ -118,7 +145,8 @@ impl<'tcx> ApiDependencyGraph<'tcx> {
         }
 
         Statistics {
-            api_count: api_cnt,
+            num_api,
+            num_generic_api,
             type_count: ty_cnt,
             edge_cnt,
         }
@@ -147,6 +175,15 @@ impl<'tcx> ApiDependencyGraph<'tcx> {
         }
     }
 
+    pub fn get_node_from_index(&self, index: NodeIndex) -> DepNode<'tcx> {
+        self.graph[index]
+    }
+
+    pub fn get_index_by_ty(&self, ty: Ty<'tcx>) -> Option<NodeIndex> {
+        let ty_wrapper = TyWrapper::from(ty);
+        self.get_index(DepNode::Ty(ty_wrapper))
+    }
+
     pub fn get_index(&self, node: DepNode<'tcx>) -> Option<NodeIndex> {
         self.node_indices.get(&node).map(|index| *index)
     }
@@ -161,15 +198,14 @@ impl<'tcx> ApiDependencyGraph<'tcx> {
         }
     }
 
-    pub fn add_generic_api(&mut self, fn_did: DefId) -> bool {
+    pub fn add_identity_api(&mut self, fn_did: DefId) -> bool {
         let args = ty::GenericArgs::identity_for_item(self.tcx, fn_did);
 
         if !self.add_api(fn_did, args) {
             return false;
         }
 
-        let api_node = self.get_or_create_index(DepNode::api(fn_did, args));
-        let binder_fn_sig = self.tcx.fn_sig(fn_did).instantiate_identity();
+        self.get_or_create_index(DepNode::api(fn_did, args));
 
         true
     }
@@ -223,13 +259,79 @@ impl<'tcx> ApiDependencyGraph<'tcx> {
         }
     }
 
-    pub fn estimate_coverage_with(
+    pub fn depth_map(&self) -> HashMap<DepNode<'tcx>, usize> {
+        let mut map = HashMap::new();
+        let mut visited = BitSet::with_capacity(self.graph.node_count());
+
+        // initialize worklist with start node (indegree is zero)
+        let mut worklist = VecDeque::from_iter(self.graph.node_indices().filter(|index| {
+            let cond = self.is_start_node_index(*index);
+            if cond {
+                visited.insert(index.index());
+                map.insert(self.get_node_from_index(*index), 0);
+            }
+            cond
+        }));
+
+        rap_trace!("[depth_map] initial worklist = {:?}", worklist);
+
+        const LARGE_ENOUGH: usize = 0xffffffff;
+
+        // initialize queue with fuzzable type
+        while let Some(current) = worklist.pop_front() {
+            let node = self.get_node_from_index(current);
+
+            if !map.contains_key(&node) {
+                // depth: Ty = min(prev_ty), Api = sum(arg_ty) + 1
+                let depth = match node {
+                    DepNode::Ty(_) => self
+                        .graph
+                        .neighbors_directed(current, Direction::Incoming)
+                        .map(|prev| {
+                            let prev_node = &self.get_node_from_index(prev);
+                            map.get(prev_node).copied().unwrap_or(LARGE_ENOUGH)
+                        })
+                        .min()
+                        .unwrap_or(0),
+                    DepNode::Api(..) => {
+                        self.graph
+                            .neighbors_directed(current, Direction::Incoming)
+                            .map(|prev| {
+                                let prev_node = &self.get_node_from_index(prev);
+                                map.get(prev_node).copied().unwrap_or(LARGE_ENOUGH)
+                            })
+                            .sum::<usize>()
+                            + 1
+                    }
+                };
+                map.insert(node, depth);
+            }
+
+            for next in self.graph.neighbors(current) {
+                let is_reachable = match self.graph[next] {
+                    DepNode::Ty(_) => true,
+                    DepNode::Api(..) => self
+                        .graph
+                        .neighbors_directed(next, petgraph::Direction::Incoming)
+                        .all(|nbor| visited.contains(nbor.index())),
+                };
+
+                if is_reachable && visited.insert(next.index()) {
+                    rap_trace!("[depth_map] add {:?} to worklist", next);
+                    worklist.push_back(next);
+                }
+            }
+        }
+
+        map
+    }
+
+    pub fn traverse_covered_api_with(
         &self,
-        tcx: TyCtxt<'tcx>,
         f_cover: &mut impl FnMut(DefId),
         f_total: &mut impl FnMut(DefId),
     ) {
-        let mut reachable = vec![false; self.graph.node_count()];
+        let mut visited = BitSet::with_capacity(self.graph.node_count());
 
         for index in self.graph.node_indices() {
             if let DepNode::Api(did, _) = self.graph[index] {
@@ -240,7 +342,7 @@ impl<'tcx> ApiDependencyGraph<'tcx> {
         // initialize worklist with start node (indegree is zero)
         let mut worklist = VecDeque::from_iter(self.graph.node_indices().filter(|index| {
             if self.is_start_node_index(*index) {
-                reachable[index.index()] = true;
+                visited.insert(index.index());
                 true
             } else {
                 false
@@ -256,38 +358,56 @@ impl<'tcx> ApiDependencyGraph<'tcx> {
             }
 
             for next in self.graph.neighbors(index) {
-                if reachable[next.index()] {
-                    continue;
-                }
-                if match self.graph[next] {
+                let is_reachable = match self.graph[next] {
                     DepNode::Ty(_) => true,
-                    DepNode::Api(..) => {
-                        if self
-                            .graph
-                            .neighbors_directed(next, petgraph::Direction::Incoming)
-                            .all(|nbor| reachable[nbor.index()])
-                        {
-                            true
-                        } else {
-                            false
-                        }
-                    }
-                } {
-                    // rap_trace!("[estimate_coverage] add {:?} to worklist", next);
-                    reachable[next.index()] = true;
+                    DepNode::Api(..) => self
+                        .graph
+                        .neighbors_directed(next, petgraph::Direction::Incoming)
+                        .all(|nbor| visited.contains(nbor.index())),
+                };
+                if is_reachable && visited.insert(next.index()) {
+                    rap_trace!("[traverse_covered_api] add {:?} to worklist", next);
                     worklist.push_back(next);
                 }
             }
         }
     }
 
+    fn recache(&mut self) {
+        self.node_indices.clear();
+        self.ty_nodes.clear();
+        self.api_nodes.clear();
+        for idx in self.graph.node_indices() {
+            let node = &self.graph[idx];
+            self.node_indices.insert(node.clone(), idx);
+            match node {
+                DepNode::Api(..) => self.api_nodes.push(idx),
+                DepNode::Ty(..) => self.ty_nodes.push(idx),
+                _ => {}
+            }
+        }
+    }
+
+    pub fn uncovered_api(&self) -> Vec<DefId> {
+        let mut covered = HashSet::new();
+        let mut total = HashSet::new();
+        self.traverse_covered_api_with(
+            &mut |did| {
+                covered.insert(did);
+            },
+            &mut |did| {
+                total.insert(did);
+            },
+        );
+        total.difference(&covered).copied().collect()
+    }
+
     /// `estimate_coverage` treat each API as the distinct API.
     /// For example, if `foo<T>`, `foo<U>` are covered, this API return (2, 2).
-    pub fn estimate_coverage(&mut self) -> (usize, usize) {
+    pub fn estimate_coverage(&self) -> (usize, usize) {
         let mut num_total = 0;
         let mut num_estimate = 0;
-        self.estimate_coverage_with(
-            self.tcx,
+        self.traverse_covered_api_with(
             &mut |did| {
                 num_estimate += 1;
             },
@@ -300,11 +420,10 @@ impl<'tcx> ApiDependencyGraph<'tcx> {
 
     /// `estimate_coverage_distinct` treat mono API as the original generic API.
     /// For example, if `foo<T>`, `foo<U>` are covered, this API return (1, 1).
-    pub fn estimate_coverage_distinct(&mut self) -> (usize, usize) {
+    pub fn estimate_coverage_distinct(&self) -> (usize, usize) {
         let mut total = HashSet::new();
         let mut estimate = HashSet::new();
-        self.estimate_coverage_with(
-            self.tcx,
+        self.traverse_covered_api_with(
             &mut |did| {
                 estimate.insert(did);
             },
@@ -315,34 +434,32 @@ impl<'tcx> ApiDependencyGraph<'tcx> {
         (estimate.len(), total.len())
     }
 
-    pub fn dump_to_dot<P: AsRef<Path>>(&self, path: P, tcx: TyCtxt<'tcx>) {
-        let get_edge_attr =
-            |graph: &Graph<DepNode<'tcx>, DepEdge>,
-             edge_ref: petgraph::graph::EdgeReference<DepEdge>| {
-                let color = match edge_ref.weight() {
-                    DepEdge::Arg(_) | DepEdge::Ret => "black",
-                    DepEdge::Transform(_) => "darkorange",
-                };
-                format!("label=\"{}\", color = {}", edge_ref.weight(), color)
-            };
-        let get_node_attr = |graph: &Graph<DepNode<'tcx>, DepEdge>,
-                             node_ref: (NodeIndex, &DepNode<'tcx>)| {
-            format!("label={:?}, ", desc_str(node_ref.1.clone(), tcx))
-                + match node_ref.1 {
-                    DepNode::Api(..) => "color = blue",
-                    DepNode::Ty(_) => "color = red",
-                }
-                + ", shape=box"
-        };
+    pub fn dump_apis<P: AsRef<Path>>(&self, path: P) {
+        let tcx = self.tcx;
+        let mut file = rap_create_file(path, "can not create api file");
 
-        let dot = dot::Dot::with_attr_getters(
-            &self.graph,
-            &[dot::Config::NodeNoLabel, dot::Config::EdgeNoLabel],
-            &get_edge_attr,
-            &get_node_attr,
-        );
-        let mut file = rap_create_file(path, "can not create dot file");
-        write!(&mut file, "{:?}", dot).expect("fail when writing data to dot file");
-        // println!("{:?}", dot);
+        self.graph
+            .node_indices()
+            .for_each(|index| match self.graph[index] {
+                DepNode::Api(did, args) => {
+                    writeln!(
+                        file,
+                        "API,\t{},\tis_fuzzable = {}",
+                        tcx.def_path_str_with_args(did, args),
+                        utils::is_fuzzable_api(did, args, tcx)
+                    )
+                    .expect("fail when writing data to api file");
+                }
+                DepNode::Ty(ty) => {
+                    let ty = ty.ty();
+                    writeln!(
+                        file,
+                        "TYPE,\t{},\tis_fuzzable = {}",
+                        ty,
+                        is_fuzzable_ty(ty, tcx)
+                    )
+                    .expect("fail when writing data to api file");
+                }
+            });
     }
 }

@@ -1,0 +1,24 @@
+{
+  "nodes": [
+    {
+      "id": 0,
+      "kind": "api",
+      "path": "dummy",
+      "args": []
+    },
+    {
+      "id": 1,
+      "kind": "type",
+      "path": "A",
+      "args": []
+    }
+  ],
+  "edges": [
+    {
+      "id": 0,
+      "kind": "arg",
+      "from": 1,
+      "to": 0
+    }
+  ]
+}
