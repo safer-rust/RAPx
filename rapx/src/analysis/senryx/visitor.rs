@@ -16,7 +16,11 @@ use crate::{
             dominated_graph::FunctionSummary,
             symbolic_analysis::{AnaOperand, SymbolicDef, ValueDomain},
         },
-        utils::{draw_dot::render_dot_string, fn_info::*, show_mir::display_mir},
+        utils::{
+            draw_dot::{DotGraph, render_dot_string},
+            fn_info::*,
+            show_mir::display_mir,
+        },
     },
     rap_debug, rap_warn,
 };
@@ -1715,6 +1719,7 @@ impl<'tcx> BodyVisitor<'tcx> {
 
         let name = format!("{}_path_{}", base_name, path_suffix);
         let dot_string = self.chains.to_dot_graph();
-        render_dot_string(name, dot_string);
+        let dot_graph = DotGraph::new(name, dot_string);
+        render_dot_string(&dot_graph);
     }
 }

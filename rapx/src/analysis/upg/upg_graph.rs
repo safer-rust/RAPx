@@ -266,4 +266,8 @@ impl UPGraph {
         // println!("{}", dot_str);
         dot_str
     }
+
+    pub fn nodes_def_ids(&self) -> Vec<DefId> {
+        self.nodes.keys().map(|def_id| *def_id).collect()
+    }
 }

@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <style>
+        body {
+            margin: 20px;
+            font-family: Arial, sans-serif;
+        }
+
+        #graph {
+            border: 1px solid #ddd;
+            padding: 10px;
+        }
+    </style>
+</head>
+
+<body>
+    <h3 id="graph_title"></h3>
+    <div id="graph"></div>
+    <script type="module">
+        import { instance } from 'https://cdn.jsdelivr.net/npm/@viz-js/viz@3/+esm'; //Viz3库
+
+        // Template placeholders
+        let title = `{{TITLE}}`;
+        let dot = `{{DOT}}`;
+        let base_url = `{{BASE_URL}}`;
+        let url_map = `{{URL_MAP}}`;
+        url_map = JSON.parse(url_map);
+
+        async function renderGraph() {
+            // Render the title
+            document.getElementById("graph_title").innerText = title;
+
+            // Render the graph
+            try {
+                const viz = await instance();
+                const svg = viz.renderSVGElement(dot);
+                document.getElementById("graph").appendChild(svg);
+            } catch (error) {
+                console.error("Render Error:", error);
+                document.getElementById("graph").innerHTML =
+                    `<div style="color:red;">Render Failed: ${error.message}</div>`;
+            }
+
+            // Add click event to each node
+            const nodes = document.querySelectorAll('g.node');
+            nodes.forEach(node => {
+                const label = node.querySelector('text').textContent;
+                if (url_map[label]) {
+                    node.style.cursor = 'pointer';
+                    node.addEventListener('click', () => {
+                        let url = new URL(url_map[label], base_url).href;
+                        window.open(url, '_blank');
+                    });
+                }
+            });
+        }
+
+        renderGraph();
+    </script>
+</body>
+</html>
