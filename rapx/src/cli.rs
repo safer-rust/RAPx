@@ -1,5 +1,7 @@
 mod analyze;
+mod verify;
 pub use analyze::*;
+pub use verify::*;
 use clap::{Args, Subcommand, ValueEnum};
 
 #[derive(Args, Debug, Clone)]
@@ -54,6 +56,8 @@ pub enum Commands {
         #[arg(long)]
         verify_std: bool,
     },
+    /// verify annotated functions in the crate, e.g., scan for #[rapx::verify] targets
+    Verify(VerifyArgs),
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
