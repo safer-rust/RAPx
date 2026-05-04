@@ -1,4 +1,4 @@
-use crate::{rap_info, analysis::Analysis};
+use crate::analysis::Analysis;
 use rustc_hir::{
     BodyId, FnDecl,
     def_id::{DefId, LocalDefId},
@@ -8,7 +8,7 @@ use rustc_middle::{
     hir::nested_filter,
     ty::TyCtxt,
 };
-use rustc_span::Span;
+use rustc_span::{Span, Symbol};
 
 /// Visitor that collects all functions annotated with `#[rapx::verify]`.
 pub struct VerifyAttrVisitor<'tcx> {
@@ -25,26 +25,24 @@ impl<'tcx> VerifyAttrVisitor<'tcx> {
     }
 
     fn has_rapx_verify_attr(&self, def_id: LocalDefId) -> bool {
-        let attrs = self.tcx.get_attrs_unchecked(def_id.to_def_id());
-        for attr in attrs {
-            if let Some(ident) = attr.ident() {
-                // handle flat #[rapx::verify] represented as a single path
+        let def_id = def_id.to_def_id();
+
+        let rapx = Symbol::intern("rapx");
+        let verify = Symbol::intern("verify");
+
+        let mut attrs = self.tcx.get_attrs(def_id, rapx);
+
+        attrs.any(|attr| {
+            if attr.is_doc_comment().is_some() {
+                return false;
             }
-            // Check for path-style attribute: #[rapx::verify]
-            if attr.is_doc_comment() {
-                continue;
-            }
-            let segments = attr.path_matches(&[rustc_span::sym::dummy; 0][..]);
-            // Use the meta path directly
-            let path = attr.get_normal_item();
-            let segs: Vec<&str> = path.path.segments.iter()
-                .map(|s| s.ident.as_str())
-                .collect();
-            if segs == ["rapx", "verify"] {
-                return true;
-            }
-        }
-        false
+
+            let path = attr.path(); // SmallVec<Symbol>
+
+            path.len() == 2
+                && path[0] == rapx
+                && path[1] == verify
+        })
     }
 }
 
@@ -60,7 +58,7 @@ impl<'tcx> Visitor<'tcx> for VerifyAttrVisitor<'tcx> {
         fk: FnKind<'tcx>,
         fd: &'tcx FnDecl<'tcx>,
         b: BodyId,
-        span: Span,
+        _span: Span,
         id: LocalDefId,
     ) -> Self::Result {
         if self.has_rapx_verify_attr(id) {
