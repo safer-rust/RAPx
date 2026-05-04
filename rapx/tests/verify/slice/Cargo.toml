@@ -1,0 +1,7 @@
+[package]
+name = "slice"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rapx = { path = "../../../" }   # root of rapx 
