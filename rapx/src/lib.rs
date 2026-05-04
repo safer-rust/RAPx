@@ -36,8 +36,9 @@ use crate::{
     analysis::{
         core::{alias_analysis::mfp::MfpAliasAnalyzer, api_dependency},
         scan::ScanAnalysis,
+        verify::scan::VerifyScanAnalysis,
     },
-    cli::{AliasStrategyKind, AnalysisKind, Commands, OptLevel, RapxArgs},
+    cli::{AliasStrategyKind, AnalysisKind, Commands, OptLevel, RapxArgs, VerifyArgs},
 };
 use analysis::{
     Analysis,
@@ -290,5 +291,11 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
                 SSATrans::new(tcx, false).start();
             }
         },
+
+        Commands::Verify(VerifyArgs { scan }) => {
+            if *scan {
+                VerifyScanAnalysis::new(tcx).run();
+            }
+        }
     }
 }

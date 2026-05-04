@@ -7,6 +7,7 @@ pub mod scan;
 pub mod senryx;
 pub mod upg;
 pub mod utils;
+pub mod verify;
 
 /// This is a general trait designed for all program analysis features.
 pub trait Analysis {
