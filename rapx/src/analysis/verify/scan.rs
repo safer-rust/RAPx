@@ -25,14 +25,14 @@ impl<'tcx> VerifyAttrVisitor<'tcx> {
     }
 
     fn has_rapx_verify_attr(&self, def_id: LocalDefId) -> bool {
-        let def_id = def_id.to_def_id();
+        let hir_id = self.tcx.local_def_id_to_hir_id(def_id);
 
         let rapx = Symbol::intern("rapx");
         let verify = Symbol::intern("verify");
 
-        let mut attrs = self.tcx.get_attrs(def_id, rapx);
+        let attrs = self.tcx.hir_attrs(hir_id);
 
-        attrs.any(|attr| {
+        attrs.iter().any(|attr| {
             if attr.is_doc_comment().is_some() {
                 return false;
             }

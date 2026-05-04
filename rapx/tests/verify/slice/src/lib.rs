@@ -1,3 +1,5 @@
+#![feature(register_tool)]
+#![register_tool(rapx)]
 #![feature(slice_index_methods)]
 #![allow(unsafe_op_in_unsafe_fn)]
 
