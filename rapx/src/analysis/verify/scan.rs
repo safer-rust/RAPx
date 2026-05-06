@@ -1,4 +1,5 @@
 use crate::analysis::Analysis;
+use crate::analysis::utils::fn_info::get_unsafe_callees;
 use rustc_hir::{
     BodyId, FnDecl,
     def_id::{DefId, LocalDefId},
@@ -6,11 +7,13 @@ use rustc_hir::{
 };
 use rustc_middle::{hir::nested_filter, ty::TyCtxt};
 use rustc_span::{Span, Symbol};
+use std::collections::{HashMap, HashSet};
 
 /// Visitor that collects all functions annotated with `#[rapx::verify]`.
 pub struct VerifyAttrVisitor<'tcx> {
     tcx: TyCtxt<'tcx>,
     pub verify_fns: Vec<DefId>,
+    pub verify_unsafe_callees: HashMap<DefId, HashSet<DefId>>,
 }
 
 impl<'tcx> VerifyAttrVisitor<'tcx> {
@@ -18,6 +21,7 @@ impl<'tcx> VerifyAttrVisitor<'tcx> {
         VerifyAttrVisitor {
             tcx,
             verify_fns: Vec::new(),
+            verify_unsafe_callees: HashMap::new(),
         }
     }
 
@@ -59,7 +63,14 @@ impl<'tcx> Visitor<'tcx> for VerifyAttrVisitor<'tcx> {
         if self.has_rapx_verify_attr(id) {
             let def_id = id.to_def_id();
             let path = self.tcx.def_path_str(def_id);
+            let unsafe_callees = get_unsafe_callees(self.tcx, def_id);
             rap_info!("[rapx::verify] found: {} (DefId: {:?})", path, def_id);
+            rap_debug!(
+                "[rapx::verify] unsafe callees of {:?}: {:?}",
+                def_id,
+                unsafe_callees
+            );
+            self.verify_unsafe_callees.insert(def_id, unsafe_callees);
             self.verify_fns.push(def_id);
         }
         walk_fn(self, fk, fd, b, id);
@@ -80,6 +91,10 @@ impl<'tcx> Analysis for VerifyScanAnalysis<'tcx> {
         rap_info!("======== #[rapx::verify] scan ========");
         let mut visitor = VerifyAttrVisitor::new(self.tcx);
         self.tcx.hir_visit_all_item_likes_in_crate(&mut visitor);
+        rap_debug!(
+            "[rapx::verify] target -> unsafe_callees: {:?}",
+            visitor.verify_unsafe_callees
+        );
         rap_info!(
             "total: {} function(s) annotated with #[rapx::verify]",
             visitor.verify_fns.len()
