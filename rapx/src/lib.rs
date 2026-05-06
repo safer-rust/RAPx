@@ -36,7 +36,7 @@ use crate::{
     analysis::{
         core::{alias_analysis::mfp::MfpAliasAnalyzer, api_dependency},
         scan::ScanAnalysis,
-        verify::scan::VerifyScanAnalysis,
+        verify::scan::VerifyTargetsScanner,
     },
     cli::{AliasStrategyKind, AnalysisKind, Commands, OptLevel, RapxArgs, VerifyArgs},
 };
@@ -294,7 +294,7 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
 
         Commands::Verify(VerifyArgs { scan }) => {
             if *scan {
-                VerifyScanAnalysis::new(tcx).run();
+                VerifyTargetsScanner::new(tcx).run();
             }
         }
     }
