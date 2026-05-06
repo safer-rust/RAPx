@@ -1,3 +1,9 @@
+//! Generic-parameter helper for Senryx layout-sensitive checks.
+//!
+//! The current implementation maps selected generic trait bounds to a finite
+//! set of representative concrete types. Alignment and size checks use these
+//! representatives when a contract mentions a generic type.
+
 use std::collections::{HashMap, HashSet};
 
 use if_chain::if_chain;
@@ -5,12 +11,14 @@ use rustc_hir::{ImplPolarity, ItemId, ItemKind, hir_id::OwnerId};
 use rustc_middle::ty::{FloatTy, IntTy, ParamEnv, Ty, TyCtxt, TyKind, UintTy};
 // use crate::rap_info;
 
+/// Computes representative concrete types for generic parameters.
 pub struct GenericChecker<'tcx> {
     // tcx: TyCtxt<'tcx>,
     trait_map: HashMap<String, HashSet<Ty<'tcx>>>,
 }
 
 impl<'tcx> GenericChecker<'tcx> {
+    /// Build a generic checker from the current type context and parameter environment.
     pub fn new(tcx: TyCtxt<'tcx>, p_env: ParamEnv<'tcx>) -> Self {
         let mut trait_bnd_map_for_generic: HashMap<String, HashSet<String>> = HashMap::new();
         let mut satisfied_ty_map_for_generic: HashMap<String, HashSet<Ty<'tcx>>> = HashMap::new();
@@ -107,6 +115,7 @@ impl<'tcx> GenericChecker<'tcx> {
         }
     }
 
+    /// Return the representative type set for each generic parameter.
     pub fn get_satisfied_ty_map(&self) -> HashMap<String, HashSet<Ty<'tcx>>> {
         self.trait_map.clone()
     }

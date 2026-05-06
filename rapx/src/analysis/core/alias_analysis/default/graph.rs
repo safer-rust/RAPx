@@ -512,17 +512,66 @@ impl<'tcx> MopGraph<'tcx> {
         }
     }
 
+    /// Enumerate acyclic CFG paths from the current block to an exit block.
+    ///
+    /// MIR loops are represented as back edges in `Block::next`. The path
+    /// consumer only needs one finite traversal that reaches each unsafe
+    /// callsite, so this DFS cuts a path when it would revisit a block already
+    /// on the current stack. Non-cycle successors are still explored, which
+    /// keeps loop exits visible without risking unbounded path growth.
     pub fn dfs_on_spanning_tree(
         &self,
-        _index: usize,
-        _stack: &mut Vec<usize>,
-        _paths: &mut Vec<Vec<usize>>,
+        index: usize,
+        stack: &mut Vec<usize>,
+        paths: &mut Vec<Vec<usize>>,
     ) {
-        // TOBE REMOVED!
+        const PATH_ENUM_LIMIT: usize = 4000;
+
+        if paths.len() >= PATH_ENUM_LIMIT {
+            return;
+        }
+        if index >= self.blocks.len() {
+            return;
+        }
+
+        let mut nexts: Vec<usize> = self.blocks[index].next.iter().copied().collect();
+        nexts.sort_unstable();
+
+        if nexts.is_empty() {
+            paths.push(stack.clone());
+            return;
+        }
+
+        let mut followed = false;
+        for next in nexts {
+            if paths.len() >= PATH_ENUM_LIMIT {
+                break;
+            }
+            if next >= self.blocks.len() {
+                continue;
+            }
+            if stack.contains(&next) {
+                paths.push(stack.clone());
+                continue;
+            }
+
+            followed = true;
+            stack.push(next);
+            self.dfs_on_spanning_tree(next, stack, paths);
+            stack.pop();
+        }
+
+        if !followed {
+            paths.push(stack.clone());
+        }
     }
 
+    /// Return all finite MIR CFG paths starting from the entry block.
     pub fn get_paths(&self) -> Vec<Vec<usize>> {
         let mut paths: Vec<Vec<usize>> = Vec::new();
+        if self.blocks.is_empty() {
+            return paths;
+        }
         let mut stack: Vec<usize> = vec![0];
         self.dfs_on_spanning_tree(0, &mut stack, &mut paths);
         paths

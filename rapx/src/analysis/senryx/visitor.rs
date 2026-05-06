@@ -1,3 +1,9 @@
+//! MIR path visitor for Senryx state construction.
+//!
+//! `BodyVisitor` walks selected MIR paths, builds dominated graph state,
+//! records symbolic value definitions, applies call summaries, and invokes
+//! contract checking whenever it reaches an unsafe API callsite.
+
 use crate::{
     analysis::{
         Analysis,
@@ -9,10 +15,7 @@ use crate::{
         graphs::scc::Scc,
         safedrop::graph::SafeDropGraph,
         senryx::{
-            contracts::{
-                abstract_state::AlignState,
-                property::{CisRangeItem, PropertyContract},
-            },
+            contract::{AlignState, ContractExpr, PropertyContract},
             dominated_graph::FunctionSummary,
             symbolic_analysis::{AnaOperand, SymbolicDef, ValueDomain},
         },
@@ -29,11 +32,11 @@ use std::{
 };
 use syn::Constraint;
 
-use super::dominated_graph::DominatedGraph;
-use super::dominated_graph::InterResultNode;
-use super::generic_check::GenericChecker;
-use super::matcher::UnsafeApi;
-use super::matcher::{get_arg_place, parse_unsafe_api};
+use super::{
+    callsite::{get_arg_place, has_unsafe_api_contract},
+    dominated_graph::{DominatedGraph, InterResultNode},
+    generic_check::GenericChecker,
+};
 use rustc_data_structures::fx::FxHashMap;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
@@ -45,6 +48,7 @@ use rustc_middle::{
 };
 use rustc_span::{Span, source_map::Spanned};
 
+/// Per-callsite contract checking result collected during body analysis.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct CheckResult {
     pub func_name: String,
@@ -66,6 +70,7 @@ impl CheckResult {
     }
 }
 
+/// Layout abstraction for concrete and generic MIR places.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum PlaceTy<'tcx> {
     Ty(usize, usize), // layout(align,size) of one specific type
@@ -98,8 +103,7 @@ impl<'tcx> Hash for PlaceTy<'tcx> {
     fn hash<H: std::hash::Hasher>(&self, _state: &mut H) {}
 }
 
-/// Visitor that traverses MIR body and builds symbolic and pointer chains.
-/// Holds analysis state such as type mappings, value domains and constraints.
+/// Visitor that traverses one MIR body and builds symbolic and pointer state.
 pub struct BodyVisitor<'tcx> {
     pub tcx: TyCtxt<'tcx>,
     pub def_id: DefId,
@@ -255,21 +259,22 @@ impl<'tcx> BodyVisitor<'tcx> {
         let path_constraints_option =
             range_analyzer.start_path_constraints_analysis_for_defid(self.def_id); // if def_id does not exist, this will break down
         let mut path_constraints: HashMap<Vec<usize>, Vec<(_, _, _)>> =
-            if path_constraints_option.is_none() {
-                let mut results = HashMap::new();
-                let paths: Vec<Vec<usize>> = self.safedrop_graph.mop_graph.get_paths();
-                for path in paths {
-                    results.insert(path, Vec::new());
+            match path_constraints_option {
+                Some(path_constraints) if !path_constraints.is_empty() => path_constraints,
+                _ => {
+                    let mut results = HashMap::new();
+                    let paths: Vec<Vec<usize>> = self.safedrop_graph.mop_graph.get_paths();
+                    for path in paths {
+                        results.insert(path, Vec::new());
+                    }
+                    results
                 }
-                results
-            } else {
-                path_constraints_option.unwrap()
             };
         self.safedrop_graph.mop_graph.find_scc();
         // If this is the top-level analysis, keep only paths that contain unsafe calls.
         if self.visit_time == 0 {
             let contains_unsafe_blocks = get_all_std_unsafe_callees_block_id(self.tcx, self.def_id);
-            path_constraints.retain(|path, cons| {
+            path_constraints.retain(|path, _constraints| {
                 path.iter()
                     .any(|block_id| contains_unsafe_blocks.contains(block_id))
             });
@@ -625,9 +630,7 @@ impl<'tcx> BodyVisitor<'tcx> {
         }
 
         // Find std unsafe API call, then check the contracts.
-        if let Some(fn_result) =
-            parse_unsafe_api(get_cleaned_def_path_name(self.tcx, *def_id).as_str())
-        {
+        if has_unsafe_api_contract(get_cleaned_def_path_name(self.tcx, *def_id).as_str()) {
             self.handle_std_unsafe_call(
                 dst_place,
                 def_id,
@@ -635,7 +638,6 @@ impl<'tcx> BodyVisitor<'tcx> {
                 path_index,
                 fn_map,
                 fn_span,
-                fn_result,
                 generic_mapping,
             );
         }
@@ -662,9 +664,9 @@ impl<'tcx> BodyVisitor<'tcx> {
         let ptr_local = get_arg_place(&args[0].node).1;
         let mem_local = self.chains.get_point_to_id(ptr_local);
         let mem_var = self.chains.get_var_node_mut(mem_local).unwrap();
-        for cis in &mut mem_var.cis.contracts {
-            if let PropertyContract::InBound(cis_ty, len) = cis {
-                *len = CisRangeItem::new_var(d_local);
+        for fact in &mut mem_var.facts.contracts {
+            if let PropertyContract::InBound(_fact_ty, len) = fact {
+                *len = ContractExpr::new_var(d_local);
             }
         }
     }
@@ -1158,7 +1160,7 @@ impl<'tcx> BodyVisitor<'tcx> {
         for (p1, p2, op) in constraint {
             let p1_num = self.handle_proj(false, p1.clone());
             let p2_num = self.handle_proj(false, p2.clone());
-            self.chains.insert_patial_op(p1_num, p2_num, op);
+            self.chains.insert_partial_order(p1_num, p2_num, op);
 
             if let BinOp::Eq = op {
                 // If RHS is a known constant, record it as p1's value_constraint.
