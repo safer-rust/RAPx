@@ -40,7 +40,7 @@ pub trait SliceExt<T> {
 
 impl<T> SliceExt<T> for [T] {
     #[rapx::verify]
-    #[rapx::inner(property = InBound(self.ptr, index), kind = "precond")]
+    #[rapx::requires(InBound(self.ptr, index), kind = "precond")]
     unsafe fn get_unchecked_ext<I>(&self, index: I) -> &I::Output
     where
         I: SliceIndex<[T]>,
@@ -49,7 +49,7 @@ impl<T> SliceExt<T> for [T] {
     }
 
     #[rapx::verify]
-    #[rapx::inner(property = InBound(self.ptr, index), kind = "precond")]
+    #[rapx::requires(InBound(self.ptr, index), kind = "precond")]
     unsafe fn get_unchecked_mut_ext<I>(&mut self, index: I) -> &mut I::Output
     where
         I: SliceIndex<[T]>,
@@ -58,7 +58,7 @@ impl<T> SliceExt<T> for [T] {
     }
 
     #[rapx::verify]
-    #[rapx::inner(property = ValidNum(mid, [0,self.len]), kind = "precond")]
+    #[rapx::requires(ValidNum(mid, [0,self.len]), kind = "precond")]
     unsafe fn split_at_unchecked_ext(&self, mid: usize) -> (&[T], &[T]) {
         let len = self.len();
         let ptr = self.as_ptr();
@@ -72,7 +72,7 @@ impl<T> SliceExt<T> for [T] {
     }
 
     #[rapx::verify]
-    #[rapx::inner(property = ValidNum(mid, [0,self.len]), kind = "precond")]
+    #[rapx::requires(ValidNum(mid, [0,self.len]), kind = "precond")]
     unsafe fn split_at_mut_unchecked_ext(&mut self, mid: usize) -> (&mut [T], &mut [T]) {
         let len = self.len();
         let ptr = self.as_mut_ptr();
@@ -94,8 +94,8 @@ impl<T> SliceExt<T> for [T] {
     }
 
     #[rapx::verify]
-    #[rapx::inner(property = ValidNum(a, "[0,self.len)"), kind = "precond")]
-    #[rapx::inner(property = ValidNum(b, "[0,self.len)"), kind = "precond")]
+    #[rapx::requires(ValidNum(a, "[0,self.len)"), kind = "precond")]
+    #[rapx::requires(ValidNum(b, "[0,self.len)"), kind = "precond")]
     unsafe fn as_chunks_unchecked_ext<const N: usize>(&self) -> &[[T; N]] {
         debug_assert!(N != 0);
         debug_assert!(self.len() % N == 0);
@@ -105,8 +105,8 @@ impl<T> SliceExt<T> for [T] {
     }
 
     #[rapx::verify]
-    #[rapx::inner(property = ValidNum(a, "[0,self.len)"), kind = "precond")]
-    #[rapx::inner(property = ValidNum(b, "[0,self.len)"), kind = "precond")]
+    #[rapx::requires(ValidNum(a, "[0,self.len)"), kind = "precond")]
+    #[rapx::requires(ValidNum(b, "[0,self.len)"), kind = "precond")]
     unsafe fn as_chunks_unchecked_mut_ext<const N: usize>(&mut self) -> &mut [[T; N]] {
         debug_assert!(N != 0);
         debug_assert!(self.len() % N == 0);
@@ -173,7 +173,7 @@ impl<T> SliceExt<T> for [T] {
     }
 
     #[rapx::verify]
-    #[rapx::inner(property = InBound(self.ptr, T, indices), kind = "precond")]
+    #[rapx::requires(InBound(self.ptr, T, indices), kind = "precond")]
     unsafe fn get_disjoint_unchecked_mut_ext<I, const N: usize>(
         &mut self,
         indices: [I; N],

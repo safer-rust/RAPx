@@ -3,7 +3,7 @@ use clap::Args;
 /// Arguments for the `verify` command.
 #[derive(Debug, Clone, Args)]
 pub struct VerifyArgs {
-    /// Scan the crate for all functions annotated with #[rapx::verify] and print their DefIds.
+    /// Collect all functions annotated with #[rapx::verify] and print each target, its unsafe callees, and their safety contracts.
     #[arg(long)]
-    pub scan: bool,
+    pub collect: bool,
 }
