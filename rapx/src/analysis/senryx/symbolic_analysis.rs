@@ -1,3 +1,10 @@
+//! Symbolic value domain and Z3 proof adapter for Senryx.
+//!
+//! The path visitor records lightweight symbolic definitions for MIR locals.
+//! Property checkers translate those definitions plus path constraints into Z3
+//! bit-vector formulas and prove obligations by checking that the negation is
+//! unsatisfiable.
+
 use rustc_middle::mir::{BinOp, UnOp};
 use std::collections::HashMap;
 
@@ -6,6 +13,7 @@ use z3::{Config, Context, SatResult, Solver};
 
 use crate::analysis::senryx::visitor::PlaceTy;
 
+/// Symbolic definition tracked for one MIR local.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SymbolicDef<'tcx> {
     Param(usize),
@@ -20,12 +28,14 @@ pub enum SymbolicDef<'tcx> {
     PtrOffset(BinOp, usize, AnaOperand, PlaceTy<'tcx>),
 }
 
+/// Operand used inside symbolic definitions.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AnaOperand {
     Local(usize),
     Const(u128),
 }
 
+/// Current symbolic value information for one MIR local.
 #[derive(Clone, Debug, Default)]
 pub struct ValueDomain<'tcx> {
     pub def: Option<SymbolicDef<'tcx>>,
@@ -33,6 +43,7 @@ pub struct ValueDomain<'tcx> {
 }
 
 impl<'tcx> ValueDomain<'tcx> {
+    /// Return a concrete value when the domain has one.
     pub fn get_constant(&self) -> Option<u128> {
         if let Some(SymbolicDef::Constant(c)) = self.def {
             Some(c)

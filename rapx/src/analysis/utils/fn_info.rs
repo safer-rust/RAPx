@@ -1,10 +1,7 @@
 use super::draw_dot::render_dot_string;
 use crate::analysis::{
     core::dataflow::{DataFlowAnalysis, default::DataFlowAnalyzer},
-    senryx::{
-        contracts::{property, property::PropertyContract},
-        matcher::parse_unsafe_api,
-    },
+    senryx::{callsite::has_unsafe_api_contract, contract::PropertyContract},
 };
 use crate::def_id::*;
 use crate::{rap_debug, rap_warn};
@@ -643,7 +640,7 @@ pub fn match_std_unsafe_callee(tcx: TyCtxt<'_>, terminator: &Terminator<'_>) -> 
             if let ty::FnDef(callee_def_id, _raw_list) = func_constant.const_.ty().kind() {
                 let func_name = get_cleaned_def_path_name(tcx, *callee_def_id);
                 // rap_info!("{func_name}");
-                if parse_unsafe_api(&func_name).is_some() {
+                if has_unsafe_api_contract(&func_name) {
                     results.push(func_name);
                 }
             }
@@ -774,7 +771,7 @@ pub fn is_verify_target_func(tcx: TyCtxt, def_id: DefId) -> bool {
 }
 
 /// Get the annotation in tag-std style.
-/// Then generate the contractual invariant states (CIS) for the args.
+/// Then generate contract facts for the args.
 /// This function will recognize the args name and record states to MIR variable (represent by usize).
 /// Return value means Vec<(local_id, fields of this local, contracts)>
 pub fn generate_contract_from_annotation(
@@ -804,7 +801,7 @@ pub fn generate_contract_from_annotation(
                 let tag_name = property.tag.name();
                 let exprs = property.args.clone().into_vec();
                 let contract = PropertyContract::new(tcx, def_id, tag_name, &exprs);
-                let (local, fields) = parse_cis_local(tcx, def_id, exprs);
+                let (local, fields) = parse_contract_target(tcx, def_id, exprs);
                 results.push((local, fields, contract));
             }
         }
@@ -830,8 +827,12 @@ pub fn generate_contract_from_annotation(
 ///     -> "2" means the second arg "region", "[1]" means "size" is region's second field.
 ///
 /// If this function doesn't have args, then it will return default pattern: (0, Vec::new())
-pub fn parse_cis_local(tcx: TyCtxt, def_id: DefId, expr: Vec<Expr>) -> (usize, Vec<(usize, Ty)>) {
-    // match expr with cis local
+pub fn parse_contract_target(
+    tcx: TyCtxt,
+    def_id: DefId,
+    expr: Vec<Expr>,
+) -> (usize, Vec<(usize, Ty)>) {
+    // Match expressions with the graph node that should receive the contract fact.
     for e in expr {
         if let Some((base, fields, _ty)) = parse_expr_into_local_and_ty(tcx, def_id, &e) {
             return (base, fields);

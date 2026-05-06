@@ -1,8 +1,8 @@
 mod analyze;
 mod verify;
 pub use analyze::*;
-pub use verify::*;
 use clap::{Args, Subcommand, ValueEnum};
+pub use verify::*;
 
 #[derive(Args, Debug, Clone)]
 pub struct RapxArgs {
