@@ -12,16 +12,16 @@ use std::collections::{HashMap, HashSet};
 /// Visitor that collects all functions annotated with `#[rapx::verify]`.
 pub struct VerifyAttrVisitor<'tcx> {
     tcx: TyCtxt<'tcx>,
-    pub verify_fns: Vec<DefId>,
-    pub verify_unsafe_callees: HashMap<DefId, HashSet<DefId>>,
+    pub targets: Vec<DefId>,
+    pub unsafe_callees: HashMap<DefId, HashSet<DefId>>,
 }
 
 impl<'tcx> VerifyAttrVisitor<'tcx> {
     pub fn new(tcx: TyCtxt<'tcx>) -> Self {
         VerifyAttrVisitor {
             tcx,
-            verify_fns: Vec::new(),
-            verify_unsafe_callees: HashMap::new(),
+            targets: Vec::new(),
+            unsafe_callees: HashMap::new(),
         }
     }
 
@@ -70,19 +70,19 @@ impl<'tcx> Visitor<'tcx> for VerifyAttrVisitor<'tcx> {
                 def_id,
                 unsafe_callees
             );
-            self.verify_unsafe_callees.insert(def_id, unsafe_callees);
-            self.verify_fns.push(def_id);
+            self.unsafe_callees.insert(def_id, unsafe_callees);
+            self.targets.push(def_id);
         }
         walk_fn(self, fk, fd, b, id);
     }
 }
 
 /// Scan Analysis - find all functions annotated with #[rapx::verify]
-pub struct VerifyScanAnalysis<'tcx> {
+pub struct VerifyTargetsScanner<'tcx> {
     tcx: TyCtxt<'tcx>,
 }
 
-impl<'tcx> Analysis for VerifyScanAnalysis<'tcx> {
+impl<'tcx> Analysis for VerifyTargetsScanner<'tcx> {
     fn name(&self) -> &'static str {
         "Verify Scan Analysis"
     }
@@ -93,11 +93,11 @@ impl<'tcx> Analysis for VerifyScanAnalysis<'tcx> {
         self.tcx.hir_visit_all_item_likes_in_crate(&mut visitor);
         rap_debug!(
             "[rapx::verify] target -> unsafe_callees: {:?}",
-            visitor.verify_unsafe_callees
+            visitor.unsafe_callees
         );
         rap_info!(
             "total: {} function(s) annotated with #[rapx::verify]",
-            visitor.verify_fns.len()
+            visitor.targets.len()
         );
         rap_info!("=====================================");
     }
@@ -105,8 +105,8 @@ impl<'tcx> Analysis for VerifyScanAnalysis<'tcx> {
     fn reset(&mut self) {}
 }
 
-impl<'tcx> VerifyScanAnalysis<'tcx> {
+impl<'tcx> VerifyTargetsScanner<'tcx> {
     pub fn new(tcx: TyCtxt<'tcx>) -> Self {
-        VerifyScanAnalysis { tcx }
+        VerifyTargetsScanner { tcx }
     }
 }
