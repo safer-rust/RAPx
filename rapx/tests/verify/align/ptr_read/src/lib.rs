@@ -3,7 +3,7 @@
 
 #[rapx::verify]
 fn safe_read<T>(ptr: *const T) -> Option<u32> {
-    if ptr % std::mem::align_of::<u32>() == 0 {
+    if (ptr as usize) % std::mem::align_of::<u32>() == 0 {
         unsafe {
             let p = ptr as *const u32;
             Some(p.read())

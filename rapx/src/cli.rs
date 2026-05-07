@@ -56,7 +56,7 @@ pub enum Commands {
         #[arg(long)]
         verify_std: bool,
     },
-    /// verify annotated functions in the crate, e.g., scan for #[rapx::verify] targets
+    /// verify annotated functions in the crate, e.g., collect #[rapx::verify] targets
     Verify(VerifyArgs),
 }
 
