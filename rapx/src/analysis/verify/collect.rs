@@ -1,3 +1,8 @@
+#[path = "contract.rs"]
+mod contract;
+#[path = "helpers.rs"]
+mod helpers;
+
 use crate::analysis::Analysis;
 use rustc_hir::{
     Attribute, BodyId, FnDecl,
@@ -9,9 +14,6 @@ use rustc_span::{Span, Symbol};
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 use syn::Expr;
-
-mod contract;
-mod helpers;
 
 use contract::{ContractEntry, PropertyContract};
 use helpers::{get_cleaned_def_path_name, get_unsafe_callees, parse_contract_target};
@@ -219,11 +221,6 @@ impl<'tcx> VerifyTargetsCollector<'tcx> {
     }
 }
 
-/// Build contracts from backup JSON entries.
-///
-/// Each entry is expected to store its first argument as the numeric target
-/// argument index, followed by the expression arguments needed to construct a
-/// `PropertyContract`.
 fn get_contract_from_entry<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
@@ -277,7 +274,6 @@ fn get_contract_from_entry<'tcx>(
     results
 }
 
-/// Return whether an attribute belongs to the `rapx` tool namespace.
 fn is_rapx_tool_attr(attr: &Attribute) -> bool {
     if let Attribute::Unparsed(tool_attr) = attr
         && let Some(first_seg) = tool_attr.path.segments.first()
@@ -287,7 +283,6 @@ fn is_rapx_tool_attr(attr: &Attribute) -> bool {
     false
 }
 
-/// Return whether an attribute is exactly `#[rapx::requires(...)]`.
 fn is_rapx_requires_attr(attr: &Attribute) -> bool {
     if let Attribute::Unparsed(tool_attr) = attr {
         return tool_attr.path.segments.len() == 2
@@ -297,7 +292,6 @@ fn is_rapx_requires_attr(attr: &Attribute) -> bool {
     false
 }
 
-/// Parse `requires` contracts from source-level RAPx annotations attached to a definition.
 fn get_contract_from_annotation<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
@@ -316,8 +310,9 @@ fn get_contract_from_annotation<'tcx>(
                 let tag_name = property.tag.name();
                 let property_args = property.args.clone().into_vec();
                 let contract = PropertyContract::new(tcx, def_id, tag_name, &property_args);
-                let (local, fields_with_ty) = parse_contract_target(tcx, def_id, property_args);
-                let fields = fields_with_ty
+                let (local, fields_with_ty): (usize, Vec<(usize, rustc_middle::ty::Ty<'tcx>)>) =
+                    parse_contract_target(tcx, def_id, property_args);
+                let fields: Vec<usize> = fields_with_ty
                     .into_iter()
                     .map(|(field_idx, _)| field_idx)
                     .collect();
@@ -333,7 +328,6 @@ fn get_contract_from_annotation<'tcx>(
     results
 }
 
-/// Lazily load the backup contract database for standard-library APIs.
 fn get_verify_std_contracts_json() -> &'static HashMap<String, Vec<ContractEntry>> {
     static STD_CONTRACTS: OnceLock<HashMap<String, Vec<ContractEntry>>> = OnceLock::new();
     STD_CONTRACTS.get_or_init(|| {
@@ -344,7 +338,6 @@ fn get_verify_std_contracts_json() -> &'static HashMap<String, Vec<ContractEntry
     })
 }
 
-/// Look up backup contracts for a standard-library function by its normalized path.
 fn get_std_backup_contracts(tcx: TyCtxt<'_>, def_id: DefId) -> &'static [ContractEntry] {
     let cleaned_path_name = get_cleaned_def_path_name(tcx, def_id);
     get_verify_std_contracts_json()
@@ -353,10 +346,6 @@ fn get_std_backup_contracts(tcx: TyCtxt<'_>, def_id: DefId) -> &'static [Contrac
         .unwrap_or(&[])
 }
 
-/// Remove trailing commas that appear immediately before `}` or `]` in JSON text.
-///
-/// This allows the embedded backup JSON file to be slightly more permissive while
-/// still being parsed by `serde_json`.
 fn normalize_json_trailing_commas(input: &str) -> String {
     let mut normalized = String::with_capacity(input.len());
     let mut iter = input.char_indices().peekable();
@@ -387,14 +376,12 @@ fn normalize_json_trailing_commas(input: &str) -> String {
 mod tests {
     use super::{get_verify_std_contracts_json, normalize_json_trailing_commas};
 
-    /// Ensure the backup contract table includes a known standard API entry.
     #[test]
     fn std_contracts_backup_contains_core_ptr_read() {
         let std_contracts = get_verify_std_contracts_json();
         assert!(std_contracts.contains_key("core::ptr::read"));
     }
 
-    /// Ensure the trailing-comma normalizer produces valid JSON.
     #[test]
     fn normalize_json_trailing_commas_works() {
         let normalized = normalize_json_trailing_commas("{\"k\":[1,2,],}");
