@@ -3,7 +3,6 @@ use crate::analysis::senryx::contract::PropertyContract;
 use crate::analysis::utils::fn_info::{
     ContractEntry, get_cleaned_def_path_name, get_unsafe_callees, parse_contract_target,
 };
-use regex::Regex;
 use rustc_hir::{
     Attribute, BodyId, FnDecl,
     def_id::{DefId, LocalDefId},
@@ -15,13 +14,18 @@ use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 use syn::Expr;
 
+/// A parsed `requires` contract.
+pub struct RequiresContract<'tcx> {
+    /// The local argument index targeted by the contract.
+    pub local: usize,
+    /// The accessed field path (empty for the whole argument).
+    pub fields: Vec<usize>,
+    /// The parsed property contract itself.
+    pub contract: PropertyContract<'tcx>,
+}
+
 /// A list of parsed `requires` contracts.
-///
-/// Each tuple contains:
-/// - the local argument index targeted by the contract,
-/// - the accessed field path (empty for the whole argument),
-/// - the parsed property contract itself.
-pub type RequiresContracts<'tcx> = Vec<(usize, Vec<usize>, PropertyContract<'tcx>)>;
+pub type RequiresContracts<'tcx> = Vec<RequiresContract<'tcx>>;
 
 /// Maps a callee `DefId` to all of its collected `requires` contracts.
 pub type CalleeRequiresMap<'tcx> = HashMap<DefId, RequiresContracts<'tcx>>;
@@ -175,12 +179,12 @@ impl<'tcx> Analysis for VerifyTargetsCollector<'tcx> {
                             .and_then(|callee_map| callee_map.get(&unsafe_callee_def_id))
                         {
                             Some(requires) if !requires.is_empty() => {
-                                for (local, fields, contract) in requires {
+                                for requires_contract in requires {
                                     rap_info!(
                                         "    safety contract: local={}, fields={:?}, {:?}",
-                                        local,
-                                        fields,
-                                        contract
+                                        requires_contract.local,
+                                        requires_contract.fields,
+                                        requires_contract.contract
                                     );
                                 }
                             }
@@ -262,7 +266,11 @@ fn get_contract_from_entry<'tcx>(
         }
 
         let contract = PropertyContract::new(tcx, def_id, entry.tag.as_str(), &exprs);
-        results.push((local_id, Vec::new(), contract));
+        results.push(RequiresContract {
+            local: local_id,
+            fields: Vec::new(),
+            contract,
+        });
     }
     results
 }
@@ -287,51 +295,19 @@ fn is_rapx_requires_attr(attr: &Attribute) -> bool {
     false
 }
 
-/// Return whether an attribute is exactly `#[rapx::inner(...)]`.
-fn is_rapx_inner_attr(attr: &Attribute) -> bool {
-    if let Attribute::Unparsed(tool_attr) = attr {
-        return tool_attr.path.segments.len() == 2
-            && tool_attr.path.segments[0].as_str() == "rapx"
-            && tool_attr.path.segments[1].as_str() == "inner";
-    }
-    false
-}
-
-/// Detect the legacy internal precondition attribute form.
-///
-/// Historically, RAPx encoded preconditions with `#[rapx::inner(...)]` and a
-/// `kind = "precond"` marker inside the attribute payload.
-fn is_legacy_precond_inner_attr(attr: &Attribute, attr_str: &str) -> bool {
-    static PRECOND_KIND_RE: OnceLock<Regex> = OnceLock::new();
-    let precond_kind_re =
-        PRECOND_KIND_RE.get_or_init(|| Regex::new(r#"kind\s*=\s*"precond""#).unwrap());
-    is_rapx_inner_attr(attr) && precond_kind_re.is_match(attr_str)
-}
-
 /// Parse `requires` contracts from source-level RAPx annotations attached to a definition.
-///
-/// This supports both the current `#[rapx::requires(...)]` form and the legacy
-/// `#[rapx::inner(..., kind = "precond", ...)]` representation.
 fn get_contract_from_annotation<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
 ) -> RequiresContracts<'tcx> {
-    const RAPX_PROOF_PLACEHOLDER: &str = "#[rapx::proof(proof)]";
     let mut results = Vec::new();
 
     for attr in tcx.get_all_attrs(def_id).into_iter() {
-        if !is_rapx_tool_attr(attr) {
+        if !is_rapx_tool_attr(attr) || !is_rapx_requires_attr(attr) {
             continue;
         }
 
         let attr_str = rustc_hir_pretty::attribute_to_string(&tcx, attr);
-        if attr_str.contains(RAPX_PROOF_PLACEHOLDER) {
-            continue;
-        }
-        if !is_rapx_requires_attr(attr) && !is_legacy_precond_inner_attr(attr, attr_str.as_str()) {
-            continue;
-        }
-
         let safety_attr = safety_parser::safety::parse_attr_and_get_properties(attr_str.as_str());
         for par in safety_attr.iter() {
             for property in par.tags.iter() {
@@ -343,7 +319,11 @@ fn get_contract_from_annotation<'tcx>(
                     .into_iter()
                     .map(|(field_idx, _)| field_idx)
                     .collect();
-                results.push((local, fields, contract));
+                results.push(RequiresContract {
+                    local,
+                    fields,
+                    contract,
+                });
             }
         }
     }
