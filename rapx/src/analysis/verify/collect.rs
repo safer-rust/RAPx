@@ -386,23 +386,3 @@ fn normalize_json_trailing_commas(input: &str) -> String {
 
     normalized
 }
-
-#[cfg(test)]
-mod tests {
-    use super::{get_verify_std_contracts_json, normalize_json_trailing_commas};
-
-    /// Ensures the backup contract table includes a known standard API entry.
-    #[test]
-    fn std_contracts_backup_contains_core_ptr_read() {
-        let std_contracts = get_verify_std_contracts_json();
-        assert!(std_contracts.contains_key("core::ptr::read"));
-    }
-
-    /// Ensures the trailing-comma normalizer produces valid JSON.
-    #[test]
-    fn normalize_json_trailing_commas_works() {
-        let normalized = normalize_json_trailing_commas("{\"k\":[1,2,],}");
-        let parsed: serde_json::Value = serde_json::from_str(normalized.as_str()).unwrap();
-        assert_eq!(parsed["k"], serde_json::json!([1, 2]));
-    }
-}

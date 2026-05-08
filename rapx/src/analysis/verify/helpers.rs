@@ -2,7 +2,7 @@ use rustc_abi::FieldIdx;
 use rustc_hir::{Safety, def_id::DefId};
 use rustc_middle::{
     mir::{Operand, TerminatorKind},
-    ty::{self, AssocKind, Ty, TyCtxt, TyKind},
+    ty::{self, Ty, TyCtxt, TyKind},
 };
 use serde_json::Value;
 use std::collections::HashSet;
