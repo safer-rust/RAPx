@@ -1,8 +1,4 @@
 use crate::analysis::Analysis;
-use crate::analysis::senryx::contract::PropertyContract;
-use crate::analysis::utils::fn_info::{
-    ContractEntry, get_cleaned_def_path_name, get_unsafe_callees, parse_contract_target,
-};
 use rustc_hir::{
     Attribute, BodyId, FnDecl,
     def_id::{DefId, LocalDefId},
@@ -12,7 +8,14 @@ use rustc_middle::{hir::nested_filter, ty::TyCtxt};
 use rustc_span::{Span, Symbol};
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
-use syn::Expr;
+use syn::{Expr, ExprLit, ExprPath, ExprReference, ExprUnary, Lit, UnOp};
+
+mod contract;
+
+use contract::{
+    ContractEntry, PropertyContract, get_cleaned_def_path_name, get_unsafe_callees,
+    parse_contract_target,
+};
 
 /// A parsed `requires` contract.
 pub struct RequiresContract<'tcx> {
