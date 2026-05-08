@@ -8,14 +8,13 @@ use rustc_middle::{hir::nested_filter, ty::TyCtxt};
 use rustc_span::{Span, Symbol};
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
-use syn::{Expr, ExprLit, ExprPath, ExprReference, ExprUnary, Lit, UnOp};
+use syn::Expr;
 
 mod contract;
+mod helpers;
 
-use contract::{
-    ContractEntry, PropertyContract, get_cleaned_def_path_name, get_unsafe_callees,
-    parse_contract_target,
-};
+use contract::{ContractEntry, PropertyContract};
+use helpers::{get_cleaned_def_path_name, get_unsafe_callees, parse_contract_target};
 
 /// A parsed `requires` contract.
 pub struct RequiresContract<'tcx> {
