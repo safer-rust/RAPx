@@ -67,19 +67,6 @@ pub fn get_cleaned_def_path_name(tcx: TyCtxt<'_>, def_id: DefId) -> String {
     cleaned_path
 }
 
-pub fn parse_contract_target<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    def_id: DefId,
-    expr: Vec<Expr>,
-) -> (usize, Vec<(usize, Ty<'tcx>)>) {
-    for e in expr {
-        if let Some((base, fields, _ty)) = parse_expr_into_local_and_ty(tcx, def_id, &e) {
-            return (base, fields);
-        }
-    }
-    (0, Vec::new())
-}
-
 pub fn parse_expr_into_local_and_ty<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,

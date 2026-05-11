@@ -225,20 +225,20 @@ impl<'tcx> NumericPredicate<'tcx> {
 }
 
 #[derive(Clone, Debug)]
-pub enum PropertyContract<'tcx> {
-    Align(Ty<'tcx>),
-    Size(),
+pub enum PropertyKind {
+    Align,
+    Size,
     NoPadding,
     NonNull,
-    Allocated(Ty<'tcx>, ContractExpr<'tcx>),
-    InBound(Ty<'tcx>, ContractExpr<'tcx>),
+    Allocated,
+    InBound,
     NonOverlap,
-    ValidNum(Vec<NumericPredicate<'tcx>>),
+    ValidNum,
     ValidString,
     ValidCStr,
-    Init(Ty<'tcx>, ContractExpr<'tcx>),
+    Init,
     Unwrap,
-    Typed(Ty<'tcx>),
+    Typed,
     Owning,
     Alias,
     Alive,
@@ -247,102 +247,174 @@ pub enum PropertyContract<'tcx> {
     Opened,
     Trait,
     Unreachable,
-    ValidPtr(Ty<'tcx>, ContractExpr<'tcx>),
+    ValidPtr,
     Deref,
     Ptr2Ref,
     Layout,
     Unknown,
 }
 
-impl<'tcx> PropertyContract<'tcx> {
-    pub fn new(tcx: TyCtxt<'tcx>, def_id: DefId, name: &str, exprs: &Vec<Expr>) -> Self {
+#[derive(Clone, Debug)]
+pub enum PropertyArg<'tcx> {
+    Place(ContractPlace<'tcx>),
+    Ty(Ty<'tcx>),
+    Expr(ContractExpr<'tcx>),
+    Predicates(Vec<NumericPredicate<'tcx>>),
+    Ident(String),
+}
+
+#[derive(Clone, Debug)]
+pub struct Property<'tcx> {
+    pub kind: PropertyKind,
+    pub args: Vec<PropertyArg<'tcx>>,
+}
+
+impl<'tcx> Property<'tcx> {
+    pub fn new(tcx: TyCtxt<'tcx>, def_id: DefId, name: &str, exprs: &[Expr]) -> Self {
         match name {
             "Align" => {
                 Self::check_arg_length(exprs.len(), 2, "Align");
+                let target = Self::parse_target_arg(tcx, def_id, &exprs[0]);
                 let ty = Self::parse_type(tcx, def_id, &exprs[1], "Align");
-                Self::Align(ty)
+                Self::new_with_args(PropertyKind::Align, vec![target, PropertyArg::Ty(ty)])
             }
-            "Size" => Self::Size(),
-            "NoPadding" => Self::NoPadding,
-            "NonNull" => Self::NonNull,
+            "Size" => Self::new_with_target(PropertyKind::Size, tcx, def_id, exprs),
+            "NoPadding" => Self::new_with_target(PropertyKind::NoPadding, tcx, def_id, exprs),
+            "NonNull" => Self::new_with_target(PropertyKind::NonNull, tcx, def_id, exprs),
             "Allocated" => {
                 Self::check_arg_length(exprs.len(), 3, "Allocated");
+                let target = Self::parse_target_arg(tcx, def_id, &exprs[0]);
                 let ty = Self::parse_type(tcx, def_id, &exprs[1], "Allocated");
                 let length = Self::parse_contract_expr(tcx, def_id, &exprs[2], "Allocated");
-                Self::Allocated(ty, length)
+                Self::new_with_args(
+                    PropertyKind::Allocated,
+                    vec![target, PropertyArg::Ty(ty), PropertyArg::Expr(length)],
+                )
             }
-            "InBound" | "InBounded" => match exprs.as_slice() {
+            "InBound" | "InBounded" => match exprs {
                 [_target, ty_expr, len_expr] => {
+                    let target = Self::parse_target_arg(tcx, def_id, &exprs[0]);
                     let ty = Self::parse_type(tcx, def_id, ty_expr, "InBound");
                     let length = Self::parse_contract_expr(tcx, def_id, len_expr, "InBound");
-                    Self::InBound(ty, length)
+                    Self::new_with_args(
+                        PropertyKind::InBound,
+                        vec![target, PropertyArg::Ty(ty), PropertyArg::Expr(length)],
+                    )
                 }
                 [target, len_expr] => {
                     let Some(ty) = Self::parse_target_type(tcx, def_id, target) else {
-                        return Self::Unknown;
+                        return Self::new_simple(PropertyKind::Unknown);
                     };
+                    let target = Self::parse_target_arg(tcx, def_id, target);
                     let length = Self::parse_contract_expr(tcx, def_id, len_expr, "InBound");
-                    Self::InBound(ty, length)
+                    Self::new_with_args(
+                        PropertyKind::InBound,
+                        vec![target, PropertyArg::Ty(ty), PropertyArg::Expr(length)],
+                    )
                 }
                 _ => {
                     Self::check_arg_length(exprs.len(), 3, "InBound");
-                    Self::Unknown
+                    Self::new_simple(PropertyKind::Unknown)
                 }
             },
-            "NonOverlap" => Self::NonOverlap,
+            "NonOverlap" => Self::new_with_target(PropertyKind::NonOverlap, tcx, def_id, exprs),
             "ValidNum" => {
                 let predicates = Self::parse_valid_num(tcx, def_id, exprs);
                 if predicates.is_empty() {
-                    Self::Unknown
+                    Self::new_simple(PropertyKind::Unknown)
                 } else {
-                    Self::ValidNum(predicates)
+                    Self::new_with_args(
+                        PropertyKind::ValidNum,
+                        vec![PropertyArg::Predicates(predicates)],
+                    )
                 }
             }
-            "ValidString" => Self::ValidString,
-            "ValidCStr" => Self::ValidCStr,
+            "ValidString" => Self::new_with_target(PropertyKind::ValidString, tcx, def_id, exprs),
+            "ValidCStr" => Self::new_with_target(PropertyKind::ValidCStr, tcx, def_id, exprs),
             "Init" => {
                 Self::check_arg_length(exprs.len(), 3, "Init");
+                let target = Self::parse_target_arg(tcx, def_id, &exprs[0]);
                 let ty = Self::parse_type(tcx, def_id, &exprs[1], "Init");
                 let length = Self::parse_contract_expr(tcx, def_id, &exprs[2], "Init");
-                Self::Init(ty, length)
+                Self::new_with_args(
+                    PropertyKind::Init,
+                    vec![target, PropertyArg::Ty(ty), PropertyArg::Expr(length)],
+                )
             }
-            "Unwrap" => Self::Unwrap,
+            "Unwrap" => Self::new_with_target(PropertyKind::Unwrap, tcx, def_id, exprs),
             "Typed" => {
                 Self::check_arg_length(exprs.len(), 2, "Typed");
+                let target = Self::parse_target_arg(tcx, def_id, &exprs[0]);
                 let ty = Self::parse_type(tcx, def_id, &exprs[1], "Typed");
-                Self::Typed(ty)
+                Self::new_with_args(PropertyKind::Typed, vec![target, PropertyArg::Ty(ty)])
             }
-            "Owning" => Self::Owning,
-            "Alias" => Self::Alias,
-            "Alive" => Self::Alive,
-            "Pinned" => Self::Pinned,
-            "NonVolatile" => Self::NonVolatile,
-            "Opened" => Self::Opened,
-            "Trait" => Self::Trait,
-            "Unreachable" => Self::Unreachable,
+            "Owning" => Self::new_with_target(PropertyKind::Owning, tcx, def_id, exprs),
+            "Alias" => Self::new_with_target(PropertyKind::Alias, tcx, def_id, exprs),
+            "Alive" => Self::new_with_target(PropertyKind::Alive, tcx, def_id, exprs),
+            "Pinned" => Self::new_with_target(PropertyKind::Pinned, tcx, def_id, exprs),
+            "NonVolatile" => Self::new_with_target(PropertyKind::NonVolatile, tcx, def_id, exprs),
+            "Opened" => Self::new_with_target(PropertyKind::Opened, tcx, def_id, exprs),
+            "Trait" => Self::new_with_target(PropertyKind::Trait, tcx, def_id, exprs),
+            "Unreachable" => Self::new_with_target(PropertyKind::Unreachable, tcx, def_id, exprs),
             "ValidPtr" => {
                 Self::check_arg_length(exprs.len(), 3, "ValidPtr");
+                let target = Self::parse_target_arg(tcx, def_id, &exprs[0]);
                 let ty = Self::parse_type(tcx, def_id, &exprs[1], "ValidPtr");
                 let length = Self::parse_contract_expr(tcx, def_id, &exprs[2], "ValidPtr");
-                Self::ValidPtr(ty, length)
+                Self::new_with_args(
+                    PropertyKind::ValidPtr,
+                    vec![target, PropertyArg::Ty(ty), PropertyArg::Expr(length)],
+                )
             }
-            "Deref" => Self::Deref,
-            "Ptr2Ref" | "ValidPtr2Ref" => Self::Ptr2Ref,
-            "Layout" => Self::Layout,
-            _ => Self::Unknown,
+            "Deref" => Self::new_with_target(PropertyKind::Deref, tcx, def_id, exprs),
+            "Ptr2Ref" | "ValidPtr2Ref" => {
+                Self::new_with_target(PropertyKind::Ptr2Ref, tcx, def_id, exprs)
+            }
+            "Layout" => Self::new_with_target(PropertyKind::Layout, tcx, def_id, exprs),
+            _ => Self::new_simple(PropertyKind::Unknown),
         }
     }
 
     pub fn new_partial_order(lhs: usize, rhs: usize, op: MirBinOp) -> Self {
         if let Some(predicate) = NumericPredicate::from_mir_locals(lhs, rhs, op) {
-            Self::ValidNum(vec![predicate])
+            Self::new_with_args(
+                PropertyKind::ValidNum,
+                vec![PropertyArg::Predicates(vec![predicate])],
+            )
         } else {
-            Self::Unknown
+            Self::new_simple(PropertyKind::Unknown)
         }
     }
 
     pub fn new_obj_boundary(ty: Ty<'tcx>, len: ContractExpr<'tcx>) -> Self {
-        Self::InBound(ty, len)
+        Self::new_with_args(
+            PropertyKind::InBound,
+            vec![
+                PropertyArg::Expr(ContractExpr::Unknown),
+                PropertyArg::Ty(ty),
+                PropertyArg::Expr(len),
+            ],
+        )
+    }
+
+    fn new_simple(kind: PropertyKind) -> Self {
+        Self {
+            kind,
+            args: Vec::new(),
+        }
+    }
+
+    fn new_with_args(kind: PropertyKind, args: Vec<PropertyArg<'tcx>>) -> Self {
+        Self { kind, args }
+    }
+
+    fn new_with_target(kind: PropertyKind, tcx: TyCtxt<'tcx>, def_id: DefId, exprs: &[Expr]) -> Self {
+        let args = exprs
+            .first()
+            .map(|expr| Self::parse_target_arg(tcx, def_id, expr))
+            .into_iter()
+            .collect();
+        Self { kind, args }
     }
 
     fn check_arg_length(expr_len: usize, required_len: usize, sp: &str) -> bool {
@@ -367,6 +439,12 @@ impl<'tcx> PropertyContract<'tcx> {
 
     fn parse_target_type(tcx: TyCtxt<'tcx>, def_id: DefId, expr: &Expr) -> Option<Ty<'tcx>> {
         parse_expr_into_local_and_ty(tcx, def_id, expr).map(|(_, _, ty)| ty)
+    }
+
+    fn parse_target_arg(tcx: TyCtxt<'tcx>, def_id: DefId, expr: &Expr) -> PropertyArg<'tcx> {
+        Self::parse_contract_place(tcx, def_id, expr)
+            .map(PropertyArg::Place)
+            .unwrap_or_else(|| PropertyArg::Expr(Self::parse_contract_expr(tcx, def_id, expr, "target")))
     }
 
     fn parse_contract_expr(
@@ -459,9 +537,9 @@ impl<'tcx> PropertyContract<'tcx> {
     fn parse_valid_num(
         tcx: TyCtxt<'tcx>,
         def_id: DefId,
-        exprs: &Vec<Expr>,
+        exprs: &[Expr],
     ) -> Vec<NumericPredicate<'tcx>> {
-        match exprs.as_slice() {
+        match exprs {
             [] => Vec::new(),
             [expr] => Self::parse_numeric_predicate(tcx, def_id, expr)
                 .into_iter()

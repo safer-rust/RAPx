@@ -11,48 +11,41 @@ use rustc_hir::{
 };
 use rustc_middle::{hir::nested_filter, ty::TyCtxt};
 use rustc_span::{Span, Symbol};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::OnceLock;
 use syn::Expr;
 
-use contract::{ContractEntry, PropertyContract};
-use helpers::{get_cleaned_def_path_name, get_unsafe_callees, parse_contract_target};
-
-/// A parsed `requires` contract attached to a callee.
-pub struct RequiresContract<'tcx> {
-    /// The local argument index targeted by the contract.
-    pub local: usize,
-    /// The accessed field path, or empty when the whole argument is targeted.
-    pub fields: Vec<usize>,
-    /// The parsed property contract payload.
-    pub contract: PropertyContract<'tcx>,
-}
+use contract::{ContractEntry, Property};
+use helpers::{get_cleaned_def_path_name, get_unsafe_callees};
 
 /// A list of parsed `requires` contracts.
-pub type RequiresContracts<'tcx> = Vec<RequiresContract<'tcx>>;
+pub type FnContracts<'tcx> = Vec<Property<'tcx>>;
 
-/// Maps a callee `DefId` to all of its collected `requires` contracts.
-pub type CalleeRequiresMap<'tcx> = HashMap<DefId, RequiresContracts<'tcx>>;
-
-/// Visitor that collects functions annotated with `#[rapx::verify]`.
-pub struct VerifyAttrCollector<'tcx> {
-    tcx: TyCtxt<'tcx>,
-    /// Target functions marked with `#[rapx::verify]`.
-    pub targets: Vec<DefId>,
-    /// Unsafe callees discovered for each verification target.
-    pub unsafe_callees: HashMap<DefId, HashSet<DefId>>,
-    /// Parsed `requires` contracts for each unsafe callee of every target.
-    pub callee_requires: HashMap<DefId, CalleeRequiresMap<'tcx>>,
+/// Collected verification data for a function annotated with `#[rapx::verify]`.
+pub struct VerifyTarget<'tcx> {
+    /// Function marked with `#[rapx::verify]`.
+    pub def_id: DefId,
+    /// Parsed `requires` contracts for each unsafe callee reachable from this target.
+    pub callee_requires: HashMap<DefId, FnContracts<'tcx>>,
+    /// TODO: add struct_invariant as an Option field
 }
 
-impl<'tcx> VerifyAttrCollector<'tcx> {
+/// Visitor that collects functions annotated with `#[rapx::verify]`.
+pub struct VerifyTargetCollector<'tcx> {
+    tcx: TyCtxt<'tcx>,
+    /// All functions marked with `#[rapx::verify]` and their collected callee data.
+    pub targets: Vec<VerifyTarget<'tcx>>,
+    /// Cached contracts for each callee function so repeated callees are parsed once.
+    fn_contract_cache: HashMap<DefId, FnContracts<'tcx>>,
+}
+
+impl<'tcx> VerifyTargetCollector<'tcx> {
     /// Creates a new collector for the current type context.
     pub fn new(tcx: TyCtxt<'tcx>) -> Self {
-        VerifyAttrCollector {
+        VerifyTargetCollector {
             tcx,
             targets: Vec::new(),
-            unsafe_callees: HashMap::new(),
-            callee_requires: HashMap::new(),
+            fn_contract_cache: HashMap::new(),
         }
     }
 
@@ -69,7 +62,7 @@ impl<'tcx> VerifyAttrCollector<'tcx> {
     /// The collector first tries inline RAPx annotations. If none are found and
     /// the callee belongs to the standard library, it falls back to the backup
     /// JSON database bundled with the verify analysis.
-    fn get_requires_for_unsafe_callee(&self, callee_def_id: DefId) -> RequiresContracts<'tcx> {
+    fn get_requires_for_unsafe_callee(&self, callee_def_id: DefId) -> FnContracts<'tcx> {
         let mut requires = get_contract_from_annotation(self.tcx, callee_def_id);
         if requires.is_empty() && self.is_std_crate_def_id(callee_def_id) {
             requires = get_contract_from_entry(
@@ -78,6 +71,18 @@ impl<'tcx> VerifyAttrCollector<'tcx> {
                 get_std_backup_contracts(self.tcx, callee_def_id),
             );
         }
+        requires
+    }
+
+    /// Returns cached contracts for an unsafe callee, computing them on first use.
+    fn get_fn_contracts(&mut self, callee_def_id: DefId) -> FnContracts<'tcx> {
+        if let Some(requires) = self.fn_contract_cache.get(&callee_def_id) {
+            return requires.clone();
+        }
+
+        let requires = self.get_requires_for_unsafe_callee(callee_def_id);
+        self.fn_contract_cache
+            .insert(callee_def_id, requires.clone());
         requires
     }
 
@@ -102,7 +107,7 @@ impl<'tcx> VerifyAttrCollector<'tcx> {
     }
 }
 
-impl<'tcx> Visitor<'tcx> for VerifyAttrCollector<'tcx> {
+impl<'tcx> Visitor<'tcx> for VerifyTargetCollector<'tcx> {
     type NestedFilter = nested_filter::OnlyBodies;
 
     fn maybe_tcx(&mut self) -> Self::MaybeTyCtxt {
@@ -126,81 +131,70 @@ impl<'tcx> Visitor<'tcx> for VerifyAttrCollector<'tcx> {
             let unsafe_callees = get_unsafe_callees(self.tcx, def_id);
             let callee_requires = unsafe_callees
                 .iter()
-                .map(|callee_def_id| {
-                    (
-                        *callee_def_id,
-                        self.get_requires_for_unsafe_callee(*callee_def_id),
-                    )
-                })
+                .map(|callee_def_id| (*callee_def_id, self.get_fn_contracts(*callee_def_id)))
                 .collect();
-            self.unsafe_callees.insert(def_id, unsafe_callees);
-            self.callee_requires.insert(def_id, callee_requires);
-            self.targets.push(def_id);
+            self.targets.push(VerifyTarget {
+                def_id,
+                callee_requires,
+            });
         }
         walk_fn(self, fk, fd, b, id);
     }
 }
 
 /// Analysis pass that finds all functions annotated with `#[rapx::verify]`.
-pub struct VerifyTargetsCollector<'tcx> {
+pub struct VerifyTargetAnalysis<'tcx> {
     tcx: TyCtxt<'tcx>,
 }
 
-impl<'tcx> Analysis for VerifyTargetsCollector<'tcx> {
+impl<'tcx> Analysis for VerifyTargetAnalysis<'tcx> {
     fn name(&self) -> &'static str {
-        "Verify Collect Analysis"
+        "Verify Identify Targets Analysis"
     }
 
     /// Runs the collection pass and logs targets, unsafe callees, and contracts.
     fn run(&mut self) {
-        rap_info!("======== #[rapx::verify] collect ========");
-        let mut collector = VerifyAttrCollector::new(self.tcx);
+        rap_info!("======== #[rapx::verify] identify targets ========");
+        let mut collector = VerifyTargetCollector::new(self.tcx);
         self.tcx.hir_visit_all_item_likes_in_crate(&mut collector);
 
-        for target_def_id in &collector.targets {
-            let target_path = self.tcx.def_path_str(*target_def_id);
+        for target in &collector.targets {
+            let target_path = self.tcx.def_path_str(target.def_id);
             rap_info!(
-                "[rapx::verify::collect] target: {} (DefId: {:?})",
+                "[rapx::verify::identify-targets] target: {} (DefId: {:?})",
                 target_path,
-                target_def_id
+                target.def_id
             );
 
-            match collector.unsafe_callees.get(target_def_id) {
-                Some(unsafe_callees) if !unsafe_callees.is_empty() => {
-                    let mut unsafe_callee_ids: Vec<_> = unsafe_callees.iter().copied().collect();
-                    unsafe_callee_ids.sort_by_key(|def_id| self.tcx.def_path_str(*def_id));
+            if target.callee_requires.is_empty() {
+                rap_info!("  unsafe callees: <none>");
+                continue;
+            }
 
-                    for unsafe_callee_def_id in unsafe_callee_ids {
-                        let unsafe_callee_path = self.tcx.def_path_str(unsafe_callee_def_id);
-                        rap_info!(
-                            "  unsafe callee: {} (DefId: {:?})",
-                            unsafe_callee_path,
-                            unsafe_callee_def_id
-                        );
+            let mut unsafe_callee_ids: Vec<_> = target.callee_requires.keys().copied().collect();
+            unsafe_callee_ids.sort_by_key(|def_id| self.tcx.def_path_str(*def_id));
 
-                        match collector
-                            .callee_requires
-                            .get(target_def_id)
-                            .and_then(|callee_map| callee_map.get(&unsafe_callee_def_id))
-                        {
-                            Some(requires) if !requires.is_empty() => {
-                                for requires_contract in requires {
-                                    rap_info!(
-                                        "    safety contract: local={}, fields={:?}, {:?}",
-                                        requires_contract.local,
-                                        requires_contract.fields,
-                                        requires_contract.contract
-                                    );
-                                }
-                            }
-                            _ => {
-                                rap_info!("    safety contract: <none>");
-                            }
+            for unsafe_callee_def_id in unsafe_callee_ids {
+                let unsafe_callee_path = self.tcx.def_path_str(unsafe_callee_def_id);
+                rap_info!(
+                    "  unsafe callee: {} (DefId: {:?})",
+                    unsafe_callee_path,
+                    unsafe_callee_def_id
+                );
+
+                match target.callee_requires.get(&unsafe_callee_def_id) {
+                    Some(requires) if !requires.is_empty() => {
+                        for property in requires {
+                            rap_info!(
+                                "    safety contract: kind={:?}, args={:?}",
+                                property.kind,
+                                property.args
+                            );
                         }
                     }
-                }
-                _ => {
-                    rap_info!("  unsafe callees: <none>");
+                    _ => {
+                        rap_info!("    safety contract: <none>");
+                    }
                 }
             }
         }
@@ -215,38 +209,28 @@ impl<'tcx> Analysis for VerifyTargetsCollector<'tcx> {
     fn reset(&mut self) {}
 }
 
-impl<'tcx> VerifyTargetsCollector<'tcx> {
+impl<'tcx> VerifyTargetAnalysis<'tcx> {
     /// Creates a new analysis instance.
     pub fn new(tcx: TyCtxt<'tcx>) -> Self {
-        VerifyTargetsCollector { tcx }
+        VerifyTargetAnalysis { tcx }
     }
 }
 
 /// Builds contracts from backup JSON entries.
 ///
-/// Each entry is expected to store its first argument as the numeric target
-/// argument index, followed by the expression arguments needed to construct a
-/// `PropertyContract`.
+/// Each entry stores property-expression arguments that are passed directly into
+/// `Property::new`. The target information is resolved by `Property` itself
+/// from those arguments.
 fn get_contract_from_entry<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
     contract_entries: &[ContractEntry],
-) -> RequiresContracts<'tcx> {
+) -> FnContracts<'tcx> {
     let mut results = Vec::new();
     for entry in contract_entries {
         if entry.args.is_empty() {
             continue;
         }
-
-        let local_id = if let Ok(arg_idx) = entry.args[0].parse::<usize>() {
-            arg_idx
-        } else {
-            rap_error!(
-                "JSON Contract Error: First argument must be a valid numeric arg index, got {}",
-                entry.args[0]
-            );
-            continue;
-        };
 
         let mut exprs: Vec<Expr> = Vec::new();
         for arg_str in &entry.args {
@@ -270,12 +254,8 @@ fn get_contract_from_entry<'tcx>(
             continue;
         }
 
-        let contract = PropertyContract::new(tcx, def_id, entry.tag.as_str(), &exprs);
-        results.push(RequiresContract {
-            local: local_id,
-            fields: Vec::new(),
-            contract,
-        });
+        let property = Property::new(tcx, def_id, entry.tag.as_str(), &exprs);
+        results.push(property);
     }
     results
 }
@@ -304,7 +284,7 @@ fn is_rapx_requires_attr(attr: &Attribute) -> bool {
 fn get_contract_from_annotation<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
-) -> RequiresContracts<'tcx> {
+) -> FnContracts<'tcx> {
     let mut results = Vec::new();
 
     for attr in tcx.get_all_attrs(def_id).into_iter() {
@@ -318,18 +298,8 @@ fn get_contract_from_annotation<'tcx>(
             for property in par.tags.iter() {
                 let tag_name = property.tag.name();
                 let property_args = property.args.clone().into_vec();
-                let contract = PropertyContract::new(tcx, def_id, tag_name, &property_args);
-                let (local, fields_with_ty): (usize, Vec<(usize, rustc_middle::ty::Ty<'tcx>)>) =
-                    parse_contract_target(tcx, def_id, property_args);
-                let fields: Vec<usize> = fields_with_ty
-                    .into_iter()
-                    .map(|(field_idx, _)| field_idx)
-                    .collect();
-                results.push(RequiresContract {
-                    local,
-                    fields,
-                    contract,
-                });
+                let property = Property::new(tcx, def_id, tag_name, &property_args);
+                results.push(property);
             }
         }
     }
