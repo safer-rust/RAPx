@@ -2,9 +2,9 @@
 #![register_tool(rapx)]
 #![allow(unused)]
 
-#[rapx::invariant(Align(ptr, T), kind = "precond")]
-#[rapx::invariant(InBound(ptr, T, len), kind = "precond")]
-#[rapx::invariant(Init(ptr, T, len), kind = "precond")]
+#[rapx::requires(Align(ptr, T), kind = "invariant")]
+#[rapx::requires(InBound(ptr, T, len), kind = "invariant")]
+#[rapx::requires(Init(ptr, T, len), kind = "invariant")]
 struct Wrapper<T> {
     ptr: *const T,
     len: usize,

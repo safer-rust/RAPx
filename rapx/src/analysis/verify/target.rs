@@ -398,28 +398,6 @@ fn is_rapx_requires_attr(attr: &Attribute) -> bool {
     false
 }
 
-/// Returns whether an attribute is exactly `#[rapx::invariant(...)]`.
-fn is_rapx_invariant_attr(attr: &Attribute) -> bool {
-    if let Attribute::Unparsed(tool_attr) = attr {
-        return tool_attr.path.segments.len() == 2
-            && tool_attr.path.segments[0].as_str() == "rapx"
-            && tool_attr.path.segments[1].as_str() == "invariant";
-    }
-    false
-}
-
-/// Returns whether a HIR attribute is exactly `#[rapx::invariant(...)]`.
-fn is_hir_rapx_invariant_attr(attr: &rustc_hir::Attribute) -> bool {
-    if attr.is_doc_comment().is_some() {
-        return false;
-    }
-
-    let rapx = Symbol::intern("rapx");
-    let invariant = Symbol::intern("invariant");
-    let path = attr.path();
-    path.len() == 2 && path[0] == rapx && path[1] == invariant
-}
-
 /// Parses `requires` contracts from source-level RAPx annotations attached to a definition.
 fn get_contract_from_annotation<'tcx>(
     tcx: TyCtxt<'tcx>,
@@ -458,13 +436,15 @@ fn get_struct_invariants_from_annotation<'tcx>(
         let item = tcx.hir_expect_item(local_def_id);
         if matches!(item.kind, ItemKind::Struct(..)) {
             for attr in tcx.get_all_attrs(def_id) {
-                if !is_hir_rapx_invariant_attr(attr) {
+                if !is_rapx_requires_attr(attr) {
                     continue;
                 }
 
                 let attr_str = rustc_hir_pretty::attribute_to_string(&tcx, attr);
+                rap_info!("{:?}", attr_str);
                 let safety_attr =
                     safety_parser::safety::parse_attr_and_get_properties(attr_str.as_str());
+                rap_info!("{:?}", safety_attr);
                 for par in safety_attr.iter() {
                     for property in par.tags.iter() {
                         let tag_name = property.tag.name();
@@ -475,29 +455,7 @@ fn get_struct_invariants_from_annotation<'tcx>(
                 }
             }
         }
-
-        if !results.is_empty() {
-            return results;
-        }
     }
-
-    for attr in tcx.get_all_attrs(def_id).into_iter() {
-        if !is_rapx_tool_attr(attr) || !is_rapx_invariant_attr(attr) {
-            continue;
-        }
-
-        let attr_str = rustc_hir_pretty::attribute_to_string(&tcx, attr);
-        let safety_attr = safety_parser::safety::parse_attr_and_get_properties(attr_str.as_str());
-        for par in safety_attr.iter() {
-            for property in par.tags.iter() {
-                let tag_name = property.tag.name();
-                let property_args = property.args.clone().into_vec();
-                let property = Property::new(tcx, def_id, tag_name, &property_args);
-                results.push(property);
-            }
-        }
-    }
-
     results
 }
 
