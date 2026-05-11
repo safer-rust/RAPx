@@ -5,7 +5,7 @@ mod helpers;
 
 use crate::analysis::Analysis;
 use rustc_hir::{
-    Attribute, BodyId, FnDecl,
+    Attribute, BodyId, FnDecl, ItemKind,
     def_id::{DefId, LocalDefId},
     intravisit::{FnKind, Visitor, walk_fn},
 };
@@ -455,24 +455,31 @@ fn get_struct_invariants_from_annotation<'tcx>(
     let mut results = Vec::new();
 
     if let Some(local_def_id) = def_id.as_local() {
-        let hir_id = tcx.local_def_id_to_hir_id(local_def_id);
-        for attr in tcx.hir_attrs(hir_id).iter() {
-            if !is_hir_rapx_invariant_attr(attr) {
-                continue;
-            }
+        let hir = tcx.hir();
+        let item = hir.item(hir.local_def_id_to_hir_id(local_def_id));
+        if matches!(item.kind, ItemKind::Struct(..)) {
+            for attr in item.attrs.iter() {
+                if !is_hir_rapx_invariant_attr(attr) {
+                    continue;
+                }
 
-            let attr_str = rustc_hir_pretty::attribute_to_string(&tcx, attr);
-            let safety_attr = safety_parser::safety::parse_attr_and_get_properties(attr_str.as_str());
-            for par in safety_attr.iter() {
-                for property in par.tags.iter() {
-                    let tag_name = property.tag.name();
-                    let property_args = property.args.clone().into_vec();
-                    let property = Property::new(tcx, def_id, tag_name, &property_args);
-                    results.push(property);
+                let attr_str = rustc_hir_pretty::attribute_to_string(&tcx, attr);
+                let safety_attr =
+                    safety_parser::safety::parse_attr_and_get_properties(attr_str.as_str());
+                for par in safety_attr.iter() {
+                    for property in par.tags.iter() {
+                        let tag_name = property.tag.name();
+                        let property_args = property.args.clone().into_vec();
+                        let property = Property::new(tcx, def_id, tag_name, &property_args);
+                        results.push(property);
+                    }
                 }
             }
         }
-        return results;
+
+        if !results.is_empty() {
+            return results;
+        }
     }
 
     for attr in tcx.get_all_attrs(def_id).into_iter() {
