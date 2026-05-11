@@ -9,7 +9,7 @@ use crate::analysis::Analysis;
 use rustc_hir::{
     Attribute, BodyId, FnDecl, ItemKind,
     def_id::{DefId, LocalDefId},
-    intravisit::{FnKind, Visitor, walk_fn},
+    intravisit::{FnKind, Visitor},
 };
 use rustc_middle::{
     hir::nested_filter,
@@ -195,9 +195,9 @@ impl<'tcx> Visitor<'tcx> for VerifyTargetCollector<'tcx> {
     /// and the safety preconditions required by those callees.
     fn visit_fn(
         &mut self,
-        fk: FnKind<'tcx>,
-        fd: &'tcx FnDecl<'tcx>,
-        b: BodyId,
+        _fk: FnKind<'tcx>,
+        _fd: &'tcx FnDecl<'tcx>,
+        _b: BodyId,
         _span: Span,
         id: LocalDefId,
     ) -> Self::Result {
@@ -206,7 +206,6 @@ impl<'tcx> Visitor<'tcx> for VerifyTargetCollector<'tcx> {
             let function_target = self.build_function_target(def_id);
             self.push_function_target(function_target);
         }
-        walk_fn(self, fk, fd, b, id);
     }
 }
 
