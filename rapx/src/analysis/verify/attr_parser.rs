@@ -1,5 +1,5 @@
 use syn::{
-    Attribute, Expr, ExprCall, ExprPath, Lit, Result as SynResult, Token,
+    Expr, ExprCall, ExprPath, Lit, Result as SynResult, Token,
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
 };
@@ -29,8 +29,8 @@ impl Parse for RapxAttrItem {
             let value: Expr = input.parse()?;
 
             if ident == "kind" {
-                if let Expr::Lit(expr_lit) = value
-                    && let Lit::Str(kind) = expr_lit.lit
+                if let Expr::Lit(ref expr_lit) = value
+                    && let Lit::Str(ref kind) = expr_lit.lit
                 {
                     return Ok(Self::Kind(kind.value()));
                 }
@@ -52,8 +52,22 @@ impl Parse for RapxAttrItem {
     }
 }
 
+struct RapxOuterAttribute {
+    attr: syn::Attribute,
+}
+
+impl Parse for RapxOuterAttribute {
+    fn parse(input: ParseStream<'_>) -> SynResult<Self> {
+        Ok(Self {
+            attr: input.call(syn::Attribute::parse_outer)?.into_iter().next().ok_or_else(|| {
+                input.error("expected exactly one outer attribute")
+            })?,
+        })
+    }
+}
+
 pub fn parse_rapx_attr(attr_str: &str, expected_name: &str) -> SynResult<ParsedRapxAttr> {
-    let attr = syn::parse_str::<Attribute>(attr_str)?;
+    let attr = syn::parse_str::<RapxOuterAttribute>(attr_str)?.attr;
     if !is_expected_syn_rapx_attr(&attr, expected_name) {
         return Ok(ParsedRapxAttr::default());
     }
@@ -76,7 +90,7 @@ pub fn parse_rapx_attr(attr_str: &str, expected_name: &str) -> SynResult<ParsedR
     Ok(parsed)
 }
 
-fn is_expected_syn_rapx_attr(attr: &Attribute, expected_name: &str) -> bool {
+fn is_expected_syn_rapx_attr(attr: &syn::Attribute, expected_name: &str) -> bool {
     let segments: Vec<_> = attr
         .path()
         .segments
