@@ -391,32 +391,29 @@ fn get_contract_from_entry<'tcx>(
     results
 }
 
-/// Returns whether an attribute belongs to the RAPx tool namespace.
-fn is_rapx_tool_attr(attr: &Attribute) -> bool {
-    if let Attribute::Unparsed(tool_attr) = attr
-        && let Some(first_seg) = tool_attr.path.segments.first()
-    {
-        return first_seg.as_str() == "rapx";
-    }
-    false
-}
-
 /// Returns whether an attribute is exactly `#[rapx::requires(...)]`.
 fn is_rapx_requires_attr(attr: &Attribute) -> bool {
-    if let Attribute::Unparsed(tool_attr) = attr {
-        return tool_attr.path.segments.len() == 2
-            && tool_attr.path.segments[0].as_str() == "rapx"
-            && tool_attr.path.segments[1].as_str() == "requires";
-    }
-    false
+    matches!(
+        attr,
+        Attribute::Unparsed(tool_attr)
+            if tool_attr.path.segments.len() == 2
+                && tool_attr.path.segments[0].as_str() == "rapx"
+                && tool_attr.path.segments[1].as_str() == "requires"
+    )
 }
 
-/// Parses `requires` contracts from source-level RAPx annotations attached to a definition.
-fn get_contract_from_annotation<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> FnContracts<'tcx> {
+/// Collects properties from `#[rapx::requires(...)]` attributes that match the given kind filter.
+fn collect_properties_from_requires_attrs<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    attrs: impl IntoIterator<Item = &'tcx Attribute>,
+    property_def_id: DefId,
+    keep_kind: impl Fn(Option<&str>) -> bool,
+    parse_error_label: &str,
+) -> Vec<Property<'tcx>> {
     let mut results = Vec::new();
 
-    for attr in tcx.get_all_attrs(def_id).into_iter() {
-        if !is_rapx_tool_attr(attr) || !is_rapx_requires_attr(attr) {
+    for attr in attrs {
+        if !is_rapx_requires_attr(attr) {
             continue;
         }
 
@@ -424,26 +421,42 @@ fn get_contract_from_annotation<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> FnCon
         let parsed = match parse_rapx_attr(attr_str.as_str(), "requires") {
             Ok(parsed) => parsed,
             Err(err) => {
-                rap_error!("Failed to parse RAPx requires attr '{}': {}", attr_str, err);
+                rap_error!(
+                    "Failed to parse RAPx {} attr '{}': {}",
+                    parse_error_label,
+                    attr_str,
+                    err
+                );
                 continue;
             }
         };
 
-        if parsed.kind.as_deref() == Some("invariant") {
+        if !keep_kind(parsed.kind.as_deref()) {
             continue;
         }
 
-        for property in parsed.properties {
-            results.push(Property::new(
+        results.extend(parsed.properties.into_iter().map(|property| {
+            Property::new(
                 tcx,
-                def_id,
+                property_def_id,
                 property.tag.as_str(),
                 &property.args,
-            ));
-        }
+            )
+        }));
     }
 
     results
+}
+
+/// Parses `requires` contracts from source-level RAPx annotations attached to a definition.
+fn get_contract_from_annotation<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> FnContracts<'tcx> {
+    collect_properties_from_requires_attrs(
+        tcx,
+        tcx.get_all_attrs(def_id),
+        def_id,
+        |kind| kind != Some("invariant"),
+        "requires",
+    )
 }
 
 /// Parses struct invariants from source-level RAPx annotations attached to a struct definition.
@@ -452,45 +465,22 @@ fn get_struct_invariants_from_annotation<'tcx>(
     struct_def_id: DefId,
     context_def_id: DefId,
 ) -> StructInvariants<'tcx> {
-    let mut results = Vec::new();
+    let Some(local_def_id) = struct_def_id.as_local() else {
+        return Vec::new();
+    };
 
-    if let Some(local_def_id) = struct_def_id.as_local() {
-        let item = tcx.hir_expect_item(local_def_id);
-        if matches!(item.kind, ItemKind::Struct(..)) {
-            for attr in tcx.get_all_attrs(struct_def_id) {
-                if !is_rapx_requires_attr(attr) {
-                    continue;
-                }
-
-                let attr_str = rustc_hir_pretty::attribute_to_string(&tcx, attr);
-                let parsed = match parse_rapx_attr(attr_str.as_str(), "requires") {
-                    Ok(parsed) => parsed,
-                    Err(err) => {
-                        rap_error!(
-                            "Failed to parse RAPx invariant attr '{}': {}",
-                            attr_str,
-                            err
-                        );
-                        continue;
-                    }
-                };
-
-                if parsed.kind.as_deref() != Some("invariant") {
-                    continue;
-                }
-
-                for property in parsed.properties {
-                    results.push(Property::new(
-                        tcx,
-                        context_def_id,
-                        property.tag.as_str(),
-                        &property.args,
-                    ));
-                }
-            }
-        }
+    let item = tcx.hir_expect_item(local_def_id);
+    if !matches!(item.kind, ItemKind::Struct(..)) {
+        return Vec::new();
     }
-    results
+
+    collect_properties_from_requires_attrs(
+        tcx,
+        tcx.get_all_attrs(struct_def_id),
+        context_def_id,
+        |kind| kind == Some("invariant"),
+        "invariant",
+    )
 }
 
 /// Lazily loads the backup contract database for standard-library APIs.
