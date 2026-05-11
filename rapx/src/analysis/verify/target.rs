@@ -28,6 +28,7 @@ pub type FnContracts<'tcx> = Vec<Property<'tcx>>;
 pub type StructInvariants<'tcx> = Vec<Property<'tcx>>;
 
 /// Collected verification data for a function annotated with `#[rapx::verify]`.
+#[derive(Clone)]
 pub struct FunctionTarget<'tcx> {
     /// Function marked with `#[rapx::verify]` and selected as a target to verify.
     pub def_id: DefId,
@@ -47,21 +48,13 @@ pub struct StructTarget<'tcx> {
     pub function_targets: Vec<FunctionTarget<'tcx>>,
 }
 
-/// Top-level verification target.
-pub enum VerifyTarget<'tcx> {
-    /// A free function selected as a target to verify.
-    FreeFunction(FunctionTarget<'tcx>),
-    /// A struct target containing invariants and methods to verify.
-    Struct(StructTarget<'tcx>),
-}
-
 /// Visitor that collects targets annotated with `#[rapx::verify]`.
 pub struct VerifyTargetCollector<'tcx> {
     tcx: TyCtxt<'tcx>,
-    /// All top-level targets to verify collected from the current crate.
-    pub targets: Vec<VerifyTarget<'tcx>>,
-    /// Maps a struct DefId to the index of its target entry in `targets`.
-    struct_target_indices: HashMap<DefId, usize>,
+    /// All function targets to verify collected from the current crate.
+    pub function_targets: Vec<FunctionTarget<'tcx>>,
+    /// All struct targets to verify collected from the current crate.
+    pub struct_targets: HashMap<DefId, StructTarget<'tcx>>,
     /// Cached contracts for each callee function so repeated callees are parsed once.
     fn_contract_cache: HashMap<DefId, FnContracts<'tcx>>,
 }
@@ -71,8 +64,8 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
     pub fn new(tcx: TyCtxt<'tcx>) -> Self {
         VerifyTargetCollector {
             tcx,
-            targets: Vec::new(),
-            struct_target_indices: HashMap::new(),
+            function_targets: Vec::new(),
+            struct_targets: HashMap::new(),
             fn_contract_cache: HashMap::new(),
         }
     }
@@ -161,36 +154,21 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
         }
     }
 
-    /// Adds a function target either as a free-function target or under its owning struct target.
-    fn push_target(&mut self, function_target: FunctionTarget<'tcx>) {
+    /// Adds a function target and updates its owning struct target when applicable.
+    fn push_function_target(&mut self, function_target: FunctionTarget<'tcx>) {
+        self.function_targets.push(function_target.clone());
+
         if let Some(struct_def_id) = function_target.owner_struct_def_id {
-            self.push_struct_function_target(struct_def_id, function_target);
-        } else {
-            self.targets.push(VerifyTarget::FreeFunction(function_target));
+            self.struct_targets
+                .entry(struct_def_id)
+                .or_insert_with(|| StructTarget {
+                    def_id: struct_def_id,
+                    invariants: get_struct_invariants_from_annotation(self.tcx, struct_def_id),
+                    function_targets: Vec::new(),
+                })
+                .function_targets
+                .push(function_target);
         }
-    }
-
-    /// Adds a function target to the struct target that owns it.
-    fn push_struct_function_target(
-        &mut self,
-        struct_def_id: DefId,
-        function_target: FunctionTarget<'tcx>,
-    ) {
-        if let Some(&target_index) = self.struct_target_indices.get(&struct_def_id) {
-            if let Some(VerifyTarget::Struct(struct_target)) = self.targets.get_mut(target_index) {
-                struct_target.function_targets.push(function_target);
-            }
-            return;
-        }
-
-        let target_index = self.targets.len();
-        self.targets.push(VerifyTarget::Struct(StructTarget {
-            def_id: struct_def_id,
-            invariants: get_struct_invariants_from_annotation(self.tcx, struct_def_id),
-            function_targets: vec![function_target],
-        }));
-        self.struct_target_indices
-            .insert(struct_def_id, target_index);
     }
 }
 
@@ -216,7 +194,7 @@ impl<'tcx> Visitor<'tcx> for VerifyTargetCollector<'tcx> {
         if self.has_rapx_verify_attr(id) {
             let def_id = id.to_def_id();
             let function_target = self.build_function_target(def_id);
-            self.push_target(function_target);
+            self.push_function_target(function_target);
         }
         walk_fn(self, fk, fd, b, id);
     }
@@ -238,55 +216,61 @@ impl<'tcx> Analysis for VerifyTargetAnalysis<'tcx> {
         let mut collector = VerifyTargetCollector::new(self.tcx);
         self.tcx.hir_visit_all_item_likes_in_crate(&mut collector);
 
-        for target in &collector.targets {
-            match target {
-                VerifyTarget::FreeFunction(function_target) => {
-                    self.log_function_target(function_target, false);
-                }
-                VerifyTarget::Struct(struct_target) => {
-                    let struct_path = self.tcx.def_path_str(struct_target.def_id);
+        for function_target in collector
+            .function_targets
+            .iter()
+            .filter(|target| target.owner_struct_def_id.is_none())
+        {
+            self.log_function_target(function_target, false);
+        }
+
+        let mut struct_ids: Vec<_> = collector.struct_targets.keys().copied().collect();
+        struct_ids.sort_by_key(|def_id| self.tcx.def_path_str(*def_id));
+
+        for struct_def_id in struct_ids {
+            let Some(struct_target) = collector.struct_targets.get(&struct_def_id) else {
+                continue;
+            };
+            let struct_path = self.tcx.def_path_str(struct_target.def_id);
+            rap_info!(
+                "[rapx::verify::identify-targets] struct target: {} (DefId: {:?})",
+                struct_path,
+                struct_target.def_id
+            );
+
+            if struct_target.invariants.is_empty() {
+                rap_info!("  struct invariants: <none>");
+            } else {
+                for property in &struct_target.invariants {
                     rap_info!(
-                        "[rapx::verify::identify-targets] struct target: {} (DefId: {:?})",
-                        struct_path,
-                        struct_target.def_id
+                        "  struct invariant: kind={:?}, args={:?}",
+                        property.kind,
+                        property.args
                     );
-
-                    if struct_target.invariants.is_empty() {
-                        rap_info!("  struct invariants: <none>");
-                    } else {
-                        for property in &struct_target.invariants {
-                            rap_info!(
-                                "  struct invariant: kind={:?}, args={:?}",
-                                property.kind,
-                                property.args
-                            );
-                        }
-                    }
-
-                    for function_target in &struct_target.function_targets {
-                        self.log_function_target(function_target, true);
-                    }
                 }
+            }
+
+            for function_target in &struct_target.function_targets {
+                self.log_function_target(function_target, true);
             }
         }
 
-        let total_function_targets: usize = collector
-            .targets
+        let total_free_function_targets = collector
+            .function_targets
             .iter()
-            .map(|target| match target {
-                VerifyTarget::FreeFunction(_) => 1,
-                VerifyTarget::Struct(struct_target) => struct_target.function_targets.len(),
-            })
-            .sum();
-        let total_struct_targets = collector
-            .targets
-            .iter()
-            .filter(|target| matches!(target, VerifyTarget::Struct(_)))
+            .filter(|target| target.owner_struct_def_id.is_none())
             .count();
+        let total_method_targets = collector
+            .function_targets
+            .iter()
+            .filter(|target| target.owner_struct_def_id.is_some())
+            .count();
+        let total_struct_targets = collector.struct_targets.len();
 
         rap_info!(
-            "total: {} function target(s) to verify, {} struct target(s) to verify",
-            total_function_targets,
+            "total: {} free function target(s) to verify, {} method target(s) to verify, {} struct target(s) to verify",
+            total_free_function_targets,
+            total_method_targets,
             total_struct_targets
         );
         rap_info!("=======================================");
