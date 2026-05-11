@@ -76,7 +76,13 @@ pub fn parse_expr_into_local_and_ty<'tcx>(
         let (param_names, param_tys) = parse_signature(tcx, def_id);
         if param_names[0] != "0" {
             if let Some(param_index) = param_names.iter().position(|name| name == &base_ident) {
-                return resolve_projection_from_base_ident(tcx, base_ident, fields, param_index + 1, param_tys[param_index]);
+                return resolve_projection_from_base_ident(
+                    tcx,
+                    base_ident,
+                    fields,
+                    param_index + 1,
+                    param_tys[param_index],
+                );
             }
         }
 
@@ -173,11 +179,12 @@ pub fn access_ident_recursive(expr: &Expr) -> Option<(String, Vec<String>)> {
             }
         }
         Expr::Field(syn::ExprField { base, member, .. }) => {
-            let (base_ident, mut fields) = if let Some((base_ident, fields)) = access_ident_recursive(base) {
-                (base_ident, fields)
-            } else {
-                return None;
-            };
+            let (base_ident, mut fields) =
+                if let Some((base_ident, fields)) = access_ident_recursive(base) {
+                    (base_ident, fields)
+                } else {
+                    return None;
+                };
             let field_name = match member {
                 syn::Member::Named(ident) => ident.to_string(),
                 syn::Member::Unnamed(index) => index.index.to_string(),
@@ -255,18 +262,17 @@ fn find_generic_param<'tcx>(
     None
 }
 
-fn find_generic_in_ty<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    ty: Ty<'tcx>,
-    type_ident: &str,
-) -> Option<Ty<'tcx>> {
+fn find_generic_in_ty<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>, type_ident: &str) -> Option<Ty<'tcx>> {
     match ty.kind() {
         TyKind::Param(param_ty) => {
             if param_ty.name.as_str() == type_ident {
                 return Some(ty);
             }
         }
-        TyKind::RawPtr(ty, _) | TyKind::Ref(_, ty, _) | TyKind::Slice(ty) | TyKind::Array(ty, _) => {
+        TyKind::RawPtr(ty, _)
+        | TyKind::Ref(_, ty, _)
+        | TyKind::Slice(ty)
+        | TyKind::Array(ty, _) => {
             if let Some(found) = find_generic_in_ty(tcx, *ty, type_ident) {
                 return Some(found);
             }
@@ -360,7 +366,9 @@ fn resolve_projection_from_struct_ident<'tcx>(
     let mut current_ty = field_ty;
     let mut field_indices = vec![(field_idx, current_ty)];
     for field_name in fields {
-        let Some((next_field_idx, next_field_ty)) = resolve_next_field(tcx, current_ty, &field_name) else {
+        let Some((next_field_idx, next_field_ty)) =
+            resolve_next_field(tcx, current_ty, &field_name)
+        else {
             return None;
         };
         current_ty = next_field_ty;

@@ -59,9 +59,11 @@ struct RapxOuterAttribute {
 impl Parse for RapxOuterAttribute {
     fn parse(input: ParseStream<'_>) -> SynResult<Self> {
         Ok(Self {
-            attr: input.call(syn::Attribute::parse_outer)?.into_iter().next().ok_or_else(|| {
-                input.error("expected exactly one outer attribute")
-            })?,
+            attr: input
+                .call(syn::Attribute::parse_outer)?
+                .into_iter()
+                .next()
+                .ok_or_else(|| input.error("expected exactly one outer attribute"))?,
         })
     }
 }

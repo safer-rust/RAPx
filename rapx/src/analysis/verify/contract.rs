@@ -408,7 +408,12 @@ impl<'tcx> Property<'tcx> {
         Self { kind, args }
     }
 
-    fn new_with_target(kind: PropertyKind, tcx: TyCtxt<'tcx>, def_id: DefId, exprs: &[Expr]) -> Self {
+    fn new_with_target(
+        kind: PropertyKind,
+        tcx: TyCtxt<'tcx>,
+        def_id: DefId,
+        exprs: &[Expr],
+    ) -> Self {
         let args = exprs
             .first()
             .map(|expr| Self::parse_target_arg(tcx, def_id, expr))
@@ -444,7 +449,9 @@ impl<'tcx> Property<'tcx> {
     fn parse_target_arg(tcx: TyCtxt<'tcx>, def_id: DefId, expr: &Expr) -> PropertyArg<'tcx> {
         Self::parse_contract_place(tcx, def_id, expr)
             .map(PropertyArg::Place)
-            .unwrap_or_else(|| PropertyArg::Expr(Self::parse_contract_expr(tcx, def_id, expr, "target")))
+            .unwrap_or_else(|| {
+                PropertyArg::Expr(Self::parse_contract_expr(tcx, def_id, expr, "target"))
+            })
     }
 
     fn parse_contract_expr(
@@ -654,12 +661,20 @@ impl<'tcx> Property<'tcx> {
         vec![
             NumericPredicate::new(
                 lower_expr,
-                if lower_inclusive { RelOp::Le } else { RelOp::Lt },
+                if lower_inclusive {
+                    RelOp::Le
+                } else {
+                    RelOp::Lt
+                },
                 value_expr.clone(),
             ),
             NumericPredicate::new(
                 value_expr,
-                if upper_inclusive { RelOp::Le } else { RelOp::Lt },
+                if upper_inclusive {
+                    RelOp::Le
+                } else {
+                    RelOp::Lt
+                },
                 upper_expr,
             ),
         ]
