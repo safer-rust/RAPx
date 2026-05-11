@@ -2,6 +2,8 @@
 mod contract;
 #[path = "helpers.rs"]
 mod helpers;
+#[path = "attr_parser.rs"]
+mod attr_parser;
 
 use crate::analysis::Analysis;
 use rustc_hir::{
@@ -18,6 +20,7 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 use syn::Expr;
 
+use attr_parser::parse_rapx_attr;
 use contract::{ContractEntry, Property};
 use helpers::{get_cleaned_def_path_name, get_unsafe_callees};
 
@@ -411,14 +414,20 @@ fn get_contract_from_annotation<'tcx>(
         }
 
         let attr_str = rustc_hir_pretty::attribute_to_string(&tcx, attr);
-        let safety_attr = safety_parser::safety::parse_attr_and_get_properties(attr_str.as_str());
-        for par in safety_attr.iter() {
-            for property in par.tags.iter() {
-                let tag_name = property.tag.name();
-                let property_args = property.args.clone().into_vec();
-                let property = Property::new(tcx, def_id, tag_name, &property_args);
-                results.push(property);
+        let parsed = match parse_rapx_attr(attr_str.as_str(), "requires") {
+            Ok(parsed) => parsed,
+            Err(err) => {
+                rap_error!("Failed to parse RAPx requires attr '{}': {}", attr_str, err);
+                continue;
             }
+        };
+
+        if parsed.kind.as_deref() == Some("invariant") {
+            continue;
+        }
+
+        for property in parsed.properties {
+            results.push(Property::new(tcx, def_id, property.tag.as_str(), &property.args));
         }
     }
 
@@ -441,17 +450,20 @@ fn get_struct_invariants_from_annotation<'tcx>(
                 }
 
                 let attr_str = rustc_hir_pretty::attribute_to_string(&tcx, attr);
-                rap_info!("{:?}", attr_str);
-                let safety_attr =
-                    safety_parser::safety::parse_attr_and_get_properties(attr_str.as_str());
-                rap_info!("{:?}", safety_attr);
-                for par in safety_attr.iter() {
-                    for property in par.tags.iter() {
-                        let tag_name = property.tag.name();
-                        let property_args = property.args.clone().into_vec();
-                        let property = Property::new(tcx, def_id, tag_name, &property_args);
-                        results.push(property);
+                let parsed = match parse_rapx_attr(attr_str.as_str(), "requires") {
+                    Ok(parsed) => parsed,
+                    Err(err) => {
+                        rap_error!("Failed to parse RAPx invariant attr '{}': {}", attr_str, err);
+                        continue;
                     }
+                };
+
+                if parsed.kind.as_deref() != Some("invariant") {
+                    continue;
+                }
+
+                for property in parsed.properties {
+                    results.push(Property::new(tcx, def_id, property.tag.as_str(), &property.args));
                 }
             }
         }
