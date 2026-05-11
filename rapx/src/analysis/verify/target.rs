@@ -166,7 +166,11 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
                 .entry(struct_def_id)
                 .or_insert_with(|| StructTarget {
                     def_id: struct_def_id,
-                    invariants: get_struct_invariants_from_annotation(self.tcx, struct_def_id),
+                    invariants: get_struct_invariants_from_annotation(
+                        self.tcx,
+                        struct_def_id,
+                        function_target.def_id,
+                    ),
                     function_targets: Vec::new(),
                 })
                 .function_targets
@@ -437,14 +441,15 @@ fn get_contract_from_annotation<'tcx>(
 /// Parses struct invariants from source-level RAPx annotations attached to a struct definition.
 fn get_struct_invariants_from_annotation<'tcx>(
     tcx: TyCtxt<'tcx>,
-    def_id: DefId,
+    struct_def_id: DefId,
+    context_def_id: DefId,
 ) -> StructInvariants<'tcx> {
     let mut results = Vec::new();
 
-    if let Some(local_def_id) = def_id.as_local() {
+    if let Some(local_def_id) = struct_def_id.as_local() {
         let item = tcx.hir_expect_item(local_def_id);
         if matches!(item.kind, ItemKind::Struct(..)) {
-            for attr in tcx.get_all_attrs(def_id) {
+            for attr in tcx.get_all_attrs(struct_def_id) {
                 if !is_rapx_requires_attr(attr) {
                     continue;
                 }
@@ -463,7 +468,12 @@ fn get_struct_invariants_from_annotation<'tcx>(
                 }
 
                 for property in parsed.properties {
-                    results.push(Property::new(tcx, def_id, property.tag.as_str(), &property.args));
+                    results.push(Property::new(
+                        tcx,
+                        context_def_id,
+                        property.tag.as_str(),
+                        &property.args,
+                    ));
                 }
             }
         }
