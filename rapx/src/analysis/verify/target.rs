@@ -455,10 +455,9 @@ fn get_struct_invariants_from_annotation<'tcx>(
     let mut results = Vec::new();
 
     if let Some(local_def_id) = def_id.as_local() {
-        let hir = tcx.hir();
-        let item = hir.item(hir.local_def_id_to_hir_id(local_def_id));
+        let item = tcx.hir_expect_item(local_def_id);
         if matches!(item.kind, ItemKind::Struct(..)) {
-            for attr in item.attrs.iter() {
+            for attr in tcx.get_all_attrs(def_id) {
                 if !is_hir_rapx_invariant_attr(attr) {
                     continue;
                 }
