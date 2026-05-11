@@ -74,39 +74,14 @@ pub fn parse_expr_into_local_and_ty<'tcx>(
 ) -> Option<(usize, Vec<(usize, Ty<'tcx>)>, Ty<'tcx>)> {
     if let Some((base_ident, fields)) = access_ident_recursive(expr) {
         let (param_names, param_tys) = parse_signature(tcx, def_id);
-        if param_names[0] == "0".to_string() {
-            return None;
-        }
-        if let Some(param_index) = param_names.iter().position(|name| name == &base_ident) {
-            let mut current_ty = param_tys[param_index];
-            let mut field_indices = Vec::new();
-            for field_name in fields {
-                let peeled_ty = current_ty.peel_refs();
-                if let TyKind::Adt(adt_def, arg_list) = *peeled_ty.kind() {
-                    let variant = adt_def.non_enum_variant();
-                    if let Ok(field_idx) = field_name.parse::<usize>() {
-                        if field_idx < variant.fields.len() {
-                            current_ty = variant.fields[FieldIdx::from_usize(field_idx)].ty(tcx, arg_list);
-                            field_indices.push((field_idx, current_ty));
-                            continue;
-                        }
-                    }
-                    if let Some((idx, _)) = variant
-                        .fields
-                        .iter()
-                        .enumerate()
-                        .find(|(_, f)| f.ident(tcx).name.to_string() == field_name)
-                    {
-                        current_ty = variant.fields[FieldIdx::from_usize(idx)].ty(tcx, arg_list);
-                        field_indices.push((idx, current_ty));
-                    } else {
-                        break;
-                    }
-                } else {
-                    break;
-                }
+        if param_names[0] != "0" {
+            if let Some(param_index) = param_names.iter().position(|name| name == &base_ident) {
+                return resolve_projection_from_base_ident(tcx, base_ident, fields, param_index + 1, param_tys[param_index]);
             }
-            return Some((param_index + 1, field_indices, current_ty));
+        }
+
+        if let Some(struct_ty) = get_struct_self_ty(tcx, def_id) {
+            return resolve_projection_from_struct_ident(tcx, base_ident, fields, struct_ty);
         }
     }
     None
@@ -270,6 +245,13 @@ fn find_generic_param<'tcx>(
             return Some(found);
         }
     }
+
+    if let Some(struct_ty) = get_struct_self_ty(tcx, def_id) {
+        if let Some(found) = find_generic_in_ty(tcx, struct_ty, &type_ident) {
+            return Some(found);
+        }
+    }
+
     None
 }
 
@@ -327,6 +309,89 @@ fn get_struct_name(tcx: TyCtxt<'_>, def_id: DefId) -> Option<String> {
                 .unwrap_or("")
                 .to_string();
             return Some(struct_name);
+        }
+    }
+    None
+}
+
+fn get_struct_self_ty<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Option<Ty<'tcx>> {
+    let assoc_item = tcx.opt_associated_item(def_id)?;
+    let impl_id = assoc_item.impl_container(tcx)?;
+    let self_ty = tcx.type_of(impl_id).skip_binder();
+    match self_ty.kind() {
+        TyKind::Adt(_, _) => Some(self_ty),
+        _ => None,
+    }
+}
+
+fn resolve_projection_from_base_ident<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    base_ident: String,
+    fields: Vec<String>,
+    base_local: usize,
+    base_ty: Ty<'tcx>,
+) -> Option<(usize, Vec<(usize, Ty<'tcx>)>, Ty<'tcx>)> {
+    let mut current_ty = base_ty;
+    let mut field_indices = Vec::new();
+    for field_name in fields {
+        let Some((field_idx, field_ty)) = resolve_next_field(tcx, current_ty, &field_name) else {
+            return if field_indices.is_empty() && base_ident.is_empty() {
+                None
+            } else {
+                None
+            };
+        };
+        current_ty = field_ty;
+        field_indices.push((field_idx, current_ty));
+    }
+    Some((base_local, field_indices, current_ty))
+}
+
+fn resolve_projection_from_struct_ident<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    base_ident: String,
+    fields: Vec<String>,
+    struct_ty: Ty<'tcx>,
+) -> Option<(usize, Vec<(usize, Ty<'tcx>)>, Ty<'tcx>)> {
+    let Some((field_idx, field_ty)) = resolve_next_field(tcx, struct_ty, &base_ident) else {
+        return None;
+    };
+
+    let mut current_ty = field_ty;
+    let mut field_indices = vec![(field_idx, current_ty)];
+    for field_name in fields {
+        let Some((next_field_idx, next_field_ty)) = resolve_next_field(tcx, current_ty, &field_name) else {
+            return None;
+        };
+        current_ty = next_field_ty;
+        field_indices.push((next_field_idx, current_ty));
+    }
+
+    Some((1, field_indices, current_ty))
+}
+
+fn resolve_next_field<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    base_ty: Ty<'tcx>,
+    field_name: &str,
+) -> Option<(usize, Ty<'tcx>)> {
+    let peeled_ty = base_ty.peel_refs();
+    if let TyKind::Adt(adt_def, arg_list) = *peeled_ty.kind() {
+        let variant = adt_def.non_enum_variant();
+        if let Ok(field_idx) = field_name.parse::<usize>() {
+            if field_idx < variant.fields.len() {
+                let field_ty = variant.fields[FieldIdx::from_usize(field_idx)].ty(tcx, arg_list);
+                return Some((field_idx, field_ty));
+            }
+        }
+        if let Some((idx, _)) = variant
+            .fields
+            .iter()
+            .enumerate()
+            .find(|(_, f)| f.ident(tcx).name.to_string() == field_name)
+        {
+            let field_ty = variant.fields[FieldIdx::from_usize(idx)].ty(tcx, arg_list);
+            return Some((idx, field_ty));
         }
     }
     None
