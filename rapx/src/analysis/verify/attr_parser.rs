@@ -8,11 +8,11 @@ use syn::{
 pub struct ParsedProperty {
     pub tag: String,
     pub args: Vec<Expr>,
+    pub kind: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct ParsedRapxAttr {
-    pub kind: Option<String>,
     pub properties: Vec<ParsedProperty>,
 }
 
@@ -85,7 +85,20 @@ pub fn parse_rapx_attr(attr_str: &str, expected_name: &str) -> SynResult<ParsedR
     for item in items {
         match item {
             RapxAttrItem::Property(property) => parsed.properties.push(property),
-            RapxAttrItem::Kind(kind) => parsed.kind = Some(kind),
+            RapxAttrItem::Kind(kind) => {
+                let last = parsed.properties.last_mut().ok_or_else(|| {
+                    syn::Error::new_spanned(&attr, "kind must follow a RAPx property")
+                })?;
+
+                if last.kind.is_some() {
+                    return Err(syn::Error::new_spanned(
+                        &attr,
+                        "duplicate kind for RAPx property",
+                    ));
+                }
+
+                last.kind = Some(kind);
+            }
         }
     }
 
@@ -121,6 +134,7 @@ fn parse_property_expr(expr: Expr) -> SynResult<ParsedProperty> {
             Ok(ParsedProperty {
                 tag,
                 args: args.into_iter().collect(),
+                kind: None,
             })
         }
         other => Err(syn::Error::new_spanned(
