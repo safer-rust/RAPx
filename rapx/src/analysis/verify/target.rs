@@ -402,12 +402,11 @@ fn is_rapx_requires_attr(attr: &Attribute) -> bool {
     )
 }
 
-/// Collects properties from `#[rapx::requires(...)]` attributes that match the given kind filter.
+/// Collects properties from `#[rapx::requires(...)]` attributes.
 fn collect_properties_from_requires_attrs<'tcx>(
     tcx: TyCtxt<'tcx>,
     attrs: impl IntoIterator<Item = &'tcx Attribute>,
     property_def_id: DefId,
-    keep_kind: impl Fn(Option<&str>) -> bool,
     parse_error_label: &str,
 ) -> Vec<Property<'tcx>> {
     let mut results = Vec::new();
@@ -431,10 +430,6 @@ fn collect_properties_from_requires_attrs<'tcx>(
             }
         };
 
-        if !keep_kind(parsed.kind.as_deref()) {
-            continue;
-        }
-
         results.extend(parsed.properties.into_iter().map(|property| {
             Property::new(
                 tcx,
@@ -450,13 +445,7 @@ fn collect_properties_from_requires_attrs<'tcx>(
 
 /// Parses `requires` contracts from source-level RAPx annotations attached to a definition.
 fn get_contract_from_annotation<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> FnContracts<'tcx> {
-    collect_properties_from_requires_attrs(
-        tcx,
-        tcx.get_all_attrs(def_id),
-        def_id,
-        |kind| kind != Some("invariant"),
-        "requires",
-    )
+    collect_properties_from_requires_attrs(tcx, tcx.get_all_attrs(def_id), def_id, "requires")
 }
 
 /// Parses struct invariants from source-level RAPx annotations attached to a struct definition.
@@ -478,7 +467,6 @@ fn get_struct_invariants_from_annotation<'tcx>(
         tcx,
         tcx.get_all_attrs(struct_def_id),
         context_def_id,
-        |kind| kind == Some("invariant"),
         "invariant",
     )
 }
