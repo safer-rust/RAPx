@@ -73,6 +73,7 @@ impl<T> SliceExt<T> for [T] {
 
     #[rapx::verify]
     #[rapx::requires(ValidNum(mid, [0,self.len]), kind = "precond")]
+
     unsafe fn split_at_mut_unchecked_ext(&mut self, mid: usize) -> (&mut [T], &mut [T]) {
         let len = self.len();
         let ptr = self.as_mut_ptr();
