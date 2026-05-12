@@ -7,10 +7,10 @@
 //! The currently supported shape is:
 //!
 //! ```text
-//! #[rapx::requires(property_call, kind = "...")]
+//! #[rapx::requires(property_call; kind = "...")]
 //! ```
 //!
-//! where `kind = "..."` applies to the immediately preceding property.
+//! where `kind = "..."` applies to the property in the same item.
 
 use syn::{
     Expr, ExprCall, ExprPath, Lit, Result as SynResult, Token,
@@ -36,45 +36,62 @@ pub struct ParsedRapxAttr {
     pub properties: Vec<ParsedProperty>,
 }
 
-/// One comma-separated item inside `#[rapx::requires(...)]`.
-enum RequireAttrItem {
-    /// A property call such as `nonzero(x)`.
-    Property(ParsedProperty),
-    /// A `kind = "..."` item attached to the previous property.
-    Kind(String),
-}
-
-impl Parse for RequireAttrItem {
-    /// Parse one item from a `requires` attribute argument list.
+/// One property item inside `#[rapx::requires(...)]`.
+///
+/// Supported forms:
+/// - `nonzero(x)`
+/// - `nonzero(x); kind = "ptr"`
+impl Parse for ParsedProperty {
+    /// Parse one property item from a `requires` attribute argument list.
     fn parse(input: ParseStream<'_>) -> SynResult<Self> {
-        // Handle named arguments like `kind = "..."`.
-        if input.peek(syn::Ident) && input.peek2(Token![=]) {
-            let ident: syn::Ident = input.parse()?;
-            let _: Token![=] = input.parse()?;
-            let value: Expr = input.parse()?;
+        let expr: Expr = input.parse()?;
+        let mut property = parse_property_expr(expr)?;
 
-            if ident == "kind" {
-                if let Expr::Lit(ref expr_lit) = value
-                    && let Lit::Str(ref kind) = expr_lit.lit
-                {
-                    return Ok(Self::Kind(kind.value()));
+        if input.peek(Token![;]) {
+            let _: Token![;] = input.parse()?;
+
+            while !input.is_empty() && !input.peek(Token![,]) {
+                let ident: syn::Ident = input.parse()?;
+                let _: Token![=] = input.parse()?;
+                let value: Expr = input.parse()?;
+
+                match ident.to_string().as_str() {
+                    "kind" => {
+                        if property.kind.is_some() {
+                            return Err(syn::Error::new(
+                                ident.span(),
+                                "duplicate kind for RAPx property",
+                            ));
+                        }
+
+                        if let Expr::Lit(ref expr_lit) = value
+                            && let Lit::Str(ref kind) = expr_lit.lit
+                        {
+                            property.kind = Some(kind.value());
+                        } else {
+                            return Err(syn::Error::new_spanned(
+                                value,
+                                "RAPx requires attribute kind must be a string literal",
+                            ));
+                        }
+                    }
+                    _ => {
+                        return Err(syn::Error::new(
+                            ident.span(),
+                            "unsupported named RAPx requires attribute argument",
+                        ));
+                    }
                 }
 
-                return Err(syn::Error::new_spanned(
-                    value,
-                    "RAPx requires attribute kind must be a string literal",
-                ));
-            }
+                if input.peek(Token![,]) {
+                    break;
+                }
 
-            return Err(syn::Error::new(
-                ident.span(),
-                "unsupported named RAPx requires attribute argument",
-            ));
+                let _: Token![;] = input.parse()?;
+            }
         }
 
-        // Otherwise parse a property call.
-        let expr: Expr = input.parse()?;
-        Ok(Self::Property(parse_property_expr(expr)?))
+        Ok(property)
     }
 }
 
@@ -112,33 +129,12 @@ pub fn parse_rapx_attr(attr_str: &str, expected_name: &str) -> SynResult<ParsedR
         return Ok(ParsedRapxAttr::default());
     };
 
-    let items =
-        meta_list.parse_args_with(Punctuated::<RequireAttrItem, Token![,]>::parse_terminated)?;
+    let properties =
+        meta_list.parse_args_with(Punctuated::<ParsedProperty, Token![,]>::parse_terminated)?;
 
-    let mut parsed = ParsedRapxAttr::default();
-    for item in items {
-        match item {
-            // Record each property in source order.
-            RequireAttrItem::Property(property) => parsed.properties.push(property),
-            // Attach `kind` to the most recently parsed property.
-            RequireAttrItem::Kind(kind) => {
-                let last = parsed.properties.last_mut().ok_or_else(|| {
-                    syn::Error::new_spanned(&attr, "kind must follow a RAPx property")
-                })?;
-
-                if last.kind.is_some() {
-                    return Err(syn::Error::new_spanned(
-                        &attr,
-                        "duplicate kind for RAPx property",
-                    ));
-                }
-
-                last.kind = Some(kind);
-            }
-        }
-    }
-
-    Ok(parsed)
+    Ok(ParsedRapxAttr {
+        properties: properties.into_iter().collect(),
+    })
 }
 
 /// Check whether an attribute path is exactly `rapx::<expected_name>`.
