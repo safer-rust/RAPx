@@ -98,7 +98,7 @@ fn report_string_ascii_bug(graph: &Graph, contains_span: Span) {
     let message = Level::Warning
         .title("Unnecessary encoding checkings detected.")
         .snippet(snippet)
-        .footer(Level::Help.title("Use to_ascii_lowercase istead."));
+        .footer(Level::Help.title("Use to_ascii_lowercase instead."));
     let renderer = Renderer::styled();
     println!("{}", renderer.render(message));
 }
