@@ -1,7 +1,7 @@
 use super::draw_dot::render_dot_string;
-use crate::analysis::{
-    core::dataflow::{DataFlowAnalysis, default::DataFlowAnalyzer},
-    senryx::{callsite::has_unsafe_api_contract, contract::PropertyContract},
+use crate::{
+    analysis::core::dataflow::{DataFlowAnalysis, default::DataFlowAnalyzer},
+    check::senryx::{callsite::has_unsafe_api_contract, contract::PropertyContract},
 };
 use crate::def_id::*;
 use crate::{rap_debug, rap_warn};
@@ -740,10 +740,10 @@ pub fn generate_contract_from_std_annotation_json(
 }
 
 /// Same with `generate_contract_from_annotation` but does not contain field types.
-pub fn generate_contract_from_annotation_without_field_types(
-    tcx: TyCtxt,
+pub fn generate_contract_from_annotation_without_field_types<'tcx>(
+    tcx: TyCtxt<'tcx>,
     def_id: DefId,
-) -> Vec<(usize, Vec<usize>, PropertyContract)> {
+) -> Vec<(usize, Vec<usize>, PropertyContract<'tcx>)> {
     let contracts_with_ty = generate_contract_from_annotation(tcx, def_id);
 
     contracts_with_ty
@@ -774,10 +774,10 @@ pub fn is_verify_target_func(tcx: TyCtxt, def_id: DefId) -> bool {
 /// Then generate contract facts for the args.
 /// This function will recognize the args name and record states to MIR variable (represent by usize).
 /// Return value means Vec<(local_id, fields of this local, contracts)>
-pub fn generate_contract_from_annotation(
-    tcx: TyCtxt,
+pub fn generate_contract_from_annotation<'tcx>(
+    tcx: TyCtxt<'tcx>,
     def_id: DefId,
-) -> Vec<(usize, Vec<(usize, Ty)>, PropertyContract)> {
+) -> Vec<(usize, Vec<(usize, Ty<'tcx>)>, PropertyContract<'tcx>)> {
     const REGISTER_TOOL: &str = "rapx";
     let tool_attrs = tcx.get_all_attrs(def_id).into_iter().filter(|attr| {
         if let Attribute::Unparsed(tool_attr) = attr {
