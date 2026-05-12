@@ -5,10 +5,12 @@
 #[macro_use]
 pub mod utils;
 pub mod analysis;
+pub mod check;
 pub mod cli;
 pub mod def_id;
 pub mod help;
 pub mod preprocess;
+pub mod verify;
 
 extern crate rustc_abi;
 extern crate rustc_ast;
@@ -36,9 +38,10 @@ use crate::{
     analysis::{
         core::{alias_analysis::mfp::MfpAliasAnalyzer, api_dependency},
         scan::ScanAnalysis,
-        verify::target::VerifyTargetAnalysis,
     },
-    cli::{AliasStrategyKind, AnalysisKind, Commands, OptLevel, RapxArgs, VerifyArgs},
+    check::{opt::Opt, rcanary::rCanary, safedrop::SafeDrop, senryx::{CheckLevel, SenryxCheck}},
+    cli::{AliasStrategyKind, AnalysisKind, CheckArgs, Commands, OptLevel, RapxArgs, VerifyArgs},
+    verify::target::VerifyTargetAnalysis,
 };
 use analysis::{
     Analysis,
@@ -55,10 +58,6 @@ use analysis::{
         },
         ssa_transform::SSATrans,
     },
-    opt::Opt,
-    rcanary::rCanary,
-    safedrop::SafeDrop,
-    senryx::{CheckLevel, SenryxCheck},
     upg::{TargetCrate, UPGAnalysis},
     utils::show_mir::ShowMir,
 };
@@ -157,18 +156,18 @@ impl Callbacks for RapCallback {
 /// Start the analysis with the features enabled.
 pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
     match &callback.args.command {
-        &Commands::Check {
+        Commands::Check(CheckArgs {
             uaf,
             mleak,
             opt,
             infer,
             verify,
             verify_std,
-        } => {
+        }) => {
             if uaf.is_some() {
                 SafeDrop::new(tcx).start();
             }
-            if mleak {
+            if *mleak {
                 let mut heap = OwnedHeapAnalyzer::new(tcx);
                 heap.run();
                 let adt_owner = heap.get_all_items();
@@ -181,16 +180,16 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
                     OptLevel::All => Opt::new(tcx, 2).start(),
                 }
             }
-            if infer {
+            if *infer {
                 let check_level = CheckLevel::Medium;
                 SenryxCheck::new(tcx, 2).start(check_level, false);
             }
-            if verify {
+            if *verify {
                 let check_level = CheckLevel::Medium;
                 SenryxCheck::new(tcx, 2).start(check_level, true);
             }
 
-            if verify_std {
+            if *verify_std {
                 SenryxCheck::new(tcx, 2).start_analyze_std_func();
                 // SenryxCheck::new(tcx, 2).generate_uig_by_def_id();
             }

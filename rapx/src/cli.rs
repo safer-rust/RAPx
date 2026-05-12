@@ -1,6 +1,8 @@
 mod analyze;
+mod check;
 mod verify;
 pub use analyze::*;
+pub use check::*;
 use clap::{Args, Subcommand, ValueEnum};
 pub use verify::*;
 
@@ -26,36 +28,7 @@ pub enum Commands {
     },
     /// check potential vulnerabilities in the crate,
     /// e.g., use-after-free, memory leak
-    Check {
-        /// detect use-after-free/double-free
-        #[arg(
-            short = 'f',
-            num_args=0..=1,
-            default_missing_value = "1",
-            long,
-        )]
-        uaf: Option<usize>,
-
-        /// detect memory leakage
-        #[arg(short = 'm', long)]
-        mleak: bool,
-
-        /// automatically detect code optimization chances
-        #[arg(short = 'o', long, default_missing_value = "default")]
-        opt: Option<OptLevel>,
-
-        /// (under development) infer the safety properties required by unsafe APIs.
-        #[arg(long)]
-        infer: bool,
-
-        /// (under development) verify if the safety requirements of unsafe API are satisfied.
-        #[arg(long)]
-        verify: bool,
-
-        /// (under development) verify if the safety requirements of unsafe API are satisfied.
-        #[arg(long)]
-        verify_std: bool,
-    },
+    Check(CheckArgs),
     /// verify annotated functions in the crate, e.g., identify #[rapx::verify] targets
     Verify(VerifyArgs),
 }
@@ -69,10 +42,7 @@ pub enum OptLevel {
 
 impl RapxArgs {
     pub fn init_env(&self) {
-        let Commands::Check {
-            uaf: Some(level), ..
-        } = self.command
-        else {
+        let Commands::Check(CheckArgs { uaf: Some(level), .. }) = &self.command else {
             return;
         };
         unsafe {
