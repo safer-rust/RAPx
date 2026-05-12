@@ -7,15 +7,14 @@
 //! The currently supported shape is:
 //!
 //! ```text
-//! #[rapx::requires(property_call; kind = "...")]
+//! #[rapx::requires(property_call, kind = "...")]
 //! ```
 //!
-//! where `kind = "..."` applies to the property in the same item.
+//! where `kind = "..."` applies to the property in the same attribute.
 
 use syn::{
     Expr, ExprCall, ExprPath, Lit, Result as SynResult, Token,
     parse::{Parse, ParseStream},
-    punctuated::Punctuated,
 };
 
 /// A parsed `requires` property in the form `tag(arg0, arg1, ...)`.
@@ -36,58 +35,42 @@ pub struct ParsedRapxAttr {
     pub properties: Vec<ParsedProperty>,
 }
 
-/// One property item inside `#[rapx::requires(...)]`.
-///
-/// Supported forms:
-/// - `nonzero(x)`
-/// - `nonzero(x); kind = "ptr"`
 impl Parse for ParsedProperty {
-    /// Parse one property item from a `requires` attribute argument list.
+    /// Parse a single property item from a `requires` attribute argument list.
+    ///
+    /// Supported forms:
+    /// - `nonzero(x)`
+    /// - `nonzero(x), kind = "ptr"`
     fn parse(input: ParseStream<'_>) -> SynResult<Self> {
         let expr: Expr = input.parse()?;
         let mut property = parse_property_expr(expr)?;
 
-        if input.peek(Token![;]) {
-            let _: Token![;] = input.parse()?;
-
-            while !input.is_empty() && !input.peek(Token![,]) {
+        if input.peek(Token![,]) {
+            let fork = input.fork();
+            let _: Token![,] = fork.parse()?;
+            if fork.peek(syn::Ident) && fork.peek2(Token![=]) {
+                let _: Token![,] = input.parse()?;
                 let ident: syn::Ident = input.parse()?;
                 let _: Token![=] = input.parse()?;
                 let value: Expr = input.parse()?;
 
-                match ident.to_string().as_str() {
-                    "kind" => {
-                        if property.kind.is_some() {
-                            return Err(syn::Error::new(
-                                ident.span(),
-                                "duplicate kind for RAPx property",
-                            ));
-                        }
-
-                        if let Expr::Lit(ref expr_lit) = value
-                            && let Lit::Str(ref kind) = expr_lit.lit
-                        {
-                            property.kind = Some(kind.value());
-                        } else {
-                            return Err(syn::Error::new_spanned(
-                                value,
-                                "RAPx requires attribute kind must be a string literal",
-                            ));
-                        }
-                    }
-                    _ => {
-                        return Err(syn::Error::new(
-                            ident.span(),
-                            "unsupported named RAPx requires attribute argument",
+                if ident == "kind" {
+                    if let Expr::Lit(ref expr_lit) = value
+                        && let Lit::Str(ref kind) = expr_lit.lit
+                    {
+                        property.kind = Some(kind.value());
+                    } else {
+                        return Err(syn::Error::new_spanned(
+                            value,
+                            "RAPx requires attribute kind must be a string literal",
                         ));
                     }
+                } else {
+                    return Err(syn::Error::new(
+                        ident.span(),
+                        "unsupported named RAPx requires attribute argument",
+                    ));
                 }
-
-                if input.peek(Token![,]) {
-                    break;
-                }
-
-                let _: Token![;] = input.parse()?;
             }
         }
 
@@ -124,16 +107,14 @@ pub fn parse_rapx_attr(attr_str: &str, expected_name: &str) -> SynResult<ParsedR
         return Ok(ParsedRapxAttr::default());
     }
 
-    // Only list-style attributes carry a comma-separated argument list.
+    // Only list-style attributes carry an argument list.
     let syn::Meta::List(meta_list) = &attr.meta else {
         return Ok(ParsedRapxAttr::default());
     };
 
-    let properties =
-        meta_list.parse_args_with(Punctuated::<ParsedProperty, Token![,]>::parse_terminated)?;
-
+    let property = meta_list.parse_args::<ParsedProperty>()?;
     Ok(ParsedRapxAttr {
-        properties: properties.into_iter().collect(),
+        properties: vec![property],
     })
 }
 
