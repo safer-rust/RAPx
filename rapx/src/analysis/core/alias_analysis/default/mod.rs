@@ -8,9 +8,9 @@ pub mod value;
 
 use super::{AliasAnalysis, AliasPair, FnAliasMap, FnAliasPairs};
 use crate::{
-    analysis::{Analysis, graphs::scc::Scc},
+    analysis::Analysis,
     def_id::*,
-    utils::source::*,
+    utils::{scc::Scc, source::*},
 };
 use graph::MopGraph;
 use rustc_data_structures::fx::FxHashMap;

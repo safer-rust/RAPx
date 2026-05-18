@@ -9,14 +9,11 @@ use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 
 use crate::{
-    analysis::{
-        core::{
-            alias_analysis::default::{AliasAnalyzer, MopFnAliasMap},
-            ownedheap_analysis::{OHAResultMap, OwnedHeapAnalysis, default::OwnedHeapAnalyzer},
-        },
-        graphs::scc::Scc,
+    analysis::core::{
+        alias_analysis::default::{AliasAnalyzer, MopFnAliasMap},
+        ownedheap_analysis::{OHAResultMap, OwnedHeapAnalysis, default::OwnedHeapAnalyzer},
     },
-    utils::source::get_fn_name,
+    utils::{scc::Scc, source::get_fn_name},
 };
 use graph::SafeDropGraph;
 use safedrop::*;

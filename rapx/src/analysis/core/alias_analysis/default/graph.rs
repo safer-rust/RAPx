@@ -1,8 +1,10 @@
 use super::{MopFnAliasPairs, assign::*, block::*, types::*, value::*};
 use crate::{
-    analysis::graphs::scc::{Scc, SccExit},
     def_id::*,
-    utils::source::*,
+    utils::{
+        scc::{Scc, SccExit},
+        source::*,
+    },
 };
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_middle::{

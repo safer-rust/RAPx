@@ -12,7 +12,6 @@ use crate::{
             ownedheap_analysis::OHAResultMap,
             range_analysis::{RangeAnalysis, default::RangeAnalyzer},
         },
-        graphs::scc::Scc,
         utils::{draw_dot::render_dot_string, fn_info::*, show_mir::display_mir},
     },
     check::{
@@ -24,6 +23,7 @@ use crate::{
         },
     },
     rap_debug, rap_warn,
+    utils::scc::Scc,
 };
 use rustc_middle::ty::GenericParamDefKind;
 use serde::de;

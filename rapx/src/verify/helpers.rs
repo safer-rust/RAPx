@@ -406,7 +406,7 @@ fn resolve_next_field<'tcx>(
     None
 }
 
-fn check_safety(tcx: TyCtxt<'_>, def_id: DefId) -> Safety {
+pub(crate) fn check_safety(tcx: TyCtxt<'_>, def_id: DefId) -> Safety {
     let poly_fn_sig = tcx.fn_sig(def_id);
     let fn_sig = poly_fn_sig.skip_binder();
     fn_sig.safety()

@@ -18,9 +18,9 @@ use crate::{
             // SSA / ESSA transformation passes
             ssa_transform::*,
         },
-        graphs::scc::Scc,
     },
     rap_debug, rap_info,
+    utils::scc::Scc,
 };
 
 use rustc_data_structures::fx::FxHashMap;

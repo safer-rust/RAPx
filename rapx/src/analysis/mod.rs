@@ -1,5 +1,4 @@
 pub mod core;
-pub mod graphs;
 pub mod scan;
 pub mod upg;
 pub mod utils;

@@ -1,5 +1,5 @@
 use super::assign::*;
-use crate::analysis::graphs::scc::SccInfo;
+use crate::utils::scc::SccInfo;
 use rustc_data_structures::fx::FxHashSet;
 use rustc_middle::mir::Terminator;
 

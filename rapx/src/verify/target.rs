@@ -15,8 +15,10 @@ use syn::Expr;
 use super::{
     assets_parser::*,
     attr_parser::parse_rapx_attr,
+    callsite::collect_unsafe_callsites,
     contract::Property,
     helpers::get_unsafe_callees,
+    path::{PathKind, VerifyPathExtractor},
 };
 
 /// A list of parsed `requires` contracts.
@@ -339,6 +341,79 @@ impl<'tcx> PrepareTargets<'tcx> {
                 }
             }
         }
+
+        self.log_function_paths(target);
+    }
+
+    /// Logs unsafe callsites and loop-aware path skeletons for one target.
+    fn log_function_paths(&self, target: &FunctionTarget<'tcx>) {
+        let callsites = collect_unsafe_callsites(self.tcx, target.def_id);
+        if callsites.is_empty() {
+            rap_info!("    unsafe callsites: <none>");
+            return;
+        }
+
+        let extractor = VerifyPathExtractor::new(self.tcx, target.def_id);
+        let paths = extractor.extract_paths(&callsites);
+
+        rap_info!("    detected loop node(s): {}", extractor.loops().len());
+        for loop_node in extractor.loops() {
+            let body: Vec<_> = loop_node
+                .body
+                .iter()
+                .map(|bb| format!("bb{}", bb.as_usize()))
+                .collect();
+            let exits: Vec<_> = loop_node
+                .exits
+                .iter()
+                .map(|exit| format!("bb{}->bb{}", exit.from.as_usize(), exit.to.as_usize()))
+                .collect();
+            rap_info!(
+                "      loop #{}: header=bb{}, body={:?}, exits={:?}",
+                loop_node.id,
+                loop_node.header.as_usize(),
+                body,
+                exits
+            );
+        }
+
+        for (callsite_id, callsite) in callsites.iter().enumerate() {
+            rap_info!(
+                "    unsafe callsite #{}: {} at bb{} ({} arg(s))",
+                callsite_id,
+                callsite.callee_name(self.tcx),
+                callsite.block.as_usize(),
+                callsite.args.len()
+            );
+
+            let mut callsite_paths: Vec<_> = paths
+                .iter()
+                .filter(|path| path.callsite == callsite_id)
+                .collect();
+            callsite_paths.sort_by_key(|path| path.describe());
+
+            if callsite_paths.is_empty() {
+                rap_info!("      paths: <none>");
+                continue;
+            }
+
+            for (path_idx, path) in callsite_paths.iter().enumerate() {
+                let kind = match path.kind {
+                    PathKind::EntryToCallsite => "entry",
+                    PathKind::LoopHeaderToCallsite { loop_id } => {
+                        rap_info!(
+                            "      path {} kind: loop-header(loop #{})",
+                            path_idx,
+                            loop_id
+                        );
+                        rap_info!("      path {}: {}", path_idx, path.describe());
+                        continue;
+                    }
+                };
+                rap_info!("      path {} kind: {}", path_idx, kind);
+                rap_info!("      path {}: {}", path_idx, path.describe());
+            }
+        }
     }
 }
 
@@ -426,12 +501,7 @@ fn collect_properties_from_requires_attrs<'tcx>(
         };
 
         results.extend(parsed.properties.into_iter().map(|property| {
-            Property::new(
-                tcx,
-                property_def_id,
-                property.tag.as_str(),
-                &property.args,
-            )
+            Property::new(tcx, property_def_id, property.tag.as_str(), &property.args)
         }));
     }
 
@@ -465,4 +535,3 @@ fn get_struct_invariants_from_annotation<'tcx>(
         "invariant",
     )
 }
-

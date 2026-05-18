@@ -14,7 +14,7 @@ use std::{
 
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 
-use crate::analysis::graphs::scc::{SccInfo, SccTree};
+use crate::utils::scc::{SccInfo, SccTree};
 
 use super::{block::Term, graph::*, *};
 
