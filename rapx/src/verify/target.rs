@@ -17,7 +17,7 @@ use super::{
     attr_parser::parse_rapx_attr,
     contract::Property,
     helpers::{collect_unsafe_callsites, get_unsafe_callees},
-    path::{PathKind, VerifyPathExtractor},
+    path::{PathExtractor, PathStart},
 };
 
 /// A list of parsed `requires` contracts.
@@ -352,43 +352,39 @@ impl<'tcx> PrepareTargets<'tcx> {
             return;
         }
 
-        let extractor = VerifyPathExtractor::new(self.tcx, target.def_id);
-        let paths = extractor.extract_paths(&callsites);
+        let result = PathExtractor::new(self.tcx, target.def_id, callsites).run();
 
-        rap_info!("    detected loop node(s): {}", extractor.loops().len());
-        for loop_node in extractor.loops() {
-            let body: Vec<_> = loop_node
-                .body
+        rap_info!("    detected loop(s): {}", result.loops().len());
+        for loop_info in result.loops() {
+            let body: Vec<_> = loop_info
+                .blocks
                 .iter()
                 .map(|bb| format!("bb{}", bb.as_usize()))
                 .collect();
-            let exits: Vec<_> = loop_node
+            let exits: Vec<_> = loop_info
                 .exits
                 .iter()
                 .map(|exit| format!("bb{}->bb{}", exit.from.as_usize(), exit.to.as_usize()))
                 .collect();
             rap_info!(
                 "      loop #{}: header=bb{}, body={:?}, exits={:?}",
-                loop_node.id,
-                loop_node.header.as_usize(),
+                loop_info.id.index(),
+                loop_info.header.as_usize(),
                 body,
                 exits
             );
         }
 
-        for (callsite_id, callsite) in callsites.iter().enumerate() {
+        for (display_index, callsite) in result.callsites().iter().enumerate() {
             rap_info!(
                 "    unsafe callsite #{}: {} at bb{} ({} arg(s))",
-                callsite_id,
+                display_index,
                 callsite.callee_name(self.tcx),
                 callsite.block.as_usize(),
                 callsite.args.len()
             );
 
-            let mut callsite_paths: Vec<_> = paths
-                .iter()
-                .filter(|path| path.callsite == callsite_id)
-                .collect();
+            let mut callsite_paths: Vec<_> = result.paths_for(callsite.location()).iter().collect();
             callsite_paths.sort_by_key(|path| path.describe());
 
             if callsite_paths.is_empty() {
@@ -397,13 +393,13 @@ impl<'tcx> PrepareTargets<'tcx> {
             }
 
             for (path_idx, path) in callsite_paths.iter().enumerate() {
-                let kind = match path.kind {
-                    PathKind::EntryToCallsite => "entry",
-                    PathKind::LoopHeaderToCallsite { loop_id } => {
+                let kind = match path.start {
+                    PathStart::FunctionEntry => "entry",
+                    PathStart::LoopHeader { loop_id } => {
                         rap_info!(
                             "      path {} kind: loop-header(loop #{})",
                             path_idx,
-                            loop_id
+                            loop_id.index()
                         );
                         rap_info!("      path {}: {}", path_idx, path.describe());
                         continue;

@@ -9,6 +9,15 @@ use serde_json::Value;
 use std::collections::HashSet;
 use syn::Expr;
 
+/// Stable MIR location for a call terminator inside one function body.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub struct CallsiteLocation {
+    /// Function containing the call terminator.
+    pub caller: DefId,
+    /// Basic block whose terminator is the call.
+    pub block: BasicBlock,
+}
+
 /// A concrete unsafe callsite in one MIR body.
 #[derive(Clone, Debug)]
 pub struct Callsite<'tcx> {
@@ -25,6 +34,14 @@ pub struct Callsite<'tcx> {
 }
 
 impl<'tcx> Callsite<'tcx> {
+    /// Return the MIR location that identifies this callsite inside the verifier.
+    pub fn location(&self) -> CallsiteLocation {
+        CallsiteLocation {
+            caller: self.caller,
+            block: self.block,
+        }
+    }
+
     /// Return a stable human-readable callee path for diagnostics.
     pub fn callee_name(&self, tcx: TyCtxt<'tcx>) -> String {
         get_cleaned_def_path_name(tcx, self.callee)
@@ -74,6 +91,7 @@ pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<C
     callsites
 }
 
+/// Return the set of unsafe callees invoked by `def_id`.
 pub fn get_unsafe_callees(tcx: TyCtxt<'_>, def_id: DefId) -> HashSet<DefId> {
     let mut unsafe_callees = HashSet::new();
     if tcx.is_mir_available(def_id) {
@@ -96,7 +114,6 @@ pub fn get_unsafe_callees(tcx: TyCtxt<'_>, def_id: DefId) -> HashSet<DefId> {
 /// A compact MIR CFG used by the verifier path extractor.
 #[derive(Clone, Debug)]
 pub struct CFG {
-    pub def_id: DefId,
     pub entry: BasicBlock,
     pub successors: Vec<Vec<BasicBlock>>,
 }
@@ -111,7 +128,6 @@ impl CFG {
             .map(|block| terminator_successors(&block.terminator().kind))
             .collect();
         Self {
-            def_id,
             entry: BasicBlock::from_usize(0),
             successors,
         }
@@ -123,11 +139,6 @@ impl CFG {
             .get(block.as_usize())
             .map(Vec::as_slice)
             .unwrap_or(&[])
-    }
-
-    /// Return the number of basic blocks.
-    pub fn len(&self) -> usize {
-        self.successors.len()
     }
 }
 
