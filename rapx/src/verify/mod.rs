@@ -4,4 +4,5 @@ mod contract;
 pub mod driver;
 mod helpers;
 pub mod path;
+pub mod report;
 pub mod target;

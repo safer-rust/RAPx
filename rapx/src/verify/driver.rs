@@ -11,6 +11,7 @@ use super::{
     contract::Property,
     helpers::{Callsite, collect_unsafe_callsites},
     path::{Path, PathExtractor, PathResult},
+    report::{CheckResult, PropertyCheckResult, VerificationReport},
     target::FunctionTarget,
 };
 
@@ -43,6 +44,35 @@ impl<'tcx> VerifyDriver<'tcx> {
     pub fn build_path_result(&self, target: &FunctionTarget<'tcx>) -> PathResult<'tcx> {
         let callsites = self.collect_callsites(target);
         self.extract_paths(target, callsites)
+    }
+
+    /// Run the current staged verifier pipeline for one function target.
+    ///
+    /// This method is the main driver entry for later verification stages.  It
+    /// currently builds callsites and paths, pairs each callsite with the
+    /// required properties stored in `FunctionTarget::callee_requires`, and
+    /// records an `Unknown` result for every `(callsite, path, property)` item.
+    /// Evidence reduction, abstract replay, and SMT checking can replace the
+    /// placeholder result inside this loop without changing the surrounding
+    /// control flow.
+    pub fn verify_function(&self, target: &FunctionTarget<'tcx>) -> VerificationReport<'tcx> {
+        let path_result = self.build_path_result(target);
+        let mut report = VerificationReport::new(target.def_id);
+
+        for view in self.iter_callsite_checks(target, &path_result) {
+            for (path_index, _path) in view.paths.iter().enumerate() {
+                for property in view.requires {
+                    report.push(PropertyCheckResult {
+                        callsite: view.callsite.location(),
+                        path_index,
+                        property: property.clone(),
+                        result: CheckResult::Unknown,
+                    });
+                }
+            }
+        }
+
+        report
     }
 
     /// Return the required properties for a concrete unsafe callsite.
