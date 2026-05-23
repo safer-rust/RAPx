@@ -9,14 +9,14 @@ use rustc_middle::{
     ty::{TyCtxt, TyKind},
 };
 use rustc_span::{Span, Symbol};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use syn::Expr;
 
 use super::{
     assets_parser::*,
     attr_parser::parse_rapx_attr,
     contract::Property,
-    helpers::{collect_unsafe_callsites, get_unsafe_callees},
+    helpers::{Callsite, collect_unsafe_callsites},
     path::{PathExtractor, PathStart},
 };
 
@@ -33,6 +33,8 @@ pub struct FunctionTarget<'tcx> {
     pub def_id: DefId,
     /// Owning struct definition when this target to verify is an associated method.
     pub owner_struct_def_id: Option<DefId>,
+    /// Concrete unsafe callsites collected from the target MIR body.
+    pub callsites: Vec<Callsite<'tcx>>,
     /// Parsed `requires` contracts for each unsafe callee reachable from this target.
     pub callee_requires: HashMap<DefId, FnContracts<'tcx>>,
 }
@@ -131,7 +133,8 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
 
     /// Builds a function target to verify from a function definition.
     fn build_function_target(&mut self, def_id: DefId) -> FunctionTarget<'tcx> {
-        let unsafe_callees = get_unsafe_callees(self.tcx, def_id);
+        let callsites = collect_unsafe_callsites(self.tcx, def_id);
+        let unsafe_callees: HashSet<_> = callsites.iter().map(|callsite| callsite.callee).collect();
         let callee_requires = unsafe_callees
             .iter()
             .map(|callee_def_id| (*callee_def_id, self.get_fn_contracts(*callee_def_id)))
@@ -140,6 +143,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
         FunctionTarget {
             def_id,
             owner_struct_def_id: self.get_owner_struct_def_id(def_id),
+            callsites,
             callee_requires,
         }
     }
@@ -346,13 +350,12 @@ impl<'tcx> PrepareTargets<'tcx> {
 
     /// Logs unsafe callsites and loop-aware path skeletons for one target.
     fn log_function_paths(&self, target: &FunctionTarget<'tcx>) {
-        let callsites = collect_unsafe_callsites(self.tcx, target.def_id);
-        if callsites.is_empty() {
+        if target.callsites.is_empty() {
             rap_info!("    unsafe callsites: <none>");
             return;
         }
 
-        let result = PathExtractor::new(self.tcx, target.def_id, callsites).run();
+        let result = PathExtractor::new(self.tcx, target.def_id, target.callsites.clone()).run();
 
         rap_info!("    detected loop(s): {}", result.loops().len());
         for loop_info in result.loops() {

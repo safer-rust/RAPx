@@ -37,14 +37,13 @@ impl<'tcx> PathExtractor<'tcx> {
         }
     }
 
-    /// Run loop detection and path extraction, then return the collected result.
-    pub fn run(mut self) -> PathResult<'tcx> {
+    /// Run loop detection and path extraction, then return path metadata.
+    pub fn run(mut self) -> PathMetaInfo<'tcx> {
         self.find_loops();
         self.find_paths();
-        PathResult {
-            callsites: self.callsites,
-            loops: self.loops,
-            paths: self.paths,
+        PathMetaInfo {
+            loops: LoopMetaInfo::new(self.loops),
+            callsite_paths: CallsitePathInfo::new(self.callsites, self.paths),
         }
     }
 
@@ -325,27 +324,99 @@ impl<'tcx> PathExtractor<'tcx> {
     }
 }
 
-/// Result produced by a completed path extraction run.
-pub struct PathResult<'tcx> {
-    callsites: Vec<Callsite<'tcx>>,
-    loops: Vec<LoopInfo>,
-    paths: FxHashMap<CallsiteLocation, Vec<Path>>,
+/// Path metadata produced by a completed extraction run.
+///
+/// This is the path-level view of a function CFG: loop information describes
+/// cyclic regions, while callsite path information maps unsafe callsites to the
+/// finite paths that reach them.
+pub struct PathMetaInfo<'tcx> {
+    loops: LoopMetaInfo,
+    callsite_paths: CallsitePathInfo<'tcx>,
 }
 
-impl<'tcx> PathResult<'tcx> {
+impl<'tcx> PathMetaInfo<'tcx> {
+    /// Return loop metadata for this function.
+    pub fn loop_info(&self) -> &LoopMetaInfo {
+        &self.loops
+    }
+
+    /// Return callsite-to-path metadata for this function.
+    pub fn callsite_paths(&self) -> &CallsitePathInfo<'tcx> {
+        &self.callsite_paths
+    }
+
+    /// Return all callsites used during path extraction.
+    pub fn callsites(&self) -> &[Callsite<'tcx>] {
+        self.callsite_paths.callsites()
+    }
+
+    /// Return all loops detected in the function CFG.
+    pub fn loops(&self) -> &[LoopInfo] {
+        self.loops.loops()
+    }
+
+    /// Return the paths extracted for one callsite location.
+    pub fn paths_for(&self, location: CallsiteLocation) -> &[Path] {
+        self.callsite_paths.paths_for(location)
+    }
+}
+
+/// Metadata for loop regions discovered in a function CFG.
+pub struct LoopMetaInfo {
+    loops: Vec<LoopInfo>,
+}
+
+impl LoopMetaInfo {
+    /// Create loop metadata from detected loops.
+    fn new(loops: Vec<LoopInfo>) -> Self {
+        Self { loops }
+    }
+
+    /// Return all detected loops.
+    pub fn loops(&self) -> &[LoopInfo] {
+        &self.loops
+    }
+
+    /// Return the number of detected loops.
+    pub fn len(&self) -> usize {
+        self.loops.len()
+    }
+
+    /// Return true when no loops were detected.
+    pub fn is_empty(&self) -> bool {
+        self.loops.is_empty()
+    }
+}
+
+/// Metadata that maps unsafe callsites to finite verification paths.
+pub struct CallsitePathInfo<'tcx> {
+    callsites: Vec<Callsite<'tcx>>,
+    paths_by_callsite: FxHashMap<CallsiteLocation, Vec<Path>>,
+}
+
+impl<'tcx> CallsitePathInfo<'tcx> {
+    /// Create callsite path metadata from callsites and extracted paths.
+    fn new(
+        callsites: Vec<Callsite<'tcx>>,
+        paths_by_callsite: FxHashMap<CallsiteLocation, Vec<Path>>,
+    ) -> Self {
+        Self {
+            callsites,
+            paths_by_callsite,
+        }
+    }
+
     /// Return all callsites used during path extraction.
     pub fn callsites(&self) -> &[Callsite<'tcx>] {
         &self.callsites
     }
 
-    /// Return all loops detected in the function CFG.
-    pub fn loops(&self) -> &[LoopInfo] {
-        &self.loops
-    }
-
     /// Return the paths extracted for one callsite location.
     pub fn paths_for(&self, location: CallsiteLocation) -> &[Path] {
-        self.paths.get(&location).map(Vec::as_slice).unwrap_or(&[])
+        self.paths_by_callsite
+            .get(&location)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
     }
 }
 

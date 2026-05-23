@@ -6,7 +6,6 @@ use rustc_middle::{
 };
 use rustc_span::Span;
 use serde_json::Value;
-use std::collections::HashSet;
 use syn::Expr;
 
 /// Stable MIR location for a call terminator inside one function body.
@@ -89,26 +88,6 @@ pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<C
     }
 
     callsites
-}
-
-/// Return the set of unsafe callees invoked by `def_id`.
-pub fn get_unsafe_callees(tcx: TyCtxt<'_>, def_id: DefId) -> HashSet<DefId> {
-    let mut unsafe_callees = HashSet::new();
-    if tcx.is_mir_available(def_id) {
-        let body = tcx.optimized_mir(def_id);
-        for bb in body.basic_blocks.iter() {
-            if let TerminatorKind::Call { func, .. } = &bb.terminator().kind {
-                if let Operand::Constant(func_constant) = func {
-                    if let ty::FnDef(callee_def_id, _) = func_constant.const_.ty().kind() {
-                        if check_safety(tcx, *callee_def_id) == Safety::Unsafe {
-                            unsafe_callees.insert(*callee_def_id);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    unsafe_callees
 }
 
 /// A compact MIR CFG used by the verifier path extractor.
