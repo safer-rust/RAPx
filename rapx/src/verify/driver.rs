@@ -10,6 +10,7 @@ use rustc_middle::ty::TyCtxt;
 
 use super::{
     contract::Property,
+    evidence::EvidenceReducer,
     helpers::Callsite,
     path::{Path, PathExtractor, PathMetaInfo},
     report::{CheckResult, PropertyCheckResult, VerificationReport},
@@ -61,10 +62,12 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
     /// changing the surrounding control flow.
     pub fn verify_function(&self) -> VerificationReport<'tcx> {
         let mut report = VerificationReport::new(self.target.def_id);
+        let reducer = EvidenceReducer::new(self.tcx);
 
         for view in self.iter_callsite_checks() {
-            for (path_index, _path) in view.paths.iter().enumerate() {
+            for (path_index, path) in view.paths.iter().enumerate() {
                 for property in view.properties {
+                    let _evidence = reducer.reduce(view.callsite, path, property);
                     report.push(PropertyCheckResult {
                         callsite: view.callsite.location(),
                         path_index,
