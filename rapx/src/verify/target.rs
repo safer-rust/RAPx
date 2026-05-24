@@ -370,8 +370,7 @@ impl<'tcx> PrepareTargets<'tcx> {
                 .map(|exit| format!("bb{}->bb{}", exit.from.as_usize(), exit.to.as_usize()))
                 .collect();
             rap_info!(
-                "      loop #{}: header=bb{}, body={:?}, exits={:?}",
-                loop_info.id.index(),
+                "      loop bb{}: body={:?}, exits={:?}",
                 loop_info.header.as_usize(),
                 body,
                 exits
@@ -398,11 +397,11 @@ impl<'tcx> PrepareTargets<'tcx> {
             for (path_idx, path) in callsite_paths.iter().enumerate() {
                 let kind = match path.start {
                     PathStart::FunctionEntry => "entry",
-                    PathStart::LoopHeader { loop_id } => {
+                    PathStart::LoopHeader { header } => {
                         rap_info!(
-                            "      path {} kind: loop-header(loop #{})",
+                            "      path {} kind: loop-header(bb{})",
                             path_idx,
-                            loop_id.index()
+                            header.as_usize()
                         );
                         rap_info!("      path {}: {}", path_idx, path.describe());
                         continue;

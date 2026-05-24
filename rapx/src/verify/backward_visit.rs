@@ -1,8 +1,9 @@
-//! Backward evidence data model for the staged verifier.
+//! Backward path visitor for the staged verifier.
 //!
-//! This module defines the structures used by the future backward evidence
-//! reducer.  It also provides property-root extraction without making the
-//! contract layer depend on the evidence layer.
+//! This module walks a finite path backward from an unsafe callsite and keeps
+//! only MIR statements, terminators, and path steps that can affect the required
+//! property. It also extracts property roots without making the contract layer
+//! depend on the backward visitor.
 
 use rustc_data_structures::fx::FxHashSet;
 use rustc_middle::mir::{
@@ -20,55 +21,55 @@ use super::{
     path::{Path, PathStep},
 };
 
-/// Entry point for future backward evidence reduction.
-pub struct EvidenceReducer<'tcx> {
+/// Entry point for backward path visiting.
+pub struct BackwardVisitor<'tcx> {
     tcx: TyCtxt<'tcx>,
 }
 
-impl<'tcx> EvidenceReducer<'tcx> {
-    /// Create an evidence reducer over the current compiler type context.
+impl<'tcx> BackwardVisitor<'tcx> {
+    /// Create a backward visitor over the current compiler type context.
     pub fn new(tcx: TyCtxt<'tcx>) -> Self {
         Self { tcx }
     }
 
-    /// Return the compiler type context owned by this reducer.
+    /// Return the compiler type context owned by this visitor.
     pub fn tcx(&self) -> TyCtxt<'tcx> {
         self.tcx
     }
 
-    /// Build the initial reduced-evidence object for a path and property.
-    pub fn seed(
+    /// Build the initial relevant-MIR item set for a path and property.
+    pub fn start_visit(
         &self,
         callsite: CallsiteLocation,
         path: &Path,
         property: &Property<'tcx>,
-    ) -> ReducedEvidence<'tcx> {
-        ReducedEvidence {
+    ) -> RelevantMirItems<'tcx> {
+        RelevantMirItems {
             callsite,
             property: property.clone(),
             path: path.clone(),
             items: Vec::new(),
-            roots: RelevanceSet::from_property(property),
+            roots: RelevantPlaces::from_property(property),
         }
     }
 
-    /// Reduce one `(callsite, path, property)` item to path-specific evidence.
+    /// Visit one `(callsite, path, property)` item backward.
     ///
-    /// The reducer walks the path backward from the unsafe callsite, starting
+    /// The visitor walks the path backward from the unsafe callsite, starting
     /// from the roots mentioned by the required property.  Statements defining
     /// relevant locals are retained and their uses become the next relevance
     /// frontier.  Relevant branch conditions, calls, drops, and loop exits are
-    /// retained as conservative evidence for later replay.
-    pub fn reduce(
+    /// retained as conservative inputs for later replay.
+    pub fn visit(
         &self,
         callsite: &Callsite<'tcx>,
         path: &Path,
         property: &Property<'tcx>,
-    ) -> ReducedEvidence<'tcx> {
-        let mut evidence = self.seed(callsite.location(), path, property);
-        bind_callsite_roots(&mut evidence.roots, callsite);
+    ) -> RelevantMirItems<'tcx> {
+        let mut visit = self.start_visit(callsite.location(), path, property);
+        bind_callsite_roots(&mut visit.roots, callsite);
 
-        let mut relevant = evidence.roots.clone();
+        let mut relevant = visit.roots.clone();
         let mut items = Vec::new();
         let body = self.tcx.optimized_mir(callsite.caller);
 
@@ -78,15 +79,15 @@ impl<'tcx> EvidenceReducer<'tcx> {
                     if *location != callsite.location() {
                         continue;
                     }
-                    items.push(EvidenceItem::Terminator {
+                    items.push(BackwardItem::Terminator {
                         block: location.block,
-                        kind: EvidenceKind::Callsite,
+                        kind: KeepReason::Callsite,
                     });
                 }
                 PathStep::Block(block) => {
                     let block_data = &body.basic_blocks[*block];
                     if *block != callsite.block {
-                        self.reduce_terminator(
+                        self.visit_terminator(
                             *block,
                             block_data.terminator(),
                             &mut relevant,
@@ -96,7 +97,7 @@ impl<'tcx> EvidenceReducer<'tcx> {
                     for (statement_index, statement) in
                         block_data.statements.iter().enumerate().rev()
                     {
-                        self.reduce_statement(
+                        self.visit_statement(
                             *block,
                             statement_index,
                             statement,
@@ -106,37 +107,37 @@ impl<'tcx> EvidenceReducer<'tcx> {
                     }
                 }
                 PathStep::LoopExit { .. } => {
-                    items.push(EvidenceItem::Havoc {
-                        reason: HavocReason::LoopWithoutSummary,
+                    items.push(BackwardItem::Forget {
+                        reason: ForgetReason::LoopWithoutSummary,
                     });
-                    items.push(EvidenceItem::PathStep {
+                    items.push(BackwardItem::PathStep {
                         step: step.clone(),
-                        kind: EvidenceKind::LoopSummary,
+                        kind: KeepReason::LoopExit,
                     });
                 }
             }
         }
 
         items.reverse();
-        evidence.items = items;
-        evidence
+        visit.items = items;
+        visit
     }
 
-    /// Reduce one MIR statement against the current relevance frontier.
-    fn reduce_statement(
+    /// Visit one MIR statement against the current relevance frontier.
+    fn visit_statement(
         &self,
         block: BasicBlock,
         statement_index: usize,
         statement: &Statement<'tcx>,
-        relevant: &mut RelevanceSet,
-        items: &mut Vec<EvidenceItem<'tcx>>,
+        relevant: &mut RelevantPlaces,
+        items: &mut Vec<BackwardItem<'tcx>>,
     ) {
         let use_def = statement_use_def(statement);
         if use_def.defs.intersects(relevant) {
-            items.push(EvidenceItem::Statement {
+            items.push(BackwardItem::Statement {
                 block,
                 statement_index,
-                kind: statement_evidence_kind(statement),
+                kind: statement_keep_reason(statement),
             });
             relevant.remove_all(&use_def.defs);
             relevant.extend(use_def.uses);
@@ -144,38 +145,38 @@ impl<'tcx> EvidenceReducer<'tcx> {
         }
 
         if statement_invalidates_relevant(statement, relevant) {
-            items.push(EvidenceItem::Statement {
+            items.push(BackwardItem::Statement {
                 block,
                 statement_index,
-                kind: EvidenceKind::Invalidation,
+                kind: KeepReason::Invalidation,
             });
         } else if use_def.uses.intersects(relevant) && statement_can_refine(statement) {
-            items.push(EvidenceItem::Statement {
+            items.push(BackwardItem::Statement {
                 block,
                 statement_index,
-                kind: EvidenceKind::RuntimeCheck,
+                kind: KeepReason::RuntimeCheck,
             });
         }
     }
 
-    /// Reduce one MIR terminator against the current relevance frontier.
-    fn reduce_terminator(
+    /// Visit one MIR terminator against the current relevance frontier.
+    fn visit_terminator(
         &self,
         block: BasicBlock,
         terminator: &Terminator<'tcx>,
-        relevant: &mut RelevanceSet,
-        items: &mut Vec<EvidenceItem<'tcx>>,
+        relevant: &mut RelevantPlaces,
+        items: &mut Vec<BackwardItem<'tcx>>,
     ) {
         let use_def = terminator_use_def(terminator);
         if use_def.defs.intersects(relevant) {
             if terminator_may_havoc(terminator) {
-                items.push(EvidenceItem::Havoc {
-                    reason: HavocReason::UnknownCall,
+                items.push(BackwardItem::Forget {
+                    reason: ForgetReason::UnknownCall,
                 });
             }
-            items.push(EvidenceItem::Terminator {
+            items.push(BackwardItem::Terminator {
                 block,
-                kind: terminator_definition_kind(terminator),
+                kind: terminator_definition_reason(terminator),
             });
             relevant.remove_all(&use_def.defs);
             relevant.extend(use_def.uses);
@@ -184,13 +185,13 @@ impl<'tcx> EvidenceReducer<'tcx> {
 
         if use_def.uses.intersects(relevant) {
             if terminator_may_havoc(terminator) {
-                items.push(EvidenceItem::Havoc {
-                    reason: HavocReason::UnknownCall,
+                items.push(BackwardItem::Forget {
+                    reason: ForgetReason::UnknownCall,
                 });
             }
-            items.push(EvidenceItem::Terminator {
+            items.push(BackwardItem::Terminator {
                 block,
-                kind: terminator_use_kind(terminator),
+                kind: terminator_use_reason(terminator),
             });
         }
     }
@@ -198,93 +199,90 @@ impl<'tcx> EvidenceReducer<'tcx> {
 
 /// Definitions and uses collected from one MIR item.
 #[derive(Clone, Debug, Default)]
-pub struct UseDef {
+pub struct DefUse {
     /// Places defined or invalidated by the MIR item.
-    pub defs: RelevanceSet,
+    pub defs: RelevantPlaces,
     /// Places read by the MIR item.
-    pub uses: RelevanceSet,
+    pub uses: RelevantPlaces,
 }
 
-impl UseDef {
+impl DefUse {
     /// Create an empty use-def summary.
     pub fn new() -> Self {
         Self::default()
     }
 }
 
-/// Reduced evidence retained for one `(callsite, path, property)` item.
+/// MIR items relevant to one `(callsite, path, property)` item.
 #[derive(Clone, Debug)]
-pub struct ReducedEvidence<'tcx> {
+pub struct RelevantMirItems<'tcx> {
     /// Unsafe callsite whose obligation is being checked.
     pub callsite: CallsiteLocation,
     /// Required property that determines the relevance roots.
     pub property: Property<'tcx>,
-    /// Path being reduced.
+    /// Path being visited.
     pub path: Path,
-    /// Evidence retained from the path.
-    pub items: Vec<EvidenceItem<'tcx>>,
+    /// Items kept from the path.
+    pub items: Vec<BackwardItem<'tcx>>,
     /// Initial roots extracted from the property.
-    pub roots: RelevanceSet,
+    pub roots: RelevantPlaces,
 }
 
-impl<'tcx> ReducedEvidence<'tcx> {
-    /// Append one evidence item to the reduced path.
-    pub fn push(&mut self, item: EvidenceItem<'tcx>) {
+impl<'tcx> RelevantMirItems<'tcx> {
+    /// Append one kept item to the visited path.
+    pub fn push(&mut self, item: BackwardItem<'tcx>) {
         self.items.push(item);
     }
 
-    /// Return true when no MIR/path evidence has been retained yet.
+    /// Return true when no MIR/path item has been kept yet.
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
     }
 }
 
-/// One retained evidence item from a path.
+/// One item kept while walking a path backward.
 #[derive(Clone, Debug)]
-pub enum EvidenceItem<'tcx> {
+pub enum BackwardItem<'tcx> {
     /// A MIR statement retained from a basic block.
     Statement {
         block: BasicBlock,
         statement_index: usize,
-        kind: EvidenceKind,
+        kind: KeepReason,
     },
     /// A MIR terminator retained from a basic block.
-    Terminator {
-        block: BasicBlock,
-        kind: EvidenceKind,
-    },
-    /// A path-level step retained as structural evidence.
-    PathStep { step: PathStep, kind: EvidenceKind },
-    /// A contract fact retained as evidence.
+    Terminator { block: BasicBlock, kind: KeepReason },
+    /// A path-level step retained as structural context.
+    PathStep { step: PathStep, kind: KeepReason },
+    /// A contract fact retained as a visit input.
     ContractFact { property: Property<'tcx> },
     /// A conservative loss of precision for relevant state.
-    Havoc { reason: HavocReason },
+    Forget { reason: ForgetReason },
 }
 
 /// Why a retained item is relevant.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum EvidenceKind {
+pub enum KeepReason {
     /// The item defines a relevant place.
     Definition,
     /// The item contributes a branch/path condition.
     PathCondition,
     /// The item contributes pointer provenance or pointer arithmetic.
-    PointerProvenance,
+    PointerFlow,
     /// The item refines state through a runtime check.
     RuntimeCheck,
     /// The item is the unsafe callsite being checked.
     Callsite,
     /// The item represents a loop summary or loop exit.
-    LoopSummary,
+    LoopExit,
     /// The item may invalidate a relevant fact.
     Invalidation,
     /// The item may affect relevant state but is not modeled precisely yet.
-    UnknownRelevantEffect,
+    UnknownEffect,
 }
 
 /// Reason for conservatively forgetting relevant state.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum HavocReason {
+pub enum ForgetReason {
     /// A call may modify relevant state but has no summary yet.
     UnknownCall,
     /// A loop may modify relevant state but has no summary yet.
@@ -363,16 +361,16 @@ impl PlaceKey {
     }
 }
 
-/// Set of roots that can make MIR evidence relevant.
+/// Set of places that make MIR items relevant to a property.
 #[derive(Clone, Debug, Default)]
-pub struct RelevanceSet {
+pub struct RelevantPlaces {
     /// Contract-level places, including callee arguments before binding.
     pub places: FxHashSet<PlaceKey>,
     /// MIR locals that are already known from local contract places.
     pub locals: FxHashSet<Local>,
 }
 
-impl RelevanceSet {
+impl RelevantPlaces {
     /// Create an empty relevance set.
     pub fn new() -> Self {
         Self::default()
@@ -432,19 +430,19 @@ impl RelevanceSet {
     }
 
     /// Merge another relevance set into this one.
-    pub fn extend(&mut self, other: RelevanceSet) {
+    pub fn extend(&mut self, other: RelevantPlaces) {
         self.places.extend(other.places);
         self.locals.extend(other.locals);
     }
 
     /// Return true if this set shares any known root with `other`.
-    pub fn intersects(&self, other: &RelevanceSet) -> bool {
+    pub fn intersects(&self, other: &RelevantPlaces) -> bool {
         self.locals.iter().any(|local| other.locals.contains(local))
             || self.places.iter().any(|place| other.places.contains(place))
     }
 
     /// Remove all roots contained in `other` from this set.
-    pub fn remove_all(&mut self, other: &RelevanceSet) {
+    pub fn remove_all(&mut self, other: &RelevantPlaces) {
         for local in &other.locals {
             self.locals.remove(local);
             self.places.retain(|place| place.local() != Some(*local));
@@ -543,7 +541,7 @@ fn is_target_argument_index(kind: &PropertyKind, arg_index: usize) -> bool {
 }
 
 /// Bind callee-argument roots in std contracts to concrete MIR call operands.
-fn bind_callsite_roots(relevance: &mut RelevanceSet, callsite: &Callsite<'_>) {
+fn bind_callsite_roots(relevance: &mut RelevantPlaces, callsite: &Callsite<'_>) {
     let argument_roots: Vec<usize> = relevance
         .places
         .iter()
@@ -561,8 +559,8 @@ fn bind_callsite_roots(relevance: &mut RelevanceSet, callsite: &Callsite<'_>) {
 }
 
 /// Collect definitions and uses for one MIR statement.
-fn statement_use_def<'tcx>(statement: &Statement<'tcx>) -> UseDef {
-    let mut use_def = UseDef::new();
+fn statement_use_def<'tcx>(statement: &Statement<'tcx>) -> DefUse {
+    let mut use_def = DefUse::new();
     match &statement.kind {
         StatementKind::Assign(box (place, rvalue)) => {
             use_def.defs.insert_mir_place(place);
@@ -579,8 +577,8 @@ fn statement_use_def<'tcx>(statement: &Statement<'tcx>) -> UseDef {
 }
 
 /// Collect definitions and uses for one MIR terminator.
-fn terminator_use_def<'tcx>(terminator: &Terminator<'tcx>) -> UseDef {
-    let mut use_def = UseDef::new();
+fn terminator_use_def<'tcx>(terminator: &Terminator<'tcx>) -> DefUse {
+    let mut use_def = DefUse::new();
     match &terminator.kind {
         TerminatorKind::Call {
             func,
@@ -609,8 +607,8 @@ fn terminator_use_def<'tcx>(terminator: &Terminator<'tcx>) -> UseDef {
 }
 
 /// Collect all MIR roots used by an rvalue.
-fn rvalue_uses<'tcx>(rvalue: &Rvalue<'tcx>) -> RelevanceSet {
-    let mut uses = RelevanceSet::new();
+fn rvalue_uses<'tcx>(rvalue: &Rvalue<'tcx>) -> RelevantPlaces {
+    let mut uses = RelevantPlaces::new();
     match rvalue {
         Rvalue::Use(operand)
         | Rvalue::Repeat(operand, _)
@@ -641,8 +639,8 @@ fn rvalue_uses<'tcx>(rvalue: &Rvalue<'tcx>) -> RelevanceSet {
 }
 
 /// Collect all MIR roots used by an operand.
-fn operand_uses<'tcx>(operand: &Operand<'tcx>) -> RelevanceSet {
-    let mut uses = RelevanceSet::new();
+fn operand_uses<'tcx>(operand: &Operand<'tcx>) -> RelevantPlaces {
+    let mut uses = RelevantPlaces::new();
     match operand {
         Operand::Copy(place) | Operand::Move(place) => {
             uses.extend(place_uses(place));
@@ -653,16 +651,16 @@ fn operand_uses<'tcx>(operand: &Operand<'tcx>) -> RelevanceSet {
 }
 
 /// Collect the base and projection-index roots used by a MIR place.
-fn place_uses(place: &Place<'_>) -> RelevanceSet {
-    let mut uses = RelevanceSet::new();
+fn place_uses(place: &Place<'_>) -> RelevantPlaces {
+    let mut uses = RelevantPlaces::new();
     uses.insert_mir_place(place);
     uses.extend(place_projection_uses(place));
     uses
 }
 
 /// Collect only the index roots used by a place projection.
-fn place_projection_uses(place: &Place<'_>) -> RelevanceSet {
-    let mut uses = RelevanceSet::new();
+fn place_projection_uses(place: &Place<'_>) -> RelevantPlaces {
+    let mut uses = RelevantPlaces::new();
     for projection in place.projection {
         if let ProjectionElem::Index(local) = projection {
             uses.insert_local(local);
@@ -671,19 +669,19 @@ fn place_projection_uses(place: &Place<'_>) -> RelevanceSet {
     uses
 }
 
-/// Classify a retained statement by the kind of evidence it contributes.
-fn statement_evidence_kind(statement: &Statement<'_>) -> EvidenceKind {
+/// Classify why a backward visit keeps a statement.
+fn statement_keep_reason(statement: &Statement<'_>) -> KeepReason {
     match &statement.kind {
         StatementKind::Assign(box (_, rvalue)) => match rvalue {
             Rvalue::Ref(_, _, _)
             | Rvalue::RawPtr(_, _)
             | Rvalue::Cast(_, _, _)
             | Rvalue::CopyForDeref(_)
-            | Rvalue::BinaryOp(_, _) => EvidenceKind::PointerProvenance,
-            _ => EvidenceKind::Definition,
+            | Rvalue::BinaryOp(_, _) => KeepReason::PointerFlow,
+            _ => KeepReason::Definition,
         },
-        StatementKind::StorageDead(_) => EvidenceKind::Invalidation,
-        _ => EvidenceKind::Definition,
+        StatementKind::StorageDead(_) => KeepReason::Invalidation,
+        _ => KeepReason::Definition,
     }
 }
 
@@ -699,7 +697,7 @@ fn statement_can_refine(statement: &Statement<'_>) -> bool {
 }
 
 /// Return true if a statement invalidates currently relevant state.
-fn statement_invalidates_relevant(statement: &Statement<'_>, relevant: &RelevanceSet) -> bool {
+fn statement_invalidates_relevant(statement: &Statement<'_>, relevant: &RelevantPlaces) -> bool {
     match &statement.kind {
         StatementKind::StorageDead(local) => relevant.locals.contains(local),
         _ => false,
@@ -707,22 +705,22 @@ fn statement_invalidates_relevant(statement: &Statement<'_>, relevant: &Relevanc
 }
 
 /// Classify a retained terminator that defines a relevant place.
-fn terminator_definition_kind(terminator: &Terminator<'_>) -> EvidenceKind {
+fn terminator_definition_reason(terminator: &Terminator<'_>) -> KeepReason {
     match terminator.kind {
-        TerminatorKind::Call { .. } => EvidenceKind::UnknownRelevantEffect,
-        _ => EvidenceKind::Definition,
+        TerminatorKind::Call { .. } => KeepReason::UnknownEffect,
+        _ => KeepReason::Definition,
     }
 }
 
 /// Classify a retained terminator that uses a relevant place.
-fn terminator_use_kind(terminator: &Terminator<'_>) -> EvidenceKind {
+fn terminator_use_reason(terminator: &Terminator<'_>) -> KeepReason {
     match terminator.kind {
         TerminatorKind::SwitchInt { .. } | TerminatorKind::Assert { .. } => {
-            EvidenceKind::PathCondition
+            KeepReason::PathCondition
         }
-        TerminatorKind::Drop { .. } => EvidenceKind::Invalidation,
-        TerminatorKind::Call { .. } => EvidenceKind::UnknownRelevantEffect,
-        _ => EvidenceKind::UnknownRelevantEffect,
+        TerminatorKind::Drop { .. } => KeepReason::Invalidation,
+        TerminatorKind::Call { .. } => KeepReason::UnknownEffect,
+        _ => KeepReason::UnknownEffect,
     }
 }
 

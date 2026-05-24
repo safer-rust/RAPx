@@ -3,16 +3,16 @@
 //! The target collector owns selected functions and their callee requirements.
 //! The path extractor upgrades a function CFG into loop-aware path metadata.
 //! This module keeps those pieces together for one function target and exposes
-//! callsite-level views for later evidence, replay, and SMT stages.
+//! callsite-level views for later backward visits, replay, and SMT stages.
 
 use rustc_data_structures::fx::FxHashMap;
 use rustc_middle::ty::TyCtxt;
 
 use super::{
+    backward_visit::BackwardVisitor,
     contract::Property,
-    evidence::EvidenceReducer,
     helpers::Callsite,
-    path::{Path, PathExtractor, PathMetaInfo},
+    path::{FunctionPaths, Path, PathExtractor},
     report::{CheckResult, PropertyCheckResult, VerificationReport},
     target::FunctionTarget,
 };
@@ -21,7 +21,7 @@ use super::{
 pub struct VerifyDriver<'target, 'tcx> {
     tcx: TyCtxt<'tcx>,
     target: &'target FunctionTarget<'tcx>,
-    path_info: PathMetaInfo<'tcx>,
+    path_info: FunctionPaths<'tcx>,
     properties_to_verify: FxHashMap<super::helpers::CallsiteLocation, &'target [Property<'tcx>]>,
 }
 
@@ -49,7 +49,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
     }
 
     /// Return the loop-aware path metadata managed by this driver.
-    pub fn path_info(&self) -> &PathMetaInfo<'tcx> {
+    pub fn path_info(&self) -> &FunctionPaths<'tcx> {
         &self.path_info
     }
 
@@ -57,17 +57,17 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
     ///
     /// This method is the main driver entry for later verification stages.  It
     /// currently walks `(callsite, path, property)` items and records an
-    /// `Unknown` result for each one.  Evidence reduction, abstract replay, and
+    /// `Unknown` result for each one. Backward visiting, abstract replay, and
     /// SMT checking can replace the placeholder result inside this loop without
     /// changing the surrounding control flow.
     pub fn verify_function(&self) -> VerificationReport<'tcx> {
         let mut report = VerificationReport::new(self.target.def_id);
-        let reducer = EvidenceReducer::new(self.tcx);
+        let visitor = BackwardVisitor::new(self.tcx);
 
         for view in self.iter_callsite_checks() {
             for (path_index, path) in view.paths.iter().enumerate() {
                 for property in view.properties {
-                    let _evidence = reducer.reduce(view.callsite, path, property);
+                    let _visit = visitor.visit(view.callsite, path, property);
                     report.push(PropertyCheckResult {
                         callsite: view.callsite.location(),
                         path_index,

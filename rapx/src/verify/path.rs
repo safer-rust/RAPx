@@ -6,8 +6,6 @@
 //! inside a loop, the path starts at the loop header and reaches the callsite
 //! within one loop iteration.
 
-use std::fmt;
-
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_middle::{mir::BasicBlock, ty::TyCtxt};
@@ -20,8 +18,8 @@ use super::helpers::{CFG, Callsite, CallsiteLocation};
 pub struct PathExtractor<'tcx> {
     cfg: CFG,
     callsites: Vec<Callsite<'tcx>>,
-    loops: Vec<LoopInfo>,
-    block_to_loop: FxHashMap<BasicBlock, LoopId>,
+    loops: Vec<Loop>,
+    block_to_loop: FxHashMap<BasicBlock, BasicBlock>,
     paths: FxHashMap<CallsiteLocation, Vec<Path>>,
 }
 
@@ -38,12 +36,12 @@ impl<'tcx> PathExtractor<'tcx> {
     }
 
     /// Run loop detection and path extraction, then return path metadata.
-    pub fn run(mut self) -> PathMetaInfo<'tcx> {
+    pub fn run(mut self) -> FunctionPaths<'tcx> {
         self.find_loops();
         self.find_paths();
-        PathMetaInfo {
-            loops: LoopMetaInfo::new(self.loops),
-            callsite_paths: CallsitePathInfo::new(self.callsites, self.paths),
+        FunctionPaths {
+            loops: Loops::new(self.loops),
+            callsite_paths: CallsitePaths::new(self.callsites, self.paths),
         }
     }
 
@@ -79,8 +77,8 @@ impl<'tcx> PathExtractor<'tcx> {
         by_block: &FxHashMap<BasicBlock, CallsiteLocation>,
     ) -> Vec<Path> {
         let target = callsite.location();
-        if let Some(loop_id) = self.block_to_loop.get(&callsite.block).copied() {
-            self.find_loop_paths(loop_id, target, callsite.block)
+        if let Some(header) = self.block_to_loop.get(&callsite.block).copied() {
+            self.find_loop_paths(header, target, callsite.block)
         } else {
             self.find_entry_paths(target, callsite.block, by_block)
         }
@@ -151,12 +149,12 @@ impl<'tcx> PathExtractor<'tcx> {
                 break;
             }
 
-            if let Some(loop_id) = self.block_to_loop.get(&next).copied() {
-                if self.block_to_loop.get(&target_block).copied() == Some(loop_id) {
+            if let Some(header) = self.block_to_loop.get(&next).copied() {
+                if self.block_to_loop.get(&target_block).copied() == Some(header) {
                     continue;
                 }
                 self.follow_loop_exits(
-                    loop_id,
+                    header,
                     target,
                     target_block,
                     by_block,
@@ -195,7 +193,7 @@ impl<'tcx> PathExtractor<'tcx> {
     /// It records the selected exit and resumes the DFS at the exit destination.
     fn follow_loop_exits(
         &self,
-        loop_id: LoopId,
+        header: BasicBlock,
         target: CallsiteLocation,
         target_block: BasicBlock,
         by_block: &FxHashMap<BasicBlock, CallsiteLocation>,
@@ -204,7 +202,9 @@ impl<'tcx> PathExtractor<'tcx> {
         results: &mut Vec<Path>,
         limit: usize,
     ) {
-        let loop_info = &self.loops[loop_id.index()];
+        let Some(loop_info) = self.loop_by_header(header) else {
+            return;
+        };
         for exit in &loop_info.exits {
             if results.len() >= limit {
                 break;
@@ -214,7 +214,7 @@ impl<'tcx> PathExtractor<'tcx> {
             }
 
             stack.push(PathStep::LoopExit {
-                loop_id,
+                header,
                 from: exit.from,
                 to: exit.to,
             });
@@ -244,19 +244,21 @@ impl<'tcx> PathExtractor<'tcx> {
     /// state.
     fn find_loop_paths(
         &self,
-        loop_id: LoopId,
+        header: BasicBlock,
         target: CallsiteLocation,
         target_block: BasicBlock,
     ) -> Vec<Path> {
         const PATH_LIMIT: usize = 1024;
-        let loop_info = &self.loops[loop_id.index()];
+        let Some(loop_info) = self.loop_by_header(header) else {
+            return Vec::new();
+        };
         let loop_blocks: FxHashSet<BasicBlock> = loop_info.blocks.iter().copied().collect();
         let mut results = Vec::new();
         let mut stack = vec![PathStep::Block(loop_info.header)];
         let mut visited = FxHashSet::default();
         visited.insert(loop_info.header);
         self.dfs_loop_paths(
-            loop_id,
+            header,
             loop_info.header,
             target,
             target_block,
@@ -276,7 +278,7 @@ impl<'tcx> PathExtractor<'tcx> {
     /// reaches a callsite located in the loop body.
     fn dfs_loop_paths(
         &self,
-        loop_id: LoopId,
+        header: BasicBlock,
         current: BasicBlock,
         target: CallsiteLocation,
         target_block: BasicBlock,
@@ -294,7 +296,7 @@ impl<'tcx> PathExtractor<'tcx> {
             stack.push(PathStep::Callsite(target));
             results.push(Path {
                 target,
-                start: PathStart::LoopHeader { loop_id },
+                start: PathStart::LoopHeader { header },
                 steps: stack.clone(),
             });
             stack.pop();
@@ -308,7 +310,7 @@ impl<'tcx> PathExtractor<'tcx> {
             stack.push(PathStep::Block(next));
             visited.insert(next);
             self.dfs_loop_paths(
-                loop_id,
+                header,
                 next,
                 target,
                 target_block,
@@ -322,6 +324,13 @@ impl<'tcx> PathExtractor<'tcx> {
             stack.pop();
         }
     }
+
+    /// Return the detected loop whose header is `header`.
+    fn loop_by_header(&self, header: BasicBlock) -> Option<&Loop> {
+        self.loops
+            .iter()
+            .find(|loop_info| loop_info.header == header)
+    }
 }
 
 /// Path metadata produced by a completed extraction run.
@@ -329,19 +338,19 @@ impl<'tcx> PathExtractor<'tcx> {
 /// This is the path-level view of a function CFG: loop information describes
 /// cyclic regions, while callsite path information maps unsafe callsites to the
 /// finite paths that reach them.
-pub struct PathMetaInfo<'tcx> {
-    loops: LoopMetaInfo,
-    callsite_paths: CallsitePathInfo<'tcx>,
+pub struct FunctionPaths<'tcx> {
+    loops: Loops,
+    callsite_paths: CallsitePaths<'tcx>,
 }
 
-impl<'tcx> PathMetaInfo<'tcx> {
+impl<'tcx> FunctionPaths<'tcx> {
     /// Return loop metadata for this function.
-    pub fn loop_info(&self) -> &LoopMetaInfo {
+    pub fn loop_info(&self) -> &Loops {
         &self.loops
     }
 
     /// Return callsite-to-path metadata for this function.
-    pub fn callsite_paths(&self) -> &CallsitePathInfo<'tcx> {
+    pub fn callsite_paths(&self) -> &CallsitePaths<'tcx> {
         &self.callsite_paths
     }
 
@@ -351,7 +360,7 @@ impl<'tcx> PathMetaInfo<'tcx> {
     }
 
     /// Return all loops detected in the function CFG.
-    pub fn loops(&self) -> &[LoopInfo] {
+    pub fn loops(&self) -> &[Loop] {
         self.loops.loops()
     }
 
@@ -362,18 +371,18 @@ impl<'tcx> PathMetaInfo<'tcx> {
 }
 
 /// Metadata for loop regions discovered in a function CFG.
-pub struct LoopMetaInfo {
-    loops: Vec<LoopInfo>,
+pub struct Loops {
+    loops: Vec<Loop>,
 }
 
-impl LoopMetaInfo {
+impl Loops {
     /// Create loop metadata from detected loops.
-    fn new(loops: Vec<LoopInfo>) -> Self {
+    fn new(loops: Vec<Loop>) -> Self {
         Self { loops }
     }
 
     /// Return all detected loops.
-    pub fn loops(&self) -> &[LoopInfo] {
+    pub fn loops(&self) -> &[Loop] {
         &self.loops
     }
 
@@ -389,12 +398,12 @@ impl LoopMetaInfo {
 }
 
 /// Metadata that maps unsafe callsites to finite verification paths.
-pub struct CallsitePathInfo<'tcx> {
+pub struct CallsitePaths<'tcx> {
     callsites: Vec<Callsite<'tcx>>,
     paths_by_callsite: FxHashMap<CallsiteLocation, Vec<Path>>,
 }
 
-impl<'tcx> CallsitePathInfo<'tcx> {
+impl<'tcx> CallsitePaths<'tcx> {
     /// Create callsite path metadata from callsites and extracted paths.
     fn new(
         callsites: Vec<Callsite<'tcx>>,
@@ -438,10 +447,10 @@ impl Path {
             .iter()
             .map(|step| match step {
                 PathStep::Block(bb) => format!("bb{}", bb.as_usize()),
-                PathStep::LoopExit { loop_id, from, to } => {
+                PathStep::LoopExit { header, from, to } => {
                     format!(
-                        "Loop#{}.exit(bb{} -> bb{})",
-                        loop_id.index(),
+                        "Loop(bb{}).exit(bb{} -> bb{})",
+                        header.as_usize(),
                         from.as_usize(),
                         to.as_usize()
                     )
@@ -461,7 +470,7 @@ pub enum PathStart {
     /// The path starts at the function entry block.
     FunctionEntry,
     /// The path starts at the header of a loop containing the target callsite.
-    LoopHeader { loop_id: LoopId },
+    LoopHeader { header: BasicBlock },
 }
 
 /// One step in a finite verification path.
@@ -471,7 +480,7 @@ pub enum PathStep {
     Block(BasicBlock),
     /// An abstract step that enters a loop and leaves through one exit edge.
     LoopExit {
-        loop_id: LoopId,
+        header: BasicBlock,
         from: BasicBlock,
         to: BasicBlock,
     },
@@ -479,35 +488,10 @@ pub enum PathStep {
     Callsite(CallsiteLocation),
 }
 
-/// Identifier for a detected loop in one function body.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-pub struct LoopId(usize);
-
-impl LoopId {
-    /// Create a loop id from its index in the local loop list.
-    fn new(index: usize) -> Self {
-        Self(index)
-    }
-
-    /// Return the index of this loop id in the local loop list.
-    pub fn index(self) -> usize {
-        self.0
-    }
-}
-
-impl fmt::Display for LoopId {
-    /// Format a loop id as its numeric index.
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-/// Information recorded for one detected loop.
+/// A cyclic SCC that the verifier treats as one loop region.
 #[derive(Clone, Debug)]
-pub struct LoopInfo {
-    /// Local id of this loop.
-    pub id: LoopId,
-    /// Header block chosen for this loop.
+pub struct Loop {
+    /// Header block used as the stable key for this loop.
     pub header: BasicBlock,
     /// Blocks that belong to the loop.
     pub blocks: Vec<BasicBlock>,
@@ -515,8 +499,6 @@ pub struct LoopInfo {
     pub exits: Vec<LoopExit>,
     /// Edges inside the loop that go back to an earlier block or the header.
     pub backedges: Vec<(BasicBlock, BasicBlock)>,
-    /// Current summary status for the loop.
-    pub transfer: LoopTransfer,
 }
 
 /// An edge that leaves a detected loop.
@@ -526,17 +508,6 @@ pub struct LoopExit {
     pub from: BasicBlock,
     /// Destination block outside the loop.
     pub to: BasicBlock,
-}
-
-/// Conservative summary status for a loop.
-#[derive(Clone, Debug)]
-pub enum LoopTransfer {
-    /// The loop has not yet been classified by later verification stages.
-    Unknown,
-    /// The loop can be ignored for the current obligation.
-    Skip,
-    /// The loop may modify relevant state without a precise summary.
-    Havoc,
 }
 
 /// Return true when `block` contains a non-target callsite.
@@ -552,7 +523,7 @@ fn has_other_callsite(
 }
 
 /// Detect loops in a CFG using SCCs.
-fn find_loops(cfg: &CFG) -> (Vec<LoopInfo>, FxHashMap<BasicBlock, LoopId>) {
+fn find_loops(cfg: &CFG) -> (Vec<Loop>, FxHashMap<BasicBlock, BasicBlock>) {
     let mut detector = SccDetector::new(cfg.successors.clone());
     detector.find_scc();
 
@@ -568,7 +539,6 @@ fn find_loops(cfg: &CFG) -> (Vec<LoopInfo>, FxHashMap<BasicBlock, LoopId>) {
             continue;
         }
 
-        let id = LoopId::new(loops.len());
         let header = BasicBlock::from_usize(component[0]);
         let block_set: FxHashSet<usize> = component.iter().copied().collect();
         let mut exits = Vec::new();
@@ -592,16 +562,14 @@ fn find_loops(cfg: &CFG) -> (Vec<LoopInfo>, FxHashMap<BasicBlock, LoopId>) {
         }
 
         for &block_idx in &component {
-            block_to_loop.insert(BasicBlock::from_usize(block_idx), id);
+            block_to_loop.insert(BasicBlock::from_usize(block_idx), header);
         }
 
-        loops.push(LoopInfo {
-            id,
+        loops.push(Loop {
             header,
             blocks: component.into_iter().map(BasicBlock::from_usize).collect(),
             exits,
             backedges,
-            transfer: LoopTransfer::Unknown,
         });
     }
 
