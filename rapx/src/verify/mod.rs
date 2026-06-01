@@ -3,6 +3,8 @@ mod attr_parser;
 pub mod backward_visit;
 mod contract;
 pub mod driver;
+pub mod fact_check;
+pub mod forward_visit;
 mod helpers;
 pub mod path;
 pub mod report;

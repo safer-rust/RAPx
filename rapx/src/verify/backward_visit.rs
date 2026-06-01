@@ -5,6 +5,8 @@
 //! property. It also extracts property roots without making the contract layer
 //! depend on the backward visitor.
 
+use std::fmt::Write;
+
 use rustc_data_structures::fx::FxHashSet;
 use rustc_middle::mir::{
     BasicBlock, Local, Operand, Place, ProjectionElem, Rvalue, Statement, StatementKind,
@@ -59,7 +61,7 @@ impl<'tcx> BackwardVisitor<'tcx> {
     /// from the roots mentioned by the required property.  Statements defining
     /// relevant locals are retained and their uses become the next relevance
     /// frontier.  Relevant branch conditions, calls, drops, and loop exits are
-    /// retained as conservative inputs for later replay.
+    /// retained as conservative inputs for later forward visits.
     pub fn visit(
         &self,
         callsite: &Callsite<'tcx>,
@@ -74,53 +76,56 @@ impl<'tcx> BackwardVisitor<'tcx> {
         let body = self.tcx.optimized_mir(callsite.caller);
 
         for step in path.steps.iter().rev() {
-            match step {
-                PathStep::Callsite(location) => {
-                    if *location != callsite.location() {
-                        continue;
-                    }
-                    items.push(BackwardItem::Terminator {
-                        block: location.block,
-                        kind: KeepReason::Callsite,
-                    });
-                }
-                PathStep::Block(block) => {
-                    let block_data = &body.basic_blocks[*block];
-                    if *block != callsite.block {
-                        self.visit_terminator(
-                            *block,
-                            block_data.terminator(),
-                            &mut relevant,
-                            &mut items,
-                        );
-                    }
-                    for (statement_index, statement) in
-                        block_data.statements.iter().enumerate().rev()
-                    {
-                        self.visit_statement(
-                            *block,
-                            statement_index,
-                            statement,
-                            &mut relevant,
-                            &mut items,
-                        );
-                    }
-                }
-                PathStep::LoopExit { .. } => {
-                    items.push(BackwardItem::Forget {
-                        reason: ForgetReason::LoopWithoutSummary,
-                    });
-                    items.push(BackwardItem::PathStep {
-                        step: step.clone(),
-                        kind: KeepReason::LoopExit,
-                    });
-                }
-            }
+            self.visit_path_step(step, callsite, &body, &mut relevant, &mut items);
+        }
+
+        for step in path.entry_prefix.iter().rev() {
+            self.visit_path_step(step, callsite, &body, &mut relevant, &mut items);
         }
 
         items.reverse();
         visit.items = items;
         visit
+    }
+
+    /// Visit one path step against the current relevance frontier.
+    fn visit_path_step(
+        &self,
+        step: &PathStep,
+        callsite: &Callsite<'tcx>,
+        body: &rustc_middle::mir::Body<'tcx>,
+        relevant: &mut RelevantPlaces,
+        items: &mut Vec<BackwardItem<'tcx>>,
+    ) {
+        match step {
+            PathStep::Callsite(location) => {
+                if *location != callsite.location() {
+                    return;
+                }
+                items.push(BackwardItem::Terminator {
+                    block: location.block,
+                    kind: KeepReason::Callsite,
+                });
+            }
+            PathStep::Block(block) => {
+                let block_data = &body.basic_blocks[*block];
+                if *block != callsite.block {
+                    self.visit_terminator(*block, block_data.terminator(), relevant, items);
+                }
+                for (statement_index, statement) in block_data.statements.iter().enumerate().rev() {
+                    self.visit_statement(*block, statement_index, statement, relevant, items);
+                }
+            }
+            PathStep::LoopExit { .. } => {
+                items.push(BackwardItem::Forget {
+                    reason: ForgetReason::LoopWithoutSummary,
+                });
+                items.push(BackwardItem::PathStep {
+                    step: step.clone(),
+                    kind: KeepReason::LoopExit,
+                });
+            }
+        }
     }
 
     /// Visit one MIR statement against the current relevance frontier.
@@ -237,6 +242,89 @@ impl<'tcx> RelevantMirItems<'tcx> {
     /// Return true when no MIR/path item has been kept yet.
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
+    }
+
+    /// Render a detailed, path-ordered diagnostic for the relevant MIR items.
+    pub fn describe(
+        &self,
+        tcx: TyCtxt<'tcx>,
+        callsite: &Callsite<'tcx>,
+        path_index: usize,
+    ) -> String {
+        let mut out = String::new();
+        let body = tcx.optimized_mir(self.callsite.caller);
+        let _ = writeln!(
+            out,
+            "      callsite: {} at bb{}",
+            callsite.callee_name(tcx),
+            callsite.block.as_usize()
+        );
+        let _ = writeln!(
+            out,
+            "      property: kind={:?}, args={:?}",
+            self.property.kind, self.property.args
+        );
+        let _ = writeln!(out, "      path {path_index}:");
+        let _ = writeln!(
+            out,
+            "        |_ kind: {}",
+            describe_path_start(&self.path.start)
+        );
+        if self.path.entry_prefix.is_empty() {
+            let _ = writeln!(out, "        |_ steps: {}", self.path.describe_body());
+        } else {
+            let _ = writeln!(
+                out,
+                "        |_ entry prefix: {}",
+                self.path.describe_entry_prefix()
+            );
+            let _ = writeln!(out, "        |_ loop body: {}", self.path.describe_body());
+        }
+        let _ = writeln!(
+            out,
+            "        |_ roots: {} place(s), {} local(s)",
+            self.roots.place_count(),
+            self.roots.local_count()
+        );
+        let _ = writeln!(out, "      relevant MIR items:");
+
+        let mut has_relevant_item = false;
+        for step in self.path.entry_prefix.iter().chain(self.path.steps.iter()) {
+            let step_items: Vec<_> = self
+                .items
+                .iter()
+                .filter(|item| item_belongs_to_step(item, step))
+                .collect();
+            if step_items.is_empty() {
+                continue;
+            }
+            has_relevant_item = true;
+
+            let _ = writeln!(out, "        |_ {}", describe_path_step(step));
+            for item in step_items {
+                let _ = writeln!(out, "        |  |_ {}", describe_backward_item(item, body));
+            }
+        }
+        if !has_relevant_item {
+            let _ = writeln!(out, "        |_ <none>");
+        }
+
+        let forgets: Vec<_> = self
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                BackwardItem::Forget { reason } => Some(reason),
+                _ => None,
+            })
+            .collect();
+        if !forgets.is_empty() {
+            let _ = writeln!(out, "      precision loss:");
+            for reason in forgets {
+                let _ = writeln!(out, "        |_ {}", describe_forget_reason(reason));
+            }
+        }
+
+        out
     }
 }
 
@@ -727,4 +815,114 @@ fn terminator_use_reason(terminator: &Terminator<'_>) -> KeepReason {
 /// Return true if a terminator has an unsupported relevant side effect.
 fn terminator_may_havoc(terminator: &Terminator<'_>) -> bool {
     matches!(terminator.kind, TerminatorKind::Call { .. })
+}
+
+/// Return true when a kept item belongs under a path step in diagnostics.
+fn item_belongs_to_step(item: &BackwardItem<'_>, step: &PathStep) -> bool {
+    match (item, step) {
+        (BackwardItem::Statement { block, .. }, PathStep::Block(step_block)) => block == step_block,
+        (BackwardItem::Terminator { block, kind }, PathStep::Block(step_block)) => {
+            block == step_block && *kind != KeepReason::Callsite
+        }
+        (BackwardItem::Terminator { block, kind }, PathStep::Callsite(location)) => {
+            *kind == KeepReason::Callsite && *block == location.block
+        }
+        (
+            BackwardItem::PathStep {
+                step: item_step, ..
+            },
+            step,
+        ) => same_path_step(item_step, step),
+        _ => false,
+    }
+}
+
+/// Return true when two path steps describe the same path position.
+fn same_path_step(lhs: &PathStep, rhs: &PathStep) -> bool {
+    match (lhs, rhs) {
+        (PathStep::Block(lhs), PathStep::Block(rhs)) => lhs == rhs,
+        (
+            PathStep::LoopExit {
+                header: lhs_header,
+                from: lhs_from,
+                to: lhs_to,
+            },
+            PathStep::LoopExit {
+                header: rhs_header,
+                from: rhs_from,
+                to: rhs_to,
+            },
+        ) => lhs_header == rhs_header && lhs_from == rhs_from && lhs_to == rhs_to,
+        (PathStep::Callsite(lhs), PathStep::Callsite(rhs)) => lhs == rhs,
+        _ => false,
+    }
+}
+
+/// Render a compact path start label.
+fn describe_path_start(start: &super::path::PathStart) -> String {
+    match start {
+        super::path::PathStart::FunctionEntry => "entry".to_string(),
+        super::path::PathStart::LoopHeader { header } => {
+            format!("loop-header(bb{})", header.as_usize())
+        }
+    }
+}
+
+/// Render a compact path step label.
+fn describe_path_step(step: &PathStep) -> String {
+    match step {
+        PathStep::Block(block) => format!("bb{}", block.as_usize()),
+        PathStep::LoopExit { header, from, to } => format!(
+            "Loop(bb{}).exit(bb{} -> bb{})",
+            header.as_usize(),
+            from.as_usize(),
+            to.as_usize()
+        ),
+        PathStep::Callsite(location) => format!("callsite(bb{})", location.block.as_usize()),
+    }
+}
+
+/// Render one kept backward item with the original MIR attached.
+fn describe_backward_item(item: &BackwardItem<'_>, body: &rustc_middle::mir::Body<'_>) -> String {
+    match item {
+        BackwardItem::Statement {
+            block,
+            statement_index,
+            kind,
+            ..
+        } => {
+            let statement = &body.basic_blocks[*block].statements[*statement_index];
+            format!("stmt#{} [{:?}] {:?}", statement_index, kind, statement.kind)
+        }
+        BackwardItem::Terminator { block, kind } => {
+            let terminator = body.basic_blocks[*block].terminator();
+            format!("terminator [{:?}] {:?}", kind, terminator.kind)
+        }
+        BackwardItem::PathStep { kind, .. } => format!("path-step {:?}", kind),
+        BackwardItem::ContractFact { property } => {
+            format!(
+                "contract kind={:?}, args={:?}",
+                property.kind, property.args
+            )
+        }
+        BackwardItem::Forget { reason } => format!("forget {:?}", reason),
+    }
+}
+
+/// Explain why relevant facts were conservatively forgotten.
+fn describe_forget_reason(reason: &ForgetReason) -> &'static str {
+    match reason {
+        ForgetReason::UnknownCall => {
+            "UnknownCall: a retained call may affect relevant state and has no summary yet"
+        }
+        ForgetReason::LoopWithoutSummary => {
+            "LoopWithoutSummary: a relevant loop exit has no verified loop summary yet"
+        }
+        ForgetReason::MayAliasWrite => {
+            "MayAliasWrite: a write may alias relevant state and is not modeled precisely yet"
+        }
+        ForgetReason::UnsupportedEffect => {
+            "UnsupportedEffect: a relevant MIR effect is not modeled precisely yet"
+        }
+    }
 }

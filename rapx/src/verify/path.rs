@@ -3,8 +3,9 @@
 //! This module builds finite paths from a function CFG to each unsafe callsite.
 //! Loops are kept finite by treating a loop as a single step through one of its
 //! exits when the target callsite is outside the loop.  If the target callsite is
-//! inside a loop, the path starts at the loop header and reaches the callsite
-//! within one loop iteration.
+//! inside a loop, the path records both the entry-to-header prefix and the
+//! header-to-callsite body path. This preserves facts established before the
+//! loop without unrolling the loop body.
 
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
@@ -138,6 +139,7 @@ impl<'tcx> PathExtractor<'tcx> {
             results.push(Path {
                 target,
                 start: PathStart::FunctionEntry,
+                entry_prefix: Vec::new(),
                 steps: stack.clone(),
             });
             stack.pop();
@@ -253,6 +255,7 @@ impl<'tcx> PathExtractor<'tcx> {
             return Vec::new();
         };
         let loop_blocks: FxHashSet<BasicBlock> = loop_info.blocks.iter().copied().collect();
+        let entry_prefixes = self.find_entry_prefixes(header, PATH_LIMIT);
         let mut results = Vec::new();
         let mut stack = vec![PathStep::Block(loop_info.header)];
         let mut visited = FxHashSet::default();
@@ -263,12 +266,133 @@ impl<'tcx> PathExtractor<'tcx> {
             target,
             target_block,
             &loop_blocks,
+            &entry_prefixes,
             &mut visited,
             &mut stack,
             &mut results,
             PATH_LIMIT,
         );
         results
+    }
+
+    /// Enumerate finite entry-to-header prefixes for an internal loop callsite.
+    ///
+    /// Loop-internal paths still need facts established before the first loop
+    /// iteration, such as `ptr = slice.as_ptr()`.  The returned prefix excludes
+    /// `header` itself because the loop body path already starts at the header.
+    fn find_entry_prefixes(&self, header: BasicBlock, limit: usize) -> Vec<Vec<PathStep>> {
+        if self.cfg.entry == header {
+            return vec![Vec::new()];
+        }
+
+        let mut results = Vec::new();
+        let mut stack = vec![PathStep::Block(self.cfg.entry)];
+        let mut visited = FxHashSet::default();
+        visited.insert(self.cfg.entry);
+        self.dfs_entry_prefixes(
+            self.cfg.entry,
+            header,
+            &mut visited,
+            &mut stack,
+            &mut results,
+            limit,
+        );
+
+        if results.is_empty() {
+            vec![Vec::new()]
+        } else {
+            results
+        }
+    }
+
+    /// Search from function entry to the selected loop header.
+    ///
+    /// Other loops are crossed through their exits, but the target loop itself
+    /// is not expanded.  This keeps the prefix finite while preserving pre-loop
+    /// definitions that the loop body may use.
+    fn dfs_entry_prefixes(
+        &self,
+        current: BasicBlock,
+        header: BasicBlock,
+        visited: &mut FxHashSet<BasicBlock>,
+        stack: &mut Vec<PathStep>,
+        results: &mut Vec<Vec<PathStep>>,
+        limit: usize,
+    ) {
+        if results.len() >= limit {
+            return;
+        }
+
+        for &next in self.cfg.successors(current) {
+            if results.len() >= limit {
+                break;
+            }
+
+            if next == header {
+                results.push(stack.clone());
+                continue;
+            }
+
+            if let Some(loop_header) = self.block_to_loop.get(&next).copied() {
+                if loop_header == header {
+                    continue;
+                }
+                self.follow_loop_exits_for_prefix(
+                    loop_header,
+                    header,
+                    visited,
+                    stack,
+                    results,
+                    limit,
+                );
+                continue;
+            }
+
+            if visited.contains(&next) {
+                continue;
+            }
+
+            stack.push(PathStep::Block(next));
+            visited.insert(next);
+            self.dfs_entry_prefixes(next, header, visited, stack, results, limit);
+            visited.remove(&next);
+            stack.pop();
+        }
+    }
+
+    /// Continue an entry prefix through every exit of an unrelated loop.
+    fn follow_loop_exits_for_prefix(
+        &self,
+        loop_header: BasicBlock,
+        target_header: BasicBlock,
+        visited: &mut FxHashSet<BasicBlock>,
+        stack: &mut Vec<PathStep>,
+        results: &mut Vec<Vec<PathStep>>,
+        limit: usize,
+    ) {
+        let Some(loop_info) = self.loop_by_header(loop_header) else {
+            return;
+        };
+        for exit in &loop_info.exits {
+            if results.len() >= limit {
+                break;
+            }
+            if visited.contains(&exit.to) {
+                continue;
+            }
+
+            stack.push(PathStep::LoopExit {
+                header: loop_header,
+                from: exit.from,
+                to: exit.to,
+            });
+            stack.push(PathStep::Block(exit.to));
+            visited.insert(exit.to);
+            self.dfs_entry_prefixes(exit.to, target_header, visited, stack, results, limit);
+            visited.remove(&exit.to);
+            stack.pop();
+            stack.pop();
+        }
     }
 
     /// Search inside one loop from its header to an internal callsite.
@@ -283,6 +407,7 @@ impl<'tcx> PathExtractor<'tcx> {
         target: CallsiteLocation,
         target_block: BasicBlock,
         loop_blocks: &FxHashSet<BasicBlock>,
+        entry_prefixes: &[Vec<PathStep>],
         visited: &mut FxHashSet<BasicBlock>,
         stack: &mut Vec<PathStep>,
         results: &mut Vec<Path>,
@@ -294,11 +419,17 @@ impl<'tcx> PathExtractor<'tcx> {
 
         if current == target_block {
             stack.push(PathStep::Callsite(target));
-            results.push(Path {
-                target,
-                start: PathStart::LoopHeader { header },
-                steps: stack.clone(),
-            });
+            for entry_prefix in entry_prefixes {
+                results.push(Path {
+                    target,
+                    start: PathStart::LoopHeader { header },
+                    entry_prefix: entry_prefix.clone(),
+                    steps: stack.clone(),
+                });
+                if results.len() >= limit {
+                    break;
+                }
+            }
             stack.pop();
             return;
         }
@@ -315,6 +446,7 @@ impl<'tcx> PathExtractor<'tcx> {
                 target,
                 target_block,
                 loop_blocks,
+                entry_prefixes,
                 visited,
                 stack,
                 results,
@@ -436,6 +568,12 @@ pub struct Path {
     pub target: CallsiteLocation,
     /// Where the path starts.
     pub start: PathStart,
+    /// Blocks and loop exits from function entry to this path's start.
+    ///
+    /// This is currently non-empty for loop-internal callsites.  It preserves
+    /// definitions established before the loop header without unrolling the
+    /// loop body.
+    pub entry_prefix: Vec<PathStep>,
     /// Ordered steps from the start point to the target callsite.
     pub steps: Vec<PathStep>,
 }
@@ -443,24 +581,58 @@ pub struct Path {
 impl Path {
     /// Render this path as a compact string for diagnostics.
     pub fn describe(&self) -> String {
+        let body = self
+            .steps
+            .iter()
+            .map(describe_step)
+            .collect::<Vec<_>>()
+            .join(" -> ");
+
+        if self.entry_prefix.is_empty() {
+            return body;
+        }
+
+        format!("entry: {} | body: {}", self.describe_entry_prefix(), body)
+    }
+
+    /// Render the entry prefix and append the loop header when applicable.
+    pub fn describe_entry_prefix(&self) -> String {
+        let mut parts = self
+            .entry_prefix
+            .iter()
+            .map(describe_step)
+            .collect::<Vec<_>>();
+        if let PathStart::LoopHeader { header } = self.start {
+            parts.push(format!("bb{}", header.as_usize()));
+        }
+        parts.join(" -> ")
+    }
+
+    /// Render only the path body from the start point to the callsite.
+    pub fn describe_body(&self) -> String {
         self.steps
             .iter()
-            .map(|step| match step {
-                PathStep::Block(bb) => format!("bb{}", bb.as_usize()),
-                PathStep::LoopExit { header, from, to } => {
-                    format!(
-                        "Loop(bb{}).exit(bb{} -> bb{})",
-                        header.as_usize(),
-                        from.as_usize(),
-                        to.as_usize()
-                    )
-                }
-                PathStep::Callsite(location) => {
-                    format!("callsite(bb{})", location.block.as_usize())
-                }
-            })
+            .map(describe_step)
             .collect::<Vec<_>>()
             .join(" -> ")
+    }
+}
+
+/// Render one path step.
+fn describe_step(step: &PathStep) -> String {
+    match step {
+        PathStep::Block(bb) => format!("bb{}", bb.as_usize()),
+        PathStep::LoopExit { header, from, to } => {
+            format!(
+                "Loop(bb{}).exit(bb{} -> bb{})",
+                header.as_usize(),
+                from.as_usize(),
+                to.as_usize()
+            )
+        }
+        PathStep::Callsite(location) => {
+            format!("callsite(bb{})", location.block.as_usize())
+        }
     }
 }
 

@@ -46,7 +46,7 @@ use crate::{
         senryx::{CheckLevel, SenryxCheck},
     },
     cli::{AliasStrategyKind, AnalysisKind, CheckArgs, Commands, OptLevel, RapxArgs, VerifyArgs},
-    verify::target::PrepareTargets,
+    verify::{driver::VerifyVisitDump, target::PrepareTargets},
 };
 use analysis::{
     Analysis,
@@ -296,9 +296,15 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
             }
         },
 
-        Commands::Verify(VerifyArgs { prepare_targets }) => {
+        Commands::Verify(VerifyArgs {
+            prepare_targets,
+            dump_visits,
+        }) => {
             if *prepare_targets {
                 PrepareTargets::new(tcx).run();
+            }
+            if *dump_visits {
+                VerifyVisitDump::new(tcx).run();
             }
         }
     }
