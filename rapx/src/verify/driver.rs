@@ -1,7 +1,7 @@
 //! Driver utilities for the staged verifier pipeline.
 //!
 //! The target collector owns selected functions and their callee requirements.
-//! The path extractor upgrades a function CFG into loop-aware path metadata.
+//! The path extractor upgrades a function CFG into SCC-aware path metadata.
 //! This module keeps those pieces together for one function target and exposes
 //! callsite-level views for later backward visits, forward visits, and SMT stages.
 
@@ -52,7 +52,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
         self.target
     }
 
-    /// Return the loop-aware path metadata managed by this driver.
+    /// Return the SCC-aware path metadata managed by this driver.
     pub fn path_info(&self) -> &FunctionPaths<'tcx> {
         &self.path_info
     }
@@ -154,7 +154,7 @@ pub struct CallsiteCheckView<'view, 'target, 'tcx> {
     pub callsite_index: usize,
     /// The concrete unsafe callsite in the caller MIR body.
     pub callsite: &'view Callsite<'tcx>,
-    /// Loop-aware paths that can reach this callsite.
+    /// SCC-aware paths that can reach this callsite.
     pub paths: &'view [Path],
     /// Required safety properties for the unsafe callee.
     pub properties: &'target [Property<'tcx>],

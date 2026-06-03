@@ -116,9 +116,9 @@ impl<'tcx> BackwardVisitor<'tcx> {
                     self.visit_statement(*block, statement_index, statement, relevant, items);
                 }
             }
-            PathStep::LoopExit { .. } => {
+            PathStep::SccExit { .. } => {
                 items.push(BackwardItem::Forget {
-                    reason: ForgetReason::LoopWithoutSummary,
+                    reason: ForgetReason::SccWithoutSummary,
                 });
                 items.push(BackwardItem::PathStep {
                     step: step.clone(),
@@ -373,8 +373,8 @@ pub enum KeepReason {
 pub enum ForgetReason {
     /// A call may modify relevant state but has no summary yet.
     UnknownCall,
-    /// A loop may modify relevant state but has no summary yet.
-    LoopWithoutSummary,
+    /// An SCC region may modify relevant state but has no summary yet.
+    SccWithoutSummary,
     /// A write may alias relevant state.
     MayAliasWrite,
     /// A relevant statement or terminator is not supported yet.
@@ -842,17 +842,19 @@ fn same_path_step(lhs: &PathStep, rhs: &PathStep) -> bool {
     match (lhs, rhs) {
         (PathStep::Block(lhs), PathStep::Block(rhs)) => lhs == rhs,
         (
-            PathStep::LoopExit {
-                header: lhs_header,
+            PathStep::SccExit {
+                representative: lhs_representative,
                 from: lhs_from,
                 to: lhs_to,
             },
-            PathStep::LoopExit {
-                header: rhs_header,
+            PathStep::SccExit {
+                representative: rhs_representative,
                 from: rhs_from,
                 to: rhs_to,
             },
-        ) => lhs_header == rhs_header && lhs_from == rhs_from && lhs_to == rhs_to,
+        ) => {
+            lhs_representative == rhs_representative && lhs_from == rhs_from && lhs_to == rhs_to
+        }
         (PathStep::Callsite(lhs), PathStep::Callsite(rhs)) => lhs == rhs,
         _ => false,
     }
@@ -862,8 +864,8 @@ fn same_path_step(lhs: &PathStep, rhs: &PathStep) -> bool {
 fn describe_path_start(start: &super::path::PathStart) -> String {
     match start {
         super::path::PathStart::FunctionEntry => "entry".to_string(),
-        super::path::PathStart::LoopHeader { header } => {
-            format!("loop-header(bb{})", header.as_usize())
+        super::path::PathStart::SccRepresentative { representative } => {
+            format!("scc-representative(bb{})", representative.as_usize())
         }
     }
 }
@@ -872,9 +874,13 @@ fn describe_path_start(start: &super::path::PathStart) -> String {
 fn describe_path_step(step: &PathStep) -> String {
     match step {
         PathStep::Block(block) => format!("bb{}", block.as_usize()),
-        PathStep::LoopExit { header, from, to } => format!(
-            "Loop(bb{}).exit(bb{} -> bb{})",
-            header.as_usize(),
+        PathStep::SccExit {
+            representative,
+            from,
+            to,
+        } => format!(
+            "SccRegion(bb{}).exit(bb{} -> bb{})",
+            representative.as_usize(),
             from.as_usize(),
             to.as_usize()
         ),
@@ -915,8 +921,8 @@ fn describe_forget_reason(reason: &ForgetReason) -> &'static str {
         ForgetReason::UnknownCall => {
             "UnknownCall: a retained call may affect relevant state and has no summary yet"
         }
-        ForgetReason::LoopWithoutSummary => {
-            "LoopWithoutSummary: a relevant loop exit has no verified loop summary yet"
+        ForgetReason::SccWithoutSummary => {
+            "SccWithoutSummary: a relevant SCC exit has no verified SCC summary yet"
         }
         ForgetReason::MayAliasWrite => {
             "MayAliasWrite: a write may alias relevant state and is not modeled precisely yet"

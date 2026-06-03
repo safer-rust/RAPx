@@ -13,8 +13,8 @@ use std::collections::{HashMap, HashSet};
 use syn::Expr;
 
 use super::{
-    assets_parser::*,
-    attr_parser::parse_rapx_attr,
+    attribute::assets_parser::*,
+    attribute::attr_parser::parse_rapx_attr,
     contract::Property,
     helpers::{Callsite, collect_unsafe_callsites},
     path::{PathExtractor, PathStart},
@@ -348,7 +348,7 @@ impl<'tcx> PrepareTargets<'tcx> {
         self.log_function_paths(target);
     }
 
-    /// Logs unsafe callsites and loop-aware path skeletons for one target.
+    /// Logs unsafe callsites and SCC-aware path skeletons for one target.
     fn log_function_paths(&self, target: &FunctionTarget<'tcx>) {
         if target.callsites.is_empty() {
             rap_info!("    unsafe callsites: <none>");
@@ -357,21 +357,21 @@ impl<'tcx> PrepareTargets<'tcx> {
 
         let result = PathExtractor::new(self.tcx, target.def_id, target.callsites.clone()).run();
 
-        rap_info!("    detected loop(s): {}", result.loops().len());
-        for loop_info in result.loops() {
-            let body: Vec<_> = loop_info
+        rap_info!("    detected SCC region(s): {}", result.scc_regions().len());
+        for scc_info in result.scc_regions() {
+            let body: Vec<_> = scc_info
                 .blocks
                 .iter()
                 .map(|bb| format!("bb{}", bb.as_usize()))
                 .collect();
-            let exits: Vec<_> = loop_info
+            let exits: Vec<_> = scc_info
                 .exits
                 .iter()
                 .map(|exit| format!("bb{}->bb{}", exit.from.as_usize(), exit.to.as_usize()))
                 .collect();
             rap_info!(
-                "      loop bb{}: body={:?}, exits={:?}",
-                loop_info.header.as_usize(),
+                "      SCC bb{}: body={:?}, exits={:?}",
+                scc_info.representative.as_usize(),
                 body,
                 exits
             );
@@ -397,11 +397,11 @@ impl<'tcx> PrepareTargets<'tcx> {
             for (path_idx, path) in callsite_paths.iter().enumerate() {
                 let kind = match path.start {
                     PathStart::FunctionEntry => "entry",
-                    PathStart::LoopHeader { header } => {
+                    PathStart::SccRepresentative { representative } => {
                         rap_info!(
-                            "      path {} kind: loop-header(bb{})",
+                            "      path {} kind: scc-representative(bb{})",
                             path_idx,
-                            header.as_usize()
+                            representative.as_usize()
                         );
                         rap_info!("      path {}: {}", path_idx, path.describe());
                         continue;

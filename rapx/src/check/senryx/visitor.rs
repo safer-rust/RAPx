@@ -23,7 +23,7 @@ use crate::{
         },
     },
     rap_debug, rap_warn,
-    utils::scc::Scc,
+    graphs::scc::Scc,
 };
 use rustc_middle::ty::GenericParamDefKind;
 use serde::de;

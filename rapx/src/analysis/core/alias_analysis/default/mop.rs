@@ -14,7 +14,12 @@ use std::{
 
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 
-use crate::utils::scc::{SccInfo, SccTree};
+use crate::graphs::{
+    scc::{SccInfo, SccTree},
+    scc_paths::{
+        build_scc_tree, constraints_key, record_unique_path, PathKey, SccPathTraversalState,
+    },
+};
 
 use super::{block::Term, graph::*, *};
 
@@ -36,12 +41,6 @@ struct SccPathCacheKey {
     def_id: DefId,
     scc_enter: usize,
     constraints: Vec<(usize, usize)>,
-}
-
-fn constraints_key(constraints: &FxHashMap<usize, usize>) -> Vec<(usize, usize)> {
-    let mut v: Vec<(usize, usize)> = constraints.iter().map(|(k, val)| (*k, *val)).collect();
-    v.sort_unstable();
-    v
 }
 
 struct DepthLimitGuard {
@@ -73,12 +72,6 @@ impl Drop for DepthLimitGuard {
             }
         });
     }
-}
-
-#[derive(Clone, Hash, PartialEq, Eq)]
-struct PathKey {
-    path: Vec<usize>,
-    constraints: Vec<(usize, usize)>,
 }
 
 impl<'tcx> MopGraph<'tcx> {
@@ -144,14 +137,7 @@ impl<'tcx> MopGraph<'tcx> {
         if !scc.exits.iter().any(|e| e.exit == node) {
             return;
         }
-
-        let key = PathKey {
-            path: cur_path.clone(),
-            constraints: constraints_key(constraints),
-        };
-        if seen_paths.insert(key) {
-            out.push((cur_path.clone(), constraints.clone()));
-        }
+        record_unique_path(cur_path, constraints, out, seen_paths);
     }
 
     fn possible_switch_values_for_constraint_id(&self, discr_local: usize) -> Option<Vec<usize>> {
@@ -503,29 +489,11 @@ impl<'tcx> MopGraph<'tcx> {
     }
 
     pub fn sort_scc_tree(&mut self, scc: &SccInfo) -> SccTree {
-        // child_enter -> SccInfo
-        let mut child_sccs: FxHashMap<usize, SccInfo> = FxHashMap::default();
-
-        // find all sub sccs
-        for &node in scc.nodes.iter() {
-            let node_scc = &self.blocks[node].scc;
-            if node_scc.enter != scc.enter && !node_scc.nodes.is_empty() {
-                child_sccs
-                    .entry(node_scc.enter)
-                    .or_insert_with(|| node_scc.clone());
-            }
-        }
-
-        // recursively sort children
-        let children = child_sccs
-            .into_values()
-            .map(|child_scc| self.sort_scc_tree(&child_scc))
-            .collect();
-
-        SccTree {
-            scc: scc.clone(),
-            children,
-        }
+        // `node_to_scc` must return the most specific SCC that directly owns `node`
+        // in the current nesting model, so nested SCC trees can be rebuilt correctly.
+        build_scc_tree(scc, |node| {
+            self.blocks.get(node).map(|block| block.scc.clone())
+        })
     }
 
     pub fn find_scc_paths(
@@ -547,33 +515,10 @@ impl<'tcx> MopGraph<'tcx> {
         let mut all_paths = Vec::new();
         let mut seen_paths: FxHashSet<PathKey> = FxHashSet::default();
 
-        // DFS stack path
-        let mut path = vec![start];
-
-        // Track nodes on the current *segment* recursion stack (since the last dominator entry).
-        // This prevents non-dominator cycles inside a segment, but allows revisiting nodes across
-        // multiple segments separated by returning to the dominator.
-        let mut segment_stack = FxHashSet::default();
-        segment_stack.insert(start);
-
-        // Track nodes visited since entering the dominator on this path.
-        let mut visited_since_enter = FxHashSet::default();
-        visited_since_enter.insert(start);
-
-        // Snapshot of visited nodes at the *start* of the current cycle segment (at dominator).
-        // Used to decide whether a new cycle (return-to-dominator) introduced new nodes.
-        let baseline_at_dominator = visited_since_enter.clone();
-
         self.find_scc_paths_inner(
-            start,
-            start,
             scc_tree,
-            &mut path,
+            SccPathTraversalState::new(start),
             initial_constraints.clone(),
-            segment_stack,
-            visited_since_enter,
-            baseline_at_dominator,
-            None,
             &mut all_paths,
             &mut seen_paths,
         );
@@ -593,15 +538,9 @@ impl<'tcx> MopGraph<'tcx> {
 
     fn find_scc_paths_inner(
         &mut self,
-        start: usize,
-        cur: usize,
         scc_tree: &SccTree,
-        path: &mut Vec<usize>,
+        state: SccPathTraversalState,
         mut path_constraints: FxHashMap<usize, usize>,
-        mut segment_stack: FxHashSet<usize>,
-        visited_since_enter: FxHashSet<usize>,
-        baseline_at_dominator: FxHashSet<usize>,
-        skip_child_enter: Option<usize>,
         paths_in_scc: &mut Vec<(Vec<usize>, FxHashMap<usize, usize>)>,
         seen_paths: &mut FxHashSet<PathKey>,
     ) {
@@ -610,67 +549,31 @@ impl<'tcx> MopGraph<'tcx> {
         };
         let scc = &scc_tree.scc;
         if scc.nodes.is_empty() {
-            let key = PathKey {
-                path: path.clone(),
-                constraints: constraints_key(&path_constraints),
-            };
-            if seen_paths.insert(key) {
-                paths_in_scc.push((path.clone(), path_constraints));
-            }
+            record_unique_path(&state.path, &path_constraints, paths_in_scc, seen_paths);
             return;
         }
 
         // Temporary complexity control to avoid path explosion.
         // Use unique-path count to avoid biased truncation from duplicates.
-        if path.len() > 200 || seen_paths.len() > 4000 {
+        if state.exceeds_complexity_limits(200, 4000, seen_paths.len()) {
             return;
         }
 
         // We do not traverse outside the SCC when generating SCC internal paths.
         // Instead, we record paths that end at SCC-exit nodes (nodes with an outgoing edge leaving
         // the SCC), and the caller is responsible for resuming traversal outside the SCC.
-        let cur_in_scc = cur == start || scc.nodes.contains(&cur);
-        if !cur_in_scc {
+        if !state.is_cur_in_scc(scc) {
             return;
         }
 
-        // Incremental cycle validity check:
-        // When we return to the dominator (start), we keep the cycle only if the *most recent*
-        // segment between two occurrences of the dominator introduced at least one node that
-        // was not visited at the beginning of that segment.
-        let mut baseline_at_dominator = baseline_at_dominator;
-        let visited_since_enter = visited_since_enter;
-
-        if cur == start {
-            if path.len() > 1 {
-                // Find previous occurrence of `start` before the trailing `start`.
-                let prev_start_pos = path[..path.len() - 1]
-                    .iter()
-                    .rposition(|&node| node == start)
-                    .unwrap_or(0);
-                // Nodes in the cycle segment exclude both dominator endpoints.
-                let cycle_nodes = &path[prev_start_pos + 1..path.len() - 1];
-                let introduces_new = cycle_nodes
-                    .iter()
-                    .any(|node| !baseline_at_dominator.contains(node));
-                if !introduces_new {
-                    return;
-                }
-            }
-            // We are at a dominator boundary: reset baseline for the next segment.
-            baseline_at_dominator = visited_since_enter.clone();
-
-            // IMPORTANT: reset segment recursion stack at the dominator.
-            // After completing a cycle back to the dominator, the next segment is allowed to
-            // traverse previously seen nodes again; only the incremental-cycle check above
-            // controls whether such repetition is useful.
-            segment_stack.clear();
-            segment_stack.insert(start);
+        let mut state = state;
+        if !state.prepare_for_current_node() {
+            return;
         }
 
-        // Clear the constriants if the local is reassigned in the current block;
+        // Clear the constraints if the local is reassigned in the current block;
         // Otherwise, it cannot reach other branches.
-        for local in &self.blocks[cur].assigned_locals {
+        for local in &self.blocks[state.cur].assigned_locals {
             rap_debug!(
                 "Remove path_constraints {:?}, because it has been reassigned.",
                 local
@@ -678,14 +581,14 @@ impl<'tcx> MopGraph<'tcx> {
             path_constraints.remove(&local);
         }
 
-        // Find the pathes of inner scc recursively;
+        // Find the paths of inner scc recursively;
         for child_tree in &scc_tree.children {
             let child_enter = child_tree.scc.enter;
-            if cur == child_enter {
+            if state.cur == child_enter {
                 // When a spliced child-SCC path ends back at the child-enter, we must continue
                 // exploring the *parent* SCC without immediately re-expanding the same child SCC
                 // again (otherwise we can loop until the depth guard triggers and drop paths).
-                if skip_child_enter == Some(child_enter) {
+                if state.skip_child_enter == Some(child_enter) {
                     break;
                 }
 
@@ -697,17 +600,10 @@ impl<'tcx> MopGraph<'tcx> {
                 // the child enumeration is truncated/empty and also to allow parent exits at
                 // `child_enter` (e.g., an edge to a sink `Unreachable` block) to be recorded.
                 {
-                    let mut nop_path = path.clone();
                     self.find_scc_paths_inner(
-                        start,
-                        child_enter,
                         scc_tree,
-                        &mut nop_path,
+                        state.with_skip_child_enter(child_enter),
                         path_constraints.clone(),
-                        segment_stack.clone(),
-                        visited_since_enter.clone(),
-                        baseline_at_dominator.clone(),
-                        Some(child_enter),
                         paths_in_scc,
                         seen_paths,
                     );
@@ -720,28 +616,11 @@ impl<'tcx> MopGraph<'tcx> {
                         continue;
                     }
 
-                    let mut new_path = path.clone();
+                    let mut new_path = state.path.clone();
                     new_path.extend(&subp[1..]);
                     // `subconst` already starts from `path_constraints` and accumulates changes.
                     // Use it as the current constraints after splicing.
                     let new_const = subconst;
-
-                    // Update visited set based on spliced nodes.
-                    let mut new_visited = visited_since_enter.clone();
-                    for node in &new_path {
-                        new_visited.insert(*node);
-                    }
-
-                    // Rebuild segment stack from the suffix of the path after the most recent
-                    // dominator occurrence.
-                    let last_start_pos = new_path
-                        .iter()
-                        .rposition(|&node| node == start)
-                        .unwrap_or(0);
-                    let mut new_segment_stack = FxHashSet::default();
-                    for node in &new_path[last_start_pos..] {
-                        new_segment_stack.insert(*node);
-                    }
 
                     let new_cur = *new_path.last().unwrap();
                     let next_skip_child_enter = if new_cur == child_enter {
@@ -751,15 +630,9 @@ impl<'tcx> MopGraph<'tcx> {
                     };
 
                     self.find_scc_paths_inner(
-                        start,
-                        new_cur,
                         scc_tree,
-                        &mut new_path,
+                        state.with_spliced_path(new_path, next_skip_child_enter),
                         new_const,
-                        new_segment_stack,
-                        new_visited,
-                        baseline_at_dominator.clone(),
-                        next_skip_child_enter,
                         paths_in_scc,
                         seen_paths,
                     );
@@ -768,7 +641,7 @@ impl<'tcx> MopGraph<'tcx> {
             }
         }
 
-        let term = self.terminators[cur].clone();
+        let term = self.terminators[state.cur].clone();
         rap_debug!("term: {:?}", term);
 
         // Clear constraints when their discriminant locals are redefined by terminators.
@@ -811,36 +684,24 @@ impl<'tcx> MopGraph<'tcx> {
                     // Existing constraint: only explore the feasible branch.
                     if constant == usize::MAX {
                         let next = targets.otherwise().as_usize();
-                        let next_in_scc = next == start || scc.nodes.contains(&next);
+                        let next_in_scc = state.is_node_in_scc(scc, next);
                         if !next_in_scc {
                             // Exits the SCC via the default branch.
                             self.record_scc_exit_path(
                                 scc,
-                                cur,
+                                state.cur,
                                 &path_constraints,
-                                path,
+                                &state.path,
                                 paths_in_scc,
                                 seen_paths,
                             );
                             return;
                         }
-                        if !segment_stack.contains(&next) || next == start {
-                            let mut new_path = path.clone();
-                            new_path.push(next);
-                            let mut new_segment_stack = segment_stack.clone();
-                            new_segment_stack.insert(next);
-                            let mut new_visited = visited_since_enter.clone();
-                            new_visited.insert(next);
+                        if state.can_descend_to(next) {
                             self.find_scc_paths_inner(
-                                start,
-                                next,
                                 scc_tree,
-                                &mut new_path,
+                                state.descend_to(next),
                                 path_constraints,
-                                new_segment_stack,
-                                new_visited,
-                                baseline_at_dominator,
-                                None,
                                 paths_in_scc,
                                 seen_paths,
                             );
@@ -853,74 +714,50 @@ impl<'tcx> MopGraph<'tcx> {
                             }
                             found = true;
                             let next = branch.1.as_usize();
-                            let next_in_scc = next == start || scc.nodes.contains(&next);
+                            let next_in_scc = state.is_node_in_scc(scc, next);
                             if !next_in_scc {
                                 // Exits the SCC via this constrained branch.
                                 self.record_scc_exit_path(
                                     scc,
-                                    cur,
+                                    state.cur,
                                     &path_constraints,
-                                    path,
+                                    &state.path,
                                     paths_in_scc,
                                     seen_paths,
                                 );
                                 continue;
                             }
-                            if segment_stack.contains(&next) && next != start {
+                            if !state.can_descend_to(next) {
                                 continue;
                             }
-                            let mut new_path = path.clone();
-                            new_path.push(next);
-                            let mut new_segment_stack = segment_stack.clone();
-                            new_segment_stack.insert(next);
-                            let mut new_visited = visited_since_enter.clone();
-                            new_visited.insert(next);
                             self.find_scc_paths_inner(
-                                start,
-                                next,
                                 scc_tree,
-                                &mut new_path,
+                                state.descend_to(next),
                                 path_constraints.clone(),
-                                new_segment_stack,
-                                new_visited,
-                                baseline_at_dominator.clone(),
-                                None,
                                 paths_in_scc,
                                 seen_paths,
                             );
                         }
                         if !found {
                             let next = targets.otherwise().as_usize();
-                            let next_in_scc = next == start || scc.nodes.contains(&next);
+                            let next_in_scc = state.is_node_in_scc(scc, next);
                             if !next_in_scc {
                                 // Exits the SCC via the default branch.
                                 self.record_scc_exit_path(
                                     scc,
-                                    cur,
+                                    state.cur,
                                     &path_constraints,
-                                    path,
+                                    &state.path,
                                     paths_in_scc,
                                     seen_paths,
                                 );
                                 return;
                             }
-                            if !segment_stack.contains(&next) || next == start {
-                                let mut new_path = path.clone();
-                                new_path.push(next);
-                                let mut new_segment_stack = segment_stack.clone();
-                                new_segment_stack.insert(next);
-                                let mut new_visited = visited_since_enter.clone();
-                                new_visited.insert(next);
+                            if state.can_descend_to(next) {
                                 self.find_scc_paths_inner(
-                                    start,
-                                    next,
                                     scc_tree,
-                                    &mut new_path,
+                                    state.descend_to(next),
                                     path_constraints,
-                                    new_segment_stack,
-                                    new_visited,
-                                    baseline_at_dominator,
-                                    None,
                                     paths_in_scc,
                                     seen_paths,
                                 );
@@ -934,44 +771,29 @@ impl<'tcx> MopGraph<'tcx> {
                         for constant in values {
                             let next = self.switch_target_for_value(&targets, constant);
 
-                            let next_in_scc = next == start || scc.nodes.contains(&next);
+                            let next_in_scc = state.is_node_in_scc(scc, next);
                             let mut new_constraints = path_constraints.clone();
                             new_constraints.insert(discr_local, constant);
 
                             if !next_in_scc {
                                 self.record_scc_exit_path(
                                     scc,
-                                    cur,
+                                    state.cur,
                                     &new_constraints,
-                                    path,
+                                    &state.path,
                                     paths_in_scc,
                                     seen_paths,
                                 );
                                 continue;
                             }
-                            if segment_stack.contains(&next) && next != start {
+                            if !state.can_descend_to(next) {
                                 continue;
                             }
 
-                            let mut new_path = path.clone();
-                            new_path.push(next);
-
-                            let mut new_segment_stack = segment_stack.clone();
-                            new_segment_stack.insert(next);
-
-                            let mut new_visited = visited_since_enter.clone();
-                            new_visited.insert(next);
-
                             self.find_scc_paths_inner(
-                                start,
-                                next,
                                 scc_tree,
-                                &mut new_path,
+                                state.descend_to(next),
                                 new_constraints,
-                                new_segment_stack,
-                                new_visited,
-                                baseline_at_dominator.clone(),
-                                None,
                                 paths_in_scc,
                                 seen_paths,
                             );
@@ -981,84 +803,54 @@ impl<'tcx> MopGraph<'tcx> {
                         for branch in targets.iter() {
                             let constant = branch.0 as usize;
                             let next = branch.1.as_usize();
-                            let next_in_scc = next == start || scc.nodes.contains(&next);
+                            let next_in_scc = state.is_node_in_scc(scc, next);
                             let mut new_constraints = path_constraints.clone();
                             new_constraints.insert(discr_local, constant);
 
                             if !next_in_scc {
                                 self.record_scc_exit_path(
                                     scc,
-                                    cur,
+                                    state.cur,
                                     &new_constraints,
-                                    path,
+                                    &state.path,
                                     paths_in_scc,
                                     seen_paths,
                                 );
                                 continue;
                             }
-                            if segment_stack.contains(&next) && next != start {
+                            if !state.can_descend_to(next) {
                                 continue;
                             }
-                            let mut new_path = path.clone();
-                            new_path.push(next);
-
-                            let mut new_segment_stack = segment_stack.clone();
-                            new_segment_stack.insert(next);
-
-                            let mut new_visited = visited_since_enter.clone();
-                            new_visited.insert(next);
-
                             self.find_scc_paths_inner(
-                                start,
-                                next,
                                 scc_tree,
-                                &mut new_path,
+                                state.descend_to(next),
                                 new_constraints,
-                                new_segment_stack,
-                                new_visited,
-                                baseline_at_dominator.clone(),
-                                None,
                                 paths_in_scc,
                                 seen_paths,
                             );
                         }
 
                         let next = targets.otherwise().as_usize();
-                        let next_in_scc = next == start || scc.nodes.contains(&next);
+                        let next_in_scc = state.is_node_in_scc(scc, next);
                         let mut new_constraints = path_constraints;
                         new_constraints.insert(discr_local, otherwise_val.unwrap_or(usize::MAX));
 
                         if !next_in_scc {
                             self.record_scc_exit_path(
                                 scc,
-                                cur,
+                                state.cur,
                                 &new_constraints,
-                                path,
+                                &state.path,
                                 paths_in_scc,
                                 seen_paths,
                             );
                             return;
                         }
-                        if !segment_stack.contains(&next) || next == start {
-                            let mut new_path = path.clone();
-                            new_path.push(next);
-
-                            let mut new_segment_stack = segment_stack.clone();
-                            new_segment_stack.insert(next);
-
-                            let mut new_visited = visited_since_enter.clone();
-                            new_visited.insert(next);
-
+                        if state.can_descend_to(next) {
                             self.find_scc_paths_inner(
-                                start,
-                                next,
                                 scc_tree,
-                                &mut new_path,
+                                state.descend_to(next),
                                 new_constraints,
-                                new_segment_stack,
-                                new_visited,
-                                baseline_at_dominator,
-                                None,
                                 paths_in_scc,
                                 seen_paths,
                             );
@@ -1071,39 +863,24 @@ impl<'tcx> MopGraph<'tcx> {
                 // usable path segment. Successors leaving the SCC are not traversed here.
                 self.record_scc_exit_path(
                     scc,
-                    cur,
+                    state.cur,
                     &path_constraints,
-                    path,
+                    &state.path,
                     paths_in_scc,
                     seen_paths,
                 );
-                for next in self.blocks[cur].next.clone() {
-                    let next_in_scc = next == start || scc.nodes.contains(&next);
+                for next in self.blocks[state.cur].next.clone() {
+                    let next_in_scc = state.is_node_in_scc(scc, next);
                     if !next_in_scc {
                         continue;
                     }
-                    if segment_stack.contains(&next) && next != start {
+                    if !state.can_descend_to(next) {
                         continue;
                     }
-                    let mut new_path = path.clone();
-                    new_path.push(next);
-
-                    let mut new_segment_stack = segment_stack.clone();
-                    new_segment_stack.insert(next);
-
-                    let mut new_visited = visited_since_enter.clone();
-                    new_visited.insert(next);
-
                     self.find_scc_paths_inner(
-                        start,
-                        next,
                         scc_tree,
-                        &mut new_path,
+                        state.descend_to(next),
                         path_constraints.clone(),
-                        new_segment_stack,
-                        new_visited,
-                        baseline_at_dominator.clone(),
-                        None,
                         paths_in_scc,
                         seen_paths,
                     );

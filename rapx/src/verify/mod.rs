@@ -1,5 +1,4 @@
-mod assets_parser;
-mod attr_parser;
+pub mod attribute;
 pub mod backward_visit;
 mod contract;
 pub mod driver;

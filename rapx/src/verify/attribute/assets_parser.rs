@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use super::helpers::get_cleaned_def_path_name;
+use crate::verify::helpers::get_cleaned_def_path_name;
 
 /// Structure of JSON entries.
 ///

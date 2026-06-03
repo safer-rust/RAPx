@@ -1,7 +1,7 @@
 //! Shared strongly-connected-component utilities.
 //!
 //! This module provides the small Tarjan SCC abstraction used by RAP analyses
-//! and by the verification path extractor.  The trait is intentionally graph
+//! and by the verification path extractor. The trait is intentionally graph
 //! agnostic: clients provide successor queries and receive each discovered SCC
 //! through `on_scc_found`.
 

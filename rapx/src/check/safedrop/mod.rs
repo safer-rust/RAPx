@@ -13,7 +13,8 @@ use crate::{
         alias_analysis::default::{AliasAnalyzer, MopFnAliasMap},
         ownedheap_analysis::{OHAResultMap, OwnedHeapAnalysis, default::OwnedHeapAnalyzer},
     },
-    utils::{scc::Scc, source::get_fn_name},
+    graphs::scc::Scc,
+    utils::source::get_fn_name,
 };
 use graph::SafeDropGraph;
 use safedrop::*;

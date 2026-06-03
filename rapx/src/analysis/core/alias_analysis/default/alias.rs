@@ -1,5 +1,5 @@
 use super::{MopAliasPair, MopFnAliasMap, block::Term, graph::*, types::*, value::*};
-use crate::{def_id::*, utils::scc::Scc};
+use crate::{def_id::*, graphs::scc::Scc};
 use rustc_data_structures::fx::FxHashSet;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{

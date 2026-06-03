@@ -4,6 +4,7 @@
 
 #[macro_use]
 pub mod utils;
+pub mod graphs;
 pub mod analysis;
 pub mod check;
 pub mod cli;

@@ -1,26 +1,26 @@
 //! Path extraction for verification targets.
 //!
 //! This module builds finite paths from a function CFG to each unsafe callsite.
-//! Loops are kept finite by treating a loop as a single step through one of its
-//! exits when the target callsite is outside the loop.  If the target callsite is
-//! inside a loop, the path records both the entry-to-header prefix and the
-//! header-to-callsite body path. This preserves facts established before the
-//! loop without unrolling the loop body.
+//! Cyclic SCC regions are kept finite by treating an SCC as a single step through
+//! one of its exits when the target callsite is outside that SCC. If the target
+//! callsite is inside an SCC, the path records both the entry-to-representative prefix and the
+//! representative-to-callsite body path. This preserves facts established before the
+//! SCC region without unrolling cyclic control flow.
 
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_middle::{mir::BasicBlock, ty::TyCtxt};
 
-use crate::utils::scc::Scc;
+use crate::graphs::scc_paths::collect_scc_components;
 
 use super::helpers::{CFG, Callsite, CallsiteLocation};
 
-/// Extracts loop-aware paths for one function body.
+/// Extracts SCC-aware paths for one function body.
 pub struct PathExtractor<'tcx> {
     cfg: CFG,
     callsites: Vec<Callsite<'tcx>>,
-    loops: Vec<Loop>,
-    block_to_loop: FxHashMap<BasicBlock, BasicBlock>,
+    scc_regions: Vec<SccRegion>,
+    block_to_scc: FxHashMap<BasicBlock, BasicBlock>,
     paths: FxHashMap<CallsiteLocation, Vec<Path>>,
 }
 
@@ -30,27 +30,27 @@ impl<'tcx> PathExtractor<'tcx> {
         Self {
             cfg: CFG::new(tcx, def_id),
             callsites,
-            loops: Vec::new(),
-            block_to_loop: FxHashMap::default(),
+            scc_regions: Vec::new(),
+            block_to_scc: FxHashMap::default(),
             paths: FxHashMap::default(),
         }
     }
 
-    /// Run loop detection and path extraction, then return path metadata.
+    /// Run SCC-region detection and path extraction, then return path metadata.
     pub fn run(mut self) -> FunctionPaths<'tcx> {
-        self.find_loops();
+        self.find_scc_regions();
         self.find_paths();
         FunctionPaths {
-            loops: Loops::new(self.loops),
+            scc_regions: SccRegions::new(self.scc_regions),
             callsite_paths: CallsitePaths::new(self.callsites, self.paths),
         }
     }
 
-    /// Detect loops in the function CFG and store their block-to-loop map.
-    fn find_loops(&mut self) {
-        let (loops, block_to_loop) = find_loops(&self.cfg);
-        self.loops = loops;
-        self.block_to_loop = block_to_loop;
+    /// Detect SCC regions in the function CFG and store their block-to-SCC map.
+    fn find_scc_regions(&mut self) {
+        let (scc_regions, block_to_scc) = find_scc_regions(&self.cfg);
+        self.scc_regions = scc_regions;
+        self.block_to_scc = block_to_scc;
     }
 
     /// Extract paths for every callsite owned by this extractor.
@@ -71,24 +71,24 @@ impl<'tcx> PathExtractor<'tcx> {
             .collect()
     }
 
-    /// Extract paths for one callsite according to whether it is inside a loop.
+    /// Extract paths for one callsite according to whether it is inside an SCC region.
     fn find_paths_for_callsite(
         &self,
         callsite: &Callsite<'tcx>,
         by_block: &FxHashMap<BasicBlock, CallsiteLocation>,
     ) -> Vec<Path> {
         let target = callsite.location();
-        if let Some(header) = self.block_to_loop.get(&callsite.block).copied() {
-            self.find_loop_paths(header, target, callsite.block)
+        if let Some(representative) = self.block_to_scc.get(&callsite.block).copied() {
+            self.find_scc_internal_paths(representative, target, callsite.block)
         } else {
             self.find_entry_paths(target, callsite.block, by_block)
         }
     }
 
-    /// Enumerate finite paths from function entry to a callsite outside loops.
+    /// Enumerate finite paths from function entry to a callsite outside SCC regions.
     ///
-    /// The search does not expand loop bodies.  When a successor enters a loop
-    /// that does not contain the target callsite, the path records one loop-exit
+    /// The search does not expand SCC internals. When a successor enters an SCC
+    /// that does not contain the target callsite, the path records one SCC-exit
     /// step and continues from the exit destination.
     fn find_entry_paths(
         &self,
@@ -114,11 +114,11 @@ impl<'tcx> PathExtractor<'tcx> {
         results
     }
 
-    /// Search from the current block to an outside-loop target callsite.
+    /// Search from the current block to an outside-SCC target callsite.
     ///
-    /// Normal blocks are recorded directly.  Entering a loop records a
-    /// `PathStep::LoopExit` for each loop exit rather than visiting the loop
-    /// body, which keeps the produced paths finite.
+    /// Normal blocks are recorded directly. Entering an SCC records a
+    /// `PathStep::SccExit` for each SCC exit rather than visiting SCC-internal
+    /// blocks, which keeps the produced paths finite.
     fn dfs_entry_paths(
         &self,
         current: BasicBlock,
@@ -151,12 +151,12 @@ impl<'tcx> PathExtractor<'tcx> {
                 break;
             }
 
-            if let Some(header) = self.block_to_loop.get(&next).copied() {
-                if self.block_to_loop.get(&target_block).copied() == Some(header) {
+            if let Some(representative) = self.block_to_scc.get(&next).copied() {
+                if self.block_to_scc.get(&target_block).copied() == Some(representative) {
                     continue;
                 }
-                self.follow_loop_exits(
-                    header,
+                self.follow_scc_exits(
+                    representative,
                     target,
                     target_block,
                     by_block,
@@ -189,13 +189,13 @@ impl<'tcx> PathExtractor<'tcx> {
         }
     }
 
-    /// Continue an entry path through every exit of a loop.
+    /// Continue an entry path through every exit of an SCC region.
     ///
-    /// This routine is used only when the target callsite is outside the loop.
+    /// This routine is used only when the target callsite is outside the SCC region.
     /// It records the selected exit and resumes the DFS at the exit destination.
-    fn follow_loop_exits(
+    fn follow_scc_exits(
         &self,
-        header: BasicBlock,
+        representative: BasicBlock,
         target: CallsiteLocation,
         target_block: BasicBlock,
         by_block: &FxHashMap<BasicBlock, CallsiteLocation>,
@@ -204,10 +204,10 @@ impl<'tcx> PathExtractor<'tcx> {
         results: &mut Vec<Path>,
         limit: usize,
     ) {
-        let Some(loop_info) = self.loop_by_header(header) else {
+        let Some(scc_info) = self.scc_by_representative(representative) else {
             return;
         };
-        for exit in &loop_info.exits {
+        for exit in &scc_info.exits {
             if results.len() >= limit {
                 break;
             }
@@ -215,8 +215,8 @@ impl<'tcx> PathExtractor<'tcx> {
                 continue;
             }
 
-            stack.push(PathStep::LoopExit {
-                header,
+            stack.push(PathStep::SccExit {
+                representative,
                 from: exit.from,
                 to: exit.to,
             });
@@ -238,34 +238,34 @@ impl<'tcx> PathExtractor<'tcx> {
         }
     }
 
-    /// Enumerate paths from a loop header to a callsite inside that loop.
+    /// Enumerate paths from an SCC representative to a callsite inside that SCC.
     ///
     /// These paths represent one possible iteration reaching the callsite.  The
     /// number of earlier iterations is intentionally not encoded in the path;
-    /// later verification stages should use loop facts to describe the header
+    /// later verification stages should use SCC facts to describe the representative
     /// state.
-    fn find_loop_paths(
+    fn find_scc_internal_paths(
         &self,
-        header: BasicBlock,
+        representative: BasicBlock,
         target: CallsiteLocation,
         target_block: BasicBlock,
     ) -> Vec<Path> {
         const PATH_LIMIT: usize = 1024;
-        let Some(loop_info) = self.loop_by_header(header) else {
+        let Some(scc_info) = self.scc_by_representative(representative) else {
             return Vec::new();
         };
-        let loop_blocks: FxHashSet<BasicBlock> = loop_info.blocks.iter().copied().collect();
-        let entry_prefixes = self.find_entry_prefixes(header, PATH_LIMIT);
+        let scc_blocks: FxHashSet<BasicBlock> = scc_info.blocks.iter().copied().collect();
+        let entry_prefixes = self.find_entry_prefixes(representative, PATH_LIMIT);
         let mut results = Vec::new();
-        let mut stack = vec![PathStep::Block(loop_info.header)];
+        let mut stack = vec![PathStep::Block(scc_info.representative)];
         let mut visited = FxHashSet::default();
-        visited.insert(loop_info.header);
-        self.dfs_loop_paths(
-            header,
-            loop_info.header,
+        visited.insert(scc_info.representative);
+        self.dfs_scc_internal_paths(
+            representative,
+            scc_info.representative,
             target,
             target_block,
-            &loop_blocks,
+            &scc_blocks,
             &entry_prefixes,
             &mut visited,
             &mut stack,
@@ -275,13 +275,13 @@ impl<'tcx> PathExtractor<'tcx> {
         results
     }
 
-    /// Enumerate finite entry-to-header prefixes for an internal loop callsite.
+    /// Enumerate finite entry-to-representative prefixes for an SCC-internal callsite.
     ///
-    /// Loop-internal paths still need facts established before the first loop
+    /// SCC-internal paths still need facts established before the first iteration
     /// iteration, such as `ptr = slice.as_ptr()`.  The returned prefix excludes
-    /// `header` itself because the loop body path already starts at the header.
-    fn find_entry_prefixes(&self, header: BasicBlock, limit: usize) -> Vec<Vec<PathStep>> {
-        if self.cfg.entry == header {
+    /// `representative` itself because the SCC-internal body path already starts there.
+    fn find_entry_prefixes(&self, representative: BasicBlock, limit: usize) -> Vec<Vec<PathStep>> {
+        if self.cfg.entry == representative {
             return vec![Vec::new()];
         }
 
@@ -291,7 +291,7 @@ impl<'tcx> PathExtractor<'tcx> {
         visited.insert(self.cfg.entry);
         self.dfs_entry_prefixes(
             self.cfg.entry,
-            header,
+            representative,
             &mut visited,
             &mut stack,
             &mut results,
@@ -305,15 +305,15 @@ impl<'tcx> PathExtractor<'tcx> {
         }
     }
 
-    /// Search from function entry to the selected loop header.
+    /// Search from function entry to the selected SCC representative.
     ///
-    /// Other loops are crossed through their exits, but the target loop itself
-    /// is not expanded.  This keeps the prefix finite while preserving pre-loop
-    /// definitions that the loop body may use.
+    /// Other SCC regions are crossed through their exits, but the target SCC itself
+    /// is not expanded. This keeps the prefix finite while preserving pre-SCC
+    /// definitions that the SCC-internal path may use.
     fn dfs_entry_prefixes(
         &self,
         current: BasicBlock,
-        header: BasicBlock,
+        representative: BasicBlock,
         visited: &mut FxHashSet<BasicBlock>,
         stack: &mut Vec<PathStep>,
         results: &mut Vec<Vec<PathStep>>,
@@ -328,18 +328,18 @@ impl<'tcx> PathExtractor<'tcx> {
                 break;
             }
 
-            if next == header {
+            if next == representative {
                 results.push(stack.clone());
                 continue;
             }
 
-            if let Some(loop_header) = self.block_to_loop.get(&next).copied() {
-                if loop_header == header {
+            if let Some(scc_representative) = self.block_to_scc.get(&next).copied() {
+                if scc_representative == representative {
                     continue;
                 }
-                self.follow_loop_exits_for_prefix(
-                    loop_header,
-                    header,
+                self.follow_scc_exits_for_prefix(
+                    scc_representative,
+                    representative,
                     visited,
                     stack,
                     results,
@@ -354,26 +354,26 @@ impl<'tcx> PathExtractor<'tcx> {
 
             stack.push(PathStep::Block(next));
             visited.insert(next);
-            self.dfs_entry_prefixes(next, header, visited, stack, results, limit);
+            self.dfs_entry_prefixes(next, representative, visited, stack, results, limit);
             visited.remove(&next);
             stack.pop();
         }
     }
 
-    /// Continue an entry prefix through every exit of an unrelated loop.
-    fn follow_loop_exits_for_prefix(
+    /// Continue an entry prefix through every exit of an unrelated SCC region.
+    fn follow_scc_exits_for_prefix(
         &self,
-        loop_header: BasicBlock,
-        target_header: BasicBlock,
+        scc_representative: BasicBlock,
+        target_representative: BasicBlock,
         visited: &mut FxHashSet<BasicBlock>,
         stack: &mut Vec<PathStep>,
         results: &mut Vec<Vec<PathStep>>,
         limit: usize,
     ) {
-        let Some(loop_info) = self.loop_by_header(loop_header) else {
+        let Some(scc_info) = self.scc_by_representative(scc_representative) else {
             return;
         };
-        for exit in &loop_info.exits {
+        for exit in &scc_info.exits {
             if results.len() >= limit {
                 break;
             }
@@ -381,32 +381,32 @@ impl<'tcx> PathExtractor<'tcx> {
                 continue;
             }
 
-            stack.push(PathStep::LoopExit {
-                header: loop_header,
+            stack.push(PathStep::SccExit {
+                representative: scc_representative,
                 from: exit.from,
                 to: exit.to,
             });
             stack.push(PathStep::Block(exit.to));
             visited.insert(exit.to);
-            self.dfs_entry_prefixes(exit.to, target_header, visited, stack, results, limit);
+            self.dfs_entry_prefixes(exit.to, target_representative, visited, stack, results, limit);
             visited.remove(&exit.to);
             stack.pop();
             stack.pop();
         }
     }
 
-    /// Search inside one loop from its header to an internal callsite.
+    /// Search inside one SCC region from its representative to an internal callsite.
     ///
-    /// Successors that leave the loop are ignored because outside-loop paths are
-    /// represented by loop exits.  This search only describes how an iteration
-    /// reaches a callsite located in the loop body.
-    fn dfs_loop_paths(
+    /// Successors that leave the SCC are ignored because outside-SCC paths are
+    /// represented by SCC exits. This search only describes how one iteration
+    /// reaches a callsite located in the SCC region.
+    fn dfs_scc_internal_paths(
         &self,
-        header: BasicBlock,
+        representative: BasicBlock,
         current: BasicBlock,
         target: CallsiteLocation,
         target_block: BasicBlock,
-        loop_blocks: &FxHashSet<BasicBlock>,
+        scc_blocks: &FxHashSet<BasicBlock>,
         entry_prefixes: &[Vec<PathStep>],
         visited: &mut FxHashSet<BasicBlock>,
         stack: &mut Vec<PathStep>,
@@ -422,7 +422,7 @@ impl<'tcx> PathExtractor<'tcx> {
             for entry_prefix in entry_prefixes {
                 results.push(Path {
                     target,
-                    start: PathStart::LoopHeader { header },
+                    start: PathStart::SccRepresentative { representative },
                     entry_prefix: entry_prefix.clone(),
                     steps: stack.clone(),
                 });
@@ -435,17 +435,17 @@ impl<'tcx> PathExtractor<'tcx> {
         }
 
         for &next in self.cfg.successors(current) {
-            if !loop_blocks.contains(&next) || visited.contains(&next) {
+            if !scc_blocks.contains(&next) || visited.contains(&next) {
                 continue;
             }
             stack.push(PathStep::Block(next));
             visited.insert(next);
-            self.dfs_loop_paths(
-                header,
+            self.dfs_scc_internal_paths(
+                representative,
                 next,
                 target,
                 target_block,
-                loop_blocks,
+                scc_blocks,
                 entry_prefixes,
                 visited,
                 stack,
@@ -457,28 +457,28 @@ impl<'tcx> PathExtractor<'tcx> {
         }
     }
 
-    /// Return the detected loop whose header is `header`.
-    fn loop_by_header(&self, header: BasicBlock) -> Option<&Loop> {
-        self.loops
+    /// Return the detected SCC region whose representative is `representative`.
+    fn scc_by_representative(&self, representative: BasicBlock) -> Option<&SccRegion> {
+        self.scc_regions
             .iter()
-            .find(|loop_info| loop_info.header == header)
+            .find(|scc_info| scc_info.representative == representative)
     }
 }
 
 /// Path metadata produced by a completed extraction run.
 ///
-/// This is the path-level view of a function CFG: loop information describes
+/// This is the path-level view of a function CFG: SCC-region information describes
 /// cyclic regions, while callsite path information maps unsafe callsites to the
 /// finite paths that reach them.
 pub struct FunctionPaths<'tcx> {
-    loops: Loops,
+    scc_regions: SccRegions,
     callsite_paths: CallsitePaths<'tcx>,
 }
 
 impl<'tcx> FunctionPaths<'tcx> {
-    /// Return loop metadata for this function.
-    pub fn loop_info(&self) -> &Loops {
-        &self.loops
+    /// Return SCC-region metadata for this function.
+    pub fn scc_info(&self) -> &SccRegions {
+        &self.scc_regions
     }
 
     /// Return callsite-to-path metadata for this function.
@@ -491,9 +491,9 @@ impl<'tcx> FunctionPaths<'tcx> {
         self.callsite_paths.callsites()
     }
 
-    /// Return all loops detected in the function CFG.
-    pub fn loops(&self) -> &[Loop] {
-        self.loops.loops()
+    /// Return all SCC regions detected in the function CFG.
+    pub fn scc_regions(&self) -> &[SccRegion] {
+        self.scc_regions.scc_regions()
     }
 
     /// Return the paths extracted for one callsite location.
@@ -502,30 +502,30 @@ impl<'tcx> FunctionPaths<'tcx> {
     }
 }
 
-/// Metadata for loop regions discovered in a function CFG.
-pub struct Loops {
-    loops: Vec<Loop>,
+/// Metadata for SCC regions discovered in a function CFG.
+pub struct SccRegions {
+    scc_regions: Vec<SccRegion>,
 }
 
-impl Loops {
-    /// Create loop metadata from detected loops.
-    fn new(loops: Vec<Loop>) -> Self {
-        Self { loops }
+impl SccRegions {
+    /// Create SCC-region metadata from detected SCC regions.
+    fn new(scc_regions: Vec<SccRegion>) -> Self {
+        Self { scc_regions }
     }
 
-    /// Return all detected loops.
-    pub fn loops(&self) -> &[Loop] {
-        &self.loops
+    /// Return all detected SCC regions.
+    pub fn scc_regions(&self) -> &[SccRegion] {
+        &self.scc_regions
     }
 
-    /// Return the number of detected loops.
+    /// Return the number of detected SCC regions.
     pub fn len(&self) -> usize {
-        self.loops.len()
+        self.scc_regions.len()
     }
 
-    /// Return true when no loops were detected.
+    /// Return true when no SCC regions were detected.
     pub fn is_empty(&self) -> bool {
-        self.loops.is_empty()
+        self.scc_regions.is_empty()
     }
 }
 
@@ -568,11 +568,11 @@ pub struct Path {
     pub target: CallsiteLocation,
     /// Where the path starts.
     pub start: PathStart,
-    /// Blocks and loop exits from function entry to this path's start.
+    /// Blocks and SCC exits from function entry to this path's start.
     ///
-    /// This is currently non-empty for loop-internal callsites.  It preserves
-    /// definitions established before the loop header without unrolling the
-    /// loop body.
+    /// This is currently non-empty for SCC-internal callsites. It preserves
+    /// definitions established before the SCC representative without unrolling
+    /// SCC-internal control flow.
     pub entry_prefix: Vec<PathStep>,
     /// Ordered steps from the start point to the target callsite.
     pub steps: Vec<PathStep>,
@@ -595,15 +595,15 @@ impl Path {
         format!("entry: {} | body: {}", self.describe_entry_prefix(), body)
     }
 
-    /// Render the entry prefix and append the loop header when applicable.
+    /// Render the entry prefix and append the SCC representative when applicable.
     pub fn describe_entry_prefix(&self) -> String {
         let mut parts = self
             .entry_prefix
             .iter()
             .map(describe_step)
             .collect::<Vec<_>>();
-        if let PathStart::LoopHeader { header } = self.start {
-            parts.push(format!("bb{}", header.as_usize()));
+        if let PathStart::SccRepresentative { representative } = self.start {
+            parts.push(format!("bb{}", representative.as_usize()));
         }
         parts.join(" -> ")
     }
@@ -622,10 +622,10 @@ impl Path {
 fn describe_step(step: &PathStep) -> String {
     match step {
         PathStep::Block(bb) => format!("bb{}", bb.as_usize()),
-        PathStep::LoopExit { header, from, to } => {
+        PathStep::SccExit { representative, from, to } => {
             format!(
-                "Loop(bb{}).exit(bb{} -> bb{})",
-                header.as_usize(),
+                "SccRegion(bb{}).exit(bb{} -> bb{})",
+                representative.as_usize(),
                 from.as_usize(),
                 to.as_usize()
             )
@@ -641,8 +641,8 @@ fn describe_step(step: &PathStep) -> String {
 pub enum PathStart {
     /// The path starts at the function entry block.
     FunctionEntry,
-    /// The path starts at the header of a loop containing the target callsite.
-    LoopHeader { header: BasicBlock },
+    /// The path starts at the representative of an SCC containing the target callsite.
+    SccRepresentative { representative: BasicBlock },
 }
 
 /// One step in a finite verification path.
@@ -650,9 +650,9 @@ pub enum PathStart {
 pub enum PathStep {
     /// A normal MIR basic block.
     Block(BasicBlock),
-    /// An abstract step that enters a loop and leaves through one exit edge.
-    LoopExit {
-        header: BasicBlock,
+    /// An abstract step that enters an SCC and leaves through one exit edge.
+    SccExit {
+        representative: BasicBlock,
         from: BasicBlock,
         to: BasicBlock,
     },
@@ -660,25 +660,25 @@ pub enum PathStep {
     Callsite(CallsiteLocation),
 }
 
-/// A cyclic SCC that the verifier treats as one loop region.
+/// A cyclic SCC region used as one finite-path abstraction unit.
 #[derive(Clone, Debug)]
-pub struct Loop {
-    /// Header block used as the stable key for this loop.
-    pub header: BasicBlock,
-    /// Blocks that belong to the loop.
+pub struct SccRegion {
+    /// Stable representative block used as the key for this SCC region.
+    pub representative: BasicBlock,
+    /// Blocks that belong to the SCC region.
     pub blocks: Vec<BasicBlock>,
-    /// Edges that leave the loop.
-    pub exits: Vec<LoopExit>,
-    /// Edges inside the loop that go back to an earlier block or the header.
+    /// Edges that leave the SCC region.
+    pub exits: Vec<SccExit>,
+    /// Edges inside the SCC region that go back to an earlier block or the representative.
     pub backedges: Vec<(BasicBlock, BasicBlock)>,
 }
 
-/// An edge that leaves a detected loop.
+/// An edge that leaves a detected SCC region.
 #[derive(Clone, Debug)]
-pub struct LoopExit {
-    /// Source block inside the loop.
+pub struct SccExit {
+    /// Source block inside the SCC region.
     pub from: BasicBlock,
-    /// Destination block outside the loop.
+    /// Destination block outside the SCC region.
     pub to: BasicBlock,
 }
 
@@ -694,24 +694,28 @@ fn has_other_callsite(
         .unwrap_or(false)
 }
 
-/// Detect loops in a CFG using SCCs.
-fn find_loops(cfg: &CFG) -> (Vec<Loop>, FxHashMap<BasicBlock, BasicBlock>) {
-    let mut detector = SccDetector::new(cfg.successors.clone());
-    detector.find_scc();
+/// Detect cyclic SCC regions in a CFG.
+fn find_scc_regions(cfg: &CFG) -> (Vec<SccRegion>, FxHashMap<BasicBlock, BasicBlock>) {
+    let successors: Vec<Vec<usize>> = cfg
+        .successors
+        .iter()
+        .map(|nexts| nexts.iter().map(|bb| bb.as_usize()).collect())
+        .collect();
+    let components = collect_scc_components(&successors);
 
-    let mut loops = Vec::new();
-    let mut block_to_loop = FxHashMap::default();
-    for mut component in detector.components {
+    let mut scc_regions = Vec::new();
+    let mut block_to_scc = FxHashMap::default();
+    for mut component in components {
         component.sort_unstable();
-        let is_self_loop = component.len() == 1
+        let has_self_edge = component.len() == 1
             && cfg.successors[component[0]]
                 .iter()
                 .any(|succ| succ.as_usize() == component[0]);
-        if component.len() <= 1 && !is_self_loop {
+        if component.len() <= 1 && !has_self_edge {
             continue;
         }
 
-        let header = BasicBlock::from_usize(component[0]);
+        let representative = BasicBlock::from_usize(component[0]);
         let block_set: FxHashSet<usize> = component.iter().copied().collect();
         let mut exits = Vec::new();
         let mut backedges = Vec::new();
@@ -721,11 +725,11 @@ fn find_loops(cfg: &CFG) -> (Vec<Loop>, FxHashMap<BasicBlock, BasicBlock>) {
             for &succ in cfg.successors(block) {
                 let succ_idx = succ.as_usize();
                 if block_set.contains(&succ_idx) {
-                    if succ_idx <= block_idx || succ == header {
+                    if succ_idx <= block_idx || succ == representative {
                         backedges.push((block, succ));
                     }
                 } else {
-                    exits.push(LoopExit {
+                    exits.push(SccExit {
                         from: block,
                         to: succ,
                     });
@@ -734,53 +738,16 @@ fn find_loops(cfg: &CFG) -> (Vec<Loop>, FxHashMap<BasicBlock, BasicBlock>) {
         }
 
         for &block_idx in &component {
-            block_to_loop.insert(BasicBlock::from_usize(block_idx), header);
+            block_to_scc.insert(BasicBlock::from_usize(block_idx), representative);
         }
 
-        loops.push(Loop {
-            header,
+        scc_regions.push(SccRegion {
+            representative,
             blocks: component.into_iter().map(BasicBlock::from_usize).collect(),
             exits,
             backedges,
         });
     }
 
-    (loops, block_to_loop)
-}
-
-/// Adapter that lets the shared SCC utility run over a MIR CFG.
-struct SccDetector {
-    successors: Vec<Vec<BasicBlock>>,
-    components: Vec<Vec<usize>>,
-}
-
-impl SccDetector {
-    /// Create an SCC detector over a concrete successor list.
-    fn new(successors: Vec<Vec<BasicBlock>>) -> Self {
-        Self {
-            successors,
-            components: Vec::new(),
-        }
-    }
-}
-
-impl Scc for SccDetector {
-    /// Store every SCC discovered by the shared Tarjan utility.
-    fn on_scc_found(&mut self, _root: usize, scc_components: &[usize]) {
-        self.components.push(scc_components.to_vec());
-    }
-
-    /// Return outgoing successor indices for the SCC traversal.
-    fn get_next(&mut self, root: usize) -> FxHashSet<usize> {
-        self.successors
-            .get(root)
-            .into_iter()
-            .flat_map(|successors| successors.iter().map(|bb| bb.as_usize()))
-            .collect()
-    }
-
-    /// Return the number of CFG nodes in the detector graph.
-    fn get_size(&mut self) -> usize {
-        self.successors.len()
-    }
+    (scc_regions, block_to_scc)
 }

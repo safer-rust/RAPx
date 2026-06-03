@@ -20,7 +20,7 @@ use crate::{
         },
     },
     rap_debug, rap_info,
-    utils::scc::Scc,
+    graphs::scc::Scc,
 };
 
 use rustc_data_structures::fx::FxHashMap;

@@ -10,7 +10,8 @@ use super::{AliasAnalysis, AliasPair, FnAliasMap, FnAliasPairs};
 use crate::{
     analysis::Analysis,
     def_id::*,
-    utils::{scc::Scc, source::*},
+    graphs::scc::Scc,
+    utils::source::*,
 };
 use graph::MopGraph;
 use rustc_data_structures::fx::FxHashMap;
