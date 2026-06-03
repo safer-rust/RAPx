@@ -365,6 +365,17 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                     self.assert_place_non_zero(solver, &place, "returned by as_ptr");
                     self.assert_place_alignment(solver, &place);
                 }
+                StateFact::KnownNonZero { place, reason } => {
+                    self.assert_place_non_zero(solver, place, reason);
+                }
+                StateFact::KnownAligned {
+                    place,
+                    align,
+                    ty_name,
+                    reason,
+                } => {
+                    self.assert_known_alignment(solver, place, *align, ty_name, reason);
+                }
                 StateFact::BranchEq { value, equals } => {
                     if let Some(term) = self.term_for_value(value, &mut HashSet::new()) {
                         let expected = Int::from_u64(self.ctx, *equals as u64);
@@ -379,6 +390,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 | StateFact::PathCondition(_)
                 | StateFact::Drop(_)
                 | StateFact::LocalDead(_)
+                | StateFact::CallEffect(_)
                 | StateFact::Call(_) => {}
             }
         }
@@ -424,6 +436,29 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             solver.assert(&term.modulo(&align)._eq(&zero));
             self.assumptions.push(format!(
                 "{} aligned for {align_ty:?} ({align} bytes)",
+                place_label(place)
+            ));
+        }
+    }
+
+    /// Assert an explicitly summarized alignment fact.
+    fn assert_known_alignment(
+        &mut self,
+        solver: &Solver<'ctx>,
+        place: &PlaceKey,
+        align: u64,
+        ty_name: &str,
+        reason: &str,
+    ) {
+        if align <= 1 {
+            return;
+        }
+        if let Some(term) = self.term_for_place(place) {
+            let zero = Int::from_u64(self.ctx, 0);
+            let align_term = Int::from_u64(self.ctx, align);
+            solver.assert(&term.modulo(&align_term)._eq(&zero));
+            self.assumptions.push(format!(
+                "{} aligned for {ty_name} ({align} bytes, {reason})",
                 place_label(place)
             ));
         }

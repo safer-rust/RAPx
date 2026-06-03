@@ -13,8 +13,10 @@ use rustc_middle::mir::{
     Terminator, TerminatorKind,
 };
 use rustc_middle::ty::TyCtxt;
+use rustc_span::source_map::Spanned;
 
 use super::{
+    call_summary,
     contract::{
         ContractExpr, ContractPlace, ContractProjection, NumericPredicate, PlaceBase, Property,
         PropertyArg, PropertyKind,
@@ -172,6 +174,17 @@ impl<'tcx> BackwardVisitor<'tcx> {
         relevant: &mut RelevantPlaces,
         items: &mut Vec<BackwardItem<'tcx>>,
     ) {
+        if let TerminatorKind::Call {
+            func,
+            args,
+            destination,
+            ..
+        } = &terminator.kind
+        {
+            self.visit_call_terminator(block, func, args, destination, relevant, items);
+            return;
+        }
+
         let use_def = terminator_use_def(terminator);
         if terminator_is_path_condition(terminator) {
             items.push(BackwardItem::Terminator {
@@ -206,6 +219,57 @@ impl<'tcx> BackwardVisitor<'tcx> {
             items.push(BackwardItem::Terminator {
                 block,
                 kind: terminator_use_reason(terminator),
+            });
+        }
+    }
+
+    /// Visit a retained/intermediate call using an interprocedural dependency summary.
+    fn visit_call_terminator(
+        &self,
+        block: BasicBlock,
+        func: &Operand<'tcx>,
+        args: &[Spanned<Operand<'tcx>>],
+        destination: &Place<'tcx>,
+        relevant: &mut RelevantPlaces,
+        items: &mut Vec<BackwardItem<'tcx>>,
+    ) {
+        let mut defs = RelevantPlaces::new();
+        defs.insert_mir_place(destination);
+        let arg_uses = call_args_uses(args);
+        let summary = call_summary::dependency_summary(self.tcx, func, args.len());
+
+        if defs.intersects(relevant) {
+            if summary.unsupported {
+                items.push(BackwardItem::Forget {
+                    reason: ForgetReason::UnknownCall,
+                });
+            }
+            items.push(BackwardItem::Terminator {
+                block,
+                kind: if summary.unsupported {
+                    KeepReason::UnknownEffect
+                } else {
+                    KeepReason::PointerFlow
+                },
+            });
+            relevant.remove_all(&defs);
+            relevant.extend(call_args_uses_at(args, &summary.return_depends_on_args));
+            return;
+        }
+
+        let relevant_written_arg = summary.may_write_args.iter().any(|index| {
+            args.get(*index)
+                .is_some_and(|arg| operand_uses(&arg.node).intersects(relevant))
+        });
+        if relevant_written_arg || (summary.unsupported && arg_uses.intersects(relevant)) {
+            if summary.unsupported {
+                items.push(BackwardItem::Forget {
+                    reason: ForgetReason::UnknownCall,
+                });
+            }
+            items.push(BackwardItem::Terminator {
+                block,
+                kind: KeepReason::UnknownEffect,
             });
         }
     }
@@ -701,6 +765,26 @@ fn terminator_use_def<'tcx>(terminator: &Terminator<'tcx>) -> DefUse {
         _ => {}
     }
     use_def
+}
+
+/// Collect all MIR roots used by call arguments.
+fn call_args_uses<'tcx>(args: &[Spanned<Operand<'tcx>>]) -> RelevantPlaces {
+    let mut uses = RelevantPlaces::new();
+    for arg in args {
+        uses.extend(operand_uses(&arg.node));
+    }
+    uses
+}
+
+/// Collect MIR roots used by selected call argument indices.
+fn call_args_uses_at<'tcx>(args: &[Spanned<Operand<'tcx>>], indices: &[usize]) -> RelevantPlaces {
+    let mut uses = RelevantPlaces::new();
+    for index in indices {
+        if let Some(arg) = args.get(*index) {
+            uses.extend(operand_uses(&arg.node));
+        }
+    }
+    uses
 }
 
 /// Collect all MIR roots used by an rvalue.
