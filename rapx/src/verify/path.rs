@@ -168,7 +168,7 @@ impl<'tcx> PathExtractor<'tcx> {
                 continue;
             }
 
-            if visited.contains(&next) || has_other_callsite(next, target, by_block) {
+            if visited.contains(&next) {
                 continue;
             }
 

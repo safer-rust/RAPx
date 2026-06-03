@@ -173,6 +173,15 @@ impl<'tcx> BackwardVisitor<'tcx> {
         items: &mut Vec<BackwardItem<'tcx>>,
     ) {
         let use_def = terminator_use_def(terminator);
+        if terminator_is_path_condition(terminator) {
+            items.push(BackwardItem::Terminator {
+                block,
+                kind: KeepReason::PathCondition,
+            });
+            relevant.extend(use_def.uses.clone());
+            return;
+        }
+
         if use_def.defs.intersects(relevant) {
             if terminator_may_havoc(terminator) {
                 items.push(BackwardItem::Forget {
@@ -790,6 +799,14 @@ fn statement_invalidates_relevant(statement: &Statement<'_>, relevant: &Relevant
         StatementKind::StorageDead(local) => relevant.locals.contains(local),
         _ => false,
     }
+}
+
+/// Return true when a terminator contributes a path condition.
+fn terminator_is_path_condition(terminator: &Terminator<'_>) -> bool {
+    matches!(
+        terminator.kind,
+        TerminatorKind::SwitchInt { .. } | TerminatorKind::Assert { .. }
+    )
 }
 
 /// Classify a retained terminator that defines a relevant place.

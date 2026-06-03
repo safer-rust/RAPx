@@ -13,11 +13,11 @@ use rustc_middle::ty::TyCtxt;
 use super::{
     backward_visit::BackwardVisitor,
     contract::Property,
-    fact_check::FactChecker,
     forward_visit::ForwardVisitor,
     helpers::Callsite,
     path::{FunctionPaths, Path, PathExtractor},
     report::{PropertyCheckResult, VerificationReport, VisitDiagnostics},
+    smt_check::SmtChecker,
     target::{FunctionTarget, VerifyTargetCollector},
 };
 
@@ -68,24 +68,26 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
         let mut report = VerificationReport::new(self.target.def_id);
         let backward_visitor = BackwardVisitor::new(self.tcx);
         let forward_visitor = ForwardVisitor::new(self.tcx);
-        let fact_checker = FactChecker::new(self.tcx);
+        let smt_checker = SmtChecker::new(self.tcx);
 
         for view in self.iter_callsite_checks() {
             for (path_index, path) in view.paths.iter().enumerate() {
                 for (property_index, property) in view.properties.iter().enumerate() {
                     let backward = backward_visitor.visit(view.callsite, path, property);
                     let forward = forward_visitor.visit(&backward);
-                    let fact_check = fact_checker.check(view.callsite, property, &forward);
+                    let smt_check = smt_checker.check(view.callsite, property, &forward);
+                    let check_diagnostics =
+                        format!("{}\n{}", forward.describe(), smt_check.describe());
                     report.push(PropertyCheckResult {
                         callsite: view.callsite.location(),
                         callsite_index: view.callsite_index,
                         path_index,
                         property_index,
                         property: property.clone(),
-                        result: fact_check.result.clone(),
+                        result: smt_check.result,
                         diagnostics: Some(VisitDiagnostics::new(
                             backward.describe(self.tcx, view.callsite, path_index),
-                            format!("{}\n{}", forward.describe(), fact_check.describe()),
+                            check_diagnostics,
                         )),
                     });
                 }
