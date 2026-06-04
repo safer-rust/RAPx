@@ -13,19 +13,11 @@ pub struct Block<'tcx> {
     pub const_value: Vec<ConstValue>,
     // Used in scc handling: to clear the assignments of the enter node.
     pub assigned_locals: FxHashSet<usize>,
-    pub terminator: Term<'tcx>,
+    pub terminator: Option<Terminator<'tcx>>,
     /// All nodes belongs to a SCC.
     /// This field could be a single node SCC.
     /// The loops in the CFG are natural loops, so each SCC has only one enter.
     pub scc: SccInfo,
-}
-
-#[derive(Debug, Clone)]
-pub enum Term<'tcx> {
-    Call(Terminator<'tcx>),
-    Drop(Terminator<'tcx>),
-    Switch(Terminator<'tcx>),
-    None,
 }
 
 #[derive(Debug, Clone)]
@@ -49,7 +41,7 @@ impl<'tcx> Block<'tcx> {
             assignments: Vec::<Assignment<'tcx>>::new(),
             const_value: Vec::<ConstValue>::new(),
             assigned_locals: FxHashSet::<usize>::default(),
-            terminator: Term::None,
+            terminator: None,
             scc: SccInfo::new(index),
         }
     }

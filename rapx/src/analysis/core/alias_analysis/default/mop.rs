@@ -16,12 +16,10 @@ use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 
 use crate::graphs::{
     scc::SccInfo,
-    scc_paths::{
-        constraints_key, record_unique_path, PathKey, SccPathTraversalState,
-    },
+    scc_paths::{constraints_key, record_unique_path, PathKey, SccPathTraversalState},
 };
 
-use super::{block::Term, graph::*, *};
+use super::{graph::*, *};
 
 // rustc analysis threads may have a relatively small stack; keep recursion limits conservative.
 const CHECK_STACK_LIMIT: usize = 96;
@@ -271,7 +269,7 @@ impl<'tcx> MopGraph<'tcx> {
                 // If exit_node is a SwitchInt, only follow SCC-exit edges consistent with the
                 // current constraint (important for enum parameters).
                 let mut allowed_targets: Option<FxHashSet<usize>> = None;
-                if let Term::Switch(sw) = self.blocks[exit_node].terminator.clone() {
+                if let Some(sw) = self.blocks[exit_node].terminator.clone() {
                     if let TerminatorKind::SwitchInt { discr, targets } = sw.kind {
                         // Resolve discr local id in the same way as SCC path generation.
                         let place = match discr {
@@ -365,65 +363,60 @@ impl<'tcx> MopGraph<'tcx> {
         let mut sw_targets = None; // Multiple targets of SwitchInt
         let mut sw_otherwise_val: Option<usize> = None;
 
-        match cur_block.terminator {
-            Term::Switch(ref switch) => {
-                if let TerminatorKind::SwitchInt {
-                    ref discr,
-                    ref targets,
-                } = switch.kind
-                {
-                    sw_otherwise_val = self.unique_otherwise_switch_value(discr, targets);
-                    match discr {
-                        Copy(p) | Move(p) => {
-                            let value_idx = self.projection(*p);
-                            let local_decls = &tcx.optimized_mir(self.def_id).local_decls;
-                            let place_ty = (*p).ty(local_decls, tcx);
-                            rap_debug!("value_idx: {:?}", value_idx);
-                            match place_ty.ty.kind() {
-                                TyKind::Bool => {
-                                    if let Some(constant) = self.constants.get(&value_idx) {
+        if let Some(ref switch) = cur_block.terminator {
+            if let TerminatorKind::SwitchInt {
+                ref discr,
+                ref targets,
+            } = switch.kind
+            {
+                sw_otherwise_val = self.unique_otherwise_switch_value(discr, targets);
+                match discr {
+                    Copy(p) | Move(p) => {
+                        let value_idx = self.projection(*p);
+                        let local_decls = &tcx.optimized_mir(self.def_id).local_decls;
+                        let place_ty = (*p).ty(local_decls, tcx);
+                        rap_debug!("value_idx: {:?}", value_idx);
+                        match place_ty.ty.kind() {
+                            TyKind::Bool => {
+                                if let Some(constant) = self.constants.get(&value_idx) {
+                                    if *constant != usize::MAX {
+                                        single_target = true;
+                                        sw_val = *constant;
+                                    }
+                                }
+                                path_discr_id = value_idx;
+                                sw_targets = Some(targets.clone());
+                            }
+                            _ => {
+                                if let Some(father) =
+                                    self.discriminants.get(&self.values[value_idx].local)
+                                {
+                                    if let Some(constant) = self.constants.get(father) {
                                         if *constant != usize::MAX {
                                             single_target = true;
                                             sw_val = *constant;
                                         }
                                     }
-                                    path_discr_id = value_idx;
-                                    sw_targets = Some(targets.clone());
-                                }
-                                _ => {
-                                    if let Some(father) =
-                                        self.discriminants.get(&self.values[value_idx].local)
-                                    {
-                                        if let Some(constant) = self.constants.get(father) {
-                                            if *constant != usize::MAX {
-                                                single_target = true;
-                                                sw_val = *constant;
-                                            }
-                                        }
-                                        if self.values[value_idx].local == value_idx {
-                                            path_discr_id = *father;
-                                            sw_targets = Some(targets.clone());
-                                        }
+                                    if self.values[value_idx].local == value_idx {
+                                        path_discr_id = *father;
+                                        sw_targets = Some(targets.clone());
                                     }
                                 }
                             }
                         }
-                        Constant(c) => {
-                            single_target = true;
-                            let ty_env = TypingEnv::post_analysis(tcx, self.def_id);
-                            if let Some(val) = c.const_.try_eval_target_usize(tcx, ty_env) {
-                                sw_val = val as usize;
-                            }
+                    }
+                    Constant(c) => {
+                        single_target = true;
+                        let ty_env = TypingEnv::post_analysis(tcx, self.def_id);
+                        if let Some(val) = c.const_.try_eval_target_usize(tcx, ty_env) {
+                            sw_val = val as usize;
                         }
                     }
-                    if single_target {
-                        rap_debug!("targets: {:?}; sw_val = {:?}", targets, sw_val);
-                        sw_target = self.switch_target_for_value(targets, sw_val);
-                    }
                 }
-            }
-            _ => {
-                // Not SwitchInt
+                if single_target {
+                    rap_debug!("targets: {:?}; sw_val = {:?}", targets, sw_val);
+                    sw_target = self.switch_target_for_value(targets, sw_val);
+                }
             }
         }
         /* End: finish handling SwitchInt */
@@ -662,7 +655,9 @@ impl<'tcx> MopGraph<'tcx> {
             }
         }
 
-        let term = self.terminators[state.cur].clone();
+        let Some(term) = self.blocks[state.cur].terminator.clone() else {
+            return;
+        };
         rap_debug!("term: {:?}", term);
 
         // Clear constraints when their discriminant locals are redefined by terminators.
@@ -670,7 +665,7 @@ impl<'tcx> MopGraph<'tcx> {
         // include locals assigned by terminators (e.g., `_11 = random()` in MIR is a `Call`).
         // If we don't clear these, stale constraints can incorrectly prune SwitchInt branches and
         // also amplify path explosion via inconsistent constraint propagation across iterations.
-        if let TerminatorKind::Call { destination, .. } = &term {
+        if let TerminatorKind::Call { destination, .. } = &term.kind {
             let dest_idx = self.projection(*destination);
             let dest_local = self
                 .discriminants
@@ -680,7 +675,7 @@ impl<'tcx> MopGraph<'tcx> {
             path_constraints.remove(&dest_local);
         }
 
-        match term {
+        match term.kind {
             TerminatorKind::SwitchInt { discr, targets } => {
                 let otherwise_val = self.unique_otherwise_switch_value(&discr, &targets);
                 // Resolve discr local id for constraint propagation

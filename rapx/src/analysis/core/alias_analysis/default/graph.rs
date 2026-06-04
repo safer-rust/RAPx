@@ -1,6 +1,5 @@
-use super::{MopFnAliasPairs, assign::*, block::*, types::*, value::*};
+use super::{assign::*, block::*, types::*, value::*, MopFnAliasPairs};
 use crate::{
-    def_id::*,
     graphs::scc::{Scc, SccExit},
     utils::source::*,
 };
@@ -12,7 +11,7 @@ use rustc_middle::{
     },
     ty::{self, TyCtxt, TypingEnv},
 };
-use rustc_span::{Span, def_id::DefId};
+use rustc_span::{def_id::DefId, Span};
 use std::{
     fmt::{self, Display},
     vec::Vec,
@@ -42,7 +41,6 @@ pub struct MopGraph<'tcx> {
     pub alias_sets: Vec<FxHashSet<usize>>,
     // contains the return results for inter-procedure analysis.
     pub ret_alias: MopFnAliasPairs,
-    pub terminators: Vec<TerminatorKind<'tcx>>,
 }
 
 impl<'tcx> MopGraph<'tcx> {
@@ -72,7 +70,6 @@ impl<'tcx> MopGraph<'tcx> {
         let basicblocks = &body.basic_blocks;
         let mut blocks = Vec::<Block<'tcx>>::new();
         let mut discriminants = FxHashMap::default();
-        let mut terminators = Vec::new();
 
         // handle each basicblock
         for i in 0..basicblocks.len() {
@@ -290,7 +287,8 @@ impl<'tcx> MopGraph<'tcx> {
                                                                         .all_fields()
                                                                         .nth(field_idx.as_usize())
                                                                         .map(|f| f.ty(tcx, substs))
-                                                                        .unwrap_or(lv_ty) // fallback
+                                                                        .unwrap_or(lv_ty)
+                                                                // fallback
                                                                 } else {
                                                                     lv_ty
                                                                 }
@@ -382,7 +380,7 @@ impl<'tcx> MopGraph<'tcx> {
                 );
                 continue;
             };
-            terminators.push(terminator.kind.clone());
+            cur_bb.terminator = Some(terminator.clone());
             // handle terminator statements
             match terminator.kind.clone() {
                 TerminatorKind::Goto { ref target } => {
@@ -392,7 +390,6 @@ impl<'tcx> MopGraph<'tcx> {
                     discr: _,
                     ref targets,
                 } => {
-                    cur_bb.terminator = Term::Switch(terminator.clone());
                     for (_, ref target) in targets.iter() {
                         cur_bb.add_next(target.as_usize());
                     }
@@ -407,31 +404,15 @@ impl<'tcx> MopGraph<'tcx> {
                     async_fut: _,
                 } => {
                     cur_bb.add_next(target.as_usize());
-                    cur_bb.terminator = Term::Drop(terminator.clone());
                     if let UnwindAction::Cleanup(target) = unwind {
                         cur_bb.add_next(target.as_usize());
                     }
                 }
                 TerminatorKind::Call {
-                    ref func,
-                    args: _,
-                    destination: _,
                     ref target,
                     ref unwind,
-                    call_source: _,
-                    fn_span: _,
+                    ..
                 } => {
-                    if let Operand::Constant(c) = func {
-                        if let &ty::FnDef(id, ..) = c.ty().kind() {
-                            if is_drop_fn(id) {
-                                cur_bb.terminator = Term::Drop(terminator.clone());
-                            } else {
-                                cur_bb.terminator = Term::Call(terminator.clone());
-                            }
-                        }
-                    } else {
-                        cur_bb.terminator = Term::Call(terminator.clone());
-                    }
                     if let Some(tt) = target {
                         cur_bb.add_next(tt.as_usize());
                     }
@@ -508,7 +489,6 @@ impl<'tcx> MopGraph<'tcx> {
             ret_alias: MopFnAliasPairs::new(arg_size),
             visit_times: 0,
             discriminants,
-            terminators,
         }
     }
 
@@ -762,7 +742,6 @@ impl<'tcx> std::fmt::Display for MopGraph<'tcx> {
         writeln!(f, "  blocks: {:?}", self.blocks)?;
         writeln!(f, "  constants: {:?}", self.constants)?;
         writeln!(f, "  discriminants: {:?}", self.discriminants)?;
-        writeln!(f, "  terminators: {:?}", self.terminators)?;
         write!(f, "}}")
     }
 }
