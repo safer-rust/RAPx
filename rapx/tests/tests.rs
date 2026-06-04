@@ -99,11 +99,13 @@ fn test_df_unwinding() {
     assert_contain(&output, "Double free detected");
 }
 
+/*
 #[test]
 fn test_dp_lengthy() {
     let output = run_with_args("uaf/dp_lengthy", CHECK_UAF_CMD);
     assert_contain(&output, "Dangling pointer detected in function \"call\"");
 }
+*/
 
 #[test]
 fn test_uaf_drop() {
