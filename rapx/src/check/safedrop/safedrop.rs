@@ -164,6 +164,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
         let paths_in_scc = self
             .mop_graph
             .find_scc_paths(bb_idx, &scc, &mut FxHashMap::default());
+
         rap_debug!("Paths in scc: {:?}", paths_in_scc);
 
         let backup_values = self.mop_graph.values.clone(); // duplicate the status when visiteding different paths;
