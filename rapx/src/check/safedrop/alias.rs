@@ -5,20 +5,20 @@ use rustc_middle::{
 
 use super::{drop::*, graph::*};
 use crate::analysis::core::alias_analysis::default::{
-    alias::is_no_alias_intrinsic, types::*, value::*, MopAliasPair, MopFnAliasMap,
+    MopAliasPair, MopFnAliasMap, alias::is_no_alias_intrinsic, types::*, value::*,
 };
 use rustc_data_structures::fx::FxHashSet;
 
 impl<'tcx> SafeDropGraph<'tcx> {
     /* alias analysis for a single block */
     pub fn alias_bb(&mut self, bb_index: usize) {
-        for constant in self.mop_graph.blocks[bb_index].const_value.clone() {
+        for constant in self.mop_graph.block_facts[bb_index].const_value.clone() {
             self.mop_graph
                 .constants
                 .insert(constant.local, constant.value);
         }
-        let cur_block = self.mop_graph.blocks[bb_index].clone();
-        for assign in cur_block.assignments {
+        let block_facts = self.mop_graph.block_facts[bb_index].clone();
+        for assign in block_facts.assignments {
             let lv_idx = self.projection(assign.lv);
             let rv_idx = self.projection(assign.rv);
             // We should perform uaf check before alias analysis.
@@ -34,8 +34,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
 
     /* Check the aliases introduced by the terminators (function call) of a scc block */
     pub fn alias_bbcall(&mut self, bb_index: usize, fn_map: &MopFnAliasMap) {
-        let cur_block = self.mop_graph.blocks[bb_index].clone();
-        if let Some(terminator) = cur_block.terminator {
+        if let Some(terminator) = self.mop_graph.cfg_block(bb_index).terminator.clone() {
             if let TerminatorKind::Call {
                 func: Operand::Constant(ref constant),
                 ref args,
@@ -75,7 +74,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
                         if is_no_alias_intrinsic(*target_id) {
                             return;
                         }
-                        if self.mop_graph.tcx.is_mir_available(*target_id) {
+                        if self.mop_graph.tcx().is_mir_available(*target_id) {
                             rap_debug!("fn_map: {:?}", fn_map);
                             if fn_map.contains_key(&target_id) {
                                 let fn_aliases = fn_map.get(&target_id).unwrap();
@@ -274,10 +273,12 @@ impl<'tcx> SafeDropGraph<'tcx> {
                         .fields
                         .contains_key(&field_idx)
                     {
-                        let ty_env =
-                            ty::TypingEnv::post_analysis(self.mop_graph.tcx, self.mop_graph.def_id);
-                        let need_drop = ty.needs_drop(self.mop_graph.tcx, ty_env);
-                        let may_drop = !is_not_drop(self.mop_graph.tcx, ty);
+                        let ty_env = ty::TypingEnv::post_analysis(
+                            self.mop_graph.tcx(),
+                            self.mop_graph.def_id(),
+                        );
+                        let need_drop = ty.needs_drop(self.mop_graph.tcx(), ty_env);
+                        let may_drop = !is_not_drop(self.mop_graph.tcx(), ty);
                         let mut node =
                             Value::new(new_value_idx, local, need_drop, need_drop || may_drop);
                         node.kind = kind(ty);

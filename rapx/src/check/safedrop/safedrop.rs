@@ -1,6 +1,6 @@
 use super::{bug_records::*, corner_case::*, drop::*, graph::*};
 use crate::{
-    analysis::core::alias_analysis::default::{types::ValueKind, MopFnAliasMap},
+    analysis::core::alias_analysis::default::{MopFnAliasMap, types::ValueKind},
     def_id::*,
     utils::source::{get_filename, get_name},
 };
@@ -19,9 +19,8 @@ pub const VISIT_LIMIT: usize = 1000;
 impl<'tcx> SafeDropGraph<'tcx> {
     // analyze the drop statement and update the liveness for nodes.
     pub fn drop_check(&mut self, bb_idx: usize) {
-        let cur_block = self.mop_graph.blocks[bb_idx].clone();
-        let is_cleanup = cur_block.is_cleanup;
-        if let Some(terminator) = cur_block.terminator {
+        let is_cleanup = self.mop_graph.cfg_block(bb_idx).is_cleanup;
+        if let Some(terminator) = self.mop_graph.cfg_block(bb_idx).terminator.clone() {
             rap_debug!("drop check bb: {}, {:?}", bb_idx, terminator);
             match terminator.kind {
                 TerminatorKind::Drop {
@@ -74,8 +73,8 @@ impl<'tcx> SafeDropGraph<'tcx> {
     }
 
     pub fn drop_heap_item_check(&self, place: &Place<'tcx>) -> bool {
-        let tcx = self.mop_graph.tcx;
-        let place_ty = place.ty(&tcx.optimized_mir(self.mop_graph.def_id).local_decls, tcx);
+        let tcx = self.mop_graph.tcx();
+        let place_ty = place.ty(&tcx.optimized_mir(self.mop_graph.def_id()).local_decls, tcx);
         match place_ty.ty.kind() {
             ty::TyKind::Adt(adtdef, ..) => match self.adt_owner.get(&adtdef.did()) {
                 None => true,
@@ -135,20 +134,20 @@ impl<'tcx> SafeDropGraph<'tcx> {
 
     // the core function of the safedrop.
     pub fn check(&mut self, bb_idx: usize, fn_map: &MopFnAliasMap) {
-        self.mop_graph.visit_times += 1;
-        if self.mop_graph.visit_times > VISIT_LIMIT {
+        self.mop_graph.increment_visit_times();
+        if self.mop_graph.visit_times() > VISIT_LIMIT {
             return;
         }
-        let scc_idx = self.mop_graph.blocks[bb_idx].scc.enter;
-        let cur_block = self.mop_graph.blocks[bb_idx].clone();
+        let scc_idx = self.mop_graph.mop_block(bb_idx).scc.enter;
+        let cur_scc = self.mop_graph.mop_block(bb_idx).scc.clone();
         rap_debug!(
             "Checking bb: {}, scc_idx: {}, scc: {:?}",
             bb_idx,
             scc_idx,
-            cur_block.scc.clone(),
+            cur_scc.clone(),
         );
 
-        if bb_idx == scc_idx && !cur_block.scc.nodes.is_empty() {
+        if bb_idx == scc_idx && !cur_scc.nodes.is_empty() {
             rap_debug!("check {:?} as a scc", bb_idx);
             self.check_scc(bb_idx, fn_map);
         } else {
@@ -158,9 +157,9 @@ impl<'tcx> SafeDropGraph<'tcx> {
     }
 
     pub fn check_scc(&mut self, bb_idx: usize, fn_map: &MopFnAliasMap) {
-        let cur_block = self.mop_graph.blocks[bb_idx].clone();
+        let cur_scc = self.mop_graph.mop_block(bb_idx).scc.clone();
         /* Handle cases if the current block is a merged scc block with sub block */
-        let scc = self.mop_graph.sort_scc_tree(&cur_block.scc);
+        let scc = self.mop_graph.sort_scc_tree(&cur_scc);
         let paths_in_scc = self
             .mop_graph
             .find_scc_paths(bb_idx, &scc, &mut FxHashMap::default());
@@ -184,7 +183,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
             }
             // The last node is already ouside the scc.
             if let Some(&last_node) = path.last() {
-                if self.mop_graph.blocks[last_node].scc.nodes.is_empty() {
+                if self.mop_graph.mop_block(last_node).scc.nodes.is_empty() {
                     self.check_single_node(last_node, fn_map);
                     self.handle_nexts(last_node, fn_map, None, Some(path_constants));
                 } else {
@@ -199,7 +198,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
     }
 
     pub fn check_single_node(&mut self, bb_idx: usize, fn_map: &MopFnAliasMap) {
-        let cur_block = self.mop_graph.blocks[bb_idx].clone();
+        let cfg_block = self.mop_graph.cfg_block(bb_idx).clone();
         rap_debug!("check {:?} as a node", bb_idx);
         self.alias_bb(bb_idx);
         self.alias_bbcall(bb_idx, fn_map);
@@ -207,9 +206,9 @@ impl<'tcx> SafeDropGraph<'tcx> {
 
         // For dangling pointer check;
         // Since a node within an SCC cannot be an exit, we only check for non-scc nodes;
-        if cur_block.next.is_empty() {
-            if should_check(self.mop_graph.def_id) {
-                self.dp_check(cur_block.is_cleanup);
+        if cfg_block.next.is_empty() {
+            if should_check(self.mop_graph.def_id()) {
+                self.dp_check(cfg_block.is_cleanup);
             }
         }
     }
@@ -221,8 +220,8 @@ impl<'tcx> SafeDropGraph<'tcx> {
         exclusive_nodes: Option<&FxHashSet<usize>>,
         path_constraints: Option<&FxHashMap<usize, usize>>,
     ) {
-        let cur_block = self.mop_graph.blocks[bb_idx].clone();
-        let tcx = self.mop_graph.tcx;
+        let cfg_block = self.mop_graph.cfg_block(bb_idx).clone();
+        let tcx = self.mop_graph.tcx();
 
         // Extra path contraints are introduced during scc handling.
         if let Some(path_constants) = path_constraints {
@@ -235,8 +234,8 @@ impl<'tcx> SafeDropGraph<'tcx> {
         let mut sw_target = 0; // Single target
         let mut path_discr_id = 0; // To avoid analyzing paths that cannot be reached with one enum type.
         let mut sw_targets = None; // Multiple targets of SwitchInt
-        if let Some(terminator) = &cur_block.terminator {
-            rap_debug!("Handle switchInt in bb {:?}", cur_block);
+        if let Some(terminator) = &cfg_block.terminator {
+            rap_debug!("Handle switchInt in bb {:?}", cfg_block);
             if let TerminatorKind::SwitchInt {
                 ref discr,
                 ref targets,
@@ -247,7 +246,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
                 match discr {
                     Copy(p) | Move(p) => {
                         let value_idx = self.projection(*p);
-                        let local_decls = &tcx.optimized_mir(self.mop_graph.def_id).local_decls;
+                        let local_decls = &tcx.optimized_mir(self.mop_graph.def_id()).local_decls;
                         let place_ty = (*p).ty(local_decls, tcx);
                         rap_debug!("value_idx: {:?}", value_idx);
                         match place_ty.ty.kind() {
@@ -284,7 +283,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
                     }
                     Constant(c) => {
                         single_target = true;
-                        let ty_env = TypingEnv::post_analysis(tcx, self.mop_graph.def_id);
+                        let ty_env = TypingEnv::post_analysis(tcx, self.mop_graph.def_id());
                         if let Some(val) = c.const_.try_eval_target_usize(tcx, ty_env) {
                             sw_val = val as usize;
                         }
@@ -329,7 +328,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
             // Other cases in switchInt terminators
             if let Some(targets) = sw_targets {
                 for iter in targets.iter() {
-                    if self.mop_graph.visit_times > VISIT_LIMIT {
+                    if self.mop_graph.visit_times() > VISIT_LIMIT {
                         continue;
                     }
                     let next = iter.1.as_usize();
@@ -350,8 +349,8 @@ impl<'tcx> SafeDropGraph<'tcx> {
                 let path_discr_val = usize::MAX; // to indicate the default path;
                 self.split_check_with_cond(next_idx, path_discr_id, path_discr_val, fn_map);
             } else {
-                for next in &cur_block.next {
-                    if self.mop_graph.visit_times > VISIT_LIMIT {
+                for next in &cfg_block.next {
+                    if self.mop_graph.visit_times() > VISIT_LIMIT {
                         continue;
                     }
 
@@ -371,10 +370,10 @@ impl<'tcx> SafeDropGraph<'tcx> {
     pub fn report_bugs(&self) {
         rap_debug!(
             "report bugs, id: {:?}, uaf: {:?}",
-            self.mop_graph.def_id,
+            self.mop_graph.def_id(),
             self.bug_records.uaf_bugs
         );
-        let filename = get_filename(self.mop_graph.tcx, self.mop_graph.def_id);
+        let filename = get_filename(self.mop_graph.tcx(), self.mop_graph.def_id());
         match filename {
             Some(filename) => {
                 if filename.contains(".cargo") {
@@ -386,21 +385,21 @@ impl<'tcx> SafeDropGraph<'tcx> {
         if self.bug_records.is_bug_free() {
             return;
         }
-        let fn_name = match get_name(self.mop_graph.tcx, self.mop_graph.def_id) {
+        let fn_name = match get_name(self.mop_graph.tcx(), self.mop_graph.def_id()) {
             Some(name) => name,
             None => Symbol::intern("no symbol available"),
         };
-        let body = self.mop_graph.tcx.optimized_mir(self.mop_graph.def_id);
+        let body = self.mop_graph.tcx().optimized_mir(self.mop_graph.def_id());
         self.bug_records
-            .df_bugs_output(body, fn_name, self.mop_graph.span);
+            .df_bugs_output(body, fn_name, self.mop_graph.span());
         self.bug_records
-            .uaf_bugs_output(body, fn_name, self.mop_graph.span);
+            .uaf_bugs_output(body, fn_name, self.mop_graph.span());
         self.bug_records
-            .dp_bug_output(body, fn_name, self.mop_graph.span);
+            .dp_bug_output(body, fn_name, self.mop_graph.span());
         /*
         let _ = generate_mir_cfg_dot(
-            self.mop_graph.tcx,
-            self.mop_graph.def_id,
+            self.mop_graph.tcx(),
+            self.mop_graph.def_id(),
             &self.mop_graph.alias_sets,
         );
         */
@@ -516,7 +515,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
         rap_debug!("dangling pointer check");
         rap_debug!("current alias sets: {:?}", self.mop_graph.alias_sets);
         if flag_cleanup {
-            for arg_idx in 1..self.mop_graph.arg_size + 1 {
+            for arg_idx in 1..self.mop_graph.arg_size() + 1 {
                 if !self.mop_graph.values[arg_idx].is_ptr() {
                     continue;
                 }
@@ -534,7 +533,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
                     drop_spot: self.drop_record[arg_idx].drop_spot,
                     trigger_info: LocalSpot::from_local(arg_idx),
                     prop_chain: self.drop_record[arg_idx].prop_chain.clone(),
-                    span: self.mop_graph.span.clone(),
+                    span: self.mop_graph.span().clone(),
                     confidence,
                 };
                 self.bug_records.dp_bugs_unwind.insert(arg_idx, bug);
@@ -559,13 +558,13 @@ impl<'tcx> SafeDropGraph<'tcx> {
                     drop_spot: self.drop_record[0].drop_spot,
                     trigger_info: LocalSpot::from_local(0),
                     prop_chain: self.drop_record[0].prop_chain.clone(),
-                    span: self.mop_graph.span.clone(),
+                    span: self.mop_graph.span().clone(),
                     confidence,
                 };
                 self.bug_records.dp_bugs.insert(0, bug);
                 rap_info!("Find a dangling pointer 0; add to record.");
             } else {
-                for arg_idx in 0..self.mop_graph.arg_size + 1 {
+                for arg_idx in 0..self.mop_graph.arg_size() + 1 {
                     if !self.mop_graph.values[arg_idx].is_ptr() {
                         continue;
                     }
@@ -583,7 +582,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
                         drop_spot: self.drop_record[arg_idx].drop_spot,
                         trigger_info: LocalSpot::from_local(arg_idx),
                         prop_chain: self.drop_record[arg_idx].prop_chain.clone(),
-                        span: self.mop_graph.span.clone(),
+                        span: self.mop_graph.span().clone(),
                         confidence,
                     };
                     self.bug_records.dp_bugs.insert(arg_idx, bug);

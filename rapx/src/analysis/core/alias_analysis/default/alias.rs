@@ -1,5 +1,5 @@
-use super::{graph::*, types::*, value::*, MopAliasPair, MopFnAliasMap};
-use crate::{def_id::*, graphs::scc::Scc};
+use super::{MopAliasPair, MopFnAliasMap, graph::*, types::*, value::*};
+use crate::def_id::*;
 use rustc_data_structures::fx::FxHashSet;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
@@ -11,11 +11,11 @@ use std::collections::HashSet;
 impl<'tcx> MopGraph<'tcx> {
     /* alias analysis for a single block */
     pub fn alias_bb(&mut self, bb_index: usize) {
-        for constant in self.blocks[bb_index].const_value.clone() {
+        for constant in self.block_facts[bb_index].const_value.clone() {
             self.constants.insert(constant.local, constant.value);
         }
-        let cur_block = self.blocks[bb_index].clone();
-        for assign in cur_block.assignments {
+        let block_facts = self.block_facts[bb_index].clone();
+        for assign in block_facts.assignments {
             rap_debug!("assign: {:?}", assign);
             let lv_idx = self.projection(assign.lv);
             let rv_idx = self.projection(assign.rv);
@@ -32,8 +32,7 @@ impl<'tcx> MopGraph<'tcx> {
         fn_map: &mut MopFnAliasMap,
         recursion_set: &mut HashSet<DefId>,
     ) {
-        let cur_block = self.blocks[bb_index].clone();
-        if let Some(terminator) = cur_block.terminator {
+        if let Some(terminator) = self.cfg_block(bb_index).terminator.clone() {
             if let TerminatorKind::Call {
                 func: Operand::Constant(ref constant),
                 ref args,
@@ -76,7 +75,7 @@ impl<'tcx> MopGraph<'tcx> {
                     if is_no_alias_intrinsic(target_id) {
                         return;
                     }
-                    if !self.tcx.is_mir_available(target_id) {
+                    if !self.tcx().is_mir_available(target_id) {
                         return;
                     }
                     rap_debug!("Sync aliases for function call: {:?}", target_id);
@@ -89,7 +88,7 @@ impl<'tcx> MopGraph<'tcx> {
                             return;
                         }
                         recursion_set.insert(target_id);
-                        let mut mop_graph = MopGraph::new(self.tcx, target_id);
+                        let mut mop_graph = MopGraph::new(self.tcx(), target_id);
                         mop_graph.find_scc();
                         mop_graph.check(0, fn_map, recursion_set);
                         let ret_alias = mop_graph.ret_alias.clone();
@@ -146,9 +145,9 @@ impl<'tcx> MopGraph<'tcx> {
                     let field_idx = field.as_usize();
                     // If the field has not been created as a value, we crate a value;
                     if !self.values[value_idx].fields.contains_key(&field_idx) {
-                        let ty_env = ty::TypingEnv::post_analysis(self.tcx, self.def_id);
-                        let need_drop = ty.needs_drop(self.tcx, ty_env);
-                        let may_drop = !is_not_drop(self.tcx, ty);
+                        let ty_env = ty::TypingEnv::post_analysis(self.tcx(), self.def_id());
+                        let need_drop = ty.needs_drop(self.tcx(), ty_env);
+                        let may_drop = !is_not_drop(self.tcx(), ty);
                         let mut node =
                             Value::new(new_value_idx, local, need_drop, need_drop || may_drop);
                         node.kind = kind(ty);
@@ -342,7 +341,7 @@ impl<'tcx> MopGraph<'tcx> {
     /// Checks whether a sequence of field projections on a local MIR variable is valid.
     /// For example, if the type of a local (e.g., 0) has two fields, 0.2 or 0.3 are both invalid.
     fn is_valid_field(&self, local: usize, field_seq: &[usize]) -> bool {
-        let body = self.tcx.optimized_mir(self.def_id);
+        let body = self.tcx().optimized_mir(self.def_id());
         let mut ty = body.local_decls[Local::from_usize(local)].ty;
         for &fidx in field_seq {
             while let ty::TyKind::Ref(_, inner, _) | ty::TyKind::RawPtr(inner, _) = ty.kind() {
@@ -367,7 +366,7 @@ impl<'tcx> MopGraph<'tcx> {
         let f_node: Vec<Option<FatherInfo>> =
             self.values.iter().map(|v| v.father.clone()).collect();
         for node in self.values.iter() {
-            if node.local > self.arg_size {
+            if node.local > self.arg_size() {
                 continue;
             }
             for idx in 1..self.values.len() {
@@ -376,7 +375,7 @@ impl<'tcx> MopGraph<'tcx> {
                 }
 
                 let mut replace = None;
-                if self.values[idx].local > self.arg_size {
+                if self.values[idx].local > self.arg_size() {
                     for (i, fidx) in f_node.iter().enumerate() {
                         if let Some(father_info) = fidx {
                             if i != idx && i != node.index {
@@ -385,7 +384,7 @@ impl<'tcx> MopGraph<'tcx> {
                                     if j != idx
                                         && j != node.index
                                         && self.is_aliasing(j, father_info.father_value_id)
-                                        && v.local <= self.arg_size
+                                        && v.local <= self.arg_size()
                                     {
                                         replace = Some(&self.values[j]);
                                     }
@@ -395,7 +394,7 @@ impl<'tcx> MopGraph<'tcx> {
                     }
                 }
 
-                if (self.values[idx].local <= self.arg_size || replace.is_some())
+                if (self.values[idx].local <= self.arg_size() || replace.is_some())
                     && idx != node.index
                     && node.local != self.values[idx].local
                 {

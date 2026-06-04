@@ -22,8 +22,8 @@ use crate::{
             symbolic_analysis::{AnaOperand, SymbolicDef, ValueDomain},
         },
     },
-    rap_debug, rap_warn,
     graphs::scc::Scc,
+    rap_debug, rap_warn,
 };
 use rustc_middle::ty::GenericParamDefKind;
 use serde::de;
@@ -200,7 +200,10 @@ impl<'tcx> BodyVisitor<'tcx> {
                     next_block,
                     fn_map,
                 );
-                let tem_basic_blocks = &self.safedrop_graph.mop_graph.blocks[*block_index]
+                let tem_basic_blocks = &self
+                    .safedrop_graph
+                    .mop_graph
+                    .mop_block(*block_index)
                     .scc
                     .nodes
                     .clone();

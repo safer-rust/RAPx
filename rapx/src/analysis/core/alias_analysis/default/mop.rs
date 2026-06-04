@@ -16,7 +16,7 @@ use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 
 use crate::graphs::{
     scc::SccInfo,
-    scc_paths::{constraints_key, record_unique_path, PathKey, SccPathTraversalState},
+    scc_paths::{PathKey, SccPathTraversalState, constraints_key, record_unique_path},
 };
 
 use super::{graph::*, *};
@@ -91,8 +91,8 @@ impl<'tcx> MopGraph<'tcx> {
         discr: &rustc_middle::mir::Operand<'tcx>,
         targets: &rustc_middle::mir::SwitchTargets,
     ) -> Option<usize> {
-        let tcx = self.tcx;
-        let local_decls = &tcx.optimized_mir(self.def_id).local_decls;
+        let tcx = self.tcx();
+        let local_decls = &tcx.optimized_mir(self.def_id()).local_decls;
 
         let place = match discr {
             Copy(p) | Move(p) => Some(*p),
@@ -139,8 +139,8 @@ impl<'tcx> MopGraph<'tcx> {
     }
 
     fn possible_switch_values_for_constraint_id(&self, discr_local: usize) -> Option<Vec<usize>> {
-        let tcx = self.tcx;
-        let local_decls = &tcx.optimized_mir(self.def_id).local_decls;
+        let tcx = self.tcx();
+        let local_decls = &tcx.optimized_mir(self.def_id()).local_decls;
         if discr_local >= local_decls.len() {
             return None;
         }
@@ -203,15 +203,13 @@ impl<'tcx> MopGraph<'tcx> {
             // Prevent rustc stack overflow on extremely deep CFG / SCC exploration.
             return;
         };
-        self.visit_times += 1;
-        if self.visit_times > VISIT_LIMIT {
+        self.increment_visit_times();
+        if self.visit_times() > VISIT_LIMIT {
             return;
         }
-        let scc_idx = self.blocks[bb_idx].scc.enter;
-        let cur_block = self.blocks[bb_idx].clone();
-
+        let scc_idx = self.mop_block(bb_idx).scc.enter;
         rap_debug!("check {:?}", bb_idx);
-        if bb_idx == scc_idx && !cur_block.scc.nodes.is_empty() {
+        if bb_idx == scc_idx && !self.mop_block(bb_idx).scc.nodes.is_empty() {
             rap_debug!("check {:?} as a scc", bb_idx);
             self.check_scc(bb_idx, fn_map, recursion_set);
         } else {
@@ -226,11 +224,11 @@ impl<'tcx> MopGraph<'tcx> {
         fn_map: &mut MopFnAliasMap,
         recursion_set: &mut HashSet<DefId>,
     ) {
-        let cur_block = self.blocks[bb_idx].clone();
+        let cur_scc = self.mop_block(bb_idx).scc.clone();
 
         /* Handle cases if the current block is a merged scc block with sub block */
-        rap_debug!("Searchng paths in scc: {:?}, {:?}", bb_idx, cur_block.scc);
-        let scc = self.sort_scc_tree(&cur_block.scc);
+        rap_debug!("Searchng paths in scc: {:?}, {:?}", bb_idx, cur_scc);
+        let scc = self.sort_scc_tree(&cur_scc);
         rap_debug!("scc: {:?}", scc);
         // Propagate constraints collected so far (top-down)
         let inherited_constraints = self.constants.clone();
@@ -243,7 +241,7 @@ impl<'tcx> MopGraph<'tcx> {
         let backup_recursion_set = recursion_set.clone();
 
         // SCC exits are stored on the SCC enter node.
-        let scc_exits = cur_block.scc.exits.clone();
+        let scc_exits = cur_scc.exits.clone();
         for raw_path in paths_in_scc {
             self.alias_sets = backup_alias_sets.clone();
             self.values = backup_values.clone();
@@ -269,7 +267,7 @@ impl<'tcx> MopGraph<'tcx> {
                 // If exit_node is a SwitchInt, only follow SCC-exit edges consistent with the
                 // current constraint (important for enum parameters).
                 let mut allowed_targets: Option<FxHashSet<usize>> = None;
-                if let Some(sw) = self.blocks[exit_node].terminator.clone() {
+                if let Some(sw) = self.cfg_block(exit_node).terminator.clone() {
                     if let TerminatorKind::SwitchInt { discr, targets } = sw.kind {
                         // Resolve discr local id in the same way as SCC path generation.
                         let place = match discr {
@@ -327,10 +325,10 @@ impl<'tcx> MopGraph<'tcx> {
         recursion_set: &mut HashSet<DefId>,
     ) {
         rap_debug!("check {:?} as a node", bb_idx);
-        let cur_block = self.blocks[bb_idx].clone();
-        self.alias_bb(self.blocks[bb_idx].scc.enter);
-        self.alias_bbcall(self.blocks[bb_idx].scc.enter, fn_map, recursion_set);
-        if cur_block.next.is_empty() {
+        let cur_next = self.cfg_block(bb_idx).next.clone();
+        self.alias_bb(self.mop_block(bb_idx).scc.enter);
+        self.alias_bbcall(self.mop_block(bb_idx).scc.enter, fn_map, recursion_set);
+        if cur_next.is_empty() {
             self.merge_results();
             return;
         }
@@ -343,12 +341,12 @@ impl<'tcx> MopGraph<'tcx> {
         path_constraints: Option<&FxHashMap<usize, usize>>,
         recursion_set: &mut HashSet<DefId>,
     ) {
-        let cur_block = self.blocks[bb_idx].clone();
-        let tcx = self.tcx;
+        let cur_next = self.cfg_block(bb_idx).next.clone();
+        let tcx = self.tcx();
 
         rap_debug!(
             "handle nexts {:?} of node {:?}",
-            self.blocks[bb_idx].next,
+            self.cfg_block(bb_idx).next,
             bb_idx
         );
         // Extra path contraints are introduced during scc handling.
@@ -363,7 +361,7 @@ impl<'tcx> MopGraph<'tcx> {
         let mut sw_targets = None; // Multiple targets of SwitchInt
         let mut sw_otherwise_val: Option<usize> = None;
 
-        if let Some(ref switch) = cur_block.terminator {
+        if let Some(switch) = self.cfg_block(bb_idx).terminator.clone() {
             if let TerminatorKind::SwitchInt {
                 ref discr,
                 ref targets,
@@ -373,7 +371,7 @@ impl<'tcx> MopGraph<'tcx> {
                 match discr {
                     Copy(p) | Move(p) => {
                         let value_idx = self.projection(*p);
-                        let local_decls = &tcx.optimized_mir(self.def_id).local_decls;
+                        let local_decls = &tcx.optimized_mir(self.def_id()).local_decls;
                         let place_ty = (*p).ty(local_decls, tcx);
                         rap_debug!("value_idx: {:?}", value_idx);
                         match place_ty.ty.kind() {
@@ -407,7 +405,7 @@ impl<'tcx> MopGraph<'tcx> {
                     }
                     Constant(c) => {
                         single_target = true;
-                        let ty_env = TypingEnv::post_analysis(tcx, self.def_id);
+                        let ty_env = TypingEnv::post_analysis(tcx, self.def_id());
                         if let Some(val) = c.const_.try_eval_target_usize(tcx, ty_env) {
                             sw_val = val as usize;
                         }
@@ -430,7 +428,7 @@ impl<'tcx> MopGraph<'tcx> {
                 if let Some(values) = self.possible_switch_values_for_constraint_id(path_discr_id) {
                     // Enumerate each possible value explicitly (bool: 0/1, enum: 0..N).
                     for path_discr_val in values {
-                        if self.visit_times > VISIT_LIMIT {
+                        if self.visit_times() > VISIT_LIMIT {
                             continue;
                         }
                         let next = self.switch_target_for_value(&targets, path_discr_val);
@@ -445,7 +443,7 @@ impl<'tcx> MopGraph<'tcx> {
                 } else {
                     // Fallback: explore explicit branches + otherwise.
                     for iter in targets.iter() {
-                        if self.visit_times > VISIT_LIMIT {
+                        if self.visit_times() > VISIT_LIMIT {
                             continue;
                         }
                         let next = iter.1.as_usize();
@@ -471,43 +469,13 @@ impl<'tcx> MopGraph<'tcx> {
                     );
                 }
             } else {
-                for next in cur_block.next {
-                    if self.visit_times > VISIT_LIMIT {
+                for next in cur_next {
+                    if self.visit_times() > VISIT_LIMIT {
                         continue;
                     }
                     self.split_check(next, fn_map, recursion_set);
                 }
             }
-        }
-    }
-
-    pub fn sort_scc_tree(&mut self, scc: &SccInfo) -> SccInfo {
-        self.populate_child_sccs(scc.enter);
-        self.blocks[scc.enter].scc.clone()
-    }
-
-    /// Recursively discover nested child SCCs for the SCC rooted at `enter` and
-    /// write the result back into `self.blocks[enter].scc.child_sccs`.
-    fn populate_child_sccs(&mut self, enter: usize) {
-        // Collect the node list first to avoid holding a borrow on self.blocks.
-        let nodes: Vec<usize> = self.blocks[enter].scc.nodes.iter().cloned().collect();
-        let mut child_enters: Vec<usize> = Vec::new();
-        let mut seen = rustc_data_structures::fx::FxHashSet::default();
-
-        for node in nodes {
-            if let Some(block) = self.blocks.get(node) {
-                let node_enter = block.scc.enter;
-                let non_trivial = !block.scc.nodes.is_empty();
-                if node_enter != enter && non_trivial && seen.insert(node_enter) {
-                    child_enters.push(node_enter);
-                }
-            }
-        }
-
-        self.blocks[enter].scc.child_sccs = child_enters;
-
-        for &child_enter in &self.blocks[enter].scc.child_sccs.clone() {
-            self.populate_child_sccs(child_enter);
         }
     }
 
@@ -518,7 +486,7 @@ impl<'tcx> MopGraph<'tcx> {
         initial_constraints: &FxHashMap<usize, usize>,
     ) -> Vec<(Vec<usize>, FxHashMap<usize, usize>)> {
         let key = SccPathCacheKey {
-            def_id: self.def_id,
+            def_id: self.def_id(),
             scc_enter: scc.enter,
             constraints: constraints_key(initial_constraints),
         };
@@ -587,7 +555,7 @@ impl<'tcx> MopGraph<'tcx> {
 
         // Clear the constraints if the local is reassigned in the current block;
         // Otherwise, it cannot reach other branches.
-        for local in &self.blocks[state.cur].assigned_locals {
+        for local in &self.mop_block(state.cur).assigned_locals {
             rap_debug!(
                 "Remove path_constraints {:?}, because it has been reassigned.",
                 local
@@ -605,7 +573,7 @@ impl<'tcx> MopGraph<'tcx> {
                     break;
                 }
 
-                let child_scc = self.blocks[child_enter].scc.clone();
+                let child_scc = self.mop_block(child_enter).scc.clone();
                 let sub_paths = self.find_scc_paths(child_enter, &child_scc, &path_constraints);
                 rap_debug!("paths in sub scc: {}, {:?}", child_enter, sub_paths);
 
@@ -655,7 +623,7 @@ impl<'tcx> MopGraph<'tcx> {
             }
         }
 
-        let Some(term) = self.blocks[state.cur].terminator.clone() else {
+        let Some(term) = self.cfg_block(state.cur).terminator.clone() else {
             return;
         };
         rap_debug!("term: {:?}", term);
@@ -885,7 +853,7 @@ impl<'tcx> MopGraph<'tcx> {
                     paths_in_scc,
                     seen_paths,
                 );
-                for next in self.blocks[state.cur].next.clone() {
+                for next in self.cfg_block(state.cur).next.clone() {
                     let next_in_scc = state.is_node_in_scc(scc, next);
                     if !next_in_scc {
                         continue;

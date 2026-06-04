@@ -7,12 +7,7 @@ pub mod types;
 pub mod value;
 
 use super::{AliasAnalysis, AliasPair, FnAliasMap, FnAliasPairs};
-use crate::{
-    analysis::Analysis,
-    def_id::*,
-    graphs::scc::Scc,
-    utils::source::*,
-};
+use crate::{analysis::Analysis, def_id::*, utils::source::*};
 use graph::MopGraph;
 use rustc_data_structures::fx::FxHashMap;
 use rustc_hir::def_id::DefId;
@@ -270,7 +265,7 @@ impl<'tcx> AliasAnalyzer<'tcx> {
             rap_trace!("After searching scc: {}", mop_graph);
             let mut recursion_set = HashSet::default();
             mop_graph.check(0, &mut self.fn_map, &mut recursion_set);
-            if mop_graph.visit_times > VISIT_LIMIT {
+            if mop_graph.visit_times() > VISIT_LIMIT {
                 rap_trace!("Over visited: {:?}", def_id);
             }
             self.fn_map.insert(def_id, mop_graph.ret_alias);

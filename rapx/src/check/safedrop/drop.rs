@@ -95,7 +95,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
         if self.mop_graph.values[value_idx].is_ref_count() {
             return;
         }
-        if self.df_check(value_idx, bb_idx, self.mop_graph.span, flag_cleanup) {
+        if self.df_check(value_idx, bb_idx, self.mop_graph.span(), flag_cleanup) {
             return;
         }
         if !self.drop_record[value_idx].is_dropped {

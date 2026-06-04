@@ -852,9 +852,7 @@ fn same_path_step(lhs: &PathStep, rhs: &PathStep) -> bool {
                 from: rhs_from,
                 to: rhs_to,
             },
-        ) => {
-            lhs_representative == rhs_representative && lhs_from == rhs_from && lhs_to == rhs_to
-        }
+        ) => lhs_representative == rhs_representative && lhs_from == rhs_from && lhs_to == rhs_to,
         (PathStep::Callsite(lhs), PathStep::Callsite(rhs)) => lhs == rhs,
         _ => false,
     }

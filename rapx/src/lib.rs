@@ -4,11 +4,11 @@
 
 #[macro_use]
 pub mod utils;
-pub mod graphs;
 pub mod analysis;
 pub mod check;
 pub mod cli;
 pub mod def_id;
+pub mod graphs;
 pub mod help;
 pub mod preprocess;
 pub mod verify;

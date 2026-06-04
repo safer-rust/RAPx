@@ -388,7 +388,14 @@ impl<'tcx> PathExtractor<'tcx> {
             });
             stack.push(PathStep::Block(exit.to));
             visited.insert(exit.to);
-            self.dfs_entry_prefixes(exit.to, target_representative, visited, stack, results, limit);
+            self.dfs_entry_prefixes(
+                exit.to,
+                target_representative,
+                visited,
+                stack,
+                results,
+                limit,
+            );
             visited.remove(&exit.to);
             stack.pop();
             stack.pop();
@@ -622,7 +629,11 @@ impl Path {
 fn describe_step(step: &PathStep) -> String {
     match step {
         PathStep::Block(bb) => format!("bb{}", bb.as_usize()),
-        PathStep::SccExit { representative, from, to } => {
+        PathStep::SccExit {
+            representative,
+            from,
+            to,
+        } => {
             format!(
                 "SccRegion(bb{}).exit(bb{} -> bb{})",
                 representative.as_usize(),

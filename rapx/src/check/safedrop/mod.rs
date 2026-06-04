@@ -13,7 +13,6 @@ use crate::{
         alias_analysis::default::{AliasAnalyzer, MopFnAliasMap},
         ownedheap_analysis::{OHAResultMap, OwnedHeapAnalysis, default::OwnedHeapAnalyzer},
     },
-    graphs::scc::Scc,
     utils::source::get_fn_name,
 };
 use graph::SafeDropGraph;
@@ -73,7 +72,7 @@ pub fn query_safedrop(tcx: TyCtxt, fn_map: &MopFnAliasMap, def_id: DefId, adt_ow
         safedrop_graph.mop_graph.find_scc();
         rap_debug!("safedrop graph (scc): {}", safedrop_graph);
         safedrop_graph.check(0, fn_map);
-        if safedrop_graph.mop_graph.visit_times <= VISIT_LIMIT {
+        if safedrop_graph.mop_graph.visit_times() <= VISIT_LIMIT {
             safedrop_graph.report_bugs();
         }
     }

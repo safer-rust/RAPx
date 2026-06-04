@@ -1,6 +1,10 @@
-use super::{assign::*, block::*, types::*, value::*, MopFnAliasPairs};
+use super::{MopFnAliasPairs, assign::*, block::*, types::*, value::*};
 use crate::{
-    graphs::scc::{Scc, SccExit},
+    graphs::{
+        cfg::{CfgBlock, ControlFlowGraph},
+        mop::{MeetOverPathsGraph, MopBlockInfo},
+        scc::{Scc, SccInfo},
+    },
     utils::source::*,
 };
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
@@ -11,33 +15,22 @@ use rustc_middle::{
     },
     ty::{self, TyCtxt, TypingEnv},
 };
-use rustc_span::{def_id::DefId, Span};
-use std::{
-    fmt::{self, Display},
-    vec::Vec,
-};
+use rustc_span::{Span, def_id::DefId};
+use std::{fmt, vec::Vec};
 
 #[derive(Clone)]
 pub struct MopGraph<'tcx> {
-    pub def_id: DefId,
-    pub tcx: TyCtxt<'tcx>,
-    // The field is used to detect dangling pointers in arguments after the function returns.
-    pub arg_size: usize,
-    pub span: Span,
+    pub graph: MeetOverPathsGraph<'tcx>,
     // All values (including fields) of the function.
     // For general variables, we use its Local as the value index;
     // For fields, the value index is determined via auto increment.
     pub values: Vec<Value>,
-    // All blocks of the function;
-    // Each block is initialized as a basic block of the mir;
-    // The blocks are then aggregated into strongly-connected components.
-    pub blocks: Vec<Block<'tcx>>,
+    // Alias-analysis-specific facts extracted from each MIR block.
+    pub block_facts: Vec<AliasBlockFacts<'tcx>>,
     // We record the constant value for path sensitivity.
     pub constants: FxHashMap<usize, usize>,
     // We record the decision of enumerate typed values for path sensitivity.
     pub discriminants: FxHashMap<usize, usize>,
-    // a threhold to avoid path explosion.
-    pub visit_times: usize,
     pub alias_sets: Vec<FxHashSet<usize>>,
     // contains the return results for inter-procedure analysis.
     pub ret_alias: MopFnAliasPairs,
@@ -68,13 +61,17 @@ impl<'tcx> MopGraph<'tcx> {
         }
 
         let basicblocks = &body.basic_blocks;
-        let mut blocks = Vec::<Block<'tcx>>::new();
+        let mut cfg_blocks = Vec::<CfgBlock<'tcx>>::new();
+        let mut mop_blocks = Vec::<MopBlockInfo>::new();
+        let mut block_facts = Vec::<AliasBlockFacts<'tcx>>::new();
         let mut discriminants = FxHashMap::default();
 
         // handle each basicblock
         for i in 0..basicblocks.len() {
             let bb = &basicblocks[BasicBlock::from(i)];
-            let mut cur_bb = Block::new(i, bb.is_cleanup);
+            let mut cfg_block = CfgBlock::new(i, bb.is_cleanup);
+            let mut mop_block = MopBlockInfo::new(i);
+            let mut alias_block = AliasBlockFacts::new();
 
             // handle general statements
             for stmt in &bb.statements {
@@ -83,7 +80,7 @@ impl<'tcx> MopGraph<'tcx> {
                     StatementKind::Assign(box (place, rvalue)) => {
                         let lv_place = *place;
                         let lv_local = place.local.as_usize();
-                        cur_bb.assigned_locals.insert(lv_local);
+                        mop_block.assigned_locals.insert(lv_local);
                         match rvalue.clone() {
                             // rvalue is a Rvalue
                             Rvalue::Use(operand) => {
@@ -97,7 +94,7 @@ impl<'tcx> MopGraph<'tcx> {
                                                 AssignType::Copy,
                                                 span,
                                             );
-                                            cur_bb.assignments.push(assign);
+                                            alias_block.assignments.push(assign);
                                         }
                                     }
                                     Operand::Move(rv_place) => {
@@ -109,7 +106,7 @@ impl<'tcx> MopGraph<'tcx> {
                                                 AssignType::Move,
                                                 span,
                                             );
-                                            cur_bb.assignments.push(assign);
+                                            alias_block.assignments.push(assign);
                                         }
                                     }
                                     Operand::Constant(constant) => {
@@ -121,7 +118,7 @@ impl<'tcx> MopGraph<'tcx> {
                                                 if let Some(val) =
                                                     const_value.try_to_target_usize(tcx)
                                                 {
-                                                    cur_bb.const_value.push(ConstValue::new(
+                                                    alias_block.const_value.push(ConstValue::new(
                                                         lv_local,
                                                         val as usize,
                                                     ));
@@ -133,7 +130,7 @@ impl<'tcx> MopGraph<'tcx> {
                                                     const_value.try_to_scalar_int()
                                                 {
                                                     let val = scalar.to_uint(scalar.size());
-                                                    cur_bb.const_value.push(ConstValue::new(
+                                                    alias_block.const_value.push(ConstValue::new(
                                                         lv_local,
                                                         val as usize,
                                                     ));
@@ -150,7 +147,7 @@ impl<'tcx> MopGraph<'tcx> {
                                 if values[lv_local].may_drop && values[rv_local].may_drop {
                                     let assign =
                                         Assignment::new(lv_place, rv_place, AssignType::Copy, span);
-                                    cur_bb.assignments.push(assign);
+                                    alias_block.assignments.push(assign);
                                 }
                             }
                             Rvalue::ShallowInitBox(operand, _) => {
@@ -175,7 +172,7 @@ impl<'tcx> MopGraph<'tcx> {
                                                 AssignType::InitBox,
                                                 span,
                                             );
-                                            cur_bb.assignments.push(assign);
+                                            alias_block.assignments.push(assign);
                                         }
                                     }
                                     Operand::Constant(_) => {}
@@ -191,7 +188,7 @@ impl<'tcx> MopGraph<'tcx> {
                                             AssignType::Copy,
                                             span,
                                         );
-                                        cur_bb.assignments.push(assign);
+                                        alias_block.assignments.push(assign);
                                     }
                                 }
                                 Operand::Move(rv_place) => {
@@ -203,7 +200,7 @@ impl<'tcx> MopGraph<'tcx> {
                                             AssignType::Move,
                                             span,
                                         );
-                                        cur_bb.assignments.push(assign);
+                                        alias_block.assignments.push(assign);
                                     }
                                 }
                                 Operand::Constant(_) => {}
@@ -248,7 +245,7 @@ impl<'tcx> MopGraph<'tcx> {
                                                             },
                                                             span,
                                                         );
-                                                        cur_bb.assignments.push(assign);
+                                                        alias_block.assignments.push(assign);
                                                         rap_debug!(
                                                             "Aggregate field assignment: {:?}.{} = {:?}",
                                                             lv_place,
@@ -311,7 +308,7 @@ impl<'tcx> MopGraph<'tcx> {
                                                             },
                                                             span,
                                                         );
-                                                        cur_bb.assignments.push(assign);
+                                                        alias_block.assignments.push(assign);
                                                         rap_debug!(
                                                             "Aggregate ADT field assignment: {:?}.{} = {:?}",
                                                             lv_place,
@@ -344,7 +341,7 @@ impl<'tcx> MopGraph<'tcx> {
                                                             AssignType::Copy,
                                                             span,
                                                         );
-                                                        cur_bb.assignments.push(assign);
+                                                        alias_block.assignments.push(assign);
                                                     }
                                                 }
                                                 Operand::Constant(_) => {}
@@ -356,7 +353,7 @@ impl<'tcx> MopGraph<'tcx> {
                             Rvalue::Discriminant(rv_place) => {
                                 let assign =
                                     Assignment::new(lv_place, rv_place, AssignType::Variant, span);
-                                cur_bb.assignments.push(assign);
+                                alias_block.assignments.push(assign);
                                 discriminants.insert(lv_local, rv_place.local.as_usize());
                             }
                             _ => {}
@@ -380,20 +377,20 @@ impl<'tcx> MopGraph<'tcx> {
                 );
                 continue;
             };
-            cur_bb.terminator = Some(terminator.clone());
+            cfg_block.terminator = Some(terminator.clone());
             // handle terminator statements
             match terminator.kind.clone() {
                 TerminatorKind::Goto { ref target } => {
-                    cur_bb.add_next(target.as_usize());
+                    cfg_block.add_next(target.as_usize());
                 }
                 TerminatorKind::SwitchInt {
                     discr: _,
                     ref targets,
                 } => {
                     for (_, ref target) in targets.iter() {
-                        cur_bb.add_next(target.as_usize());
+                        cfg_block.add_next(target.as_usize());
                     }
-                    cur_bb.add_next(targets.otherwise().as_usize());
+                    cfg_block.add_next(targets.otherwise().as_usize());
                 }
                 TerminatorKind::Drop {
                     place: _,
@@ -403,9 +400,9 @@ impl<'tcx> MopGraph<'tcx> {
                     drop: _,
                     async_fut: _,
                 } => {
-                    cur_bb.add_next(target.as_usize());
+                    cfg_block.add_next(target.as_usize());
                     if let UnwindAction::Cleanup(target) = unwind {
-                        cur_bb.add_next(target.as_usize());
+                        cfg_block.add_next(target.as_usize());
                     }
                 }
                 TerminatorKind::Call {
@@ -414,10 +411,10 @@ impl<'tcx> MopGraph<'tcx> {
                     ..
                 } => {
                     if let Some(tt) = target {
-                        cur_bb.add_next(tt.as_usize());
+                        cfg_block.add_next(tt.as_usize());
                     }
                     if let UnwindAction::Cleanup(tt) = unwind {
-                        cur_bb.add_next(tt.as_usize());
+                        cfg_block.add_next(tt.as_usize());
                     }
                 }
 
@@ -428,9 +425,9 @@ impl<'tcx> MopGraph<'tcx> {
                     ref target,
                     ref unwind,
                 } => {
-                    cur_bb.add_next(target.as_usize());
+                    cfg_block.add_next(target.as_usize());
                     if let UnwindAction::Cleanup(target) = unwind {
-                        cur_bb.add_next(target.as_usize());
+                        cfg_block.add_next(target.as_usize());
                     }
                 }
                 TerminatorKind::Yield {
@@ -439,22 +436,22 @@ impl<'tcx> MopGraph<'tcx> {
                     resume_arg: _,
                     ref drop,
                 } => {
-                    cur_bb.add_next(resume.as_usize());
+                    cfg_block.add_next(resume.as_usize());
                     if let Some(target) = drop {
-                        cur_bb.add_next(target.as_usize());
+                        cfg_block.add_next(target.as_usize());
                     }
                 }
                 TerminatorKind::FalseEdge {
                     ref real_target,
                     imaginary_target: _,
                 } => {
-                    cur_bb.add_next(real_target.as_usize());
+                    cfg_block.add_next(real_target.as_usize());
                 }
                 TerminatorKind::FalseUnwind {
                     ref real_target,
                     unwind: _,
                 } => {
-                    cur_bb.add_next(real_target.as_usize());
+                    cfg_block.add_next(real_target.as_usize());
                 }
                 TerminatorKind::InlineAsm {
                     template: _,
@@ -466,269 +463,88 @@ impl<'tcx> MopGraph<'tcx> {
                     asm_macro: _,
                 } => {
                     for target in targets {
-                        cur_bb.add_next(target.as_usize());
+                        cfg_block.add_next(target.as_usize());
                     }
                     if let UnwindAction::Cleanup(target) = unwind {
-                        cur_bb.add_next(target.as_usize());
+                        cfg_block.add_next(target.as_usize());
                     }
                 }
                 _ => {}
             }
-            blocks.push(cur_bb);
+            cfg_blocks.push(cfg_block);
+            mop_blocks.push(mop_block);
+            block_facts.push(alias_block);
         }
 
+        let cfg = ControlFlowGraph::new(def_id, tcx, body.span, arg_size, cfg_blocks);
+        let graph = MeetOverPathsGraph::new(cfg, mop_blocks);
+
         MopGraph {
-            def_id,
-            tcx,
-            span: body.span,
-            blocks,
+            graph,
             values,
-            arg_size,
+            block_facts,
             alias_sets: Vec::<FxHashSet<usize>>::new(),
             constants: FxHashMap::default(),
             ret_alias: MopFnAliasPairs::new(arg_size),
-            visit_times: 0,
             discriminants,
         }
     }
 
-    /// Enumerate acyclic CFG paths from the current block to an exit block.
-    ///
-    /// MIR loops are represented as back edges in `Block::next`. The path
-    /// consumer only needs one finite traversal that reaches each unsafe
-    /// callsite, so this DFS cuts a path when it would revisit a block already
-    /// on the current stack. Non-cycle successors are still explored, which
-    /// keeps loop exits visible without risking unbounded path growth.
-    pub fn dfs_on_spanning_tree(
-        &self,
-        index: usize,
-        stack: &mut Vec<usize>,
-        paths: &mut Vec<Vec<usize>>,
-    ) {
-        const PATH_ENUM_LIMIT: usize = 4000;
-
-        if paths.len() >= PATH_ENUM_LIMIT {
-            return;
-        }
-        if index >= self.blocks.len() {
-            return;
-        }
-
-        let mut nexts: Vec<usize> = self.blocks[index].next.iter().copied().collect();
-        nexts.sort_unstable();
-
-        if nexts.is_empty() {
-            paths.push(stack.clone());
-            return;
-        }
-
-        let mut followed = false;
-        for next in nexts {
-            if paths.len() >= PATH_ENUM_LIMIT {
-                break;
-            }
-            if next >= self.blocks.len() {
-                continue;
-            }
-            if stack.contains(&next) {
-                paths.push(stack.clone());
-                continue;
-            }
-
-            followed = true;
-            stack.push(next);
-            self.dfs_on_spanning_tree(next, stack, paths);
-            stack.pop();
-        }
-
-        if !followed {
-            paths.push(stack.clone());
-        }
+    pub fn def_id(&self) -> DefId {
+        self.graph.cfg.def_id
     }
 
-    /// Return all finite MIR CFG paths starting from the entry block.
+    pub fn tcx(&self) -> TyCtxt<'tcx> {
+        self.graph.cfg.tcx
+    }
+
+    pub fn arg_size(&self) -> usize {
+        self.graph.cfg.arg_size
+    }
+
+    pub fn span(&self) -> Span {
+        self.graph.cfg.span
+    }
+
+    pub fn cfg_block(&self, index: usize) -> &CfgBlock<'tcx> {
+        self.graph.cfg_block(index)
+    }
+
+    pub fn cfg_block_mut(&mut self, index: usize) -> &mut CfgBlock<'tcx> {
+        self.graph.cfg_block_mut(index)
+    }
+
+    pub fn mop_block(&self, index: usize) -> &MopBlockInfo {
+        self.graph.mop_block(index)
+    }
+
+    pub fn mop_block_mut(&mut self, index: usize) -> &mut MopBlockInfo {
+        self.graph.mop_block_mut(index)
+    }
+
+    pub fn find_scc(&mut self) {
+        self.graph.find_scc();
+    }
+
     pub fn get_paths(&self) -> Vec<Vec<usize>> {
-        let mut paths: Vec<Vec<usize>> = Vec::new();
-        if self.blocks.is_empty() {
-            return paths;
-        }
-        let mut stack: Vec<usize> = vec![0];
-        self.dfs_on_spanning_tree(0, &mut stack, &mut paths);
-        paths
+        self.graph.get_paths()
     }
+
     pub fn get_all_branch_sub_blocks_paths(&self) -> Vec<Vec<usize>> {
-        // 1. Get all execution paths
-        let all_paths = self.get_paths();
-
-        // Use FxHashSet to collect all unique lists of dominated_scc_bbs.
-        // Vec<usize> implements Hash, so it can be inserted directly into the set.
-        let mut unique_branch_sub_blocks = FxHashSet::<Vec<usize>>::default();
-
-        // 2. Iterate over each path
-        for path in all_paths {
-            // 3. For the current path, get the corresponding dominated_scc_bbs for branch nodes
-            let branch_blocks_for_this_path = self.get_branch_sub_blocks_for_path(&path);
-            rap_debug!(
-                "Branch blocks for path {:?}: {:?}",
-                path,
-                branch_blocks_for_this_path
-            );
-            // 4. Add these dominated_scc_bbs to the set
-            //    Use insert to avoid duplicates
-            unique_branch_sub_blocks.insert(branch_blocks_for_this_path);
-        }
-
-        // 5. Convert the set of unique results back to a Vec and return
-        unique_branch_sub_blocks.into_iter().collect()
+        self.graph.get_all_branch_sub_blocks_paths()
     }
 
-    pub fn get_branch_sub_blocks_for_path(&self, path: &[usize]) -> Vec<usize> {
-        let mut expanded_path = Vec::new();
-        // Use FxHashSet to track which SCCs have already been expanded in this path,
-        // preventing repeated expansion due to cycles.
-        let mut processed_scc_indices = FxHashSet::default();
-
-        for &block_idx in path {
-            // 1. Get the representative SCC index of the current basic block
-            let scc_idx = self.blocks[block_idx].scc.enter;
-
-            // 2. Try inserting scc_idx into the set. If successful (returns true),
-            // it means this SCC is encountered for the first time.
-            if processed_scc_indices.insert(scc_idx) {
-                // First time encountering this SCC: perform full expansion
-
-                // a. First, add the SCC representative itself to the path
-                expanded_path.push(scc_idx);
-
-                // b. Then, retrieve the SCC node information
-                let scc_enter = &self.blocks[scc_idx];
-
-                // c. If it has sub-blocks (i.e., it’s a multi-node SCC),
-                // append all sub-blocks to the path.
-                // dominated_scc_bbs are already ordered (topologically or near-topologically)
-                if !scc_enter.scc.nodes.is_empty() {
-                    //expanded_path.extend_from_slice(&scc_enter.scc.nodes);
-                }
-            } else {
-                // SCC already seen before (e.g., due to a cycle in the path):
-                // Only add the representative node as a connector, skip internal blocks.
-                expanded_path.push(scc_idx);
-            }
-        }
-
-        expanded_path
-    }
-}
-
-pub trait SccHelper<'tcx> {
-    fn tcx(&self) -> TyCtxt<'tcx>;
-    fn defid(&self) -> DefId;
-    fn blocks(&self) -> &Vec<Block<'tcx>>; // or whatever the actual type is
-    fn blocks_mut(&mut self) -> &mut Vec<Block<'tcx>>;
-}
-
-impl<'tcx> SccHelper<'tcx> for MopGraph<'tcx> {
-    fn tcx(&self) -> TyCtxt<'tcx> {
-        self.tcx
-    }
-    fn defid(&self) -> DefId {
-        self.def_id
-    }
-    fn blocks(&self) -> &Vec<Block<'tcx>> {
-        &self.blocks
-    }
-    fn blocks_mut(&mut self) -> &mut Vec<Block<'tcx>> {
-        &mut self.blocks
-    }
-}
-
-pub fn scc_handler<'tcx, T: SccHelper<'tcx> + Scc + Clone + Display>(
-    graph: &mut T,
-    root: usize,
-    scc_components: &[usize],
-) {
-    rap_debug!(
-        "Scc found: root = {}, components = {:?}",
-        root,
-        scc_components
-    );
-    graph.blocks_mut()[root].scc.enter = root;
-    if scc_components.len() <= 1 {
-        return;
+    pub fn sort_scc_tree(&mut self, scc: &SccInfo) -> SccInfo {
+        self.graph.sort_scc_tree(scc)
     }
 
-    // If the scc enter is also an exit of the scc; add it to the scc exit;
-    let nexts = graph.blocks_mut()[root].next.clone();
-    for next in nexts {
-        if !&scc_components.contains(&next) {
-            let scc_exit = SccExit::new(root, next);
-            graph.blocks_mut()[root].scc.exits.insert(scc_exit);
-        }
-    }
-    // Handle other nodes of the scc;
-    for &node in &scc_components[1..] {
-        graph.blocks_mut()[root].scc.nodes.insert(node);
-        graph.blocks_mut()[node].scc.enter = root;
-        let nexts = graph.blocks_mut()[node].next.clone();
-        for next in nexts {
-            // The node is an scc exit.
-            if !&scc_components.contains(&next) {
-                let scc_exit = SccExit::new(node, next);
-                graph.blocks_mut()[root].scc.exits.insert(scc_exit);
-            }
-            // The node initiates a back edge to the scc enter.
-            if next == root {
-                graph.blocks_mut()[root].scc.backnodes.insert(node);
-            }
-        }
+    pub fn visit_times(&self) -> usize {
+        self.graph.visit_times
     }
 
-    rap_debug!("Scc Info: {:?}", graph.blocks_mut()[root].scc);
-    // Recursively detect sub sccs within the scc.
-    // This is performed on a modified graph with the starting node and scc components only;
-    // Before modification, we have to backup corresponding information.
-    let mut backups: Vec<(usize, FxHashSet<usize>)> = Vec::new();
-
-    let block0 = &mut graph.blocks_mut()[0];
-    backups.push((0, block0.next.clone()));
-
-    // Change the next of block0 to the scc enter.
-    block0.next.clear();
-    block0.next.insert(root);
-
-    let scc_exits = graph.blocks()[root].scc.exits.clone();
-    let backnodes = graph.blocks()[root].scc.backnodes.clone();
-
-    for &node in scc_components.iter() {
-        let block = &mut graph.blocks_mut()[node];
-        if backnodes.contains(&node) {
-            backups.push((node, block.next.clone()));
-            block.next.remove(&root);
-        }
-    }
-    // isolate the scc components from other parts of the graph.
-    for exit in &scc_exits {
-        let block_to = &mut graph.blocks_mut()[exit.to];
-        backups.push((exit.to, block_to.next.clone()));
-        block_to.next.clear();
-    }
-    graph.find_scc();
-
-    // Restore the original graph.
-    for backup in &backups {
-        graph.blocks_mut()[backup.0].next = backup.1.clone();
-    }
-}
-
-impl<'tcx> Scc for MopGraph<'tcx> {
-    fn on_scc_found(&mut self, root: usize, scc_components: &[usize]) {
-        scc_handler(self, root, scc_components);
-    }
-    fn get_next(&mut self, root: usize) -> FxHashSet<usize> {
-        self.blocks[root].next.clone()
-    }
-    fn get_size(&mut self) -> usize {
-        self.blocks.len()
+    pub fn increment_visit_times(&mut self) -> usize {
+        self.graph.visit_times += 1;
+        self.graph.visit_times
     }
 }
 
@@ -737,9 +553,11 @@ impl<'tcx> Scc for MopGraph<'tcx> {
 impl<'tcx> std::fmt::Display for MopGraph<'tcx> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "MopGraph {{")?;
-        writeln!(f, "  def_id: {:?}", self.def_id)?;
+        writeln!(f, "  def_id: {:?}", self.def_id())?;
         writeln!(f, "  values: {:?}", self.values)?;
-        writeln!(f, "  blocks: {:?}", self.blocks)?;
+        writeln!(f, "  cfg_blocks: {:?}", self.graph.cfg.blocks)?;
+        writeln!(f, "  mop_blocks: {:?}", self.graph.blocks)?;
+        writeln!(f, "  block_facts: {:?}", self.block_facts)?;
         writeln!(f, "  constants: {:?}", self.constants)?;
         writeln!(f, "  discriminants: {:?}", self.discriminants)?;
         write!(f, "}}")

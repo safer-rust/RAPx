@@ -132,4 +132,3 @@ pub trait Scc {
         }
     }
 }
-
