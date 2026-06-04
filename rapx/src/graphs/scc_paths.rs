@@ -5,7 +5,7 @@
 
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 
-use super::scc::{Scc, SccInfo, SccTree};
+use super::scc::{Scc, SccInfo};
 
 /// Stable key for deduplicating path + path-constraint combinations.
 #[derive(Clone, Hash, PartialEq, Eq)]
@@ -22,49 +22,6 @@ pub fn collect_scc_components(successors: &[Vec<usize>]) -> Vec<Vec<usize>> {
     let mut collector = SccComponentCollector::new(successors.to_vec());
     collector.find_scc();
     collector.components
-}
-
-/// Build an SCC tree rooted at `scc` by repeatedly querying per-node SCC info.
-///
-/// `node_to_scc` should return the **most specific/direct SCC owner** for `node`
-/// under the current nesting model.
-///
-/// In other words, for a node that belongs to nested SCCs, return the SCC metadata
-/// of the innermost SCC that currently contains that node. This allows this helper
-/// to reconstruct nested SCC trees by repeatedly mapping each node to its direct
-/// child SCC owner and recursing.
-pub fn build_scc_tree<F>(scc: &SccInfo, mut node_to_scc: F) -> SccTree
-where
-    F: FnMut(usize) -> Option<SccInfo>,
-{
-    build_scc_tree_inner(scc, &mut node_to_scc)
-}
-
-fn build_scc_tree_inner<F>(scc: &SccInfo, node_to_scc: &mut F) -> SccTree
-where
-    F: FnMut(usize) -> Option<SccInfo>,
-{
-    let mut child_sccs: FxHashMap<usize, SccInfo> = FxHashMap::default();
-
-    for &node in scc.nodes.iter() {
-        let Some(node_scc) = node_to_scc(node) else {
-            continue;
-        };
-
-        if node_scc.enter != scc.enter && !node_scc.nodes.is_empty() {
-            child_sccs.entry(node_scc.enter).or_insert(node_scc);
-        }
-    }
-
-    let children = child_sccs
-        .into_values()
-        .map(|child_scc| build_scc_tree_inner(&child_scc, node_to_scc))
-        .collect();
-
-    SccTree {
-        scc: scc.clone(),
-        children,
-    }
 }
 
 /// Convert unordered path constraints into a stable, hashable key.

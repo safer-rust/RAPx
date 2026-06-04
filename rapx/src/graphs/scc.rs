@@ -33,6 +33,8 @@ pub struct SccInfo {
     pub exits: FxHashSet<SccExit>,
     /// Blocks with back edges to the SCC representative.
     pub backnodes: FxHashSet<usize>,
+    /// Representative `enter` nodes of nested child SCCs.
+    pub child_sccs: Vec<usize>,
 }
 
 impl SccInfo {
@@ -43,6 +45,7 @@ impl SccInfo {
             nodes: FxHashSet::default(),
             exits: FxHashSet::default(),
             backnodes: FxHashSet::default(),
+            child_sccs: Vec::new(),
         }
     }
 }
@@ -130,9 +133,3 @@ pub trait Scc {
     }
 }
 
-/// Tree representation for nested SCC metadata.
-#[derive(Debug)]
-pub struct SccTree {
-    pub scc: SccInfo,
-    pub children: Vec<SccTree>,
-}

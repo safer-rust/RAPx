@@ -15,9 +15,9 @@ use std::{
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 
 use crate::graphs::{
-    scc::{SccInfo, SccTree},
+    scc::SccInfo,
     scc_paths::{
-        build_scc_tree, constraints_key, record_unique_path, PathKey, SccPathTraversalState,
+        constraints_key, record_unique_path, PathKey, SccPathTraversalState,
     },
 };
 
@@ -232,11 +232,11 @@ impl<'tcx> MopGraph<'tcx> {
 
         /* Handle cases if the current block is a merged scc block with sub block */
         rap_debug!("Searchng paths in scc: {:?}, {:?}", bb_idx, cur_block.scc);
-        let scc_tree = self.sort_scc_tree(&cur_block.scc);
-        rap_debug!("scc_tree: {:?}", scc_tree);
+        let scc = self.sort_scc_tree(&cur_block.scc);
+        rap_debug!("scc: {:?}", scc);
         // Propagate constraints collected so far (top-down)
         let inherited_constraints = self.constants.clone();
-        let paths_in_scc = self.find_scc_paths(bb_idx, &scc_tree, &inherited_constraints);
+        let paths_in_scc = self.find_scc_paths(bb_idx, &scc, &inherited_constraints);
         rap_debug!("Paths found in scc: {:?}", paths_in_scc);
 
         let backup_values = self.values.clone(); // duplicate the status when visiteding different paths;
@@ -488,23 +488,45 @@ impl<'tcx> MopGraph<'tcx> {
         }
     }
 
-    pub fn sort_scc_tree(&mut self, scc: &SccInfo) -> SccTree {
-        // `node_to_scc` must return the most specific SCC that directly owns `node`
-        // in the current nesting model, so nested SCC trees can be rebuilt correctly.
-        build_scc_tree(scc, |node| {
-            self.blocks.get(node).map(|block| block.scc.clone())
-        })
+    pub fn sort_scc_tree(&mut self, scc: &SccInfo) -> SccInfo {
+        self.populate_child_sccs(scc.enter);
+        self.blocks[scc.enter].scc.clone()
+    }
+
+    /// Recursively discover nested child SCCs for the SCC rooted at `enter` and
+    /// write the result back into `self.blocks[enter].scc.child_sccs`.
+    fn populate_child_sccs(&mut self, enter: usize) {
+        // Collect the node list first to avoid holding a borrow on self.blocks.
+        let nodes: Vec<usize> = self.blocks[enter].scc.nodes.iter().cloned().collect();
+        let mut child_enters: Vec<usize> = Vec::new();
+        let mut seen = rustc_data_structures::fx::FxHashSet::default();
+
+        for node in nodes {
+            if let Some(block) = self.blocks.get(node) {
+                let node_enter = block.scc.enter;
+                let non_trivial = !block.scc.nodes.is_empty();
+                if node_enter != enter && non_trivial && seen.insert(node_enter) {
+                    child_enters.push(node_enter);
+                }
+            }
+        }
+
+        self.blocks[enter].scc.child_sccs = child_enters;
+
+        for &child_enter in &self.blocks[enter].scc.child_sccs.clone() {
+            self.populate_child_sccs(child_enter);
+        }
     }
 
     pub fn find_scc_paths(
         &mut self,
         start: usize,
-        scc_tree: &SccTree,
+        scc: &SccInfo,
         initial_constraints: &FxHashMap<usize, usize>,
     ) -> Vec<(Vec<usize>, FxHashMap<usize, usize>)> {
         let key = SccPathCacheKey {
             def_id: self.def_id,
-            scc_enter: scc_tree.scc.enter,
+            scc_enter: scc.enter,
             constraints: constraints_key(initial_constraints),
         };
 
@@ -516,7 +538,7 @@ impl<'tcx> MopGraph<'tcx> {
         let mut seen_paths: FxHashSet<PathKey> = FxHashSet::default();
 
         self.find_scc_paths_inner(
-            scc_tree,
+            scc,
             SccPathTraversalState::new(start),
             initial_constraints.clone(),
             &mut all_paths,
@@ -538,7 +560,7 @@ impl<'tcx> MopGraph<'tcx> {
 
     fn find_scc_paths_inner(
         &mut self,
-        scc_tree: &SccTree,
+        scc: &SccInfo,
         state: SccPathTraversalState,
         mut path_constraints: FxHashMap<usize, usize>,
         paths_in_scc: &mut Vec<(Vec<usize>, FxHashMap<usize, usize>)>,
@@ -547,7 +569,6 @@ impl<'tcx> MopGraph<'tcx> {
         let Some(_guard) = enter_depth_limit(&SCC_DFS_DEPTH, SCC_DFS_STACK_LIMIT) else {
             return;
         };
-        let scc = &scc_tree.scc;
         if scc.nodes.is_empty() {
             record_unique_path(&state.path, &path_constraints, paths_in_scc, seen_paths);
             return;
@@ -582,8 +603,7 @@ impl<'tcx> MopGraph<'tcx> {
         }
 
         // Find the paths of inner scc recursively;
-        for child_tree in &scc_tree.children {
-            let child_enter = child_tree.scc.enter;
+        for &child_enter in &scc.child_sccs {
             if state.cur == child_enter {
                 // When a spliced child-SCC path ends back at the child-enter, we must continue
                 // exploring the *parent* SCC without immediately re-expanding the same child SCC
@@ -592,7 +612,8 @@ impl<'tcx> MopGraph<'tcx> {
                     break;
                 }
 
-                let sub_paths = self.find_scc_paths(child_enter, child_tree, &path_constraints);
+                let child_scc = self.blocks[child_enter].scc.clone();
+                let sub_paths = self.find_scc_paths(child_enter, &child_scc, &path_constraints);
                 rap_debug!("paths in sub scc: {}, {:?}", child_enter, sub_paths);
 
                 // Always allow the parent SCC to proceed from `child_enter` without traversing
@@ -601,7 +622,7 @@ impl<'tcx> MopGraph<'tcx> {
                 // `child_enter` (e.g., an edge to a sink `Unreachable` block) to be recorded.
                 {
                     self.find_scc_paths_inner(
-                        scc_tree,
+                        scc,
                         state.with_skip_child_enter(child_enter),
                         path_constraints.clone(),
                         paths_in_scc,
@@ -630,7 +651,7 @@ impl<'tcx> MopGraph<'tcx> {
                     };
 
                     self.find_scc_paths_inner(
-                        scc_tree,
+                        scc,
                         state.with_spliced_path(new_path, next_skip_child_enter),
                         new_const,
                         paths_in_scc,
@@ -699,7 +720,7 @@ impl<'tcx> MopGraph<'tcx> {
                         }
                         if state.can_descend_to(next) {
                             self.find_scc_paths_inner(
-                                scc_tree,
+                                scc,
                                 state.descend_to(next),
                                 path_constraints,
                                 paths_in_scc,
@@ -731,7 +752,7 @@ impl<'tcx> MopGraph<'tcx> {
                                 continue;
                             }
                             self.find_scc_paths_inner(
-                                scc_tree,
+                                scc,
                                 state.descend_to(next),
                                 path_constraints.clone(),
                                 paths_in_scc,
@@ -755,7 +776,7 @@ impl<'tcx> MopGraph<'tcx> {
                             }
                             if state.can_descend_to(next) {
                                 self.find_scc_paths_inner(
-                                    scc_tree,
+                                    scc,
                                     state.descend_to(next),
                                     path_constraints,
                                     paths_in_scc,
@@ -791,7 +812,7 @@ impl<'tcx> MopGraph<'tcx> {
                             }
 
                             self.find_scc_paths_inner(
-                                scc_tree,
+                                scc,
                                 state.descend_to(next),
                                 new_constraints,
                                 paths_in_scc,
@@ -822,7 +843,7 @@ impl<'tcx> MopGraph<'tcx> {
                                 continue;
                             }
                             self.find_scc_paths_inner(
-                                scc_tree,
+                                scc,
                                 state.descend_to(next),
                                 new_constraints,
                                 paths_in_scc,
@@ -848,7 +869,7 @@ impl<'tcx> MopGraph<'tcx> {
                         }
                         if state.can_descend_to(next) {
                             self.find_scc_paths_inner(
-                                scc_tree,
+                                scc,
                                 state.descend_to(next),
                                 new_constraints,
                                 paths_in_scc,
@@ -878,7 +899,7 @@ impl<'tcx> MopGraph<'tcx> {
                         continue;
                     }
                     self.find_scc_paths_inner(
-                        scc_tree,
+                        scc,
                         state.descend_to(next),
                         path_constraints.clone(),
                         paths_in_scc,
