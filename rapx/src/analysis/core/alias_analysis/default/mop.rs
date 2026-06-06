@@ -16,19 +16,20 @@ use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 
 use crate::graphs::{
     scc::SccInfo,
-    scc_paths::{PathKey, SccPathTraversalState, constraints_key, record_unique_path},
+    scc_paths::{
+        SccEnumeratedPath, SccPathAction, SccPathSemantics, SccPathTraversalConfig,
+        SccPathTraversalState, constraints_key, enumerate_scc_paths,
+    },
 };
 
 use super::{graph::*, *};
 
 // rustc analysis threads may have a relatively small stack; keep recursion limits conservative.
 const CHECK_STACK_LIMIT: usize = 96;
-const SCC_DFS_STACK_LIMIT: usize = 128;
 const SCC_PATH_CACHE_LIMIT: usize = 2048;
 
 thread_local! {
     static CHECK_DEPTH: Cell<usize> = Cell::new(0);
-    static SCC_DFS_DEPTH: Cell<usize> = Cell::new(0);
     static SCC_PATH_CACHE: RefCell<
         FxHashMap<SccPathCacheKey, Vec<(Vec<usize>, FxHashMap<usize, usize>)>>
     > = RefCell::new(FxHashMap::default());
@@ -69,6 +70,157 @@ impl Drop for DepthLimitGuard {
                 d.set(cur - 1);
             }
         });
+    }
+}
+
+struct MopSccPathSemantics<'a, 'tcx> {
+    graph: &'a mut MopGraph<'tcx>,
+}
+
+impl<'a, 'tcx> SccPathSemantics for MopSccPathSemantics<'a, 'tcx> {
+    fn on_node_enter(&mut self, node: usize, constraints: &mut FxHashMap<usize, usize>) {
+        for local in &self.graph.cfg_block(node).assigned_locals {
+            rap_debug!(
+                "Remove path_constraints {:?}, because it has been reassigned.",
+                local
+            );
+            constraints.remove(local);
+        }
+    }
+
+    fn enumerate_child_paths(
+        &mut self,
+        child_enter: usize,
+        constraints: &FxHashMap<usize, usize>,
+    ) -> Vec<SccEnumeratedPath> {
+        let child_scc = self.graph.cfg_block(child_enter).scc.clone();
+        self.graph
+            .find_scc_paths(child_enter, &child_scc, constraints)
+    }
+
+    fn enumerate_actions(
+        &mut self,
+        _scc: &SccInfo,
+        state: &SccPathTraversalState,
+        path_constraints: &FxHashMap<usize, usize>,
+    ) -> Vec<SccPathAction> {
+        let Some(term) = self.graph.cfg_block(state.cur).terminator.clone() else {
+            return Vec::new();
+        };
+
+        rap_debug!("term: {:?}", term);
+
+        let mut path_constraints = path_constraints.clone();
+        if let TerminatorKind::Call { destination, .. } = &term.kind {
+            let dest_idx = self.graph.projection(*destination);
+            let dest_local = self
+                .graph
+                .cfg
+                .discriminants
+                .get(&self.graph.values[dest_idx].local)
+                .cloned()
+                .unwrap_or(dest_idx);
+            path_constraints.remove(&dest_local);
+        }
+
+        match term.kind {
+            TerminatorKind::SwitchInt { discr, targets } => {
+                let otherwise_val = self.graph.unique_otherwise_switch_value(&discr, &targets);
+                let place = match discr {
+                    Copy(p) | Move(p) => Some(self.graph.projection(p)),
+                    _ => None,
+                };
+
+                let Some(place) = place else {
+                    return Vec::new();
+                };
+
+                let discr_local = self
+                    .graph
+                    .cfg
+                    .discriminants
+                    .get(&self.graph.values[place].local)
+                    .cloned()
+                    .unwrap_or(place);
+
+                let possible_values = self
+                    .graph
+                    .possible_switch_values_for_constraint_id(discr_local);
+                let mut actions = Vec::new();
+
+                if let Some(&constant) = path_constraints.get(&discr_local) {
+                    if constant == usize::MAX {
+                        actions.push(SccPathAction::Traverse {
+                            next: targets.otherwise().as_usize(),
+                            constraints: path_constraints,
+                        });
+                        return actions;
+                    }
+
+                    let mut found = false;
+                    for branch in targets.iter() {
+                        if branch.0 as usize != constant {
+                            continue;
+                        }
+                        found = true;
+                        actions.push(SccPathAction::Traverse {
+                            next: branch.1.as_usize(),
+                            constraints: path_constraints.clone(),
+                        });
+                    }
+                    if !found {
+                        actions.push(SccPathAction::Traverse {
+                            next: targets.otherwise().as_usize(),
+                            constraints: path_constraints,
+                        });
+                    }
+                    return actions;
+                }
+
+                if let Some(values) = possible_values {
+                    for constant in values {
+                        let mut new_constraints = path_constraints.clone();
+                        new_constraints.insert(discr_local, constant);
+                        actions.push(SccPathAction::Traverse {
+                            next: self.graph.switch_target_for_value(&targets, constant),
+                            constraints: new_constraints,
+                        });
+                    }
+                    return actions;
+                }
+
+                for branch in targets.iter() {
+                    let mut new_constraints = path_constraints.clone();
+                    new_constraints.insert(discr_local, branch.0 as usize);
+                    actions.push(SccPathAction::Traverse {
+                        next: branch.1.as_usize(),
+                        constraints: new_constraints,
+                    });
+                }
+
+                let mut otherwise_constraints = path_constraints;
+                otherwise_constraints.insert(discr_local, otherwise_val.unwrap_or(usize::MAX));
+                actions.push(SccPathAction::Traverse {
+                    next: targets.otherwise().as_usize(),
+                    constraints: otherwise_constraints,
+                });
+
+                actions
+            }
+            _ => {
+                let mut actions = Vec::new();
+                actions.push(SccPathAction::RecordExit {
+                    constraints: path_constraints.clone(),
+                });
+                for next in self.graph.cfg_block(state.cur).next.clone() {
+                    actions.push(SccPathAction::Traverse {
+                        next,
+                        constraints: path_constraints.clone(),
+                    });
+                }
+                actions
+            }
+        }
     }
 }
 
@@ -121,21 +273,6 @@ impl<'tcx> MopGraph<'tcx> {
         } else {
             None
         }
-    }
-
-    fn record_scc_exit_path(
-        &self,
-        scc: &SccInfo,
-        node: usize,
-        constraints: &FxHashMap<usize, usize>,
-        cur_path: &Vec<usize>,
-        out: &mut Vec<(Vec<usize>, FxHashMap<usize, usize>)>,
-        seen_paths: &mut FxHashSet<PathKey>,
-    ) {
-        if !scc.exits.iter().any(|e| e.exit == node) {
-            return;
-        }
-        record_unique_path(cur_path, constraints, out, seen_paths);
     }
 
     fn possible_switch_values_for_constraint_id(&self, discr_local: usize) -> Option<Vec<usize>> {
@@ -496,18 +633,14 @@ impl<'tcx> MopGraph<'tcx> {
             return cached;
         }
 
-        let mut all_paths = Vec::new();
-        let mut seen_paths: FxHashSet<PathKey> = FxHashSet::default();
-
-        self.find_scc_paths_inner(
+        let mut semantics = MopSccPathSemantics { graph: self };
+        let all_paths = enumerate_scc_paths(
+            start,
             scc,
-            SccPathTraversalState::new(start),
             initial_constraints.clone(),
-            &mut all_paths,
-            &mut seen_paths,
+            &mut semantics,
+            SccPathTraversalConfig::default(),
         );
-
-        // Paths are deduplicated incrementally via `seen_paths`.
 
         SCC_PATH_CACHE.with(|c| {
             let mut cache = c.borrow_mut();
@@ -518,361 +651,5 @@ impl<'tcx> MopGraph<'tcx> {
         });
 
         all_paths
-    }
-
-    fn find_scc_paths_inner(
-        &mut self,
-        scc: &SccInfo,
-        state: SccPathTraversalState,
-        mut path_constraints: FxHashMap<usize, usize>,
-        paths_in_scc: &mut Vec<(Vec<usize>, FxHashMap<usize, usize>)>,
-        seen_paths: &mut FxHashSet<PathKey>,
-    ) {
-        let Some(_guard) = enter_depth_limit(&SCC_DFS_DEPTH, SCC_DFS_STACK_LIMIT) else {
-            return;
-        };
-        if scc.nodes.is_empty() {
-            record_unique_path(&state.path, &path_constraints, paths_in_scc, seen_paths);
-            return;
-        }
-
-        // Temporary complexity control to avoid path explosion.
-        // Use unique-path count to avoid biased truncation from duplicates.
-        if state.exceeds_complexity_limits(200, 4000, seen_paths.len()) {
-            return;
-        }
-
-        // We do not traverse outside the SCC when generating SCC internal paths.
-        // Instead, we record paths that end at SCC-exit nodes (nodes with an outgoing edge leaving
-        // the SCC), and the caller is responsible for resuming traversal outside the SCC.
-        if !state.is_cur_in_scc(scc) {
-            return;
-        }
-
-        let mut state = state;
-        if !state.prepare_for_current_node() {
-            return;
-        }
-
-        // Clear the constraints if the local is reassigned in the current block;
-        // Otherwise, it cannot reach other branches.
-        for local in &self.cfg_block(state.cur).assigned_locals {
-            rap_debug!(
-                "Remove path_constraints {:?}, because it has been reassigned.",
-                local
-            );
-            path_constraints.remove(&local);
-        }
-
-        // Find the paths of inner scc recursively;
-        for &child_enter in &scc.child_sccs {
-            if state.cur == child_enter {
-                // When a spliced child-SCC path ends back at the child-enter, we must continue
-                // exploring the *parent* SCC without immediately re-expanding the same child SCC
-                // again (otherwise we can loop until the depth guard triggers and drop paths).
-                if state.skip_child_enter == Some(child_enter) {
-                    break;
-                }
-
-                let child_scc = self.cfg_block(child_enter).scc.clone();
-                let sub_paths = self.find_scc_paths(child_enter, &child_scc, &path_constraints);
-                rap_debug!("paths in sub scc: {}, {:?}", child_enter, sub_paths);
-
-                // Always allow the parent SCC to proceed from `child_enter` without traversing
-                // into the child SCC (conceptually, an empty child path). This is necessary when
-                // the child enumeration is truncated/empty and also to allow parent exits at
-                // `child_enter` (e.g., an edge to a sink `Unreachable` block) to be recorded.
-                {
-                    self.find_scc_paths_inner(
-                        scc,
-                        state.with_skip_child_enter(child_enter),
-                        path_constraints.clone(),
-                        paths_in_scc,
-                        seen_paths,
-                    );
-                }
-
-                for (subp, subconst) in sub_paths {
-                    // A single-node sub-path ([child_enter]) makes no progress and would only
-                    // re-trigger child expansion; the no-op continuation above already covers it.
-                    if subp.len() <= 1 {
-                        continue;
-                    }
-
-                    let mut new_path = state.path.clone();
-                    new_path.extend(&subp[1..]);
-                    // `subconst` already starts from `path_constraints` and accumulates changes.
-                    // Use it as the current constraints after splicing.
-                    let new_const = subconst;
-
-                    let new_cur = *new_path.last().unwrap();
-                    let next_skip_child_enter = if new_cur == child_enter {
-                        Some(child_enter)
-                    } else {
-                        None
-                    };
-
-                    self.find_scc_paths_inner(
-                        scc,
-                        state.with_spliced_path(new_path, next_skip_child_enter),
-                        new_const,
-                        paths_in_scc,
-                        seen_paths,
-                    );
-                }
-                return;
-            }
-        }
-
-        let Some(term) = self.cfg_block(state.cur).terminator.clone() else {
-            return;
-        };
-        rap_debug!("term: {:?}", term);
-
-        // Clear constraints when their discriminant locals are redefined by terminators.
-        // NOTE: `assigned_locals` is populated only from `StatementKind::Assign`, and does not
-        // include locals assigned by terminators (e.g., `_11 = random()` in MIR is a `Call`).
-        // If we don't clear these, stale constraints can incorrectly prune SwitchInt branches and
-        // also amplify path explosion via inconsistent constraint propagation across iterations.
-        if let TerminatorKind::Call { destination, .. } = &term.kind {
-            let dest_idx = self.projection(*destination);
-            let dest_local = self
-                .cfg
-                .discriminants
-                .get(&self.values[dest_idx].local)
-                .cloned()
-                .unwrap_or(dest_idx);
-            path_constraints.remove(&dest_local);
-        }
-
-        match term.kind {
-            TerminatorKind::SwitchInt { discr, targets } => {
-                let otherwise_val = self.unique_otherwise_switch_value(&discr, &targets);
-                // Resolve discr local id for constraint propagation
-                let place = match discr {
-                    Copy(p) | Move(p) => Some(self.projection(p)),
-                    _ => None,
-                };
-
-                let Some(place) = place else {
-                    return;
-                };
-
-                let discr_local = self
-                    .cfg
-                    .discriminants
-                    .get(&self.values[place].local)
-                    .cloned()
-                    .unwrap_or(place);
-
-                let possible_values = self.possible_switch_values_for_constraint_id(discr_local);
-
-                if let Some(&constant) = path_constraints.get(&discr_local) {
-                    // Existing constraint: only explore the feasible branch.
-                    if constant == usize::MAX {
-                        let next = targets.otherwise().as_usize();
-                        let next_in_scc = state.is_node_in_scc(scc, next);
-                        if !next_in_scc {
-                            // Exits the SCC via the default branch.
-                            self.record_scc_exit_path(
-                                scc,
-                                state.cur,
-                                &path_constraints,
-                                &state.path,
-                                paths_in_scc,
-                                seen_paths,
-                            );
-                            return;
-                        }
-                        if state.can_descend_to(next) {
-                            self.find_scc_paths_inner(
-                                scc,
-                                state.descend_to(next),
-                                path_constraints,
-                                paths_in_scc,
-                                seen_paths,
-                            );
-                        }
-                    } else {
-                        let mut found = false;
-                        for branch in targets.iter() {
-                            if branch.0 as usize != constant {
-                                continue;
-                            }
-                            found = true;
-                            let next = branch.1.as_usize();
-                            let next_in_scc = state.is_node_in_scc(scc, next);
-                            if !next_in_scc {
-                                // Exits the SCC via this constrained branch.
-                                self.record_scc_exit_path(
-                                    scc,
-                                    state.cur,
-                                    &path_constraints,
-                                    &state.path,
-                                    paths_in_scc,
-                                    seen_paths,
-                                );
-                                continue;
-                            }
-                            if !state.can_descend_to(next) {
-                                continue;
-                            }
-                            self.find_scc_paths_inner(
-                                scc,
-                                state.descend_to(next),
-                                path_constraints.clone(),
-                                paths_in_scc,
-                                seen_paths,
-                            );
-                        }
-                        if !found {
-                            let next = targets.otherwise().as_usize();
-                            let next_in_scc = state.is_node_in_scc(scc, next);
-                            if !next_in_scc {
-                                // Exits the SCC via the default branch.
-                                self.record_scc_exit_path(
-                                    scc,
-                                    state.cur,
-                                    &path_constraints,
-                                    &state.path,
-                                    paths_in_scc,
-                                    seen_paths,
-                                );
-                                return;
-                            }
-                            if state.can_descend_to(next) {
-                                self.find_scc_paths_inner(
-                                    scc,
-                                    state.descend_to(next),
-                                    path_constraints,
-                                    paths_in_scc,
-                                    seen_paths,
-                                );
-                            }
-                        }
-                    }
-                } else {
-                    // No constraint yet: if this is a bool/enum discriminant, enumerate every
-                    // possible value explicitly (not just "iter + otherwise").
-                    if let Some(values) = possible_values {
-                        for constant in values {
-                            let next = self.switch_target_for_value(&targets, constant);
-
-                            let next_in_scc = state.is_node_in_scc(scc, next);
-                            let mut new_constraints = path_constraints.clone();
-                            new_constraints.insert(discr_local, constant);
-
-                            if !next_in_scc {
-                                self.record_scc_exit_path(
-                                    scc,
-                                    state.cur,
-                                    &new_constraints,
-                                    &state.path,
-                                    paths_in_scc,
-                                    seen_paths,
-                                );
-                                continue;
-                            }
-                            if !state.can_descend_to(next) {
-                                continue;
-                            }
-
-                            self.find_scc_paths_inner(
-                                scc,
-                                state.descend_to(next),
-                                new_constraints,
-                                paths_in_scc,
-                                seen_paths,
-                            );
-                        }
-                    } else {
-                        // Fallback: explore explicit branches + otherwise.
-                        for branch in targets.iter() {
-                            let constant = branch.0 as usize;
-                            let next = branch.1.as_usize();
-                            let next_in_scc = state.is_node_in_scc(scc, next);
-                            let mut new_constraints = path_constraints.clone();
-                            new_constraints.insert(discr_local, constant);
-
-                            if !next_in_scc {
-                                self.record_scc_exit_path(
-                                    scc,
-                                    state.cur,
-                                    &new_constraints,
-                                    &state.path,
-                                    paths_in_scc,
-                                    seen_paths,
-                                );
-                                continue;
-                            }
-                            if !state.can_descend_to(next) {
-                                continue;
-                            }
-                            self.find_scc_paths_inner(
-                                scc,
-                                state.descend_to(next),
-                                new_constraints,
-                                paths_in_scc,
-                                seen_paths,
-                            );
-                        }
-
-                        let next = targets.otherwise().as_usize();
-                        let next_in_scc = state.is_node_in_scc(scc, next);
-                        let mut new_constraints = path_constraints;
-                        new_constraints.insert(discr_local, otherwise_val.unwrap_or(usize::MAX));
-
-                        if !next_in_scc {
-                            self.record_scc_exit_path(
-                                scc,
-                                state.cur,
-                                &new_constraints,
-                                &state.path,
-                                paths_in_scc,
-                                seen_paths,
-                            );
-                            return;
-                        }
-                        if state.can_descend_to(next) {
-                            self.find_scc_paths_inner(
-                                scc,
-                                state.descend_to(next),
-                                new_constraints,
-                                paths_in_scc,
-                                seen_paths,
-                            );
-                        }
-                    }
-                }
-            }
-            _ => {
-                // For non-SwitchInt terminators, reaching an SCC-exit node is enough to record a
-                // usable path segment. Successors leaving the SCC are not traversed here.
-                self.record_scc_exit_path(
-                    scc,
-                    state.cur,
-                    &path_constraints,
-                    &state.path,
-                    paths_in_scc,
-                    seen_paths,
-                );
-                for next in self.cfg_block(state.cur).next.clone() {
-                    let next_in_scc = state.is_node_in_scc(scc, next);
-                    if !next_in_scc {
-                        continue;
-                    }
-                    if !state.can_descend_to(next) {
-                        continue;
-                    }
-                    self.find_scc_paths_inner(
-                        scc,
-                        state.descend_to(next),
-                        path_constraints.clone(),
-                        paths_in_scc,
-                        seen_paths,
-                    );
-                }
-            }
-        }
     }
 }

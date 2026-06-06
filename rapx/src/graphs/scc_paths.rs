@@ -1,7 +1,8 @@
-//! Shared SCC-tree and SCC-path utilities.
+//! Shared SCC-tree and path-sensitive SCC traversal utilities.
 //!
-//! These helpers are graph-only building blocks: they do not encode
-//! alias-analysis- or verification-specific state semantics.
+//! This module provides reusable SCC path enumeration with path-state
+//! propagation, pruning, deduplication, and nested-SCC path splicing.
+//! Concrete analyses define branch feasibility and state updates via hooks.
 
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 
@@ -73,8 +74,7 @@ pub fn rebuild_segment_stack(path: &[usize], start: usize) -> FxHashSet<usize> {
 
 /// Traversal state for SCC path enumeration in an SCC tree.
 ///
-/// This struct is graph-layer state only: it tracks path/segment/cycle bookkeeping
-/// and intentionally does not include analysis-specific branch semantics.
+/// This struct tracks path/segment/cycle bookkeeping for SCC traversal.
 #[derive(Clone, Debug)]
 pub struct SccPathTraversalState {
     pub start: usize,
@@ -205,6 +205,223 @@ impl SccPathTraversalState {
             skip_child_enter,
         }
     }
+}
+
+pub type SccPathConstraints = FxHashMap<usize, usize>;
+pub type SccEnumeratedPath = (Vec<usize>, SccPathConstraints);
+
+#[derive(Clone, Debug)]
+pub struct SccPathTraversalConfig {
+    pub max_path_len: usize,
+    pub max_seen_paths: usize,
+    pub max_depth: usize,
+}
+
+impl Default for SccPathTraversalConfig {
+    fn default() -> Self {
+        Self {
+            max_path_len: 200,
+            max_seen_paths: 4000,
+            max_depth: 128,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum SccPathAction {
+    Traverse {
+        next: usize,
+        constraints: SccPathConstraints,
+    },
+    RecordExit {
+        constraints: SccPathConstraints,
+    },
+}
+
+pub trait SccPathSemantics {
+    fn on_node_enter(&mut self, _node: usize, _constraints: &mut SccPathConstraints) {}
+
+    fn child_scc_enters<'a>(&self, scc: &'a SccInfo) -> &'a [usize] {
+        &scc.child_sccs
+    }
+
+    fn enumerate_child_paths(
+        &mut self,
+        child_enter: usize,
+        constraints: &SccPathConstraints,
+    ) -> Vec<SccEnumeratedPath>;
+
+    fn enumerate_actions(
+        &mut self,
+        scc: &SccInfo,
+        state: &SccPathTraversalState,
+        constraints: &SccPathConstraints,
+    ) -> Vec<SccPathAction>;
+}
+
+fn record_scc_exit_path(
+    scc: &SccInfo,
+    node: usize,
+    constraints: &SccPathConstraints,
+    cur_path: &[usize],
+    out: &mut Vec<SccEnumeratedPath>,
+    seen_paths: &mut FxHashSet<PathKey>,
+) {
+    if !scc.exits.iter().any(|e| e.exit == node) {
+        return;
+    }
+    record_unique_path(cur_path, constraints, out, seen_paths);
+}
+
+fn enumerate_scc_paths_inner<S: SccPathSemantics>(
+    scc: &SccInfo,
+    state: SccPathTraversalState,
+    mut path_constraints: SccPathConstraints,
+    paths_in_scc: &mut Vec<SccEnumeratedPath>,
+    seen_paths: &mut FxHashSet<PathKey>,
+    semantics: &mut S,
+    config: &SccPathTraversalConfig,
+    depth: usize,
+) {
+    if depth > config.max_depth {
+        return;
+    }
+
+    if scc.nodes.is_empty() {
+        record_unique_path(&state.path, &path_constraints, paths_in_scc, seen_paths);
+        return;
+    }
+
+    if state.exceeds_complexity_limits(config.max_path_len, config.max_seen_paths, seen_paths.len())
+    {
+        return;
+    }
+
+    if !state.is_cur_in_scc(scc) {
+        return;
+    }
+
+    let mut state = state;
+    if !state.prepare_for_current_node() {
+        return;
+    }
+
+    semantics.on_node_enter(state.cur, &mut path_constraints);
+
+    for &child_enter in semantics.child_scc_enters(scc) {
+        if state.cur != child_enter {
+            continue;
+        }
+
+        if state.skip_child_enter == Some(child_enter) {
+            break;
+        }
+
+        let sub_paths = semantics.enumerate_child_paths(child_enter, &path_constraints);
+
+        enumerate_scc_paths_inner(
+            scc,
+            state.with_skip_child_enter(child_enter),
+            path_constraints.clone(),
+            paths_in_scc,
+            seen_paths,
+            semantics,
+            config,
+            depth + 1,
+        );
+
+        for (subp, subconst) in sub_paths {
+            if subp.len() <= 1 {
+                continue;
+            }
+
+            let mut new_path = state.path.clone();
+            new_path.extend(&subp[1..]);
+            let new_cur = *new_path
+                .last()
+                .expect("spliced child path must be non-empty");
+            let next_skip_child_enter = if new_cur == child_enter {
+                Some(child_enter)
+            } else {
+                None
+            };
+
+            enumerate_scc_paths_inner(
+                scc,
+                state.with_spliced_path(new_path, next_skip_child_enter),
+                subconst,
+                paths_in_scc,
+                seen_paths,
+                semantics,
+                config,
+                depth + 1,
+            );
+        }
+        return;
+    }
+
+    for action in semantics.enumerate_actions(scc, &state, &path_constraints) {
+        match action {
+            SccPathAction::RecordExit { constraints } => {
+                record_scc_exit_path(
+                    scc,
+                    state.cur,
+                    &constraints,
+                    &state.path,
+                    paths_in_scc,
+                    seen_paths,
+                );
+            }
+            SccPathAction::Traverse { next, constraints } => {
+                if !state.is_node_in_scc(scc, next) {
+                    record_scc_exit_path(
+                        scc,
+                        state.cur,
+                        &constraints,
+                        &state.path,
+                        paths_in_scc,
+                        seen_paths,
+                    );
+                    continue;
+                }
+                if !state.can_descend_to(next) {
+                    continue;
+                }
+                enumerate_scc_paths_inner(
+                    scc,
+                    state.descend_to(next),
+                    constraints,
+                    paths_in_scc,
+                    seen_paths,
+                    semantics,
+                    config,
+                    depth + 1,
+                );
+            }
+        }
+    }
+}
+
+pub fn enumerate_scc_paths<S: SccPathSemantics>(
+    start: usize,
+    scc: &SccInfo,
+    initial_constraints: SccPathConstraints,
+    semantics: &mut S,
+    config: SccPathTraversalConfig,
+) -> Vec<SccEnumeratedPath> {
+    let mut all_paths = Vec::new();
+    let mut seen_paths: FxHashSet<PathKey> = FxHashSet::default();
+    enumerate_scc_paths_inner(
+        scc,
+        SccPathTraversalState::new(start),
+        initial_constraints,
+        &mut all_paths,
+        &mut seen_paths,
+        semantics,
+        &config,
+        0,
+    );
+    all_paths
 }
 
 struct SccComponentCollector {
