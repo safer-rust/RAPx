@@ -23,9 +23,17 @@ use crate::graphs::{
 };
 
 use super::{graph::*, *};
+use super::value::Value;
 
-// rustc analysis threads may have a relatively small stack; keep recursion limits conservative.
+/// rustc analysis threads can have a relatively small stack.
+///
+/// We cap recursive `check` depth so deeply nested CFG/SCC exploration degrades gracefully
+/// instead of overflowing the compiler thread stack.
 const CHECK_STACK_LIMIT: usize = 96;
+/// Bounded cache for SCC path enumeration.
+///
+/// SCC path enumeration is expensive and often re-run with the same `(fn, scc, constraints)`.
+/// This cache avoids repeated traversal while keeping memory bounded.
 const SCC_PATH_CACHE_LIMIT: usize = 2048;
 
 thread_local! {
@@ -37,9 +45,29 @@ thread_local! {
 
 #[derive(Clone, Hash, PartialEq, Eq)]
 struct SccPathCacheKey {
+    /// The analyzed function; constraints are only comparable inside one MIR body.
     def_id: DefId,
+    /// SCC entry block where path enumeration starts.
     scc_enter: usize,
+    /// Canonicalized path-sensitive constraints carried into the SCC.
     constraints: Vec<(usize, usize)>,
+}
+
+#[derive(Clone)]
+struct MopStateSnapshot {
+    values: Vec<Value>,
+    constants: FxHashMap<usize, usize>,
+    alias_sets: Vec<FxHashSet<usize>>,
+}
+
+enum SwitchSuccessorPlan {
+    NotSwitch,
+    SingleTarget { target: usize },
+    SplitTargets {
+        constraint_id: usize,
+        targets: rustc_middle::mir::SwitchTargets,
+        otherwise_value: Option<usize>,
+    },
 }
 
 struct DepthLimitGuard {
@@ -79,6 +107,9 @@ struct MopSccPathSemantics<'a, 'tcx> {
 
 impl<'a, 'tcx> SccPathSemantics for MopSccPathSemantics<'a, 'tcx> {
     fn on_node_enter(&mut self, node: usize, constraints: &mut FxHashMap<usize, usize>) {
+        // Path constraints are facts about the current value of a discriminant/local.
+        // Once a local is reassigned along this path, prior facts about that local are stale
+        // and must be dropped to avoid using invalid path-sensitive assumptions downstream.
         for local in &self.graph.cfg_block(node).assigned_locals {
             rap_debug!(
                 "Remove path_constraints {:?}, because it has been reassigned.",
@@ -112,6 +143,8 @@ impl<'a, 'tcx> SccPathSemantics for MopSccPathSemantics<'a, 'tcx> {
 
         let mut path_constraints = path_constraints.clone();
         if let TerminatorKind::Call { destination, .. } = &term.kind {
+            // A call can overwrite `destination`; any branch constraints on that value become
+            // invalid immediately after the call and must not be propagated.
             let dest_idx = self.graph.projection(*destination);
             let dest_local = self
                 .graph
@@ -149,6 +182,8 @@ impl<'a, 'tcx> SccPathSemantics for MopSccPathSemantics<'a, 'tcx> {
                 let mut actions = Vec::new();
 
                 if let Some(&constant) = path_constraints.get(&discr_local) {
+                    // `usize::MAX` is our sentinel for "take otherwise/default branch".
+                    // It is used when we cannot represent otherwise as a unique concrete value.
                     if constant == usize::MAX {
                         actions.push(SccPathAction::Traverse {
                             next: targets.otherwise().as_usize(),
@@ -199,6 +234,8 @@ impl<'a, 'tcx> SccPathSemantics for MopSccPathSemantics<'a, 'tcx> {
                 }
 
                 let mut otherwise_constraints = path_constraints;
+                // Prefer a concrete value for `otherwise` if there is exactly one remaining
+                // enum/bool variant; otherwise use the sentinel to represent default flow.
                 otherwise_constraints.insert(discr_local, otherwise_val.unwrap_or(usize::MAX));
                 actions.push(SccPathAction::Traverse {
                     next: targets.otherwise().as_usize(),
@@ -292,21 +329,244 @@ impl<'tcx> MopGraph<'tcx> {
         }
     }
 
+    fn snapshot_state(&self) -> MopStateSnapshot {
+        MopStateSnapshot {
+            values: self.values.clone(),
+            constants: self.cfg.constants.clone(),
+            alias_sets: self.alias_sets.clone(),
+        }
+    }
+
+    fn restore_state(&mut self, snapshot: &MopStateSnapshot) {
+        self.values = snapshot.values.clone();
+        self.cfg.constants = snapshot.constants.clone();
+        self.alias_sets = snapshot.alias_sets.clone();
+    }
+
+    fn apply_path_constraints(&mut self, constraints: Option<&FxHashMap<usize, usize>>) {
+        if let Some(constraints) = constraints {
+            self.cfg.constants.extend(constraints);
+        }
+    }
+
+    fn known_switch_value(&mut self, discr: &rustc_middle::mir::Operand<'tcx>) -> Option<usize> {
+        match discr {
+            Copy(p) | Move(p) => {
+                let value_idx = self.projection(*p);
+                let tcx = self.tcx();
+                let local_decls = &tcx.optimized_mir(self.def_id()).local_decls;
+                let place_ty = (*p).ty(local_decls, tcx);
+
+                match place_ty.ty.kind() {
+                    TyKind::Bool => self
+                        .cfg
+                        .constants
+                        .get(&value_idx)
+                        .copied()
+                        .filter(|c| *c != usize::MAX),
+                    _ => {
+                        let father = self.cfg.discriminants.get(&self.values[value_idx].local)?;
+                        self.cfg
+                            .constants
+                            .get(father)
+                            .copied()
+                            .filter(|c| *c != usize::MAX)
+                    }
+                }
+            }
+            Constant(c) => {
+                // Preserve existing behavior: if evaluation fails, we still treat this as
+                // a deterministic switch and default to `0`.
+                let tcx = self.tcx();
+                let ty_env = TypingEnv::post_analysis(tcx, self.def_id());
+                Some(
+                    c.const_
+                        .try_eval_target_usize(tcx, ty_env)
+                        .map_or(0, |v| v as usize),
+                )
+            }
+        }
+    }
+
+    fn switch_constraint_id_for_split(
+        &mut self,
+        discr: &rustc_middle::mir::Operand<'tcx>,
+    ) -> Option<usize> {
+        match discr {
+            Copy(p) | Move(p) => {
+                let value_idx = self.projection(*p);
+                let tcx = self.tcx();
+                let local_decls = &tcx.optimized_mir(self.def_id()).local_decls;
+                let place_ty = (*p).ty(local_decls, tcx);
+                match place_ty.ty.kind() {
+                    TyKind::Bool => Some(value_idx),
+                    _ => {
+                        let father = self.cfg.discriminants.get(&self.values[value_idx].local)?;
+                        (self.values[value_idx].local == value_idx).then_some(*father)
+                    }
+                }
+            }
+            Constant(_) => None,
+        }
+    }
+
+    fn analyze_switch_successors(&mut self, bb_idx: usize) -> SwitchSuccessorPlan {
+        let Some(terminator) = self.cfg_block(bb_idx).terminator.clone() else {
+            return SwitchSuccessorPlan::NotSwitch;
+        };
+        let TerminatorKind::SwitchInt { discr, targets } = terminator.kind else {
+            return SwitchSuccessorPlan::NotSwitch;
+        };
+
+        if let Some(discriminant_value) = self.known_switch_value(&discr) {
+            return SwitchSuccessorPlan::SingleTarget {
+                target: self.switch_target_for_value(&targets, discriminant_value),
+            };
+        }
+
+        let Some(constraint_id) = self.switch_constraint_id_for_split(&discr) else {
+            return SwitchSuccessorPlan::NotSwitch;
+        };
+
+        let otherwise_value = self.unique_otherwise_switch_value(&discr, &targets);
+        SwitchSuccessorPlan::SplitTargets {
+            constraint_id,
+            targets,
+            otherwise_value,
+        }
+    }
+
+    fn dispatch_split_switch_targets(
+        &mut self,
+        constraint_id: usize,
+        targets: &rustc_middle::mir::SwitchTargets,
+        otherwise_value: Option<usize>,
+        fn_map: &mut MopFnAliasMap,
+        recursion_set: &mut HashSet<DefId>,
+    ) {
+        if let Some(values) = self.possible_switch_values_for_constraint_id(constraint_id) {
+            // Enumerate each possible value explicitly (bool: 0/1, enum: 0..N).
+            for constraint_value in values {
+                if self.visit_times() > VISIT_LIMIT {
+                    continue;
+                }
+                let next = self.switch_target_for_value(targets, constraint_value);
+                self.split_check_with_cond(
+                    next,
+                    constraint_id,
+                    constraint_value,
+                    fn_map,
+                    recursion_set,
+                );
+            }
+            return;
+        }
+
+        // Fallback: explore explicit branches + otherwise.
+        for (constraint_value, branch) in targets.iter() {
+            if self.visit_times() > VISIT_LIMIT {
+                continue;
+            }
+            self.split_check_with_cond(
+                branch.as_usize(),
+                constraint_id,
+                constraint_value as usize,
+                fn_map,
+                recursion_set,
+            );
+        }
+
+        // `usize::MAX` is the sentinel for "otherwise/default branch" when no unique concrete
+        // value can represent that arm.
+        self.split_check_with_cond(
+            targets.otherwise().as_usize(),
+            constraint_id,
+            otherwise_value.unwrap_or(usize::MAX),
+            fn_map,
+            recursion_set,
+        );
+    }
+
+    fn dispatch_normal_successors(
+        &mut self,
+        successors: impl IntoIterator<Item = usize>,
+        fn_map: &mut MopFnAliasMap,
+        recursion_set: &mut HashSet<DefId>,
+    ) {
+        for next in successors {
+            if self.visit_times() > VISIT_LIMIT {
+                continue;
+            }
+            self.split_check(next, fn_map, recursion_set);
+        }
+    }
+
+    fn allowed_switch_targets_for_exit(&mut self, exit_node: usize) -> Option<FxHashSet<usize>> {
+        let Some(terminator) = self.cfg_block(exit_node).terminator.clone() else {
+            return None;
+        };
+        let TerminatorKind::SwitchInt { discr, targets } = terminator.kind else {
+            return None;
+        };
+
+        let place = match discr {
+            Copy(p) | Move(p) => Some(self.projection(p)),
+            _ => None,
+        }?;
+
+        let discr_local = self
+            .cfg
+            .discriminants
+            .get(&self.values[place].local)
+            .cloned()
+            .unwrap_or(place);
+
+        let mut allowed = FxHashSet::default();
+        if let Some(&constant) = self.cfg.constants.get(&discr_local) {
+            allowed.insert(self.switch_target_for_value(&targets, constant));
+        } else {
+            // No path constraint: all explicit targets and default remain reachable.
+            for (_, bb) in targets.iter() {
+                allowed.insert(bb.as_usize());
+            }
+            allowed.insert(targets.otherwise().as_usize());
+        }
+        Some(allowed)
+    }
+
+    fn follow_recorded_scc_exits(
+        &mut self,
+        scc: &SccInfo,
+        exit_node: usize,
+        allowed_targets: Option<&FxHashSet<usize>>,
+        fn_map: &mut MopFnAliasMap,
+        recursion_set: &mut HashSet<DefId>,
+    ) -> bool {
+        let mut followed = false;
+        for edge in &scc.exits {
+            if edge.exit != exit_node {
+                continue;
+            }
+            if let Some(allowed_targets) = allowed_targets {
+                if !allowed_targets.contains(&edge.to) {
+                    continue;
+                }
+            }
+            followed = true;
+            self.split_check(edge.to, fn_map, recursion_set);
+        }
+        followed
+    }
+
     pub fn split_check(
         &mut self,
         bb_idx: usize,
         fn_map: &mut MopFnAliasMap,
         recursion_set: &mut HashSet<DefId>,
     ) {
-        /* duplicate the status before visiting a path; */
-        let backup_values = self.values.clone(); // duplicate the status when visiting different paths;
-        let backup_constant = self.cfg.constants.clone();
-        let backup_alias_sets = self.alias_sets.clone();
+        let snapshot = self.snapshot_state();
         self.check(bb_idx, fn_map, recursion_set);
-        /* restore after visit */
-        self.alias_sets = backup_alias_sets;
-        self.values = backup_values;
-        self.cfg.constants = backup_constant;
+        self.restore_state(&snapshot);
     }
     pub fn split_check_with_cond(
         &mut self,
@@ -316,17 +576,11 @@ impl<'tcx> MopGraph<'tcx> {
         fn_map: &mut MopFnAliasMap,
         recursion_set: &mut HashSet<DefId>,
     ) {
-        /* duplicate the status before visiting a path; */
-        let backup_values = self.values.clone(); // duplicate the status when visiting different paths;
-        let backup_constant = self.cfg.constants.clone();
-        let backup_alias_sets = self.alias_sets.clone();
-        /* add control-sensitive indicator to the path status */
+        let snapshot = self.snapshot_state();
+        // Add control-sensitive indicator to the path status.
         self.cfg.constants.insert(path_discr_id, path_discr_val);
         self.check(bb_idx, fn_map, recursion_set);
-        /* restore after visit */
-        self.alias_sets = backup_alias_sets;
-        self.values = backup_values;
-        self.cfg.constants = backup_constant;
+        self.restore_state(&snapshot);
     }
 
     // the core function of the alias analysis algorithm.
@@ -372,17 +626,13 @@ impl<'tcx> MopGraph<'tcx> {
         let paths_in_scc = self.find_scc_paths(bb_idx, &scc, &inherited_constraints);
         rap_debug!("Paths found in scc: {:?}", paths_in_scc);
 
-        let backup_values = self.values.clone(); // duplicate the status when visiteding different paths;
-        let backup_constant = self.cfg.constants.clone();
-        let backup_alias_sets = self.alias_sets.clone();
+        // Every SCC path is evaluated from the same pre-SCC state.
+        let snapshot = self.snapshot_state();
         let backup_recursion_set = recursion_set.clone();
 
-        // SCC exits are stored on the SCC enter node.
-        let scc_exits = cur_scc.exits.clone();
+        // SCC exits are recorded on the SCC entry metadata.
         for raw_path in paths_in_scc {
-            self.alias_sets = backup_alias_sets.clone();
-            self.values = backup_values.clone();
-            self.cfg.constants = backup_constant.clone();
+            self.restore_state(&snapshot);
             *recursion_set = backup_recursion_set.clone();
 
             let path = raw_path.blocks;
@@ -398,54 +648,15 @@ impl<'tcx> MopGraph<'tcx> {
             // The path ends at an SCC-exit node (inside the SCC). We now leave the SCC only via
             // recorded SCC exit edges from that node, carrying the collected path constraints.
             if let Some(&exit_node) = path.last() {
-                self.cfg.constants.extend(path_constraints);
-                let mut followed = false;
-
-                // If exit_node is a SwitchInt, only follow SCC-exit edges consistent with the
-                // current constraint (important for enum parameters).
-                let mut allowed_targets: Option<FxHashSet<usize>> = None;
-                if let Some(sw) = self.cfg_block(exit_node).terminator.clone() {
-                    if let TerminatorKind::SwitchInt { discr, targets } = sw.kind {
-                        // Resolve discr local id in the same way as SCC path generation.
-                        let place = match discr {
-                            Copy(p) | Move(p) => Some(self.projection(p)),
-                            _ => None,
-                        };
-                        if let Some(place) = place {
-                            let discr_local = self
-                                .cfg
-                                .discriminants
-                                .get(&self.values[place].local)
-                                .cloned()
-                                .unwrap_or(place);
-
-                            let mut allowed = FxHashSet::default();
-                            if let Some(&c) = self.cfg.constants.get(&discr_local) {
-                                allowed.insert(self.switch_target_for_value(&targets, c));
-                            } else {
-                                // No constraint: allow all explicit targets + default.
-                                for (_, bb) in targets.iter() {
-                                    allowed.insert(bb.as_usize());
-                                }
-                                allowed.insert(targets.otherwise().as_usize());
-                            }
-                            allowed_targets = Some(allowed);
-                        }
-                    }
-                }
-
-                for e in &scc_exits {
-                    if e.exit != exit_node {
-                        continue;
-                    }
-                    if let Some(allowed) = &allowed_targets {
-                        if !allowed.contains(&e.to) {
-                            continue;
-                        }
-                    }
-                    followed = true;
-                    self.split_check(e.to, fn_map, recursion_set);
-                }
+                self.apply_path_constraints(Some(path_constraints));
+                let allowed_targets = self.allowed_switch_targets_for_exit(exit_node);
+                let followed = self.follow_recorded_scc_exits(
+                    &cur_scc,
+                    exit_node,
+                    allowed_targets.as_ref(),
+                    fn_map,
+                    recursion_set,
+                );
 
                 // If this SCC path ends at a node that is not recorded as an exit (should be rare),
                 // fall back to exploring its successors normally.
@@ -479,140 +690,37 @@ impl<'tcx> MopGraph<'tcx> {
         path_constraints: Option<&FxHashMap<usize, usize>>,
         recursion_set: &mut HashSet<DefId>,
     ) {
-        let cur_next = self.cfg_block(bb_idx).next.clone();
-        let tcx = self.tcx();
+        let successors = self.cfg_block(bb_idx).next.clone();
 
         rap_debug!(
             "handle nexts {:?} of node {:?}",
             self.cfg_block(bb_idx).next,
             bb_idx
         );
-        // Extra path contraints are introduced during scc handling.
-        if let Some(path_constraints) = path_constraints {
-            self.cfg.constants.extend(path_constraints);
-        }
-        /* Begin: handle the SwitchInt statement. */
-        let mut single_target = false;
-        let mut sw_val = 0;
-        let mut sw_target = 0; // Single target
-        let mut path_discr_id = 0; // To avoid analyzing paths that cannot be reached with one enum type.
-        let mut sw_targets = None; // Multiple targets of SwitchInt
-        let mut sw_otherwise_val: Option<usize> = None;
+        // Extra constraints are introduced during SCC path expansion and reused here when
+        // dispatching CFG successors after exiting an SCC path.
+        self.apply_path_constraints(path_constraints);
 
-        if let Some(switch) = self.cfg_block(bb_idx).terminator.clone() {
-            if let TerminatorKind::SwitchInt {
-                ref discr,
-                ref targets,
-            } = switch.kind
-            {
-                sw_otherwise_val = self.unique_otherwise_switch_value(discr, targets);
-                match discr {
-                    Copy(p) | Move(p) => {
-                        let value_idx = self.projection(*p);
-                        let local_decls = &tcx.optimized_mir(self.def_id()).local_decls;
-                        let place_ty = (*p).ty(local_decls, tcx);
-                        rap_debug!("value_idx: {:?}", value_idx);
-                        match place_ty.ty.kind() {
-                            TyKind::Bool => {
-                                if let Some(constant) = self.cfg.constants.get(&value_idx) {
-                                    if *constant != usize::MAX {
-                                        single_target = true;
-                                        sw_val = *constant;
-                                    }
-                                }
-                                path_discr_id = value_idx;
-                                sw_targets = Some(targets.clone());
-                            }
-                            _ => {
-                                if let Some(father) =
-                                    self.cfg.discriminants.get(&self.values[value_idx].local)
-                                {
-                                    if let Some(constant) = self.cfg.constants.get(father) {
-                                        if *constant != usize::MAX {
-                                            single_target = true;
-                                            sw_val = *constant;
-                                        }
-                                    }
-                                    if self.values[value_idx].local == value_idx {
-                                        path_discr_id = *father;
-                                        sw_targets = Some(targets.clone());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Constant(c) => {
-                        single_target = true;
-                        let ty_env = TypingEnv::post_analysis(tcx, self.def_id());
-                        if let Some(val) = c.const_.try_eval_target_usize(tcx, ty_env) {
-                            sw_val = val as usize;
-                        }
-                    }
-                }
-                if single_target {
-                    rap_debug!("targets: {:?}; sw_val = {:?}", targets, sw_val);
-                    sw_target = self.switch_target_for_value(targets, sw_val);
-                }
+        match self.analyze_switch_successors(bb_idx) {
+            SwitchSuccessorPlan::SingleTarget { target } => {
+                rap_debug!("visit a single switch target: {:?}", target);
+                self.check(target, fn_map, recursion_set);
             }
-        }
-        /* End: finish handling SwitchInt */
-        // fixed path since a constant switchInt value
-        if single_target {
-            rap_debug!("visit a single target: {:?}", sw_target);
-            self.check(sw_target, fn_map, recursion_set);
-        } else {
-            // Other cases in switchInt terminators
-            if let Some(targets) = sw_targets {
-                if let Some(values) = self.possible_switch_values_for_constraint_id(path_discr_id) {
-                    // Enumerate each possible value explicitly (bool: 0/1, enum: 0..N).
-                    for path_discr_val in values {
-                        if self.visit_times() > VISIT_LIMIT {
-                            continue;
-                        }
-                        let next = self.switch_target_for_value(&targets, path_discr_val);
-                        self.split_check_with_cond(
-                            next,
-                            path_discr_id,
-                            path_discr_val,
-                            fn_map,
-                            recursion_set,
-                        );
-                    }
-                } else {
-                    // Fallback: explore explicit branches + otherwise.
-                    for iter in targets.iter() {
-                        if self.visit_times() > VISIT_LIMIT {
-                            continue;
-                        }
-                        let next = iter.1.as_usize();
-                        let path_discr_val = iter.0 as usize;
-                        self.split_check_with_cond(
-                            next,
-                            path_discr_id,
-                            path_discr_val,
-                            fn_map,
-                            recursion_set,
-                        );
-                    }
-                    let next_index = targets.otherwise().as_usize();
-                    // For bool/enum switches, the "otherwise" arm may represent a single concrete
-                    // value (e.g., an enum with 2 variants). Prefer a concrete value when unique.
-                    let path_discr_val = sw_otherwise_val.unwrap_or(usize::MAX); // default/otherwise path
-                    self.split_check_with_cond(
-                        next_index,
-                        path_discr_id,
-                        path_discr_val,
-                        fn_map,
-                        recursion_set,
-                    );
-                }
-            } else {
-                for next in cur_next {
-                    if self.visit_times() > VISIT_LIMIT {
-                        continue;
-                    }
-                    self.split_check(next, fn_map, recursion_set);
-                }
+            SwitchSuccessorPlan::SplitTargets {
+                constraint_id,
+                targets,
+                otherwise_value,
+            } => {
+                self.dispatch_split_switch_targets(
+                    constraint_id,
+                    &targets,
+                    otherwise_value,
+                    fn_map,
+                    recursion_set,
+                );
+            }
+            SwitchSuccessorPlan::NotSwitch => {
+                self.dispatch_normal_successors(successors, fn_map, recursion_set);
             }
         }
     }
@@ -623,6 +731,8 @@ impl<'tcx> MopGraph<'tcx> {
         scc: &SccInfo,
         initial_constraints: &FxHashMap<usize, usize>,
     ) -> Vec<SccEnumeratedPath> {
+        // Cache key includes incoming constraints because SCC traversal is path-sensitive:
+        // the same SCC can produce different feasible paths under different discriminant facts.
         let key = SccPathCacheKey {
             def_id: self.def_id(),
             scc_enter: scc.enter,
@@ -645,6 +755,7 @@ impl<'tcx> MopGraph<'tcx> {
         SCC_PATH_CACHE.with(|c| {
             let mut cache = c.borrow_mut();
             if cache.len() >= SCC_PATH_CACHE_LIMIT {
+                // Keep cache bounded; this is a heuristic performance guard, not a semantic limit.
                 cache.clear();
             }
             cache.insert(key, all_paths.clone());
