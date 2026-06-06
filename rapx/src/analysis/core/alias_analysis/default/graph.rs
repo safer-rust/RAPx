@@ -2,7 +2,6 @@ use super::{MopFnAliasPairs, assign::*, block::*, types::*, value::*};
 use crate::{
     graphs::{
         cfg::{CfgBlock, ControlFlowGraph},
-        mop::{MeetOverPathsGraph, MopBlockInfo},
         scc::{Scc, SccInfo},
     },
     utils::source::*,
@@ -20,20 +19,18 @@ use std::{fmt, vec::Vec};
 
 #[derive(Clone)]
 pub struct MopGraph<'tcx> {
-    pub graph: MeetOverPathsGraph<'tcx>,
+    pub cfg: ControlFlowGraph<'tcx>,
     // All values (including fields) of the function.
     // For general variables, we use its Local as the value index;
     // For fields, the value index is determined via auto increment.
     pub values: Vec<Value>,
     // Alias-analysis-specific facts extracted from each MIR block.
     pub block_facts: Vec<AliasBlockFacts<'tcx>>,
-    // We record the constant value for path sensitivity.
-    pub constants: FxHashMap<usize, usize>,
-    // We record the decision of enumerate typed values for path sensitivity.
-    pub discriminants: FxHashMap<usize, usize>,
     pub alias_sets: Vec<FxHashSet<usize>>,
     // contains the return results for inter-procedure analysis.
     pub ret_alias: MopFnAliasPairs,
+    pub arg_size: usize,
+    pub span: Span,
 }
 
 impl<'tcx> MopGraph<'tcx> {
@@ -62,7 +59,6 @@ impl<'tcx> MopGraph<'tcx> {
 
         let basicblocks = &body.basic_blocks;
         let mut cfg_blocks = Vec::<CfgBlock<'tcx>>::new();
-        let mut mop_blocks = Vec::<MopBlockInfo>::new();
         let mut block_facts = Vec::<AliasBlockFacts<'tcx>>::new();
         let mut discriminants = FxHashMap::default();
 
@@ -70,7 +66,6 @@ impl<'tcx> MopGraph<'tcx> {
         for i in 0..basicblocks.len() {
             let bb = &basicblocks[BasicBlock::from(i)];
             let mut cfg_block = CfgBlock::new(i, bb.is_cleanup);
-            let mut mop_block = MopBlockInfo::new(i);
             let mut alias_block = AliasBlockFacts::new();
 
             // handle general statements
@@ -80,7 +75,7 @@ impl<'tcx> MopGraph<'tcx> {
                     StatementKind::Assign(box (place, rvalue)) => {
                         let lv_place = *place;
                         let lv_local = place.local.as_usize();
-                        mop_block.assigned_locals.insert(lv_local);
+                        cfg_block.assigned_locals.insert(lv_local);
                         match rvalue.clone() {
                             // rvalue is a Rvalue
                             Rvalue::Use(operand) => {
@@ -472,79 +467,69 @@ impl<'tcx> MopGraph<'tcx> {
                 _ => {}
             }
             cfg_blocks.push(cfg_block);
-            mop_blocks.push(mop_block);
             block_facts.push(alias_block);
         }
 
-        let cfg = ControlFlowGraph::new(def_id, tcx, body.span, arg_size, cfg_blocks);
-        let graph = MeetOverPathsGraph::new(cfg, mop_blocks);
+        let mut cfg = ControlFlowGraph::new(def_id, tcx, cfg_blocks);
+        cfg.discriminants = discriminants;
 
         MopGraph {
-            graph,
+            cfg,
             values,
             block_facts,
             alias_sets: Vec::<FxHashSet<usize>>::new(),
-            constants: FxHashMap::default(),
             ret_alias: MopFnAliasPairs::new(arg_size),
-            discriminants,
+            arg_size,
+            span: body.span,
         }
     }
 
     pub fn def_id(&self) -> DefId {
-        self.graph.cfg.def_id
+        self.cfg.def_id
     }
 
     pub fn tcx(&self) -> TyCtxt<'tcx> {
-        self.graph.cfg.tcx
+        self.cfg.tcx
     }
 
     pub fn arg_size(&self) -> usize {
-        self.graph.cfg.arg_size
+        self.arg_size
     }
 
     pub fn span(&self) -> Span {
-        self.graph.cfg.span
+        self.span
     }
 
     pub fn cfg_block(&self, index: usize) -> &CfgBlock<'tcx> {
-        self.graph.cfg_block(index)
+        self.cfg.block(index)
     }
 
     pub fn cfg_block_mut(&mut self, index: usize) -> &mut CfgBlock<'tcx> {
-        self.graph.cfg_block_mut(index)
-    }
-
-    pub fn mop_block(&self, index: usize) -> &MopBlockInfo {
-        self.graph.mop_block(index)
-    }
-
-    pub fn mop_block_mut(&mut self, index: usize) -> &mut MopBlockInfo {
-        self.graph.mop_block_mut(index)
+        self.cfg.block_mut(index)
     }
 
     pub fn find_scc(&mut self) {
-        self.graph.find_scc();
+        self.cfg.find_scc();
     }
 
     pub fn get_paths(&self) -> Vec<Vec<usize>> {
-        self.graph.get_paths()
+        self.cfg.get_paths()
     }
 
     pub fn get_all_branch_sub_blocks_paths(&self) -> Vec<Vec<usize>> {
-        self.graph.get_all_branch_sub_blocks_paths()
+        self.cfg.get_all_branch_sub_blocks_paths()
     }
 
     pub fn sort_scc_tree(&mut self, scc: &SccInfo) -> SccInfo {
-        self.graph.sort_scc_tree(scc)
+        self.cfg.sort_scc_tree(scc)
     }
 
     pub fn visit_times(&self) -> usize {
-        self.graph.visit_times
+        self.cfg.visit_times()
     }
 
     pub fn increment_visit_times(&mut self) -> usize {
-        self.graph.visit_times += 1;
-        self.graph.visit_times
+        self.cfg.increment_visit_times()
     }
 }
 
@@ -555,11 +540,10 @@ impl<'tcx> std::fmt::Display for MopGraph<'tcx> {
         writeln!(f, "MopGraph {{")?;
         writeln!(f, "  def_id: {:?}", self.def_id())?;
         writeln!(f, "  values: {:?}", self.values)?;
-        writeln!(f, "  cfg_blocks: {:?}", self.graph.cfg.blocks)?;
-        writeln!(f, "  mop_blocks: {:?}", self.graph.blocks)?;
+        writeln!(f, "  cfg_blocks: {:?}", self.cfg.blocks)?;
         writeln!(f, "  block_facts: {:?}", self.block_facts)?;
-        writeln!(f, "  constants: {:?}", self.constants)?;
-        writeln!(f, "  discriminants: {:?}", self.discriminants)?;
+        writeln!(f, "  constants: {:?}", self.cfg.constants)?;
+        writeln!(f, "  discriminants: {:?}", self.cfg.discriminants)?;
         write!(f, "}}")
     }
 }

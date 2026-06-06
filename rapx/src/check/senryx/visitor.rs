@@ -203,7 +203,7 @@ impl<'tcx> BodyVisitor<'tcx> {
                 let tem_basic_blocks = &self
                     .safedrop_graph
                     .mop_graph
-                    .mop_block(*block_index)
+                    .cfg_block(*block_index)
                     .scc
                     .nodes
                     .clone();

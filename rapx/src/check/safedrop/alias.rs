@@ -14,6 +14,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
     pub fn alias_bb(&mut self, bb_index: usize) {
         for constant in self.mop_graph.block_facts[bb_index].const_value.clone() {
             self.mop_graph
+                .cfg
                 .constants
                 .insert(constant.local, constant.value);
         }

@@ -97,13 +97,13 @@ impl<'tcx> SafeDropGraph<'tcx> {
     pub fn split_check(&mut self, bb_idx: usize, fn_map: &MopFnAliasMap) {
         /* duplicate the status before visiteding a path; */
         let backup_values = self.mop_graph.values.clone(); // duplicate the status when visiteding different paths;
-        let backup_constant = self.mop_graph.constants.clone();
+        let backup_constant = self.mop_graph.cfg.constants.clone();
         let backup_alias_sets = self.mop_graph.alias_sets.clone();
         let backup_drop_record = self.drop_record.clone();
         self.check(bb_idx, fn_map);
         /* restore after visited */
         self.mop_graph.values = backup_values;
-        self.mop_graph.constants = backup_constant;
+        self.mop_graph.cfg.constants = backup_constant;
         self.mop_graph.alias_sets = backup_alias_sets;
         self.drop_record = backup_drop_record;
     }
@@ -117,17 +117,18 @@ impl<'tcx> SafeDropGraph<'tcx> {
     ) {
         /* duplicate the status before visiteding a path; */
         let backup_values = self.mop_graph.values.clone(); // duplicate the status when visiteding different paths;
-        let backup_constant = self.mop_graph.constants.clone();
+        let backup_constant = self.mop_graph.cfg.constants.clone();
         let backup_alias_sets = self.mop_graph.alias_sets.clone();
         let backup_drop_record = self.drop_record.clone();
         /* add control-sensitive indicator to the path status */
         self.mop_graph
+            .cfg
             .constants
             .insert(path_discr_id, path_discr_val);
         self.check(bb_idx, fn_map);
         /* restore after visited */
         self.mop_graph.values = backup_values;
-        self.mop_graph.constants = backup_constant;
+        self.mop_graph.cfg.constants = backup_constant;
         self.mop_graph.alias_sets = backup_alias_sets;
         self.drop_record = backup_drop_record;
     }
@@ -138,8 +139,8 @@ impl<'tcx> SafeDropGraph<'tcx> {
         if self.mop_graph.visit_times() > VISIT_LIMIT {
             return;
         }
-        let scc_idx = self.mop_graph.mop_block(bb_idx).scc.enter;
-        let cur_scc = self.mop_graph.mop_block(bb_idx).scc.clone();
+        let scc_idx = self.mop_graph.cfg_block(bb_idx).scc.enter;
+        let cur_scc = self.mop_graph.cfg_block(bb_idx).scc.clone();
         rap_debug!(
             "Checking bb: {}, scc_idx: {}, scc: {:?}",
             bb_idx,
@@ -157,7 +158,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
     }
 
     pub fn check_scc(&mut self, bb_idx: usize, fn_map: &MopFnAliasMap) {
-        let cur_scc = self.mop_graph.mop_block(bb_idx).scc.clone();
+        let cur_scc = self.mop_graph.cfg_block(bb_idx).scc.clone();
         /* Handle cases if the current block is a merged scc block with sub block */
         let scc = self.mop_graph.sort_scc_tree(&cur_scc);
         let paths_in_scc = self
@@ -167,7 +168,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
         rap_debug!("Paths in scc: {:?}", paths_in_scc);
 
         let backup_values = self.mop_graph.values.clone(); // duplicate the status when visiteding different paths;
-        let backup_constant = self.mop_graph.constants.clone();
+        let backup_constant = self.mop_graph.cfg.constants.clone();
         let backup_alias_sets = self.mop_graph.alias_sets.clone();
         let backup_drop_record = self.drop_record.clone();
         for raw_path in &paths_in_scc {
@@ -183,7 +184,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
             }
             // The last node is already ouside the scc.
             if let Some(&last_node) = path.last() {
-                if self.mop_graph.mop_block(last_node).scc.nodes.is_empty() {
+                if self.mop_graph.cfg_block(last_node).scc.nodes.is_empty() {
                     self.check_single_node(last_node, fn_map);
                     self.handle_nexts(last_node, fn_map, None, Some(path_constants));
                 } else {
@@ -192,7 +193,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
             }
             self.mop_graph.alias_sets = backup_alias_sets.clone();
             self.mop_graph.values = backup_values.clone();
-            self.mop_graph.constants = backup_constant.clone();
+            self.mop_graph.cfg.constants = backup_constant.clone();
             self.drop_record = backup_drop_record.clone();
         }
     }
@@ -225,7 +226,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
 
         // Extra path contraints are introduced during scc handling.
         if let Some(path_constants) = path_constraints {
-            self.mop_graph.constants.extend(path_constants);
+            self.mop_graph.cfg.constants.extend(path_constants);
         }
 
         /* Begin: handle the SwitchInt statement. */
@@ -242,7 +243,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
             } = terminator.kind
             {
                 rap_debug!("{:?}", terminator);
-                rap_debug!("{:?}", self.mop_graph.constants);
+                rap_debug!("{:?}", self.mop_graph.cfg.constants);
                 match discr {
                     Copy(p) | Move(p) => {
                         let value_idx = self.projection(*p);
@@ -252,7 +253,8 @@ impl<'tcx> SafeDropGraph<'tcx> {
                         match place_ty.ty.kind() {
                             ty::TyKind::Bool => {
                                 rap_debug!("SwitchInt via Bool");
-                                if let Some(constant) = self.mop_graph.constants.get(&value_idx) {
+                                if let Some(constant) = self.mop_graph.cfg.constants.get(&value_idx)
+                                {
                                     if *constant != usize::MAX {
                                         single_target = true;
                                         sw_val = *constant;
@@ -264,10 +266,12 @@ impl<'tcx> SafeDropGraph<'tcx> {
                             _ => {
                                 if let Some(father) = self
                                     .mop_graph
+                                    .cfg
                                     .discriminants
                                     .get(&self.mop_graph.values[value_idx].local)
                                 {
-                                    if let Some(constant) = self.mop_graph.constants.get(father) {
+                                    if let Some(constant) = self.mop_graph.cfg.constants.get(father)
+                                    {
                                         if *constant != usize::MAX {
                                             single_target = true;
                                             sw_val = *constant;

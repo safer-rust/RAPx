@@ -12,7 +12,7 @@ impl<'tcx> MopGraph<'tcx> {
     /* alias analysis for a single block */
     pub fn alias_bb(&mut self, bb_index: usize) {
         for constant in self.block_facts[bb_index].const_value.clone() {
-            self.constants.insert(constant.local, constant.value);
+            self.cfg.constants.insert(constant.local, constant.value);
         }
         let block_facts = self.block_facts[bb_index].clone();
         for assign in block_facts.assignments {
