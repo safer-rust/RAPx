@@ -48,6 +48,13 @@ impl SccInfo {
             child_sccs: Vec::new(),
         }
     }
+
+    /// Returns `true` when this SCC contains only its entry block (no member nodes).
+    ///
+    /// A trivial SCC has no loops and requires no special path enumeration.
+    pub fn is_trivial(&self) -> bool {
+        self.nodes.is_empty()
+    }
 }
 
 /// Tarjan SCC callback trait.

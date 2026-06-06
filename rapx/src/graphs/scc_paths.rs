@@ -13,15 +13,15 @@ use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use super::scc::{Scc, SccInfo};
 
 /// Maximum number of whole-CFG paths collected before stopping enumeration.
-pub const WHOLE_CFG_PATH_LIMIT: usize = 4000;
+const WHOLE_CFG_PATH_LIMIT: usize = 4000;
 /// Maximum DFS depth for whole-CFG path enumeration.
-pub const WHOLE_CFG_PATH_DEPTH_LIMIT: usize = 256;
+const WHOLE_CFG_PATH_DEPTH_LIMIT: usize = 256;
 
 /// Stable key for deduplicating path + path-constraint combinations.
 #[derive(Clone, Hash, PartialEq, Eq)]
-pub struct PathKey {
-    pub path: Vec<usize>,
-    pub constraints: Vec<(usize, usize)>,
+struct PathKey {
+    path: Vec<usize>,
+    constraints: Vec<(usize, usize)>,
 }
 
 /// Collect all SCC components from a successor graph.
@@ -43,7 +43,7 @@ pub fn constraints_key(constraints: &FxHashMap<usize, usize>) -> Vec<(usize, usi
 }
 
 /// Build a dedup key from a path and its associated constraints.
-pub fn make_path_key(path: &[usize], constraints: &FxHashMap<usize, usize>) -> PathKey {
+fn make_path_key(path: &[usize], constraints: &FxHashMap<usize, usize>) -> PathKey {
     PathKey {
         path: path.to_vec(),
         constraints: constraints_key(constraints),
@@ -51,26 +51,29 @@ pub fn make_path_key(path: &[usize], constraints: &FxHashMap<usize, usize>) -> P
 }
 
 /// Insert `(path, constraints)` into `out` only if this combination is new.
-pub fn record_unique_path(
+fn record_unique_path(
     path: &[usize],
     constraints: &FxHashMap<usize, usize>,
-    out: &mut Vec<(Vec<usize>, FxHashMap<usize, usize>)>,
+    out: &mut Vec<SccEnumeratedPath>,
     seen_paths: &mut FxHashSet<PathKey>,
 ) {
     let key = make_path_key(path, constraints);
     if seen_paths.insert(key) {
-        out.push((path.to_vec(), constraints.clone()));
+        out.push(SccEnumeratedPath {
+            blocks: path.to_vec(),
+            constraints: constraints.clone(),
+        });
     }
 }
 
 /// Return true when `node` belongs to the SCC currently being enumerated.
-pub fn node_is_in_current_scc(start: usize, scc: &SccInfo, node: usize) -> bool {
+fn node_is_in_current_scc(start: usize, scc: &SccInfo, node: usize) -> bool {
     node == start || scc.nodes.contains(&node)
 }
 
 /// Rebuild the per-segment recursion stack from the suffix after the latest
 /// dominator (`start`) occurrence in `path`.
-pub fn rebuild_segment_stack(path: &[usize], start: usize) -> FxHashSet<usize> {
+fn rebuild_segment_stack(path: &[usize], start: usize) -> FxHashSet<usize> {
     // `path` is expected to begin with `start` in our SCC DFS. If a caller provides
     // an unexpected path without `start`, we conservatively fall back to the full path.
     let last_start_pos = path.iter().rposition(|&node| node == start).unwrap_or(0);
@@ -217,7 +220,16 @@ impl SccPathTraversalState {
 }
 
 pub type SccPathConstraints = FxHashMap<usize, usize>;
-pub type SccEnumeratedPath = (Vec<usize>, SccPathConstraints);
+
+/// A single enumerated path through an SCC together with its accumulated path constraints.
+///
+/// `blocks` is the ordered sequence of CFG block indices visited along the path.
+/// `constraints` holds the path-sensitive branch facts collected during traversal.
+#[derive(Clone, Debug)]
+pub struct SccEnumeratedPath {
+    pub blocks: Vec<usize>,
+    pub constraints: SccPathConstraints,
+}
 
 #[derive(Clone, Debug)]
 pub struct SccPathTraversalConfig {
@@ -339,13 +351,13 @@ fn enumerate_scc_paths_inner<S: SccPathSemantics>(
             depth + 1,
         );
 
-        for (subp, subconst) in sub_paths {
-            if subp.len() <= 1 {
+        for sub_path in sub_paths {
+            if sub_path.blocks.len() <= 1 {
                 continue;
             }
 
             let mut new_path = state.path.clone();
-            new_path.extend(&subp[1..]);
+            new_path.extend(&sub_path.blocks[1..]);
             let new_cur = *new_path
                 .last()
                 .expect("spliced child path must be non-empty");
@@ -358,7 +370,7 @@ fn enumerate_scc_paths_inner<S: SccPathSemantics>(
             enumerate_scc_paths_inner(
                 scc,
                 state.with_spliced_path(new_path, next_skip_child_enter),
-                subconst,
+                sub_path.constraints,
                 paths_in_scc,
                 seen_paths,
                 semantics,
@@ -552,14 +564,14 @@ fn collect_path_sensitive_paths_inner<G: WholeCfgPathEnumerator>(
             return;
         }
 
-        for (segment_path, _) in paths_in_scc {
+        for scc_segment in paths_in_scc {
             if all_paths.len() >= WHOLE_CFG_PATH_LIMIT {
                 break;
             }
 
             let mut scc_path = current_path.clone();
-            if segment_path.len() > 1 {
-                scc_path.extend_from_slice(&segment_path[1..]);
+            if scc_segment.blocks.len() > 1 {
+                scc_path.extend_from_slice(&scc_segment.blocks[1..]);
             }
 
             let Some(&last) = scc_path.last() else {

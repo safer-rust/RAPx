@@ -31,7 +31,7 @@ const SCC_PATH_CACHE_LIMIT: usize = 2048;
 thread_local! {
     static CHECK_DEPTH: Cell<usize> = Cell::new(0);
     static SCC_PATH_CACHE: RefCell<
-        FxHashMap<SccPathCacheKey, Vec<(Vec<usize>, FxHashMap<usize, usize>)>>
+        FxHashMap<SccPathCacheKey, Vec<SccEnumeratedPath>>
     > = RefCell::new(FxHashMap::default());
 }
 
@@ -385,8 +385,8 @@ impl<'tcx> MopGraph<'tcx> {
             self.cfg.constants = backup_constant.clone();
             *recursion_set = backup_recursion_set.clone();
 
-            let path = raw_path.0;
-            let path_constraints = &raw_path.1;
+            let path = raw_path.blocks;
+            let path_constraints = &raw_path.constraints;
             rap_debug!("checking path: {:?}", path);
 
             // Apply alias transfer for every node in the path (including the exit node).
@@ -622,7 +622,7 @@ impl<'tcx> MopGraph<'tcx> {
         start: usize,
         scc: &SccInfo,
         initial_constraints: &FxHashMap<usize, usize>,
-    ) -> Vec<(Vec<usize>, FxHashMap<usize, usize>)> {
+    ) -> Vec<SccEnumeratedPath> {
         let key = SccPathCacheKey {
             def_id: self.def_id(),
             scc_enter: scc.enter,

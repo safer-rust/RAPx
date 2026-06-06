@@ -163,7 +163,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
         let scc = self.mop_graph.sort_scc_tree(&cur_scc);
         let paths_in_scc = self
             .mop_graph
-            .find_scc_paths(bb_idx, &scc, &mut FxHashMap::default());
+            .find_scc_paths(bb_idx, &scc, &FxHashMap::default());
 
         rap_debug!("Paths in scc: {:?}", paths_in_scc);
 
@@ -172,8 +172,8 @@ impl<'tcx> SafeDropGraph<'tcx> {
         let backup_alias_sets = self.mop_graph.alias_sets.clone();
         let backup_drop_record = self.drop_record.clone();
         for raw_path in &paths_in_scc {
-            let path = &raw_path.0;
-            let path_constants = &raw_path.1;
+            let path = &raw_path.blocks;
+            let path_constants = &raw_path.constraints;
 
             if !path.is_empty() {
                 for idx in &path[..path.len() - 1] {
