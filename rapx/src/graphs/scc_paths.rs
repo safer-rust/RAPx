@@ -3,10 +3,19 @@
 //! This module provides reusable SCC path enumeration with path-state
 //! propagation, pruning, deduplication, and nested-SCC path splicing.
 //! Concrete analyses define branch feasibility and state updates via hooks.
+//!
+//! It also provides whole-CFG path enumeration via [`compute_path_sensitive_paths`]
+//! and the [`WholeCfgPathEnumerator`] trait, which is the unified entry point for
+//! downstream consumers such as range analysis and Senryx.
 
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 
 use super::scc::{Scc, SccInfo};
+
+/// Maximum number of whole-CFG paths collected before stopping enumeration.
+pub const WHOLE_CFG_PATH_LIMIT: usize = 4000;
+/// Maximum DFS depth for whole-CFG path enumeration.
+pub const WHOLE_CFG_PATH_DEPTH_LIMIT: usize = 256;
 
 /// Stable key for deduplicating path + path-constraint combinations.
 #[derive(Clone, Hash, PartialEq, Eq)]
@@ -453,5 +462,192 @@ impl Scc for SccComponentCollector {
 
     fn get_size(&mut self) -> usize {
         self.successors.len()
+    }
+}
+
+// ===========================================================================================
+// Whole-CFG path-sensitive enumeration
+// ===========================================================================================
+
+/// Trait abstracting the CFG + SCC operations needed by whole-CFG path enumeration.
+///
+/// Implement this trait for your graph type to use [`compute_path_sensitive_paths`].
+pub trait WholeCfgPathEnumerator {
+    /// Total number of CFG blocks.
+    fn block_count(&self) -> usize;
+
+    /// Outgoing successor indices for block `index`.
+    fn block_nexts(&self, index: usize) -> Vec<usize>;
+
+    /// SCC-enter block index for block `index`.
+    fn block_scc_enter(&self, index: usize) -> usize;
+
+    /// Returns `true` when block `index` is the root of a non-trivial SCC
+    /// (i.e., the SCC contains at least one other member node).
+    fn block_has_scc_members(&self, index: usize) -> bool;
+
+    /// Sort the SCC tree rooted at `enter` and enumerate all SCC-internal paths.
+    ///
+    /// The returned paths start at `enter` and end at an SCC exit node.
+    fn enumerate_scc_paths_at(&mut self, enter: usize) -> Vec<SccEnumeratedPath>;
+}
+
+/// Compute all path-sensitive paths for a whole CFG.
+///
+/// This is the **unified entry point** for downstream consumers such as
+/// range analysis and Senryx.  All SCC-internal loops are expanded via
+/// [`WholeCfgPathEnumerator::enumerate_scc_paths_at`] so that the
+/// returned paths contain the full block sequence for each feasible
+/// execution.
+pub fn compute_path_sensitive_paths<G: WholeCfgPathEnumerator>(graph: &mut G) -> Vec<Vec<usize>> {
+    let mut all_paths = Vec::new();
+    let mut seen_paths = FxHashSet::default();
+
+    if graph.block_count() == 0 {
+        return all_paths;
+    }
+
+    let mut current_path = vec![0];
+    let mut active_blocks = FxHashSet::default();
+    active_blocks.insert(0);
+
+    collect_path_sensitive_paths_inner(
+        graph,
+        0,
+        &mut current_path,
+        &mut active_blocks,
+        &mut all_paths,
+        &mut seen_paths,
+        0,
+    );
+
+    all_paths.sort_unstable();
+    all_paths
+}
+
+fn collect_path_sensitive_paths_inner<G: WholeCfgPathEnumerator>(
+    graph: &mut G,
+    current: usize,
+    current_path: &mut Vec<usize>,
+    active_blocks: &mut FxHashSet<usize>,
+    all_paths: &mut Vec<Vec<usize>>,
+    seen_paths: &mut FxHashSet<Vec<usize>>,
+    depth: usize,
+) {
+    if depth > WHOLE_CFG_PATH_DEPTH_LIMIT
+        || all_paths.len() >= WHOLE_CFG_PATH_LIMIT
+        || current >= graph.block_count()
+    {
+        return;
+    }
+
+    let cur_scc_enter = graph.block_scc_enter(current);
+    if current == cur_scc_enter && graph.block_has_scc_members(current) {
+        let paths_in_scc = graph.enumerate_scc_paths_at(current);
+
+        if paths_in_scc.is_empty() {
+            if seen_paths.insert(current_path.clone()) {
+                all_paths.push(current_path.clone());
+            }
+            return;
+        }
+
+        for (segment_path, _) in paths_in_scc {
+            if all_paths.len() >= WHOLE_CFG_PATH_LIMIT {
+                break;
+            }
+
+            let mut scc_path = current_path.clone();
+            if segment_path.len() > 1 {
+                scc_path.extend_from_slice(&segment_path[1..]);
+            }
+
+            let Some(&last) = scc_path.last() else {
+                continue;
+            };
+
+            let mut nexts: Vec<usize> = graph
+                .block_nexts(last)
+                .into_iter()
+                .filter(|&next| graph.block_scc_enter(next) != cur_scc_enter)
+                .collect();
+            nexts.sort_unstable();
+            nexts.dedup();
+
+            if nexts.is_empty() {
+                if seen_paths.insert(scc_path.clone()) {
+                    all_paths.push(scc_path);
+                }
+                continue;
+            }
+
+            for next in nexts {
+                if active_blocks.contains(&next) {
+                    if seen_paths.insert(scc_path.clone()) {
+                        all_paths.push(scc_path.clone());
+                    }
+                    continue;
+                }
+
+                let mut continued_path = scc_path.clone();
+                continued_path.push(next);
+                active_blocks.insert(next);
+                collect_path_sensitive_paths_inner(
+                    graph,
+                    next,
+                    &mut continued_path,
+                    active_blocks,
+                    all_paths,
+                    seen_paths,
+                    depth + 1,
+                );
+                active_blocks.remove(&next);
+            }
+        }
+        return;
+    }
+
+    let mut nexts = graph.block_nexts(current);
+    nexts.sort_unstable();
+    nexts.dedup();
+
+    if nexts.is_empty() {
+        if seen_paths.insert(current_path.clone()) {
+            all_paths.push(current_path.clone());
+        }
+        return;
+    }
+
+    let mut followed = false;
+    for next in nexts {
+        if all_paths.len() >= WHOLE_CFG_PATH_LIMIT {
+            break;
+        }
+
+        if active_blocks.contains(&next) {
+            if seen_paths.insert(current_path.clone()) {
+                all_paths.push(current_path.clone());
+            }
+            continue;
+        }
+
+        followed = true;
+        current_path.push(next);
+        active_blocks.insert(next);
+        collect_path_sensitive_paths_inner(
+            graph,
+            next,
+            current_path,
+            active_blocks,
+            all_paths,
+            seen_paths,
+            depth + 1,
+        );
+        active_blocks.remove(&next);
+        current_path.pop();
+    }
+
+    if !followed && seen_paths.insert(current_path.clone()) {
+        all_paths.push(current_path.clone());
     }
 }
