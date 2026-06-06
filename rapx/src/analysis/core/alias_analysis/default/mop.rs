@@ -8,7 +8,7 @@ use rustc_middle::{
 };
 
 use std::{
-    cell::{Cell, RefCell},
+    cell::Cell,
     collections::HashSet,
 };
 
@@ -18,7 +18,7 @@ use crate::graphs::{
     scc::SccInfo,
     scc_paths::{
         SccEnumeratedPath, SccPathAction, SccPathSemantics, SccPathTraversalConfig,
-        SccPathTraversalState, constraints_key, enumerate_scc_paths,
+        SccPathTraversalState, enumerate_scc_paths_cached,
     },
 };
 
@@ -30,27 +30,8 @@ use super::value::Value;
 /// We cap recursive `check` depth so deeply nested CFG/SCC exploration degrades gracefully
 /// instead of overflowing the compiler thread stack.
 const CHECK_STACK_LIMIT: usize = 96;
-/// Bounded cache for SCC path enumeration.
-///
-/// SCC path enumeration is expensive and often re-run with the same `(fn, scc, constraints)`.
-/// This cache avoids repeated traversal while keeping memory bounded.
-const SCC_PATH_CACHE_LIMIT: usize = 2048;
-
 thread_local! {
     static CHECK_DEPTH: Cell<usize> = Cell::new(0);
-    static SCC_PATH_CACHE: RefCell<
-        FxHashMap<SccPathCacheKey, Vec<SccEnumeratedPath>>
-    > = RefCell::new(FxHashMap::default());
-}
-
-#[derive(Clone, Hash, PartialEq, Eq)]
-struct SccPathCacheKey {
-    /// The analyzed function; constraints are only comparable inside one MIR body.
-    def_id: DefId,
-    /// SCC entry block where path enumeration starts.
-    scc_enter: usize,
-    /// Canonicalized path-sensitive constraints carried into the SCC.
-    constraints: Vec<(usize, usize)>,
 }
 
 #[derive(Clone)]
@@ -731,36 +712,15 @@ impl<'tcx> MopGraph<'tcx> {
         scc: &SccInfo,
         initial_constraints: &FxHashMap<usize, usize>,
     ) -> Vec<SccEnumeratedPath> {
-        // Cache key includes incoming constraints because SCC traversal is path-sensitive:
-        // the same SCC can produce different feasible paths under different discriminant facts.
-        let key = SccPathCacheKey {
-            def_id: self.def_id(),
-            scc_enter: scc.enter,
-            constraints: constraints_key(initial_constraints),
-        };
-
-        if let Some(cached) = SCC_PATH_CACHE.with(|c| c.borrow().get(&key).cloned()) {
-            return cached;
-        }
-
+        let def_id = self.def_id();
         let mut semantics = MopSccPathSemantics { graph: self };
-        let all_paths = enumerate_scc_paths(
+        enumerate_scc_paths_cached(
+            def_id,
             start,
             scc,
             initial_constraints.clone(),
             &mut semantics,
             SccPathTraversalConfig::default(),
-        );
-
-        SCC_PATH_CACHE.with(|c| {
-            let mut cache = c.borrow_mut();
-            if cache.len() >= SCC_PATH_CACHE_LIMIT {
-                // Keep cache bounded; this is a heuristic performance guard, not a semantic limit.
-                cache.clear();
-            }
-            cache.insert(key, all_paths.clone());
-        });
-
-        all_paths
+        )
     }
 }
