@@ -512,12 +512,8 @@ impl<'tcx> MopGraph<'tcx> {
         self.cfg.find_scc();
     }
 
-    pub fn get_paths(&self) -> Vec<Vec<usize>> {
-        self.cfg.get_paths()
-    }
-
-    pub fn get_all_branch_sub_blocks_paths(&self) -> Vec<Vec<usize>> {
-        self.cfg.get_all_branch_sub_blocks_paths()
+    pub fn get_path_sensitive_paths(&mut self) -> Vec<Vec<usize>> {
+        self.compute_path_sensitive_paths()
     }
 
     pub fn sort_scc_tree(&mut self, scc: &SccInfo) -> SccInfo {

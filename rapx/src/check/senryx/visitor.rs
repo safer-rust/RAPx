@@ -179,6 +179,7 @@ impl<'tcx> BodyVisitor<'tcx> {
         // Iterate all the paths. Paths have been handled by tarjan.
         let tmp_chain = self.chains.clone();
         for (index, (path, constraint)) in paths.iter().enumerate() {
+            let path_nodes: HashSet<usize> = path.iter().copied().collect();
             // Init three data structures in every path
             self.value_domains.clear();
             for (arg_index, _) in body.args_iter().enumerate() {
@@ -210,6 +211,9 @@ impl<'tcx> BodyVisitor<'tcx> {
                 // also analyze basic blocks that belong to dominated SCCs
                 if tem_basic_blocks.len() > 0 {
                     for sub_block in tem_basic_blocks {
+                        if path_nodes.contains(sub_block) {
+                            continue;
+                        }
                         self.path_analyze_block(
                             &body.basic_blocks[BasicBlock::from_usize(*sub_block)].clone(),
                             index,
@@ -260,6 +264,7 @@ impl<'tcx> BodyVisitor<'tcx> {
     /// Retrieve all paths and optional range-based constraints for this function.
     /// Falls back to safedrop graph paths if range analysis did not produce constraints.
     pub fn get_all_paths(&mut self) -> HashMap<Vec<usize>, Vec<(Place<'tcx>, Place<'tcx>, BinOp)>> {
+        self.safedrop_graph.mop_graph.find_scc();
         let mut range_analyzer = RangeAnalyzer::<i64>::new(self.tcx, false);
         let path_constraints_option =
             range_analyzer.start_path_constraints_analysis_for_defid(self.def_id); // if def_id does not exist, this will break down
@@ -268,14 +273,14 @@ impl<'tcx> BodyVisitor<'tcx> {
                 Some(path_constraints) if !path_constraints.is_empty() => path_constraints,
                 _ => {
                     let mut results = HashMap::new();
-                    let paths: Vec<Vec<usize>> = self.safedrop_graph.mop_graph.get_paths();
+                    let paths: Vec<Vec<usize>> =
+                        self.safedrop_graph.mop_graph.get_path_sensitive_paths();
                     for path in paths {
                         results.insert(path, Vec::new());
                     }
                     results
                 }
             };
-        self.safedrop_graph.mop_graph.find_scc();
         // If this is the top-level analysis, keep only paths that contain unsafe calls.
         if self.visit_time == 0 {
             let contains_unsafe_blocks = get_all_std_unsafe_callees_block_id(self.tcx, self.def_id);

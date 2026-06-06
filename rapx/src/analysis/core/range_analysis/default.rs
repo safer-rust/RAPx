@@ -334,7 +334,7 @@ where
                 ConstraintGraph::new_without_ssa(body_mut_ref, self.tcx, def_id);
             let mut graph = MopGraph::new(self.tcx, def_id);
             graph.find_scc();
-            let paths: Vec<Vec<usize>> = graph.get_all_branch_sub_blocks_paths();
+            let paths: Vec<Vec<usize>> = graph.get_path_sensitive_paths();
             let result = cg.start_analyze_path_constraints(body_mut_ref, &paths);
             rap_debug!(
                 "Paths for function {}: {:?}",
@@ -371,7 +371,7 @@ where
                         ConstraintGraph::new_without_ssa(body_mut_ref, self.tcx, def_id);
                     let mut graph = MopGraph::new(self.tcx, def_id);
                     graph.find_scc();
-                    let paths: Vec<Vec<usize>> = graph.get_all_branch_sub_blocks_paths();
+                    let paths: Vec<Vec<usize>> = graph.get_path_sensitive_paths();
                     let result = cg.start_analyze_path_constraints(body_mut_ref, &paths);
                     rap_debug!(
                         "Paths for function {}: {:?}",
