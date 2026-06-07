@@ -29,7 +29,7 @@ impl<'tcx> PathAnalyzer<'tcx> {
 
         let mut graph = PathGraph::new(self.tcx, def_id);
         graph.find_scc();
-        let paths = graph.get_path_sensitive_paths();
+        let paths = graph.enumerate_paths();
 
         if self.debug {
             rap_debug!(

@@ -11,12 +11,12 @@ use std::{cell::Cell, collections::HashSet};
 
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 
-use crate::graphs::{
-    scc::SccInfo,
-    scc_paths::{
-        SccEnumeratedPath, SccPathAction, SccPathSemantics, SccPathTraversalConfig,
-        SccPathTraversalState, enumerate_scc_paths_cached,
+use crate::{
+    analysis::core::path_analysis::graph::{
+        SccEnumeratedPath, SccPathAction, SccPathTraversalConfig, SccPathTraversalState,
+        enumerate_scc_paths_cached_with,
     },
+    graphs::scc::SccInfo,
 };
 
 use super::value::Value;
@@ -81,34 +81,55 @@ impl Drop for DepthLimitGuard {
     }
 }
 
-struct MopSccPathSemantics<'a, 'tcx> {
-    graph: &'a mut AliasGraph<'tcx>,
-}
-
-impl<'a, 'tcx> SccPathSemantics for MopSccPathSemantics<'a, 'tcx> {
-    fn on_node_enter(&mut self, node: usize, constraints: &mut FxHashMap<usize, usize>) {
-        // Path constraints are facts about the current value of a discriminant/local.
-        // Once a local is reassigned along this path, prior facts about that local are stale
-        // and must be dropped to avoid using invalid path-sensitive assumptions downstream.
-        if let Some(assigned_locals) = self.graph.assigned_locals(node) {
-            for local in assigned_locals {
-                rap_debug!(
-                    "Remove path_constraints {:?}, because it has been reassigned.",
-                    local
-                );
-                constraints.remove(local);
-            }
+fn mop_on_scc_node_enter<'tcx>(
+    graph: &mut AliasGraph<'tcx>,
+    node: usize,
+    constraints: &mut FxHashMap<usize, usize>,
+) {
+    if let Some(assigned_locals) = graph.assigned_locals(node) {
+        for local in assigned_locals {
+            rap_debug!(
+                "Remove path_constraints {:?}, because it has been reassigned.",
+                local
+            );
+            constraints.remove(local);
         }
     }
+}
 
-    fn enumerate_child_paths(
-        &mut self,
-        child_enter: usize,
-        constraints: &FxHashMap<usize, usize>,
-    ) -> Vec<SccEnumeratedPath> {
-        let child_scc = self.graph.cfg_block(child_enter).scc.clone();
-        self.graph
-            .find_scc_paths(child_enter, &child_scc, constraints)
+fn mop_enumerate_child_paths<'tcx>(
+    graph: &mut AliasGraph<'tcx>,
+    child_enter: usize,
+    constraints: &FxHashMap<usize, usize>,
+) -> Vec<SccEnumeratedPath> {
+    let child_scc = graph.cfg_block(child_enter).scc.clone();
+    graph.find_scc_paths(child_enter, &child_scc, constraints)
+}
+
+fn mop_enumerate_actions<'tcx>(
+    graph: &mut AliasGraph<'tcx>,
+    _scc: &SccInfo,
+    state: &SccPathTraversalState,
+    path_constraints: &FxHashMap<usize, usize>,
+) -> Vec<SccPathAction> {
+    let Some(term) = graph.terminator(state.cur).cloned() else {
+        return Vec::new();
+    };
+
+    rap_debug!("term: {:?}", term);
+
+    let mut path_constraints = path_constraints.clone();
+    if let TerminatorKind::Call { destination, .. } = &term.kind {
+        // A call can overwrite `destination`; any branch constraints on that value become
+        // invalid immediately after the call and must not be propagated.
+        let dest_idx = graph.projection(*destination);
+        let dest_local = graph
+            .path_graph
+            .discriminants
+            .get(&graph.values[dest_idx].local)
+            .cloned()
+            .unwrap_or(dest_idx);
+        path_constraints.remove(&dest_local);
     }
 
     fn enumerate_actions(
@@ -121,124 +142,91 @@ impl<'a, 'tcx> SccPathSemantics for MopSccPathSemantics<'a, 'tcx> {
             return Vec::new();
         };
 
-        rap_debug!("term: {:?}", term);
+            let Some(place) = place else {
+                return Vec::new();
+            };
 
-        let mut path_constraints = path_constraints.clone();
-        if let TerminatorKind::Call { destination, .. } = &term.kind {
-            // A call can overwrite `destination`; any branch constraints on that value become
-            // invalid immediately after the call and must not be propagated.
-            let dest_idx = self.graph.projection(*destination);
-            let dest_local = self
-                .graph
+            let discr_local = graph
                 .path_graph
                 .discriminants
-                .get(&self.graph.values[dest_idx].local)
+                .get(&graph.values[place].local)
                 .cloned()
-                .unwrap_or(dest_idx);
-            path_constraints.remove(&dest_local);
-        }
+                .unwrap_or(place);
 
-        match term.kind {
-            TerminatorKind::SwitchInt { discr, targets } => {
-                let otherwise_val = self.graph.unique_otherwise_switch_value(&discr, &targets);
-                let place = match discr {
-                    Copy(p) | Move(p) => Some(self.graph.projection(p)),
-                    _ => None,
-                };
+            let possible_values = graph.possible_switch_values_for_constraint_id(discr_local);
+            let mut actions = Vec::new();
 
-                let Some(place) = place else {
-                    return Vec::new();
-                };
-
-                let discr_local = self
-                    .graph
-                    .path_graph
-                    .discriminants
-                    .get(&self.graph.values[place].local)
-                    .cloned()
-                    .unwrap_or(place);
-
-                let possible_values = self
-                    .graph
-                    .possible_switch_values_for_constraint_id(discr_local);
-                let mut actions = Vec::new();
-
-                if let Some(&constant) = path_constraints.get(&discr_local) {
-                    // `usize::MAX` is our sentinel for "take otherwise/default branch".
-                    // It is used when we cannot represent otherwise as a unique concrete value.
-                    if constant == usize::MAX {
-                        actions.push(SccPathAction::Traverse {
-                            next: targets.otherwise().as_usize(),
-                            constraints: path_constraints,
-                        });
-                        return actions;
-                    }
-
-                    let mut found = false;
-                    for branch in targets.iter() {
-                        if branch.0 as usize != constant {
-                            continue;
-                        }
-                        found = true;
-                        actions.push(SccPathAction::Traverse {
-                            next: branch.1.as_usize(),
-                            constraints: path_constraints.clone(),
-                        });
-                    }
-                    if !found {
-                        actions.push(SccPathAction::Traverse {
-                            next: targets.otherwise().as_usize(),
-                            constraints: path_constraints,
-                        });
-                    }
+            if let Some(&constant) = path_constraints.get(&discr_local) {
+                if constant == usize::MAX {
+                    actions.push(SccPathAction::Traverse {
+                        next: targets.otherwise().as_usize(),
+                        constraints: path_constraints,
+                    });
                     return actions;
                 }
 
-                if let Some(values) = possible_values {
-                    for constant in values {
-                        let mut new_constraints = path_constraints.clone();
-                        new_constraints.insert(discr_local, constant);
-                        actions.push(SccPathAction::Traverse {
-                            next: self.graph.switch_target_for_value(&targets, constant),
-                            constraints: new_constraints,
-                        });
-                    }
-                    return actions;
-                }
-
+                let mut found = false;
                 for branch in targets.iter() {
-                    let mut new_constraints = path_constraints.clone();
-                    new_constraints.insert(discr_local, branch.0 as usize);
+                    if branch.0 as usize != constant {
+                        continue;
+                    }
+                    found = true;
                     actions.push(SccPathAction::Traverse {
                         next: branch.1.as_usize(),
-                        constraints: new_constraints,
-                    });
-                }
-
-                let mut otherwise_constraints = path_constraints;
-                // Prefer a concrete value for `otherwise` if there is exactly one remaining
-                // enum/bool variant; otherwise use the sentinel to represent default flow.
-                otherwise_constraints.insert(discr_local, otherwise_val.unwrap_or(usize::MAX));
-                actions.push(SccPathAction::Traverse {
-                    next: targets.otherwise().as_usize(),
-                    constraints: otherwise_constraints,
-                });
-
-                actions
-            }
-            _ => {
-                let mut actions = Vec::new();
-                actions.push(SccPathAction::RecordExit {
-                    constraints: path_constraints.clone(),
-                });
-                for next in self.graph.cfg_block(state.cur).next.clone() {
-                    actions.push(SccPathAction::Traverse {
-                        next,
                         constraints: path_constraints.clone(),
                     });
                 }
-                actions
+                if !found {
+                    actions.push(SccPathAction::Traverse {
+                        next: targets.otherwise().as_usize(),
+                        constraints: path_constraints,
+                    });
+                }
+                return actions;
             }
+
+            if let Some(values) = possible_values {
+                for constant in values {
+                    let mut new_constraints = path_constraints.clone();
+                    new_constraints.insert(discr_local, constant);
+                    actions.push(SccPathAction::Traverse {
+                        next: graph.switch_target_for_value(&targets, constant),
+                        constraints: new_constraints,
+                    });
+                }
+                return actions;
+            }
+
+            for branch in targets.iter() {
+                let mut new_constraints = path_constraints.clone();
+                new_constraints.insert(discr_local, branch.0 as usize);
+                actions.push(SccPathAction::Traverse {
+                    next: branch.1.as_usize(),
+                    constraints: new_constraints,
+                });
+            }
+
+            let mut otherwise_constraints = path_constraints;
+            otherwise_constraints.insert(discr_local, otherwise_val.unwrap_or(usize::MAX));
+            actions.push(SccPathAction::Traverse {
+                next: targets.otherwise().as_usize(),
+                constraints: otherwise_constraints,
+            });
+
+            actions
+        }
+        _ => {
+            let mut actions = Vec::new();
+            actions.push(SccPathAction::RecordExit {
+                constraints: path_constraints.clone(),
+            });
+            for next in graph.cfg_block(state.cur).next.clone() {
+                actions.push(SccPathAction::Traverse {
+                    next,
+                    constraints: path_constraints.clone(),
+                });
+            }
+            actions
         }
     }
 }
@@ -718,13 +706,15 @@ impl<'tcx> AliasGraph<'tcx> {
         initial_constraints: &FxHashMap<usize, usize>,
     ) -> Vec<SccEnumeratedPath> {
         let def_id = self.def_id();
-        let mut semantics = MopSccPathSemantics { graph: self };
-        enumerate_scc_paths_cached(
+        enumerate_scc_paths_cached_with(
             def_id,
             start,
             scc,
             initial_constraints.clone(),
-            &mut semantics,
+            self,
+            mop_on_scc_node_enter,
+            mop_enumerate_child_paths,
+            mop_enumerate_actions,
             SccPathTraversalConfig::default(),
         )
     }

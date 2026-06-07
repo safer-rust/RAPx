@@ -11,7 +11,7 @@ use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_middle::{mir::BasicBlock, ty::TyCtxt};
 
-use crate::graphs::scc_paths::collect_scc_components;
+use crate::graphs::scc::collect_scc_components;
 
 use super::helpers::{CFG, Callsite, CallsiteLocation};
 

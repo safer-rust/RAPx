@@ -139,3 +139,42 @@ pub trait Scc {
         }
     }
 }
+
+/// Collect all SCC components from a successor graph.
+pub fn collect_scc_components(successors: &[Vec<usize>]) -> Vec<Vec<usize>> {
+    let mut collector = SccComponentCollector::new(successors.to_vec());
+    collector.find_scc();
+    collector.components
+}
+
+struct SccComponentCollector {
+    successors: Vec<Vec<usize>>,
+    components: Vec<Vec<usize>>,
+}
+
+impl SccComponentCollector {
+    fn new(successors: Vec<Vec<usize>>) -> Self {
+        Self {
+            successors,
+            components: Vec::new(),
+        }
+    }
+}
+
+impl Scc for SccComponentCollector {
+    fn on_scc_found(&mut self, _root: usize, scc_components: &[usize]) {
+        self.components.push(scc_components.to_vec());
+    }
+
+    fn get_next(&mut self, root: usize) -> FxHashSet<usize> {
+        self.successors
+            .get(root)
+            .into_iter()
+            .flat_map(|successors| successors.iter().copied())
+            .collect()
+    }
+
+    fn get_size(&mut self) -> usize {
+        self.successors.len()
+    }
+}
