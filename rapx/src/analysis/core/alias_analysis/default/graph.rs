@@ -10,7 +10,7 @@ use crate::{
 };
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_middle::{
-    mir::{AggregateKind, BasicBlock, Const, Operand, Rvalue, StatementKind},
+    mir::{AggregateKind, BasicBlock, Const, Operand, Rvalue, StatementKind, Terminator},
     ty::{self, TyCtxt, TypingEnv},
 };
 use rustc_span::{Span, def_id::DefId};
@@ -405,12 +405,17 @@ impl<'tcx> AliasGraph<'tcx> {
         self.span
     }
 
-    pub fn cfg_block(&self, index: usize) -> &CfgBlock<'tcx> {
+    pub fn cfg_block(&self, index: usize) -> &CfgBlock {
         self.path_graph.cfg_block(index)
     }
 
-    pub fn cfg_block_mut(&mut self, index: usize) -> &mut CfgBlock<'tcx> {
+    pub fn cfg_block_mut(&mut self, index: usize) -> &mut CfgBlock {
         self.path_graph.cfg_block_mut(index)
+    }
+
+    /// Retrieve the MIR terminator for the block at `index` on demand.
+    pub fn terminator(&self, index: usize) -> Option<&Terminator<'tcx>> {
+        self.path_graph.terminator(index)
     }
 
     pub fn find_scc(&mut self) {

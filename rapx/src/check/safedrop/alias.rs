@@ -34,7 +34,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
 
     /* Check the aliases introduced by the terminators (function call) of a scc block */
     pub fn alias_bbcall(&mut self, bb_index: usize, fn_map: &MopFnAliasMap) {
-        if let Some(terminator) = self.alias_graph.cfg_block(bb_index).terminator.clone() {
+        if let Some(terminator) = self.alias_graph.terminator(bb_index).cloned() {
             if let TerminatorKind::Call {
                 func: Operand::Constant(ref constant),
                 ref args,

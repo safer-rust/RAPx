@@ -1,6 +1,6 @@
 use crate::graphs::scc::{Scc, SccExit, SccInfo};
 use rustc_data_structures::fx::FxHashSet;
-use rustc_middle::{mir::Terminator, ty::TyCtxt};
+use rustc_middle::{mir::{BasicBlock, Terminator}, ty::TyCtxt};
 use rustc_span::def_id::DefId;
 
 /// Reusable CFG block structure shared by analyses built over MIR.
@@ -9,21 +9,18 @@ use rustc_span::def_id::DefId;
 /// - its block index,
 /// - whether it is a cleanup block,
 /// - its outgoing CFG edges,
-/// - the terminator instruction,
 /// - and SCC metadata for loop/cycle-aware traversal.
+///
+/// Terminator data is intentionally not cached here; use
+/// [`ControlFlowGraph::terminator`] to retrieve it on demand from MIR.
 #[derive(Debug, Clone)]
-pub struct CfgBlock<'tcx> {
+pub struct CfgBlock {
     /// Index of this block in the CFG block list.
     pub index: usize,
     /// Whether this block belongs to MIR cleanup/unwind control flow.
     pub is_cleanup: bool,
     /// Outgoing successor block indices.
     pub next: FxHashSet<usize>,
-    /// MIR terminator associated with this block.
-    ///
-    /// Kept as generic MIR CFG payload because multiple analyses (not only
-    /// path analysis) read terminator semantics from CFG nodes.
-    pub terminator: Option<Terminator<'tcx>>,
     /// SCC information for this block.
     ///
     /// For non-root blocks inside an SCC, `enter` points to the SCC root.
@@ -31,14 +28,13 @@ pub struct CfgBlock<'tcx> {
     pub scc: SccInfo,
 }
 
-impl<'tcx> CfgBlock<'tcx> {
+impl CfgBlock {
     /// Create a new CFG block with default analysis metadata.
     pub fn new(index: usize, is_cleanup: bool) -> Self {
         Self {
             index,
             is_cleanup,
             next: FxHashSet::default(),
-            terminator: None,
             scc: SccInfo::new(index),
         }
     }
@@ -59,12 +55,12 @@ pub struct ControlFlowGraph<'tcx> {
     /// Type context from the Rust compiler.
     pub tcx: TyCtxt<'tcx>,
     /// All CFG blocks for the current body.
-    pub blocks: Vec<CfgBlock<'tcx>>,
+    pub blocks: Vec<CfgBlock>,
 }
 
 impl<'tcx> ControlFlowGraph<'tcx> {
     /// Construct a control-flow graph wrapper from prebuilt blocks.
-    pub fn new(def_id: DefId, tcx: TyCtxt<'tcx>, blocks: Vec<CfgBlock<'tcx>>) -> Self {
+    pub fn new(def_id: DefId, tcx: TyCtxt<'tcx>, blocks: Vec<CfgBlock>) -> Self {
         Self {
             def_id,
             tcx,
@@ -73,13 +69,24 @@ impl<'tcx> ControlFlowGraph<'tcx> {
     }
 
     /// Get an immutable reference to a block by index.
-    pub fn block(&self, index: usize) -> &CfgBlock<'tcx> {
+    pub fn block(&self, index: usize) -> &CfgBlock {
         &self.blocks[index]
     }
 
     /// Get a mutable reference to a block by index.
-    pub fn block_mut(&mut self, index: usize) -> &mut CfgBlock<'tcx> {
+    pub fn block_mut(&mut self, index: usize) -> &mut CfgBlock {
         &mut self.blocks[index]
+    }
+
+    /// Retrieve the MIR terminator for the block at `index` on demand.
+    ///
+    /// Returns `None` only for blocks whose terminator has not yet been
+    /// elaborated (which is unusual for optimized MIR).
+    pub fn terminator(&self, index: usize) -> Option<&Terminator<'tcx>> {
+        let body = self.tcx.optimized_mir(self.def_id);
+        body.basic_blocks
+            .get(BasicBlock::from(index))
+            .and_then(|bb| bb.terminator.as_ref())
     }
 }
 

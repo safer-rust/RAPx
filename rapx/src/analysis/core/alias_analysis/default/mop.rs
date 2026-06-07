@@ -117,7 +117,7 @@ impl<'a, 'tcx> SccPathSemantics for MopSccPathSemantics<'a, 'tcx> {
         state: &SccPathTraversalState,
         path_constraints: &FxHashMap<usize, usize>,
     ) -> Vec<SccPathAction> {
-        let Some(term) = self.graph.cfg_block(state.cur).terminator.clone() else {
+        let Some(term) = self.graph.terminator(state.cur).cloned() else {
             return Vec::new();
         };
 
@@ -397,7 +397,7 @@ impl<'tcx> AliasGraph<'tcx> {
     }
 
     fn analyze_switch_successors(&mut self, bb_idx: usize) -> SwitchSuccessorPlan {
-        let Some(terminator) = self.cfg_block(bb_idx).terminator.clone() else {
+        let Some(terminator) = self.terminator(bb_idx).cloned() else {
             return SwitchSuccessorPlan::NotSwitch;
         };
         let TerminatorKind::SwitchInt { discr, targets } = terminator.kind else {
@@ -488,7 +488,7 @@ impl<'tcx> AliasGraph<'tcx> {
     }
 
     fn allowed_switch_targets_for_exit(&mut self, exit_node: usize) -> Option<FxHashSet<usize>> {
-        let Some(terminator) = self.cfg_block(exit_node).terminator.clone() else {
+        let Some(terminator) = self.terminator(exit_node).cloned() else {
             return None;
         };
         let TerminatorKind::SwitchInt { discr, targets } = terminator.kind else {

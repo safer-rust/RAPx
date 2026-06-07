@@ -20,7 +20,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
     // analyze the drop statement and update the liveness for nodes.
     pub fn drop_check(&mut self, bb_idx: usize) {
         let is_cleanup = self.alias_graph.cfg_block(bb_idx).is_cleanup;
-        if let Some(terminator) = self.alias_graph.cfg_block(bb_idx).terminator.clone() {
+        if let Some(terminator) = self.alias_graph.terminator(bb_idx).cloned() {
             rap_debug!("drop check bb: {}, {:?}", bb_idx, terminator);
             match terminator.kind {
                 TerminatorKind::Drop {
@@ -224,6 +224,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
         path_constraints: Option<&FxHashMap<usize, usize>>,
     ) {
         let cfg_block = self.alias_graph.cfg_block(bb_idx).clone();
+        let bb_terminator = self.alias_graph.terminator(bb_idx).cloned();
         let tcx = self.alias_graph.tcx();
 
         // Extra path contraints are introduced during scc handling.
@@ -237,7 +238,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
         let mut sw_target = 0; // Single target
         let mut path_discr_id = 0; // To avoid analyzing paths that cannot be reached with one enum type.
         let mut sw_targets = None; // Multiple targets of SwitchInt
-        if let Some(terminator) = &cfg_block.terminator {
+        if let Some(terminator) = &bb_terminator {
             rap_debug!("Handle switchInt in bb {:?}", cfg_block);
             if let TerminatorKind::SwitchInt {
                 ref discr,

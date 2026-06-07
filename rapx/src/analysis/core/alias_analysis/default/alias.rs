@@ -32,7 +32,7 @@ impl<'tcx> AliasGraph<'tcx> {
         fn_map: &mut MopFnAliasMap,
         recursion_set: &mut HashSet<DefId>,
     ) {
-        if let Some(terminator) = self.cfg_block(bb_index).terminator.clone() {
+        if let Some(terminator) = self.terminator(bb_index).cloned() {
             if let TerminatorKind::Call {
                 func: Operand::Constant(ref constant),
                 ref args,

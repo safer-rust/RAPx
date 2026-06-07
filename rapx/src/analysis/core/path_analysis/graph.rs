@@ -9,7 +9,7 @@ use crate::graphs::{
 };
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_middle::{
-    mir::{BasicBlock, Rvalue, StatementKind, TerminatorKind, UnwindAction},
+    mir::{BasicBlock, Rvalue, StatementKind, Terminator, TerminatorKind, UnwindAction},
     ty::TyCtxt,
 };
 use rustc_span::def_id::DefId;
@@ -69,7 +69,7 @@ impl<'tcx> PathGraph<'tcx> {
     pub fn new(tcx: TyCtxt<'tcx>, def_id: DefId) -> PathGraph<'tcx> {
         let body = tcx.optimized_mir(def_id);
         let basicblocks = &body.basic_blocks;
-        let mut cfg_blocks = Vec::<CfgBlock<'tcx>>::new();
+        let mut cfg_blocks = Vec::<CfgBlock>::new();
         let mut assigned_locals = Vec::new();
         let mut discriminants = FxHashMap::default();
 
@@ -90,7 +90,6 @@ impl<'tcx> PathGraph<'tcx> {
             let Some(terminator) = &bb.terminator else {
                 continue;
             };
-            cfg_block.terminator = Some(terminator.clone());
 
             match terminator.kind.clone() {
                 TerminatorKind::Goto { ref target } => {
@@ -209,12 +208,17 @@ impl<'tcx> PathGraph<'tcx> {
         self.cfg.tcx
     }
 
-    pub fn cfg_block(&self, index: usize) -> &CfgBlock<'tcx> {
+    pub fn cfg_block(&self, index: usize) -> &CfgBlock {
         self.cfg.block(index)
     }
 
-    pub fn cfg_block_mut(&mut self, index: usize) -> &mut CfgBlock<'tcx> {
+    pub fn cfg_block_mut(&mut self, index: usize) -> &mut CfgBlock {
         self.cfg.block_mut(index)
+    }
+
+    /// Retrieve the MIR terminator for the block at `index` on demand.
+    pub fn terminator(&self, index: usize) -> Option<&Terminator<'tcx>> {
+        self.cfg.terminator(index)
     }
 
     pub fn assigned_locals(&self, index: usize) -> Option<&FxHashSet<usize>> {
