@@ -117,8 +117,12 @@ fn record_member_nodes<'tcx>(
     for &node in &scc_components[1..] {
         // Record membership under the root SCC.
         graph.block_mut(root).scc.nodes.insert(node);
+        if !graph.block(root).scc.blocks.contains(&node) {
+            graph.block_mut(root).scc.blocks.push(node);
+        }
         // Make each member point to the SCC root.
         graph.block_mut(node).scc.enter = root;
+        graph.block_mut(node).scc.representative = root;
 
         let nexts = graph.block(node).next.clone();
         for next in nexts {
@@ -133,6 +137,9 @@ fn record_member_nodes<'tcx>(
             // Any edge back to the root is tracked as a back edge source.
             if next == root {
                 graph.block_mut(root).scc.backnodes.insert(node);
+                if !graph.block(root).scc.backedges.contains(&(node, root)) {
+                    graph.block_mut(root).scc.backedges.push((node, root));
+                }
             }
         }
     }
@@ -198,6 +205,7 @@ fn scc_handler<'tcx>(graph: &mut ControlFlowGraph<'tcx>, root: usize, scc_compon
 
     // The SCC root always points to itself.
     graph.block_mut(root).scc.enter = root;
+    graph.block_mut(root).scc.representative = root;
 
     // A single-node SCC is trivial; nothing else needs to be recorded.
     if scc_components.len() <= 1 {

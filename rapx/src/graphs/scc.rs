@@ -12,26 +12,40 @@ use std::cmp;
 /// An outgoing edge from an SCC body to a block outside the SCC.
 #[derive(Debug, Clone, Eq, Hash, PartialEq)]
 pub struct SccExit {
+    /// Legacy alias for `from` used by existing analyses.
+    pub exit: usize,
+    /// Source node inside the SCC body.
     pub from: usize,
+    /// Destination node outside the SCC body.
     pub to: usize,
 }
 
 impl SccExit {
     /// Create an SCC exit edge from `from` to `to`.
     pub fn new(from: usize, to: usize) -> Self {
-        SccExit { from, to }
+        SccExit {
+            exit: from,
+            from,
+            to,
+        }
     }
 }
 
 /// Per-header SCC metadata used by loop-aware analyses.
 #[derive(Debug, Clone)]
 pub struct SccInfo {
+    /// Legacy SCC root field used across existing analyses.
+    pub enter: usize,
+    /// Legacy SCC member set excluding `enter`.
+    pub nodes: FxHashSet<usize>,
+    /// Legacy SCC back-edge source set.
+    pub backnodes: FxHashSet<usize>,
     /// Representative entry block of the SCC.
     pub representative: usize,
     /// All blocks in the SCC, including `representative`.
     pub blocks: Vec<usize>,
     /// Edges leaving the SCC.
-    pub exits: Vec<SccExit>,
+    pub exits: FxHashSet<SccExit>,
     /// Edges inside the SCC region that go back to an earlier block or the representative.
     pub backedges: Vec<(usize, usize)>,
     /// Representative nodes of nested child SCCs.
@@ -42,9 +56,12 @@ impl SccInfo {
     /// Create empty SCC metadata for `representative`.
     pub fn new(representative: usize) -> Self {
         SccInfo {
+            enter: representative,
+            nodes: FxHashSet::default(),
+            backnodes: FxHashSet::default(),
             representative,
             blocks: vec![representative],
-            exits: Vec::new(),
+            exits: FxHashSet::default(),
             backedges: Vec::new(),
             child_sccs: Vec::new(),
         }
@@ -57,7 +74,7 @@ impl SccInfo {
 
     /// Compatibility accessor for older callers.
     pub fn enter(&self) -> usize {
-        self.representative
+        self.enter
     }
 }
 
