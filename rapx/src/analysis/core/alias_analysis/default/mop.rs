@@ -132,15 +132,13 @@ fn mop_enumerate_actions<'tcx>(
         path_constraints.remove(&dest_local);
     }
 
-    fn enumerate_actions(
-        &mut self,
-        _scc: &SccInfo,
-        state: &SccPathTraversalState,
-        path_constraints: &FxHashMap<usize, usize>,
-    ) -> Vec<SccPathAction> {
-        let Some(term) = self.graph.terminator(state.cur).cloned() else {
-            return Vec::new();
-        };
+    match term.kind {
+        TerminatorKind::SwitchInt { discr, targets } => {
+            let otherwise_val = graph.unique_otherwise_switch_value(&discr, &targets);
+            let place = match discr {
+                Copy(p) | Move(p) => Some(graph.projection(p)),
+                _ => None,
+            };
 
             let Some(place) = place else {
                 return Vec::new();
