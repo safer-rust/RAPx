@@ -11,7 +11,7 @@ use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_middle::{mir::BasicBlock, ty::TyCtxt};
 
-use crate::graphs::scc::collect_scc_components;
+use crate::graphs::scc::{find_scc_regions, SccRegion};
 
 use super::helpers::{CFG, Callsite, CallsiteLocation};
 
@@ -50,7 +50,7 @@ impl<'tcx> PathExtractor<'tcx> {
 
     /// Detect SCC regions in the function CFG and store their block-to-SCC map.
     fn find_scc_regions(&mut self) {
-        let (scc_regions, block_to_scc) = find_scc_regions(&self.cfg);
+        let (scc_regions, block_to_scc) = find_scc_regions(&self.cfg.successors);
         self.scc_regions = scc_regions;
         self.block_to_scc = block_to_scc;
     }
@@ -645,84 +645,4 @@ pub enum PathStep {
     },
     /// The target callsite that terminates the path.
     Callsite(CallsiteLocation),
-}
-
-/// A cyclic SCC region used as one finite-path abstraction unit.
-#[derive(Clone, Debug)]
-pub struct SccRegion {
-    /// Stable representative block used as the key for this SCC region.
-    pub representative: BasicBlock,
-    /// Blocks that belong to the SCC region.
-    pub blocks: Vec<BasicBlock>,
-    /// Edges that leave the SCC region.
-    pub exits: Vec<SccExit>,
-    /// Edges inside the SCC region that go back to an earlier block or the representative.
-    pub backedges: Vec<(BasicBlock, BasicBlock)>,
-}
-
-/// An edge that leaves a detected SCC region.
-#[derive(Clone, Debug)]
-pub struct SccExit {
-    /// Source block inside the SCC region.
-    pub from: BasicBlock,
-    /// Destination block outside the SCC region.
-    pub to: BasicBlock,
-}
-
-/// Detect cyclic SCC regions in a CFG.
-fn find_scc_regions(cfg: &CFG) -> (Vec<SccRegion>, FxHashMap<BasicBlock, BasicBlock>) {
-    let successors: Vec<Vec<usize>> = cfg
-        .successors
-        .iter()
-        .map(|nexts| nexts.iter().map(|bb| bb.as_usize()).collect())
-        .collect();
-    let components = collect_scc_components(&successors);
-
-    let mut scc_regions = Vec::new();
-    let mut block_to_scc = FxHashMap::default();
-    for mut component in components {
-        component.sort_unstable();
-        let has_self_edge = component.len() == 1
-            && cfg.successors[component[0]]
-                .iter()
-                .any(|succ| succ.as_usize() == component[0]);
-        if component.len() <= 1 && !has_self_edge {
-            continue;
-        }
-
-        let representative = BasicBlock::from_usize(component[0]);
-        let block_set: FxHashSet<usize> = component.iter().copied().collect();
-        let mut exits = Vec::new();
-        let mut backedges = Vec::new();
-
-        for &block_idx in &component {
-            let block = BasicBlock::from_usize(block_idx);
-            for &succ in cfg.successors(block) {
-                let succ_idx = succ.as_usize();
-                if block_set.contains(&succ_idx) {
-                    if succ_idx <= block_idx || succ == representative {
-                        backedges.push((block, succ));
-                    }
-                } else {
-                    exits.push(SccExit {
-                        from: block,
-                        to: succ,
-                    });
-                }
-            }
-        }
-
-        for &block_idx in &component {
-            block_to_scc.insert(BasicBlock::from_usize(block_idx), representative);
-        }
-
-        scc_regions.push(SccRegion {
-            representative,
-            blocks: component.into_iter().map(BasicBlock::from_usize).collect(),
-            exits,
-            backedges,
-        });
-    }
-
-    (scc_regions, block_to_scc)
 }
