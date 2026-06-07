@@ -92,14 +92,14 @@ impl<'tcx> SafeDropGraph<'tcx> {
             bb_idx
         );
         //Rc drop
-        if self.mop_graph.values[value_idx].is_ref_count() {
+        if self.alias_graph.values[value_idx].is_ref_count() {
             return;
         }
-        if self.df_check(value_idx, bb_idx, self.mop_graph.span(), flag_cleanup) {
+        if self.df_check(value_idx, bb_idx, self.alias_graph.span(), flag_cleanup) {
             return;
         }
         if !self.drop_record[value_idx].is_dropped {
-            let drop_spot = LocalSpot::new(bb_idx, self.mop_graph.values[value_idx].local);
+            let drop_spot = LocalSpot::new(bb_idx, self.alias_graph.values[value_idx].local);
             self.drop_record[value_idx] = DropRecord::new(value_idx, true, drop_spot);
             rap_debug!("{:?}", self.drop_record[value_idx]);
             self.push_drop_info(value_idx, drop_spot);
@@ -114,7 +114,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
 
     pub fn push_drop_alias(&mut self, value_idx: usize, drop_spot: LocalSpot) {
         rap_debug!("push_drop_alias: value_idx = {}", value_idx,);
-        if let Some(aliases) = self.mop_graph.get_alias_set(value_idx) {
+        if let Some(aliases) = self.alias_graph.get_alias_set(value_idx) {
             for i in aliases {
                 if i != value_idx {
                     self.drop_record[i] = DropRecord::new(i, true, drop_spot);
@@ -130,7 +130,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
     pub fn push_drop_top_down(&mut self, value_idx: usize, drop_spot: LocalSpot) {
         rap_debug!("push_drop_top_down: value_idx = {}", value_idx);
         let mut prop_chain = vec![value_idx];
-        for (_field_id, field_value_id) in self.mop_graph.values[value_idx].fields.clone() {
+        for (_field_id, field_value_id) in self.alias_graph.values[value_idx].fields.clone() {
             self.drop_record[field_value_id] = DropRecord::new(field_value_id, true, drop_spot);
             prop_chain.push(field_value_id);
             self.drop_record[field_value_id].prop_chain = prop_chain.clone();
@@ -141,7 +141,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
 
     pub fn push_drop_bottom_up(&mut self, value_idx: usize, drop_spot: LocalSpot) {
         rap_debug!("push_drop_bottom_up: value_idx = {}", value_idx);
-        let mut father = self.mop_graph.values[value_idx].father.clone();
+        let mut father = self.alias_graph.values[value_idx].father.clone();
         let mut prop_chain = vec![value_idx];
         while let Some(father_info) = father {
             let father_idx = father_info.father_value_id;
@@ -152,7 +152,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
                 self.drop_record[father_idx].drop_spot = drop_spot;
             }
             rap_debug!("{:?}", self.drop_record[father_idx]);
-            father = self.mop_graph.values[father_idx].father.clone();
+            father = self.alias_graph.values[father_idx].father.clone();
         }
     }
 
@@ -172,19 +172,19 @@ impl<'tcx> SafeDropGraph<'tcx> {
     pub fn clear_father_drop(&mut self, value_idx: usize) {
         rap_debug!("clear_drop_father: value_idx = {}", value_idx);
         // to fix: this is an over approximation.
-        let mut father = self.mop_graph.values[value_idx].father.clone();
+        let mut father = self.alias_graph.values[value_idx].father.clone();
         while let Some(father_info) = father {
             let father_idx = father_info.father_value_id;
             if !self.drop_record[father_idx].is_dropped {
                 self.drop_record[father_idx].clear();
             }
-            father = self.mop_graph.values[father_idx].father.clone();
+            father = self.alias_graph.values[father_idx].father.clone();
         }
     }
 
     pub fn clear_field_drop(&mut self, value_idx: usize) {
         rap_debug!("clear_field_drop: value_idx = {}", value_idx);
-        for (_field_id, field_value_id) in self.mop_graph.values[value_idx].fields.clone() {
+        for (_field_id, field_value_id) in self.alias_graph.values[value_idx].fields.clone() {
             self.drop_record[field_value_id].clear();
             self.clear_field_drop(field_value_id);
         }
@@ -192,7 +192,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
 
     pub fn fetch_drop_from_bottom(&mut self, value_idx: usize) {
         rap_debug!("fetch_drop_from_bottom: value_idx = {}", value_idx);
-        for (_field_id, field_value_id) in self.mop_graph.values[value_idx].fields.clone() {
+        for (_field_id, field_value_id) in self.alias_graph.values[value_idx].fields.clone() {
             rap_debug!("{:?}", self.drop_record[field_value_id]);
             self.fetch_drop_from_alias(field_value_id);
             if self.drop_record[field_value_id].is_dropped {
@@ -209,7 +209,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
 
     pub fn fetch_drop_from_top(&mut self, value_idx: usize) {
         rap_debug!("fetch_drop_from_top: value_idx = {}", value_idx);
-        let mut father = self.mop_graph.values[value_idx].father.clone();
+        let mut father = self.alias_graph.values[value_idx].father.clone();
         while let Some(father_info) = father {
             let father_idx = father_info.father_value_id;
             self.fetch_drop_from_alias(father_idx);
@@ -218,13 +218,13 @@ impl<'tcx> SafeDropGraph<'tcx> {
                 rap_debug!("{:?}", self.drop_record[value_idx]);
                 break;
             }
-            father = self.mop_graph.values[father_idx].father.clone();
+            father = self.alias_graph.values[father_idx].father.clone();
         }
     }
 
     pub fn fetch_drop_from_alias(&mut self, value_idx: usize) {
         rap_debug!("fetch_drop_from_alias: value_idx = {}", value_idx);
-        if let Some(aliases) = self.mop_graph.get_alias_set(value_idx) {
+        if let Some(aliases) = self.alias_graph.get_alias_set(value_idx) {
             for idx in aliases {
                 // set idx as dropped if any of its alias has been dropped.
                 if self.drop_record[idx].is_dropped {

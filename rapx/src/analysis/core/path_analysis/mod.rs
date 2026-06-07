@@ -1,5 +1,5 @@
-pub mod graph;
 pub mod default;
+pub mod graph;
 
 use crate::utils::source::get_fn_name_byid;
 use rustc_hir::def_id::DefId;

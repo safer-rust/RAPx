@@ -206,7 +206,7 @@ impl<'tcx> BodyVisitor<'tcx> {
                 );
                 let tem_basic_blocks = &self
                     .safedrop_graph
-                    .mop_graph
+                    .alias_graph
                     .cfg_block(*block_index)
                     .scc
                     .nodes

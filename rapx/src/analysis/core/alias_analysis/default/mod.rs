@@ -8,7 +8,7 @@ pub mod value;
 
 use super::{AliasAnalysis, AliasPair, FnAliasMap, FnAliasPairs};
 use crate::{analysis::Analysis, def_id::*, utils::source::*};
-use graph::MopGraph;
+use graph::AliasGraph;
 use rustc_data_structures::fx::FxHashMap;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
@@ -188,7 +188,7 @@ impl<'tcx> Analysis for AliasAnalyzer<'tcx> {
         rap_debug!("Start alias analysis via MoP.");
         let mir_keys = self.tcx.mir_keys(());
         for local_def_id in mir_keys {
-            self.query_mop(local_def_id.to_def_id());
+            self.query_alias_graph(local_def_id.to_def_id());
         }
         // Meaning of output: 0 for ret value; 1,2,3,... for corresponding args.
         for (fn_id, fn_alias) in &mut self.fn_map {
@@ -243,7 +243,7 @@ impl<'tcx> AliasAnalyzer<'tcx> {
         }
     }
 
-    fn query_mop(&mut self, def_id: DefId) {
+    fn query_alias_graph(&mut self, def_id: DefId) {
         let fn_name = get_fn_name(self.tcx, def_id);
         if fn_name
             .as_ref()
@@ -251,24 +251,24 @@ impl<'tcx> AliasAnalyzer<'tcx> {
         {
             return;
         }
-        rap_trace!("query_mop: {:?}", fn_name);
+        rap_trace!("query_alias_graph: {:?}", fn_name);
         /* filter const mir */
         if let Some(_other) = self.tcx.hir_body_const_context(def_id.expect_local()) {
             return;
         }
 
         if self.tcx.is_mir_available(def_id) {
-            let mut mop_graph = MopGraph::new(self.tcx, def_id);
-            rap_debug!("Mop graph crated: {}", mop_graph);
+            let mut alias_graph = AliasGraph::new(self.tcx, def_id);
+            rap_debug!("Alias graph created: {}", alias_graph);
             rap_debug!("Search scc components in the graph.");
-            mop_graph.find_scc();
-            rap_trace!("After searching scc: {}", mop_graph);
+            alias_graph.find_scc();
+            rap_trace!("After searching scc: {}", alias_graph);
             let mut recursion_set = HashSet::default();
-            mop_graph.check(0, &mut self.fn_map, &mut recursion_set);
-            if mop_graph.visit_times() > VISIT_LIMIT {
+            alias_graph.check(0, &mut self.fn_map, &mut recursion_set);
+            if alias_graph.visit_times() > VISIT_LIMIT {
                 rap_trace!("Over visited: {:?}", def_id);
             }
-            self.fn_map.insert(def_id, mop_graph.ret_alias);
+            self.fn_map.insert(def_id, alias_graph.ret_alias);
         } else {
             rap_trace!("Mir is not available at {}", self.tcx.def_path_str(def_id));
         }

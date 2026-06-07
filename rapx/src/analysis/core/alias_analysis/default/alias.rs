@@ -8,11 +8,11 @@ use rustc_middle::{
 };
 use std::collections::HashSet;
 
-impl<'tcx> MopGraph<'tcx> {
+impl<'tcx> AliasGraph<'tcx> {
     /* alias analysis for a single block */
     pub fn alias_bb(&mut self, bb_index: usize) {
         for constant in self.block_facts[bb_index].const_value.clone() {
-            self.cfg.constants.insert(constant.local, constant.value);
+            self.constants.insert(constant.local, constant.value);
         }
         let block_facts = self.block_facts[bb_index].clone();
         for assign in block_facts.assignments {
@@ -88,10 +88,10 @@ impl<'tcx> MopGraph<'tcx> {
                             return;
                         }
                         recursion_set.insert(target_id);
-                        let mut mop_graph = MopGraph::new(self.tcx(), target_id);
-                        mop_graph.find_scc();
-                        mop_graph.check(0, fn_map, recursion_set);
-                        let ret_alias = mop_graph.ret_alias.clone();
+                        let mut alias_graph = AliasGraph::new(self.tcx(), target_id);
+                        alias_graph.find_scc();
+                        alias_graph.check(0, fn_map, recursion_set);
+                        let ret_alias = alias_graph.ret_alias.clone();
                         rap_debug!("Find aliases of {:?}: {:?}", target_id, ret_alias);
                         fn_map.insert(target_id, ret_alias);
                         recursion_set.remove(&target_id);

@@ -69,10 +69,10 @@ pub fn query_safedrop(tcx: TyCtxt, fn_map: &MopFnAliasMap, def_id: DefId, adt_ow
     if tcx.is_mir_available(def_id) {
         let mut safedrop_graph = SafeDropGraph::new(tcx, def_id, adt_owner);
         rap_debug!("safedrop grah (raw): {}", safedrop_graph);
-        safedrop_graph.mop_graph.find_scc();
+        safedrop_graph.alias_graph.find_scc();
         rap_debug!("safedrop graph (scc): {}", safedrop_graph);
         safedrop_graph.check(0, fn_map);
-        if safedrop_graph.mop_graph.visit_times() <= VISIT_LIMIT {
+        if safedrop_graph.alias_graph.visit_times() <= VISIT_LIMIT {
             safedrop_graph.report_bugs();
         }
     }

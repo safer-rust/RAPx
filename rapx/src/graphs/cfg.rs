@@ -1,5 +1,5 @@
 use crate::graphs::scc::{Scc, SccExit, SccInfo};
-use rustc_data_structures::fx::{FxHashMap, FxHashSet};
+use rustc_data_structures::fx::FxHashSet;
 use rustc_middle::{mir::Terminator, ty::TyCtxt};
 use rustc_span::def_id::DefId;
 
@@ -10,7 +10,6 @@ use rustc_span::def_id::DefId;
 /// - whether it is a cleanup block,
 /// - its outgoing CFG edges,
 /// - the terminator instruction,
-/// - locals assigned in this block,
 /// - and SCC metadata for loop/cycle-aware traversal.
 #[derive(Debug, Clone)]
 pub struct CfgBlock<'tcx> {
@@ -21,12 +20,10 @@ pub struct CfgBlock<'tcx> {
     /// Outgoing successor block indices.
     pub next: FxHashSet<usize>,
     /// MIR terminator associated with this block.
-    pub terminator: Option<Terminator<'tcx>>,
-    /// Locals assigned in this block.
     ///
-    /// This is used during SCC/path processing to invalidate stale
-    /// path constraints after assignments.
-    pub assigned_locals: FxHashSet<usize>,
+    /// Kept as generic MIR CFG payload because multiple analyses (not only
+    /// path analysis) read terminator semantics from CFG nodes.
+    pub terminator: Option<Terminator<'tcx>>,
     /// SCC information for this block.
     ///
     /// For non-root blocks inside an SCC, `enter` points to the SCC root.
@@ -42,7 +39,6 @@ impl<'tcx> CfgBlock<'tcx> {
             is_cleanup,
             next: FxHashSet::default(),
             terminator: None,
-            assigned_locals: FxHashSet::default(),
             scc: SccInfo::new(index),
         }
     }
@@ -53,10 +49,9 @@ impl<'tcx> CfgBlock<'tcx> {
     }
 }
 
-/// Control-flow graph metadata independent from any particular analysis facts.
+/// Generic MIR control-flow graph container.
 ///
-/// This structure owns the MIR-level CFG plus path-sensitive metadata used
-/// during traversal and SCC-aware analysis.
+/// This structure intentionally keeps only generic CFG shape and SCC metadata.
 #[derive(Clone)]
 pub struct ControlFlowGraph<'tcx> {
     /// Definition being analyzed.
@@ -65,16 +60,6 @@ pub struct ControlFlowGraph<'tcx> {
     pub tcx: TyCtxt<'tcx>,
     /// All CFG blocks for the current body.
     pub blocks: Vec<CfgBlock<'tcx>>,
-    /// Path-sensitive constants tracked during traversal.
-    ///
-    /// The key/value meaning depends on the caller's analysis convention.
-    pub constants: FxHashMap<usize, usize>,
-    /// Path-sensitive discriminant source mapping tracked during traversal.
-    ///
-    /// This is typically used to preserve branch/switch-related facts.
-    pub discriminants: FxHashMap<usize, usize>,
-    /// Number of times the graph or a traversal routine has been visited.
-    pub visit_times: usize,
 }
 
 impl<'tcx> ControlFlowGraph<'tcx> {
@@ -84,9 +69,6 @@ impl<'tcx> ControlFlowGraph<'tcx> {
             def_id,
             tcx,
             blocks,
-            constants: FxHashMap::default(),
-            discriminants: FxHashMap::default(),
-            visit_times: 0,
         }
     }
 
@@ -99,52 +81,6 @@ impl<'tcx> ControlFlowGraph<'tcx> {
     pub fn block_mut(&mut self, index: usize) -> &mut CfgBlock<'tcx> {
         &mut self.blocks[index]
     }
-
-    /// Populate and return a hierarchical SCC tree rooted at `scc.enter`.
-    pub fn sort_scc_tree(&mut self, scc: &SccInfo) -> SccInfo {
-        self.populate_child_sccs(scc.enter);
-        self.block(scc.enter).scc.clone()
-    }
-
-    /// Recursively discover nested child SCCs for the SCC rooted at `enter`.
-    ///
-    /// A child SCC is identified when a node inside the current SCC belongs to
-    /// another non-trivial SCC with a different `enter`.
-    fn populate_child_sccs(&mut self, enter: usize) {
-        let nodes: Vec<usize> = self.block(enter).scc.nodes.iter().cloned().collect();
-        let mut child_enters = Vec::new();
-        let mut seen = FxHashSet::default();
-
-        for node in nodes {
-            if let Some(block) = self.blocks.get(node) {
-                let node_enter = block.scc.enter;
-                let non_trivial = !block.scc.nodes.is_empty();
-
-                // Record distinct non-trivial child SCC roots only once.
-                if node_enter != enter && non_trivial && seen.insert(node_enter) {
-                    child_enters.push(node_enter);
-                }
-            }
-        }
-
-        self.block_mut(enter).scc.child_sccs = child_enters;
-
-        // Recursively populate SCC children to build the SCC tree.
-        for &child_enter in &self.block(enter).scc.child_sccs.clone() {
-            self.populate_child_sccs(child_enter);
-        }
-    }
-
-    /// Get the current visit counter.
-    pub fn visit_times(&self) -> usize {
-        self.visit_times
-    }
-
-    /// Increment and return the visit counter.
-    pub fn increment_visit_times(&mut self) -> usize {
-        self.visit_times += 1;
-        self.visit_times
-    }
 }
 
 /// Record exits from the SCC root to blocks outside the SCC.
@@ -156,7 +92,11 @@ fn record_root_exits<'tcx>(
     let nexts = graph.block(root).next.clone();
     for next in nexts {
         if !scc_components.contains(&next) {
-            graph.block_mut(root).scc.exits.insert(SccExit::new(root, next));
+            graph
+                .block_mut(root)
+                .scc
+                .exits
+                .insert(SccExit::new(root, next));
         }
     }
 }
@@ -177,7 +117,11 @@ fn record_member_nodes<'tcx>(
         for next in nexts {
             // Any edge leaving the SCC is an SCC exit.
             if !scc_components.contains(&next) {
-                graph.block_mut(root).scc.exits.insert(SccExit::new(node, next));
+                graph
+                    .block_mut(root)
+                    .scc
+                    .exits
+                    .insert(SccExit::new(node, next));
             }
             // Any edge back to the root is tracked as a back edge source.
             if next == root {
@@ -238,11 +182,7 @@ fn rerun_scc_in_isolation<'tcx>(
 
 /// Handle a newly discovered SCC: mark the root, collect membership and edge metadata,
 /// then re-run SCC discovery on an isolated subgraph to populate nested SCC structure.
-fn scc_handler<'tcx>(
-    graph: &mut ControlFlowGraph<'tcx>,
-    root: usize,
-    scc_components: &[usize],
-) {
+fn scc_handler<'tcx>(graph: &mut ControlFlowGraph<'tcx>, root: usize, scc_components: &[usize]) {
     rap_debug!(
         "Scc found: root = {}, components = {:?}",
         root,

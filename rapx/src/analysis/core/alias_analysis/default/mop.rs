@@ -7,10 +7,7 @@ use rustc_middle::{
     ty::{TyKind, TypingEnv},
 };
 
-use std::{
-    cell::Cell,
-    collections::HashSet,
-};
+use std::{cell::Cell, collections::HashSet};
 
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 
@@ -22,8 +19,8 @@ use crate::graphs::{
     },
 };
 
-use super::{graph::*, *};
 use super::value::Value;
+use super::{graph::*, *};
 
 /// rustc analysis threads can have a relatively small stack.
 ///
@@ -43,7 +40,9 @@ struct MopStateSnapshot {
 
 enum SwitchSuccessorPlan {
     NotSwitch,
-    SingleTarget { target: usize },
+    SingleTarget {
+        target: usize,
+    },
     SplitTargets {
         constraint_id: usize,
         targets: rustc_middle::mir::SwitchTargets,
@@ -83,7 +82,7 @@ impl Drop for DepthLimitGuard {
 }
 
 struct MopSccPathSemantics<'a, 'tcx> {
-    graph: &'a mut MopGraph<'tcx>,
+    graph: &'a mut AliasGraph<'tcx>,
 }
 
 impl<'a, 'tcx> SccPathSemantics for MopSccPathSemantics<'a, 'tcx> {
@@ -91,12 +90,14 @@ impl<'a, 'tcx> SccPathSemantics for MopSccPathSemantics<'a, 'tcx> {
         // Path constraints are facts about the current value of a discriminant/local.
         // Once a local is reassigned along this path, prior facts about that local are stale
         // and must be dropped to avoid using invalid path-sensitive assumptions downstream.
-        for local in &self.graph.cfg_block(node).assigned_locals {
-            rap_debug!(
-                "Remove path_constraints {:?}, because it has been reassigned.",
-                local
-            );
-            constraints.remove(local);
+        if let Some(assigned_locals) = self.graph.assigned_locals(node) {
+            for local in assigned_locals {
+                rap_debug!(
+                    "Remove path_constraints {:?}, because it has been reassigned.",
+                    local
+                );
+                constraints.remove(local);
+            }
         }
     }
 
@@ -129,7 +130,7 @@ impl<'a, 'tcx> SccPathSemantics for MopSccPathSemantics<'a, 'tcx> {
             let dest_idx = self.graph.projection(*destination);
             let dest_local = self
                 .graph
-                .cfg
+                .path_graph
                 .discriminants
                 .get(&self.graph.values[dest_idx].local)
                 .cloned()
@@ -151,7 +152,7 @@ impl<'a, 'tcx> SccPathSemantics for MopSccPathSemantics<'a, 'tcx> {
 
                 let discr_local = self
                     .graph
-                    .cfg
+                    .path_graph
                     .discriminants
                     .get(&self.graph.values[place].local)
                     .cloned()
@@ -242,7 +243,7 @@ impl<'a, 'tcx> SccPathSemantics for MopSccPathSemantics<'a, 'tcx> {
     }
 }
 
-impl<'tcx> MopGraph<'tcx> {
+impl<'tcx> AliasGraph<'tcx> {
     fn switch_target_for_value(
         &self,
         targets: &rustc_middle::mir::SwitchTargets,
@@ -313,20 +314,20 @@ impl<'tcx> MopGraph<'tcx> {
     fn snapshot_state(&self) -> MopStateSnapshot {
         MopStateSnapshot {
             values: self.values.clone(),
-            constants: self.cfg.constants.clone(),
+            constants: self.constants.clone(),
             alias_sets: self.alias_sets.clone(),
         }
     }
 
     fn restore_state(&mut self, snapshot: &MopStateSnapshot) {
         self.values = snapshot.values.clone();
-        self.cfg.constants = snapshot.constants.clone();
+        self.constants = snapshot.constants.clone();
         self.alias_sets = snapshot.alias_sets.clone();
     }
 
     fn apply_path_constraints(&mut self, constraints: Option<&FxHashMap<usize, usize>>) {
         if let Some(constraints) = constraints {
-            self.cfg.constants.extend(constraints);
+            self.constants.extend(constraints);
         }
     }
 
@@ -340,15 +341,16 @@ impl<'tcx> MopGraph<'tcx> {
 
                 match place_ty.ty.kind() {
                     TyKind::Bool => self
-                        .cfg
                         .constants
                         .get(&value_idx)
                         .copied()
                         .filter(|c| *c != usize::MAX),
                     _ => {
-                        let father = self.cfg.discriminants.get(&self.values[value_idx].local)?;
-                        self.cfg
-                            .constants
+                        let father = self
+                            .path_graph
+                            .discriminants
+                            .get(&self.values[value_idx].local)?;
+                        self.constants
                             .get(father)
                             .copied()
                             .filter(|c| *c != usize::MAX)
@@ -382,7 +384,10 @@ impl<'tcx> MopGraph<'tcx> {
                 match place_ty.ty.kind() {
                     TyKind::Bool => Some(value_idx),
                     _ => {
-                        let father = self.cfg.discriminants.get(&self.values[value_idx].local)?;
+                        let father = self
+                            .path_graph
+                            .discriminants
+                            .get(&self.values[value_idx].local)?;
                         (self.values[value_idx].local == value_idx).then_some(*father)
                     }
                 }
@@ -496,14 +501,14 @@ impl<'tcx> MopGraph<'tcx> {
         }?;
 
         let discr_local = self
-            .cfg
+            .path_graph
             .discriminants
             .get(&self.values[place].local)
             .cloned()
             .unwrap_or(place);
 
         let mut allowed = FxHashSet::default();
-        if let Some(&constant) = self.cfg.constants.get(&discr_local) {
+        if let Some(&constant) = self.constants.get(&discr_local) {
             allowed.insert(self.switch_target_for_value(&targets, constant));
         } else {
             // No path constraint: all explicit targets and default remain reachable.
@@ -559,7 +564,7 @@ impl<'tcx> MopGraph<'tcx> {
     ) {
         let snapshot = self.snapshot_state();
         // Add control-sensitive indicator to the path status.
-        self.cfg.constants.insert(path_discr_id, path_discr_val);
+        self.constants.insert(path_discr_id, path_discr_val);
         self.check(bb_idx, fn_map, recursion_set);
         self.restore_state(&snapshot);
     }
@@ -603,7 +608,7 @@ impl<'tcx> MopGraph<'tcx> {
         let scc = self.sort_scc_tree(&cur_scc);
         rap_debug!("scc: {:?}", scc);
         // Propagate constraints collected so far (top-down)
-        let inherited_constraints = self.cfg.constants.clone();
+        let inherited_constraints = self.constants.clone();
         let paths_in_scc = self.find_scc_paths(bb_idx, &scc, &inherited_constraints);
         rap_debug!("Paths found in scc: {:?}", paths_in_scc);
 
