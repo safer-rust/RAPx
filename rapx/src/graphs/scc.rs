@@ -34,16 +34,10 @@ impl SccExit {
 /// Per-header SCC metadata used by loop-aware analyses.
 #[derive(Debug, Clone)]
 pub struct SccInfo {
-    /// Legacy SCC root field used across existing analyses.
+    /// SCC entry / representative block.
     pub enter: usize,
-    /// Legacy SCC member set excluding `enter`.
+    /// SCC member set excluding `enter`.
     pub nodes: FxHashSet<usize>,
-    /// Legacy SCC back-edge source set.
-    pub backnodes: FxHashSet<usize>,
-    /// Representative entry block of the SCC.
-    pub representative: usize,
-    /// All blocks in the SCC, including `representative`.
-    pub blocks: Vec<usize>,
     /// Edges leaving the SCC.
     pub exits: FxHashSet<SccExit>,
     /// Edges inside the SCC region that go back to an earlier block or the representative.
@@ -53,14 +47,11 @@ pub struct SccInfo {
 }
 
 impl SccInfo {
-    /// Create empty SCC metadata for `representative`.
-    pub fn new(representative: usize) -> Self {
+    /// Create empty SCC metadata for `enter`.
+    pub fn new(enter: usize) -> Self {
         SccInfo {
-            enter: representative,
+            enter,
             nodes: FxHashSet::default(),
-            backnodes: FxHashSet::default(),
-            representative,
-            blocks: vec![representative],
             exits: FxHashSet::default(),
             backedges: Vec::new(),
             child_sccs: Vec::new(),
@@ -69,7 +60,7 @@ impl SccInfo {
 
     /// Returns `true` when this SCC contains only its representative and has no self-loop.
     pub fn is_trivial(&self) -> bool {
-        self.blocks.len() <= 1 && self.backedges.is_empty()
+        self.nodes.is_empty() && self.backedges.is_empty()
     }
 
     /// Compatibility accessor for older callers.
