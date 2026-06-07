@@ -62,6 +62,8 @@ Examples:
    cargo rapx check -f -m -- --tests
 3. detect use-after-free and memory leak for all members:
    cargo rapx check -f -m -- --workspace
+4. print path-sensitive CFG paths:
+   cargo rapx analyze paths
 
 Environment Variables (Values are case insensitive):
 
@@ -98,5 +100,4 @@ For `RAP_RECURSIVE`:
 * deep: check for all workspaces from current folder
  
 NOTE: rapx will enter each member folder to do the check.
-
 

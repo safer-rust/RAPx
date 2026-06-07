@@ -10,6 +10,7 @@ use crate::{
         core::{
             alias_analysis::FnAliasPairs,
             ownedheap_analysis::OHAResultMap,
+            path_analysis::default::PathAnalyzer,
             range_analysis::{RangeAnalysis, default::RangeAnalyzer},
         },
         utils::{draw_dot::render_dot_string, fn_info::*, show_mir::display_mir},
@@ -110,6 +111,7 @@ pub struct BodyVisitor<'tcx> {
     pub tcx: TyCtxt<'tcx>,
     pub def_id: DefId,
     pub safedrop_graph: SafeDropGraph<'tcx>,
+    pub path_analyzer: PathAnalyzer<'tcx>,
     pub local_ty: HashMap<usize, PlaceTy<'tcx>>,
     pub visit_time: usize,
     pub check_results: Vec<CheckResult>,
@@ -137,6 +139,7 @@ impl<'tcx> BodyVisitor<'tcx> {
             tcx,
             def_id,
             safedrop_graph: SafeDropGraph::new(tcx, def_id, OHAResultMap::default()),
+            path_analyzer: PathAnalyzer::new(tcx, false),
             local_ty: HashMap::new(),
             visit_time,
             check_results: Vec::new(),
@@ -264,7 +267,6 @@ impl<'tcx> BodyVisitor<'tcx> {
     /// Retrieve all paths and optional range-based constraints for this function.
     /// Falls back to safedrop graph paths if range analysis did not produce constraints.
     pub fn get_all_paths(&mut self) -> HashMap<Vec<usize>, Vec<(Place<'tcx>, Place<'tcx>, BinOp)>> {
-        self.safedrop_graph.mop_graph.find_scc();
         let mut range_analyzer = RangeAnalyzer::<i64>::new(self.tcx, false);
         let path_constraints_option =
             range_analyzer.start_path_constraints_analysis_for_defid(self.def_id); // if def_id does not exist, this will break down
@@ -273,8 +275,10 @@ impl<'tcx> BodyVisitor<'tcx> {
                 Some(path_constraints) if !path_constraints.is_empty() => path_constraints,
                 _ => {
                     let mut results = HashMap::new();
-                    let paths: Vec<Vec<usize>> =
-                        self.safedrop_graph.mop_graph.get_path_sensitive_paths();
+                    let paths = self
+                        .path_analyzer
+                        .start_path_analysis_for_defid(self.def_id)
+                        .unwrap_or_default();
                     for path in paths {
                         results.insert(path, Vec::new());
                     }

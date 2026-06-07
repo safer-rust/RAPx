@@ -54,6 +54,8 @@ pub enum AnalysisKind {
     },
     /// analyze if the type holds a piece of memory on heap
     OwnedHeap,
+    /// extract path-sensitive CFG paths
+    Paths,
     /// extract path constraints
     Pathcond,
     /// perform range analysis

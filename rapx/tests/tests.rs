@@ -71,6 +71,7 @@ const CHECK_MLEAK_CMD: &[&str] = &["check", "-m"];
 const ANALYZE_ALIAS_CMD: &[&str] = &["analyze", "alias"];
 const ANALYZE_ALIAS_MFP_CMD: &[&str] = &["analyze", "alias", "--strategy", "mfp"];
 const ANALYZE_OWNED_HEAP_CMD: &[&str] = &["analyze", "owned-heap"];
+const ANALYZE_PATHS_CMD: &[&str] = &["analyze", "paths"];
 const ANALYZE_UPG_CMD: &[&str] = &["analyze", "upg"];
 const ANALYZE_SSA_CMD: &[&str] = &["analyze", "ssa"];
 const ANALYZE_RANGE_CMD: &[&str] = &["analyze", "range"];
@@ -451,6 +452,14 @@ fn test_heap_proxy() {
     ] {
         assert_contain(&output, pattern);
     }
+}
+
+#[test]
+fn test_paths_analysis() {
+    let output = run_with_args("verify/path/if-else", ANALYZE_PATHS_CMD);
+    assert_contain(&output, "Function: \"read1\":");
+    assert_contain(&output, "Function: \"read2\":");
+    assert_contain(&output, "Path [");
 }
 
 #[test]

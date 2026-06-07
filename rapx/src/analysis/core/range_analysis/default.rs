@@ -4,9 +4,8 @@ use crate::{
     analysis::{
         Analysis,
         core::{
-            // Graph used for path-sensitive CFG traversal
-            alias_analysis::default::graph::MopGraph,
             callgraph::{default::CallGraph, visitor::CallGraphVisitor},
+            path_analysis::default::PathAnalyzer,
             range_analysis::{
                 Range, RangeAnalysis,
                 domain::{
@@ -322,6 +321,7 @@ where
 
         rap_debug!("PHASE 2 Complete. Interval analysis finished for call chain start functions.");
     }
+
     pub fn start_path_constraints_analysis_for_defid(
         &mut self,
         def_id: DefId,
@@ -329,12 +329,11 @@ where
         if self.tcx.is_mir_available(def_id) {
             let mut body = self.tcx.optimized_mir(def_id).clone();
             let body_mut_ref = unsafe { &mut *(&mut body as *mut Body<'tcx>) };
+            let mut path_analyzer = PathAnalyzer::new(self.tcx, self.debug);
+            let paths = path_analyzer.start_path_analysis_for_defid(def_id)?;
 
             let mut cg: ConstraintGraph<'tcx, T> =
                 ConstraintGraph::new_without_ssa(body_mut_ref, self.tcx, def_id);
-            let mut graph = MopGraph::new(self.tcx, def_id);
-            graph.find_scc();
-            let paths: Vec<Vec<usize>> = graph.get_path_sensitive_paths();
             let result = cg.start_analyze_path_constraints(body_mut_ref, &paths);
             rap_debug!(
                 "Paths for function {}: {:?}",
@@ -359,6 +358,7 @@ where
         }
     }
     pub fn start_path_constraints_analysis(&mut self) {
+        let mut path_analyzer = PathAnalyzer::new(self.tcx, self.debug);
         for local_def_id in self.tcx.iter_local_def_id() {
             if matches!(self.tcx.def_kind(local_def_id), DefKind::Fn) {
                 let def_id = local_def_id.to_def_id();
@@ -369,9 +369,9 @@ where
 
                     let mut cg: ConstraintGraph<'tcx, T> =
                         ConstraintGraph::new_without_ssa(body_mut_ref, self.tcx, def_id);
-                    let mut graph = MopGraph::new(self.tcx, def_id);
-                    graph.find_scc();
-                    let paths: Vec<Vec<usize>> = graph.get_path_sensitive_paths();
+                    let Some(paths) = path_analyzer.start_path_analysis_for_defid(def_id) else {
+                        continue;
+                    };
                     let result = cg.start_analyze_path_constraints(body_mut_ref, &paths);
                     rap_debug!(
                         "Paths for function {}: {:?}",

@@ -59,6 +59,7 @@ use analysis::{
             Arg2RetMapWrapper, DataFlowAnalysis, DataFlowGraphMapWrapper, default::DataFlowAnalyzer,
         },
         ownedheap_analysis::{OHAResultMapWrapper, OwnedHeapAnalysis, default::OwnedHeapAnalyzer},
+        path_analysis::{PathMapWrapper, default::PathAnalyzer},
         range_analysis::{
             PathConstraintMapWrapper, RAResultMapWrapper, RangeAnalysis, default::RangeAnalyzer,
         },
@@ -269,6 +270,12 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
                 analyzer.run();
                 let result = analyzer.get_all_items();
                 rap_info!("{}", OHAResultMapWrapper(result));
+            }
+            AnalysisKind::Paths => {
+                let mut analyzer = PathAnalyzer::new(tcx, false);
+                analyzer.run();
+                let result = analyzer.get_all_paths();
+                rap_info!("{}", PathMapWrapper(result));
             }
             AnalysisKind::Pathcond => {
                 let mut analyzer = RangeAnalyzer::<i64>::new(tcx, false);
