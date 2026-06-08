@@ -7,7 +7,7 @@ use rustc_span::Span;
 
 use super::{report_encoding_bug, value_is_from_const};
 use crate::analysis::{
-    core::dataflow::{graph::*, *},
+    core::dataflow::*,
     utils::def_path::DefPath,
 };
 use crate::check::opt::OptCheck;

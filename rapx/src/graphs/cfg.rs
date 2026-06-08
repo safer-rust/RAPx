@@ -149,7 +149,7 @@ fn record_member_nodes<'tcx>(
 fn rerun_scc_in_isolation<'tcx>(
     graph: &mut ControlFlowGraph<'tcx>,
     root: usize,
-    scc_components: &[usize],
+    _scc_components: &[usize],
 ) {
     let scc_exits = graph.block(root).scc.exits.clone();
     let backedges = graph.block(root).scc.backedges.clone();

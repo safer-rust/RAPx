@@ -8,7 +8,7 @@ use rustc_span::Span;
 
 use crate::{
     analysis::{
-        core::dataflow::{graph::*, *},
+        core::dataflow::*,
         utils::def_path::DefPath,
     },
     check::opt::OptCheck,

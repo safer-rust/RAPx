@@ -4,7 +4,7 @@ use once_cell::sync::OnceCell;
 
 use crate::{
     analysis::{
-        core::dataflow::{graph::*, *},
+        core::dataflow::*,
         utils::def_path::DefPath,
     },
     check::opt::OptCheck,

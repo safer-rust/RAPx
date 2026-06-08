@@ -31,7 +31,7 @@ pub type GraphEdge = DataflowEdge;
 
 use rustc_hir::def_id::DefId;
 use rustc_index::IndexVec;
-use rustc_middle::{mir::Local, ty::TyCtxt};
+use rustc_middle::mir::Local;
 
 pub type Arg2Ret = IndexVec<Local, bool>;
 pub type Arg2RetMap = HashMap<DefId, IndexVec<Local, bool>>;

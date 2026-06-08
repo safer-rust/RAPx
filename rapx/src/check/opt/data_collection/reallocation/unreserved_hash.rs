@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use crate::{
     analysis::{
-        core::dataflow::{graph::*, *},
+        core::dataflow::*,
         utils::def_path::DefPath,
     },
     check::opt::OptCheck,

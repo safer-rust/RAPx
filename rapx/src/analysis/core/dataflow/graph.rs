@@ -1,6 +1,4 @@
-use std::collections::HashSet;
 
-use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{
         AggregateKind, BorrowKind, Const, Local, Operand, Place, PlaceElem, Rvalue, Statement,
