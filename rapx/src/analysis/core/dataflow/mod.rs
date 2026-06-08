@@ -5,20 +5,33 @@ pub mod graph;
 use std::{
     collections::{HashMap, HashSet},
     fmt::{self, Debug, Display},
-    fs::File,
-    io::Write,
-    process::Command,
 };
 
-use crate::{analysis::Analysis, utils::source::get_fn_name_byid};
+use crate::{
+    analysis::Analysis,
+    utils::source::get_fn_name_byid,
+};
+pub use crate::graphs::dataflow::*;
 
-use rustc_hir::{def::DefKind, def_id::DefId};
+impl From<DataflowGraph> for DataFlowGraph {
+    fn from(graph: DataflowGraph) -> Self {
+        let param_ret_deps = graph.param_return_deps();
+        DataFlowGraph {
+            nodes: graph.nodes,
+            edges: graph.edges,
+            param_ret_deps,
+        }
+    }
+}
+
+// Backward-compatible aliases for code migrating from old `Graph`/`GraphNode`/`GraphEdge` names.
+pub type Graph = DataflowGraph;
+pub type GraphNode = DataflowNode;
+pub type GraphEdge = DataflowEdge;
+
+use rustc_hir::def_id::DefId;
 use rustc_index::IndexVec;
-use rustc_middle::{
-    mir::{Body, Local},
-    ty::TyCtxt,
-};
-use rustc_span::Span;
+use rustc_middle::{mir::Local, ty::TyCtxt};
 
 pub type Arg2Ret = IndexVec<Local, bool>;
 pub type Arg2RetMap = HashMap<DefId, IndexVec<Local, bool>>;
@@ -35,46 +48,13 @@ pub struct Arg2RetMapWrapper(pub Arg2RetMap);
 pub struct DataFlowGraphWrapper(pub DataFlowGraph);
 pub struct DataFlowGraphMapWrapper(pub HashMap<DefId, DataFlowGraph>);
 
-pub type EdgeIdx = usize;
-pub type GraphNodes = IndexVec<Local, GraphNode>;
-pub type GraphEdges = IndexVec<EdgeIdx, GraphEdge>;
-
-#[derive(Clone, Debug)]
-pub struct GraphEdge {
-    pub src: Local,
-    pub dst: Local,
-    pub op: EdgeOp,
-    pub seq: usize,
-}
-
-#[derive(Clone, Debug)]
-pub struct GraphNode {
-    pub ops: Vec<NodeOp>,
-    pub span: Span, //the corresponding code span
-    pub seq: usize, //the sequence number, edges with the same seq number are added in the same batch within a statement or terminator
-    pub out_edges: Vec<EdgeIdx>,
-    pub in_edges: Vec<EdgeIdx>,
-}
-
 /// This trait provides features related to dataflow analysis.
 pub trait DataFlowAnalysis: Analysis {
-    /// The function returns the dataflow graph for the given function id.
     fn get_fn_dataflow(&self, def_id: DefId) -> Option<DataFlowGraph>;
-
-    /// The function returns the dataflow graph for all functions.
     fn get_all_dataflow(&self) -> DataFlowGraphMap;
-
-    /// If there is a dataflow between `local1` and `local2` within the function specified by
-    /// `def_id`, the function returns ture; otherwise, it returns false.
     fn has_flow_between(&self, def_id: DefId, local1: Local, local2: Local) -> bool;
-
-    /// The function returns a set of Locals that are equivelent to the given `local`.
     fn collect_equivalent_locals(&self, def_id: DefId, local: Local) -> HashSet<Local>;
-
-    /// The function returns an IndexVec of whether the returned Local depends on the parameter Local.
     fn get_fn_arg2ret(&self, def_id: DefId) -> Arg2Ret;
-
-    /// The function returns the dataflow between the arguments and return value for all functions
     fn get_all_arg2ret(&self) -> Arg2RetMap;
 }
 
@@ -184,61 +164,4 @@ impl Debug for DataFlowGraphMapWrapper {
         }
         Ok(())
     }
-}
-
-#[derive(Clone, Debug)]
-pub enum NodeOp {
-    //warning: the fields are related to the version of the backend rustc version
-    Nop,
-    Err,
-    Const(String, String),
-    //Rvalue
-    Use,
-    Repeat,
-    Ref,
-    ThreadLocalRef,
-    AddressOf,
-    Len,
-    Cast,
-    BinaryOp,
-    CheckedBinaryOp,
-    NullaryOp,
-    UnaryOp,
-    Discriminant,
-    Aggregate(AggKind),
-    ShallowInitBox,
-    CopyForDeref,
-    RawPtr,
-    //TerminatorKind
-    Call(DefId),
-    CallOperand, // the first in_edge is the func
-}
-
-#[derive(Clone, Debug)]
-pub enum EdgeOp {
-    Nop,
-    //Operand
-    Move,
-    Copy,
-    Const,
-    //Mutability
-    Immut,
-    Mut,
-    //Place
-    Deref,
-    Field(usize),
-    Downcast(String),
-    Index,
-    ConstIndex,
-    SubSlice,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum AggKind {
-    Array,
-    Tuple,
-    Adt(DefId),
-    Closure(DefId),
-    Coroutine(DefId),
-    RawPtr,
 }

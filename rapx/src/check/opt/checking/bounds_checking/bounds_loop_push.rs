@@ -5,7 +5,7 @@ use rustc_middle::ty::TyCtxt;
 use rustc_middle::ty::TypeckResults;
 use rustc_span::Span;
 
-use crate::analysis::core::dataflow::graph::Graph;
+use crate::analysis::core::dataflow::Graph;
 use crate::analysis::utils::def_path::DefPath;
 use crate::utils::log::{
     relative_pos_range, span_to_filename, span_to_first_line, span_to_line_number,

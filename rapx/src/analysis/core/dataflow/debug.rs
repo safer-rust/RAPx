@@ -2,7 +2,7 @@ use std::fmt::Write;
 
 use rustc_middle::{mir::Local, ty::TyCtxt};
 
-use crate::analysis::core::dataflow::{graph::*, *};
+use crate::graphs::dataflow::*;
 
 fn escaped_string(s: String) -> String {
     s.replace("{", "\\{")
@@ -12,7 +12,7 @@ fn escaped_string(s: String) -> String {
         .replace("\"", "\\\"")
 }
 
-impl GraphEdge {
+impl DataflowEdge {
     pub fn to_dot_graph<'tcx>(&self) -> String {
         let mut attr = String::new();
         let mut dot = String::new();
@@ -27,7 +27,7 @@ impl GraphEdge {
     }
 }
 
-impl GraphNode {
+impl DataflowNode {
     pub fn to_dot_graph<'tcx>(
         &self,
         tcx: &TyCtxt<'tcx>,
@@ -38,7 +38,6 @@ impl GraphNode {
         let mut attr = String::new();
         let mut dot = String::new();
         if is_marker {
-            // only Nop and Const can be marker node and they only have one op
             assert!(self.ops.len() == 1);
             match self.ops[0] {
                 NodeOp::Nop => {
@@ -55,7 +54,6 @@ impl GraphNode {
                     .unwrap();
                 }
                 NodeOp::Use => {
-                    // only exists for _a[_b] = (Use) value
                     write!(attr, "label=\"{:?} ", local).unwrap();
                 }
                 NodeOp::Aggregate(_) => {
@@ -71,7 +69,6 @@ impl GraphNode {
         let mut seq = 1;
         self.ops.iter().for_each(|op| {
             match op {
-                //label=xxx
                 NodeOp::Nop => {}
                 NodeOp::Const(..) => {}
                 NodeOp::Call(def_id) => {
@@ -120,7 +117,6 @@ impl GraphNode {
         });
         write!(attr, "\" ").unwrap();
         match color {
-            //color=xxx
             None => {}
             Some(color) => {
                 write!(attr, "color={} ", color).unwrap();
@@ -134,7 +130,7 @@ impl GraphNode {
     }
 }
 
-impl Graph {
+impl DataflowGraph {
     pub fn to_dot_graph<'tcx>(&self, tcx: &TyCtxt<'tcx>) -> String {
         let mut dot = String::new();
         let name = tcx.def_path_str(self.def_id);
@@ -151,7 +147,6 @@ impl Graph {
             };
             writeln!(dot, "    {}", node_dot).unwrap();
         }
-        //edges
         for edge in self.edges.iter() {
             let edge_dot = edge.to_dot_graph();
             writeln!(dot, "    {}", edge_dot).unwrap();

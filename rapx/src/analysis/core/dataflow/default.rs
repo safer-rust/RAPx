@@ -1,9 +1,18 @@
-use super::graph::*;
+use std::collections::{HashMap, HashSet};
+use std::fs::File;
+use std::io::Write;
+use std::process::Command;
+
 use crate::analysis::core::dataflow::*;
+use crate::analysis::Analysis;
+use rustc_hir::def::DefKind;
+use rustc_hir::def_id::DefId;
+use rustc_middle::mir::{Body, Local};
+use rustc_middle::ty::TyCtxt;
 
 pub struct DataFlowAnalyzer<'tcx> {
     pub tcx: TyCtxt<'tcx>,
-    pub graphs: HashMap<DefId, Graph>,
+    pub graphs: HashMap<DefId, DataflowGraph>,
     pub debug: bool,
 }
 
@@ -94,7 +103,7 @@ impl<'tcx> DataFlowAnalyzer<'tcx> {
             return;
         }
         let body: &Body = self.tcx.optimized_mir(def_id);
-        let mut graph = Graph::new(def_id, body.span, body.arg_count, body.local_decls.len());
+        let mut graph = DataflowGraph::new(def_id, body.span, body.arg_count, body.local_decls.len());
         let basic_blocks = &body.basic_blocks;
         for basic_block_data in basic_blocks.iter() {
             for statement in basic_block_data.statements.iter() {

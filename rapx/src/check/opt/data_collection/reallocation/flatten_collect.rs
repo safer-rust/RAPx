@@ -4,7 +4,7 @@ use rustc_middle::ty::TyCtxt;
 
 use crate::{
     analysis::{
-        core::dataflow::{graph::Graph, *},
+        core::dataflow::*,
         utils::def_path::DefPath,
     },
     check::opt::OptCheck,

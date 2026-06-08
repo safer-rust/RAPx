@@ -3,7 +3,7 @@ use annotate_snippets::{Level, Renderer, Snippet};
 use once_cell::sync::OnceCell;
 
 use crate::{
-    analysis::{core::dataflow::graph::*, utils::def_path::DefPath},
+    analysis::{core::dataflow::Graph, utils::def_path::DefPath},
     check::opt::OptCheck,
     utils::log::{relative_pos_range, span_to_filename, span_to_line_number, span_to_source_code},
 };
