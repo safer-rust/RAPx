@@ -841,7 +841,7 @@ impl<'tcx> PathGraph<'tcx> {
         self.find_scc_paths(child_enter, &child_scc, constraints)
     }
 
-    fn enumerate_scc_actions(
+    pub(crate) fn enumerate_scc_actions(
         &mut self,
         _scc: &SccInfo,
         state: &SccPathTraversalState,
@@ -869,6 +869,8 @@ impl<'tcx> PathGraph<'tcx> {
                     .or(discr_local);
 
                 let otherwise_val = self.unique_otherwise_value(discr, targets);
+
+                let mut actions = Vec::new();
 
                 // Case 1: known constraint — follow only the matching target.
                 if let Some(local) = constraint_local {

@@ -12,10 +12,7 @@ use std::{cell::Cell, collections::HashSet};
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 
 use crate::{
-    analysis::path_analysis::graph::{
-        SccEnumeratedPath, SccPathAction, SccPathTraversalConfig, SccPathTraversalState,
-        enumerate_scc_paths_cached_with,
-    },
+    analysis::path_analysis::graph::SccEnumeratedPath,
     graphs::scc::SccInfo,
 };
 
@@ -78,146 +75,6 @@ impl Drop for DepthLimitGuard {
                 d.set(cur - 1);
             }
         });
-    }
-}
-
-fn mop_on_scc_node_enter<'tcx>(
-    graph: &mut AliasGraph<'tcx>,
-    node: usize,
-    constraints: &mut FxHashMap<usize, usize>,
-) {
-    if let Some(assigned_locals) = graph.assigned_locals(node) {
-        for local in assigned_locals {
-            constraints.remove(local);
-        }
-    }
-}
-
-fn mop_enumerate_child_paths<'tcx>(
-    graph: &mut AliasGraph<'tcx>,
-    child_enter: usize,
-    constraints: &FxHashMap<usize, usize>,
-) -> Vec<SccEnumeratedPath> {
-    let child_scc = graph.cfg_block(child_enter).scc.clone();
-    graph.find_scc_paths(child_enter, &child_scc, constraints)
-}
-
-fn mop_enumerate_actions<'tcx>(
-    graph: &mut AliasGraph<'tcx>,
-    _scc: &SccInfo,
-    state: &SccPathTraversalState,
-    path_constraints: &FxHashMap<usize, usize>,
-) -> Vec<SccPathAction> {
-    let Some(term) = graph.terminator(state.cur).cloned() else {
-        return Vec::new();
-    };
-
-    let mut path_constraints = path_constraints.clone();
-    if let TerminatorKind::Call { destination, .. } = &term.kind {
-        let dest_idx = graph.projection(*destination);
-        let dest_local = graph
-            .path_graph
-            .discriminants
-            .get(&graph.values[dest_idx].local)
-            .cloned()
-            .unwrap_or(dest_idx);
-        path_constraints.remove(&dest_local);
-    }
-
-    match term.kind {
-        TerminatorKind::SwitchInt { discr, targets } => {
-            let otherwise_val = graph.unique_otherwise_switch_value(&discr, &targets);
-            let place = match discr {
-                Copy(p) | Move(p) => Some(graph.projection(p)),
-                _ => None,
-            };
-
-            let Some(place) = place else {
-                return Vec::new();
-            };
-
-            let discr_local = graph
-                .path_graph
-                .discriminants
-                .get(&graph.values[place].local)
-                .cloned()
-                .unwrap_or(place);
-
-            let possible_values = graph.possible_switch_values_for_constraint_id(discr_local);
-            let mut actions = Vec::new();
-
-            if let Some(&constant) = path_constraints.get(&discr_local) {
-                if constant == usize::MAX {
-                    actions.push(SccPathAction::Traverse {
-                        next: targets.otherwise().as_usize(),
-                        constraints: path_constraints,
-                    });
-                    return actions;
-                }
-
-                let mut found = false;
-                for branch in targets.iter() {
-                    if branch.0 as usize != constant {
-                        continue;
-                    }
-                    found = true;
-                    actions.push(SccPathAction::Traverse {
-                        next: branch.1.as_usize(),
-                        constraints: path_constraints.clone(),
-                    });
-                }
-                if !found {
-                    actions.push(SccPathAction::Traverse {
-                        next: targets.otherwise().as_usize(),
-                        constraints: path_constraints,
-                    });
-                }
-                return actions;
-            }
-
-            if let Some(values) = possible_values {
-                for constant in values {
-                    let mut new_constraints = path_constraints.clone();
-                    new_constraints.insert(discr_local, constant);
-                    actions.push(SccPathAction::Traverse {
-                        next: graph.switch_target_for_value(&targets, constant),
-                        constraints: new_constraints,
-                    });
-                }
-                return actions;
-            }
-
-            for branch in targets.iter() {
-                let mut new_constraints = path_constraints.clone();
-                new_constraints.insert(discr_local, branch.0 as usize);
-                actions.push(SccPathAction::Traverse {
-                    next: branch.1.as_usize(),
-                    constraints: new_constraints,
-                });
-            }
-
-            let mut otherwise_constraints = path_constraints;
-            otherwise_constraints.insert(discr_local, otherwise_val.unwrap_or(usize::MAX));
-            actions.push(SccPathAction::Traverse {
-                next: targets.otherwise().as_usize(),
-                constraints: otherwise_constraints,
-            });
-
-            actions
-        }
-        _ => {
-            let mut actions = Vec::new();
-            actions.push(SccPathAction::RecordExit {
-                constraints: path_constraints.clone(),
-            });
-            for next in graph.cfg_block(state.cur).next.clone() {
-                actions.push(SccPathAction::Traverse {
-                    next,
-                    constraints: path_constraints.clone(),
-                });
-            }
-            actions
-        }
     }
 }
 
@@ -695,17 +552,6 @@ impl<'tcx> AliasGraph<'tcx> {
         scc: &SccInfo,
         initial_constraints: &FxHashMap<usize, usize>,
     ) -> Vec<SccEnumeratedPath> {
-        let def_id = self.def_id();
-        enumerate_scc_paths_cached_with(
-            def_id,
-            start,
-            scc,
-            initial_constraints.clone(),
-            self,
-            mop_on_scc_node_enter,
-            mop_enumerate_child_paths,
-            mop_enumerate_actions,
-            SccPathTraversalConfig::default(),
-        )
+        self.path_graph.find_scc_paths(start, scc, initial_constraints)
     }
 }
