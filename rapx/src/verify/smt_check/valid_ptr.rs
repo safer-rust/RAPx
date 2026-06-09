@@ -22,7 +22,7 @@
 use super::{
     align,
     common::{SmtCheckResult, SmtChecker},
-    non_null,
+    in_bound, init, non_null,
 };
 use crate::verify::{
     contract::{Property, PropertyKind},
@@ -39,16 +39,22 @@ pub(crate) fn check<'tcx>(
 ) -> SmtCheckResult {
     let non_null_property = primitive_property(property, PropertyKind::NonNull);
     let align_property = primitive_property(property, PropertyKind::Align);
+    let in_bound_property = primitive_property(property, PropertyKind::InBound);
+    let init_property = primitive_property(property, PropertyKind::Init);
 
     let non_null = non_null::check(checker, callsite, &non_null_property, forward);
     let align = align::check(checker, callsite, &align_property, forward);
+    let in_bound = in_bound::check(checker, callsite, &in_bound_property, forward);
+    let init = init::check(checker, callsite, &init_property, forward);
 
     SmtCheckResult::unknown(
         "ValidPtr is decomposed, but not all primitive obligations are implemented yet",
     )
     .with_note(format!("primitive NonNull via SMT: {:?}", non_null.result))
     .with_note(format!("primitive Align via SMT: {:?}", align.result))
-    .with_note("missing primitive SMT lowerings: Allocated, InBound, Init, Typed")
+    .with_note(format!("primitive InBound via SMT: {:?}", in_bound.result))
+    .with_note(format!("primitive Init via SMT: {:?}", init.result))
+    .with_note("missing primitive SMT lowerings: Allocated, Typed")
 }
 
 /// Reuse the original arguments while checking one primitive component.

@@ -94,8 +94,12 @@ pub enum CallEffect {
     ReturnNonZero,
     /// The return value is known to satisfy a concrete alignment.
     ReturnAligned { align: u64, ty_name: String },
+    /// The return value is a concrete layout/numeric constant.
+    ReturnConst { value: u64, label: String },
     /// The call reads memory through an argument.
     ReadMemory { arg: usize },
+    /// The call writes one initialized element through a pointer argument.
+    WriteMemory { pointer_arg: usize },
     /// The return value is the length of an aggregate argument.
     ReturnLengthOfArg { arg: usize },
     /// Facts about an argument must be forgotten conservatively.
@@ -141,11 +145,31 @@ pub fn dependency_summary<'tcx>(
         };
     }
 
+    if is_pointer_write_call(&name) {
+        return CallDependencySummary {
+            callee,
+            name,
+            return_depends_on_args: Vec::new(),
+            may_write_args: vec![0],
+            unsupported: false,
+        };
+    }
+
     if is_len_call(&name) {
         return CallDependencySummary {
             callee,
             name,
             return_depends_on_args: vec![0],
+            may_write_args: Vec::new(),
+            unsupported: false,
+        };
+    }
+
+    if is_maybe_uninit_uninit_call(&name) {
+        return CallDependencySummary {
+            callee,
+            name,
+            return_depends_on_args: Vec::new(),
             may_write_args: Vec::new(),
             unsupported: false,
         };
@@ -231,6 +255,16 @@ pub fn effect_summary<'tcx>(
         };
     }
 
+    if is_pointer_write_call(&name) {
+        return CallEffectSummary {
+            callee,
+            name,
+            destination,
+            effects: vec![CallEffect::WriteMemory { pointer_arg: 0 }],
+            unsupported: false,
+        };
+    }
+
     if is_len_call(&name) {
         return CallEffectSummary {
             callee,
@@ -241,12 +275,25 @@ pub fn effect_summary<'tcx>(
         };
     }
 
-    if is_layout_constant_call(&name) {
+    if is_maybe_uninit_uninit_call(&name) {
         return CallEffectSummary {
             callee,
             name,
             destination,
             effects: Vec::new(),
+            unsupported: false,
+        };
+    }
+
+    if is_layout_constant_call(&name) {
+        let effects = layout_constant_effect(tcx, caller, func, &name)
+            .into_iter()
+            .collect();
+        return CallEffectSummary {
+            callee,
+            name,
+            destination,
+            effects,
             unsupported: false,
         };
     }
@@ -312,14 +359,62 @@ pub fn is_pointer_read_call(name: &str) -> bool {
     name.contains("::read") || name.ends_with("read")
 }
 
+/// Return true for pointer writes that initialize one element.
+pub fn is_pointer_write_call(name: &str) -> bool {
+    (name.contains("::write") || name.ends_with("write"))
+        && !name.contains("write_bytes")
+        && !name.contains("write_unaligned")
+        && !name.contains("write_volatile")
+}
+
 /// Return true for slice/string/vector length queries.
 pub fn is_len_call(name: &str) -> bool {
     name.ends_with("::len") || name.contains("::len")
 }
 
+/// Return true for `MaybeUninit::<T>::uninit`.
+pub fn is_maybe_uninit_uninit_call(name: &str) -> bool {
+    name.contains("MaybeUninit") && name.ends_with("::uninit")
+}
+
 /// Return true for layout constant producers.
 pub fn is_layout_constant_call(name: &str) -> bool {
     name.contains("align_of") || name.contains("size_of")
+}
+
+/// Return a concrete layout constant effect for `align_of::<T>()` or `size_of::<T>()`.
+fn layout_constant_effect<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    caller: DefId,
+    func: &Operand<'tcx>,
+    name: &str,
+) -> Option<CallEffect> {
+    let ty = layout_call_ty(func)?;
+    let (align, size) = type_layout(tcx, caller, ty)?;
+    if name.contains("align_of") {
+        Some(CallEffect::ReturnConst {
+            value: align,
+            label: format!("align_of::<{ty:?}>()"),
+        })
+    } else if name.contains("size_of") {
+        Some(CallEffect::ReturnConst {
+            value: size,
+            label: format!("size_of::<{ty:?}>()"),
+        })
+    } else {
+        None
+    }
+}
+
+/// Return the type argument for a layout-producing call.
+fn layout_call_ty<'tcx>(func: &Operand<'tcx>) -> Option<Ty<'tcx>> {
+    let Operand::Constant(func_constant) = func else {
+        return None;
+    };
+    let TyKind::FnDef(_, args) = func_constant.const_.ty().kind() else {
+        return None;
+    };
+    args.iter().find_map(|arg| arg.as_type())
 }
 
 /// Use the existing dataflow graph to approximate local callee return deps.

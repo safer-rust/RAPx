@@ -306,7 +306,33 @@ impl<'tcx> ForwardVisitor<'tcx> {
                         reason: format!("returned by {}", summary.name),
                     });
                 }
+                CallEffect::ReturnConst { value, label } => {
+                    result
+                        .values
+                        .insert(destination, AbstractValue::ConstInt(u128::from(*value)));
+                    result.facts.push(StateFact::KnownConst {
+                        place: destination_place.clone(),
+                        value: *value,
+                        reason: label.clone(),
+                    });
+                }
                 CallEffect::ReadMemory { .. } => {}
+                CallEffect::WriteMemory { pointer_arg } => {
+                    if let Some(pointer) = args
+                        .get(*pointer_arg)
+                        .and_then(|arg| operand_place(&arg.node))
+                    {
+                        let ty_name = self
+                            .pointee_ty_name(result.callsite.caller, &pointer)
+                            .unwrap_or_else(|| "?".to_string());
+                        result.facts.push(StateFact::KnownInit {
+                            place: pointer,
+                            ty_name,
+                            elements: 1,
+                            reason: format!("written by {}", summary.name),
+                        });
+                    }
+                }
                 CallEffect::ReturnLengthOfArg { .. } => {}
                 CallEffect::ForgetArgFacts { reason, .. } => {
                     result.forgets.push(reason.clone());
@@ -319,6 +345,19 @@ impl<'tcx> ForwardVisitor<'tcx> {
             result
                 .notes
                 .push(format!("unsupported call effect: {}", summary.name));
+        }
+    }
+
+    /// Return a compact pointee type name for a raw pointer local.
+    fn pointee_ty_name(&self, caller: DefId, place: &PlaceKey) -> Option<String> {
+        if !place.fields.is_empty() {
+            return None;
+        }
+        let local = place.local()?;
+        let ty = self.tcx.optimized_mir(caller).local_decls[local].ty;
+        match ty.kind() {
+            TyKind::RawPtr(ty, _) | TyKind::Ref(_, ty, _) => Some(format!("{ty:?}")),
+            _ => Some(format!("{ty:?}")),
         }
     }
 }
@@ -460,6 +499,17 @@ pub enum StateFact<'tcx> {
         place: PlaceKey,
         align: u64,
         ty_name: String,
+        reason: String,
+    },
+    KnownInit {
+        place: PlaceKey,
+        ty_name: String,
+        elements: u64,
+        reason: String,
+    },
+    KnownConst {
+        place: PlaceKey,
+        value: u64,
         reason: String,
     },
 }

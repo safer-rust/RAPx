@@ -306,7 +306,11 @@ impl<'tcx> BackwardVisitor<'tcx> {
             args.get(*index)
                 .is_some_and(|arg| operand_uses(&arg.node).intersects(relevant))
         });
-        if relevant_written_arg || (summary.unsupported && arg_uses.intersects(relevant)) {
+        let summarized_write = !summary.may_write_args.is_empty();
+        if relevant_written_arg
+            || summarized_write
+            || (summary.unsupported && arg_uses.intersects(relevant))
+        {
             if summary.unsupported {
                 items.push(BackwardItem::Forget {
                     reason: ForgetReason::UnknownCall,
@@ -314,8 +318,13 @@ impl<'tcx> BackwardVisitor<'tcx> {
             }
             items.push(BackwardItem::Terminator {
                 block,
-                kind: KeepReason::UnknownEffect,
+                kind: if summary.unsupported {
+                    KeepReason::UnknownEffect
+                } else {
+                    KeepReason::PointerFlow
+                },
             });
+            relevant.extend(call_args_uses_at(args, &summary.may_write_args));
         }
     }
 }

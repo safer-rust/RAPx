@@ -10,6 +10,8 @@
 
 mod align;
 mod common;
+mod in_bound;
+mod init;
 mod non_null;
 mod valid_ptr;
 

@@ -31,11 +31,11 @@ use rustc_middle::{
     ty::{GenericArgKind, PseudoCanonicalInput, Ty, TyCtxt, TyKind},
 };
 use z3::{
-    Context, Solver,
-    ast::{Ast, Int},
+    Config, Context, SatResult, Solver,
+    ast::{Ast, Bool, Int},
 };
 
-use super::{align, non_null, valid_ptr};
+use super::{align, in_bound, init, non_null, valid_ptr};
 
 use crate::verify::{
     def_use::{PlaceBaseKey, PlaceKey},
@@ -66,8 +66,286 @@ impl<'tcx> SmtChecker<'tcx> {
         match property.kind {
             PropertyKind::Align => align::check(self, callsite, property, forward),
             PropertyKind::NonNull => non_null::check(self, callsite, property, forward),
+            PropertyKind::InBound => in_bound::check(self, callsite, property, forward),
+            PropertyKind::Init => init::check(self, callsite, property, forward),
             PropertyKind::ValidPtr => valid_ptr::check(self, callsite, property, forward),
             _ => SmtCheckResult::unknown("no SMT lowering for this property yet"),
+        }
+    }
+
+    /// Prove one already-lowered common SMT obligation.
+    pub(crate) fn prove_obligation(
+        &self,
+        callsite: &Callsite<'tcx>,
+        forward: &ForwardVisitResult<'tcx>,
+        obligation: SmtObligation,
+    ) -> SmtCheckResult {
+        let cfg = Config::new();
+        let ctx = Context::new(&cfg);
+        let solver = Solver::new(&ctx);
+        let mut model = SmtModel::new(self.tcx, callsite, forward, &ctx);
+        model.assert_forward_facts(&solver);
+
+        match &obligation {
+            SmtObligation::Aligned {
+                place,
+                align,
+                ty_name: _,
+            } => {
+                if *align <= 1 {
+                    return SmtCheckResult {
+                        result: CheckResult::Proved,
+                        query: Some(SmtQuery::new(
+                            obligation.clone(),
+                            model.assumptions().to_vec(),
+                            SmtPredicate::Custom(format!(
+                                "{} has trivial 1-byte alignment",
+                                place_label(place)
+                            )),
+                        )),
+                        notes: vec![String::from("alignment requirement is trivial")],
+                    };
+                }
+
+                let target_label = place_label(place);
+                let Some(target_term) = model.term_for_place(place) else {
+                    return SmtCheckResult::unknown(format!(
+                        "could not build an address term for {target_label}"
+                    ))
+                    .with_query(SmtQuery::new(
+                        obligation.clone(),
+                        model.assumptions().to_vec(),
+                        SmtPredicate::Not(Box::new(SmtPredicate::Divisible {
+                            term: SmtTerm::Place(place.clone()),
+                            modulus: *align,
+                        })),
+                    ));
+                };
+
+                let zero = Int::from_u64(&ctx, 0);
+                let align_term = Int::from_u64(&ctx, *align);
+                let goal = target_term.modulo(&align_term)._eq(&zero);
+                let query = SmtQuery::new(
+                    obligation.clone(),
+                    model.assumptions().to_vec(),
+                    SmtPredicate::Not(Box::new(SmtPredicate::Divisible {
+                        term: SmtTerm::Place(place.clone()),
+                        modulus: *align,
+                    })),
+                );
+
+                solver.assert(&goal.not());
+                match solver.check() {
+                    SatResult::Unsat => SmtCheckResult::proved(
+                        "alignment proved; no counterexample satisfies the path facts",
+                    )
+                    .with_query(query),
+                    SatResult::Sat => SmtCheckResult::unknown(
+                        "current path facts do not prove the required alignment",
+                    )
+                    .with_query(query)
+                    .with_note(
+                        "hint: add an offset-alignment guard or provide a pointer-add/layout summary",
+                    ),
+                    SatResult::Unknown => {
+                        SmtCheckResult::unknown("solver returned unknown").with_query(query)
+                    }
+                }
+            }
+            SmtObligation::NonZero { place } => {
+                let target_label = place_label(place);
+                let Some(target_term) = model.term_for_place(place) else {
+                    return SmtCheckResult::unknown(format!(
+                        "could not build an address term for {target_label}"
+                    ))
+                    .with_query(SmtQuery::new(
+                        obligation.clone(),
+                        model.assumptions().to_vec(),
+                        SmtPredicate::Eq(SmtTerm::Place(place.clone()), SmtTerm::Const(0)),
+                    ));
+                };
+
+                let zero = Int::from_u64(&ctx, 0);
+                let query = SmtQuery::new(
+                    obligation.clone(),
+                    model.assumptions().to_vec(),
+                    SmtPredicate::Eq(SmtTerm::Place(place.clone()), SmtTerm::Const(0)),
+                );
+
+                solver.assert(&target_term._eq(&zero));
+                match solver.check() {
+                    SatResult::Unsat => SmtCheckResult::proved(
+                        "non-null proved; no zero-address model satisfies the path facts",
+                    )
+                    .with_query(query),
+                    SatResult::Sat => SmtCheckResult::unknown(
+                        "current path facts do not prove the target is non-null",
+                    )
+                    .with_query(query)
+                    .with_note("hint: add a non-null guard or provide a source/provenance summary"),
+                    SatResult::Unknown => {
+                        SmtCheckResult::unknown("solver returned unknown").with_query(query)
+                    }
+                }
+            }
+            SmtObligation::InBounds {
+                place,
+                ty_name,
+                access_count,
+                ..
+            } => {
+                let target_label = place_label(place);
+                let Some(bounds) = model.pointer_bounds_for_place(place) else {
+                    return SmtCheckResult::unknown(format!(
+                        "could not connect {target_label} to a slice length and pointer-add index"
+                    ))
+                    .with_query(SmtQuery::new(
+                        obligation.clone(),
+                        model.assumptions().to_vec(),
+                        SmtPredicate::Not(Box::new(SmtPredicate::InBounds {
+                            index: SmtTerm::Value("index(?)".to_string()),
+                            access_count: *access_count,
+                            len: SmtTerm::Value("len(?)".to_string()),
+                        })),
+                    ))
+                    .with_note(
+                        "hint: this first InBound lowering needs slice.as_ptr(), ptr.add(index), and a matching index < slice.len() path fact",
+                    );
+                };
+
+                let zero = Int::from_u64(&ctx, 0);
+                let access = Int::from_u64(&ctx, *access_count);
+                let index_non_negative = bounds.index.ge(&zero);
+                let covered_end = Int::add(&ctx, &[bounds.index.clone(), access]);
+                let within_len = covered_end.le(&bounds.len);
+                solver.assert(&index_non_negative);
+                model.assumptions.push(SmtPredicate::Ge(
+                    bounds.index_term.clone(),
+                    SmtTerm::Const(0),
+                ));
+                let goal = Bool::and(&ctx, &[&index_non_negative, &within_len]);
+                let query = SmtQuery::new(
+                    obligation.clone(),
+                    model.assumptions().to_vec(),
+                    SmtPredicate::Not(Box::new(SmtPredicate::InBounds {
+                        index: bounds.index_term,
+                        access_count: *access_count,
+                        len: bounds.len_term,
+                    })),
+                );
+
+                solver.assert(&goal.not());
+                match solver.check() {
+                    SatResult::Unsat => SmtCheckResult::proved(format!(
+                        "in-bounds proved for {target_label}; {access_count} {ty_name} element(s) fit under the matched slice length"
+                    ))
+                    .with_query(query),
+                    SatResult::Sat => SmtCheckResult::unknown(
+                        "current path facts do not prove the required bounds",
+                    )
+                    .with_query(query)
+                    .with_note("hint: add an index < len guard or provide a richer object-size summary"),
+                    SatResult::Unknown => {
+                        SmtCheckResult::unknown("solver returned unknown").with_query(query)
+                    }
+                }
+            }
+            SmtObligation::Initialized {
+                place,
+                ty_name,
+                elements,
+            } => {
+                let target_label = place_label(place);
+                let Some(target_term) = model.term_for_place(place) else {
+                    return SmtCheckResult::unknown(format!(
+                        "could not build an address term for {target_label}"
+                    ))
+                    .with_query(SmtQuery::new(
+                        obligation.clone(),
+                        model.assumptions().to_vec(),
+                        SmtPredicate::Custom(format!(
+                            "not Init({}, {ty_name}, {elements})",
+                            target_label
+                        )),
+                    ));
+                };
+
+                let init_facts: Vec<_> = forward
+                    .facts
+                    .iter()
+                    .filter_map(|fact| match fact {
+                        StateFact::KnownInit {
+                            place,
+                            ty_name,
+                            elements,
+                            reason,
+                        } => Some((place.clone(), ty_name.clone(), *elements, reason.clone())),
+                        _ => None,
+                    })
+                    .collect();
+
+                let mut checked_any_init_fact = false;
+                for (init_place, init_ty_name, init_elements, init_reason) in init_facts {
+                    if init_elements < *elements {
+                        continue;
+                    }
+                    let Some(init_term) = model.term_for_place(&init_place) else {
+                        continue;
+                    };
+                    checked_any_init_fact = true;
+                    let query = SmtQuery::new(
+                        obligation.clone(),
+                        model.assumptions().to_vec(),
+                        SmtPredicate::Custom(format!(
+                            "not same_addr({}, {}) for Init({}, {ty_name}, {elements})",
+                            target_label,
+                            place_label(&init_place),
+                            target_label
+                        )),
+                    );
+                    solver.push();
+                    solver.assert(&target_term._eq(&init_term).not());
+                    let check = solver.check();
+                    solver.pop(1);
+                    if matches!(check, SatResult::Unsat) {
+                        return SmtCheckResult::proved(format!(
+                            "initialization proved; {target_label} aliases a {init_elements}-element write ({init_reason})"
+                        ))
+                        .with_query(query)
+                        .with_note(format!("matched initialized type summary: {init_ty_name}"));
+                    }
+                }
+
+                let mut result = SmtCheckResult::unknown(
+                    "current path facts do not prove the target memory is initialized",
+                )
+                .with_query(SmtQuery::new(
+                    obligation.clone(),
+                    model.assumptions().to_vec(),
+                    SmtPredicate::Custom(format!(
+                        "not Init({}, {ty_name}, {elements})",
+                        target_label
+                    )),
+                ));
+                if checked_any_init_fact {
+                    result = result.with_note(
+                        "hint: a write was found, but SMT could not prove it aliases the Init target",
+                    );
+                } else {
+                    result = result.with_note(
+                        "hint: add a preceding ptr.write summary or a verified init-range summary",
+                    );
+                }
+                result
+            }
+            SmtObligation::Range { .. } => SmtCheckResult::unknown(
+                "range obligations are not implemented yet",
+            )
+            .with_query(SmtQuery::new(
+                obligation.clone(),
+                model.assumptions().to_vec(),
+                SmtPredicate::Custom(String::from("range refutation not implemented")),
+            )),
         }
     }
 
@@ -102,6 +380,16 @@ impl<'tcx> SmtChecker<'tcx> {
                 return None;
             };
             Some(self.instantiate_callsite_ty(callsite, *ty))
+        })
+    }
+
+    /// Resolve the trailing numeric length argument of a property when constant.
+    pub(crate) fn property_len_const(&self, property: &Property<'tcx>) -> Option<u64> {
+        property.args.iter().rev().find_map(|arg| {
+            let PropertyArg::Expr(ContractExpr::Const(value)) = arg else {
+                return None;
+            };
+            u64::try_from(*value).ok()
         })
     }
 
@@ -190,6 +478,19 @@ pub enum SmtObligation {
         lower: i128,
         upper: Option<i128>,
     },
+    /// Prove that `place` points to `access_count` elements inside its object.
+    InBounds {
+        place: PlaceKey,
+        ty_name: String,
+        elem_size: u64,
+        access_count: u64,
+    },
+    /// Prove that `place` denotes initialized memory for `elements` elements.
+    Initialized {
+        place: PlaceKey,
+        ty_name: String,
+        elements: u64,
+    },
 }
 
 impl SmtObligation {
@@ -217,6 +518,111 @@ impl SmtObligation {
                 Some(upper) => format!("Range({}, {lower}..{upper})", place_label(value)),
                 None => format!("Range({}, {lower}..)", place_label(value)),
             },
+            SmtObligation::InBounds {
+                place,
+                ty_name,
+                elem_size,
+                access_count,
+            } => format!(
+                "InBound({}, {}, {} element(s), {} byte(s) each)",
+                place_label(place),
+                ty_name,
+                access_count,
+                elem_size
+            ),
+            SmtObligation::Initialized {
+                place,
+                ty_name,
+                elements,
+            } => format!(
+                "Init({}, {}, {} element(s))",
+                place_label(place),
+                ty_name,
+                elements
+            ),
+        }
+    }
+}
+
+/// Common SMT term used by diagnostics and property-independent query building.
+#[derive(Clone, Debug)]
+pub enum SmtTerm {
+    Place(PlaceKey),
+    Value(String),
+    Const(u64),
+    Add(Box<SmtTerm>, Box<SmtTerm>),
+    Mul(Box<SmtTerm>, Box<SmtTerm>),
+    Rem(Box<SmtTerm>, Box<SmtTerm>),
+}
+
+impl SmtTerm {
+    /// Render this term in compact source-facing form.
+    pub fn describe(&self) -> String {
+        match self {
+            SmtTerm::Place(place) => place_label(place),
+            SmtTerm::Value(value) => value.clone(),
+            SmtTerm::Const(value) => value.to_string(),
+            SmtTerm::Add(lhs, rhs) => format!("({} + {})", lhs.describe(), rhs.describe()),
+            SmtTerm::Mul(lhs, rhs) => format!("({} * {})", lhs.describe(), rhs.describe()),
+            SmtTerm::Rem(lhs, rhs) => format!("({} % {})", lhs.describe(), rhs.describe()),
+        }
+    }
+}
+
+/// Common boolean predicate asserted or refuted by SMT queries.
+#[derive(Clone, Debug)]
+pub enum SmtPredicate {
+    Eq(SmtTerm, SmtTerm),
+    Ne(SmtTerm, SmtTerm),
+    Le(SmtTerm, SmtTerm),
+    Lt(SmtTerm, SmtTerm),
+    Ge(SmtTerm, SmtTerm),
+    Gt(SmtTerm, SmtTerm),
+    And(Vec<SmtPredicate>),
+    Divisible {
+        term: SmtTerm,
+        modulus: u64,
+    },
+    InBounds {
+        index: SmtTerm,
+        access_count: u64,
+        len: SmtTerm,
+    },
+    Not(Box<SmtPredicate>),
+    Custom(String),
+}
+
+impl SmtPredicate {
+    /// Render this predicate for diagnostics.
+    pub fn describe(&self) -> String {
+        match self {
+            SmtPredicate::Eq(lhs, rhs) => format!("{} == {}", lhs.describe(), rhs.describe()),
+            SmtPredicate::Ne(lhs, rhs) => format!("{} != {}", lhs.describe(), rhs.describe()),
+            SmtPredicate::Le(lhs, rhs) => format!("{} <= {}", lhs.describe(), rhs.describe()),
+            SmtPredicate::Lt(lhs, rhs) => format!("{} < {}", lhs.describe(), rhs.describe()),
+            SmtPredicate::Ge(lhs, rhs) => format!("{} >= {}", lhs.describe(), rhs.describe()),
+            SmtPredicate::Gt(lhs, rhs) => format!("{} > {}", lhs.describe(), rhs.describe()),
+            SmtPredicate::And(predicates) => predicates
+                .iter()
+                .map(SmtPredicate::describe)
+                .collect::<Vec<_>>()
+                .join(" && "),
+            SmtPredicate::Divisible { term, modulus } => {
+                format!("{} % {modulus} == 0", term.describe())
+            }
+            SmtPredicate::InBounds {
+                index,
+                access_count,
+                len,
+            } => format!(
+                "0 <= {} && {} + {} <= {}",
+                index.describe(),
+                index.describe(),
+                access_count,
+                len.describe()
+            ),
+            SmtPredicate::Not(predicate) => format!("not({})", predicate.describe()),
+            SmtPredicate::Custom(text) => text.clone(),
         }
     }
 }
@@ -226,23 +632,23 @@ impl SmtObligation {
 pub struct SmtQuery {
     /// Property-specific obligation being proved.
     pub obligation: SmtObligation,
-    /// Human-readable assumptions asserted from forward facts.
-    pub assumptions: Vec<String>,
-    /// Human-readable negated goal sent to the solver.
-    pub negated_goal: String,
+    /// Assumptions asserted from forward facts.
+    pub assumptions: Vec<SmtPredicate>,
+    /// Negated goal sent to the solver.
+    pub negated_goal: SmtPredicate,
 }
 
 impl SmtQuery {
     /// Create a query description.
     pub fn new(
         obligation: SmtObligation,
-        assumptions: Vec<String>,
-        negated_goal: impl Into<String>,
+        assumptions: Vec<SmtPredicate>,
+        negated_goal: SmtPredicate,
     ) -> Self {
         Self {
             obligation,
             assumptions,
-            negated_goal: negated_goal.into(),
+            negated_goal,
         }
     }
 }
@@ -297,10 +703,13 @@ impl SmtCheckResult {
             if !query.assumptions.is_empty() {
                 lines.push("        |_ known facts:".to_string());
                 for assumption in &query.assumptions {
-                    lines.push(format!("        |  |_ {assumption}"));
+                    lines.push(format!("        |  |_ {}", assumption.describe()));
                 }
             }
-            lines.push(format!("        |_ checked: {}", query.negated_goal));
+            lines.push(format!(
+                "        |_ checked: {}",
+                query.negated_goal.describe()
+            ));
         }
         if let Some((first, rest)) = self.notes.split_first() {
             lines.push(format!("        |_ verdict: {first}"));
@@ -323,7 +732,7 @@ pub(crate) struct SmtModel<'a, 'ctx, 'tcx> {
     forward: &'a ForwardVisitResult<'tcx>,
     ctx: &'ctx Context,
     place_terms: HashMap<PlaceKey, Int<'ctx>>,
-    assumptions: Vec<String>,
+    assumptions: Vec<SmtPredicate>,
 }
 
 impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
@@ -357,13 +766,16 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                     self.assert_place_alignment(solver, pointer);
                     self.assert_place_alignment(solver, source);
                 }
-                StateFact::Call(call) if is_as_ptr_call(&call.func) => {
-                    let place = PlaceKey {
-                        base: PlaceBaseKey::Local(call.destination.as_usize()),
-                        fields: Vec::new(),
-                    };
-                    self.assert_place_non_zero(solver, &place, "returned by as_ptr");
-                    self.assert_place_alignment(solver, &place);
+                StateFact::Call(call) => {
+                    if is_as_ptr_call(&call.func) {
+                        let place = PlaceKey {
+                            base: PlaceBaseKey::Local(call.destination.as_usize()),
+                            fields: Vec::new(),
+                        };
+                        self.assert_place_non_zero(solver, &place, "returned by as_ptr");
+                        self.assert_place_alignment(solver, &place);
+                    }
+                    self.record_call_effect_assumptions(call);
                 }
                 StateFact::KnownNonZero { place, reason } => {
                     self.assert_place_non_zero(solver, place, reason);
@@ -376,29 +788,103 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 } => {
                     self.assert_known_alignment(solver, place, *align, ty_name, reason);
                 }
+                StateFact::KnownInit {
+                    place,
+                    ty_name,
+                    elements,
+                    reason,
+                } => {
+                    self.assumptions.push(SmtPredicate::Custom(format!(
+                        "{} initialized for {ty_name}, {elements} element(s) ({reason})",
+                        place_label(place)
+                    )));
+                }
+                StateFact::KnownConst {
+                    place,
+                    value,
+                    reason,
+                } => {
+                    self.assert_known_const(solver, place, *value, reason);
+                }
                 StateFact::BranchEq { value, equals } => {
                     if let Some(term) = self.term_for_value(value, &mut HashSet::new()) {
                         let expected = Int::from_u64(self.ctx, *equals as u64);
                         solver.assert(&term._eq(&expected));
-                        self.assumptions
-                            .push(format!("{} == {equals}", value_label(value)));
+                        self.assumptions.push(SmtPredicate::Eq(
+                            SmtTerm::Value(value_label(value)),
+                            SmtTerm::Const(*equals as u64),
+                        ));
                     }
                 }
+                StateFact::Cast { target, source, .. } => {
+                    self.assumptions.push(SmtPredicate::Eq(
+                        SmtTerm::Place(target.clone()),
+                        SmtTerm::Value(value_label(source)),
+                    ));
+                }
+                StateFact::Binary {
+                    target,
+                    op,
+                    lhs,
+                    rhs,
+                } => {
+                    self.assumptions.push(SmtPredicate::Eq(
+                        SmtTerm::Place(target.clone()),
+                        SmtTerm::Value(format!(
+                            "({} {} {})",
+                            value_label(lhs),
+                            binop_label(*op),
+                            value_label(rhs)
+                        )),
+                    ));
+                }
                 StateFact::Contract(_)
-                | StateFact::Cast { .. }
-                | StateFact::Binary { .. }
                 | StateFact::PathCondition(_)
                 | StateFact::Drop(_)
                 | StateFact::LocalDead(_)
-                | StateFact::CallEffect(_)
-                | StateFact::Call(_) => {}
+                | StateFact::CallEffect(_) => {}
             }
         }
     }
 
     /// Return the path assumptions asserted by this model.
-    pub(crate) fn assumptions(&self) -> &[String] {
+    pub(crate) fn assumptions(&self) -> &[SmtPredicate] {
         &self.assumptions
+    }
+
+    /// Try to recover the slice index/length terms behind a `ptr.add(index)` result.
+    pub(crate) fn pointer_bounds_for_place(
+        &mut self,
+        place: &PlaceKey,
+    ) -> Option<PointerBounds<'ctx>> {
+        let call = self.pointer_add_call_for_place(place)?;
+        if !is_pointer_add_call(&call.func) {
+            return None;
+        }
+        let (base_arg, offset_arg) = call.effects.iter().find_map(|effect| {
+            let crate::verify::call_summary::CallEffect::ReturnPointerAdd {
+                base_arg,
+                offset_arg,
+                ..
+            } = effect
+            else {
+                return None;
+            };
+            Some((*base_arg, *offset_arg))
+        })?;
+        let base = call.args.get(base_arg)?;
+        let index = call.args.get(offset_arg)?;
+        let base_origin = self.origin_key_for_value(base, &mut HashSet::new())?;
+        let len_place = self.len_place_for_origin(&base_origin)?;
+
+        let index_term = self.term_for_value(index, &mut HashSet::new())?;
+        let len_term_int = self.term_for_place(&len_place)?;
+        Some(PointerBounds {
+            index: index_term,
+            len: len_term_int,
+            index_term: SmtTerm::Value(value_label(index)),
+            len_term: SmtTerm::Place(len_place),
+        })
     }
 
     /// Assert that a place is known to denote a non-zero address.
@@ -411,8 +897,10 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         if let Some(term) = self.term_for_place(place) {
             let zero = Int::from_u64(self.ctx, 0);
             solver.assert(&term._eq(&zero).not());
-            self.assumptions
-                .push(format!("{} != 0 ({reason})", place_label(place)));
+            self.assumptions.push(SmtPredicate::Custom(format!(
+                "{} != 0 ({reason})",
+                place_label(place)
+            )));
         }
     }
 
@@ -432,12 +920,12 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         }
         if let Some(term) = self.term_for_place(place) {
             let zero = Int::from_u64(self.ctx, 0);
-            let align = Int::from_u64(self.ctx, align);
-            solver.assert(&term.modulo(&align)._eq(&zero));
-            self.assumptions.push(format!(
+            let align_term = Int::from_u64(self.ctx, align);
+            solver.assert(&term.modulo(&align_term)._eq(&zero));
+            self.assumptions.push(SmtPredicate::Custom(format!(
                 "{} aligned for {align_ty:?} ({align} bytes)",
                 place_label(place)
-            ));
+            )));
         }
     }
 
@@ -457,10 +945,90 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             let zero = Int::from_u64(self.ctx, 0);
             let align_term = Int::from_u64(self.ctx, align);
             solver.assert(&term.modulo(&align_term)._eq(&zero));
-            self.assumptions.push(format!(
+            self.assumptions.push(SmtPredicate::Custom(format!(
                 "{} aligned for {ty_name} ({align} bytes, {reason})",
                 place_label(place)
-            ));
+            )));
+        }
+    }
+
+    /// Assert that a place is equal to a concrete layout/numeric constant.
+    fn assert_known_const(
+        &mut self,
+        solver: &Solver<'ctx>,
+        place: &PlaceKey,
+        value: u64,
+        reason: &str,
+    ) {
+        if let Some(term) = self.term_for_place(place) {
+            let value_term = Int::from_u64(self.ctx, value);
+            solver.assert(&term._eq(&value_term));
+            self.assumptions.push(SmtPredicate::Custom(format!(
+                "{} == {value} ({reason})",
+                place_label(place)
+            )));
+        }
+    }
+
+    /// Record call-effect definitions that the term builder understands.
+    fn record_call_effect_assumptions(&mut self, call: &CallSummary<'tcx>) {
+        let destination = PlaceKey {
+            base: PlaceBaseKey::Local(call.destination.as_usize()),
+            fields: Vec::new(),
+        };
+        for effect in &call.effects {
+            match effect {
+                crate::verify::call_summary::CallEffect::ReturnPointerAdd {
+                    base_arg,
+                    offset_arg,
+                    stride,
+                } => {
+                    let base = call
+                        .args
+                        .get(*base_arg)
+                        .map(value_label)
+                        .unwrap_or_else(|| format!("arg{base_arg}"));
+                    let offset = call
+                        .args
+                        .get(*offset_arg)
+                        .map(value_label)
+                        .unwrap_or_else(|| format!("arg{offset_arg}"));
+                    let stride = stride.unwrap_or(1);
+                    self.assumptions.push(SmtPredicate::Eq(
+                        SmtTerm::Place(destination.clone()),
+                        SmtTerm::Value(format!("{base} + {offset} * {stride}")),
+                    ));
+                }
+                crate::verify::call_summary::CallEffect::ReturnLengthOfArg { arg } => {
+                    let source = call
+                        .args
+                        .get(*arg)
+                        .map(value_label)
+                        .unwrap_or_else(|| format!("arg{arg}"));
+                    self.assumptions.push(SmtPredicate::Eq(
+                        SmtTerm::Place(destination.clone()),
+                        SmtTerm::Value(format!("len({source})")),
+                    ));
+                }
+                crate::verify::call_summary::CallEffect::ReturnPointerFromArg { arg }
+                | crate::verify::call_summary::CallEffect::ReturnAliasArg { arg } => {
+                    let source = call
+                        .args
+                        .get(*arg)
+                        .map(value_label)
+                        .unwrap_or_else(|| format!("arg{arg}"));
+                    self.assumptions.push(SmtPredicate::Eq(
+                        SmtTerm::Place(destination.clone()),
+                        SmtTerm::Value(source),
+                    ));
+                }
+                crate::verify::call_summary::CallEffect::ReturnConst { .. } => {}
+                crate::verify::call_summary::CallEffect::ReturnNonZero
+                | crate::verify::call_summary::CallEffect::ReturnAligned { .. }
+                | crate::verify::call_summary::CallEffect::ReadMemory { .. }
+                | crate::verify::call_summary::CallEffect::WriteMemory { .. }
+                | crate::verify::call_summary::CallEffect::ForgetArgFacts { .. } => {}
+            }
         }
     }
 
@@ -600,6 +1168,120 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         let layout = self.tcx.layout_of(input).ok()?;
         Some((layout.align.abi.bytes(), layout.size.bytes()))
     }
+
+    /// Return the pointer-add call that produced a place after copies/casts.
+    fn pointer_add_call_for_place(&self, place: &PlaceKey) -> Option<CallSummary<'tcx>> {
+        let value = self.resolved_value_for_place(place, &mut HashSet::new())?;
+        match value {
+            AbstractValue::CallResult(call) if is_pointer_add_call(&call.func) => Some(call),
+            _ => None,
+        }
+    }
+
+    /// Resolve copy/cast chains for a MIR place into the value at their source.
+    fn resolved_value_for_place(
+        &self,
+        place: &PlaceKey,
+        seen: &mut HashSet<PlaceKey>,
+    ) -> Option<AbstractValue<'tcx>> {
+        if !seen.insert(place.clone()) {
+            return None;
+        }
+        let value = value_for_place(self.forward, place)?;
+        self.resolved_value(value, seen)
+            .or_else(|| Some(value.clone()))
+    }
+
+    /// Resolve copy/cast chains for an abstract value.
+    fn resolved_value(
+        &self,
+        value: &AbstractValue<'tcx>,
+        seen: &mut HashSet<PlaceKey>,
+    ) -> Option<AbstractValue<'tcx>> {
+        match value {
+            AbstractValue::Place(place) => self.resolved_value_for_place(place, seen),
+            AbstractValue::Cast(inner, _) => self.resolved_value(inner, seen),
+            _ => Some(value.clone()),
+        }
+    }
+
+    /// Return a stable origin key for matching `as_ptr(source)` and `len(source)`.
+    fn origin_key_for_value(
+        &self,
+        value: &AbstractValue<'tcx>,
+        seen: &mut HashSet<PlaceKey>,
+    ) -> Option<String> {
+        let resolved = self
+            .resolved_value(value, seen)
+            .unwrap_or_else(|| value.clone());
+        match resolved {
+            AbstractValue::Ref(place) | AbstractValue::RawPtr(place) => Some(place_label(&place)),
+            AbstractValue::Place(place) => self
+                .source_from_points_to(&place)
+                .map(|source| place_label(&source))
+                .or_else(|| Some(place_label(&place))),
+            AbstractValue::Cast(inner, _) => self.origin_key_for_value(&inner, seen),
+            AbstractValue::CallResult(call) if is_as_ptr_call(&call.func) => {
+                let source_arg = call.effects.iter().find_map(|effect| match effect {
+                    crate::verify::call_summary::CallEffect::ReturnPointerFromArg { arg }
+                    | crate::verify::call_summary::CallEffect::ReturnAliasArg { arg } => Some(*arg),
+                    _ => None,
+                })?;
+                self.origin_key_for_value(call.args.get(source_arg)?, seen)
+            }
+            _ => Some(value_label(&resolved)),
+        }
+    }
+
+    /// Return the source place recorded by a `PointsTo(pointer, source)` fact.
+    fn source_from_points_to(&self, pointer: &PlaceKey) -> Option<PlaceKey> {
+        self.forward.facts.iter().find_map(|fact| match fact {
+            StateFact::PointsTo {
+                pointer: fact_pointer,
+                source,
+            } if fact_pointer == pointer => Some(source.clone()),
+            _ => None,
+        })
+    }
+
+    /// Find a retained `len(source)` call whose source matches `origin_key`.
+    fn len_place_for_origin(&self, origin_key: &str) -> Option<PlaceKey> {
+        for fact in &self.forward.facts {
+            let StateFact::Call(call) = fact else {
+                continue;
+            };
+            let Some(source_arg) = call.effects.iter().find_map(|effect| {
+                let crate::verify::call_summary::CallEffect::ReturnLengthOfArg { arg } = effect
+                else {
+                    return None;
+                };
+                Some(*arg)
+            }) else {
+                continue;
+            };
+            let Some(source) = call.args.get(source_arg) else {
+                continue;
+            };
+            let Some(key) = self.origin_key_for_value(source, &mut HashSet::new()) else {
+                continue;
+            };
+            if key == origin_key {
+                return Some(PlaceKey {
+                    base: PlaceBaseKey::Local(call.destination.as_usize()),
+                    fields: Vec::new(),
+                });
+            }
+        }
+        None
+    }
+}
+
+/// Recovered index and length terms for a first-cut in-bounds proof.
+pub(crate) struct PointerBounds<'ctx> {
+    index: Int<'ctx>,
+    len: Int<'ctx>,
+    index_term: SmtTerm,
+    len_term: SmtTerm,
 }
 
 /// Convert an operand into a place key when it names a MIR place.
@@ -700,7 +1382,7 @@ pub(crate) fn value_label(value: &AbstractValue<'_>) -> String {
         AbstractValue::Unary(op, inner) => format!("{op:?}({})", value_label(inner)),
         AbstractValue::Binary(op, lhs, rhs) => {
             format!(
-                "{} {} {}",
+                "({} {} {})",
                 value_label(lhs),
                 binop_label(*op),
                 value_label(rhs)

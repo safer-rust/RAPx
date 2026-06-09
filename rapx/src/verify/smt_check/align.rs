@@ -15,15 +15,8 @@
 //! The common model then proves the obligation by asking whether the path facts
 //! plus the negated alignment goal are satisfiable.
 
-use z3::{
-    Config, Context, SatResult, Solver,
-    ast::{Ast, Int},
-};
-
-use super::common::{SmtCheckResult, SmtChecker, SmtModel, SmtObligation, SmtQuery, place_label};
-use crate::verify::{
-    contract::Property, forward_visit::ForwardVisitResult, helpers::Callsite, report::CheckResult,
-};
+use super::common::{SmtCheckResult, SmtChecker, SmtObligation};
+use crate::verify::{contract::Property, forward_visit::ForwardVisitResult, helpers::Callsite};
 
 /// Check `Align` by lowering it to `SmtObligation::Aligned`.
 pub(crate) fn check<'tcx>(
@@ -46,63 +39,9 @@ pub(crate) fn check<'tcx>(
     };
 
     let obligation = SmtObligation::Aligned {
-        place: target.clone(),
+        place: target,
         align: required_align,
         ty_name: format!("{required_ty:?}"),
     };
-    let target_label = place_label(&target);
-
-    if required_align <= 1 {
-        return SmtCheckResult {
-            result: CheckResult::Proved,
-            query: Some(SmtQuery::new(
-                obligation,
-                Vec::new(),
-                format!("Align({target_label}) is trivial because required alignment is 1"),
-            )),
-            notes: vec![String::from("alignment requirement is trivial")],
-        };
-    }
-
-    let cfg = Config::new();
-    let ctx = Context::new(&cfg);
-    let solver = Solver::new(&ctx);
-    let mut model = SmtModel::new(checker.tcx, callsite, forward, &ctx);
-    model.assert_forward_facts(&solver);
-
-    let Some(target_term) = model.term_for_place(&target) else {
-        return SmtCheckResult::unknown(format!(
-            "could not build an address term for {target_label}"
-        ))
-        .with_query(SmtQuery::new(
-            obligation,
-            model.assumptions().to_vec(),
-            format!("try to refute {target_label} % {required_align} == 0"),
-        ));
-    };
-
-    let zero = Int::from_u64(&ctx, 0);
-    let align = Int::from_u64(&ctx, required_align);
-    let goal = target_term.modulo(&align)._eq(&zero);
-    let query = SmtQuery::new(
-        obligation,
-        model.assumptions().to_vec(),
-        format!("try to refute {target_label} % {required_align} == 0"),
-    );
-
-    solver.assert(&goal.not());
-    match solver.check() {
-        SatResult::Unsat => {
-            SmtCheckResult::proved("alignment proved; no counterexample satisfies the path facts")
-                .with_query(query)
-        }
-        SatResult::Sat => {
-            SmtCheckResult::unknown("current path facts do not prove the required alignment")
-                .with_query(query)
-                .with_note(
-                    "hint: add an offset-alignment guard or provide a pointer-add/layout summary",
-                )
-        }
-        SatResult::Unknown => SmtCheckResult::unknown("solver returned unknown").with_query(query),
-    }
+    checker.prove_obligation(callsite, forward, obligation)
 }
