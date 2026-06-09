@@ -17,6 +17,38 @@ use super::helpers::{CFG, Callsite, CallsiteLocation};
 
 const PATH_LIMIT: usize = 1024;
 
+/// Shared DFS state for entry-path search (target callsite outside SCC regions).
+struct EntrySearchCtx<'a> {
+    visited: &'a mut FxHashSet<BasicBlock>,
+    stack: &'a mut Vec<PathStep>,
+    results: &'a mut Vec<Path>,
+    limit: usize,
+    target: CallsiteLocation,
+    target_block: BasicBlock,
+}
+
+/// Shared DFS state for entry-prefix search (to an SCC representative).
+struct PrefixSearchCtx<'a> {
+    visited: &'a mut FxHashSet<BasicBlock>,
+    stack: &'a mut Vec<PathStep>,
+    results: &'a mut Vec<Vec<PathStep>>,
+    limit: usize,
+    representative: BasicBlock,
+}
+
+/// Shared DFS state for SCC-internal path search.
+struct SccInternalCtx<'a> {
+    visited: &'a mut FxHashSet<BasicBlock>,
+    stack: &'a mut Vec<PathStep>,
+    results: &'a mut Vec<Path>,
+    limit: usize,
+    target: CallsiteLocation,
+    target_block: BasicBlock,
+    representative: BasicBlock,
+    scc_blocks: &'a FxHashSet<BasicBlock>,
+    entry_prefixes: &'a [Vec<PathStep>],
+}
+
 /// Extracts SCC-aware paths for one function body.
 pub struct PathExtractor<'tcx> {
     cfg: CFG,
@@ -74,145 +106,187 @@ impl<'tcx> PathExtractor<'tcx> {
         }
     }
 
-    /// Enumerate finite paths from function entry to a callsite outside SCC regions.
-    ///
-    /// The search does not expand SCC internals. When a successor enters an SCC
-    /// that does not contain the target callsite, the path records one SCC-exit
-    /// step and continues from the exit destination.
+    // ── entry-path search (target outside SCC) ──────────────────────────
+
     fn find_entry_paths(&self, target: CallsiteLocation, target_block: BasicBlock) -> Vec<Path> {
         let mut results = Vec::new();
         let mut stack = vec![PathStep::Block(self.cfg.entry)];
         let mut visited = FxHashSet::default();
         visited.insert(self.cfg.entry);
-        self.dfs_entry_paths(
-            self.cfg.entry,
+        let mut ctx = EntrySearchCtx {
+            visited: &mut visited,
+            stack: &mut stack,
+            results: &mut results,
+            limit: PATH_LIMIT,
             target,
             target_block,
-            &mut visited,
-            &mut stack,
-            &mut results,
-            PATH_LIMIT,
-        );
+        };
+        self.dfs_entry_paths(self.cfg.entry, &mut ctx);
         results
     }
 
-    /// Search from the current block to an outside-SCC target callsite.
-    ///
-    /// Normal blocks are recorded directly. Entering an SCC records a
-    /// `PathStep::SccExit` for each SCC exit rather than visiting SCC-internal
-    /// blocks, which keeps the produced paths finite.
-    fn dfs_entry_paths(
-        &self,
-        current: BasicBlock,
-        target: CallsiteLocation,
-        target_block: BasicBlock,
-        visited: &mut FxHashSet<BasicBlock>,
-        stack: &mut Vec<PathStep>,
-        results: &mut Vec<Path>,
-        limit: usize,
-    ) {
-        if results.len() >= limit {
+    fn dfs_entry_paths(&self, current: BasicBlock, ctx: &mut EntrySearchCtx<'_>) {
+        if ctx.results.len() >= ctx.limit {
             return;
         }
 
-        if current == target_block {
-            stack.push(PathStep::Callsite(target));
-            results.push(Path {
-                target,
+        if current == ctx.target_block {
+            ctx.stack.push(PathStep::Callsite(ctx.target));
+            ctx.results.push(Path {
+                target: ctx.target,
                 start: PathStart::FunctionEntry,
                 entry_prefix: Vec::new(),
-                steps: stack.clone(),
+                steps: ctx.stack.clone(),
             });
-            stack.pop();
+            ctx.stack.pop();
             return;
         }
 
         for &next in self.cfg.successors(current) {
-            if results.len() >= limit {
+            if ctx.results.len() >= ctx.limit {
                 break;
             }
 
             if let Some(representative) = self.block_to_scc.get(&next).copied() {
-                if self.block_to_scc.get(&target_block).copied() == Some(representative) {
+                if self.block_to_scc.get(&ctx.target_block).copied() == Some(representative) {
                     continue;
                 }
-                self.follow_scc_exits(
-                    representative,
-                    target,
-                    target_block,
-                    visited,
-                    stack,
-                    results,
-                    limit,
-                );
+                self.follow_scc_exits(representative, ctx);
                 continue;
             }
 
-            if visited.contains(&next) {
+            if ctx.visited.contains(&next) {
                 continue;
             }
 
-            stack.push(PathStep::Block(next));
-            visited.insert(next);
-            self.dfs_entry_paths(next, target, target_block, visited, stack, results, limit);
-            visited.remove(&next);
-            stack.pop();
+            ctx.stack.push(PathStep::Block(next));
+            ctx.visited.insert(next);
+            self.dfs_entry_paths(next, ctx);
+            ctx.visited.remove(&next);
+            ctx.stack.pop();
         }
     }
 
-    /// Continue an entry path through every exit of an SCC region.
-    ///
-    /// This routine is used only when the target callsite is outside the SCC region.
-    /// It records the selected exit and resumes the DFS at the exit destination.
-    fn follow_scc_exits(
-        &self,
-        representative: BasicBlock,
-        target: CallsiteLocation,
-        target_block: BasicBlock,
-        visited: &mut FxHashSet<BasicBlock>,
-        stack: &mut Vec<PathStep>,
-        results: &mut Vec<Path>,
-        limit: usize,
-    ) {
+    fn follow_scc_exits(&self, representative: BasicBlock, ctx: &mut EntrySearchCtx<'_>) {
         let Some(scc_info) = self.scc_by_representative(representative) else {
             return;
         };
         for exit in &scc_info.exits {
-            if results.len() >= limit {
+            if ctx.results.len() >= ctx.limit {
                 break;
             }
-            if visited.contains(&exit.to) {
+            if ctx.visited.contains(&exit.to) {
                 continue;
             }
 
-            stack.push(PathStep::SccExit {
+            ctx.stack.push(PathStep::SccExit {
                 representative,
                 from: exit.from,
                 to: exit.to,
             });
-            stack.push(PathStep::Block(exit.to));
-            visited.insert(exit.to);
-            self.dfs_entry_paths(
-                exit.to,
-                target,
-                target_block,
-                visited,
-                stack,
-                results,
-                limit,
-            );
-            visited.remove(&exit.to);
-            stack.pop();
-            stack.pop();
+            ctx.stack.push(PathStep::Block(exit.to));
+            ctx.visited.insert(exit.to);
+            self.dfs_entry_paths(exit.to, ctx);
+            ctx.visited.remove(&exit.to);
+            ctx.stack.pop();
+            ctx.stack.pop();
         }
     }
 
-    /// Enumerate paths from an SCC representative to a callsite inside that SCC.
-    ///
-    /// These paths represent one possible iteration reaching the callsite.  The
-    /// number of earlier iterations is intentionally not encoded in the path;
-    /// later verification stages should use SCC facts to describe the representative
-    /// state.
+    // ── entry-prefix search (to SCC representative) ─────────────────────
+
+    fn find_entry_prefixes(&self, representative: BasicBlock, limit: usize) -> Vec<Vec<PathStep>> {
+        if self.cfg.entry == representative {
+            return vec![Vec::new()];
+        }
+
+        let mut results = Vec::new();
+        let mut stack = vec![PathStep::Block(self.cfg.entry)];
+        let mut visited = FxHashSet::default();
+        visited.insert(self.cfg.entry);
+        let mut ctx = PrefixSearchCtx {
+            visited: &mut visited,
+            stack: &mut stack,
+            results: &mut results,
+            limit,
+            representative,
+        };
+        self.dfs_entry_prefixes(self.cfg.entry, &mut ctx);
+
+        if results.is_empty() {
+            vec![Vec::new()]
+        } else {
+            results
+        }
+    }
+
+    fn dfs_entry_prefixes(&self, current: BasicBlock, ctx: &mut PrefixSearchCtx<'_>) {
+        if ctx.results.len() >= ctx.limit {
+            return;
+        }
+
+        for &next in self.cfg.successors(current) {
+            if ctx.results.len() >= ctx.limit {
+                break;
+            }
+
+            if next == ctx.representative {
+                ctx.results.push(ctx.stack.clone());
+                continue;
+            }
+
+            if let Some(scc_representative) = self.block_to_scc.get(&next).copied() {
+                if scc_representative == ctx.representative {
+                    continue;
+                }
+                self.follow_scc_exits_for_prefix(scc_representative, ctx);
+                continue;
+            }
+
+            if ctx.visited.contains(&next) {
+                continue;
+            }
+
+            ctx.stack.push(PathStep::Block(next));
+            ctx.visited.insert(next);
+            self.dfs_entry_prefixes(next, ctx);
+            ctx.visited.remove(&next);
+            ctx.stack.pop();
+        }
+    }
+
+    fn follow_scc_exits_for_prefix(
+        &self,
+        scc_representative: BasicBlock,
+        ctx: &mut PrefixSearchCtx<'_>,
+    ) {
+        let Some(scc_info) = self.scc_by_representative(scc_representative) else {
+            return;
+        };
+        for exit in &scc_info.exits {
+            if ctx.results.len() >= ctx.limit {
+                break;
+            }
+            if ctx.visited.contains(&exit.to) {
+                continue;
+            }
+
+            ctx.stack.push(PathStep::SccExit {
+                representative: scc_representative,
+                from: exit.from,
+                to: exit.to,
+            });
+            ctx.stack.push(PathStep::Block(exit.to));
+            ctx.visited.insert(exit.to);
+            self.dfs_entry_prefixes(exit.to, ctx);
+            ctx.visited.remove(&exit.to);
+            ctx.stack.pop();
+            ctx.stack.pop();
+        }
+    }
+
+    // ── SCC-internal path search ────────────────────────────────────────
+
     fn find_scc_internal_paths(
         &self,
         representative: BasicBlock,
@@ -228,207 +302,54 @@ impl<'tcx> PathExtractor<'tcx> {
         let mut stack = vec![PathStep::Block(scc_info.representative)];
         let mut visited = FxHashSet::default();
         visited.insert(scc_info.representative);
-        self.dfs_scc_internal_paths(
-            representative,
-            scc_info.representative,
+        let mut ctx = SccInternalCtx {
+            visited: &mut visited,
+            stack: &mut stack,
+            results: &mut results,
+            limit: PATH_LIMIT,
             target,
             target_block,
-            &scc_blocks,
-            &entry_prefixes,
-            &mut visited,
-            &mut stack,
-            &mut results,
-            PATH_LIMIT,
-        );
+            representative,
+            scc_blocks: &scc_blocks,
+            entry_prefixes: &entry_prefixes,
+        };
+        self.dfs_scc_internal_paths(scc_info.representative, &mut ctx);
         results
     }
 
-    /// Enumerate finite entry-to-representative prefixes for an SCC-internal callsite.
-    ///
-    /// SCC-internal paths still need facts established before the first iteration
-    /// such as `ptr = slice.as_ptr()`. The returned prefix excludes
-    /// `representative` itself because the SCC-internal body path already starts there.
-    fn find_entry_prefixes(&self, representative: BasicBlock, limit: usize) -> Vec<Vec<PathStep>> {
-        if self.cfg.entry == representative {
-            return vec![Vec::new()];
-        }
-
-        let mut results = Vec::new();
-        let mut stack = vec![PathStep::Block(self.cfg.entry)];
-        let mut visited = FxHashSet::default();
-        visited.insert(self.cfg.entry);
-        self.dfs_entry_prefixes(
-            self.cfg.entry,
-            representative,
-            &mut visited,
-            &mut stack,
-            &mut results,
-            limit,
-        );
-
-        if results.is_empty() {
-            vec![Vec::new()]
-        } else {
-            results
-        }
-    }
-
-    /// Search from function entry to the selected SCC representative.
-    ///
-    /// Other SCC regions are crossed through their exits, but the target SCC itself
-    /// is not expanded. This keeps the prefix finite while preserving pre-SCC
-    /// definitions that the SCC-internal path may use.
-    fn dfs_entry_prefixes(
-        &self,
-        current: BasicBlock,
-        representative: BasicBlock,
-        visited: &mut FxHashSet<BasicBlock>,
-        stack: &mut Vec<PathStep>,
-        results: &mut Vec<Vec<PathStep>>,
-        limit: usize,
-    ) {
-        if results.len() >= limit {
+    fn dfs_scc_internal_paths(&self, current: BasicBlock, ctx: &mut SccInternalCtx<'_>) {
+        if ctx.results.len() >= ctx.limit {
             return;
         }
 
-        for &next in self.cfg.successors(current) {
-            if results.len() >= limit {
-                break;
-            }
-
-            if next == representative {
-                results.push(stack.clone());
-                continue;
-            }
-
-            if let Some(scc_representative) = self.block_to_scc.get(&next).copied() {
-                if scc_representative == representative {
-                    continue;
-                }
-                self.follow_scc_exits_for_prefix(
-                    scc_representative,
-                    representative,
-                    visited,
-                    stack,
-                    results,
-                    limit,
-                );
-                continue;
-            }
-
-            if visited.contains(&next) {
-                continue;
-            }
-
-            stack.push(PathStep::Block(next));
-            visited.insert(next);
-            self.dfs_entry_prefixes(next, representative, visited, stack, results, limit);
-            visited.remove(&next);
-            stack.pop();
-        }
-    }
-
-    /// Continue an entry prefix through every exit of an unrelated SCC region.
-    fn follow_scc_exits_for_prefix(
-        &self,
-        scc_representative: BasicBlock,
-        target_representative: BasicBlock,
-        visited: &mut FxHashSet<BasicBlock>,
-        stack: &mut Vec<PathStep>,
-        results: &mut Vec<Vec<PathStep>>,
-        limit: usize,
-    ) {
-        let Some(scc_info) = self.scc_by_representative(scc_representative) else {
-            return;
-        };
-        for exit in &scc_info.exits {
-            if results.len() >= limit {
-                break;
-            }
-            if visited.contains(&exit.to) {
-                continue;
-            }
-
-            stack.push(PathStep::SccExit {
-                representative: scc_representative,
-                from: exit.from,
-                to: exit.to,
-            });
-            stack.push(PathStep::Block(exit.to));
-            visited.insert(exit.to);
-            self.dfs_entry_prefixes(
-                exit.to,
-                target_representative,
-                visited,
-                stack,
-                results,
-                limit,
-            );
-            visited.remove(&exit.to);
-            stack.pop();
-            stack.pop();
-        }
-    }
-
-    /// Search inside one SCC region from its representative to an internal callsite.
-    ///
-    /// Successors that leave the SCC are ignored because outside-SCC paths are
-    /// represented by SCC exits. This search only describes how one iteration
-    /// reaches a callsite located in the SCC region.
-    fn dfs_scc_internal_paths(
-        &self,
-        representative: BasicBlock,
-        current: BasicBlock,
-        target: CallsiteLocation,
-        target_block: BasicBlock,
-        scc_blocks: &FxHashSet<BasicBlock>,
-        entry_prefixes: &[Vec<PathStep>],
-        visited: &mut FxHashSet<BasicBlock>,
-        stack: &mut Vec<PathStep>,
-        results: &mut Vec<Path>,
-        limit: usize,
-    ) {
-        if results.len() >= limit {
-            return;
-        }
-
-        if current == target_block {
-            stack.push(PathStep::Callsite(target));
-            for entry_prefix in entry_prefixes {
-                results.push(Path {
-                    target,
-                    start: PathStart::SccRepresentative { representative },
+        if current == ctx.target_block {
+            ctx.stack.push(PathStep::Callsite(ctx.target));
+            for entry_prefix in ctx.entry_prefixes {
+                ctx.results.push(Path {
+                    target: ctx.target,
+                    start: PathStart::SccRepresentative {
+                        representative: ctx.representative,
+                    },
                     entry_prefix: entry_prefix.clone(),
-                    steps: stack.clone(),
+                    steps: ctx.stack.clone(),
                 });
-                if results.len() >= limit {
+                if ctx.results.len() >= ctx.limit {
                     break;
                 }
             }
-            stack.pop();
+            ctx.stack.pop();
             return;
         }
 
         for &next in self.cfg.successors(current) {
-            if !scc_blocks.contains(&next) || visited.contains(&next) {
+            if !ctx.scc_blocks.contains(&next) || ctx.visited.contains(&next) {
                 continue;
             }
-            stack.push(PathStep::Block(next));
-            visited.insert(next);
-            self.dfs_scc_internal_paths(
-                representative,
-                next,
-                target,
-                target_block,
-                scc_blocks,
-                entry_prefixes,
-                visited,
-                stack,
-                results,
-                limit,
-            );
-            visited.remove(&next);
-            stack.pop();
+            ctx.stack.push(PathStep::Block(next));
+            ctx.visited.insert(next);
+            self.dfs_scc_internal_paths(next, ctx);
+            ctx.visited.remove(&next);
+            ctx.stack.pop();
         }
     }
 
