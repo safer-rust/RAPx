@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use super::visitor::CallGraphVisitor;
 use crate::{
     Analysis,
-    analysis::core::callgraph::{CallGraphAnalysis, FnCallMap},
+    analysis::callgraph::{CallGraphAnalysis, FnCallMap},
 };
 
 pub struct CallGraphAnalyzer<'tcx> {

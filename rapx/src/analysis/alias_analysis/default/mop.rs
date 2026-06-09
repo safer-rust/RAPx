@@ -12,7 +12,7 @@ use std::{cell::Cell, collections::HashSet};
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 
 use crate::{
-    analysis::core::path_analysis::graph::{
+    analysis::path_analysis::graph::{
         SccEnumeratedPath, SccPathAction, SccPathTraversalConfig, SccPathTraversalState,
         enumerate_scc_paths_cached_with,
     },

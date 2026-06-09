@@ -1,6 +1,6 @@
 use super::dep_edge::DepEdge;
 use super::dep_node::DepNode;
-use crate::analysis::core::api_dependency::ApiDependencyGraph;
+use crate::analysis::api_dependency::ApiDependencyGraph;
 use crate::analysis::utils::path::{PathResolver, get_path_resolver};
 use crate::utils::fs::rap_create_file;
 use anyhow::Result;

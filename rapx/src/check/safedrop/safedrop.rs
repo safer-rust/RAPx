@@ -1,6 +1,6 @@
 use super::{bug_records::*, corner_case::*, drop::*, graph::*};
 use crate::{
-    analysis::core::alias_analysis::default::{MopFnAliasMap, types::ValueKind},
+    analysis::alias_analysis::default::{MopFnAliasMap, types::ValueKind},
     def_id::*,
     utils::source::{get_filename, get_name},
 };

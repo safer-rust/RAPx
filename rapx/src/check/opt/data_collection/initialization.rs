@@ -4,7 +4,7 @@ pub mod vec_init;
 use local_set::LocalSetCheck;
 use vec_init::VecInitCheck;
 
-use crate::analysis::core::dataflow::Graph;
+use crate::analysis::dataflow::Graph;
 use crate::check::opt::OptCheck;
 
 use super::super::LEVEL;

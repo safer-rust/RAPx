@@ -1,7 +1,7 @@
 use super::graph::ApiDependencyGraph;
 use super::graph::{DepEdge, DepNode};
 use super::is_def_id_public;
-use crate::analysis::core::api_dependency::mono;
+use crate::analysis::api_dependency::mono;
 use crate::{rap_debug, rap_trace};
 use rustc_hir::LangItem;
 use rustc_hir::{

@@ -1,6 +1,6 @@
 use super::{MopFnAliasPairs, assign::*, block::*, types::*, value::*};
 use crate::{
-    analysis::core::path_analysis::graph::PathGraph,
+    analysis::path_analysis::graph::PathGraph,
     graphs::{
         cfg::CfgBlock,
         scc::SccInfo,

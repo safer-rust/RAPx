@@ -10,7 +10,7 @@ mod ty_wrapper;
 use super::Config;
 use super::utils;
 use super::visit::{self, FnVisitor};
-use crate::analysis::core::api_dependency::is_fuzzable_ty;
+use crate::analysis::api_dependency::is_fuzzable_ty;
 use crate::analysis::utils::def_path::path_str_def_id;
 use crate::rap_debug;
 use crate::rap_trace;

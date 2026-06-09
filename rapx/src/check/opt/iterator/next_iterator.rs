@@ -5,7 +5,7 @@ use rustc_middle::ty::TyCtxt;
 use rustc_middle::ty::TypeckResults;
 use rustc_span::Span;
 
-use crate::analysis::core::dataflow::Graph;
+use crate::analysis::dataflow::Graph;
 use crate::analysis::utils::def_path::DefPath;
 use crate::check::opt::OptCheck;
 use crate::utils::log::{

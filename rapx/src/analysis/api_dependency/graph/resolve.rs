@@ -3,14 +3,14 @@ use super::dep_edge::DepEdge;
 use super::dep_node::DepNode;
 use super::transform::TransformKind;
 use super::ty_wrapper::TyWrapper;
-use crate::analysis::core::api_dependency::ApiDependencyGraph;
-use crate::analysis::core::api_dependency::graph::std_tys;
-use crate::analysis::core::api_dependency::mono::{Mono, get_mono_complexity};
-use crate::analysis::core::api_dependency::utils::{
+use crate::analysis::api_dependency::ApiDependencyGraph;
+use crate::analysis::api_dependency::graph::std_tys;
+use crate::analysis::api_dependency::mono::{Mono, get_mono_complexity};
+use crate::analysis::api_dependency::utils::{
     fn_requires_monomorphization, is_fuzzable_ty, ty_complexity,
 };
-use crate::analysis::core::api_dependency::visit::FnVisitor;
-use crate::analysis::core::api_dependency::{mono, utils};
+use crate::analysis::api_dependency::visit::FnVisitor;
+use crate::analysis::api_dependency::{mono, utils};
 use crate::analysis::utils::def_path::path_str_def_id;
 use crate::utils::fs::rap_create_file;
 use crate::{rap_debug, rap_info, rap_trace};

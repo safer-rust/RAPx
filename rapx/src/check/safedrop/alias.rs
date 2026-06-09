@@ -4,7 +4,7 @@ use rustc_middle::{
 };
 
 use super::{drop::*, graph::*};
-use crate::analysis::core::alias_analysis::default::{
+use crate::analysis::alias_analysis::default::{
     MopAliasPair, MopFnAliasMap, alias::is_no_alias_intrinsic, types::*, value::*,
 };
 use rustc_data_structures::fx::FxHashSet;

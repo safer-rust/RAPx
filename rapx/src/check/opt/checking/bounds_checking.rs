@@ -1,6 +1,6 @@
 use rustc_middle::ty::TyCtxt;
 
-use crate::analysis::core::dataflow::Graph;
+use crate::analysis::dataflow::Graph;
 use crate::check::opt::OptCheck;
 
 pub mod bounds_extend;

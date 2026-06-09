@@ -3,7 +3,7 @@ use std::fs::File;
 use std::io::Write;
 use std::process::Command;
 
-use crate::analysis::core::dataflow::*;
+use crate::analysis::dataflow::*;
 use crate::analysis::Analysis;
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;

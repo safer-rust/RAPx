@@ -3,20 +3,17 @@
 use crate::{
     analysis::{
         Analysis,
-        core::{
-            callgraph::{default::CallGraph, visitor::CallGraphVisitor},
-            path_analysis::default::PathAnalyzer,
-            range_analysis::{
-                Range, RangeAnalysis,
-                domain::{
-                    ConstraintGraph::ConstraintGraph,
-                    domain::{ConstConvert, IntervalArithmetic, VarNodes},
-                },
+        callgraph::{default::CallGraph, visitor::CallGraphVisitor},
+        path_analysis::default::PathAnalyzer,
+        range_analysis::{
+            Range, RangeAnalysis,
+            domain::{
+                ConstraintGraph::ConstraintGraph,
+                domain::{ConstConvert, IntervalArithmetic, VarNodes},
             },
-
-            // SSA / ESSA transformation passes
-            ssa_transform::*,
         },
+        // SSA / ESSA transformation passes
+        ssa_transform::*,
     },
     graphs::scc::Scc,
     rap_debug, rap_info,

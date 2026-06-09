@@ -7,12 +7,10 @@
 use crate::{
     analysis::{
         Analysis,
-        core::{
-            alias_analysis::FnAliasPairs,
-            ownedheap_analysis::OHAResultMap,
-            path_analysis::default::PathAnalyzer,
-            range_analysis::{RangeAnalysis, default::RangeAnalyzer},
-        },
+        alias_analysis::FnAliasPairs,
+        ownedheap_analysis::OHAResultMap,
+        path_analysis::default::PathAnalyzer,
+        range_analysis::{RangeAnalysis, default::RangeAnalyzer},
         utils::{draw_dot::render_dot_string, fn_info::*, show_mir::display_mir},
     },
     check::{

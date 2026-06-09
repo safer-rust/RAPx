@@ -17,7 +17,7 @@ use rustc_middle::{
     ty::{PseudoCanonicalInput, Ty, TyCtxt, TyKind},
 };
 
-use crate::analysis::core::dataflow::{DataFlowAnalysis, default::DataFlowAnalyzer};
+use crate::analysis::dataflow::{DataFlowAnalysis, default::DataFlowAnalyzer};
 
 use super::backward_visit::ForgetReason;
 

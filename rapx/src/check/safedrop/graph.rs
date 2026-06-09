@@ -1,5 +1,5 @@
 use super::{bug_records::*, drop::*};
-use crate::analysis::core::{
+use crate::analysis::{
     alias_analysis::default::graph::AliasGraph, ownedheap_analysis::OHAResultMap,
 };
 use rustc_middle::ty::TyCtxt;

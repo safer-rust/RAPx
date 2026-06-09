@@ -7,9 +7,9 @@
 #![allow(unused)]
 
 use super::domain::*;
-use crate::analysis::core::range_analysis::{Range, RangeType};
+use crate::analysis::range_analysis::{Range, RangeType};
 
-use crate::analysis::core::range_analysis::domain::SymbolicExpr::*;
+use crate::analysis::range_analysis::domain::SymbolicExpr::*;
 use crate::rap_debug;
 use crate::rap_info;
 use crate::rap_trace;

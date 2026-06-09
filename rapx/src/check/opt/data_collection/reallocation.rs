@@ -6,7 +6,7 @@ use flatten_collect::FlattenCollectCheck;
 use unreserved_hash::UnreservedHashCheck;
 use unreserved_vec::UnreservedVecCheck;
 
-use crate::analysis::core::dataflow::Graph;
+use crate::analysis::dataflow::Graph;
 use crate::check::opt::OptCheck;
 
 use rustc_middle::ty::TyCtxt;

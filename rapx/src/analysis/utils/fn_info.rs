@@ -1,7 +1,7 @@
 use super::draw_dot::render_dot_string;
 use crate::def_id::*;
 use crate::{
-    analysis::core::dataflow::{DataFlowAnalysis, default::DataFlowAnalyzer},
+    analysis::dataflow::{DataFlowAnalysis, default::DataFlowAnalyzer},
     check::senryx::{callsite::has_unsafe_api_contract, contract::PropertyContract},
 };
 use crate::{rap_debug, rap_warn};

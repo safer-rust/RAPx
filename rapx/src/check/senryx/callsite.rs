@@ -5,7 +5,7 @@
 //! only needed when identifying and instantiating call-site obligations.
 
 use crate::analysis::{
-    core::alias_analysis::FnAliasPairs,
+    alias_analysis::FnAliasPairs,
     utils::fn_info::{
         generate_contract_from_std_annotation_json, get_cleaned_def_path_name, get_sp_tags_json,
         reflect_generic,

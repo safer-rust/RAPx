@@ -6,11 +6,11 @@
 #![allow(non_snake_case)]
 use rust_intervals::NothingBetween;
 
-use crate::analysis::core::range_analysis::domain::ConstraintGraph::ConstraintGraph;
-use crate::analysis::core::range_analysis::domain::SymbolicExpr::{
+use crate::analysis::range_analysis::domain::ConstraintGraph::ConstraintGraph;
+use crate::analysis::range_analysis::domain::SymbolicExpr::{
     BasicInterval, IntervalType, IntervalTypeTrait, SymbExpr,
 };
-use crate::analysis::core::range_analysis::{Range, RangeType};
+use crate::analysis::range_analysis::{Range, RangeType};
 use crate::{rap_debug, rap_trace};
 use num_traits::{Bounded, CheckedAdd, CheckedSub, One, ToPrimitive, Zero, ops};
 use rustc_abi::Size;

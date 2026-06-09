@@ -13,7 +13,7 @@ use std::rc::Rc;
 
 use super::super::{FnAliasMap, FnAliasPairs};
 use super::transfer;
-use crate::analysis::core::alias_analysis::default::types::is_not_drop;
+use crate::analysis::alias_analysis::default::types::is_not_drop;
 
 /// Apply a function summary to the current state
 fn apply_function_summary<'tcx>(

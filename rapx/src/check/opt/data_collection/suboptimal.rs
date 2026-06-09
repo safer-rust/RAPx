@@ -6,7 +6,7 @@ use participant::ParticipantCheck;
 use slice_contains::SliceContainsCheck;
 use vec_remove::VecRemoveCheck;
 
-use crate::analysis::core::dataflow::Graph;
+use crate::analysis::dataflow::Graph;
 use crate::check::opt::OptCheck;
 
 use rustc_middle::ty::TyCtxt;

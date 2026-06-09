@@ -18,7 +18,7 @@ use std::collections::HashSet;
 
 use crate::analysis::{
     Analysis,
-    core::alias_analysis::{AliasAnalysis, FnAliasPairs, default::AliasAnalyzer},
+    alias_analysis::{AliasAnalysis, FnAliasPairs, default::AliasAnalyzer},
     upg::{fn_collector::FnCollector, hir_visitor::ContainsUnsafe},
     utils::fn_info::*,
 };

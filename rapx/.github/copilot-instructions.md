@@ -2,7 +2,7 @@
 
 ## Project Overview
 - **RAPx** is a static analysis platform for Rust, focused on detecting use-after-free, memory leaks, and related bugs.
-- The codebase is organized as a Rust crate with multiple analysis modules under `src/analysis/core/`.
+- The codebase is organized as a Rust crate with multiple analysis modules under `src/analysis/`.
 - The main entry point is `src/lib.rs`, which wires together all major analyses and exposes the `RapCallback` struct for configuring analysis runs.
 
 ## Key Components
@@ -48,7 +48,7 @@
 
 ## References
 - Main configuration: `src/lib.rs`, `Cargo.toml`
-- Analysis logic: `src/analysis/core/`
+- Analysis logic: `src/analysis/`
 - Test cases: `tests/`
 - Documentation: https://artisan-lab.github.io/RAPx-Book/
 

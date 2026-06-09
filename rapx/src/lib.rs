@@ -37,7 +37,7 @@ extern crate thin_vec;
 
 use crate::{
     analysis::{
-        core::{alias_analysis::mfp::MfpAliasAnalyzer, api_dependency},
+        alias_analysis::mfp::MfpAliasAnalyzer, api_dependency,
         scan::ScanAnalysis,
     },
     check::{
@@ -51,20 +51,18 @@ use crate::{
 };
 use analysis::{
     Analysis,
-    core::{
-        alias_analysis::{AliasAnalysis, FnAliasMapWrapper, default::AliasAnalyzer},
-        api_dependency::ApiDependencyAnalyzer,
-        callgraph::{CallGraphAnalysis, FnCallDisplay, default::CallGraphAnalyzer},
-        dataflow::{
-            Arg2RetMapWrapper, DataFlowAnalysis, DataFlowGraphMapWrapper, default::DataFlowAnalyzer,
-        },
-        ownedheap_analysis::{OHAResultMapWrapper, OwnedHeapAnalysis, default::OwnedHeapAnalyzer},
-        path_analysis::{PathMapWrapper, default::PathAnalyzer},
-        range_analysis::{
-            PathConstraintMapWrapper, RAResultMapWrapper, RangeAnalysis, default::RangeAnalyzer,
-        },
-        ssa_transform::SSATrans,
+    alias_analysis::{AliasAnalysis, FnAliasMapWrapper, default::AliasAnalyzer},
+    api_dependency::ApiDependencyAnalyzer,
+    callgraph::{CallGraphAnalysis, FnCallDisplay, default::CallGraphAnalyzer},
+    dataflow::{
+        Arg2RetMapWrapper, DataFlowAnalysis, DataFlowGraphMapWrapper, default::DataFlowAnalyzer,
     },
+    ownedheap_analysis::{OHAResultMapWrapper, OwnedHeapAnalysis, default::OwnedHeapAnalyzer},
+    path_analysis::{PathMapWrapper, default::PathAnalyzer},
+    range_analysis::{
+        PathConstraintMapWrapper, RAResultMapWrapper, RangeAnalysis, default::RangeAnalyzer,
+    },
+    ssa_transform::SSATrans,
     upg::{TargetCrate, UPGAnalysis},
     utils::show_mir::ShowMir,
 };
