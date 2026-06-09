@@ -36,10 +36,7 @@ extern crate rustc_type_ir;
 extern crate thin_vec;
 
 use crate::{
-    analysis::{
-        alias_analysis::mfp::MfpAliasAnalyzer, api_dependency,
-        scan::ScanAnalysis,
-    },
+    analysis::{alias_analysis::mfp::MfpAliasAnalyzer, api_dependency, scan::ScanAnalysis},
     check::{
         opt::Opt,
         rcanary::rCanary,

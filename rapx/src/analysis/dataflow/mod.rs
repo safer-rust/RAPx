@@ -7,11 +7,8 @@ use std::{
     fmt::{self, Debug, Display},
 };
 
-use crate::{
-    analysis::Analysis,
-    utils::source::get_fn_name_byid,
-};
 pub use crate::graphs::dataflow::*;
+use crate::{analysis::Analysis, utils::source::get_fn_name_byid};
 
 impl From<DataflowGraph> for DataFlowGraph {
     fn from(graph: DataflowGraph) -> Self {

@@ -7,7 +7,7 @@ use rustc_middle::ty::TyCtxt;
 
 use crate::utils::log::span_to_source_code;
 
-use crate::analysis::dataflow::{default::DataFlowAnalyzer, Graph};
+use crate::analysis::dataflow::{Graph, default::DataFlowAnalyzer};
 use checking::bounds_checking::BoundsCheck;
 use checking::encoding_checking::EncodingCheck;
 use data_collection::initialization::InitializationCheck;

@@ -3,8 +3,8 @@ use std::fs::File;
 use std::io::Write;
 use std::process::Command;
 
-use crate::analysis::dataflow::*;
 use crate::analysis::Analysis;
+use crate::analysis::dataflow::*;
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{Body, Local};
@@ -103,7 +103,8 @@ impl<'tcx> DataFlowAnalyzer<'tcx> {
             return;
         }
         let body: &Body = self.tcx.optimized_mir(def_id);
-        let mut graph = DataflowGraph::new(def_id, body.span, body.arg_count, body.local_decls.len());
+        let mut graph =
+            DataflowGraph::new(def_id, body.span, body.arg_count, body.local_decls.len());
         let basic_blocks = &body.basic_blocks;
         for basic_block_data in basic_blocks.iter() {
             for statement in basic_block_data.statements.iter() {

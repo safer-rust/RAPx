@@ -5,8 +5,8 @@ pub mod dataflow;
 pub mod ownedheap_analysis;
 pub mod path_analysis;
 pub mod range_analysis;
-pub mod ssa_transform;
 pub mod scan;
+pub mod ssa_transform;
 pub mod upg;
 pub mod utils;
 

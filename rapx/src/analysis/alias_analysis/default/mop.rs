@@ -88,10 +88,6 @@ fn mop_on_scc_node_enter<'tcx>(
 ) {
     if let Some(assigned_locals) = graph.assigned_locals(node) {
         for local in assigned_locals {
-            rap_debug!(
-                "Remove path_constraints {:?}, because it has been reassigned.",
-                local
-            );
             constraints.remove(local);
         }
     }
@@ -116,12 +112,8 @@ fn mop_enumerate_actions<'tcx>(
         return Vec::new();
     };
 
-    rap_debug!("term: {:?}", term);
-
     let mut path_constraints = path_constraints.clone();
     if let TerminatorKind::Call { destination, .. } = &term.kind {
-        // A call can overwrite `destination`; any branch constraints on that value become
-        // invalid immediately after the call and must not be propagated.
         let dest_idx = graph.projection(*destination);
         let dest_local = graph
             .path_graph

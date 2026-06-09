@@ -1,9 +1,6 @@
 use std::collections::HashSet;
 
-use crate::analysis::{
-    dataflow::*,
-    utils::def_path::DefPath,
-};
+use crate::analysis::{dataflow::*, utils::def_path::DefPath};
 use once_cell::sync::OnceCell;
 use rustc_middle::{mir::Local, ty::TyCtxt};
 use rustc_span::Span;

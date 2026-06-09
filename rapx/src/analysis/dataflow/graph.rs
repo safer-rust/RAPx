@@ -1,4 +1,3 @@
-
 use rustc_middle::{
     mir::{
         AggregateKind, BorrowKind, Const, Local, Operand, Place, PlaceElem, Rvalue, Statement,
@@ -124,12 +123,10 @@ impl DataflowGraph {
                         }
                         AggregateKind::Closure(def_id, ..) => {
                             self.closures.insert(def_id);
-                            self.nodes[dst].ops[seq] =
-                                NodeOp::Aggregate(AggKind::Closure(def_id))
+                            self.nodes[dst].ops[seq] = NodeOp::Aggregate(AggKind::Closure(def_id))
                         }
                         AggregateKind::Coroutine(def_id, ..) => {
-                            self.nodes[dst].ops[seq] =
-                                NodeOp::Aggregate(AggKind::Coroutine(def_id))
+                            self.nodes[dst].ops[seq] = NodeOp::Aggregate(AggKind::Coroutine(def_id))
                         }
                         AggregateKind::RawPtr(_, _mutability) => {
                             self.nodes[dst].ops[seq] = NodeOp::Aggregate(AggKind::RawPtr)

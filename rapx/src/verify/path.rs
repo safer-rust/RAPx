@@ -11,7 +11,7 @@ use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_middle::{mir::BasicBlock, ty::TyCtxt};
 
-use crate::graphs::scc::{find_scc_regions, SccRegion};
+use crate::graphs::scc::{SccRegion, find_scc_regions};
 
 use super::helpers::{CFG, Callsite, CallsiteLocation};
 
@@ -154,15 +154,7 @@ impl<'tcx> PathExtractor<'tcx> {
 
             stack.push(PathStep::Block(next));
             visited.insert(next);
-            self.dfs_entry_paths(
-                next,
-                target,
-                target_block,
-                visited,
-                stack,
-                results,
-                limit,
-            );
+            self.dfs_entry_paths(next, target, target_block, visited, stack, results, limit);
             visited.remove(&next);
             stack.pop();
         }

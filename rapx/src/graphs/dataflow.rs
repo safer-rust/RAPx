@@ -438,7 +438,6 @@ impl DataflowGraph {
             Some((var.get(), fields))
         }
     }
-
 }
 
 #[derive(Clone, Copy)]
