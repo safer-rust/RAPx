@@ -68,6 +68,15 @@ impl<'tcx> PathAnalyzer<'tcx> {
             }
         }
     }
+
+    /// Verify whether a given path is reachable for the specified function.
+    ///
+    /// The path is a sequence of MIR block indices (can include loops).
+    /// Uses discriminant/constant-based filtering to reject infeasible paths.
+    pub fn check_path_reachability(&self, def_id: DefId, path: &[usize]) -> bool {
+        let graph = PathGraph::new(self.tcx, def_id);
+        graph.is_path_reachable(path)
+    }
 }
 
 impl<'tcx> Analysis for PathAnalyzer<'tcx> {
