@@ -327,15 +327,6 @@ pub fn terminator_use_def<'tcx>(terminator: &Terminator<'tcx>) -> DefUse {
     use_def
 }
 
-/// Collect all MIR roots used by call arguments.
-pub fn call_args_uses<'tcx>(args: &[Spanned<Operand<'tcx>>]) -> RelevantPlaces {
-    let mut uses = RelevantPlaces::new();
-    for arg in args {
-        uses.extend(operand_uses(&arg.node));
-    }
-    uses
-}
-
 /// Collect MIR roots used by selected call argument indices.
 pub fn call_args_uses_at<'tcx>(
     args: &[Spanned<Operand<'tcx>>],

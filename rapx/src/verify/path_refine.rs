@@ -12,14 +12,15 @@ use rustc_middle::mir::{BasicBlock, Operand, StatementKind, TerminatorKind};
 use rustc_middle::ty::TyCtxt;
 use rustc_span::source_map::Spanned;
 
-use crate::analysis::dataflow::graph::build_dataflow_graph;
+    use crate::analysis::dataflow::graph::build_dataflow_graph;
 use crate::graphs::dataflow::DataflowGraph;
+
+use rustc_middle::mir::Body;
 
 use super::{
     call_summary,
     def_use::{
-        bind_callsite_roots, call_args_uses, call_args_uses_at, operand_uses,
-        terminator_use_def, RelevantPlaces,
+        bind_callsite_roots, call_args_uses_at, operand_uses, terminator_use_def, RelevantPlaces,
     },
     helpers::{Callsite, CallsiteLocation},
     path::{Path, PathStep},
@@ -108,7 +109,7 @@ impl<'tcx> BackwardVisitor<'tcx> {
             PathStep::Block(block) => {
                 let block_data = &body.basic_blocks[*block];
                 if *block != callsite.block {
-                    self.visit_terminator(*block, block_data.terminator(), relevant, items);
+                    self.visit_terminator(*block, block_data.terminator(), flow, body, relevant, items);
                 }
                 for (statement_index, statement) in block_data.statements.iter().enumerate().rev() {
                     self.visit_statement(*block, statement_index, statement, flow, relevant, items);
@@ -202,6 +203,8 @@ impl<'tcx> BackwardVisitor<'tcx> {
         &self,
         block: BasicBlock,
         terminator: &rustc_middle::mir::Terminator<'tcx>,
+        flow: &DataflowGraph,
+        body: &Body<'tcx>,
         relevant: &mut RelevantPlaces,
         items: &mut Vec<BackwardItem<'tcx>>,
     ) {
@@ -212,7 +215,7 @@ impl<'tcx> BackwardVisitor<'tcx> {
             ..
         } = &terminator.kind
         {
-            self.visit_call_terminator(block, func, args, destination, relevant, items);
+            self.visit_call_terminator(block, func, args, destination, flow, body, relevant, items);
             return;
         }
 
@@ -261,12 +264,23 @@ impl<'tcx> BackwardVisitor<'tcx> {
         func: &Operand<'tcx>,
         args: &[Spanned<Operand<'tcx>>],
         destination: &rustc_middle::mir::Place<'tcx>,
+        flow: &DataflowGraph,
+        body: &Body<'tcx>,
         relevant: &mut RelevantPlaces,
         items: &mut Vec<BackwardItem<'tcx>>,
     ) {
         let mut defs = RelevantPlaces::new();
         defs.insert_mir_place(destination);
-        let arg_uses = call_args_uses(args);
+
+        let tpos = body.basic_blocks[block].statements.len();
+        let mut arg_uses = RelevantPlaces::new();
+        for &edge_idx in &flow.node(destination.local).in_edges {
+            let edge = &flow.edges[edge_idx];
+            if edge.block == block.as_usize() && edge.statement_index == tpos {
+                arg_uses.insert_local(edge.src);
+            }
+        }
+
         let summary = call_summary::dependency_summary(self.tcx, func, args.len());
 
         if defs.intersects(relevant) {
