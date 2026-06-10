@@ -10,6 +10,7 @@ use rustc_data_structures::fx::FxHashSet;
 use rustc_middle::mir::{
     Local, Operand, Place, ProjectionElem, Terminator, TerminatorKind,
 };
+use rustc_middle::ty::TyCtxt;
 use rustc_span::source_map::Spanned;
 
 use super::{
@@ -17,7 +18,7 @@ use super::{
         ContractExpr, ContractPlace, ContractProjection, NumericPredicate, PlaceBase, Property,
         PropertyArg, PropertyKind,
     },
-    helpers::Callsite,
+    helpers::{Callsite, callee_param_index_for_local},
 };
 
 /// Definitions and uses collected from one MIR item.
@@ -178,6 +179,14 @@ impl RelevantPlaces {
         self.locals.extend(other.locals);
     }
 
+    /// Remove a list of place keys and rebuild the derived local set.
+    pub fn remove_place_keys(&mut self, places: &[PlaceKey]) {
+        for place in places {
+            self.places.remove(place);
+        }
+        self.rebuild_locals();
+    }
+
     /// Return true if this set shares any known root with `other`.
     pub fn intersects(&self, other: &RelevantPlaces) -> bool {
         self.locals.iter().any(|local| other.locals.contains(local))
@@ -196,6 +205,10 @@ impl RelevantPlaces {
                 self.locals.remove(&local);
             }
         }
+    }
+
+    fn rebuild_locals(&mut self) {
+        self.locals = self.places.iter().filter_map(PlaceKey::local).collect();
     }
 
     /// Collect all roots mentioned by a property.
@@ -277,22 +290,47 @@ fn is_target_argument_index(kind: &PropertyKind, arg_index: usize) -> bool {
     }
 }
 
-/// Bind callee-argument roots in std contracts to concrete MIR call operands.
-pub fn bind_callsite_roots(relevance: &mut RelevantPlaces, callsite: &Callsite<'_>) {
-    let argument_roots: Vec<usize> = relevance
+/// Bind callee parameter roots to concrete MIR call operands.
+pub fn bind_callsite_roots(
+    tcx: TyCtxt<'_>,
+    relevance: &mut RelevantPlaces,
+    callsite: &Callsite<'_>,
+) {
+    let argument_roots: Vec<(PlaceKey, usize)> = relevance
         .places
         .iter()
         .filter_map(|place| match place.base {
-            PlaceBaseKey::Arg(index) => Some(index),
+            PlaceBaseKey::Arg(index) => Some((place.clone(), index)),
+            PlaceBaseKey::Local(local) => callee_param_index_for_local(tcx, callsite.callee, local)
+                .map(|index| (place.clone(), index)),
             _ => None,
         })
         .collect();
 
-    for index in argument_roots {
+    let mut bound_roots = RelevantPlaces::new();
+    let mut rebound_roots = Vec::new();
+    for (root, index) in argument_roots {
         if let Some(operand) = callsite.args.get(index) {
-            relevance.extend(operand_uses(operand));
+            if let Some(place) = bind_operand_place(operand, &root.fields) {
+                bound_roots.insert_place_key(place);
+            } else {
+                bound_roots.extend(operand_uses(operand));
+            }
+            rebound_roots.push(root);
         }
     }
+
+    relevance.remove_place_keys(&rebound_roots);
+    relevance.extend(bound_roots);
+}
+
+fn bind_operand_place(operand: &Operand<'_>, fields: &[usize]) -> Option<PlaceKey> {
+    let mut place = match operand {
+        Operand::Copy(place) | Operand::Move(place) => PlaceKey::from_mir_place(place),
+        Operand::Constant(_) => return None,
+    };
+    place.fields.extend(fields.iter().copied());
+    Some(place)
 }
 
 // ── def-use extraction from MIR ────────────────────────────────────────

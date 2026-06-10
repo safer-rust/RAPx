@@ -9,13 +9,12 @@
 use std::fmt::Write;
 
 use rustc_middle::mir::{BasicBlock, Operand, StatementKind, TerminatorKind};
+use rustc_middle::mir::Body;
 use rustc_middle::ty::TyCtxt;
 use rustc_span::source_map::Spanned;
 
-    use crate::analysis::dataflow::graph::build_dataflow_graph;
+use crate::analysis::dataflow::graph::build_dataflow_graph;
 use crate::graphs::dataflow::DataflowGraph;
-
-use rustc_middle::mir::Body;
 
 use super::{
     call_summary,
@@ -66,7 +65,7 @@ impl<'tcx> BackwardVisitor<'tcx> {
         property: &super::contract::Property<'tcx>,
     ) -> RelevantMirItems<'tcx> {
         let mut visit = self.start_visit(callsite.location(), path, property);
-        bind_callsite_roots(&mut visit.roots, callsite);
+        bind_callsite_roots(self.tcx, &mut visit.roots, callsite);
 
         let mut relevant = visit.roots.clone();
         let mut items = Vec::new();

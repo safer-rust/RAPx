@@ -1,6 +1,7 @@
 #![allow(clippy::bool_assert_comparison)]
 use fs4::fs_std::FileExt;
 use insta::assert_snapshot;
+use std::ffi::OsString;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -36,8 +37,8 @@ fn run_with_args(dir: &str, args: &[&str]) -> String {
     let lock_file = File::create(&lock_path).expect("Failed to create lock file");
     lock_file.lock_exclusive().expect("Failed to acquire lock");
 
-    let output = Command::new("cargo")
-        .arg("rapx")
+    let mut command = cargo_rapx_command();
+    let output = command
         .args(args)
         .current_dir(project_path)
         .output()
@@ -46,6 +47,37 @@ fn run_with_args(dir: &str, args: &[&str]) -> String {
     lock_file.unlock().expect("Failed to release lock");
 
     String::from_utf8_lossy(&output.stderr).into_owned()
+}
+
+fn cargo_rapx_command() -> Command {
+    if let Some(path) = option_env!("CARGO_BIN_EXE_cargo-rapx") {
+        let path = PathBuf::from(path);
+        let mut command = Command::new(&path);
+        command.arg("rapx");
+        prepend_local_bin_to_path(&mut command, path.parent());
+        return command;
+    }
+
+    let mut command = Command::new("cargo");
+    command.arg("rapx");
+    command
+}
+
+fn prepend_local_bin_to_path(command: &mut Command, cargo_rapx_dir: Option<&Path>) {
+    let local_rapx_dir = option_env!("CARGO_BIN_EXE_rapx")
+        .and_then(|path| PathBuf::from(path).parent().map(Path::to_path_buf))
+        .or_else(|| cargo_rapx_dir.map(Path::to_path_buf));
+    let Some(local_rapx_dir) = local_rapx_dir else {
+        return;
+    };
+
+    let mut paths = vec![local_rapx_dir];
+    if let Some(path) = std::env::var_os("PATH") {
+        paths.extend(std::env::split_paths(&path));
+    }
+    if let Ok(path) = std::env::join_paths(paths) {
+        command.env("PATH", OsString::from(path));
+    }
 }
 
 fn assert_contain(output: &str, pattern: &str) {
@@ -77,6 +109,7 @@ const ANALYZE_SSA_CMD: &[&str] = &["analyze", "ssa"];
 const ANALYZE_RANGE_CMD: &[&str] = &["analyze", "range"];
 const ANALYZE_CALLGRAPH_CMD: &[&str] = &["analyze", "callgraph"];
 const ANALYZE_ADG_CMD: &[&str] = &["analyze", "adg", "--dump", "api_graph.yml"];
+const VERIFY_DUMP_CMD: &[&str] = &["verify", "--dump-visits"];
 
 // ================Dangling Pointer Detection Test=====================
 #[test]
@@ -460,6 +493,15 @@ fn test_paths_analysis() {
     assert_contain(&output, "Function: \"read1\":");
     assert_contain(&output, "Function: \"read2\":");
     assert_contain(&output, "Path [");
+}
+
+#[test]
+fn test_verify_named_contract_argument_binding() {
+    let output = run_with_args("verify/align/scc_paths", VERIFY_DUMP_CMD);
+    assert_contain(&output, "target: sound_named_contract_binds_callsite_arg");
+    assert_contain(&output, "goal: Align(_5, u32, 4-byte boundary)");
+    assert_contain(&output, "smt check: Proved");
+    assert_not_contain(&output, "goal: Align(_1, u32, 4-byte boundary)");
 }
 
 #[test]

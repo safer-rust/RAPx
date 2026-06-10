@@ -249,6 +249,29 @@ pub fn parse_expr_into_local_and_ty<'tcx>(
     None
 }
 
+/// Return the callee argument index represented by a MIR local.
+///
+/// Contract annotations written with parameter names are parsed in the callee's
+/// local namespace.  MIR local `_0` is the return place and argument locals are
+/// `_1..=_arg_count`, so callee local `_1` denotes callsite argument `0`.
+pub fn callee_param_index_for_local(tcx: TyCtxt<'_>, callee: DefId, local: usize) -> Option<usize> {
+    if local == 0 {
+        return None;
+    }
+
+    let arg_count = if tcx.is_mir_available(callee) {
+        tcx.optimized_mir(callee).arg_count
+    } else {
+        tcx.fn_sig(callee)
+            .skip_binder()
+            .inputs()
+            .skip_binder()
+            .len()
+    };
+
+    (local <= arg_count).then_some(local - 1)
+}
+
 pub fn parse_signature<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> (Vec<String>, Vec<Ty<'tcx>>) {
     if def_id.as_local().is_some() {
         parse_local_signature(tcx, def_id)

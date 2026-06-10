@@ -11,10 +11,7 @@ use std::{cell::Cell, collections::HashSet};
 
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 
-use crate::{
-    analysis::path_analysis::graph::SccEnumeratedPath,
-    graphs::scc::SccInfo,
-};
+use crate::{analysis::path_analysis::graph::SccEnumeratedPath, graphs::scc::SccInfo};
 
 use super::value::Value;
 use super::{graph::*, *};
@@ -552,6 +549,7 @@ impl<'tcx> AliasGraph<'tcx> {
         scc: &SccInfo,
         initial_constraints: &FxHashMap<usize, usize>,
     ) -> Vec<SccEnumeratedPath> {
-        self.path_graph.find_scc_paths(start, scc, initial_constraints)
+        self.path_graph
+            .find_scc_paths(start, scc, initial_constraints)
     }
 }

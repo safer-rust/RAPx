@@ -41,7 +41,7 @@ use crate::verify::{
     def_use::{PlaceBaseKey, PlaceKey},
     contract::{ContractExpr, ContractPlace, PlaceBase, Property, PropertyArg, PropertyKind},
     forward_visit::{AbstractValue, CallSummary, ForwardVisitResult, StateFact},
-    helpers::Callsite,
+    helpers::{Callsite, callee_param_index_for_local},
     report::CheckResult,
 };
 
@@ -80,6 +80,26 @@ impl<'tcx> SmtChecker<'tcx> {
         forward: &ForwardVisitResult<'tcx>,
         obligation: SmtObligation,
     ) -> SmtCheckResult {
+        if !forward.forgets.is_empty() {
+            let reasons = forward
+                .forgets
+                .iter()
+                .map(|reason| format!("{reason:?}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            return SmtCheckResult::unknown(
+                "path has precision loss; SMT proof is not trusted without a summary",
+            )
+            .with_query(SmtQuery::new(
+                obligation,
+                Vec::new(),
+                SmtPredicate::Custom(String::from(
+                    "proof skipped because relevant state was forgotten",
+                )),
+            ))
+            .with_note(format!("precision loss: {reasons}"));
+        }
+
         let cfg = Config::new();
         let ctx = Context::new(&cfg);
         let solver = Solver::new(&ctx);
@@ -400,8 +420,24 @@ impl<'tcx> SmtChecker<'tcx> {
         place: &ContractPlace<'tcx>,
     ) -> Option<PlaceKey> {
         match place.base {
-            PlaceBase::Arg(index) => self.callsite_arg_place(callsite, index),
-            PlaceBase::Return | PlaceBase::Local(_) => Some(PlaceKey::from_contract_place(place)),
+            PlaceBase::Arg(index) => self.callsite_arg_place_with_fields(
+                callsite,
+                index,
+                &PlaceKey::from_contract_place(place).fields,
+            ),
+            PlaceBase::Local(local) => {
+                if let Some(index) = callee_param_index_for_local(self.tcx, callsite.callee, local)
+                {
+                    self.callsite_arg_place_with_fields(
+                        callsite,
+                        index,
+                        &PlaceKey::from_contract_place(place).fields,
+                    )
+                } else {
+                    Some(PlaceKey::from_contract_place(place))
+                }
+            }
+            PlaceBase::Return => Some(PlaceKey::from_contract_place(place)),
         }
     }
 
@@ -413,6 +449,18 @@ impl<'tcx> SmtChecker<'tcx> {
     ) -> Option<PlaceKey> {
         let operand = callsite.args.get(index)?;
         operand_place(operand)
+    }
+
+    /// Return the `index`-th call argument with contract projections appended.
+    pub(crate) fn callsite_arg_place_with_fields(
+        &self,
+        callsite: &Callsite<'tcx>,
+        index: usize,
+        fields: &[usize],
+    ) -> Option<PlaceKey> {
+        let mut place = self.callsite_arg_place(callsite, index)?;
+        place.fields.extend(fields.iter().copied());
+        Some(place)
     }
 
     /// Replace a callee generic parameter with its concrete callsite type.
