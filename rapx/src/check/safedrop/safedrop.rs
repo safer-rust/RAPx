@@ -452,6 +452,12 @@ impl<'tcx> SafeDropGraph<'tcx> {
         if self.bug_records.uaf_bugs.contains_key(&local) {
             return;
         }
+        let drop_spot = self.drop_record[value_idx].drop_spot;
+        if self.bug_records.uaf_bugs.values().any(|existing| {
+            existing.drop_spot == drop_spot && existing.trigger_info.bb == Some(bb_idx)
+        }) {
+            return;
+        }
         rap_warn!("Find a use-after-free bug {:?}; add to records", bug);
         self.bug_records.uaf_bugs.insert(local, bug);
     }
@@ -504,6 +510,12 @@ impl<'tcx> SafeDropGraph<'tcx> {
         }
         if flag_cleanup {
             if !self.bug_records.df_bugs_unwind.contains_key(&local) {
+                let drop_spot = self.drop_record[value_idx].drop_spot;
+                if self.bug_records.df_bugs_unwind.values().any(|existing| {
+                    existing.drop_spot == drop_spot && existing.trigger_info.bb == Some(bb_idx)
+                }) {
+                    return true;
+                }
                 self.bug_records.df_bugs_unwind.insert(local, bug);
                 rap_info!(
                     "Find a double free bug {} during unwinding; add to records.",
@@ -512,6 +524,12 @@ impl<'tcx> SafeDropGraph<'tcx> {
             }
         } else {
             if !self.bug_records.df_bugs.contains_key(&local) {
+                let drop_spot = self.drop_record[value_idx].drop_spot;
+                if self.bug_records.df_bugs.values().any(|existing| {
+                    existing.drop_spot == drop_spot && existing.trigger_info.bb == Some(bb_idx)
+                }) {
+                    return true;
+                }
                 self.bug_records.df_bugs.insert(local, bug);
                 rap_info!("Find a double free bug {}; add to records.", local);
             }
@@ -544,11 +562,19 @@ impl<'tcx> SafeDropGraph<'tcx> {
                     span: self.alias_graph.span().clone(),
                     confidence,
                 };
-                self.bug_records.dp_bugs_unwind.insert(arg_idx, bug);
-                rap_info!(
-                    "Find a dangling pointer {} during unwinding; add to record.",
-                    arg_idx
-                );
+                if !self.bug_records.dp_bugs_unwind.contains_key(&arg_idx) {
+                    let drop_spot = self.drop_record[arg_idx].drop_spot;
+                    if self.bug_records.dp_bugs_unwind.values().any(|existing| {
+                        existing.drop_spot == drop_spot
+                    }) {
+                        continue;
+                    }
+                    self.bug_records.dp_bugs_unwind.insert(arg_idx, bug);
+                    rap_info!(
+                        "Find a dangling pointer {} during unwinding; add to record.",
+                        arg_idx
+                    );
+                }
             }
         } else {
             if self.alias_graph.values[0].may_drop
@@ -569,8 +595,10 @@ impl<'tcx> SafeDropGraph<'tcx> {
                     span: self.alias_graph.span().clone(),
                     confidence,
                 };
-                self.bug_records.dp_bugs.insert(0, bug);
-                rap_info!("Find a dangling pointer 0; add to record.");
+                if !self.bug_records.dp_bugs.contains_key(&0) {
+                    self.bug_records.dp_bugs.insert(0, bug);
+                    rap_info!("Find a dangling pointer 0; add to record.");
+                }
             } else {
                 for arg_idx in 0..self.alias_graph.arg_size() + 1 {
                     if !self.alias_graph.values[arg_idx].is_ptr() {
@@ -593,8 +621,16 @@ impl<'tcx> SafeDropGraph<'tcx> {
                         span: self.alias_graph.span().clone(),
                         confidence,
                     };
-                    self.bug_records.dp_bugs.insert(arg_idx, bug);
-                    rap_info!("Find a dangling pointer {}; add to record.", arg_idx);
+                    if !self.bug_records.dp_bugs.contains_key(&arg_idx) {
+                        let drop_spot = self.drop_record[arg_idx].drop_spot;
+                        if self.bug_records.dp_bugs.values().any(|existing| {
+                            existing.drop_spot == drop_spot
+                        }) {
+                            continue;
+                        }
+                        self.bug_records.dp_bugs.insert(arg_idx, bug);
+                        rap_info!("Find a dangling pointer {}; add to record.", arg_idx);
+                    }
                 }
             }
         }

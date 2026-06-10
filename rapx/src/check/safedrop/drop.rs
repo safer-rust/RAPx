@@ -2,7 +2,7 @@ use super::graph::*;
 use rustc_middle::mir::SourceInfo;
 use std::usize;
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct LocalSpot {
     pub bb: Option<usize>,
     pub local: Option<usize>,
