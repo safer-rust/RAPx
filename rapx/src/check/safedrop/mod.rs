@@ -33,7 +33,7 @@ impl<'tcx> SafeDrop<'tcx> {
         mop.run();
         let fn_map = mop.get_all_fn_alias_raw();
         rap_info!("================================");
-        rap_info!("Aliases found: {:?}", fn_map);
+        rap_debug!("Aliases found: {:?}", fn_map);
 
         let mut heap = OwnedHeapAnalyzer::new(self.tcx);
         heap.run();

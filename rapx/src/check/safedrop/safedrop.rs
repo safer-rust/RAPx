@@ -448,14 +448,13 @@ impl<'tcx> SafeDropGraph<'tcx> {
             prop_chain: self.drop_record[value_idx].prop_chain.clone(),
             span: span.clone(),
             confidence,
+            bug_type: BugType::UseAfterFree,
         };
         if self.bug_records.uaf_bugs.contains_key(&local) {
             return;
         }
         let drop_spot = self.drop_record[value_idx].drop_spot;
-        if self.bug_records.uaf_bugs.values().any(|existing| {
-            existing.drop_spot == drop_spot && existing.trigger_info.bb == Some(bb_idx)
-        }) {
+        if self.bug_records.try_merge_pair(drop_spot, bb_idx, BugType::UseAfterFree) {
             return;
         }
         rap_warn!("Find a use-after-free bug {:?}; add to records", bug);
@@ -503,6 +502,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
             prop_chain: self.drop_record[value_idx].prop_chain.clone(),
             span: span.clone(),
             confidence,
+            bug_type: BugType::DoubleFree,
         };
 
         for item in &self.drop_record {
@@ -511,9 +511,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
         if flag_cleanup {
             if !self.bug_records.df_bugs_unwind.contains_key(&local) {
                 let drop_spot = self.drop_record[value_idx].drop_spot;
-                if self.bug_records.df_bugs_unwind.values().any(|existing| {
-                    existing.drop_spot == drop_spot && existing.trigger_info.bb == Some(bb_idx)
-                }) {
+                if self.bug_records.try_merge_pair(drop_spot, bb_idx, BugType::DoubleFree) {
                     return true;
                 }
                 self.bug_records.df_bugs_unwind.insert(local, bug);
@@ -525,9 +523,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
         } else {
             if !self.bug_records.df_bugs.contains_key(&local) {
                 let drop_spot = self.drop_record[value_idx].drop_spot;
-                if self.bug_records.df_bugs.values().any(|existing| {
-                    existing.drop_spot == drop_spot && existing.trigger_info.bb == Some(bb_idx)
-                }) {
+                if self.bug_records.try_merge_pair(drop_spot, bb_idx, BugType::DoubleFree) {
                     return true;
                 }
                 self.bug_records.df_bugs.insert(local, bug);
@@ -561,6 +557,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
                     prop_chain: self.drop_record[arg_idx].prop_chain.clone(),
                     span: self.alias_graph.span().clone(),
                     confidence,
+                    bug_type: BugType::DanglingPointer,
                 };
                 if !self.bug_records.dp_bugs_unwind.contains_key(&arg_idx) {
                     let drop_spot = self.drop_record[arg_idx].drop_spot;
@@ -594,6 +591,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
                     prop_chain: self.drop_record[0].prop_chain.clone(),
                     span: self.alias_graph.span().clone(),
                     confidence,
+                    bug_type: BugType::DanglingPointer,
                 };
                 if !self.bug_records.dp_bugs.contains_key(&0) {
                     self.bug_records.dp_bugs.insert(0, bug);
@@ -620,6 +618,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
                         prop_chain: self.drop_record[arg_idx].prop_chain.clone(),
                         span: self.alias_graph.span().clone(),
                         confidence,
+                        bug_type: BugType::DanglingPointer,
                     };
                     if !self.bug_records.dp_bugs.contains_key(&arg_idx) {
                         let drop_spot = self.drop_record[arg_idx].drop_spot;
