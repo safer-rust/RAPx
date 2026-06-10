@@ -413,61 +413,60 @@ impl<'tcx> SafeDropGraph<'tcx> {
         */
     }
 
+    fn make_bug(&self, idx: usize, trigger_info: LocalSpot, span: Span, confidence: usize, bug_type: BugType) -> TyBug {
+        TyBug {
+            drop_spot: self.drop_record[idx].drop_spot,
+            trigger_info,
+            prop_chain: self.drop_record[idx].prop_chain.clone(),
+            span,
+            confidence,
+            bug_type,
+        }
+    }
+
+    fn check_drop_status(&mut self, idx: usize) -> Option<usize> {
+        self.fetch_drop_info(idx);
+        let mut fully_dropped = true;
+        if !self.drop_record[idx].is_dropped {
+            fully_dropped = false;
+            if !self.drop_record[idx].has_dropped_field {
+                return None;
+            }
+        }
+        let kind = self.alias_graph.values[idx].kind;
+        Some(Self::rate_confidence(kind, fully_dropped))
+    }
+
     pub fn uaf_check(&mut self, value_idx: usize, bb_idx: usize, span: Span, is_fncall: bool) {
         let local = self.alias_graph.values[value_idx].local;
         rap_debug!(
             "uaf_check, idx: {:?}, local: {:?}, drop_record: {:?}",
-            value_idx,
-            local,
-            self.drop_record[value_idx],
+            value_idx, local, self.drop_record[value_idx],
         );
-
         if !self.alias_graph.values[value_idx].may_drop {
             return;
         }
         if self.alias_graph.values[value_idx].is_ptr() && !is_fncall {
             return;
         }
-
-        self.fetch_drop_info(value_idx);
-
-        let mut fully_dropped = true;
-        if !self.drop_record[value_idx].is_dropped {
-            fully_dropped = false;
-            if !self.drop_record[value_idx].has_dropped_field {
-                return;
-            }
-        }
-
-        let kind = self.alias_graph.values[value_idx].kind;
-        let confidence = Self::rate_confidence(kind, fully_dropped);
-
+        let Some(confidence) = self.check_drop_status(value_idx) else { return; };
         if self.bug_records.uaf_bugs.contains_key(&local) {
             return;
         }
         let drop_spot = self.drop_record[value_idx].drop_spot;
-        let result_type = self.bug_records.try_merge_pair(drop_spot, bb_idx, BugType::UseAfterFree);
-        if let Some(t) = result_type {
-            let bug = TyBug {
-                drop_spot: self.drop_record[value_idx].drop_spot,
-                trigger_info: LocalSpot::new(bb_idx, local),
-                prop_chain: self.drop_record[value_idx].prop_chain.clone(),
-                span: span.clone(),
-                confidence,
-                bug_type: t,
-            };
+        if let Some(t) = self.bug_records.try_merge_pair(drop_spot, bb_idx, BugType::UseAfterFree) {
+            let bug = self.make_bug(value_idx, LocalSpot::new(bb_idx, local), span.clone(), confidence, t);
             rap_warn!("Find a use-after-free bug {:?}; add to records", bug);
             self.bug_records.uaf_bugs.insert(local, bug);
         }
     }
 
     pub fn rate_confidence(kind: ValueKind, fully_dropped: bool) -> usize {
-        let confidence = match (kind, fully_dropped) {
+        match (kind, fully_dropped) {
             (ValueKind::SpecialPtr, _) => 0,
             (_, true) => 99,
             (_, false) => 50,
-        };
-        confidence
+        }
     }
 
     pub fn df_check(
@@ -478,70 +477,35 @@ impl<'tcx> SafeDropGraph<'tcx> {
         flag_cleanup: bool,
     ) -> bool {
         let local = self.alias_graph.values[value_idx].local;
-        // If the value has not been dropped, it is not a double free.
         rap_debug!(
             "df_check: value_idx = {:?}, bb_idx = {:?}, alias_sets: {:?}",
-            value_idx,
-            bb_idx,
-            self.alias_graph.alias_sets,
+            value_idx, bb_idx, self.alias_graph.alias_sets,
         );
-        self.fetch_drop_info(value_idx);
-        let mut fully_dropped = true;
-        if !self.drop_record[value_idx].is_dropped {
-            fully_dropped = false;
-            if !self.drop_record[value_idx].has_dropped_field {
-                return false;
-            }
-        }
-        let kind = self.alias_graph.values[value_idx].kind;
-        let confidence = Self::rate_confidence(kind, fully_dropped);
+        let Some(confidence) = self.check_drop_status(value_idx) else { return false; };
 
         for item in &self.drop_record {
             rap_debug!("drop_spot: {:?}", item);
         }
-        if flag_cleanup {
-            if !self.bug_records.df_bugs_unwind.contains_key(&local) {
-                let drop_spot = self.drop_record[value_idx].drop_spot;
-                let result_type = self.bug_records.try_merge_pair(drop_spot, bb_idx, BugType::DoubleFree);
-                if let Some(t) = result_type {
-                    let bug = TyBug {
-                        drop_spot: self.drop_record[value_idx].drop_spot,
-                        trigger_info: LocalSpot::new(bb_idx, local),
-                        prop_chain: self.drop_record[value_idx].prop_chain.clone(),
-                        span: span.clone(),
-                        confidence,
-                        bug_type: t,
-                    };
-                    self.bug_records.df_bugs_unwind.insert(local, bug);
-                    rap_info!(
-                        "Find a double free bug {} during unwinding; add to records.",
-                        local
-                    );
-                } else {
-                    return true;
-                }
-            }
+
+        let drop_spot = self.drop_record[value_idx].drop_spot;
+        let result_type = self.bug_records.try_merge_pair(drop_spot, bb_idx, BugType::DoubleFree);
+        let Some(t) = result_type else { return true; };
+
+        let bug = self.make_bug(value_idx, LocalSpot::new(bb_idx, local), span.clone(), confidence, t);
+        let target_map = if flag_cleanup {
+            &mut self.bug_records.df_bugs_unwind
         } else {
-            if !self.bug_records.df_bugs.contains_key(&local) {
-                let drop_spot = self.drop_record[value_idx].drop_spot;
-                let result_type = self.bug_records.try_merge_pair(drop_spot, bb_idx, BugType::DoubleFree);
-                if let Some(t) = result_type {
-                    let bug = TyBug {
-                        drop_spot: self.drop_record[value_idx].drop_spot,
-                        trigger_info: LocalSpot::new(bb_idx, local),
-                        prop_chain: self.drop_record[value_idx].prop_chain.clone(),
-                        span: span.clone(),
-                        confidence,
-                        bug_type: t,
-                    };
-                    self.bug_records.df_bugs.insert(local, bug);
-                    rap_info!("Find a double free bug {}; add to records.", local);
-                } else {
-                    return true;
-                }
+            &mut self.bug_records.df_bugs
+        };
+        if !target_map.contains_key(&local) {
+            target_map.insert(local, bug);
+            if flag_cleanup {
+                rap_info!("Find a double free bug {} during unwinding; add to records.", local);
+            } else {
+                rap_info!("Find a double free bug {}; add to records.", local);
             }
         }
-        return true;
+        true
     }
 
     pub fn dp_check(&mut self, flag_cleanup: bool) {
@@ -549,100 +513,46 @@ impl<'tcx> SafeDropGraph<'tcx> {
         rap_debug!("current alias sets: {:?}", self.alias_graph.alias_sets);
         if flag_cleanup {
             for arg_idx in 1..self.alias_graph.arg_size() + 1 {
-                if !self.alias_graph.values[arg_idx].is_ptr() {
-                    continue;
-                }
-                self.fetch_drop_info(arg_idx);
-                let mut fully_dropped = true;
-                if !self.drop_record[arg_idx].is_dropped {
-                    fully_dropped = false;
-                    if !self.drop_record[arg_idx].has_dropped_field {
-                        continue;
-                    }
-                }
-                let kind = self.alias_graph.values[arg_idx].kind;
-                let confidence = Self::rate_confidence(kind, fully_dropped);
-                let bug = TyBug {
-                    drop_spot: self.drop_record[arg_idx].drop_spot,
-                    trigger_info: LocalSpot::from_local(arg_idx),
-                    prop_chain: self.drop_record[arg_idx].prop_chain.clone(),
-                    span: self.alias_graph.span().clone(),
-                    confidence,
-                    bug_type: BugType::DanglingPointer,
-                };
-                if !self.bug_records.dp_bugs_unwind.contains_key(&arg_idx) {
-                    let drop_spot = self.drop_record[arg_idx].drop_spot;
-                    if self.bug_records.dp_bugs_unwind.values().any(|existing| {
-                        existing.drop_spot == drop_spot
-                    }) {
-                        continue;
-                    }
-                    self.bug_records.dp_bugs_unwind.insert(arg_idx, bug);
-                    rap_info!(
-                        "Find a dangling pointer {} during unwinding; add to record.",
-                        arg_idx
-                    );
-                }
+                self.dp_check_arg(arg_idx, flag_cleanup);
+            }
+        } else if self.alias_graph.values[0].may_drop
+            && (self.drop_record[0].is_dropped || self.drop_record[0].has_dropped_field)
+        {
+            let Some(confidence) = self.check_drop_status(0) else { return; };
+            if !self.bug_records.dp_bugs.contains_key(&0) {
+                let bug = self.make_bug(0, LocalSpot::from_local(0), self.alias_graph.span().clone(), confidence, BugType::DanglingPointer);
+                self.bug_records.dp_bugs.insert(0, bug);
+                rap_info!("Find a dangling pointer 0; add to record.");
             }
         } else {
-            if self.alias_graph.values[0].may_drop
-                && (self.drop_record[0].is_dropped || self.drop_record[0].has_dropped_field)
-            {
-                self.fetch_drop_info(0);
-                let mut fully_dropped = true;
-                if !self.drop_record[0].is_dropped {
-                    fully_dropped = false;
-                }
-
-                let kind = self.alias_graph.values[0].kind;
-                let confidence = Self::rate_confidence(kind, fully_dropped);
-                let bug = TyBug {
-                    drop_spot: self.drop_record[0].drop_spot,
-                    trigger_info: LocalSpot::from_local(0),
-                    prop_chain: self.drop_record[0].prop_chain.clone(),
-                    span: self.alias_graph.span().clone(),
-                    confidence,
-                    bug_type: BugType::DanglingPointer,
-                };
-                if !self.bug_records.dp_bugs.contains_key(&0) {
-                    self.bug_records.dp_bugs.insert(0, bug);
-                    rap_info!("Find a dangling pointer 0; add to record.");
-                }
-            } else {
-                for arg_idx in 0..self.alias_graph.arg_size() + 1 {
-                    if !self.alias_graph.values[arg_idx].is_ptr() {
-                        continue;
-                    }
-                    self.fetch_drop_info(arg_idx);
-                    let mut fully_dropped = true;
-                    if !self.drop_record[arg_idx].is_dropped {
-                        fully_dropped = false;
-                        if !self.drop_record[arg_idx].has_dropped_field {
-                            continue;
-                        }
-                    }
-                    let kind = self.alias_graph.values[arg_idx].kind;
-                    let confidence = Self::rate_confidence(kind, fully_dropped);
-                    let bug = TyBug {
-                        drop_spot: self.drop_record[arg_idx].drop_spot,
-                        trigger_info: LocalSpot::from_local(arg_idx),
-                        prop_chain: self.drop_record[arg_idx].prop_chain.clone(),
-                        span: self.alias_graph.span().clone(),
-                        confidence,
-                        bug_type: BugType::DanglingPointer,
-                    };
-                    if !self.bug_records.dp_bugs.contains_key(&arg_idx) {
-                        let drop_spot = self.drop_record[arg_idx].drop_spot;
-                        if self.bug_records.dp_bugs.values().any(|existing| {
-                            existing.drop_spot == drop_spot
-                        }) {
-                            continue;
-                        }
-                        self.bug_records.dp_bugs.insert(arg_idx, bug);
-                        rap_info!("Find a dangling pointer {}; add to record.", arg_idx);
-                    }
-                }
+            for arg_idx in 0..self.alias_graph.arg_size() + 1 {
+                self.dp_check_arg(arg_idx, false);
             }
+        }
+    }
+
+    fn dp_check_arg(&mut self, arg_idx: usize, flag_cleanup: bool) {
+        if !self.alias_graph.values[arg_idx].is_ptr() {
+            return;
+        }
+        let Some(confidence) = self.check_drop_status(arg_idx) else { return; };
+        let bug = self.make_bug(arg_idx, LocalSpot::from_local(arg_idx), self.alias_graph.span().clone(), confidence, BugType::DanglingPointer);
+        if flag_cleanup {
+            if !self.bug_records.dp_bugs_unwind.contains_key(&arg_idx) {
+                let drop_spot = self.drop_record[arg_idx].drop_spot;
+                if self.bug_records.dp_bugs_unwind.values().any(|e| e.drop_spot == drop_spot) {
+                    return;
+                }
+                self.bug_records.dp_bugs_unwind.insert(arg_idx, bug);
+                rap_info!("Find a dangling pointer {} during unwinding; add to record.", arg_idx);
+            }
+        } else if !self.bug_records.dp_bugs.contains_key(&arg_idx) {
+            let drop_spot = self.drop_record[arg_idx].drop_spot;
+            if self.bug_records.dp_bugs.values().any(|e| e.drop_spot == drop_spot) {
+                return;
+            }
+            self.bug_records.dp_bugs.insert(arg_idx, bug);
+            rap_info!("Find a dangling pointer {}; add to record.", arg_idx);
         }
     }
 }
