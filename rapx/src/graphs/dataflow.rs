@@ -67,6 +67,8 @@ pub struct DataflowEdge {
     pub dst: Local,
     pub op: EdgeOp,
     pub seq: usize,
+    pub block: usize,
+    pub statement_index: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -99,6 +101,8 @@ pub struct DataflowGraph {
     pub edges: GraphEdges,
     pub n_locals: usize,
     pub closures: HashSet<DefId>,
+    pub block: usize,
+    pub statement_index: usize,
 }
 
 impl DataflowGraph {
@@ -111,6 +115,8 @@ impl DataflowGraph {
             edges: GraphEdges::new(),
             n_locals,
             closures: HashSet::new(),
+            block: 0,
+            statement_index: 0,
         }
     }
 
@@ -132,7 +138,14 @@ impl DataflowGraph {
 
     pub fn add_node_edge(&mut self, src: Local, dst: Local, op: EdgeOp) -> EdgeIdx {
         let seq = self.nodes[dst].seq;
-        let edge_idx = self.edges.push(DataflowEdge { src, dst, op, seq });
+        let edge_idx = self.edges.push(DataflowEdge {
+            src,
+            dst,
+            op,
+            seq,
+            block: self.block,
+            statement_index: self.statement_index,
+        });
         self.nodes[dst].in_edges.push(edge_idx);
         self.nodes[src].out_edges.push(edge_idx);
         edge_idx
@@ -149,7 +162,14 @@ impl DataflowGraph {
         let mut const_node = DataflowNode::new();
         const_node.ops[0] = NodeOp::Const(src_desc, src_ty);
         let src = self.nodes.push(const_node);
-        let edge_idx = self.edges.push(DataflowEdge { src, dst, op, seq });
+        let edge_idx = self.edges.push(DataflowEdge {
+            src,
+            dst,
+            op,
+            seq,
+            block: self.block,
+            statement_index: self.statement_index,
+        });
         self.nodes[dst].in_edges.push(edge_idx);
         edge_idx
     }

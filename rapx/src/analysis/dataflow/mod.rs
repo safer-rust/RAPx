@@ -46,7 +46,7 @@ pub struct DataFlowGraphWrapper(pub DataFlowGraph);
 pub struct DataFlowGraphMapWrapper(pub HashMap<DefId, DataFlowGraph>);
 
 /// This trait provides features related to dataflow analysis.
-pub trait DataFlowAnalysis: Analysis {
+pub trait DataflowAnalysis: Analysis {
     fn get_fn_dataflow(&self, def_id: DefId) -> Option<DataFlowGraph>;
     fn get_all_dataflow(&self) -> DataFlowGraphMap;
     fn has_flow_between(&self, def_id: DefId, local1: Local, local2: Local) -> bool;

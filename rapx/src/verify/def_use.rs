@@ -1,15 +1,14 @@
 //! Def-use computation for the backward path visitor.
 //!
 //! These types and helpers track which MIR places are relevant to a safety
-//! property and compute definitions/uses from MIR statements and terminators.
+//! property and compute definitions/uses from MIR terminators.
 //! This is the data layer that `path_refine` drives block-by-block along a
 //! finite verification path; keeping it separate lets the core visit logic stay
 //! focused on path-level decisions (calls, SCC exits, path conditions).
 
 use rustc_data_structures::fx::FxHashSet;
 use rustc_middle::mir::{
-    Local, Operand, Place, ProjectionElem, Rvalue, Statement, StatementKind, Terminator,
-    TerminatorKind,
+    Local, Operand, Place, ProjectionElem, Terminator, TerminatorKind,
 };
 use rustc_span::source_map::Spanned;
 
@@ -298,24 +297,6 @@ pub fn bind_callsite_roots(relevance: &mut RelevantPlaces, callsite: &Callsite<'
 
 // ── def-use extraction from MIR ────────────────────────────────────────
 
-/// Collect definitions and uses for one MIR statement.
-pub fn statement_use_def<'tcx>(statement: &Statement<'tcx>) -> DefUse {
-    let mut use_def = DefUse::new();
-    match &statement.kind {
-        StatementKind::Assign(box (place, rvalue)) => {
-            use_def.defs.insert_mir_place(place);
-            use_def.uses.extend(place_projection_uses(place));
-            use_def.uses.extend(rvalue_uses(rvalue));
-        }
-        StatementKind::StorageDead(local) => {
-            use_def.defs.insert_local(*local);
-        }
-        StatementKind::StorageLive(_) => {}
-        _ => {}
-    }
-    use_def
-}
-
 /// Collect definitions and uses for one MIR terminator.
 pub fn terminator_use_def<'tcx>(terminator: &Terminator<'tcx>) -> DefUse {
     let mut use_def = DefUse::new();
@@ -365,38 +346,6 @@ pub fn call_args_uses_at<'tcx>(
         if let Some(arg) = args.get(*index) {
             uses.extend(operand_uses(&arg.node));
         }
-    }
-    uses
-}
-
-/// Collect all MIR roots used by an rvalue.
-pub fn rvalue_uses<'tcx>(rvalue: &Rvalue<'tcx>) -> RelevantPlaces {
-    let mut uses = RelevantPlaces::new();
-    match rvalue {
-        Rvalue::Use(operand)
-        | Rvalue::Repeat(operand, _)
-        | Rvalue::UnaryOp(_, operand)
-        | Rvalue::Cast(_, operand, _)
-        | Rvalue::ShallowInitBox(operand, _) => {
-            uses.extend(operand_uses(operand));
-        }
-        Rvalue::BinaryOp(_, box (lhs, rhs)) => {
-            uses.extend(operand_uses(lhs));
-            uses.extend(operand_uses(rhs));
-        }
-        Rvalue::Ref(_, _, place)
-        | Rvalue::RawPtr(_, place)
-        | Rvalue::CopyForDeref(place)
-        | Rvalue::Discriminant(place) => {
-            uses.extend(place_uses(place));
-        }
-        Rvalue::Aggregate(_, operands) => {
-            for operand in operands {
-                uses.extend(operand_uses(operand));
-            }
-        }
-        Rvalue::NullaryOp(_) | Rvalue::ThreadLocalRef(_) => {}
-        _ => {}
     }
     uses
 }

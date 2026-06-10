@@ -17,7 +17,7 @@ use rustc_middle::{
     ty::{PseudoCanonicalInput, Ty, TyCtxt, TyKind},
 };
 
-use crate::analysis::dataflow::{DataFlowAnalysis, default::DataFlowAnalyzer};
+use crate::analysis::dataflow::{DataflowAnalysis, default::DataflowAnalyzer};
 
 use super::path_refine::ForgetReason;
 
@@ -326,7 +326,7 @@ pub fn is_layout_constant_call(name: &str) -> bool {
 fn local_return_dependencies(tcx: TyCtxt<'_>, callee: DefId) -> Option<Vec<usize>> {
     callee.as_local()?;
     catch_unwind(AssertUnwindSafe(|| {
-        let mut analyzer = DataFlowAnalyzer::new(tcx, false);
+        let mut analyzer = DataflowAnalyzer::new(tcx, false);
         analyzer.build_graph(callee);
         let deps = analyzer.get_fn_arg2ret(callee);
         deps.iter_enumerated()

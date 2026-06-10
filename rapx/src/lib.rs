@@ -52,7 +52,7 @@ use analysis::{
     api_dependency::ApiDependencyAnalyzer,
     callgraph::{CallGraphAnalysis, FnCallDisplay, default::CallGraphAnalyzer},
     dataflow::{
-        Arg2RetMapWrapper, DataFlowAnalysis, DataFlowGraphMapWrapper, default::DataFlowAnalyzer,
+        Arg2RetMapWrapper, DataflowAnalysis, DataFlowGraphMapWrapper, default::DataflowAnalyzer,
     },
     ownedheap_analysis::{OHAResultMapWrapper, OwnedHeapAnalysis, default::OwnedHeapAnalyzer},
     path_analysis::{PathMapWrapper, default::PathAnalyzer},
@@ -249,12 +249,12 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
             }
             &AnalysisKind::Dataflow { debug } => {
                 if debug {
-                    let mut analyzer = DataFlowAnalyzer::new(tcx, true);
+                    let mut analyzer = DataflowAnalyzer::new(tcx, true);
                     analyzer.run();
                     let result = analyzer.get_all_dataflow();
                     rap_info!("{}", DataFlowGraphMapWrapper(result));
                 } else {
-                    let mut analyzer = DataFlowAnalyzer::new(tcx, false);
+                    let mut analyzer = DataflowAnalyzer::new(tcx, false);
                     analyzer.run();
                     let result = analyzer.get_all_arg2ret();
                     rap_info!("{}", Arg2RetMapWrapper(result));

@@ -1,7 +1,7 @@
 use super::draw_dot::render_dot_string;
 use crate::def_id::*;
 use crate::{
-    analysis::dataflow::{DataFlowAnalysis, default::DataFlowAnalyzer},
+    analysis::dataflow::{DataflowAnalysis, default::DataflowAnalyzer},
     check::senryx::{callsite::has_unsafe_api_contract, contract::PropertyContract},
 };
 use crate::{rap_debug, rap_warn};
@@ -1176,7 +1176,7 @@ pub fn reflect_generic<'tcx>(
 // src_var = 0: for constructor
 // src_var = 1: for methods
 pub fn has_tainted_fields(tcx: TyCtxt, def_id: DefId, src_var: u32) -> bool {
-    let mut dataflow_analyzer = DataFlowAnalyzer::new(tcx, false);
+    let mut dataflow_analyzer = DataflowAnalyzer::new(tcx, false);
     dataflow_analyzer.build_graph(def_id);
 
     let body = tcx.optimized_mir(def_id);

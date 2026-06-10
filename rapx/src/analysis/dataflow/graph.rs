@@ -3,11 +3,31 @@ use rustc_middle::{
         AggregateKind, BorrowKind, Const, Local, Operand, Place, PlaceElem, Rvalue, Statement,
         StatementKind, Terminator, TerminatorKind,
     },
-    ty::TyKind,
+    ty::{TyCtxt, TyKind},
 };
+use rustc_hir::def_id::DefId;
 use rustc_span::Span;
 
 use crate::graphs::dataflow::*;
+
+/// Build a `DataflowGraph` for a single function identified by `def_id`.
+pub fn build_dataflow_graph(tcx: TyCtxt<'_>, def_id: DefId) -> DataflowGraph {
+    let body = tcx.optimized_mir(def_id);
+    let mut graph =
+        DataflowGraph::new(def_id, body.span, body.arg_count, body.local_decls.len());
+    for (block_idx, bb) in body.basic_blocks.iter().enumerate() {
+        graph.block = block_idx;
+        for (stmt_idx, stmt) in bb.statements.iter().enumerate() {
+            graph.statement_index = stmt_idx;
+            graph.add_statm_to_graph(&stmt);
+        }
+        if let Some(terminator) = &bb.terminator {
+            graph.statement_index = bb.statements.len();
+            graph.add_terminator_to_graph(&terminator);
+        }
+    }
+    graph
+}
 
 impl DataflowGraph {
     pub fn add_operand(&mut self, operand: &Operand, dst: Local) {

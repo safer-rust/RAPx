@@ -12,11 +12,14 @@ use rustc_middle::mir::{BasicBlock, Operand, StatementKind, TerminatorKind};
 use rustc_middle::ty::TyCtxt;
 use rustc_span::source_map::Spanned;
 
+use crate::analysis::dataflow::graph::build_dataflow_graph;
+use crate::graphs::dataflow::DataflowGraph;
+
 use super::{
     call_summary,
     def_use::{
         bind_callsite_roots, call_args_uses, call_args_uses_at, operand_uses,
-        statement_use_def, terminator_use_def, RelevantPlaces,
+        terminator_use_def, RelevantPlaces,
     },
     helpers::{Callsite, CallsiteLocation},
     path::{Path, PathStep},
@@ -67,13 +70,14 @@ impl<'tcx> BackwardVisitor<'tcx> {
         let mut relevant = visit.roots.clone();
         let mut items = Vec::new();
         let body = self.tcx.optimized_mir(callsite.caller);
+        let flow = build_dataflow_graph(self.tcx, callsite.caller);
 
         for step in path.steps.iter().rev() {
-            self.visit_path_step(step, callsite, &body, &mut relevant, &mut items);
+            self.visit_path_step(step, callsite, &body, &flow, &mut relevant, &mut items);
         }
 
         for step in path.entry_prefix.iter().rev() {
-            self.visit_path_step(step, callsite, &body, &mut relevant, &mut items);
+            self.visit_path_step(step, callsite, &body, &flow, &mut relevant, &mut items);
         }
 
         items.reverse();
@@ -87,6 +91,7 @@ impl<'tcx> BackwardVisitor<'tcx> {
         step: &PathStep,
         callsite: &Callsite<'tcx>,
         body: &rustc_middle::mir::Body<'tcx>,
+        flow: &DataflowGraph,
         relevant: &mut RelevantPlaces,
         items: &mut Vec<BackwardItem<'tcx>>,
     ) {
@@ -106,7 +111,7 @@ impl<'tcx> BackwardVisitor<'tcx> {
                     self.visit_terminator(*block, block_data.terminator(), relevant, items);
                 }
                 for (statement_index, statement) in block_data.statements.iter().enumerate().rev() {
-                    self.visit_statement(*block, statement_index, statement, relevant, items);
+                    self.visit_statement(*block, statement_index, statement, flow, relevant, items);
                 }
             }
             PathStep::SccExit { .. } => {
@@ -127,18 +132,40 @@ impl<'tcx> BackwardVisitor<'tcx> {
         block: BasicBlock,
         statement_index: usize,
         statement: &rustc_middle::mir::Statement<'tcx>,
+        flow: &DataflowGraph,
         relevant: &mut RelevantPlaces,
         items: &mut Vec<BackwardItem<'tcx>>,
     ) {
-        let use_def = statement_use_def(statement);
-        if use_def.defs.intersects(relevant) {
+        let mut defs = RelevantPlaces::new();
+        match &statement.kind {
+            StatementKind::Assign(box (place, _)) => {
+                defs.insert_mir_place(place);
+            }
+            StatementKind::StorageDead(local) => {
+                defs.insert_local(*local);
+            }
+            _ => {}
+        }
+
+        if defs.intersects(relevant) {
+            let mut uses = RelevantPlaces::new();
+            for &local in &defs.locals {
+                for &edge_idx in &flow.node(local).in_edges {
+                    let edge = &flow.edges[edge_idx];
+                    if edge.block == block.as_usize()
+                        && edge.statement_index == statement_index
+                    {
+                        uses.insert_local(edge.src);
+                    }
+                }
+            }
             items.push(BackwardItem::Statement {
                 block,
                 statement_index,
                 kind: statement_keep_reason(statement),
             });
-            relevant.remove_all(&use_def.defs);
-            relevant.extend(use_def.uses);
+            relevant.remove_all(&defs);
+            relevant.extend(uses);
             return;
         }
 
@@ -148,12 +175,25 @@ impl<'tcx> BackwardVisitor<'tcx> {
                 statement_index,
                 kind: KeepReason::Invalidation,
             });
-        } else if use_def.uses.intersects(relevant) && statement_can_refine(statement) {
-            items.push(BackwardItem::Statement {
-                block,
-                statement_index,
-                kind: KeepReason::RuntimeCheck,
-            });
+        } else if statement_can_refine(statement) {
+            let mut uses = RelevantPlaces::new();
+            for &local in &defs.locals {
+                for &edge_idx in &flow.node(local).in_edges {
+                    let edge = &flow.edges[edge_idx];
+                    if edge.block == block.as_usize()
+                        && edge.statement_index == statement_index
+                    {
+                        uses.insert_local(edge.src);
+                    }
+                }
+            }
+            if uses.intersects(relevant) {
+                items.push(BackwardItem::Statement {
+                    block,
+                    statement_index,
+                    kind: KeepReason::RuntimeCheck,
+                });
+            }
         }
     }
 

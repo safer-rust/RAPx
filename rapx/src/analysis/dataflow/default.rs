@@ -10,13 +10,13 @@ use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{Body, Local};
 use rustc_middle::ty::TyCtxt;
 
-pub struct DataFlowAnalyzer<'tcx> {
+pub struct DataflowAnalyzer<'tcx> {
     pub tcx: TyCtxt<'tcx>,
     pub graphs: HashMap<DefId, DataflowGraph>,
     pub debug: bool,
 }
 
-impl<'tcx> DataFlowAnalysis for DataFlowAnalyzer<'tcx> {
+impl<'tcx> DataflowAnalysis for DataflowAnalyzer<'tcx> {
     fn get_fn_dataflow(&self, def_id: DefId) -> Option<DataFlowGraph> {
         self.graphs.get(&def_id).cloned().map(Into::into)
     }
@@ -53,7 +53,7 @@ impl<'tcx> DataFlowAnalysis for DataFlowAnalyzer<'tcx> {
     }
 }
 
-impl<'tcx> Analysis for DataFlowAnalyzer<'tcx> {
+impl<'tcx> Analysis for DataflowAnalyzer<'tcx> {
     fn name(&self) -> &'static str {
         "DataFlow Analysis"
     }
@@ -70,7 +70,7 @@ impl<'tcx> Analysis for DataFlowAnalyzer<'tcx> {
     }
 }
 
-impl<'tcx> DataFlowAnalyzer<'tcx> {
+impl<'tcx> DataflowAnalyzer<'tcx> {
     pub fn new(tcx: TyCtxt<'tcx>, debug: bool) -> Self {
         Self {
             tcx: tcx,
@@ -106,11 +106,14 @@ impl<'tcx> DataFlowAnalyzer<'tcx> {
         let mut graph =
             DataflowGraph::new(def_id, body.span, body.arg_count, body.local_decls.len());
         let basic_blocks = &body.basic_blocks;
-        for basic_block_data in basic_blocks.iter() {
-            for statement in basic_block_data.statements.iter() {
+        for (block_idx, basic_block_data) in basic_blocks.iter().enumerate() {
+            graph.block = block_idx;
+            for (stmt_idx, statement) in basic_block_data.statements.iter().enumerate() {
+                graph.statement_index = stmt_idx;
                 graph.add_statm_to_graph(&statement);
             }
             if let Some(terminator) = &basic_block_data.terminator {
+                graph.statement_index = basic_block_data.statements.len();
                 graph.add_terminator_to_graph(&terminator);
             }
         }
