@@ -14,6 +14,7 @@ pub struct DataflowAnalyzer<'tcx> {
     pub tcx: TyCtxt<'tcx>,
     pub graphs: HashMap<DefId, DataflowGraph>,
     pub debug: bool,
+    pub draw: bool,
 }
 
 impl<'tcx> DataflowAnalysis for DataflowAnalyzer<'tcx> {
@@ -60,7 +61,7 @@ impl<'tcx> Analysis for DataflowAnalyzer<'tcx> {
 
     fn run(&mut self) {
         self.build_graphs();
-        if self.debug {
+        if self.draw {
             self.draw_graphs();
         }
     }
@@ -76,12 +77,18 @@ impl<'tcx> DataflowAnalyzer<'tcx> {
             tcx: tcx,
             graphs: HashMap::new(),
             debug,
+            draw: false,
         }
+    }
+
+    pub fn with_draw(mut self, draw: bool) -> Self {
+        self.draw = draw;
+        self
     }
 
     pub fn start(&mut self) {
         self.build_graphs();
-        if self.debug {
+        if self.draw {
             self.draw_graphs();
         }
     }

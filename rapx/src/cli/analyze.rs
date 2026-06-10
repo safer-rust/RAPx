@@ -51,6 +51,9 @@ pub enum AnalysisKind {
         /// print debug information during dataflow analysis
         #[arg(short, long)]
         debug: bool,
+        /// render dataflow graphs as PNG images (requires Graphviz)
+        #[arg(short, long)]
+        draw: bool,
     },
     /// analyze if the type holds a piece of memory on heap
     OwnedHeap,

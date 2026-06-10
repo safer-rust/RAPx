@@ -52,7 +52,7 @@ use analysis::{
     api_dependency::ApiDependencyAnalyzer,
     callgraph::{CallGraphAnalysis, FnCallDisplay, default::CallGraphAnalyzer},
     dataflow::{
-        Arg2RetMapWrapper, DataflowAnalysis, DataFlowGraphMapWrapper, default::DataflowAnalyzer,
+        Arg2RetMapWrapper, DataflowAnalysis, default::DataflowAnalyzer,
     },
     ownedheap_analysis::{OHAResultMapWrapper, OwnedHeapAnalysis, default::OwnedHeapAnalyzer},
     path_analysis::{PathMapWrapper, default::PathAnalyzer},
@@ -247,18 +247,11 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
                     }
                 );
             }
-            &AnalysisKind::Dataflow { debug } => {
-                if debug {
-                    let mut analyzer = DataflowAnalyzer::new(tcx, true);
-                    analyzer.run();
-                    let result = analyzer.get_all_dataflow();
-                    rap_info!("{}", DataFlowGraphMapWrapper(result));
-                } else {
-                    let mut analyzer = DataflowAnalyzer::new(tcx, false);
-                    analyzer.run();
-                    let result = analyzer.get_all_arg2ret();
-                    rap_info!("{}", Arg2RetMapWrapper(result));
-                }
+            &AnalysisKind::Dataflow { debug, draw } => {
+                let mut analyzer = DataflowAnalyzer::new(tcx, debug).with_draw(draw);
+                analyzer.run();
+                let result = analyzer.get_all_arg2ret();
+                rap_info!("{}", Arg2RetMapWrapper(result));
             }
             AnalysisKind::OwnedHeap => {
                 let mut analyzer = OwnedHeapAnalyzer::new(tcx);
