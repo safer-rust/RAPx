@@ -19,9 +19,10 @@ use rustc_middle::{
 };
 
 use super::{
-    backward_visit::{BackwardItem, ForgetReason, KeepReason, PlaceKey, RelevantMirItems},
+    backward_visit::{BackwardItem, ForgetReason, KeepReason, RelevantMirItems},
     call_summary::{self, CallEffect, CallEffectSummary},
     contract::Property,
+    def_use::PlaceKey,
     helpers::CallsiteLocation,
     path::{Path, PathStep},
 };
@@ -278,7 +279,7 @@ impl<'tcx> ForwardVisitor<'tcx> {
             return;
         };
         let destination_place = PlaceKey {
-            base: super::backward_visit::PlaceBaseKey::Local(destination.as_usize()),
+            base: super::def_use::PlaceBaseKey::Local(destination.as_usize()),
             fields: Vec::new(),
         };
 

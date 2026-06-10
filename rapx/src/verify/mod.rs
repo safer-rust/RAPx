@@ -2,6 +2,7 @@ pub mod attribute;
 pub mod backward_visit;
 pub mod call_summary;
 mod contract;
+pub mod def_use;
 pub mod driver;
 pub mod forward_visit;
 mod helpers;

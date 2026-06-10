@@ -38,7 +38,7 @@ use z3::{
 use super::{align, non_null, valid_ptr};
 
 use crate::verify::{
-    backward_visit::{PlaceBaseKey, PlaceKey},
+    def_use::{PlaceBaseKey, PlaceKey},
     contract::{ContractExpr, ContractPlace, PlaceBase, Property, PropertyArg, PropertyKind},
     forward_visit::{AbstractValue, CallSummary, ForwardVisitResult, StateFact},
     helpers::Callsite,
