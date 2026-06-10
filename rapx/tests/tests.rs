@@ -156,7 +156,7 @@ fn test_uaf_drop2() {
 #[test]
 fn test_uaf_drop_in_place() {
     let output = run_with_args("uaf/uaf_drop_in_place", CHECK_UAF_CMD);
-    assert_contain(&output, "Use-after-free detected in function \"main\"");
+    assert_contain(&output, "Double free detected in function \"main\"");
 }
 
 #[test]
@@ -174,7 +174,7 @@ fn test_uaf_small() {
 #[test]
 fn test_uaf_swithint() {
     let output = run_with_args("uaf/uaf_swithint", CHECK_UAF_CMD);
-    assert_contain(&output, "Use-after-free detected in function \"evil_test\"");
+    assert_contain(&output, "Double free detected in function \"evil_test\"");
 }
 
 #[test]

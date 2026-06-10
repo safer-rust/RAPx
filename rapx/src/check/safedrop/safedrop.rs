@@ -442,23 +442,23 @@ impl<'tcx> SafeDropGraph<'tcx> {
         let kind = self.alias_graph.values[value_idx].kind;
         let confidence = Self::rate_confidence(kind, fully_dropped);
 
-        let bug = TyBug {
-            drop_spot: self.drop_record[value_idx].drop_spot,
-            trigger_info: LocalSpot::new(bb_idx, local),
-            prop_chain: self.drop_record[value_idx].prop_chain.clone(),
-            span: span.clone(),
-            confidence,
-            bug_type: BugType::UseAfterFree,
-        };
         if self.bug_records.uaf_bugs.contains_key(&local) {
             return;
         }
         let drop_spot = self.drop_record[value_idx].drop_spot;
-        if self.bug_records.try_merge_pair(drop_spot, bb_idx, BugType::UseAfterFree) {
-            return;
+        let result_type = self.bug_records.try_merge_pair(drop_spot, bb_idx, BugType::UseAfterFree);
+        if let Some(t) = result_type {
+            let bug = TyBug {
+                drop_spot: self.drop_record[value_idx].drop_spot,
+                trigger_info: LocalSpot::new(bb_idx, local),
+                prop_chain: self.drop_record[value_idx].prop_chain.clone(),
+                span: span.clone(),
+                confidence,
+                bug_type: t,
+            };
+            rap_warn!("Find a use-after-free bug {:?}; add to records", bug);
+            self.bug_records.uaf_bugs.insert(local, bug);
         }
-        rap_warn!("Find a use-after-free bug {:?}; add to records", bug);
-        self.bug_records.uaf_bugs.insert(local, bug);
     }
 
     pub fn rate_confidence(kind: ValueKind, fully_dropped: bool) -> usize {
@@ -496,38 +496,49 @@ impl<'tcx> SafeDropGraph<'tcx> {
         let kind = self.alias_graph.values[value_idx].kind;
         let confidence = Self::rate_confidence(kind, fully_dropped);
 
-        let bug = TyBug {
-            drop_spot: self.drop_record[value_idx].drop_spot,
-            trigger_info: LocalSpot::new(bb_idx, local),
-            prop_chain: self.drop_record[value_idx].prop_chain.clone(),
-            span: span.clone(),
-            confidence,
-            bug_type: BugType::DoubleFree,
-        };
-
         for item in &self.drop_record {
             rap_debug!("drop_spot: {:?}", item);
         }
         if flag_cleanup {
             if !self.bug_records.df_bugs_unwind.contains_key(&local) {
                 let drop_spot = self.drop_record[value_idx].drop_spot;
-                if self.bug_records.try_merge_pair(drop_spot, bb_idx, BugType::DoubleFree) {
+                let result_type = self.bug_records.try_merge_pair(drop_spot, bb_idx, BugType::DoubleFree);
+                if let Some(t) = result_type {
+                    let bug = TyBug {
+                        drop_spot: self.drop_record[value_idx].drop_spot,
+                        trigger_info: LocalSpot::new(bb_idx, local),
+                        prop_chain: self.drop_record[value_idx].prop_chain.clone(),
+                        span: span.clone(),
+                        confidence,
+                        bug_type: t,
+                    };
+                    self.bug_records.df_bugs_unwind.insert(local, bug);
+                    rap_info!(
+                        "Find a double free bug {} during unwinding; add to records.",
+                        local
+                    );
+                } else {
                     return true;
                 }
-                self.bug_records.df_bugs_unwind.insert(local, bug);
-                rap_info!(
-                    "Find a double free bug {} during unwinding; add to records.",
-                    local
-                );
             }
         } else {
             if !self.bug_records.df_bugs.contains_key(&local) {
                 let drop_spot = self.drop_record[value_idx].drop_spot;
-                if self.bug_records.try_merge_pair(drop_spot, bb_idx, BugType::DoubleFree) {
+                let result_type = self.bug_records.try_merge_pair(drop_spot, bb_idx, BugType::DoubleFree);
+                if let Some(t) = result_type {
+                    let bug = TyBug {
+                        drop_spot: self.drop_record[value_idx].drop_spot,
+                        trigger_info: LocalSpot::new(bb_idx, local),
+                        prop_chain: self.drop_record[value_idx].prop_chain.clone(),
+                        span: span.clone(),
+                        confidence,
+                        bug_type: t,
+                    };
+                    self.bug_records.df_bugs.insert(local, bug);
+                    rap_info!("Find a double free bug {}; add to records.", local);
+                } else {
                     return true;
                 }
-                self.bug_records.df_bugs.insert(local, bug);
-                rap_info!("Find a double free bug {}; add to records.", local);
             }
         }
         return true;

@@ -51,29 +51,37 @@ impl BugRecords {
         }
     }
 
-    pub fn try_merge_pair(&mut self, drop_spot: LocalSpot, trigger_bb: usize, in_type: BugType) -> bool {
-        let is_uaf = in_type == BugType::UseAfterFree;
-        let mut merged = false;
+    /// Returns `Some(bug_type)` if the caller should insert the bug with the returned type.
+    /// Returns `None` if the bug should be skipped (already covered by an existing entry).
+    /// When both UAF and DF exist for the same pair, DF wins as the survivor.
+    pub fn try_merge_pair(&mut self, drop_spot: LocalSpot, trigger_bb: usize, in_type: BugType) -> Option<BugType> {
         let pair_match = |bug: &TyBug| bug.drop_spot == drop_spot && bug.trigger_info.bb == Some(trigger_bb);
-        if is_uaf {
+        if in_type == BugType::UseAfterFree {
             for bug in self.df_bugs.values_mut() {
-                if pair_match(bug) { bug.bug_type = BugType::UseAfterFreeAndDoubleFree; merged = true; }
+                if pair_match(bug) { bug.bug_type = BugType::UseAfterFreeAndDoubleFree; return None; }
             }
             for bug in self.df_bugs_unwind.values_mut() {
-                if pair_match(bug) { bug.bug_type = BugType::UseAfterFreeAndDoubleFree; merged = true; }
+                if pair_match(bug) { bug.bug_type = BugType::UseAfterFreeAndDoubleFree; return None; }
             }
         } else {
-            for bug in self.uaf_bugs.values_mut() {
-                if pair_match(bug) { bug.bug_type = BugType::UseAfterFreeAndDoubleFree; merged = true; }
+            let uaf_keys: Vec<usize> = self.uaf_bugs.iter()
+                .filter(|(_, bug)| pair_match(bug))
+                .map(|(k, _)| *k)
+                .collect();
+            if !uaf_keys.is_empty() {
+                for k in &uaf_keys {
+                    self.uaf_bugs.remove(k);
+                }
+                return Some(BugType::UseAfterFreeAndDoubleFree);
             }
-        }
-        if merged {
-            return true;
         }
         let check = |bugs: &FxHashMap<usize, TyBug>| -> bool {
             bugs.values().any(pair_match)
         };
-        check(&self.uaf_bugs) || check(&self.df_bugs) || check(&self.df_bugs_unwind)
+        if check(&self.uaf_bugs) || check(&self.df_bugs) || check(&self.df_bugs_unwind) {
+            return None;
+        }
+        Some(in_type)
     }
 
     pub fn is_bug_free(&self) -> bool {
@@ -230,7 +238,7 @@ fn df_uaf_detail(
     let line = format!("{} line {}.", span_to_filename(bug.span), span_to_line_number(bug.span));
     match bug.bug_type {
         BugType::UseAfterFreeAndDoubleFree => format!(
-            "Use-after-free / Double free (confidence {}%): Location in file {}\n    | MIR detail: Value {} and {} are alias.\n    | MIR detail: {} is dropped at {}; {} is dropped at {}.",
+            "Double free / Use-after-free (confidence {}%): Location in file {}\n    | MIR detail: Value {} and {} are alias.\n    | MIR detail: {} is dropped at {}; {} is dropped at {}.",
             bug.confidence, line, drop_local, trigger_local, drop_local, drop_bb, trigger_local, trigger_bb
         ),
         BugType::UseAfterFree => format!(
