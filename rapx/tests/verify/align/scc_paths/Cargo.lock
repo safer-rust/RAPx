@@ -3,5 +3,5 @@
 version = 4
 
 [[package]]
-name = "in_bound_init"
+name = "align_scc_paths"
 version = "0.1.0"
