@@ -19,7 +19,7 @@ use rustc_middle::{
 };
 
 use super::{
-    backward_visit::{BackwardItem, ForgetReason, KeepReason, RelevantMirItems},
+    path_refine::{BackwardItem, ForgetReason, KeepReason, RelevantMirItems},
     call_summary::{self, CallEffect, CallEffectSummary},
     contract::Property,
     def_use::PlaceKey,

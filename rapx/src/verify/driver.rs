@@ -11,7 +11,7 @@ use rustc_data_structures::fx::FxHashMap;
 use rustc_middle::ty::TyCtxt;
 
 use super::{
-    backward_visit::BackwardVisitor,
+    path_refine::BackwardVisitor,
     contract::Property,
     forward_visit::ForwardVisitor,
     helpers::Callsite,

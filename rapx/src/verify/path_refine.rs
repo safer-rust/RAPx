@@ -429,7 +429,7 @@ pub enum ForgetReason {
     UnsupportedEffect,
 }
 
-// ── classification helpers (kept here; use only backward_visit types) ────
+// ── classification helpers (kept here; use only path_refine types) ────
 
 fn statement_keep_reason(statement: &rustc_middle::mir::Statement<'_>) -> KeepReason {
     match &statement.kind {

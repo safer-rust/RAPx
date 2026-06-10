@@ -19,7 +19,7 @@ use rustc_middle::{
 
 use crate::analysis::dataflow::{DataFlowAnalysis, default::DataFlowAnalyzer};
 
-use super::backward_visit::ForgetReason;
+use super::path_refine::ForgetReason;
 
 /// Dependency summary consumed by the backward visitor.
 #[derive(Clone, Debug)]

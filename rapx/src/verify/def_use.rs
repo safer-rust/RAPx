@@ -2,7 +2,7 @@
 //!
 //! These types and helpers track which MIR places are relevant to a safety
 //! property and compute definitions/uses from MIR statements and terminators.
-//! This is the data layer that `backward_visit` drives block-by-block along a
+//! This is the data layer that `path_refine` drives block-by-block along a
 //! finite verification path; keeping it separate lets the core visit logic stay
 //! focused on path-level decisions (calls, SCC exits, path conditions).
 
