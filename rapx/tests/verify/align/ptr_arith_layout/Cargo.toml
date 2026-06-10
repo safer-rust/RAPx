@@ -1,0 +1,6 @@
+[package]
+name = "align_ptr_arith_layout"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
