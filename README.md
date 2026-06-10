@@ -57,29 +57,36 @@ will perform two kinds of detection in a row.
 
 Examples:
 
-  # Bug Detection
-  1. detect use-after-free and memory leak for a riscv target:
-     cargo rapx check -f -m -- --target riscv64gc-unknown-none-elf
-  2. detect use-after-free and memory leak for tests:
-     cargo rapx check -f -m -- --tests
-  3. detect use-after-free and memory leak for all workspace members:
-     cargo rapx check -f -m -- --workspace
-  4. detect optimization opportunities (report mode):
+  1. detect use-after-free and memory leak:
+     cargo rapx check -f -m
+  2. detect optimization opportunities:
      cargo rapx check -o report
-
-  # Analysis
-  5. print path-sensitive CFG paths:
-     cargo rapx analyze paths
-  6. generate API dependency graphs:
-     cargo rapx analyze adg
-  7. perform alias analysis (MFP strategy):
-     cargo rapx analyze alias -s mfp
-
-  # Contract-Based Verification
-  8. identify #[rapx::verify] targets and their safety contracts:
+  3. perform alias analysis:
+     cargo rapx analyze alias
+  4. verify annotated functions:
      cargo rapx verify --prepare-targets
-  9. dump full verification diagnostics (backward/forward visits + SMT):
-     cargo rapx verify --dump-visits
+```
+
+### `analyze` command
+
+```
+Usage: cargo rapx analyze <COMMAND>
+
+Commands:
+  alias       alias analysis (meet-over-paths by default)
+  adg         API dependency graphs
+  callgraph   callgraph generation
+  dataflow    dataflow graphs
+  owned-heap  analyze heap-owning types
+  paths       path-sensitive CFG paths
+  range       range analysis
+  scan        basic crate info
+  mir         print MIR
+  dot-mir     print MIR as DOT
+  help        Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help  Print help
 ```
 
 ### `check` command
