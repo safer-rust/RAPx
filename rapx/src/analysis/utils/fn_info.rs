@@ -2,13 +2,12 @@ use super::draw_dot::render_dot_string;
 use crate::def_id::*;
 use crate::{
     analysis::dataflow::{DataflowAnalysis, default::DataflowAnalyzer},
-    check::senryx::{callsite::has_unsafe_api_contract, contract::PropertyContract},
 };
 use crate::{rap_debug, rap_warn};
 use rustc_ast::ItemKind;
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_hir::{
-    Attribute, ImplItemKind, Safety,
+    Safety,
     def::DefKind,
     def_id::{CrateNum, DefId, DefIndex},
 };
@@ -22,8 +21,6 @@ use rustc_middle::{
     ty::{AssocKind, ConstKind, Mutability, Ty, TyCtxt, TyKind},
 };
 use rustc_span::{def_id::LocalDefId, kw, sym};
-use serde::de;
-use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
     fmt::Debug,
@@ -148,30 +145,6 @@ pub fn get_std_api_signature_json() -> serde_json::Value {
     let json_data: serde_json::Value =
         serde_json::from_str(include_str!("data/std_sig.json")).expect("Unable to parse JSON");
     json_data
-}
-
-pub fn get_sp_tags_and_args_json() -> serde_json::Value {
-    let json_data: serde_json::Value =
-        serde_json::from_str(include_str!("data/std_sps_args.json")).expect("Unable to parse JSON");
-    json_data
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ContractEntry {
-    pub tag: String,
-    pub args: Vec<String>,
-}
-
-pub fn get_std_contracts(tcx: TyCtxt<'_>, def_id: DefId) -> Vec<ContractEntry> {
-    let cleaned_path_name = get_cleaned_def_path_name(tcx, def_id);
-    let json_data: serde_json::Value = get_sp_tags_and_args_json();
-
-    if let Some(entries) = json_data.get(&cleaned_path_name) {
-        if let Ok(contracts) = serde_json::from_value::<Vec<ContractEntry>>(entries.clone()) {
-            return contracts;
-        }
-    }
-    Vec::new()
 }
 
 pub fn get_sp(tcx: TyCtxt<'_>, def_id: DefId) -> HashSet<String> {
@@ -586,69 +559,6 @@ where
     }
 }
 
-pub fn match_std_unsafe_chains_callee(tcx: TyCtxt<'_>, terminator: &Terminator<'_>) -> Vec<String> {
-    let mut results = Vec::new();
-    if let TerminatorKind::Call { func, .. } = &terminator.kind {
-        if let Operand::Constant(func_constant) = func {
-            if let ty::FnDef(callee_def_id, _raw_list) = func_constant.const_.ty().kind() {
-                let func_name = get_cleaned_def_path_name(tcx, *callee_def_id);
-            }
-        }
-    }
-    results
-}
-
-pub fn get_all_std_unsafe_callees(tcx: TyCtxt, def_id: DefId) -> Vec<String> {
-    let mut results = Vec::new();
-    let body = tcx.optimized_mir(def_id);
-    let bb_len = body.basic_blocks.len();
-    for i in 0..bb_len {
-        let callees = match_std_unsafe_callee(
-            tcx,
-            body.basic_blocks[BasicBlock::from_usize(i)]
-                .clone()
-                .terminator(),
-        );
-        results.extend(callees);
-    }
-    results
-}
-
-pub fn get_all_std_unsafe_callees_block_id(tcx: TyCtxt, def_id: DefId) -> Vec<usize> {
-    let mut results = Vec::new();
-    let body = tcx.optimized_mir(def_id);
-    let bb_len = body.basic_blocks.len();
-    for i in 0..bb_len {
-        if match_std_unsafe_callee(
-            tcx,
-            body.basic_blocks[BasicBlock::from_usize(i)]
-                .clone()
-                .terminator(),
-        )
-        .is_empty()
-        {
-            results.push(i);
-        }
-    }
-    results
-}
-
-pub fn match_std_unsafe_callee(tcx: TyCtxt<'_>, terminator: &Terminator<'_>) -> Vec<String> {
-    let mut results = Vec::new();
-    if let TerminatorKind::Call { func, .. } = &terminator.kind {
-        if let Operand::Constant(func_constant) = func {
-            if let ty::FnDef(callee_def_id, _raw_list) = func_constant.const_.ty().kind() {
-                let func_name = get_cleaned_def_path_name(tcx, *callee_def_id);
-                // rap_info!("{func_name}");
-                if has_unsafe_api_contract(&func_name) {
-                    results.push(func_name);
-                }
-            }
-        }
-    }
-    results
-}
-
 // Bug definition: (1) strict -> weak & dst is mutable;
 //                 (2) _ -> strict
 pub fn is_strict_ty_convert<'tcx>(tcx: TyCtxt<'tcx>, src_ty: Ty<'tcx>, dst_ty: Ty<'tcx>) -> bool {
@@ -679,166 +589,6 @@ pub fn reverse_op(op: BinOp) -> BinOp {
         BinOp::Ne => BinOp::Ne,
         _ => op,
     }
-}
-
-/// Generate contracts from pre-defined std-lib JSON configuration (std_sps_args.json).
-pub fn generate_contract_from_std_annotation_json(
-    tcx: TyCtxt<'_>,
-    def_id: DefId,
-) -> Vec<(usize, Vec<usize>, PropertyContract<'_>)> {
-    let mut results = Vec::new();
-    let std_contracts = get_std_contracts(tcx, def_id);
-
-    for entry in std_contracts {
-        let tag_name = entry.tag;
-        let raw_args = entry.args;
-
-        if raw_args.is_empty() {
-            continue;
-        }
-
-        let arg_index_str = &raw_args[0];
-        let local_id = if let Ok(arg_idx) = arg_index_str.parse::<usize>() {
-            arg_idx
-        } else {
-            rap_error!(
-                "JSON Contract Error: First argument must be an arg index number, got {}",
-                arg_index_str
-            );
-            continue;
-        };
-
-        let mut exprs: Vec<Expr> = Vec::new();
-        for arg_str in &raw_args {
-            match syn::parse_str::<Expr>(arg_str) {
-                Ok(expr) => exprs.push(expr),
-                Err(_) => {
-                    rap_error!(
-                        "JSON Contract Error: Failed to parse arg '{}' as Rust Expr for tag {}",
-                        arg_str,
-                        tag_name
-                    );
-                }
-            }
-        }
-
-        // Robustness check of arguments transition
-        if exprs.len() != raw_args.len() {
-            rap_error!(
-                "Parse std API args error: Failed to parse arg '{:?}'",
-                raw_args
-            );
-            continue;
-        }
-        let fields: Vec<usize> = Vec::new();
-        let contract = PropertyContract::new(tcx, def_id, &tag_name, &exprs);
-        results.push((local_id, fields, contract));
-    }
-
-    // rap_warn!("Get contract {:?}.", results);
-    results
-}
-
-/// Same with `generate_contract_from_annotation` but does not contain field types.
-pub fn generate_contract_from_annotation_without_field_types<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    def_id: DefId,
-) -> Vec<(usize, Vec<usize>, PropertyContract<'tcx>)> {
-    let contracts_with_ty = generate_contract_from_annotation(tcx, def_id);
-
-    contracts_with_ty
-        .into_iter()
-        .map(|(local_id, fields_with_ty, contract)| {
-            let fields: Vec<usize> = fields_with_ty
-                .into_iter()
-                .map(|(field_idx, _)| field_idx)
-                .collect();
-            (local_id, fields, contract)
-        })
-        .collect()
-}
-
-/// Filter the function which contains "rapx::proof"
-pub fn is_verify_target_func(tcx: TyCtxt, def_id: DefId) -> bool {
-    for attr in tcx.get_all_attrs(def_id).into_iter() {
-        let attr_str = rustc_hir_pretty::attribute_to_string(&tcx, attr);
-        // Find proof placeholder
-        if attr_str.contains("#[rapx::proof(proof)]") {
-            return true;
-        }
-    }
-    false
-}
-
-/// Get the annotation in tag-std style.
-/// Then generate contract facts for the args.
-/// This function will recognize the args name and record states to MIR variable (represent by usize).
-/// Return value means Vec<(local_id, fields of this local, contracts)>
-pub fn generate_contract_from_annotation<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    def_id: DefId,
-) -> Vec<(usize, Vec<(usize, Ty<'tcx>)>, PropertyContract<'tcx>)> {
-    const REGISTER_TOOL: &str = "rapx";
-    let tool_attrs = tcx.get_all_attrs(def_id).into_iter().filter(|attr| {
-        if let Attribute::Unparsed(tool_attr) = attr {
-            if tool_attr.path.segments[0].as_str() == REGISTER_TOOL {
-                return true;
-            }
-        }
-        false
-    });
-    let mut results = Vec::new();
-    for attr in tool_attrs {
-        let attr_str = rustc_hir_pretty::attribute_to_string(&tcx, attr);
-        // Find proof placeholder, skip it
-        if attr_str.contains("#[rapx::proof(proof)]") {
-            continue;
-        }
-        rap_debug!("{:?}", attr_str);
-        let safety_attr = safety_parser::safety::parse_attr_and_get_properties(attr_str.as_str());
-        for par in safety_attr.iter() {
-            for property in par.tags.iter() {
-                let tag_name = property.tag.name();
-                let exprs = property.args.clone().into_vec();
-                let contract = PropertyContract::new(tcx, def_id, tag_name, &exprs);
-                let (local, fields) = parse_contract_target(tcx, def_id, exprs);
-                results.push((local, fields, contract));
-            }
-        }
-    }
-    // if results.len() > 0 {
-    //     rap_warn!("results:\n{:?}", results);
-    // }
-    results
-}
-
-/// Parse attr.expr into local id and local fields.
-///
-/// Example:
-/// ```
-/// #[rapx::inner(property = ValidPtr(ptr, u32, 1), kind = "precond")]
-/// #[rapx::inner(property = ValidNum(region.size>=0), kind = "precond")]
-/// pub fn xor_secret_region(ptr: *mut u32, region:SecretRegion) -> u32 {...}
-/// ```
-///
-/// The first attribute will be parsed as (1, []).
-///     -> "1" means the first arg "ptr", "[]" means no fields.
-/// The second attribute will be parsed as (2, [1]).
-///     -> "2" means the second arg "region", "[1]" means "size" is region's second field.
-///
-/// If this function doesn't have args, then it will return default pattern: (0, Vec::new())
-pub fn parse_contract_target(
-    tcx: TyCtxt,
-    def_id: DefId,
-    expr: Vec<Expr>,
-) -> (usize, Vec<(usize, Ty)>) {
-    // Match expressions with the graph node that should receive the contract fact.
-    for e in expr {
-        if let Some((base, fields, _ty)) = parse_expr_into_local_and_ty(tcx, def_id, &e) {
-            return (base, fields);
-        }
-    }
-    (0, Vec::new())
 }
 
 /// parse single expr into (local, fields, ty)

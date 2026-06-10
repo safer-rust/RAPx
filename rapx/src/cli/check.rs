@@ -21,15 +21,4 @@ pub struct CheckArgs {
     #[arg(short = 'o', long, default_missing_value = "default")]
     pub opt: Option<OptLevel>,
 
-    /// (under development) infer the safety properties required by unsafe APIs.
-    #[arg(long)]
-    pub infer: bool,
-
-    /// (under development) verify if the safety requirements of unsafe API are satisfied.
-    #[arg(long)]
-    pub verify: bool,
-
-    /// (under development) verify if the safety requirements of unsafe API are satisfied.
-    #[arg(long)]
-    pub verify_std: bool,
 }

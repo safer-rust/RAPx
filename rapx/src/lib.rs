@@ -41,7 +41,6 @@ use crate::{
         opt::Opt,
         rcanary::rCanary,
         safedrop::SafeDrop,
-        senryx::{CheckLevel, SenryxCheck},
     },
     cli::{AliasStrategyKind, AnalysisKind, CheckArgs, Commands, OptLevel, RapxArgs, VerifyArgs},
     verify::{driver::VerifyVisitDump, target::PrepareTargets},
@@ -162,9 +161,6 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
             uaf,
             mleak,
             opt,
-            infer,
-            verify,
-            verify_std,
         }) => {
             if uaf.is_some() {
                 SafeDrop::new(tcx).start();
@@ -181,19 +177,6 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
                     OptLevel::Default => Opt::new(tcx, 1).start(),
                     OptLevel::All => Opt::new(tcx, 2).start(),
                 }
-            }
-            if *infer {
-                let check_level = CheckLevel::Medium;
-                SenryxCheck::new(tcx, 2).start(check_level, false);
-            }
-            if *verify {
-                let check_level = CheckLevel::Medium;
-                SenryxCheck::new(tcx, 2).start(check_level, true);
-            }
-
-            if *verify_std {
-                SenryxCheck::new(tcx, 2).start_analyze_std_func();
-                // SenryxCheck::new(tcx, 2).generate_uig_by_def_id();
             }
         }
 
