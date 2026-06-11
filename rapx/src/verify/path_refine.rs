@@ -114,15 +114,6 @@ impl<'tcx> BackwardVisitor<'tcx> {
                     self.visit_statement(*block, statement_index, statement, flow, relevant, items);
                 }
             }
-            PathStep::SccExit { .. } => {
-                items.push(BackwardItem::Forget {
-                    reason: ForgetReason::SccWithoutSummary,
-                });
-                items.push(BackwardItem::PathStep {
-                    step: step.clone(),
-                    kind: KeepReason::LoopExit,
-                });
-            }
         }
     }
 
@@ -583,18 +574,6 @@ fn item_belongs_to_step(item: &BackwardItem<'_>, step: &PathStep) -> bool {
 fn same_path_step(lhs: &PathStep, rhs: &PathStep) -> bool {
     match (lhs, rhs) {
         (PathStep::Block(lhs), PathStep::Block(rhs)) => lhs == rhs,
-        (
-            PathStep::SccExit {
-                representative: lhs_representative,
-                from: lhs_from,
-                to: lhs_to,
-            },
-            PathStep::SccExit {
-                representative: rhs_representative,
-                from: rhs_from,
-                to: rhs_to,
-            },
-        ) => lhs_representative == rhs_representative && lhs_from == rhs_from && lhs_to == rhs_to,
         (PathStep::Callsite(lhs), PathStep::Callsite(rhs)) => lhs == rhs,
         _ => false,
     }
@@ -612,16 +591,6 @@ fn describe_path_start(start: &super::path::PathStart) -> String {
 fn describe_path_step(step: &PathStep) -> String {
     match step {
         PathStep::Block(block) => format!("bb{}", block.as_usize()),
-        PathStep::SccExit {
-            representative,
-            from,
-            to,
-        } => format!(
-            "SccRegion(bb{}).exit(bb{} -> bb{})",
-            representative.as_usize(),
-            from.as_usize(),
-            to.as_usize()
-        ),
         PathStep::Callsite(location) => format!("callsite(bb{})", location.block.as_usize()),
     }
 }

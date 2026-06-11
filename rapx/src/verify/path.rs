@@ -151,7 +151,7 @@ impl<'tcx> PathExtractor<'tcx> {
                 if self.block_to_scc.get(&ctx.target_block).copied() == Some(representative) {
                     continue;
                 }
-                self.follow_scc_exits(representative, ctx);
+                self.follow_scc_exits(next, representative, ctx);
                 continue;
             }
 
@@ -167,10 +167,17 @@ impl<'tcx> PathExtractor<'tcx> {
         }
     }
 
-    fn follow_scc_exits(&self, representative: BasicBlock, ctx: &mut EntrySearchCtx<'_>) {
+    fn follow_scc_exits(
+        &self,
+        entry: BasicBlock,
+        representative: BasicBlock,
+        ctx: &mut EntrySearchCtx<'_>,
+    ) {
         let Some(scc_info) = self.scc_by_representative(representative) else {
             return;
         };
+        let scc_blocks: FxHashSet<BasicBlock> = scc_info.blocks.iter().copied().collect();
+
         for exit in &scc_info.exits {
             if ctx.results.len() >= ctx.limit {
                 break;
@@ -179,17 +186,40 @@ impl<'tcx> PathExtractor<'tcx> {
                 continue;
             }
 
-            ctx.stack.push(PathStep::SccExit {
-                representative,
-                from: exit.from,
-                to: exit.to,
-            });
-            ctx.stack.push(PathStep::Block(exit.to));
-            ctx.visited.insert(exit.to);
-            self.dfs_entry_paths(exit.to, ctx);
-            ctx.visited.remove(&exit.to);
-            ctx.stack.pop();
-            ctx.stack.pop();
+            let internal_paths =
+                self.find_scc_paths_to(&scc_blocks, entry, exit.from, ctx.limit);
+
+            for internal_path in &internal_paths {
+                if ctx.results.len() >= ctx.limit {
+                    break;
+                }
+
+                let mut pushed: Vec<BasicBlock> = Vec::new();
+                for &block in internal_path {
+                    ctx.stack.push(PathStep::Block(block));
+                    ctx.visited.insert(block);
+                    pushed.push(block);
+                }
+
+                if ctx.visited.contains(&exit.to) {
+                    for &block in pushed.iter().rev() {
+                        ctx.visited.remove(&block);
+                        ctx.stack.pop();
+                    }
+                    continue;
+                }
+
+                ctx.stack.push(PathStep::Block(exit.to));
+                ctx.visited.insert(exit.to);
+                self.dfs_entry_paths(exit.to, ctx);
+                ctx.visited.remove(&exit.to);
+                ctx.stack.pop();
+
+                for &block in pushed.iter().rev() {
+                    ctx.visited.remove(&block);
+                    ctx.stack.pop();
+                }
+            }
         }
     }
 
@@ -239,7 +269,7 @@ impl<'tcx> PathExtractor<'tcx> {
                 if scc_representative == ctx.representative {
                     continue;
                 }
-                self.follow_scc_exits_for_prefix(scc_representative, ctx);
+                self.follow_scc_exits_for_prefix(next, scc_representative, ctx);
                 continue;
             }
 
@@ -257,12 +287,15 @@ impl<'tcx> PathExtractor<'tcx> {
 
     fn follow_scc_exits_for_prefix(
         &self,
+        entry: BasicBlock,
         scc_representative: BasicBlock,
         ctx: &mut PrefixSearchCtx<'_>,
     ) {
         let Some(scc_info) = self.scc_by_representative(scc_representative) else {
             return;
         };
+        let scc_blocks: FxHashSet<BasicBlock> = scc_info.blocks.iter().copied().collect();
+
         for exit in &scc_info.exits {
             if ctx.results.len() >= ctx.limit {
                 break;
@@ -271,17 +304,40 @@ impl<'tcx> PathExtractor<'tcx> {
                 continue;
             }
 
-            ctx.stack.push(PathStep::SccExit {
-                representative: scc_representative,
-                from: exit.from,
-                to: exit.to,
-            });
-            ctx.stack.push(PathStep::Block(exit.to));
-            ctx.visited.insert(exit.to);
-            self.dfs_entry_prefixes(exit.to, ctx);
-            ctx.visited.remove(&exit.to);
-            ctx.stack.pop();
-            ctx.stack.pop();
+            let internal_paths =
+                self.find_scc_paths_to(&scc_blocks, entry, exit.from, ctx.limit);
+
+            for internal_path in &internal_paths {
+                if ctx.results.len() >= ctx.limit {
+                    break;
+                }
+
+                let mut pushed: Vec<BasicBlock> = Vec::new();
+                for &block in internal_path {
+                    ctx.stack.push(PathStep::Block(block));
+                    ctx.visited.insert(block);
+                    pushed.push(block);
+                }
+
+                if ctx.visited.contains(&exit.to) {
+                    for &block in pushed.iter().rev() {
+                        ctx.visited.remove(&block);
+                        ctx.stack.pop();
+                    }
+                    continue;
+                }
+
+                ctx.stack.push(PathStep::Block(exit.to));
+                ctx.visited.insert(exit.to);
+                self.dfs_entry_prefixes(exit.to, ctx);
+                ctx.visited.remove(&exit.to);
+                ctx.stack.pop();
+
+                for &block in pushed.iter().rev() {
+                    ctx.visited.remove(&block);
+                    ctx.stack.pop();
+                }
+            }
         }
     }
 
@@ -358,6 +414,63 @@ impl<'tcx> PathExtractor<'tcx> {
         self.scc_regions
             .iter()
             .find(|scc_info| scc_info.representative == representative)
+    }
+
+    /// Find all simple paths from `from` to `to` within `scc_blocks` (endpoints included).
+    fn find_scc_paths_to(
+        &self,
+        scc_blocks: &FxHashSet<BasicBlock>,
+        from: BasicBlock,
+        to: BasicBlock,
+        limit: usize,
+    ) -> Vec<Vec<BasicBlock>> {
+        if from == to {
+            return vec![vec![from]];
+        }
+        let mut results = Vec::new();
+        let mut visited = FxHashSet::default();
+        let mut stack = vec![from];
+        visited.insert(from);
+        self.dfs_scc_paths_to(scc_blocks, from, to, limit, &mut visited, &mut stack, &mut results);
+        results
+    }
+
+    fn dfs_scc_paths_to(
+        &self,
+        scc_blocks: &FxHashSet<BasicBlock>,
+        current: BasicBlock,
+        target: BasicBlock,
+        limit: usize,
+        visited: &mut FxHashSet<BasicBlock>,
+        stack: &mut Vec<BasicBlock>,
+        results: &mut Vec<Vec<BasicBlock>>,
+    ) {
+        if results.len() >= limit {
+            return;
+        }
+
+        for &next in self.cfg.successors(current) {
+            if results.len() >= limit {
+                break;
+            }
+
+            if next == target {
+                let mut path = stack.clone();
+                path.push(next);
+                results.push(path);
+                continue;
+            }
+
+            if !scc_blocks.contains(&next) || visited.contains(&next) {
+                continue;
+            }
+
+            stack.push(next);
+            visited.insert(next);
+            self.dfs_scc_paths_to(scc_blocks, next, target, limit, visited, stack, results);
+            visited.remove(&next);
+            stack.pop();
+        }
     }
 }
 
@@ -464,7 +577,7 @@ pub struct Path {
     pub target: CallsiteLocation,
     /// Where the path starts.
     pub start: PathStart,
-    /// Blocks and SCC exits from function entry to this path's start.
+    /// Blocks from function entry to this path's start.
     ///
     /// This is currently non-empty for SCC-internal callsites. It preserves
     /// definitions established before the SCC representative without unrolling
@@ -518,18 +631,6 @@ impl Path {
 fn describe_step(step: &PathStep) -> String {
     match step {
         PathStep::Block(bb) => format!("bb{}", bb.as_usize()),
-        PathStep::SccExit {
-            representative,
-            from,
-            to,
-        } => {
-            format!(
-                "SccRegion(bb{}).exit(bb{} -> bb{})",
-                representative.as_usize(),
-                from.as_usize(),
-                to.as_usize()
-            )
-        }
         PathStep::Callsite(location) => {
             format!("callsite(bb{})", location.block.as_usize())
         }
@@ -550,12 +651,6 @@ pub enum PathStart {
 pub enum PathStep {
     /// A normal MIR basic block.
     Block(BasicBlock),
-    /// An abstract step that enters an SCC and leaves through one exit edge.
-    SccExit {
-        representative: BasicBlock,
-        from: BasicBlock,
-        to: BasicBlock,
-    },
     /// The target callsite that terminates the path.
     Callsite(CallsiteLocation),
 }

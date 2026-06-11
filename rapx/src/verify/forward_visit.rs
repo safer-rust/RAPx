@@ -734,12 +734,6 @@ fn chosen_successor(path: &Path, block: BasicBlock) -> Option<BasicBlock> {
                 }
                 previous = Some(*current);
             }
-            PathStep::SccExit { to, .. } => {
-                if previous == Some(block) {
-                    return Some(*to);
-                }
-                previous = Some(*to);
-            }
             PathStep::Callsite(_) => return None,
         }
     }
