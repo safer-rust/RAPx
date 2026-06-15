@@ -43,6 +43,7 @@ use crate::verify::{
     forward_visit::{AbstractValue, CallSummary, ForwardVisitResult, StateFact},
     generic::GenericTypeCandidates,
     helpers::{Callsite, callee_param_index_for_local},
+    primitive::PrimitiveCall,
     report::CheckResult,
 };
 
@@ -1642,17 +1643,17 @@ fn pointee_ty_str<'tcx>(ty: Ty<'tcx>) -> Option<String> {
 
 /// Return true when a call summary is a typed pointer addition.
 fn is_pointer_add_call(func: &str) -> bool {
-    func.contains("::add") || func.contains("::wrapping_add")
+    PrimitiveCall::classify(func).is_some_and(PrimitiveCall::is_pointer_add_like)
 }
 
 /// Return true when a call summary is a typed pointer subtraction.
 fn is_pointer_sub_call(func: &str) -> bool {
-    func.contains("::sub") || func.contains("::wrapping_sub")
+    PrimitiveCall::classify(func).is_some_and(PrimitiveCall::is_pointer_sub_like)
 }
 
 /// Return true when a call summary extracts a pointer from a slice-like object.
 fn is_as_ptr_call(func: &str) -> bool {
-    func.ends_with("::as_ptr") || func.contains("::as_ptr")
+    PrimitiveCall::classify(func).is_some_and(PrimitiveCall::is_as_ptr_like)
 }
 
 /// Stable SMT variable name for a place key.

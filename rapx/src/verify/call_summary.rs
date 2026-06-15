@@ -19,7 +19,7 @@ use rustc_middle::{
 
 use crate::analysis::dataflow::{DataflowAnalysis, default::DataflowAnalyzer};
 
-use super::path_refine::ForgetReason;
+use super::{path_refine::ForgetReason, primitive::PrimitiveCall};
 
 /// Dependency summary consumed by the backward visitor.
 #[derive(Clone, Debug)]
@@ -121,7 +121,9 @@ pub fn dependency_summary<'tcx>(
     let callee = callee_def_id(func);
     let name = call_name(tcx, func);
 
-    if is_as_ptr_call(&name) || is_as_mut_ptr_call(&name) {
+    let primitive = PrimitiveCall::classify(&name);
+
+    if primitive.is_some_and(PrimitiveCall::is_as_ptr_like) {
         return CallDependencySummary {
             callee,
             name,
@@ -131,7 +133,7 @@ pub fn dependency_summary<'tcx>(
         };
     }
 
-    if is_pointer_add_call(&name) || is_pointer_sub_call(&name) || is_pointer_offset_call(&name) {
+    if primitive.is_some_and(PrimitiveCall::is_pointer_arithmetic) {
         return CallDependencySummary {
             callee,
             name,
@@ -141,7 +143,7 @@ pub fn dependency_summary<'tcx>(
         };
     }
 
-    if is_pointer_read_call(&name) {
+    if primitive == Some(PrimitiveCall::PtrRead) {
         return CallDependencySummary {
             callee,
             name,
@@ -151,7 +153,7 @@ pub fn dependency_summary<'tcx>(
         };
     }
 
-    if is_pointer_write_call(&name) {
+    if primitive == Some(PrimitiveCall::PtrWrite) {
         return CallDependencySummary {
             callee,
             name,
@@ -161,7 +163,7 @@ pub fn dependency_summary<'tcx>(
         };
     }
 
-    if is_len_call(&name) {
+    if primitive == Some(PrimitiveCall::Len) {
         return CallDependencySummary {
             callee,
             name,
@@ -171,7 +173,7 @@ pub fn dependency_summary<'tcx>(
         };
     }
 
-    if is_maybe_uninit_uninit_call(&name) {
+    if primitive == Some(PrimitiveCall::MaybeUninitUninit) {
         return CallDependencySummary {
             callee,
             name,
@@ -181,7 +183,7 @@ pub fn dependency_summary<'tcx>(
         };
     }
 
-    if is_layout_constant_call(&name) {
+    if primitive.is_some_and(PrimitiveCall::is_layout_constant) {
         return CallDependencySummary {
             callee,
             name,
@@ -220,7 +222,9 @@ pub fn effect_summary<'tcx>(
     let name = call_name(tcx, func);
     let destination = Some(destination);
 
-    if is_as_ptr_call(&name) || is_as_mut_ptr_call(&name) {
+    let primitive = PrimitiveCall::classify(&name);
+
+    if primitive.is_some_and(PrimitiveCall::is_as_ptr_like) {
         let mut effects = vec![
             CallEffect::ReturnPointerFromArg { arg: 0 },
             CallEffect::ReturnNonZero,
@@ -237,7 +241,7 @@ pub fn effect_summary<'tcx>(
         };
     }
 
-    if is_pointer_add_call(&name) || is_pointer_offset_call(&name) {
+    if primitive.is_some_and(PrimitiveCall::is_pointer_add_like) {
         return CallEffectSummary {
             callee,
             name,
@@ -251,7 +255,7 @@ pub fn effect_summary<'tcx>(
         };
     }
 
-    if is_pointer_sub_call(&name) {
+    if primitive.is_some_and(PrimitiveCall::is_pointer_sub_like) {
         return CallEffectSummary {
             callee,
             name,
@@ -265,7 +269,7 @@ pub fn effect_summary<'tcx>(
         };
     }
 
-    if is_pointer_read_call(&name) {
+    if primitive == Some(PrimitiveCall::PtrRead) {
         return CallEffectSummary {
             callee,
             name,
@@ -275,7 +279,7 @@ pub fn effect_summary<'tcx>(
         };
     }
 
-    if is_pointer_write_call(&name) {
+    if primitive == Some(PrimitiveCall::PtrWrite) {
         return CallEffectSummary {
             callee,
             name,
@@ -285,7 +289,7 @@ pub fn effect_summary<'tcx>(
         };
     }
 
-    if is_len_call(&name) {
+    if primitive == Some(PrimitiveCall::Len) {
         return CallEffectSummary {
             callee,
             name,
@@ -295,7 +299,7 @@ pub fn effect_summary<'tcx>(
         };
     }
 
-    if is_maybe_uninit_uninit_call(&name) {
+    if primitive == Some(PrimitiveCall::MaybeUninitUninit) {
         return CallEffectSummary {
             callee,
             name,
@@ -305,7 +309,7 @@ pub fn effect_summary<'tcx>(
         };
     }
 
-    if is_layout_constant_call(&name) {
+    if primitive.is_some_and(PrimitiveCall::is_layout_constant) {
         let effects = layout_constant_effect(tcx, caller, func, &name)
             .into_iter()
             .collect();
@@ -365,55 +369,52 @@ pub fn call_name(tcx: TyCtxt<'_>, func: &Operand<'_>) -> String {
 
 /// Return true for slice/string/vector pointer extraction calls.
 pub fn is_as_ptr_call(name: &str) -> bool {
-    name.ends_with("::as_ptr") || name.contains("::as_ptr")
+    PrimitiveCall::classify(name) == Some(PrimitiveCall::AsPtr)
 }
 
 /// Return true for mutable pointer extraction calls.
 pub fn is_as_mut_ptr_call(name: &str) -> bool {
-    name.ends_with("::as_mut_ptr") || name.contains("::as_mut_ptr")
+    PrimitiveCall::classify(name) == Some(PrimitiveCall::AsMutPtr)
 }
 
 /// Return true for typed pointer addition calls.
 pub fn is_pointer_add_call(name: &str) -> bool {
-    name.contains("::add") || name.contains("::wrapping_add")
+    PrimitiveCall::classify(name) == Some(PrimitiveCall::PtrAdd)
 }
 
 /// Return true for typed pointer subtraction calls.
 pub fn is_pointer_sub_call(name: &str) -> bool {
-    name.contains("::sub") || name.contains("::wrapping_sub")
+    PrimitiveCall::classify(name) == Some(PrimitiveCall::PtrSub)
 }
 
 /// Return true for typed pointer offset calls.
 pub fn is_pointer_offset_call(name: &str) -> bool {
-    name.contains("::offset") || name.contains("::wrapping_offset")
+    PrimitiveCall::classify(name) == Some(PrimitiveCall::PtrOffset)
 }
 
 /// Return true for pointer reads.
 pub fn is_pointer_read_call(name: &str) -> bool {
-    name.contains("::read") || name.ends_with("read")
+    PrimitiveCall::classify(name) == Some(PrimitiveCall::PtrRead)
 }
 
 /// Return true for pointer writes that initialize one element.
 pub fn is_pointer_write_call(name: &str) -> bool {
-    (name.contains("::write") || name.ends_with("write"))
-        && !name.contains("write_bytes")
-        && !name.contains("write_unaligned")
-        && !name.contains("write_volatile")
+    PrimitiveCall::classify(name) == Some(PrimitiveCall::PtrWrite)
 }
 
 /// Return true for slice/string/vector length queries.
 pub fn is_len_call(name: &str) -> bool {
-    name.ends_with("::len") || name.contains("::len")
+    PrimitiveCall::classify(name) == Some(PrimitiveCall::Len)
 }
 
 /// Return true for `MaybeUninit::<T>::uninit`.
 pub fn is_maybe_uninit_uninit_call(name: &str) -> bool {
-    name.contains("MaybeUninit") && name.ends_with("::uninit")
+    PrimitiveCall::classify(name) == Some(PrimitiveCall::MaybeUninitUninit)
 }
 
 /// Return true for layout constant producers.
 pub fn is_layout_constant_call(name: &str) -> bool {
-    name.contains("align_of") || name.contains("size_of")
+    PrimitiveCall::classify(name).is_some_and(PrimitiveCall::is_layout_constant)
 }
 
 /// Return a concrete layout constant effect for `align_of::<T>()` or `size_of::<T>()`.
@@ -425,18 +426,16 @@ fn layout_constant_effect<'tcx>(
 ) -> Option<CallEffect> {
     let ty = layout_call_ty(func)?;
     let (align, size) = type_layout(tcx, caller, ty)?;
-    if name.contains("align_of") {
-        Some(CallEffect::ReturnConst {
+    match PrimitiveCall::classify(name)? {
+        PrimitiveCall::AlignOf => Some(CallEffect::ReturnConst {
             value: align,
             label: format!("align_of::<{ty:?}>()"),
-        })
-    } else if name.contains("size_of") {
-        Some(CallEffect::ReturnConst {
+        }),
+        PrimitiveCall::SizeOf => Some(CallEffect::ReturnConst {
             value: size,
             label: format!("size_of::<{ty:?}>()"),
-        })
-    } else {
-        None
+        }),
+        _ => None,
     }
 }
 
@@ -527,8 +526,9 @@ fn try_pointer_arith_wrapper_effect<'tcx>(
         };
 
         let name = call_name(tcx, func);
-        let is_add = is_pointer_add_call(&name);
-        let is_sub = is_pointer_sub_call(&name);
+        let primitive = PrimitiveCall::classify(&name);
+        let is_add = primitive.is_some_and(PrimitiveCall::is_pointer_add_like);
+        let is_sub = primitive.is_some_and(PrimitiveCall::is_pointer_sub_like);
 
         // Also check if the inner callee is itself a pointer-arithmetic wrapper.
         let inner_effect = if !is_add && !is_sub {

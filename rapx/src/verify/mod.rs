@@ -9,6 +9,7 @@ pub mod generic;
 mod helpers;
 pub mod path;
 pub mod path_refine;
+pub mod primitive;
 pub mod report;
 pub mod smt_check;
 pub mod target;

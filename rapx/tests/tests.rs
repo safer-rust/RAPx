@@ -111,6 +111,7 @@ const ANALYZE_CALLGRAPH_CMD: &[&str] = &["analyze", "callgraph"];
 const ANALYZE_ADG_CMD: &[&str] = &["analyze", "adg", "--dump", "api_graph.yml"];
 const VERIFY_CMD: &[&str] = &["verify"];
 const VERIFY_ALLOW_REPEAT_CMD: &[&str] = &["verify", "--allow-pathseg-repeat", "1"];
+const VERIFY_ALLOW_REPEAT2_CMD: &[&str] = &["verify", "--allow-pathseg-repeat", "2"];
 
 // ================Dangling Pointer Detection Test=====================
 #[test]
@@ -792,6 +793,47 @@ fn align_sound_24() {
     let output = run_with_args("verify/align_sound_24", VERIFY_CMD);
     assert_contain(&output, "function: sound_trait_bound_cross_cast");
     assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn align_sound_25() {
+    let output = run_with_args("verify/align_sound_25", VERIFY_CMD);
+    assert_contain(
+        &output,
+        "function: sound_contract_type_param_binds_concrete",
+    );
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn align_sound_26() {
+    let output = run_with_args("verify/align_sound_26", VERIFY_CMD);
+    assert_contain(&output, "function: sound_contract_type_param_binds_generic");
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn align_unsound_17() {
+    let output = run_with_args("verify/align_unsound_17", VERIFY_CMD);
+    assert_contain(
+        &output,
+        "function: unsound_contract_type_param_binds_generic",
+    );
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn align_repeat_threshold_repeat1_sound() {
+    let output = run_with_args("verify/align_repeat_threshold", VERIFY_ALLOW_REPEAT_CMD);
+    assert_contain(&output, "function: repeat2_reveals_delayed_unaligned");
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn align_repeat_threshold_repeat2_unsound() {
+    let output = run_with_args("verify/align_repeat_threshold", VERIFY_ALLOW_REPEAT2_CMD);
+    assert_contain(&output, "function: repeat2_reveals_delayed_unaligned");
+    assert_contain(&output, "result: UNSOUND");
 }
 
 #[test]
