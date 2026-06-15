@@ -1,8 +1,8 @@
 use rustc_hir::{Safety, def_id::DefId};
 use rustc_middle::{
     mir::{
-        BasicBlock, Body, Local, Operand, Place, ProjectionElem,
-        Rvalue, StatementKind, TerminatorKind,
+        BasicBlock, Body, Local, Operand, Place, ProjectionElem, Rvalue, StatementKind,
+        TerminatorKind,
     },
     ty::{self, TyCtxt, TyKind},
 };
@@ -58,7 +58,11 @@ pub fn check_safety(tcx: TyCtxt<'_>, def_id: DefId) -> Safety {
 }
 
 /// Helper checking if a [`Place`] involves raw pointer dereference.
-pub fn place_has_raw_deref<'tcx>(_tcx: TyCtxt<'tcx>, body: &Body<'tcx>, place: &Place<'tcx>) -> bool {
+pub fn place_has_raw_deref<'tcx>(
+    _tcx: TyCtxt<'tcx>,
+    body: &Body<'tcx>,
+    place: &Place<'tcx>,
+) -> bool {
     let local = place.local;
     for proj in place.projection.iter() {
         if let ProjectionElem::Deref = proj.kind() {

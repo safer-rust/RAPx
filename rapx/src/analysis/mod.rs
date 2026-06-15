@@ -5,9 +5,9 @@ pub mod dataflow;
 pub mod ownedheap_analysis;
 pub mod path_analysis;
 pub mod range_analysis;
+pub mod safetyflow_analysis;
 pub mod scan;
 pub mod ssa_transform;
-pub mod safetyflow_analysis;
 
 /// This is a general trait designed for all program analysis features.
 pub trait Analysis {

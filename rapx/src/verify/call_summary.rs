@@ -453,6 +453,7 @@ fn layout_call_ty<'tcx>(func: &Operand<'tcx>) -> Option<Ty<'tcx>> {
 /// Trace backward from an operand (inner call arg) through Copy/Move/Cast
 /// assignments to the outer callee's argument local, returning its index.
 fn trace_to_callee_arg<'tcx>(
+    tcx: TyCtxt<'tcx>,
     body: &rustc_middle::mir::Body<'tcx>,
     operand: &Operand<'_>,
 ) -> Option<usize> {
@@ -486,13 +487,45 @@ fn trace_to_callee_arg<'tcx>(
                     Rvalue::Use(Operand::Copy(place))
                     | Rvalue::Use(Operand::Move(place))
                     | Rvalue::Cast(_, Operand::Copy(place), _)
-                    | Rvalue::Cast(_, Operand::Move(place), _) => place.local,
+                    | Rvalue::Cast(_, Operand::Move(place), _)
+                    | Rvalue::Ref(_, _, place)
+                    | Rvalue::RawPtr(_, place)
+                    | Rvalue::CopyForDeref(place) => place.local,
                     _ => continue,
                 };
                 if !seen.contains(&source) {
                     seen.insert(source);
                     queue.push_back(source);
                 }
+            }
+            let Some(terminator) = &bb.terminator else {
+                continue;
+            };
+            let TerminatorKind::Call {
+                func,
+                args,
+                destination,
+                ..
+            } = &terminator.kind
+            else {
+                continue;
+            };
+            if destination.local != current {
+                continue;
+            }
+            let primitive = PrimitiveCall::classify(&call_name(tcx, func));
+            if !primitive.is_some_and(PrimitiveCall::is_as_ptr_like) {
+                continue;
+            }
+            let Some(source) = args.first().and_then(|arg| match &arg.node {
+                Operand::Copy(place) | Operand::Move(place) => Some(place.local),
+                Operand::Constant(_) => None,
+            }) else {
+                continue;
+            };
+            if !seen.contains(&source) {
+                seen.insert(source);
+                queue.push_back(source);
             }
         }
     }
@@ -600,8 +633,8 @@ fn try_pointer_arith_wrapper_effect<'tcx>(
                     offset_arg: inner_offset,
                     stride,
                 } => {
-                    let base_arg = trace_to_callee_arg(body, &args.get(inner_base)?.node)?;
-                    let offset_arg = trace_to_callee_arg(body, &args.get(inner_offset)?.node)?;
+                    let base_arg = trace_to_callee_arg(tcx, body, &args.get(inner_base)?.node)?;
+                    let offset_arg = trace_to_callee_arg(tcx, body, &args.get(inner_offset)?.node)?;
                     return Some(match effect {
                         CallEffect::ReturnPointerSub { .. } => CallEffect::ReturnPointerSub {
                             base_arg,
@@ -622,52 +655,8 @@ fn try_pointer_arith_wrapper_effect<'tcx>(
 
         // Map inner call args to callee argument indices by tracing back
         // through Copy/Move assignments to the callee's parameter locals.
-        let map_arg = |operand: &Operand<'_>| -> Option<usize> {
-            let local = match operand {
-                Operand::Copy(place) | Operand::Move(place) => place.local,
-                _ => return None,
-            };
-            // Direct: the operand is already a callee parameter.
-            let idx = local.as_usize();
-            if idx >= 1 && idx <= body.arg_count {
-                return Some(idx - 1);
-            }
-            // Indirect: trace back through assignments.
-            let mut queue = VecDeque::from([local]);
-            let mut seen = HashSet::from([local]);
-            while let Some(current) = queue.pop_front() {
-                let cidx = current.as_usize();
-                if cidx >= 1 && cidx <= body.arg_count {
-                    return Some(cidx - 1);
-                }
-                for bb2 in body.basic_blocks.iter() {
-                    for stmt in &bb2.statements {
-                        let StatementKind::Assign(assign) = &stmt.kind else {
-                            continue;
-                        };
-                        let dest = assign.0.local;
-                        if dest != current {
-                            continue;
-                        }
-                        let source = match &assign.1 {
-                            Rvalue::Use(Operand::Copy(place))
-                            | Rvalue::Use(Operand::Move(place))
-                            | Rvalue::Cast(_, Operand::Copy(place), _)
-                            | Rvalue::Cast(_, Operand::Move(place), _) => place.local,
-                            _ => continue,
-                        };
-                        if !seen.contains(&source) {
-                            seen.insert(source);
-                            queue.push_back(source);
-                        }
-                    }
-                }
-            }
-            None
-        };
-
-        let base_arg = map_arg(&args[0].node)?;
-        let offset_arg = map_arg(&args[1].node)?;
+        let base_arg = trace_to_callee_arg(tcx, body, &args[0].node)?;
+        let offset_arg = trace_to_callee_arg(tcx, body, &args[1].node)?;
         // Use the inner call's destination to compute the byte stride,
         // not the wrapper's return type (which may differ after a cast).
         let stride = destination_stride(tcx, callee, Some(call_dest.local));

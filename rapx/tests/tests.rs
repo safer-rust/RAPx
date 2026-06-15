@@ -838,6 +838,89 @@ fn align_repeat_threshold_repeat2_unsound() {
 }
 
 #[test]
+fn inbound_sound_01() {
+    let output = run_with_args("verify/inbound_sound_01", VERIFY_CMD);
+    assert_contain(&output, "function: sound_ptr_add_guarded");
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn inbound_unsound_01() {
+    let output = run_with_args("verify/inbound_unsound_01", VERIFY_CMD);
+    assert_contain(&output, "function: unsound_ptr_add_without_guard");
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn inbound_sound_02() {
+    let output = run_with_args("verify/inbound_sound_02", VERIFY_CMD);
+    assert_contain(&output, "function: sound_from_raw_parts_prefix_two");
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn inbound_unsound_02() {
+    let output = run_with_args("verify/inbound_unsound_02", VERIFY_CMD);
+    assert_contain(
+        &output,
+        "function: unsound_from_raw_parts_two_only_nonempty",
+    );
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn inbound_sound_03() {
+    let output = run_with_args("verify/inbound_sound_03", VERIFY_CMD);
+    assert_contain(&output, "function: sound_get_unchecked_generic");
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn inbound_unsound_03() {
+    let output = run_with_args("verify/inbound_unsound_03", VERIFY_CMD);
+    assert_contain(&output, "function: unsound_get_unchecked_wrong_guard");
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn inbound_sound_04() {
+    let output = run_with_args("verify/inbound_sound_04", VERIFY_CMD);
+    assert_contain(&output, "function: sound_copy_nonoverlapping_one");
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn inbound_unsound_04() {
+    let output = run_with_args("verify/inbound_unsound_04", VERIFY_CMD);
+    assert_contain(
+        &output,
+        "function: unsound_copy_nonoverlapping_dst_unguarded",
+    );
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn inbound_sound_05() {
+    let output = run_with_args("verify/inbound_sound_05", VERIFY_CMD);
+    assert_contain(&output, "function: sound_intra_slice_add_guarded");
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn inbound_unsound_05() {
+    let output = run_with_args("verify/inbound_unsound_05", VERIFY_CMD);
+    assert_contain(&output, "function: unsound_branch_selects_unguarded_index");
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn inbound_sound_06() {
+    let output = run_with_args("verify/inbound_sound_06", VERIFY_CMD);
+    assert_contain(&output, "function: sound_scc_loop_index_guard");
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
 fn struct_invariant_1() {
     let output = run_with_args("verify/struct_invariant_1", VERIFY_CMD);
     assert_contain(&output, "function: Wrapper::<T>::unsound_new");

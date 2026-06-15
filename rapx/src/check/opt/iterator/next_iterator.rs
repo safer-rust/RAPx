@@ -6,8 +6,8 @@ use rustc_middle::ty::TypeckResults;
 use rustc_span::Span;
 
 use crate::analysis::dataflow::Graph;
-use crate::helpers::def_path::DefPath;
 use crate::check::opt::OptCheck;
+use crate::helpers::def_path::DefPath;
 use crate::utils::log::{
     relative_pos_range, span_to_filename, span_to_line_number, span_to_source_code,
 };

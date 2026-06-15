@@ -53,8 +53,8 @@ use analysis::{
     range_analysis::{
         PathConstraintMapWrapper, RAResultMapWrapper, RangeAnalysis, default::RangeAnalyzer,
     },
+    safetyflow_analysis::{SafetyFlowAnalysis, TargetCrate},
     ssa_transform::SSATrans,
-    safetyflow_analysis::{TargetCrate, SafetyFlowAnalysis},
 };
 use helpers::show_mir::ShowMir;
 use rustc_ast::ast;
@@ -266,7 +266,11 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
             }
         },
 
-        Commands::Verify(VerifyArgs { prepare_targets, allow_pathseg_repeat, mode }) => {
+        Commands::Verify(VerifyArgs {
+            prepare_targets,
+            allow_pathseg_repeat,
+            mode,
+        }) => {
             if *prepare_targets {
                 PrepareTargets::new(tcx, *mode).run();
             } else {

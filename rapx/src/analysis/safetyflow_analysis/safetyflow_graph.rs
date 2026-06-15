@@ -186,18 +186,20 @@ impl SafetyFlowGraph {
     pub fn generate_dot_from_unit(tcx: TyCtxt<'_>, unit: &SafetyFlowUnit) -> String {
         let mut graph: Graph<SafetyFlowNode, SafetyFlowEdge> = DiGraph::new();
 
-        let get_edge_attr = |_graph: &Graph<SafetyFlowNode, SafetyFlowEdge>,
-                              edge_ref: EdgeReference<'_, SafetyFlowEdge>| {
-            match edge_ref.weight() {
-                SafetyFlowEdge::CallerToCallee => "color=black, style=solid",
-                SafetyFlowEdge::ConsToMethod => "color=black, style=dotted",
-                SafetyFlowEdge::MutToCaller => "color=blue, style=dashed",
-            }
-            .to_owned()
-        };
+        let get_edge_attr =
+            |_graph: &Graph<SafetyFlowNode, SafetyFlowEdge>,
+             edge_ref: EdgeReference<'_, SafetyFlowEdge>| {
+                match edge_ref.weight() {
+                    SafetyFlowEdge::CallerToCallee => "color=black, style=solid",
+                    SafetyFlowEdge::ConsToMethod => "color=black, style=dotted",
+                    SafetyFlowEdge::MutToCaller => "color=blue, style=dashed",
+                }
+                .to_owned()
+            };
 
-        let get_node_attr =
-            |_graph: &Graph<SafetyFlowNode, SafetyFlowEdge>, node_ref: (NodeIndex, &SafetyFlowNode)| match node_ref.1 {
+        let get_node_attr = |_graph: &Graph<SafetyFlowNode, SafetyFlowEdge>,
+                             node_ref: (NodeIndex, &SafetyFlowNode)| {
+            match node_ref.1 {
                 SafetyFlowNode::SafeFn(def_id) => {
                     let label = tcx.def_path_str(*def_id);
                     format!(
@@ -208,10 +210,7 @@ impl SafetyFlowGraph {
                 }
                 SafetyFlowNode::UnsafeFn(def_id) => {
                     let label = tcx.def_path_str(*def_id);
-                    format!(
-                        "label=\"{}\\n \", shape=\"box\", color=red",
-                        label
-                    )
+                    format!("label=\"{}\\n \", shape=\"box\", color=red", label)
                 }
                 SafetyFlowNode::MergedCallerCons(def_ids) => {
                     let label = def_ids_to_label(tcx, def_ids);
@@ -227,12 +226,12 @@ impl SafetyFlowGraph {
                         label
                     )
                 }
-            };
+            }
+        };
 
         let caller_node = graph.add_node(SafetyFlowNode::from(unit.caller));
         if !unit.caller_cons.is_empty() {
-            let cons_def_ids: Vec<DefId> =
-                unit.caller_cons.iter().map(|con| con.def_id).collect();
+            let cons_def_ids: Vec<DefId> = unit.caller_cons.iter().map(|con| con.def_id).collect();
             let merged_cons_node = graph.add_node(SafetyFlowNode::MergedCallerCons(cons_def_ids));
             graph.add_edge(merged_cons_node, caller_node, SafetyFlowEdge::ConsToMethod);
         }

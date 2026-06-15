@@ -7,8 +7,8 @@ use rustc_span::Span;
 
 use super::{report_encoding_bug, value_is_from_const};
 use crate::analysis::dataflow::*;
-use crate::helpers::def_path::DefPath;
 use crate::check::opt::OptCheck;
+use crate::helpers::def_path::DefPath;
 
 static DEFPATHS: OnceCell<DefPaths> = OnceCell::new();
 

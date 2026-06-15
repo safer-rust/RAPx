@@ -1,10 +1,10 @@
-use super::{SafetyFlowAnalysis, safetyflow_graph::SafetyFlowGraph, safetyflow_unit::BasicUnitCounts};
 use super::chain::*;
+use super::{
+    SafetyFlowAnalysis, safetyflow_graph::SafetyFlowGraph, safetyflow_unit::BasicUnitCounts,
+};
 use crate::helpers::{draw_dot::render_dot_graphs, fn_info::*, show_mir::display_mir};
 use rustc_hir::{Safety, def::DefKind, def_id::DefId};
-use rustc_middle::{
-    ty::Visibility,
-};
+use rustc_middle::ty::Visibility;
 use rustc_span::Symbol;
 use std::collections::HashSet;
 

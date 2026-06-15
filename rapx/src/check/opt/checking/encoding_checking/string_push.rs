@@ -7,7 +7,8 @@ use rustc_span::Span;
 
 use super::value_is_from_const;
 use crate::{
-    analysis::dataflow::*, helpers::def_path::DefPath,
+    analysis::dataflow::*,
+    helpers::def_path::DefPath,
     utils::log::{relative_pos_range, span_to_filename, span_to_line_number, span_to_source_code},
 };
 use annotate_snippets::{Level, Renderer, Snippet};

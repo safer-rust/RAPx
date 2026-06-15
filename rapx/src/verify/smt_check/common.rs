@@ -27,7 +27,7 @@
 use std::collections::{HashMap, HashSet};
 
 use rustc_middle::{
-    mir::{BinOp, Local, Operand, TerminatorKind},
+    mir::{BinOp, Local, Operand, TerminatorKind, UnOp},
     ty::{GenericArgKind, PseudoCanonicalInput, Ty, TyCtxt, TyKind},
 };
 use z3::{
@@ -1117,38 +1117,70 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         &self.assumptions
     }
 
-    /// Try to recover the slice index/length terms behind a `ptr.add(index)` result.
+    /// Try to recover the slice index/length terms behind a pointer result.
+    ///
+    /// Supported forms:
+    ///
+    /// - `slice.as_ptr().add(index)` and wrappers summarized as `ReturnPointerAdd`
+    /// - plain `slice.as_ptr()` / `slice.as_mut_ptr()`, treated as index `0`
     pub(crate) fn pointer_bounds_for_place(
         &mut self,
         place: &PlaceKey,
     ) -> Option<PointerBounds<'ctx>> {
-        let call = self.pointer_add_call_for_place(place)?;
-        if !is_pointer_add_call(&call.func) {
-            return None;
-        }
-        let (base_arg, offset_arg) = call.effects.iter().find_map(|effect| {
-            let crate::verify::call_summary::CallEffect::ReturnPointerAdd {
-                base_arg,
-                offset_arg,
-                ..
-            } = effect
-            else {
-                return None;
-            };
-            Some((*base_arg, *offset_arg))
-        })?;
-        let base = call.args.get(base_arg)?;
-        let index = call.args.get(offset_arg)?;
-        let base_origin = self.origin_key_for_value(base, &mut HashSet::new())?;
-        let len_place = self.len_place_for_origin(&base_origin)?;
+        if let Some(call) = self.pointer_add_call_for_place(place) {
+            let (base_arg, offset_arg) = call.effects.iter().find_map(|effect| {
+                let crate::verify::call_summary::CallEffect::ReturnPointerAdd {
+                    base_arg,
+                    offset_arg,
+                    ..
+                } = effect
+                else {
+                    return None;
+                };
+                Some((*base_arg, *offset_arg))
+            })?;
+            let base = call.args.get(base_arg)?;
+            let index = call.args.get(offset_arg)?;
+            let base_origin = self.origin_key_for_value(base, &mut HashSet::new())?;
 
-        let index_term = self.term_for_value(index, &mut HashSet::new())?;
-        let len_term_int = self.term_for_place(&len_place)?;
+            let index_term = self.term_for_value(index, &mut HashSet::new())?;
+            let (len_term_int, len_term) =
+                if let Some(len_place) = self.len_place_for_origin(&base_origin) {
+                    (self.term_for_place(&len_place)?, SmtTerm::Place(len_place))
+                } else {
+                    let len_value = self.guarded_len_for_index(&base_origin, index)?;
+                    (
+                        self.term_for_value(&len_value, &mut HashSet::new())?,
+                        SmtTerm::Value(value_label(&len_value)),
+                    )
+                };
+            return Some(PointerBounds {
+                index: index_term,
+                len: len_term_int,
+                index_term: SmtTerm::Value(value_label(index)),
+                len_term,
+            });
+        }
+
+        let value = self.resolved_value_for_place(place, &mut HashSet::new())?;
+        let base_origin = self.origin_key_for_value(&value, &mut HashSet::new())?;
+        let (len_term_int, len_term) =
+            if let Some(len_place) = self.len_place_for_origin(&base_origin) {
+                (self.term_for_place(&len_place)?, SmtTerm::Place(len_place))
+            } else {
+                let zero = AbstractValue::ConstInt(0);
+                let len_value = self.guarded_len_for_index(&base_origin, &zero)?;
+                (
+                    self.term_for_value(&len_value, &mut HashSet::new())?,
+                    SmtTerm::Value(value_label(&len_value)),
+                )
+            };
+
         Some(PointerBounds {
-            index: index_term,
+            index: Int::from_u64(self.ctx, 0),
             len: len_term_int,
-            index_term: SmtTerm::Value(value_label(index)),
-            len_term: SmtTerm::Place(len_place),
+            index_term: SmtTerm::Const(0),
+            len_term,
         })
     }
 
@@ -1493,11 +1525,11 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         }
     }
 
-    /// Return the pointer-add call that produced a place after copies/casts.
+    /// Return the pointer-add call/effect that produced a place after copies/casts.
     fn pointer_add_call_for_place(&self, place: &PlaceKey) -> Option<CallSummary<'tcx>> {
         let value = self.resolved_value_for_place(place, &mut HashSet::new())?;
         match value {
-            AbstractValue::CallResult(call) if is_pointer_add_call(&call.func) => Some(call),
+            AbstractValue::CallResult(call) if call_has_pointer_add_effect(&call) => Some(call),
             _ => None,
         }
     }
@@ -1554,6 +1586,93 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 self.origin_key_for_value(call.args.get(source_arg)?, seen)
             }
             _ => Some(value_label(&resolved)),
+        }
+    }
+
+    /// Recover a length value from a path guard that mentions `index`.
+    fn guarded_len_for_index(
+        &self,
+        base_origin: &str,
+        index: &AbstractValue<'tcx>,
+    ) -> Option<AbstractValue<'tcx>> {
+        let index = self
+            .resolved_value(index, &mut HashSet::new())
+            .unwrap_or_else(|| index.clone());
+        for fact in &self.forward.facts {
+            let StateFact::BranchEq { value, equals: 1 } = fact else {
+                continue;
+            };
+            let predicate = self
+                .resolved_value(value, &mut HashSet::new())
+                .unwrap_or_else(|| value.clone());
+            let AbstractValue::Binary(op, lhs, rhs) = predicate else {
+                continue;
+            };
+            match op {
+                BinOp::Lt | BinOp::Le => {
+                    if self.value_mentions(&lhs, &index)
+                        && self.len_matches_origin(&rhs, base_origin)
+                    {
+                        return Some(*rhs);
+                    }
+                }
+                BinOp::Gt | BinOp::Ge => {
+                    if self.value_mentions(&rhs, &index)
+                        && self.len_matches_origin(&lhs, base_origin)
+                    {
+                        return Some(*lhs);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// Return true when `haystack` contains the same resolved value as `needle`.
+    fn value_mentions(&self, haystack: &AbstractValue<'tcx>, needle: &AbstractValue<'tcx>) -> bool {
+        let haystack = self
+            .resolved_value(haystack, &mut HashSet::new())
+            .unwrap_or_else(|| haystack.clone());
+        let needle = self
+            .resolved_value(needle, &mut HashSet::new())
+            .unwrap_or_else(|| needle.clone());
+        if value_label(&haystack) == value_label(&needle) {
+            return true;
+        }
+        match haystack {
+            AbstractValue::Cast(inner, _) | AbstractValue::Unary(_, inner) => {
+                self.value_mentions(&inner, &needle)
+            }
+            AbstractValue::Binary(_, lhs, rhs) => {
+                self.value_mentions(&lhs, &needle) || self.value_mentions(&rhs, &needle)
+            }
+            _ => false,
+        }
+    }
+
+    /// Return true when a length-like value is the metadata/len of `base_origin`.
+    fn len_matches_origin(&self, len: &AbstractValue<'tcx>, base_origin: &str) -> bool {
+        let resolved = self
+            .resolved_value(len, &mut HashSet::new())
+            .unwrap_or_else(|| len.clone());
+        match resolved {
+            AbstractValue::Place(place) => value_for_place(self.forward, &place)
+                .is_some_and(|value| self.len_matches_origin(value, base_origin)),
+            AbstractValue::Unary(UnOp::PtrMetadata, inner) => self
+                .origin_key_for_value(&inner, &mut HashSet::new())
+                .is_some_and(|origin| origin == base_origin),
+            AbstractValue::CallResult(call) => call.effects.iter().any(|effect| {
+                let crate::verify::call_summary::CallEffect::ReturnLengthOfArg { arg } = effect
+                else {
+                    return false;
+                };
+                call.args
+                    .get(*arg)
+                    .and_then(|value| self.origin_key_for_value(value, &mut HashSet::new()))
+                    .is_some_and(|origin| origin == base_origin)
+            }),
+            _ => false,
         }
     }
 
@@ -1654,6 +1773,16 @@ fn is_pointer_sub_call(func: &str) -> bool {
 /// Return true when a call summary extracts a pointer from a slice-like object.
 fn is_as_ptr_call(func: &str) -> bool {
     PrimitiveCall::classify(func).is_some_and(PrimitiveCall::is_as_ptr_like)
+}
+
+/// Return true when a call summary carries pointer-add semantics.
+fn call_has_pointer_add_effect(call: &CallSummary<'_>) -> bool {
+    call.effects.iter().any(|effect| {
+        matches!(
+            effect,
+            crate::verify::call_summary::CallEffect::ReturnPointerAdd { .. }
+        )
+    })
 }
 
 /// Stable SMT variable name for a place key.

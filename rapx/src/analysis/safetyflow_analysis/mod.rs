@@ -14,12 +14,12 @@ use crate::{
     utils::source::{get_fn_name_byid, get_module_name},
 };
 use fn_collector::FnCollector;
+use root::hir_contains_unsafe;
 use rustc_hir::{Safety, def_id::DefId};
 use rustc_middle::ty::TyCtxt;
-use std::collections::{HashMap, HashSet};
-use root::hir_contains_unsafe;
 use safetyflow_graph::{SafetyFlowEdge, SafetyFlowGraph};
 use safetyflow_unit::SafetyFlowUnit;
+use std::collections::{HashMap, HashSet};
 
 #[derive(PartialEq)]
 pub enum TargetCrate {
@@ -201,7 +201,9 @@ impl<'tcx> SafetyFlowAnalysis<'tcx> {
             let module_name = get_module_name(self.tcx, caller_id);
             rap_info!("module name: {:?}", module_name);
 
-            let module_data = modules_data.entry(module_name).or_insert_with(SafetyFlowGraph::new);
+            let module_data = modules_data
+                .entry(module_name)
+                .or_insert_with(SafetyFlowGraph::new);
 
             module_data.add_node(self.tcx, unit.caller, None);
 
@@ -229,7 +231,11 @@ impl<'tcx> SafetyFlowAnalysis<'tcx> {
             // Edge from associated item (constructor) to the method.
             for cons in &unit.caller_cons {
                 module_data.add_node(self.tcx, *cons, None);
-                module_data.add_edge(cons.def_id, unit.caller.def_id, SafetyFlowEdge::ConsToMethod);
+                module_data.add_edge(
+                    cons.def_id,
+                    unit.caller.def_id,
+                    SafetyFlowEdge::ConsToMethod,
+                );
             }
 
             // Edge from mutable access to the caller.
@@ -239,13 +245,21 @@ impl<'tcx> SafetyFlowAnalysis<'tcx> {
                 let node = FnInfo::new(*mut_method_id, fn_safety, node_type);
 
                 module_data.add_node(self.tcx, node, None);
-                module_data.add_edge(*mut_method_id, unit.caller.def_id, SafetyFlowEdge::MutToCaller);
+                module_data.add_edge(
+                    *mut_method_id,
+                    unit.caller.def_id,
+                    SafetyFlowEdge::MutToCaller,
+                );
             }
 
             // Edge representing a call from caller to callee.
             for callee in &unit.callees {
                 module_data.add_node(self.tcx, *callee, None);
-                module_data.add_edge(unit.caller.def_id, callee.def_id, SafetyFlowEdge::CallerToCallee);
+                module_data.add_edge(
+                    unit.caller.def_id,
+                    callee.def_id,
+                    SafetyFlowEdge::CallerToCallee,
+                );
             }
 
             rap_debug!("raw ptrs: {:?}", unit.raw_ptrs);

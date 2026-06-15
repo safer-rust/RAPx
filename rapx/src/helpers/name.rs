@@ -86,8 +86,7 @@ pub fn get_struct_self_ty<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Option<Ty<'
 /// Return the JSON value loaded from the pre-computed standard-library
 /// signature map (`data/std_sig.json`).
 pub fn get_std_api_signature_json() -> Value {
-    serde_json::from_str(include_str!("data/std_sig.json"))
-        .expect("Unable to parse JSON")
+    serde_json::from_str(include_str!("data/std_sig.json")).expect("Unable to parse JSON")
 }
 
 /// Look up known argument names for standard-library APIs.
@@ -168,10 +167,7 @@ pub fn parse_outside_signature<'tcx>(
 
 /// Dispatch argument-name/type parsing to either the local HIR path or the
 /// external type-based path.
-pub fn parse_signature<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    def_id: DefId,
-) -> (Vec<String>, Vec<Ty<'tcx>>) {
+pub fn parse_signature<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> (Vec<String>, Vec<Ty<'tcx>>) {
     if def_id.as_local().is_some() {
         parse_local_signature(tcx, def_id)
     } else {

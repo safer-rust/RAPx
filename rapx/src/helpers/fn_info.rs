@@ -12,15 +12,14 @@ use std::{
 };
 use syn::Expr;
 
-pub use super::name::{
-    access_ident_recursive, find_generic_in_ty, find_generic_param,
-    get_cleaned_def_path_name, get_known_std_names, get_std_api_signature_json,
-    get_struct_name, match_primitive_type, match_ty_with_ident,
-    parse_local_signature, parse_outside_signature, parse_signature,
-};
 pub use super::mir_scan::{
     check_safety, collect_global_local_pairs, get_rawptr_deref, get_unsafe_callees,
     place_has_raw_deref,
+};
+pub use super::name::{
+    access_ident_recursive, find_generic_in_ty, find_generic_param, get_cleaned_def_path_name,
+    get_known_std_names, get_std_api_signature_json, get_struct_name, match_primitive_type,
+    match_ty_with_ident, parse_local_signature, parse_outside_signature, parse_signature,
 };
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
