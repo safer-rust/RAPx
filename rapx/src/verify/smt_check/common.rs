@@ -38,7 +38,10 @@ use z3::{
 use super::{align, in_bound, init, non_null, valid_ptr};
 
 use crate::verify::{
-    contract::{ContractExpr, ContractPlace, PlaceBase, Property, PropertyArg, PropertyKind},
+    contract::{
+        ContractExpr, ContractPlace, ContractProjection, PlaceBase, Property, PropertyArg,
+        PropertyKind,
+    },
     def_use::{PlaceBaseKey, PlaceKey},
     forward_visit::{AbstractValue, CallSummary, ForwardVisitResult, StateFact},
     generic::GenericTypeCandidates,
@@ -507,6 +510,54 @@ impl<'tcx> SmtChecker<'tcx> {
             };
             u64::try_from(*value).ok()
         })
+    }
+
+    /// Resolve the trailing length expression at a concrete callsite.
+    ///
+    /// This keeps constants unchanged and rewrites callee argument places, such
+    /// as `Arg_2` from std-contract JSON, to the concrete MIR place passed by
+    /// the caller at this callsite.  Composite numeric expressions are rebound
+    /// recursively.
+    pub(crate) fn property_len_expr(
+        &self,
+        callsite: &Callsite<'tcx>,
+        property: &Property<'tcx>,
+    ) -> Option<ContractExpr<'tcx>> {
+        property.args.iter().rev().find_map(|arg| {
+            let PropertyArg::Expr(expr) = arg else {
+                return None;
+            };
+            self.bind_contract_expr_to_callsite(callsite, expr)
+        })
+    }
+
+    fn bind_contract_expr_to_callsite(
+        &self,
+        callsite: &Callsite<'tcx>,
+        expr: &ContractExpr<'tcx>,
+    ) -> Option<ContractExpr<'tcx>> {
+        match expr {
+            ContractExpr::Place(place) => self
+                .contract_place_to_callsite_place(callsite, place)
+                .map(contract_expr_from_place_key),
+            ContractExpr::Const(value) => Some(ContractExpr::Const(*value)),
+            ContractExpr::SizeOf(ty) => Some(ContractExpr::SizeOf(self.instantiate_callsite_ty(
+                callsite, *ty,
+            ))),
+            ContractExpr::AlignOf(ty) => Some(ContractExpr::AlignOf(
+                self.instantiate_callsite_ty(callsite, *ty),
+            )),
+            ContractExpr::Binary { op, lhs, rhs } => Some(ContractExpr::Binary {
+                op: *op,
+                lhs: Box::new(self.bind_contract_expr_to_callsite(callsite, lhs)?),
+                rhs: Box::new(self.bind_contract_expr_to_callsite(callsite, rhs)?),
+            }),
+            ContractExpr::Unary { op, expr } => Some(ContractExpr::Unary {
+                op: *op,
+                expr: Box::new(self.bind_contract_expr_to_callsite(callsite, expr)?),
+            }),
+            ContractExpr::Unknown => Some(ContractExpr::Unknown),
+        }
     }
 
     /// Convert a contract place into a concrete MIR place when possible.
@@ -1733,6 +1784,20 @@ fn operand_place(operand: &Operand<'_>) -> Option<PlaceKey> {
         Operand::Copy(place) | Operand::Move(place) => Some(PlaceKey::from_mir_place(place)),
         Operand::Constant(_) => None,
     }
+}
+
+fn contract_expr_from_place_key<'tcx>(place: PlaceKey) -> ContractExpr<'tcx> {
+    let base = match place.base {
+        PlaceBaseKey::Return => PlaceBase::Return,
+        PlaceBaseKey::Local(local) => PlaceBase::Local(local),
+        PlaceBaseKey::Arg(arg) => PlaceBase::Arg(arg),
+    };
+    let projections = place
+        .fields
+        .into_iter()
+        .map(|index| ContractProjection::Field { index, ty: None })
+        .collect();
+    ContractExpr::Place(ContractPlace { base, projections })
 }
 
 /// Return the abstract value assigned to a place when it is tracked by local.

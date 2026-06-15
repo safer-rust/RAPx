@@ -14,7 +14,11 @@
 //! branch facts from the forward visit result.
 
 use super::common::{SmtCheckResult, SmtChecker, SmtObligation};
-use crate::verify::{contract::Property, forward_visit::ForwardVisitResult, helpers::Callsite};
+use crate::verify::{
+    contract::{ContractExpr, Property},
+    forward_visit::ForwardVisitResult,
+    helpers::Callsite,
+};
 
 /// Check `InBound` by lowering it to a common bounds obligation.
 pub(crate) fn check<'tcx>(
@@ -35,10 +39,16 @@ pub(crate) fn check<'tcx>(
             required_ty
         ));
     };
-    let Some(access_count) = checker.property_len_const(property) else {
+    let Some(access_count_expr) = checker.property_len_expr(callsite, property) else {
+        return SmtCheckResult::unknown("InBound length argument could not be resolved");
+    };
+    let ContractExpr::Const(access_count) = access_count_expr else {
         return SmtCheckResult::unknown(
             "InBound currently requires a constant element-count argument",
         );
+    };
+    let Some(access_count) = u64::try_from(access_count).ok() else {
+        return SmtCheckResult::unknown("InBound element-count argument is too large");
     };
 
     checker.prove_obligation(
