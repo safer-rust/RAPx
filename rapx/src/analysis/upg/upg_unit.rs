@@ -13,6 +13,48 @@ pub struct UPGUnit {
     pub mut_methods: Vec<DefId>,
 }
 
+/// Counts of different unit categories collected across all UPG units.
+///
+/// Fields are indexed as per the original comment:
+///   [uf/um, sf-uf, sf-um, uf-uf, uf-um, um(sf)-uf, um(uf)-uf, um(sf)-um,
+///    um(uf)-um, sm(sf)-uf, sm(uf)-uf, sm(sf)-um, sm(uf)-um]
+#[derive(Debug, Clone, Default)]
+pub struct BasicUnitCounts {
+    /// uf/um — unsafe caller with no callees
+    pub unsafe_fn_or_method_no_callees: u32,
+    /// sf-uf — safe non-method caller calling unsafe non-method
+    pub safe_fn_call_unsafe_fn: u32,
+    /// sf-um — safe non-method caller calling unsafe method
+    pub safe_fn_call_unsafe_method: u32,
+    /// uf-uf — unsafe non-method caller calling unsafe non-method
+    pub unsafe_fn_call_unsafe_fn: u32,
+    /// uf-um — unsafe non-method caller calling unsafe method
+    pub unsafe_fn_call_unsafe_method: u32,
+    /// um(sf)-uf — unsafe method with safe cons calling unsafe non-method
+    pub unsafe_method_safe_cons_call_unsafe_fn: u32,
+    /// um(uf)-uf — unsafe method with unsafe cons calling unsafe non-method
+    pub unsafe_method_unsafe_cons_call_unsafe_fn: u32,
+    /// um(sf)-um — unsafe method with safe cons calling unsafe method
+    pub unsafe_method_safe_cons_call_unsafe_method: u32,
+    /// um(uf)-um — unsafe method with unsafe cons calling unsafe method
+    pub unsafe_method_unsafe_cons_call_unsafe_method: u32,
+    /// sm(sf)-uf — safe method with safe cons calling unsafe non-method
+    pub safe_method_safe_cons_call_unsafe_fn: u32,
+    /// sm(uf)-uf — safe method with unsafe cons calling unsafe non-method
+    pub safe_method_unsafe_cons_call_unsafe_fn: u32,
+    /// sm(sf)-um — safe method with safe cons calling unsafe method
+    pub safe_method_safe_cons_call_unsafe_method: u32,
+    /// sm(uf)-um — safe method with unsafe cons calling unsafe method
+    pub safe_method_unsafe_cons_call_unsafe_method: u32,
+}
+
+impl BasicUnitCounts {
+    pub fn as_slice_mut(&mut self) -> &mut [u32] {
+        let ptr = self as *mut Self as *mut u32;
+        unsafe { std::slice::from_raw_parts_mut(ptr, 13) }
+    }
+}
+
 impl UPGUnit {
     pub fn new(
         caller: FnInfo,
@@ -32,7 +74,9 @@ impl UPGUnit {
         }
     }
 
-    pub fn count_basic_units(&self, data: &mut [u32]) {
+    pub fn count_basic_units(&self, counts: &mut BasicUnitCounts) {
+        let data = counts.as_slice_mut();
+
         if self.caller.fn_safety == Safety::Unsafe && self.callees.is_empty() {
             data[0] += 1;
         }

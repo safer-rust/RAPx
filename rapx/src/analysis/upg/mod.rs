@@ -1,7 +1,6 @@
 /*
  * This module generates the unsafety propagation graph for each Rust module in the target crate.
  */
-pub mod draw_dot;
 pub mod fn_collector;
 pub mod hir_visitor;
 pub mod std_upg;

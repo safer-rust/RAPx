@@ -16,8 +16,8 @@ use petgraph::{
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub enum UPGNode {
-    SafeFn(DefId, String),
-    UnsafeFn(DefId, String),
+    SafeFn(DefId),
+    UnsafeFn(DefId),
     MergedCallerCons(String),
     MutMethods(String),
 }
@@ -32,18 +32,8 @@ pub enum UPGEdge {
 impl UPGNode {
     pub fn from(node: FnInfo) -> Self {
         match node.fn_safety {
-            Safety::Unsafe => match node.fn_kind {
-                FnKind::Constructor => UPGNode::UnsafeFn(node.def_id, "box".to_string()),
-                FnKind::Method => UPGNode::UnsafeFn(node.def_id, "ellipse".to_string()),
-                FnKind::Fn => UPGNode::UnsafeFn(node.def_id, "box".to_string()),
-                FnKind::Intrinsic => UPGNode::UnsafeFn(node.def_id, "box".to_string()),
-            },
-            Safety::Safe => match node.fn_kind {
-                FnKind::Constructor => UPGNode::SafeFn(node.def_id, "box".to_string()),
-                FnKind::Method => UPGNode::SafeFn(node.def_id, "ellipse".to_string()),
-                FnKind::Fn => UPGNode::SafeFn(node.def_id, "box".to_string()),
-                FnKind::Intrinsic => UPGNode::SafeFn(node.def_id, "box".to_string()),
-            },
+            Safety::Unsafe => UPGNode::UnsafeFn(node.def_id),
+            Safety::Safe => UPGNode::SafeFn(node.def_id),
         }
     }
 }
@@ -51,8 +41,8 @@ impl UPGNode {
 impl fmt::Display for UPGNode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            UPGNode::SafeFn(_, _) => write!(f, "Safe"),
-            UPGNode::UnsafeFn(_, _) => write!(f, "Unsafe"),
+            UPGNode::SafeFn(_) => write!(f, "Safe"),
+            UPGNode::UnsafeFn(_) => write!(f, "Unsafe"),
             UPGNode::MergedCallerCons(_) => write!(f, "MergedCallerCons"),
             UPGNode::MutMethods(_) => write!(f, "MutMethods"),
         }
@@ -69,13 +59,18 @@ impl fmt::Display for UPGEdge {
     }
 }
 
+fn shape_for_fn_kind(kind: FnKind) -> &'static str {
+    match kind {
+        FnKind::Constructor => "septagon",
+        FnKind::Method => "ellipse",
+        _ => "box",
+    }
+}
+
 /// Holds graph data for a single module before DOT generation.
 pub struct UPGraph {
-    // Nodes grouped by their associated struct/type name.
     structs: HashMap<String, HashSet<FnInfo>>,
-    // Edges between DefIds with their type.
     edges: HashSet<(DefId, DefId, UPGEdge)>,
-    // Pre-generated DOT attribute strings for each node (DefId).
     nodes: HashMap<DefId, String>,
 }
 
@@ -94,20 +89,14 @@ impl UPGraph {
 
         if !self.nodes.contains_key(&node.def_id) || custom_label.is_some() {
             let attr = if let Some(label) = custom_label {
-                if node.fn_kind == FnKind::Constructor {
-                    format!(
-                        "label=\"{}\", shape=\"septagon\", style=\"filled\", fillcolor=\"#f0f0f0\", color=\"#555555\"",
-                        label
-                    )
-                } else {
-                    format!(
-                        "label=\"{}\", shape=\"ellipse\", style=\"filled\", fillcolor=\"#f0f0f0\", color=\"#555555\"",
-                        label
-                    )
-                }
+                let shape = shape_for_fn_kind(node.fn_kind);
+                format!(
+                    "label=\"{}\", shape=\"{}\", style=\"filled\", fillcolor=\"#f0f0f0\", color=\"#555555\"",
+                    label, shape
+                )
             } else {
                 let upg_node = UPGNode::from(node);
-                Self::node_to_dot_attr(&upg_node)
+                Self::node_to_dot_attr(tcx, &upg_node, node.fn_kind)
             };
 
             self.nodes.insert(node.def_id, attr);
@@ -171,23 +160,26 @@ impl UPGraph {
         dot
     }
 
-    fn node_to_dot_attr(node: &UPGNode) -> String {
+    fn node_to_dot_attr(tcx: TyCtxt<'_>, node: &UPGNode, kind: FnKind) -> String {
+        let shape = shape_for_fn_kind(kind);
         match node {
-            UPGNode::SafeFn(def_id, shape) => {
-                format!("label=\"{:?}\", color=black, shape={:?}", def_id, shape)
+            UPGNode::SafeFn(def_id) => {
+                let label = tcx.def_path_str(*def_id);
+                format!("label=\"{}\", color=black, shape=\"{}\"", label, shape)
             }
-            UPGNode::UnsafeFn(def_id, shape) => {
-                let label = format!("{:?}", def_id);
-                format!("label=\"{}\", shape={:?}, color=red", label, shape)
+            UPGNode::UnsafeFn(def_id) => {
+                let label = tcx.def_path_str(*def_id);
+                format!("label=\"{}\", shape=\"{}\", color=red", label, shape)
             }
             _ => "label=\"Unknown\"".to_string(),
         }
     }
 
-    pub fn generate_dot_from_upg_unit(upg: &UPGUnit) -> String {
+    pub fn generate_dot_from_upg_unit(tcx: TyCtxt<'_>, upg: &UPGUnit) -> String {
         let mut graph: Graph<UPGNode, UPGEdge> = DiGraph::new();
+
         let get_edge_attr = |_graph: &Graph<UPGNode, UPGEdge>,
-                             edge_ref: EdgeReference<'_, UPGEdge>| {
+                              edge_ref: EdgeReference<'_, UPGEdge>| {
             match edge_ref.weight() {
                 UPGEdge::CallerToCallee => "color=black, style=solid",
                 UPGEdge::ConsToMethod => "color=black, style=dotted",
@@ -195,15 +187,23 @@ impl UPGraph {
             }
             .to_owned()
         };
+
         let get_node_attr =
             |_graph: &Graph<UPGNode, UPGEdge>, node_ref: (NodeIndex, &UPGNode)| match node_ref.1 {
-                UPGNode::SafeFn(def_id, shape) => {
-                    format!("label=\"{:?}\", color=black, shape={:?}", def_id, shape)
+                UPGNode::SafeFn(def_id) => {
+                    let label = tcx.def_path_str(*def_id);
+                    let shape = shape_for_fn_kind(upg.caller.fn_kind);
+                    format!(
+                        "label=\"{}\", color=black, shape=\"{}\"",
+                        label, shape
+                    )
                 }
-                UPGNode::UnsafeFn(def_id, shape) => {
-                    let label = format!("{:?}\n ", def_id);
-                    let node_attr = format!("label={:?}, shape={:?}, color=red", label, shape);
-                    node_attr
+                UPGNode::UnsafeFn(def_id) => {
+                    let label = tcx.def_path_str(*def_id);
+                    format!(
+                        "label=\"{}\n \", shape=\"box\", color=red",
+                        label
+                    )
                 }
                 UPGNode::MergedCallerCons(label) => {
                     format!(
@@ -224,7 +224,7 @@ impl UPGraph {
             let cons_labels: Vec<String> = upg
                 .caller_cons
                 .iter()
-                .map(|con| format!("{:?}", con.def_id))
+                .map(|con| tcx.def_path_str(con.def_id).to_string())
                 .collect();
             let merged_label = format!("Caller Constructors\n{}", cons_labels.join("\n"));
             let merged_cons_node = graph.add_node(UPGNode::MergedCallerCons(merged_label));
@@ -235,7 +235,7 @@ impl UPGraph {
             let mut_method_labels: Vec<String> = upg
                 .mut_methods
                 .iter()
-                .map(|def_id| format!("{:?}", def_id))
+                .map(|def_id| tcx.def_path_str(*def_id).to_string())
                 .collect();
             let merged_label = format!("Mutable Methods\n{}", mut_method_labels.join("\n"));
 
@@ -243,27 +243,15 @@ impl UPGraph {
             graph.add_edge(mut_methods_node, caller_node, UPGEdge::MutToCaller);
         }
 
-        /*
-        for (callee, cons) in &self.callee_cons_pair {
-            let callee_node = graph.add_node(Self::get_node(*callee));
-            for callee_cons in cons {
-                let callee_cons_node = graph.add_node(Self::get_node(*callee_cons));
-                graph.add_edge(callee_cons_node, callee_node, UPGEdge::ConsToMethod);
-            }
-            graph.add_edge(caller_node, callee_node, UPGEdge::CallerToCallee);
-        }
-        */
         let mut dot_str = String::new();
         let dot = Dot::with_attr_getters(
             &graph,
-            // &[Config::NodeNoLabel, Config::EdgeNoLabel],
             &[Config::NodeNoLabel],
             &get_edge_attr,
             &get_node_attr,
         );
 
         write!(dot_str, "{}", dot).unwrap();
-        // println!("{}", dot_str);
         dot_str
     }
 }

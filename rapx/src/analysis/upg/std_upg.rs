@@ -1,12 +1,10 @@
-use super::{UPGAnalysis, upg_graph::UPGraph};
+use super::{UPGAnalysis, upg_graph::UPGraph, upg_unit::BasicUnitCounts};
 use crate::analysis::{
     helpers::{fn_info::*, show_mir::display_mir},
     upg::draw_dot::render_dot_graphs,
 };
 use rustc_hir::{Safety, def::DefKind, def_id::DefId};
 use rustc_middle::{
-    mir::Local,
-    ty,
     ty::{TyCtxt, Visibility},
 };
 use rustc_span::Symbol;
@@ -30,7 +28,7 @@ impl<'tcx> UPGAnalysis<'tcx> {
     pub fn render_dot(&mut self) {
         let mut dot_strs = Vec::new();
         for upg in &self.upgs {
-            let dot_str = UPGraph::generate_dot_from_upg_unit(upg);
+            let dot_str = UPGraph::generate_dot_from_upg_unit(self.tcx, upg);
             let caller_name = get_cleaned_def_path_name(self.tcx, upg.caller.def_id);
             dot_strs.push((caller_name, dot_str));
         }
@@ -118,215 +116,8 @@ impl<'tcx> UPGAnalysis<'tcx> {
         unsafe_fn
     }
 
-    pub fn check_params(&self, def_id: DefId) {
-        let body = self.tcx.optimized_mir(def_id);
-        let locals = body.local_decls.clone();
-        let fn_sig = self.tcx.fn_sig(def_id).skip_binder();
-        let param_len = fn_sig.inputs().skip_binder().len();
-        let return_ty = fn_sig.output().skip_binder();
-        for idx in 1..param_len + 1 {
-            let local_ty = locals[Local::from(idx)].ty;
-            if is_ptr(local_ty) && !return_ty.is_unit() {
-                println!("{:?}", get_cleaned_def_path_name(self.tcx, def_id));
-            }
-        }
-    }
-
-    pub fn analyze_upg(&self) {
-        let mut fn_no_callee = Vec::new();
-        let mut fn_unsafe_caller = Vec::new();
-        let mut fn_safe_caller = Vec::new();
-        let mut method_no_callee = Vec::new();
-        let mut method_unsafe_caller = Vec::new();
-        let mut method_safe_caller = Vec::new();
-        for upg in &self.upgs {
-            if upg.caller.fn_kind == FnKind::Method {
-                // method
-                if upg.callees.is_empty() {
-                    method_no_callee.push(upg.clone());
-                }
-                if upg.caller.fn_safety == Safety::Unsafe {
-                    method_unsafe_caller.push(upg.clone());
-                } else {
-                    method_safe_caller.push(upg.clone());
-                }
-            } else {
-                //function
-                if upg.callees.is_empty() {
-                    fn_no_callee.push(upg.clone());
-                }
-                if upg.caller.fn_safety == Safety::Unsafe {
-                    fn_unsafe_caller.push(upg.clone());
-                } else {
-                    fn_safe_caller.push(upg.clone());
-                }
-            }
-        }
-        rap_info!(
-            "func: {},{},{}, method: {},{},{}",
-            fn_no_callee.len(),
-            fn_unsafe_caller.len(),
-            fn_safe_caller.len(),
-            method_no_callee.len(),
-            method_unsafe_caller.len(),
-            method_safe_caller.len()
-        );
-        rap_info!("units: {}", self.upgs.len());
-    }
-
-    pub fn analyze_struct(&self) {
-        let mut cache = HashSet::default();
-        let mut s = 0;
-        let mut u = 0;
-        let mut e = 0;
-        let mut uc = 0;
-        let mut vi = 0;
-        for upg in &self.upgs {
-            self.get_struct(
-                upg.caller.def_id,
-                &mut cache,
-                &mut s,
-                &mut u,
-                &mut e,
-                &mut uc,
-                &mut vi,
-            );
-        }
-        println!("{},{},{},{}", s, u, e, vi);
-    }
-
-    pub fn get_struct(
-        &self,
-        def_id: DefId,
-        cache: &mut HashSet<DefId>,
-        s: &mut usize,
-        u: &mut usize,
-        e: &mut usize,
-        uc: &mut usize,
-        vi: &mut usize,
-    ) {
-        let tcx = self.tcx;
-        let mut safe_constructors = Vec::new();
-        let mut unsafe_constructors = Vec::new();
-        let mut unsafe_methods = Vec::new();
-        let mut safe_methods = Vec::new();
-        let mut mut_methods = Vec::new();
-        let mut struct_name = "".to_string();
-        let mut ty_flag = 0;
-        let mut vi_flag = false;
-        if let Some(assoc_item) = tcx.opt_associated_item(def_id) {
-            if let Some(impl_id) = assoc_item.impl_container(tcx) {
-                // get struct ty
-                let ty = tcx.type_of(impl_id).skip_binder();
-                if let Some(adt_def) = ty.ty_adt_def() {
-                    if adt_def.is_union() {
-                        ty_flag = 1;
-                    } else if adt_def.is_enum() {
-                        ty_flag = 2;
-                    }
-                    let adt_def_id = adt_def.did();
-                    struct_name = get_cleaned_def_path_name(tcx, adt_def_id);
-                    if !cache.insert(adt_def_id) {
-                        return;
-                    }
-
-                    vi_flag = false;
-                    let impl_vec = get_impls_for_struct(self.tcx, adt_def_id);
-                    for impl_id in impl_vec {
-                        let associated_items = tcx.associated_items(impl_id);
-                        for item in associated_items.in_definition_order() {
-                            if let ty::AssocKind::Fn {
-                                name: _,
-                                has_self: _,
-                            } = item.kind
-                            {
-                                let item_def_id = item.def_id;
-                                if !get_sp(self.tcx, item_def_id).is_empty() {
-                                    vi_flag = true;
-                                }
-                                if get_type(self.tcx, item_def_id) == FnKind::Constructor
-                                    && check_safety(self.tcx, item_def_id) == Safety::Unsafe
-                                // && get_sp(self.tcx, item_def_id).len() > 0
-                                {
-                                    unsafe_constructors.push(item_def_id);
-                                }
-                                if get_type(self.tcx, item_def_id) == FnKind::Constructor
-                                    && check_safety(self.tcx, item_def_id) == Safety::Safe
-                                {
-                                    safe_constructors.push(item_def_id);
-                                }
-                                if get_type(self.tcx, item_def_id) == FnKind::Method
-                                    && check_safety(self.tcx, item_def_id) == Safety::Unsafe
-                                // && get_sp(self.tcx, item_def_id).len() > 0
-                                {
-                                    unsafe_methods.push(item_def_id);
-                                }
-                                if get_type(self.tcx, item_def_id) == FnKind::Method
-                                    && check_safety(self.tcx, item_def_id) == Safety::Safe
-                                {
-                                    if !get_unsafe_callees(tcx, item_def_id).is_empty() {
-                                        safe_methods.push(item_def_id);
-                                    }
-                                }
-                                if get_type(self.tcx, item_def_id) == FnKind::Method
-                                    && has_mut_self_param(self.tcx, item_def_id)
-                                {
-                                    mut_methods.push(item_def_id);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if struct_name == *""
-            || (unsafe_constructors.is_empty()
-                && unsafe_methods.is_empty()
-                && safe_methods.is_empty())
-        {
-            return;
-        }
-        if vi_flag {
-            *vi += 1;
-        }
-        if !unsafe_constructors.is_empty() {
-            *uc += 1;
-        }
-        if ty_flag == 0 {
-            *s += 1;
-        }
-        if ty_flag == 1 {
-            *u += 1;
-        }
-        if ty_flag == 2 {
-            *e += 1;
-        }
-
-        println!("Safe Cons: {}", safe_constructors.len());
-        for safe_cons in safe_constructors {
-            println!(" {:?}", get_cleaned_def_path_name(tcx, safe_cons));
-        }
-        println!("Unsafe Cons: {}", unsafe_constructors.len());
-        for unsafe_cons in unsafe_constructors {
-            println!(" {:?}", get_cleaned_def_path_name(tcx, unsafe_cons));
-        }
-        println!("Unsafe Methods: {}", unsafe_methods.len());
-        for method in unsafe_methods {
-            println!(" {:?}", get_cleaned_def_path_name(tcx, method));
-        }
-        println!("Safe Methods with unsafe callee: {}", safe_methods.len());
-        for method in safe_methods {
-            println!(" {:?}", get_cleaned_def_path_name(tcx, method));
-        }
-        println!("Mut self Methods: {}", mut_methods.len());
-        for method in mut_methods {
-            println!(" {:?}", get_cleaned_def_path_name(tcx, method));
-        }
-    }
-
     pub fn get_units_data(&mut self, tcx: TyCtxt<'tcx>) {
-        // [uf/um, sf-uf, sf-um, uf-uf, uf-um, um(sf)-uf, um(uf)-uf, um(sf)-um, um(uf)-um, sm(sf)-uf, sm(uf)-uf, sm(sf)-um, sm(uf)-um]
-        let mut basic_units_data = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let mut counts = BasicUnitCounts::default();
         let def_id_sets = tcx.mir_keys(());
         for local_def_id in def_id_sets {
             let def_id = local_def_id.to_def_id();
@@ -335,7 +126,7 @@ impl<'tcx> UPGAnalysis<'tcx> {
             }
         }
         for upg in &self.upgs {
-            upg.count_basic_units(&mut basic_units_data);
+            upg.count_basic_units(&mut counts);
         }
     }
 

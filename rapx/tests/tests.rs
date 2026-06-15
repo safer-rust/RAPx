@@ -863,7 +863,7 @@ fn upg_raw_ptr() {
 #[test]
 fn upg_static_mut() {
     let output = run_with_args("upg/static_mut", ANALYZE_UPG_CMD);
-    assert_contain(&output, "::COUNTER");
+    assert_contain(&output, "COUNTER");
 }
 
 #[test]

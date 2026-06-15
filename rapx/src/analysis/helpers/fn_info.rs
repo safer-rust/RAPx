@@ -18,6 +18,17 @@ use std::{
 };
 use syn::Expr;
 
+pub use super::name::{
+    access_ident_recursive, find_generic_in_ty, find_generic_param,
+    get_cleaned_def_path_name, get_known_std_names, get_std_api_signature_json,
+    get_struct_name, match_primitive_type, match_ty_with_ident,
+    parse_local_signature, parse_outside_signature, parse_signature,
+};
+pub use super::mir_scan::{
+    check_safety, collect_global_local_pairs, get_rawptr_deref, get_unsafe_callees,
+    place_has_raw_deref,
+};
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum FnKind {
     Fn,
@@ -71,12 +82,6 @@ pub fn get_sp_tags_json() -> serde_json::Value {
     json_data
 }
 
-pub fn get_std_api_signature_json() -> serde_json::Value {
-    let json_data: serde_json::Value =
-        serde_json::from_str(include_str!("data/std_sig.json")).expect("Unable to parse JSON");
-    json_data
-}
-
 pub fn get_sp(tcx: TyCtxt<'_>, def_id: DefId) -> HashSet<String> {
     let cleaned_path_name = get_cleaned_def_path_name(tcx, def_id);
     let json_data: serde_json::Value = get_sp_tags_json();
@@ -95,32 +100,6 @@ pub fn get_sp(tcx: TyCtxt<'_>, def_id: DefId) -> HashSet<String> {
         }
     }
     HashSet::new()
-}
-
-pub fn get_struct_name(tcx: TyCtxt<'_>, def_id: DefId) -> Option<String> {
-    if let Some(assoc_item) = tcx.opt_associated_item(def_id) {
-        if let Some(impl_id) = assoc_item.impl_container(tcx) {
-            let ty = tcx.type_of(impl_id).skip_binder();
-            let type_name = ty.to_string();
-            let struct_name = type_name
-                .split('<')
-                .next()
-                .unwrap_or("")
-                .split("::")
-                .last()
-                .unwrap_or("")
-                .to_string();
-
-            return Some(struct_name);
-        }
-    }
-    None
-}
-
-pub fn check_safety(tcx: TyCtxt<'_>, def_id: DefId) -> Safety {
-    let poly_fn_sig = tcx.fn_sig(def_id);
-    let fn_sig = poly_fn_sig.skip_binder();
-    fn_sig.safety()
 }
 
 pub fn get_type(tcx: TyCtxt<'_>, def_id: DefId) -> FnKind {
@@ -206,145 +185,6 @@ pub fn get_adt_via_method(tcx: TyCtxt<'_>, method_def_id: DefId) -> Option<AdtIn
         return None;
     }
     Some(AdtInfo::new(adt_def_id, pub_count == total_count))
-}
-
-fn place_has_raw_deref<'tcx>(_tcx: TyCtxt<'tcx>, body: &Body<'tcx>, place: &Place<'tcx>) -> bool {
-    let local = place.local;
-    for proj in place.projection.iter() {
-        if let ProjectionElem::Deref = proj.kind() {
-            let ty = body.local_decls[local].ty;
-            if let TyKind::RawPtr(_, _) = ty.kind() {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-/// Analyzes the MIR of the given function to collect all local variables
-/// that are involved in dereferencing raw pointers (`*const T` or `*mut T`).
-pub fn get_rawptr_deref(tcx: TyCtxt<'_>, def_id: DefId) -> HashSet<Local> {
-    let mut raw_ptrs = HashSet::new();
-    if tcx.is_mir_available(def_id) {
-        let body = tcx.optimized_mir(def_id);
-        for bb in body.basic_blocks.iter() {
-            for stmt in &bb.statements {
-                if let StatementKind::Assign(box (lhs, rhs)) = &stmt.kind {
-                    if place_has_raw_deref(tcx, &body, lhs) {
-                        raw_ptrs.insert(lhs.local);
-                    }
-                    if let Rvalue::Use(op) = rhs {
-                        match op {
-                            Operand::Copy(place) | Operand::Move(place) => {
-                                if place_has_raw_deref(tcx, &body, place) {
-                                    raw_ptrs.insert(place.local);
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    if let Rvalue::Ref(_, _, place) = rhs {
-                        if place_has_raw_deref(tcx, &body, place) {
-                            raw_ptrs.insert(place.local);
-                        }
-                    }
-                }
-            }
-            if let Some(terminator) = &bb.terminator {
-                match &terminator.kind {
-                    rustc_middle::mir::TerminatorKind::Call { args, .. } => {
-                        for arg in args {
-                            match arg.node {
-                                Operand::Copy(place) | Operand::Move(place) => {
-                                    if place_has_raw_deref(tcx, &body, &place) {
-                                        raw_ptrs.insert(place.local);
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-    raw_ptrs
-}
-
-/* Example mir of static mutable access.
-
-static mut COUNTER: i32 = {
-    let mut _0: i32;
-
-    bb0: {
-        _0 = const 0_i32;
-        return;
-    }
-}
-
-fn main() -> () {
-    let mut _0: ();
-    let mut _1: *mut i32;
-
-    bb0: {
-        StorageLive(_1);
-        _1 = const {alloc1: *mut i32};
-        (*_1) = const 1_i32;
-        StorageDead(_1);
-        return;
-    }
-}
-
-alloc1 (static: COUNTER, size: 4, align: 4) {
-    00 00 00 00                                     │ ....
-}
-
-*/
-
-/// Collects pairs of global static variables and their corresponding local variables
-/// within a function's MIR that are assigned from statics.
-pub fn collect_global_local_pairs(tcx: TyCtxt<'_>, def_id: DefId) -> HashMap<DefId, Vec<Local>> {
-    let mut globals: HashMap<DefId, Vec<Local>> = HashMap::new();
-
-    if !tcx.is_mir_available(def_id) {
-        return globals;
-    }
-
-    let body = tcx.optimized_mir(def_id);
-
-    for bb in body.basic_blocks.iter() {
-        for stmt in &bb.statements {
-            if let StatementKind::Assign(box (lhs, rhs)) = &stmt.kind {
-                if let Rvalue::Use(Operand::Constant(c)) = rhs {
-                    if let Some(static_def_id) = c.check_static_ptr(tcx) {
-                        globals.entry(static_def_id).or_default().push(lhs.local);
-                    }
-                }
-            }
-        }
-    }
-
-    globals
-}
-
-pub fn get_unsafe_callees(tcx: TyCtxt<'_>, def_id: DefId) -> HashSet<DefId> {
-    let mut unsafe_callees = HashSet::new();
-    if tcx.is_mir_available(def_id) {
-        let body = tcx.optimized_mir(def_id);
-        for bb in body.basic_blocks.iter() {
-            if let TerminatorKind::Call { func, .. } = &bb.terminator().kind {
-                if let Operand::Constant(func_constant) = func {
-                    if let ty::FnDef(callee_def_id, _) = func_constant.const_.ty().kind() {
-                        if check_safety(tcx, *callee_def_id) == Safety::Unsafe {
-                            unsafe_callees.insert(*callee_def_id);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    unsafe_callees
 }
 // return all the impls def id of corresponding struct
 pub fn get_impls_for_struct(tcx: TyCtxt<'_>, struct_def_id: DefId) -> Vec<DefId> {
@@ -486,136 +326,6 @@ pub fn parse_expr_into_local_and_ty<'tcx>(
         }
     }
     None
-}
-
-/// Return the Vecs of args' names and types
-/// This function will handle outside def_id by different way.
-pub fn parse_signature<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> (Vec<String>, Vec<Ty<'tcx>>) {
-    // 0. If the def id is local
-    if def_id.as_local().is_some() {
-        return parse_local_signature(tcx, def_id);
-    } else {
-        rap_debug!("{:?} is not local def id.", def_id);
-        return parse_outside_signature(tcx, def_id);
-    };
-}
-
-/// Return the Vecs of args' names and types of outside functions.
-fn parse_outside_signature<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> (Vec<String>, Vec<Ty<'tcx>>) {
-    let sig = tcx.fn_sig(def_id).skip_binder();
-    let param_tys: Vec<Ty<'tcx>> = sig.inputs().skip_binder().iter().copied().collect();
-
-    // 1. check pre-defined std unsafe api signature
-    if let Some(args_name) = get_known_std_names(tcx, def_id) {
-        // rap_warn!(
-        //     "function {:?} has arg: {:?}, arg types: {:?}",
-        //     def_id,
-        //     args_name,
-        //     param_tys
-        // );
-        return (args_name, param_tys);
-    }
-
-    // 2. TODO: If can not find known std apis, then use numbers like `0`,`1`,... to represent args.
-    let args_name = (0..param_tys.len()).map(|i| format!("{}", i)).collect();
-    rap_debug!(
-        "function {:?} has arg: {:?}, arg types: {:?}",
-        def_id,
-        args_name,
-        param_tys
-    );
-    return (args_name, param_tys);
-}
-
-/// We use a json to record known std apis' arg names.
-/// This function will search the json and return the names.
-/// Notes: If std gets updated, the json may still record old ones.
-fn get_known_std_names<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Option<Vec<String>> {
-    let std_func_name = get_cleaned_def_path_name(tcx, def_id);
-    let json_data: serde_json::Value = get_std_api_signature_json();
-
-    if let Some(arg_info) = json_data.get(&std_func_name) {
-        if let Some(args_name) = arg_info.as_array() {
-            // set default value to arg name
-            if args_name.len() == 0 {
-                return Some(vec!["0".to_string()]);
-            }
-            // iterate and collect
-            let mut result = Vec::new();
-            for arg in args_name {
-                if let Some(sp_name) = arg.as_str() {
-                    result.push(sp_name.to_string());
-                }
-            }
-            return Some(result);
-        }
-    }
-    None
-}
-
-/// Return the Vecs of args' names and types of local functions.
-pub fn parse_local_signature(tcx: TyCtxt, def_id: DefId) -> (Vec<String>, Vec<Ty>) {
-    // 1. parse local def_id and get arg list
-    let local_def_id = def_id.as_local().unwrap();
-    let hir_body = tcx.hir_body_owned_by(local_def_id);
-    if hir_body.params.len() == 0 {
-        return (vec!["0".to_string()], Vec::new());
-    }
-    // 2. contruct the vec of param and param ty
-    let params = hir_body.params;
-    let typeck_results = tcx.typeck_body(hir_body.id());
-    let mut param_names = Vec::new();
-    let mut param_tys = Vec::new();
-    for param in params {
-        match param.pat.kind {
-            rustc_hir::PatKind::Binding(_, _, ident, _) => {
-                param_names.push(ident.name.to_string());
-                let ty = typeck_results.pat_ty(param.pat);
-                param_tys.push(ty);
-            }
-            _ => {
-                param_names.push(String::new());
-                param_tys.push(typeck_results.pat_ty(param.pat));
-            }
-        }
-    }
-    (param_names, param_tys)
-}
-
-/// return the (ident, its fields) of the expr.
-///
-/// illustrated cases :
-///    ptr	-> ("ptr", [])
-///    region.size	-> ("region", ["size"])
-///    tuple.0.value -> ("tuple", ["0", "value"])
-pub fn access_ident_recursive(expr: &Expr) -> Option<(String, Vec<String>)> {
-    match expr {
-        Expr::Path(syn::ExprPath { path, .. }) => {
-            if path.segments.len() == 1 {
-                rap_debug!("expr2 {:?}", expr);
-                let ident = path.segments[0].ident.to_string();
-                Some((ident, Vec::new()))
-            } else {
-                None
-            }
-        }
-        // get the base and fields recursively
-        Expr::Field(syn::ExprField { base, member, .. }) => {
-            let (base_ident, mut fields) =
-                if let Some((base_ident, fields)) = access_ident_recursive(base) {
-                    (base_ident, fields)
-                } else {
-                    return None;
-                };
-            let field_name = match member {
-                syn::Member::Named(ident) => ident.to_string(),
-                syn::Member::Unnamed(index) => index.index.to_string(),
-            };
-            fields.push(field_name);
-            Some((base_ident, fields))
-        }
-        _ => None,
-    }
 }
 
 /// parse expr into number.
@@ -826,53 +536,6 @@ fn try_get_mir(tcx: TyCtxt<'_>, def_id: DefId) -> Option<&rustc_middle::mir::Bod
     } else {
         None
     }
-}
-
-pub fn get_cleaned_def_path_name(tcx: TyCtxt<'_>, def_id: DefId) -> String {
-    let def_id_str = format!("{:?}", def_id);
-    let mut parts: Vec<&str> = def_id_str.split("::").collect();
-
-    let mut remove_first = false;
-    if let Some(first_part) = parts.get_mut(0) {
-        if first_part.contains("core") {
-            *first_part = "core";
-        } else if first_part.contains("std") {
-            *first_part = "std";
-        } else if first_part.contains("alloc") {
-            *first_part = "alloc";
-        } else {
-            remove_first = true;
-        }
-    }
-    if remove_first && !parts.is_empty() {
-        parts.remove(0);
-    }
-
-    let new_parts: Vec<String> = parts
-        .into_iter()
-        .filter_map(|s| {
-            if s.contains("{") {
-                if remove_first {
-                    get_struct_name(tcx, def_id)
-                } else {
-                    None
-                }
-            } else {
-                Some(s.to_string())
-            }
-        })
-        .collect();
-
-    let mut cleaned_path = new_parts.join("::");
-    cleaned_path = cleaned_path.trim_end_matches(')').to_string();
-    cleaned_path
-    // tcx.def_path_str(def_id)
-    //     .replace("::", "_")
-    //     .replace("<", "_")
-    //     .replace(">", "_")
-    //     .replace(",", "_")
-    //     .replace(" ", "")
-    //     .replace("__", "_")
 }
 
 pub fn print_unsafe_chains(chains: &[Vec<String>]) {
