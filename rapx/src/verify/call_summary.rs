@@ -544,6 +544,7 @@ fn try_pointer_arith_wrapper_effect<'tcx>(
     if !tcx.is_mir_available(callee) {
         return None;
     }
+
     let body = tcx.optimized_mir(callee);
     let ret = Local::from_usize(0);
 

@@ -921,6 +921,37 @@ fn inbound_sound_06() {
 }
 
 #[test]
+fn inbound_std_sound_01() {
+    let output = run_with_args("verify/inbound_std_sound_01", VERIFY_CMD);
+    assert_contain(&output, "function: sound_std_get_unchecked");
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn inbound_std_unsound_01() {
+    let output = run_with_args("verify/inbound_std_unsound_01", VERIFY_CMD);
+    assert_contain(&output, "function: unsound_std_get_unchecked_wrong_guard");
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn inbound_std_sound_02() {
+    let output = run_with_args("verify/inbound_std_sound_02", VERIFY_CMD);
+    assert_contain(&output, "function: sound_std_copy_nonoverlapping");
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn inbound_std_unsound_02() {
+    let output = run_with_args("verify/inbound_std_unsound_02", VERIFY_CMD);
+    assert_contain(
+        &output,
+        "function: unsound_std_copy_nonoverlapping_dst_unguarded",
+    );
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
 fn struct_invariant_1() {
     let output = run_with_args("verify/struct_invariant_1", VERIFY_CMD);
     assert_contain(&output, "function: Wrapper::<T>::unsound_new");

@@ -24,22 +24,30 @@ pub(crate) fn check<'tcx>(
     forward: &ForwardVisitResult<'tcx>,
 ) -> SmtCheckResult {
     let Some(target) = checker.property_target(callsite, property) else {
+        rap_debug!("  [SMT InBound] target could not be resolved");
         return SmtCheckResult::unknown("InBound target could not be resolved");
     };
     let Some(required_ty) = checker.property_required_ty(callsite, property) else {
+        rap_debug!("  [SMT InBound] type could not be resolved");
         return SmtCheckResult::unknown("InBound type could not be resolved");
     };
     let Some((_, elem_size)) = checker.type_layout(callsite.caller, required_ty) else {
+        rap_debug!("  [SMT InBound] layout unavailable for {:?}", required_ty);
         return SmtCheckResult::unknown(format!(
             "InBound layout unavailable for {:?}",
             required_ty
         ));
     };
     let Some(access_count_expr) = checker.property_len_expr(callsite, property) else {
+        rap_debug!("  [SMT InBound] length argument could not be resolved");
         return SmtCheckResult::unknown("InBound length argument could not be resolved");
     };
     let Some(access_count) = checker.contract_expr_to_smt_term(callsite.caller, &access_count_expr)
     else {
+        rap_debug!(
+            "  [SMT InBound] length expression could not be lowered: {:?}",
+            access_count_expr
+        );
         return SmtCheckResult::unknown("InBound length argument could not be lowered to SMT");
     };
 

@@ -260,6 +260,9 @@ impl<'tcx> SmtChecker<'tcx> {
             } => {
                 let target_label = place_label(place);
                 let Some(bounds) = model.pointer_bounds_for_place(place) else {
+                    rap_debug!(
+                        "  [SMT InBound] could not recover pointer bounds for {target_label}"
+                    );
                     return SmtCheckResult::unknown(format!(
                         "could not connect {target_label} to a slice length and pointer-add index"
                     ))
@@ -279,6 +282,10 @@ impl<'tcx> SmtChecker<'tcx> {
 
                 let zero = Int::from_u64(&ctx, 0);
                 let Some(access) = model.term_for_smt_term(access_count) else {
+                    rap_debug!(
+                        "  [SMT InBound] could not lower access-count term {}",
+                        access_count.describe()
+                    );
                     return SmtCheckResult::unknown(format!(
                         "could not build an access-count term for {}",
                         access_count.describe()
@@ -327,11 +334,20 @@ impl<'tcx> SmtChecker<'tcx> {
                         access_count.describe()
                     ))
                     .with_query(query),
-                    SatResult::Sat => SmtCheckResult::unknown(
-                        "current path facts do not prove the required bounds",
-                    )
-                    .with_query(query)
-                    .with_note("hint: add an index < len guard or provide a richer object-size summary"),
+                    SatResult::Sat => {
+                        rap_debug!(
+                            "  [SMT InBound] sat for {target_label}; assumptions: {:?}; negated goal: {}",
+                            query.assumptions,
+                            query.negated_goal.describe()
+                        );
+                        SmtCheckResult::unknown(
+                            "current path facts do not prove the required bounds",
+                        )
+                        .with_query(query)
+                        .with_note(
+                            "hint: add an index < len guard or provide a richer object-size summary",
+                        )
+                    }
                     SatResult::Unknown => {
                         SmtCheckResult::unknown("solver returned unknown").with_query(query)
                     }
@@ -1274,7 +1290,9 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             });
         }
 
-        let value = self.resolved_value_for_place(place, &mut HashSet::new())?;
+        let value = self
+            .resolved_value_for_place(place, &mut HashSet::new())
+            .unwrap_or_else(|| AbstractValue::Place(place.clone()));
         let base_origin = self.origin_key_for_value(&value, &mut HashSet::new())?;
         let (len_term_int, len_term) =
             if let Some(len_place) = self.len_place_for_origin(&base_origin) {

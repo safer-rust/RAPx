@@ -379,6 +379,7 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
             for repeat in 0..=self.allow_pathseg_repeat {
                 let driver = VerifyDriver::new_with_repeat(self.tcx, target, repeat);
                 let report = driver.verify_function();
+                rap_debug!("{}", report.describe());
                 all_results.extend(report.results);
             }
 
@@ -389,6 +390,7 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                 let driver =
                     VerifyDriver::new_with_repeat(self.tcx, target, self.allow_pathseg_repeat);
                 let struct_report = driver.verify_struct_invariants();
+                rap_debug!("{}", struct_report.describe());
                 all_results.extend(struct_report.results);
             }
 

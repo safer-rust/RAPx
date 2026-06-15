@@ -160,7 +160,12 @@ impl<'tcx> ForwardVisitor<'tcx> {
                     .values
                     .insert(destination.local, AbstractValue::CallResult(call.clone()));
                 result.facts.push(StateFact::Call(call));
-                self.apply_call_effects(&effect_summary, args, result);
+                self.apply_call_effects(
+                    &effect_summary,
+                    args,
+                    reason == KeepReason::Callsite,
+                    result,
+                );
             }
             TerminatorKind::SwitchInt { discr, .. } => {
                 if let Some(equals) = chosen_switch_value(&result.path, block, terminator) {
@@ -341,6 +346,7 @@ impl<'tcx> ForwardVisitor<'tcx> {
         &self,
         summary: &CallEffectSummary,
         args: &[Spanned<Operand<'tcx>>],
+        is_target_callsite: bool,
         result: &mut ForwardVisitResult<'tcx>,
     ) {
         result.facts.push(StateFact::CallEffect(summary.clone()));
@@ -419,11 +425,16 @@ impl<'tcx> ForwardVisitor<'tcx> {
             }
         }
 
-        if summary.unsupported {
+        if summary.unsupported && !is_target_callsite {
             result.forgets.push(ForgetReason::UnknownCall);
             result
                 .notes
                 .push(format!("unsupported call effect: {}", summary.name));
+        } else if summary.unsupported {
+            result.notes.push(format!(
+                "unsupported target call effect ignored for precondition proof: {}",
+                summary.name
+            ));
         }
     }
 
