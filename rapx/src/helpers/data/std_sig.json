@@ -1,20 +1,30 @@
 {
-    "core::slice::raw::from_raw_parts": [
-        "data",
-        "len"
+    "alloc::string::from_raw_parts": [
+        "buf",
+        "length",
+        "capacity"
     ],
-    "core::slice::raw::from_raw_parts_mut": [
-        "data",
-        "len"
+    "alloc::vec::from_parts": [
+        "ptr",
+        "length",
+        "capacity"
     ],
-    "core::ptr::non_null::read": [
-        "self"
+    "alloc::vec::from_parts_in": [
+        "ptr",
+        "length",
+        "capacity",
+        "alloc"
     ],
-    "core::ptr::non_null::read_volatile": [
-        "self"
+    "alloc::vec::from_raw_parts": [
+        "ptr",
+        "length",
+        "capacity"
     ],
-    "core::ptr::non_null::read_unaligned": [
-        "self"
+    "alloc::vec::from_raw_parts_in": [
+        "ptr",
+        "length",
+        "capacity",
+        "alloc"
     ],
     "core::ptr::const_ptr::read": [
         "self"
@@ -34,6 +44,15 @@
     "core::ptr::mut_ptr::read_unaligned": [
         "self"
     ],
+    "core::ptr::non_null::read": [
+        "self"
+    ],
+    "core::ptr::non_null::read_volatile": [
+        "self"
+    ],
+    "core::ptr::non_null::read_unaligned": [
+        "self"
+    ],
     "core::ptr::read": [
         "src"
     ],
@@ -42,5 +61,27 @@
     ],
     "core::ptr::read_unaligned": [
         "src"
+    ],
+    "core::slice::raw::from_mut_ptr_range": [
+        "range"
+    ],
+    "core::slice::raw::from_ptr_range": [
+        "range"
+    ],
+    "core::slice::raw::from_raw_parts": [
+        "data",
+        "len"
+    ],
+    "core::slice::raw::from_raw_parts_mut": [
+        "data",
+        "len"
+    ],
+    "core::str::converts::from_raw_parts": [
+        "ptr",
+        "len"
+    ],
+    "core::str::converts::from_raw_parts_mut": [
+        "ptr",
+        "len"
     ]
 }

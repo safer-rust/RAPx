@@ -2,11 +2,18 @@
   "alloc::string::from_raw_parts": [
     {
       "tag": "Allocated",
-      "args": ["Arg_0", "T", "Arg_1"]
+      "args": [
+        "buf",
+        "T",
+        "length"
+      ]
     },
     {
       "tag": "Align",
-      "args": ["Arg_0", "T"]
+      "args": [
+        "buf",
+        "T"
+      ]
     },
     {
       "tag": "ValidNum",
@@ -14,21 +21,34 @@
     },
     {
       "tag": "ValidString",
-      "args": ["Arg_0"]
+      "args": [
+        "buf"
+      ]
     }
   ],
   "alloc::vec::from_parts": [
     {
       "tag": "Allocated",
-      "args": ["Arg_0", "T", "Arg_1"]
+      "args": [
+        "ptr",
+        "T",
+        "length"
+      ]
     },
     {
       "tag": "Align",
-      "args": ["Arg_0", "T"]
+      "args": [
+        "ptr",
+        "T"
+      ]
     },
     {
       "tag": "InBound",
-      "args": ["Arg_0", "T", "Arg_1"]
+      "args": [
+        "ptr",
+        "T",
+        "length"
+      ]
     },
     {
       "tag": "ValidNum",
@@ -36,21 +56,34 @@
     },
     {
       "tag": "Layout",
-      "args": ["Arg_0"]
+      "args": [
+        "ptr"
+      ]
     }
   ],
   "alloc::vec::from_parts_in": [
     {
       "tag": "Allocated",
-      "args": ["Arg_0", "T", "Arg_1"]
+      "args": [
+        "ptr",
+        "T",
+        "length"
+      ]
     },
     {
       "tag": "Align",
-      "args": ["Arg_0", "T"]
+      "args": [
+        "ptr",
+        "T"
+      ]
     },
     {
       "tag": "InBound",
-      "args": ["Arg_0", "T", "Arg_1"]
+      "args": [
+        "ptr",
+        "T",
+        "length"
+      ]
     },
     {
       "tag": "ValidNum",
@@ -58,21 +91,34 @@
     },
     {
       "tag": "Layout",
-      "args": ["Arg_0"]
+      "args": [
+        "ptr"
+      ]
     }
   ],
   "alloc::vec::from_raw_parts": [
     {
       "tag": "Allocated",
-      "args": ["Arg_0", "T", "Arg_1"]
+      "args": [
+        "ptr",
+        "T",
+        "length"
+      ]
     },
     {
       "tag": "Align",
-      "args": ["Arg_0", "T"]
+      "args": [
+        "ptr",
+        "T"
+      ]
     },
     {
       "tag": "InBound",
-      "args": ["Arg_0", "T", "Arg_1"]
+      "args": [
+        "ptr",
+        "T",
+        "length"
+      ]
     },
     {
       "tag": "ValidNum",
@@ -80,21 +126,34 @@
     },
     {
       "tag": "Layout",
-      "args": ["Arg_0"]
+      "args": [
+        "ptr"
+      ]
     }
   ],
   "alloc::vec::from_raw_parts_in": [
     {
       "tag": "Allocated",
-      "args": ["Arg_0", "T", "Arg_1"]
+      "args": [
+        "ptr",
+        "T",
+        "length"
+      ]
     },
     {
       "tag": "Align",
-      "args": ["Arg_0", "T"]
+      "args": [
+        "ptr",
+        "T"
+      ]
     },
     {
       "tag": "InBound",
-      "args": ["Arg_0", "T", "Arg_1"]
+      "args": [
+        "ptr",
+        "T",
+        "length"
+      ]
     },
     {
       "tag": "ValidNum",
@@ -102,123 +161,117 @@
     },
     {
       "tag": "Layout",
-      "args": ["Arg_0"]
+      "args": [
+        "ptr"
+      ]
     }
   ],
   "core::ptr::read": [
     {
       "tag": "ValidPtr",
-      "args": ["arg:0", "ty:T", "const:1"]
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
     },
     {
       "tag": "Align",
-      "args": ["arg:0", "ty:T"]
+      "args": [
+        "self",
+        "T"
+      ]
     },
     {
       "tag": "Typed",
-      "args": ["arg:0", "ty:T"]
+      "args": [
+        "self",
+        "T"
+      ]
     }
   ],
   "core::ptr::const_ptr::read": [
     {
       "tag": "ValidPtr",
-      "args": ["arg:0", "ty:T", "const:1"]
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
     },
     {
       "tag": "Align",
-      "args": ["arg:0", "ty:T"]
+      "args": [
+        "self",
+        "T"
+      ]
     },
     {
       "tag": "Typed",
-      "args": ["arg:0", "ty:T"]
+      "args": [
+        "self",
+        "T"
+      ]
     }
   ],
   "core::ptr::mut_ptr::read": [
     {
       "tag": "ValidPtr",
-      "args": ["arg:0", "ty:T", "const:1"]
+      "args": [
+        "src",
+        "T",
+        "1"
+      ]
     },
     {
       "tag": "Align",
-      "args": ["arg:0", "ty:T"]
+      "args": [
+        "src",
+        "T"
+      ]
     },
     {
       "tag": "Typed",
-      "args": ["arg:0", "ty:T"]
-    }
-  ],
-  "core::ptr::copy_nonoverlapping": [
-    {
-      "tag": "NonNull",
-      "args": ["arg:0"]
-    },
-    {
-      "tag": "NonNull",
-      "args": ["arg:1"]
-    },
-    {
-      "tag": "Align",
-      "args": ["arg:0", "ty:T"]
-    },
-    {
-      "tag": "Align",
-      "args": ["arg:1", "ty:T"]
-    },
-    {
-      "tag": "InBound",
-      "args": ["arg:0", "ty:T", "arg:2"]
-    },
-    {
-      "tag": "InBound",
-      "args": ["arg:1", "ty:T", "arg:2"]
-    }
-  ],
-  "core::ptr::const_ptr::copy_to_nonoverlapping": [
-    {
-      "tag": "NonNull",
-      "args": ["arg:0"]
-    },
-    {
-      "tag": "NonNull",
-      "args": ["arg:1"]
-    },
-    {
-      "tag": "Align",
-      "args": ["arg:0", "ty:T"]
-    },
-    {
-      "tag": "Align",
-      "args": ["arg:1", "ty:T"]
-    },
-    {
-      "tag": "InBound",
-      "args": ["arg:0", "ty:T", "arg:2"]
-    },
-    {
-      "tag": "InBound",
-      "args": ["arg:1", "ty:T", "arg:2"]
+      "args": [
+        "src",
+        "T"
+      ]
     }
   ],
   "core::slice::raw::from_mut_ptr_range": [
     {
       "tag": "NonNull",
-      "args": ["Arg_0"]
+      "args": [
+        "range"
+      ]
     },
     {
       "tag": "ValidPtr",
-      "args": ["Arg_0", "T", "Arg_1"]
+      "args": [
+        "range",
+        "T",
+        "1"
+      ]
     },
     {
       "tag": "Init",
-      "args": ["Arg_0", "T", "Arg_1"]
+      "args": [
+        "range",
+        "T",
+        "1"
+      ]
     },
     {
       "tag": "Alive",
-      "args": ["Arg_0"]
+      "args": [
+        "range"
+      ]
     },
     {
       "tag": "Alias",
-      "args": ["Arg_0"]
+      "args": [
+        "range"
+      ]
     },
     {
       "tag": "ValidNum",
@@ -226,29 +279,46 @@
     },
     {
       "tag": "Align",
-      "args": ["Arg_0", "T"]
+      "args": [
+        "range",
+        "T"
+      ]
     }
   ],
   "core::slice::raw::from_ptr_range": [
     {
       "tag": "NonNull",
-      "args": ["Arg_0"]
+      "args": [
+        "range"
+      ]
     },
     {
       "tag": "ValidPtr",
-      "args": ["Arg_0", "T", "Arg_1"]
+      "args": [
+        "range",
+        "T",
+        "1"
+      ]
     },
     {
       "tag": "Init",
-      "args": ["Arg_0", "T", "Arg_1"]
+      "args": [
+        "range",
+        "T",
+        "1"
+      ]
     },
     {
       "tag": "Alive",
-      "args": ["Arg_0"]
+      "args": [
+        "range"
+      ]
     },
     {
       "tag": "Alias",
-      "args": ["Arg_0"]
+      "args": [
+        "range"
+      ]
     },
     {
       "tag": "ValidNum",
@@ -256,41 +326,61 @@
     },
     {
       "tag": "Align",
-      "args": ["Arg_0", "T"]
+      "args": [
+        "range",
+        "T"
+      ]
     },
     {
       "tag": "InBound",
-      "args": ["Arg_0", "T", "Arg_1"]
+      "args": [
+        "range",
+        "T",
+        "1"
+      ]
     }
   ],
   "core::slice::raw::from_raw_parts": [
     {
       "tag": "NonNull",
-      "args": ["arg:0"]
+      "args": [
+        "data"
+      ]
     },
     {
       "tag": "ValidPtr",
-      "args": ["arg:0", "ty:T", "arg:1"]
+      "args": [
+        "data",
+        "T",
+        "len"
+      ]
     },
     {
       "tag": "Init",
-      "args": ["arg:0", "ty:T", "arg:1"]
-    },
-    {
-      "tag": "InBound",
-      "args": ["arg:0", "ty:T", "arg:1"]
+      "args": [
+        "data",
+        "T",
+        "len"
+      ]
     },
     {
       "tag": "Alive",
-      "args": ["arg:0"]
+      "args": [
+        "data"
+      ]
     },
     {
       "tag": "Alias",
-      "args": ["arg:0"]
+      "args": [
+        "data"
+      ]
     },
     {
       "tag": "Align",
-      "args": ["arg:0", "ty:T"]
+      "args": [
+        "data",
+        "T"
+      ]
     },
     {
       "tag": "ValidNum",
@@ -300,31 +390,44 @@
   "core::slice::raw::from_raw_parts_mut": [
     {
       "tag": "NonNull",
-      "args": ["arg:0"]
+      "args": [
+        "data"
+      ]
     },
     {
       "tag": "ValidPtr",
-      "args": ["arg:0", "ty:T", "arg:1"]
+      "args": [
+        "data",
+        "T",
+        "len"
+      ]
     },
     {
       "tag": "Init",
-      "args": ["arg:0", "ty:T", "arg:1"]
-    },
-    {
-      "tag": "InBound",
-      "args": ["arg:0", "ty:T", "arg:1"]
+      "args": [
+        "data",
+        "T",
+        "len"
+      ]
     },
     {
       "tag": "Alive",
-      "args": ["arg:0"]
+      "args": [
+        "data"
+      ]
     },
     {
       "tag": "Alias",
-      "args": ["arg:0"]
+      "args": [
+        "data"
+      ]
     },
     {
       "tag": "Align",
-      "args": ["arg:0", "ty:T"]
+      "args": [
+        "data",
+        "T"
+      ]
     },
     {
       "tag": "ValidNum",
@@ -346,23 +449,37 @@
   "core::str::converts::from_raw_parts": [
     {
       "tag": "NonNull",
-      "args": ["Arg_0"]
+      "args": [
+        "ptr"
+      ]
     },
     {
       "tag": "ValidPtr",
-      "args": ["Arg_0", "T", "Arg_1"]
+      "args": [
+        "ptr",
+        "T",
+        "len"
+      ]
     },
     {
       "tag": "Init",
-      "args": ["Arg_0", "T", "Arg_1"]
+      "args": [
+        "ptr",
+        "T",
+        "len"
+      ]
     },
     {
       "tag": "Alive",
-      "args": ["Arg_0"]
+      "args": [
+        "ptr"
+      ]
     },
     {
       "tag": "Alias",
-      "args": ["Arg_0"]
+      "args": [
+        "ptr"
+      ]
     },
     {
       "tag": "ValidNum",
@@ -370,29 +487,46 @@
     },
     {
       "tag": "Align",
-      "args": ["Arg_0", "T"]
+      "args": [
+        "ptr",
+        "T"
+      ]
     }
   ],
   "core::str::converts::from_raw_parts_mut": [
     {
       "tag": "NonNull",
-      "args": ["Arg_0"]
+      "args": [
+        "ptr"
+      ]
     },
     {
       "tag": "ValidPtr",
-      "args": ["Arg_0", "T", "Arg_1"]
+      "args": [
+        "ptr",
+        "T",
+        "len"
+      ]
     },
     {
       "tag": "Init",
-      "args": ["Arg_0", "T", "Arg_1"]
+      "args": [
+        "ptr",
+        "T",
+        "len"
+      ]
     },
     {
       "tag": "Alive",
-      "args": ["Arg_0"]
+      "args": [
+        "ptr"
+      ]
     },
     {
       "tag": "Alias",
-      "args": ["Arg_0"]
+      "args": [
+        "ptr"
+      ]
     },
     {
       "tag": "ValidNum",
@@ -400,7 +534,10 @@
     },
     {
       "tag": "Align",
-      "args": ["Arg_0", "T"]
+      "args": [
+        "ptr",
+        "T"
+      ]
     }
   ]
 }

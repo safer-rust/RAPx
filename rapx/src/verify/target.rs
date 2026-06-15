@@ -128,6 +128,15 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
                     }
                 }
 
+                if requires.is_empty() {
+                    requires.push(Property::new(
+                        self.tcx,
+                        callee_def_id,
+                        "Unknown",
+                        &[],
+                    ));
+                }
+
                 requires
             })
             .clone()
