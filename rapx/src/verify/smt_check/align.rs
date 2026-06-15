@@ -31,7 +31,7 @@ pub(crate) fn check<'tcx>(
     let Some(required_ty) = checker.property_required_ty(callsite, property) else {
         return SmtCheckResult::unknown("SMT Align type could not be resolved");
     };
-    let Some((required_align, _)) = checker.type_layout(callsite.caller, required_ty) else {
+    let Some(required_align) = checker.required_alignment(callsite.caller, required_ty) else {
         return SmtCheckResult::unknown(format!(
             "SMT Align layout unavailable for {:?}",
             required_ty
@@ -59,7 +59,7 @@ pub(crate) fn check_for_checkpoint<'tcx>(
     let Some(required_ty) = checker.property_required_ty_direct(property) else {
         return SmtCheckResult::unknown("SMT Align type could not be resolved");
     };
-    let Some((required_align, _)) = checker.type_layout(caller, required_ty) else {
+    let Some(required_align) = checker.required_alignment(caller, required_ty) else {
         return SmtCheckResult::unknown(format!(
             "SMT Align layout unavailable for {:?}",
             required_ty

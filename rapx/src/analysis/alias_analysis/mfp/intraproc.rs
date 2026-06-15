@@ -7,11 +7,11 @@ use rustc_middle::{
     },
     ty::{self, Ty, TyCtxt, TypingEnv},
 };
-#[cfg(not(rustc_spanned_at_root))]
-use rustc_span::source_map::Spanned;
+use rustc_mir_dataflow::{Analysis, JoinSemiLattice, fmt::DebugWithContext};
 #[cfg(rustc_spanned_at_root)]
 use rustc_span::Spanned;
-use rustc_mir_dataflow::{Analysis, JoinSemiLattice, fmt::DebugWithContext};
+#[cfg(not(rustc_spanned_at_root))]
+use rustc_span::source_map::Spanned;
 use std::cell::RefCell;
 use std::rc::Rc;
 

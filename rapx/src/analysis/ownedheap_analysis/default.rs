@@ -182,7 +182,7 @@ impl<'tcx> OwnedHeapAnalyzer<'tcx> {
     // Extract params in adt types, the 'param' means one generic parameter acting like 'T', 'A', etc...
     // In the sub-visitor RawGeneric, it will visit the given type recursively, and extract all params.
     //
-                // Note that RAPx is only interested in 'raw' params ('T' not like '*mut T').
+    // Note that RAPx is only interested in 'raw' params ('T' not like '*mut T').
     // It lies in 'one-entire field' | recursive in tuple | recursive in array | mixed before
     //
     // Given a struct Example<A, B, T, S>:

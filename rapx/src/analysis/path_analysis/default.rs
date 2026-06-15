@@ -35,10 +35,7 @@ impl<'tcx> PathAnalyzer<'tcx> {
         rap_info!("Function: {}", fn_name);
         for (idx, path) in paths.iter().enumerate() {
             let reachable = graph.is_path_reachable(path);
-            rap_info!(
-                "  path {}: {:?} | reachable: {}",
-                idx, path, reachable
-            );
+            rap_info!("  path {}: {:?} | reachable: {}", idx, path, reachable);
         }
 
         Some(paths)

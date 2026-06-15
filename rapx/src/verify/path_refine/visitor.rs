@@ -5,26 +5,24 @@
 //! the path-level control flow decisions: calls, SCC exits, and path-condition
 //! branches.
 
+use rustc_hir::def_id::DefId;
 use rustc_middle::mir::Body;
 use rustc_middle::mir::{BasicBlock, StatementKind, TerminatorKind};
 use rustc_middle::ty::TyCtxt;
-use rustc_hir::def_id::DefId;
 
 use crate::analysis::dataflow::graph::build_dataflow_graph;
 use crate::graphs::dataflow::DataflowGraph;
 
 use super::super::{
     contract,
-    def_use::{
-        RelevantPlaces, bind_callsite_roots, operand_uses, terminator_use_def,
-    },
+    def_use::{RelevantPlaces, bind_callsite_roots, operand_uses, terminator_use_def},
     helpers::{Callsite, CallsiteLocation},
     path::{Path, PathStep},
 };
 
 use super::{
-    types::{BackwardItem, KeepReason, ForgetReason, RelevantMirItems},
     call_visit,
+    types::{BackwardItem, ForgetReason, KeepReason, RelevantMirItems},
 };
 
 /// Entry point for backward path visiting.
@@ -224,7 +222,17 @@ impl<'tcx> BackwardVisitor<'tcx> {
             ..
         } = &terminator.kind
         {
-            call_visit::visit(self.tcx, block, func, args, destination, flow, body, relevant, items);
+            call_visit::visit(
+                self.tcx,
+                block,
+                func,
+                args,
+                destination,
+                flow,
+                body,
+                relevant,
+                items,
+            );
             return;
         }
 

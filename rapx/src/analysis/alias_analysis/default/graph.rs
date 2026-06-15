@@ -1,9 +1,5 @@
 use super::{MopFnAliasPairs, assign::*, block::*, types::*, value::*};
-use crate::{
-    analysis::path_analysis::graph::PathGraph,
-    graphs::cfg::CfgBlock,
-    utils::source::*,
-};
+use crate::{analysis::path_analysis::graph::PathGraph, graphs::cfg::CfgBlock, utils::source::*};
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_middle::{
     mir::{AggregateKind, BasicBlock, Const, Operand, Rvalue, StatementKind, Terminator},

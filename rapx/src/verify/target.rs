@@ -147,7 +147,9 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
 
         let owner_struct_def_id = self.get_owner_struct_def_id(def_id);
         let struct_invariants = owner_struct_def_id
-            .map(|struct_def_id| get_struct_invariants_from_annotation(self.tcx, struct_def_id, def_id))
+            .map(|struct_def_id| {
+                get_struct_invariants_from_annotation(self.tcx, struct_def_id, def_id)
+            })
             .unwrap_or_default();
 
         FunctionTarget {
@@ -289,10 +291,7 @@ impl<'tcx> Analysis for PrepareTargets<'tcx> {
             let struct_path = self.tcx.def_path_str(struct_target.def_id);
 
             rap_info!("============================================================");
-            rap_info!(
-                "[rapx::verify] prepare targets for struct: {}",
-                struct_path
-            );
+            rap_info!("[rapx::verify] prepare targets for struct: {}", struct_path);
             rap_info!("============================================================");
 
             self.log_struct_invariants(struct_target);
@@ -336,11 +335,7 @@ impl<'tcx> PrepareTargets<'tcx> {
         } else {
             rap_info!("  struct invariants:");
             for property in &struct_target.invariants {
-                rap_info!(
-                    "    - {:?}, args={:?}",
-                    property.kind,
-                    property.args
-                );
+                rap_info!("    - {:?}, args={:?}", property.kind, property.args);
             }
         }
     }
@@ -355,7 +350,10 @@ impl<'tcx> PrepareTargets<'tcx> {
         rap_info!(
             "      return checkpoints: {} block(s) {:?}",
             return_blocks.len(),
-            return_blocks.iter().map(|bb| bb.as_usize()).collect::<Vec<_>>()
+            return_blocks
+                .iter()
+                .map(|bb| bb.as_usize())
+                .collect::<Vec<_>>()
         );
 
         self.log_unsafe_callees_and_contracts(target);
@@ -378,10 +376,7 @@ impl<'tcx> PrepareTargets<'tcx> {
 
         for unsafe_callee_def_id in unsafe_callee_ids {
             let unsafe_callee_path = self.tcx.def_path_str(unsafe_callee_def_id);
-            rap_info!(
-                "      unsafe callee: {}",
-                unsafe_callee_path,
-            );
+            rap_info!("      unsafe callee: {}", unsafe_callee_path,);
 
             if let Some(requires) = target.callee_requires.get(&unsafe_callee_def_id) {
                 if requires.is_empty() {
@@ -389,11 +384,7 @@ impl<'tcx> PrepareTargets<'tcx> {
                 } else {
                     rap_info!("        safety contracts:");
                     for property in requires {
-                        rap_info!(
-                            "          - {:?}, args={:?}",
-                            property.kind,
-                            property.args
-                        );
+                        rap_info!("          - {:?}, args={:?}", property.kind, property.args);
                     }
                 }
             }

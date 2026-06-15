@@ -5,22 +5,21 @@
 //! simple value/fact summaries and leaves unsupported MIR effects as notes so
 //! later property checkers can be added incrementally.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
-use if_chain::if_chain;
 use rustc_data_structures::fx::FxHashMap;
-use rustc_hir::{ImplPolarity, ItemId, ItemKind, def_id::DefId, hir_id::OwnerId};
+use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{
         AggregateKind, BasicBlock, BinOp, Local, Operand, Place, Rvalue, Statement, StatementKind,
         Terminator, TerminatorKind, UnOp,
     },
-    ty::{FloatTy, IntTy, ParamEnv, Ty, TyCtxt, TyKind, UintTy},
+    ty::{Ty, TyCtxt, TyKind},
 };
-#[cfg(not(rustc_spanned_at_root))]
-use rustc_span::source_map::Spanned;
 #[cfg(rustc_spanned_at_root)]
 use rustc_span::Spanned;
+#[cfg(not(rustc_spanned_at_root))]
+use rustc_span::source_map::Spanned;
 
 use super::{
     call_summary::{self, CallEffect, CallEffectSummary},
@@ -170,16 +169,12 @@ impl<'tcx> ForwardVisitor<'tcx> {
                         value: value.clone(),
                         equals,
                     });
-                    if let Some((place, align)) =
-                        align_guard_value(&value, equals, result)
-                    {
+                    if let Some((place, align)) = align_guard_value(&value, equals, result) {
                         result.facts.push(StateFact::KnownAligned {
                             place,
                             align,
                             ty_name: format!("{align}-aligned"),
-                            reason: format!(
-                                "{align}-byte alignment guard on path"
-                            ),
+                            reason: format!("{align}-byte alignment guard on path"),
                         });
                     }
                 } else {
@@ -307,9 +302,11 @@ impl<'tcx> ForwardVisitor<'tcx> {
                     }
                 }
                 if *op == BinOp::Add || *op == BinOp::AddWithOverflow {
-                    if let Some(a) = known_alignment_of(&lhs_val, result)
-                        .and_then(|a| known_alignment_of(&rhs_val, result)
-                            .filter(|&b| b == a).map(|_| a))                    {
+                    if let Some(a) = known_alignment_of(&lhs_val, result).and_then(|a| {
+                        known_alignment_of(&rhs_val, result)
+                            .filter(|&b| b == a)
+                            .map(|_| a)
+                    }) {
                         result.facts.push(StateFact::KnownAligned {
                             place: target_key.clone(),
                             align: a,
@@ -328,9 +325,7 @@ impl<'tcx> ForwardVisitor<'tcx> {
                                     place: target_key.clone(),
                                     align: new_align,
                                     ty_name: format!("result of div by {divisor}"),
-                                    reason: format!(
-                                        "dividing {src_align}-aligned by {divisor}"
-                                    ),
+                                    reason: format!("dividing {src_align}-aligned by {divisor}"),
                                 });
                             }
                         }
@@ -369,7 +364,9 @@ impl<'tcx> ForwardVisitor<'tcx> {
                 }
                 CallEffect::ReturnPointerAdd { base_arg, .. }
                 | CallEffect::ReturnPointerSub { base_arg, .. } => {
-                    if let Some(source) = args.get(*base_arg).and_then(|arg| operand_place(&arg.node)) {
+                    if let Some(source) =
+                        args.get(*base_arg).and_then(|arg| operand_place(&arg.node))
+                    {
                         result.facts.push(StateFact::PointsTo {
                             pointer: destination_place.clone(),
                             source,
@@ -607,120 +604,6 @@ pub struct CallSummary<'tcx> {
     pub unsupported: bool,
 }
 
-/// Computes representative concrete types for generic parameters.
-pub struct GenericTypeCandidates<'tcx> {
-    trait_map: HashMap<String, HashSet<Ty<'tcx>>>,
-}
-
-impl<'tcx> GenericTypeCandidates<'tcx> {
-    /// Build generic type candidates from a function definition.
-    pub fn for_def(tcx: TyCtxt<'tcx>, def_id: DefId) -> Self {
-        Self::new(tcx, tcx.param_env(def_id))
-    }
-
-    /// Build generic type candidates from a parameter environment.
-    pub fn new(tcx: TyCtxt<'tcx>, param_env: ParamEnv<'tcx>) -> Self {
-        let mut trait_bounds: HashMap<String, HashSet<String>> = HashMap::new();
-        let mut satisfied_types: HashMap<String, HashSet<Ty<'tcx>>> = HashMap::new();
-
-        for clause in param_env.caller_bounds() {
-            let Some(trait_clause) = clause.as_trait_clause() else {
-                continue;
-            };
-            let trait_def_id = trait_clause.def_id();
-            let generic_name = trait_clause.self_ty().skip_binder().to_string();
-            let trait_name = tcx.def_path_str(trait_def_id);
-            trait_bounds
-                .entry(generic_name.clone())
-                .or_default()
-                .insert(trait_name.clone());
-
-            let type_set = satisfied_types.entry(generic_name).or_default();
-            for impl_def_id in tcx.all_impls(trait_def_id) {
-                if !impl_def_id.is_local() {
-                    continue;
-                }
-                let impl_owner_id = tcx
-                    .hir_owner_node(OwnerId {
-                        def_id: impl_def_id.expect_local(),
-                    })
-                    .def_id();
-                let item = tcx.hir_item(ItemId {
-                    owner_id: impl_owner_id,
-                });
-                if_chain! {
-                    if let ItemKind::Impl(impl_item) = item.kind;
-                    if let Some(trait_impl_header) = impl_item.of_trait;
-                    if trait_impl_header.polarity == ImplPolarity::Positive;
-                    if let Some(binder) = tcx.impl_opt_trait_ref(impl_def_id);
-                    then {
-                        let impl_ty = binder.skip_binder().self_ty();
-                        match impl_ty.kind() {
-                            TyKind::Adt(adt_def, _) => {
-                                type_set.insert(tcx.type_of(adt_def.did()).skip_binder());
-                            }
-                            TyKind::Param(_) => {}
-                            _ => {
-                                type_set.insert(impl_ty);
-                            }
-                        }
-                    }
-                }
-            }
-
-            if trait_name == "bytemuck::Pod" || trait_name == "plain::Plain" {
-                type_set.extend(Self::pod_types(tcx));
-            }
-        }
-
-        let std_marker_traits = HashSet::from([
-            String::from("std::marker::Copy"),
-            String::from("std::clone::Clone"),
-            String::from("std::marker::Sized"),
-        ]);
-        for (name, type_set) in &mut satisfied_types {
-            if trait_bounds
-                .get(name)
-                .map(|bounds| bounds.is_subset(&std_marker_traits))
-                .unwrap_or(false)
-            {
-                type_set.clear();
-            }
-        }
-
-        Self {
-            trait_map: satisfied_types,
-        }
-    }
-
-    /// Return the representative types grouped by generic parameter name.
-    pub fn candidates(&self) -> &HashMap<String, HashSet<Ty<'tcx>>> {
-        &self.trait_map
-    }
-
-    /// Return known primitive representatives for Pod-like bounds.
-    fn pod_types(tcx: TyCtxt<'tcx>) -> HashSet<Ty<'tcx>> {
-        [
-            tcx.mk_ty_from_kind(TyKind::Int(IntTy::Isize)),
-            tcx.mk_ty_from_kind(TyKind::Int(IntTy::I8)),
-            tcx.mk_ty_from_kind(TyKind::Int(IntTy::I16)),
-            tcx.mk_ty_from_kind(TyKind::Int(IntTy::I32)),
-            tcx.mk_ty_from_kind(TyKind::Int(IntTy::I64)),
-            tcx.mk_ty_from_kind(TyKind::Int(IntTy::I128)),
-            tcx.mk_ty_from_kind(TyKind::Uint(UintTy::Usize)),
-            tcx.mk_ty_from_kind(TyKind::Uint(UintTy::U8)),
-            tcx.mk_ty_from_kind(TyKind::Uint(UintTy::U16)),
-            tcx.mk_ty_from_kind(TyKind::Uint(UintTy::U32)),
-            tcx.mk_ty_from_kind(TyKind::Uint(UintTy::U64)),
-            tcx.mk_ty_from_kind(TyKind::Uint(UintTy::U128)),
-            tcx.mk_ty_from_kind(TyKind::Float(FloatTy::F32)),
-            tcx.mk_ty_from_kind(TyKind::Float(FloatTy::F64)),
-        ]
-        .into_iter()
-        .collect()
-    }
-}
-
 /// Convert a MIR operand to an abstract value.
 fn value_from_operand<'tcx>(operand: &Operand<'tcx>) -> AbstractValue<'tcx> {
     match operand {
@@ -881,13 +764,17 @@ fn align_guard_value<'tcx>(
         let AbstractValue::Binary(BinOp::Eq, eq_l, eq_r) = &resolved else {
             return None;
         };
-        if !is_const_zero(eq_r) { return None; }
+        if !is_const_zero(eq_r) {
+            return None;
+        }
         let eq_resolved = resolve_value_chain(eq_l, result);
         let AbstractValue::Binary(BinOp::Rem, rem_l, rem_r) = &eq_resolved else {
             return None;
         };
         let d = const_int_value(rem_r)?;
-        if d == 0 || !is_power_of_two(d) { return None; }
+        if d == 0 || !is_power_of_two(d) {
+            return None;
+        }
         let place = match resolve_value_chain(rem_l, result) {
             AbstractValue::Place(p) => p,
             AbstractValue::Cast(inner, _) => match inner.as_ref() {
@@ -918,7 +805,9 @@ fn resolve_value_chain<'tcx>(
                         Some(v) => v.clone(),
                         None => return cur,
                     }
-                } else { return cur; }
+                } else {
+                    return cur;
+                }
             }
             _ => return cur,
         };
@@ -933,16 +822,16 @@ fn known_alignment_of<'tcx>(
     let mut cur = value.clone();
     let mut seen = HashSet::new();
     loop {
-        if !seen.insert(format!("{cur:?}")) { break; }
+        if !seen.insert(format!("{cur:?}")) {
+            break;
+        }
         if let AbstractValue::Place(ref p) = cur {
             for f in &result.facts {
                 if let StateFact::KnownAligned { place, align, .. } = f {
                     if place == p {
                         best = best.map_or(Some(*align), |b| Some(b.max(*align)));
                     }
-                    if place.fields.is_empty() != p.fields.is_empty()
-                        && place.base == p.base
-                    {
+                    if place.fields.is_empty() != p.fields.is_empty() && place.base == p.base {
                         best = best.map_or(Some(*align), |b| Some(b.max(*align)));
                     }
                 }
@@ -955,7 +844,9 @@ fn known_alignment_of<'tcx>(
                         Some(v) => v.clone(),
                         None => break,
                     }
-                } else { break }
+                } else {
+                    break;
+                }
             }
             AbstractValue::Cast(inner, _) => (**inner).clone(),
             _ => break,

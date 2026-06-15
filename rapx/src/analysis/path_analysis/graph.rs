@@ -31,7 +31,12 @@ thread_local! {
 /// produce different sequences even when all block IDs have already been seen,
 /// e.g. `if i % 2 == 0 { A } else { B }` alternates between two paths through
 /// the same set of blocks on successive loop iterations.
-fn check_postfix_segment(path: &[usize], enter: usize, segment_counts: &mut FxHashMap<Vec<usize>, usize>, max_repeats: usize) -> bool {
+fn check_postfix_segment(
+    path: &[usize],
+    enter: usize,
+    segment_counts: &mut FxHashMap<Vec<usize>, usize>,
+    max_repeats: usize,
+) -> bool {
     let segment = extract_segment(path, enter);
     let count = segment_counts.entry(segment).or_insert(0);
     *count += 1;
@@ -75,7 +80,6 @@ impl Default for SccPathTraversalConfig {
         }
     }
 }
-
 
 #[derive(Clone)]
 pub struct PathGraph<'tcx> {
@@ -272,7 +276,14 @@ impl<'tcx> PathGraph<'tcx> {
             return all_paths;
         }
 
-        self.collect_whole_cfg_paths(0, &mut vec![0], &mut all_paths, &mut seen_paths, 0, postfix_repeat);
+        self.collect_whole_cfg_paths(
+            0,
+            &mut vec![0],
+            &mut all_paths,
+            &mut seen_paths,
+            0,
+            postfix_repeat,
+        );
 
         all_paths.sort_unstable();
         all_paths
@@ -552,11 +563,7 @@ impl<'tcx> PathGraph<'tcx> {
     /// exceeds `postfix_repeat + 1`, the branch is pruned.
     ///
     /// Results are cached per `(def_id, scc_enter)`.
-    pub fn find_scc_paths(
-        &mut self,
-        start: usize,
-        scc: &SccInfo,
-    ) -> Vec<SccEnumeratedPath> {
+    pub fn find_scc_paths(&mut self, start: usize, scc: &SccInfo) -> Vec<SccEnumeratedPath> {
         self.find_scc_paths_repeat(start, scc, 0)
     }
 
@@ -584,8 +591,15 @@ impl<'tcx> PathGraph<'tcx> {
         let mut segment_counts = FxHashMap::default();
 
         self.dfs_scc_tree(
-            scc, start, &mut path, &mut segment_counts,
-            postfix_repeat, &mut out, &mut seen, 0, &config,
+            scc,
+            start,
+            &mut path,
+            &mut segment_counts,
+            postfix_repeat,
+            &mut out,
+            &mut seen,
+            0,
+            &config,
         );
 
         SCC_PATH_CACHE.with(|c| {
@@ -622,10 +636,18 @@ impl<'tcx> PathGraph<'tcx> {
         depth: usize,
         config: &SccPathTraversalConfig,
     ) {
-        if depth > config.max_depth { return; }
-        if out.len() >= config.max_seen_paths { return; }
-        if path.len() > config.max_path_len { return; }
-        if cur != scc.enter && !scc.nodes.contains(&cur) { return; }
+        if depth > config.max_depth {
+            return;
+        }
+        if out.len() >= config.max_seen_paths {
+            return;
+        }
+        if path.len() > config.max_path_len {
+            return;
+        }
+        if cur != scc.enter && !scc.nodes.contains(&cur) {
+            return;
+        }
 
         if cur == scc.enter && path.len() > 1 {
             if !check_postfix_segment(path, scc.enter, segment_counts, postfix_repeat) {
@@ -647,15 +669,24 @@ impl<'tcx> PathGraph<'tcx> {
             let child_paths = self.find_scc_paths_repeat(cur, &child_scc, postfix_repeat);
 
             for child_path in &child_paths {
-                if child_path.blocks.len() <= 1 { continue; }
+                if child_path.blocks.len() <= 1 {
+                    continue;
+                }
                 let orig_len = path.len();
                 path.extend(&child_path.blocks[1..]);
 
                 for &next in &child_path.exit_successors {
                     path.push(next);
                     self.dfs_scc_tree(
-                        scc, next, path, segment_counts,
-                        postfix_repeat, out, seen_paths, depth + 1, config,
+                        scc,
+                        next,
+                        path,
+                        segment_counts,
+                        postfix_repeat,
+                        out,
+                        seen_paths,
+                        depth + 1,
+                        config,
                     );
                     path.pop();
                 }
@@ -674,8 +705,15 @@ impl<'tcx> PathGraph<'tcx> {
             *segment_counts = saved_counts.clone();
             path.push(next);
             self.dfs_scc_tree(
-                scc, next, path, segment_counts,
-                postfix_repeat, out, seen_paths, depth + 1, config,
+                scc,
+                next,
+                path,
+                segment_counts,
+                postfix_repeat,
+                out,
+                seen_paths,
+                depth + 1,
+                config,
             );
             path.pop();
         }
@@ -684,10 +722,7 @@ impl<'tcx> PathGraph<'tcx> {
     /// Return all CFG successors of `cur` as traversal actions.
     ///
     /// No constraint-based narrowing — purely structural.
-    fn enumerate_scc_traversals(
-        &mut self,
-        cur: usize,
-    ) -> Vec<SccPathAction> {
+    fn enumerate_scc_traversals(&mut self, cur: usize) -> Vec<SccPathAction> {
         self.cfg
             .block(cur)
             .next
@@ -747,7 +782,12 @@ impl<'tcx> PathGraph<'tcx> {
                     for &next in &seg.exit_successors {
                         path.push(next);
                         self.collect_whole_cfg_paths(
-                            next, path, all_paths, seen_paths, depth + 1, postfix_repeat,
+                            next,
+                            path,
+                            all_paths,
+                            seen_paths,
+                            depth + 1,
+                            postfix_repeat,
                         );
                         path.pop();
                     }
@@ -769,7 +809,14 @@ impl<'tcx> PathGraph<'tcx> {
 
         for next in successors {
             path.push(next);
-            self.collect_whole_cfg_paths(next, path, all_paths, seen_paths, depth + 1, postfix_repeat);
+            self.collect_whole_cfg_paths(
+                next,
+                path,
+                all_paths,
+                seen_paths,
+                depth + 1,
+                postfix_repeat,
+            );
             path.pop();
         }
     }
@@ -823,18 +870,14 @@ fn record_unique_path(
     });
 }
 
-fn compute_exit_successors(
-    path: &[usize],
-    scc: &SccInfo,
-    graph: &PathGraph<'_>,
-) -> Vec<usize> {
-    let Some(&last) = path.last() else { return vec![] };
+fn compute_exit_successors(path: &[usize], scc: &SccInfo, graph: &PathGraph<'_>) -> Vec<usize> {
+    let Some(&last) = path.last() else {
+        return vec![];
+    };
     scc.exits
         .iter()
         .filter(|e| e.exit == last)
         .map(|e| e.to)
-        .filter(|&n| {
-            !scc.child_sccs.contains(&graph.cfg.block(n).scc.enter())
-        })
+        .filter(|&n| !scc.child_sccs.contains(&graph.cfg.block(n).scc.enter()))
         .collect()
 }

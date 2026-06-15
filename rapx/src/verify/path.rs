@@ -26,7 +26,6 @@ use super::helpers::{Callsite, CallsiteLocation};
 
 pub(crate) const PATH_LIMIT: usize = 1024;
 
-
 /// Extracts finite verification paths for one function body.
 ///
 /// Uses `PathGraph` for SCC-aware path enumeration, then filters
@@ -134,8 +133,13 @@ impl<'tcx> PathExtractor<'tcx> {
             let reachable = pg.is_path_reachable(&prefix);
             rap_debug!(
                 "  verify path {}: {:?} | {}",
-                idx, prefix,
-                if reachable { "reachable" } else { "unreachable" }
+                idx,
+                prefix,
+                if reachable {
+                    "reachable"
+                } else {
+                    "unreachable"
+                }
             );
             if !reachable {
                 continue;
@@ -243,7 +247,6 @@ impl Path {
         format!("{:?}", indices)
     }
 }
-
 
 /// Start point for a finite verification path.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -8,8 +8,8 @@ use rustc_span::Span;
 use serde_json::Value;
 use syn::Expr;
 
-use crate::analysis::helpers::fn_info::{check_safety, find_generic_in_ty};
 pub use crate::analysis::helpers::fn_info::parse_expr_into_number;
+use crate::analysis::helpers::fn_info::{check_safety, find_generic_in_ty};
 
 /// Stable MIR location for a call terminator inside one function body.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]

@@ -17,11 +17,11 @@ use rustc_middle::ty::{TyCtxt, TyKind};
 
 use super::{
     contract::Property,
+    engine::VerifyEngine,
     helpers::{Callsite, CallsiteLocation, collect_return_block_indices},
-    path::{FunctionPaths, Path, PathExtractor, PathStart, PathStep, PATH_LIMIT},
+    path::{FunctionPaths, PATH_LIMIT, Path, PathExtractor, PathStart, PathStep},
     report::{PropertyCheckResult, VerificationReport, VisitDiagnostics},
     target::{FunctionTarget, VerifyTargetCollector},
-    engine::VerifyEngine,
 };
 
 /// Orchestrates verification inputs for one function target.
@@ -93,10 +93,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
                         property_index,
                         property: property.clone(),
                         result: smt_check.result,
-                        diagnostics: Some(VisitDiagnostics::new(
-                            String::new(),
-                            check_diagnostics,
-                        )),
+                        diagnostics: Some(VisitDiagnostics::new(String::new(), check_diagnostics)),
                         path_description: path.describe_indices(),
                         callee_name: view.callsite.callee_name(self.tcx),
                     });
@@ -160,9 +157,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
             .map(|sid| returns_self(self.tcx, self.target.def_id, sid))
             .unwrap_or(false);
 
-        for (checkpoint, paths) in
-            self.build_invariant_paths(is_constructor)
-        {
+        for (checkpoint, paths) in self.build_invariant_paths(is_constructor) {
             rap_debug!(
                 "[rapx::verify] struct invariant checkpoint bb{}: {} reachable path(s)",
                 checkpoint.block.as_usize(),
@@ -196,15 +191,11 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
                         property: property.clone(),
                         result: smt_check.result,
                         diagnostics: Some(VisitDiagnostics::new(
-                            backward
-                                .describe_for_checkpoint(self.tcx, checkpoint, path_index),
+                            backward.describe_for_checkpoint(self.tcx, checkpoint, path_index),
                             check_diagnostics,
                         )),
                         path_description: path.describe_indices(),
-                        callee_name: format!(
-                            "struct-invariant(bb{})",
-                            checkpoint.block.as_usize()
-                        ),
+                        callee_name: format!("struct-invariant(bb{})", checkpoint.block.as_usize()),
                     });
                 }
             }
@@ -221,15 +212,18 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
         pg.find_scc();
         let all_paths = pg.enumerate_paths_repeat(self.allow_repeat);
 
-        let kind_label = if is_constructor { "constructor" } else { "method" };
+        let kind_label = if is_constructor {
+            "constructor"
+        } else {
+            "method"
+        };
         rap_debug!(
             "[rapx::verify] struct invariant ({kind_label}): {} whole-cfg path(s) for {}",
             all_paths.len(),
             self.tcx.def_path_str(self.target.def_id),
         );
 
-        let mut paths_by_checkpoint: FxHashMap<CallsiteLocation, Vec<Path>> =
-            FxHashMap::default();
+        let mut paths_by_checkpoint: FxHashMap<CallsiteLocation, Vec<Path>> = FxHashMap::default();
         let mut seen_paths = FxHashSet::default();
 
         if is_constructor {
@@ -320,7 +314,11 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
 }
 
 /// Returns whether a function returns the owning struct type (i.e. is a constructor).
-fn returns_self(tcx: TyCtxt<'_>, def_id: rustc_hir::def_id::DefId, struct_def_id: rustc_hir::def_id::DefId) -> bool {
+fn returns_self(
+    tcx: TyCtxt<'_>,
+    def_id: rustc_hir::def_id::DefId,
+    struct_def_id: rustc_hir::def_id::DefId,
+) -> bool {
     let output = tcx.fn_sig(def_id).skip_binder().output().skip_binder();
     match output.kind() {
         TyKind::Adt(adt_def, _) => adt_def.did() == struct_def_id,
@@ -450,10 +448,7 @@ fn emit_verify_summary(target_path: &str, all_results: &[PropertyCheckResult<'_>
     if !invariant_groups.is_empty() {
         rap_info!("  --- struct invariants ---");
         for ((checkpoint, _), results) in &invariant_groups {
-            rap_info!(
-                "      checkpoint bb{}:",
-                checkpoint.block.as_usize(),
-            );
+            rap_info!("      checkpoint bb{}:", checkpoint.block.as_usize(),);
             emit_property_rows(results);
         }
     }

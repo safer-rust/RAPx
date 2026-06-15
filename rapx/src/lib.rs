@@ -47,6 +47,7 @@ use analysis::{
     api_dependency::ApiDependencyAnalyzer,
     callgraph::{CallGraphAnalysis, FnCallDisplay, default::CallGraphAnalyzer},
     dataflow::{Arg2RetMapWrapper, DataflowAnalysis, default::DataflowAnalyzer},
+    helpers::show_mir::ShowMir,
     ownedheap_analysis::{OHAResultMapWrapper, OwnedHeapAnalysis, default::OwnedHeapAnalyzer},
     path_analysis::{PathMapWrapper, default::PathAnalyzer},
     range_analysis::{
@@ -54,7 +55,6 @@ use analysis::{
     },
     ssa_transform::SSATrans,
     upg::{TargetCrate, UPGAnalysis},
-    helpers::show_mir::ShowMir,
 };
 use rustc_ast::ast;
 use rustc_driver::{Callbacks, Compilation};

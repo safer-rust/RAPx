@@ -116,7 +116,6 @@ fn item_belongs_to_step(item: &BackwardItem<'_>, step: &PathStep) -> bool {
             *kind == KeepReason::Callsite && *block == location.block
         }
 
-
         (
             BackwardItem::PathStep {
                 step: item_step, ..

@@ -26,10 +26,10 @@ use rustc_middle::{
     mir::*,
     ty::{self, ScalarInt, TyCtxt, print},
 };
-#[cfg(not(rustc_spanned_at_root))]
-use rustc_span::source_map::Spanned;
 #[cfg(rustc_spanned_at_root)]
 use rustc_span::Spanned;
+#[cfg(not(rustc_spanned_at_root))]
+use rustc_span::source_map::Spanned;
 use rustc_span::sym::var;
 
 use core::borrow;

@@ -476,7 +476,9 @@ fn trace_to_callee_arg<'tcx>(
         }
         for bb in body.basic_blocks.iter() {
             for stmt in &bb.statements {
-                let StatementKind::Assign(assign) = &stmt.kind else { continue };
+                let StatementKind::Assign(assign) = &stmt.kind else {
+                    continue;
+                };
                 let dest = assign.0.local;
                 if dest != current {
                     continue;
@@ -511,7 +513,9 @@ fn try_pointer_arith_wrapper_effect<'tcx>(
     let ret = Local::from_usize(0);
 
     for bb in body.basic_blocks.iter() {
-        let Some(terminator) = &bb.terminator else { continue };
+        let Some(terminator) = &bb.terminator else {
+            continue;
+        };
         let TerminatorKind::Call {
             func,
             args,
@@ -550,14 +554,15 @@ fn try_pointer_arith_wrapper_effect<'tcx>(
             }
             for bb2 in body.basic_blocks.iter() {
                 for stmt in &bb2.statements {
-                    let StatementKind::Assign(assign) = &stmt.kind else { continue };
+                    let StatementKind::Assign(assign) = &stmt.kind else {
+                        continue;
+                    };
                     let dest = assign.0.local;
                     if seen.contains(&dest) {
                         continue;
                     }
                     match &assign.1 {
-                        Rvalue::Use(Operand::Copy(place))
-                        | Rvalue::Use(Operand::Move(place)) => {
+                        Rvalue::Use(Operand::Copy(place)) | Rvalue::Use(Operand::Move(place)) => {
                             if place.local == current {
                                 queue.push_back(dest);
                                 seen.insert(dest);
@@ -592,18 +597,14 @@ fn try_pointer_arith_wrapper_effect<'tcx>(
                     offset_arg: inner_offset,
                     stride,
                 } => {
-                    let base_arg =
-                        trace_to_callee_arg(body, &args.get(inner_base)?.node)?;
-                    let offset_arg =
-                        trace_to_callee_arg(body, &args.get(inner_offset)?.node)?;
+                    let base_arg = trace_to_callee_arg(body, &args.get(inner_base)?.node)?;
+                    let offset_arg = trace_to_callee_arg(body, &args.get(inner_offset)?.node)?;
                     return Some(match effect {
-                        CallEffect::ReturnPointerSub { .. } => {
-                            CallEffect::ReturnPointerSub {
-                                base_arg,
-                                offset_arg,
-                                stride,
-                            }
-                        }
+                        CallEffect::ReturnPointerSub { .. } => CallEffect::ReturnPointerSub {
+                            base_arg,
+                            offset_arg,
+                            stride,
+                        },
                         _ => CallEffect::ReturnPointerAdd {
                             base_arg,
                             offset_arg,
@@ -638,7 +639,9 @@ fn try_pointer_arith_wrapper_effect<'tcx>(
                 }
                 for bb2 in body.basic_blocks.iter() {
                     for stmt in &bb2.statements {
-                        let StatementKind::Assign(assign) = &stmt.kind else { continue };
+                        let StatementKind::Assign(assign) = &stmt.kind else {
+                            continue;
+                        };
                         let dest = assign.0.local;
                         if dest != current {
                             continue;
@@ -647,9 +650,7 @@ fn try_pointer_arith_wrapper_effect<'tcx>(
                             Rvalue::Use(Operand::Copy(place))
                             | Rvalue::Use(Operand::Move(place))
                             | Rvalue::Cast(_, Operand::Copy(place), _)
-                            | Rvalue::Cast(_, Operand::Move(place), _) => {
-                                place.local
-                            }
+                            | Rvalue::Cast(_, Operand::Move(place), _) => place.local,
                             _ => continue,
                         };
                         if !seen.contains(&source) {

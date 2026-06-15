@@ -1,15 +1,11 @@
 use super::draw_dot::render_dot_string;
 use crate::def_id::*;
 use rustc_data_structures::fx::FxHashSet;
-use rustc_hir::{
-    Safety,
-    def::DefKind,
-    def_id::{DefId},
-};
+use rustc_hir::{Safety, def::DefKind, def_id::DefId};
 use rustc_middle::{
     mir::{
-        Body, Local, Operand, Place, ProjectionElem,
-        Rvalue, StatementKind, Terminator, TerminatorKind,
+        Body, Local, Operand, Place, ProjectionElem, Rvalue, StatementKind, Terminator,
+        TerminatorKind,
     },
     ty,
     ty::{AssocKind, Mutability, Ty, TyCtxt, TyKind},
@@ -705,7 +701,11 @@ fn find_generic_param(tcx: TyCtxt, def_id: DefId, type_ident: String) -> Option<
 }
 
 /// Iterate the args' types recursively and find the matched generic one.
-pub(crate) fn find_generic_in_ty<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>, type_ident: &str) -> Option<Ty<'tcx>> {
+pub(crate) fn find_generic_in_ty<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    ty: Ty<'tcx>,
+    type_ident: &str,
+) -> Option<Ty<'tcx>> {
     match ty.kind() {
         TyKind::Param(param_ty) => {
             if param_ty.name.as_str() == type_ident {

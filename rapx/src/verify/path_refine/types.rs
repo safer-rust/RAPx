@@ -55,9 +55,7 @@ pub enum BackwardItem<'tcx> {
     PathStep { step: PathStep, kind: KeepReason },
     /// A contract fact injected by the engine before the forward visit.
     /// Never produced by the backward visitor itself.
-    ContractFact {
-        property: contract::Property<'tcx>,
-    },
+    ContractFact { property: contract::Property<'tcx> },
     /// A conservative loss of precision for relevant state.
     Forget { reason: ForgetReason },
 }

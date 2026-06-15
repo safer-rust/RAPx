@@ -62,7 +62,11 @@ impl<'tcx> VerifyEngine<'tcx> {
         property: &Property<'tcx>,
         invariants: &[Property<'tcx>],
         is_constructor: bool,
-    ) -> (RelevantMirItems<'tcx>, ForwardVisitResult<'tcx>, SmtCheckResult) {
+    ) -> (
+        RelevantMirItems<'tcx>,
+        ForwardVisitResult<'tcx>,
+        SmtCheckResult,
+    ) {
         let mut backward = self
             .backward
             .visit_for_checkpoint(def_id, checkpoint, path, property);

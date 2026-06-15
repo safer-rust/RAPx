@@ -1,10 +1,6 @@
 use rustc_hir::{Node::*, def::DefKind};
 use rustc_middle::ty::TyCtxt;
-use rustc_span::{
-    FileName,
-    def_id::DefId,
-    symbol::Symbol,
-};
+use rustc_span::{FileName, def_id::DefId, symbol::Symbol};
 
 pub fn get_fn_name(tcx: TyCtxt<'_>, def_id: DefId) -> Option<String> {
     let name = tcx.def_path(def_id).to_string_no_crate_verbose();

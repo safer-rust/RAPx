@@ -7,12 +7,14 @@
 //! focused on path-level decisions (calls, SCC exits, path conditions).
 
 use rustc_data_structures::fx::FxHashSet;
-use rustc_middle::mir::{Local, Operand, Place, ProjectionElem, Rvalue, Terminator, TerminatorKind};
+use rustc_middle::mir::{
+    Local, Operand, Place, ProjectionElem, Rvalue, Terminator, TerminatorKind,
+};
 use rustc_middle::ty::TyCtxt;
-#[cfg(not(rustc_spanned_at_root))]
-use rustc_span::source_map::Spanned;
 #[cfg(rustc_spanned_at_root)]
 use rustc_span::Spanned;
+#[cfg(not(rustc_spanned_at_root))]
+use rustc_span::source_map::Spanned;
 
 use super::{
     contract::{
@@ -201,9 +203,9 @@ impl RelevantPlaces {
 
     /// Return true if this set shares any known root with `other`.
     pub fn intersects(&self, other: &RelevantPlaces) -> bool {
-        self.places.iter().any(|sp| {
-            other.places.iter().any(|op| sp.overlaps(op))
-        })
+        self.places
+            .iter()
+            .any(|sp| other.places.iter().any(|op| sp.overlaps(op)))
     }
 
     /// Remove all roots contained in `other` from this set.
