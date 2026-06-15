@@ -467,7 +467,8 @@ fn get_contract_from_entry<'tcx>(
 
         let mut exprs: Vec<Expr> = Vec::new();
         for arg_str in &entry.args {
-            match syn::parse_str::<Expr>(arg_str) {
+            let normalized_arg = normalize_json_contract_arg(arg_str);
+            match syn::parse_str::<Expr>(&normalized_arg) {
                 Ok(expr) => exprs.push(expr),
                 Err(_) => {
                     rap_error!(
@@ -491,6 +492,29 @@ fn get_contract_from_entry<'tcx>(
         results.push(property);
     }
     results
+}
+
+/// Convert explicit JSON contract tokens into the expression syntax accepted by
+/// the existing property parser.
+///
+/// Supported explicit tokens:
+/// - `arg:N` names callee argument `N` and becomes internal `Arg_N`.
+/// - `const:N` names an integer constant and becomes `N`.
+/// - `ty:T` names a type parameter/type identifier and becomes `T`.
+///
+/// Unprefixed strings are kept unchanged for compatibility with older entries
+/// such as `"0"`, `"T"`, and `"1"`.
+fn normalize_json_contract_arg(arg: &str) -> String {
+    if let Some(index) = arg.strip_prefix("arg:") {
+        return format!("Arg_{}", index.trim());
+    }
+    if let Some(value) = arg.strip_prefix("const:") {
+        return value.trim().to_string();
+    }
+    if let Some(ty) = arg.strip_prefix("ty:") {
+        return ty.trim().to_string();
+    }
+    arg.to_string()
 }
 
 fn is_rapx_named_attr(attr: &Attribute, name: &str) -> bool {
