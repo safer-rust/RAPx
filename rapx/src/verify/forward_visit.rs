@@ -497,15 +497,22 @@ impl<'tcx> ForwardVisitor<'tcx> {
                         .get(*pointer_arg)
                         .and_then(|arg| operand_place(&arg.node))
                     {
-                        let ty_name = self
-                            .pointee_ty_name(result.callsite.caller, &pointer)
-                            .unwrap_or_else(|| "?".to_string());
-                        result.facts.push(StateFact::KnownInit {
-                            place: pointer,
-                            ty_name,
-                            elements: 1,
-                            reason: format!("written by {}", summary.name),
-                        });
+                        let mut init_places = copy_chain_places(&pointer, result);
+                        if init_places.is_empty() {
+                            init_places.push(pointer);
+                        }
+
+                        for place in init_places {
+                            let ty_name = self
+                                .pointee_ty_name(result.callsite.caller, &place)
+                                .unwrap_or_else(|| "?".to_string());
+                            result.facts.push(StateFact::KnownInit {
+                                place,
+                                ty_name,
+                                elements: 1,
+                                reason: format!("written by {}", summary.name),
+                            });
+                        }
                     }
                 }
                 CallEffect::ReturnLengthOfArg { .. } => {}
@@ -918,6 +925,39 @@ fn resolve_value_chain<'tcx>(
             _ => return cur,
         };
     }
+}
+
+fn copy_chain_places<'tcx>(
+    place: &PlaceKey,
+    result: &ForwardVisitResult<'tcx>,
+) -> Vec<PlaceKey> {
+    let mut places = Vec::new();
+    let mut cur = place.clone();
+    let mut seen = HashSet::new();
+    loop {
+        if !seen.insert(cur.clone()) {
+            break;
+        }
+        if !places.contains(&cur) {
+            places.push(cur.clone());
+        }
+
+        let Some(local) = cur.local() else {
+            break;
+        };
+        let Some(value) = result.values.get(&local) else {
+            break;
+        };
+        match value {
+            AbstractValue::Place(next) => cur = next.clone(),
+            AbstractValue::Cast(inner, _) => match inner.as_ref() {
+                AbstractValue::Place(next) => cur = next.clone(),
+                _ => break,
+            },
+            _ => break,
+        }
+    }
+    places
 }
 
 fn known_alignment_of<'tcx>(

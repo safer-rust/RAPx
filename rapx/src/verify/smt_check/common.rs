@@ -370,7 +370,8 @@ impl<'tcx> SmtChecker<'tcx> {
                 elements,
             } => {
                 let target_label = place_label(place);
-                let Some(target_term) = model.term_for_place(place) else {
+                let target_terms = model.init_target_terms(place);
+                if target_terms.is_empty() {
                     return SmtCheckResult::unknown(format!(
                         "could not build an address term for {target_label}"
                     ))
@@ -382,7 +383,7 @@ impl<'tcx> SmtChecker<'tcx> {
                             target_label
                         )),
                     ));
-                };
+                }
 
                 if model.has_equivalent_contract_fact(place, PropertyKind::Init) {
                     return SmtCheckResult::proved(
@@ -418,30 +419,35 @@ impl<'tcx> SmtChecker<'tcx> {
                     if init_elements < *elements {
                         continue;
                     }
-                    let Some(init_term) = model.term_for_place(&init_place) else {
+                    let init_terms = model.init_source_terms(&init_place);
+                    if init_terms.is_empty() {
                         continue;
-                    };
+                    }
                     checked_any_init_fact = true;
-                    let query = SmtQuery::new(
-                        obligation.clone(),
-                        model.assumptions().to_vec(),
-                        SmtPredicate::Custom(format!(
-                            "not same_addr({}, {}) for Init({}, {ty_name}, {elements})",
-                            target_label,
-                            place_label(&init_place),
-                            target_label
-                        )),
-                    );
-                    solver.push();
-                    solver.assert(&target_term._eq(&init_term).not());
-                    let check = solver.check();
-                    solver.pop(1);
-                    if matches!(check, SatResult::Unsat) {
-                        return SmtCheckResult::proved(format!(
-                            "initialization proved; {target_label} aliases a {init_elements}-element write ({init_reason})"
-                        ))
-                        .with_query(query)
-                        .with_note(format!("matched initialized type summary: {init_ty_name}"));
+                    for target_term in &target_terms {
+                        for init_term in &init_terms {
+                            let query = SmtQuery::new(
+                                obligation.clone(),
+                                model.assumptions().to_vec(),
+                                SmtPredicate::Custom(format!(
+                                    "not same_addr({}, {}) for Init({}, {ty_name}, {elements})",
+                                    target_label,
+                                    place_label(&init_place),
+                                    target_label
+                                )),
+                            );
+                            solver.push();
+                            solver.assert(&target_term._eq(init_term).not());
+                            let check = solver.check();
+                            solver.pop(1);
+                            if matches!(check, SatResult::Unsat) {
+                                return SmtCheckResult::proved(format!(
+                                    "initialization proved; {target_label} aliases a {init_elements}-element write ({init_reason})"
+                                ))
+                                .with_query(query)
+                                .with_note(format!("matched initialized type summary: {init_ty_name}"));
+                            }
+                        }
                     }
                 }
 
@@ -2034,6 +2040,60 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             } if fact_pointer == pointer => Some(source.clone()),
             _ => None,
         })
+    }
+
+    /// Candidate address/value terms for an `Init` target.
+    ///
+    /// Pointer targets use their value term.  By-value `MaybeUninit<T>` targets
+    /// may be moved into a temporary before `assume_init`; in that case the
+    /// relevant initialized storage is the address of the original place.
+    fn init_target_terms(&mut self, place: &PlaceKey) -> Vec<Int<'ctx>> {
+        let mut terms = Vec::new();
+        if let Some(term) = self.term_for_place(place) {
+            terms.push(term);
+        }
+        if let Some(term) = self.storage_addr_for_place(place, &mut HashSet::new()) {
+            if !terms.iter().any(|existing| existing == &term) {
+                terms.push(term);
+            }
+        }
+        terms
+    }
+
+    /// Candidate address/value terms for a known initialized write.
+    fn init_source_terms(&mut self, place: &PlaceKey) -> Vec<Int<'ctx>> {
+        let mut terms = Vec::new();
+        if let Some(term) = self.term_for_place(place) {
+            terms.push(term);
+        }
+        if let Some(source) = self.source_from_points_to(place)
+            && let Some(term) = self.storage_addr_for_place(&source, &mut HashSet::new())
+            && !terms.iter().any(|existing| existing == &term)
+        {
+            terms.push(term);
+        }
+        terms
+    }
+
+    /// Return the address of the storage represented by `place`.
+    fn storage_addr_for_place(
+        &mut self,
+        place: &PlaceKey,
+        seen: &mut HashSet<PlaceKey>,
+    ) -> Option<Int<'ctx>> {
+        if !seen.insert(place.clone()) {
+            return None;
+        }
+        if let Some(AbstractValue::Place(inner)) = value_for_place(self.forward, place) {
+            return self.storage_addr_for_place(inner, seen);
+        }
+        if let Some(source) = self.source_from_points_to(place) {
+            return self.storage_addr_for_place(&source, seen);
+        }
+        Some(Int::new_const(
+            self.ctx,
+            format!("addr_{}", place_name(place)),
+        ))
     }
 
     /// Find a retained `len(source)` call whose source matches `origin_key`.

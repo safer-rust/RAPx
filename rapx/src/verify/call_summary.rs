@@ -9,15 +9,17 @@
 //! are summarized by name.  Local callees can additionally use the existing
 //! dataflow graph to approximate which arguments flow into the return value.
 
+use std::collections::HashSet;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
-    mir::{Local, Operand, Rvalue, StatementKind, TerminatorKind},
+    mir::{BasicBlock, Local, Operand, Rvalue, StatementKind, TerminatorKind},
     ty::{PseudoCanonicalInput, Ty, TyCtxt, TyKind},
 };
 
 use crate::analysis::dataflow::{DataflowAnalysis, default::DataflowAnalyzer};
+use crate::analysis::path_analysis::graph::PathGraph;
 
 use super::{path_refine::ForgetReason, primitive::PrimitiveCall};
 
@@ -194,6 +196,20 @@ pub fn dependency_summary<'tcx>(
     }
 
     if let Some(callee) = callee {
+        if let Some(must_write_args) = local_must_write_args(tcx, callee) {
+            if !must_write_args.is_empty() {
+                return CallDependencySummary {
+                    callee: Some(callee),
+                    name,
+                    return_depends_on_args: Vec::new(),
+                    may_write_args: must_write_args
+                        .into_iter()
+                        .filter(|index| *index < arg_count)
+                        .collect(),
+                    unsupported: false,
+                };
+            }
+        }
         if let Some(return_deps) = local_return_dependencies(tcx, callee) {
             return CallDependencySummary {
                 callee: Some(callee),
@@ -323,6 +339,21 @@ pub fn effect_summary<'tcx>(
     }
 
     if let Some(callee) = callee {
+        if let Some(must_write_args) = local_must_write_args(tcx, callee) {
+            let effects: Vec<_> = must_write_args
+                .into_iter()
+                .map(|arg| CallEffect::WriteMemory { pointer_arg: arg })
+                .collect();
+            if !effects.is_empty() {
+                return CallEffectSummary {
+                    callee: Some(callee),
+                    name,
+                    destination,
+                    effects,
+                    unsupported: false,
+                };
+            }
+        }
         if let Some(effect) = try_pointer_arith_wrapper_effect(tcx, callee, destination) {
             return CallEffectSummary {
                 callee: Some(callee),
@@ -700,6 +731,79 @@ fn local_return_dependencies(tcx: TyCtxt<'_>, callee: DefId) -> Option<Vec<usize
             .collect()
     }))
     .ok()
+}
+
+/// Return callee argument indices that are definitely written on every
+/// reachable return path.
+fn local_must_write_args(tcx: TyCtxt<'_>, callee: DefId) -> Option<Vec<usize>> {
+    callee.as_local()?;
+    if !tcx.is_mir_available(callee) {
+        return None;
+    }
+
+    catch_unwind(AssertUnwindSafe(|| {
+        let body = tcx.optimized_mir(callee);
+        let mut graph = PathGraph::new(tcx, callee);
+        graph.find_scc();
+        let paths = graph.enumerate_paths_repeat(0);
+
+        let mut must_write: Option<HashSet<usize>> = None;
+        for path in paths {
+            if !graph.is_path_reachable(&path) || !path_ends_in_return(body, &path) {
+                continue;
+            }
+            let writes = write_args_on_path(tcx, body, &path);
+            must_write = Some(match must_write {
+                Some(current) => current.intersection(&writes).copied().collect(),
+                None => writes,
+            });
+        }
+
+        must_write
+            .unwrap_or_default()
+            .into_iter()
+            .collect::<Vec<_>>()
+    }))
+    .ok()
+}
+
+fn path_ends_in_return(body: &rustc_middle::mir::Body<'_>, path: &[usize]) -> bool {
+    path.last().is_some_and(|block| {
+        body.basic_blocks
+            .get(BasicBlock::from_usize(*block))
+            .and_then(|data| data.terminator.as_ref())
+            .is_some_and(|terminator| matches!(terminator.kind, TerminatorKind::Return))
+    })
+}
+
+fn write_args_on_path<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    body: &rustc_middle::mir::Body<'tcx>,
+    path: &[usize],
+) -> HashSet<usize> {
+    let mut writes = HashSet::new();
+    for block in path {
+        let Some(data) = body.basic_blocks.get(BasicBlock::from_usize(*block)) else {
+            continue;
+        };
+        let Some(terminator) = data.terminator.as_ref() else {
+            continue;
+        };
+        let TerminatorKind::Call { func, args, .. } = &terminator.kind else {
+            continue;
+        };
+        let name = call_name(tcx, func);
+        if PrimitiveCall::classify(&name) != Some(PrimitiveCall::PtrWrite) {
+            continue;
+        }
+        if let Some(pointer_arg) = args
+            .first()
+            .and_then(|arg| trace_to_callee_arg(tcx, body, &arg.node))
+        {
+            writes.insert(pointer_arg);
+        }
+    }
+    writes
 }
 
 /// Return the byte stride for a pointer returned into `destination`.
