@@ -211,10 +211,14 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
                 analyzer.run();
             }
             &AnalysisKind::SafetyFlow { draw } => {
-                SafetyFlowAnalysis::new(tcx).with_draw(draw).start(TargetCrate::Other);
+                SafetyFlowAnalysis::new(tcx)
+                    .with_draw(draw)
+                    .start(TargetCrate::Other);
             }
             &AnalysisKind::SafetyFlowStd { draw } => {
-                SafetyFlowAnalysis::new(tcx).with_draw(draw).start(TargetCrate::Std);
+                SafetyFlowAnalysis::new(tcx)
+                    .with_draw(draw)
+                    .start(TargetCrate::Std);
             }
             AnalysisKind::Callgraph => {
                 let mut analyzer = CallGraphAnalyzer::new(tcx);

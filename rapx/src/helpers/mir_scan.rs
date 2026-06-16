@@ -257,7 +257,9 @@ pub fn collect_raw_ptr_deref_info<'tcx>(
                 continue;
             }
 
-            let deref_place = if is_write { lhs } else {
+            let deref_place = if is_write {
+                lhs
+            } else {
                 match rhs {
                     Rvalue::Use(Operand::Copy(place) | Operand::Move(place), ..) => place,
                     _ => continue,
@@ -285,10 +287,7 @@ pub fn collect_raw_ptr_deref_info<'tcx>(
 }
 
 /// Return the pointee type of the raw pointer being dereferenced.
-fn deref_place_pointee_ty<'tcx>(
-    body: &Body<'tcx>,
-    place: &Place<'tcx>,
-) -> Option<Ty<'tcx>> {
+fn deref_place_pointee_ty<'tcx>(body: &Body<'tcx>, place: &Place<'tcx>) -> Option<Ty<'tcx>> {
     let ty = body.local_decls[place.local].ty;
     match ty.kind() {
         TyKind::RawPtr(inner, _) => Some(*inner),

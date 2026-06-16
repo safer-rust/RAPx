@@ -149,7 +149,11 @@ impl<'tcx> SafetyFlowAnalysis<'tcx> {
 
             for unit in units {
                 let caller_name = self.tcx.def_path_str(unit.caller.def_id);
-                let safety = if unit.caller.fn_safety == Safety::Unsafe { "[Unsafe]" } else { "[Safe]" };
+                let safety = if unit.caller.fn_safety == Safety::Unsafe {
+                    "[Unsafe]"
+                } else {
+                    "[Safe]"
+                };
                 rap_info!("  {} {}", caller_name, safety);
                 total_callers += 1;
 
@@ -160,7 +164,8 @@ impl<'tcx> SafetyFlowAnalysis<'tcx> {
                 }
 
                 if !unit.raw_ptrs.is_empty() {
-                    let locals: Vec<String> = unit.raw_ptrs.iter().map(|l| format!("{:?}", l)).collect();
+                    let locals: Vec<String> =
+                        unit.raw_ptrs.iter().map(|l| format!("{:?}", l)).collect();
                     rap_info!("    *raw* ptr deref: {}", locals.join(", "));
                     total_rawptrs += 1;
                 }
@@ -187,7 +192,10 @@ impl<'tcx> SafetyFlowAnalysis<'tcx> {
         rap_info!("============================================================");
         rap_info!(
             "SafetyFlow summary: {} function(s), {} call edge(s), {} raw ptr deref(s), {} static mut access(es)",
-            total_callers, total_callees, total_rawptrs, total_staticmuts
+            total_callers,
+            total_callees,
+            total_rawptrs,
+            total_staticmuts
         );
         rap_info!("============================================================");
     }

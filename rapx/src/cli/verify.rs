@@ -6,9 +6,7 @@ pub enum VerifyMode {
     Scan,
     #[value(help = "Only verify functions annotated with #[rapx::verify]")]
     Targeted,
-    #[value(
-        help = "Like `scan` or `targeted` but skip struct invariant checks"
-    )]
+    #[value(help = "Like `scan` or `targeted` but skip struct invariant checks")]
     Invless,
 }
 

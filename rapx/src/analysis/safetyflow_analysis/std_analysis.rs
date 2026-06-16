@@ -72,7 +72,9 @@ impl<'tcx> SafetyFlowAnalysis<'tcx> {
         let def_id_sets = self.tcx.mir_keys(());
         for local_def_id in def_id_sets {
             let def_id = local_def_id.to_def_id();
-            if self.tcx.def_kind(def_id) == DefKind::Fn || self.tcx.def_kind(def_id) == DefKind::AssocFn {
+            if self.tcx.def_kind(def_id) == DefKind::Fn
+                || self.tcx.def_kind(def_id) == DefKind::AssocFn
+            {
                 self.insert_upg(def_id);
             }
         }

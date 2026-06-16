@@ -53,8 +53,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
         for (callsite, _) in &target.raw_ptr_deref_checks {
             all_callsites.push(callsite.clone());
         }
-        let path_info =
-            PathExtractor::new(tcx, target.def_id, all_callsites, allow_repeat).run();
+        let path_info = PathExtractor::new(tcx, target.def_id, all_callsites, allow_repeat).run();
         let properties_to_verify = Self::build_properties_to_verify(target);
         let engine = VerifyEngine::new(tcx);
         Self {
@@ -163,8 +162,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
             return report;
         }
 
-        let is_constructor =
-            get_type(self.tcx, self.target.def_id) == FnKind::Constructor;
+        let is_constructor = get_type(self.tcx, self.target.def_id) == FnKind::Constructor;
         let caller_contracts = &self.target.caller_requires;
 
         for (checkpoint, paths) in self.build_invariant_paths(is_constructor) {
@@ -568,9 +566,7 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
             }
 
             // Phase 2: struct invariant verification
-            if !target.struct_invariants.is_empty()
-                && !matches!(self.mode, VerifyMode::Invless)
-            {
+            if !target.struct_invariants.is_empty() && !matches!(self.mode, VerifyMode::Invless) {
                 let driver =
                     VerifyDriver::new_with_repeat(self.tcx, target, self.allow_pathseg_repeat);
                 let struct_report = driver.verify_struct_invariants();

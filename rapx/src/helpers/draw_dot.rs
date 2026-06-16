@@ -16,7 +16,12 @@ pub fn render_dot_graphs(dot_graphs: Vec<(String, String)>) {
             .expect("Unable to write data");
 
         Command::new("dot")
-            .args(["-Tpng", &file_name, "-o", &format!("SafetyFlow/{}.png", dot.0)])
+            .args([
+                "-Tpng",
+                &file_name,
+                "-o",
+                &format!("SafetyFlow/{}.png", dot.0),
+            ])
             .output()
             .expect("Failed to execute Graphviz dot command");
 
