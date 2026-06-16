@@ -503,9 +503,8 @@ impl<'tcx> ForwardVisitor<'tcx> {
                         }
 
                         for place in init_places {
-                            let ty_name = self
-                                .pointee_ty_name(result.callsite.caller, &place)
-                                .unwrap_or_else(|| "?".to_string());
+                            let ty_name =
+                                self.init_write_ty_name(summary, result.callsite.caller, &place);
                             result.facts.push(StateFact::KnownInit {
                                 place,
                                 ty_name,
@@ -545,6 +544,22 @@ impl<'tcx> ForwardVisitor<'tcx> {
         match ty.kind() {
             TyKind::RawPtr(ty, _) | TyKind::Ref(_, ty, _) => Some(format!("{ty:?}")),
             _ => Some(format!("{ty:?}")),
+        }
+    }
+
+    fn init_write_ty_name(
+        &self,
+        summary: &CallEffectSummary,
+        caller: DefId,
+        place: &PlaceKey,
+    ) -> String {
+        let ty_name = self
+            .pointee_ty_name(caller, place)
+            .unwrap_or_else(|| "?".to_string());
+        if summary.name.contains("MaybeUninit") && summary.name.contains("write") {
+            maybe_uninit_inner_ty_name(&ty_name).unwrap_or(ty_name)
+        } else {
+            ty_name
         }
     }
 }
@@ -927,10 +942,7 @@ fn resolve_value_chain<'tcx>(
     }
 }
 
-fn copy_chain_places<'tcx>(
-    place: &PlaceKey,
-    result: &ForwardVisitResult<'tcx>,
-) -> Vec<PlaceKey> {
+fn copy_chain_places<'tcx>(place: &PlaceKey, result: &ForwardVisitResult<'tcx>) -> Vec<PlaceKey> {
     let mut places = Vec::new();
     let mut cur = place.clone();
     let mut seen = HashSet::new();
@@ -958,6 +970,23 @@ fn copy_chain_places<'tcx>(
         }
     }
     places
+}
+
+fn maybe_uninit_inner_ty_name(ty_name: &str) -> Option<String> {
+    let ty_name = ty_name.trim();
+    for prefix in [
+        "std::mem::MaybeUninit<",
+        "core::mem::MaybeUninit<",
+        "MaybeUninit<",
+    ] {
+        if let Some(inner) = ty_name
+            .strip_prefix(prefix)
+            .and_then(|s| s.strip_suffix('>'))
+        {
+            return Some(inner.trim().to_string());
+        }
+    }
+    None
 }
 
 fn known_alignment_of<'tcx>(

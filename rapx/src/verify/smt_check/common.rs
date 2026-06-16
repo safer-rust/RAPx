@@ -135,6 +135,16 @@ impl<'tcx> SmtChecker<'tcx> {
         let solver = Solver::new(&ctx);
         let mut model = SmtModel::new(self.tcx, callsite, forward, &ctx);
         model.assert_forward_facts(&solver);
+        if matches!(solver.check(), SatResult::Unsat) {
+            return SmtCheckResult::proved(
+                "path facts are infeasible; the obligation holds vacuously on this path",
+            )
+            .with_query(SmtQuery::new(
+                obligation,
+                model.assumptions().to_vec(),
+                SmtPredicate::Custom(String::from("path constraints are unsat")),
+            ));
+        }
 
         match &obligation {
             SmtObligation::Aligned {
@@ -415,16 +425,24 @@ impl<'tcx> SmtChecker<'tcx> {
                     .collect();
 
                 let mut checked_any_init_fact = false;
-                for (init_place, init_ty_name, init_elements, init_reason) in init_facts {
-                    if init_elements < *elements {
-                        continue;
-                    }
-                    let init_terms = model.init_source_terms(&init_place);
-                    if init_terms.is_empty() {
-                        continue;
-                    }
-                    checked_any_init_fact = true;
-                    for target_term in &target_terms {
+                for target_term in &target_terms {
+                    let mut matched_elements = 0_u64;
+                    let mut matched_places = HashSet::new();
+                    let mut matched_notes = Vec::new();
+                    let mut last_query = None;
+
+                    for (init_place, init_ty_name, init_elements, init_reason) in &init_facts {
+                        if !init_type_compatible(init_ty_name, ty_name) {
+                            continue;
+                        }
+                        if !matched_places.insert(init_place.clone()) {
+                            continue;
+                        }
+                        let init_terms = model.init_source_terms(init_place);
+                        if init_terms.is_empty() {
+                            continue;
+                        }
+
                         for init_term in &init_terms {
                             let query = SmtQuery::new(
                                 obligation.clone(),
@@ -432,7 +450,7 @@ impl<'tcx> SmtChecker<'tcx> {
                                 SmtPredicate::Custom(format!(
                                     "not same_addr({}, {}) for Init({}, {ty_name}, {elements})",
                                     target_label,
-                                    place_label(&init_place),
+                                    place_label(init_place),
                                     target_label
                                 )),
                             );
@@ -441,12 +459,37 @@ impl<'tcx> SmtChecker<'tcx> {
                             let check = solver.check();
                             solver.pop(1);
                             if matches!(check, SatResult::Unsat) {
-                                return SmtCheckResult::proved(format!(
-                                    "initialization proved; {target_label} aliases a {init_elements}-element write ({init_reason})"
-                                ))
-                                .with_query(query)
-                                .with_note(format!("matched initialized type summary: {init_ty_name}"));
+                                checked_any_init_fact = true;
+                                matched_elements = matched_elements.saturating_add(*init_elements);
+                                matched_notes.push(format!(
+                                    "{} element(s) from {} ({init_reason})",
+                                    init_elements,
+                                    place_label(init_place)
+                                ));
+                                last_query = Some(query);
+                                break;
                             }
+                        }
+
+                        if matched_elements >= *elements {
+                            let query = last_query.unwrap_or_else(|| {
+                                SmtQuery::new(
+                                    obligation.clone(),
+                                    model.assumptions().to_vec(),
+                                    SmtPredicate::Custom(format!(
+                                        "not Init({}, {ty_name}, {elements})",
+                                        target_label
+                                    )),
+                                )
+                            });
+                            return SmtCheckResult::proved(format!(
+                                "initialization proved; {target_label} aliases {matched_elements} initialized element(s)"
+                            ))
+                            .with_query(query)
+                            .with_note(format!(
+                                "matched initialized writes: {}",
+                                matched_notes.join("; ")
+                            ));
                         }
                     }
                 }
@@ -660,9 +703,7 @@ impl<'tcx> SmtChecker<'tcx> {
         expr: &ContractExpr<'tcx>,
     ) -> Option<ContractExpr<'tcx>> {
         match expr {
-            ContractExpr::Place(place) => self
-                .contract_place_to_callsite_place(callsite, place)
-                .map(contract_expr_from_place_key),
+            ContractExpr::Place(place) => self.contract_place_to_callsite_expr(callsite, place),
             ContractExpr::Const(value) => Some(ContractExpr::Const(*value)),
             ContractExpr::SizeOf(ty) => Some(ContractExpr::SizeOf(
                 self.instantiate_callsite_ty(callsite, *ty),
@@ -681,6 +722,43 @@ impl<'tcx> SmtChecker<'tcx> {
             }),
             ContractExpr::Unknown => Some(ContractExpr::Unknown),
         }
+    }
+
+    fn contract_place_to_callsite_expr(
+        &self,
+        callsite: &Callsite<'tcx>,
+        place: &ContractPlace<'tcx>,
+    ) -> Option<ContractExpr<'tcx>> {
+        let key = PlaceKey::from_contract_place(place);
+        match place.base {
+            PlaceBase::Arg(index) => self.callsite_arg_expr(callsite, index, &key.fields),
+            PlaceBase::Local(local) => {
+                if let Some(index) = callee_param_index_for_local(self.tcx, callsite.callee, local)
+                {
+                    self.callsite_arg_expr(callsite, index, &key.fields)
+                } else {
+                    Some(ContractExpr::Place(place.clone()))
+                }
+            }
+            PlaceBase::Return => Some(ContractExpr::Place(place.clone())),
+        }
+    }
+
+    fn callsite_arg_expr(
+        &self,
+        callsite: &Callsite<'tcx>,
+        index: usize,
+        fields: &[usize],
+    ) -> Option<ContractExpr<'tcx>> {
+        let operand = callsite.args.get(index)?;
+        if fields.is_empty()
+            && let Operand::Constant(constant) = operand
+            && let Some(value) = const_int_from_debug(&format!("{:?}", constant.const_))
+        {
+            return Some(ContractExpr::Const(value));
+        }
+        self.callsite_arg_place_with_fields(callsite, index, fields)
+            .map(contract_expr_from_place_key)
     }
 
     /// Convert a contract place into a concrete MIR place when possible.
@@ -1648,6 +1726,9 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                         .get(*arg)
                         .map(value_label)
                         .unwrap_or_else(|| format!("arg{arg}"));
+                    let len_term =
+                        Int::new_const(self.ctx, sanitize_smt_name(&format!("len({source})")));
+                    self.place_terms.insert(destination.clone(), len_term);
                     self.assumptions.push(SmtPredicate::Eq(
                         SmtTerm::Place(destination.clone()),
                         SmtTerm::Value(format!("len({source})")),
@@ -1655,9 +1736,13 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 }
                 crate::verify::call_summary::CallEffect::ReturnPointerFromArg { arg }
                 | crate::verify::call_summary::CallEffect::ReturnAliasArg { arg } => {
-                    let source = call
-                        .args
-                        .get(*arg)
+                    let source_value = call.args.get(*arg);
+                    if let Some(term) = source_value
+                        .and_then(|value| self.term_for_value(value, &mut HashSet::new()))
+                    {
+                        self.place_terms.insert(destination.clone(), term);
+                    }
+                    let source = source_value
                         .map(value_label)
                         .unwrap_or_else(|| format!("arg{arg}"));
                     self.assumptions.push(SmtPredicate::Eq(
@@ -2370,6 +2455,27 @@ fn const_int_from_debug(text: &str) -> Option<u128> {
     } else {
         u128::from_str_radix(&digits, 16).ok()
     }
+}
+
+fn init_type_compatible(init_ty_name: &str, required_ty_name: &str) -> bool {
+    normalize_init_ty_name(init_ty_name) == normalize_init_ty_name(required_ty_name)
+}
+
+fn normalize_init_ty_name(ty_name: &str) -> String {
+    let ty_name = ty_name.trim();
+    for prefix in [
+        "std::mem::MaybeUninit<",
+        "core::mem::MaybeUninit<",
+        "MaybeUninit<",
+    ] {
+        if let Some(inner) = ty_name
+            .strip_prefix(prefix)
+            .and_then(|s| s.strip_suffix('>'))
+        {
+            return normalize_init_ty_name(inner);
+        }
+    }
+    ty_name.to_string()
 }
 
 /// Stable SMT identifier for diagnostic-only symbolic terms.
