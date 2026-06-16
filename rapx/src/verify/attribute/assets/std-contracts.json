@@ -311,6 +311,36 @@
       ]
     }
   ],
+  "core::mem::maybe_uninit::assume_init": [
+    {
+      "tag": "Init",
+      "args": [
+        "arg:0",
+        "ty:T",
+        "const:1"
+      ]
+    }
+  ],
+  "core::mem::maybe_uninit::assume_init_read": [
+    {
+      "tag": "Init",
+      "args": [
+        "arg:0",
+        "ty:T",
+        "const:1"
+      ]
+    }
+  ],
+  "core::mem::maybe_uninit::array_assume_init": [
+    {
+      "tag": "Init",
+      "args": [
+        "arg:0",
+        "ty:T",
+        "N"
+      ]
+    }
+  ],
   "core::slice::raw::from_mut_ptr_range": [
     {
       "tag": "NonNull",
@@ -538,7 +568,7 @@
       "tag": "Init",
       "args": [
         "ptr",
-        "T",
+        "u8",
         "len"
       ]
     },
@@ -682,7 +712,7 @@
       "tag": "Init",
       "args": [
         "ptr",
-        "T",
+        "u8",
         "len"
       ]
     },
