@@ -991,12 +991,23 @@ fn init_std_sound_04() {
 }
 
 #[test]
+fn init_std_sound_05() {
+    let output = run_with_args("verify/init_std_sound_05", VERIFY_CMD);
+    assert_contain(&output, "function: sound_loop_initializes_slice");
+    assert_contain(&output, "Init | Proved");
+}
+
+#[test]
+fn init_std_sound_06() {
+    let output = run_with_args("verify/init_std_sound_06", VERIFY_CMD);
+    assert_contain(&output, "function: sound_len_bound_loop_initializes_slice");
+    assert_contain(&output, "Init | Proved");
+}
+
+#[test]
 fn init_std_unsound_01() {
     let output = run_with_args("verify/init_std_unsound_01", VERIFY_CMD);
-    assert_contain(
-        &output,
-        "function: unsound_assume_init_read_without_write",
-    );
+    assert_contain(&output, "function: unsound_assume_init_read_without_write");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1010,10 +1021,7 @@ fn init_std_unsound_02() {
 #[test]
 fn init_std_unsound_03() {
     let output = run_with_args("verify/init_std_unsound_03", VERIFY_CMD);
-    assert_contain(
-        &output,
-        "function: unsound_conditional_write_then_assume",
-    );
+    assert_contain(&output, "function: unsound_conditional_write_then_assume");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1027,10 +1035,7 @@ fn init_std_unsound_04() {
 #[test]
 fn init_std_unsound_05() {
     let output = run_with_args("verify/init_std_unsound_05", VERIFY_CMD);
-    assert_contain(
-        &output,
-        "function: unsound_intra_helper_maybe_initializes",
-    );
+    assert_contain(&output, "function: unsound_intra_helper_maybe_initializes");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1038,6 +1043,28 @@ fn init_std_unsound_05() {
 fn init_std_unsound_06() {
     let output = run_with_args("verify/init_std_unsound_06", VERIFY_CMD);
     assert_contain(&output, "function: unsound_from_raw_parts_uninitialized");
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn init_std_unsound_07() {
+    let output = run_with_args("verify/init_std_unsound_07", VERIFY_CMD);
+    assert_contain(
+        &output,
+        "function: unsound_from_raw_parts_wrong_element_type",
+    );
+    assert_contain(&output, "Init | Unknown");
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn init_std_unsound_08() {
+    let output = run_with_args("verify/init_std_unsound_08", VERIFY_CMD);
+    assert_contain(
+        &output,
+        "function: unsound_len_bound_loop_skips_even_indices",
+    );
+    assert_contain(&output, "Init | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
