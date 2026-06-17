@@ -1216,6 +1216,34 @@ fn validnum_sound_05() {
 }
 
 #[test]
+fn validnum_sound_06() {
+    let output = run_with_args("verify/validnum_sound_06", VERIFY_CMD);
+    assert_contain(&output, "function: sound_guarded_variable_sum");
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn validnum_sound_07() {
+    let output = run_with_args("verify/validnum_sound_07", VERIFY_CMD);
+    assert_contain(&output, "function: sound_interval_guard");
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn validnum_unsound_05() {
+    let output = run_with_args("verify/validnum_unsound_05", VERIFY_CMD);
+    assert_contain(&output, "function: unsound_interval_inclusive_guard");
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn validnum_sound_08() {
+    let output = run_with_args("verify/validnum_sound_08", VERIFY_CMD);
+    assert_contain(&output, "function: sound_trait_bound_align_order");
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
 fn validnum_std_sound_01() {
     let output = run_with_args("verify/validnum_std_sound_01", VERIFY_CMD);
     assert_contain(&output, "function: sound_std_from_raw_parts_validnum");
@@ -1228,6 +1256,24 @@ fn validnum_std_unsound_01() {
     assert_contain(
         &output,
         "function: unsound_std_from_raw_parts_validnum_overflow",
+    );
+    assert_contain(&output, "ValidNum | Unknown");
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn validnum_std_sound_02() {
+    let output = run_with_args("verify/validnum_std_sound_02", VERIFY_CMD);
+    assert_contain(&output, "function: sound_std_copy_nonoverlapping_validnum");
+    assert_contain(&output, "ValidNum | Proved");
+}
+
+#[test]
+fn validnum_std_unsound_02() {
+    let output = run_with_args("verify/validnum_std_unsound_02", VERIFY_CMD);
+    assert_contain(
+        &output,
+        "function: unsound_std_copy_nonoverlapping_validnum",
     );
     assert_contain(&output, "ValidNum | Unknown");
     assert_contain(&output, "result: UNSOUND");

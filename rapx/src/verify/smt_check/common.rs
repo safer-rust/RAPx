@@ -527,6 +527,7 @@ impl<'tcx> SmtChecker<'tcx> {
                         ),
                     );
                 }
+                model.assert_unsigned_bounds_for_predicates(&solver, predicates);
 
                 let Some(goal) = model.bool_for_predicates(predicates) else {
                     return SmtCheckResult::unknown(
@@ -1913,6 +1914,16 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             return None;
         }
 
+        if !place.fields.is_empty() {
+            if let Some(term) = self.projected_term_for_place(place, seen) {
+                self.place_terms.insert(place.clone(), term.clone());
+                return Some(term);
+            }
+            let term = Int::new_const(self.ctx, place_name(place));
+            self.place_terms.insert(place.clone(), term.clone());
+            return Some(term);
+        }
+
         if let Some(value) = value_for_place(self.forward, place) {
             if let Some(term) = self.term_for_value(value, seen) {
                 self.place_terms.insert(place.clone(), term.clone());
@@ -1923,6 +1934,37 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         let term = Int::new_const(self.ctx, place_name(place));
         self.place_terms.insert(place.clone(), term.clone());
         Some(term)
+    }
+
+    /// Build terms for well-known aggregate projections.
+    ///
+    /// Checked integer arithmetic is represented as `(value, overflow)` in MIR.
+    /// For numeric reasoning we can use field `0` as the mathematical result.
+    /// Field `1` remains a fresh value, so overflow assertions do not become
+    /// accidental constraints on the result itself.
+    fn projected_term_for_place(
+        &mut self,
+        place: &PlaceKey,
+        seen: &mut HashSet<PlaceKey>,
+    ) -> Option<Int<'ctx>> {
+        if place.fields.as_slice() != [0] {
+            return None;
+        }
+        let mut base = place.clone();
+        base.fields.clear();
+        let value = value_for_place(self.forward, &base)?;
+        let AbstractValue::Binary(op, lhs, rhs) = value else {
+            return None;
+        };
+        if !matches!(
+            op,
+            BinOp::AddWithOverflow | BinOp::SubWithOverflow | BinOp::MulWithOverflow
+        ) {
+            return None;
+        }
+        let lhs = self.term_for_value(lhs, seen)?;
+        let rhs = self.term_for_value(rhs, seen)?;
+        self.term_for_binary(*op, &lhs, &rhs)
     }
 
     /// Build an SMT term for an abstract value.
@@ -2100,13 +2142,105 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         }
     }
 
+    /// Assert Rust unsigned integer lower bounds for terms that appear in a
+    /// numeric obligation.
+    fn assert_unsigned_bounds_for_predicates(
+        &mut self,
+        solver: &Solver<'ctx>,
+        predicates: &[SmtPredicate],
+    ) {
+        let mut seen = HashSet::new();
+        for predicate in predicates {
+            self.assert_unsigned_bounds_for_predicate(solver, predicate, &mut seen);
+        }
+    }
+
+    fn assert_unsigned_bounds_for_predicate(
+        &mut self,
+        solver: &Solver<'ctx>,
+        predicate: &SmtPredicate,
+        seen: &mut HashSet<PlaceKey>,
+    ) {
+        match predicate {
+            SmtPredicate::Eq(lhs, rhs)
+            | SmtPredicate::Ne(lhs, rhs)
+            | SmtPredicate::Le(lhs, rhs)
+            | SmtPredicate::Lt(lhs, rhs)
+            | SmtPredicate::Ge(lhs, rhs)
+            | SmtPredicate::Gt(lhs, rhs) => {
+                self.assert_unsigned_bounds_for_term(solver, lhs, seen);
+                self.assert_unsigned_bounds_for_term(solver, rhs, seen);
+            }
+            SmtPredicate::And(predicates) => {
+                for predicate in predicates {
+                    self.assert_unsigned_bounds_for_predicate(solver, predicate, seen);
+                }
+            }
+            SmtPredicate::Divisible { term, .. } => {
+                self.assert_unsigned_bounds_for_term(solver, term, seen);
+            }
+            SmtPredicate::InBounds {
+                index,
+                access_count,
+                len,
+            } => {
+                self.assert_unsigned_bounds_for_term(solver, index, seen);
+                self.assert_unsigned_bounds_for_term(solver, access_count, seen);
+                self.assert_unsigned_bounds_for_term(solver, len, seen);
+            }
+            SmtPredicate::Not(predicate) => {
+                self.assert_unsigned_bounds_for_predicate(solver, predicate, seen);
+            }
+            SmtPredicate::Custom(_) => {}
+        }
+    }
+
+    fn assert_unsigned_bounds_for_term(
+        &mut self,
+        solver: &Solver<'ctx>,
+        term: &SmtTerm,
+        seen: &mut HashSet<PlaceKey>,
+    ) {
+        match term {
+            SmtTerm::Place(place) => {
+                if !seen.insert(place.clone()) {
+                    return;
+                }
+                let Some(ty) = self.place_ty(place) else {
+                    return;
+                };
+                if !is_unsigned_integral_ty(ty) {
+                    return;
+                }
+                let Some(int_term) = self.term_for_place(place) else {
+                    return;
+                };
+                let zero = Int::from_u64(self.ctx, 0);
+                solver.assert(&int_term.ge(&zero));
+                self.assumptions.push(SmtPredicate::Ge(
+                    SmtTerm::Place(place.clone()),
+                    SmtTerm::Const(0),
+                ));
+            }
+            SmtTerm::Add(lhs, rhs)
+            | SmtTerm::Sub(lhs, rhs)
+            | SmtTerm::Mul(lhs, rhs)
+            | SmtTerm::Div(lhs, rhs)
+            | SmtTerm::Rem(lhs, rhs) => {
+                self.assert_unsigned_bounds_for_term(solver, lhs, seen);
+                self.assert_unsigned_bounds_for_term(solver, rhs, seen);
+            }
+            SmtTerm::Value(_) | SmtTerm::Const(_) => {}
+        }
+    }
+
     /// Lower a binary MIR operation to an integer term.
     fn term_for_binary(&self, op: BinOp, lhs: &Int<'ctx>, rhs: &Int<'ctx>) -> Option<Int<'ctx>> {
         let one = Int::from_u64(self.ctx, 1);
         let zero = Int::from_u64(self.ctx, 0);
         Some(match op {
-            BinOp::Add => Int::add(self.ctx, &[lhs.clone(), rhs.clone()]),
-            BinOp::Sub => Int::sub(self.ctx, &[lhs.clone(), rhs.clone()]),
+            BinOp::Add | BinOp::AddWithOverflow => Int::add(self.ctx, &[lhs.clone(), rhs.clone()]),
+            BinOp::Sub | BinOp::SubWithOverflow => Int::sub(self.ctx, &[lhs.clone(), rhs.clone()]),
             BinOp::Mul | BinOp::MulWithOverflow => Int::mul(self.ctx, &[lhs.clone(), rhs.clone()]),
             BinOp::Div => lhs.div(rhs),
             BinOp::Rem => lhs.modulo(rhs),
@@ -2484,6 +2618,10 @@ fn pointee_ty_str<'tcx>(ty: Ty<'tcx>) -> Option<String> {
         TyKind::RawPtr(inner, _) | TyKind::Ref(_, inner, _) => Some(format!("{inner:?}")),
         _ => None,
     }
+}
+
+fn is_unsigned_integral_ty(ty: Ty<'_>) -> bool {
+    matches!(ty.kind(), TyKind::Uint(_))
 }
 
 /// Return true when a call summary is a typed pointer addition.
