@@ -1,7 +1,9 @@
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::BinOp as MirBinOp;
 use rustc_middle::ty::{Ty, TyCtxt};
-use safety_parser::syn::{BinOp as SynBinOp, Expr, Lit, UnOp};
+use safety_parser::syn::{
+    BinOp as SynBinOp, Expr, GenericArgument, Lit, PathArguments, Type, UnOp,
+};
 
 use super::helpers::{
     access_ident_recursive, match_ty_with_ident, parse_expr_into_local_and_ty,
@@ -463,6 +465,12 @@ impl<'tcx> Property<'tcx> {
                     .unwrap_or(ContractExpr::Unknown),
                 _ => ContractExpr::Unknown,
             },
+            Expr::Call(expr_call) => {
+                if let Some(expr) = Self::parse_layout_expr(tcx, def_id, expr_call) {
+                    return expr;
+                }
+                ContractExpr::Unknown
+            }
             Expr::Unary(expr_unary) => {
                 let Some(op) = NumericUnaryOp::from_syn(&expr_unary.op) else {
                     return ContractExpr::Unknown;
@@ -495,6 +503,8 @@ impl<'tcx> Property<'tcx> {
             _ => {
                 if let Some(place) = Self::parse_contract_place(tcx, def_id, expr) {
                     ContractExpr::Place(place)
+                } else if let Some(value) = Self::parse_builtin_const(tcx, expr) {
+                    ContractExpr::Const(value)
                 } else if let Some(value) = parse_expr_into_number(expr) {
                     ContractExpr::new_value(value)
                 } else {
@@ -506,6 +516,88 @@ impl<'tcx> Property<'tcx> {
                     ContractExpr::Unknown
                 }
             }
+        }
+    }
+
+    fn parse_layout_expr(
+        tcx: TyCtxt<'tcx>,
+        def_id: DefId,
+        expr_call: &safety_parser::syn::ExprCall,
+    ) -> Option<ContractExpr<'tcx>> {
+        let Expr::Path(func_path) = expr_call.func.as_ref() else {
+            return None;
+        };
+        let last = func_path.path.segments.last()?;
+        let name = last.ident.to_string();
+        if name != "size_of" && name != "align_of" {
+            return None;
+        }
+
+        let ty = if let Some(arg) = expr_call.args.first() {
+            Self::parse_type_opt(tcx, def_id, arg)
+        } else {
+            Self::parse_turbofish_type(tcx, def_id, &last.arguments, "ValidNum")
+        }?;
+
+        Some(match name.as_str() {
+            "size_of" => ContractExpr::SizeOf(ty),
+            "align_of" => ContractExpr::AlignOf(ty),
+            _ => return None,
+        })
+    }
+
+    fn parse_turbofish_type(
+        tcx: TyCtxt<'tcx>,
+        def_id: DefId,
+        arguments: &PathArguments,
+        sp: &str,
+    ) -> Option<Ty<'tcx>> {
+        let PathArguments::AngleBracketed(args) = arguments else {
+            return None;
+        };
+        args.args.iter().find_map(|arg| match arg {
+            GenericArgument::Type(ty) => Self::parse_syn_type(tcx, def_id, ty, sp),
+            _ => None,
+        })
+    }
+
+    fn parse_type_opt(tcx: TyCtxt<'tcx>, def_id: DefId, expr: &Expr) -> Option<Ty<'tcx>> {
+        if let Expr::Path(expr_path) = expr
+            && let Some(segment) = expr_path.path.segments.last()
+        {
+            return match_ty_with_ident(tcx, def_id, segment.ident.to_string());
+        }
+        let ty_ident = access_ident_recursive(expr)?.0;
+        match_ty_with_ident(tcx, def_id, ty_ident)
+    }
+
+    fn parse_syn_type(tcx: TyCtxt<'tcx>, def_id: DefId, ty: &Type, sp: &str) -> Option<Ty<'tcx>> {
+        let Type::Path(type_path) = ty else {
+            return None;
+        };
+        let ident = type_path.path.segments.last()?.ident.to_string();
+        match_ty_with_ident(tcx, def_id, ident).or_else(|| {
+            rap_debug!("Cannot get type in {:?} Tag from {:?}", sp, type_path);
+            None
+        })
+    }
+
+    fn parse_builtin_const(tcx: TyCtxt<'tcx>, expr: &Expr) -> Option<u128> {
+        let Expr::Path(expr_path) = expr else {
+            return None;
+        };
+        let mut segments = expr_path.path.segments.iter();
+        let first = segments.next()?.ident.to_string();
+        let second = segments.next()?.ident.to_string();
+        if segments.next().is_some() || second != "MAX" {
+            return None;
+        }
+
+        let pointer_bits = tcx.data_layout.pointer_size().bits();
+        match first.as_str() {
+            "isize" => Some((1_u128 << (pointer_bits - 1)) - 1),
+            "usize" => Some((1_u128 << pointer_bits) - 1),
+            _ => None,
         }
     }
 

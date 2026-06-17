@@ -224,7 +224,27 @@ pub fn match_ty_with_ident<'tcx>(
     if let Some(primitive_ty) = match_primitive_type(tcx, type_ident.clone()) {
         return Some(primitive_ty);
     }
+    if let Some(param_ty) = find_declared_generic_param(tcx, def_id, &type_ident) {
+        return Some(param_ty);
+    }
     find_generic_param(tcx, def_id, type_ident)
+}
+
+fn find_declared_generic_param<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def_id: DefId,
+    type_ident: &str,
+) -> Option<Ty<'tcx>> {
+    tcx.generics_of(def_id)
+        .own_params
+        .iter()
+        .find(|param| param.name.as_str() == type_ident)
+        .map(|param| {
+            tcx.mk_ty_from_kind(TyKind::Param(rustc_middle::ty::ParamTy {
+                index: param.index,
+                name: param.name,
+            }))
+        })
 }
 
 /// Match a string against Rust's primitive types, returning the

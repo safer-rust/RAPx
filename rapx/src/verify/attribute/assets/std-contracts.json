@@ -17,7 +17,9 @@
     },
     {
       "tag": "ValidNum",
-      "args": []
+      "args": [
+        "size_of(u8) * arg:1 <= isize::MAX"
+      ]
     },
     {
       "tag": "ValidString",
@@ -52,7 +54,9 @@
     },
     {
       "tag": "ValidNum",
-      "args": []
+      "args": [
+        "size_of(T) * arg:2 <= isize::MAX"
+      ]
     },
     {
       "tag": "Layout",
@@ -87,7 +91,9 @@
     },
     {
       "tag": "ValidNum",
-      "args": []
+      "args": [
+        "size_of(T) * arg:2 <= isize::MAX"
+      ]
     },
     {
       "tag": "Layout",
@@ -122,7 +128,9 @@
     },
     {
       "tag": "ValidNum",
-      "args": []
+      "args": [
+        "size_of(T) * arg:1 <= isize::MAX"
+      ]
     },
     {
       "tag": "Layout",
@@ -157,7 +165,9 @@
     },
     {
       "tag": "ValidNum",
-      "args": []
+      "args": [
+        "size_of(T) * arg:2 <= isize::MAX"
+      ]
     },
     {
       "tag": "Layout",
@@ -250,6 +260,12 @@
       "args": [
         "dst",
         "src"
+      ]
+    },
+    {
+      "tag": "ValidNum",
+      "args": [
+        "size_of(T) * arg:2 <= isize::MAX"
       ]
     }
   ],
@@ -378,7 +394,9 @@
     },
     {
       "tag": "ValidNum",
-      "args": []
+      "args": [
+        "size_of(T) * arg:2 <= isize::MAX"
+      ]
     },
     {
       "tag": "Align",
@@ -487,7 +505,9 @@
     },
     {
       "tag": "ValidNum",
-      "args": []
+      "args": [
+        "size_of(T) * arg:1 <= isize::MAX"
+      ]
     }
   ],
   "core::slice::raw::from_raw_parts_mut": [
@@ -534,19 +554,21 @@
     },
     {
       "tag": "ValidNum",
-      "args": []
+      "args": [
+        "size_of(T) * arg:1 <= isize::MAX"
+      ]
     }
   ],
   "core::slice::get_unchecked": [
     {
       "tag": "InBound",
-      "args": ["arg:0", "ty:T", "Arg_1 + 1"]
+      "args": ["arg:0", "ty:T", "arg:1 + const:1"]
     }
   ],
   "core::slice::get_unchecked_mut": [
     {
       "tag": "InBound",
-      "args": ["arg:0", "ty:T", "Arg_1 + 1"]
+      "args": ["arg:0", "ty:T", "arg:1 + const:1"]
     }
   ],
   "core::str::converts::from_raw_parts": [
@@ -586,7 +608,9 @@
     },
     {
       "tag": "ValidNum",
-      "args": []
+      "args": [
+        "size_of(u8) * arg:1 <= isize::MAX"
+      ]
     },
     {
       "tag": "Align",
@@ -730,7 +754,9 @@
     },
     {
       "tag": "ValidNum",
-      "args": []
+      "args": [
+        "size_of(u8) * arg:1 <= isize::MAX"
+      ]
     },
     {
       "tag": "Align",

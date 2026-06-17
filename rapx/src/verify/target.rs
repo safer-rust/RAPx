@@ -545,16 +545,63 @@ fn get_contract_from_entry<'tcx>(
 /// Unprefixed strings are kept unchanged for compatibility with older entries
 /// such as `"0"`, `"T"`, and `"1"`.
 fn normalize_json_contract_arg(arg: &str) -> String {
-    if let Some(index) = arg.strip_prefix("arg:") {
-        return format!("Arg_{}", index.trim());
+    let bytes = arg.as_bytes();
+    let mut out = String::with_capacity(arg.len());
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if arg[i..].starts_with("arg:") {
+            let start = i + "arg:".len();
+            let end = scan_while(arg, start, |ch| ch.is_ascii_digit());
+            if end > start {
+                out.push_str("Arg_");
+                out.push_str(&arg[start..end]);
+                i = end;
+                continue;
+            }
+        }
+
+        if arg[i..].starts_with("const:") {
+            let start = i + "const:".len();
+            let end = scan_while(arg, start, is_contract_token_char);
+            if end > start {
+                out.push_str(&arg[start..end]);
+                i = end;
+                continue;
+            }
+        }
+
+        if arg[i..].starts_with("ty:") {
+            let start = i + "ty:".len();
+            let end = scan_while(arg, start, is_contract_token_char);
+            if end > start {
+                out.push_str(&arg[start..end]);
+                i = end;
+                continue;
+            }
+        }
+
+        let ch = arg[i..].chars().next().unwrap();
+        out.push(ch);
+        i += ch.len_utf8();
     }
-    if let Some(value) = arg.strip_prefix("const:") {
-        return value.trim().to_string();
+
+    out
+}
+
+fn scan_while(arg: &str, mut index: usize, predicate: impl Fn(char) -> bool) -> usize {
+    while index < arg.len() {
+        let ch = arg[index..].chars().next().unwrap();
+        if !predicate(ch) {
+            break;
+        }
+        index += ch.len_utf8();
     }
-    if let Some(ty) = arg.strip_prefix("ty:") {
-        return ty.trim().to_string();
-    }
-    arg.to_string()
+    index
+}
+
+fn is_contract_token_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || ch == '_' || ch == ':'
 }
 
 fn is_rapx_named_attr(attr: &Attribute, name: &str) -> bool {

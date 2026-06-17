@@ -35,12 +35,12 @@ use z3::{
     ast::{Ast, Bool, Int},
 };
 
-use super::{align, in_bound, init, non_null, valid_ptr};
+use super::{align, in_bound, init, non_null, valid_num, valid_ptr};
 
 use crate::verify::{
     contract::{
-        ContractExpr, ContractPlace, ContractProjection, NumericOp, PlaceBase, Property,
-        PropertyArg, PropertyKind,
+        ContractExpr, ContractPlace, ContractProjection, NumericOp, NumericPredicate, PlaceBase,
+        Property, PropertyArg, PropertyKind, RelOp,
     },
     def_use::{PlaceBaseKey, PlaceKey},
     forward_visit::{AbstractValue, CallSummary, ForwardVisitResult, StateFact},
@@ -73,6 +73,7 @@ impl<'tcx> SmtChecker<'tcx> {
             PropertyKind::NonNull => non_null::check(self, callsite, property, forward),
             PropertyKind::InBound => in_bound::check(self, callsite, property, forward),
             PropertyKind::Init => init::check(self, callsite, property, forward),
+            PropertyKind::ValidNum => valid_num::check(self, callsite, property, forward),
             PropertyKind::ValidPtr => valid_ptr::check(self, callsite, property, forward),
             _ => SmtCheckResult::unknown("no SMT lowering for this property yet"),
         }
@@ -516,6 +517,57 @@ impl<'tcx> SmtChecker<'tcx> {
                 }
                 result
             }
+            SmtObligation::Predicate { predicates } => {
+                if predicates.is_empty() {
+                    return SmtCheckResult::unknown("ValidNum predicate set is empty").with_query(
+                        SmtQuery::new(
+                            obligation.clone(),
+                            model.assumptions().to_vec(),
+                            SmtPredicate::Custom(String::from("empty ValidNum predicate")),
+                        ),
+                    );
+                }
+
+                let Some(goal) = model.bool_for_predicates(predicates) else {
+                    return SmtCheckResult::unknown(
+                        "ValidNum predicate could not be lowered to SMT",
+                    )
+                    .with_query(SmtQuery::new(
+                        obligation.clone(),
+                        model.assumptions().to_vec(),
+                        SmtPredicate::Not(Box::new(if predicates.len() == 1 {
+                            predicates[0].clone()
+                        } else {
+                            SmtPredicate::And(predicates.clone())
+                        })),
+                    ));
+                };
+                let query = SmtQuery::new(
+                    obligation.clone(),
+                    model.assumptions().to_vec(),
+                    SmtPredicate::Not(Box::new(if predicates.len() == 1 {
+                        predicates[0].clone()
+                    } else {
+                        SmtPredicate::And(predicates.clone())
+                    })),
+                );
+
+                solver.assert(&goal.not());
+                match solver.check() {
+                    SatResult::Unsat => SmtCheckResult::proved(
+                        "numeric precondition proved; no counterexample satisfies the path facts",
+                    )
+                    .with_query(query),
+                    SatResult::Sat => SmtCheckResult::unknown(
+                        "current path facts do not prove the numeric precondition",
+                    )
+                    .with_query(query)
+                    .with_note("hint: add a matching numeric guard or expose a stronger summary"),
+                    SatResult::Unknown => {
+                        SmtCheckResult::unknown("solver returned unknown").with_query(query)
+                    }
+                }
+            }
             SmtObligation::Range { .. } => SmtCheckResult::unknown(
                 "range obligations are not implemented yet",
             )
@@ -673,11 +725,11 @@ impl<'tcx> SmtChecker<'tcx> {
             }
             ContractExpr::Const(value) => u64::try_from(*value).ok().map(SmtTerm::Const),
             ContractExpr::SizeOf(ty) => {
-                let (_, size) = self.type_layout(caller, *ty)?;
+                let size = self.required_size(caller, *ty)?;
                 Some(SmtTerm::Const(size))
             }
             ContractExpr::AlignOf(ty) => {
-                let (align, _) = self.type_layout(caller, *ty)?;
+                let align = self.required_alignment(caller, *ty)?;
                 Some(SmtTerm::Const(align))
             }
             ContractExpr::Binary { op, lhs, rhs } => {
@@ -687,14 +739,54 @@ impl<'tcx> SmtChecker<'tcx> {
                     NumericOp::Add => Some(SmtTerm::Add(lhs, rhs)),
                     NumericOp::Sub => Some(SmtTerm::Sub(lhs, rhs)),
                     NumericOp::Mul => Some(SmtTerm::Mul(lhs, rhs)),
+                    NumericOp::Div => Some(SmtTerm::Div(lhs, rhs)),
                     NumericOp::Rem => Some(SmtTerm::Rem(lhs, rhs)),
-                    NumericOp::Div | NumericOp::BitAnd | NumericOp::BitOr | NumericOp::BitXor => {
-                        None
-                    }
+                    NumericOp::BitAnd | NumericOp::BitOr | NumericOp::BitXor => None,
                 }
             }
             ContractExpr::Unary { .. } | ContractExpr::Unknown => None,
         }
+    }
+
+    /// Resolve a `ValidNum` predicate list at a concrete callsite.
+    pub(crate) fn property_numeric_predicates(
+        &self,
+        callsite: &Callsite<'tcx>,
+        property: &Property<'tcx>,
+    ) -> Option<Vec<NumericPredicate<'tcx>>> {
+        property.args.iter().find_map(|arg| {
+            let PropertyArg::Predicates(predicates) = arg else {
+                return None;
+            };
+            predicates
+                .iter()
+                .map(|predicate| {
+                    Some(NumericPredicate {
+                        lhs: self.bind_contract_expr_to_callsite(callsite, &predicate.lhs)?,
+                        op: predicate.op,
+                        rhs: self.bind_contract_expr_to_callsite(callsite, &predicate.rhs)?,
+                    })
+                })
+                .collect()
+        })
+    }
+
+    /// Convert a rebound contract predicate into the shared SMT predicate model.
+    pub(crate) fn numeric_predicate_to_smt_predicate(
+        &self,
+        caller: rustc_hir::def_id::DefId,
+        predicate: &NumericPredicate<'tcx>,
+    ) -> Option<SmtPredicate> {
+        let lhs = self.contract_expr_to_smt_term(caller, &predicate.lhs)?;
+        let rhs = self.contract_expr_to_smt_term(caller, &predicate.rhs)?;
+        Some(match predicate.op {
+            RelOp::Eq => SmtPredicate::Eq(lhs, rhs),
+            RelOp::Ne => SmtPredicate::Ne(lhs, rhs),
+            RelOp::Lt => SmtPredicate::Lt(lhs, rhs),
+            RelOp::Le => SmtPredicate::Le(lhs, rhs),
+            RelOp::Gt => SmtPredicate::Gt(lhs, rhs),
+            RelOp::Ge => SmtPredicate::Ge(lhs, rhs),
+        })
     }
 
     fn bind_contract_expr_to_callsite(
@@ -877,6 +969,23 @@ impl<'tcx> SmtChecker<'tcx> {
             .max()
     }
 
+    /// Return a conservative byte size for a concrete or bounded generic type.
+    ///
+    /// For a generic parameter with representative candidates, every candidate
+    /// must satisfy a numeric precondition.  We therefore use the maximum
+    /// candidate size for upper-bound formulas such as
+    /// `size_of(T) * len <= isize::MAX`.
+    pub(crate) fn required_size(
+        &self,
+        caller: rustc_hir::def_id::DefId,
+        ty: Ty<'tcx>,
+    ) -> Option<u64> {
+        if !matches!(ty.kind(), TyKind::Param(_)) {
+            return self.type_layout(caller, ty).map(|(_, size)| size);
+        }
+        self.generic_candidate_sizes(caller, ty)?.into_iter().max()
+    }
+
     fn generic_candidate_alignments(
         &self,
         caller: rustc_hir::def_id::DefId,
@@ -894,6 +1003,20 @@ impl<'tcx> SmtChecker<'tcx> {
         } else {
             Some(alignments)
         }
+    }
+
+    fn generic_candidate_sizes(
+        &self,
+        caller: rustc_hir::def_id::DefId,
+        ty: Ty<'tcx>,
+    ) -> Option<Vec<u64>> {
+        let candidates = GenericTypeCandidates::for_def(self.tcx, caller);
+        let sizes = candidates
+            .candidates_for_ty(ty)?
+            .iter()
+            .filter_map(|candidate| self.type_layout(caller, *candidate).map(|(_, size)| size))
+            .collect::<Vec<_>>();
+        if sizes.is_empty() { None } else { Some(sizes) }
     }
 }
 
@@ -927,6 +1050,8 @@ pub enum SmtObligation {
         ty_name: String,
         elements: u64,
     },
+    /// Prove one or more numeric predicates.
+    Predicate { predicates: Vec<SmtPredicate> },
 }
 
 impl SmtObligation {
@@ -976,6 +1101,14 @@ impl SmtObligation {
                 ty_name,
                 elements
             ),
+            SmtObligation::Predicate { predicates } => {
+                let rendered = predicates
+                    .iter()
+                    .map(SmtPredicate::describe)
+                    .collect::<Vec<_>>()
+                    .join(" && ");
+                format!("ValidNum({rendered})")
+            }
         }
     }
 }
@@ -989,6 +1122,7 @@ pub enum SmtTerm {
     Add(Box<SmtTerm>, Box<SmtTerm>),
     Sub(Box<SmtTerm>, Box<SmtTerm>),
     Mul(Box<SmtTerm>, Box<SmtTerm>),
+    Div(Box<SmtTerm>, Box<SmtTerm>),
     Rem(Box<SmtTerm>, Box<SmtTerm>),
 }
 
@@ -1002,6 +1136,7 @@ impl SmtTerm {
             SmtTerm::Add(lhs, rhs) => format!("({} + {})", lhs.describe(), rhs.describe()),
             SmtTerm::Sub(lhs, rhs) => format!("({} - {})", lhs.describe(), rhs.describe()),
             SmtTerm::Mul(lhs, rhs) => format!("({} * {})", lhs.describe(), rhs.describe()),
+            SmtTerm::Div(lhs, rhs) => format!("({} / {})", lhs.describe(), rhs.describe()),
             SmtTerm::Rem(lhs, rhs) => format!("({} % {})", lhs.describe(), rhs.describe()),
         }
     }
@@ -1876,11 +2011,92 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 let rhs = self.term_for_smt_term(rhs)?;
                 Some(Int::mul(self.ctx, &[lhs, rhs]))
             }
+            SmtTerm::Div(lhs, rhs) => {
+                let lhs = self.term_for_smt_term(lhs)?;
+                let rhs = self.term_for_smt_term(rhs)?;
+                Some(lhs.div(&rhs))
+            }
             SmtTerm::Rem(lhs, rhs) => {
                 let lhs = self.term_for_smt_term(lhs)?;
                 let rhs = self.term_for_smt_term(rhs)?;
                 Some(lhs.modulo(&rhs))
             }
+        }
+    }
+
+    /// Build a boolean term for a conjunction of shared predicates.
+    fn bool_for_predicates(&mut self, predicates: &[SmtPredicate]) -> Option<Bool<'ctx>> {
+        match predicates {
+            [] => None,
+            [predicate] => self.bool_for_predicate(predicate),
+            predicates => {
+                let bools = predicates
+                    .iter()
+                    .map(|predicate| self.bool_for_predicate(predicate))
+                    .collect::<Option<Vec<_>>>()?;
+                let refs = bools.iter().collect::<Vec<_>>();
+                Some(Bool::and(self.ctx, &refs))
+            }
+        }
+    }
+
+    /// Build a boolean term from a shared diagnostic/query predicate.
+    fn bool_for_predicate(&mut self, predicate: &SmtPredicate) -> Option<Bool<'ctx>> {
+        match predicate {
+            SmtPredicate::Eq(lhs, rhs) => {
+                let lhs = self.term_for_smt_term(lhs)?;
+                let rhs = self.term_for_smt_term(rhs)?;
+                Some(lhs._eq(&rhs))
+            }
+            SmtPredicate::Ne(lhs, rhs) => {
+                let lhs = self.term_for_smt_term(lhs)?;
+                let rhs = self.term_for_smt_term(rhs)?;
+                Some(lhs._eq(&rhs).not())
+            }
+            SmtPredicate::Le(lhs, rhs) => {
+                let lhs = self.term_for_smt_term(lhs)?;
+                let rhs = self.term_for_smt_term(rhs)?;
+                Some(lhs.le(&rhs))
+            }
+            SmtPredicate::Lt(lhs, rhs) => {
+                let lhs = self.term_for_smt_term(lhs)?;
+                let rhs = self.term_for_smt_term(rhs)?;
+                Some(lhs.lt(&rhs))
+            }
+            SmtPredicate::Ge(lhs, rhs) => {
+                let lhs = self.term_for_smt_term(lhs)?;
+                let rhs = self.term_for_smt_term(rhs)?;
+                Some(lhs.ge(&rhs))
+            }
+            SmtPredicate::Gt(lhs, rhs) => {
+                let lhs = self.term_for_smt_term(lhs)?;
+                let rhs = self.term_for_smt_term(rhs)?;
+                Some(lhs.gt(&rhs))
+            }
+            SmtPredicate::And(predicates) => self.bool_for_predicates(predicates),
+            SmtPredicate::Divisible { term, modulus } => {
+                let term = self.term_for_smt_term(term)?;
+                let modulus = Int::from_u64(self.ctx, *modulus);
+                let zero = Int::from_u64(self.ctx, 0);
+                Some(term.modulo(&modulus)._eq(&zero))
+            }
+            SmtPredicate::InBounds {
+                index,
+                access_count,
+                len,
+            } => {
+                let index = self.term_for_smt_term(index)?;
+                let access_count = self.term_for_smt_term(access_count)?;
+                let len = self.term_for_smt_term(len)?;
+                let zero = Int::from_u64(self.ctx, 0);
+                let covered_end = Int::add(self.ctx, &[index.clone(), access_count]);
+                Some(Bool::and(
+                    self.ctx,
+                    &[&index.ge(&zero), &covered_end.le(&len)],
+                ))
+            }
+            SmtPredicate::Not(predicate) => Some(self.bool_for_predicate(predicate)?.not()),
+            SmtPredicate::Custom(_) => None,
         }
     }
 
