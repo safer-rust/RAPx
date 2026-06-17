@@ -1153,6 +1153,87 @@ fn init_std_unsound_08() {
 }
 
 #[test]
+fn validnum_sound_01() {
+    let output = run_with_args("verify/validnum_sound_01", VERIFY_CMD);
+    assert_contain(&output, "function: sound_guarded_less_than");
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn validnum_unsound_01() {
+    let output = run_with_args("verify/validnum_unsound_01", VERIFY_CMD);
+    assert_contain(&output, "function: unsound_missing_less_than_guard");
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn validnum_sound_02() {
+    let output = run_with_args("verify/validnum_sound_02", VERIFY_CMD);
+    assert_contain(&output, "function: sound_guarded_nonzero");
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn validnum_unsound_02() {
+    let output = run_with_args("verify/validnum_unsound_02", VERIFY_CMD);
+    assert_contain(&output, "function: unsound_missing_nonzero_guard");
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn validnum_sound_03() {
+    let output = run_with_args("verify/validnum_sound_03", VERIFY_CMD);
+    assert_contain(&output, "function: sound_constant_sum_below_cap");
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn validnum_unsound_03() {
+    let output = run_with_args("verify/validnum_unsound_03", VERIFY_CMD);
+    assert_contain(&output, "function: unsound_partial_sum_guard");
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn validnum_sound_04() {
+    let output = run_with_args("verify/validnum_sound_04", VERIFY_CMD);
+    assert_contain(&output, "function: sound_trait_bound_size_limit");
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn validnum_unsound_04() {
+    let output = run_with_args("verify/validnum_unsound_04", VERIFY_CMD);
+    assert_contain(&output, "function: unsound_trait_bound_missing_size_limit");
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn validnum_sound_05() {
+    let output = run_with_args("verify/validnum_sound_05", VERIFY_CMD);
+    assert_contain(&output, "function: sound_scc_validnum_index_guard");
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn validnum_std_sound_01() {
+    let output = run_with_args("verify/validnum_std_sound_01", VERIFY_CMD);
+    assert_contain(&output, "function: sound_std_from_raw_parts_validnum");
+    assert_contain(&output, "ValidNum | Proved");
+}
+
+#[test]
+fn validnum_std_unsound_01() {
+    let output = run_with_args("verify/validnum_std_unsound_01", VERIFY_CMD);
+    assert_contain(
+        &output,
+        "function: unsound_std_from_raw_parts_validnum_overflow",
+    );
+    assert_contain(&output, "ValidNum | Unknown");
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
 fn struct_invariant_1() {
     let output = run_with_args("verify/struct_invariant_1", VERIFY_CMD);
     // unsound_new: constructor with requires, all struct invariants proved
