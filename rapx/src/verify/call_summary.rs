@@ -195,6 +195,16 @@ pub fn dependency_summary<'tcx>(
         };
     }
 
+    if is_from_trait_call(&name) {
+        return CallDependencySummary {
+            callee,
+            name,
+            return_depends_on_args: vec![0],
+            may_write_args: Vec::new(),
+            unsupported: false,
+        };
+    }
+
     if let Some(callee) = callee {
         if let Some(must_write_args) = local_must_write_args(tcx, callee) {
             if !must_write_args.is_empty() {
@@ -338,6 +348,23 @@ pub fn effect_summary<'tcx>(
         };
     }
 
+    if is_from_trait_call(&name) && is_nonnull_destination(tcx, caller, destination) {
+        let mut effects = vec![
+            CallEffect::ReturnPointerFromArg { arg: 0 },
+            CallEffect::ReturnNonZero,
+        ];
+        if let Some((align, ty_name)) = destination_nonnull_alignment(tcx, caller, destination) {
+            effects.push(CallEffect::ReturnAligned { align, ty_name });
+        }
+        return CallEffectSummary {
+            callee,
+            name,
+            destination,
+            effects,
+            unsupported: false,
+        };
+    }
+
     if let Some(callee) = callee {
         if let Some(must_write_args) = local_must_write_args(tcx, callee) {
             let effects: Vec<_> = must_write_args
@@ -446,6 +473,10 @@ pub fn is_maybe_uninit_uninit_call(name: &str) -> bool {
 /// Return true for layout constant producers.
 pub fn is_layout_constant_call(name: &str) -> bool {
     PrimitiveCall::classify(name).is_some_and(PrimitiveCall::is_layout_constant)
+}
+
+fn is_from_trait_call(name: &str) -> bool {
+    name == "std::convert::From::from" || name == "core::convert::From::from"
 }
 
 /// Return a concrete layout constant effect for `align_of::<T>()` or `size_of::<T>()`.
@@ -830,12 +861,47 @@ fn destination_pointee_alignment<'tcx>(
     type_layout(tcx, caller, pointee).map(|(align, _)| (align, format!("{pointee:?}")))
 }
 
+/// Return pointee alignment when the destination is `NonNull<T>`.
+fn destination_nonnull_alignment<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    caller: DefId,
+    destination: Option<Local>,
+) -> Option<(u64, String)> {
+    let destination = destination?;
+    let ty = tcx.optimized_mir(caller).local_decls[destination].ty;
+    let pointee = nonnull_inner_ty(tcx, ty)?;
+    type_layout(tcx, caller, pointee).map(|(align, _)| (align, format!("{pointee:?}")))
+}
+
+fn is_nonnull_destination<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    caller: DefId,
+    destination: Option<Local>,
+) -> bool {
+    let Some(destination) = destination else {
+        return false;
+    };
+    let ty = tcx.optimized_mir(caller).local_decls[destination].ty;
+    nonnull_inner_ty(tcx, ty).is_some() || format!("{ty:?}").contains("NonNull<")
+}
+
 /// Return the pointee type of raw pointers and references.
 fn pointee_ty<'tcx>(ty: Ty<'tcx>) -> Option<Ty<'tcx>> {
     match ty.kind() {
         TyKind::RawPtr(ty, _) | TyKind::Ref(_, ty, _) => Some(*ty),
         _ => None,
     }
+}
+
+fn nonnull_inner_ty<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<Ty<'tcx>> {
+    let TyKind::Adt(def, args) = ty.kind() else {
+        return None;
+    };
+    let path = tcx.def_path_str(def.did());
+    if !path.contains("ptr::non_null::NonNull") {
+        return None;
+    }
+    args.iter().find_map(|arg| arg.as_type())
 }
 
 /// Return ABI alignment and size for a type in the caller environment.
