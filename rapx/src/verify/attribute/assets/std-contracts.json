@@ -620,14 +620,6 @@
       ]
     }
   ],
-  "core::mem::maybe_uninit::assume_init": [
-    {
-      "tag": "NonNull",
-      "args": [
-        "self"
-      ]
-    }
-  ],
   "core::ptr::const_ptr::add": [
     {
       "tag": "NonNull",

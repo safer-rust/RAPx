@@ -654,9 +654,10 @@ impl<'tcx> ForwardVisitor<'tcx> {
         let body = self.tcx.optimized_mir(caller);
         for block in body.basic_blocks.iter() {
             for statement in &block.statements {
-                let StatementKind::Assign(box (dest, rvalue)) = &statement.kind else {
+                let StatementKind::Assign(assign) = &statement.kind else {
                     continue;
                 };
+                let (dest, rvalue) = assign.as_ref();
                 if dest.local != place.local {
                     continue;
                 }
@@ -690,9 +691,10 @@ impl<'tcx> ForwardVisitor<'tcx> {
         let body = self.tcx.optimized_mir(caller);
         for block in body.basic_blocks.iter() {
             for statement in &block.statements {
-                let StatementKind::Assign(box (dest, rvalue)) = &statement.kind else {
+                let StatementKind::Assign(assign) = &statement.kind else {
                     continue;
                 };
+                let (dest, rvalue) = assign.as_ref();
                 if dest.local != place.local {
                     continue;
                 }
