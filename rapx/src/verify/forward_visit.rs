@@ -665,7 +665,8 @@ impl<'tcx> ForwardVisitor<'tcx> {
                     Rvalue::Ref(_, _, source) | Rvalue::RawPtr(_, source) => {
                         return Some(PlaceKey::from_mir_place(source));
                     }
-                    Rvalue::Use(Operand::Copy(source)) | Rvalue::Use(Operand::Move(source)) => {
+                    Rvalue::Use(Operand::Copy(source), ..)
+                    | Rvalue::Use(Operand::Move(source), ..) => {
                         return Some(PlaceKey::from_mir_place(source));
                     }
                     _ => {}
@@ -701,7 +702,8 @@ impl<'tcx> ForwardVisitor<'tcx> {
 
                 let source = match rvalue {
                     Rvalue::Ref(_, _, source) | Rvalue::RawPtr(_, source) => source,
-                    Rvalue::Use(Operand::Copy(source)) | Rvalue::Use(Operand::Move(source)) => {
+                    Rvalue::Use(Operand::Copy(source), ..)
+                    | Rvalue::Use(Operand::Move(source), ..) => {
                         source
                     }
                     _ => continue,
