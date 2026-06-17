@@ -848,6 +848,90 @@ fn align_repeat_threshold_repeat2_unsound() {
 }
 
 #[test]
+fn nonnull_sound_07() {
+    let output = run_with_args("verify/nonnull_sound_07", VERIFY_CMD);
+    assert_contain(&output, "function: sound_ref_cast_copy_chain");
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn nonnull_sound_02() {
+    let output = run_with_args("verify/nonnull_sound_02", VERIFY_CMD);
+    assert_contain(&output, "function: sound_slice_as_ptr_branch");
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn nonnull_sound_03() {
+    let output = run_with_args("verify/nonnull_sound_03", VERIFY_CMD);
+    assert_contain(&output, "function: sound_intra_helper_from_ref");
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn nonnull_sound_04() {
+    let output = run_with_args("verify/nonnull_sound_04", VERIFY_CMD);
+    assert_contain(&output, "function: sound_scc_unrelated_state");
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn nonnull_sound_05() {
+    let output = run_with_args("verify/nonnull_sound_05", VERIFY_CMD);
+    assert_contain(&output, "function: sound_raw_arg_guarded");
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn nonnull_sound_06() {
+    let output = run_with_args("verify/nonnull_sound_06", VERIFY_CMD);
+    assert_contain(&output, "function: sound_nonnull_wrapper_from_ref");
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn nonnull_unsound_01() {
+    let output = run_with_args("verify/nonnull_unsound_01", VERIFY_CMD);
+    assert_contain(&output, "function: unsound_explicit_null_constant");
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn nonnull_unsound_02() {
+    let output = run_with_args("verify/nonnull_unsound_02", VERIFY_CMD);
+    assert_contain(&output, "function: unsound_raw_pointer_argument");
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn nonnull_unsound_03() {
+    let output = run_with_args("verify/nonnull_unsound_03", VERIFY_CMD);
+    assert_contain(&output, "function: unsound_branch_selects_null");
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn nonnull_unsound_04() {
+    let output = run_with_args("verify/nonnull_unsound_04", VERIFY_CMD);
+    assert_contain(&output, "function: unsound_scc_overwrites_with_null");
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn nonnull_unsound_05() {
+    let output = run_with_args("verify/nonnull_unsound_05", VERIFY_CMD);
+    assert_contain(&output, "function: unsound_unrelated_guard");
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn nonnull_unsound_06() {
+    let output = run_with_args("verify/nonnull_unsound_06", VERIFY_CMD);
+    assert_contain(&output, "function: unsound_nonnull_wrapper_from_null");
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
 fn inbound_sound_01() {
     let output = run_with_args("verify/inbound_sound_01", VERIFY_CMD);
     assert_contain(&output, "function: sound_ptr_add_guarded");

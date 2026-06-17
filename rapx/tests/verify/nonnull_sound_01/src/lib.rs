@@ -15,7 +15,7 @@ unsafe fn caller_with_contract(_ptr: *const u32) {
     }
 }
 
-// SOUND: chained unsafe callers — inner caller's contract propagates.
+// SOUND: chained unsafe callers -- inner caller's contract propagates.
 #[rapx::requires(NonNull(ptr), kind = "precond")]
 #[rapx::verify]
 pub unsafe fn sound_chained_propagation(ptr: *const u32) {
