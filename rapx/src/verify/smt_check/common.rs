@@ -35,7 +35,7 @@ use z3::{
     ast::{Ast, Bool, Int},
 };
 
-use super::{align, in_bound, init, non_null, valid_num, valid_ptr};
+use super::{align, allocated, in_bound, init, non_null, valid_num, valid_ptr};
 
 use crate::verify::{
     contract::{
@@ -70,6 +70,7 @@ impl<'tcx> SmtChecker<'tcx> {
     ) -> SmtCheckResult {
         match property.kind {
             PropertyKind::Align => align::check(self, callsite, property, forward),
+            PropertyKind::Allocated => allocated::check(self, callsite, property, forward),
             PropertyKind::NonNull => non_null::check(self, callsite, property, forward),
             PropertyKind::InBound => in_bound::check(self, callsite, property, forward),
             PropertyKind::Init => init::check(self, callsite, property, forward),
@@ -92,6 +93,9 @@ impl<'tcx> SmtChecker<'tcx> {
     ) -> SmtCheckResult {
         match property.kind {
             PropertyKind::Align => align::check_for_checkpoint(self, caller, property, forward),
+            PropertyKind::Allocated => {
+                SmtCheckResult::unknown("Allocated struct invariant not implemented yet")
+            }
             PropertyKind::NonNull => {
                 SmtCheckResult::unknown("NonNull struct invariant not implemented yet")
             }
@@ -516,6 +520,188 @@ impl<'tcx> SmtChecker<'tcx> {
                     );
                 }
                 result
+            }
+            SmtObligation::Allocated {
+                place,
+                ty_name,
+                elements,
+            } => {
+                let target_label = place_label(place);
+
+                if let Some(bounds) = model.pointer_bounds_for_place(place) {
+                    let zero = Int::from_u64(&ctx, 0);
+                    let Some(access) = model.term_for_smt_term(elements) else {
+                        return SmtCheckResult::unknown(format!(
+                            "could not build an allocation element-count term for {}",
+                            elements.describe()
+                        ))
+                        .with_query(SmtQuery::new(
+                            obligation.clone(),
+                            model.assumptions().to_vec(),
+                            SmtPredicate::Custom(format!(
+                                "not Allocated({}, {ty_name}, {})",
+                                target_label,
+                                elements.describe()
+                            )),
+                        ));
+                    };
+                    let index_non_negative = bounds.index.ge(&zero);
+                    let access_non_negative = access.ge(&zero);
+                    let covered_end = Int::add(&ctx, &[bounds.index.clone(), access]);
+                    let within_len = covered_end.le(&bounds.len);
+                    solver.assert(&index_non_negative);
+                    solver.assert(&access_non_negative);
+                    model.assumptions.push(SmtPredicate::Ge(
+                        bounds.index_term.clone(),
+                        SmtTerm::Const(0),
+                    ));
+                    model
+                        .assumptions
+                        .push(SmtPredicate::Ge(elements.clone(), SmtTerm::Const(0)));
+                    let goal = Bool::and(
+                        &ctx,
+                        &[&index_non_negative, &access_non_negative, &within_len],
+                    );
+                    let query = SmtQuery::new(
+                        obligation.clone(),
+                        model.assumptions().to_vec(),
+                        SmtPredicate::Custom(format!(
+                            "not same_object_bounds({}, {}, {})",
+                            target_label,
+                            bounds.index_term.describe(),
+                            elements.describe()
+                        )),
+                    );
+
+                    solver.assert(&goal.not());
+                    return match solver.check() {
+                        SatResult::Unsat => SmtCheckResult::proved(format!(
+                            "allocation proved for {target_label}; requested range stays inside the matched object"
+                        ))
+                        .with_query(query),
+                        SatResult::Sat => SmtCheckResult::unknown(
+                            "current path facts do not prove the requested range stays inside one allocation",
+                        )
+                        .with_query(query)
+                        .with_note(
+                            "hint: add an object-length guard or provide a richer allocation summary",
+                        ),
+                        SatResult::Unknown => {
+                            SmtCheckResult::unknown("solver returned unknown").with_query(query)
+                        }
+                    };
+                }
+
+                let Some(target_term) = model.term_for_place(place) else {
+                    return SmtCheckResult::unknown(format!(
+                        "could not build an address term for {target_label}"
+                    ))
+                    .with_query(SmtQuery::new(
+                        obligation.clone(),
+                        model.assumptions().to_vec(),
+                        SmtPredicate::Custom(format!(
+                            "not Allocated({}, {ty_name}, {})",
+                            target_label,
+                            elements.describe()
+                        )),
+                    ));
+                };
+                let Some(required_elements) = model.term_for_smt_term(elements) else {
+                    return SmtCheckResult::unknown(format!(
+                        "could not build an allocation element-count term for {}",
+                        elements.describe()
+                    ))
+                    .with_query(SmtQuery::new(
+                        obligation.clone(),
+                        model.assumptions().to_vec(),
+                        SmtPredicate::Custom(format!(
+                            "not Allocated({}, {ty_name}, {})",
+                            target_label,
+                            elements.describe()
+                        )),
+                    ));
+                };
+
+                let allocated_facts = forward
+                    .facts
+                    .iter()
+                    .filter_map(|fact| match fact {
+                        StateFact::KnownAllocated {
+                            place,
+                            object,
+                            ty_name,
+                            elements,
+                            reason,
+                        } => Some((
+                            place.clone(),
+                            object.clone(),
+                            ty_name.clone(),
+                            *elements,
+                            reason.clone(),
+                        )),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+
+                for (alloc_place, object, alloc_ty_name, alloc_elements, reason) in allocated_facts
+                {
+                    if !allocated_type_compatible(&alloc_ty_name, ty_name) {
+                        continue;
+                    }
+                    if allocation_object_invalidated(forward, &object) {
+                        continue;
+                    }
+                    let Some(alloc_term) = model.term_for_place(&alloc_place) else {
+                        continue;
+                    };
+                    let query = SmtQuery::new(
+                        obligation.clone(),
+                        model.assumptions().to_vec(),
+                        SmtPredicate::Custom(format!(
+                            "not same_allocated_object({}, {}) or {} > {}",
+                            target_label,
+                            place_label(&alloc_place),
+                            elements.describe(),
+                            alloc_elements
+                        )),
+                    );
+
+                    solver.push();
+                    solver.assert(&target_term._eq(&alloc_term).not());
+                    let same_address = matches!(solver.check(), SatResult::Unsat);
+                    solver.pop(1);
+                    if !same_address {
+                        continue;
+                    }
+
+                    solver.push();
+                    solver.assert(&required_elements.gt(&Int::from_u64(&ctx, alloc_elements)));
+                    let enough_elements = matches!(solver.check(), SatResult::Unsat);
+                    solver.pop(1);
+                    if enough_elements {
+                        return SmtCheckResult::proved(format!(
+                            "allocation proved; {target_label} aliases {} element(s) of {} ({reason})",
+                            alloc_elements, alloc_ty_name
+                        ))
+                        .with_query(query);
+                    }
+                }
+
+                SmtCheckResult::unknown(
+                    "current path facts do not prove the target range is backed by one live allocation",
+                )
+                .with_query(SmtQuery::new(
+                    obligation.clone(),
+                    model.assumptions().to_vec(),
+                    SmtPredicate::Custom(format!(
+                        "not Allocated({}, {ty_name}, {})",
+                        target_label,
+                        elements.describe()
+                    )),
+                ))
+                .with_note(
+                    "hint: keep pointer provenance, object length, and lifetime facts for the target object",
+                )
             }
             SmtObligation::Predicate { predicates } => {
                 if predicates.is_empty() {
@@ -1051,6 +1237,12 @@ pub enum SmtObligation {
         ty_name: String,
         elements: u64,
     },
+    /// Prove that `place` points to `elements` elements in one live allocation.
+    Allocated {
+        place: PlaceKey,
+        ty_name: String,
+        elements: SmtTerm,
+    },
     /// Prove one or more numeric predicates.
     Predicate { predicates: Vec<SmtPredicate> },
 }
@@ -1101,6 +1293,16 @@ impl SmtObligation {
                 place_label(place),
                 ty_name,
                 elements
+            ),
+            SmtObligation::Allocated {
+                place,
+                ty_name,
+                elements,
+            } => format!(
+                "Allocated({}, {}, {} element(s))",
+                place_label(place),
+                ty_name,
+                elements.describe()
             ),
             SmtObligation::Predicate { predicates } => {
                 let rendered = predicates
@@ -1435,6 +1637,19 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                     self.assumptions.push(SmtPredicate::Custom(format!(
                         "{} initialized for {ty_name}, {elements} element(s) ({reason})",
                         place_label(place)
+                    )));
+                }
+                StateFact::KnownAllocated {
+                    place,
+                    object,
+                    ty_name,
+                    elements,
+                    reason,
+                } => {
+                    self.assumptions.push(SmtPredicate::Custom(format!(
+                        "{} allocated in {} for {ty_name}, {elements} element(s) ({reason})",
+                        place_label(place),
+                        place_label(object)
                     )));
                 }
                 StateFact::KnownConst {
@@ -2375,6 +2590,14 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 })?;
                 self.origin_key_for_value(call.args.get(source_arg)?, seen)
             }
+            AbstractValue::CallResult(call) => {
+                let source_arg = call.effects.iter().find_map(|effect| match effect {
+                    crate::verify::call_summary::CallEffect::ReturnPointerFromArg { arg }
+                    | crate::verify::call_summary::CallEffect::ReturnAliasArg { arg } => Some(*arg),
+                    _ => None,
+                })?;
+                self.origin_key_for_value(call.args.get(source_arg)?, seen)
+            }
             _ => Some(value_label(&resolved)),
         }
     }
@@ -2813,6 +3036,21 @@ fn const_int_from_debug(text: &str) -> Option<u128> {
 
 fn init_type_compatible(init_ty_name: &str, required_ty_name: &str) -> bool {
     normalize_init_ty_name(init_ty_name) == normalize_init_ty_name(required_ty_name)
+}
+
+fn allocated_type_compatible(allocated_ty_name: &str, required_ty_name: &str) -> bool {
+    normalize_init_ty_name(allocated_ty_name) == normalize_init_ty_name(required_ty_name)
+}
+
+fn allocation_object_invalidated<'tcx>(
+    forward: &ForwardVisitResult<'tcx>,
+    object: &PlaceKey,
+) -> bool {
+    forward.facts.iter().any(|fact| match fact {
+        StateFact::LocalDead(local) => object.local() == Some(*local),
+        StateFact::Drop(place) => place.overlaps(object) || object.overlaps(place),
+        _ => false,
+    })
 }
 
 fn normalize_init_ty_name(ty_name: &str) -> String {

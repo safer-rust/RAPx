@@ -1,0 +1,6 @@
+[package]
+name = "allocated_sound_05"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]

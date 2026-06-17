@@ -100,8 +100,21 @@ impl<'tcx> BackwardVisitor<'tcx> {
         let body = self.tcx.optimized_mir(caller);
         let flow = build_dataflow_graph(self.tcx, caller);
 
+        let keep_allocation_invalidations = matches!(
+            visit.property.kind,
+            contract::PropertyKind::Allocated | contract::PropertyKind::ValidPtr
+        );
+
         for step in path.steps.iter().rev() {
-            self.visit_path_step_inner(step, callsite_loc, &body, &flow, &mut relevant, &mut items);
+            self.visit_path_step_inner(
+                step,
+                callsite_loc,
+                &body,
+                &flow,
+                &mut relevant,
+                &mut items,
+                keep_allocation_invalidations,
+            );
         }
 
         items.reverse();
@@ -116,6 +129,7 @@ impl<'tcx> BackwardVisitor<'tcx> {
         flow: &DataflowGraph,
         relevant: &mut RelevantPlaces,
         items: &mut Vec<BackwardItem<'tcx>>,
+        keep_allocation_invalidations: bool,
     ) {
         match step {
             PathStep::Callsite(location) => {
@@ -137,10 +151,19 @@ impl<'tcx> BackwardVisitor<'tcx> {
                         body,
                         relevant,
                         items,
+                        keep_allocation_invalidations,
                     );
                 }
                 for (statement_index, statement) in block_data.statements.iter().enumerate().rev() {
-                    self.visit_statement(*block, statement_index, statement, flow, relevant, items);
+                    self.visit_statement(
+                        *block,
+                        statement_index,
+                        statement,
+                        flow,
+                        relevant,
+                        items,
+                        keep_allocation_invalidations,
+                    );
                 }
             }
         }
@@ -155,7 +178,18 @@ impl<'tcx> BackwardVisitor<'tcx> {
         flow: &DataflowGraph,
         relevant: &mut RelevantPlaces,
         items: &mut Vec<BackwardItem<'tcx>>,
+        keep_allocation_invalidations: bool,
     ) {
+        if keep_allocation_invalidations && matches!(statement.kind, StatementKind::StorageDead(_))
+        {
+            items.push(BackwardItem::Statement {
+                block,
+                statement_index,
+                kind: KeepReason::Invalidation,
+            });
+            return;
+        }
+
         let mut defs = RelevantPlaces::new();
         match &statement.kind {
             StatementKind::Assign(assign) => {
@@ -215,7 +249,16 @@ impl<'tcx> BackwardVisitor<'tcx> {
         body: &Body<'tcx>,
         relevant: &mut RelevantPlaces,
         items: &mut Vec<BackwardItem<'tcx>>,
+        keep_allocation_invalidations: bool,
     ) {
+        if keep_allocation_invalidations && matches!(terminator.kind, TerminatorKind::Drop { .. }) {
+            items.push(BackwardItem::Terminator {
+                block,
+                kind: KeepReason::Invalidation,
+            });
+            return;
+        }
+
         if let TerminatorKind::Call {
             func,
             args,

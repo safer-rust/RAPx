@@ -9,6 +9,7 @@
 //! obligations. They should not construct independent solver APIs.
 
 mod align;
+mod allocated;
 mod common;
 mod in_bound;
 mod init;

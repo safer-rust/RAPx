@@ -932,6 +932,145 @@ fn nonnull_unsound_06() {
 }
 
 #[test]
+fn allocated_sound_01() {
+    let output = run_with_args("verify/allocated_sound_01", VERIFY_CMD);
+    assert_contain(&output, "function: sound_stack_local_allocated");
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn allocated_sound_02() {
+    let output = run_with_args("verify/allocated_sound_02", VERIFY_CMD);
+    assert_contain(&output, "function: sound_slice_prefix_allocated");
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn allocated_sound_03() {
+    let output = run_with_args("verify/allocated_sound_03", VERIFY_CMD);
+    assert_contain(&output, "function: sound_live_vec_allocated");
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn allocated_sound_04() {
+    let output = run_with_args("verify/allocated_sound_04", VERIFY_CMD);
+    assert_contain(&output, "function: sound_live_box_allocated");
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn allocated_sound_05() {
+    let output = run_with_args("verify/allocated_sound_05", VERIFY_CMD);
+    assert_contain(&output, "function: sound_branch_selects_live_local");
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn allocated_sound_06() {
+    let output = run_with_args("verify/allocated_sound_06", VERIFY_CMD);
+    assert_contain(&output, "function: sound_loop_slice_element_allocated");
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn allocated_sound_07() {
+    let output = run_with_args("verify/allocated_sound_07", VERIFY_CMD);
+    assert_contain(&output, "function: sound_scc_selects_live_array");
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn allocated_sound_08() {
+    let output = run_with_args("verify/allocated_sound_08", VERIFY_CMD);
+    assert_contain(&output, "function: sound_intra_returns_slice_pointer");
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn allocated_unsound_01() {
+    let output = run_with_args("verify/allocated_unsound_01", VERIFY_CMD);
+    assert_contain(&output, "function: unsound_null_not_allocated");
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn allocated_unsound_02() {
+    let output = run_with_args("verify/allocated_unsound_02", VERIFY_CMD);
+    assert_contain(&output, "function: unsound_stack_scope_ended");
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn allocated_unsound_03() {
+    let output = run_with_args("verify/allocated_unsound_03", VERIFY_CMD);
+    assert_contain(&output, "function: unsound_vec_dropped_before_use");
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn allocated_unsound_04() {
+    let output = run_with_args("verify/allocated_unsound_04", VERIFY_CMD);
+    assert_contain(&output, "function: unsound_empty_slice_needs_one_element");
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn allocated_unsound_05() {
+    let output = run_with_args("verify/allocated_unsound_05", VERIFY_CMD);
+    assert_contain(&output, "function: unsound_branch_may_select_null");
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn allocated_unsound_06() {
+    let output = run_with_args("verify/allocated_unsound_06", VERIFY_CMD);
+    assert_contain(&output, "function: unsound_scc_overwrites_with_null");
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn allocated_unsound_07() {
+    let output = run_with_args("verify/allocated_unsound_07", VERIFY_CMD);
+    assert_contain(&output, "function: unsound_vec_reallocates_old_pointer");
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn allocated_unsound_08() {
+    let output = run_with_args("verify/allocated_unsound_08", VERIFY_CMD);
+    assert_contain(
+        &output,
+        "function: unsound_slice_too_short_for_requested_len",
+    );
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn allocated_unsound_09() {
+    let output = run_with_args("verify/allocated_unsound_09", VERIFY_CMD);
+    assert_contain(&output, "function: unsound_intra_returns_dangling_pointer");
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn allocated_unsound_10() {
+    let output = run_with_args("verify/allocated_unsound_10", VERIFY_CMD);
+    assert_contain(&output, "function: unsound_scc_selects_dead_temporary");
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn allocated_unsound_11() {
+    let output = run_with_args("verify/allocated_unsound_11", VERIFY_CMD);
+    assert_contain(
+        &output,
+        "function: unsound_adjacent_stack_objects_do_not_merge",
+    );
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
 fn inbound_sound_01() {
     let output = run_with_args("verify/inbound_sound_01", VERIFY_CMD);
     assert_contain(&output, "function: sound_ptr_add_guarded");

@@ -9,9 +9,9 @@
 //! ValidPtr(p, T, n)
 //!   -> NonNull(p)
 //!   -> Align(p, T)
-//!   -> Allocated(p, T, n)  // future
-//!   -> InBound(p, T, n)    // future
-//!   -> Init(p, T, n)       // future
+//!   -> Allocated(p, T, n)
+//!   -> InBound(p, T, n)
+//!   -> Init(p, T, n)
 //!   -> Typed(p, T)         // future
 //! ```
 //!
@@ -20,7 +20,7 @@
 //! succeed.
 
 use super::{
-    align,
+    align, allocated,
     common::{SmtCheckResult, SmtChecker},
     in_bound, init, non_null,
 };
@@ -39,11 +39,13 @@ pub(crate) fn check<'tcx>(
 ) -> SmtCheckResult {
     let non_null_property = primitive_property(property, PropertyKind::NonNull);
     let align_property = primitive_property(property, PropertyKind::Align);
+    let allocated_property = primitive_property(property, PropertyKind::Allocated);
     let in_bound_property = primitive_property(property, PropertyKind::InBound);
     let init_property = primitive_property(property, PropertyKind::Init);
 
     let non_null = non_null::check(checker, callsite, &non_null_property, forward);
     let align = align::check(checker, callsite, &align_property, forward);
+    let allocated = allocated::check(checker, callsite, &allocated_property, forward);
     let in_bound = in_bound::check(checker, callsite, &in_bound_property, forward);
     let init = init::check(checker, callsite, &init_property, forward);
 
@@ -52,9 +54,13 @@ pub(crate) fn check<'tcx>(
     )
     .with_note(format!("primitive NonNull via SMT: {:?}", non_null.result))
     .with_note(format!("primitive Align via SMT: {:?}", align.result))
+    .with_note(format!(
+        "primitive Allocated via SMT: {:?}",
+        allocated.result
+    ))
     .with_note(format!("primitive InBound via SMT: {:?}", in_bound.result))
     .with_note(format!("primitive Init via SMT: {:?}", init.result))
-    .with_note("missing primitive SMT lowerings: Allocated, Typed")
+    .with_note("missing primitive SMT lowerings: Typed")
 }
 
 /// Reuse the original arguments while checking one primitive component.
