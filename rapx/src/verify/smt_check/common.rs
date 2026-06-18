@@ -35,7 +35,7 @@ use z3::{
     ast::{Ast, Bool, Int},
 };
 
-use super::{align, allocated, in_bound, init, non_null, valid_num, valid_ptr};
+use super::{alias, align, allocated, in_bound, init, non_null, non_overlap, valid_num, valid_ptr};
 
 use crate::verify::{
     contract::{
@@ -73,10 +73,12 @@ impl<'tcx> SmtChecker<'tcx> {
     ) -> SmtCheckResult {
         match property.kind {
             PropertyKind::Align => align::check(self, callsite, property, forward),
+            PropertyKind::Alias => alias::check(self, callsite, property, forward),
             PropertyKind::Allocated => allocated::check(self, callsite, property, forward),
             PropertyKind::NonNull => non_null::check(self, callsite, property, forward),
             PropertyKind::InBound => in_bound::check(self, callsite, property, forward),
             PropertyKind::Init => init::check(self, callsite, property, forward),
+            PropertyKind::NonOverlap => non_overlap::check(self, callsite, property, forward),
             PropertyKind::ValidNum => valid_num::check(self, callsite, property, forward),
             PropertyKind::ValidPtr => valid_ptr::check(self, callsite, property, forward),
             _ => SmtCheckResult::unknown("no SMT lowering for this property yet"),
@@ -486,7 +488,8 @@ impl<'tcx> SmtChecker<'tcx> {
                         model.assumptions().to_vec(),
                         SmtPredicate::Custom(format!(
                             "not Init({}, {ty_name}, {elements})",
-                            target_label
+                            target_label,
+                            elements = elements.describe()
                         )),
                     ));
                 }
@@ -500,10 +503,59 @@ impl<'tcx> SmtChecker<'tcx> {
                         model.assumptions().to_vec(),
                         SmtPredicate::Custom(format!(
                             "Init({}, {ty_name}, {elements})",
-                            target_label
+                            target_label,
+                            elements = elements.describe()
                         )),
                     ))
                     .with_note("caller contract provides Init for raw pointer parameter");
+                }
+
+                if let Some(bounds) = model.pointer_bounds_for_place(place)
+                    && model.origin_is_initialized_for_ty(&bounds.origin_key, ty_name)
+                {
+                    let Some(access) = model.term_for_smt_term(elements) else {
+                        return SmtCheckResult::unknown(format!(
+                            "could not build an Init element-count term for {}",
+                            elements.describe()
+                        ));
+                    };
+                    model.assert_unsigned_bounds_for_term(&solver, elements, &mut HashSet::new());
+                    let zero = Int::from_u64(&ctx, 0);
+                    let index_non_negative = bounds.index.ge(&zero);
+                    let access_non_negative = access.ge(&zero);
+                    let covered_end = Int::add(&ctx, &[bounds.index.clone(), access]);
+                    let within_len = covered_end.le(&bounds.len);
+                    let goal = Bool::and(
+                        &ctx,
+                        &[&index_non_negative, &access_non_negative, &within_len],
+                    );
+                    let query = SmtQuery::new(
+                        obligation.clone(),
+                        model.assumptions().to_vec(),
+                        SmtPredicate::Custom(format!(
+                            "not initialized_object_range({}, {}, {})",
+                            target_label,
+                            bounds.index_term.describe(),
+                            elements.describe()
+                        )),
+                    );
+
+                    solver.assert(&goal.not());
+                    return match solver.check() {
+                        SatResult::Unsat => SmtCheckResult::proved(format!(
+                            "initialization proved; {target_label} covers {} initialized {ty_name} element(s) from its source object",
+                            elements.describe()
+                        ))
+                        .with_query(query),
+                        SatResult::Sat => SmtCheckResult::unknown(
+                            "current path facts do not prove the initialized object range covers the target",
+                        )
+                        .with_query(query)
+                        .with_note("hint: keep object length facts for the initialized source"),
+                        SatResult::Unknown => {
+                            SmtCheckResult::unknown("solver returned unknown").with_query(query)
+                        }
+                    };
                 }
 
                 let init_facts: Vec<_> = forward
@@ -526,6 +578,9 @@ impl<'tcx> SmtChecker<'tcx> {
                     let mut matched_places = HashSet::new();
                     let mut matched_notes = Vec::new();
                     let mut last_query = None;
+                    let Some(required_elements) = smt_term_const_u64(elements) else {
+                        continue;
+                    };
 
                     for (init_place, init_ty_name, init_elements, init_reason) in &init_facts {
                         if !init_type_compatible(init_ty_name, ty_name) {
@@ -547,7 +602,8 @@ impl<'tcx> SmtChecker<'tcx> {
                                     "not same_addr({}, {}) for Init({}, {ty_name}, {elements})",
                                     target_label,
                                     place_label(init_place),
-                                    target_label
+                                    target_label,
+                                    elements = elements.describe()
                                 )),
                             );
                             solver.push();
@@ -567,14 +623,15 @@ impl<'tcx> SmtChecker<'tcx> {
                             }
                         }
 
-                        if matched_elements >= *elements {
+                        if matched_elements >= required_elements {
                             let query = last_query.unwrap_or_else(|| {
                                 SmtQuery::new(
                                     obligation.clone(),
                                     model.assumptions().to_vec(),
                                     SmtPredicate::Custom(format!(
                                         "not Init({}, {ty_name}, {elements})",
-                                        target_label
+                                        target_label,
+                                        elements = elements.describe()
                                     )),
                                 )
                             });
@@ -598,7 +655,8 @@ impl<'tcx> SmtChecker<'tcx> {
                     model.assumptions().to_vec(),
                     SmtPredicate::Custom(format!(
                         "not Init({}, {ty_name}, {elements})",
-                        target_label
+                        target_label,
+                        elements = elements.describe()
                     )),
                 ));
                 if checked_any_init_fact {
@@ -794,6 +852,155 @@ impl<'tcx> SmtChecker<'tcx> {
                     "hint: keep pointer provenance, object length, and lifetime facts for the target object",
                 )
             }
+            SmtObligation::NonOverlapping {
+                left,
+                right,
+                left_count,
+                right_count,
+                elem_size,
+            } => {
+                if let (Some((left_object, left_offset)), Some((right_object, right_offset))) = (
+                    model.pointer_object_offset_for_place(left),
+                    model.pointer_object_offset_for_place(right),
+                ) && left_object == right_object
+                {
+                    let Some(left_offset_term) = model.term_for_smt_term(&left_offset) else {
+                        return SmtCheckResult::unknown(format!(
+                            "could not lower object offset {}",
+                            left_offset.describe()
+                        ));
+                    };
+                    let Some(right_offset_term) = model.term_for_smt_term(&right_offset) else {
+                        return SmtCheckResult::unknown(format!(
+                            "could not lower object offset {}",
+                            right_offset.describe()
+                        ));
+                    };
+                    let Some(left_count_term) = model.term_for_smt_term(left_count) else {
+                        return SmtCheckResult::unknown(format!(
+                            "could not build a range-count term for {}",
+                            left_count.describe()
+                        ));
+                    };
+                    let Some(right_count_term) = model.term_for_smt_term(right_count) else {
+                        return SmtCheckResult::unknown(format!(
+                            "could not build a range-count term for {}",
+                            right_count.describe()
+                        ));
+                    };
+                    let left_end = Int::add(&ctx, &[left_offset_term.clone(), left_count_term]);
+                    let right_end = Int::add(&ctx, &[right_offset_term.clone(), right_count_term]);
+                    let disjoint = Bool::or(
+                        &ctx,
+                        &[
+                            &left_end.le(&right_offset_term),
+                            &right_end.le(&left_offset_term),
+                        ],
+                    );
+                    let negated = SmtPredicate::Not(Box::new(SmtPredicate::NonOverlapping {
+                        left: left_offset,
+                        right: right_offset,
+                        left_count: left_count.clone(),
+                        right_count: right_count.clone(),
+                        elem_size: 1,
+                    }));
+                    let query =
+                        SmtQuery::new(obligation.clone(), model.assumptions().to_vec(), negated);
+
+                    model.assert_unsigned_bounds_for_term(&solver, left_count, &mut HashSet::new());
+                    model.assert_unsigned_bounds_for_term(
+                        &solver,
+                        right_count,
+                        &mut HashSet::new(),
+                    );
+                    solver.assert(&disjoint.not());
+                    return match solver.check() {
+                        SatResult::Unsat => SmtCheckResult::proved(format!(
+                            "non-overlap proved inside allocation {}",
+                            place_label(&left_object)
+                        ))
+                        .with_query(query),
+                        SatResult::Sat => {
+                            failed_smt("the two ranges overlap within the same allocation object")
+                                .with_query(query)
+                        }
+                        SatResult::Unknown => {
+                            SmtCheckResult::unknown("solver returned unknown").with_query(query)
+                        }
+                    };
+                }
+
+                let Some(left_addr) = model.term_for_place(left) else {
+                    return SmtCheckResult::unknown(format!(
+                        "could not build an address term for {}",
+                        place_label(left)
+                    ));
+                };
+                let Some(right_addr) = model.term_for_place(right) else {
+                    return SmtCheckResult::unknown(format!(
+                        "could not build an address term for {}",
+                        place_label(right)
+                    ));
+                };
+                let Some(left_count_term) = model.term_for_smt_term(left_count) else {
+                    return SmtCheckResult::unknown(format!(
+                        "could not build a range-count term for {}",
+                        left_count.describe()
+                    ));
+                };
+                let Some(right_count_term) = model.term_for_smt_term(right_count) else {
+                    return SmtCheckResult::unknown(format!(
+                        "could not build a range-count term for {}",
+                        right_count.describe()
+                    ));
+                };
+
+                let size = Int::from_u64(&ctx, *elem_size);
+                let left_end = Int::add(
+                    &ctx,
+                    &[
+                        left_addr.clone(),
+                        Int::mul(&ctx, &[left_count_term, size.clone()]),
+                    ],
+                );
+                let right_end = Int::add(
+                    &ctx,
+                    &[
+                        right_addr.clone(),
+                        Int::mul(&ctx, &[right_count_term, size]),
+                    ],
+                );
+                let disjoint = Bool::or(
+                    &ctx,
+                    &[&left_end.le(&right_addr), &right_end.le(&left_addr)],
+                );
+                let negated = SmtPredicate::Not(Box::new(SmtPredicate::NonOverlapping {
+                    left: SmtTerm::Place(left.clone()),
+                    right: SmtTerm::Place(right.clone()),
+                    left_count: left_count.clone(),
+                    right_count: right_count.clone(),
+                    elem_size: *elem_size,
+                }));
+                let query =
+                    SmtQuery::new(obligation.clone(), model.assumptions().to_vec(), negated);
+
+                model.assert_unsigned_bounds_for_term(&solver, left_count, &mut HashSet::new());
+                model.assert_unsigned_bounds_for_term(&solver, right_count, &mut HashSet::new());
+                solver.assert(&disjoint.not());
+                match solver.check() {
+                    SatResult::Unsat => SmtCheckResult::proved(
+                        "non-overlap proved; the two pointer ranges cannot intersect on this path",
+                    )
+                    .with_query(query),
+                    SatResult::Sat => failed_smt(
+                        "the two pointer ranges may overlap under the current path facts",
+                    )
+                    .with_query(query),
+                    SatResult::Unknown => {
+                        SmtCheckResult::unknown("solver returned unknown").with_query(query)
+                    }
+                }
+            }
             SmtObligation::Predicate { predicates } => {
                 if predicates.is_empty() {
                     return SmtCheckResult::unknown("ValidNum predicate set is empty").with_query(
@@ -898,6 +1105,27 @@ impl<'tcx> SmtChecker<'tcx> {
         }
     }
 
+    /// Resolve the `index`-th property argument as a concrete callsite place.
+    pub(crate) fn property_place_arg(
+        &self,
+        callsite: &Callsite<'tcx>,
+        property: &Property<'tcx>,
+        index: usize,
+    ) -> Option<PlaceKey> {
+        let arg = property.args.get(index)?;
+        match arg {
+            PropertyArg::Place(place) => self.contract_place_to_callsite_place(callsite, place),
+            PropertyArg::Expr(ContractExpr::Place(place)) => {
+                self.contract_place_to_callsite_place(callsite, place)
+            }
+            PropertyArg::Expr(ContractExpr::Const(arg_index)) => {
+                let arg_index = usize::try_from(*arg_index).ok()?;
+                self.callsite_arg_place(callsite, arg_index)
+            }
+            _ => None,
+        }
+    }
+
     /// Resolve the target place of a property directly from a contract place
     /// without going through callee argument mapping.
     pub(crate) fn property_target_direct(&self, property: &Property<'tcx>) -> Option<PlaceKey> {
@@ -944,16 +1172,6 @@ impl<'tcx> SmtChecker<'tcx> {
                 return None;
             };
             Some(*ty)
-        })
-    }
-
-    /// Resolve the trailing numeric length argument of a property when constant.
-    pub(crate) fn property_len_const(&self, property: &Property<'tcx>) -> Option<u64> {
-        property.args.iter().rev().find_map(|arg| {
-            let PropertyArg::Expr(ContractExpr::Const(value)) = arg else {
-                return None;
-            };
-            u64::try_from(*value).ok()
         })
     }
 
@@ -1176,6 +1394,36 @@ impl<'tcx> SmtChecker<'tcx> {
         operand_place(operand)
     }
 
+    /// Return the `index`-th call argument as a common SMT term.
+    pub(crate) fn callsite_arg_smt_term(
+        &self,
+        callsite: &Callsite<'tcx>,
+        index: usize,
+    ) -> Option<SmtTerm> {
+        let expr = self.callsite_arg_expr(callsite, index, &[])?;
+        self.contract_expr_to_smt_term(callsite.caller, &expr)
+    }
+
+    /// Return the pointee size for a concrete pointer place.
+    pub(crate) fn place_pointee_size(
+        &self,
+        caller: rustc_hir::def_id::DefId,
+        place: &PlaceKey,
+    ) -> Option<u64> {
+        if !place.fields.is_empty() {
+            return None;
+        }
+        let local = match place.base {
+            PlaceBaseKey::Return => Local::from_usize(0),
+            PlaceBaseKey::Local(local) => Local::from_usize(local),
+            PlaceBaseKey::Arg(_) => return None,
+        };
+        let body = self.tcx.optimized_mir(caller);
+        let ty = body.local_decls[local].ty;
+        let pointee = pointee_ty(ty)?;
+        self.type_layout(caller, pointee).map(|(_, size)| size)
+    }
+
     /// Return the `index`-th call argument with contract projections appended.
     pub(crate) fn callsite_arg_place_with_fields(
         &self,
@@ -1341,13 +1589,21 @@ pub enum SmtObligation {
     Initialized {
         place: PlaceKey,
         ty_name: String,
-        elements: u64,
+        elements: SmtTerm,
     },
     /// Prove that `place` points to `elements` elements in one live allocation.
     Allocated {
         place: PlaceKey,
         ty_name: String,
         elements: SmtTerm,
+    },
+    /// Prove that two pointer ranges do not overlap.
+    NonOverlapping {
+        left: PlaceKey,
+        right: PlaceKey,
+        left_count: SmtTerm,
+        right_count: SmtTerm,
+        elem_size: u64,
     },
     /// Prove one or more numeric predicates.
     Predicate { predicates: Vec<SmtPredicate> },
@@ -1410,7 +1666,7 @@ impl SmtObligation {
                 "Init({}, {}, {} element(s))",
                 place_label(place),
                 ty_name,
-                elements
+                elements.describe()
             ),
             SmtObligation::Allocated {
                 place,
@@ -1421,6 +1677,20 @@ impl SmtObligation {
                 place_label(place),
                 ty_name,
                 elements.describe()
+            ),
+            SmtObligation::NonOverlapping {
+                left,
+                right,
+                left_count,
+                right_count,
+                elem_size,
+            } => format!(
+                "NonOverlap({}, {}, left={} element(s), right={} element(s), elem_size={})",
+                place_label(left),
+                place_label(right),
+                left_count.describe(),
+                right_count.describe(),
+                elem_size
             ),
             SmtObligation::Predicate { predicates } => {
                 let rendered = predicates
@@ -1482,6 +1752,13 @@ pub enum SmtPredicate {
         access_count: SmtTerm,
         len: SmtTerm,
     },
+    NonOverlapping {
+        left: SmtTerm,
+        right: SmtTerm,
+        left_count: SmtTerm,
+        right_count: SmtTerm,
+        elem_size: u64,
+    },
     Not(Box<SmtPredicate>),
     Custom(String),
 }
@@ -1514,6 +1791,23 @@ impl SmtPredicate {
                 index.describe(),
                 access_count.describe(),
                 len.describe()
+            ),
+            SmtPredicate::NonOverlapping {
+                left,
+                right,
+                left_count,
+                right_count,
+                elem_size,
+            } => format!(
+                "{} + {} * {} <= {} || {} + {} * {} <= {}",
+                left.describe(),
+                left_count.describe(),
+                elem_size,
+                right.describe(),
+                right.describe(),
+                right_count.describe(),
+                elem_size,
+                left.describe()
             ),
             SmtPredicate::Not(predicate) => format!("not({})", predicate.describe()),
             SmtPredicate::Custom(text) => text.clone(),
@@ -1616,6 +1910,21 @@ impl SmtCheckResult {
             }
         }
         lines.join("\n")
+    }
+}
+
+fn failed_smt(note: impl Into<String>) -> SmtCheckResult {
+    SmtCheckResult {
+        result: CheckResult::Failed,
+        query: None,
+        notes: vec![note.into()],
+    }
+}
+
+fn smt_term_const_u64(term: &SmtTerm) -> Option<u64> {
+    match term {
+        SmtTerm::Const(value) => Some(*value),
+        _ => None,
     }
 }
 
@@ -2060,21 +2369,13 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 self.origin_key_for_value_before(base, call_cursor, &mut TraceSeen::new())?;
 
             let index_term = self.term_for_value_at(index, call_cursor, &mut TraceSeen::new())?;
-            let (len_term_int, len_term) =
-                if let Some(len_place) = self.len_place_for_origin(&base_origin) {
-                    (self.term_for_place(&len_place)?, SmtTerm::Place(len_place))
-                } else {
-                    let len_value = self.guarded_len_for_index(&base_origin, index)?;
-                    (
-                        self.term_for_value(&len_value, &mut HashSet::new())?,
-                        SmtTerm::Value(value_label(&len_value)),
-                    )
-                };
+            let (len_term_int, len_term) = self.bounds_len_for_origin(&base_origin, Some(index))?;
             return Some(PointerBounds {
                 index: index_term,
                 len: len_term_int,
                 index_term: SmtTerm::Value(value_label(index)),
                 len_term,
+                origin_key: base_origin,
             });
         }
 
@@ -2083,23 +2384,137 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             .unwrap_or_else(|| AbstractValue::Place(place.clone()));
         let base_origin =
             self.origin_key_for_value_before(&value, self.latest_cursor(), &mut TraceSeen::new())?;
-        let (len_term_int, len_term) =
-            if let Some(len_place) = self.len_place_for_origin(&base_origin) {
-                (self.term_for_place(&len_place)?, SmtTerm::Place(len_place))
-            } else {
-                let zero = AbstractValue::ConstInt(0);
-                let len_value = self.guarded_len_for_index(&base_origin, &zero)?;
-                (
-                    self.term_for_value(&len_value, &mut HashSet::new())?,
-                    SmtTerm::Value(value_label(&len_value)),
-                )
-            };
+        let zero = AbstractValue::ConstInt(0);
+        let (len_term_int, len_term) = self.bounds_len_for_origin(&base_origin, Some(&zero))?;
 
         Some(PointerBounds {
             index: Int::from_u64(self.ctx, 0),
             len: len_term_int,
             index_term: SmtTerm::Const(0),
             len_term,
+            origin_key: base_origin,
+        })
+    }
+
+    /// Recover the allocation object and element offset for a pointer-like
+    /// place. This is intentionally small: it handles base pointers returned by
+    /// `as_ptr`/`as_mut_ptr` and offsets produced by pointer arithmetic
+    /// summaries.
+    fn pointer_object_offset_for_place(&self, place: &PlaceKey) -> Option<(PlaceKey, SmtTerm)> {
+        self.pointer_object_offset_for_place_before(
+            place,
+            self.latest_cursor(),
+            &mut TraceSeen::new(),
+        )
+    }
+
+    fn pointer_object_offset_for_place_before(
+        &self,
+        place: &PlaceKey,
+        cursor: ValueCursor,
+        seen: &mut TraceSeen,
+    ) -> Option<(PlaceKey, SmtTerm)> {
+        if let Some(object) = self.allocated_object_for_place(place) {
+            return Some((object, SmtTerm::Const(0)));
+        }
+        let seen_key = (place.clone(), cursor);
+        if !seen.insert(seen_key) {
+            return None;
+        }
+        let local = place.local()?;
+        let definition = self.forward.latest_value_definition_before(local, cursor)?;
+        self.pointer_object_offset_for_value(&definition.value, definition.ordinal, seen)
+    }
+
+    fn pointer_object_offset_for_value(
+        &self,
+        value: &AbstractValue<'tcx>,
+        cursor: ValueCursor,
+        seen: &mut TraceSeen,
+    ) -> Option<(PlaceKey, SmtTerm)> {
+        match value {
+            AbstractValue::Place(place) => {
+                self.pointer_object_offset_for_place_before(place, cursor, seen)
+            }
+            AbstractValue::Cast(inner, _) => {
+                self.pointer_object_offset_for_value(inner, cursor, seen)
+            }
+            AbstractValue::CallResult(call) => {
+                if call_has_pointer_add_effect(call) || is_pointer_add_call(&call.func) {
+                    let (base_arg, offset_arg) = call
+                        .effects
+                        .iter()
+                        .find_map(|effect| {
+                            let crate::verify::call_summary::CallEffect::ReturnPointerAdd {
+                                base_arg,
+                                offset_arg,
+                                ..
+                            } = effect
+                            else {
+                                return None;
+                            };
+                            Some((*base_arg, *offset_arg))
+                        })
+                        .unwrap_or((0, 1));
+                    let call_cursor = self.call_definition_cursor(call);
+                    let (object, base_offset) = self.pointer_object_offset_for_value(
+                        call.args.get(base_arg)?,
+                        call_cursor,
+                        seen,
+                    )?;
+                    let offset = smt_term_for_value(call.args.get(offset_arg)?)?;
+                    return Some((
+                        object,
+                        SmtTerm::Add(Box::new(base_offset), Box::new(offset)),
+                    ));
+                }
+                if call_has_pointer_sub_effect(call) || is_pointer_sub_call(&call.func) {
+                    let (base_arg, offset_arg) = call
+                        .effects
+                        .iter()
+                        .find_map(|effect| {
+                            let crate::verify::call_summary::CallEffect::ReturnPointerSub {
+                                base_arg,
+                                offset_arg,
+                                ..
+                            } = effect
+                            else {
+                                return None;
+                            };
+                            Some((*base_arg, *offset_arg))
+                        })
+                        .unwrap_or((0, 1));
+                    let call_cursor = self.call_definition_cursor(call);
+                    let (object, base_offset) = self.pointer_object_offset_for_value(
+                        call.args.get(base_arg)?,
+                        call_cursor,
+                        seen,
+                    )?;
+                    let offset = smt_term_for_value(call.args.get(offset_arg)?)?;
+                    return Some((
+                        object,
+                        SmtTerm::Sub(Box::new(base_offset), Box::new(offset)),
+                    ));
+                }
+                let destination = PlaceKey {
+                    base: PlaceBaseKey::Local(call.destination.as_usize()),
+                    fields: Vec::new(),
+                };
+                self.allocated_object_for_place(&destination)
+                    .map(|object| (object, SmtTerm::Const(0)))
+            }
+            _ => None,
+        }
+    }
+
+    fn allocated_object_for_place(&self, place: &PlaceKey) -> Option<PlaceKey> {
+        self.forward.facts.iter().find_map(|fact| match fact {
+            StateFact::KnownAllocated {
+                place: allocated_place,
+                object,
+                ..
+            } if allocated_place == place => Some(object.clone()),
+            _ => None,
         })
     }
 
@@ -2562,6 +2977,34 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                     &[&index.ge(&zero), &covered_end.le(&len)],
                 ))
             }
+            SmtPredicate::NonOverlapping {
+                left,
+                right,
+                left_count,
+                right_count,
+                elem_size,
+            } => {
+                let left = self.term_for_smt_term(left)?;
+                let right = self.term_for_smt_term(right)?;
+                let left_count = self.term_for_smt_term(left_count)?;
+                let right_count = self.term_for_smt_term(right_count)?;
+                let elem_size = Int::from_u64(self.ctx, *elem_size);
+                let left_end = Int::add(
+                    self.ctx,
+                    &[
+                        left.clone(),
+                        Int::mul(self.ctx, &[left_count, elem_size.clone()]),
+                    ],
+                );
+                let right_end = Int::add(
+                    self.ctx,
+                    &[right.clone(), Int::mul(self.ctx, &[right_count, elem_size])],
+                );
+                Some(Bool::or(
+                    self.ctx,
+                    &[&left_end.le(&right), &right_end.le(&left)],
+                ))
+            }
             SmtPredicate::Not(predicate) => Some(self.bool_for_predicate(predicate)?.not()),
             SmtPredicate::Custom(_) => None,
         }
@@ -2612,6 +3055,14 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 self.assert_unsigned_bounds_for_term(solver, index, seen);
                 self.assert_unsigned_bounds_for_term(solver, access_count, seen);
                 self.assert_unsigned_bounds_for_term(solver, len, seen);
+            }
+            SmtPredicate::NonOverlapping {
+                left_count,
+                right_count,
+                ..
+            } => {
+                self.assert_unsigned_bounds_for_term(solver, left_count, seen);
+                self.assert_unsigned_bounds_for_term(solver, right_count, seen);
             }
             SmtPredicate::Not(predicate) => {
                 self.assert_unsigned_bounds_for_predicate(solver, predicate, seen);
@@ -3032,6 +3483,26 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
     }
 
     /// Find a retained `len(source)` call whose source matches `origin_key`.
+    fn bounds_len_for_origin(
+        &mut self,
+        origin_key: &str,
+        index: Option<&AbstractValue<'tcx>>,
+    ) -> Option<(Int<'ctx>, SmtTerm)> {
+        if let Some(len_place) = self.len_place_for_origin(origin_key) {
+            return Some((self.term_for_place(&len_place)?, SmtTerm::Place(len_place)));
+        }
+        if let Some(index) = index
+            && let Some(len_value) = self.guarded_len_for_index(origin_key, index)
+        {
+            return Some((
+                self.term_for_value(&len_value, &mut HashSet::new())?,
+                SmtTerm::Value(value_label(&len_value)),
+            ));
+        }
+        self.allocated_len_for_origin(origin_key)
+            .map(|len| (Int::from_u64(self.ctx, len), SmtTerm::Const(len)))
+    }
+
     fn len_place_for_origin(&self, origin_key: &str) -> Option<PlaceKey> {
         for fact in &self.forward.facts {
             let StateFact::Call(call) = fact else {
@@ -3061,6 +3532,49 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         }
         None
     }
+
+    fn allocated_len_for_origin(&self, origin_key: &str) -> Option<u64> {
+        self.forward.facts.iter().find_map(|fact| match fact {
+            StateFact::KnownAllocated {
+                place,
+                object,
+                elements,
+                ..
+            } if place_label(object) == origin_key || place_label(place) == origin_key => {
+                Some(*elements)
+            }
+            _ => None,
+        })
+    }
+
+    fn origin_is_initialized_for_ty(&self, origin_key: &str, required_ty_name: &str) -> bool {
+        self.forward.facts.iter().any(|fact| {
+            let StateFact::KnownAllocated {
+                place,
+                object,
+                ty_name,
+                ..
+            } = fact
+            else {
+                return false;
+            };
+            if place_label(object) != origin_key && place_label(place) != origin_key {
+                return false;
+            }
+            if ty_name.contains("MaybeUninit") {
+                return false;
+            }
+            init_type_compatible(ty_name, required_ty_name)
+                || self
+                    .initialized_element_ty_for_place(object)
+                    .is_some_and(|elem| init_type_compatible(&elem, required_ty_name))
+        })
+    }
+
+    fn initialized_element_ty_for_place(&self, place: &PlaceKey) -> Option<String> {
+        let ty = self.place_ty(place)?;
+        initialized_element_ty_name(ty)
+    }
 }
 
 /// Recovered index and length terms for a first-cut in-bounds proof.
@@ -3069,6 +3583,7 @@ pub(crate) struct PointerBounds<'ctx> {
     len: Int<'ctx>,
     index_term: SmtTerm,
     len_term: SmtTerm,
+    origin_key: String,
 }
 
 /// Convert an operand into a place key when it names a MIR place.
@@ -3120,6 +3635,34 @@ fn pointee_ty_str<'tcx>(ty: Ty<'tcx>) -> Option<String> {
     }
 }
 
+fn initialized_element_ty_name<'tcx>(ty: Ty<'tcx>) -> Option<String> {
+    let ty_name = format!("{ty:?}");
+    if ty_name.contains("MaybeUninit") {
+        return None;
+    }
+    match ty.kind() {
+        TyKind::Ref(_, inner, _) | TyKind::RawPtr(inner, _) => {
+            initialized_element_ty_name(*inner).or_else(|| Some(format!("{inner:?}")))
+        }
+        TyKind::Array(elem, _) | TyKind::Slice(elem) => Some(format!("{elem:?}")),
+        TyKind::Adt(def, args) => {
+            let def_name = format!("{:?}", def.did());
+            let is_vec = def_name.contains("Vec")
+                || ty_name.starts_with("std::vec::Vec<")
+                || ty_name.starts_with("alloc::vec::Vec<")
+                || ty_name.starts_with("Vec<");
+            if is_vec {
+                return args.iter().find_map(|arg| match arg.kind() {
+                    GenericArgKind::Type(ty) => Some(format!("{ty:?}")),
+                    _ => None,
+                });
+            }
+            Some(ty_name)
+        }
+        _ => Some(ty_name),
+    }
+}
+
 fn is_unsigned_integral_ty(ty: Ty<'_>) -> bool {
     matches!(ty.kind(), TyKind::Uint(_))
 }
@@ -3145,6 +3688,15 @@ fn call_has_pointer_add_effect(call: &CallSummary<'_>) -> bool {
         matches!(
             effect,
             crate::verify::call_summary::CallEffect::ReturnPointerAdd { .. }
+        )
+    })
+}
+
+fn call_has_pointer_sub_effect(call: &CallSummary<'_>) -> bool {
+    call.effects.iter().any(|effect| {
+        matches!(
+            effect,
+            crate::verify::call_summary::CallEffect::ReturnPointerSub { .. }
         )
     })
 }
@@ -3249,6 +3801,30 @@ pub(crate) fn value_label(value: &AbstractValue<'_>) -> String {
                 short_func_name(&call.func)
             )
         }
+    }
+}
+
+fn smt_term_for_value(value: &AbstractValue<'_>) -> Option<SmtTerm> {
+    match value {
+        AbstractValue::ConstInt(value) => u64::try_from(*value).ok().map(SmtTerm::Const),
+        AbstractValue::Const(text) => const_int_from_debug(text)
+            .and_then(|value| u64::try_from(value).ok())
+            .map(SmtTerm::Const),
+        AbstractValue::Place(place) => Some(SmtTerm::Place(place.clone())),
+        AbstractValue::Cast(inner, _) => smt_term_for_value(inner),
+        AbstractValue::Binary(op, lhs, rhs) => {
+            let lhs = Box::new(smt_term_for_value(lhs)?);
+            let rhs = Box::new(smt_term_for_value(rhs)?);
+            match op {
+                BinOp::Add | BinOp::AddWithOverflow => Some(SmtTerm::Add(lhs, rhs)),
+                BinOp::Sub | BinOp::SubWithOverflow => Some(SmtTerm::Sub(lhs, rhs)),
+                BinOp::Mul | BinOp::MulWithOverflow => Some(SmtTerm::Mul(lhs, rhs)),
+                BinOp::Div => Some(SmtTerm::Div(lhs, rhs)),
+                BinOp::Rem => Some(SmtTerm::Rem(lhs, rhs)),
+                _ => None,
+            }
+        }
+        _ => None,
     }
 }
 

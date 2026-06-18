@@ -8,12 +8,14 @@
 //! SP-specific modules should only lower verifier properties into common SMT
 //! obligations. They should not construct independent solver APIs.
 
+mod alias;
 mod align;
 mod allocated;
 mod common;
 mod in_bound;
 mod init;
 mod non_null;
+mod non_overlap;
 mod valid_num;
 mod valid_ptr;
 
