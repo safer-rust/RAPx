@@ -20,7 +20,7 @@ pub struct VerifyArgs {
     /// Default is 0 (postfix segments appear once each). Set to 1 to allow one extra repetition (two total occurrences), etc.
     #[arg(long, default_value_t = 0)]
     pub allow_pathseg_repeat: usize,
-    /// Verification mode: `scan` auto-detects targets without annotations (default), `targeted` requires #[rapx::verify].
-    #[arg(long, default_value = "scan")]
+    /// Verification mode: `targeted` verifies #[rapx::verify] functions (default), `scan` auto-detects unannotated unsafe targets.
+    #[arg(long, default_value = "targeted")]
     pub mode: VerifyMode,
 }

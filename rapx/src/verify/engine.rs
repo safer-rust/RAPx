@@ -126,5 +126,4 @@ impl<'tcx> VerifyEngine<'tcx> {
 
         results
     }
-
 }

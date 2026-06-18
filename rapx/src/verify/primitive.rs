@@ -14,6 +14,9 @@ pub enum PrimitiveCall {
     PtrAdd,
     PtrSub,
     PtrOffset,
+    PtrByteAdd,
+    PtrByteSub,
+    PtrByteOffset,
     PtrRead,
     PtrWrite,
     Len,
@@ -30,6 +33,15 @@ impl PrimitiveCall {
         }
         if name.ends_with("::as_mut_ptr") || name.contains("::as_mut_ptr") {
             return Some(Self::AsMutPtr);
+        }
+        if name.contains("::byte_add") || name.contains("::wrapping_byte_add") {
+            return Some(Self::PtrByteAdd);
+        }
+        if name.contains("::byte_sub") || name.contains("::wrapping_byte_sub") {
+            return Some(Self::PtrByteSub);
+        }
+        if name.contains("::byte_offset") || name.contains("::wrapping_byte_offset") {
+            return Some(Self::PtrByteOffset);
         }
         if name.contains("::add") || name.contains("::wrapping_add") {
             return Some(Self::PtrAdd);
@@ -72,17 +84,41 @@ impl PrimitiveCall {
 
     /// Return true for pointer arithmetic calls with `base + offset * stride`.
     pub fn is_pointer_add_like(self) -> bool {
-        matches!(self, Self::PtrAdd | Self::PtrOffset)
+        matches!(
+            self,
+            Self::PtrAdd | Self::PtrOffset | Self::PtrByteAdd | Self::PtrByteOffset
+        )
     }
 
     /// Return true for pointer arithmetic calls with `base - offset * stride`.
     pub fn is_pointer_sub_like(self) -> bool {
-        matches!(self, Self::PtrSub)
+        matches!(self, Self::PtrSub | Self::PtrByteSub)
     }
 
     /// Return true for any pointer arithmetic primitive.
     pub fn is_pointer_arithmetic(self) -> bool {
-        matches!(self, Self::PtrAdd | Self::PtrSub | Self::PtrOffset)
+        matches!(
+            self,
+            Self::PtrAdd
+                | Self::PtrSub
+                | Self::PtrOffset
+                | Self::PtrByteAdd
+                | Self::PtrByteSub
+                | Self::PtrByteOffset
+        )
+    }
+
+    /// Return true when the arithmetic count is measured in bytes.
+    pub fn is_byte_pointer_arithmetic(self) -> bool {
+        matches!(
+            self,
+            Self::PtrByteAdd | Self::PtrByteSub | Self::PtrByteOffset
+        )
+    }
+
+    /// Return true when the arithmetic count can be negative.
+    pub fn is_signed_pointer_arithmetic(self) -> bool {
+        matches!(self, Self::PtrOffset | Self::PtrByteOffset)
     }
 
     /// Return true for compile-time layout constant producers.

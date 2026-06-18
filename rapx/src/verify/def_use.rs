@@ -7,11 +7,11 @@
 //! focused on path-level decisions (calls, SCC exits, path conditions).
 
 use crate::compat::FxHashSet;
+use crate::compat::Spanned;
 use rustc_middle::mir::{
     Local, Operand, Place, ProjectionElem, Rvalue, Terminator, TerminatorKind,
 };
 use rustc_middle::ty::TyCtxt;
-use crate::compat::Spanned;
 
 use super::{
     contract::{

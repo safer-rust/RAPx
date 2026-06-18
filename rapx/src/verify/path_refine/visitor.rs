@@ -80,8 +80,12 @@ impl<'tcx> BackwardVisitor<'tcx> {
         property: &contract::Property<'tcx>,
     ) -> Vec<RelevantMirItems<'tcx>> {
         self.visit_path_tree_impl(
-            tree, target_block, callsite.caller, callsite.block,
-            Some(callsite), property,
+            tree,
+            target_block,
+            callsite.caller,
+            callsite.block,
+            Some(callsite),
+            property,
         )
     }
 
@@ -96,7 +100,14 @@ impl<'tcx> BackwardVisitor<'tcx> {
         callsite_loc: CallsiteLocation,
         property: &contract::Property<'tcx>,
     ) -> Vec<RelevantMirItems<'tcx>> {
-        self.visit_path_tree_impl(tree, target_block, caller, callsite_loc.block, None, property)
+        self.visit_path_tree_impl(
+            tree,
+            target_block,
+            caller,
+            callsite_loc.block,
+            None,
+            property,
+        )
     }
 
     /// Internal: post-order recursion returning per-leaf
@@ -113,7 +124,10 @@ impl<'tcx> BackwardVisitor<'tcx> {
         let Some(root) = tree.root() else {
             return Vec::new();
         };
-        let callsite_loc = CallsiteLocation { caller, block: callsite_block };
+        let callsite_loc = CallsiteLocation {
+            caller,
+            block: callsite_block,
+        };
         let body = self.tcx.optimized_mir(caller);
         let flow = build_dataflow_graph(self.tcx, caller);
         let keep_alloc = matches!(
@@ -122,8 +136,15 @@ impl<'tcx> BackwardVisitor<'tcx> {
         );
 
         let leaf_results = Self::build_leaf_items(
-            self, root, target_block, callsite_block, bind_callsite,
-            property, &body, &flow, keep_alloc,
+            self,
+            root,
+            target_block,
+            callsite_block,
+            bind_callsite,
+            property,
+            &body,
+            &flow,
+            keep_alloc,
         );
 
         let mut results = Vec::new();
@@ -177,8 +198,13 @@ impl<'tcx> BackwardVisitor<'tcx> {
             let block_data = &body.basic_blocks[callsite_block];
             for (si, stmt) in block_data.statements.iter().enumerate().rev() {
                 visitor.visit_statement(
-                    callsite_block, si, stmt, flow,
-                    &mut relevant, &mut items, keep_alloc,
+                    callsite_block,
+                    si,
+                    stmt,
+                    flow,
+                    &mut relevant,
+                    &mut items,
+                    keep_alloc,
                 );
             }
             return vec![(vec![node.block], items, relevant)];
@@ -190,20 +216,37 @@ impl<'tcx> BackwardVisitor<'tcx> {
 
         for child in &node.children {
             let child_results = Self::build_leaf_items(
-                visitor, child, target_block, callsite_block,
-                bind_callsite, property, body, flow, keep_alloc,
+                visitor,
+                child,
+                target_block,
+                callsite_block,
+                bind_callsite,
+                property,
+                body,
+                flow,
+                keep_alloc,
             );
             for (mut child_path, child_items, child_relevant) in child_results {
                 let mut relevant = child_relevant;
                 let mut items = child_items;
                 visitor.visit_terminator(
-                    block, block_data.terminator(), flow, body,
-                    &mut relevant, &mut items, keep_alloc,
+                    block,
+                    block_data.terminator(),
+                    flow,
+                    body,
+                    &mut relevant,
+                    &mut items,
+                    keep_alloc,
                 );
                 for (si, stmt) in block_data.statements.iter().enumerate().rev() {
                     visitor.visit_statement(
-                        block, si, stmt, flow,
-                        &mut relevant, &mut items, keep_alloc,
+                        block,
+                        si,
+                        stmt,
+                        flow,
+                        &mut relevant,
+                        &mut items,
+                        keep_alloc,
                     );
                 }
                 child_path.insert(0, node.block);
@@ -233,7 +276,7 @@ impl<'tcx> BackwardVisitor<'tcx> {
         for step in path.steps.iter().rev() {
             self.visit_path_step_inner(
                 step,
-            &callsite_loc,
+                &callsite_loc,
                 &body,
                 &flow,
                 &mut relevant,
@@ -458,7 +501,7 @@ fn statement_keep_reason(statement: &rustc_middle::mir::Statement<'_>) -> KeepRe
                 | rustc_middle::mir::Rvalue::BinaryOp(_, _) => KeepReason::PointerFlow,
                 _ => KeepReason::Definition,
             }
-        },
+        }
         StatementKind::StorageDead(_) => KeepReason::Invalidation,
         _ => KeepReason::Definition,
     }

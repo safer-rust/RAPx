@@ -8,6 +8,7 @@
 use std::collections::HashSet;
 
 use crate::compat::FxHashMap;
+use crate::compat::Spanned;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{
@@ -16,7 +17,6 @@ use rustc_middle::{
     },
     ty::{Ty, TyCtxt, TyKind},
 };
-use crate::compat::Spanned;
 
 use super::{
     call_summary::{self, CallEffect, CallEffectSummary},
@@ -103,8 +103,8 @@ impl<'tcx> ForwardVisitor<'tcx> {
             StatementKind::Assign(assign) => {
                 let (place, rvalue) = &**assign;
                 let value = self.value_from_rvalue(rvalue);
-                result.values.insert(place.local, value);
-                self.record_rvalue_facts(place, rvalue, body, result);
+                result.record_value_definition(block, Some(statement_index), place.local, value);
+                self.record_rvalue_facts(block, statement_index, place, rvalue, body, result);
             }
             StatementKind::FakeRead(..)
             | StatementKind::SetDiscriminant { .. }
@@ -162,11 +162,15 @@ impl<'tcx> ForwardVisitor<'tcx> {
                     effects: effect_summary.effects.clone(),
                     unsupported: effect_summary.unsupported,
                 };
-                result
-                    .values
-                    .insert(destination.local, AbstractValue::CallResult(call.clone()));
+                result.record_value_definition(
+                    block,
+                    None,
+                    destination.local,
+                    AbstractValue::CallResult(call.clone()),
+                );
                 result.facts.push(StateFact::Call(call));
                 self.apply_call_effects(
+                    block,
                     &effect_summary,
                     args,
                     reason == KeepReason::Callsite,
@@ -239,7 +243,7 @@ impl<'tcx> ForwardVisitor<'tcx> {
                     Box::new(value_from_operand(lhs)),
                     Box::new(value_from_operand(rhs)),
                 )
-            },
+            }
             #[cfg(all(rapx_rustc_ge_193, not(rapx_rustc_ge_196)))]
             Rvalue::NullaryOp(op) => AbstractValue::Nullary(format!("{op:?}")),
             #[cfg(all(not(rapx_rustc_ge_193), not(rapx_rustc_ge_196)))]
@@ -265,6 +269,8 @@ impl<'tcx> ForwardVisitor<'tcx> {
     /// Record initial facts directly implied by selected rvalues.
     fn record_rvalue_facts(
         &self,
+        block: BasicBlock,
+        statement_index: usize,
         place: &Place<'tcx>,
         rvalue: &Rvalue<'tcx>,
         body: &Body<'tcx>,
@@ -296,9 +302,12 @@ impl<'tcx> ForwardVisitor<'tcx> {
                 if let Some(alias) =
                     self.deref_pointer_value_for_place(result.callsite.caller, source)
                 {
-                    result
-                        .values
-                        .insert(place.local, AbstractValue::Place(alias.clone()));
+                    result.record_value_definition(
+                        block,
+                        Some(statement_index),
+                        place.local,
+                        AbstractValue::Place(alias.clone()),
+                    );
                     let ty =
                         self.tcx.optimized_mir(result.callsite.caller).local_decls[place.local].ty;
                     result.facts.push(StateFact::Cast {
@@ -327,10 +336,8 @@ impl<'tcx> ForwardVisitor<'tcx> {
                 }
             }
             Rvalue::Aggregate(kind, operands) => {
-                let is_decomposable = matches!(
-                    kind.as_ref(),
-                    AggregateKind::Adt(..) | AggregateKind::Tuple
-                );
+                let is_decomposable =
+                    matches!(kind.as_ref(), AggregateKind::Adt(..) | AggregateKind::Tuple);
                 if !is_decomposable {
                     return;
                 }
@@ -492,6 +499,7 @@ impl<'tcx> ForwardVisitor<'tcx> {
     /// Apply a summarized call effect to the path-local abstract state.
     fn apply_call_effects(
         &self,
+        block: BasicBlock,
         summary: &CallEffectSummary,
         args: &[Spanned<Operand<'tcx>>],
         is_target_callsite: bool,
@@ -552,9 +560,12 @@ impl<'tcx> ForwardVisitor<'tcx> {
                     });
                 }
                 CallEffect::ReturnConst { value, label } => {
-                    result
-                        .values
-                        .insert(destination, AbstractValue::ConstInt(u128::from(*value)));
+                    result.record_value_definition(
+                        block,
+                        None,
+                        destination,
+                        AbstractValue::ConstInt(u128::from(*value)),
+                    );
                     result.facts.push(StateFact::KnownConst {
                         place: destination_place.clone(),
                         value: *value,
@@ -703,9 +714,7 @@ impl<'tcx> ForwardVisitor<'tcx> {
                 let source = match rvalue {
                     Rvalue::Ref(_, _, source) | Rvalue::RawPtr(_, source) => source,
                     Rvalue::Use(Operand::Copy(source), ..)
-                    | Rvalue::Use(Operand::Move(source), ..) => {
-                        source
-                    }
+                    | Rvalue::Use(Operand::Move(source), ..) => source,
                     _ => continue,
                 };
                 if source.projection.iter().any(|projection| {
@@ -752,6 +761,8 @@ pub struct ForwardVisitResult<'tcx> {
     pub path: Path,
     /// Abstract values currently known for MIR locals.
     pub values: FxHashMap<Local, AbstractValue<'tcx>>,
+    /// Path-ordered definitions produced while replaying retained MIR items.
+    pub value_definitions: Vec<ValueDefinition<'tcx>>,
     /// Facts recorded during the forward visit.
     pub facts: Vec<StateFact<'tcx>>,
     /// Places whose facts were conservatively forgotten.
@@ -770,6 +781,7 @@ impl<'tcx> ForwardVisitResult<'tcx> {
             property,
             path,
             values: FxHashMap::default(),
+            value_definitions: Vec::new(),
             facts: Vec::new(),
             forgets: Vec::new(),
             steps: Vec::new(),
@@ -801,6 +813,48 @@ impl<'tcx> ForwardVisitResult<'tcx> {
         }
         lines.join("\n")
     }
+
+    /// Record one path-ordered local definition and update the final snapshot.
+    pub fn record_value_definition(
+        &mut self,
+        block: BasicBlock,
+        statement_index: Option<usize>,
+        local: Local,
+        value: AbstractValue<'tcx>,
+    ) {
+        let ordinal = self.value_definitions.len();
+        self.values.insert(local, value.clone());
+        self.value_definitions.push(ValueDefinition {
+            ordinal,
+            block,
+            statement_index,
+            local,
+            value,
+        });
+    }
+
+    /// Return the latest definition of `local` before the exclusive cursor.
+    pub fn latest_value_definition_before(
+        &self,
+        local: Local,
+        cursor: usize,
+    ) -> Option<&ValueDefinition<'tcx>> {
+        let end = cursor.min(self.value_definitions.len());
+        self.value_definitions[..end]
+            .iter()
+            .rev()
+            .find(|definition| definition.local == local)
+    }
+}
+
+/// One local definition observed while replaying retained MIR items.
+#[derive(Clone, Debug)]
+pub struct ValueDefinition<'tcx> {
+    pub ordinal: usize,
+    pub block: BasicBlock,
+    pub statement_index: Option<usize>,
+    pub local: Local,
+    pub value: AbstractValue<'tcx>,
 }
 
 /// One step visited by the forward visitor.

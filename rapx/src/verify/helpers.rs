@@ -138,7 +138,9 @@ fn resolve_next_field<'tcx>(
                 #[cfg(not(rapx_rustc_ge_198))]
                 let field_ty = variant.fields[FieldIdx::from_usize(field_idx)].ty(tcx, arg_list);
                 #[cfg(rapx_rustc_ge_198)]
-                let field_ty = variant.fields[FieldIdx::from_usize(field_idx)].ty(tcx, arg_list).skip_norm_wip();
+                let field_ty = variant.fields[FieldIdx::from_usize(field_idx)]
+                    .ty(tcx, arg_list)
+                    .skip_norm_wip();
                 return Some((field_idx, field_ty));
             }
         }
@@ -151,7 +153,9 @@ fn resolve_next_field<'tcx>(
             #[cfg(not(rapx_rustc_ge_198))]
             let field_ty = variant.fields[FieldIdx::from_usize(idx)].ty(tcx, arg_list);
             #[cfg(rapx_rustc_ge_198)]
-            let field_ty = variant.fields[FieldIdx::from_usize(idx)].ty(tcx, arg_list).skip_norm_wip();
+            let field_ty = variant.fields[FieldIdx::from_usize(idx)]
+                .ty(tcx, arg_list)
+                .skip_norm_wip();
             return Some((idx, field_ty));
         }
     }

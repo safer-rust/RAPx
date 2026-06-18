@@ -50,6 +50,9 @@ use crate::verify::{
     report::CheckResult,
 };
 
+type ValueCursor = usize;
+type TraceSeen = HashSet<(PlaceKey, ValueCursor)>;
+
 /// SMT backend for verifier properties.
 pub struct SmtChecker<'tcx> {
     pub(crate) tcx: TyCtxt<'tcx>,
@@ -99,7 +102,9 @@ impl<'tcx> SmtChecker<'tcx> {
             PropertyKind::NonNull => {
                 SmtCheckResult::unknown("NonNull struct invariant not implemented yet")
             }
-            PropertyKind::InBound => in_bound::check_for_checkpoint(self, caller, property, forward),
+            PropertyKind::InBound => {
+                in_bound::check_for_checkpoint(self, caller, property, forward)
+            }
             PropertyKind::Init => init::check_for_checkpoint(self, caller, property, forward),
             PropertyKind::ValidPtr => {
                 SmtCheckResult::unknown("ValidPtr struct invariant not implemented yet")
@@ -374,6 +379,92 @@ impl<'tcx> SmtChecker<'tcx> {
                             "hint: add an index < len guard or provide a richer object-size summary",
                         )
                     }
+                    SatResult::Unknown => {
+                        SmtCheckResult::unknown("solver returned unknown").with_query(query)
+                    }
+                }
+            }
+            SmtObligation::PointerRangeInBounds {
+                place,
+                ty_name,
+                lower_delta,
+                upper_delta,
+            } => {
+                let target_label = place_label(place);
+                let Some(bounds) = model.pointer_bounds_for_place(place) else {
+                    return SmtCheckResult::unknown(format!(
+                        "could not connect {target_label} to a slice length and pointer index"
+                    ))
+                    .with_query(SmtQuery::new(
+                        obligation.clone(),
+                        model.assumptions().to_vec(),
+                        pointer_range_negated_goal(
+                            SmtTerm::Value("index(?)".to_string()),
+                            lower_delta.clone(),
+                            upper_delta.clone(),
+                            SmtTerm::Value("len(?)".to_string()),
+                        ),
+                    ))
+                    .with_note(
+                        "hint: pointer arithmetic bounds need a recoverable base object and index/length facts",
+                    );
+                };
+
+                let Some(lower) = model.term_for_smt_term(lower_delta) else {
+                    return SmtCheckResult::unknown(format!(
+                        "could not build a lower pointer-range term for {}",
+                        lower_delta.describe()
+                    ));
+                };
+                let Some(upper) = model.term_for_smt_term(upper_delta) else {
+                    return SmtCheckResult::unknown(format!(
+                        "could not build an upper pointer-range term for {}",
+                        upper_delta.describe()
+                    ));
+                };
+
+                model.assert_unsigned_bounds_for_term(&solver, lower_delta, &mut HashSet::new());
+                model.assert_unsigned_bounds_for_term(&solver, upper_delta, &mut HashSet::new());
+
+                let zero = Int::from_u64(&ctx, 0);
+                let lower_index = Int::add(&ctx, &[bounds.index.clone(), lower]);
+                let upper_index = Int::add(&ctx, &[bounds.index.clone(), upper]);
+                let base_non_negative = bounds.index.ge(&zero);
+                let base_within_len = bounds.index.le(&bounds.len);
+                let lower_in_object = lower_index.ge(&zero);
+                let upper_in_object = upper_index.le(&bounds.len);
+
+                let goal = Bool::and(
+                    &ctx,
+                    &[
+                        &base_non_negative,
+                        &base_within_len,
+                        &lower_in_object,
+                        &upper_in_object,
+                    ],
+                );
+                let query = SmtQuery::new(
+                    obligation.clone(),
+                    model.assumptions().to_vec(),
+                    pointer_range_negated_goal(
+                        bounds.index_term,
+                        lower_delta.clone(),
+                        upper_delta.clone(),
+                        bounds.len_term,
+                    ),
+                );
+
+                solver.assert(&goal.not());
+                match solver.check() {
+                    SatResult::Unsat => SmtCheckResult::proved(format!(
+                        "pointer arithmetic range proved for {target_label}; the {ty_name} range stays inside the matched object"
+                    ))
+                    .with_query(query),
+                    SatResult::Sat => SmtCheckResult::unknown(
+                        "current path facts do not prove the pointer arithmetic stays in bounds",
+                    )
+                    .with_query(query)
+                    .with_note("hint: add bounds guards for the pointer arithmetic count"),
                     SatResult::Unknown => {
                         SmtCheckResult::unknown("solver returned unknown").with_query(query)
                     }
@@ -1231,6 +1322,14 @@ pub enum SmtObligation {
         elem_size: u64,
         access_count: SmtTerm,
     },
+    /// Prove that pointer arithmetic starting at `place` stays inside the
+    /// matched object for the whole delta range.
+    PointerRangeInBounds {
+        place: PlaceKey,
+        ty_name: String,
+        lower_delta: SmtTerm,
+        upper_delta: SmtTerm,
+    },
     /// Prove that `place` denotes initialized memory for `elements` elements.
     Initialized {
         place: PlaceKey,
@@ -1283,6 +1382,18 @@ impl SmtObligation {
                 ty_name,
                 access_count.describe(),
                 elem_size
+            ),
+            SmtObligation::PointerRangeInBounds {
+                place,
+                ty_name,
+                lower_delta,
+                upper_delta,
+            } => format!(
+                "PointerRangeInBound({}, {}, lower={}, upper={})",
+                place_label(place),
+                ty_name,
+                lower_delta.describe(),
+                upper_delta.describe()
             ),
             SmtObligation::Initialized {
                 place,
@@ -1501,6 +1612,22 @@ impl SmtCheckResult {
     }
 }
 
+fn pointer_range_negated_goal(
+    index: SmtTerm,
+    lower_delta: SmtTerm,
+    upper_delta: SmtTerm,
+    len: SmtTerm,
+) -> SmtPredicate {
+    let lower_index = SmtTerm::Add(Box::new(index.clone()), Box::new(lower_delta));
+    let upper_index = SmtTerm::Add(Box::new(index.clone()), Box::new(upper_delta));
+    SmtPredicate::Not(Box::new(SmtPredicate::And(vec![
+        SmtPredicate::Ge(index.clone(), SmtTerm::Const(0)),
+        SmtPredicate::Le(index, len.clone()),
+        SmtPredicate::Ge(lower_index, SmtTerm::Const(0)),
+        SmtPredicate::Le(upper_index, len),
+    ])))
+}
+
 /// Per-query SMT term builder over a forward visit result.
 pub(crate) struct SmtModel<'a, 'ctx, 'tcx> {
     tcx: TyCtxt<'tcx>,
@@ -1555,10 +1682,8 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             let StateFact::Contract(property) = fact else {
                 continue;
             };
-            let is_target_kind = matches!(
-                property.kind,
-                PropertyKind::InBound | PropertyKind::Init
-            );
+            let is_target_kind =
+                matches!(property.kind, PropertyKind::InBound | PropertyKind::Init);
             if !is_target_kind {
                 continue;
             }
@@ -1764,11 +1889,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                         })() else {
                             continue;
                         };
-                        self.assert_place_non_zero(
-                            solver,
-                            &target,
-                            "caller-contract",
-                        );
+                        self.assert_place_non_zero(solver, &target, "caller-contract");
                     }
                     PropertyKind::InBound => {
                         let Some(target) = (|| {
@@ -1796,12 +1917,17 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                         let Some((_, elem_size)) = self.type_layout(required_ty) else {
                             continue;
                         };
-                        let access_count = property.args.iter().rev().find_map(|arg| {
-                            let PropertyArg::Expr(ContractExpr::Const(value)) = arg else {
-                                return None;
-                            };
-                            u64::try_from(*value).ok()
-                        }).unwrap_or(0);
+                        let access_count = property
+                            .args
+                            .iter()
+                            .rev()
+                            .find_map(|arg| {
+                                let PropertyArg::Expr(ContractExpr::Const(value)) = arg else {
+                                    return None;
+                                };
+                                u64::try_from(*value).ok()
+                            })
+                            .unwrap_or(0);
                         self.assumptions.push(SmtPredicate::InBounds {
                             index: SmtTerm::Const(0),
                             access_count: SmtTerm::Const(access_count),
@@ -1842,12 +1968,17 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                         }) else {
                             continue;
                         };
-                        let elements = property.args.iter().rev().find_map(|arg| {
-                            let PropertyArg::Expr(ContractExpr::Const(value)) = arg else {
-                                return None;
-                            };
-                            u64::try_from(*value).ok()
-                        }).unwrap_or(0);
+                        let elements = property
+                            .args
+                            .iter()
+                            .rev()
+                            .find_map(|arg| {
+                                let PropertyArg::Expr(ContractExpr::Const(value)) = arg else {
+                                    return None;
+                                };
+                                u64::try_from(*value).ok()
+                            })
+                            .unwrap_or(0);
                         self.assumptions.push(SmtPredicate::Custom(format!(
                             "{} initialized for {:?}, {elements} element(s) (caller-contract)",
                             place_label(&target),
@@ -1867,6 +1998,30 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
     /// Return the path assumptions asserted by this model.
     pub(crate) fn assumptions(&self) -> &[SmtPredicate] {
         &self.assumptions
+    }
+
+    fn latest_cursor(&self) -> ValueCursor {
+        self.forward.value_definitions.len()
+    }
+
+    fn call_definition_cursor(&self, call: &CallSummary<'tcx>) -> ValueCursor {
+        self.forward
+            .value_definitions
+            .iter()
+            .find_map(|definition| {
+                if definition.local != call.destination {
+                    return None;
+                }
+                let AbstractValue::CallResult(recorded) = &definition.value else {
+                    return None;
+                };
+                if recorded.func == call.func && recorded.arg_count == call.arg_count {
+                    Some(definition.ordinal)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| self.latest_cursor())
     }
 
     /// Try to recover the slice index/length terms behind a pointer result.
@@ -1893,9 +2048,11 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             })?;
             let base = call.args.get(base_arg)?;
             let index = call.args.get(offset_arg)?;
-            let base_origin = self.origin_key_for_value(base, &mut HashSet::new())?;
+            let call_cursor = self.call_definition_cursor(&call);
+            let base_origin =
+                self.origin_key_for_value_before(base, call_cursor, &mut TraceSeen::new())?;
 
-            let index_term = self.term_for_value(index, &mut HashSet::new())?;
+            let index_term = self.term_for_value_at(index, call_cursor, &mut TraceSeen::new())?;
             let (len_term_int, len_term) =
                 if let Some(len_place) = self.len_place_for_origin(&base_origin) {
                     (self.term_for_place(&len_place)?, SmtTerm::Place(len_place))
@@ -1915,9 +2072,10 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         }
 
         let value = self
-            .resolved_value_for_place(place, &mut HashSet::new())
+            .resolved_value_for_place(place, &mut TraceSeen::new())
             .unwrap_or_else(|| AbstractValue::Place(place.clone()));
-        let base_origin = self.origin_key_for_value(&value, &mut HashSet::new())?;
+        let base_origin =
+            self.origin_key_for_value_before(&value, self.latest_cursor(), &mut TraceSeen::new())?;
         let (len_term_int, len_term) =
             if let Some(len_place) = self.len_place_for_origin(&base_origin) {
                 (self.term_for_place(&len_place)?, SmtTerm::Place(len_place))
@@ -2029,6 +2187,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             base: PlaceBaseKey::Local(call.destination.as_usize()),
             fields: Vec::new(),
         };
+        let cursor = self.call_definition_cursor(call);
         for effect in &call.effects {
             match effect {
                 crate::verify::call_summary::CallEffect::ReturnPointerAdd {
@@ -2039,11 +2198,11 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                     let base_term = call
                         .args
                         .get(*base_arg)
-                        .and_then(|v| self.term_for_value(v, &mut HashSet::new()));
+                        .and_then(|v| self.term_for_value_at(v, cursor, &mut TraceSeen::new()));
                     let offset_term = call
                         .args
                         .get(*offset_arg)
-                        .and_then(|v| self.term_for_value(v, &mut HashSet::new()));
+                        .and_then(|v| self.term_for_value_at(v, cursor, &mut TraceSeen::new()));
                     if let (Some(base), Some(offset)) = (base_term, offset_term) {
                         let stride = Int::from_u64(self.ctx, stride.unwrap_or(1));
                         let term =
@@ -2059,11 +2218,11 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                     let base_term = call
                         .args
                         .get(*base_arg)
-                        .and_then(|v| self.term_for_value(v, &mut HashSet::new()));
+                        .and_then(|v| self.term_for_value_at(v, cursor, &mut TraceSeen::new()));
                     let offset_term = call
                         .args
                         .get(*offset_arg)
-                        .and_then(|v| self.term_for_value(v, &mut HashSet::new()));
+                        .and_then(|v| self.term_for_value_at(v, cursor, &mut TraceSeen::new()));
                     if let (Some(base), Some(offset)) = (base_term, offset_term) {
                         let stride = Int::from_u64(self.ctx, stride.unwrap_or(1));
                         let term =
@@ -2088,9 +2247,9 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 crate::verify::call_summary::CallEffect::ReturnPointerFromArg { arg }
                 | crate::verify::call_summary::CallEffect::ReturnAliasArg { arg } => {
                     let source_value = call.args.get(*arg);
-                    if let Some(term) = source_value
-                        .and_then(|value| self.term_for_value(value, &mut HashSet::new()))
-                    {
+                    if let Some(term) = source_value.and_then(|value| {
+                        self.term_for_value_at(value, cursor, &mut TraceSeen::new())
+                    }) {
                         self.place_terms.insert(destination.clone(), term);
                     }
                     let source = source_value
@@ -2113,37 +2272,44 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
 
     /// Build an SMT term for a place.
     pub(crate) fn term_for_place(&mut self, place: &PlaceKey) -> Option<Int<'ctx>> {
-        self.term_for_place_inner(place, &mut HashSet::new())
+        self.term_for_place_before(place, self.latest_cursor(), &mut TraceSeen::new())
     }
 
-    /// Build an SMT term for a place with recursion protection.
-    fn term_for_place_inner(
+    /// Build an SMT term for a place using only definitions before `cursor`.
+    fn term_for_place_before(
         &mut self,
         place: &PlaceKey,
-        seen: &mut HashSet<PlaceKey>,
+        cursor: ValueCursor,
+        seen: &mut TraceSeen,
     ) -> Option<Int<'ctx>> {
-        if let Some(term) = self.place_terms.get(place) {
-            return Some(term.clone());
-        }
-        if !seen.insert(place.clone()) {
+        let seen_key = (place.clone(), cursor);
+        if !seen.insert(seen_key) {
             return None;
         }
 
         if !place.fields.is_empty() {
-            if let Some(term) = self.projected_term_for_place(place, seen) {
-                self.place_terms.insert(place.clone(), term.clone());
+            if let Some(term) = self.projected_term_for_place(place, cursor, seen) {
                 return Some(term);
+            }
+            if let Some(term) = self.place_terms.get(place) {
+                return Some(term.clone());
             }
             let term = Int::new_const(self.ctx, place_name(place));
             self.place_terms.insert(place.clone(), term.clone());
             return Some(term);
         }
 
-        if let Some(value) = value_for_place(self.forward, place) {
-            if let Some(term) = self.term_for_value(value, seen) {
-                self.place_terms.insert(place.clone(), term.clone());
+        if let Some(local) = place.local()
+            && let Some(definition) = self.forward.latest_value_definition_before(local, cursor)
+        {
+            if let Some(term) = self.term_for_value_at(&definition.value, definition.ordinal, seen)
+            {
                 return Some(term);
             }
+        }
+
+        if let Some(term) = self.place_terms.get(place) {
+            return Some(term.clone());
         }
 
         let term = Int::new_const(self.ctx, place_name(place));
@@ -2160,14 +2326,17 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
     fn projected_term_for_place(
         &mut self,
         place: &PlaceKey,
-        seen: &mut HashSet<PlaceKey>,
+        cursor: ValueCursor,
+        seen: &mut TraceSeen,
     ) -> Option<Int<'ctx>> {
         if place.fields.as_slice() != [0] {
             return None;
         }
         let mut base = place.clone();
         base.fields.clear();
-        let value = value_for_place(self.forward, &base)?;
+        let local = base.local()?;
+        let definition = self.forward.latest_value_definition_before(local, cursor)?;
+        let value = &definition.value;
         let AbstractValue::Binary(op, lhs, rhs) = value else {
             return None;
         };
@@ -2177,8 +2346,8 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         ) {
             return None;
         }
-        let lhs = self.term_for_value(lhs, seen)?;
-        let rhs = self.term_for_value(rhs, seen)?;
+        let lhs = self.term_for_value_at(lhs, definition.ordinal, seen)?;
+        let rhs = self.term_for_value_at(rhs, definition.ordinal, seen)?;
         self.term_for_binary(*op, &lhs, &rhs)
     }
 
@@ -2186,49 +2355,83 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
     fn term_for_value(
         &mut self,
         value: &AbstractValue<'tcx>,
-        seen: &mut HashSet<PlaceKey>,
+        seen: &mut TraceSeen,
+    ) -> Option<Int<'ctx>> {
+        self.term_for_value_at(value, self.latest_cursor(), seen)
+    }
+
+    /// Build an address expression for a call summarized as pointer arithmetic.
+    fn term_for_pointer_arith_call(
+        &mut self,
+        call: &CallSummary<'tcx>,
+        cursor: ValueCursor,
+        seen: &mut TraceSeen,
+    ) -> Option<Int<'ctx>> {
+        let effect = call.effects.iter().find_map(|effect| match effect {
+            crate::verify::call_summary::CallEffect::ReturnPointerAdd {
+                base_arg,
+                offset_arg,
+                stride,
+            } => Some((false, *base_arg, *offset_arg, *stride)),
+            crate::verify::call_summary::CallEffect::ReturnPointerSub {
+                base_arg,
+                offset_arg,
+                stride,
+            } => Some((true, *base_arg, *offset_arg, *stride)),
+            _ => None,
+        });
+
+        let (is_sub, base_arg, offset_arg, stride) = effect.or_else(|| {
+            if is_pointer_add_call(&call.func) {
+                Some((false, 0, 1, self.call_destination_stride(call)))
+            } else if is_pointer_sub_call(&call.func) {
+                Some((true, 0, 1, self.call_destination_stride(call)))
+            } else {
+                None
+            }
+        })?;
+
+        let base = call.args.get(base_arg)?;
+        let offset = call.args.get(offset_arg)?;
+        let base = self.term_for_value_at(base, cursor, seen)?;
+        let offset = self.term_for_value_at(offset, cursor, seen)?;
+        let stride = Int::from_u64(self.ctx, stride.unwrap_or(1));
+        let scaled_offset = Int::mul(self.ctx, &[offset, stride]);
+
+        if is_sub {
+            Some(Int::sub(self.ctx, &[base, scaled_offset]))
+        } else {
+            Some(Int::add(self.ctx, &[base, scaled_offset]))
+        }
+    }
+
+    /// Build an SMT term for an abstract value at a program point.
+    fn term_for_value_at(
+        &mut self,
+        value: &AbstractValue<'tcx>,
+        cursor: ValueCursor,
+        seen: &mut TraceSeen,
     ) -> Option<Int<'ctx>> {
         match value {
             AbstractValue::ConstInt(value) => Some(Int::from_u64(self.ctx, *value as u64)),
             AbstractValue::Const(text) => {
                 const_int_from_debug(text).map(|value| Int::from_u64(self.ctx, value as u64))
             }
-            AbstractValue::Place(place) => self.term_for_place_inner(place, seen),
-            AbstractValue::Cast(inner, _) => self.term_for_value(inner, seen),
+            AbstractValue::Place(place) => self.term_for_place_before(place, cursor, seen),
+            AbstractValue::Cast(inner, _) => self.term_for_value_at(inner, cursor, seen),
             AbstractValue::Ref(place) | AbstractValue::RawPtr(place) => Some(Int::new_const(
                 self.ctx,
                 format!("addr_{}", place_name(place)),
             )),
             AbstractValue::Binary(op, lhs, rhs) => {
-                let lhs = self.term_for_value(lhs, seen)?;
-                let rhs = self.term_for_value(rhs, seen)?;
+                let lhs = self.term_for_value_at(lhs, cursor, seen)?;
+                let rhs = self.term_for_value_at(rhs, cursor, seen)?;
                 self.term_for_binary(*op, &lhs, &rhs)
             }
-            AbstractValue::CallResult(call) if is_pointer_add_call(&call.func) => {
-                let base = call.args.first()?;
-                let index = call.args.get(1)?;
-                let base = self.term_for_value(base, seen)?;
-                let index = self.term_for_value(index, seen)?;
-                let stride = self.call_destination_stride(call).unwrap_or(1);
-                let stride = Int::from_u64(self.ctx, stride);
-                Some(Int::add(
-                    self.ctx,
-                    &[base, Int::mul(self.ctx, &[index, stride])],
-                ))
-            }
-            AbstractValue::CallResult(call) if is_pointer_sub_call(&call.func) => {
-                let base = call.args.first()?;
-                let index = call.args.get(1)?;
-                let base = self.term_for_value(base, seen)?;
-                let index = self.term_for_value(index, seen)?;
-                let stride = self.call_destination_stride(call).unwrap_or(1);
-                let stride = Int::from_u64(self.ctx, stride);
-                Some(Int::sub(
-                    self.ctx,
-                    &[base, Int::mul(self.ctx, &[index, stride])],
-                ))
-            }
             AbstractValue::CallResult(call) => {
+                if let Some(term) = self.term_for_pointer_arith_call(call, cursor, seen) {
+                    return Some(term);
+                }
                 let place = PlaceKey {
                     base: PlaceBaseKey::Local(call.destination.as_usize()),
                     fields: Vec::new(),
@@ -2532,7 +2735,11 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
 
     /// Return the pointer-add call/effect that produced a place after copies/casts.
     fn pointer_add_call_for_place(&self, place: &PlaceKey) -> Option<CallSummary<'tcx>> {
-        let value = self.resolved_value_for_place(place, &mut HashSet::new())?;
+        let value = self.resolved_value_for_place_before(
+            place,
+            self.latest_cursor(),
+            &mut TraceSeen::new(),
+        )?;
         match value {
             AbstractValue::CallResult(call) if call_has_pointer_add_effect(&call) => Some(call),
             _ => None,
@@ -2543,25 +2750,49 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
     fn resolved_value_for_place(
         &self,
         place: &PlaceKey,
-        seen: &mut HashSet<PlaceKey>,
+        seen: &mut TraceSeen,
     ) -> Option<AbstractValue<'tcx>> {
-        if !seen.insert(place.clone()) {
+        self.resolved_value_for_place_before(place, self.latest_cursor(), seen)
+    }
+
+    fn resolved_value_for_place_before(
+        &self,
+        place: &PlaceKey,
+        cursor: ValueCursor,
+        seen: &mut TraceSeen,
+    ) -> Option<AbstractValue<'tcx>> {
+        let seen_key = (place.clone(), cursor);
+        if !seen.insert(seen_key) {
             return None;
         }
-        let value = value_for_place(self.forward, place)?;
-        self.resolved_value(value, seen)
-            .or_else(|| Some(value.clone()))
+        if !place.fields.is_empty() {
+            return Some(AbstractValue::Place(place.clone()));
+        }
+        let local = place.local()?;
+        let definition = self.forward.latest_value_definition_before(local, cursor)?;
+        self.resolved_value_before(&definition.value, definition.ordinal, seen)
     }
 
     /// Resolve copy/cast chains for an abstract value.
     fn resolved_value(
         &self,
         value: &AbstractValue<'tcx>,
-        seen: &mut HashSet<PlaceKey>,
+        seen: &mut TraceSeen,
+    ) -> Option<AbstractValue<'tcx>> {
+        self.resolved_value_before(value, self.latest_cursor(), seen)
+    }
+
+    fn resolved_value_before(
+        &self,
+        value: &AbstractValue<'tcx>,
+        cursor: ValueCursor,
+        seen: &mut TraceSeen,
     ) -> Option<AbstractValue<'tcx>> {
         match value {
-            AbstractValue::Place(place) => self.resolved_value_for_place(place, seen),
-            AbstractValue::Cast(inner, _) => self.resolved_value(inner, seen),
+            AbstractValue::Place(place) => {
+                self.resolved_value_for_place_before(place, cursor, seen)
+            }
+            AbstractValue::Cast(inner, _) => self.resolved_value_before(inner, cursor, seen),
             _ => Some(value.clone()),
         }
     }
@@ -2570,10 +2801,19 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
     fn origin_key_for_value(
         &self,
         value: &AbstractValue<'tcx>,
-        seen: &mut HashSet<PlaceKey>,
+        seen: &mut TraceSeen,
+    ) -> Option<String> {
+        self.origin_key_for_value_before(value, self.latest_cursor(), seen)
+    }
+
+    fn origin_key_for_value_before(
+        &self,
+        value: &AbstractValue<'tcx>,
+        cursor: ValueCursor,
+        seen: &mut TraceSeen,
     ) -> Option<String> {
         let resolved = self
-            .resolved_value(value, seen)
+            .resolved_value_before(value, cursor, seen)
             .unwrap_or_else(|| value.clone());
         match resolved {
             AbstractValue::Ref(place) | AbstractValue::RawPtr(place) => Some(place_label(&place)),
@@ -2581,14 +2821,15 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 .source_from_points_to(&place)
                 .map(|source| place_label(&source))
                 .or_else(|| Some(place_label(&place))),
-            AbstractValue::Cast(inner, _) => self.origin_key_for_value(&inner, seen),
+            AbstractValue::Cast(inner, _) => self.origin_key_for_value_before(&inner, cursor, seen),
             AbstractValue::CallResult(call) if is_as_ptr_call(&call.func) => {
                 let source_arg = call.effects.iter().find_map(|effect| match effect {
                     crate::verify::call_summary::CallEffect::ReturnPointerFromArg { arg }
                     | crate::verify::call_summary::CallEffect::ReturnAliasArg { arg } => Some(*arg),
                     _ => None,
                 })?;
-                self.origin_key_for_value(call.args.get(source_arg)?, seen)
+                let call_cursor = self.call_definition_cursor(&call);
+                self.origin_key_for_value_before(call.args.get(source_arg)?, call_cursor, seen)
             }
             AbstractValue::CallResult(call) => {
                 let source_arg = call.effects.iter().find_map(|effect| match effect {
@@ -2596,7 +2837,8 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                     | crate::verify::call_summary::CallEffect::ReturnAliasArg { arg } => Some(*arg),
                     _ => None,
                 })?;
-                self.origin_key_for_value(call.args.get(source_arg)?, seen)
+                let call_cursor = self.call_definition_cursor(&call);
+                self.origin_key_for_value_before(call.args.get(source_arg)?, call_cursor, seen)
             }
             _ => Some(value_label(&resolved)),
         }
@@ -2644,21 +2886,36 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
 
     /// Return true when `haystack` contains the same resolved value as `needle`.
     fn value_mentions(&self, haystack: &AbstractValue<'tcx>, needle: &AbstractValue<'tcx>) -> bool {
+        self.value_mentions_inner(haystack, needle, &mut HashSet::new())
+    }
+
+    fn value_mentions_inner(
+        &self,
+        haystack: &AbstractValue<'tcx>,
+        needle: &AbstractValue<'tcx>,
+        seen: &mut HashSet<(String, String)>,
+    ) -> bool {
         let haystack = self
             .resolved_value(haystack, &mut HashSet::new())
             .unwrap_or_else(|| haystack.clone());
         let needle = self
             .resolved_value(needle, &mut HashSet::new())
             .unwrap_or_else(|| needle.clone());
-        if value_label(&haystack) == value_label(&needle) {
+        let haystack_label = value_label(&haystack);
+        let needle_label = value_label(&needle);
+        if haystack_label == needle_label {
             return true;
+        }
+        if !seen.insert((haystack_label, needle_label)) {
+            return false;
         }
         match haystack {
             AbstractValue::Cast(inner, _) | AbstractValue::Unary(_, inner) => {
-                self.value_mentions(&inner, &needle)
+                self.value_mentions_inner(&inner, &needle, seen)
             }
             AbstractValue::Binary(_, lhs, rhs) => {
-                self.value_mentions(&lhs, &needle) || self.value_mentions(&rhs, &needle)
+                self.value_mentions_inner(&lhs, &needle, seen)
+                    || self.value_mentions_inner(&rhs, &needle, seen)
             }
             _ => false,
         }
@@ -2666,12 +2923,25 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
 
     /// Return true when a length-like value is the metadata/len of `base_origin`.
     fn len_matches_origin(&self, len: &AbstractValue<'tcx>, base_origin: &str) -> bool {
+        self.len_matches_origin_inner(len, base_origin, &mut HashSet::new())
+    }
+
+    fn len_matches_origin_inner(
+        &self,
+        len: &AbstractValue<'tcx>,
+        base_origin: &str,
+        seen: &mut HashSet<String>,
+    ) -> bool {
+        let label = value_label(len);
+        if !seen.insert(label) {
+            return false;
+        }
         let resolved = self
             .resolved_value(len, &mut HashSet::new())
             .unwrap_or_else(|| len.clone());
         match resolved {
             AbstractValue::Place(place) => value_for_place(self.forward, &place)
-                .is_some_and(|value| self.len_matches_origin(value, base_origin)),
+                .is_some_and(|value| self.len_matches_origin_inner(value, base_origin, seen)),
             AbstractValue::Unary(UnOp::PtrMetadata, inner) => self
                 .origin_key_for_value(&inner, &mut HashSet::new())
                 .is_some_and(|origin| origin == base_origin),

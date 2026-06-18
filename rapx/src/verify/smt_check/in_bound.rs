@@ -13,8 +13,11 @@
 //! common SMT model is responsible for matching `as_ptr`, `ptr.add`, `len`, and
 //! branch facts from the forward visit result.
 
-use super::common::{SmtCheckResult, SmtChecker, SmtObligation};
-use crate::verify::{contract::Property, forward_visit::ForwardVisitResult, helpers::Callsite};
+use super::common::{SmtCheckResult, SmtChecker, SmtObligation, SmtTerm};
+use crate::verify::{
+    contract::Property, forward_visit::ForwardVisitResult, helpers::Callsite,
+    primitive::PrimitiveCall,
+};
 
 /// Check `InBound` by lowering it to a common bounds obligation.
 pub(crate) fn check<'tcx>(
@@ -51,6 +54,12 @@ pub(crate) fn check<'tcx>(
         return SmtCheckResult::unknown("InBound length argument could not be lowered to SMT");
     };
 
+    if let Some(obligation) =
+        pointer_arithmetic_obligation(checker, callsite, required_ty, access_count.clone())
+    {
+        return checker.prove_obligation(callsite, forward, obligation);
+    }
+
     checker.prove_obligation(
         callsite,
         forward,
@@ -61,6 +70,37 @@ pub(crate) fn check<'tcx>(
             access_count,
         },
     )
+}
+
+fn pointer_arithmetic_obligation<'tcx>(
+    checker: &SmtChecker<'tcx>,
+    callsite: &Callsite<'tcx>,
+    required_ty: rustc_middle::ty::Ty<'tcx>,
+    count: SmtTerm,
+) -> Option<SmtObligation> {
+    let callee_name = checker.tcx.def_path_str(callsite.callee);
+    let primitive = PrimitiveCall::classify(&callee_name)?;
+    if !primitive.is_pointer_arithmetic() {
+        return None;
+    }
+
+    let base = checker.callsite_arg_place(callsite, 0)?;
+    let zero = SmtTerm::Const(0);
+    let negative_count = SmtTerm::Sub(Box::new(zero.clone()), Box::new(count.clone()));
+    let (lower_delta, upper_delta) = if primitive.is_pointer_sub_like() {
+        (negative_count, zero)
+    } else if primitive.is_signed_pointer_arithmetic() {
+        (count.clone(), count)
+    } else {
+        (zero, count)
+    };
+
+    Some(SmtObligation::PointerRangeInBounds {
+        place: base,
+        ty_name: format!("{required_ty:?}"),
+        lower_delta,
+        upper_delta,
+    })
 }
 
 /// Check `InBound` at a return checkpoint for struct invariant verification.
@@ -85,8 +125,7 @@ pub(crate) fn check_for_checkpoint<'tcx>(
     let Some(access_count_expr) = checker.property_len_expr_direct(property) else {
         return SmtCheckResult::unknown("InBound length argument could not be resolved");
     };
-    let Some(access_count) = checker.contract_expr_to_smt_term(caller, &access_count_expr)
-    else {
+    let Some(access_count) = checker.contract_expr_to_smt_term(caller, &access_count_expr) else {
         return SmtCheckResult::unknown("InBound length argument could not be lowered to SMT");
     };
 

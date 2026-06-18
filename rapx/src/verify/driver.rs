@@ -13,8 +13,8 @@ use crate::helpers::fn_info::{FnKind, get_cons, get_mutated_fields, get_muts, ge
 use crate::verify::contract::PropertyKind;
 use crate::verify::target::get_contract_from_annotation;
 
-use indexmap::IndexMap;
 use crate::compat::{FxHashMap, FxHashSet};
+use indexmap::IndexMap;
 use rustc_middle::mir::BasicBlock;
 use rustc_middle::ty::TyCtxt;
 
@@ -383,16 +383,8 @@ impl<'tcx> VerifyRun<'tcx> {
             let muts = get_muts(self.tcx, read_def_id);
 
             for &con_id in &cons {
-                let con_target =
-                    self.build_virtual_target(target, read_def_id, con_id, &[]);
-                self.verify_and_emit_sequence(
-                    target,
-                    read_def_id,
-                    &con_target,
-                    con_id,
-                    &[],
-                    0,
-                );
+                let con_target = self.build_virtual_target(target, read_def_id, con_id, &[]);
+                self.verify_and_emit_sequence(target, read_def_id, &con_target, con_id, &[], 0);
 
                 for (mut_idx, &mut_id) in muts.iter().enumerate() {
                     let con_target =
@@ -444,10 +436,7 @@ impl<'tcx> VerifyRun<'tcx> {
         // Also include the read method's own requires
         let own_requires = get_contract_from_annotation(self.tcx, read_def_id);
         for req in own_requires {
-            if !accumulated_requires
-                .iter()
-                .any(|p| same_property(p, &req))
-            {
+            if !accumulated_requires.iter().any(|p| same_property(p, &req)) {
                 accumulated_requires.push(req);
             }
         }
@@ -475,8 +464,7 @@ impl<'tcx> VerifyRun<'tcx> {
         let mut all_results: Vec<PropertyCheckResult<'_>> = Vec::new();
 
         for repeat in 0..=self.allow_pathseg_repeat {
-            let driver =
-                VerifyDriver::new_with_repeat(self.tcx, con_target, repeat);
+            let driver = VerifyDriver::new_with_repeat(self.tcx, con_target, repeat);
             let report = driver.verify_function();
             rap_debug!("{}", report.describe());
             all_results.extend(report.results);
@@ -601,7 +589,13 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                 continue;
             }
 
-            emit_verify_summary(self.tcx, &target_path, target.def_id, &all_results, self.mode);
+            emit_verify_summary(
+                self.tcx,
+                &target_path,
+                target.def_id,
+                &all_results,
+                self.mode,
+            );
         }
 
         // Invless mode: generate constructor-mutator-method sequences
@@ -720,12 +714,13 @@ fn same_property(
     a: &crate::verify::contract::Property<'_>,
     b: &crate::verify::contract::Property<'_>,
 ) -> bool {
-    matches!((&a.kind, &b.kind),
-        (PropertyKind::Align, PropertyKind::Align) |
-        (PropertyKind::InBound, PropertyKind::InBound) |
-        (PropertyKind::Init, PropertyKind::Init) |
-        (PropertyKind::NonNull, PropertyKind::NonNull) |
-        (PropertyKind::ValidPtr, PropertyKind::ValidPtr)
+    matches!(
+        (&a.kind, &b.kind),
+        (PropertyKind::Align, PropertyKind::Align)
+            | (PropertyKind::InBound, PropertyKind::InBound)
+            | (PropertyKind::Init, PropertyKind::Init)
+            | (PropertyKind::NonNull, PropertyKind::NonNull)
+            | (PropertyKind::ValidPtr, PropertyKind::ValidPtr)
     )
 }
 

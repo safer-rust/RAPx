@@ -5,9 +5,9 @@
 //! which arguments flow through to the destination and whether the call may
 //! modify relevant state.
 
+use crate::compat::Spanned;
 use rustc_middle::mir::{BasicBlock, Body, Operand, Place};
 use rustc_middle::ty::TyCtxt;
-use crate::compat::Spanned;
 
 use crate::analysis::dataflow::types::DataflowGraph;
 

@@ -268,6 +268,11 @@ pub fn effect_summary<'tcx>(
     }
 
     if primitive.is_some_and(PrimitiveCall::is_pointer_add_like) {
+        let stride = if primitive.is_some_and(PrimitiveCall::is_byte_pointer_arithmetic) {
+            Some(1)
+        } else {
+            destination_stride(tcx, caller, destination)
+        };
         return CallEffectSummary {
             callee,
             name,
@@ -275,13 +280,18 @@ pub fn effect_summary<'tcx>(
             effects: vec![CallEffect::ReturnPointerAdd {
                 base_arg: 0,
                 offset_arg: 1,
-                stride: destination_stride(tcx, caller, destination),
+                stride,
             }],
             unsupported: false,
         };
     }
 
     if primitive.is_some_and(PrimitiveCall::is_pointer_sub_like) {
+        let stride = if primitive.is_some_and(PrimitiveCall::is_byte_pointer_arithmetic) {
+            Some(1)
+        } else {
+            destination_stride(tcx, caller, destination)
+        };
         return CallEffectSummary {
             callee,
             name,
@@ -289,7 +299,7 @@ pub fn effect_summary<'tcx>(
             effects: vec![CallEffect::ReturnPointerSub {
                 base_arg: 0,
                 offset_arg: 1,
-                stride: destination_stride(tcx, caller, destination),
+                stride,
             }],
             unsupported: false,
         };
@@ -437,12 +447,12 @@ pub fn is_as_mut_ptr_call(name: &str) -> bool {
 
 /// Return true for typed pointer addition calls.
 pub fn is_pointer_add_call(name: &str) -> bool {
-    PrimitiveCall::classify(name) == Some(PrimitiveCall::PtrAdd)
+    PrimitiveCall::classify(name).is_some_and(PrimitiveCall::is_pointer_add_like)
 }
 
 /// Return true for typed pointer subtraction calls.
 pub fn is_pointer_sub_call(name: &str) -> bool {
-    PrimitiveCall::classify(name) == Some(PrimitiveCall::PtrSub)
+    PrimitiveCall::classify(name).is_some_and(PrimitiveCall::is_pointer_sub_like)
 }
 
 /// Return true for typed pointer offset calls.
@@ -663,7 +673,8 @@ fn try_pointer_arith_wrapper_effect<'tcx>(
                         continue;
                     }
                     match &assign.1 {
-                        Rvalue::Use(Operand::Copy(place), ..) | Rvalue::Use(Operand::Move(place), ..) => {
+                        Rvalue::Use(Operand::Copy(place), ..)
+                        | Rvalue::Use(Operand::Move(place), ..) => {
                             if place.local == current {
                                 queue.push_back(dest);
                                 seen.insert(dest);
@@ -724,7 +735,11 @@ fn try_pointer_arith_wrapper_effect<'tcx>(
         let offset_arg = trace_to_callee_arg(tcx, body, &args[1].node)?;
         // Use the inner call's destination to compute the byte stride,
         // not the wrapper's return type (which may differ after a cast).
-        let stride = destination_stride(tcx, callee, Some(call_dest.local));
+        let stride = if primitive.is_some_and(PrimitiveCall::is_byte_pointer_arithmetic) {
+            Some(1)
+        } else {
+            destination_stride(tcx, callee, Some(call_dest.local))
+        };
 
         return if is_sub {
             Some(CallEffect::ReturnPointerSub {
