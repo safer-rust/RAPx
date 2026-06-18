@@ -1,4 +1,5 @@
 use crate::compat::FxHashMap;
+use crate::compat::Spanned;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{
@@ -8,7 +9,6 @@ use rustc_middle::{
     ty::{self, Ty, TyCtxt, TypingEnv},
 };
 use rustc_mir_dataflow::{Analysis, JoinSemiLattice, fmt::DebugWithContext};
-use crate::compat::Spanned;
 use std::cell::RefCell;
 use std::rc::Rc;
 

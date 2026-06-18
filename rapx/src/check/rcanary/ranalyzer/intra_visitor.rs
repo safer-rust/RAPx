@@ -1,3 +1,4 @@
+use crate::compat::Spanned;
 use rustc_abi::VariantIdx;
 use rustc_data_structures::graph;
 use rustc_hir::def_id::DefId;
@@ -8,7 +9,6 @@ use rustc_middle::{
     },
     ty::{self, InstanceKind::Item, Ty, TyKind, TypeVisitable},
 };
-use crate::compat::Spanned;
 use rustc_span::Symbol;
 
 use annotate_snippets::{Level, Renderer, Snippet};
@@ -1010,7 +1010,8 @@ impl<'tcx, 'ctx, 'a> IntraFlowAnalysis<'tcx, 'ctx, 'a> {
         if index_needed >= rlen {
             rap_debug!(
                 "handle_copy_from_field: field index {} out of bounds (rlen={}), skipping\n",
-                index_needed, rlen
+                index_needed,
+                rlen
             );
             return;
         }
@@ -1198,7 +1199,8 @@ impl<'tcx, 'ctx, 'a> IntraFlowAnalysis<'tcx, 'ctx, 'a> {
         if index_needed >= rlen {
             rap_debug!(
                 "handle_move_from_field: field index {} out of bounds (rlen={}), skipping\n",
-                index_needed, rlen
+                index_needed,
+                rlen
             );
             return;
         }

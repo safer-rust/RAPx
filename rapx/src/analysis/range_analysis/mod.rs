@@ -12,8 +12,8 @@ use crate::{
 };
 use once_cell::sync::Lazy;
 // use intervals::Closed;
-use rust_intervals::Interval;
 use crate::compat::FxHashMap;
+use rust_intervals::Interval;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{BinOp, Place};
 

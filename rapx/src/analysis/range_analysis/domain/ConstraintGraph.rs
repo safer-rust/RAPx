@@ -16,9 +16,10 @@ use crate::rap_trace;
 use num_traits::Bounded;
 use once_cell::sync::{Lazy, OnceCell};
 // use rand::Rng;
-use rustc_abi::FieldIdx;
 use crate::analysis::path_analysis::PathTree;
 use crate::compat::FxHashMap;
+use crate::compat::Spanned;
+use rustc_abi::FieldIdx;
 use rustc_hir::def_id::LOCAL_CRATE;
 use rustc_hir::{def, def_id::DefId};
 use rustc_index::IndexVec;
@@ -27,7 +28,6 @@ use rustc_middle::{
     mir::*,
     ty::{self, ScalarInt, TyCtxt, print},
 };
-use crate::compat::Spanned;
 use rustc_span::sym::var;
 
 use core::borrow;
@@ -979,32 +979,32 @@ where
                 if let Rvalue::BinaryOp(bin_op, pair) = rvalue {
                     let (op1, op2) = &**pair;
                     if lhs == place {
-                    let mut return_op1: &Operand<'tcx> = &op1;
-                    let mut return_op2: &Operand<'tcx> = &op2;
-                    // for stmt_original in &switch_block.statements {
-                    //     if op1.constant().is_none() {
-                    //         if let StatementKind::Assign(box (lhs, Rvalue::Use(OP1))) =
-                    //             &stmt_original.kind
-                    //         {
-                    //             if lhs.clone() == op1.place().unwrap() {
-                    //                 return_op1 = OP1;
-                    //             }
-                    //         }
-                    //     }
-                    // }
-                    // if op2.constant().is_none() {
-                    //     for stmt_original in &switch_block.statements {
-                    //         if let StatementKind::Assign(box (lhs, Rvalue::Use(OP2))) =
-                    //             &stmt_original.kind
-                    //         {
-                    //             if lhs.clone() == op2.place().unwrap() {
-                    //                 return_op2 = OP2;
-                    //             }
-                    //         }
-                    //     }
-                    // }
+                        let mut return_op1: &Operand<'tcx> = &op1;
+                        let mut return_op2: &Operand<'tcx> = &op2;
+                        // for stmt_original in &switch_block.statements {
+                        //     if op1.constant().is_none() {
+                        //         if let StatementKind::Assign(box (lhs, Rvalue::Use(OP1))) =
+                        //             &stmt_original.kind
+                        //         {
+                        //             if lhs.clone() == op1.place().unwrap() {
+                        //                 return_op1 = OP1;
+                        //             }
+                        //         }
+                        //     }
+                        // }
+                        // if op2.constant().is_none() {
+                        //     for stmt_original in &switch_block.statements {
+                        //         if let StatementKind::Assign(box (lhs, Rvalue::Use(OP2))) =
+                        //             &stmt_original.kind
+                        //         {
+                        //             if lhs.clone() == op2.place().unwrap() {
+                        //                 return_op2 = OP2;
+                        //             }
+                        //         }
+                        //     }
+                        // }
 
-                    return Some((return_op1, return_op2, *bin_op));
+                        return Some((return_op1, return_op2, *bin_op));
                     }
                 }
             }
@@ -1199,7 +1199,7 @@ where
 
                             _ => {}
                         }
-                    },
+                    }
                     Rvalue::UnaryOp(unop, operand) => {
                         self.add_unary_op(sink, inst, rvalue, operand, *unop);
                     }
@@ -1208,7 +1208,9 @@ where
                             _ if def_id == self.essa => {
                                 self.add_essa_op(sink, inst, rvalue, operends, block)
                             }
-                            _ if def_id == self.ssa => self.add_ssa_op(sink, inst, rvalue, operends),
+                            _ if def_id == self.ssa => {
+                                self.add_ssa_op(sink, inst, rvalue, operends)
+                            }
                             _ => match self.unique_adt_handler(def_id) {
                                 1 => {
                                     self.add_aggregate_op(sink, inst, rvalue, operends, 1);
@@ -1232,7 +1234,7 @@ where
                     }
                     _ => {}
                 }
-            },
+            }
             _ => {}
         }
     }
@@ -2380,10 +2382,10 @@ where
                                             constraint_place_2.clone(),
                                             symb_interval.get_operation().clone(),
                                         ));
-                    }
-                }
-            }
-        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

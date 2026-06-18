@@ -1,9 +1,9 @@
 use super::set_attrs;
-use rustc_ast::*;
 #[cfg(rapx_rustc_ge_198)]
 use rustc_ast::MutRestriction;
 #[cfg(rapx_rustc_ge_198)]
 use rustc_ast::RestrictionKind;
+use rustc_ast::*;
 use rustc_span::{
     DUMMY_SP,
     symbol::{Ident, Symbol},

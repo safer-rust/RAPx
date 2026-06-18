@@ -1,5 +1,5 @@
-use crate::graphs::scc::{Scc, SccExit, SccInfo};
 use crate::compat::FxHashSet;
+use crate::graphs::scc::{Scc, SccExit, SccInfo};
 use rustc_middle::{
     mir::{BasicBlock, Terminator},
     ty::TyCtxt,

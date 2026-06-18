@@ -1,9 +1,9 @@
+use super::PathTree;
+use crate::compat::{FxHashMap, FxHashSet};
 use crate::graphs::{
     cfg::{CfgBlock, ControlFlowGraph},
     scc::{Scc, SccInfo},
 };
-use crate::compat::{FxHashMap, FxHashSet};
-use super::PathTree;
 use rustc_middle::{
     mir::{
         BasicBlock, Local, Operand, Rvalue, StatementKind, SwitchTargets, Terminator,
@@ -118,7 +118,7 @@ impl<'tcx> PathGraph<'tcx> {
                     replace: _,
                     drop: _,
                     #[cfg(not(rapx_rustc_ge_198))]
-                    async_fut: _,
+                        async_fut: _,
                 } => {
                     cfg_block.add_next(target.as_usize());
                     if let UnwindAction::Cleanup(target) = unwind {
@@ -791,9 +791,7 @@ impl<'g, 'tcx> PathEnumerator<'g, 'tcx> {
                 } else {
                     for &next in &seg.exit_successors {
                         path.push(next);
-                        self.collect_whole_cfg_paths(
-                            next, path, tree, depth + 1, postfix_repeat,
-                        );
+                        self.collect_whole_cfg_paths(next, path, tree, depth + 1, postfix_repeat);
                         path.pop();
                     }
                 }
@@ -814,9 +812,7 @@ impl<'g, 'tcx> PathEnumerator<'g, 'tcx> {
 
         for next in successors {
             path.push(next);
-            self.collect_whole_cfg_paths(
-                next, path, tree, depth + 1, postfix_repeat,
-            );
+            self.collect_whole_cfg_paths(next, path, tree, depth + 1, postfix_repeat);
             path.pop();
         }
     }

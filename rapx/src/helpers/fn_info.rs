@@ -214,8 +214,7 @@ pub fn has_mut_self_param(tcx: TyCtxt, def_id: DefId) -> bool {
                     let body = tcx.optimized_mir(def_id);
                     let fst_arg = body.local_decls[Local::from_usize(1)].clone();
                     let ty = fst_arg.ty;
-                    let is_mut_ref =
-                        matches!(ty.kind(), ty::Ref(_, _, Mutability::Mut));
+                    let is_mut_ref = matches!(ty.kind(), ty::Ref(_, _, Mutability::Mut));
                     return fst_arg.mutability.is_mut() || is_mut_ref;
                 }
             }
@@ -359,10 +358,7 @@ pub fn get_muts(tcx: TyCtxt<'_>, def_id: DefId) -> Vec<DefId> {
                 let impls = tcx.inherent_impls(adt_def_id);
                 for impl_def_id in impls {
                     for item in tcx.associated_item_def_ids(*impl_def_id) {
-                        if !matches!(
-                            tcx.def_kind(*item),
-                            DefKind::Fn | DefKind::AssocFn
-                        ) {
+                        if !matches!(tcx.def_kind(*item), DefKind::Fn | DefKind::AssocFn) {
                             continue;
                         }
                         if get_type(tcx, *item) != FnKind::Method {
@@ -374,8 +370,7 @@ pub fn get_muts(tcx: TyCtxt<'_>, def_id: DefId) -> Vec<DefId> {
                         if !matches!(assoc.kind, AssocKind::Fn { has_self: true, .. }) {
                             continue;
                         }
-                        let fn_sig =
-                            tcx.fn_sig(*item).instantiate_identity().skip_binder();
+                        let fn_sig = tcx.fn_sig(*item).instantiate_identity().skip_binder();
                         let all = fn_sig.inputs_and_output;
                         let first_param = all.first().copied();
                         if let Some(TyKind::Ref(_, _, Mutability::Mut)) =
@@ -410,9 +405,7 @@ pub fn get_ptr_deref_dummy_def_id(tcx: TyCtxt<'_>) -> Option<DefId> {
 /// set of field indices that are modified.  Used by invless mode to know which
 /// constructor-inherited invariants are invalidated by a mutator.
 pub fn get_mutated_fields(tcx: TyCtxt<'_>, def_id: DefId) -> Vec<usize> {
-    use rustc_middle::mir::{
-        ProjectionElem, StatementKind,
-    };
+    use rustc_middle::mir::{ProjectionElem, StatementKind};
 
     let body = tcx.optimized_mir(def_id);
     let mut fields = Vec::new();

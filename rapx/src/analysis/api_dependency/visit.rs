@@ -96,7 +96,11 @@ fn is_drop_impl(tcx: TyCtxt<'_>, fn_did: DefId) -> bool {
         #[cfg(rapx_rustc_ge_193)]
         let trait_did = tcx.impl_trait_id(impl_id);
         #[cfg(not(rapx_rustc_ge_193))]
-        let trait_did = tcx.impl_trait_ref(impl_id).expect("impl must have trait ref").skip_binder().def_id;
+        let trait_did = tcx
+            .impl_trait_ref(impl_id)
+            .expect("impl must have trait ref")
+            .skip_binder()
+            .def_id;
         if tcx.is_lang_item(trait_did, LangItem::Drop) {
             return true;
         }

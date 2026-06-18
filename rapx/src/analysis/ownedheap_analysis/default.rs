@@ -332,7 +332,8 @@ impl<'tcx> OwnedHeapAnalyzer<'tcx> {
                                                     #[cfg(not(rapx_rustc_ge_198))]
                                                     let field_ty = field.ty(self.tcx, substs);
                                                     #[cfg(rapx_rustc_ge_198)]
-                                                    let field_ty = field.ty(self.tcx, substs).skip_norm_wip();
+                                                    let field_ty =
+                                                        field.ty(self.tcx, substs).skip_norm_wip();
                                                     let mut find_ptr = FindPtr::new(self.tcx);
                                                     let _ = field_ty.visit_with(&mut find_ptr);
                                                     if find_ptr.has_ptr() {

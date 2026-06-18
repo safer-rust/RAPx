@@ -11,10 +11,10 @@ use crate::analysis::range_analysis::domain::domain::{
     ConstConvert, IntervalArithmetic, VarNode, VarNodes,
 };
 use crate::analysis::range_analysis::{Range, RangeType};
+use crate::compat::FxHashMap;
 use crate::{rap_debug, rap_trace};
 use num_traits::{Bounded, CheckedAdd, CheckedSub, One, ToPrimitive, Zero, ops};
 use rustc_abi::Size;
-use crate::compat::FxHashMap;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::coverage::Op;
 use rustc_middle::mir::{
@@ -117,11 +117,9 @@ impl<'tcx> SymbExpr<'tcx> {
             | Rvalue::Aggregate(..)
             | Rvalue::Repeat(..)
             | Rvalue::Discriminant(..)
-            | Rvalue::CopyForDeref(..)
-            => SymbExpr::Unknown,
+            | Rvalue::CopyForDeref(..) => SymbExpr::Unknown,
             #[cfg(not(rapx_rustc_ge_196))]
-            Rvalue::ShallowInitBox(..)
-            | Rvalue::NullaryOp(..) => SymbExpr::Unknown,
+            Rvalue::ShallowInitBox(..) | Rvalue::NullaryOp(..) => SymbExpr::Unknown,
             #[cfg(rapx_rustc_ge_198)]
             Rvalue::Reborrow(..) => SymbExpr::Unknown,
             Rvalue::RawPtr(raw_ptr_kind, place) => todo!(),

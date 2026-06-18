@@ -85,10 +85,7 @@ fn cargo_clean(dir: &Utf8Path, really: bool) {
         match out {
             Ok(o) if o.status.success() => {}
             _ => {
-                let out = Command::new("cargo")
-                    .arg("clean")
-                    .current_dir(dir)
-                    .output();
+                let out = Command::new("cargo").arg("clean").current_dir(dir).output();
                 match out {
                     Ok(o) if o.status.success() => {}
                     Ok(o) => {

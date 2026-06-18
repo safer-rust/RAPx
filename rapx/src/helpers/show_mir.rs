@@ -1,8 +1,8 @@
+use crate::compat::FxHashSet;
 use crate::def_id::is_drop_fn;
 use crate::helpers::draw_dot::render_dot_string;
 use crate::helpers::name::get_cleaned_def_path_name;
 use colorful::{Color, Colorful};
-use crate::compat::FxHashSet;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{
     BasicBlockData, BasicBlocks, Body, LocalDecl, LocalDecls, Operand, Rvalue, Statement,

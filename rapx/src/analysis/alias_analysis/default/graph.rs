@@ -4,10 +4,10 @@ use crate::{
         PathTree,
         graph::{PathGraph, PathEnumerator},
     },
+    compat::{FxHashMap, FxHashSet},
     graphs::cfg::CfgBlock,
     utils::source::*,
 };
-use crate::compat::{FxHashMap, FxHashSet};
 use rustc_middle::{
     mir::{AggregateKind, BasicBlock, Const, Operand, Rvalue, StatementKind, Terminator},
     ty::{self, TyCtxt, TypingEnv},
@@ -265,39 +265,48 @@ impl<'tcx> AliasGraph<'tcx> {
                                         // For ADTs (structs/enums), handle field assignments field-sensitively.
                                         // NOTE: Here we treat the ADT similarly to tuples,
                                         // but fields might be named and ADT type info is available, so more precise field indexing is possible if needed.
-                                                        let lv_ty = lv_place.ty(&body.local_decls, tcx).ty;
-                                                        for (field_idx, operand) in operands.iter_enumerated() {
-                                                            match operand {
-                                                                Operand::Copy(rv_place)
-                                                                | Operand::Move(rv_place) => {
-                                                                    let rv_local = rv_place.local.as_usize();
-                                                                    if values[lv_local].may_drop
-                                                                        && values[rv_local].may_drop
-                                                                    {
-                                                                        // If possible, resolve field type for better analysis. Here we use tuple logic as a template.
-                                                                        let field_ty = match lv_ty.kind() {
-                                                                            ty::Adt(adt_def, substs) => {
-                                                                                // Try getting the field type if available.
-                                                                                if field_idx.as_usize()
-                                                                                    < adt_def.all_fields().count()
-                                                                                {
-                                                                                    adt_def
-                                                                                        .all_fields()
-                                                                                        .nth(field_idx.as_usize())
-                                                        .map(|f| {
-                                                            #[cfg(not(rapx_rustc_ge_198))]
-                                                            { f.ty(tcx, substs) }
-                                                            #[cfg(rapx_rustc_ge_198)]
-                                                            { f.ty(tcx, substs).skip_norm_wip() }
-                                                        })
-                                                                                        .unwrap_or(lv_ty)
-                                                                                // fallback
-                                                                                } else {
-                                                                                    lv_ty
-                                                                                }
+                                        let lv_ty = lv_place.ty(&body.local_decls, tcx).ty;
+                                        for (field_idx, operand) in operands.iter_enumerated() {
+                                            match operand {
+                                                Operand::Copy(rv_place)
+                                                | Operand::Move(rv_place) => {
+                                                    let rv_local = rv_place.local.as_usize();
+                                                    if values[lv_local].may_drop
+                                                        && values[rv_local].may_drop
+                                                    {
+                                                        // If possible, resolve field type for better analysis. Here we use tuple logic as a template.
+                                                        let field_ty = match lv_ty.kind() {
+                                                            ty::Adt(adt_def, substs) => {
+                                                                // Try getting the field type if available.
+                                                                if field_idx.as_usize()
+                                                                    < adt_def.all_fields().count()
+                                                                {
+                                                                    adt_def
+                                                                        .all_fields()
+                                                                        .nth(field_idx.as_usize())
+                                                                        .map(|f| {
+                                                                            #[cfg(not(
+                                                                                rapx_rustc_ge_198
+                                                                            ))]
+                                                                            {
+                                                                                f.ty(tcx, substs)
                                                                             }
-                                                                            _ => lv_ty,
-                                                                        };
+                                                                            #[cfg(
+                                                                                rapx_rustc_ge_198
+                                                                            )]
+                                                                            {
+                                                                                f.ty(tcx, substs)
+                                                                                    .skip_norm_wip()
+                                                                            }
+                                                                        })
+                                                                        .unwrap_or(lv_ty)
+                                                                // fallback
+                                                                } else {
+                                                                    lv_ty
+                                                                }
+                                                            }
+                                                            _ => lv_ty,
+                                                        };
 
                                                         // Create lv.field_idx Place using tcx.mk_place_field, as for tuples.
                                                         let lv_field_place = tcx.mk_place_field(

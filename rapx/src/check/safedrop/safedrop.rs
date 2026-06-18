@@ -30,7 +30,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
                     replace: _,
                     drop: _,
                     #[cfg(not(rapx_rustc_ge_198))]
-                    async_fut: _,
+                        async_fut: _,
                 } => {
                     if !self.drop_heap_item_check(place) {
                         return;
@@ -103,7 +103,9 @@ impl<'tcx> SafeDropGraph<'tcx> {
     pub fn process_function_paths(&mut self, fn_map: &MopFnAliasMap) {
         let paths = self.alias_graph.enumerate_paths();
 
-        let Some(root) = paths.root() else { return; };
+        let Some(root) = paths.root() else {
+            return;
+        };
         let mut path = Vec::new();
         let _ = self.dfs_safedrop(root, &mut path, fn_map);
     }

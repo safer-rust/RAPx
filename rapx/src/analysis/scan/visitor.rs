@@ -59,7 +59,10 @@ impl<'tcx> FnVisitor<'tcx> {
         #[cfg(rapx_rustc_ge_198)]
         rap_debug!(
             "fn_sig: {}",
-            self.tcx.type_of(fn_did).instantiate_identity().skip_norm_wip()
+            self.tcx
+                .type_of(fn_did)
+                .instantiate_identity()
+                .skip_norm_wip()
         );
         rap_debug!(
             "visibility: {:?}",
@@ -107,11 +110,15 @@ impl<'tcx> FnVisitor<'tcx> {
         #[cfg(not(rapx_rustc_ge_198))]
         rap_debug!("type(debug): {:?}", self.tcx.type_of(fn_did));
         #[cfg(rapx_rustc_ge_198)]
-        rap_debug!("type(debug): {:?}", self.tcx.type_of(fn_did).instantiate_identity().skip_norm_wip());
+        rap_debug!(
+            "type(debug): {:?}",
+            self.tcx
+                .type_of(fn_did)
+                .instantiate_identity()
+                .skip_norm_wip()
+        );
         rap_debug!("fn_sig(debug): {:?}", fn_sig);
-        let late_fn_sig = self
-            .tcx
-            .liberate_late_bound_regions(fn_did, inst_fn_sig);
+        let late_fn_sig = self.tcx.liberate_late_bound_regions(fn_did, inst_fn_sig);
         rap_debug!("late_fn_sig: {:?}", late_fn_sig);
 
         if is_generic {

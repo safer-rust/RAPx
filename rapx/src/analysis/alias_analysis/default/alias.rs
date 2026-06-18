@@ -1,6 +1,6 @@
 use super::{MopAliasPair, MopFnAliasMap, graph::*, types::*, value::*};
-use crate::def_id::*;
 use crate::compat::{FxHashMap, FxHashSet};
+use crate::def_id::*;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{Local, Operand, Place, ProjectionElem, TerminatorKind},
@@ -369,10 +369,7 @@ impl<'tcx> AliasGraph<'tcx> {
         while let Some(father) = &node_ref.father {
             iteration += 1;
             if iteration > 1000 {
-                rap_warn!(
-                    "get_field_seq exceeded 1000 iterations: value={:?}",
-                    value
-                );
+                rap_warn!("get_field_seq exceeded 1000 iterations: value={:?}", value);
                 break;
             }
             field_id_seq.push(father.field_id);
@@ -405,7 +402,7 @@ impl<'tcx> AliasGraph<'tcx> {
 
     //merge the result of current path to the final result.
     pub fn merge_results(&mut self) {
-            rap_debug!("merge results");
+        rap_debug!("merge results");
         let f_node: Vec<Option<FatherInfo>> =
             self.values.iter().map(|v| v.father.clone()).collect();
         let set_index = self.build_set_index();
@@ -437,9 +434,7 @@ impl<'tcx> AliasGraph<'tcx> {
                         }
                         if let Some(father_info) = fidx {
                             if i != idx && i != node.index {
-                                if let Some(set_idx) =
-                                    set_index.get(&father_info.father_value_id)
-                                {
+                                if let Some(set_idx) = set_index.get(&father_info.father_value_id) {
                                     for &j in &set_arg_values[*set_idx] {
                                         if j != idx && j != node.index {
                                             replace = Some(&self.values[j]);

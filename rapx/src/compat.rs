@@ -11,7 +11,6 @@
 /// 2. Register it with `emit_check_cfg` in `build.rs`.
 /// 3. Add the re-export below.
 /// 4. Update call-sites to `use crate::compat::Foo;`.
-
 pub use rustc_hash::FxHashMap;
 pub use rustc_hash::FxHashSet;
 
