@@ -271,7 +271,9 @@ impl<'tcx> Property<'tcx> {
             "Align" => {
                 Self::check_arg_length(exprs.len(), 2, "Align");
                 let target = Self::parse_target_arg(tcx, def_id, &exprs[0]);
-                let ty = Self::parse_type(tcx, def_id, &exprs[1], "Align");
+                let Some(ty) = Self::parse_type(tcx, def_id, &exprs[1], "Align") else {
+                    return Self::new_simple(PropertyKind::Unknown);
+                };
                 Self::new_with_args(PropertyKind::Align, vec![target, PropertyArg::Ty(ty)])
             }
             "Size" => Self::new_with_target(PropertyKind::Size, tcx, def_id, exprs),
@@ -280,7 +282,9 @@ impl<'tcx> Property<'tcx> {
             "Allocated" => {
                 Self::check_arg_length(exprs.len(), 3, "Allocated");
                 let target = Self::parse_target_arg(tcx, def_id, &exprs[0]);
-                let ty = Self::parse_type(tcx, def_id, &exprs[1], "Allocated");
+                let Some(ty) = Self::parse_type(tcx, def_id, &exprs[1], "Allocated") else {
+                    return Self::new_simple(PropertyKind::Unknown);
+                };
                 let length = Self::parse_contract_expr(tcx, def_id, &exprs[2], "Allocated");
                 Self::new_with_args(
                     PropertyKind::Allocated,
@@ -290,7 +294,9 @@ impl<'tcx> Property<'tcx> {
             "InBound" | "InBounded" => match exprs {
                 [_target, ty_expr, len_expr] => {
                     let target = Self::parse_target_arg(tcx, def_id, &exprs[0]);
-                    let ty = Self::parse_type(tcx, def_id, ty_expr, "InBound");
+                    let Some(ty) = Self::parse_type(tcx, def_id, ty_expr, "InBound") else {
+                        return Self::new_simple(PropertyKind::Unknown);
+                    };
                     let length = Self::parse_contract_expr(tcx, def_id, len_expr, "InBound");
                     Self::new_with_args(
                         PropertyKind::InBound,
@@ -313,7 +319,7 @@ impl<'tcx> Property<'tcx> {
                     Self::new_simple(PropertyKind::Unknown)
                 }
             },
-            "NonOverlap" => Self::new_with_target(PropertyKind::NonOverlap, tcx, def_id, exprs),
+            "NonOverlap" => Self::new_with_targets(PropertyKind::NonOverlap, tcx, def_id, exprs),
             "ValidNum" => {
                 let predicates = Self::parse_valid_num(tcx, def_id, exprs);
                 if predicates.is_empty() {
@@ -330,7 +336,9 @@ impl<'tcx> Property<'tcx> {
             "Init" => {
                 Self::check_arg_length(exprs.len(), 3, "Init");
                 let target = Self::parse_target_arg(tcx, def_id, &exprs[0]);
-                let ty = Self::parse_type(tcx, def_id, &exprs[1], "Init");
+                let Some(ty) = Self::parse_type(tcx, def_id, &exprs[1], "Init") else {
+                    return Self::new_simple(PropertyKind::Unknown);
+                };
                 let length = Self::parse_contract_expr(tcx, def_id, &exprs[2], "Init");
                 Self::new_with_args(
                     PropertyKind::Init,
@@ -341,7 +349,9 @@ impl<'tcx> Property<'tcx> {
             "Typed" => {
                 Self::check_arg_length(exprs.len(), 2, "Typed");
                 let target = Self::parse_target_arg(tcx, def_id, &exprs[0]);
-                let ty = Self::parse_type(tcx, def_id, &exprs[1], "Typed");
+                let Some(ty) = Self::parse_type(tcx, def_id, &exprs[1], "Typed") else {
+                    return Self::new_simple(PropertyKind::Unknown);
+                };
                 Self::new_with_args(PropertyKind::Typed, vec![target, PropertyArg::Ty(ty)])
             }
             "Owning" => Self::new_with_target(PropertyKind::Owning, tcx, def_id, exprs),
@@ -355,7 +365,9 @@ impl<'tcx> Property<'tcx> {
             "ValidPtr" => {
                 Self::check_arg_length(exprs.len(), 3, "ValidPtr");
                 let target = Self::parse_target_arg(tcx, def_id, &exprs[0]);
-                let ty = Self::parse_type(tcx, def_id, &exprs[1], "ValidPtr");
+                let Some(ty) = Self::parse_type(tcx, def_id, &exprs[1], "ValidPtr") else {
+                    return Self::new_simple(PropertyKind::Unknown);
+                };
                 let length = Self::parse_contract_expr(tcx, def_id, &exprs[2], "ValidPtr");
                 Self::new_with_args(
                     PropertyKind::ValidPtr,
@@ -427,6 +439,19 @@ impl<'tcx> Property<'tcx> {
         Self { kind, args }
     }
 
+    fn new_with_targets(
+        kind: PropertyKind,
+        tcx: TyCtxt<'tcx>,
+        def_id: DefId,
+        exprs: &[Expr],
+    ) -> Self {
+        let args = exprs
+            .iter()
+            .map(|expr| Self::parse_target_arg(tcx, def_id, expr))
+            .collect();
+        Self { kind, args }
+    }
+
     fn check_arg_length(expr_len: usize, required_len: usize, sp: &str) -> bool {
         if expr_len != required_len {
             panic!("Wrong args length for {:?} Tag!", sp);
@@ -434,17 +459,18 @@ impl<'tcx> Property<'tcx> {
         true
     }
 
-    fn parse_type(tcx: TyCtxt<'tcx>, def_id: DefId, expr: &Expr, sp: &str) -> Ty<'tcx> {
+    fn parse_type(tcx: TyCtxt<'tcx>, def_id: DefId, expr: &Expr, sp: &str) -> Option<Ty<'tcx>> {
         let ty_ident_full = access_ident_recursive(expr);
         if ty_ident_full.is_none() {
-            rap_error!("Incorrect expression for the type of {:?} Tag!", sp);
+            rap_debug!("Incorrect expression for the type of {:?} Tag!", sp);
+            return None;
         }
         let ty_ident = ty_ident_full.unwrap().0;
         let ty = match_ty_with_ident(tcx, def_id, ty_ident);
         if ty.is_none() {
-            rap_error!("Cannot get type in {:?} Tag!", sp);
+            rap_debug!("Cannot get type in {:?} Tag!", sp);
         }
-        ty.unwrap()
+        ty
     }
 
     fn parse_target_type(tcx: TyCtxt<'tcx>, def_id: DefId, expr: &Expr) -> Option<Ty<'tcx>> {
