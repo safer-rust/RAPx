@@ -2,7 +2,7 @@ use super::{MopFnAliasPairs, assign::*, block::*, types::*, value::*};
 use crate::{
     analysis::path_analysis::{
         PathTree,
-        graph::{PathGraph, PathEnumerator},
+        graph::{PathEnumerator, PathGraph},
     },
     compat::{FxHashMap, FxHashSet},
     graphs::cfg::CfgBlock,

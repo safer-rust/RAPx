@@ -20,7 +20,10 @@ use crate::compat::FxHashMap;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{mir::BasicBlock, ty::TyCtxt};
 
-use crate::analysis::path_analysis::{PathTree, graph::{PathGraph, PathEnumerator}};
+use crate::analysis::path_analysis::{
+    PathTree,
+    graph::{PathEnumerator, PathGraph},
+};
 
 use super::helpers::{Callsite, CallsiteLocation};
 

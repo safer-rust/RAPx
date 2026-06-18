@@ -608,7 +608,10 @@ fn scc_simple() {
     assert_contain(&output, "Path [0, 1, 2]");
     assert_contain(&output, "Path [0, 1, 3, 4, 5, 6, 7, 10, 1, 2]");
     assert_contain(&output, "Path [0, 1, 3, 4, 5, 8, 9, 10, 1, 2]");
-    assert_contain(&output, "Path [0, 1, 3, 4, 5, 6, 7, 10, 1, 3, 4, 5, 8, 9, 10, 1, 2]");
+    assert_contain(
+        &output,
+        "Path [0, 1, 3, 4, 5, 6, 7, 10, 1, 3, 4, 5, 8, 9, 10, 1, 2]",
+    );
     // early_exit: 3 paths — loop with return
     assert_contain(&output, "Path [0, 1, 2]");
     assert_contain(&output, "Path [0, 1, 3, 4, 1, 2]");
@@ -625,8 +628,14 @@ fn scc_nested() {
     // walk: 11 paths — nested SCC (outer row + inner col loops)
     assert_contain(&output, "Path [0, 1, 2]");
     assert_contain(&output, "Path [0, 1, 3, 4, 6, 7, 8, 4, 5, 9, 1, 2]");
-    assert_contain(&output, "Path [0, 1, 3, 4, 6, 7, 8, 4, 6, 7, 8, 4, 5, 9, 1, 2]");
-    assert_contain(&output, "Path [0, 1, 3, 4, 6, 7, 8, 4, 5, 9, 1, 3, 4, 6, 7, 8, 4, 5, 9, 1, 2]");
+    assert_contain(
+        &output,
+        "Path [0, 1, 3, 4, 6, 7, 8, 4, 6, 7, 8, 4, 5, 9, 1, 2]",
+    );
+    assert_contain(
+        &output,
+        "Path [0, 1, 3, 4, 6, 7, 8, 4, 5, 9, 1, 3, 4, 6, 7, 8, 4, 5, 9, 1, 2]",
+    );
     // double_loop: 11 paths — nested SCC (outer + inner loops)
     assert_contain(&output, "Path [0, 1, 2]");
     assert_contain(&output, "Path [0, 1, 3, 4, 6, 7, 4, 5, 8, 1, 2]");

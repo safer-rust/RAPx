@@ -1,4 +1,7 @@
-use crate::analysis::{Analysis, path_analysis::graph::{PathGraph, PathEnumerator}};
+use crate::analysis::{
+    Analysis,
+    path_analysis::graph::{PathEnumerator, PathGraph},
+};
 use crate::compat::FxHashMap;
 use rustc_hir::{def::DefKind, def_id::DefId};
 use rustc_middle::ty::TyCtxt;

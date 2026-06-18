@@ -8,8 +8,8 @@ use std::{
 };
 
 pub mod types;
-pub use types::*;
 use crate::{analysis::Analysis, utils::source::get_fn_name_byid};
+pub use types::*;
 
 impl From<DataflowGraph> for DataFlowGraph {
     fn from(graph: DataflowGraph) -> Self {

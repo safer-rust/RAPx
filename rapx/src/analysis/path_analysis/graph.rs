@@ -846,7 +846,10 @@ impl<'g, 'tcx> PathEnumerator<'g, 'tcx> {
             .iter()
             .filter(|e| e.exit == last)
             .map(|e| e.to)
-            .filter(|&n| !scc.child_sccs.contains(&self.graph.cfg.block(n).scc.enter()))
+            .filter(|&n| {
+                !scc.child_sccs
+                    .contains(&self.graph.cfg.block(n).scc.enter())
+            })
             .collect()
     }
 }

@@ -7,7 +7,7 @@
 //! the shared `VerifyEngine`.
 
 use crate::analysis::Analysis;
-use crate::analysis::path_analysis::graph::{PathGraph, PathEnumerator};
+use crate::analysis::path_analysis::graph::{PathEnumerator, PathGraph};
 use crate::cli::VerifyMode;
 use crate::helpers::fn_info::{FnKind, get_cons, get_mutated_fields, get_muts, get_type};
 use crate::verify::contract::PropertyKind;
