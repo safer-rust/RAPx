@@ -529,6 +529,14 @@ fn get_contract_from_entry<'tcx>(
         }
 
         let property = Property::new(tcx, def_id, entry.tag.as_str(), &exprs);
+        if matches!(property.kind, PropertyKind::Unknown) {
+            rap_debug!(
+                "skip unsupported std safety contract tag '{}' for callee {:?}",
+                entry.tag,
+                def_id
+            );
+            continue;
+        }
         results.push(property);
     }
     results
@@ -606,7 +614,9 @@ fn is_contract_token_char(ch: char) -> bool {
 
 fn is_rapx_named_attr(attr: &Attribute, name: &str) -> bool {
     let path = attr.path();
-    path.len() >= 2 && path[path.len() - 2].as_str() == "rapx" && path[path.len() - 1].as_str() == name
+    path.len() >= 2
+        && path[path.len() - 2].as_str() == "rapx"
+        && path[path.len() - 1].as_str() == name
 }
 
 /// Collects properties from `#[rapx::requires(...)]` attributes.
@@ -666,7 +676,10 @@ fn collect_properties_from_named_attrs<'tcx>(
 }
 
 /// Parses `requires` contracts from source-level RAPx annotations attached to a definition.
-pub(crate) fn get_contract_from_annotation<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> FnContracts<'tcx> {
+pub(crate) fn get_contract_from_annotation<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def_id: DefId,
+) -> FnContracts<'tcx> {
     #[allow(deprecated)]
     let attrs = tcx.get_all_attrs(def_id);
     collect_properties_from_requires_attrs(tcx, attrs, def_id, "requires")
@@ -691,7 +704,9 @@ fn get_struct_invariants_from_annotation<'tcx>(
         tcx,
         {
             #[allow(deprecated)]
-            { tcx.get_all_attrs(struct_def_id) }
+            {
+                tcx.get_all_attrs(struct_def_id)
+            }
         },
         context_def_id,
         "invariant",
@@ -700,7 +715,9 @@ fn get_struct_invariants_from_annotation<'tcx>(
         tcx,
         {
             #[allow(deprecated)]
-            { tcx.get_all_attrs(struct_def_id) }
+            {
+                tcx.get_all_attrs(struct_def_id)
+            }
         },
         context_def_id,
         "invariant",

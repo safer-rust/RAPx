@@ -1,92 +1,1121 @@
 {
-    "alloc::string::from_raw_parts": [
-        "buf",
-        "length",
-        "capacity"
-    ],
-    "alloc::vec::from_parts": [
-        "ptr",
-        "length",
-        "capacity"
-    ],
-    "alloc::vec::from_parts_in": [
-        "ptr",
-        "length",
-        "capacity",
-        "alloc"
-    ],
-    "alloc::vec::from_raw_parts": [
-        "ptr",
-        "length",
-        "capacity"
-    ],
-    "alloc::vec::from_raw_parts_in": [
-        "ptr",
-        "length",
-        "capacity",
-        "alloc"
-    ],
-    "core::ptr::const_ptr::read": [
-        "self"
-    ],
-    "core::ptr::const_ptr::read_volatile": [
-        "self"
-    ],
-    "core::ptr::const_ptr::read_unaligned": [
-        "self"
-    ],
-    "core::ptr::copy_nonoverlapping": [
-        "src",
-        "dst",
-        "count"
-    ],
-    "core::ptr::mut_ptr::read": [
-        "self"
-    ],
-    "core::ptr::mut_ptr::read_volatile": [
-        "self"
-    ],
-    "core::ptr::mut_ptr::read_unaligned": [
-        "self"
-    ],
-    "core::ptr::non_null::read": [
-        "self"
-    ],
-    "core::ptr::non_null::read_volatile": [
-        "self"
-    ],
-    "core::ptr::non_null::read_unaligned": [
-        "self"
-    ],
-    "core::ptr::read": [
-        "src"
-    ],
-    "core::ptr::read_volatile": [
-        "src"
-    ],
-    "core::ptr::read_unaligned": [
-        "src"
-    ],
-    "core::slice::raw::from_mut_ptr_range": [
-        "range"
-    ],
-    "core::slice::raw::from_ptr_range": [
-        "range"
-    ],
-    "core::slice::raw::from_raw_parts": [
-        "data",
-        "len"
-    ],
-    "core::slice::raw::from_raw_parts_mut": [
-        "data",
-        "len"
-    ],
-    "core::str::converts::from_raw_parts": [
-        "ptr",
-        "len"
-    ],
-    "core::str::converts::from_raw_parts_mut": [
-        "ptr",
-        "len"
-    ]
+  "core::alloc::global::GlobalAlloc::alloc": [
+    "self",
+    "layout"
+  ],
+  "core::alloc::global::GlobalAlloc::realloc": [
+    "self",
+    "ptr",
+    "layout",
+    "new_size"
+  ],
+  "core::alloc::global::GlobalAlloc::dealloc": [
+    "self",
+    "_ptr",
+    "_layout"
+  ],
+  "core::alloc::global::GlobalAlloc::alloc_zeroed": [
+    "self",
+    "layout"
+  ],
+  "core::alloc::layout::from_size_align_unchecked": [
+    "size",
+    "align"
+  ],
+  "core::alloc::layout::for_value_raw": [
+    "t"
+  ],
+  "core::alloc::Allocator::grow": [
+    "self",
+    "ptr",
+    "old_layout",
+    "new_layout"
+  ],
+  "core::alloc::Allocator::grow_zeroed": [
+    "self",
+    "ptr",
+    "old_layout",
+    "new_layout"
+  ],
+  "core::alloc::Allocator::shrink": [
+    "self",
+    "ptr",
+    "old_layout",
+    "new_layout"
+  ],
+  "core::alloc::Allocator::deallocate": [
+    "self",
+    "ptr",
+    "layout"
+  ],
+  "core::alloc::deallocate": [
+    "self",
+    "ptr",
+    "layout"
+  ],
+  "core::alloc::grow": [
+    "self",
+    "ptr",
+    "old_layout",
+    "new_layout"
+  ],
+  "core::alloc::grow_zeroed": [
+    "self",
+    "ptr",
+    "old_layout",
+    "new_layout"
+  ],
+  "core::alloc::shrink": [
+    "self",
+    "ptr",
+    "old_layout",
+    "new_layout"
+  ],
+  "core::any::downcast_ref_unchecked": [],
+  "core::any::downcast_mut_unchecked": [],
+  "core::array::iter::new_unchecked": [
+    "buffer",
+    "initialized"
+  ],
+  "core::array::ascii::as_ascii_unchecked": [
+    "self"
+  ],
+  "core::ascii::ascii_char::digit_unchecked": [
+    "d"
+  ],
+  "core::ascii::ascii_char::from_u8_unchecked": [
+    "b"
+  ],
+  "core::cell::try_borrow_unguarded": [
+    "self"
+  ],
+  "core::char::from_u32_unchecked": [
+    "i"
+  ],
+  "core::char::convert::from_u32_unchecked": [
+    "i"
+  ],
+  "core::char::methods::from_u32_unchecked": [
+    "i"
+  ],
+  "core::f128::to_int_unchecked": [
+    "self"
+  ],
+  "core::f64::to_int_unchecked": [
+    "self"
+  ],
+  "core::f32::to_int_unchecked": [
+    "self"
+  ],
+  "core::f16::to_int_unchecked": [
+    "self"
+  ],
+  "core::convert::num::FloatToInt::to_int_unchecked": [
+    "self"
+  ],
+  "core::convert::num::to_int_unchecked": [
+    "self"
+  ],
+  "core::ffi::c_str::from_ptr": [
+    "ptr"
+  ],
+  "core::ffi::c_str::from_bytes_with_nul_unchecked": [
+    "bytes"
+  ],
+  "core::future::async_drop::async_drop_in_place": [
+    "_to_drop"
+  ],
+  "core::iter::range::forward_unchecked": [
+    "start",
+    "count"
+  ],
+  "core::iter::range::backward_unchecked": [
+    "start",
+    "count"
+  ],
+  "core::iter::range::Step::forward_unchecked": [
+    "start",
+    "count"
+  ],
+  "core::iter::range::Step::backward_unchecked": [
+    "start",
+    "count"
+  ],
+  "core::mem::manually_drop::take": [
+    "slot"
+  ],
+  "core::mem::manually_drop::drop": [
+    "slot"
+  ],
+  "core::mem::maybe_uninit::assume_init": [
+    "self"
+  ],
+  "core::mem::maybe_uninit::assume_init_read": [
+    "self"
+  ],
+  "core::mem::maybe_uninit::assume_init_drop": [
+    "self"
+  ],
+  "core::mem::maybe_uninit::assume_init_ref": [
+    "self"
+  ],
+  "core::mem::maybe_uninit::assume_init_mut": [
+    "self"
+  ],
+  "core::mem::maybe_uninit::array_assume_init": [
+    "array"
+  ],
+  "core::mem::maybe_uninit::slice_assume_init_ref": [],
+  "core::mem::maybe_uninit::slice_assume_init_mut": [],
+  "core::mem::size_of_val_raw": [
+    "val"
+  ],
+  "core::mem::align_of_val_raw": [
+    "val"
+  ],
+  "core::mem::zeroed": [],
+  "core::mem::uninitialized": [],
+  "core::mem::transmute_copy": [
+    "src"
+  ],
+  "core::mem::transmutability::TransmuteFrom::transmute": [
+    "src"
+  ],
+  "core::num::nonzero::unchecked_add": [
+    "self",
+    "other"
+  ],
+  "core::num::nonzero::unchecked_mul": [
+    "self",
+    "other"
+  ],
+  "core::num::nonzero::new_unchecked": [
+    "n"
+  ],
+  "core::num::nonzero::from_mut_unchecked": [
+    "n"
+  ],
+  "core::num::unchecked_sub": [
+    "self",
+    "rhs"
+  ],
+  "core::num::unchecked_mul": [
+    "self",
+    "rhs"
+  ],
+  "core::num::unchecked_neg": [
+    "self"
+  ],
+  "core::num::unchecked_shl": [
+    "self",
+    "rhs"
+  ],
+  "core::num::unchecked_shr": [
+    "self",
+    "rhs"
+  ],
+  "core::num::unchecked_add": [
+    "self",
+    "rhs"
+  ],
+  "core::hint::unreachable_unchecked": [],
+  "core::hint::assert_unchecked": [
+    "cond"
+  ],
+  "core::pin::map_unchecked": [
+    "self",
+    "func"
+  ],
+  "core::pin::map_unchecked_mut": [
+    "self",
+    "func"
+  ],
+  "core::pin::new_unchecked": [
+    "pointer"
+  ],
+  "core::pin::into_inner_unchecked": [
+    "pin"
+  ],
+  "core::pin::get_unchecked_mut": [
+    "self"
+  ],
+  "core::sync::atomic::from_ptr": [
+    "ptr"
+  ],
+  "core::intrinsics::float_to_int_unchecked": [
+    "value"
+  ],
+  "core::intrinsics::typed_swap_nonoverlapping": [
+    "x",
+    "y"
+  ],
+  "core::intrinsics::copy": [
+    "src",
+    "dst",
+    "count"
+  ],
+  "core::intrinsics::copy::copy": [
+    "src",
+    "dst",
+    "count"
+  ],
+  "core::intrinsics::copy_nonoverlapping": [
+    "src",
+    "dst",
+    "count"
+  ],
+  "core::intrinsics::write_bytes": [
+    "dst",
+    "val",
+    "count"
+  ],
+  "core::intrinsics::ptr_offset_from": [
+    "ptr",
+    "base"
+  ],
+  "core::ptr::alignment::new_unchecked": [
+    "align"
+  ],
+  "core::ptr::non_null::as_uninit_ref": [
+    "self"
+  ],
+  "core::ptr::non_null::as_uninit_mut": [
+    "self"
+  ],
+  "core::ptr::non_null::new_unchecked": [
+    "ptr"
+  ],
+  "core::ptr::non_null::as_ref": [
+    "self"
+  ],
+  "core::ptr::non_null::as_mut": [
+    "self"
+  ],
+  "core::ptr::non_null::offset": [
+    "self",
+    "count"
+  ],
+  "core::ptr::non_null::add": [
+    "self",
+    "count"
+  ],
+  "core::ptr::non_null::byte_offset": [
+    "self",
+    "count"
+  ],
+  "core::ptr::non_null::byte_add": [
+    "self",
+    "count"
+  ],
+  "core::ptr::non_null::byte_sub": [
+    "self",
+    "count"
+  ],
+  "core::ptr::non_null::offset_from": [
+    "self",
+    "origin"
+  ],
+  "core::ptr::non_null::byte_offset_from": [
+    "self",
+    "origin"
+  ],
+  "core::ptr::non_null::sub_ptr": [],
+  "core::ptr::non_null::sub": [
+    "self",
+    "count"
+  ],
+  "core::ptr::non_null::read": [
+    "self"
+  ],
+  "core::ptr::non_null::read_volatile": [
+    "self"
+  ],
+  "core::ptr::non_null::read_unaligned": [
+    "self"
+  ],
+  "core::ptr::non_null::copy_to": [
+    "self",
+    "dest",
+    "count"
+  ],
+  "core::ptr::non_null::copy_to_nonoverlapping": [
+    "self",
+    "dest",
+    "count"
+  ],
+  "core::ptr::non_null::copy_from": [
+    "self",
+    "src",
+    "count"
+  ],
+  "core::ptr::non_null::copy_from_nonoverlapping": [
+    "self",
+    "src",
+    "count"
+  ],
+  "core::ptr::non_null::drop_in_place": [
+    "self"
+  ],
+  "core::ptr::non_null::write": [
+    "self",
+    "val"
+  ],
+  "core::ptr::non_null::write_bytes": [
+    "self",
+    "val",
+    "count"
+  ],
+  "core::ptr::non_null::write_volatile": [
+    "self",
+    "val"
+  ],
+  "core::ptr::non_null::write_unaligned": [
+    "self",
+    "val"
+  ],
+  "core::ptr::non_null::replace": [
+    "self",
+    "src"
+  ],
+  "core::ptr::non_null::swap": [
+    "self",
+    "with"
+  ],
+  "core::ptr::non_null::as_uninit_slice": [
+    "self"
+  ],
+  "core::ptr::non_null::as_uninit_slice_mut": [
+    "self"
+  ],
+  "core::ptr::non_null::get_unchecked_mut": [
+    "self",
+    "index"
+  ],
+  "core::ptr::const_ptr::as_ref": [
+    "self"
+  ],
+  "core::ptr::const_ptr::as_ref_unchecked": [
+    "self"
+  ],
+  "core::ptr::const_ptr::as_uninit_ref": [
+    "self"
+  ],
+  "core::ptr::const_ptr::offset": [
+    "self",
+    "count"
+  ],
+  "core::ptr::const_ptr::add": [
+    "self",
+    "count"
+  ],
+  "core::ptr::const_ptr::sub": [
+    "self",
+    "count"
+  ],
+  "core::ptr::const_ptr::byte_offset": [
+    "self",
+    "count"
+  ],
+  "core::ptr::const_ptr::offset_from": [
+    "self",
+    "origin"
+  ],
+  "core::ptr::const_ptr::byte_offset_from": [
+    "self",
+    "origin"
+  ],
+  "core::ptr::const_ptr::non_null::sub_ptr": [],
+  "core::ptr::const_ptr::sub_ptr": [],
+  "core::ptr::const_ptr::byte_add": [
+    "self",
+    "count"
+  ],
+  "core::ptr::const_ptr::byte_sub": [
+    "self",
+    "count"
+  ],
+  "core::ptr::const_ptr::read": [
+    "self"
+  ],
+  "core::ptr::const_ptr::read_volatile": [
+    "self"
+  ],
+  "core::ptr::const_ptr::read_unaligned": [
+    "self"
+  ],
+  "core::ptr::const_ptr::copy_to": [
+    "self",
+    "dest",
+    "count"
+  ],
+  "core::ptr::const_ptr::copy_to_nonoverlapping": [
+    "self",
+    "dest",
+    "count"
+  ],
+  "core::ptr::const_ptr::as_uninit_slice": [
+    "self"
+  ],
+  "core::ptr::const_ptr::get_unchecked": [
+    "self",
+    "index"
+  ],
+  "core::ptr::mut_ptr::as_ref": [
+    "self"
+  ],
+  "core::ptr::mut_ptr::as_ref_unchecked": [
+    "self"
+  ],
+  "core::ptr::mut_ptr::as_uninit_ref": [
+    "self"
+  ],
+  "core::ptr::mut_ptr::offset": [
+    "self",
+    "count"
+  ],
+  "core::ptr::mut_ptr::as_mut": [
+    "self"
+  ],
+  "core::ptr::mut_ptr::as_mut_unchecked": [
+    "self"
+  ],
+  "core::ptr::mut_ptr::as_uninit_mut": [
+    "self"
+  ],
+  "core::ptr::mut_ptr::add": [
+    "self",
+    "count"
+  ],
+  "core::ptr::mut_ptr::sub": [
+    "self",
+    "count"
+  ],
+  "core::ptr::mut_ptr::byte_offset": [
+    "self",
+    "count"
+  ],
+  "core::ptr::mut_ptr::offset_from": [
+    "self",
+    "origin"
+  ],
+  "core::ptr::mut_ptr::byte_offset_from": [
+    "self",
+    "origin"
+  ],
+  "core::ptr::mut_ptr::sub_ptr": [],
+  "core::ptr::mut_ptr::byte_add": [
+    "self",
+    "count"
+  ],
+  "core::ptr::mut_ptr::byte_sub": [
+    "self",
+    "count"
+  ],
+  "core::ptr::mut_ptr::read": [
+    "self"
+  ],
+  "core::ptr::mut_ptr::read_volatile": [
+    "self"
+  ],
+  "core::ptr::mut_ptr::read_unaligned": [
+    "self"
+  ],
+  "core::ptr::mut_ptr::copy_to": [
+    "self",
+    "dest",
+    "count"
+  ],
+  "core::ptr::mut_ptr::copy_to_nonoverlapping": [
+    "self",
+    "dest",
+    "count"
+  ],
+  "core::ptr::mut_ptr::copy_from": [
+    "self",
+    "src",
+    "count"
+  ],
+  "core::ptr::mut_ptr::copy_from_nonoverlapping": [
+    "self",
+    "src",
+    "count"
+  ],
+  "core::ptr::mut_ptr::drop_in_place": [
+    "self"
+  ],
+  "core::ptr::mut_ptr::write": [
+    "self",
+    "val"
+  ],
+  "core::ptr::mut_ptr::write_bytes": [
+    "self",
+    "val",
+    "count"
+  ],
+  "core::ptr::mut_ptr::write_volatile": [
+    "self",
+    "val"
+  ],
+  "core::ptr::mut_ptr::write_unaligned": [
+    "self",
+    "val"
+  ],
+  "core::ptr::mut_ptr::replace": [
+    "self",
+    "src"
+  ],
+  "core::ptr::mut_ptr::swap": [
+    "self",
+    "with"
+  ],
+  "core::ptr::mut_ptr::split_at_mut": [
+    "self",
+    "mid"
+  ],
+  "core::ptr::mut_ptr::split_at_mut_unchecked": [
+    "self",
+    "mid"
+  ],
+  "core::ptr::mut_ptr::as_uninit_slice": [
+    "self"
+  ],
+  "core::ptr::mut_ptr::as_uninit_slice_mut": [
+    "self"
+  ],
+  "core::ptr::mut_ptr::get_unchecked_mut": [
+    "self",
+    "index"
+  ],
+  "core::ptr::drop_in_place": [
+    "to_drop"
+  ],
+  "core::ptr::replace": [
+    "dst",
+    "src"
+  ],
+  "core::ptr::read": [
+    "src"
+  ],
+  "core::ptr::write": [
+    "dst",
+    "src"
+  ],
+  "core::ptr::swap": [
+    "x",
+    "y"
+  ],
+  "core::ptr::swap_nonoverlapping": [
+    "x",
+    "y",
+    "count"
+  ],
+  "core::ptr::read_unaligned": [
+    "src"
+  ],
+  "core::ptr::write_unaligned": [
+    "dst",
+    "src"
+  ],
+  "core::ptr::read_volatile": [
+    "src"
+  ],
+  "core::ptr::write_volatile": [
+    "dst",
+    "src"
+  ],
+  "core::ptr::offset": [
+    "self",
+    "count"
+  ],
+  "core::clone::clone_to_uninit": [
+    "self",
+    "dest"
+  ],
+  "core::result::unwrap_unchecked": [
+    "self"
+  ],
+  "core::option::unwrap_unchecked": [
+    "self"
+  ],
+  "core::result::unwrap_err_unchecked": [
+    "self"
+  ],
+  "core::slice::get_unchecked": [
+    "self",
+    "index"
+  ],
+  "core::slice::index::SliceIndex::get_unchecked": [
+    "self",
+    "slice"
+  ],
+  "core::slice::index::SliceIndex::get_unchecked_mut": [
+    "self",
+    "slice"
+  ],
+  "core::slice::get_unchecked_mut": [
+    "self",
+    "index"
+  ],
+  "core::slice::swap_unchecked": [
+    "self",
+    "a",
+    "b"
+  ],
+  "core::slice::as_chunks_unchecked": [
+    "self"
+  ],
+  "core::slice::as_chunks_unchecked_mut": [
+    "self"
+  ],
+  "core::slice::split_at_unchecked": [
+    "self",
+    "mid"
+  ],
+  "core::slice::split_at_mut_unchecked": [
+    "self",
+    "mid"
+  ],
+  "core::slice::align_to": [
+    "self"
+  ],
+  "core::slice::align_to_mut": [
+    "self"
+  ],
+  "core::slice::ascii::as_ascii_unchecked": [
+    "self"
+  ],
+  "core::slice::raw::from_raw_parts": [
+    "data",
+    "len"
+  ],
+  "core::slice::raw::from_raw_parts_mut": [
+    "data",
+    "len"
+  ],
+  "core::slice::index::get_unchecked": [
+    "self",
+    "slice"
+  ],
+  "core::slice::index::get_unchecked_mut": [
+    "self",
+    "slice"
+  ],
+  "core::slice::raw::from_ptr_range": [
+    "range"
+  ],
+  "core::slice::raw::from_mut_ptr_range": [
+    "range"
+  ],
+  "core::str::get_unchecked": [
+    "self",
+    "i"
+  ],
+  "core::str::get_unchecked_mut": [
+    "self",
+    "i"
+  ],
+  "core::str::slice_unchecked": [
+    "self",
+    "begin",
+    "end"
+  ],
+  "core::str::slice_mut_unchecked": [
+    "self",
+    "begin",
+    "end"
+  ],
+  "core::str::as_bytes_mut": [
+    "self"
+  ],
+  "core::str::converts::from_utf8_unchecked": [
+    "v"
+  ],
+  "core::str::converts::from_utf8_unchecked_mut": [
+    "v"
+  ],
+  "core::str::converts::from_raw_parts": [
+    "ptr",
+    "len"
+  ],
+  "core::str::converts::from_raw_parts_mut": [
+    "ptr",
+    "len"
+  ],
+  "core::str::traits::get_unchecked": [
+    "self",
+    "i"
+  ],
+  "core::str::traits::get_unchecked_mut": [
+    "self",
+    "i"
+  ],
+  "core::io::borrowed_buf::set_init": [],
+  "core::io::borrowed_buf::advance_unchecked": [],
+  "core::io::borrowed_buf::as_mut": [
+    "self"
+  ],
+  "core::task::wake::from_raw": [
+    "waker"
+  ],
+  "alloc::vec::from_raw_parts": [
+    "ptr",
+    "length",
+    "capacity"
+  ],
+  "alloc::vec::from_parts": [
+    "ptr",
+    "length",
+    "capacity"
+  ],
+  "alloc::vec::from_raw_parts_in": [
+    "ptr",
+    "length",
+    "capacity",
+    "alloc"
+  ],
+  "alloc::vec::from_parts_in": [
+    "ptr",
+    "length",
+    "capacity",
+    "alloc"
+  ],
+  "alloc::vec::set_len": [
+    "self",
+    "new_len"
+  ],
+  "alloc::alloc::alloc": [
+    "layout"
+  ],
+  "alloc::alloc::dealloc": [
+    "ptr",
+    "layout"
+  ],
+  "alloc::alloc::realloc": [
+    "ptr",
+    "layout",
+    "new_size"
+  ],
+  "alloc::alloc::alloc_zeroed": [
+    "layout"
+  ],
+  "alloc::alloc::deallocate": [
+    "self",
+    "ptr",
+    "layout"
+  ],
+  "alloc::alloc::grow": [
+    "self",
+    "ptr",
+    "old_layout",
+    "new_layout"
+  ],
+  "alloc::alloc::grow_zeroed": [
+    "self",
+    "ptr",
+    "old_layout",
+    "new_layout"
+  ],
+  "alloc::alloc::shrink": [
+    "self",
+    "ptr",
+    "old_layout",
+    "new_layout"
+  ],
+  "alloc::boxed::assume_init": [
+    "self"
+  ],
+  "alloc::boxed::from_raw": [
+    "raw"
+  ],
+  "alloc::boxed::from_non_null": [
+    "ptr"
+  ],
+  "alloc::boxed::from_raw_in": [
+    "raw",
+    "alloc"
+  ],
+  "alloc::boxed::from_non_null_in": [
+    "raw",
+    "alloc"
+  ],
+  "alloc::boxed::downcast_unchecked": [
+    "self"
+  ],
+  "alloc::collections::btree::map::insert_after_unchecked": [
+    "self",
+    "key",
+    "value"
+  ],
+  "alloc::collections::btree::map::insert_before_unchecked": [
+    "self",
+    "key",
+    "value"
+  ],
+  "alloc::collections::btree::set::insert_after_unchecked": [
+    "self",
+    "value"
+  ],
+  "alloc::collections::btree::set::insert_before_unchecked": [
+    "self",
+    "value"
+  ],
+  "alloc::ffi::c_str::from_vec_unchecked": [
+    "v"
+  ],
+  "alloc::ffi::c_str::from_raw": [
+    "ptr"
+  ],
+  "alloc::ffi::c_str::from_vec_with_nul_unchecked": [
+    "v"
+  ],
+  "alloc::rc::assume_init": [
+    "self"
+  ],
+  "alloc::rc::from_raw": [
+    "ptr"
+  ],
+  "alloc::rc::increment_strong_count": [
+    "ptr"
+  ],
+  "alloc::rc::decrement_strong_count": [
+    "ptr"
+  ],
+  "alloc::rc::from_raw_in": [
+    "ptr",
+    "alloc"
+  ],
+  "alloc::rc::increment_strong_count_in": [
+    "ptr",
+    "alloc"
+  ],
+  "alloc::rc::decrement_strong_count_in": [
+    "ptr",
+    "alloc"
+  ],
+  "alloc::rc::downcast_unchecked": [
+    "self"
+  ],
+  "alloc::rc::get_mut_unchecked": [
+    "this"
+  ],
+  "alloc::collections::btree::map::with_mutable_key": [
+    "self"
+  ],
+  "alloc::collections::btree::set::upper_bound_mut": [],
+  "alloc::str::from_boxed_utf8_unchecked": [
+    "v"
+  ],
+  "alloc::string::from_raw_parts": [
+    "buf",
+    "length",
+    "capacity"
+  ],
+  "alloc::string::from_utf8_unchecked": [
+    "bytes"
+  ],
+  "alloc::string::as_mut_vec": [
+    "self"
+  ],
+  "alloc::sync::get_mut_unchecked": [
+    "this"
+  ],
+  "alloc::sync::from_raw": [
+    "ptr"
+  ],
+  "alloc::sync::increment_strong_count": [
+    "ptr"
+  ],
+  "alloc::sync::decrement_strong_count": [
+    "ptr"
+  ],
+  "alloc::sync::from_raw_in": [
+    "ptr",
+    "alloc"
+  ],
+  "alloc::sync::increment_strong_count_in": [
+    "ptr",
+    "alloc"
+  ],
+  "alloc::sync::decrement_strong_count_in": [
+    "ptr",
+    "alloc"
+  ],
+  "alloc::sync::downcast_unchecked": [
+    "self"
+  ],
+  "std::thread::from_raw": [
+    "ptr"
+  ],
+  "std::collections::hash::map::get_many_unchecked_mut": [],
+  "std::env::set_var": [
+    "key",
+    "value"
+  ],
+  "std::env::remove_var": [
+    "key"
+  ],
+  "std::ffi::os_str::from_encoded_bytes_unchecked": [
+    "s"
+  ],
+  "std::ffi::os_str::clone_to_uninit": [
+    "self",
+    "dst"
+  ],
+  "std::os::unix::net::datagram::from_raw_fd": [
+    "fd"
+  ],
+  "std::os::unix::net::listener::from_raw_fd": [
+    "fd"
+  ],
+  "std::os::unix::net::stream::from_raw_fd": [
+    "fd"
+  ],
+  "std::os::unix::process::CommandExt::before_exec": [
+    "self",
+    "f"
+  ],
+  "std::os::unix::process::pre_exec": [
+    "self",
+    "f"
+  ],
+  "std::os::unix::process::from_raw_fd": [
+    "fd"
+  ],
+  "std::os::linux::process::from_raw_fd": [
+    "fd"
+  ],
+  "std::os::fd::raw::from_raw_fd": [
+    "fd"
+  ],
+  "std::os::fd::owned::borrow_raw": [
+    "fd"
+  ],
+  "std::os::fd::owned::from_raw_fd": [
+    "fd"
+  ],
+  "std::os::fd::net::from_raw_fd": [
+    "fd"
+  ],
+  "std::os::fd::raw::FromRawFd::from_raw_fd": [
+    "fd"
+  ],
+  "std::path::clone_to_uninit": [
+    "self",
+    "dest"
+  ],
+  "std::sys::pal::unix::fd::from_raw_fd": [
+    "fd"
+  ],
+  "std::sys::pal::unix::fs::from_raw_fd": [
+    "raw_fd"
+  ],
+  "std::sys::pal::unix::linux::pidfd::from_raw_fd": [
+    "fd"
+  ],
+  "std::sys::pal::unix::net::from_raw_fd": [
+    "raw_fd"
+  ],
+  "std::sys::pal::unix::pipe::from_raw_fd": [
+    "raw_fd"
+  ],
+  "std::sys::pal::unix::process::process_common::pre_exec": [
+    "self",
+    "f"
+  ],
+  "std::sys::anonymous_pipe::unix::from_raw_fd": [
+    "raw_fd"
+  ],
+  "std::sys::os_str::bytes::clone_to_uninit": [
+    "self",
+    "dst"
+  ],
+  "std::alloc::deallocate": [
+    "self",
+    "ptr",
+    "layout"
+  ],
+  "std::alloc::grow": [
+    "self",
+    "ptr",
+    "old_layout",
+    "new_layout"
+  ],
+  "std::alloc::grow_zeroed": [
+    "self",
+    "ptr",
+    "old_layout",
+    "new_layout"
+  ],
+  "std::alloc::shrink": [
+    "self",
+    "ptr",
+    "old_layout",
+    "new_layout"
+  ],
+  "std::raw_attribute": [
+    "self",
+    "attribute",
+    "value_ptr",
+    "value_size"
+  ],
+  "std::from_raw_handle": [
+    "handle"
+  ],
+  "std::thread::spawn_unchecked": [
+    "name",
+    "stack_size",
+    "no_hooks",
+    "scope_data",
+    "f"
+  ],
+  "core::intrinsics::const_allocate": [
+    "_size",
+    "_align"
+  ],
+  "core::intrinsics::assume": [
+    "b"
+  ],
+  "core::intrinsics::drop_in_place": [
+    "self"
+  ],
+  "core::intrinsics::const_deallocate": [
+    "_ptr",
+    "_size",
+    "_align"
+  ],
+  "core::intrinsics::vtable_size": [
+    "ptr"
+  ],
+  "core::intrinsics::vtable_align": [
+    "ptr"
+  ],
+  "core::intrinsics::pref_align_of": [],
+  "core::intrinsics::size_of_val": [
+    "ptr"
+  ],
+  "core::intrinsics::min_align_of_val": [],
+  "core::ffi::va_list::arg": [
+    "self"
+  ],
+  "core::ffi::va_list::with_copy": [
+    "self",
+    "f"
+  ],
+  "core::task::wake::new": [
+    "data"
+  ],
+  "alloc::collections::btree::set::with_mutable_key": [
+    "self"
+  ],
+  "alloc::sync::assume_init": [
+    "self"
+  ],
+  "std::sys::os_str::bytes::from_encoded_bytes_unchecked": [
+    "s"
+  ],
+  "core::ptr::copy_nonoverlapping": [
+    "src",
+    "dst",
+    "count"
+  ]
 }

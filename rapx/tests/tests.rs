@@ -120,6 +120,46 @@ fn assert_not_contain(output: &str, pattern: &str) {
     );
 }
 
+#[test]
+fn verify_std_contract_assets_are_expanded_and_named() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let contracts_path = manifest_dir.join("src/verify/attribute/assets/std-contracts.json");
+    let sig_path = manifest_dir.join("src/helpers/data/std_sig.json");
+
+    let contracts: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&contracts_path).unwrap()).unwrap();
+    let signatures: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&sig_path).unwrap()).unwrap();
+
+    let contracts = contracts.as_object().unwrap();
+    let signatures = signatures.as_object().unwrap();
+    assert!(
+        contracts.len() >= 300,
+        "std contracts should cover the tag-std API set, got {}",
+        contracts.len()
+    );
+    for key in contracts.keys() {
+        assert!(
+            signatures.contains_key(key),
+            "missing std_sig entry for std contract key {key}"
+        );
+    }
+
+    for (api, entries) in contracts {
+        for entry in entries.as_array().unwrap() {
+            for arg in entry["args"].as_array().unwrap() {
+                let arg = arg.as_str().unwrap();
+                for legacy_token in ["arg:", "Arg_", "const:", "ty:"] {
+                    assert!(
+                        !arg.contains(legacy_token),
+                        "std contracts should use parameter names, found {legacy_token} in {api}: {arg}"
+                    );
+                }
+            }
+        }
+    }
+}
+
 const CHECK_UAF_CMD: &[&str] = &["check", "-f"];
 const CHECK_MLEAK_CMD: &[&str] = &["check", "-m"];
 const ANALYZE_ALIAS_CMD: &[&str] = &["analyze", "alias"];
@@ -136,6 +176,7 @@ const ANALYZE_ADG_CMD: &[&str] = &["analyze", "adg", "--dump", "api_graph.yml"];
 const VERIFY_CMD: &[&str] = &["verify"];
 const VERIFY_ALLOW_REPEAT_CMD: &[&str] = &["verify", "--allow-pathseg-repeat", "1"];
 const VERIFY_ALLOW_REPEAT2_CMD: &[&str] = &["verify", "--allow-pathseg-repeat", "2"];
+const VERIFY_SCAN_CMD: &[&str] = &["verify", "--mode", "scan"];
 const VERIFY_INVLESS_CMD: &[&str] = &["verify", "--mode", "invless"];
 
 // ================Dangling Pointer Detection Test=====================
@@ -1546,9 +1587,15 @@ fn invless_skips_struct_invariant() {
     let output = run_with_args("verify/struct_invariant_1", VERIFY_INVLESS_CMD);
     // 4 sequences: 2 read methods × 2 options (direct, through set_len)
     assert_contain(&output, "sequence: unsound_new -> sound_read");
-    assert_contain(&output, "sequence: unsound_new -> unsound_set_len -> sound_read");
+    assert_contain(
+        &output,
+        "sequence: unsound_new -> unsound_set_len -> sound_read",
+    );
     assert_contain(&output, "sequence: unsound_new -> unsound_read");
-    assert_contain(&output, "sequence: unsound_new -> unsound_set_len -> unsound_read");
+    assert_contain(
+        &output,
+        "sequence: unsound_new -> unsound_set_len -> unsound_read",
+    );
     // All UNSOUND: ValidPtr/Typed unimplemented
     assert_contain(&output, "result: UNSOUND");
     assert_not_contain(&output, "result: SOUND");
@@ -1565,9 +1612,15 @@ fn invless_1_no_annotations() {
     let output = run_with_args("verify/invless_1", VERIFY_INVLESS_CMD);
     // 4 sequences generated
     assert_contain(&output, "sequence: unsound_new -> sound_read");
-    assert_contain(&output, "sequence: unsound_new -> unsound_set_len -> sound_read");
+    assert_contain(
+        &output,
+        "sequence: unsound_new -> unsound_set_len -> sound_read",
+    );
     assert_contain(&output, "sequence: unsound_new -> unsound_read");
-    assert_contain(&output, "sequence: unsound_new -> unsound_set_len -> unsound_read");
+    assert_contain(
+        &output,
+        "sequence: unsound_new -> unsound_set_len -> unsound_read",
+    );
     // sound_read: Align Proved (internal guard), ValidPtr/Typed Unknown → UNSOUND(2)
     // set_len→sound_read: same
     // unsound_read: Align Unknown (no contracts), ValidPtr/Typed Unknown → UNSOUND(3)
@@ -1584,9 +1637,15 @@ fn invless_2_with_contracts() {
     let output = run_with_args("verify/invless_2", VERIFY_INVLESS_CMD);
     // 4 sequences generated
     assert_contain(&output, "sequence: unsound_new -> sound_read");
-    assert_contain(&output, "sequence: unsound_new -> unsound_set_len -> sound_read");
+    assert_contain(
+        &output,
+        "sequence: unsound_new -> unsound_set_len -> sound_read",
+    );
     assert_contain(&output, "sequence: unsound_new -> unsound_read");
-    assert_contain(&output, "sequence: unsound_new -> unsound_set_len -> unsound_read");
+    assert_contain(
+        &output,
+        "sequence: unsound_new -> unsound_set_len -> unsound_read",
+    );
     // sound_read: Align Proved (guard), ValidPtr/Typed Unknown → UNSOUND(2)
     // set_len→sound_read: Align Proved (guard; set_len mutates len but Align depends only on ptr)
     // unsound_read: Align Unknown (contract Align(self.ptr, u32) not connected to casted ptr via SMT)
@@ -1627,7 +1686,7 @@ fn safetyflow_static_mut() {
 
 #[test]
 fn verify_raw_ptr_unknown() {
-    let output = run_with_args("safetyflow/raw_ptr", VERIFY_CMD);
+    let output = run_with_args("safetyflow/raw_ptr", VERIFY_SCAN_CMD);
     assert_contain(&output, "[rapx::verify] function: main");
     assert_contain(&output, "Unknown");
     assert_contain(&output, "UNSOUND");
@@ -1635,7 +1694,7 @@ fn verify_raw_ptr_unknown() {
 
 #[test]
 fn verify_static_mut_unknown() {
-    let output = run_with_args("safetyflow/static_mut", VERIFY_CMD);
+    let output = run_with_args("safetyflow/static_mut", VERIFY_SCAN_CMD);
     assert_contain(&output, "[rapx::verify] function: main");
     assert_contain(&output, "Unknown");
     assert_contain(&output, "UNSOUND");
