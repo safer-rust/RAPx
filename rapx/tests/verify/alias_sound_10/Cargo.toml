@@ -1,0 +1,6 @@
+[package]
+name = "alias_sound_10"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
