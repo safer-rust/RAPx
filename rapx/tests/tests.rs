@@ -639,7 +639,10 @@ fn path_7() {
     assert_contain(&output, "Path [0, 1, 2]");
     assert_contain(&output, "Path [0, 1, 3, 4, 5, 9, 1, 2]");
     assert_contain(&output, "Path [0, 1, 3, 4, 6, 7, 8, 4, 5, 9, 1, 2]");
-    assert_contain(&output, "Path [0, 1, 3, 4, 6, 7, 8, 4, 5, 9, 1, 3, 4, 5, 9, 1, 2]");
+    assert_contain(
+        &output,
+        "Path [0, 1, 3, 4, 6, 7, 8, 4, 5, 9, 1, 3, 4, 5, 9, 1, 2]",
+    );
     assert_eq!(path_count_for(&output, "walk"), 4);
 }
 
@@ -1833,8 +1836,9 @@ fn adg_bug() {
 #[test]
 fn adg_simple_graph() {
     let _ = run_with_args("analyze/adg_simple_graph", ANALYZE_ADG_CMD);
-    let graph_str = std::fs::read_to_string(project_path("analyze/adg_simple_graph").join("api_graph.yml"))
-        .expect("read api_graph.yml fail");
+    let graph_str =
+        std::fs::read_to_string(project_path("analyze/adg_simple_graph").join("api_graph.yml"))
+            .expect("read api_graph.yml fail");
     assert_contain(&graph_str, "path: foo");
     assert_contain(&graph_str, "path: bar");
     assert_contain(&graph_str, "path: vec_arg");

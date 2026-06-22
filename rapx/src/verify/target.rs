@@ -4,18 +4,13 @@ use crate::analysis::safetyflow_analysis::root::{
 };
 use crate::cli::VerifyMode;
 use crate::helpers::fn_info::get_cons;
-use crate::helpers::mir_scan::{
-    collect_raw_ptr_deref_info, collect_static_mut_access_info,
-};
+use crate::helpers::mir_scan::{collect_raw_ptr_deref_info, collect_static_mut_access_info};
 use rustc_hir::{
     Attribute, BodyId, FnDecl, ItemKind,
     def_id::{DefId, LocalDefId},
     intravisit::{FnKind, Visitor},
 };
-use rustc_middle::{
-    hir::nested_filter,
-    ty::TyCtxt,
-};
+use rustc_middle::{hir::nested_filter, ty::TyCtxt};
 use rustc_span::Span;
 use std::collections::{HashMap, HashSet};
 use syn::Expr;
@@ -25,9 +20,8 @@ use super::{
     attribute::attr_parser::parse_rapx_attr,
     contract::{ContractExpr, ContractPlace, PlaceBase, Property, PropertyArg, PropertyKind},
     helpers::{
-        Callsite, collect_return_block_indices, collect_unsafe_callsites,
-        get_owner_struct_def_id, has_rapx_verify_attr, is_std_crate_def_id, is_trait_unsafe,
-        resolve_impl_self_ty_def_id,
+        Callsite, collect_return_block_indices, collect_unsafe_callsites, get_owner_struct_def_id,
+        has_rapx_verify_attr, is_std_crate_def_id, is_trait_unsafe, resolve_impl_self_ty_def_id,
     },
     path::PathExtractor,
 };
@@ -301,10 +295,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
     }
 }
 
-fn get_trait_method_requires<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    callee_def_id: DefId,
-) -> FnContracts<'tcx> {
+fn get_trait_method_requires<'tcx>(tcx: TyCtxt<'tcx>, callee_def_id: DefId) -> FnContracts<'tcx> {
     let Some(assoc_item) = tcx.opt_associated_item(callee_def_id) else {
         return Vec::new();
     };
@@ -354,8 +345,7 @@ impl<'tcx> Visitor<'tcx> for VerifyTargetCollector<'tcx> {
             if let Some(trait_ref) = trait_ref {
                 let trait_def_id = trait_ref.skip_binder().def_id;
                 if is_trait_unsafe(self.tcx, trait_def_id) {
-                    let ensures =
-                        get_trait_contracts_from_annotation(self.tcx, trait_def_id);
+                    let ensures = get_trait_contracts_from_annotation(self.tcx, trait_def_id);
 
                     let self_ty_def_id = resolve_impl_self_ty_def_id(&item);
 
@@ -506,7 +496,10 @@ impl<'tcx> Analysis for PrepareTargets<'tcx> {
             let trait_path = self.tcx.def_path_str(trait_target.def_id);
 
             rap_info!("============================================================");
-            rap_info!("[rapx::verify] prepare targets for unsafe trait: {}", trait_path);
+            rap_info!(
+                "[rapx::verify] prepare targets for unsafe trait: {}",
+                trait_path
+            );
             rap_info!("============================================================");
 
             self.log_trait_ensurance(trait_target);
@@ -555,10 +548,7 @@ impl<'tcx> PrepareTargets<'tcx> {
 
     fn log_trait_ensurance(&self, trait_target: &TraitEnsurance<'tcx>) {
         if let Some(self_ty) = trait_target.self_ty_def_id {
-            rap_info!(
-                "  impl for: {}",
-                self.tcx.def_path_str(self_ty)
-            );
+            rap_info!("  impl for: {}", self.tcx.def_path_str(self_ty));
         }
         if trait_target.ensures.is_empty() {
             rap_info!("  ensures: <none>");
@@ -941,12 +931,8 @@ fn get_trait_contracts_from_annotation<'tcx>(
         #[allow(deprecated)]
         let attrs = tcx.get_all_attrs(trait_item_def_id);
 
-        let method_ensures = collect_properties_from_ensures_attrs(
-            tcx,
-            attrs,
-            trait_item_def_id,
-            "trait ensures",
-        );
+        let method_ensures =
+            collect_properties_from_ensures_attrs(tcx, attrs, trait_item_def_id, "trait ensures");
 
         if !method_ensures.is_empty() {
             ensures.push((method_name, method_ensures));

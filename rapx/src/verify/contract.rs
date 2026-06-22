@@ -377,11 +377,10 @@ impl<'tcx> Property<'tcx> {
             "ValidSlice" => {
                 Self::check_arg_length(exprs.len(), 2, "ValidSlice");
                 let target = Self::parse_target_arg(tcx, def_id, &exprs[0]);
-                let ty = Self::parse_type(tcx, def_id, &exprs[1], "ValidSlice");
-                Self::new_with_args(
-                    PropertyKind::ValidSlice,
-                    vec![target, PropertyArg::Ty(ty)],
-                )
+                let Some(ty) = Self::parse_type(tcx, def_id, &exprs[1], "ValidSlice") else {
+                    return Self::new_simple(PropertyKind::Unknown);
+                };
+                Self::new_with_args(PropertyKind::ValidSlice, vec![target, PropertyArg::Ty(ty)])
             }
             "Deref" => Self::new_with_target(PropertyKind::Deref, tcx, def_id, exprs),
             "Ptr2Ref" | "ValidPtr2Ref" => {

@@ -110,7 +110,12 @@ impl<'tcx> Opt<'tcx> {
             rap_warn!("Potential optimizations detected.");
             rap_info!(
                 "  Bounds Checking: {}, Encoding Checking: {}, Suboptimal: {}, Initialization: {}, Reallocation: {}, Cloning: {}",
-                statistics[0], statistics[1], statistics[2], statistics[3], statistics[4], statistics[5],
+                statistics[0],
+                statistics[1],
+                statistics[2],
+                statistics[3],
+                statistics[4],
+                statistics[5],
             );
         }
     }

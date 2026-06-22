@@ -1322,10 +1322,9 @@ impl<'tcx> SmtChecker<'tcx> {
         match place.base {
             PlaceBase::Arg(index) => self.callsite_arg_expr(callsite, index, &key.fields),
             PlaceBase::Local(local) => {
-                if let Some(index) =
-                    callsite
-                        .callee
-                        .and_then(|callee| callee_param_index_for_local(self.tcx, callee, local))
+                if let Some(index) = callsite
+                    .callee
+                    .and_then(|callee| callee_param_index_for_local(self.tcx, callee, local))
                 {
                     self.callsite_arg_expr(callsite, index, &key.fields)
                 } else {
@@ -1366,10 +1365,9 @@ impl<'tcx> SmtChecker<'tcx> {
                 &PlaceKey::from_contract_place(place).fields,
             ),
             PlaceBase::Local(local) => {
-                if let Some(index) =
-                    callsite
-                        .callee
-                        .and_then(|callee| callee_param_index_for_local(self.tcx, callee, local))
+                if let Some(index) = callsite
+                    .callee
+                    .and_then(|callee| callee_param_index_for_local(self.tcx, callee, local))
                 {
                     self.callsite_arg_place_with_fields(
                         callsite,

@@ -396,7 +396,8 @@ pub fn collect_static_mut_access_info<'tcx>(
                     match &arg.node {
                         op @ Operand::Constant(c) => {
                             if let Some(static_id) = c.check_static_ptr(tcx) {
-                                if matches!(tcx.static_mutability(static_id), Some(m) if m.is_mut()) {
+                                if matches!(tcx.static_mutability(static_id), Some(m) if m.is_mut())
+                                {
                                     let ty = tcx.type_of(static_id).skip_binder();
                                     infos.push(StaticMutAccessInfo {
                                         block: bb,

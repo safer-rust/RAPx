@@ -110,10 +110,9 @@ impl<'tcx> PathGraph<'tcx> {
                                     .const_
                                     .try_eval_bool(tcx, typing_env)
                                     .map(|b| if b { 1 } else { 0 }),
-                                TyKind::Int(_) | TyKind::Uint(_) => c
-                                    .const_
-                                    .try_eval_bits(tcx, typing_env)
-                                    .map(|v| v as usize),
+                                TyKind::Int(_) | TyKind::Uint(_) => {
+                                    c.const_.try_eval_bits(tcx, typing_env).map(|v| v as usize)
+                                }
                                 _ => None,
                             };
                             if let Some(val) = val {
@@ -302,7 +301,11 @@ impl<'tcx> PathGraph<'tcx> {
     }
 
     pub fn is_cleanup_block(&self, index: usize) -> bool {
-        self.cfg.blocks.get(index).map(|b| b.is_cleanup).unwrap_or(false)
+        self.cfg
+            .blocks
+            .get(index)
+            .map(|b| b.is_cleanup)
+            .unwrap_or(false)
     }
 
     /// Verify whether a given path (sequence of block indices) is reachable.
@@ -545,9 +548,8 @@ impl<'tcx> PathGraph<'tcx> {
                 if next == targets.otherwise().as_usize() {
                     if let Some(local) = constraint_local {
                         if let Some(&num_variants) = self.discriminant_ranges.get(&local) {
-                            let all_covered = (0..num_variants).all(|v| {
-                                targets.iter().any(|(tv, _)| tv == v as u128)
-                            });
+                            let all_covered = (0..num_variants)
+                                .all(|v| targets.iter().any(|(tv, _)| tv == v as u128));
                             if all_covered {
                                 return false;
                             }
@@ -555,7 +557,13 @@ impl<'tcx> PathGraph<'tcx> {
                     }
                 }
 
-                self.learn_constraint_with_backprop(cur, constraint_local, &targets, next, constraints);
+                self.learn_constraint_with_backprop(
+                    cur,
+                    constraint_local,
+                    &targets,
+                    next,
+                    constraints,
+                );
 
                 true
             }
@@ -575,7 +583,9 @@ impl<'tcx> PathGraph<'tcx> {
         next: usize,
         constraints: &mut FxHashMap<usize, usize>,
     ) {
-        let Some(local) = constraint_local else { return };
+        let Some(local) = constraint_local else {
+            return;
+        };
         let Some((val, _)) = targets.iter().find(|(_, bb)| bb.as_usize() == next) else {
             if let Some(inferred) = self.infer_otherwise_value(targets, local) {
                 constraints.insert(local, inferred);
@@ -595,7 +605,9 @@ impl<'tcx> PathGraph<'tcx> {
         val: usize,
         constraints: &mut FxHashMap<usize, usize>,
     ) {
-        let Some(copies) = self.constraint_copies.get(cur) else { return };
+        let Some(copies) = self.constraint_copies.get(cur) else {
+            return;
+        };
         let mut current = local;
         while let Some(&src) = copies.get(&current) {
             if current == src {

@@ -387,7 +387,6 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
 
         paths_by_checkpoint
     }
-
 }
 
 /// Returns whether a function returns the owning struct type (i.e. is a constructor).

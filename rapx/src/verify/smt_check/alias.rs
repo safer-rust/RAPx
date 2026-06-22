@@ -64,7 +64,10 @@ pub fn check<'tcx>(
     _forward_property: &crate::verify::contract::Property<'tcx>,
     forward: &ForwardVisitResult<'tcx>,
 ) -> SmtCheckResult {
-    let callee_name = checker.tcx.def_path_str(callsite.callee);
+    let Some(callee) = callsite.callee else {
+        return SmtCheckResult::unknown("Alias target callee could not be resolved");
+    };
+    let callee_name = checker.tcx.def_path_str(callee);
     let Some(producer) = alias_producer(callee_name.as_str()) else {
         return SmtCheckResult::unknown(
             "Alias lowering currently supports view producers and ownership-transfer APIs",
