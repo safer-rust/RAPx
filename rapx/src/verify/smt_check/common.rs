@@ -27,7 +27,7 @@
 use std::collections::{HashMap, HashSet};
 
 use rustc_middle::{
-    mir::{BinOp, Local, Operand, TerminatorKind, UnOp},
+    mir::{BinOp, Local, Operand, Rvalue, TerminatorKind, UnOp},
     ty::{GenericArgKind, PseudoCanonicalInput, Ty, TyCtxt, TyKind},
 };
 use z3::{
@@ -48,12 +48,19 @@ use crate::verify::{
     verifier::{AbstractValue, CallSummary, ForwardVisitResult, StateFact},
     generic::GenericTypeCandidates,
     helpers::{Checkpoint, callee_param_index_for_local},
+    path_extractor::PathStep,
     primitive::PrimitiveCall,
     report::CheckResult,
 };
 
 type ValueCursor = usize;
 type TraceSeen = HashSet<(PlaceKey, ValueCursor)>;
+
+#[derive(Clone, Copy)]
+struct PathCursorCutoff {
+    block: rustc_middle::mir::BasicBlock,
+    statement_index: Option<usize>,
+}
 
 /// SMT backend for verifier properties.
 pub struct SmtChecker<'tcx> {
@@ -2692,7 +2699,10 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                     let source = call
                         .args
                         .get(*arg)
-                        .map(value_label)
+                        .and_then(|value| {
+                            self.origin_key_for_value_before(value, cursor, &mut TraceSeen::new())
+                        })
+                        .or_else(|| call.args.get(*arg).map(value_label))
                         .unwrap_or_else(|| format!("arg{arg}"));
                     let len_term =
                         Int::new_const(self.ctx, sanitize_smt_name(&format!("len({source})")));
@@ -2764,6 +2774,12 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             {
                 return Some(term);
             }
+        }
+
+        if let Some(value) = self.path_value_definition_before(place, cursor)
+            && let Some(term) = self.term_for_value_at(&value, cursor, seen)
+        {
+            return Some(term);
         }
 
         if let Some(term) = self.place_terms.get(place) {
@@ -2863,6 +2879,29 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         }
     }
 
+    /// Build a stable `len(origin)` term for calls summarized as length reads.
+    fn term_for_length_call(
+        &mut self,
+        call: &CallSummary<'tcx>,
+        cursor: ValueCursor,
+        seen: &mut TraceSeen,
+    ) -> Option<Int<'ctx>> {
+        let arg = call.effects.iter().find_map(|effect| {
+            let crate::verify::call_summary::CallEffect::ReturnLengthOfArg { arg } = effect else {
+                return None;
+            };
+            Some(*arg)
+        })?;
+        let source = call.args.get(arg)?;
+        let source = self
+            .origin_key_for_value_before(source, cursor, seen)
+            .unwrap_or_else(|| value_label(source));
+        Some(Int::new_const(
+            self.ctx,
+            sanitize_smt_name(&format!("len({source})")),
+        ))
+    }
+
     /// Build an SMT term for an abstract value at a program point.
     fn term_for_value_at(
         &mut self,
@@ -2888,6 +2927,9 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             }
             AbstractValue::CallResult(call) => {
                 if let Some(term) = self.term_for_pointer_arith_call(call, cursor, seen) {
+                    return Some(term);
+                }
+                if let Some(term) = self.term_for_length_call(call, cursor, seen) {
                     return Some(term);
                 }
                 let place = PlaceKey {
@@ -3263,8 +3305,13 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             return Some(AbstractValue::Place(place.clone()));
         }
         let local = place.local()?;
-        let definition = self.forward.latest_value_definition_before(local, cursor)?;
-        self.resolved_value_before(&definition.value, definition.ordinal, seen)
+        if let Some(definition) = self.forward.latest_value_definition_before(local, cursor) {
+            return self.resolved_value_before(&definition.value, definition.ordinal, seen);
+        }
+        if let Some(value) = self.path_value_definition_before(place, cursor) {
+            return self.resolved_value_before(&value, cursor, seen);
+        }
+        None
     }
 
     /// Resolve copy/cast chains for an abstract value.
@@ -3288,6 +3335,71 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             }
             AbstractValue::Cast(inner, _) => self.resolved_value_before(inner, cursor, seen),
             _ => Some(value.clone()),
+        }
+    }
+
+    /// Recover a local definition directly from the expanded MIR path.
+    ///
+    /// Backward relevance keeps the proof slice intentionally small. When a
+    /// pure call-argument temporary is not retained in the forward visit, SMT
+    /// term construction can still recover its value by replaying assignments
+    /// along the already-enumerated path up to the current cursor.
+    fn path_value_definition_before(
+        &self,
+        place: &PlaceKey,
+        cursor: ValueCursor,
+    ) -> Option<AbstractValue<'tcx>> {
+        if !place.fields.is_empty() {
+            return None;
+        }
+        let local = place.local()?;
+        let cutoff = self.path_cursor_cutoff(cursor);
+        let body = self.tcx.optimized_mir(self.forward.callsite.caller);
+        let mut latest = None;
+
+        for step in &self.forward.path.steps {
+            let PathStep::Block(block) = step else {
+                continue;
+            };
+            let is_cutoff_block = *block == cutoff.block;
+            let block_data = &body.basic_blocks[*block];
+
+            for (statement_index, statement) in block_data.statements.iter().enumerate() {
+                if is_cutoff_block
+                    && let Some(cutoff_statement) = cutoff.statement_index
+                    && statement_index >= cutoff_statement
+                {
+                    return latest;
+                }
+
+                let rustc_middle::mir::StatementKind::Assign(assign) = &statement.kind else {
+                    continue;
+                };
+                let (target, rvalue) = &**assign;
+                if target.local == local {
+                    latest = abstract_value_from_rvalue(rvalue);
+                }
+            }
+
+            if is_cutoff_block {
+                return latest;
+            }
+        }
+
+        latest
+    }
+
+    fn path_cursor_cutoff(&self, cursor: ValueCursor) -> PathCursorCutoff {
+        if let Some(definition) = self.forward.value_definitions.get(cursor) {
+            return PathCursorCutoff {
+                block: definition.block,
+                statement_index: definition.statement_index,
+            };
+        }
+
+        PathCursorCutoff {
+            block: self.forward.callsite.block,
+            statement_index: None,
         }
     }
 
@@ -3735,6 +3847,62 @@ fn call_has_pointer_sub_effect(call: &CallSummary<'_>) -> bool {
             crate::verify::call_summary::CallEffect::ReturnPointerSub { .. }
         )
     })
+}
+
+fn abstract_value_from_rvalue<'tcx>(rvalue: &Rvalue<'tcx>) -> Option<AbstractValue<'tcx>> {
+    Some(match rvalue {
+        Rvalue::Use(operand, ..) => abstract_value_from_operand(operand),
+        Rvalue::Repeat(operand, _) => {
+            AbstractValue::Repeat(Box::new(abstract_value_from_operand(operand)))
+        }
+        Rvalue::Ref(_, _, place) => AbstractValue::Ref(PlaceKey::from_mir_place(place)),
+        Rvalue::RawPtr(_, place) => AbstractValue::RawPtr(PlaceKey::from_mir_place(place)),
+        Rvalue::Cast(_, operand, ty) => {
+            AbstractValue::Cast(Box::new(abstract_value_from_operand(operand)), *ty)
+        }
+        Rvalue::BinaryOp(op, pair) => {
+            let (lhs, rhs) = &**pair;
+            AbstractValue::Binary(
+                *op,
+                Box::new(abstract_value_from_operand(lhs)),
+                Box::new(abstract_value_from_operand(rhs)),
+            )
+        }
+        Rvalue::UnaryOp(op, operand) => {
+            AbstractValue::Unary(*op, Box::new(abstract_value_from_operand(operand)))
+        }
+        Rvalue::CopyForDeref(place) => AbstractValue::Place(PlaceKey::from_mir_place(place)),
+        Rvalue::ThreadLocalRef(def_id) => AbstractValue::ThreadLocal(format!("{def_id:?}")),
+        #[cfg(all(rapx_rustc_ge_193, not(rapx_rustc_ge_196)))]
+        Rvalue::NullaryOp(op) => AbstractValue::Nullary(format!("{op:?}")),
+        #[cfg(all(not(rapx_rustc_ge_193), not(rapx_rustc_ge_196)))]
+        Rvalue::NullaryOp(op, _) => AbstractValue::Nullary(format!("{op:?}")),
+        Rvalue::Discriminant(place) => AbstractValue::Discriminant(PlaceKey::from_mir_place(place)),
+        Rvalue::Aggregate(kind, operands) => {
+            AbstractValue::Aggregate(format!("{kind:?}"), operands.len())
+        }
+        #[cfg(not(rapx_rustc_ge_196))]
+        Rvalue::ShallowInitBox(operand, ty) => {
+            AbstractValue::ShallowInitBox(Box::new(abstract_value_from_operand(operand)), *ty)
+        }
+        _ => return None,
+    })
+}
+
+fn abstract_value_from_operand<'tcx>(operand: &Operand<'tcx>) -> AbstractValue<'tcx> {
+    match operand {
+        Operand::Copy(place) | Operand::Move(place) => {
+            AbstractValue::Place(PlaceKey::from_mir_place(place))
+        }
+        Operand::Constant(constant) => {
+            let text = format!("{:?}", constant.const_);
+            const_int_from_debug(&text)
+                .map(AbstractValue::ConstInt)
+                .unwrap_or(AbstractValue::Const(text))
+        }
+        #[cfg(rapx_rustc_ge_196)]
+        Operand::RuntimeChecks(_) => AbstractValue::Unknown("runtime-checks".to_string()),
+    }
 }
 
 /// Stable SMT variable name for a place key.

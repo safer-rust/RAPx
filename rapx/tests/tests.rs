@@ -1583,7 +1583,11 @@ fn validptr_size_or_deref_sound_cases() {
     assert_contain(&output, "result: SOUND");
 
     let output = run_with_args("verify/validptr_sound_3", VERIFY_CMD);
-    assert_contain(&output, "function: sound_slice_prefix_guarded");
+    assert_contain(&output, "function: sound_slice_suffix_guarded");
+    assert_contain(&output, "result: SOUND");
+
+    let output = run_with_args("verify/validptr_sound_5", VERIFY_CMD);
+    assert_contain(&output, "function: sound_signed_suffix_guarded");
     assert_contain(&output, "result: SOUND");
 
     let output = run_with_args("verify/validptr_sound_4", VERIFY_CMD);
@@ -1607,6 +1611,13 @@ fn validptr_size_or_deref_unsound_cases() {
 
     let output = run_with_args("verify/validptr_unsound_4", VERIFY_CMD);
     assert_contain(&output, "function: unsound_scc_branch_uses_one_past");
+    assert_contain(&output, "result: UNSOUND");
+
+    let output = run_with_args("verify/validptr_unsound_5", VERIFY_CMD);
+    assert_contain(
+        &output,
+        "function: unsound_signed_suffix_missing_lower_bound",
+    );
     assert_contain(&output, "result: UNSOUND");
 }
 
