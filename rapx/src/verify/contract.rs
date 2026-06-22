@@ -382,7 +382,31 @@ impl<'tcx> Property<'tcx> {
                 };
                 Self::new_with_args(PropertyKind::ValidSlice, vec![target, PropertyArg::Ty(ty)])
             }
-            "Deref" => Self::new_with_target(PropertyKind::Deref, tcx, def_id, exprs),
+            "Deref" => match exprs {
+                [_target, ty_expr, len_expr] => {
+                    let target = Self::parse_target_arg(tcx, def_id, &exprs[0]);
+                    let Some(ty) = Self::parse_type(tcx, def_id, ty_expr, "Deref") else {
+                        return Self::new_simple(PropertyKind::Unknown);
+                    };
+                    let length = Self::parse_contract_expr(tcx, def_id, len_expr, "Deref");
+                    Self::new_with_args(
+                        PropertyKind::Deref,
+                        vec![target, PropertyArg::Ty(ty), PropertyArg::Expr(length)],
+                    )
+                }
+                [target, len_expr] => {
+                    let Some(ty) = Self::parse_target_type(tcx, def_id, target) else {
+                        return Self::new_simple(PropertyKind::Unknown);
+                    };
+                    let target = Self::parse_target_arg(tcx, def_id, target);
+                    let length = Self::parse_contract_expr(tcx, def_id, len_expr, "Deref");
+                    Self::new_with_args(
+                        PropertyKind::Deref,
+                        vec![target, PropertyArg::Ty(ty), PropertyArg::Expr(length)],
+                    )
+                }
+                _ => Self::new_with_target(PropertyKind::Deref, tcx, def_id, exprs),
+            },
             "Ptr2Ref" | "ValidPtr2Ref" => {
                 Self::new_with_target(PropertyKind::Ptr2Ref, tcx, def_id, exprs)
             }

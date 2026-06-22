@@ -1,66 +1,80 @@
 //! SMT lowering for the composite `ValidPtr` safety property.
 //!
-//! `ValidPtr(p, T, n)` is not a primitive SMT obligation.  The verifier treats
-//! it as a bundle of smaller safety properties.  This module keeps that
-//! decomposition local to the `ValidPtr` SP and delegates implemented pieces to
-//! the corresponding SMT modules:
+//! `ValidPtr(p, T, n)` is not a primitive SMT obligation.  The verifier reduces
+//! it to the pointer-validity formula used by the staged SMT checker:
 //!
 //! ```text
-//! ValidPtr(p, T, n)
-//!   -> NonNull(p)
-//!   -> Align(p, T)
-//!   -> Allocated(p, T, n)
-//!   -> InBound(p, T, n)
-//!   -> Init(p, T, n)
-//!   -> Typed(p, T)         // future
+//! ValidPtr(p, T, n) =
+//!   Size(T, 0) || (!Size(T, 0) && Deref(p, T, n))
+//!
+//! Deref(p, T, n) =
+//!   Allocated(p, T, n, *) && InBound(p, T, n)
 //! ```
 //!
-//! Until all pieces are implemented, the composite result remains `Unknown`,
-//! but the report shows which implemented primitive SMT obligations already
-//! succeed.
+//! Zero-sized types do not require an allocated dereferenceable range.  For
+//! non-ZSTs, `ValidPtr` delegates to the `Deref` composite checker.
 
 use super::{
-    align, allocated,
-    common::{SmtCheckResult, SmtChecker},
-    in_bound, init, non_null,
+    common::{SmtCheckResult, SmtChecker, TypeSizeClass},
+    deref,
 };
 use crate::verify::{
     contract::{Property, PropertyKind},
     forward_visit::ForwardVisitResult,
     helpers::Callsite,
+    report::CheckResult,
 };
 
-/// Check the implemented primitive pieces of `ValidPtr`.
+/// Check `ValidPtr` using `Size(T,0) || (!Size(T,0) && Deref(p,T,n))`.
 pub(crate) fn check<'tcx>(
     checker: &SmtChecker<'tcx>,
     callsite: &Callsite<'tcx>,
     property: &Property<'tcx>,
     forward: &ForwardVisitResult<'tcx>,
 ) -> SmtCheckResult {
-    let non_null_property = primitive_property(property, PropertyKind::NonNull);
-    let align_property = primitive_property(property, PropertyKind::Align);
-    let allocated_property = primitive_property(property, PropertyKind::Allocated);
-    let in_bound_property = primitive_property(property, PropertyKind::InBound);
-    let init_property = primitive_property(property, PropertyKind::Init);
+    let Some(required_ty) = checker.property_required_ty(callsite, property) else {
+        return SmtCheckResult::unknown("ValidPtr type could not be resolved");
+    };
 
-    let non_null = non_null::check(checker, callsite, &non_null_property, forward);
-    let align = align::check(checker, callsite, &align_property, forward);
-    let allocated = allocated::check(checker, callsite, &allocated_property, forward);
-    let in_bound = in_bound::check(checker, callsite, &in_bound_property, forward);
-    let init = init::check(checker, callsite, &init_property, forward);
-
-    SmtCheckResult::unknown(
-        "ValidPtr is decomposed, but not all primitive obligations are implemented yet",
-    )
-    .with_note(format!("primitive NonNull via SMT: {:?}", non_null.result))
-    .with_note(format!("primitive Align via SMT: {:?}", align.result))
-    .with_note(format!(
-        "primitive Allocated via SMT: {:?}",
-        allocated.result
-    ))
-    .with_note(format!("primitive InBound via SMT: {:?}", in_bound.result))
-    .with_note(format!("primitive Init via SMT: {:?}", init.result))
-    .with_note("missing primitive SMT lowerings: Typed")
+    match checker.type_size_class(callsite.caller, required_ty) {
+        TypeSizeClass::Zero => {
+            SmtCheckResult::proved(format!("ValidPtr proved by Size({required_ty:?}, 0)"))
+        }
+        TypeSizeClass::NonZero => {
+            let deref_property = primitive_property(property, PropertyKind::Deref);
+            let deref = deref::check(checker, callsite, &deref_property, forward);
+            match &deref.result {
+                CheckResult::Proved => {
+                    SmtCheckResult::proved("ValidPtr proved: non-ZST target satisfies Deref")
+                }
+                CheckResult::Failed => SmtCheckResult {
+                    result: CheckResult::Failed,
+                    query: None,
+                    notes: vec![String::from(
+                        "ValidPtr failed: non-ZST target does not satisfy Deref",
+                    )],
+                },
+                CheckResult::Unknown => {
+                    SmtCheckResult::unknown("ValidPtr unknown: non-ZST Deref is not proved")
+                }
+            }
+            .with_note(format!("primitive Deref via SMT: {:?}", deref.result))
+        }
+        TypeSizeClass::Unknown => {
+            let deref_property = primitive_property(property, PropertyKind::Deref);
+            let deref = deref::check(checker, callsite, &deref_property, forward);
+            match &deref.result {
+                CheckResult::Proved => SmtCheckResult::proved(
+                    "ValidPtr proved: Deref holds, so the formula holds for zero and non-zero sizes",
+                ),
+                CheckResult::Failed | CheckResult::Unknown => SmtCheckResult::unknown(
+                    "ValidPtr unknown: type size is unresolved and Deref is not proved",
+                ),
+            }
+            .with_note("type size: Unknown")
+            .with_note(format!("primitive Deref via SMT: {:?}", deref.result))
+        }
+    }
 }
 
 /// Reuse the original arguments while checking one primitive component.

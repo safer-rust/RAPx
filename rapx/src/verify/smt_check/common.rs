@@ -35,7 +35,9 @@ use z3::{
     ast::{Ast, Bool, Int},
 };
 
-use super::{alias, align, allocated, in_bound, init, non_null, non_overlap, valid_num, valid_ptr};
+use super::{
+    alias, align, allocated, deref, in_bound, init, non_null, non_overlap, valid_num, valid_ptr,
+};
 
 use crate::verify::{
     contract::{
@@ -75,6 +77,7 @@ impl<'tcx> SmtChecker<'tcx> {
             PropertyKind::Align => align::check(self, callsite, property, forward),
             PropertyKind::Alias => alias::check(self, callsite, property, forward),
             PropertyKind::Allocated => allocated::check(self, callsite, property, forward),
+            PropertyKind::Deref => deref::check(self, callsite, property, forward),
             PropertyKind::NonNull => non_null::check(self, callsite, property, forward),
             PropertyKind::InBound => in_bound::check(self, callsite, property, forward),
             PropertyKind::Init => init::check(self, callsite, property, forward),
@@ -1517,6 +1520,33 @@ impl<'tcx> SmtChecker<'tcx> {
         self.generic_candidate_sizes(caller, ty)?.into_iter().max()
     }
 
+    /// Classify whether a type is definitely zero-sized, definitely non-zero,
+    /// or still layout-ambiguous under the current generic bounds.
+    pub(crate) fn type_size_class(
+        &self,
+        caller: rustc_hir::def_id::DefId,
+        ty: Ty<'tcx>,
+    ) -> TypeSizeClass {
+        if !matches!(ty.kind(), TyKind::Param(_)) {
+            return match self.type_layout(caller, ty).map(|(_, size)| size) {
+                Some(0) => TypeSizeClass::Zero,
+                Some(_) => TypeSizeClass::NonZero,
+                None => TypeSizeClass::Unknown,
+            };
+        }
+
+        let Some(sizes) = self.generic_candidate_sizes(caller, ty) else {
+            return TypeSizeClass::Unknown;
+        };
+        if sizes.iter().all(|size| *size == 0) {
+            TypeSizeClass::Zero
+        } else if sizes.iter().all(|size| *size > 0) {
+            TypeSizeClass::NonZero
+        } else {
+            TypeSizeClass::Unknown
+        }
+    }
+
     fn generic_candidate_alignments(
         &self,
         caller: rustc_hir::def_id::DefId,
@@ -1549,6 +1579,14 @@ impl<'tcx> SmtChecker<'tcx> {
             .collect::<Vec<_>>();
         if sizes.is_empty() { None } else { Some(sizes) }
     }
+}
+
+/// Trivalent size classification for type-dependent composite SPs.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TypeSizeClass {
+    Zero,
+    NonZero,
+    Unknown,
 }
 
 /// General SMT obligation produced by an SP-specific lowering.

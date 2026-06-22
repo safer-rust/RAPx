@@ -12,6 +12,7 @@ mod alias;
 mod align;
 mod allocated;
 mod common;
+mod deref;
 mod in_bound;
 mod init;
 mod non_null;

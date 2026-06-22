@@ -132,7 +132,9 @@ impl<'tcx> BackwardVisitor<'tcx> {
         let flow = build_dataflow_graph(self.tcx, caller);
         let keep_alloc = matches!(
             property.kind,
-            contract::PropertyKind::Allocated | contract::PropertyKind::ValidPtr
+            contract::PropertyKind::Allocated
+                | contract::PropertyKind::Deref
+                | contract::PropertyKind::ValidPtr
         );
 
         let leaf_results = Self::build_leaf_items(
@@ -270,7 +272,9 @@ impl<'tcx> BackwardVisitor<'tcx> {
 
         let keep_allocation_invalidations = matches!(
             visit.property.kind,
-            contract::PropertyKind::Allocated | contract::PropertyKind::ValidPtr
+            contract::PropertyKind::Allocated
+                | contract::PropertyKind::Deref
+                | contract::PropertyKind::ValidPtr
         );
 
         for step in path.steps.iter().rev() {
