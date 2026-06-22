@@ -155,12 +155,12 @@ This checklist maps RAPx's contract verification to the [Primitive Safety Proper
 | Primitive SP                 | RAPx tag       | Supported |
 |------------------------------|----------------|:---------:|
 | Align(p, T)                  | `Align`        |     ✅    |
-| Size(T, c)                   | `Size`         |     —     |
+| Size(T, c)                   | `Size`         |     ✅     |
 | !Padding(T)                  | `NoPadding`    |     —     |
 | !Null(p)                     | `NonNull`      |     ✅    |
 | Allocated(p, T, len, A)      | `Allocated`    |     ✅    |
 | InBound(p, T, len)           | `InBound`      |     ✅    |
-| !Overlap(dst, src, T, len)   | `NonOverlap`   |     —     |
+| !Overlap(dst, src, T, len)   | `NonOverlap`   |     ✅     |
 | ValidNum(exp, vrange)        | `ValidNum`     |     ✅    |
 | ValidString(arange)          | `ValidString`  |     —     |
 | ValidCStr(p, len)            | `ValidCStr`    |     —     |
@@ -175,8 +175,8 @@ This checklist maps RAPx's contract verification to the [Primitive Safety Proper
 | Opened(fd)                   | `Opened`       |     —     |
 | Trait(T, trait)              | `Trait`        |     —     |
 | !Reachable()                 | `Unreachable`  |     —     |
-| ValidPtr(p, T, len)          | `ValidPtr`     |    ⚠️¹   |
-| Deref(p, T, len)              | `Deref`        |     —     |
+| ValidPtr(p, T, len)          | `ValidPtr`     |    ✅¹   |
+| Deref(p, T, len)              | `Deref`        |     ✅     |
 | Ptr2Ref(p, T)                 | `Ptr2Ref`      |     —     |
 | Layout(p, layout)             | `Layout`       |     —     |
 
