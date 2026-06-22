@@ -1573,6 +1573,57 @@ fn validnum_std_unsound_2() {
 }
 
 #[test]
+fn validptr_size_or_deref_sound_cases() {
+    let output = run_with_args("verify/validptr_sound_1", VERIFY_CMD);
+    assert_contain(&output, "function: sound_zst_dangling_valid_for_any_len");
+    assert_contain(&output, "result: SOUND");
+
+    let output = run_with_args("verify/validptr_sound_2", VERIFY_CMD);
+    assert_contain(&output, "function: sound_stack_array_full_range");
+    assert_contain(&output, "result: SOUND");
+
+    let output = run_with_args("verify/validptr_sound_3", VERIFY_CMD);
+    assert_contain(&output, "function: sound_slice_prefix_guarded");
+    assert_contain(&output, "result: SOUND");
+
+    let output = run_with_args("verify/validptr_sound_4", VERIFY_CMD);
+    assert_contain(&output, "function: sound_scc_each_slice_element");
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn validptr_size_or_deref_unsound_cases() {
+    let output = run_with_args("verify/validptr_unsound_1", VERIFY_CMD);
+    assert_contain(&output, "function: unsound_non_zst_dangling_not_allocated");
+    assert_contain(&output, "result: UNSOUND");
+
+    let output = run_with_args("verify/validptr_unsound_2", VERIFY_CMD);
+    assert_contain(&output, "function: unsound_one_past_requires_one_element");
+    assert_contain(&output, "result: UNSOUND");
+
+    let output = run_with_args("verify/validptr_unsound_3", VERIFY_CMD);
+    assert_contain(&output, "function: unsound_stack_array_len_too_large");
+    assert_contain(&output, "result: UNSOUND");
+
+    let output = run_with_args("verify/validptr_unsound_4", VERIFY_CMD);
+    assert_contain(&output, "function: unsound_scc_branch_uses_one_past");
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn deref_allocated_and_inbound_cases() {
+    let output = run_with_args("verify/deref_sound_1", VERIFY_CMD);
+    assert_contain(&output, "function: sound_deref_slice_prefix");
+    assert_contain(&output, "Deref | Proved");
+    assert_contain(&output, "result: SOUND");
+
+    let output = run_with_args("verify/deref_unsound_1", VERIFY_CMD);
+    assert_contain(&output, "function: unsound_deref_one_past");
+    assert_contain(&output, "Deref | Unknown");
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
 fn struct_invariant_1() {
     let output = run_with_args("verify/struct_invariant_1", VERIFY_CMD);
     // unsound_new: constructor with requires, all struct invariants proved
@@ -1691,11 +1742,11 @@ fn safetyflow_static_mut() {
 }
 
 #[test]
-fn verify_raw_ptr_unknown() {
+fn verify_raw_ptr_stack_local_sound() {
     let output = run_with_args("analyze/safetyflow_raw_ptr", VERIFY_SCAN_CMD);
     assert_contain(&output, "[rapx::verify] function: main");
-    assert_contain(&output, "Unknown");
-    assert_contain(&output, "UNSOUND");
+    assert_contain(&output, "ValidPtr | Proved");
+    assert_contain(&output, "result: SOUND");
 }
 
 #[test]
