@@ -285,6 +285,10 @@ impl RelevantPlaces {
                 self.collect_contract_expr(rhs);
             }
             ContractExpr::Unary { expr, .. } => self.collect_contract_expr(expr),
+            ContractExpr::IndexAccess { slice, index } => {
+                self.collect_contract_expr(slice);
+                self.collect_contract_expr(index);
+            }
             ContractExpr::Const(_)
             | ContractExpr::SizeOf(_)
             | ContractExpr::AlignOf(_)
@@ -446,11 +450,10 @@ pub fn rvalue_operands<'tcx>(rvalue: &'tcx Rvalue<'tcx>) -> Vec<&'tcx Operand<'t
         Rvalue::Ref(_, _, _) | Rvalue::RawPtr(_, _) => {}
         #[cfg(not(rapx_rustc_ge_196))]
         Rvalue::ShallowInitBox(_, _) => {}
-        Rvalue::Discriminant(_)
-        | Rvalue::CopyForDeref(_)
-        | Rvalue::ThreadLocalRef(_)
-        | Rvalue::Aggregate(_, _)
-        | _ => {}
+        Rvalue::Aggregate(_, aggregate_operands) => {
+            operands.extend(aggregate_operands.iter());
+        }
+        Rvalue::Discriminant(_) | Rvalue::CopyForDeref(_) | Rvalue::ThreadLocalRef(_) | _ => {}
     }
     operands
 }

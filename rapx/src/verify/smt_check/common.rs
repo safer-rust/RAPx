@@ -28,7 +28,7 @@ use std::collections::{HashMap, HashSet};
 
 use rustc_middle::{
     mir::{BinOp, Local, Operand, Rvalue, TerminatorKind, UnOp},
-    ty::{GenericArgKind, PseudoCanonicalInput, Ty, TyCtxt, TyKind},
+    ty::{GenericArgKind, PseudoCanonicalInput, Ty, TyCtxt, TyKind, UintTy},
 };
 use z3::{
     Config, Context, SatResult, Solver,
@@ -36,7 +36,8 @@ use z3::{
 };
 
 use super::{
-    alias, align, allocated, deref, in_bound, init, non_null, non_overlap, valid_num, valid_ptr,
+    alias, align, alive, allocated, deref, in_bound, init, non_null, non_overlap, valid_num,
+    valid_ptr,
 };
 
 use crate::verify::{
@@ -83,6 +84,7 @@ impl<'tcx> SmtChecker<'tcx> {
         match property.kind {
             PropertyKind::Align => align::check(self, checkpoint, property, forward),
             PropertyKind::Alias => alias::check(self, checkpoint, property, forward),
+            PropertyKind::Alive => alive::check(self, checkpoint, property, forward),
             PropertyKind::Allocated => allocated::check(self, checkpoint, property, forward),
             PropertyKind::Deref => deref::check(self, checkpoint, property, forward),
             PropertyKind::NonNull => non_null::check(self, checkpoint, property, forward),
@@ -1239,6 +1241,7 @@ impl<'tcx> SmtChecker<'tcx> {
                 let align = self.required_alignment(caller, *ty)?;
                 Some(SmtTerm::Const(align))
             }
+            ContractExpr::IndexAccess { .. } => None,
             ContractExpr::Binary { op, lhs, rhs } => {
                 let lhs = Box::new(self.contract_expr_to_smt_term(caller, lhs)?);
                 let rhs = Box::new(self.contract_expr_to_smt_term(caller, rhs)?);
@@ -1296,6 +1299,171 @@ impl<'tcx> SmtChecker<'tcx> {
         })
     }
 
+    /// Resolve and lower `ValidNum` predicates, expanding non-scalar helpers.
+    pub(crate) fn property_numeric_smt_predicates(
+        &self,
+        checkpoint: &Checkpoint<'tcx>,
+        property: &Property<'tcx>,
+    ) -> Option<Vec<SmtPredicate>> {
+        let predicates = self.property_numeric_predicates(checkpoint, property)?;
+        let mut lowered = Vec::new();
+        for predicate in predicates {
+            if let Some(expanded) = self.expand_index_access_predicate(checkpoint, &predicate)? {
+                lowered.extend(expanded);
+            } else {
+                lowered.push(
+                    self.numeric_predicate_to_smt_predicate(checkpoint.caller, &predicate)?,
+                );
+            }
+        }
+        Some(lowered)
+    }
+
+    fn expand_index_access_predicate(
+        &self,
+        checkpoint: &Checkpoint<'tcx>,
+        predicate: &NumericPredicate<'tcx>,
+    ) -> Option<Option<Vec<SmtPredicate>>> {
+        let ContractExpr::IndexAccess { slice, index } = &predicate.lhs else {
+            if matches!(predicate.rhs, ContractExpr::IndexAccess { .. }) {
+                return None;
+            }
+            return Some(None);
+        };
+        if !matches!(predicate.op, RelOp::Ne) || !matches!(predicate.rhs, ContractExpr::Const(0)) {
+            return None;
+        }
+
+        let len = SmtTerm::Value(format!("len({})", self.contract_expr_label(slice)?));
+        let (lower, upper) = self.slice_index_bounds(checkpoint, index, len.clone())?;
+        Some(Some(vec![
+            SmtPredicate::Le(SmtTerm::Const(0), lower.clone()),
+            SmtPredicate::Le(lower, upper.clone()),
+            SmtPredicate::Le(upper, len),
+        ]))
+    }
+
+    fn slice_index_bounds(
+        &self,
+        checkpoint: &Checkpoint<'tcx>,
+        index: &ContractExpr<'tcx>,
+        len: SmtTerm,
+    ) -> Option<(SmtTerm, SmtTerm)> {
+        let index_term = self.contract_expr_to_smt_term(checkpoint.caller, index)?;
+        let Some(kind) = self.slice_index_kind(checkpoint.caller, index) else {
+            return Some((
+                index_term.clone(),
+                SmtTerm::Add(Box::new(index_term), Box::new(SmtTerm::Const(1))),
+            ));
+        };
+
+        match kind {
+            SliceIndexKind::Scalar => Some((
+                index_term.clone(),
+                SmtTerm::Add(Box::new(index_term), Box::new(SmtTerm::Const(1))),
+            )),
+            SliceIndexKind::Range => Some((
+                self.contract_expr_field_term(checkpoint.caller, index, 0)?,
+                self.contract_expr_field_term(checkpoint.caller, index, 1)?,
+            )),
+            SliceIndexKind::RangeFrom => Some((
+                self.contract_expr_field_term(checkpoint.caller, index, 0)?,
+                len,
+            )),
+            SliceIndexKind::RangeTo => Some((
+                SmtTerm::Const(0),
+                self.contract_expr_field_term(checkpoint.caller, index, 0)?,
+            )),
+            SliceIndexKind::RangeFull => Some((SmtTerm::Const(0), len)),
+            SliceIndexKind::RangeInclusive => {
+                let start = self.contract_expr_field_term(checkpoint.caller, index, 0)?;
+                let end = self.contract_expr_field_term(checkpoint.caller, index, 1)?;
+                Some((
+                    start,
+                    SmtTerm::Add(Box::new(end), Box::new(SmtTerm::Const(1))),
+                ))
+            }
+            SliceIndexKind::RangeToInclusive => {
+                let end = self.contract_expr_field_term(checkpoint.caller, index, 0)?;
+                Some((
+                    SmtTerm::Const(0),
+                    SmtTerm::Add(Box::new(end), Box::new(SmtTerm::Const(1))),
+                ))
+            }
+        }
+    }
+
+    fn slice_index_kind(
+        &self,
+        caller: rustc_hir::def_id::DefId,
+        index: &ContractExpr<'tcx>,
+    ) -> Option<SliceIndexKind> {
+        let place = self.contract_expr_place(index)?;
+        let ty = self.place_ty_for_caller(caller, &place)?;
+        if matches!(ty.kind(), TyKind::Uint(UintTy::Usize)) {
+            return Some(SliceIndexKind::Scalar);
+        }
+
+        let ty_name = format!("{ty:?}");
+        if ty_name.contains("RangeToInclusive<usize>") {
+            Some(SliceIndexKind::RangeToInclusive)
+        } else if ty_name.contains("RangeInclusive<usize>") {
+            Some(SliceIndexKind::RangeInclusive)
+        } else if ty_name.contains("RangeFrom<usize>") {
+            Some(SliceIndexKind::RangeFrom)
+        } else if ty_name.contains("RangeTo<usize>") {
+            Some(SliceIndexKind::RangeTo)
+        } else if ty_name.contains("RangeFull") {
+            Some(SliceIndexKind::RangeFull)
+        } else if ty_name.contains("Range<usize>") || ty_name.contains("IndexRange") {
+            Some(SliceIndexKind::Range)
+        } else {
+            None
+        }
+    }
+
+    fn contract_expr_field_term(
+        &self,
+        caller: rustc_hir::def_id::DefId,
+        expr: &ContractExpr<'tcx>,
+        field: usize,
+    ) -> Option<SmtTerm> {
+        let mut place = self.contract_expr_place(expr)?;
+        place.fields.push(field);
+        self.contract_expr_to_smt_term(caller, &contract_expr_from_place_key(place))
+    }
+
+    fn contract_expr_place(&self, expr: &ContractExpr<'tcx>) -> Option<PlaceKey> {
+        let ContractExpr::Place(place) = expr else {
+            return None;
+        };
+        Some(PlaceKey::from_contract_place(place))
+    }
+
+    fn contract_expr_label(&self, expr: &ContractExpr<'tcx>) -> Option<String> {
+        match expr {
+            ContractExpr::Place(place) => Some(place_label(&PlaceKey::from_contract_place(place))),
+            ContractExpr::Const(value) => Some(value.to_string()),
+            _ => None,
+        }
+    }
+
+    fn place_ty_for_caller(
+        &self,
+        caller: rustc_hir::def_id::DefId,
+        place: &PlaceKey,
+    ) -> Option<Ty<'tcx>> {
+        if !place.fields.is_empty() {
+            return None;
+        }
+        let local = match place.base {
+            PlaceBaseKey::Return => Local::from_usize(0),
+            PlaceBaseKey::Local(local) => Local::from_usize(local),
+            PlaceBaseKey::Arg(_) => return None,
+        };
+        Some(self.tcx.optimized_mir(caller).local_decls[local].ty)
+    }
+
     fn bind_contract_expr_to_callsite(
         &self,
         checkpoint: &Checkpoint<'tcx>,
@@ -1310,6 +1478,10 @@ impl<'tcx> SmtChecker<'tcx> {
             ContractExpr::AlignOf(ty) => Some(ContractExpr::AlignOf(
                 self.instantiate_callsite_ty(checkpoint, *ty),
             )),
+            ContractExpr::IndexAccess { slice, index } => Some(ContractExpr::IndexAccess {
+                slice: Box::new(self.bind_contract_expr_to_callsite(checkpoint, slice)?),
+                index: Box::new(self.bind_contract_expr_to_callsite(checkpoint, index)?),
+            }),
             ContractExpr::Binary { op, lhs, rhs } => Some(ContractExpr::Binary {
                 op: *op,
                 lhs: Box::new(self.bind_contract_expr_to_callsite(checkpoint, lhs)?),
@@ -1594,6 +1766,17 @@ pub(crate) enum TypeSizeClass {
     Zero,
     NonZero,
     Unknown,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SliceIndexKind {
+    Scalar,
+    Range,
+    RangeFrom,
+    RangeTo,
+    RangeFull,
+    RangeInclusive,
+    RangeToInclusive,
 }
 
 /// General SMT obligation produced by an SP-specific lowering.
@@ -2089,6 +2272,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                         self.assert_place_alignment(solver, pointer);
                     }
                     self.assert_place_alignment(solver, source);
+                    self.assert_length_alias(solver, pointer, source);
                 }
                 StateFact::Call(call) => {
                     if is_as_ptr_call(&call.func) {
@@ -2644,6 +2828,26 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 place_label(place)
             )));
         }
+    }
+
+    /// Assert equal slice lengths for two slice-like places that alias.
+    fn assert_length_alias(&mut self, solver: &Solver<'ctx>, left: &PlaceKey, right: &PlaceKey) {
+        if !self.is_len_carrying_place(left) || !self.is_len_carrying_place(right) {
+            return;
+        }
+        let left_label = place_label(left);
+        let right_label = place_label(right);
+        let lhs = Int::new_const(self.ctx, sanitize_smt_name(&format!("len({left_label})")));
+        let rhs = Int::new_const(self.ctx, sanitize_smt_name(&format!("len({right_label})")));
+        solver.assert(&lhs._eq(&rhs));
+        self.assumptions.push(SmtPredicate::Eq(
+            SmtTerm::Value(format!("len({left_label})")),
+            SmtTerm::Value(format!("len({right_label})")),
+        ));
+    }
+
+    fn is_len_carrying_place(&self, place: &PlaceKey) -> bool {
+        self.place_ty(place).is_some_and(is_len_carrying_ty)
     }
 
     /// Record call-effect definitions that the term builder understands.
@@ -3222,7 +3426,12 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
     /// Return the MIR type for a simple place key.
     fn place_ty(&self, place: &PlaceKey) -> Option<Ty<'tcx>> {
         if !place.fields.is_empty() {
-            return None;
+            return self.forward.facts.iter().find_map(|fact| {
+                let StateFact::Cast { target, ty, .. } = fact else {
+                    return None;
+                };
+                if target == place { Some(*ty) } else { None }
+            });
         }
         let local = match place.base {
             PlaceBaseKey::Return => Local::from_usize(0),
@@ -3354,7 +3563,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         }
         let local = place.local()?;
         let cutoff = self.path_cursor_cutoff(cursor);
-        let body = self.tcx.optimized_mir(self.forward.callsite.caller);
+        let body = self.tcx.optimized_mir(self.forward.checkpoint.caller);
         let mut latest = None;
 
         for step in &self.forward.path.steps {
@@ -3398,7 +3607,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         }
 
         PathCursorCutoff {
-            block: self.forward.callsite.block,
+            block: self.forward.checkpoint.block,
             statement_index: None,
         }
     }
@@ -3780,6 +3989,14 @@ fn pointee_ty_str<'tcx>(ty: Ty<'tcx>) -> Option<String> {
     match ty.kind() {
         TyKind::RawPtr(inner, _) | TyKind::Ref(_, inner, _) => Some(format!("{inner:?}")),
         _ => None,
+    }
+}
+
+fn is_len_carrying_ty(ty: Ty<'_>) -> bool {
+    match ty.kind() {
+        TyKind::Ref(_, inner, _) => is_len_carrying_ty(*inner),
+        TyKind::Slice(_) | TyKind::Str => true,
+        _ => false,
     }
 }
 

@@ -1321,6 +1321,52 @@ fn inbound_std_unsound_1() {
     assert_contain(&output, "result: UNSOUND");
 }
 
+#[test]
+fn sliceindex_validnum_sound_1() {
+    let output = run_with_args("verify/sliceindex_sound_01", VERIFY_CMD);
+    assert_contain(&output, "function: sound_scalar_index_guard");
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn sliceindex_validnum_unsound_1() {
+    let output = run_with_args("verify/sliceindex_unsound_01", VERIFY_CMD);
+    assert_contain(&output, "function: unsound_scalar_index_wrong_guard");
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn sliceindex_validnum_sound_2() {
+    let output = run_with_args("verify/sliceindex_sound_02", VERIFY_CMD);
+    assert_contain(&output, "function: sound_range_index_guard");
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn sliceindex_validnum_unsound_2() {
+    let output = run_with_args("verify/sliceindex_unsound_02", VERIFY_CMD);
+    assert_contain(&output, "function: unsound_range_index_missing_end_guard");
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn sliceindex_validnum_std_sound_1() {
+    let output = run_with_args("verify/sliceindex_sound_03", VERIFY_CMD);
+    assert_contain(&output, "function: sound_std_get_unchecked_sliceindex");
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn sliceindex_validnum_std_range_cases() {
+    let output = run_with_args("verify/sliceindex_sound_04", VERIFY_CMD);
+    assert_contain(&output, "function: sound_std_range_get_unchecked");
+    assert_contain(&output, "result: SOUND");
+
+    let output = run_with_args("verify/sliceindex_unsound_03", VERIFY_CMD);
+    assert_contain(&output, "function: unsound_std_range_missing_end_guard");
+    assert_contain(&output, "result: UNSOUND");
+}
+
 // FIXME: requires SMT improvements for variable-length ValidPtr and NonOverlap
 // #[test]
 // fn inbound_std_sound_2() {
@@ -1631,6 +1677,39 @@ fn deref_allocated_and_inbound_cases() {
     let output = run_with_args("verify/deref_unsound_1", VERIFY_CMD);
     assert_contain(&output, "function: unsound_deref_one_past");
     assert_contain(&output, "Deref | Unknown");
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn alive_lifetime_sound_cases() {
+    let output = run_with_args("verify/alive_sound_01", VERIFY_CMD);
+    assert_contain(&output, "function: SliceHost::<'a, T>::get");
+    assert_contain(&output, "Alive | Proved");
+
+    let output = run_with_args("verify/alive_sound_02", VERIFY_CMD);
+    assert_contain(&output, "function: MutSliceHost::<'a, T>::get_mut");
+    assert_contain(&output, "Alive | Proved");
+
+    let output = run_with_args("verify/alive_sound_03", VERIFY_CMD);
+    assert_contain(&output, "function: slice_from_host");
+    assert_contain(&output, "Alive | Proved");
+}
+
+#[test]
+fn alive_lifetime_unsound_cases() {
+    let output = run_with_args("verify/alive_unsound_01", VERIFY_CMD);
+    assert_contain(&output, "function: DangerousAliaser::<'a, T>::get_mut");
+    assert_contain(&output, "Alive | Failed");
+    assert_contain(&output, "result: UNSOUND");
+
+    let output = run_with_args("verify/alive_unsound_02", VERIFY_CMD);
+    assert_contain(&output, "function: slice_tied_to_unrelated_host");
+    assert_contain(&output, "Alive | Failed");
+    assert_contain(&output, "result: UNSOUND");
+
+    let output = run_with_args("verify/alive_unsound_03", VERIFY_CMD);
+    assert_contain(&output, "function: static_slice_from_local_vec");
+    assert_contain(&output, "Alive | Failed");
     assert_contain(&output, "result: UNSOUND");
 }
 

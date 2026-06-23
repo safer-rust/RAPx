@@ -22,14 +22,7 @@ pub(crate) fn check<'tcx>(
     property: &Property<'tcx>,
     forward: &ForwardVisitResult<'tcx>,
 ) -> SmtCheckResult {
-    let Some(predicates) = checker.property_numeric_predicates(checkpoint, property) else {
-        return SmtCheckResult::unknown("ValidNum predicates could not be resolved");
-    };
-    let smt_predicates = predicates
-        .iter()
-        .map(|predicate| checker.numeric_predicate_to_smt_predicate(checkpoint.caller, predicate))
-        .collect::<Option<Vec<_>>>();
-    let Some(smt_predicates) = smt_predicates else {
+    let Some(smt_predicates) = checker.property_numeric_smt_predicates(checkpoint, property) else {
         return SmtCheckResult::unknown("ValidNum predicate could not be lowered to SMT");
     };
 

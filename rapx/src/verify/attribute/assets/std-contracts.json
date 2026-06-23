@@ -3049,58 +3049,34 @@
   ],
   "core::slice::get_unchecked": [
     {
-      "tag": "InBound",
+      "tag": "ValidNum",
       "args": [
-        "self",
-        "T",
-        "index + 1"
+        "index_access(self, index)"
       ]
-    },
-    {
-      "tag": "InBound",
-      "args": []
     }
   ],
   "core::slice::index::SliceIndex::get_unchecked": [
     {
-      "tag": "InBound",
-      "args": []
-    },
-    {
-      "tag": "InBound",
-      "args": []
-    },
-    {
-      "tag": "Allocated",
-      "args": []
+      "tag": "ValidNum",
+      "args": [
+        "index_access(slice, self)"
+      ]
     }
   ],
   "core::slice::index::SliceIndex::get_unchecked_mut": [
     {
-      "tag": "InBound",
-      "args": []
-    },
-    {
-      "tag": "InBound",
-      "args": []
-    },
-    {
-      "tag": "Allocated",
-      "args": []
+      "tag": "ValidNum",
+      "args": [
+        "index_access(slice, self)"
+      ]
     }
   ],
   "core::slice::get_unchecked_mut": [
     {
-      "tag": "InBound",
+      "tag": "ValidNum",
       "args": [
-        "self",
-        "T",
-        "index + 1"
+        "index_access(self, index)"
       ]
-    },
-    {
-      "tag": "InBound",
-      "args": []
     }
   ],
   "core::slice::swap_unchecked": [

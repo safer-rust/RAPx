@@ -121,6 +121,10 @@ pub enum ContractExpr<'tcx> {
     Const(u128),
     SizeOf(Ty<'tcx>),
     AlignOf(Ty<'tcx>),
+    IndexAccess {
+        slice: Box<ContractExpr<'tcx>>,
+        index: Box<ContractExpr<'tcx>>,
+    },
     Binary {
         op: NumericOp,
         lhs: Box<ContractExpr<'tcx>>,
@@ -525,6 +529,9 @@ impl<'tcx> Property<'tcx> {
                 _ => ContractExpr::Unknown,
             },
             Expr::Call(expr_call) => {
+                if let Some(expr) = Self::parse_index_access_expr(tcx, def_id, expr_call) {
+                    return expr;
+                }
                 if let Some(expr) = Self::parse_layout_expr(tcx, def_id, expr_call) {
                     return expr;
                 }
@@ -576,6 +583,28 @@ impl<'tcx> Property<'tcx> {
                 }
             }
         }
+    }
+
+    fn parse_index_access_expr(
+        tcx: TyCtxt<'tcx>,
+        def_id: DefId,
+        expr_call: &safety_parser::syn::ExprCall,
+    ) -> Option<ContractExpr<'tcx>> {
+        let Expr::Path(func_path) = expr_call.func.as_ref() else {
+            return None;
+        };
+        let name = func_path.path.segments.last()?.ident.to_string();
+        if name != "index_access" || expr_call.args.len() != 2 {
+            return None;
+        }
+
+        let mut args = expr_call.args.iter();
+        let slice = args.next()?;
+        let index = args.next()?;
+        Some(ContractExpr::IndexAccess {
+            slice: Box::new(Self::parse_contract_expr(tcx, def_id, slice, "ValidNum")),
+            index: Box::new(Self::parse_contract_expr(tcx, def_id, index, "ValidNum")),
+        })
     }
 
     fn parse_layout_expr(

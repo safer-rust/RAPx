@@ -10,6 +10,7 @@
 
 mod alias;
 mod align;
+mod alive;
 mod allocated;
 mod common;
 mod deref;
