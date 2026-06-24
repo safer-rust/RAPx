@@ -20,8 +20,9 @@ use super::{
     attribute::attr_parser::parse_rapx_attr,
     contract::{ContractExpr, ContractPlace, PlaceBase, Property, PropertyArg, PropertyKind},
     helpers::{
-        Checkpoint, collect_return_block_indices, collect_unsafe_callsites, get_owner_struct_def_id,
-        has_rapx_verify_attr, is_std_crate_def_id, is_trait_unsafe, resolve_impl_self_ty_def_id,
+        Checkpoint, collect_return_block_indices, collect_unsafe_callsites,
+        get_owner_struct_def_id, has_rapx_verify_attr, is_std_crate_def_id, is_trait_unsafe,
+        resolve_impl_self_ty_def_id,
     },
     path_extractor::PathExtractor,
 };
@@ -624,7 +625,8 @@ impl<'tcx> PrepareTargets<'tcx> {
             return;
         }
 
-        let groups = PathExtractor::new(self.tcx, target.def_id, target.checkpoints.clone(), 0).run();
+        let groups =
+            PathExtractor::new(self.tcx, target.def_id, target.checkpoints.clone(), 0).run();
         rap_info!("      checkpoint paths:");
         let mut display_index = 0usize;
         for group in &groups {

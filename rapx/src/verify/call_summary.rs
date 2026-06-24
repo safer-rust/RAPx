@@ -21,7 +21,7 @@ use rustc_middle::{
 use crate::analysis::dataflow::{DataflowAnalysis, default::DataflowAnalyzer};
 use crate::analysis::path_analysis::graph::{PathEnumerator, PathGraph};
 
-use super::{slicer::ForgetReason, primitive::PrimitiveCall};
+use super::{primitive::PrimitiveCall, slicer::ForgetReason};
 
 /// Dependency summary consumed by the backward visitor.
 #[derive(Clone, Debug)]

@@ -20,9 +20,9 @@ use super::{
 };
 use crate::verify::{
     contract::{Property, PropertyKind},
-    verifier::ForwardVisitResult,
     helpers::Checkpoint,
     report::CheckResult,
+    verifier::ForwardVisitResult,
 };
 
 /// Check `ValidPtr` using `Size(T,0) || (!Size(T,0) && Deref(p,T,n))`.

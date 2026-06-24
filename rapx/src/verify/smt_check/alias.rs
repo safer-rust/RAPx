@@ -23,10 +23,10 @@ use crate::{
     helpers::mir_scan::check_safety,
     verify::{
         def_use::{PlaceBaseKey, PlaceKey},
-        verifier::{AbstractValue, ForwardVisitResult},
         helpers::Checkpoint,
         primitive::PrimitiveCall,
         report::CheckResult,
+        verifier::{AbstractValue, ForwardVisitResult},
     },
 };
 
@@ -120,7 +120,8 @@ pub fn check<'tcx>(
     }
 
     if let Some(origin) = self_field_origin(checker.tcx, checkpoint.caller, &origin) {
-        if let Some(reason) = escaped_self_field_violation(checker.tcx, checkpoint.caller, &origin) {
+        if let Some(reason) = escaped_self_field_violation(checker.tcx, checkpoint.caller, &origin)
+        {
             return failed(reason);
         }
         return SmtCheckResult::proved(format!(

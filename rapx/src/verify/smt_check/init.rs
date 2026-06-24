@@ -14,7 +14,7 @@
 
 use super::common::{SmtCheckResult, SmtChecker, SmtObligation};
 
-use crate::verify::{contract::Property, verifier::ForwardVisitResult, helpers::Checkpoint};
+use crate::verify::{contract::Property, helpers::Checkpoint, verifier::ForwardVisitResult};
 
 /// Check `Init` by lowering it to a common initialized-memory obligation.
 pub(crate) fn check<'tcx>(

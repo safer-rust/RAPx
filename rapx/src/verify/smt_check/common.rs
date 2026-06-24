@@ -36,7 +36,7 @@ use z3::{
 };
 
 use super::{
-    alias, align, alive, allocated, deref, in_bound, init, non_null, non_overlap, valid_num,
+    alias, align, alive, allocated, deref, in_bound, init, non_null, non_overlap, typed, valid_num,
     valid_ptr,
 };
 
@@ -46,12 +46,12 @@ use crate::verify::{
         Property, PropertyArg, PropertyKind, RelOp,
     },
     def_use::{PlaceBaseKey, PlaceKey},
-    verifier::{AbstractValue, CallSummary, ForwardVisitResult, StateFact},
     generic::GenericTypeCandidates,
     helpers::{Checkpoint, callee_param_index_for_local},
     path_extractor::PathStep,
     primitive::PrimitiveCall,
     report::CheckResult,
+    verifier::{AbstractValue, CallSummary, ForwardVisitResult, StateFact},
 };
 
 type ValueCursor = usize;
@@ -91,6 +91,7 @@ impl<'tcx> SmtChecker<'tcx> {
             PropertyKind::InBound => in_bound::check(self, checkpoint, property, forward),
             PropertyKind::Init => init::check(self, checkpoint, property, forward),
             PropertyKind::NonOverlap => non_overlap::check(self, checkpoint, property, forward),
+            PropertyKind::Typed => typed::check(self, checkpoint, property, forward),
             PropertyKind::ValidNum => valid_num::check(self, checkpoint, property, forward),
             PropertyKind::ValidPtr => valid_ptr::check(self, checkpoint, property, forward),
             _ => SmtCheckResult::unknown("no SMT lowering for this property yet"),
@@ -1233,6 +1234,7 @@ impl<'tcx> SmtChecker<'tcx> {
                 Some(SmtTerm::Place(PlaceKey::from_contract_place(place)))
             }
             ContractExpr::Const(value) => u64::try_from(*value).ok().map(SmtTerm::Const),
+            ContractExpr::ConstParam { .. } => None,
             ContractExpr::SizeOf(ty) => {
                 let size = self.required_size(caller, *ty)?;
                 Some(SmtTerm::Const(size))
@@ -1241,6 +1243,10 @@ impl<'tcx> SmtChecker<'tcx> {
                 let align = self.required_alignment(caller, *ty)?;
                 Some(SmtTerm::Const(align))
             }
+            ContractExpr::Len(expr) => Some(SmtTerm::Value(format!(
+                "len({})",
+                self.contract_expr_label(expr)?
+            ))),
             ContractExpr::IndexAccess { .. } => None,
             ContractExpr::Binary { op, lhs, rhs } => {
                 let lhs = Box::new(self.contract_expr_to_smt_term(caller, lhs)?);
@@ -1311,12 +1317,29 @@ impl<'tcx> SmtChecker<'tcx> {
             if let Some(expanded) = self.expand_index_access_predicate(checkpoint, &predicate)? {
                 lowered.extend(expanded);
             } else {
-                lowered.push(
-                    self.numeric_predicate_to_smt_predicate(checkpoint.caller, &predicate)?,
-                );
+                lowered
+                    .push(self.numeric_predicate_to_smt_predicate(checkpoint.caller, &predicate)?);
             }
         }
         Some(lowered)
+    }
+
+    /// Resolve an `InBound(index_access(slice, index))` property to range predicates.
+    pub(crate) fn property_index_access_in_bound_predicates(
+        &self,
+        checkpoint: &Checkpoint<'tcx>,
+        property: &Property<'tcx>,
+    ) -> Option<Vec<SmtPredicate>> {
+        property.args.iter().find_map(|arg| {
+            let PropertyArg::Expr(expr) = arg else {
+                return None;
+            };
+            if !matches!(expr, ContractExpr::IndexAccess { .. }) {
+                return None;
+            }
+            let rebound = self.bind_contract_expr_to_callsite(checkpoint, expr)?;
+            self.index_access_in_bound_predicates(checkpoint, &rebound)
+        })
     }
 
     fn expand_index_access_predicate(
@@ -1334,13 +1357,31 @@ impl<'tcx> SmtChecker<'tcx> {
             return None;
         }
 
+        self.index_access_in_bound_predicates(
+            checkpoint,
+            &ContractExpr::IndexAccess {
+                slice: slice.clone(),
+                index: index.clone(),
+            },
+        )
+        .map(Some)
+    }
+
+    fn index_access_in_bound_predicates(
+        &self,
+        checkpoint: &Checkpoint<'tcx>,
+        expr: &ContractExpr<'tcx>,
+    ) -> Option<Vec<SmtPredicate>> {
+        let ContractExpr::IndexAccess { slice, index } = expr else {
+            return None;
+        };
         let len = SmtTerm::Value(format!("len({})", self.contract_expr_label(slice)?));
         let (lower, upper) = self.slice_index_bounds(checkpoint, index, len.clone())?;
-        Some(Some(vec![
+        Some(vec![
             SmtPredicate::Le(SmtTerm::Const(0), lower.clone()),
             SmtPredicate::Le(lower, upper.clone()),
             SmtPredicate::Le(upper, len),
-        ]))
+        ])
     }
 
     fn slice_index_bounds(
@@ -1444,6 +1485,7 @@ impl<'tcx> SmtChecker<'tcx> {
         match expr {
             ContractExpr::Place(place) => Some(place_label(&PlaceKey::from_contract_place(place))),
             ContractExpr::Const(value) => Some(value.to_string()),
+            ContractExpr::ConstParam { name, .. } => Some(name.clone()),
             _ => None,
         }
     }
@@ -1464,6 +1506,16 @@ impl<'tcx> SmtChecker<'tcx> {
         Some(self.tcx.optimized_mir(caller).local_decls[local].ty)
     }
 
+    /// Return true if a place is a safe reference/slice/string carrying object length.
+    pub(crate) fn is_len_carrying_place_for_caller(
+        &self,
+        caller: rustc_hir::def_id::DefId,
+        place: &PlaceKey,
+    ) -> bool {
+        self.place_ty_for_caller(caller, place)
+            .is_some_and(is_len_carrying_ty)
+    }
+
     fn bind_contract_expr_to_callsite(
         &self,
         checkpoint: &Checkpoint<'tcx>,
@@ -1472,12 +1524,24 @@ impl<'tcx> SmtChecker<'tcx> {
         match expr {
             ContractExpr::Place(place) => self.contract_place_to_callsite_expr(checkpoint, place),
             ContractExpr::Const(value) => Some(ContractExpr::Const(*value)),
+            ContractExpr::ConstParam { index, name } => self
+                .instantiate_callsite_const(checkpoint, *index)
+                .map(ContractExpr::Const)
+                .or_else(|| {
+                    Some(ContractExpr::ConstParam {
+                        index: *index,
+                        name: name.clone(),
+                    })
+                }),
             ContractExpr::SizeOf(ty) => Some(ContractExpr::SizeOf(
                 self.instantiate_callsite_ty(checkpoint, *ty),
             )),
             ContractExpr::AlignOf(ty) => Some(ContractExpr::AlignOf(
                 self.instantiate_callsite_ty(checkpoint, *ty),
             )),
+            ContractExpr::Len(expr) => Some(ContractExpr::Len(Box::new(
+                self.bind_contract_expr_to_callsite(checkpoint, expr)?,
+            ))),
             ContractExpr::IndexAccess { slice, index } => Some(ContractExpr::IndexAccess {
                 slice: Box::new(self.bind_contract_expr_to_callsite(checkpoint, slice)?),
                 index: Box::new(self.bind_contract_expr_to_callsite(checkpoint, index)?),
@@ -1643,6 +1707,33 @@ impl<'tcx> SmtChecker<'tcx> {
         match arg.kind() {
             GenericArgKind::Type(actual_ty) => actual_ty,
             _ => ty,
+        }
+    }
+
+    /// Replace a callee const generic parameter with its concrete checkpoint value.
+    pub(crate) fn instantiate_callsite_const(
+        &self,
+        checkpoint: &Checkpoint<'tcx>,
+        index: u32,
+    ) -> Option<u128> {
+        let body = self.tcx.optimized_mir(checkpoint.caller);
+        let terminator = body.basic_blocks[checkpoint.block].terminator();
+        let TerminatorKind::Call { func, .. } = &terminator.kind else {
+            return None;
+        };
+        let Operand::Constant(func_constant) = func else {
+            return None;
+        };
+        let TyKind::FnDef(_, args) = func_constant.const_.ty().kind() else {
+            return None;
+        };
+        let arg = args.get(index as usize)?;
+        match arg.kind() {
+            GenericArgKind::Const(actual_const) => actual_const
+                .try_to_target_usize(self.tcx)
+                .map(|value| value as u128)
+                .or_else(|| const_int_from_debug(&format!("{actual_const:?}"))),
+            _ => None,
         }
     }
 
@@ -3443,7 +3534,8 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
 
     /// Return ABI alignment and size for a type.
     fn type_layout(&self, ty: Ty<'tcx>) -> Option<(u64, u64)> {
-        let typing_env = rustc_middle::ty::TypingEnv::post_analysis(self.tcx, self.checkpoint.caller);
+        let typing_env =
+            rustc_middle::ty::TypingEnv::post_analysis(self.tcx, self.checkpoint.caller);
         let input = PseudoCanonicalInput {
             typing_env,
             value: ty,

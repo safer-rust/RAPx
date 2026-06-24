@@ -12,7 +12,7 @@
 
 use super::{allocated, common::SmtCheckResult, in_bound};
 use crate::verify::{
-    contract::Property, verifier::ForwardVisitResult, helpers::Checkpoint, report::CheckResult,
+    contract::Property, helpers::Checkpoint, report::CheckResult, verifier::ForwardVisitResult,
 };
 
 /// Check `Deref` by proving both allocation and bounds obligations.

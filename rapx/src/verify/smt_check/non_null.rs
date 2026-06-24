@@ -17,7 +17,7 @@
 //! still be zero.
 
 use super::common::{SmtCheckResult, SmtChecker, SmtObligation};
-use crate::verify::{contract::Property, verifier::ForwardVisitResult, helpers::Checkpoint};
+use crate::verify::{contract::Property, helpers::Checkpoint, verifier::ForwardVisitResult};
 
 /// Check `NonNull` by lowering it to `SmtObligation::NonZero`.
 pub(crate) fn check<'tcx>(

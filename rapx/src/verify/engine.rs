@@ -12,11 +12,11 @@ use crate::analysis::path_analysis::PathTree;
 
 use super::{
     contract::Property,
-    verifier::{ForwardVisitResult, ForwardVerifier},
     helpers::{Checkpoint, CheckpointLocation},
-    slicer::{BackwardItem, BackwardSlicer},
     report::CheckResult,
+    slicer::{BackwardItem, BackwardSlicer},
     smt_check::{SmtCheckResult, SmtChecker},
+    verifier::{ForwardVerifier, ForwardVisitResult},
 };
 
 /// Result of checking one invariant along one reachability path.
@@ -79,7 +79,9 @@ impl<'tcx> VerifyEngine<'tcx> {
                 backward.items = items;
             }
             let forward = self.verifier.visit(&backward);
-            let smt = self.checker.check_for_checkpoint(def_id, invariant, &forward);
+            let smt = self
+                .checker
+                .check_for_checkpoint(def_id, invariant, &forward);
 
             let tcx = self.slicer.tcx();
             let slicing_diag = backward.describe_for_checkpoint(tcx, checkpoint, 0);

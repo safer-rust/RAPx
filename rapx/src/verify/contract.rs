@@ -1,6 +1,6 @@
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::BinOp as MirBinOp;
-use rustc_middle::ty::{Ty, TyCtxt};
+use rustc_middle::ty::{GenericParamDefKind, Ty, TyCtxt};
 use safety_parser::syn::{
     BinOp as SynBinOp, Expr, GenericArgument, Lit, PathArguments, Type, UnOp,
 };
@@ -119,8 +119,13 @@ impl NumericUnaryOp {
 pub enum ContractExpr<'tcx> {
     Place(ContractPlace<'tcx>),
     Const(u128),
+    ConstParam {
+        index: u32,
+        name: String,
+    },
     SizeOf(Ty<'tcx>),
     AlignOf(Ty<'tcx>),
+    Len(Box<ContractExpr<'tcx>>),
     IndexAccess {
         slice: Box<ContractExpr<'tcx>>,
         index: Box<ContractExpr<'tcx>>,
@@ -283,19 +288,36 @@ impl<'tcx> Property<'tcx> {
             "Size" => Self::new_with_target(PropertyKind::Size, tcx, def_id, exprs),
             "NoPadding" => Self::new_with_target(PropertyKind::NoPadding, tcx, def_id, exprs),
             "NonNull" => Self::new_with_target(PropertyKind::NonNull, tcx, def_id, exprs),
-            "Allocated" => {
-                Self::check_arg_length(exprs.len(), 3, "Allocated");
-                let target = Self::parse_target_arg(tcx, def_id, &exprs[0]);
-                let Some(ty) = Self::parse_type(tcx, def_id, &exprs[1], "Allocated") else {
-                    return Self::new_simple(PropertyKind::Unknown);
-                };
-                let length = Self::parse_contract_expr(tcx, def_id, &exprs[2], "Allocated");
-                Self::new_with_args(
+            "Allocated" => match exprs {
+                [target] => Self::new_with_args(
                     PropertyKind::Allocated,
-                    vec![target, PropertyArg::Ty(ty), PropertyArg::Expr(length)],
-                )
-            }
+                    vec![Self::parse_target_arg(tcx, def_id, target)],
+                ),
+                [target_expr, ty_expr, len_expr] => {
+                    let target = Self::parse_target_arg(tcx, def_id, target_expr);
+                    let Some(ty) = Self::parse_type(tcx, def_id, ty_expr, "Allocated") else {
+                        return Self::new_simple(PropertyKind::Unknown);
+                    };
+                    let length = Self::parse_contract_expr(tcx, def_id, len_expr, "Allocated");
+                    Self::new_with_args(
+                        PropertyKind::Allocated,
+                        vec![target, PropertyArg::Ty(ty), PropertyArg::Expr(length)],
+                    )
+                }
+                _ => {
+                    Self::check_arg_length(exprs.len(), 3, "Allocated");
+                    Self::new_simple(PropertyKind::Unknown)
+                }
+            },
             "InBound" | "InBounded" => match exprs {
+                [expr] => {
+                    let expr = Self::parse_contract_expr(tcx, def_id, expr, "InBound");
+                    if matches!(expr, ContractExpr::IndexAccess { .. }) {
+                        Self::new_with_args(PropertyKind::InBound, vec![PropertyArg::Expr(expr)])
+                    } else {
+                        Self::new_simple(PropertyKind::Unknown)
+                    }
+                }
                 [_target, ty_expr, len_expr] => {
                     let target = Self::parse_target_arg(tcx, def_id, &exprs[0]);
                     let Some(ty) = Self::parse_type(tcx, def_id, ty_expr, "InBound") else {
@@ -532,6 +554,9 @@ impl<'tcx> Property<'tcx> {
                 if let Some(expr) = Self::parse_index_access_expr(tcx, def_id, expr_call) {
                     return expr;
                 }
+                if let Some(expr) = Self::parse_len_expr(tcx, def_id, expr_call) {
+                    return expr;
+                }
                 if let Some(expr) = Self::parse_layout_expr(tcx, def_id, expr_call) {
                     return expr;
                 }
@@ -569,6 +594,8 @@ impl<'tcx> Property<'tcx> {
             _ => {
                 if let Some(place) = Self::parse_contract_place(tcx, def_id, expr) {
                     ContractExpr::Place(place)
+                } else if let Some(expr) = Self::parse_const_param(tcx, def_id, expr) {
+                    expr
                 } else if let Some(value) = Self::parse_builtin_const(tcx, expr) {
                     ContractExpr::Const(value)
                 } else if let Some(value) = parse_expr_into_number(expr) {
@@ -602,9 +629,37 @@ impl<'tcx> Property<'tcx> {
         let slice = args.next()?;
         let index = args.next()?;
         Some(ContractExpr::IndexAccess {
-            slice: Box::new(Self::parse_contract_expr(tcx, def_id, slice, "ValidNum")),
-            index: Box::new(Self::parse_contract_expr(tcx, def_id, index, "ValidNum")),
+            slice: Box::new(Self::parse_contract_expr(
+                tcx,
+                def_id,
+                slice,
+                "index_access",
+            )),
+            index: Box::new(Self::parse_contract_expr(
+                tcx,
+                def_id,
+                index,
+                "index_access",
+            )),
         })
+    }
+
+    fn parse_len_expr(
+        tcx: TyCtxt<'tcx>,
+        def_id: DefId,
+        expr_call: &safety_parser::syn::ExprCall,
+    ) -> Option<ContractExpr<'tcx>> {
+        let Expr::Path(func_path) = expr_call.func.as_ref() else {
+            return None;
+        };
+        let name = func_path.path.segments.last()?.ident.to_string();
+        if name != "len" || expr_call.args.len() != 1 {
+            return None;
+        }
+        let target = expr_call.args.first()?;
+        Some(ContractExpr::Len(Box::new(Self::parse_contract_expr(
+            tcx, def_id, target, "len",
+        ))))
     }
 
     fn parse_layout_expr(
@@ -687,6 +742,31 @@ impl<'tcx> Property<'tcx> {
             "usize" => Some((1_u128 << pointer_bits) - 1),
             _ => None,
         }
+    }
+
+    fn parse_const_param(
+        tcx: TyCtxt<'tcx>,
+        def_id: DefId,
+        expr: &Expr,
+    ) -> Option<ContractExpr<'tcx>> {
+        let Expr::Path(expr_path) = expr else {
+            return None;
+        };
+        let ident = expr_path.path.get_ident()?.to_string();
+        let mut generics = Some(tcx.generics_of(def_id));
+        while let Some(current) = generics {
+            if let Some(param) = current.own_params.iter().find(|param| {
+                matches!(param.kind, GenericParamDefKind::Const { .. })
+                    && param.name.as_str() == ident
+            }) {
+                return Some(ContractExpr::ConstParam {
+                    index: param.index,
+                    name: ident,
+                });
+            }
+            generics = current.parent.map(|parent| tcx.generics_of(parent));
+        }
+        None
     }
 
     fn parse_contract_place(

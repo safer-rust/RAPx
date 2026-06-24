@@ -18,6 +18,7 @@ mod in_bound;
 mod init;
 mod non_null;
 mod non_overlap;
+mod typed;
 mod valid_num;
 mod valid_ptr;
 

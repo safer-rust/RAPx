@@ -7,7 +7,10 @@
 //! the shared `VerifyEngine`.
 
 use crate::analysis::Analysis;
-use crate::analysis::path_analysis::{PathTree, graph::{PathEnumerator, PathGraph}};
+use crate::analysis::path_analysis::{
+    PathTree,
+    graph::{PathEnumerator, PathGraph},
+};
 use crate::cli::VerifyMode;
 use crate::helpers::fn_info::{FnKind, get_cons, get_mutated_fields, get_muts, get_type};
 use crate::verify::contract::PropertyKind;
@@ -23,8 +26,8 @@ use super::{
     engine::VerifyEngine,
     helpers::{Checkpoint, CheckpointKind, CheckpointLocation, collect_return_block_indices},
     path_extractor::{CallGroup, PATH_LIMIT, PathExtractor},
-    slicer::BackwardItem,
     report::{PropertyCheckResult, VerificationReport, VisitDiagnostics},
+    slicer::BackwardItem,
     target::{FunctionTarget, VerifyTargetCollector},
 };
 
@@ -177,7 +180,10 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
     /// dereference, static mut access) carry their properties in
     /// `target.raw_ptr_deref_checks` / `target.static_mut_checks`; real
     /// unsafe calls look up `target.callee_requires` by callee `DefId`.
-    pub fn properties_for_callsite(&self, checkpoint: &Checkpoint<'tcx>) -> &'target [Property<'tcx>] {
+    pub fn properties_for_callsite(
+        &self,
+        checkpoint: &Checkpoint<'tcx>,
+    ) -> &'target [Property<'tcx>] {
         let loc = checkpoint.location();
         match checkpoint.kind {
             CheckpointKind::RawPtrDeref => {
@@ -591,8 +597,7 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
 
             // Phase 2: struct invariant verification
             if !target.struct_invariants.is_empty() && !matches!(self.mode, VerifyMode::Invless) {
-                let driver =
-                    VerifyDriver::new_with_repeat(self.tcx, target, self.postfix_repeat);
+                let driver = VerifyDriver::new_with_repeat(self.tcx, target, self.postfix_repeat);
                 let struct_report = driver.verify_struct_invariants();
                 rap_debug!("{}", struct_report.describe());
                 all_results.extend(struct_report.results);

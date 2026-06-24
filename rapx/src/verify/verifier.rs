@@ -308,8 +308,9 @@ impl<'tcx> ForwardVerifier<'tcx> {
                         place.local,
                         AbstractValue::Place(alias.clone()),
                     );
-                    let ty =
-                        self.tcx.optimized_mir(result.checkpoint.caller).local_decls[place.local].ty;
+                    let ty = self.tcx.optimized_mir(result.checkpoint.caller).local_decls
+                        [place.local]
+                        .ty;
                     result.facts.push(StateFact::Cast {
                         target: target.clone(),
                         source: AbstractValue::Place(alias),

@@ -83,9 +83,9 @@ pub(crate) fn check<'tcx>(
     let target = checker
         .property_target(checkpoint, property)
         .or_else(|| checker.callsite_arg_place(checkpoint, 0));
-    let pointer_origin_param = target
-        .as_ref()
-        .and_then(|place| pointer_origin_param_local(checker.tcx, checkpoint.caller, place, forward));
+    let pointer_origin_param = target.as_ref().and_then(|place| {
+        pointer_origin_param_local(checker.tcx, checkpoint.caller, place, forward)
+    });
 
     match &signature.return_lifetime {
         ReturnLifetime::Elided => check_elided_return(producer, &signature),

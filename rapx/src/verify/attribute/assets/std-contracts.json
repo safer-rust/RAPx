@@ -818,6 +818,20 @@
       ]
     }
   ],
+  "core::intrinsics::exact_div": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "y != 0"
+      ]
+    },
+    {
+      "tag": "ValidNum",
+      "args": [
+        "x % y == 0"
+      ]
+    }
+  ],
   "core::intrinsics::copy_nonoverlapping": [
     {
       "tag": "ValidPtr",
@@ -3049,7 +3063,7 @@
   ],
   "core::slice::get_unchecked": [
     {
-      "tag": "ValidNum",
+      "tag": "InBound",
       "args": [
         "index_access(self, index)"
       ]
@@ -3057,7 +3071,7 @@
   ],
   "core::slice::index::SliceIndex::get_unchecked": [
     {
-      "tag": "ValidNum",
+      "tag": "InBound",
       "args": [
         "index_access(slice, self)"
       ]
@@ -3065,7 +3079,7 @@
   ],
   "core::slice::index::SliceIndex::get_unchecked_mut": [
     {
-      "tag": "ValidNum",
+      "tag": "InBound",
       "args": [
         "index_access(slice, self)"
       ]
@@ -3073,7 +3087,7 @@
   ],
   "core::slice::get_unchecked_mut": [
     {
-      "tag": "ValidNum",
+      "tag": "InBound",
       "args": [
         "index_access(self, index)"
       ]
@@ -3082,31 +3096,59 @@
   "core::slice::swap_unchecked": [
     {
       "tag": "InBound",
-      "args": []
+      "args": [
+        "index_access(self, a)"
+      ]
+    },
+    {
+      "tag": "InBound",
+      "args": [
+        "index_access(self, b)"
+      ]
     }
   ],
   "core::slice::as_chunks_unchecked": [
     {
       "tag": "ValidNum",
-      "args": []
+      "args": [
+        "N != 0"
+      ]
+    },
+    {
+      "tag": "ValidNum",
+      "args": [
+        "len(self) % N == 0"
+      ]
     }
   ],
   "core::slice::as_chunks_unchecked_mut": [
     {
       "tag": "ValidNum",
-      "args": []
+      "args": [
+        "N != 0"
+      ]
+    },
+    {
+      "tag": "ValidNum",
+      "args": [
+        "len(self) % N == 0"
+      ]
     }
   ],
   "core::slice::split_at_unchecked": [
     {
-      "tag": "InBound",
-      "args": []
+      "tag": "ValidNum",
+      "args": [
+        "mid <= len(self)"
+      ]
     }
   ],
   "core::slice::split_at_mut_unchecked": [
     {
-      "tag": "InBound",
-      "args": []
+      "tag": "ValidNum",
+      "args": [
+        "mid <= len(self)"
+      ]
     }
   ],
   "core::slice::align_to": [
@@ -3121,7 +3163,7 @@
       "tag": "Typed",
       "args": [
         "self",
-        "T"
+        "U"
       ]
     }
   ],
@@ -3137,7 +3179,15 @@
       "tag": "Typed",
       "args": [
         "self",
-        "T"
+        "U"
+      ]
+    }
+  ],
+  "core::slice::get_disjoint_unchecked_mut": [
+    {
+      "tag": "InBound",
+      "args": [
+        "index_access(self, indices)"
       ]
     }
   ],

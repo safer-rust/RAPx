@@ -259,6 +259,10 @@
     "dst",
     "count"
   ],
+  "core::intrinsics::exact_div": [
+    "x",
+    "y"
+  ],
   "core::intrinsics::copy_nonoverlapping": [
     "src",
     "dst",
@@ -680,6 +684,10 @@
   ],
   "core::slice::align_to_mut": [
     "self"
+  ],
+  "core::slice::get_disjoint_unchecked_mut": [
+    "self",
+    "indices"
   ],
   "core::slice::ascii::as_ascii_unchecked": [
     "self"

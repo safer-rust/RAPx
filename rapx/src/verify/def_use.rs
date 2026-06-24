@@ -285,11 +285,13 @@ impl RelevantPlaces {
                 self.collect_contract_expr(rhs);
             }
             ContractExpr::Unary { expr, .. } => self.collect_contract_expr(expr),
+            ContractExpr::Len(expr) => self.collect_contract_expr(expr),
             ContractExpr::IndexAccess { slice, index } => {
                 self.collect_contract_expr(slice);
                 self.collect_contract_expr(index);
             }
             ContractExpr::Const(_)
+            | ContractExpr::ConstParam { .. }
             | ContractExpr::SizeOf(_)
             | ContractExpr::AlignOf(_)
             | ContractExpr::Unknown => {}

@@ -7,7 +7,7 @@
 
 use super::common::{SmtCheckResult, SmtChecker, SmtObligation, SmtTerm};
 use crate::verify::{
-    contract::Property, def_use::PlaceKey, verifier::ForwardVisitResult, helpers::Checkpoint,
+    contract::Property, def_use::PlaceKey, helpers::Checkpoint, verifier::ForwardVisitResult,
 };
 use rustc_middle::mir::{Operand, Rvalue, StatementKind};
 

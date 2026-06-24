@@ -16,7 +16,7 @@
 //! plus the negated alignment goal are satisfiable.
 
 use super::common::{SmtCheckResult, SmtChecker, SmtObligation};
-use crate::verify::{contract::Property, verifier::ForwardVisitResult, helpers::Checkpoint};
+use crate::verify::{contract::Property, helpers::Checkpoint, verifier::ForwardVisitResult};
 
 /// Check `Align` by lowering it to `SmtObligation::Aligned`.
 pub(crate) fn check<'tcx>(

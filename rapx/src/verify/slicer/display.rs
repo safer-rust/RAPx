@@ -4,10 +4,7 @@ use std::fmt::Write;
 
 use rustc_middle::ty::TyCtxt;
 
-use crate::verify::{
-    helpers::CheckpointLocation,
-    path_extractor::PathStep,
-};
+use crate::verify::{helpers::CheckpointLocation, path_extractor::PathStep};
 
 use super::types::{BackwardItem, ForgetReason, KeepReason, RelevantMirItems};
 
@@ -50,10 +47,7 @@ impl<'tcx> RelevantMirItems<'tcx> {
             self.property.kind, self.property.args
         );
         let _ = writeln!(out, "      path {path_index}:");
-        let _ = writeln!(
-            out,
-            "        |_ kind: entry",
-        );
+        let _ = writeln!(out, "        |_ kind: entry",);
         let _ = writeln!(out, "        |_ steps: {}", self.path.describe_body());
         let _ = writeln!(
             out,

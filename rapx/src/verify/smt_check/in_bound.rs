@@ -15,8 +15,7 @@
 
 use super::common::{SmtCheckResult, SmtChecker, SmtObligation, SmtTerm};
 use crate::verify::{
-    contract::Property, verifier::ForwardVisitResult, helpers::Checkpoint,
-    primitive::PrimitiveCall,
+    contract::Property, helpers::Checkpoint, primitive::PrimitiveCall, verifier::ForwardVisitResult,
 };
 
 /// Check `InBound` by lowering it to a common bounds obligation.
@@ -26,6 +25,16 @@ pub(crate) fn check<'tcx>(
     property: &Property<'tcx>,
     forward: &ForwardVisitResult<'tcx>,
 ) -> SmtCheckResult {
+    if let Some(predicates) =
+        checker.property_index_access_in_bound_predicates(checkpoint, property)
+    {
+        return checker.prove_obligation(
+            checkpoint,
+            forward,
+            SmtObligation::Predicate { predicates },
+        );
+    }
+
     let Some(target) = checker.property_target(checkpoint, property) else {
         rap_debug!("  [SMT InBound] target could not be resolved");
         return SmtCheckResult::unknown("InBound target could not be resolved");
@@ -45,7 +54,8 @@ pub(crate) fn check<'tcx>(
         rap_debug!("  [SMT InBound] length argument could not be resolved");
         return SmtCheckResult::unknown("InBound length argument could not be resolved");
     };
-    let Some(access_count) = checker.contract_expr_to_smt_term(checkpoint.caller, &access_count_expr)
+    let Some(access_count) =
+        checker.contract_expr_to_smt_term(checkpoint.caller, &access_count_expr)
     else {
         rap_debug!(
             "  [SMT InBound] length expression could not be lowered: {:?}",
