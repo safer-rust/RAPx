@@ -166,7 +166,7 @@ This checklist maps RAPx's contract verification to the [Primitive Safety Proper
 | ValidCStr(p, len)            | `ValidCStr`    |     —     |
 | Init(p, T, len)              | `Init`         |     ✅    |
 | Unwrap(x, T)                 | `Unwrap`       |     —     |
-| Typed(p, T)                  | `Typed`        |     —     |
+| Typed(p, T)                  | `Typed`        |     ✅     |
 | !Owned(p)                    | `Owning`       |     —     |
 | Alias(p1, p2)                | `Alias`        |     ✅    |
 | Alive(p, l)                  | `Alive`        |     ✅     |
