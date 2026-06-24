@@ -1323,42 +1323,42 @@ fn inbound_std_unsound_1() {
 }
 
 #[test]
-fn sliceindex_validnum_sound_1() {
+fn sliceindex_inbound_sound_1() {
     let output = run_with_args("verify/sliceindex_sound_01", VERIFY_CMD);
     assert_contain(&output, "function: sound_scalar_index_guard");
     assert_contain(&output, "result: SOUND");
 }
 
 #[test]
-fn sliceindex_validnum_unsound_1() {
+fn sliceindex_inbound_unsound_1() {
     let output = run_with_args("verify/sliceindex_unsound_01", VERIFY_CMD);
     assert_contain(&output, "function: unsound_scalar_index_wrong_guard");
     assert_contain(&output, "result: UNSOUND");
 }
 
 #[test]
-fn sliceindex_validnum_sound_2() {
+fn sliceindex_inbound_sound_2() {
     let output = run_with_args("verify/sliceindex_sound_02", VERIFY_CMD);
     assert_contain(&output, "function: sound_range_index_guard");
     assert_contain(&output, "result: SOUND");
 }
 
 #[test]
-fn sliceindex_validnum_unsound_2() {
+fn sliceindex_inbound_unsound_2() {
     let output = run_with_args("verify/sliceindex_unsound_02", VERIFY_CMD);
     assert_contain(&output, "function: unsound_range_index_missing_end_guard");
     assert_contain(&output, "result: UNSOUND");
 }
 
 #[test]
-fn sliceindex_validnum_std_sound_1() {
+fn sliceindex_inbound_std_sound_1() {
     let output = run_with_args("verify/sliceindex_sound_03", VERIFY_CMD);
     assert_contain(&output, "function: sound_std_get_unchecked_sliceindex");
     assert_contain(&output, "result: SOUND");
 }
 
 #[test]
-fn sliceindex_validnum_std_range_cases() {
+fn sliceindex_inbound_std_range_cases() {
     let output = run_with_args("verify/sliceindex_sound_04", VERIFY_CMD);
     assert_contain(&output, "function: sound_std_range_get_unchecked");
     assert_contain(&output, "result: SOUND");
@@ -1620,6 +1620,27 @@ fn validnum_std_unsound_2() {
 }
 
 #[test]
+fn as_chunks_unchecked_validnum_sound_1() {
+    let output = run_with_args("verify/as_chunks_sound_01", VERIFY_CMD);
+    assert_contain(&output, "function: sound_as_chunks_unchecked_exact_div");
+    assert_contain(&output, "result: SOUND");
+    assert_contain(&output, "function: sound_exact_div_guard");
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn as_chunks_unchecked_validnum_unsound_1() {
+    let output = run_with_args("verify/as_chunks_unsound_01", VERIFY_CMD);
+    assert_contain(
+        &output,
+        "function: unsound_as_chunks_unchecked_missing_exact_div",
+    );
+    assert_contain(&output, "result: UNSOUND");
+    assert_contain(&output, "function: unsound_exact_div_missing_guard");
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
 fn validptr_size_or_deref_sound_cases() {
     let output = run_with_args("verify/validptr_sound_1", VERIFY_CMD);
     assert_contain(&output, "function: sound_zst_dangling_valid_for_any_len");
@@ -1678,6 +1699,42 @@ fn deref_allocated_and_inbound_cases() {
     let output = run_with_args("verify/deref_unsound_1", VERIFY_CMD);
     assert_contain(&output, "function: unsound_deref_one_past");
     assert_contain(&output, "Deref | Unknown");
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn typed_provenance_cases() {
+    let output = run_with_args("verify/typed_cases", VERIFY_CMD);
+
+    for function in [
+        "sound_reference_source",
+        "sound_slice_element_source",
+        "sound_repr_c_field_source",
+        "sound_generic_reference_source",
+        "sound_branch_all_sources_typed",
+        "sound_scc_preserves_typed_source",
+        "sound_maybeuninit_after_write",
+        "sound_align_to_same_type",
+    ] {
+        assert_contain(&output, &format!("function: {function}"));
+    }
+    assert_contain(&output, "Typed | Proved");
+    assert_contain(&output, "result: SOUND");
+
+    for function in [
+        "unsound_u8_bytes_as_u32",
+        "unsound_u16_slice_as_u32",
+        "unsound_uninit_memory_as_u32",
+        "unsound_invalid_bool_bits",
+        "unsound_invalid_char_bits",
+        "unsound_invalid_enum_discriminant",
+        "unsound_branch_selects_untyped_source",
+        "unsound_scc_overwrites_with_untyped_source",
+        "unsound_align_to_bool_from_bytes",
+    ] {
+        assert_contain(&output, &format!("function: {function}"));
+    }
+    assert_contain(&output, "Typed | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 

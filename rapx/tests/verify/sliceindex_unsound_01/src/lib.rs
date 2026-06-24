@@ -2,7 +2,7 @@
 #![register_tool(rapx)]
 #![allow(dead_code)]
 
-#[rapx::requires(ValidNum(index_access(_slice, _index)), kind = "precond")]
+#[rapx::requires(InBound(index_access(_slice, _index)), kind = "precond")]
 unsafe fn require_slice_index<T>(_slice: &[T], _index: usize) {}
 
 // UNSOUND: the guard checks a different value from the index used by the API.
