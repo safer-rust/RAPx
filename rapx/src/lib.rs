@@ -278,12 +278,14 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
             prepare_targets,
             postfix_repeat,
             mode,
+            crate_name,
             module,
         }) => {
             if *prepare_targets {
-                PrepareTargets::new(tcx, *mode, module.clone()).run();
+                PrepareTargets::new(tcx, *mode, crate_name.clone(), module.clone()).run();
             } else {
-                VerifyRun::new(tcx, *postfix_repeat, *mode, module.clone()).run();
+                VerifyRun::new(tcx, *postfix_repeat, *mode, crate_name.clone(), module.clone())
+                    .run();
             }
         }
     }

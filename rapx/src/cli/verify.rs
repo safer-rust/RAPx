@@ -23,8 +23,14 @@ pub struct VerifyArgs {
     /// Verification mode: `scan` auto-detects unannotated unsafe targets (default), `targeted` verifies #[rapx::verify] functions.
     #[arg(long, default_value = "scan")]
     pub mode: VerifyMode,
+    /// Filter verification targets to only those within the specified crate
+    /// (Rust crate name or Cargo package name, e.g. `std`, `core`, `my-crate`).
+    /// Useful for standard-library workspaces and sub-workspaces.
+    #[arg(long = "crate")]
+    pub crate_name: Option<String>,
     /// Filter verification targets to only those within the specified module path
-    /// (e.g. `my_crate::my_module`). Applies to all verification modes.
+    /// (e.g. `my_module::inner`). When combined with `--crate`, the path is
+    /// interpreted relative to that crate. Applies to all verification modes.
     #[arg(long)]
     pub module: Option<String>,
 }

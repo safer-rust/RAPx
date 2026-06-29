@@ -149,6 +149,8 @@ pub struct TraitEnsurance<'tcx> {
 pub struct VerifyTargetCollector<'tcx> {
     tcx: TyCtxt<'tcx>,
     mode: VerifyMode,
+    crate_filter: Option<String>,
+    crate_filter_matched: bool,
     module_filter: Option<String>,
     module_filter_matched: bool,
     /// All function targets to verify collected from the current crate.
@@ -163,10 +165,17 @@ pub struct VerifyTargetCollector<'tcx> {
 
 impl<'tcx> VerifyTargetCollector<'tcx> {
     /// Creates a new collector for the current type context.
-    pub fn new(tcx: TyCtxt<'tcx>, mode: VerifyMode, module_filter: Option<String>) -> Self {
+    pub fn new(
+        tcx: TyCtxt<'tcx>,
+        mode: VerifyMode,
+        crate_filter: Option<String>,
+        module_filter: Option<String>,
+    ) -> Self {
         VerifyTargetCollector {
             tcx,
             mode,
+            crate_filter,
+            crate_filter_matched: false,
             module_filter,
             module_filter_matched: false,
             function_targets: Vec::new(),
@@ -299,7 +308,50 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
         }
     }
 
+    fn crate_name_matches(&self, def_id: DefId) -> bool {
+        match self.crate_filter {
+            None => true,
+            Some(ref filter) => {
+                let crate_name = self.tcx.crate_name(def_id.krate);
+                if crate_name.as_str() == *filter {
+                    return true;
+                }
+                if let Ok(pkg_name) = std::env::var("CARGO_PKG_NAME") {
+                    if pkg_name == *filter {
+                        return true;
+                    }
+                }
+                false
+            }
+        }
+    }
+
+    fn module_path_matches(&self, def_id: DefId) -> bool {
+        let Some(ref filter) = self.module_filter else {
+            return true;
+        };
+        let def_path = self.tcx.def_path_str(def_id);
+        if def_path == *filter || def_path.starts_with(&format!("{}::", filter)) {
+            return true;
+        }
+        let crate_name = self.tcx.crate_name(def_id.krate);
+        let crate_prefix = format!("{}::", crate_name.as_str());
+        if let Some(inner) = filter.strip_prefix(&crate_prefix) {
+            if def_path == inner || def_path.starts_with(&format!("{}::", inner)) {
+                return true;
+            }
+        }
+        false
+    }
+
     pub fn check_module_filter_result(&self) {
+        if let Some(ref filter) = self.crate_filter {
+            if !self.crate_filter_matched {
+                rap_warn!(
+                    "[rapx::verify] --crate \"{filter}\" matched no targets"
+                );
+            }
+        }
         if let Some(ref filter) = self.module_filter {
             if !self.module_filter_matched {
                 rap_warn!(
@@ -345,6 +397,18 @@ impl<'tcx> Visitor<'tcx> for VerifyTargetCollector<'tcx> {
             }
 
             let impl_def_id = item.owner_id.to_def_id();
+
+            if !self.crate_name_matches(impl_def_id) {
+                rustc_hir::intravisit::walk_item(self, item);
+                return;
+            }
+            self.crate_filter_matched = true;
+
+            if !self.module_path_matches(impl_def_id) {
+                rustc_hir::intravisit::walk_item(self, item);
+                return;
+            }
+            self.module_filter_matched = true;
 
             let trait_ref = {
                 #[cfg(rapx_rustc_ge_193)]
@@ -450,25 +514,15 @@ impl<'tcx> Visitor<'tcx> for VerifyTargetCollector<'tcx> {
             }
         }
 
-        if let Some(ref filter) = self.module_filter {
-            let def_path = self.tcx.def_path_str(def_id);
-            let matched = def_path == *filter
-                || def_path.starts_with(&format!("{}::", filter))
-                || {
-                    let crate_name = self.tcx.crate_name(def_id.krate);
-                    let prefix = format!("{}::", crate_name.as_str());
-                    filter.strip_prefix(&prefix).map_or(false, |inner| {
-                        def_path == *inner || def_path.starts_with(&format!("{}::", inner))
-                    })
-                };
-            rap_debug!(
-                "[rapx::verify] module_filter: filter=\"{filter}\" def_path=\"{def_path}\" matched={matched}",
-            );
-            if !matched {
-                return;
-            }
-            self.module_filter_matched = true;
+        if !self.crate_name_matches(def_id) {
+            return;
         }
+        self.crate_filter_matched = true;
+
+        if !self.module_path_matches(def_id) {
+            return;
+        }
+        self.module_filter_matched = true;
 
         self.push_function_target(function_target);
     }
@@ -481,6 +535,7 @@ impl<'tcx> Visitor<'tcx> for VerifyTargetCollector<'tcx> {
 pub struct PrepareTargets<'tcx> {
     tcx: TyCtxt<'tcx>,
     mode: VerifyMode,
+    crate_filter: Option<String>,
     module_filter: Option<String>,
 }
 
@@ -490,8 +545,12 @@ impl<'tcx> Analysis for PrepareTargets<'tcx> {
     }
 
     fn run(&mut self) {
-        let mut collector =
-            VerifyTargetCollector::new(self.tcx, self.mode, self.module_filter.clone());
+        let mut collector = VerifyTargetCollector::new(
+            self.tcx,
+            self.mode,
+            self.crate_filter.clone(),
+            self.module_filter.clone(),
+        );
         self.tcx.hir_visit_all_item_likes_in_crate(&mut collector);
         collector.check_module_filter_result();
 
@@ -582,10 +641,16 @@ impl<'tcx> Analysis for PrepareTargets<'tcx> {
 }
 
 impl<'tcx> PrepareTargets<'tcx> {
-    pub fn new(tcx: TyCtxt<'tcx>, mode: VerifyMode, module_filter: Option<String>) -> Self {
+    pub fn new(
+        tcx: TyCtxt<'tcx>,
+        mode: VerifyMode,
+        crate_filter: Option<String>,
+        module_filter: Option<String>,
+    ) -> Self {
         PrepareTargets {
             tcx,
             mode,
+            crate_filter,
             module_filter,
         }
     }

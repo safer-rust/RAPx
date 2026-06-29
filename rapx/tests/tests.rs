@@ -2059,6 +2059,31 @@ fn verify_module_filter() {
 }
 
 #[test]
+fn verify_crate_filter() {
+    let output = run_with_args(
+        "verify/module_filter",
+        &["verify", "--mode", "targeted", "--crate", "verify_module_filter"],
+    );
+    assert_contain(&output, "function: a::f");
+    assert_contain(&output, "function: b::g");
+    assert_contain(&output, "function: c::h");
+
+    let output = run_with_args(
+        "verify/module_filter",
+        &["verify", "--mode", "targeted", "--crate", "verify_module_filter", "--module", "a"],
+    );
+    assert_contain(&output, "function: a::f");
+    assert_not_contain(&output, "function: b::g");
+    assert_not_contain(&output, "function: c::h");
+
+    let output = run_with_args(
+        "verify/module_filter",
+        &["verify", "--mode", "targeted", "--crate", "nonexistent_crate"],
+    );
+    assert_contain(&output, "--crate \"nonexistent_crate\" matched no targets");
+}
+
+#[test]
 fn opt_bounds_len() {
     let output = run_with_args("opt/bounds_len", &["opt"]);
     assert_not_contain(&output, "RAPx|ERROR|");

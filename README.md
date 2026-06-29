@@ -118,7 +118,8 @@ Options:
       --prepare-targets            identify #[rapx::verify] functions and list their safety contracts
       --postfix-repeat <N>       number of extra SCC postfix repetitions during path enumeration (default 0)
       --mode <MODE>               verification mode: scan, targeted, invless (default scan)
-      --module <MODULE_PATH>     filter verification targets to only those within the specified module path
+      --crate <CRATE>             filter verification targets to a specific crate (Rust crate name or Cargo package name)
+      --module <MODULE_PATH>     filter verification targets to a specific module path within the crate
   -h, --help                      Print help
 ```
 
@@ -127,7 +128,21 @@ Verification modes:
 - `targeted` — only verify functions annotated with `#[rapx::verify]`
 - `invless` — verify without struct invariants as pre/post-conditions, deriving safety requirements automatically from the safety flow graph
 
-Use `--module` with any mode to limit verification to functions within a specific module path (e.g. `--module my_mod::sub`).
+**Filtering targets:** `--crate` and `--module` work in any mode and can be combined. When analyzing standard-library workspaces or sub-workspaces:
+
+```bash
+# Verify a specific module (single crate or workspace)
+cargo rapx verify --module my_mod::sub
+
+# Verify a specific crate in a workspace
+cargo rapx verify --crate my_crate
+
+# Combine both for precise targeting (e.g. standard library)
+cargo rapx verify --crate core --module ptr::NonNull
+cargo rapx verify --crate std --module collections::vec
+```
+
+When `--module` is used without `--crate`, a `crate_name::module` prefix is also accepted for backward compatibility (e.g. `--module core::ptr` strips the `core::` prefix automatically).
 
 ```rust
 #![feature(register_tool)]
