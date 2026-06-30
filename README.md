@@ -170,33 +170,33 @@ This checklist maps RAPx's contract verification to the [Primitive Safety Proper
 
 > **Legend**: ✅ = full Z3-based SMT verification (produces SOUND/UNSOUND verdicts)　— = not yet verified (parsed but no SMT lowering)
 
-| Primitive SP                 | RAPx tag       | Supported |
-|------------------------------|----------------|:---------:|
-| Align(p, T)                  | `Align`        |     ✅    |
-| Size(T, c)                   | `Size`         |     ✅     |
-| !Padding(T)                  | `NoPadding`    |     —     |
-| !Null(p)                     | `NonNull`      |     ✅    |
-| Allocated(p, T, len, A)      | `Allocated`    |     ✅    |
-| InBound(p, T, len)           | `InBound`      |     ✅    |
-| !Overlap(dst, src, T, len)   | `NonOverlap`   |     ✅     |
-| ValidNum(exp, vrange)        | `ValidNum`     |     ✅    |
-| ValidString(arange)          | `ValidString`  |     —     |
-| ValidCStr(p, len)            | `ValidCStr`    |     —     |
-| Init(p, T, len)              | `Init`         |     ✅    |
-| Unwrap(x, T)                 | `Unwrap`       |     —     |
-| Typed(p, T)                  | `Typed`        |     ✅     |
-| !Owned(p)                    | `Owning`       |     —     |
-| Alias(p1, p2)                | `Alias`        |     ✅    |
-| Alive(p, l)                  | `Alive`        |     ✅     |
-| Pinned(p, l)                 | `Pinned`       |     —     |
-| !Volatile(p, T, len)         | `NonVolatile`  |     —     |
-| Opened(fd)                   | `Opened`       |     —     |
-| Trait(T, trait)              | `Trait`        |     —     |
-| !Reachable()                 | `Unreachable`  |     —     |
-| ValidPtr(p, T, len)          | `ValidPtr`     |    ✅¹   |
-| Deref(p, T, len)              | `Deref`        |     ✅     |
-| Ptr2Ref(p, T)                 | `Ptr2Ref`      |     —     |
-| Layout(p, layout)             | `Layout`       |     —     |
+| safety-tag     | Example                     | Supported |
+|----------------|-----------------------------|:---------:|
+| `Align`        | Align(p, T)                 |     ✅    |
+| `Size`         | Size(T, c)                  |     ✅    |
+| `NoPadding`    | !Padding(T)                 |     —     |
+| `NonNull`      | !Null(p)                    |     ✅    |
+| `Allocated`    | Allocated(p, T, len, A)     |     ✅    |
+| `InBound`      | InBound(p, T, len)          |     ✅    |
+| `NonOverlap`   | !Overlap(dst, src, T, len)  |     ✅    |
+| `ValidNum`     | ValidNum(exp, vrange)       |     ✅    |
+| `ValidString`  | ValidString(arange)         |     —     |
+| `ValidCStr`    | ValidCStr(p, len)           |     —     |
+| `Init`         | Init(p, T, len)             |     ✅    |
+| `Unwrap`       | Unwrap(x, T)                |     —     |
+| `Typed`        | Typed(p, T)                 |     ✅    |
+| `Owning`       | !Owned(p)                   |     —     |
+| `Alias`        | Alias(p1, p2)               |     ✅    |
+| `Alive`        | Alive(p, l)                 |     ✅    |
+| `Pinned`       | Pinned(p, l)                |     —     |
+| `NonVolatile`  | !Volatile(p, T, len)        |     —     |
+| `Opened`       | Opened(fd)                  |     —     |
+| `Trait`        | Trait(T, trait)             |     —     |
+| `Unreachable`  | !Reachable()                |     —     |
+| `ValidPtr` \*  | ValidPtr(p, T, len)         |    ✅¹   |
+| `Deref` \*     | Deref(p, T, len)            |     ✅    |
+| `Ptr2Ref` \*   | Ptr2Ref(p, T)               |     —     |
+| `Layout` \*    | Layout(p, layout)           |     —     |
 
 > ¹ **ValidPtr** is decomposed into primitive SMT obligations (`NonNull`, `Align`, `Allocated`, `InBound`, `Init`). Each primitive is checked individually; however the composite verdict remains `Unknown` until all sub-properties (including `Typed`) are fully lowered. The decomposition results are reported as diagnostic notes.
 
