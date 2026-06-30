@@ -1263,6 +1263,23 @@ fn inbound_unsound_5() {
 }
 
 #[test]
+fn inbound_unsound_6() {
+    let output = run_with_args("verify/inbound_unsound_6", VERIFY_CMD);
+    assert_contain(&output, "function: unsound_scc_off_by_one");
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn inbound_unsound_7() {
+    let output = run_with_args("verify/inbound_unsound_7", VERIFY_CMD);
+    assert_contain(
+        &output,
+        "function: unsound_signed_suffix_missing_lower_bound",
+    );
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
 fn inbound_sound_6() {
     let output = run_with_args("verify/inbound_sound_6", VERIFY_CMD);
     assert_contain(&output, "function: sound_scc_loop_index_guard");

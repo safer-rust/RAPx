@@ -355,6 +355,25 @@ impl<'tcx> PathGraph<'tcx> {
             }
         }
 
+        // Also clear constraints for locals assigned by the terminator
+        // (e.g. _13 = Iterator::next() in a Call terminator). The block's
+        // assigned_locals only covers statement-level assignments, so
+        // terminator-side assignments are handled here.
+        if let Some(terminator) = self.terminator(cur) {
+            let assigned = match &terminator.kind {
+                TerminatorKind::Call {
+                    destination, ..
+                } => Some(destination.local.as_usize()),
+                TerminatorKind::Yield {
+                    resume_arg, ..
+                } => Some(resume_arg.local.as_usize()),
+                _ => None,
+            };
+            if let Some(local) = assigned {
+                constraints.remove(&local);
+            }
+        }
+
         let successors = &self.cfg.block(cur).next;
         if !successors.contains(&next) {
             if !self.is_unwind_target(cur, next) {

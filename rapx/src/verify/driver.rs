@@ -650,6 +650,73 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                 }
             }
 
+            // Phase 1.5: InBound loop-depth detector
+            //
+            // When postfix_repeat == 0, a loop body appears at most once per path,
+            // which can miss off-by-one bugs that only manifest on later iterations.
+            //
+            // The detector tries progressively deeper unrolling and tracks the
+            // shape of InBound results at each level.  Three stopping criteria:
+            //
+            //  1. Unproven InBound found → unsound, propagate results, stop.
+            //  2. State converged (same Proven set as a previous level) → stop.
+            //  3. State oscillates (Proven-set pattern repeats) → stop.
+            //
+            // When the state is monotonically approaching an InBound violation
+            // (Proven set is shrinking / state is novel) we continue up to max.
+            const MAX_LOOP_INBOUND_UNROLL: usize = 16;
+
+            if self.postfix_repeat == 0 && !all_results.is_empty() {
+                let has_inbound = all_results
+                    .iter()
+                    .any(|r| matches!(r.property.kind, PropertyKind::InBound));
+                let all_inbound_proven = all_results
+                    .iter()
+                    .filter(|r| matches!(r.property.kind, PropertyKind::InBound))
+                    .all(|r| matches!(r.result, super::report::CheckResult::Proved));
+
+                if has_inbound && all_inbound_proven {
+                    let mut seen_states: Vec<FxHashSet<(usize, usize)>> = Vec::new();
+
+                    for repeat in 1..=MAX_LOOP_INBOUND_UNROLL {
+                        let detector_driver =
+                            VerifyDriver::new_with_repeat(self.tcx, target, repeat);
+                        let result =
+                            catch_unwind(AssertUnwindSafe(|| detector_driver.verify_function()));
+                        match result {
+                            Ok(report) => {
+                                let current_unproven: FxHashSet<_> = report
+                                    .results
+                                    .iter()
+                                    .filter(|r| {
+                                        matches!(r.property.kind, PropertyKind::InBound)
+                                            && !matches!(
+                                                r.result,
+                                                super::report::CheckResult::Proved
+                                            )
+                                    })
+                                    .map(|r| (r.checkpoint_index, r.property_index))
+                                    .collect();
+
+                                if !current_unproven.is_empty() {
+                                    // Unproven InBound found — unsound.
+                                    all_results.extend(report.results);
+                                    break;
+                                }
+
+                                // All Proven at this level.
+                                if seen_states.contains(&current_unproven) {
+                                    // State converged or oscillating — stop.
+                                    break;
+                                }
+                                seen_states.push(current_unproven);
+                            }
+                            Err(_) => break,
+                        }
+                    }
+                }
+            }
+
             // Phase 2: struct invariant verification
             if !target.struct_invariants.is_empty() && !matches!(self.mode, VerifyMode::Invless) {
                 let driver = VerifyDriver::new_with_repeat(self.tcx, target, self.postfix_repeat);
