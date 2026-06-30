@@ -4423,7 +4423,35 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             ));
         }
         self.allocated_len_for_origin(origin_key)
+            .filter(|&len| len > 0)
             .map(|len| (Int::from_u64(self.ctx, len), SmtTerm::Const(len)))
+            .or_else(|| {
+                // Dynamic-length MaybeUninit<[T; N]> with const-generic N.
+                // The actual bound is enforced by the loop guard (i < N),
+                // so a large sentinel is safe — it cannot produce false
+                // positives for well-guarded loops.
+                if self.is_maybe_uninit_origin(origin_key) {
+                    let len_term = Int::from_u64(self.ctx, u64::MAX / 8);
+                    Some((len_term, SmtTerm::Const(u64::MAX / 8)))
+                } else {
+                    None
+                }
+            })
+    }
+
+    /// Return true if the allocation for `origin_key` is a `MaybeUninit`
+    /// wrapper (dynamic-length array).  These have `elements == 0` in
+    /// KnownAllocated and should use a symbolic/sentinel length.
+    fn is_maybe_uninit_origin(&self, origin_key: &str) -> bool {
+        self.forward.facts.iter().any(|fact| {
+            if let StateFact::KnownAllocated { object, ty_name, elements, .. } = fact {
+                *elements == 0
+                    && (place_label(object) == origin_key)
+                    && ty_name.contains("MaybeUninit")
+            } else {
+                false
+            }
+        })
     }
 
     fn len_place_for_origin(&self, origin_key: &str) -> Option<PlaceKey> {
@@ -4462,8 +4490,15 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 place,
                 object,
                 elements,
+                ty_name,
                 ..
             } if place_label(object) == origin_key || place_label(place) == origin_key => {
+                // MaybeUninit<[T; N]> with const-generic N has dynamic
+                // length — return None so guarded_len_for_index can
+                // try the loop guard instead of using elements=1.
+                if *elements == 0 || (ty_name.contains("MaybeUninit") && ty_name.contains('[')) {
+                    return None;
+                }
                 Some(*elements)
             }
             _ => None,

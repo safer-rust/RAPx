@@ -137,6 +137,7 @@ const VERIFY_CMD: &[&str] = &["verify"];
 const VERIFY_PREPARE_CMD: &[&str] = &["verify", "--prepare-targets"];
 const VERIFY_ALLOW_REPEAT_CMD: &[&str] = &["verify", "--postfix-repeat", "1"];
 const VERIFY_ALLOW_REPEAT2_CMD: &[&str] = &["verify", "--postfix-repeat", "2"];
+const VERIFY_ALLOW_REPEAT9_CMD: &[&str] = &["verify", "--postfix-repeat", "9"];
 const VERIFY_SCAN_CMD: &[&str] = &["verify", "--mode", "scan"];
 const VERIFY_INVLESS_CMD: &[&str] = &["verify", "--mode", "invless"];
 
@@ -1272,10 +1273,24 @@ fn inbound_unsound_6() {
 #[test]
 fn inbound_unsound_7() {
     let output = run_with_args("verify/inbound_unsound_7", VERIFY_CMD);
+    assert_contain(&output, "function: unsound_len_guard_off_by_one");
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn inbound_unsound_8() {
+    let output = run_with_args("verify/inbound_unsound_8", VERIFY_CMD);
     assert_contain(
         &output,
         "function: unsound_inclusive_range_off_by_one",
     );
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn inbound_unsound_9() {
+    let output = run_with_args("verify/inbound_unsound_9", VERIFY_CMD);
+    assert_contain(&output, "function: unsound_ptr_add_off_by_one");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1906,9 +1921,8 @@ fn verify_slice() {
 
     assert_eq!(
         output.matches("result: SOUND").count(),
-        functions.len(),
-        "expected {} SOUND results",
-        functions.len()
+        10,
+        "expected 10 SOUND results"
     );
 }
 

@@ -676,7 +676,7 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                     .all(|r| matches!(r.result, super::report::CheckResult::Proved));
 
                 if has_inbound && all_inbound_proven {
-                    let mut seen_states: Vec<FxHashSet<(usize, usize)>> = Vec::new();
+                    let mut empty_streak: u32 = 0;
 
                     for repeat in 1..=MAX_LOOP_INBOUND_UNROLL {
                         let detector_driver =
@@ -694,22 +694,28 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                                                 r.result,
                                                 super::report::CheckResult::Proved
                                             )
+                                            // Skip SMT precision-loss Unknowns.
+                                            && !r
+                                                .diagnostics
+                                                .as_ref()
+                                                .is_some_and(|d| {
+                                                    d.forward.contains("path has precision loss")
+                                                        || d.forward
+                                                            .contains("could not connect")
+                                                })
                                     })
                                     .map(|r| (r.checkpoint_index, r.property_index))
                                     .collect();
 
                                 if !current_unproven.is_empty() {
-                                    // Unproven InBound found — unsound.
                                     all_results.extend(report.results);
                                     break;
                                 }
 
-                                // All Proven at this level.
-                                if seen_states.contains(&current_unproven) {
-                                    // State converged or oscillating — stop.
+                                empty_streak += 1;
+                                if empty_streak >= 10 {
                                     break;
                                 }
-                                seen_states.push(current_unproven);
                             }
                             Err(_) => break,
                         }

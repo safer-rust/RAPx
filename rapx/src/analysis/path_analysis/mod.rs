@@ -187,13 +187,28 @@ impl PathTree {
             return Ok(());
         };
         let mut path = Vec::new();
-        Self::walk_prefixes_impl(root, &mut path, target_block, f)
+        Self::walk_prefixes_impl(root, &mut path, target_block, false, f)
+    }
+
+    /// Like [`walk_prefixes`] but continues past the target block into
+    /// children, finding ALL occurrences (e.g. multiple iterations of the
+    /// same checkpoint block in a loop).
+    pub fn walk_all_prefixes<F>(&self, target_block: usize, f: &mut F) -> Result<(), ()>
+    where
+        F: FnMut(&[usize]) -> bool,
+    {
+        let Some(root) = self.root.as_ref() else {
+            return Ok(());
+        };
+        let mut path = Vec::new();
+        Self::walk_prefixes_impl(root, &mut path, target_block, true, f)
     }
 
     fn walk_prefixes_impl<F>(
         node: &PathNode,
         path: &mut Vec<usize>,
         target_block: usize,
+        continue_past_target: bool,
         f: &mut F,
     ) -> Result<(), ()>
     where
@@ -202,11 +217,17 @@ impl PathTree {
         path.push(node.block);
         if node.block == target_block {
             let cont = f(path);
-            path.pop();
-            return if cont { Ok(()) } else { Err(()) };
+            if !cont {
+                path.pop();
+                return Err(());
+            }
+            if !continue_past_target {
+                path.pop();
+                return Ok(());
+            }
         }
         for child in &node.children {
-            Self::walk_prefixes_impl(child, path, target_block, f)?;
+            Self::walk_prefixes_impl(child, path, target_block, continue_past_target, f)?;
         }
         path.pop();
         Ok(())

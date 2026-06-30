@@ -176,9 +176,9 @@ impl<'tcx> ForwardVerifier<'tcx> {
                     reason == KeepReason::Checkpoint,
                     result,
                 );
-                let is_uninit = call_summary::call_name(self.tcx, func).contains("maybe_uninit::uninit");
+                let is_uninit = call_summary::is_maybe_uninit_uninit_call(&call_summary::call_name(self.tcx, func));
                 if is_uninit
-                    && let Some((_, elements)) =
+                    && let Some((elem_ty_name, elements)) =
                         self.allocated_element_summary(result.checkpoint.caller, Some(destination.local))
                 {
                     let dest_place = PlaceKey {
@@ -189,7 +189,7 @@ impl<'tcx> ForwardVerifier<'tcx> {
                         .local_decls[destination.local].ty;
                     result.facts.push(StateFact::KnownAllocated {
                         place: dest_place.clone(),
-                        object: dest_place,
+                        object: dest_place.clone(),
                         ty_name: format!("{actual_ty:?}"),
                         elements,
                         reason: "live local allocation".to_string(),
@@ -842,6 +842,7 @@ impl<'tcx> ForwardVisitResult<'tcx> {
         local: Local,
         value: AbstractValue<'tcx>,
     ) {
+        let value = Self::fold_self_ref(value, local, &self.values);
         let ordinal = self.value_definitions.len();
         self.values.insert(local, value.clone());
         self.value_definitions.push(ValueDefinition {
@@ -851,6 +852,39 @@ impl<'tcx> ForwardVisitResult<'tcx> {
             local,
             value,
         });
+    }
+
+    /// Replace `Place(local)` inside `value` with the current snapshot from
+    /// `values`.  This prevents self-referencing chains when a local is
+    /// re-assigned using its own previous value (e.g. `i = i + 1` inside a
+    /// loop).
+    fn fold_self_ref(
+        value: AbstractValue<'tcx>,
+        local: Local,
+        snapshot: &FxHashMap<Local, AbstractValue<'tcx>>,
+    ) -> AbstractValue<'tcx> {
+        let local_usize = local.as_usize();
+        match value {
+            AbstractValue::Place(ref p)
+                if p.base == PlaceBaseKey::Local(local_usize) =>
+            {
+                snapshot.get(&local).cloned().unwrap_or(value)
+            }
+            AbstractValue::Binary(op, lhs, rhs) => AbstractValue::Binary(
+                op,
+                Box::new(Self::fold_self_ref(*lhs, local, snapshot)),
+                Box::new(Self::fold_self_ref(*rhs, local, snapshot)),
+            ),
+            AbstractValue::Unary(op, inner) => AbstractValue::Unary(
+                op,
+                Box::new(Self::fold_self_ref(*inner, local, snapshot)),
+            ),
+            AbstractValue::Cast(inner, ty) => AbstractValue::Cast(
+                Box::new(Self::fold_self_ref(*inner, local, snapshot)),
+                ty,
+            ),
+            _ => value,
+        }
     }
 
     /// Return the latest definition of `local` before the exclusive cursor.
@@ -1284,6 +1318,24 @@ fn fixed_allocation_elements<'tcx>(
         }
         TyKind::Ref(_, inner, _) => fixed_allocation_elements(tcx, caller, *inner),
         TyKind::Slice(_) | TyKind::RawPtr(_, _) => None,
+        TyKind::Adt(_, args) => {
+            let ty_name = format!("{ty:?}");
+            if ty_name.contains("MaybeUninit") {
+                if let Some(first) = args.first()
+                    && let Some(inner_ty) = first.as_type()
+                    && let TyKind::Array(elem, len) = inner_ty.kind()
+                {
+                    // For const-generic N where length can't be
+                    // resolved, return 0 (dynamic) — the SMT will
+                    // use the loop guard (i < N) via guarded_len_for_index
+                    // to discover the actual bound at each iteration.
+                    let value = len.try_to_target_usize(tcx).unwrap_or(0);
+                    return Some((format!("{elem:?}"), value));
+                }
+                return Some((ty_name, 1));
+            }
+            Some((ty_name, 1))
+        }
         _ => Some((format!("{ty:?}"), 1)),
     }
 }

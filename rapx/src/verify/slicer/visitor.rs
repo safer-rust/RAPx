@@ -162,7 +162,12 @@ impl<'tcx> BackwardSlicer<'tcx> {
         flow: &DataflowGraph,
         keep_alloc: bool,
     ) -> Vec<(Vec<usize>, Vec<BackwardItem<'tcx>>, RelevantPlaces)> {
-        if node.block == target_block {
+        let block = BasicBlock::from(node.block);
+        let block_data = &body.basic_blocks[block];
+        let mut results = Vec::new();
+
+        // Build the checkpoint-layer items when this block IS the target.
+        let (checkpoint_items, checkpoint_relevant) = if node.block == target_block {
             let mut relevant = RelevantPlaces::from_property(property);
             if let Some(cs) = bind_checkpoint {
                 bind_callsite_roots(visitor.tcx, &mut relevant, cs);
@@ -172,7 +177,6 @@ impl<'tcx> BackwardSlicer<'tcx> {
                 block: checkpoint_block,
                 kind: KeepReason::Checkpoint,
             });
-            let block_data = &body.basic_blocks[checkpoint_block];
             for (si, stmt) in block_data.statements.iter().enumerate().rev() {
                 visitor.visit_statement(
                     checkpoint_block,
@@ -184,13 +188,13 @@ impl<'tcx> BackwardSlicer<'tcx> {
                     keep_alloc,
                 );
             }
-            return vec![(vec![node.block], items, relevant)];
-        }
+            (items, relevant)
+        } else {
+            (Vec::new(), RelevantPlaces::new())
+        };
 
-        let mut results = Vec::new();
-        let block = BasicBlock::from(node.block);
-        let block_data = &body.basic_blocks[block];
-
+        // Process children — even when this is the target block,
+        // deeper checkpoint occurrences may hide below.
         for child in &node.children {
             let child_results = Self::build_leaf_items(
                 visitor,
@@ -206,6 +210,9 @@ impl<'tcx> BackwardSlicer<'tcx> {
             for (mut child_path, child_items, child_relevant) in child_results {
                 let mut relevant = child_relevant;
                 let mut items = child_items;
+                // Always thread through so the backward chain reaches
+                // function entry even for child (deeper SCC) paths,
+                // otherwise allocation/initialization facts are missing.
                 visitor.visit_terminator(
                     block,
                     block_data.terminator(),
@@ -230,6 +237,12 @@ impl<'tcx> BackwardSlicer<'tcx> {
                 results.push((child_path, items, relevant));
             }
         }
+
+        // Produce a leaf for this checkpoint occurrence.
+        if !checkpoint_items.is_empty() {
+            results.push((vec![node.block], checkpoint_items, checkpoint_relevant));
+        }
+
         results
     }
 
