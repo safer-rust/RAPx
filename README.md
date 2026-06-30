@@ -193,12 +193,12 @@ This checklist maps RAPx's contract verification to the [Primitive Safety Proper
 | `Opened`       | Opened(fd)                  |     —     |
 | `Trait`        | Trait(T, trait)             |     —     |
 | `Unreachable`  | !Reachable()                |     —     |
-| `ValidPtr` \*  | ValidPtr(p, T, len)         |    ✅¹   |
+| `ValidPtr` \*  | ValidPtr(p, T, len)         |     ✅    |
 | `Deref` \*     | Deref(p, T, len)            |     ✅    |
 | `Ptr2Ref` \*   | Ptr2Ref(p, T)               |     —     |
 | `Layout` \*    | Layout(p, layout)           |     —     |
 
-> ¹ **ValidPtr** is decomposed into primitive SMT obligations (`NonNull`, `Align`, `Allocated`, `InBound`, `Init`). Each primitive is checked individually; however the composite verdict remains `Unknown` until all sub-properties (including `Typed`) are fully lowered. The decomposition results are reported as diagnostic notes.
+> \* Compound safety properties are composed from primitive SPs. For example, `ValidPtr` combines `NonNull`, `Align`, `Allocated`, `InBound`, and `Init`; `Deref` combines `Allocated` and `InBound`; `Ptr2Ref` combines `Init`, `Align`, and non-aliasing.
 
 RAPx ships with a curated set of `std` library safety contracts (`std-contracts.json`) that annotate standard library functions with property tags. This enables contract-based verification for common `std`/`core` APIs without requiring user annotations.
 
