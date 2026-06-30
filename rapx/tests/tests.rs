@@ -1274,7 +1274,7 @@ fn inbound_unsound_7() {
     let output = run_with_args("verify/inbound_unsound_7", VERIFY_CMD);
     assert_contain(
         &output,
-        "function: unsound_signed_suffix_missing_lower_bound",
+        "function: unsound_inclusive_range_off_by_one",
     );
     assert_contain(&output, "result: UNSOUND");
 }
