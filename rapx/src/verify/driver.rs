@@ -592,7 +592,7 @@ impl<'tcx> VerifyRun<'tcx> {
         if unproved == 0 && !all_results.is_empty() {
             rap_info!(green,"  result: SOUND");
         } else {
-            rap_warn!(yellow,"  result: UNSOUND ({unproved} unproved)");
+            rap_warn!("  result: UNSOUND ({unproved} unproved)");
         }
         rap_info!("");
     }
@@ -748,8 +748,8 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                     }
                     rap_info!("  --- unsafe checkpoints ---");
                     rap_info!("      <none>");
-                    rap_warn!(yellow,"        Unknown | Unproved");
-                    rap_warn!(yellow,"  result: UNSOUND (no safety contracts found)");
+                    rap_warn!("        Unknown | Unproved");
+                    rap_warn!("  result: UNSOUND (no safety contracts found)");
                     rap_info!("");
                 }
                 continue;
@@ -881,7 +881,7 @@ fn emit_verify_summary<'tcx>(
     if unproved == 0 {
         rap_info!(green,"  result: SOUND");
     } else {
-        rap_warn!(yellow,"  result: UNSOUND ({unproved} unproved)");
+        rap_warn!("  result: UNSOUND ({unproved} unproved)");
     }
 
     rap_info!("");
@@ -902,7 +902,7 @@ fn emit_property_rows(results: &[&PropertyCheckResult<'_>]) {
             if matches!(r.result, super::report::CheckResult::Proved) {
                 rap_info!(green,"{line}");
             } else {
-                rap_warn!(yellow,"{line}");
+                rap_warn!("{line}");
             }
         }
     }
