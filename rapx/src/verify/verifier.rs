@@ -341,11 +341,7 @@ impl<'tcx> ForwardVerifier<'tcx> {
                     .unwrap_or_else(|| allocation_object_for_source(&source_key, result));
                 result.facts.push(StateFact::PointsTo {
                     pointer: target.clone(),
-                    source: source_key.clone(),
-                });
-                result.facts.push(StateFact::KnownNonZero {
-                    place: target.clone(),
-                    reason: "created from reference".to_string(),
+                    source: source_key,
                 });
                 if let Some((ty_name, elements)) =
                     self.allocated_element_summary(result.checkpoint.caller, object.local())
@@ -397,15 +393,11 @@ impl<'tcx> ForwardVerifier<'tcx> {
                         self.box_projection_allocation(result.checkpoint.caller, source_place, *ty)
                 {
                     result.facts.push(StateFact::KnownAllocated {
-                        place: target.clone(),
+                        place: target,
                         object: source_place.clone(),
-                        ty_name: ty_name.clone(),
+                        ty_name,
                         elements,
                         reason: "cast from Box-owned pointer field".to_string(),
-                    });
-                    result.facts.push(StateFact::KnownNonZero {
-                        place: target.clone(),
-                        reason: "Box-owned pointer is non-null".to_string(),
                     });
                 }
             }
@@ -562,11 +554,6 @@ impl<'tcx> ForwardVerifier<'tcx> {
                                 reason: format!("returned by {}", summary.name),
                             });
                         }
-                        // ReturnPointerFromArg produces a non-null pointer
-                        result.facts.push(StateFact::KnownNonZero {
-                            place: destination_place.clone(),
-                            reason: format!("returned by {} (pointer from arg)", summary.name),
-                        });
                     }
                 }
                 CallEffect::ReturnPointerAdd { base_arg, .. }

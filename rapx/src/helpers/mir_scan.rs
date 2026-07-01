@@ -252,7 +252,6 @@ pub struct RawPtrDerefInfo<'tcx> {
     pub ptr_operand: Operand<'tcx>,
     pub pointee_ty: Ty<'tcx>,
     pub is_read: bool,
-    pub is_ref: bool,
 }
 
 /// Collect all raw pointer dereference operations in `def_id` as
@@ -275,14 +274,11 @@ pub fn collect_raw_ptr_deref_info<'tcx>(
             let (lhs, rhs) = &**assign;
 
             let is_write = place_has_raw_deref(tcx, &body, lhs);
-            let (is_read, is_ref) = match rhs {
-                Rvalue::Use(Operand::Copy(place) | Operand::Move(place)) => {
-                    (place_has_raw_deref(tcx, &body, place), false)
+            let is_read = match rhs {
+                Rvalue::Use(Operand::Copy(place) | Operand::Move(place), ..) => {
+                    place_has_raw_deref(tcx, &body, place)
                 }
-                Rvalue::Ref(_, _, place) => {
-                    (place_has_raw_deref(tcx, &body, place), true)
-                }
-                _ => (false, false),
+                _ => false,
             };
 
             if !is_write && !is_read {
@@ -293,8 +289,7 @@ pub fn collect_raw_ptr_deref_info<'tcx>(
                 lhs
             } else {
                 match rhs {
-                    Rvalue::Use(Operand::Copy(place) | Operand::Move(place))
-                    | Rvalue::Ref(_, _, place) => place,
+                    Rvalue::Use(Operand::Copy(place) | Operand::Move(place), ..) => place,
                     _ => continue,
                 }
             };
@@ -312,7 +307,6 @@ pub fn collect_raw_ptr_deref_info<'tcx>(
                 ptr_operand,
                 pointee_ty,
                 is_read,
-                is_ref,
             });
         }
     }

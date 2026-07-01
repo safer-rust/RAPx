@@ -1279,31 +1279,18 @@ fn build_raw_ptr_deref_checks<'tcx>(
             let ty = PropertyArg::Ty(info.pointee_ty);
             let count = PropertyArg::Expr(ContractExpr::Const(1));
 
-            let mut properties = if info.is_ref {
-                vec![
-                    Property {
-                        kind: PropertyKind::NonNull,
-                        args: vec![target.clone()],
-                    },
-                    Property {
-                        kind: PropertyKind::Align,
-                        args: vec![target.clone(), ty.clone()],
-                    },
-                ]
-            } else {
-                vec![
-                    Property {
-                        kind: PropertyKind::ValidPtr,
-                        args: vec![target.clone(), ty.clone(), count.clone()],
-                    },
-                    Property {
-                        kind: PropertyKind::Align,
-                        args: vec![target.clone(), ty.clone()],
-                    },
-                ]
-            };
+            let mut properties = vec![
+                Property {
+                    kind: PropertyKind::ValidPtr,
+                    args: vec![target.clone(), ty.clone(), count.clone()],
+                },
+                Property {
+                    kind: PropertyKind::Align,
+                    args: vec![target.clone(), ty.clone()],
+                },
+            ];
 
-            if info.is_read && !info.is_ref {
+            if info.is_read {
                 properties.push(Property {
                     kind: PropertyKind::Typed,
                     args: vec![target, ty],
