@@ -67,6 +67,15 @@ macro_rules! rap_debug {
 
 #[macro_export]
 macro_rules! rap_info {
+    (green, $($arg:tt)+) => (
+        ::log::info!(target: "RAPx", "\x1B[32m{}\x1B[0m", format_args!($($arg)+))
+    );
+    (yellow, $($arg:tt)+) => (
+        ::log::info!(target: "RAPx", "\x1B[33m{}\x1B[0m", format_args!($($arg)+))
+    );
+    (red, $($arg:tt)+) => (
+        ::log::info!(target: "RAPx", "\x1B[31m{}\x1B[0m", format_args!($($arg)+))
+    );
     ($($arg:tt)+) => (
         ::log::info!(target: "RAPx", $($arg)+)
     );
@@ -74,6 +83,15 @@ macro_rules! rap_info {
 
 #[macro_export]
 macro_rules! rap_warn {
+    (green, $($arg:tt)+) => (
+        ::log::warn!(target: "RAPx", "\x1B[32m{}\x1B[0m", format_args!($($arg)+))
+    );
+    (yellow, $($arg:tt)+) => (
+        ::log::warn!(target: "RAPx", "\x1B[33m{}\x1B[0m", format_args!($($arg)+))
+    );
+    (red, $($arg:tt)+) => (
+        ::log::warn!(target: "RAPx", "\x1B[31m{}\x1B[0m", format_args!($($arg)+))
+    );
     ($($arg:tt)+) => (
         ::log::warn!(target: "RAPx", $($arg)+)
     );
@@ -81,6 +99,15 @@ macro_rules! rap_warn {
 
 #[macro_export]
 macro_rules! rap_error {
+    (green, $($arg:tt)+) => (
+        ::log::error!(target: "RAPx", "\x1B[32m{}\x1B[0m", format_args!($($arg)+))
+    );
+    (yellow, $($arg:tt)+) => (
+        ::log::error!(target: "RAPx", "\x1B[33m{}\x1B[0m", format_args!($($arg)+))
+    );
+    (red, $($arg:tt)+) => (
+        ::log::error!(target: "RAPx", "\x1B[31m{}\x1B[0m", format_args!($($arg)+))
+    );
     ($($arg:tt)+) => (
         ::log::error!(target: "RAPx", $($arg)+)
     );

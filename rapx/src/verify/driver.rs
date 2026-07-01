@@ -590,9 +590,9 @@ impl<'tcx> VerifyRun<'tcx> {
         }
 
         if unproved == 0 && !all_results.is_empty() {
-            rap_info!("  \x1B[32mresult: SOUND\x1B[0m");
+            rap_info!(green,"  result: SOUND");
         } else {
-            rap_warn!("  \x1B[33mresult: UNSOUND ({unproved} unproved)\x1B[0m");
+            rap_warn!(yellow,"  result: UNSOUND ({unproved} unproved)");
         }
         rap_info!("");
     }
@@ -748,8 +748,8 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                     }
                     rap_info!("  --- unsafe checkpoints ---");
                     rap_info!("      <none>");
-                    rap_warn!("        Unknown | Unproved");
-                    rap_warn!("  result: UNSOUND (\x1B[33mno safety contracts found\x1B[0m)");
+                    rap_warn!(yellow,"        Unknown | Unproved");
+                    rap_warn!(yellow,"  result: UNSOUND (no safety contracts found)");
                     rap_info!("");
                 }
                 continue;
@@ -879,9 +879,9 @@ fn emit_verify_summary<'tcx>(
     }
 
     if unproved == 0 {
-        rap_info!("  \x1B[32mresult: SOUND\x1B[0m");
+        rap_info!(green,"  result: SOUND");
     } else {
-        rap_warn!("  result: UNSOUND ({unproved} unproved)");
+        rap_warn!(yellow,"  result: UNSOUND ({unproved} unproved)");
     }
 
     rap_info!("");
@@ -898,18 +898,11 @@ fn emit_property_rows(results: &[&PropertyCheckResult<'_>]) {
     for (path_desc, props) in &path_groups {
         rap_info!("        path {path_desc}:");
         for r in props.iter() {
+            let line = format!("          {:?} | {:?}", r.property.kind, r.result);
             if matches!(r.result, super::report::CheckResult::Proved) {
-                rap_info!(
-                    "          \x1B[32m{:?}\x1B[0m | \x1B[32m{:?}\x1B[0m",
-                    r.property.kind,
-                    r.result
-                );
+                rap_info!(green,"{line}");
             } else {
-                rap_warn!(
-                    "          \x1B[33m{:?}\x1B[0m | \x1B[33m{:?}\x1B[0m",
-                    r.property.kind,
-                    r.result
-                );
+                rap_warn!(yellow,"{line}");
             }
         }
     }
