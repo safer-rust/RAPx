@@ -17,13 +17,44 @@ pub struct PropertyEntry {
 /// Looks up backup contracts for a standard-library function by its normalized path.
 /// For trait-method impls, resolves to the trait method's path first so that
 /// all impls share the same contracts.
+///
+/// After exact-path lookup, falls back to wildcard patterns by progressively
+/// replacing the tail segment with `*`.  For example, for
+/// `core::slice::<impl [T]>::as_chunks`, the fallback chain is:
+///
+/// 1. `core::slice::<impl [T]>::as_chunks`  (exact)
+/// 2. `core::slice::<impl [T]>::*`          (all methods of `[T]`)
+/// 3. `core::slice::*`                      (all functions in slice module)
+/// 4. `core::*`                             (anything in core crate)
 pub fn get_std_contracts_from_assets(tcx: TyCtxt<'_>, def_id: DefId) -> &'static [PropertyEntry] {
     let lookup_def_id = resolve_trait_method(tcx, def_id);
     let cleaned_path_name = get_cleaned_def_path_name(tcx, lookup_def_id);
-    get_std_contracts_from_json()
-        .get(&cleaned_path_name)
-        .map(Vec::as_slice)
-        .unwrap_or(&[])
+    let db = get_std_contracts_from_json();
+
+    // Exact match first.
+    if let Some(entries) = db.get(&cleaned_path_name) {
+        return entries.as_slice();
+    }
+
+    // Wildcard fallback: progressively replace tail segments with `*`.
+    let mut segments: Vec<&str> = cleaned_path_name.split("::").collect();
+    for i in (1..segments.len()).rev() {
+        segments[i] = "*";
+        if segments[i..].iter().all(|s| *s == "*") {
+            segments.truncate(i + 1);
+        }
+        let pattern = segments.join("::");
+        if let Some(entries) = db.get(&pattern) {
+            return entries.as_slice();
+        }
+    }
+
+    // Try bare `*` for any function.
+    if let Some(entries) = db.get("*") {
+        return entries.as_slice();
+    }
+
+    &[]
 }
 
 /// If `def_id` is a trait-method implementation, returns the corresponding

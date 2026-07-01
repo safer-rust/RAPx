@@ -11,6 +11,7 @@
 pub enum PrimitiveCall {
     AsPtr,
     AsMutPtr,
+    PtrCast,
     PtrAdd,
     PtrSub,
     PtrOffset,
@@ -35,6 +36,9 @@ impl PrimitiveCall {
         }
         if name.ends_with("::as_mut_ptr") || name.contains("::as_mut_ptr") {
             return Some(Self::AsMutPtr);
+        }
+        if name.contains("::cast") || name.contains("cast_array") || name.contains("cast_const") || name.contains("cast_mut") {
+            return Some(Self::PtrCast);
         }
         if name.contains("::byte_add") || name.contains("::wrapping_byte_add") {
             return Some(Self::PtrByteAdd);
@@ -87,7 +91,7 @@ impl PrimitiveCall {
 
     /// Return true for calls that extract a raw pointer from an aggregate.
     pub fn is_as_ptr_like(self) -> bool {
-        matches!(self, Self::AsPtr | Self::AsMutPtr)
+        matches!(self, Self::AsPtr | Self::AsMutPtr | Self::PtrCast)
     }
 
     /// Return true for pointer arithmetic calls with `base + offset * stride`.
