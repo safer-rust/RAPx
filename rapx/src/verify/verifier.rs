@@ -393,11 +393,17 @@ impl<'tcx> ForwardVerifier<'tcx> {
                         self.box_projection_allocation(result.checkpoint.caller, source_place, *ty)
                 {
                     result.facts.push(StateFact::KnownAllocated {
-                        place: target,
+                        place: target.clone(),
                         object: source_place.clone(),
-                        ty_name,
+                        ty_name: ty_name.clone(),
                         elements,
                         reason: "cast from Box-owned pointer field".to_string(),
+                    });
+                    result.facts.push(StateFact::KnownInit {
+                        place: target.clone(),
+                        ty_name,
+                        elements,
+                        reason: "cast pointer inherits initialization from Box".to_string(),
                     });
                 }
             }

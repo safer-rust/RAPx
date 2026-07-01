@@ -198,7 +198,7 @@ impl<'a, 'tcx> TypedContext<'a, 'tcx> {
         };
 
         match *ty.kind() {
-            TyKind::RawPtr(_, _) => false,
+            TyKind::RawPtr(inner, _) => self.ty_matches(payload_ty(inner)),
             TyKind::Ref(_, inner, _) => self.ty_matches(payload_ty(inner)),
             TyKind::Slice(element) | TyKind::Array(element, _) => self.ty_matches(element),
             _ => self.ty_matches(ty),

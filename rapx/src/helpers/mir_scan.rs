@@ -275,9 +275,8 @@ pub fn collect_raw_ptr_deref_info<'tcx>(
 
             let is_write = place_has_raw_deref(tcx, &body, lhs);
             let is_read = match rhs {
-                Rvalue::Use(Operand::Copy(place) | Operand::Move(place), ..) => {
-                    place_has_raw_deref(tcx, &body, place)
-                }
+                Rvalue::Use(Operand::Copy(place) | Operand::Move(place))
+                | Rvalue::Ref(_, _, place) => place_has_raw_deref(tcx, &body, place),
                 _ => false,
             };
 
@@ -289,7 +288,8 @@ pub fn collect_raw_ptr_deref_info<'tcx>(
                 lhs
             } else {
                 match rhs {
-                    Rvalue::Use(Operand::Copy(place) | Operand::Move(place), ..) => place,
+                    Rvalue::Use(Operand::Copy(place) | Operand::Move(place))
+                    | Rvalue::Ref(_, _, place) => place,
                     _ => continue,
                 }
             };
