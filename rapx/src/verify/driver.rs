@@ -590,9 +590,9 @@ impl<'tcx> VerifyRun<'tcx> {
         }
 
         if unproved == 0 && !all_results.is_empty() {
-            rap_info!("  result: SOUND");
+            rap_info!("  \x1B[32mresult: SOUND\x1B[0m");
         } else {
-            rap_warn!("  result: UNSOUND ({unproved} unproved)");
+            rap_warn!("  \x1B[33mresult: UNSOUND ({unproved} unproved)\x1B[0m");
         }
         rap_info!("");
     }
@@ -748,8 +748,8 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                     }
                     rap_info!("  --- unsafe checkpoints ---");
                     rap_info!("      <none>");
-                    rap_info!("        Unknown | Unproved");
-                    rap_warn!("  result: UNSOUND (no safety contracts found)");
+                    rap_warn!("        Unknown | Unproved");
+                    rap_warn!("  result: UNSOUND (\x1B[33mno safety contracts found\x1B[0m)");
                     rap_info!("");
                 }
                 continue;
@@ -879,7 +879,7 @@ fn emit_verify_summary<'tcx>(
     }
 
     if unproved == 0 {
-        rap_info!("  result: SOUND");
+        rap_info!("  \x1B[32mresult: SOUND\x1B[0m");
     } else {
         rap_warn!("  result: UNSOUND ({unproved} unproved)");
     }
@@ -898,7 +898,19 @@ fn emit_property_rows(results: &[&PropertyCheckResult<'_>]) {
     for (path_desc, props) in &path_groups {
         rap_info!("        path {path_desc}:");
         for r in props.iter() {
-            rap_info!("          {:?} | {:?}", r.property.kind, r.result);
+            if matches!(r.result, super::report::CheckResult::Proved) {
+                rap_info!(
+                    "          \x1B[32m{:?}\x1B[0m | \x1B[32m{:?}\x1B[0m",
+                    r.property.kind,
+                    r.result
+                );
+            } else {
+                rap_warn!(
+                    "          \x1B[33m{:?}\x1B[0m | \x1B[33m{:?}\x1B[0m",
+                    r.property.kind,
+                    r.result
+                );
+            }
         }
     }
 }
