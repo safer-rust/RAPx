@@ -562,15 +562,11 @@ impl<'tcx> ForwardVerifier<'tcx> {
                                 reason: format!("returned by {}", summary.name),
                             });
                         }
-                        if result.facts.iter().any(|f| {
-                            matches!(f, StateFact::KnownNonZero { place, .. }
-                                if place == &source)
-                        }) {
-                            result.facts.push(StateFact::KnownNonZero {
-                                place: destination_place.clone(),
-                                reason: format!("returned by {}", summary.name),
-                            });
-                        }
+                        // ReturnPointerFromArg produces a non-null pointer
+                        result.facts.push(StateFact::KnownNonZero {
+                            place: destination_place.clone(),
+                            reason: format!("returned by {} (pointer from arg)", summary.name),
+                        });
                     }
                 }
                 CallEffect::ReturnPointerAdd { base_arg, .. }
