@@ -343,6 +343,10 @@ impl<'tcx> ForwardVerifier<'tcx> {
                     pointer: target.clone(),
                     source: source_key,
                 });
+                result.facts.push(StateFact::KnownNonZero {
+                    place: target.clone(),
+                    reason: "created from reference".to_string(),
+                });
                 if let Some((ty_name, elements)) =
                     self.allocated_element_summary(result.checkpoint.caller, object.local())
                 {
@@ -554,6 +558,10 @@ impl<'tcx> ForwardVerifier<'tcx> {
                                 reason: format!("returned by {}", summary.name),
                             });
                         }
+                        result.facts.push(StateFact::KnownNonZero {
+                            place: destination_place.clone(),
+                            reason: format!("returned by {}", summary.name),
+                        });
                     }
                 }
                 CallEffect::ReturnPointerAdd { base_arg, .. }

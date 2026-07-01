@@ -252,6 +252,7 @@ pub struct RawPtrDerefInfo<'tcx> {
     pub ptr_operand: Operand<'tcx>,
     pub pointee_ty: Ty<'tcx>,
     pub is_read: bool,
+    pub is_ref: bool,
 }
 
 /// Collect all raw pointer dereference operations in `def_id` as
@@ -274,11 +275,14 @@ pub fn collect_raw_ptr_deref_info<'tcx>(
             let (lhs, rhs) = &**assign;
 
             let is_write = place_has_raw_deref(tcx, &body, lhs);
-            let is_read = match rhs {
-                Rvalue::Use(Operand::Copy(place) | Operand::Move(place), ..) => {
-                    place_has_raw_deref(tcx, &body, place)
+            let (is_read, is_ref) = match rhs {
+                Rvalue::Use(Operand::Copy(place) | Operand::Move(place)) => {
+                    (place_has_raw_deref(tcx, &body, place), false)
                 }
-                _ => false,
+                Rvalue::Ref(_, _, place) => {
+                    (place_has_raw_deref(tcx, &body, place), true)
+                }
+                _ => (false, false),
             };
 
             if !is_write && !is_read {
@@ -289,7 +293,8 @@ pub fn collect_raw_ptr_deref_info<'tcx>(
                 lhs
             } else {
                 match rhs {
-                    Rvalue::Use(Operand::Copy(place) | Operand::Move(place), ..) => place,
+                    Rvalue::Use(Operand::Copy(place) | Operand::Move(place))
+                    | Rvalue::Ref(_, _, place) => place,
                     _ => continue,
                 }
             };
@@ -307,6 +312,7 @@ pub fn collect_raw_ptr_deref_info<'tcx>(
                 ptr_operand,
                 pointee_ty,
                 is_read,
+                is_ref,
             });
         }
     }
@@ -330,9 +336,9 @@ fn ptr_operand_for_deref_place<'tcx>(place: &Place<'tcx>) -> Option<Operand<'tcx
     let first_deref_idx = place
         .projection
         .iter()
-        .position(|p| matches!(p.kind(), ProjectionElem::Deref))?;
+        .position(|p| matches!(p.kind(), ProjectionElem::Deref));
 
-    if first_deref_idx > 0 {
+    if let Some(idx) = first_deref_idx && idx > 0 {
         return None;
     }
 
