@@ -2,57 +2,77 @@
   "core::alloc::global::GlobalAlloc::alloc": [
     {
       "tag": "ValidNum",
-      "args": []
-    },
-    {
-      "tag": "Init",
-      "args": []
+      "args": [
+        "layout.size() != 0"
+      ]
     }
   ],
   "core::alloc::global::GlobalAlloc::realloc": [
     {
       "tag": "Allocated",
-      "args": []
+      "args": [
+        "ptr",
+        "u8",
+        "layout.size()"
+      ]
     },
     {
       "tag": "Layout",
-      "args": []
+      "args": [
+        "layout"
+      ]
     },
     {
       "tag": "ValidNum",
-      "args": []
+      "args": [
+        "new_size != 0"
+      ]
     }
   ],
   "core::alloc::global::GlobalAlloc::dealloc": [
     {
       "tag": "Allocated",
-      "args": []
+      "args": [
+        "ptr",
+        "u8",
+        "layout.size()"
+      ]
     },
     {
       "tag": "Layout",
-      "args": []
+      "args": [
+        "layout"
+      ]
     }
   ],
   "core::alloc::global::GlobalAlloc::alloc_zeroed": [
     {
       "tag": "ValidNum",
-      "args": []
+      "args": [
+        "layout.size() != 0"
+      ]
     }
   ],
   "core::alloc::layout::from_size_align_unchecked": [
     {
       "tag": "ValidNum",
-      "args": []
+      "args": [
+        "align != 0"
+      ]
     }
   ],
   "core::alloc::layout::for_value_raw": [
     {
-      "tag": "Size |",
-      "args": []
+      "tag": "Size",
+      "args": [
+        "val"
+      ]
     },
     {
-      "tag": "ValidSlice |",
-      "args": []
+      "tag": "ValidSlice",
+      "args": [
+        "val"
+      ]
     },
     {
       "tag": "ValidTraitObj",
@@ -64,151 +84,206 @@
   "core::alloc::Allocator::grow": [
     {
       "tag": "Allocated",
-      "args": []
+      "args": [
+        "ptr",
+        "u8",
+        "old_layout.size()"
+      ]
     },
     {
       "tag": "Layout",
-      "args": []
+      "args": [
+        "old_layout"
+      ]
     },
     {
       "tag": "ValidNum",
-      "args": []
+      "args": [
+        "new_layout.size() > old_layout.size()"
+      ]
     }
   ],
   "core::alloc::Allocator::grow_zeroed": [
     {
       "tag": "Allocated",
-      "args": []
+      "args": [
+        "ptr",
+        "u8",
+        "old_layout.size()"
+      ]
     },
     {
       "tag": "Layout",
-      "args": []
+      "args": [
+        "old_layout"
+      ]
     },
     {
       "tag": "ValidNum",
-      "args": []
+      "args": [
+        "new_layout.size() > old_layout.size()"
+      ]
     }
   ],
   "core::alloc::Allocator::shrink": [
     {
       "tag": "Allocated",
-      "args": []
+      "args": [
+        "ptr",
+        "u8",
+        "old_layout.size()"
+      ]
     },
     {
       "tag": "Layout",
-      "args": []
+      "args": [
+        "old_layout"
+      ]
     },
     {
       "tag": "ValidNum",
-      "args": []
+      "args": [
+        "new_layout.size() <= old_layout.size()"
+      ]
     }
   ],
   "core::alloc::Allocator::deallocate": [
     {
       "tag": "Allocated",
-      "args": []
+      "args": [
+        "ptr",
+        "u8",
+        "layout.size()"
+      ]
     },
     {
       "tag": "Layout",
-      "args": []
+      "args": [
+        "layout"
+      ]
     }
   ],
   "core::alloc::deallocate": [
     {
       "tag": "Allocated",
-      "args": []
+      "args": [
+        "ptr",
+        "u8",
+        "layout.size()"
+      ]
     },
     {
       "tag": "Layout",
-      "args": []
+      "args": [
+        "layout"
+      ]
     }
   ],
   "core::alloc::grow": [
     {
       "tag": "Allocated",
-      "args": []
+      "args": [
+        "ptr",
+        "u8",
+        "old_layout.size()"
+      ]
     },
     {
       "tag": "Layout",
-      "args": []
+      "args": [
+        "old_layout"
+      ]
     },
     {
       "tag": "ValidNum",
-      "args": []
+      "args": [
+        "new_layout.size() > old_layout.size()"
+      ]
     }
   ],
   "core::alloc::grow_zeroed": [
     {
       "tag": "Allocated",
-      "args": []
+      "args": [
+        "ptr",
+        "u8",
+        "old_layout.size()"
+      ]
     },
     {
       "tag": "Layout",
-      "args": []
+      "args": [
+        "old_layout"
+      ]
     },
     {
       "tag": "ValidNum",
-      "args": []
+      "args": [
+        "new_layout.size() > old_layout.size()"
+      ]
     }
   ],
   "core::alloc::shrink": [
     {
       "tag": "Allocated",
-      "args": []
+      "args": [
+        "ptr",
+        "u8",
+        "old_layout.size()"
+      ]
     },
     {
       "tag": "Layout",
-      "args": []
+      "args": [
+        "old_layout"
+      ]
     },
     {
       "tag": "ValidNum",
-      "args": []
+      "args": [
+        "new_layout.size() <= old_layout.size()"
+      ]
     }
   ],
   "core::any::downcast_ref_unchecked": [
     {
       "tag": "Init",
-      "args": []
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
     }
   ],
   "core::any::downcast_mut_unchecked": [
     {
       "tag": "Init",
-      "args": []
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
     }
   ],
   "core::array::iter::new_unchecked": [
     {
       "tag": "ValidNum",
-      "args": []
+      "args": [
+        "N != 0"
+      ]
     },
     {
       "tag": "Init",
       "args": [
         "buffer",
         "T",
-        "1"
+        "N"
       ]
     }
   ],
-  "core::array::ascii::as_ascii_unchecked": [
-    {
-      "tag": "ValidNum",
-      "args": []
-    }
-  ],
-  "core::ascii::ascii_char::digit_unchecked": [
-    {
-      "tag": "ValidNum",
-      "args": []
-    }
-  ],
-  "core::ascii::ascii_char::from_u8_unchecked": [
-    {
-      "tag": "ValidNum",
-      "args": []
-    }
-  ],
+  "core::array::ascii::as_ascii_unchecked": [],
+  "core::ascii::ascii_char::digit_unchecked": [],
+  "core::ascii::ascii_char::from_u8_unchecked": [],
   "core::cell::try_borrow_unguarded": [
     {
       "tag": "Alias",
@@ -241,42 +316,12 @@
       ]
     }
   ],
-  "core::f128::to_int_unchecked": [
-    {
-      "tag": "ValidNum",
-      "args": []
-    }
-  ],
-  "core::f64::to_int_unchecked": [
-    {
-      "tag": "ValidNum",
-      "args": []
-    }
-  ],
-  "core::f32::to_int_unchecked": [
-    {
-      "tag": "ValidNum",
-      "args": []
-    }
-  ],
-  "core::f16::to_int_unchecked": [
-    {
-      "tag": "ValidNum",
-      "args": []
-    }
-  ],
-  "core::convert::num::FloatToInt::to_int_unchecked": [
-    {
-      "tag": "ValidNum",
-      "args": []
-    }
-  ],
-  "core::convert::num::to_int_unchecked": [
-    {
-      "tag": "ValidNum",
-      "args": []
-    }
-  ],
+  "core::f128::to_int_unchecked": [],
+  "core::f64::to_int_unchecked": [],
+  "core::f32::to_int_unchecked": [],
+  "core::f16::to_int_unchecked": [],
+  "core::convert::num::FloatToInt::to_int_unchecked": [],
+  "core::convert::num::to_int_unchecked": [],
   "core::ffi::c_str::from_ptr": [
     {
       "tag": "ValidCStr",
@@ -303,10 +348,6 @@
       "args": [
         "ptr"
       ]
-    },
-    {
-      "tag": "ValidNum",
-      "args": []
     }
   ],
   "core::ffi::c_str::from_bytes_with_nul_unchecked": [
@@ -348,30 +389,10 @@
       ]
     }
   ],
-  "core::iter::range::forward_unchecked": [
-    {
-      "tag": "ValidNum",
-      "args": []
-    }
-  ],
-  "core::iter::range::backward_unchecked": [
-    {
-      "tag": "ValidNum",
-      "args": []
-    }
-  ],
-  "core::iter::range::Step::forward_unchecked": [
-    {
-      "tag": "ValidNum",
-      "args": []
-    }
-  ],
-  "core::iter::range::Step::backward_unchecked": [
-    {
-      "tag": "ValidNum",
-      "args": []
-    }
-  ],
+  "core::iter::range::forward_unchecked": [],
+  "core::iter::range::backward_unchecked": [],
+  "core::iter::range::Step::forward_unchecked": [],
+  "core::iter::range::Step::backward_unchecked": [],
   "core::mem::manually_drop::take": [
     {
       "tag": "Owning",
@@ -398,10 +419,6 @@
         "T",
         "1"
       ]
-    },
-    {
-      "tag": "Init",
-      "args": []
     }
   ],
   "core::mem::maybe_uninit::assume_init_read": [
@@ -414,10 +431,6 @@
       ]
     },
     {
-      "tag": "Init",
-      "args": []
-    },
-    {
       "tag": "CopyTrait",
       "args": [
         "self"
@@ -427,23 +440,39 @@
   "core::mem::maybe_uninit::assume_init_drop": [
     {
       "tag": "Init",
-      "args": []
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
     },
     {
       "tag": "Allocated",
-      "args": []
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
     }
   ],
   "core::mem::maybe_uninit::assume_init_ref": [
     {
       "tag": "Init",
-      "args": []
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
     }
   ],
   "core::mem::maybe_uninit::assume_init_mut": [
     {
       "tag": "Init",
-      "args": []
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
     }
   ],
   "core::mem::maybe_uninit::array_assume_init": [
@@ -454,22 +483,26 @@
         "T",
         "N"
       ]
-    },
-    {
-      "tag": "Init",
-      "args": []
     }
   ],
   "core::mem::maybe_uninit::slice_assume_init_ref": [
     {
       "tag": "Init",
-      "args": []
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
     }
   ],
   "core::mem::maybe_uninit::slice_assume_init_mut": [
     {
       "tag": "Init",
-      "args": []
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
     }
   ],
   "core::mem::size_of_val_raw": [
@@ -515,19 +548,21 @@
   "core::mem::zeroed": [
     {
       "tag": "Typed",
-      "args": []
+      "args": [
+        "T",
+        "T"
+      ]
     }
   ],
-  "core::mem::uninitialized": [
-    {
-      "tag": "ValidNum",
-      "args": []
-    }
-  ],
+  "core::mem::uninitialized": [],
   "core::mem::transmute_copy": [
     {
       "tag": "DoubleAligned",
-      "args": []
+      "args": [
+        "src",
+        "Src",
+        "Dst"
+      ]
     },
     {
       "tag": "Typed",
@@ -540,25 +575,22 @@
   "core::mem::transmutability::TransmuteFrom::transmute": [
     {
       "tag": "DoubleAligned",
-      "args": []
+      "args": [
+        "self",
+        "Src",
+        "Dst"
+      ]
     },
     {
       "tag": "Typed",
-      "args": []
+      "args": [
+        "self",
+        "Src"
+      ]
     }
   ],
-  "core::num::nonzero::unchecked_add": [
-    {
-      "tag": "ValidNum",
-      "args": []
-    }
-  ],
-  "core::num::nonzero::unchecked_mul": [
-    {
-      "tag": "ValidNum",
-      "args": []
-    }
-  ],
+  "core::num::nonzero::unchecked_add": [],
+  "core::num::nonzero::unchecked_mul": [],
   "core::num::nonzero::new_unchecked": [
     {
       "tag": "ValidNum",
@@ -570,45 +602,17 @@
   "core::num::nonzero::from_mut_unchecked": [
     {
       "tag": "ValidNum",
-      "args": []
+      "args": [
+        "self != 0"
+      ]
     }
   ],
-  "core::num::unchecked_sub": [
-    {
-      "tag": "ValidNum",
-      "args": []
-    }
-  ],
-  "core::num::unchecked_mul": [
-    {
-      "tag": "ValidNum",
-      "args": []
-    }
-  ],
-  "core::num::unchecked_neg": [
-    {
-      "tag": "ValidNum",
-      "args": []
-    }
-  ],
-  "core::num::unchecked_shl": [
-    {
-      "tag": "ValidNum",
-      "args": []
-    }
-  ],
-  "core::num::unchecked_shr": [
-    {
-      "tag": "ValidNum",
-      "args": []
-    }
-  ],
-  "core::num::unchecked_add": [
-    {
-      "tag": "ValidNum",
-      "args": []
-    }
-  ],
+  "core::num::unchecked_sub": [],
+  "core::num::unchecked_mul": [],
+  "core::num::unchecked_neg": [],
+  "core::num::unchecked_shl": [],
+  "core::num::unchecked_shr": [],
+  "core::num::unchecked_add": [],
   "core::hint::unreachable_unchecked": [
     {
       "tag": "Unreachable",
@@ -692,12 +696,7 @@
       ]
     }
   ],
-  "core::intrinsics::float_to_int_unchecked": [
-    {
-      "tag": "ValidNum",
-      "args": []
-    }
-  ],
+  "core::intrinsics::float_to_int_unchecked": [],
   "core::intrinsics::typed_swap_nonoverlapping": [
     {
       "tag": "ValidPtr",
@@ -941,11 +940,7 @@
       ]
     },
     {
-      "tag": "ValidNum",
-      "args": []
-    },
-    {
-      "tag": "!Size",
+      "tag": "NonSize",
       "args": []
     }
   ],
@@ -959,8 +954,10 @@
   ],
   "core::ptr::non_null::as_uninit_ref": [
     {
-      "tag": "!Null |",
-      "args": []
+      "tag": "NonNull",
+      "args": [
+        "self"
+      ]
     },
     {
       "tag": "Ptr2Ref",
@@ -971,8 +968,10 @@
   ],
   "core::ptr::non_null::as_uninit_mut": [
     {
-      "tag": "!Null |",
-      "args": []
+      "tag": "NonNull",
+      "args": [
+        "self"
+      ]
     },
     {
       "tag": "Ptr2Ref",
@@ -1013,10 +1012,6 @@
         "T",
         "count"
       ]
-    },
-    {
-      "tag": "ValidNum",
-      "args": []
     }
   ],
   "core::ptr::non_null::add": [
@@ -1027,10 +1022,6 @@
         "T",
         "count"
       ]
-    },
-    {
-      "tag": "ValidNum",
-      "args": []
     }
   ],
   "core::ptr::non_null::byte_offset": [
@@ -1051,10 +1042,6 @@
         "T",
         "count"
       ]
-    },
-    {
-      "tag": "ValidNum",
-      "args": []
     }
   ],
   "core::ptr::non_null::byte_sub": [
@@ -1065,10 +1052,6 @@
         "T",
         "count"
       ]
-    },
-    {
-      "tag": "ValidNum",
-      "args": []
     }
   ],
   "core::ptr::non_null::offset_from": [
@@ -1081,11 +1064,7 @@
       ]
     },
     {
-      "tag": "ValidNum",
-      "args": []
-    },
-    {
-      "tag": "!Size",
+      "tag": "NonSize",
       "args": []
     }
   ],
@@ -1099,25 +1078,21 @@
       ]
     },
     {
-      "tag": "ValidNum",
-      "args": []
-    },
-    {
-      "tag": "!Size",
+      "tag": "NonSize",
       "args": []
     }
   ],
   "core::ptr::non_null::sub_ptr": [
     {
       "tag": "InBound",
-      "args": []
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
     },
     {
-      "tag": "ValidNum",
-      "args": []
-    },
-    {
-      "tag": "!Size",
+      "tag": "NonSize",
       "args": []
     }
   ],
@@ -1129,10 +1104,6 @@
         "T",
         "count"
       ]
-    },
-    {
-      "tag": "ValidNum",
-      "args": []
     }
   ],
   "core::ptr::non_null::read": [
@@ -1538,10 +1509,6 @@
       ]
     },
     {
-      "tag": "ValidNum",
-      "args": []
-    },
-    {
       "tag": "Align",
       "args": [
         "self",
@@ -1585,10 +1552,6 @@
       ]
     },
     {
-      "tag": "ValidNum",
-      "args": []
-    },
-    {
       "tag": "Align",
       "args": [
         "self",
@@ -1597,10 +1560,6 @@
     }
   ],
   "core::ptr::non_null::get_unchecked_mut": [
-    {
-      "tag": "ValidNum",
-      "args": []
-    },
     {
       "tag": "Allocated",
       "args": [
@@ -1612,8 +1571,10 @@
   ],
   "core::ptr::const_ptr::as_ref": [
     {
-      "tag": "Null |",
-      "args": []
+      "tag": "Null",
+      "args": [
+        "self"
+      ]
     },
     {
       "tag": "Ptr2Ref",
@@ -1632,8 +1593,10 @@
   ],
   "core::ptr::const_ptr::as_uninit_ref": [
     {
-      "tag": "Null |",
-      "args": []
+      "tag": "Null",
+      "args": [
+        "self"
+      ]
     },
     {
       "tag": "Ptr2Ref",
@@ -1673,10 +1636,6 @@
         "T",
         "count"
       ]
-    },
-    {
-      "tag": "ValidNum",
-      "args": []
     }
   ],
   "core::ptr::const_ptr::sub": [
@@ -1687,10 +1646,6 @@
         "T",
         "count"
       ]
-    },
-    {
-      "tag": "ValidNum",
-      "args": []
     }
   ],
   "core::ptr::const_ptr::byte_offset": [
@@ -1713,11 +1668,7 @@
       ]
     },
     {
-      "tag": "ValidNum",
-      "args": []
-    },
-    {
-      "tag": "!Size",
+      "tag": "NonSize",
       "args": []
     }
   ],
@@ -1731,39 +1682,35 @@
       ]
     },
     {
-      "tag": "ValidNum",
-      "args": []
-    },
-    {
-      "tag": "!Size",
+      "tag": "NonSize",
       "args": []
     }
   ],
   "core::ptr::const_ptr::non_null::sub_ptr": [
     {
       "tag": "InBound",
-      "args": []
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
     },
     {
-      "tag": "ValidNum",
-      "args": []
-    },
-    {
-      "tag": "!Size",
+      "tag": "NonSize",
       "args": []
     }
   ],
   "core::ptr::const_ptr::sub_ptr": [
     {
       "tag": "InBound",
-      "args": []
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
     },
     {
-      "tag": "ValidNum",
-      "args": []
-    },
-    {
-      "tag": "!Size",
+      "tag": "NonSize",
       "args": []
     }
   ],
@@ -1775,10 +1722,6 @@
         "u8",
         "count"
       ]
-    },
-    {
-      "tag": "ValidNum",
-      "args": []
     }
   ],
   "core::ptr::const_ptr::byte_sub": [
@@ -1789,10 +1732,6 @@
         "u8",
         "count"
       ]
-    },
-    {
-      "tag": "ValidNum",
-      "args": []
     }
   ],
   "core::ptr::const_ptr::read": [
@@ -1967,8 +1906,10 @@
   ],
   "core::ptr::const_ptr::as_uninit_slice": [
     {
-      "tag": "Null |",
-      "args": []
+      "tag": "Null",
+      "args": [
+        "self"
+      ]
     },
     {
       "tag": "ValidPtr",
@@ -1991,10 +1932,6 @@
       ]
     },
     {
-      "tag": "ValidNum",
-      "args": []
-    },
-    {
       "tag": "Align",
       "args": [
         "self",
@@ -2003,10 +1940,6 @@
     }
   ],
   "core::ptr::const_ptr::get_unchecked": [
-    {
-      "tag": "ValidNum",
-      "args": []
-    },
     {
       "tag": "Allocated",
       "args": [
@@ -2018,8 +1951,10 @@
   ],
   "core::ptr::mut_ptr::as_ref": [
     {
-      "tag": "Null |",
-      "args": []
+      "tag": "Null",
+      "args": [
+        "self"
+      ]
     },
     {
       "tag": "Ptr2Ref",
@@ -2038,8 +1973,10 @@
   ],
   "core::ptr::mut_ptr::as_uninit_ref": [
     {
-      "tag": "!Null |",
-      "args": []
+      "tag": "NonNull",
+      "args": [
+        "self"
+      ]
     },
     {
       "tag": "Ptr2Ref",
@@ -2056,10 +1993,6 @@
         "T",
         "count"
       ]
-    },
-    {
-      "tag": "ValidNum",
-      "args": []
     }
   ],
   "core::ptr::mut_ptr::as_mut": [
@@ -2080,8 +2013,10 @@
   ],
   "core::ptr::mut_ptr::as_uninit_mut": [
     {
-      "tag": "!Null |",
-      "args": []
+      "tag": "NonNull",
+      "args": [
+        "self"
+      ]
     },
     {
       "tag": "Ptr2Ref",
@@ -2111,10 +2046,6 @@
         "T",
         "count"
       ]
-    },
-    {
-      "tag": "ValidNum",
-      "args": []
     }
   ],
   "core::ptr::mut_ptr::sub": [
@@ -2125,10 +2056,6 @@
         "T",
         "count"
       ]
-    },
-    {
-      "tag": "ValidNum",
-      "args": []
     }
   ],
   "core::ptr::mut_ptr::byte_offset": [
@@ -2151,11 +2078,7 @@
       ]
     },
     {
-      "tag": "ValidNum",
-      "args": []
-    },
-    {
-      "tag": "!Size",
+      "tag": "NonSize",
       "args": []
     }
   ],
@@ -2169,25 +2092,21 @@
       ]
     },
     {
-      "tag": "ValidNum",
-      "args": []
-    },
-    {
-      "tag": "!Size",
+      "tag": "NonSize",
       "args": []
     }
   ],
   "core::ptr::mut_ptr::sub_ptr": [
     {
       "tag": "InBound",
-      "args": []
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
     },
     {
-      "tag": "ValidNum",
-      "args": []
-    },
-    {
-      "tag": "!Size",
+      "tag": "NonSize",
       "args": []
     }
   ],
@@ -2199,10 +2118,6 @@
         "u8",
         "count"
       ]
-    },
-    {
-      "tag": "ValidNum",
-      "args": []
     }
   ],
   "core::ptr::mut_ptr::byte_sub": [
@@ -2213,10 +2128,6 @@
         "u8",
         "count"
       ]
-    },
-    {
-      "tag": "ValidNum",
-      "args": []
     }
   ],
   "core::ptr::mut_ptr::read": [
@@ -2617,7 +2528,9 @@
   "core::ptr::mut_ptr::split_at_mut": [
     {
       "tag": "ValidNum",
-      "args": []
+      "args": [
+        "mid <= len(self)"
+      ]
     },
     {
       "tag": "Allocated",
@@ -2631,7 +2544,9 @@
   "core::ptr::mut_ptr::split_at_mut_unchecked": [
     {
       "tag": "ValidNum",
-      "args": []
+      "args": [
+        "mid <= len(self)"
+      ]
     },
     {
       "tag": "Allocated",
@@ -2678,10 +2593,6 @@
       ]
     },
     {
-      "tag": "ValidNum",
-      "args": []
-    },
-    {
       "tag": "Align",
       "args": [
         "self",
@@ -2725,10 +2636,6 @@
       ]
     },
     {
-      "tag": "ValidNum",
-      "args": []
-    },
-    {
       "tag": "Align",
       "args": [
         "self",
@@ -2737,10 +2644,6 @@
     }
   ],
   "core::ptr::mut_ptr::get_unchecked_mut": [
-    {
-      "tag": "ValidNum",
-      "args": []
-    },
     {
       "tag": "Allocated",
       "args": [
@@ -3021,20 +2924,23 @@
         "T",
         "count"
       ]
-    },
-    {
-      "tag": "ValidNum",
-      "args": []
     }
   ],
   "core::clone::clone_to_uninit": [
     {
       "tag": "ValidPtr",
-      "args": []
+      "args": [
+        "dst",
+        "T",
+        "1"
+      ]
     },
     {
       "tag": "Align",
-      "args": []
+      "args": [
+        "dst",
+        "T"
+      ]
     }
   ],
   "core::result::unwrap_unchecked": [
@@ -3191,12 +3097,7 @@
       ]
     }
   ],
-  "core::slice::ascii::as_ascii_unchecked": [
-    {
-      "tag": "ValidNum",
-      "args": []
-    }
-  ],
+  "core::slice::ascii::as_ascii_unchecked": [],
   "core::slice::raw::from_raw_parts": [
     {
       "tag": "NonNull",
@@ -3298,21 +3199,37 @@
   "core::slice::index::get_unchecked": [
     {
       "tag": "Allocated",
-      "args": []
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
     },
     {
       "tag": "InBound",
-      "args": []
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
     }
   ],
   "core::slice::index::get_unchecked_mut": [
     {
       "tag": "Allocated",
-      "args": []
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
     },
     {
       "tag": "InBound",
-      "args": []
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
     }
   ],
   "core::slice::raw::from_ptr_range": [
@@ -3351,10 +3268,6 @@
       ]
     },
     {
-      "tag": "ValidNum",
-      "args": []
-    },
-    {
       "tag": "Align",
       "args": [
         "range",
@@ -3370,7 +3283,7 @@
       ]
     },
     {
-      "tag": "!Size",
+      "tag": "NonSize",
       "args": []
     }
   ],
@@ -3426,41 +3339,65 @@
   "core::str::get_unchecked": [
     {
       "tag": "ValidString",
-      "args": []
+      "args": [
+        "self"
+      ]
     },
     {
       "tag": "InBound",
-      "args": []
+      "args": [
+        "self",
+        "u8",
+        "1"
+      ]
     }
   ],
   "core::str::get_unchecked_mut": [
     {
       "tag": "ValidString",
-      "args": []
+      "args": [
+        "self"
+      ]
     },
     {
       "tag": "InBound",
-      "args": []
+      "args": [
+        "self",
+        "u8",
+        "1"
+      ]
     }
   ],
   "core::str::slice_unchecked": [
     {
       "tag": "ValidString",
-      "args": []
+      "args": [
+        "self"
+      ]
     },
     {
       "tag": "InBound",
-      "args": []
+      "args": [
+        "self",
+        "u8",
+        "1"
+      ]
     }
   ],
   "core::str::slice_mut_unchecked": [
     {
       "tag": "ValidString",
-      "args": []
+      "args": [
+        "self"
+      ]
     },
     {
       "tag": "InBound",
-      "args": []
+      "args": [
+        "self",
+        "u8",
+        "1"
+      ]
     }
   ],
   "core::str::as_bytes_mut": [
@@ -3618,45 +3555,73 @@
   "core::str::traits::get_unchecked": [
     {
       "tag": "ValidString",
-      "args": []
+      "args": [
+        "self"
+      ]
     },
     {
       "tag": "InBound",
-      "args": []
+      "args": [
+        "self",
+        "u8",
+        "1"
+      ]
     }
   ],
   "core::str::traits::get_unchecked_mut": [
     {
       "tag": "ValidString",
-      "args": []
+      "args": [
+        "self"
+      ]
     },
     {
       "tag": "InBound",
-      "args": []
+      "args": [
+        "self",
+        "u8",
+        "1"
+      ]
     }
   ],
   "core::io::borrowed_buf::set_init": [
     {
       "tag": "Init",
-      "args": []
+      "args": [
+        "self",
+        "u8",
+        "1"
+      ]
     }
   ],
   "core::io::borrowed_buf::advance_unchecked": [
     {
       "tag": "Init",
-      "args": []
+      "args": [
+        "self",
+        "u8",
+        "1"
+      ]
     }
   ],
   "core::io::borrowed_buf::as_mut": [
     {
       "tag": "Init",
-      "args": []
+      "args": [
+        "self",
+        "u8",
+        "1"
+      ]
     }
   ],
   "core::task::wake::from_raw": [
     {
       "tag": "Allocated",
-      "args": []
+      "args": [
+        "data",
+        "T",
+        "1"
+      ]
     }
   ],
   "alloc::vec::from_raw_parts": [
@@ -3866,17 +3831,25 @@
   "alloc::vec::set_len": [
     {
       "tag": "InBound",
-      "args": []
+      "args": [
+        "self",
+        "T",
+        "new_len"
+      ]
     },
     {
       "tag": "ValidNum",
-      "args": []
+      "args": [
+        "new_len <= self.capacity()"
+      ]
     }
   ],
   "alloc::alloc::alloc": [
     {
       "tag": "ValidNum",
-      "args": []
+      "args": [
+        "layout.size() != 0"
+      ]
     }
   ],
   "alloc::alloc::dealloc": [
@@ -3907,76 +3880,114 @@
     {
       "tag": "Layout",
       "args": [
-        "ptr"
+        "layout"
       ]
     },
     {
       "tag": "ValidNum",
-      "args": []
+      "args": [
+        "new_size != 0"
+      ]
     }
   ],
   "alloc::alloc::alloc_zeroed": [
     {
       "tag": "ValidNum",
-      "args": []
+      "args": [
+        "layout.size() != 0"
+      ]
     }
   ],
   "alloc::alloc::deallocate": [
     {
       "tag": "Allocated",
-      "args": []
+      "args": [
+        "ptr",
+        "u8",
+        "layout.size()"
+      ]
     },
     {
       "tag": "Layout",
-      "args": []
+      "args": [
+        "layout"
+      ]
     }
   ],
   "alloc::alloc::grow": [
     {
       "tag": "Allocated",
-      "args": []
+      "args": [
+        "ptr",
+        "u8",
+        "old_layout.size()"
+      ]
     },
     {
       "tag": "Layout",
-      "args": []
+      "args": [
+        "old_layout"
+      ]
     },
     {
       "tag": "ValidNum",
-      "args": []
+      "args": [
+        "new_layout.size() > old_layout.size()"
+      ]
     }
   ],
   "alloc::alloc::grow_zeroed": [
     {
       "tag": "Allocated",
-      "args": []
+      "args": [
+        "ptr",
+        "u8",
+        "old_layout.size()"
+      ]
     },
     {
       "tag": "Layout",
-      "args": []
+      "args": [
+        "old_layout"
+      ]
     },
     {
       "tag": "ValidNum",
-      "args": []
+      "args": [
+        "new_layout.size() > old_layout.size()"
+      ]
     }
   ],
   "alloc::alloc::shrink": [
     {
       "tag": "Allocated",
-      "args": []
+      "args": [
+        "ptr",
+        "u8",
+        "old_layout.size()"
+      ]
     },
     {
       "tag": "Layout",
-      "args": []
+      "args": [
+        "old_layout"
+      ]
     },
     {
       "tag": "ValidNum",
-      "args": []
+      "args": [
+        "new_layout.size() <= old_layout.size()"
+      ]
     }
   ],
   "alloc::boxed::assume_init": [
     {
       "tag": "Init",
-      "args": []
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
     }
   ],
   "alloc::boxed::from_raw": [
@@ -4070,31 +4081,42 @@
   "alloc::boxed::downcast_unchecked": [
     {
       "tag": "Typed",
-      "args": []
+      "args": [
+        "self",
+        "T"
+      ]
     }
   ],
   "alloc::collections::btree::map::insert_after_unchecked": [
     {
       "tag": "Function_sp",
-      "args": []
+      "args": [
+        "self"
+      ]
     }
   ],
   "alloc::collections::btree::map::insert_before_unchecked": [
     {
       "tag": "Function_sp",
-      "args": []
+      "args": [
+        "self"
+      ]
     }
   ],
   "alloc::collections::btree::set::insert_after_unchecked": [
     {
       "tag": "Function_sp",
-      "args": []
+      "args": [
+        "self"
+      ]
     }
   ],
   "alloc::collections::btree::set::insert_before_unchecked": [
     {
       "tag": "Function_sp",
-      "args": []
+      "args": [
+        "self"
+      ]
     }
   ],
   "alloc::ffi::c_str::from_vec_unchecked": [
@@ -4138,7 +4160,11 @@
   "alloc::rc::assume_init": [
     {
       "tag": "Init",
-      "args": []
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
     }
   ],
   "alloc::rc::from_raw": [
@@ -4300,13 +4326,19 @@
   "alloc::rc::downcast_unchecked": [
     {
       "tag": "Typed",
-      "args": []
+      "args": [
+        "self",
+        "T"
+      ]
     }
   ],
   "alloc::rc::get_mut_unchecked": [
     {
       "tag": "Typed",
-      "args": []
+      "args": [
+        "self",
+        "T"
+      ]
     },
     {
       "tag": "Alias",
@@ -4326,7 +4358,9 @@
   "alloc::collections::btree::set::upper_bound_mut": [
     {
       "tag": "Function_sp",
-      "args": []
+      "args": [
+        "self"
+      ]
     }
   ],
   "alloc::str::from_boxed_utf8_unchecked": [
@@ -4400,7 +4434,10 @@
   "alloc::sync::get_mut_unchecked": [
     {
       "tag": "Typed",
-      "args": []
+      "args": [
+        "self",
+        "T"
+      ]
     },
     {
       "tag": "Alias",
@@ -4568,7 +4605,10 @@
   "alloc::sync::downcast_unchecked": [
     {
       "tag": "Typed",
-      "args": []
+      "args": [
+        "self",
+        "T"
+      ]
     }
   ],
   "std::thread::from_raw": [
@@ -4590,7 +4630,9 @@
   "std::collections::hash::map::get_many_unchecked_mut": [
     {
       "tag": "NonOverlap",
-      "args": []
+      "args": [
+        "indices"
+      ]
     }
   ],
   "std::env::set_var": [
@@ -4620,11 +4662,18 @@
   "std::ffi::os_str::clone_to_uninit": [
     {
       "tag": "ValidPtr",
-      "args": []
+      "args": [
+        "dst",
+        "T",
+        "1"
+      ]
     },
     {
       "tag": "Align",
-      "args": []
+      "args": [
+        "dst",
+        "T"
+      ]
     }
   ],
   "std::os::unix::net::datagram::from_raw_fd": [
@@ -4654,13 +4703,17 @@
   "std::os::unix::process::CommandExt::before_exec": [
     {
       "tag": "System_sp",
-      "args": []
+      "args": [
+        "self"
+      ]
     }
   ],
   "std::os::unix::process::pre_exec": [
     {
       "tag": "System_sp",
-      "args": []
+      "args": [
+        "self"
+      ]
     }
   ],
   "std::os::unix::process::from_raw_fd": [
@@ -4693,10 +4746,6 @@
       "args": [
         "fd"
       ]
-    },
-    {
-      "tag": "ValidNum",
-      "args": []
     }
   ],
   "std::os::fd::owned::from_raw_fd": [
@@ -4726,11 +4775,18 @@
   "std::path::clone_to_uninit": [
     {
       "tag": "ValidPtr",
-      "args": []
+      "args": [
+        "dst",
+        "T",
+        "1"
+      ]
     },
     {
       "tag": "Align",
-      "args": []
+      "args": [
+        "dst",
+        "T"
+      ]
     }
   ],
   "std::sys::pal::unix::fd::from_raw_fd": [
@@ -4776,7 +4832,9 @@
   "std::sys::pal::unix::process::process_common::pre_exec": [
     {
       "tag": "System_sp",
-      "args": []
+      "args": [
+        "self"
+      ]
     }
   ],
   "std::sys::anonymous_pipe::unix::from_raw_fd": [
@@ -4790,73 +4848,108 @@
   "std::sys::os_str::bytes::clone_to_uninit": [
     {
       "tag": "ValidPtr",
-      "args": []
+      "args": [
+        "dst",
+        "T",
+        "1"
+      ]
     },
     {
       "tag": "Align",
-      "args": []
+      "args": [
+        "dst",
+        "T"
+      ]
     }
   ],
   "std::alloc::deallocate": [
     {
       "tag": "Allocated",
-      "args": []
+      "args": [
+        "ptr",
+        "u8",
+        "layout.size()"
+      ]
     },
     {
       "tag": "Layout",
-      "args": []
+      "args": [
+        "layout"
+      ]
     }
   ],
   "std::alloc::grow": [
     {
       "tag": "Allocated",
-      "args": []
+      "args": [
+        "ptr",
+        "u8",
+        "old_layout.size()"
+      ]
     },
     {
       "tag": "Layout",
-      "args": []
+      "args": [
+        "old_layout"
+      ]
     },
     {
       "tag": "ValidNum",
-      "args": []
+      "args": [
+        "new_layout.size() > old_layout.size()"
+      ]
     }
   ],
   "std::alloc::grow_zeroed": [
     {
       "tag": "Allocated",
-      "args": []
+      "args": [
+        "ptr",
+        "u8",
+        "old_layout.size()"
+      ]
     },
     {
       "tag": "Layout",
-      "args": []
+      "args": [
+        "old_layout"
+      ]
     },
     {
       "tag": "ValidNum",
-      "args": []
+      "args": [
+        "new_layout.size() > old_layout.size()"
+      ]
     }
   ],
   "std::alloc::shrink": [
     {
       "tag": "Allocated",
-      "args": []
+      "args": [
+        "ptr",
+        "u8",
+        "old_layout.size()"
+      ]
     },
     {
       "tag": "Layout",
-      "args": []
+      "args": [
+        "old_layout"
+      ]
     },
     {
       "tag": "ValidNum",
-      "args": []
+      "args": [
+        "new_layout.size() <= old_layout.size()"
+      ]
     }
   ],
   "std::raw_attribute": [
     {
       "tag": "Alive",
-      "args": []
-    },
-    {
-      "tag": "ValidNum",
-      "args": []
+      "args": [
+        "self"
+      ]
     }
   ],
   "std::from_raw_handle": [
@@ -4876,67 +4969,80 @@
     },
     {
       "tag": "Init",
-      "args": []
+      "args": [
+        "name",
+        "T",
+        "1"
+      ]
     },
     {
       "tag": "Function_sp",
       "args": [
-        "name"
+        "f"
       ]
     }
   ],
   "core::intrinsics::const_allocate": [
     {
       "tag": "ValidNum",
-      "args": []
+      "args": [
+        "layout.size() != 0"
+      ]
     }
   ],
   "core::intrinsics::assume": [
     {
       "tag": "ValidNum",
-      "args": []
+      "args": [
+        "cond"
+      ]
     }
   ],
   "core::intrinsics::drop_in_place": [
     {
       "tag": "ValidPtr",
-      "args": []
+      "args": [
+        "to_drop",
+        "T",
+        "1"
+      ]
     },
     {
       "tag": "Align",
-      "args": []
+      "args": [
+        "to_drop",
+        "T"
+      ]
     },
     {
       "tag": "NonNull",
       "args": [
-        "self"
+        "to_drop"
       ]
     }
   ],
-  "core::intrinsics::const_deallocate": [
-    {
-      "tag": "ValidNum",
-      "args": []
-    }
-  ],
+  "core::intrinsics::const_deallocate": [],
   "core::intrinsics::vtable_size": [
     {
       "tag": "ValidPtr",
-      "args": []
+      "args": [
+        "ptr",
+        "T",
+        "1"
+      ]
     }
   ],
   "core::intrinsics::vtable_align": [
     {
       "tag": "ValidPtr",
-      "args": []
+      "args": [
+        "ptr",
+        "T",
+        "1"
+      ]
     }
   ],
-  "core::intrinsics::pref_align_of": [
-    {
-      "tag": "",
-      "args": []
-    }
-  ],
+  "core::intrinsics::pref_align_of": [],
   "core::intrinsics::size_of_val": [
     {
       "tag": "Size",
@@ -4960,37 +5066,49 @@
   "core::intrinsics::min_align_of_val": [
     {
       "tag": "Size",
-      "args": []
+      "args": [
+        "ptr"
+      ]
     },
     {
       "tag": "ValidSlice",
-      "args": []
+      "args": [
+        "ptr"
+      ]
     },
     {
       "tag": "ValidTraitObj",
-      "args": []
+      "args": [
+        "ptr"
+      ]
     }
   ],
   "core::ffi::va_list::arg": [
     {
       "tag": "InBound",
-      "args": []
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
     },
     {
       "tag": "Init",
-      "args": []
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
     },
     {
       "tag": "Typed",
-      "args": []
+      "args": [
+        "self",
+        "T"
+      ]
     }
   ],
-  "core::ffi::va_list::with_copy": [
-    {
-      "tag": "",
-      "args": []
-    }
-  ],
+  "core::ffi::va_list::with_copy": [],
   "core::task::wake::new": [
     {
       "tag": "System_sp",
@@ -5010,7 +5128,11 @@
   "alloc::sync::assume_init": [
     {
       "tag": "Init",
-      "args": []
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
     }
   ],
   "std::sys::os_str::bytes::from_encoded_bytes_unchecked": [

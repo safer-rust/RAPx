@@ -257,6 +257,8 @@ pub enum PropertyKind {
     Ptr2Ref,
     Layout,
     ValidTransmute,
+    NonSize,
+    Nullable,
     Unknown,
 }
 
@@ -415,16 +417,26 @@ impl<'tcx> Property<'tcx> {
                     vec![target, PropertyArg::Ty(ty), PropertyArg::Expr(length)],
                 )
             }
-            "ValidSlice" => {
-                if !Self::check_arg_length(exprs.len(), 2, "ValidSlice") {
-                    return Self::new_simple(PropertyKind::Unknown);
+            "ValidSlice" => match exprs {
+                [target_expr, ty_expr] => {
+                    let target = Self::parse_target_arg(tcx, def_id, target_expr);
+                    let Some(ty) = Self::parse_type(tcx, def_id, ty_expr, "ValidSlice") else {
+                        return Self::new_simple(PropertyKind::Unknown);
+                    };
+                    Self::new_with_args(PropertyKind::ValidSlice, vec![target, PropertyArg::Ty(ty)])
                 }
-                let target = Self::parse_target_arg(tcx, def_id, &exprs[0]);
-                let Some(ty) = Self::parse_type(tcx, def_id, &exprs[1], "ValidSlice") else {
-                    return Self::new_simple(PropertyKind::Unknown);
-                };
-                Self::new_with_args(PropertyKind::ValidSlice, vec![target, PropertyArg::Ty(ty)])
-            }
+                [target_expr] => {
+                    let Some(ty) = Self::parse_target_type(tcx, def_id, target_expr) else {
+                        return Self::new_simple(PropertyKind::Unknown);
+                    };
+                    let target = Self::parse_target_arg(tcx, def_id, target_expr);
+                    Self::new_with_args(PropertyKind::ValidSlice, vec![target, PropertyArg::Ty(ty)])
+                }
+                _ => {
+                    Self::check_arg_length(exprs.len(), 2, "ValidSlice");
+                    Self::new_simple(PropertyKind::Unknown)
+                }
+            },
             "Deref" => match exprs {
                 [_target, ty_expr, len_expr] => {
                     let target = Self::parse_target_arg(tcx, def_id, &exprs[0]);
@@ -469,6 +481,8 @@ impl<'tcx> Property<'tcx> {
                     vec![PropertyArg::Ty(src_ty), PropertyArg::Ty(dst_ty)],
                 )
             }
+            "NonSize" => Self::new_simple(PropertyKind::NonSize),
+            "Null" => Self::new_with_target(PropertyKind::Nullable, tcx, def_id, exprs),
             _ => Self::new_simple(PropertyKind::Unknown),
         }
     }
