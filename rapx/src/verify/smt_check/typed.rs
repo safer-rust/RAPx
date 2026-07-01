@@ -177,18 +177,25 @@ impl<'a, 'tcx> TypedContext<'a, 'tcx> {
 
     /// Return true when a previous write initialized this place as `required_ty`.
     fn known_init_matches(&self, place: &PlaceKey) -> bool {
-        self.forward.facts.iter().rev().any(|fact| {
-            let StateFact::KnownInit {
-                place: init_place,
-                ty_name,
-                elements,
-                ..
-            } = fact
-            else {
-                return false;
-            };
+        if self.forward.facts.iter().rev().any(|fact| {
+            let StateFact::KnownInit { place: init_place, ty_name, elements, .. } = fact else { return false };
             init_place == place && *elements > 0 && self.ty_name_matches(ty_name)
-        })
+        }) {
+            return true;
+        }
+        if !place.fields.is_empty() {
+            let mut ancestor = place.clone();
+            while !ancestor.fields.is_empty() {
+                ancestor.fields.pop();
+                if self.forward.facts.iter().rev().any(|fact| {
+                    let StateFact::KnownInit { place: init_place, ty_name, elements, .. } = fact else { return false };
+                    init_place == &ancestor && *elements > 0 && self.ty_name_matches(ty_name)
+                }) {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// Return true when a Rust storage place itself is known to contain `required_ty`.
@@ -198,7 +205,7 @@ impl<'a, 'tcx> TypedContext<'a, 'tcx> {
         };
 
         match *ty.kind() {
-            TyKind::RawPtr(inner, _) => self.ty_matches(payload_ty(inner)),
+            TyKind::RawPtr(_, _) => false,
             TyKind::Ref(_, inner, _) => self.ty_matches(payload_ty(inner)),
             TyKind::Slice(element) | TyKind::Array(element, _) => self.ty_matches(element),
             _ => self.ty_matches(ty),

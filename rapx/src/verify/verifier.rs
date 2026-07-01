@@ -343,10 +343,6 @@ impl<'tcx> ForwardVerifier<'tcx> {
                     pointer: target.clone(),
                     source: source_key,
                 });
-                result.facts.push(StateFact::KnownNonZero {
-                    place: target.clone(),
-                    reason: "created from reference".to_string(),
-                });
                 if let Some((ty_name, elements)) =
                     self.allocated_element_summary(result.checkpoint.caller, object.local())
                 {
@@ -397,17 +393,11 @@ impl<'tcx> ForwardVerifier<'tcx> {
                         self.box_projection_allocation(result.checkpoint.caller, source_place, *ty)
                 {
                     result.facts.push(StateFact::KnownAllocated {
-                        place: target.clone(),
+                        place: target,
                         object: source_place.clone(),
-                        ty_name: ty_name.clone(),
-                        elements,
-                        reason: "cast from Box-owned pointer field".to_string(),
-                    });
-                    result.facts.push(StateFact::KnownInit {
-                        place: target.clone(),
                         ty_name,
                         elements,
-                        reason: "cast pointer inherits initialization from Box".to_string(),
+                        reason: "cast from Box-owned pointer field".to_string(),
                     });
                 }
             }
