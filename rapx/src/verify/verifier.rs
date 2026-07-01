@@ -341,7 +341,11 @@ impl<'tcx> ForwardVerifier<'tcx> {
                     .unwrap_or_else(|| allocation_object_for_source(&source_key, result));
                 result.facts.push(StateFact::PointsTo {
                     pointer: target.clone(),
-                    source: source_key,
+                    source: source_key.clone(),
+                });
+                result.facts.push(StateFact::KnownNonZero {
+                    place: target.clone(),
+                    reason: "created from reference".to_string(),
                 });
                 if let Some((ty_name, elements)) =
                     self.allocated_element_summary(result.checkpoint.caller, object.local())
@@ -393,11 +397,15 @@ impl<'tcx> ForwardVerifier<'tcx> {
                         self.box_projection_allocation(result.checkpoint.caller, source_place, *ty)
                 {
                     result.facts.push(StateFact::KnownAllocated {
-                        place: target,
+                        place: target.clone(),
                         object: source_place.clone(),
-                        ty_name,
+                        ty_name: ty_name.clone(),
                         elements,
                         reason: "cast from Box-owned pointer field".to_string(),
+                    });
+                    result.facts.push(StateFact::KnownNonZero {
+                        place: target.clone(),
+                        reason: "Box-owned pointer is non-null".to_string(),
                     });
                 }
             }
@@ -551,6 +559,15 @@ impl<'tcx> ForwardVerifier<'tcx> {
                                 object,
                                 ty_name,
                                 elements,
+                                reason: format!("returned by {}", summary.name),
+                            });
+                        }
+                        if result.facts.iter().any(|f| {
+                            matches!(f, StateFact::KnownNonZero { place, .. }
+                                if place == &source)
+                        }) {
+                            result.facts.push(StateFact::KnownNonZero {
+                                place: destination_place.clone(),
                                 reason: format!("returned by {}", summary.name),
                             });
                         }
