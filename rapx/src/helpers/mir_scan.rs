@@ -38,21 +38,13 @@ pub enum CheckpointKind {
 /// extraction and SMT verification pipeline.
 #[derive(Clone, Debug)]
 pub struct Checkpoint<'tcx> {
-    /// Function containing this checkpoint.
     pub caller: DefId,
-    /// For [`UnsafeCall`](CheckpointKind::UnsafeCall): the unsafe callee.
-    /// For synthetic checkpoints ([`RawPtrDeref`](CheckpointKind::RawPtrDeref),
-    /// [`StaticMutAccess`](CheckpointKind::StaticMutAccess)): `None`.
     pub callee: Option<DefId>,
-    /// MIR block where the checkpoint occurs.
     pub block: BasicBlock,
-    /// Source span for diagnostics.
     pub span: Span,
-    /// MIR operands passed to the callee or the pointer operand for
-    /// dereference/static-mut checks.
     pub args: Vec<Operand<'tcx>>,
-    /// Discriminates between real calls and synthetic safety checks.
     pub kind: CheckpointKind,
+    pub is_ref: bool,
 }
 
 impl<'tcx> Checkpoint<'tcx> {
@@ -239,6 +231,7 @@ pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<C
             span: *fn_span,
             args: args.iter().map(|arg| arg.node.clone()).collect(),
             kind: CheckpointKind::UnsafeCall,
+            is_ref: false,
         });
     }
 

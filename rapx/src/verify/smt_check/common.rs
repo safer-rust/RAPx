@@ -1176,6 +1176,7 @@ impl<'tcx> SmtChecker<'tcx> {
             span: rustc_span::Span::default(),
             args: Vec::new(),
             kind: crate::helpers::mir_scan::CheckpointKind::UnsafeCall,
+            is_ref: false,
         };
         self.prove_obligation(&dummy_checkpoint, forward, obligation)
     }

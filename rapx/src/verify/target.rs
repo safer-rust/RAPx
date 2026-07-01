@@ -1318,6 +1318,7 @@ fn build_raw_ptr_deref_checks<'tcx>(
                     span: rustc_span::DUMMY_SP,
                     args: vec![info.ptr_operand],
                     kind: crate::helpers::mir_scan::CheckpointKind::RawPtrDeref,
+                    is_ref: info.is_ref,
                 },
                 properties,
             )
@@ -1369,6 +1370,7 @@ fn build_static_mut_checks<'tcx>(
                     span: rustc_span::DUMMY_SP,
                     args: vec![info.ptr_operand],
                     kind: crate::helpers::mir_scan::CheckpointKind::StaticMutAccess,
+                    is_ref: false,
                 },
                 properties,
             )

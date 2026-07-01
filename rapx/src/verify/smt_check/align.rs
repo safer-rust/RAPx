@@ -25,6 +25,9 @@ pub(crate) fn check<'tcx>(
     property: &Property<'tcx>,
     forward: &ForwardVisitResult<'tcx>,
 ) -> SmtCheckResult {
+    if checkpoint.is_ref {
+        return SmtCheckResult::proved("Align trivially holds for ref-derived pointer");
+    }
     let Some(target) = checker.property_target(checkpoint, property) else {
         return SmtCheckResult::unknown("SMT Align target could not be resolved");
     };

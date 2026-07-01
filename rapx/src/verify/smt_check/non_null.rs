@@ -26,6 +26,9 @@ pub(crate) fn check<'tcx>(
     property: &Property<'tcx>,
     forward: &ForwardVisitResult<'tcx>,
 ) -> SmtCheckResult {
+    if checkpoint.is_ref {
+        return SmtCheckResult::proved("NonNull trivially holds for ref-derived pointer");
+    }
     let Some(target) = checker.property_target(checkpoint, property) else {
         return SmtCheckResult::unknown("NonNull target could not be resolved");
     };
