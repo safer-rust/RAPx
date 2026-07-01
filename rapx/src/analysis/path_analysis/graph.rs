@@ -6,7 +6,7 @@ use crate::graphs::{
 };
 use rustc_middle::{
     mir::{
-        AggregateKind, BasicBlock, Local, Operand, Rvalue, StatementKind, SwitchTargets,
+        AggregateKind, BasicBlock, BinOp, Local, Operand, Rvalue, StatementKind, SwitchTargets,
         Terminator, TerminatorKind, UnwindAction,
     },
     ty::{TyCtxt, TyKind, TypingEnv},
@@ -77,6 +77,18 @@ pub struct BlockConstantInfo {
     pub assigned_locals: FxHashSet<usize>,
     pub constants: FxHashMap<usize, usize>,
     pub constraint_copies: FxHashMap<usize, usize>,
+    /// Maps a boolean local (e.g., a guard result) to the binary comparison
+    /// that produced it: `(op, lhs_local, rhs_kind)`.
+    pub comparison_sources: FxHashMap<usize, ComparisonSource>,
+}
+
+/// Records the origin of a boolean temporary produced by a binary
+/// comparison during guard-clause evaluation.
+#[derive(Clone, Debug)]
+pub struct ComparisonSource {
+    pub op: rustc_middle::mir::BinOp,
+    pub lhs_local: usize,
+    pub rhs_local: usize,
 }
 
 /// Enum discriminant metadata used by [`check_switch_transition`].
@@ -172,7 +184,39 @@ impl<'tcx> PathGraph<'tcx> {
                                 }
                             }
                         }
-                        _ => {}
+                        Rvalue::BinaryOp(op, operands)
+                            if matches!(
+                                op,
+                                BinOp::Lt
+                                    | BinOp::Le
+                                    | BinOp::Gt
+                                    | BinOp::Ge
+                                    | BinOp::Eq
+                                    | BinOp::Ne
+                            ) =>
+                        {
+                            let (lhs, rhs): (&Operand<'_>, &Operand<'_>) = (&operands.0, &operands.1);
+                            let (lhs_local, rhs_local) =
+                                match (lhs, rhs) {
+                                    (Operand::Copy(l) | Operand::Move(l), Operand::Copy(r) | Operand::Move(r)) => {
+                                        (l.local, r.local)
+                                    }
+                                    _ => {
+                                        continue;
+                                    }
+                                };
+                            let lhs_local = lhs_local.as_usize();
+                            let rhs_local = rhs_local.as_usize();
+                            info.comparison_sources.insert(
+                                dest,
+                                ComparisonSource {
+                                    op: *op,
+                                    lhs_local,
+                                    rhs_local,
+                                },
+                            );
+                        }
+                        _ => {}  // close match rvalue
                     }
                 }
             }
