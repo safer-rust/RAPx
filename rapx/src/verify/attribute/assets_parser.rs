@@ -15,12 +15,26 @@ pub struct PropertyEntry {
 }
 
 /// Looks up backup contracts for a standard-library function by its normalized path.
+/// For trait-method impls, resolves to the trait method's path first so that
+/// all impls share the same contracts.
 pub fn get_std_contracts_from_assets(tcx: TyCtxt<'_>, def_id: DefId) -> &'static [PropertyEntry] {
-    let cleaned_path_name = get_cleaned_def_path_name(tcx, def_id);
+    let lookup_def_id = resolve_trait_method(tcx, def_id);
+    let cleaned_path_name = get_cleaned_def_path_name(tcx, lookup_def_id);
     get_std_contracts_from_json()
         .get(&cleaned_path_name)
         .map(Vec::as_slice)
         .unwrap_or(&[])
+}
+
+/// If `def_id` is a trait-method implementation, returns the corresponding
+/// trait method's [`DefId`]; otherwise returns `def_id` unchanged.
+fn resolve_trait_method(tcx: TyCtxt<'_>, def_id: DefId) -> DefId {
+    if let Some(assoc_item) = tcx.opt_associated_item(def_id) {
+        if let Some(trait_def_id) = assoc_item.trait_item_def_id() {
+            return trait_def_id;
+        }
+    }
+    def_id
 }
 
 /// Lazily loads the backup contract database for standard-library APIs.
