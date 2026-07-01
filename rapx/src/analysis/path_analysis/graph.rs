@@ -321,6 +321,25 @@ impl<'tcx> PathGraph<'tcx> {
             .unwrap_or(false)
     }
 
+    /// Get the number of variants for a constraint local.
+    /// First checks the pre-populated `variant_count_of` hashmap,
+    /// then falls back to the local's declared type (for ADT locals
+    /// that gained their type through field projections in nested
+    /// destructuring patterns rather than explicit construction).
+    fn get_variant_count(&self, local: usize) -> Option<usize> {
+        if let Some(&count) = self.disc_info.variant_count_of.get(&local) {
+            return Some(count);
+        }
+        let body = self.cfg.tcx.optimized_mir(self.cfg.def_id);
+        let ty = body.local_decls[Local::from_usize(local)].ty;
+        match ty.kind() {
+            TyKind::Adt(adt_def, _) if adt_def.is_enum() => {
+                Some(adt_def.variants().len())
+            }
+            _ => None,
+        }
+    }
+
     /// Check a single transition `cur -> next` for reachability and update
     /// discriminant constraints. Returns `false` if the transition is
     /// provably unreachable.
@@ -459,7 +478,7 @@ impl<'tcx> PathGraph<'tcx> {
                 // and record the newly learned constraint from the taken branch.
                 if next == targets.otherwise().as_usize() {
                     if let Some(local) = constraint_local {
-                        if let Some(&num_variants) = self.disc_info.variant_count_of.get(&local) {
+                        if let Some(num_variants) = self.get_variant_count(local) {
                             let all_covered = (0..num_variants)
                                 .all(|v| targets.iter().any(|(tv, _)| tv == v as u128));
                             if all_covered {
