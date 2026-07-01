@@ -145,6 +145,79 @@ pub struct TraitEnsurance<'tcx> {
     pub ensures: Vec<(String, FnContracts<'tcx>)>,
 }
 
+/// Follow an unsafe callee's call chain to find inherited safety contracts.
+///
+/// When an unsafe callee (e.g. B) lacks its own contracts, look into its MIR
+/// body for the unsafe callees it calls (e.g. C, D).  If one of those has
+/// contracts (e.g. D), inherit them.  The chain `A -> B -> C -> D` means A's
+/// checkpoint on B is verified using D's contracts.
+///
+/// `max_depth` limits recursion to avoid cycles or infinite chains.
+fn resolve_chain_contracts<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    callee_def_id: DefId,
+    max_depth: usize,
+    std_contracts: fn(TyCtxt<'tcx>, DefId) -> &'static [super::attribute::assets_parser::PropertyEntry],
+) -> FnContracts<'tcx> {
+    if max_depth == 0 {
+        return Vec::new();
+    }
+
+    if !tcx.is_mir_available(callee_def_id) {
+        return Vec::new();
+    }
+
+    let body = tcx.optimized_mir(callee_def_id);
+    let mut contracts = Vec::new();
+
+    for bb in body.basic_blocks.iter() {
+        let Some(terminator) = &bb.terminator else {
+            continue;
+        };
+        if let rustc_middle::mir::TerminatorKind::Call { func, .. } = &terminator.kind {
+            if let rustc_middle::mir::Operand::Constant(c) = func {
+                let rustc_middle::ty::TyKind::FnDef(sub_def_id, _) = c.const_.ty().kind() else {
+                    continue;
+                };
+                let sub_def_id = *sub_def_id;
+
+                let fn_sig = tcx.fn_sig(sub_def_id).skip_binder();
+                if fn_sig.safety() != rustc_hir::Safety::Unsafe {
+                    continue;
+                }
+
+                // Try annotation first.
+                let mut reqs = get_contract_from_annotation(tcx, sub_def_id);
+
+                // Try trait method requires.
+                if reqs.is_empty() {
+                    reqs = get_trait_method_requires(tcx, sub_def_id);
+                }
+
+                // Try std contracts database.
+                if reqs.is_empty() && is_std_crate_def_id(tcx, sub_def_id) {
+                    let entries = std_contracts(tcx, sub_def_id);
+                    reqs = get_contract_from_entry(tcx, sub_def_id, entries);
+                }
+
+                // If still no contracts, recurse into this callee.
+                if reqs.is_empty() {
+                    reqs = resolve_chain_contracts(
+                        tcx,
+                        sub_def_id,
+                        max_depth - 1,
+                        std_contracts,
+                    );
+                }
+
+                contracts.extend(reqs);
+            }
+        }
+    }
+
+    contracts
+}
+
 /// Visitor that collects targets annotated with `#[rapx::verify]`.
 pub struct VerifyTargetCollector<'tcx> {
     tcx: TyCtxt<'tcx>,
@@ -224,6 +297,16 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
                     );
 
                 if requires.is_empty() {
+                    // Recursively resolve contracts from the callee's call chain.
+                    // e.g. A -> B -> C -> D where B,C are unsafe unannotated,
+                    // D has contracts; follow the chain to D and use its contracts.
+                    requires = resolve_chain_contracts(
+                        self.tcx,
+                        callee_def_id,
+                        3, // max chain depth
+                        get_std_contracts_from_assets,
+                    );
+                    if requires.is_empty() {
                         let show_warning = match module_filter {
                             Some(_) => callee_in_filter,
                             None => is_targeted,
@@ -244,10 +327,11 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
                             callee_def_id,
                         );
                         rap_debug!(
-                            "loaded {} safety contract(s) for std callee \"{path}\" from std-contracts.json",
+                            "resolved {} safety contract(s) for std callee \"{path}\" via call chain",
                             requires.len()
                         );
                     }
+                }
                 }
 
                 if requires.is_empty() {
