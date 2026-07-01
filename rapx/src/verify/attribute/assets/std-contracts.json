@@ -281,9 +281,30 @@
       ]
     }
   ],
-  "core::array::ascii::as_ascii_unchecked": [],
-  "core::ascii::ascii_char::digit_unchecked": [],
-  "core::ascii::ascii_char::from_u8_unchecked": [],
+  "core::array::ascii::as_ascii_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "0 == 0"
+      ]
+    }
+  ],
+  "core::ascii::ascii_char::digit_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "0 == 0"
+      ]
+    }
+  ],
+  "core::ascii::ascii_char::from_u8_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "0 == 0"
+      ]
+    }
+  ],
   "core::cell::try_borrow_unguarded": [
     {
       "tag": "Alias",
@@ -316,12 +337,54 @@
       ]
     }
   ],
-  "core::f128::to_int_unchecked": [],
-  "core::f64::to_int_unchecked": [],
-  "core::f32::to_int_unchecked": [],
-  "core::f16::to_int_unchecked": [],
-  "core::convert::num::FloatToInt::to_int_unchecked": [],
-  "core::convert::num::to_int_unchecked": [],
+  "core::f128::to_int_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "0 == 0"
+      ]
+    }
+  ],
+  "core::f64::to_int_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "0 == 0"
+      ]
+    }
+  ],
+  "core::f32::to_int_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "0 == 0"
+      ]
+    }
+  ],
+  "core::f16::to_int_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "0 == 0"
+      ]
+    }
+  ],
+  "core::convert::num::FloatToInt::to_int_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "0 == 0"
+      ]
+    }
+  ],
+  "core::convert::num::to_int_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "0 == 0"
+      ]
+    }
+  ],
   "core::ffi::c_str::from_ptr": [
     {
       "tag": "ValidCStr",
@@ -389,10 +452,38 @@
       ]
     }
   ],
-  "core::iter::range::forward_unchecked": [],
-  "core::iter::range::backward_unchecked": [],
-  "core::iter::range::Step::forward_unchecked": [],
-  "core::iter::range::Step::backward_unchecked": [],
+  "core::iter::range::forward_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "0 == 0"
+      ]
+    }
+  ],
+  "core::iter::range::backward_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "0 == 0"
+      ]
+    }
+  ],
+  "core::iter::range::Step::forward_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "0 == 0"
+      ]
+    }
+  ],
+  "core::iter::range::Step::backward_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "0 == 0"
+      ]
+    }
+  ],
   "core::mem::manually_drop::take": [
     {
       "tag": "Owning",
@@ -554,7 +645,14 @@
       ]
     }
   ],
-  "core::mem::uninitialized": [],
+  "core::mem::uninitialized": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "0 == 0"
+      ]
+    }
+  ],
   "core::mem::transmute_copy": [
     {
       "tag": "DoubleAligned",
@@ -589,8 +687,6 @@
       ]
     }
   ],
-  "core::num::nonzero::unchecked_add": [],
-  "core::num::nonzero::unchecked_mul": [],
   "core::num::nonzero::new_unchecked": [
     {
       "tag": "ValidNum",
@@ -607,12 +703,14 @@
       ]
     }
   ],
-  "core::num::unchecked_sub": [],
-  "core::num::unchecked_mul": [],
-  "core::num::unchecked_neg": [],
-  "core::num::unchecked_shl": [],
-  "core::num::unchecked_shr": [],
-  "core::num::unchecked_add": [],
+  "core::num::unchecked_neg": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "0 == 0"
+      ]
+    }
+  ],
   "core::hint::unreachable_unchecked": [
     {
       "tag": "Unreachable",
@@ -696,7 +794,14 @@
       ]
     }
   ],
-  "core::intrinsics::float_to_int_unchecked": [],
+  "core::intrinsics::float_to_int_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "0 == 0"
+      ]
+    }
+  ],
   "core::intrinsics::typed_swap_nonoverlapping": [
     {
       "tag": "ValidPtr",
@@ -3097,7 +3202,14 @@
       ]
     }
   ],
-  "core::slice::ascii::as_ascii_unchecked": [],
+  "core::slice::ascii::as_ascii_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "0 == 0"
+      ]
+    }
+  ],
   "core::slice::raw::from_raw_parts": [
     {
       "tag": "NonNull",
@@ -5021,7 +5133,14 @@
       ]
     }
   ],
-  "core::intrinsics::const_deallocate": [],
+  "core::intrinsics::const_deallocate": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "0 == 0"
+      ]
+    }
+  ],
   "core::intrinsics::vtable_size": [
     {
       "tag": "ValidPtr",
@@ -5042,7 +5161,14 @@
       ]
     }
   ],
-  "core::intrinsics::pref_align_of": [],
+  "core::intrinsics::pref_align_of": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "0 == 0"
+      ]
+    }
+  ],
   "core::intrinsics::size_of_val": [
     {
       "tag": "Size",
@@ -5108,7 +5234,14 @@
       ]
     }
   ],
-  "core::ffi::va_list::with_copy": [],
+  "core::ffi::va_list::with_copy": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "0 == 0"
+      ]
+    }
+  ],
   "core::task::wake::new": [
     {
       "tag": "System_sp",
@@ -5185,6 +5318,62 @@
       "tag": "ValidNum",
       "args": [
         "size_of(T) * count <= isize::MAX"
+      ]
+    }
+  ],
+  "core::num::unchecked_mul": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "0 == 0"
+      ]
+    }
+  ],
+  "core::num::unchecked_add": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "0 == 0"
+      ]
+    }
+  ],
+  "core::num::unchecked_sub": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "0 == 0"
+      ]
+    }
+  ],
+  "core::num::unchecked_shl": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "0 == 0"
+      ]
+    }
+  ],
+  "core::num::unchecked_shr": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "0 == 0"
+      ]
+    }
+  ],
+  "core::num::nonzero::unchecked_add": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "0 == 0"
+      ]
+    }
+  ],
+  "core::num::nonzero::unchecked_mul": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "0 == 0"
       ]
     }
   ]
