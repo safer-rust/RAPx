@@ -331,11 +331,12 @@ impl<'tcx> PathGraph<'tcx> {
             return Some(count);
         }
         let body = self.cfg.tcx.optimized_mir(self.cfg.def_id);
-        let ty = body.local_decls[Local::from_usize(local)].ty;
+        let mut ty = body.local_decls[Local::from_usize(local)].ty;
+        while let TyKind::Ref(_, inner_ty, _) | TyKind::RawPtr(inner_ty, _) = ty.kind() {
+            ty = *inner_ty;
+        }
         match ty.kind() {
-            TyKind::Adt(adt_def, _) if adt_def.is_enum() => {
-                Some(adt_def.variants().len())
-            }
+            TyKind::Adt(adt_def, _) if adt_def.is_enum() => Some(adt_def.variants().len()),
             _ => None,
         }
     }
@@ -554,7 +555,10 @@ impl<'tcx> PathGraph<'tcx> {
     /// possible values are covered by explicit targets).
     fn infer_otherwise_value(&self, targets: &SwitchTargets, discr_local: usize) -> Option<usize> {
         let body = self.cfg.tcx.optimized_mir(self.cfg.def_id);
-        let discr_ty = body.local_decls[Local::from_usize(discr_local)].ty;
+        let mut discr_ty = body.local_decls[Local::from_usize(discr_local)].ty;
+        while let TyKind::Ref(_, inner, _) | TyKind::RawPtr(inner, _) = discr_ty.kind() {
+            discr_ty = *inner;
+        }
 
         let possible_values: Vec<usize> = match discr_ty.kind() {
             TyKind::Bool => vec![0, 1],
