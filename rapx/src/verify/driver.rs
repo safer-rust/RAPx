@@ -656,14 +656,11 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
             // which can miss off-by-one bugs that only manifest on later iterations.
             //
             // The detector tries progressively deeper unrolling and tracks the
-            // shape of InBound results at each level.  Three stopping criteria:
+            // set of Proved InBound properties at each level.  Three stopping criteria:
             //
             //  1. Unproven InBound found → unsound, propagate results, stop.
             //  2. State converged (same Proven set as a previous level) → stop.
-            //  3. State oscillates (Proven-set pattern repeats) → stop.
-            //
-            // When the state is monotonically approaching an InBound violation
-            // (Proven set is shrinking / state is novel) we continue up to max.
+            //  3. State oscillates (Proven set alternates between two states) → stop.
             const MAX_LOOP_INBOUND_UNROLL: usize = 16;
 
             if self.postfix_repeat == 0 && !all_results.is_empty() {
@@ -676,7 +673,24 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                     .all(|r| matches!(r.result, super::report::CheckResult::Proved));
 
                 if has_inbound && all_inbound_proven {
-                    let mut empty_streak: u32 = 0;
+                    // Proven-set history: each entry is a sorted vector of
+                    // (checkpoint_index, property_index) for Proved InBound results.
+                    let mut proven_history: Vec<Vec<(usize, usize)>> = Vec::new();
+
+                    // Seed with the repeat=0 Proven set.
+                    let seed: Vec<_> = {
+                        let mut v: Vec<_> = all_results
+                            .iter()
+                            .filter(|r| {
+                                matches!(r.property.kind, PropertyKind::InBound)
+                                    && matches!(r.result, super::report::CheckResult::Proved)
+                            })
+                            .map(|r| (r.checkpoint_index, r.property_index))
+                            .collect();
+                        v.sort();
+                        v
+                    };
+                    proven_history.push(seed);
 
                     for repeat in 1..=MAX_LOOP_INBOUND_UNROLL {
                         let detector_driver =
@@ -685,6 +699,8 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                             catch_unwind(AssertUnwindSafe(|| detector_driver.verify_function()));
                         match result {
                             Ok(report) => {
+                                // Collect genuinely non-Proved InBound (excluding
+                                // SMT precision-loss noise).
                                 let current_unproven: FxHashSet<_> = report
                                     .results
                                     .iter()
@@ -694,7 +710,6 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                                                 r.result,
                                                 super::report::CheckResult::Proved
                                             )
-                                            // Skip SMT precision-loss Unknowns.
                                             && !r
                                                 .diagnostics
                                                 .as_ref()
@@ -707,15 +722,42 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                                     .map(|r| (r.checkpoint_index, r.property_index))
                                     .collect();
 
+                                // Pattern 1: violation found.
                                 if !current_unproven.is_empty() {
                                     all_results.extend(report.results);
                                     break;
                                 }
 
-                                empty_streak += 1;
-                                if empty_streak >= 10 {
+                                // Collect Proven InBound set for this level.
+                                let mut current_proven: Vec<_> = report
+                                    .results
+                                    .iter()
+                                    .filter(|r| {
+                                        matches!(r.property.kind, PropertyKind::InBound)
+                                            && matches!(
+                                                r.result,
+                                                super::report::CheckResult::Proved
+                                            )
+                                    })
+                                    .map(|r| (r.checkpoint_index, r.property_index))
+                                    .collect();
+                                current_proven.sort();
+
+                                // Pattern 2: same Proven set as any prior level.
+                                if proven_history.contains(&current_proven) {
                                     break;
                                 }
+
+                                // Pattern 3: oscillation — alternation between two sets.
+                                let len = proven_history.len();
+                                if len >= 3
+                                    && proven_history[len - 1] == proven_history[len - 3]
+                                    && current_proven == proven_history[len - 2]
+                                {
+                                    break;
+                                }
+
+                                proven_history.push(current_proven);
                             }
                             Err(_) => break,
                         }
