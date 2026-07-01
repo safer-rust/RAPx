@@ -200,6 +200,13 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
 
         let trait_requires = get_trait_method_requires(self.tcx, callee_def_id);
 
+        let module_filter = self.module_filter.clone();
+        let is_targeted = matches!(self.mode, VerifyMode::Targeted);
+        let callee_in_filter = module_filter
+            .as_ref()
+            .map(|_| self.module_path_matches(callee_def_id))
+            .unwrap_or(false);
+
         self.fn_contract_cache
             .entry(callee_def_id)
             .or_insert_with(|| {
@@ -217,14 +224,20 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
                     );
 
                 if requires.is_empty() {
-                        let path = crate::helpers::name::get_cleaned_def_path_name(
-                            self.tcx,
-                            callee_def_id,
-                        );
-                        rap_warn!(
-                            "no safety contracts found for std callee \"{path}\" \
-                             (missing from std-contracts.json)"
-                        );
+                        let show_warning = match module_filter {
+                            Some(_) => callee_in_filter,
+                            None => is_targeted,
+                        };
+                        if show_warning {
+                            let path = crate::helpers::name::get_cleaned_def_path_name(
+                                self.tcx,
+                                callee_def_id,
+                            );
+                            rap_warn!(
+                                "no safety contracts found for std callee \"{path}\" \
+                                 (missing from std-contracts.json)"
+                            );
+                        }
                     } else {
                         let path = crate::helpers::name::get_cleaned_def_path_name(
                             self.tcx,
