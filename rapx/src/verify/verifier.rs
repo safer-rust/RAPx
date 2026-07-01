@@ -178,7 +178,7 @@ impl<'tcx> ForwardVerifier<'tcx> {
                 );
                 let is_uninit = call_summary::is_maybe_uninit_uninit_call(&call_summary::call_name(self.tcx, func));
                 if is_uninit
-                    && let Some((elem_ty_name, elements)) =
+                    && let Some((_elem_ty_name, elements)) =
                         self.allocated_element_summary(result.checkpoint.caller, Some(destination.local))
                 {
                     let dest_place = PlaceKey {
