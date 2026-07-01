@@ -331,16 +331,31 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
             return true;
         };
         let def_path = self.tcx.def_path_str(def_id);
+
         if def_path == *filter || def_path.starts_with(&format!("{}::", filter)) {
             return true;
         }
         let crate_name = self.tcx.crate_name(def_id.krate);
         let crate_prefix = format!("{}::", crate_name.as_str());
+
+        // Try matching filter after stripping the crate prefix.
+        // e.g. filter "slice" matches def_path "core::slice::raw::from_raw_parts"
+        // after stripping "core::".
         if let Some(inner) = filter.strip_prefix(&crate_prefix) {
             if def_path == inner || def_path.starts_with(&format!("{}::", inner)) {
                 return true;
             }
         }
+
+        // Try matching def_path after stripping the crate prefix.
+        // e.g. filter "core::slice" matches def_path "slice::raw::from_raw_parts"
+        // after stripping "core::" from the filter.
+        if let Some(inner) = def_path.strip_prefix(&crate_prefix) {
+            if inner == *filter || inner.starts_with(&format!("{}::", filter)) {
+                return true;
+            }
+        }
+
         false
     }
 
