@@ -2418,6 +2418,7 @@ pub(crate) struct SmtModel<'a, 'ctx, 'tcx> {
     place_terms: HashMap<PlaceKey, Int<'ctx>>,
     symbolic_align_terms: HashMap<String, Int<'ctx>>,
     symbolic_len_terms: HashMap<String, Int<'ctx>>,
+    const_terms: HashMap<String, Int<'ctx>>,
     assumptions: Vec<SmtPredicate>,
     /// Set to true when IndexAccess InBound assumptions were added from caller contract
     has_index_access_assumptions: bool,
@@ -2439,6 +2440,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             place_terms: HashMap::new(),
             symbolic_align_terms: HashMap::new(),
             symbolic_len_terms: HashMap::new(),
+            const_terms: HashMap::new(),
             assumptions: Vec::new(),
             has_index_access_assumptions: false,
         }
@@ -2538,6 +2540,9 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             ContractExpr::Const(value) => {
                 u64::try_from(*value).ok().map(SmtTerm::Const)
             }
+            ContractExpr::ConstParam { name, .. } => {
+                Some(SmtTerm::ConstParam(name.clone()))
+            }
             ContractExpr::Len(inner) => {
                 let label = match inner.as_ref() {
                     ContractExpr::Place(place) => {
@@ -2563,6 +2568,16 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                     _ => return None,
                 })
             }
+            _ => None,
+        }
+    }
+
+    fn value_to_int(&mut self, value: &AbstractValue<'tcx>) -> Option<Int<'ctx>> {
+        match value {
+            AbstractValue::ConstInt(v) => u64::try_from(*v).ok().map(|v| Int::from_u64(self.ctx, v)),
+            AbstractValue::Place(place) => self.term_for_place(place),
+            AbstractValue::ConstParam(name) => Some(Int::new_const(self.ctx, format!("const_{name}").as_str())),
+            AbstractValue::Const(name) => Some(Int::new_const(self.ctx, sanitize_smt_name(name).as_str())),
             _ => None,
         }
     }
@@ -2642,7 +2657,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 } => {
                     self.assert_known_const(solver, place, *value, reason);
                 }
-                StateFact::BranchEq { value, equals } => {
+                StateFact::BranchEq { value, equals, cmp_op, cmp_lhs, cmp_rhs } => {
                     if let Some(term) = self.term_for_value(value, &mut HashSet::new()) {
                         let expected = Int::from_u64(self.ctx, *equals as u64);
                         solver.assert(&term._eq(&expected));
@@ -2650,6 +2665,22 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                             SmtTerm::Value(value_label(value)),
                             SmtTerm::Const(*equals as u64),
                         ));
+                    }
+                    if let (Some(op), Some(lhs), Some(rhs)) = (cmp_op, cmp_lhs, cmp_rhs) {
+                        if let (Some(lhs_t), Some(rhs_t)) = (
+                            self.value_to_int(lhs), self.value_to_int(rhs),
+                        ) {
+                            let holds = *equals == 1;
+                            match (op, holds) {
+                                (BinOp::Eq, true) | (BinOp::Ne, false) => solver.assert(&lhs_t._eq(&rhs_t)),
+                                (BinOp::Ne, true) | (BinOp::Eq, false) => solver.assert(&lhs_t._eq(&rhs_t).not()),
+                                (BinOp::Lt, true) | (BinOp::Ge, false) => solver.assert(&lhs_t.lt(&rhs_t)),
+                                (BinOp::Le, true) | (BinOp::Gt, false) => solver.assert(&lhs_t.le(&rhs_t)),
+                                (BinOp::Gt, true) | (BinOp::Le, false) => solver.assert(&lhs_t.gt(&rhs_t)),
+                                (BinOp::Ge, true) | (BinOp::Lt, false) => solver.assert(&lhs_t.ge(&rhs_t)),
+                                _ => {}
+                            }
+                        }
                     }
                 }
                 StateFact::Cast { target, source, .. } => {
@@ -3639,6 +3670,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
     ) -> Option<Int<'ctx>> {
         match value {
             AbstractValue::ConstInt(value) => Some(Int::from_u64(self.ctx, *value as u64)),
+            AbstractValue::ConstParam(name) => Some(Int::new_const(self.ctx, format!("const_{name}").as_str())),
             AbstractValue::Const(text) => {
                 const_int_from_debug(text).map(|value| Int::from_u64(self.ctx, value as u64))
                     .or_else(|| {
@@ -3708,8 +3740,14 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             SmtTerm::Const(value) => Some(Int::from_u64(self.ctx, *value)),
             SmtTerm::ConstParam(text) => {
                 let name = sanitize_smt_name(text);
-                if name.is_empty() { None }
-                else { Some(Int::new_const(self.ctx, format!("const_{name}"))) }
+                if name.is_empty() { return None; }
+                let key = format!("const_{name}");
+                if let Some(term) = self.const_terms.get(&key) {
+                    return Some(term.clone());
+                }
+                let term = Int::new_const(self.ctx, key.as_str());
+                self.const_terms.insert(key.clone(), term.clone());
+                Some(term)
             }
             SmtTerm::Add(lhs, rhs) => {
                 let lhs = self.term_for_smt_term(lhs)?;
@@ -4226,7 +4264,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             .resolved_value(index, &mut HashSet::new())
             .unwrap_or_else(|| index.clone());
         for fact in &self.forward.facts {
-            let StateFact::BranchEq { value, equals: 1 } = fact else {
+            let StateFact::BranchEq { value, equals: 1, .. } = fact else {
                 continue;
             };
             let predicate = self
@@ -4804,6 +4842,7 @@ pub(crate) fn value_label(value: &AbstractValue<'_>) -> String {
         AbstractValue::RawPtr(place) => format!("raw({})", place_label(place)),
         AbstractValue::ThreadLocal(name) => format!("thread_local({name})"),
         AbstractValue::ConstInt(value) => value.to_string(),
+        AbstractValue::ConstParam(name) => format!("const_{name}"),
         AbstractValue::Const(text) => const_int_from_debug(text)
             .map(|value| value.to_string())
             .unwrap_or_else(|| text.trim().to_string()),

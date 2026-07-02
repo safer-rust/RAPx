@@ -63,7 +63,7 @@ impl<'tcx> ForwardVerifier<'tcx> {
                 }
                 BackwardItem::Terminator { block, kind } => {
                     let terminator = body.basic_blocks[*block].terminator();
-                    self.visit_terminator(*block, *kind, terminator, &mut result);
+                    self.visit_terminator(*block, *kind, terminator, body, &mut result);
                 }
                 BackwardItem::PathStep { step, kind } => {
                     result.steps.push(ForwardStep::PathStep {
@@ -133,6 +133,7 @@ impl<'tcx> ForwardVerifier<'tcx> {
         block: BasicBlock,
         reason: KeepReason,
         terminator: &Terminator<'tcx>,
+        body: &Body<'tcx>,
         result: &mut ForwardVisitResult<'tcx>,
     ) {
         result.steps.push(ForwardStep::Terminator { block, reason });
@@ -202,6 +203,9 @@ impl<'tcx> ForwardVerifier<'tcx> {
                     result.facts.push(StateFact::BranchEq {
                         value: value.clone(),
                         equals,
+                        cmp_op: None,
+                        cmp_lhs: None,
+                        cmp_rhs: None,
                     });
                     if let Some((place, align)) = align_guard_value(&value, equals, result) {
                         result.facts.push(StateFact::KnownAligned {
@@ -218,9 +222,13 @@ impl<'tcx> ForwardVerifier<'tcx> {
                 }
             }
             TerminatorKind::Assert { cond, expected, .. } => {
+                let (cmp_op, cmp_lhs, cmp_rhs) = find_cmp_source(block, cond, body);
                 result.facts.push(StateFact::BranchEq {
                     value: value_from_operand(cond),
                     equals: u128::from(*expected),
+                    cmp_op,
+                    cmp_lhs,
+                    cmp_rhs,
                 });
             }
             TerminatorKind::Drop { place, .. } => {
@@ -947,6 +955,7 @@ pub enum AbstractValue<'tcx> {
     ThreadLocal(String),
     ConstInt(u128),
     Const(String),
+    ConstParam(String),
     Repeat(Box<AbstractValue<'tcx>>),
     Cast(Box<AbstractValue<'tcx>>, Ty<'tcx>),
     Unary(UnOp, Box<AbstractValue<'tcx>>),
@@ -981,6 +990,9 @@ pub enum StateFact<'tcx> {
     BranchEq {
         value: AbstractValue<'tcx>,
         equals: u128,
+        cmp_op: Option<BinOp>,
+        cmp_lhs: Option<AbstractValue<'tcx>>,
+        cmp_rhs: Option<AbstractValue<'tcx>>,
     },
     PathCondition(String),
     Drop(PlaceKey),
@@ -1028,6 +1040,23 @@ pub struct CallSummary<'tcx> {
     pub unsupported: bool,
 }
 
+fn extract_const_param_name(text: &str) -> Option<String> {
+    if let Some(start) = text.find("kind: Param(") {
+        let rest = &text[start + "kind: Param(".len()..];
+        if let Some(end) = rest.find(')') {
+            let inner = &rest[..end];
+            if let Some(name_start) = inner.find("name: ") {
+                let name_part = &inner[name_start + "name: ".len()..];
+                if let Some(name_end) = name_part.find(',') {
+                    return Some(name_part[..name_end].trim().to_string());
+                }
+                return Some(name_part.trim().to_string());
+            }
+        }
+    }
+    None
+}
+
 /// Convert a MIR operand to an abstract value.
 fn value_from_operand<'tcx>(operand: &Operand<'tcx>) -> AbstractValue<'tcx> {
     match operand {
@@ -1036,6 +1065,9 @@ fn value_from_operand<'tcx>(operand: &Operand<'tcx>) -> AbstractValue<'tcx> {
         }
         Operand::Constant(constant) => {
             let text = format!("{:?}", constant.const_);
+            if let Some(name) = extract_const_param_name(&text) {
+                return AbstractValue::ConstParam(name);
+            }
             const_int_from_debug(&text)
                 .map(AbstractValue::ConstInt)
                 .unwrap_or(AbstractValue::Const(text))
@@ -1404,4 +1436,28 @@ fn known_alignment_of<'tcx>(
         };
     }
     best
+}
+
+fn find_cmp_source<'tcx>(
+    block: BasicBlock,
+    cond: &Operand<'tcx>,
+    body: &Body<'tcx>,
+) -> (
+    Option<BinOp>,
+    Option<AbstractValue<'tcx>>,
+    Option<AbstractValue<'tcx>>,
+) {
+    let place = match cond {
+        Operand::Copy(place) | Operand::Move(place) => place,
+        _ => return (None, None, None),
+    };
+    let bb = &body.basic_blocks[block];
+    for stmt in &bb.statements {
+        let StatementKind::Assign(assign) = &stmt.kind else { continue };
+        if assign.0.local != place.local { continue };
+        let Rvalue::BinaryOp(op, pair) = &assign.1 else { continue };
+        if !matches!(op, BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::Eq | BinOp::Ne) { continue; }
+        return (Some(*op), Some(value_from_operand(&pair.0)), Some(value_from_operand(&pair.1)));
+    }
+    (None, None, None)
 }
