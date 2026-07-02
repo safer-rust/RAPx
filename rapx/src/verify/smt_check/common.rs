@@ -3283,14 +3283,31 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
     }
 
     fn allocated_object_for_place(&self, place: &PlaceKey) -> Option<PlaceKey> {
-        self.forward.facts.iter().find_map(|fact| match fact {
+        // 1) KnownAllocated facts (concrete allocations).
+        if let Some(object) = self.forward.facts.iter().find_map(|fact| match fact {
             StateFact::KnownAllocated {
                 place: allocated_place,
                 object,
                 ..
             } if allocated_place == place => Some(object.clone()),
             _ => None,
-        })
+        }) {
+            return Some(object);
+        }
+        // 2) PointsTo facts — when a pointer (or a projection of one)
+        //    traces to a reference, the reference is the allocation object.
+        let base = if place.fields.is_empty() {
+            place.clone()
+        } else {
+            PlaceKey { base: place.base.clone(), fields: Vec::new() }
+        };
+        if let Some(source) = self.forward.facts.iter().find_map(|fact| match fact {
+            StateFact::PointsTo { pointer, source } if *pointer == base => Some(source.clone()),
+            _ => None,
+        }) {
+            return Some(source);
+        }
+        None
     }
 
     /// Assert that a place is known to denote a non-zero address.
@@ -4482,10 +4499,35 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 if self.is_maybe_uninit_origin(origin_key) {
                     let len_term = Int::from_u64(self.ctx, u64::MAX / 8);
                     Some((len_term, SmtTerm::Const(u64::MAX / 8)))
+                } else if self.is_slice_pointer_origin(origin_key) {
+                    let len_key = format!("len({})", origin_key);
+                    let len_term = self.symbolic_len_term(&len_key);
+                    Some((len_term, SmtTerm::Value(len_key)))
                 } else {
                     None
                 }
             })
+    }
+
+    /// Return true if `origin_key` is the source of an `as_ptr`-like call
+    /// (suggesting it is a slice / reference whose internal pointer was
+    /// extracted).  For these origins a symbolic length term is safe because
+    /// the length is naturally bounded by the reference type.
+    fn is_slice_pointer_origin(&self, origin_key: &str) -> bool {
+        self.forward.facts.iter().any(|fact| {
+            let StateFact::Call(call) = fact else { return false };
+            is_as_ptr_call(&call.func)
+                && call.effects.iter().any(|effect| {
+                    matches!(
+                        effect,
+                        crate::verify::call_summary::CallEffect::ReturnPointerFromArg { .. }
+                    )
+                })
+                && call.args.iter().any(|arg| {
+                    self.origin_key_for_value(arg, &mut HashSet::new())
+                        .is_some_and(|key| key == origin_key)
+                })
+        })
     }
 
     /// Return true if the allocation for `origin_key` is a `MaybeUninit`

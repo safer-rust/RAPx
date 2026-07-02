@@ -1,0 +1,17 @@
+{
+  "&[T]": {
+    "comment": "Slice reference — the internal pointer is ValidPtr for len(self) elements",
+    "invariants": [
+      {"tag": "ValidPtr", "args": ["$ptr", "$elem_ty", "$len"]},
+      {"tag": "NonNull", "args": ["$ptr"]}
+    ]
+  },
+  "&mut [T]": {
+    "comment": "Mutable slice reference",
+    "invariants": [
+      {"tag": "ValidPtr", "args": ["$ptr", "$elem_ty", "$len"]},
+      {"tag": "NonNull", "args": ["$ptr"]},
+      {"tag": "Init", "args": ["$ptr", "$elem_ty", "$len"]}
+    ]
+  }
+}

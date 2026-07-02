@@ -5276,6 +5276,82 @@
       ]
     }
   ],
+  "core::ptr::align_offset": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "align != 0"
+      ]
+    }
+  ],
+  "core::ptr::copy": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "src",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "src",
+        "T"
+      ]
+    },
+    {
+      "tag": "NonVolatile",
+      "args": [
+        "src"
+      ]
+    },
+    {
+      "tag": "Alias",
+      "args": [
+        "src"
+      ]
+    },
+    {
+      "tag": "CopyTrait",
+      "args": [
+        "src"
+      ]
+    },
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "dst",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "dst",
+        "T"
+      ]
+    },
+    {
+      "tag": "NonVolatile",
+      "args": [
+        "dst"
+      ]
+    },
+    {
+      "tag": "Alias",
+      "args": [
+        "dst"
+      ]
+    },
+    {
+      "tag": "CopyTrait",
+      "args": [
+        "dst"
+      ]
+    }
+  ],
   "core::ptr::copy_nonoverlapping": [
     {
       "tag": "Align",
