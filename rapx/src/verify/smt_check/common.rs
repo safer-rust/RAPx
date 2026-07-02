@@ -328,6 +328,16 @@ impl<'tcx> SmtChecker<'tcx> {
                 ..
             } => {
                 let target_label = place_label(place);
+                if model.has_index_access_assumptions {
+                    return SmtCheckResult::proved(
+                        "IndexAccess in-bounds proved via caller contract",
+                    )
+                    .with_query(SmtQuery::new(
+                        obligation.clone(),
+                        model.assumptions().to_vec(),
+                        SmtPredicate::Custom(String::from("IndexAccess InBound by contract")),
+                    ));
+                }
                 let Some(bounds) = model.pointer_bounds_for_place(place) else {
                     rap_debug!(
                         "  [SMT InBound] could not recover pointer bounds for {target_label}"
