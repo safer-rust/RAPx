@@ -3084,7 +3084,7 @@
     {
       "tag": "InBound",
       "args": [
-        "index_access(slice, self)"
+        "index_access(arg:1, arg:0)"
       ]
     }
   ],
@@ -3092,7 +3092,7 @@
     {
       "tag": "InBound",
       "args": [
-        "index_access(slice, self)"
+        "index_access(arg:1, arg:0)"
       ]
     }
   ],
