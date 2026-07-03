@@ -22,22 +22,28 @@ fn init_inner(tcx: TyCtxt) -> Intrinsics {
     let mut indices: IndexMap<_, _> = (0..INTRINSICS.len()).map(|idx| (idx, false)).collect();
 
     let mut map = IndexMap::<Box<str>, DefId>::with_capacity(INTRINSICS.len());
-    for krate in rustc_public::external_crates() {
-        if !CRATES.iter().any(|name| *name == krate.name) {
-            continue;
-        }
 
+    for krate in std::iter::once(rustc_public::local_crate())
+        .chain(rustc_public::external_crates().into_iter())
+        .filter(|krate| CRATES.iter().any(|name| *name == krate.name))
+    {
         for fn_def in krate.fn_defs() {
-            let fn_name = fn_def.name();
+            let fn_name: Box<str> = fn_def.name().into();
+            let fn_name_str: &str = &fn_name;
             if let Some(name) = INTRINSICS.iter().enumerate().find_map(|(idx, paths)| {
-                if paths.iter().any(|path| **path == fn_name) {
+                if paths.iter().any(|&path| {
+                    path == fn_name_str
+                        || path.strip_prefix("core::").is_some_and(|s| s == fn_name_str)
+                        || path.strip_prefix("std::").is_some_and(|s| s == fn_name_str)
+                        || path.strip_prefix("alloc::").is_some_and(|s| s == fn_name_str)
+                }) {
                     assert_eq!(
                         indices.insert(idx, true),
                         Some(false),
                         "DefId for {fn_name} has been found: {:?}",
                         map.get(&*fn_name)
                     );
-                    Some(fn_name.as_str().into())
+                    Some(fn_name.clone())
                 } else {
                     None
                 }
@@ -98,11 +104,15 @@ macro_rules! intrinsics {
 intrinsics! {
     assume_init_drop: &[
         "std::mem::MaybeUninit::<T>::assume_init_drop",
-        "core::mem::MaybeUninit::<T>::assume_init_drop"
+        "core::mem::MaybeUninit::<T>::assume_init_drop",
+        "std::mem::maybe_uninit::MaybeUninit::<T>::assume_init_drop",
+        "core::mem::maybe_uninit::MaybeUninit::<T>::assume_init_drop"
     ],
     call_mut: &[
         "std::ops::FnMut::call_mut",
-        "core::ops::FnMut::call_mut"
+        "core::ops::FnMut::call_mut",
+        "std::ops::function::FnMut::call_mut",
+        "core::ops::function::FnMut::call_mut"
     ],
     clone: &[
         "std::clone::Clone::clone",
@@ -138,7 +148,9 @@ intrinsics! {
     ],
     manually_drop: &[
         "std::mem::ManuallyDrop::<T>::drop",
-        "core::mem::ManuallyDrop::<T>::drop"
+        "core::mem::ManuallyDrop::<T>::drop",
+        "std::mem::manually_drop::ManuallyDrop::<T>::drop",
+        "core::mem::manually_drop::ManuallyDrop::<T>::drop"
     ],
     replace: &[
         "std::mem::replace",

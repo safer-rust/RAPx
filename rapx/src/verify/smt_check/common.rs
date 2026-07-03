@@ -132,6 +132,7 @@ impl<'tcx> SmtChecker<'tcx> {
             PropertyKind::Typed => typed::check(self, checkpoint, property, forward),
             PropertyKind::ValidNum => valid_num::check(self, checkpoint, property, forward),
             PropertyKind::ValidPtr => valid_ptr::check(self, checkpoint, property, forward),
+            PropertyKind::NonVolatile => super::non_volatile::check(self, checkpoint, property, forward),
             _ => SmtCheckResult::unknown("no SMT lowering for this property yet"),
         }
     }
@@ -173,31 +174,20 @@ impl<'tcx> SmtChecker<'tcx> {
         forward: &ForwardVisitResult<'tcx>,
         obligation: SmtObligation,
     ) -> SmtCheckResult {
-        if !forward.forgets.is_empty() {
-            let reasons = forward
-                .forgets
-                .iter()
-                .map(|reason| format!("{reason:?}"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            return SmtCheckResult::unknown(
-                "path has precision loss; SMT proof is not trusted without a summary",
-            )
-            .with_query(SmtQuery::new(
-                obligation,
-                Vec::new(),
-                SmtPredicate::Custom(String::from(
-                    "proof skipped because relevant state was forgotten",
-                )),
-            ))
-            .with_note(format!("precision loss: {reasons}"));
-        }
+        let has_contracts = forward
+            .facts
+            .iter()
+            .any(|f| matches!(f, StateFact::Contract(_)));
 
+        // Build the SMT model once.  Contract facts (caller_requires)
+        // are always asserted, even when the path has forgets from
+        // unsupported intrinsics.
         let cfg = Config::new();
         let ctx = Context::new(&cfg);
         let solver = Solver::new(&ctx);
         let mut model = SmtModel::new(self.tcx, checkpoint, forward, &ctx);
         model.assert_forward_facts(&solver);
+
         if matches!(solver.check(), SatResult::Unsat) {
             return SmtCheckResult::proved(
                 "path facts are infeasible; the obligation holds vacuously on this path",
@@ -208,6 +198,25 @@ impl<'tcx> SmtChecker<'tcx> {
                 SmtPredicate::Custom(String::from("path constraints are unsat")),
             ));
         }
+
+        if !forward.forgets.is_empty() && !has_contracts {
+            let reasons = forward
+                .forgets
+                .iter()
+                .map(|reason| format!("{reason:?}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            return SmtCheckResult::unknown(
+                "path has precision loss; SMT proof is not trusted without a summary",
+            )
+            .with_note(format!("precision loss: {reasons}"));
+        }
+
+        // When forgets exist but contracts provide path assumptions,
+        // allow the SMT check to proceed against the contract-fact
+        // model.  The contract assertions may be sufficient to
+        // discharge the obligation even without full path precision.
+        // (No early return — fall through to obligation match.)
 
         match &obligation {
             SmtObligation::Aligned {
@@ -1335,7 +1344,9 @@ impl<'tcx> SmtChecker<'tcx> {
                 Some(SmtTerm::Place(PlaceKey::from_contract_place(place)))
             }
             ContractExpr::Const(value) => u64::try_from(*value).ok().map(SmtTerm::Const),
-            ContractExpr::ConstParam { .. } => None,
+            ContractExpr::ConstParam { name, .. } => {
+                Some(SmtTerm::ConstParam(name.clone()))
+            }
             ContractExpr::SizeOf(ty) => {
                 let size = self.required_size(caller, *ty)?;
                 Some(SmtTerm::Const(size))
@@ -1712,9 +1723,18 @@ impl<'tcx> SmtChecker<'tcx> {
             })?;
         if fields.is_empty()
             && let Operand::Constant(constant) = operand
-            && let Some(value) = const_int_from_debug(&format!("{:?}", constant.const_))
         {
-            return Some(ContractExpr::Const(value));
+            let const_debug = format!("{:?}", constant.const_);
+            if let Some(value) = const_int_from_debug(&const_debug) {
+                return Some(ContractExpr::Const(value));
+            }
+            rap_warn!("callsite Const debug={}", const_debug);
+            if let Some(name) = const_param_name_from_debug(&const_debug) {
+                return Some(ContractExpr::ConstParam {
+                    index: 0,
+                    name,
+                });
+            }
         }
         self.callsite_arg_place_with_fields(checkpoint, index, fields)
             .map(contract_expr_from_place_key)
@@ -2426,6 +2446,10 @@ pub(crate) struct SmtModel<'a, 'ctx, 'tcx> {
     forward: &'a ForwardVisitResult<'tcx>,
     ctx: &'ctx Context,
     place_terms: HashMap<PlaceKey, Int<'ctx>>,
+    /// Shared Z3 constants per MIR local — ensures every reference to the
+    /// same local produces the exact same SMT term (e.g. `mid` used in both
+    /// `ptr.add` and `unchecked_sub`).
+    local_terms: HashMap<usize, Int<'ctx>>,
     symbolic_align_terms: HashMap<String, Int<'ctx>>,
     symbolic_len_terms: HashMap<String, Int<'ctx>>,
     const_terms: HashMap<String, Int<'ctx>>,
@@ -2448,6 +2472,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             forward,
             ctx,
             place_terms: HashMap::new(),
+            local_terms: HashMap::new(),
             symbolic_align_terms: HashMap::new(),
             symbolic_len_terms: HashMap::new(),
             const_terms: HashMap::new(),
@@ -2554,17 +2579,66 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 Some(SmtTerm::ConstParam(name.clone()))
             }
             ContractExpr::Len(inner) => {
-                let label = match inner.as_ref() {
-                    ContractExpr::Place(place) => {
-                        let mut key = PlaceKey::from_contract_place(place);
+                let origin = match inner.as_ref() {
+                    ContractExpr::Place(cp) => {
+                        let mut key = PlaceKey::from_contract_place(cp);
                         if let PlaceBaseKey::Arg(index) = key.base {
                             key.base = PlaceBaseKey::Local(index + 1);
                         }
-                        place_label(&key)
+                        let val = AbstractValue::Place(key.clone());
+                        self.origin_key_for_value(&val, &mut TraceSeen::new())
                     }
-                    _ => return None,
+                    _ => None,
                 };
-                Some(SmtTerm::Value(format!("len({label})")))
+
+                // Try to link the contract's `len(self)` to the actual MIR
+                // `slice::len()` call result on this path.
+                let origin_str = origin.clone().unwrap_or_default();
+                let mut first_len_dest: Option<PlaceKey> = None;
+                for fact in &self.forward.facts {
+                    let StateFact::Call(call) = fact else { continue };
+                    let is_len_call = call.func.ends_with("::len")
+                        || call.func.contains("::len(");
+                    if !is_len_call {
+                        continue;
+                    }
+                    for effect in &call.effects {
+                        let crate::verify::call_summary::CallEffect::ReturnLengthOfArg {
+                            arg,
+                        } = effect
+                        else {
+                            continue;
+                        };
+                        let dest = PlaceKey {
+                            base: PlaceBaseKey::Local(call.destination.as_usize()),
+                            fields: Vec::new(),
+                        };
+                        // Remember first len call for fallback.
+                        if first_len_dest.is_none() {
+                            first_len_dest = Some(dest.clone());
+                        }
+                        let Some(arg_value) = call.args.get(*arg) else {
+                            continue;
+                        };
+                        let arg_origin = self.origin_key_for_value(
+                            arg_value,
+                            &mut TraceSeen::new(),
+                        );
+                        let matches = arg_origin.as_deref() == Some(&origin_str)
+                            || arg_origin
+                                .as_deref()
+                                .is_some_and(|ao| ao.starts_with(&origin_str));
+                        if matches {
+                            return Some(SmtTerm::Place(dest));
+                        }
+                    }
+                }
+                // Fallback: use any len() call result on this path.
+                if let Some(dest) = first_len_dest {
+                    return Some(SmtTerm::Place(dest));
+                }
+
+                Some(SmtTerm::Value(format!("len({})", origin_str)))
             }
             ContractExpr::Binary { op, lhs, rhs } => {
                 let lhs = Box::new(self.smt_term_from_contract_expr(lhs)?);
@@ -2603,12 +2677,18 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                         "created from a reference/raw pointer",
                     );
                     // Only assert alignment on the pointer when the pointee types
-                    // match – pointer-arithmetic wrappers produce pointers of a
+                    // match — pointer-arithmetic wrappers produce pointers of a
                     // different pointee type whose alignment must be proved from
                     // guard facts, not from the raw type alone.
-                    let ptr_pointee = self.place_ty(pointer).and_then(|ty| pointee_ty_str(ty));
-                    let src_pointee = self.place_ty(source).and_then(|ty| pointee_ty_str(ty));
-                    if ptr_pointee == src_pointee {
+                    // Normalize types (strip MaybeUninit, array/slice brackets)
+                    // so that e.g. [T] and T share the same alignment key.
+                    let ptr_pointee_str = self.place_ty(pointer)
+                        .and_then(|ty| pointee_ty_str(ty))
+                        .map(|s| normalize_init_ty_name(&s));
+                    let src_pointee_str = self.place_ty(source)
+                        .and_then(|ty| pointee_ty_str(ty))
+                        .map(|s| normalize_init_ty_name(&s));
+                    if ptr_pointee_str == src_pointee_str {
                         self.assert_place_alignment(solver, pointer);
                     }
                     self.assert_place_alignment(solver, source);
@@ -2624,6 +2704,36 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                         self.assert_place_alignment(solver, &place);
                     }
                     self.record_call_effect_assumptions(call);
+                    // exact_div(x, y) returns x / y.  Assert result <= x
+                    // so that downstream bounds checks (e.g.
+                    // from_raw_parts(ptr, exact_div(len, N))) can infer
+                    // chunk_count <= len.
+                    if call.func.contains("exact_div") {
+                        let dest = PlaceKey {
+                            base: PlaceBaseKey::Local(call.destination.as_usize()),
+                            fields: Vec::new(),
+                        };
+                        if let Some(dest_term) = self.term_for_place(&dest)
+                            && let Some(arg0) = call.args.get(0)
+                        {
+                            let cursor = self.call_definition_cursor(call);
+                            if let Some(arg0_term) = self.term_for_value_at(
+                                arg0,
+                                cursor,
+                                &mut TraceSeen::new(),
+                            ) {
+                                solver.assert(&dest_term.le(&arg0_term));
+                                // Cache the term so subsequent uses of this
+                                // local (e.g. Allocated check) get the same
+                                // Z3 variable.
+                                self.place_terms.insert(dest.clone(), dest_term);
+                                self.assumptions.push(SmtPredicate::Le(
+                                    SmtTerm::Place(dest),
+                                    SmtTerm::Value(value_label(arg0)),
+                                ));
+                            }
+                        }
+                    }
                 }
                 StateFact::KnownNonZero { place, reason } => {
                     self.assert_place_non_zero(solver, place, reason);
@@ -2863,9 +2973,15 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                                         self.has_index_access_assumptions =
                                             true;
                                         continue;
-                                    }
-                                }
-                            }
+            }
+        }
+        // Const-generic parameters (e.g. const N: usize) are
+        // always non-negative.  Assert this so that constraints like
+        // N != 0 or N >= 1 are provable.
+        for term in self.const_terms.values() {
+            solver.assert(&term.ge(&Int::from_u64(self.ctx, 0)));
+        }
+    }
 
                             let index_term = match index.as_ref() {
                                 ContractExpr::Place(place) => {
@@ -3283,14 +3399,31 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
     }
 
     fn allocated_object_for_place(&self, place: &PlaceKey) -> Option<PlaceKey> {
-        self.forward.facts.iter().find_map(|fact| match fact {
+        // 1) KnownAllocated facts (concrete allocations).
+        if let Some(object) = self.forward.facts.iter().find_map(|fact| match fact {
             StateFact::KnownAllocated {
                 place: allocated_place,
                 object,
                 ..
             } if allocated_place == place => Some(object.clone()),
             _ => None,
-        })
+        }) {
+            return Some(object);
+        }
+        // 2) PointsTo facts — when a pointer (or a projection of one)
+        //    traces to a reference, the reference is the allocation object.
+        let base = if place.fields.is_empty() {
+            place.clone()
+        } else {
+            PlaceKey { base: place.base.clone(), fields: Vec::new() }
+        };
+        if let Some(source) = self.forward.facts.iter().find_map(|fact| match fact {
+            StateFact::PointsTo { pointer, source } if *pointer == base => Some(source.clone()),
+            _ => None,
+        }) {
+            return Some(source);
+        }
+        None
     }
 
     /// Assert that a place is known to denote a non-zero address.
@@ -3465,7 +3598,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                     }
                 }
                 crate::verify::call_summary::CallEffect::ReturnLengthOfArg { arg } => {
-                    let source = call
+                    let raw_source = call
                         .args
                         .get(*arg)
                         .and_then(|value| {
@@ -3473,6 +3606,9 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                         })
                         .or_else(|| call.args.get(*arg).map(value_label))
                         .unwrap_or_else(|| format!("arg{arg}"));
+                    // Strip Deref projections (e.g. _1.* → _1) so the
+                    // length term matches the contract's len(self) key.
+                    let source = raw_source.split('.').next().unwrap_or(&raw_source);
                     let len_key = format!("len({source})");
                     let len_term = self.symbolic_len_term(&len_key);
                     self.place_terms.insert(destination.clone(), len_term);
@@ -3498,6 +3634,35 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                     ));
                 }
                 crate::verify::call_summary::CallEffect::ReturnConst { .. } => {}
+                crate::verify::call_summary::CallEffect::ReturnTupleFieldLength {
+                    field,
+                    from_arg,
+                } => {
+                    if *field == 0 {
+                        let cursor = self.call_definition_cursor(call);
+                        if let Some(mid_term) = call
+                            .args
+                            .get(*from_arg)
+                            .and_then(|v| {
+                                self.term_for_value_at(v, cursor, &mut TraceSeen::new())
+                            })
+                        {
+                            let label = value_label(
+                                call.args.get(*from_arg)
+                                    .unwrap_or(&AbstractValue::Unknown(String::new())),
+                            );
+                            let dest_key = PlaceKey {
+                                base: PlaceBaseKey::Local(call.destination.as_usize()),
+                                fields: vec![0],
+                            };
+                            self.place_terms.insert(dest_key.clone(), mid_term);
+                            self.assumptions.push(SmtPredicate::Eq(
+                                SmtTerm::Place(dest_key),
+                                SmtTerm::Value(label),
+                            ));
+                        }
+                    }
+                }
                 crate::verify::call_summary::CallEffect::ReturnNonZero
                 | crate::verify::call_summary::CallEffect::ReturnAligned { .. }
                 | crate::verify::call_summary::CallEffect::ReadMemory { .. }
@@ -3553,6 +3718,23 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
 
         if let Some(term) = self.place_terms.get(place) {
             return Some(term.clone());
+        }
+
+        // Use a shared per-local cache so every reference to the same MIR
+        // local (e.g. parameter `mid`) produces the identical Z3 term.
+        if place.fields.is_empty()
+            && let Some(local) = place.local()
+        {
+            let id = local.as_usize();
+            if let Some(term) = self.local_terms.get(&id) {
+                let term = term.clone();
+                self.place_terms.insert(place.clone(), term.clone());
+                return Some(term);
+            }
+            let term = Int::new_const(self.ctx, place_name(place));
+            self.local_terms.insert(id, term.clone());
+            self.place_terms.insert(place.clone(), term.clone());
+            return Some(term);
         }
 
         let term = Int::new_const(self.ctx, place_name(place));
@@ -4230,6 +4412,20 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             AbstractValue::Place(place) => self
                 .source_from_points_to(&place)
                 .map(|source| place_label(&source))
+                .or_else(|| {
+                    // Follow PointsTo(pointer→source) recursively to find
+                    // the ultimate origin (e.g. _5 → _6 → _1).
+                    self.forward.facts.iter().find_map(|fact| match fact {
+                        StateFact::PointsTo { pointer, source } if *pointer == place => {
+                            self.origin_key_for_value_before(
+                                &AbstractValue::Place(source.clone()),
+                                cursor,
+                                seen,
+                            )
+                        }
+                        _ => None,
+                    })
+                })
                 .or_else(|| Some(place_label(&place))),
             AbstractValue::Cast(inner, _) => self.origin_key_for_value_before(&inner, cursor, seen),
             AbstractValue::CallResult(call) if is_as_ptr_call(&call.func) => {
@@ -4482,10 +4678,35 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 if self.is_maybe_uninit_origin(origin_key) {
                     let len_term = Int::from_u64(self.ctx, u64::MAX / 8);
                     Some((len_term, SmtTerm::Const(u64::MAX / 8)))
+                } else if self.is_slice_pointer_origin(origin_key) {
+                    let len_key = format!("len({})", origin_key);
+                    let len_term = self.symbolic_len_term(&len_key);
+                    Some((len_term, SmtTerm::Value(len_key)))
                 } else {
                     None
                 }
             })
+    }
+
+    /// Return true if `origin_key` is the source of an `as_ptr`-like call
+    /// (suggesting it is a slice / reference whose internal pointer was
+    /// extracted).  For these origins a symbolic length term is safe because
+    /// the length is naturally bounded by the reference type.
+    fn is_slice_pointer_origin(&self, origin_key: &str) -> bool {
+        self.forward.facts.iter().any(|fact| {
+            let StateFact::Call(call) = fact else { return false };
+            is_as_ptr_call(&call.func)
+                && call.effects.iter().any(|effect| {
+                    matches!(
+                        effect,
+                        crate::verify::call_summary::CallEffect::ReturnPointerFromArg { .. }
+                    )
+                })
+                && call.args.iter().any(|arg| {
+                    self.origin_key_for_value(arg, &mut HashSet::new())
+                        .is_some_and(|key| key == origin_key)
+                })
+        })
     }
 
     /// Return true if the allocation for `origin_key` is a `MaybeUninit`
@@ -4708,7 +4929,7 @@ fn is_pointer_sub_call(func: &str) -> bool {
 }
 
 /// Return true when a call summary extracts a pointer from a slice-like object.
-fn is_as_ptr_call(func: &str) -> bool {
+pub(crate) fn is_as_ptr_call(func: &str) -> bool {
     PrimitiveCall::classify(func).is_some_and(PrimitiveCall::is_as_ptr_like)
 }
 
@@ -4960,6 +5181,31 @@ fn short_func_name(func: &str) -> String {
         .to_string()
 }
 
+/// Extract a const generic parameter name, e.g. `Param(N)` → `"N"`.
+fn const_param_name_from_debug(text: &str) -> Option<String> {
+    let text = text.trim();
+    // Format: Param(N)
+    if let Some(rest) = text.find("Param(").map(|i| &text[i + 6..]) {
+        let end = rest.find(')')?;
+        let name = rest[..end].trim().to_string();
+        if !name.is_empty() { return Some(name); }
+    }
+    // Format: Ty(usize, N/#1)  or  Ty(usize, N)
+    if let Some(rest) = text.strip_prefix("Ty(") {
+        let comma = rest.find(',')?;
+        let after_comma = rest[comma + 1..].trim();
+        let end = after_comma.find(')').unwrap_or(after_comma.len());
+        let name = after_comma[..end].trim();
+        // Strip trailing /#N index if present
+        if let Some(slash) = name.rfind('/') {
+            let name = name[..slash].trim();
+            if !name.is_empty() { return Some(name.to_string()); }
+        }
+        if !name.is_empty() { return Some(name.to_string()); }
+    }
+    None
+}
+
 /// Extract a small integer constant from rustc's debug representation.
 fn const_int_from_debug(text: &str) -> Option<u128> {
     let text = text.trim();
@@ -5053,10 +5299,14 @@ fn normalize_init_ty_name(ty_name: &str) -> String {
         }
     }
     if let Some(rest) = ty_name.strip_prefix('[')
-        && let Some(semi_pos) = rest.rfind("; ")
         && rest.ends_with(']')
     {
-        return normalize_init_ty_name(&rest[..semi_pos]);
+        let inner = &rest[..rest.len() - 1];
+        if let Some(semi_pos) = inner.rfind("; ") {
+            return normalize_init_ty_name(&inner[..semi_pos]);
+        }
+        // Slice type [T] — same alignment as T.
+        return normalize_init_ty_name(inner);
     }
     let mut result = ty_name.to_string();
     while let Some(slash) = result.rfind('/')

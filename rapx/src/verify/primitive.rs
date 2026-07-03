@@ -26,6 +26,8 @@ pub enum PrimitiveCall {
     SizeOf,
     FromRawParts,
     FromRawPartsMut,
+    SplitAt,
+    SplitAtMut,
 }
 
 impl PrimitiveCall {
@@ -82,6 +84,12 @@ impl PrimitiveCall {
         }
         if name.ends_with("::from_raw_parts_mut") || name.contains("::from_raw_parts_mut") {
             return Some(Self::FromRawPartsMut);
+        }
+        if name.contains("::split_at") || name.ends_with("::split_at_mut") {
+            if name.contains("_mut") {
+                return Some(Self::SplitAtMut);
+            }
+            return Some(Self::SplitAt);
         }
         if name.ends_with("::from_raw_parts") || name.contains("::from_raw_parts") {
             return Some(Self::FromRawParts);

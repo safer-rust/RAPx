@@ -708,6 +708,11 @@
     "self",
     "slice"
   ],
+  "core::slice::rotate::ptr_rotate": [
+    "left",
+    "mid",
+    "right"
+  ],
   "core::slice::raw::from_ptr_range": [
     "range"
   ],

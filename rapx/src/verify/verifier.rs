@@ -632,6 +632,7 @@ impl<'tcx> ForwardVerifier<'tcx> {
                     }
                 }
                 CallEffect::ReturnLengthOfArg { .. } => {}
+                CallEffect::ReturnTupleFieldLength { .. } => {}
                 CallEffect::ForgetArgFacts { reason, .. } => {
                     result.forgets.push(reason.clone());
                 }

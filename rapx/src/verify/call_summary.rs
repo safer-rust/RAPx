@@ -110,6 +110,9 @@ pub enum CallEffect {
     WriteMemory { pointer_arg: usize },
     /// The return value is the length of an aggregate argument.
     ReturnLengthOfArg { arg: usize },
+    /// A specific field of the returned tuple carries the length of a given
+    /// argument (e.g. split_at(mid) returns (left, right) where left.len() == mid).
+    ReturnTupleFieldLength { field: usize, from_arg: usize },
     /// Facts about an argument must be forgotten conservatively.
     ForgetArgFacts { arg: usize, reason: ForgetReason },
 }
@@ -363,6 +366,21 @@ pub fn effect_summary<'tcx>(
             name,
             destination,
             effects,
+            unsupported: false,
+        };
+    }
+
+    if let Some(prim) = primitive
+        && matches!(prim, PrimitiveCall::SplitAt | PrimitiveCall::SplitAtMut)
+    {
+        return CallEffectSummary {
+            callee,
+            name,
+            destination,
+            effects: vec![CallEffect::ReturnTupleFieldLength {
+                field: 0,
+                from_arg: 1,
+            }],
             unsupported: false,
         };
     }

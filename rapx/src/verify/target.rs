@@ -360,7 +360,20 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
             .map(|callee_def_id| (*callee_def_id, self.get_fn_contracts(*callee_def_id)))
             .collect();
 
-        let caller_requires = self.get_fn_contracts(def_id);
+        let mut caller_requires = self.get_fn_contracts(def_id);
+        // Supplement inline #[rapx::requires] with JSON contracts from the
+        // standard-library database so that `caller_requires` (used as the
+        // entry-point assumptions when verifying the function body) reflects
+        // the full documented safety contract.  Callee-side resolution is
+        // unchanged.
+        if is_std_crate_def_id(self.tcx, def_id) {
+            let json_contracts = get_contract_from_entry(
+                self.tcx,
+                def_id,
+                get_std_contracts_from_assets(self.tcx, def_id),
+            );
+            caller_requires.extend(json_contracts);
+        }
 
         let raw_ptr_deref_checks = build_raw_ptr_deref_checks(self.tcx, def_id);
         let static_mut_checks = build_static_mut_checks(self.tcx, def_id);

@@ -36,6 +36,21 @@ pub fn get_std_contracts_from_assets(tcx: TyCtxt<'_>, def_id: DefId) -> &'static
         return entries.as_slice();
     }
 
+    // Strip intra-path type segments that appear in impl blocks.
+    // E.g. `core::slice::[T]::as_chunks_unchecked` → `core::slice::as_chunks_unchecked`.
+    {
+        let stripped: Vec<&str> = cleaned_path_name
+            .split("::")
+            .filter(|s| !s.starts_with('[') && !s.starts_with('<'))
+            .collect();
+        if stripped.len() != cleaned_path_name.matches("::").count() + 1 {
+            let stripped_path = stripped.join("::");
+            if let Some(entries) = db.get(&stripped_path) {
+                return entries.as_slice();
+            }
+        }
+    }
+
     // Wildcard fallback: progressively replace tail segments with `*`.
     let mut segments: Vec<&str> = cleaned_path_name.split("::").collect();
     for i in (1..segments.len()).rev() {
