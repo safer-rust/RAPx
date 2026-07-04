@@ -420,6 +420,18 @@ impl<'tcx> ForwardVerifier<'tcx> {
                     _ => None,
                 };
                 if let Some(source_place) = source_place {
+                    let has_projection = source_place
+                        .projection
+                        .iter()
+                        .any(|p| {
+                            matches!(p,
+                                rustc_middle::mir::ProjectionElem::Deref |
+                                rustc_middle::mir::ProjectionElem::Field(..)
+                            )
+                        });
+                    if !has_projection {
+                        return;
+                    }
                     let source_key = PlaceKey::from_mir_place(source_place);
                     let op_ty = operand.ty(&body.local_decls, self.tcx);
                     result.facts.push(StateFact::Cast {
@@ -436,6 +448,18 @@ impl<'tcx> ForwardVerifier<'tcx> {
                     _ => None,
                 };
                 if let Some(source_place) = source_place {
+                    let has_projection = source_place
+                        .projection
+                        .iter()
+                        .any(|p| {
+                            matches!(p,
+                                rustc_middle::mir::ProjectionElem::Deref |
+                                rustc_middle::mir::ProjectionElem::Field(..)
+                            )
+                        });
+                    if !has_projection {
+                        return;
+                    }
                     let source_key = PlaceKey::from_mir_place(source_place);
                     let op_ty = operand.ty(&body.local_decls, self.tcx);
                     result.facts.push(StateFact::Cast {
