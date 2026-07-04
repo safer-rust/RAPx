@@ -420,13 +420,6 @@ impl<'tcx> ForwardVerifier<'tcx> {
                     _ => None,
                 };
                 if let Some(source_place) = source_place {
-                    let has_deref = source_place
-                        .projection
-                        .iter()
-                        .any(|p| matches!(p, rustc_middle::mir::ProjectionElem::Deref));
-                    if !has_deref {
-                        return;
-                    }
                     let source_key = PlaceKey::from_mir_place(source_place);
                     let op_ty = operand.ty(&body.local_decls, self.tcx);
                     result.facts.push(StateFact::Cast {
@@ -443,13 +436,6 @@ impl<'tcx> ForwardVerifier<'tcx> {
                     _ => None,
                 };
                 if let Some(source_place) = source_place {
-                    let has_deref = source_place
-                        .projection
-                        .iter()
-                        .any(|p| matches!(p, rustc_middle::mir::ProjectionElem::Deref));
-                    if !has_deref {
-                        return;
-                    }
                     let source_key = PlaceKey::from_mir_place(source_place);
                     let op_ty = operand.ty(&body.local_decls, self.tcx);
                     result.facts.push(StateFact::Cast {
@@ -1358,7 +1344,8 @@ fn fixed_allocation_elements<'tcx>(
             Some((format!("{elem:?}"), value))
         }
         TyKind::Ref(_, inner, _) => fixed_allocation_elements(tcx, caller, *inner),
-        TyKind::Slice(_) | TyKind::RawPtr(_, _) => None,
+        TyKind::Slice(elem) => Some((format!("{elem:?}"), 0)),
+        TyKind::RawPtr(_, _) => None,
         TyKind::Adt(_, args) => {
             let ty_name = format!("{ty:?}");
             if ty_name.contains("MaybeUninit") {

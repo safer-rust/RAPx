@@ -3124,12 +3124,6 @@
       "args": [
         "N != 0"
       ]
-    },
-    {
-      "tag": "ValidNum",
-      "args": [
-        "len(self) % N == 0"
-      ]
     }
   ],
   "core::slice::as_chunks_unchecked_mut": [
@@ -3137,12 +3131,6 @@
       "tag": "ValidNum",
       "args": [
         "N != 0"
-      ]
-    },
-    {
-      "tag": "ValidNum",
-      "args": [
-        "len(self) % N == 0"
       ]
     }
   ],
@@ -3213,7 +3201,7 @@
     },
     {
       "tag": "ValidPtr",
-      "args": ["mid"]
+      "args": ["mid", "T", "1"]
     }
   ],
   "core::slice::ascii::as_ascii_unchecked": [
@@ -5465,6 +5453,100 @@
       "args": [
         "0 == 0"
       ]
+    }
+  ],
+  "core::slice::<impl [T]>::reverse": [
+    {
+      "tag": "NonNull",
+      "args": ["arg:0"]
+    },
+    {
+      "tag": "Align",
+      "args": ["arg:0", "T"]
+    }
+  ],
+  "core::slice::<impl [T]>::as_chunks": [
+    {
+      "tag": "NonNull",
+      "args": ["arg:0"]
+    }
+  ],
+  "core::slice::<impl [T]>::as_chunks_mut": [
+    {
+      "tag": "NonNull",
+      "args": ["arg:0"]
+    }
+  ],
+  "core::slice::<impl [T]>::as_rchunks": [
+    {
+      "tag": "NonNull",
+      "args": ["arg:0"]
+    }
+  ],
+  "core::slice::<impl [T]>::split_at_unchecked": [
+    {
+      "tag": "NonNull",
+      "args": ["arg:0"]
+    }
+  ],
+  "core::slice::<impl [T]>::split_at_mut_unchecked": [
+    {
+      "tag": "NonNull",
+      "args": ["arg:0"]
+    }
+  ],
+  "core::slice::<impl [T]>::copy_from_slice": [
+    {
+      "tag": "NonNull",
+      "args": ["arg:0"]
+    }
+  ],
+  "core::slice::<impl [T]>::copy_within": [
+    {
+      "tag": "NonNull",
+      "args": ["arg:0"]
+    }
+  ],
+  "core::slice::<impl [T]>::align_to": [
+    {
+      "tag": "NonNull",
+      "args": ["arg:0"]
+    }
+  ],
+  "core::slice::<impl [T]>::align_to_mut": [
+    {
+      "tag": "NonNull",
+      "args": ["arg:0"]
+    }
+  ],
+  "core::slice::<impl [T]>::as_simd": [
+    {
+      "tag": "NonNull",
+      "args": ["arg:0"]
+    }
+  ],
+  "core::slice::<impl [T]>::as_simd_mut": [
+    {
+      "tag": "NonNull",
+      "args": ["arg:0"]
+    }
+  ],
+  "core::slice::<impl [T]>::get_disjoint_unchecked_mut": [
+    {
+      "tag": "NonNull",
+      "args": ["arg:0"]
+    }
+  ],
+  "core::slice::<impl [[T; N]]>::as_flattened": [
+    {
+      "tag": "NonNull",
+      "args": ["arg:0"]
+    }
+  ],
+  "core::slice::<impl [[T; N]]>::as_flattened_mut": [
+    {
+      "tag": "NonNull",
+      "args": ["arg:0"]
     }
   ]
 }

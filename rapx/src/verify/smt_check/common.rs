@@ -1728,13 +1728,13 @@ impl<'tcx> SmtChecker<'tcx> {
             if let Some(value) = const_int_from_debug(&const_debug) {
                 return Some(ContractExpr::Const(value));
             }
-            rap_warn!("callsite Const debug={}", const_debug);
             if let Some(name) = const_param_name_from_debug(&const_debug) {
                 return Some(ContractExpr::ConstParam {
                     index: 0,
                     name,
                 });
             }
+            rap_warn!("callsite Const debug={}", const_debug);
         }
         self.callsite_arg_place_with_fields(checkpoint, index, fields)
             .map(contract_expr_from_place_key)
@@ -3243,15 +3243,19 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
     ) -> Option<PointerBounds<'ctx>> {
         if let Some(call) = self.pointer_add_call_for_place(place) {
             let (base_arg, offset_arg) = call.effects.iter().find_map(|effect| {
-                let crate::verify::call_summary::CallEffect::ReturnPointerAdd {
-                    base_arg,
-                    offset_arg,
-                    ..
-                } = effect
-                else {
-                    return None;
-                };
-                Some((*base_arg, *offset_arg))
+                match effect {
+                    crate::verify::call_summary::CallEffect::ReturnPointerAdd {
+                        base_arg,
+                        offset_arg,
+                        ..
+                    }
+                    | crate::verify::call_summary::CallEffect::ReturnPointerSub {
+                        base_arg,
+                        offset_arg,
+                        ..
+                    } => Some((*base_arg, *offset_arg)),
+                    _ => None,
+                }
             })?;
             let base = call.args.get(base_arg)?;
             let index = call.args.get(offset_arg)?;
@@ -3261,10 +3265,42 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
 
             let index_term = self.term_for_value_at(index, call_cursor, &mut TraceSeen::new())?;
             let (len_term_int, len_term) = self.bounds_len_for_origin(&base_origin, Some(index))?;
+
+            // For pointer arithmetic on a base pointer that is a Range field,
+            // adjust the index: base_offset +/- count instead of just count.
+            let result_index_smt: SmtTerm;
+            let result_index_val: Int<'ctx>;
+            if let AbstractValue::Place(base_place) = base {
+                let (base_smt, base_val) = self.field_projection_index(
+                    base_place, &base_origin, &len_term,
+                );
+                if !matches!(&base_smt, SmtTerm::Const(0)) {
+                    // base has a non-zero offset — adjust by the arithmetic
+                    let is_sub = call_has_pointer_sub_effect(&call);
+                    let (adjusted_val, adjusted_smt) = if is_sub {
+                        let v = Int::sub(&self.ctx, &[base_val, index_term]);
+                        let s = SmtTerm::Sub(Box::new(base_smt), Box::new(SmtTerm::Value(value_label(index))));
+                        (v, s)
+                    } else {
+                        let v = Int::add(&self.ctx, &[base_val, index_term]);
+                        let s = SmtTerm::Add(Box::new(base_smt), Box::new(SmtTerm::Value(value_label(index))));
+                        (v, s)
+                    };
+                    result_index_val = adjusted_val;
+                    result_index_smt = adjusted_smt;
+                } else {
+                    result_index_val = index_term;
+                    result_index_smt = SmtTerm::Value(value_label(index));
+                }
+            } else {
+                result_index_val = index_term;
+                result_index_smt = SmtTerm::Value(value_label(index));
+            }
+
             return Some(PointerBounds {
-                index: index_term,
+                index: result_index_val,
                 len: len_term_int,
-                index_term: SmtTerm::Value(value_label(index)),
+                index_term: result_index_smt,
                 len_term,
                 origin_key: base_origin,
             });
@@ -3278,13 +3314,174 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         let zero = AbstractValue::ConstInt(0);
         let (len_term_int, len_term) = self.bounds_len_for_origin(&base_origin, Some(&zero))?;
 
+        // Compute the correct index for field projections from Range types.
+        // Field [0] (start) is at offset 0; field [1] (end) is at offset len.
+        let (index_term, index_val) = self.field_projection_index(place, &base_origin, &len_term);
+
         Some(PointerBounds {
-            index: Int::from_u64(self.ctx, 0),
+            index: index_val,
             len: len_term_int,
-            index_term: SmtTerm::Const(0),
+            index_term,
             len_term,
             origin_key: base_origin,
         })
+    }
+
+    /// Walk the value chain for `place` to determine if it is a field projection
+    /// from an `as_ptr_range`/`as_mut_ptr_range` result (or an inlined equivalent).
+    /// Returns (index_term, index_val).  Field [0] (start) → offset 0;
+    /// field [1] (end) → offset len.
+    fn field_projection_index(
+        &mut self,
+        place: &PlaceKey,
+        origin_key: &str,
+        len_term: &SmtTerm,
+    ) -> (SmtTerm, Int<'ctx>) {
+        let default_index = SmtTerm::Const(0);
+        let default_val = Int::from_u64(self.ctx, 0);
+
+        let mut cur_place = place.clone();
+        loop {
+            if !cur_place.fields.is_empty() {
+                let field_idx = cur_place.fields.as_slice();
+                let mut base = cur_place.clone();
+                base.fields.clear();
+                if let Some(local) = base.local() {
+                    if let Some(definition) = self.forward.latest_value_definition_before(
+                        local,
+                        self.latest_cursor(),
+                    ) {
+                        let is_range = match &definition.value {
+                            AbstractValue::CallResult(call) => {
+                                let prim = PrimitiveCall::classify(&call.func);
+                                prim == Some(PrimitiveCall::AsPtrRange)
+                                    || prim == Some(PrimitiveCall::AsMutPtrRange)
+                            }
+                            AbstractValue::Aggregate(_, _) => true,
+                            _ => false,
+                        };
+                        if is_range {
+                            if field_idx == [0] {
+                                return (SmtTerm::Const(0), Int::from_u64(self.ctx, 0));
+                            }
+                            if field_idx == [1] {
+                                let len_key = format!("len({})", origin_key);
+                                let len_val = self.symbolic_len_term(&len_key);
+                                return (SmtTerm::Value(len_key), len_val);
+                            }
+                        }
+                        // Follow Cast facts for inlined aggregates
+                        for fact in &self.forward.facts {
+                            if let StateFact::Cast { target, source, .. } = fact {
+                                if *target == cur_place {
+                                    if let AbstractValue::Place(p) = source {
+                                        cur_place = p.clone();
+                                        // Try again with the new place
+                                        if cur_place.fields.as_slice() == [1] {
+                                            let mut inner_base = cur_place.clone();
+                                            inner_base.fields.clear();
+                                            if let Some(inner_local) = inner_base.local() {
+                                                if let Some(inner_def) = self.forward.latest_value_definition_before(inner_local, self.latest_cursor()) {
+                                                    if let AbstractValue::CallResult(inner_call) = &inner_def.value {
+                                                        let inner_prim = PrimitiveCall::classify(&inner_call.func);
+                                                        if inner_prim == Some(PrimitiveCall::AsPtrRange) || inner_prim == Some(PrimitiveCall::AsMutPtrRange) {
+                                                            let len_key = format!("len({})", origin_key);
+                                                            let len_val = self.symbolic_len_term(&len_key);
+                                                            return (SmtTerm::Value(len_key), len_val);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                return (default_index, default_val);
+            }
+
+            if let Some(local) = cur_place.local() {
+                if let Some(definition) =
+                    self.forward.latest_value_definition_before(local, self.latest_cursor())
+                {
+                    match &definition.value {
+                        AbstractValue::Place(p) => {
+                            cur_place = p.clone();
+                            continue;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            return (default_index, default_val);
+        }
+    }
+
+    /// Compute the offset index for a pointer-arithmetic call result.
+    /// result_offset = base_offset (+ or -) count
+    fn compute_pointer_arith_index(
+        &mut self,
+        base: &AbstractValue<'tcx>,
+        base_origin: &str,
+        len_term: &SmtTerm,
+        call: &CallSummary<'tcx>,
+        call_cursor: ValueCursor,
+    ) -> (SmtTerm, Int<'ctx>) {
+        // Get the base pointer's PlaceKey
+        let base_place = match base {
+            AbstractValue::Place(p) => p.clone(),
+            _ => {
+                // Fallback: use the count as the index (old behavior)
+                if let Some(index) = call.effects.iter().find_map(|effect| match effect {
+                    crate::verify::call_summary::CallEffect::ReturnPointerAdd { offset_arg, .. }
+                    | crate::verify::call_summary::CallEffect::ReturnPointerSub { offset_arg, .. } => {
+                        call.args.get(*offset_arg)
+                    }
+                    _ => None,
+                }) {
+                    let count_smt = SmtTerm::Value(value_label(index));
+                    let count_val = self.term_for_value_at(index, call_cursor, &mut TraceSeen::new())
+                        .unwrap_or(Int::from_u64(self.ctx, 0));
+                    return (count_smt, count_val);
+                }
+                return (SmtTerm::Const(0), Int::from_u64(self.ctx, 0));
+            }
+        };
+
+        // Compute base offset using field_projection_index
+        let (base_idx_smt, _base_idx_val) = self.field_projection_index(
+            &base_place, base_origin, len_term,
+        );
+
+        // Get the count term
+        let count = call.effects.iter().find_map(|effect| match effect {
+            crate::verify::call_summary::CallEffect::ReturnPointerAdd { offset_arg, .. }
+            | crate::verify::call_summary::CallEffect::ReturnPointerSub { offset_arg, .. } => {
+                call.args.get(*offset_arg)
+            }
+            _ => None,
+        });
+
+        let count_smt = if let Some(c) = count {
+            SmtTerm::Value(value_label(c))
+        } else {
+            SmtTerm::Const(0)
+        };
+
+        let is_sub = call_has_pointer_sub_effect(call);
+        let result_smt = if is_sub {
+            SmtTerm::Sub(Box::new(base_idx_smt), Box::new(count_smt))
+        } else {
+            SmtTerm::Add(Box::new(base_idx_smt), Box::new(count_smt))
+        };
+
+        let result_val = self.term_for_smt_term(&result_smt)
+            .unwrap_or(Int::from_u64(self.ctx, 0));
+
+        (result_smt, result_val)
     }
 
     /// Recover the allocation object and element offset for a pointer-like
@@ -3754,14 +3951,38 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         cursor: ValueCursor,
         seen: &mut TraceSeen,
     ) -> Option<Int<'ctx>> {
-        if place.fields.as_slice() != [0] {
-            return None;
-        }
         let mut base = place.clone();
         base.fields.clear();
         let local = base.local()?;
         let definition = self.forward.latest_value_definition_before(local, cursor)?;
         let value = &definition.value;
+
+        // Handle field projections from as_ptr_range / as_mut_ptr_range results.
+        // Field 0 is the start pointer (== arg0's address).
+        // Field 1 is the end pointer (== arg0's address + len of arg0).
+        if let AbstractValue::CallResult(call) = value {
+            let prim = PrimitiveCall::classify(&call.func);
+            if prim == Some(PrimitiveCall::AsPtrRange)
+                || prim == Some(PrimitiveCall::AsMutPtrRange)
+            {
+                let arg_index = if place.fields.as_slice() == [0] {
+                    0 // field 0 = start = arg0.as_ptr()
+                } else if place.fields.as_slice() == [1] {
+                    0 // field 1 = end = arg0.as_ptr() + len (use base arg0 term)
+                } else {
+                    return None;
+                };
+                let call_cursor = self.call_definition_cursor(call);
+                return call
+                    .args
+                    .get(arg_index)
+                    .and_then(|arg| self.term_for_value_at(arg, call_cursor, seen));
+            }
+        }
+
+        if place.fields.as_slice() != [0] {
+            return None;
+        }
         let AbstractValue::Binary(op, lhs, rhs) = value else {
             return None;
         };
@@ -4263,7 +4484,11 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             &mut TraceSeen::new(),
         )?;
         match value {
-            AbstractValue::CallResult(call) if call_has_pointer_add_effect(&call) => Some(call),
+            AbstractValue::CallResult(call)
+                if call_has_pointer_add_effect(&call) || call_has_pointer_sub_effect(&call) =>
+            {
+                Some(call)
+            }
             _ => None,
         }
     }
@@ -4288,6 +4513,42 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             return None;
         }
         if !place.fields.is_empty() {
+            let mut base = place.clone();
+            base.fields.clear();
+            let local = base.local()?;
+            if let Some(definition) = self.forward.latest_value_definition_before(local, cursor) {
+                // Handle as_ptr_range / as_mut_ptr_range (call result)
+                if let AbstractValue::CallResult(call) = &definition.value {
+                    let prim = PrimitiveCall::classify(&call.func);
+                    if prim == Some(PrimitiveCall::AsPtrRange)
+                        || prim == Some(PrimitiveCall::AsMutPtrRange)
+                    {
+                        if let Some(source_arg) = call.effects.iter().find_map(|effect| {
+                            match effect {
+                                crate::verify::call_summary::CallEffect::ReturnAliasArg { arg }
+                                | crate::verify::call_summary::CallEffect::ReturnPointerFromArg { arg } => Some(*arg),
+                                _ => None,
+                            }
+                        }) {
+                            let call_cursor = self.call_definition_cursor(call);
+                            if let Some(arg_value) = call.args.get(source_arg) {
+                                return self.resolved_value_before(arg_value, call_cursor, seen);
+                            }
+                        }
+                    }
+                }
+                // Handle inlined as_ptr_range (aggregate of as_ptr + add results)
+                // Find Cast facts that connect field places to their source values
+                if let AbstractValue::Aggregate(_, _) = &definition.value {
+                    for fact in &self.forward.facts {
+                        if let StateFact::Cast { target, source, .. } = fact {
+                            if *target == *place {
+                                return self.resolved_value_before(source, definition.ordinal, seen);
+                            }
+                        }
+                    }
+                }
+            }
             return Some(AbstractValue::Place(place.clone()));
         }
         let local = place.local()?;
@@ -4441,6 +4702,8 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 if let Some(source_arg) = call.effects.iter().find_map(|effect| match effect {
                     crate::verify::call_summary::CallEffect::ReturnPointerFromArg { arg }
                     | crate::verify::call_summary::CallEffect::ReturnAliasArg { arg } => Some(*arg),
+                    crate::verify::call_summary::CallEffect::ReturnPointerAdd { base_arg, .. }
+                    | crate::verify::call_summary::CallEffect::ReturnPointerSub { base_arg, .. } => Some(*base_arg),
                     _ => None,
                 }) {
                     let call_cursor = self.call_definition_cursor(&call);
@@ -4584,6 +4847,20 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             } if fact_pointer == pointer => Some(source.clone()),
             _ => None,
         })
+        .or_else(|| {
+            if pointer.fields.is_empty() {
+                return None;
+            }
+            let mut base = pointer.clone();
+            base.fields.clear();
+            self.forward.facts.iter().find_map(|fact| match fact {
+                StateFact::PointsTo {
+                    pointer: fact_pointer,
+                    source,
+                } if *fact_pointer == base => Some(source.clone()),
+                _ => None,
+            })
+        })
     }
 
     /// Candidate address/value terms for an `Init` target.
@@ -4667,14 +4944,10 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 SmtTerm::Value(value_label(&len_value)),
             ));
         }
-        self.allocated_len_for_origin(origin_key)
+        let result = self.allocated_len_for_origin(origin_key)
             .filter(|&len| len > 0)
             .map(|len| (Int::from_u64(self.ctx, len), SmtTerm::Const(len)))
             .or_else(|| {
-                // Dynamic-length MaybeUninit<[T; N]> with const-generic N.
-                // The actual bound is enforced by the loop guard (i < N),
-                // so a large sentinel is safe — it cannot produce false
-                // positives for well-guarded loops.
                 if self.is_maybe_uninit_origin(origin_key) {
                     let len_term = Int::from_u64(self.ctx, u64::MAX / 8);
                     Some((len_term, SmtTerm::Const(u64::MAX / 8)))
@@ -4685,7 +4958,8 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 } else {
                     None
                 }
-            })
+            });
+        result
     }
 
     /// Return true if `origin_key` is the source of an `as_ptr`-like call
@@ -4695,11 +4969,15 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
     fn is_slice_pointer_origin(&self, origin_key: &str) -> bool {
         self.forward.facts.iter().any(|fact| {
             let StateFact::Call(call) = fact else { return false };
-            is_as_ptr_call(&call.func)
+            let is_ptr_like = is_as_ptr_call(&call.func);
+            let is_ptr_range = PrimitiveCall::classify(&call.func)
+                .is_some_and(|p| matches!(p, PrimitiveCall::AsPtrRange | PrimitiveCall::AsMutPtrRange));
+            (is_ptr_like || is_ptr_range)
                 && call.effects.iter().any(|effect| {
                     matches!(
                         effect,
-                        crate::verify::call_summary::CallEffect::ReturnPointerFromArg { .. }
+                        crate::verify::call_summary::CallEffect::ReturnAliasArg { .. }
+                            | crate::verify::call_summary::CallEffect::ReturnPointerFromArg { .. }
                     )
                 })
                 && call.args.iter().any(|arg| {

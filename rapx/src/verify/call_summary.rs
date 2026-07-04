@@ -138,6 +138,18 @@ pub fn dependency_summary<'tcx>(
         };
     }
 
+    if primitive == Some(PrimitiveCall::AsPtrRange)
+        || primitive == Some(PrimitiveCall::AsMutPtrRange)
+    {
+        return CallDependencySummary {
+            callee,
+            name,
+            return_depends_on_args: vec![0],
+            may_write_args: Vec::new(),
+            unsupported: false,
+        };
+    }
+
     if primitive.is_some_and(PrimitiveCall::is_pointer_arithmetic) {
         return CallDependencySummary {
             callee,
@@ -270,6 +282,19 @@ pub fn effect_summary<'tcx>(
         if let Some((align, ty_name)) = destination_pointee_alignment(tcx, caller, destination) {
             effects.push(CallEffect::ReturnAligned { align, ty_name });
         }
+        return CallEffectSummary {
+            callee,
+            name,
+            destination,
+            effects,
+            unsupported: false,
+        };
+    }
+
+    if primitive == Some(PrimitiveCall::AsPtrRange)
+        || primitive == Some(PrimitiveCall::AsMutPtrRange)
+    {
+        let effects = vec![CallEffect::ReturnAliasArg { arg: 0 }];
         return CallEffectSummary {
             callee,
             name,

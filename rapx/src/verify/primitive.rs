@@ -11,6 +11,8 @@
 pub enum PrimitiveCall {
     AsPtr,
     AsMutPtr,
+    AsPtrRange,
+    AsMutPtrRange,
     PtrCast,
     PtrAdd,
     PtrSub,
@@ -33,11 +35,21 @@ pub enum PrimitiveCall {
 impl PrimitiveCall {
     /// Classify a stable rustc def-path string as a known primitive call.
     pub fn classify(name: &str) -> Option<Self> {
-        if name.ends_with("::as_ptr") || name.contains("::as_ptr") {
+        if name.ends_with("::as_ptr")
+            || (name.contains("::as_ptr") && !name.ends_with("::as_ptr_range"))
+        {
             return Some(Self::AsPtr);
         }
-        if name.ends_with("::as_mut_ptr") || name.contains("::as_mut_ptr") {
+        if name.ends_with("::as_mut_ptr")
+            || (name.contains("::as_mut_ptr") && !name.ends_with("::as_mut_ptr_range"))
+        {
             return Some(Self::AsMutPtr);
+        }
+        if name.ends_with("::as_ptr_range") || name.contains("::as_ptr_range") {
+            return Some(Self::AsPtrRange);
+        }
+        if name.ends_with("::as_mut_ptr_range") || name.contains("::as_mut_ptr_range") {
+            return Some(Self::AsMutPtrRange);
         }
         if name.contains("::cast") || name.contains("cast_array") || name.contains("cast_const") || name.contains("cast_mut") {
             return Some(Self::PtrCast);

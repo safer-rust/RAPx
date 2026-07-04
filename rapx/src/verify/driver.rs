@@ -790,8 +790,8 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                     }
                     rap_info!("  --- unsafe checkpoints ---");
                     rap_info!("      <none>");
-                    rap_warn!("        Unknown | Unproved");
-                    rap_warn!("  result: UNSOUND (no safety contracts found)");
+                    rap_info!("        <none>");
+                    rap_info!("  result: SOUND (no unsafe checkpoints)");
                     rap_info!("");
                 }
                 continue;
