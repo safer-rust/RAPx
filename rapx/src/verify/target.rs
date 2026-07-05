@@ -194,8 +194,8 @@ fn resolve_chain_contracts<'tcx>(
                     reqs = get_trait_method_requires(tcx, sub_def_id);
                 }
 
-                // Try std contracts database.
-                if reqs.is_empty() && is_std_crate_def_id(tcx, sub_def_id) {
+                // Try contracts database (std-public + std-private).
+                if reqs.is_empty() {
                     let entries = std_contracts(tcx, sub_def_id);
                     reqs = get_contract_from_entry(tcx, sub_def_id, entries);
                 }
@@ -289,12 +289,13 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
                     requires = trait_requires.clone();
                 }
 
-                if requires.is_empty() && is_std {
+                if requires.is_empty() {
                     requires = get_contract_from_entry(
                         self.tcx,
                         callee_def_id,
                         get_std_contracts_from_assets(self.tcx, callee_def_id),
                     );
+                }
 
                 if requires.is_empty() {
                     // Recursively resolve contracts from the callee's call chain.
@@ -306,7 +307,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
                         3, // max chain depth
                         get_std_contracts_from_assets,
                     );
-                    if requires.is_empty() {
+                    if requires.is_empty() && is_std {
                         let show_warning = match module_filter {
                             Some(_) => callee_in_filter,
                             None => is_targeted,
@@ -321,7 +322,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
                                  (missing from std-public-contracts.json / std-private-contracts.json)"
                             );
                         }
-                    } else {
+                    } else if !requires.is_empty() {
                         let path = crate::helpers::name::get_cleaned_def_path_name(
                             self.tcx,
                             callee_def_id,
@@ -331,7 +332,6 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
                             requires.len()
                         );
                     }
-                }
                 }
 
                 if requires.is_empty() {
