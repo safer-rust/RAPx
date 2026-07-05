@@ -1899,8 +1899,8 @@ fn verify_static_mut_unknown() {
 }
 
 #[test]
-fn verify_slice() {
-    let output = run_with_args("verify/slice", VERIFY_CMD);
+fn verify_slice_ext() {
+    let output = run_with_args("verify/slice_ext", VERIFY_CMD);
 
     let functions = [
         "<[T] as SliceExt<T>>::get_unchecked_ext",
@@ -1923,6 +1923,67 @@ fn verify_slice() {
         output.matches("result: SOUND").count(),
         10,
         "expected 10 SOUND results"
+    );
+}
+
+#[test]
+fn verify_slice_safe_ext() {
+    let output = run_with_args("verify/slice_safe_ext", VERIFY_CMD);
+
+    let functions = [
+        "<[T] as SliceSafeExt<T>>::first_chunk_ext",
+        "<[T] as SliceSafeExt<T>>::first_chunk_mut_ext",
+        "<[T] as SliceSafeExt<T>>::split_first_chunk_ext",
+        "<[T] as SliceSafeExt<T>>::split_first_chunk_mut_ext",
+        "<[T] as SliceSafeExt<T>>::split_last_chunk_ext",
+        "<[T] as SliceSafeExt<T>>::split_last_chunk_mut_ext",
+        "<[T] as SliceSafeExt<T>>::last_chunk_ext",
+        "<[T] as SliceSafeExt<T>>::last_chunk_mut_ext",
+        "<[T] as SliceSafeExt<T>>::as_chunks_ext",
+        "<[T] as SliceSafeExt<T>>::as_chunks_mut_ext",
+        "<[T] as SliceSafeExt<T>>::as_rchunks_ext",
+        "<[T] as SliceSafeExt<T>>::split_at_checked_ext",
+        "<[T] as SliceSafeExt<T>>::split_at_mut_checked_ext",
+        "<[T] as SliceSafeExt<T>>::reverse_ext",
+        "<[T] as SliceSafeExt<T>>::rotate_left_ext",
+        "<[T] as SliceSafeExt<T>>::rotate_right_ext",
+        "<[T] as SliceSafeExt<T>>::copy_from_slice_ext",
+        "<[T] as SliceSafeExt<T>>::copy_within_ext",
+        "<[T] as SliceSafeExt<T>>::swap_with_slice_ext",
+        "<[T] as SliceSafeExt<T>>::binary_search_by_ext",
+        "<[T] as SliceSafeExt<T>>::partition_dedup_by_ext",
+        "<[T] as SliceSafeExt<T>>::get_disjoint_mut_ext",
+        "get_disjoint_check_valid_ext",
+    ];
+
+    for fn_name in &functions {
+        assert_contain(&output, fn_name);
+    }
+
+    assert_eq!(
+        output.matches("result: SOUND").count(),
+        23,
+        "expected 23 SOUND results"
+    );
+}
+
+#[test]
+fn verify_slice_array_ext() {
+    let output = run_with_args("verify/slice_array_ext", VERIFY_CMD);
+
+    let functions = [
+        "<[[T; N]] as SliceArrayExt<T, N>>::as_flattened_ext",
+        "<[[T; N]] as SliceArrayExt<T, N>>::as_flattened_mut_ext",
+    ];
+
+    for fn_name in &functions {
+        assert_contain(&output, fn_name);
+    }
+
+    assert_eq!(
+        output.matches("result: SOUND").count(),
+        2,
+        "expected 2 SOUND results"
     );
 }
 
