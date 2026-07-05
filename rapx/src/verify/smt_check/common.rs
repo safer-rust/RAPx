@@ -3335,14 +3335,20 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                         _ => None,
                     };
                     let src_size = src_ty.and_then(|pt| safe_type_layout(self.tcx, caller, pt).map(|(_, s)| s));
-                    if let (Some(dst), Some(src)) = (dst_size, src_size) {
-                        if src > dst && src % dst == 0 {
-                            let ratio = src / dst;
-                            let ratio_term = Int::from_u64(self.ctx, ratio);
-                            let ratio_const = SmtTerm::Const(ratio);
-                            len_term_int = Int::mul(self.ctx, &[len_term_int, ratio_term.clone()]);
-                            len_term = SmtTerm::Mul(Box::new(len_term), Box::new(ratio_const));
+                    let ratio_smt = match (src_size, dst_size) {
+                        (Some(src), Some(dst)) if src > dst && src % dst == 0 => Some(SmtTerm::Const(src / dst)),
+                        _ => {
+                            if let (Some(src_pty), Some(dst_pty)) = (src_ty, Some(dst_pt)) {
+                                pointee_stride_from_types(self.tcx, src_pty, dst_pty)
+                            } else {
+                                None
+                            }
                         }
+                    };
+                    if let Some(ratio_smt) = ratio_smt {
+                        let ratio_int = self.term_for_smt_term(&ratio_smt)?;
+                        len_term_int = Int::mul(self.ctx, &[len_term_int, ratio_int]);
+                        len_term = SmtTerm::Mul(Box::new(len_term), Box::new(ratio_smt));
                     }
                 }
             }
@@ -5644,4 +5650,27 @@ fn sanitize_smt_name(name: &str) -> String {
             }
         })
         .collect()
+}
+
+fn pointee_stride_from_types<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    src_pointee: Ty<'tcx>,
+    dst_pointee: Ty<'tcx>,
+) -> Option<SmtTerm> {
+    use rustc_middle::ty::ConstKind;
+    if src_pointee == dst_pointee {
+        return Some(SmtTerm::Const(1));
+    }
+    if let TyKind::Array(elem, len) = src_pointee.kind()
+        && *elem == dst_pointee
+    {
+        return len.try_to_target_usize(tcx).map(SmtTerm::Const).or_else(|| {
+            if let ConstKind::Param(param) = len.kind() {
+                Some(SmtTerm::ConstParam(format!("N/{}", param.index)))
+            } else {
+                None
+            }
+        });
+    }
+    None
 }
