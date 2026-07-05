@@ -1899,8 +1899,8 @@ fn verify_static_mut_unknown() {
 }
 
 #[test]
-fn verify_slice_unsafe_ext() {
-    let output = run_with_args("verify/slice_unsafe_ext", VERIFY_CMD);
+fn verify_slice() {
+    let output = run_with_args("verify/slice", VERIFY_CMD);
 
     let functions = [
         "<[T] as SliceExt<T>>::get_unchecked_ext",
@@ -1913,24 +1913,6 @@ fn verify_slice_unsafe_ext() {
         "<[T] as SliceExt<T>>::align_to_ext",
         "<[T] as SliceExt<T>>::align_to_mut_ext",
         "<[T] as SliceExt<T>>::get_disjoint_unchecked_mut_ext",
-    ];
-
-    for fn_name in &functions {
-        assert_contain(&output, fn_name);
-    }
-
-    assert_eq!(
-        output.matches("result: SOUND").count(),
-        10,
-        "expected 10 SOUND results"
-    );
-}
-
-#[test]
-fn verify_slice_safe_ext() {
-    let output = run_with_args("verify/slice_safe_ext", VERIFY_CMD);
-
-    let functions = [
         "<[T] as SliceSafeExt<T>>::first_chunk_ext",
         "<[T] as SliceSafeExt<T>>::first_chunk_mut_ext",
         "<[T] as SliceSafeExt<T>>::split_first_chunk_ext",
@@ -1953,6 +1935,8 @@ fn verify_slice_safe_ext() {
         "<[T] as SliceSafeExt<T>>::binary_search_by_ext",
         "<[T] as SliceSafeExt<T>>::partition_dedup_by_ext",
         "<[T] as SliceSafeExt<T>>::get_disjoint_mut_ext",
+        "<[[T; N]] as SliceArrayExt<T, N>>::as_flattened_ext",
+        "<[[T; N]] as SliceArrayExt<T, N>>::as_flattened_mut_ext",
     ];
 
     for fn_name in &functions {
@@ -1961,23 +1945,9 @@ fn verify_slice_safe_ext() {
 
     assert_eq!(
         output.matches("result: SOUND").count(),
-        17,
-        "expected 17 SOUND results"
+        21,
+        "expected 21 SOUND results"
     );
-}
-
-#[test]
-fn verify_slice_array_ext() {
-    let output = run_with_args("verify/slice_array_ext", VERIFY_CMD);
-
-    let functions = [
-        "<[[T; N]] as SliceArrayExt<T, N>>::as_flattened_ext",
-        "<[[T; N]] as SliceArrayExt<T, N>>::as_flattened_mut_ext",
-    ];
-
-    for fn_name in &functions {
-        assert_contain(&output, fn_name);
-    }
 }
 
 #[test]

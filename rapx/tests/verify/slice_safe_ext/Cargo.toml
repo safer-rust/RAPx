@@ -1,7 +1,0 @@
-[package]
-name = "slice_safe_ext"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-slice_unsafe_ext = { path = "../slice_unsafe_ext" }

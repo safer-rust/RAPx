@@ -3732,8 +3732,8 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         }
         let left_label = place_label(left);
         let right_label = place_label(right);
-        let lhs = self.symbolic_len_term(&format!("len({left_label})"));
-        let rhs = self.symbolic_len_term(&format!("len({right_label})"));
+        let lhs = Int::new_const(self.ctx, sanitize_smt_name(&format!("len({left_label})")));
+        let rhs = Int::new_const(self.ctx, sanitize_smt_name(&format!("len({right_label})")));
         solver.assert(&lhs._eq(&rhs));
         self.assumptions.push(SmtPredicate::Eq(
             SmtTerm::Value(format!("len({left_label})")),
@@ -4068,8 +4068,10 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         let source = self
             .origin_key_for_value_before(source, cursor, seen)
             .unwrap_or_else(|| value_label(source));
-        let len_key = format!("len({source})");
-        Some(self.symbolic_len_term(&len_key))
+        Some(Int::new_const(
+            self.ctx,
+            sanitize_smt_name(&format!("len({source})")),
+        ))
     }
 
     /// Build an SMT term for an abstract value at a program point.
@@ -4125,8 +4127,10 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                     let source = self
                         .origin_key_for_value_before(inner, cursor, seen)
                         .unwrap_or_else(|| value_label(inner));
-                    let len_key = format!("len({source})");
-                    Some(self.symbolic_len_term(&len_key))
+                    Some(Int::new_const(
+                        self.ctx,
+                        sanitize_smt_name(&format!("len({source})")),
+                    ))
                 }
                 _ => None,
             },
