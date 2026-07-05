@@ -1959,7 +1959,6 @@ fn verify_slice_safe_ext() {
         assert_contain(&output, fn_name);
     }
 
-    // TODO: 8 UNSOUND remain — see target.rs contract resolution + SMT solver limitations
     assert_eq!(
         output.matches("result: SOUND").count(),
         14,

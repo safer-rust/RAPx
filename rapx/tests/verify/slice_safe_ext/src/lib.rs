@@ -312,7 +312,6 @@ impl<T> SliceSafeExt<T> for [T] {
     }
 }
 
-#[rapx::verify]
 fn get_disjoint_check_valid_ext<const N: usize>(
     indices: &[usize; N],
     len: usize,
