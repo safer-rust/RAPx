@@ -318,7 +318,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
                             );
                             rap_warn!(
                                 "no safety contracts found for std callee \"{path}\" \
-                                 (missing from std-contracts.json)"
+                                 (missing from std-public-contracts.json / std-private-contracts.json)"
                             );
                         }
                     } else {

@@ -1,0 +1,9 @@
+{
+  "$comment": "Safety contracts for standard-library unsafe APIs that are private/not-part-of-the-public-API (e.g. core::slice::raw::*, core::ptr::*, alloc internal helpers). Entries follow the same schema as std-public-contracts.json.",
+
+  "_example": {
+    "path::to::function": [
+      { "tag": "ContractTag", "args": ["arg0", "arg1"] }
+    ]
+  }
+}

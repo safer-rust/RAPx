@@ -83,14 +83,28 @@ fn resolve_trait_method(tcx: TyCtxt<'_>, def_id: DefId) -> DefId {
     def_id
 }
 
-/// Lazily loads the backup contract database for standard-library APIs.
+/// Lazily loads the merged contract database for standard-library APIs
+/// from both public and private contract files.
 fn get_std_contracts_from_json() -> &'static HashMap<String, Vec<PropertyEntry>> {
     static STD_CONTRACTS: OnceLock<HashMap<String, Vec<PropertyEntry>>> = OnceLock::new();
     STD_CONTRACTS.get_or_init(|| {
-        let raw = include_str!("assets/std-contracts.json");
-        let normalized = normalize_json_trailing_commas(raw);
-        serde_json::from_str(normalized.as_str())
-            .unwrap_or_else(|err| panic!("failed to parse verify std contracts backup: {err}"))
+        let mut db: HashMap<String, Vec<PropertyEntry>> = HashMap::new();
+
+        let public_raw = include_str!("assets/std-public-contracts.json");
+        let public_normalized = normalize_json_trailing_commas(public_raw);
+        let public_entries: HashMap<String, Vec<PropertyEntry>> =
+            serde_json::from_str(public_normalized.as_str())
+                .unwrap_or_else(|err| panic!("failed to parse std-public-contracts.json: {err}"));
+        db.extend(public_entries);
+
+        let private_raw = include_str!("assets/std-private-contracts.json");
+        let private_normalized = normalize_json_trailing_commas(private_raw);
+        let private_entries: HashMap<String, Vec<PropertyEntry>> =
+            serde_json::from_str(private_normalized.as_str())
+                .unwrap_or_else(|err| panic!("failed to parse std-private-contracts.json: {err}"));
+        db.extend(private_entries);
+
+        db
     })
 }
 
