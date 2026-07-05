@@ -1,5 +1,5 @@
 [package]
-name = "slice_ext"
+name = "slice_unsafe_ext"
 version = "0.1.0"
 edition = "2024"
 

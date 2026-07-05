@@ -3,7 +3,7 @@
 #![feature(slice_index_methods)]
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use slice_ext::SliceExt;
+use slice_unsafe_ext::SliceExt;
 use std::cmp::Ordering;
 use std::mem::swap;
 use std::ops::Range;
