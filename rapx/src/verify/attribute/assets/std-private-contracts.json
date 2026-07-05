@@ -2,35 +2,35 @@
   "SliceExt::get_unchecked_ext": [
     {
       "tag": "InBound",
-      "args": ["index_access(self, index)"]
+      "args": ["index_access(arg:0, arg:1)"]
     }
   ],
   "SliceExt::get_unchecked_mut_ext": [
     {
       "tag": "InBound",
-      "args": ["index_access(self, index)"]
+      "args": ["index_access(arg:0, arg:1)"]
     }
   ],
   "SliceExt::split_at_unchecked_ext": [
     {
       "tag": "ValidNum",
-      "args": ["mid <= len(self)"]
+      "args": ["arg:1 <= len(arg:0)"]
     }
   ],
   "SliceExt::split_at_mut_unchecked_ext": [
     {
       "tag": "ValidNum",
-      "args": ["mid <= len(self)"]
+      "args": ["arg:1 <= len(arg:0)"]
     }
   ],
   "SliceExt::swap_unchecked_ext": [
     {
       "tag": "ValidNum",
-      "args": ["a < len(self)"]
+      "args": ["arg:1 < len(arg:0)"]
     },
     {
       "tag": "ValidNum",
-      "args": ["b < len(self)"]
+      "args": ["arg:2 < len(arg:0)"]
     }
   ],
   "SliceExt::as_chunks_unchecked_ext": [
@@ -40,7 +40,7 @@
     },
     {
       "tag": "ValidNum",
-      "args": ["len(self) % N == 0"]
+      "args": ["len(arg:0) % N == 0"]
     }
   ],
   "SliceExt::as_chunks_unchecked_mut_ext": [
@@ -50,37 +50,37 @@
     },
     {
       "tag": "ValidNum",
-      "args": ["len(self) % N == 0"]
+      "args": ["len(arg:0) % N == 0"]
     }
   ],
   "SliceExt::align_to_ext": [
     {
       "tag": "Align",
-      "args": ["self", "T"]
+      "args": ["arg:0", "ty:T"]
     },
     {
       "tag": "Typed",
-      "args": ["self", "U"]
+      "args": ["arg:0", "ty:U"]
     }
   ],
   "SliceExt::align_to_mut_ext": [
     {
       "tag": "Align",
-      "args": ["self", "T"]
+      "args": ["arg:0", "ty:T"]
     },
     {
       "tag": "Typed",
-      "args": ["self", "U"]
+      "args": ["arg:0", "ty:U"]
     }
   ],
   "SliceExt::get_disjoint_unchecked_mut_ext": [
     {
       "tag": "InBound",
-      "args": ["index_access(self, indices)"]
+      "args": ["index_access(arg:0, arg:1)"]
     },
     {
       "tag": "NonOverlap",
-      "args": ["indices"]
+      "args": ["arg:1"]
     }
   ]
 }

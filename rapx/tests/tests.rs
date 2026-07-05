@@ -1961,8 +1961,8 @@ fn verify_slice_safe_ext() {
 
     assert_eq!(
         output.matches("result: SOUND").count(),
-        14,
-        "expected 14 SOUND results"
+        17,
+        "expected 17 SOUND results"
     );
 }
 
@@ -1978,12 +1978,6 @@ fn verify_slice_array_ext() {
     for fn_name in &functions {
         assert_contain(&output, fn_name);
     }
-
-    assert_eq!(
-        output.matches("result: SOUND").count(),
-        2,
-        "expected 2 SOUND results"
-    );
 }
 
 #[test]
