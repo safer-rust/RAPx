@@ -200,12 +200,13 @@ impl<'tcx> ForwardVerifier<'tcx> {
             TerminatorKind::SwitchInt { discr, .. } => {
                 if let Some(equals) = chosen_switch_value(&result.path, block, terminator) {
                     let value = value_from_operand(discr);
+                    let (cmp_op, cmp_lhs, cmp_rhs) = find_cmp_source(block, discr, body);
                     result.facts.push(StateFact::BranchEq {
                         value: value.clone(),
                         equals,
-                        cmp_op: None,
-                        cmp_lhs: None,
-                        cmp_rhs: None,
+                        cmp_op,
+                        cmp_lhs,
+                        cmp_rhs,
                     });
                     if let Some((place, align)) = align_guard_value(&value, equals, result) {
                         result.facts.push(StateFact::KnownAligned {
