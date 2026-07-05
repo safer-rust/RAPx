@@ -3312,7 +3312,41 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         let base_origin =
             self.origin_key_for_value_before(&value, self.latest_cursor(), &mut TraceSeen::new())?;
         let zero = AbstractValue::ConstInt(0);
-        let (len_term_int, len_term) = self.bounds_len_for_origin(&base_origin, Some(&zero))?;
+        let (mut len_term_int, mut len_term) = self.bounds_len_for_origin(&base_origin, Some(&zero))?;
+
+        if place.fields.is_empty()
+            && let Some(local) = place.local()
+            && let Some(definition) = self.forward.latest_value_definition_before(local, self.latest_cursor())
+        {
+            if let AbstractValue::Cast(inner, cast_ty) = &definition.value {
+                let caller = self.checkpoint.caller;
+                if let Some(dst_pt) = pointee_ty(*cast_ty) {
+                    let dst_size = safe_type_layout(self.tcx, caller, dst_pt).map(|(_, s)| s);
+                    let src_ty = match &**inner {
+                        AbstractValue::Place(inner_place)
+                        | AbstractValue::RawPtr(inner_place)
+                        | AbstractValue::Ref(inner_place) => {
+                            inner_place.local().and_then(|local| {
+                                let body = self.tcx.optimized_mir(caller);
+                                let ty = body.local_decls[local].ty;
+                                pointee_ty(ty)
+                            })
+                        }
+                        _ => None,
+                    };
+                    let src_size = src_ty.and_then(|pt| safe_type_layout(self.tcx, caller, pt).map(|(_, s)| s));
+                    if let (Some(dst), Some(src)) = (dst_size, src_size) {
+                        if src > dst && src % dst == 0 {
+                            let ratio = src / dst;
+                            let ratio_term = Int::from_u64(self.ctx, ratio);
+                            let ratio_const = SmtTerm::Const(ratio);
+                            len_term_int = Int::mul(self.ctx, &[len_term_int, ratio_term.clone()]);
+                            len_term = SmtTerm::Mul(Box::new(len_term), Box::new(ratio_const));
+                        }
+                    }
+                }
+            }
+        }
 
         // Compute the correct index for field projections from Range types.
         // Field [0] (start) is at offset 0; field [1] (end) is at offset len.
