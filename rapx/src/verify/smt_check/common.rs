@@ -501,6 +501,16 @@ impl<'tcx> SmtChecker<'tcx> {
                 model.assert_unsigned_bounds_for_term(&solver, upper_delta, &mut HashSet::new());
 
                 let zero = Int::from_u64(&ctx, 0);
+                // A recovered object length is a slice/allocation size and is
+                // therefore non-negative.  Without this fact the solver may pick
+                // a negative `len`, defeating goals whose offset is expressed as
+                // `len - x` (e.g. `ptr.add(len - half_len)`), where the bound
+                // `len - x <= len` only holds because `x >= 0` and `len >= 0`.
+                solver.assert(&bounds.len.ge(&zero));
+                model
+                    .assumptions
+                    .push(SmtPredicate::Ge(bounds.len_term.clone(), SmtTerm::Const(0)));
+
                 let lower_index = Int::add(&ctx, &[bounds.index.clone(), lower]);
                 let upper_index = Int::add(&ctx, &[bounds.index.clone(), upper]);
                 let base_non_negative = bounds.index.ge(&zero);
@@ -3199,6 +3209,29 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 | StateFact::LocalDead(_)
                 | StateFact::CallEffect(_) => {}
             }
+        }
+
+        // Assert unsigned-integer function arguments are non-negative.
+        // Arguments are atomic inputs (MIR locals `1..=arg_count`), so this is
+        // universally true for usize / u8..u128 and does not over-constrain any
+        // computed value.  It is required for proving bounds goals where the
+        // offset involves subtraction (e.g. `ptr.add(len - k)` needs `k >= 0`
+        // together with `len >= 0`).
+        let body = self.tcx.optimized_mir(self.checkpoint.caller);
+        for arg in 1..=body.arg_count {
+            let place = PlaceKey {
+                base: PlaceBaseKey::Local(arg),
+                fields: Vec::new(),
+            };
+            let Some(ty) = self.place_ty(&place) else { continue };
+            if !is_unsigned_integral_ty(ty) { continue }
+            let Some(term) = self.term_for_place(&place) else { continue };
+            let zero = Int::from_u64(self.ctx, 0);
+            solver.assert(&term.ge(&zero));
+            self.assumptions.push(SmtPredicate::Ge(
+                SmtTerm::Place(place),
+                SmtTerm::Const(0),
+            ));
         }
     }
 
