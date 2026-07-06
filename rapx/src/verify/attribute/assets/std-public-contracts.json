@@ -5290,67 +5290,43 @@
     {
       "tag": "ValidPtr",
       "args": [
-        "src",
+        "arg:0",
         "T",
-        "count"
+        "arg:2"
       ]
     },
     {
       "tag": "Align",
       "args": [
-        "src",
+        "arg:0",
         "T"
       ]
     },
     {
       "tag": "NonVolatile",
       "args": [
-        "src"
-      ]
-    },
-    {
-      "tag": "Alias",
-      "args": [
-        "src"
-      ]
-    },
-    {
-      "tag": "CopyTrait",
-      "args": [
-        "src"
+        "arg:0"
       ]
     },
     {
       "tag": "ValidPtr",
       "args": [
-        "dst",
+        "arg:1",
         "T",
-        "count"
+        "arg:2"
       ]
     },
     {
       "tag": "Align",
       "args": [
-        "dst",
+        "arg:1",
         "T"
       ]
     },
     {
       "tag": "NonVolatile",
       "args": [
-        "dst"
-      ]
-    },
-    {
-      "tag": "Alias",
-      "args": [
-        "dst"
-      ]
-    },
-    {
-      "tag": "CopyTrait",
-      "args": [
-        "dst"
+        "arg:1"
       ]
     }
   ],
