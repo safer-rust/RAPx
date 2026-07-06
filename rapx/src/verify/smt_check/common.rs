@@ -4129,7 +4129,15 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
     ) -> Option<Int<'ctx>> {
         match value {
             AbstractValue::ConstInt(value) => Some(Int::from_u64(self.ctx, *value as u64)),
-            AbstractValue::ConstParam(name) => Some(Int::new_const(self.ctx, format!("const_{name}").as_str())),
+            AbstractValue::ConstParam(name) => {
+                let key = format!("const_{}", sanitize_smt_name(name));
+                if let Some(term) = self.const_terms.get(&key) {
+                    return Some(term.clone());
+                }
+                let term = Int::new_const(self.ctx, format!("const_{}", sanitize_smt_name(name)).as_str());
+                self.const_terms.insert(key, term.clone());
+                Some(term)
+            }
             AbstractValue::Const(text) => {
                 const_int_from_debug(text).map(|value| Int::from_u64(self.ctx, value as u64))
                     .or_else(|| {
@@ -5703,7 +5711,7 @@ fn pointee_stride_from_types<'tcx>(
     {
         return len.try_to_target_usize(tcx).map(SmtTerm::Const).or_else(|| {
             if let ConstKind::Param(param) = len.kind() {
-                Some(SmtTerm::ConstParam(format!("N/{}", param.index)))
+                Some(SmtTerm::ConstParam(param.name.to_string()))
             } else {
                 None
             }
