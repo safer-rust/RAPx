@@ -4032,6 +4032,14 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         ) {
             return None;
         }
+        if matches!(op, BinOp::MulWithOverflow) {
+            if let Some(len_origin) = ptr_metadata_origin(lhs, self) {
+                let len_key = format!("len({len_origin})");
+                let len_term = self.symbolic_len_term(&len_key);
+                let rhs_term = self.term_for_value_at(rhs, definition.ordinal, seen)?;
+                return Some(Int::mul(self.ctx, &[len_term, rhs_term]));
+            }
+        }
         let lhs = self.term_for_value_at(lhs, definition.ordinal, seen)?;
         let rhs = self.term_for_value_at(rhs, definition.ordinal, seen)?;
         self.term_for_binary(*op, &lhs, &rhs)
@@ -5650,6 +5658,35 @@ fn sanitize_smt_name(name: &str) -> String {
             }
         })
         .collect()
+}
+
+fn ptr_metadata_origin<'tcx>(
+    value: &AbstractValue<'tcx>,
+    model: &SmtModel<'_, '_, 'tcx>,
+) -> Option<String> {
+    let resolved = model.resolved_value(value, &mut TraceSeen::new())
+        .unwrap_or_else(|| value.clone());
+    match &resolved {
+        AbstractValue::Unary(UnOp::PtrMetadata, inner) => {
+            let cursor = model.latest_cursor();
+            model.origin_key_for_value_before(inner, cursor, &mut TraceSeen::new())
+        }
+        AbstractValue::CallResult(call) => {
+            if call.effects.iter().any(|e| matches!(e, crate::verify::call_summary::CallEffect::ReturnLengthOfArg { .. }))
+            {
+                let arg = call.effects.iter().find_map(|e| match e {
+                    crate::verify::call_summary::CallEffect::ReturnLengthOfArg { arg } => Some(*arg),
+                    _ => None,
+                })?;
+                let call_cursor = model.call_definition_cursor(call);
+                let source = call.args.get(arg)?;
+                model.origin_key_for_value_before(source, call_cursor, &mut TraceSeen::new())
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
 }
 
 fn pointee_stride_from_types<'tcx>(
