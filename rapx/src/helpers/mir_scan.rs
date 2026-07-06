@@ -216,7 +216,7 @@ pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<C
             continue;
         };
 
-        let ty::FnDef(callee_def_id, _) = func_constant.const_.ty().kind() else {
+        let ty::FnDef(callee_def_id, callee_args) = func_constant.const_.ty().kind() else {
             continue;
         };
 
@@ -224,9 +224,15 @@ pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<C
             continue;
         }
 
+        // Normalize a trait-method callee to the concrete impl method so that
+        // inline `#[rapx::requires]` contracts (which live on the impl, not the
+        // trait declaration) are found during contract lookup.
+        let resolved_callee =
+            resolve_callee_impl(tcx, def_id, *callee_def_id, callee_args).unwrap_or(*callee_def_id);
+
         checkpoints.push(Checkpoint {
             caller: def_id,
-            callee: Some(*callee_def_id),
+            callee: Some(resolved_callee),
             block: bb,
             span: *fn_span,
             args: args.iter().map(|arg| arg.node.clone()).collect(),
@@ -236,6 +242,46 @@ pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<C
     }
 
     checkpoints
+}
+
+/// Resolve a (possibly trait-method) callee to the concrete impl method that
+/// will actually be dispatched, given the caller context and the callee's
+/// generic arguments.
+///
+/// This matters for contract lookup: `#[rapx::requires(...)]` annotations are
+/// attached to the impl method, but in a generic caller the MIR `FnDef` refers
+/// to the trait method declaration.  Resolving to the impl method lets the
+/// verifier find those inline contracts.  Returns `None` when the callee cannot
+/// be resolved to a distinct concrete item (e.g. still generic/virtual), in
+/// which case callers should keep the original DefId.
+fn resolve_callee_impl<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    caller_def_id: DefId,
+    callee_def_id: DefId,
+    callee_args: ty::GenericArgsRef<'tcx>,
+) -> Option<DefId> {
+    // Only trait-associated methods need remapping; inherent/free functions
+    // already point at their concrete definition.
+    let assoc = tcx.opt_associated_item(callee_def_id)?;
+    if assoc.trait_container(tcx).is_none() {
+        return None;
+    }
+
+    let typing_env = ty::TypingEnv::post_analysis(tcx, caller_def_id);
+    let instance = ty::Instance::try_resolve(tcx, typing_env, callee_def_id, callee_args)
+        .ok()
+        .flatten()?;
+
+    let resolved = match instance.def {
+        ty::InstanceKind::Item(def_id) => def_id,
+        _ => return None,
+    };
+
+    if resolved == callee_def_id {
+        None
+    } else {
+        Some(resolved)
+    }
 }
 
 /// Metadata for a single raw pointer dereference operation found in MIR.

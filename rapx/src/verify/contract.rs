@@ -612,6 +612,17 @@ impl<'tcx> Property<'tcx> {
                 }
                 ContractExpr::Unknown
             }
+            // Treat `x.len` (field-access sugar) as the slice length `len(x)`.
+            Expr::Field(expr_field)
+                if matches!(&expr_field.member, safety_parser::syn::Member::Named(ident) if ident == "len") =>
+            {
+                ContractExpr::Len(Box::new(Self::parse_contract_expr(
+                    tcx,
+                    def_id,
+                    &expr_field.base,
+                    sp,
+                )))
+            }
             Expr::Unary(expr_unary) => {
                 let Some(op) = NumericUnaryOp::from_syn(&expr_unary.op) else {
                     return ContractExpr::Unknown;

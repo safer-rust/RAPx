@@ -87,11 +87,7 @@ fn array_len_term<'tcx>(
             return Some(SmtTerm::Const(val));
         }
         if let ConstKind::Param(param) = len.kind() {
-            return Some(SmtTerm::ConstParam(format!(
-                "Ty(usize, {}/#{})",
-                param.name,
-                param.index
-            )));
+            return Some(SmtTerm::ConstParam(param.name.to_string()));
         }
         Some(SmtTerm::ConstParam(format!("Ty(usize, {len})")))
     } else {

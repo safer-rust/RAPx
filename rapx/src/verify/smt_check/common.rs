@@ -4120,6 +4120,23 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         Some(self.symbolic_len_term(&len_key))
     }
 
+    /// Return a cached Z3 integer symbol for a const generic parameter,
+    /// keyed by its plain name (e.g. `N`).  Accepts either a plain name or a
+    /// rustc debug string such as `Ty(usize, N/#1)` / `Param(N)`, so that a
+    /// const parameter referenced from a MIR operand, a contract, and an array
+    /// length all resolve to the same `const_<name>` symbol.
+    fn const_param_symbol(&mut self, name_or_debug: &str) -> Int<'ctx> {
+        let plain = const_param_name_from_debug(name_or_debug)
+            .unwrap_or_else(|| name_or_debug.to_string());
+        let key = format!("const_{}", sanitize_smt_name(&plain));
+        if let Some(term) = self.const_terms.get(&key) {
+            return term.clone();
+        }
+        let term = Int::new_const(self.ctx, key.as_str());
+        self.const_terms.insert(key, term.clone());
+        term
+    }
+
     /// Build an SMT term for an abstract value at a program point.
     fn term_for_value_at(
         &mut self,
@@ -4129,18 +4146,18 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
     ) -> Option<Int<'ctx>> {
         match value {
             AbstractValue::ConstInt(value) => Some(Int::from_u64(self.ctx, *value as u64)),
-            AbstractValue::ConstParam(name) => {
-                let key = format!("const_{}", sanitize_smt_name(name));
-                if let Some(term) = self.const_terms.get(&key) {
-                    return Some(term.clone());
-                }
-                let term = Int::new_const(self.ctx, format!("const_{}", sanitize_smt_name(name)).as_str());
-                self.const_terms.insert(key, term.clone());
-                Some(term)
-            }
+            AbstractValue::ConstParam(name) => Some(self.const_param_symbol(name)),
             AbstractValue::Const(text) => {
                 const_int_from_debug(text).map(|value| Int::from_u64(self.ctx, value as u64))
                     .or_else(|| {
+                        // A constant operand may be a const generic parameter
+                        // (e.g. debug `Ty(usize, N/#1)`).  Normalize its symbol
+                        // to `const_<name>` so it unifies with the same const
+                        // parameter referenced elsewhere (contracts, array
+                        // lengths) instead of minting `const_Ty_usize__N__1_`.
+                        if let Some(param) = const_param_name_from_debug(text) {
+                            return Some(self.const_param_symbol(&param));
+                        }
                         let name = sanitize_smt_name(text);
                         if name.is_empty() { None }
                         else { Some(Int::new_const(self.ctx, format!("const_{name}"))) }
@@ -4204,15 +4221,10 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             }
             SmtTerm::Const(value) => Some(Int::from_u64(self.ctx, *value)),
             SmtTerm::ConstParam(text) => {
-                let name = sanitize_smt_name(text);
-                if name.is_empty() { return None; }
-                let key = format!("const_{name}");
-                if let Some(term) = self.const_terms.get(&key) {
-                    return Some(term.clone());
+                if sanitize_smt_name(text).is_empty() {
+                    return None;
                 }
-                let term = Int::new_const(self.ctx, key.as_str());
-                self.const_terms.insert(key.clone(), term.clone());
-                Some(term)
+                Some(self.const_param_symbol(text))
             }
             SmtTerm::Add(lhs, rhs) => {
                 let lhs = self.term_for_smt_term(lhs)?;
