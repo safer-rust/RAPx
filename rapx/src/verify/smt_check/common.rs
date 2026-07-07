@@ -3374,7 +3374,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             let result_index_val: Int<'ctx>;
             if let AbstractValue::Place(base_place) = base {
                 let (base_smt, base_val) = self.field_projection_index(
-                    base_place, &base_origin, &len_term,
+                    base_place, &base_origin,
                 );
                 if !matches!(&base_smt, SmtTerm::Const(0)) {
                     // base has a non-zero offset — adjust by the arithmetic
@@ -3458,7 +3458,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
 
         // Compute the correct index for field projections from Range types.
         // Field [0] (start) is at offset 0; field [1] (end) is at offset len.
-        let (index_term, index_val) = self.field_projection_index(place, &base_origin, &len_term);
+        let (index_term, index_val) = self.field_projection_index(place, &base_origin);
 
         Some(PointerBounds {
             index: index_val,
@@ -3477,7 +3477,6 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         &mut self,
         place: &PlaceKey,
         origin_key: &str,
-        len_term: &SmtTerm,
     ) -> (SmtTerm, Int<'ctx>) {
         let default_index = SmtTerm::Const(0);
         let default_val = Int::from_u64(self.ctx, 0);
@@ -3560,70 +3559,6 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             }
             return (default_index, default_val);
         }
-    }
-
-    /// Compute the offset index for a pointer-arithmetic call result.
-    /// result_offset = base_offset (+ or -) count
-    fn compute_pointer_arith_index(
-        &mut self,
-        base: &AbstractValue<'tcx>,
-        base_origin: &str,
-        len_term: &SmtTerm,
-        call: &CallSummary<'tcx>,
-        call_cursor: ValueCursor,
-    ) -> (SmtTerm, Int<'ctx>) {
-        // Get the base pointer's PlaceKey
-        let base_place = match base {
-            AbstractValue::Place(p) => p.clone(),
-            _ => {
-                // Fallback: use the count as the index (old behavior)
-                if let Some(index) = call.effects.iter().find_map(|effect| match effect {
-                    crate::verify::call_summary::CallEffect::ReturnPointerAdd { offset_arg, .. }
-                    | crate::verify::call_summary::CallEffect::ReturnPointerSub { offset_arg, .. } => {
-                        call.args.get(*offset_arg)
-                    }
-                    _ => None,
-                }) {
-                    let count_smt = SmtTerm::Value(value_label(index));
-                    let count_val = self.term_for_value_at(index, call_cursor, &mut TraceSeen::new())
-                        .unwrap_or(Int::from_u64(self.ctx, 0));
-                    return (count_smt, count_val);
-                }
-                return (SmtTerm::Const(0), Int::from_u64(self.ctx, 0));
-            }
-        };
-
-        // Compute base offset using field_projection_index
-        let (base_idx_smt, _base_idx_val) = self.field_projection_index(
-            &base_place, base_origin, len_term,
-        );
-
-        // Get the count term
-        let count = call.effects.iter().find_map(|effect| match effect {
-            crate::verify::call_summary::CallEffect::ReturnPointerAdd { offset_arg, .. }
-            | crate::verify::call_summary::CallEffect::ReturnPointerSub { offset_arg, .. } => {
-                call.args.get(*offset_arg)
-            }
-            _ => None,
-        });
-
-        let count_smt = if let Some(c) = count {
-            SmtTerm::Value(value_label(c))
-        } else {
-            SmtTerm::Const(0)
-        };
-
-        let is_sub = call_has_pointer_sub_effect(call);
-        let result_smt = if is_sub {
-            SmtTerm::Sub(Box::new(base_idx_smt), Box::new(count_smt))
-        } else {
-            SmtTerm::Add(Box::new(base_idx_smt), Box::new(count_smt))
-        };
-
-        let result_val = self.term_for_smt_term(&result_smt)
-            .unwrap_or(Int::from_u64(self.ctx, 0));
-
-        (result_smt, result_val)
     }
 
     /// Recover the allocation object and element offset for a pointer-like
