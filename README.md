@@ -202,6 +202,8 @@ This checklist maps RAPx's contract verification to the [Primitive Safety Proper
 
 RAPx ships with a curated set of `std` library safety contracts (`std-contracts.json`) that annotate standard library functions with property tags. This enables contract-based verification for common `std`/`core` APIs without requiring user annotations.
 
+The verifier is exercised against real-world safe abstractions built on top of unsafe code — for example `core::slice`-style methods such as `split_at`, `as_chunks`/`as_rchunks`, `as_flattened`, `binary_search`, `partition_dedup`, and `get_disjoint_mut` — where RAPx proves that the internal unsafe operations cannot cause undefined behavior. Each SMT query is bounded by a per-query timeout so that undecidable nonlinear goals return `unknown` instead of hanging.
+
 ### Environment Variables (values are case insensitive)
 
 | var             | default when absent | possible values     | description                  |
