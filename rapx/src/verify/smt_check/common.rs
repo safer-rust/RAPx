@@ -4690,6 +4690,19 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 self.assert_unsigned_bounds_for_term(solver, lhs, seen);
                 self.assert_unsigned_bounds_for_term(solver, rhs, seen);
             }
+            SmtTerm::Value(name) if name.starts_with("len(") => {
+                // Slice/array lengths are unsigned metadata: always >= 0.
+                // Without this, `len(x) != 0` (from a `size == 0` guard) does
+                // not imply `len(x) >= 1` in z3's unbounded integers, so a
+                // zero-iteration `base < len` bound stays unprovable.
+                let term = self.symbolic_len_term(name);
+                let zero = Int::from_u64(self.ctx, 0);
+                solver.assert(&term.ge(&zero));
+                self.assumptions.push(SmtPredicate::Ge(
+                    SmtTerm::Value(name.clone()),
+                    SmtTerm::Const(0),
+                ));
+            }
             SmtTerm::Value(_) | SmtTerm::Const(_) | SmtTerm::ConstParam(_) => {}
         }
     }
