@@ -210,6 +210,22 @@ pub fn dependency_summary<'tcx>(
         };
     }
 
+    if let Some(prim) = primitive
+        && matches!(prim, PrimitiveCall::SplitAt | PrimitiveCall::SplitAtMut)
+    {
+        // The returned prefix/suffix slices depend both on the source buffer
+        // (arg 0) and on the split point `mid` (arg 1); the prefix length is
+        // exactly `mid`.  Keep both so the backward slice retains the `mid`
+        // computation for downstream `len(prefix)` obligations.
+        return CallDependencySummary {
+            callee,
+            name,
+            return_depends_on_args: vec![0, 1],
+            may_write_args: Vec::new(),
+            unsupported: false,
+        };
+    }
+
     if is_from_trait_call(&name) {
         return CallDependencySummary {
             callee,

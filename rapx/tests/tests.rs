@@ -1945,8 +1945,8 @@ fn verify_slice() {
 
     assert_eq!(
         output.matches("result: SOUND").count(),
-        28,
-        "expected 28 SOUND results"
+        31,
+        "expected 31 SOUND results"
     );
 }
 

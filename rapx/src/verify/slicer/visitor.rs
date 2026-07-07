@@ -183,6 +183,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
                     si,
                     stmt,
                     flow,
+                    body,
                     &mut relevant,
                     &mut items,
                     keep_alloc,
@@ -228,6 +229,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
                         si,
                         stmt,
                         flow,
+                        body,
                         &mut relevant,
                         &mut items,
                         keep_alloc,
@@ -253,6 +255,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
         statement_index: usize,
         statement: &'tcx rustc_middle::mir::Statement<'tcx>,
         flow: &DataflowGraph,
+        body: &Body<'tcx>,
         relevant: &mut RelevantPlaces,
         items: &mut Vec<BackwardItem<'tcx>>,
         keep_allocation_invalidations: bool,
@@ -280,7 +283,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
         }
 
         if defs.intersects(relevant) {
-            let uses = collect_statement_uses(statement, block, statement_index, flow);
+            let uses = collect_statement_uses(statement, block, statement_index, flow, body);
             items.push(BackwardItem::Statement {
                 block,
                 statement_index,
@@ -473,6 +476,7 @@ fn collect_statement_uses<'tcx>(
     block: BasicBlock,
     statement_index: usize,
     flow: &DataflowGraph,
+    body: &Body<'tcx>,
 ) -> RelevantPlaces {
     let mut uses = RelevantPlaces::new();
 
@@ -503,7 +507,63 @@ fn collect_statement_uses<'tcx>(
         for operand in super::super::def_use::rvalue_operands(rvalue) {
             uses.extend(operand_uses(operand));
         }
+        // A reborrow (`_p = &(*_q)`, `_p = &raw (*_q)`) carries no operands, so
+        // `rvalue_operands` misses its referent.  Only when the referent traces
+        // back to a projection out of a call's returned tuple (a `split_at`
+        // prefix/suffix slice) do we keep the referent's base local, so the
+        // split — and its `mid` argument — stays in the backward slice and
+        // feeds downstream `len(self)` obligations.  This stays narrow to avoid
+        // inflating relevance for ordinary reborrows, which explodes loop path
+        // enumeration.
+        if let rustc_middle::mir::Rvalue::Ref(_, _, place)
+        | rustc_middle::mir::Rvalue::RawPtr(_, place) = rvalue
+            && local_from_tuple_field_projection(body, place.local)
+        {
+            uses.extend(super::super::def_use::place_uses(place));
+        }
     }
 
     uses
+}
+
+/// Return true when `local` is defined (directly or through copy/move chains)
+/// by a projection out of another local's field — the shape produced when a
+/// tuple returned by a call (e.g. `split_at`) is destructured into its slice
+/// components.
+fn local_from_tuple_field_projection<'tcx>(body: &Body<'tcx>, local: rustc_middle::mir::Local) -> bool {
+    use rustc_middle::mir::{Operand, Rvalue};
+    let mut current = local;
+    let mut seen = std::collections::HashSet::new();
+    for _ in 0..8 {
+        if !seen.insert(current) {
+            return false;
+        }
+        let mut next = None;
+        for block in body.basic_blocks.iter() {
+            for stmt in &block.statements {
+                let StatementKind::Assign(assign) = &stmt.kind else {
+                    continue;
+                };
+                let (dest, rvalue) = &**assign;
+                if dest.local != current || !dest.projection.is_empty() {
+                    continue;
+                }
+                if let Rvalue::Use(Operand::Copy(src) | Operand::Move(src)) = rvalue {
+                    if src
+                        .projection
+                        .iter()
+                        .any(|p| matches!(p, rustc_middle::mir::ProjectionElem::Field(..)))
+                    {
+                        return true;
+                    }
+                    next = Some(src.local);
+                }
+            }
+        }
+        match next {
+            Some(src) if src != current => current = src,
+            _ => return false,
+        }
+    }
+    false
 }

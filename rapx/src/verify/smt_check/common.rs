@@ -185,6 +185,12 @@ impl<'tcx> SmtChecker<'tcx> {
         let cfg = Config::new();
         let ctx = Context::new(&cfg);
         let solver = Solver::new(&ctx);
+        // Bound each SMT query so undecidable nonlinear-integer goals (e.g.
+        // modular arithmetic with a symbolic divisor) return `unknown`
+        // instead of hanging the whole analysis.
+        let mut params = z3::Params::new(&ctx);
+        params.set_u32("timeout", 10_000);
+        solver.set_params(&params);
         let mut model = SmtModel::new(self.tcx, checkpoint, forward, &ctx);
         model.assert_forward_facts(&solver);
 
@@ -2714,6 +2720,13 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                         self.assert_place_alignment(solver, &place);
                     }
                     self.record_call_effect_assumptions(call);
+                    // `split_at`-style calls expose the length of the returned
+                    // prefix slice (field 0) as `mid`.  Bridge that length into
+                    // the `len(...)` namespace so that downstream `len(self)`
+                    // contracts on the destructured prefix (e.g.
+                    // `as_chunks_unchecked_ext` requiring `len(self) % N == 0`)
+                    // can see `len(prefix) == mid` instead of a free symbol.
+                    self.bridge_tuple_field_lengths(solver, call);
                     // exact_div(x, y) returns x / y.  Assert result <= x
                     // so that downstream bounds checks (e.g.
                     // from_raw_parts(ptr, exact_div(len, N))) can infer
@@ -3232,6 +3245,62 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 SmtTerm::Place(place),
                 SmtTerm::Const(0),
             ));
+        }
+
+        // Round-down products `(x / d) * d` are always multiples of `d`.
+        // Assert this divisibility explicitly so downstream `_ % d == 0`
+        // obligations discharge without z3's nonlinear-integer solver, which
+        // diverges on modular arithmetic with a symbolic divisor.
+        self.assert_round_down_products(solver);
+    }
+
+    /// Assert `p % d == 0` for every retained `(x / d) * d` round-down product
+    /// `p`.  Sound because such a product is by construction a multiple of `d`;
+    /// it hands z3 the one nonlinear fact it needs so the rest of the proof
+    /// (e.g. a `split_at` prefix/suffix length feeding `len(self) % N == 0`)
+    /// stays linear.
+    fn assert_round_down_products(&mut self, solver: &Solver<'ctx>) {
+        let mut candidates: Vec<(PlaceKey, AbstractValue<'tcx>)> = Vec::new();
+        for fact in &self.forward.facts {
+            let StateFact::Binary {
+                target,
+                op,
+                lhs,
+                rhs,
+            } = fact
+            else {
+                continue;
+            };
+            if !matches!(op, BinOp::Mul | BinOp::MulWithOverflow) {
+                continue;
+            }
+            let value = AbstractValue::Binary(*op, Box::new(lhs.clone()), Box::new(rhs.clone()));
+            if let Some(divisor) = self.multiple_divisor(&value) {
+                let product = if matches!(op, BinOp::MulWithOverflow) {
+                    PlaceKey {
+                        base: target.base.clone(),
+                        fields: vec![0],
+                    }
+                } else {
+                    target.clone()
+                };
+                candidates.push((product, divisor));
+            }
+        }
+
+        let zero = Int::from_u64(self.ctx, 0);
+        for (product, divisor) in candidates {
+            let product_term = self.term_for_place(&product);
+            let divisor_term =
+                self.term_for_value_at(&divisor, self.latest_cursor(), &mut TraceSeen::new());
+            if let (Some(product_term), Some(divisor_term)) = (product_term, divisor_term) {
+                solver.assert(&product_term.modulo(&divisor_term)._eq(&zero));
+                self.assumptions.push(SmtPredicate::Custom(format!(
+                    "{} is a multiple of {}",
+                    place_label(&product),
+                    value_label(&divisor)
+                )));
+            }
         }
     }
 
@@ -3816,6 +3885,153 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
 
     fn is_len_carrying_place(&self, place: &PlaceKey) -> bool {
         self.place_ty(place).is_some_and(is_len_carrying_ty)
+    }
+
+    /// Bridge the prefix length produced by a `split_at`-style call into the
+    /// symbolic `len(...)` namespace.
+    ///
+    /// `ReturnTupleFieldLength { field: 0, from_arg }` records that field 0 of
+    /// the returned tuple is a slice of length `args[from_arg]` (the `mid`
+    /// split point).  `record_call_effect_assumptions` stores this only as the
+    /// *value* term of `dest.0`, which the `len(place)` contract lowering (and
+    /// `assert_length_alias`) never observe.  Here we additionally assert
+    /// `len(P) == mid` for `dest.0` itself and for every local that copies it
+    /// out of the tuple (the destructured `multiple_of_n`), so that a later
+    /// `len(self)` obligation on the prefix — or a reborrow of it linked via
+    /// `assert_length_alias` — resolves to the correct `mid` rather than a
+    /// free symbol.
+    fn bridge_tuple_field_lengths(&mut self, solver: &Solver<'ctx>, call: &CallSummary<'tcx>) {
+        for effect in &call.effects {
+            let crate::verify::call_summary::CallEffect::ReturnTupleFieldLength { field, .. } =
+                effect
+            else {
+                continue;
+            };
+            if *field != 0 {
+                continue;
+            }
+            let dest0 = PlaceKey {
+                base: PlaceBaseKey::Local(call.destination.as_usize()),
+                fields: vec![0],
+            };
+            let Some(mid_term) = self.place_terms.get(&dest0).cloned() else {
+                continue;
+            };
+
+            // Field 0 (prefix) has length `mid`.
+            self.bridge_field_length(solver, call.destination.as_usize(), 0, &mid_term);
+
+            // Field 1 (suffix) has length `len(receiver) - mid`.  Its
+            // divisibility (when the split rounds down to a multiple) follows
+            // from the global round-down-product assertion once z3 relates the
+            // receiver length to the length used inside `mid`.
+            if let Some(AbstractValue::Place(receiver)) = call.args.first() {
+                let len_recv =
+                    self.symbolic_len_term(&format!("len({})", place_label(receiver)));
+                let suffix_term = Int::sub(self.ctx, &[len_recv, mid_term.clone()]);
+                self.bridge_field_length(solver, call.destination.as_usize(), 1, &suffix_term);
+            }
+        }
+    }
+
+    /// Assert `len(P) == len_term` for tuple field `dest.field_index` and for
+    /// every local that copies it out of the tuple (the destructured slice).
+    fn bridge_field_length(
+        &mut self,
+        solver: &Solver<'ctx>,
+        destination: usize,
+        field_index: usize,
+        len_term: &Int<'ctx>,
+    ) {
+        let dest_key = PlaceKey {
+            base: PlaceBaseKey::Local(destination),
+            fields: vec![field_index],
+        };
+        let mut targets: Vec<PlaceKey> = vec![dest_key.clone()];
+        for def in &self.forward.value_definitions {
+            if let AbstractValue::Place(source) = &def.value
+                && source == &dest_key
+            {
+                targets.push(PlaceKey {
+                    base: PlaceBaseKey::Local(def.local.as_usize()),
+                    fields: Vec::new(),
+                });
+            }
+        }
+
+        for place in targets {
+            if !self.is_len_carrying_place(&place) {
+                continue;
+            }
+            let len_key = format!("len({})", place_label(&place));
+            let place_len = self.symbolic_len_term(&len_key);
+            solver.assert(&place_len._eq(len_term));
+            self.assumptions.push(SmtPredicate::Custom(format!(
+                "{len_key} == split field {field_index} length"
+            )));
+        }
+    }
+
+    /// If `value` provably equals `(x / d) * d` for some divisor `d`, return
+    /// `d`.  Such a value is always a multiple of `d`.  Recognises the
+    /// `slice.len() / N * N` (round-down-to-multiple) idiom, including the
+    /// `MulWithOverflow`/`.0` shape produced by MIR overflow checks.
+    fn multiple_divisor(&self, value: &AbstractValue<'tcx>) -> Option<AbstractValue<'tcx>> {
+        let AbstractValue::Binary(op, lhs, rhs) = self.resolve_arith(value, 0)? else {
+            return None;
+        };
+        if !matches!(op, BinOp::Mul | BinOp::MulWithOverflow) {
+            return None;
+        }
+        let lhs_a = self.resolve_arith(&lhs, 0).unwrap_or((*lhs).clone());
+        let rhs_a = self.resolve_arith(&rhs, 0).unwrap_or((*rhs).clone());
+        for (maybe_div, other) in [(&lhs_a, &rhs_a), (&rhs_a, &lhs_a)] {
+            if let AbstractValue::Binary(BinOp::Div, _, divisor) = maybe_div {
+                let divisor_a = self.resolve_arith(divisor, 0).unwrap_or((**divisor).clone());
+                if value_label(&divisor_a) == value_label(other) {
+                    return Some(divisor_a);
+                }
+            }
+        }
+        None
+    }
+
+    /// Resolve an abstract value to its arithmetic shape, following copies and
+    /// casts and unwrapping the `.0` field of `*WithOverflow` binary results.
+    fn resolve_arith(
+        &self,
+        value: &AbstractValue<'tcx>,
+        depth: usize,
+    ) -> Option<AbstractValue<'tcx>> {
+        if depth > 16 {
+            return None;
+        }
+        match value {
+            AbstractValue::Place(place) if place.fields == [0] => {
+                let base = PlaceKey {
+                    base: place.base.clone(),
+                    fields: Vec::new(),
+                };
+                match value_for_place(self.forward, &base)? {
+                    AbstractValue::Binary(op, l, r) => {
+                        let normalized = match op {
+                            BinOp::MulWithOverflow => BinOp::Mul,
+                            BinOp::AddWithOverflow => BinOp::Add,
+                            BinOp::SubWithOverflow => BinOp::Sub,
+                            other => *other,
+                        };
+                        Some(AbstractValue::Binary(normalized, l.clone(), r.clone()))
+                    }
+                    _ => None,
+                }
+            }
+            AbstractValue::Place(place) => {
+                let inner = value_for_place(self.forward, place)?.clone();
+                self.resolve_arith(&inner, depth + 1)
+            }
+            AbstractValue::Cast(inner, _) => self.resolve_arith(inner, depth + 1),
+            _ => Some(value.clone()),
+        }
     }
 
     /// Record call-effect definitions that the term builder understands.
