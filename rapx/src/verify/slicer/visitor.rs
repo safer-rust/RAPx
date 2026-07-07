@@ -548,7 +548,7 @@ fn local_from_tuple_field_projection<'tcx>(body: &Body<'tcx>, local: rustc_middl
                 if dest.local != current || !dest.projection.is_empty() {
                     continue;
                 }
-                if let Rvalue::Use(Operand::Copy(src) | Operand::Move(src)) = rvalue {
+                if let Rvalue::Use(Operand::Copy(src) | Operand::Move(src), ..) = rvalue {
                     if src
                         .projection
                         .iter()
