@@ -555,7 +555,15 @@ fn ty_is_layout_safe_inner(ty: Ty<'_>, depth: usize) -> bool {
         TyKind::Slice(inner) | TyKind::Array(inner, _) => {
             ty_is_layout_safe_inner(*inner, depth + 1)
         }
-        TyKind::Ref(_, inner, _) => ty_is_layout_safe_inner(*inner, depth + 1),
+        // A shared reference can never reallocate, free, or reassign the
+        // callee's length-carrying storage (the callee holds a copy of the
+        // fat pointer; interior mutability can change contents but not the
+        // length/base of a slice we track).  A mutable reference can only do
+        // so if it points at an owning container, so recurse into the pointee.
+        TyKind::Ref(_, _, rustc_middle::ty::Mutability::Not) => true,
+        TyKind::Ref(_, inner, rustc_middle::ty::Mutability::Mut) => {
+            ty_is_layout_safe_inner(*inner, depth + 1)
+        }
         TyKind::Tuple(elems) => elems.iter().all(|e| ty_is_layout_safe_inner(e, depth + 1)),
         // Raw pointers, FnDef, and concrete ADTs (Vec/Box/String/collections/…)
         // may reallocate, free, or reassign length-carrying storage.

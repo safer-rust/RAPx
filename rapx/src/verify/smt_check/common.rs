@@ -3348,6 +3348,49 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             .unwrap_or_else(|| self.latest_cursor())
     }
 
+    /// Walk a pointer place's definition chain through plain copies to the
+    /// nearest defining `Cast`, returning `(cast_operand, cast_target_ty)`.
+    fn defining_cast(&self, place: &PlaceKey) -> Option<(AbstractValue<'tcx>, Ty<'tcx>)> {
+        let mut cur = place.clone();
+        for _ in 0..8 {
+            let local = cur.local()?;
+            let def = self
+                .forward
+                .latest_value_definition_before(local, self.latest_cursor())?;
+            match &def.value {
+                AbstractValue::Cast(inner, ty) => return Some(((**inner).clone(), *ty)),
+                AbstractValue::Place(next) if next.fields.is_empty() => cur = next.clone(),
+                _ => return None,
+            }
+        }
+        None
+    }
+
+    /// Follow a cast operand through intermediate pointer casts and copies to
+    /// the root pointer, returning its pointee type.  Handles the
+    /// `*const [T; N] -> *const () -> *const T` reinterpret shape emitted by
+    /// some toolchains, where the immediate operand's pointee (`()`) would
+    /// otherwise hide the real `[T; N]` source element type.
+    fn cast_source_pointee(&self, value: &AbstractValue<'tcx>, depth: usize) -> Option<Ty<'tcx>> {
+        if depth > 8 {
+            return None;
+        }
+        match value {
+            AbstractValue::Cast(inner, _) => self.cast_source_pointee(inner, depth + 1),
+            AbstractValue::Place(pk) | AbstractValue::RawPtr(pk) | AbstractValue::Ref(pk) => {
+                if let Some(local) = pk.local()
+                    && let Some(def) =
+                        self.forward.latest_value_definition_before(local, self.latest_cursor())
+                    && matches!(def.value, AbstractValue::Cast(..))
+                {
+                    return self.cast_source_pointee(&def.value, depth + 1);
+                }
+                self.place_ty(pk).and_then(pointee_ty)
+            }
+            _ => None,
+        }
+    }
+
     /// Try to recover the slice index/length terms behind a pointer result.
     ///
     /// Supported forms:
@@ -3432,41 +3475,35 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         let (mut len_term_int, mut len_term) = self.bounds_len_for_origin(&base_origin, Some(&zero))?;
 
         if place.fields.is_empty()
-            && let Some(local) = place.local()
-            && let Some(definition) = self.forward.latest_value_definition_before(local, self.latest_cursor())
+            && let Some((inner, cast_ty)) = self.defining_cast(place)
         {
-            if let AbstractValue::Cast(inner, cast_ty) = &definition.value {
-                let caller = self.checkpoint.caller;
-                if let Some(dst_pt) = pointee_ty(*cast_ty) {
-                    let dst_size = safe_type_layout(self.tcx, caller, dst_pt).map(|(_, s)| s);
-                    let src_ty = match &**inner {
-                        AbstractValue::Place(inner_place)
-                        | AbstractValue::RawPtr(inner_place)
-                        | AbstractValue::Ref(inner_place) => {
-                            inner_place.local().and_then(|local| {
-                                let body = self.tcx.optimized_mir(caller);
-                                let ty = body.local_decls[local].ty;
-                                pointee_ty(ty)
-                            })
-                        }
-                        _ => None,
-                    };
-                    let src_size = src_ty.and_then(|pt| safe_type_layout(self.tcx, caller, pt).map(|(_, s)| s));
-                    let ratio_smt = match (src_size, dst_size) {
-                        (Some(src), Some(dst)) if src > dst && src % dst == 0 => Some(SmtTerm::Const(src / dst)),
-                        _ => {
-                            if let (Some(src_pty), Some(dst_pty)) = (src_ty, Some(dst_pt)) {
-                                pointee_stride_from_types(self.tcx, src_pty, dst_pty)
-                            } else {
-                                None
-                            }
-                        }
-                    };
-                    if let Some(ratio_smt) = ratio_smt {
-                        let ratio_int = self.term_for_smt_term(&ratio_smt)?;
-                        len_term_int = Int::mul(self.ctx, &[len_term_int, ratio_int]);
-                        len_term = SmtTerm::Mul(Box::new(len_term), Box::new(ratio_smt));
+            let caller = self.checkpoint.caller;
+            if let Some(dst_pt) = pointee_ty(cast_ty) {
+                let dst_size = safe_type_layout(self.tcx, caller, dst_pt).map(|(_, s)| s);
+                // Follow the cast/copy chain to the *root* pointer's pointee
+                // type.  On some toolchains a `*const [T; N] -> *const T`
+                // reinterpret is lowered through an intermediate `*const ()`
+                // cast (and a copy), so inspecting only the immediate operand
+                // would yield `()` and miss the `[T; N] -> T` stride ratio.
+                let src_ty = self.cast_source_pointee(&inner, 0);
+                let src_size =
+                    src_ty.and_then(|pt| safe_type_layout(self.tcx, caller, pt).map(|(_, s)| s));
+                let ratio_smt = match (src_size, dst_size) {
+                    (Some(src), Some(dst)) if src > dst && src % dst == 0 => {
+                        Some(SmtTerm::Const(src / dst))
                     }
+                    _ => {
+                        if let (Some(src_pty), Some(dst_pty)) = (src_ty, Some(dst_pt)) {
+                            pointee_stride_from_types(self.tcx, src_pty, dst_pty)
+                        } else {
+                            None
+                        }
+                    }
+                };
+                if let Some(ratio_smt) = ratio_smt {
+                    let ratio_int = self.term_for_smt_term(&ratio_smt)?;
+                    len_term_int = Int::mul(self.ctx, &[len_term_int, ratio_int]);
+                    len_term = SmtTerm::Mul(Box::new(len_term), Box::new(ratio_smt));
                 }
             }
         }
