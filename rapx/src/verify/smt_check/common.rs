@@ -51,6 +51,7 @@ use crate::verify::{
     path_extractor::PathStep,
     primitive::PrimitiveCall,
     report::CheckResult,
+    slicer::ForgetReason,
     verifier::{AbstractValue, CallSummary, ForwardVisitResult, StateFact},
 };
 
@@ -205,7 +206,21 @@ impl<'tcx> SmtChecker<'tcx> {
             ));
         }
 
-        if !forward.forgets.is_empty() && !has_contracts {
+        // A path with conservative precision loss cannot be trusted without a
+        // summary — unless the only losses come from `OpaqueContentCall`s
+        // (unsupported calls that may mutate referenced contents but cannot
+        // change any slice's length/base or the allocation).  Such losses are
+        // harmless for address/alignment/bounds/numeric obligations over
+        // pointers with known provenance.  They must still block content
+        // (`Initialized`) and allocation (`Allocated`) obligations, because an
+        // opaque call's *return value* could be an uninitialized or dangling
+        // pointer.
+        let obligation_keeps_precision_loss =
+            matches!(obligation, SmtObligation::Initialized { .. } | SmtObligation::Allocated { .. });
+        let blocking_forget = forward.forgets.iter().any(|reason| {
+            !matches!(reason, ForgetReason::OpaqueContentCall) || obligation_keeps_precision_loss
+        });
+        if blocking_forget && !has_contracts {
             let reasons = forward
                 .forgets
                 .iter()

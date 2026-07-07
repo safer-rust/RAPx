@@ -86,6 +86,12 @@ pub enum KeepReason {
 pub enum ForgetReason {
     /// A call may modify relevant state but has no summary yet.
     UnknownCall,
+    /// An unsupported call that can only mutate *contents* reachable through
+    /// its reference arguments — it takes no raw pointers and no concrete
+    /// owning containers, so it cannot change any slice's length or base
+    /// address, reallocate, or free memory.  Such a call invalidates
+    /// content facts (Init) but leaves address/length/layout facts intact.
+    OpaqueContentCall,
     /// An SCC region may modify relevant state but has no summary yet.
     SccWithoutSummary,
     /// A write may alias relevant state.

@@ -44,10 +44,20 @@ pub(crate) fn visit<'tcx>(
 
     let summary = call_summary::dependency_summary(tcx, func, args.len());
 
+    let forget_reason = || {
+        if call_summary::call_args_preserve_layout(
+            args.iter().map(|arg| arg.node.ty(&body.local_decls, tcx)),
+        ) {
+            ForgetReason::OpaqueContentCall
+        } else {
+            ForgetReason::UnknownCall
+        }
+    };
+
     if defs.intersects(relevant) {
         if summary.unsupported {
             items.push(BackwardItem::Forget {
-                reason: ForgetReason::UnknownCall,
+                reason: forget_reason(),
             });
         }
         items.push(BackwardItem::Terminator {
@@ -74,7 +84,7 @@ pub(crate) fn visit<'tcx>(
     {
         if summary.unsupported {
             items.push(BackwardItem::Forget {
-                reason: ForgetReason::UnknownCall,
+                reason: forget_reason(),
             });
         }
         items.push(BackwardItem::Terminator {

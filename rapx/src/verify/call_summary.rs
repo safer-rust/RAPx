@@ -523,9 +523,48 @@ pub fn callee_def_id(func: &Operand<'_>) -> Option<DefId> {
     Some(*def_id)
 }
 
+/// Return true when every argument type is *layout-safe*: passing such a value
+/// to an unsupported call cannot let that call change any slice's length or
+/// base address, reallocate, or free memory.  Scalars, `str`, slices, arrays,
+/// generic type parameters (elements, closures), closures, and references or
+/// tuples of these are layout-safe; raw pointers and concrete owning
+/// containers (`Vec`, `Box`, `String`, collections, other ADTs) are not.
+pub fn call_args_preserve_layout<'tcx>(arg_tys: impl Iterator<Item = Ty<'tcx>>) -> bool {
+    arg_tys.map(ty_is_layout_safe_arg).all(|safe| safe)
+}
+
+/// See [`call_args_preserve_layout`].
+pub fn ty_is_layout_safe_arg(ty: Ty<'_>) -> bool {
+    ty_is_layout_safe_inner(ty, 0)
+}
+
+fn ty_is_layout_safe_inner(ty: Ty<'_>, depth: usize) -> bool {
+    if depth > 6 {
+        return false;
+    }
+    match ty.kind() {
+        TyKind::Bool
+        | TyKind::Char
+        | TyKind::Int(_)
+        | TyKind::Uint(_)
+        | TyKind::Float(_)
+        | TyKind::Str
+        | TyKind::Param(_)
+        | TyKind::Closure(..)
+        | TyKind::Never => true,
+        TyKind::Slice(inner) | TyKind::Array(inner, _) => {
+            ty_is_layout_safe_inner(*inner, depth + 1)
+        }
+        TyKind::Ref(_, inner, _) => ty_is_layout_safe_inner(*inner, depth + 1),
+        TyKind::Tuple(elems) => elems.iter().all(|e| ty_is_layout_safe_inner(e, depth + 1)),
+        // Raw pointers, FnDef, and concrete ADTs (Vec/Box/String/collections/…)
+        // may reallocate, free, or reassign length-carrying storage.
+        _ => false,
+    }
+}
+
 /// Return a stable, human-readable name for a MIR call operand.
-pub fn call_name(tcx: TyCtxt<'_>, func: &Operand<'_>) -> String {
-    callee_def_id(func)
+pub fn call_name(tcx: TyCtxt<'_>, func: &Operand<'_>) -> String {    callee_def_id(func)
         .map(|def_id| tcx.def_path_str(def_id))
         .unwrap_or_else(|| format!("{func:?}"))
 }

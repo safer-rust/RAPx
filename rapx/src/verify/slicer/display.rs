@@ -165,6 +165,9 @@ fn describe_forget_reason(reason: &ForgetReason) -> &'static str {
         ForgetReason::UnknownCall => {
             "UnknownCall: a retained call may affect relevant state and has no summary yet"
         }
+        ForgetReason::OpaqueContentCall => {
+            "OpaqueContentCall: a retained call may mutate referenced contents but cannot change slice length/base or allocation"
+        }
         ForgetReason::SccWithoutSummary => {
             "SccWithoutSummary: a relevant SCC exit has no verified SCC summary yet"
         }

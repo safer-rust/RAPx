@@ -651,7 +651,16 @@ impl<'tcx> ForwardVerifier<'tcx> {
         }
 
         if summary.unsupported && !is_target_checkpoint {
-            result.forgets.push(ForgetReason::UnknownCall);
+            let body = self.tcx.optimized_mir(result.checkpoint.caller);
+            let preserves_layout = call_summary::call_args_preserve_layout(
+                args.iter().map(|arg| arg.node.ty(&body.local_decls, self.tcx)),
+            );
+            let reason = if preserves_layout {
+                ForgetReason::OpaqueContentCall
+            } else {
+                ForgetReason::UnknownCall
+            };
+            result.forgets.push(reason);
             result
                 .notes
                 .push(format!("unsupported call effect: {}", summary.name));
