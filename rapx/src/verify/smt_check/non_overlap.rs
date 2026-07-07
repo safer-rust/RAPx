@@ -18,6 +18,14 @@ pub(crate) fn check<'tcx>(
     property: &Property<'tcx>,
     forward: &ForwardVisitResult<'tcx>,
 ) -> SmtCheckResult {
+    // A single array argument (`NonOverlap(indices)`, all elements pairwise
+    // distinct) that a preceding `get_disjoint`-style validator has checked is
+    // discharged by that trusted summary.
+    if property.args.len() == 1 && checker.checkpoint_uses_validated_array(checkpoint, forward) {
+        return SmtCheckResult::proved(
+            "NonOverlap proved: indices validated pairwise-distinct by a preceding disjoint check",
+        );
+    }
     let Some(left) = checker.property_place_arg(checkpoint, property, 0) else {
         return SmtCheckResult::unknown("NonOverlap left pointer could not be resolved");
     };

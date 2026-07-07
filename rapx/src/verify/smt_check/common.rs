@@ -1280,6 +1280,60 @@ impl<'tcx> SmtChecker<'tcx> {
         }
     }
 
+    /// True when a preceding `get_disjoint`-style validator call on this path
+    /// has checked the array denoted by `target` (a trusted
+    /// `ChecksIndexBoundsDisjoint` summary).
+    pub(crate) fn disjoint_check_validates(
+        &self,
+        forward: &ForwardVisitResult<'tcx>,
+        target: &PlaceKey,
+    ) -> bool {
+        let caller = forward.checkpoint.caller;
+        let Some(target_root) = target.local().map(|l| resolve_root_local_mir(self.tcx, caller, l))
+        else {
+            return false;
+        };
+        for fact in &forward.facts {
+            let StateFact::Call(call) = fact else {
+                continue;
+            };
+            let Some(indices_arg) = call.effects.iter().find_map(|effect| match effect {
+                crate::verify::call_summary::CallEffect::ChecksIndexBoundsDisjoint {
+                    indices_arg,
+                    ..
+                } => Some(*indices_arg),
+                _ => None,
+            }) else {
+                continue;
+            };
+            let arg_root = call
+                .args
+                .get(indices_arg)
+                .and_then(abstract_value_base_local)
+                .map(|l| resolve_root_local_mir(self.tcx, caller, l));
+            if arg_root == Some(target_root) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// True when some argument of `checkpoint` is an array that a preceding
+    /// `get_disjoint`-style validator on this path has checked.  Used to
+    /// discharge the array-level `InBound`/`NonOverlap` obligations of an
+    /// unchecked disjoint accessor, whose contract arguments do not always
+    /// parse to a resolvable place.
+    pub(crate) fn checkpoint_uses_validated_array(
+        &self,
+        checkpoint: &Checkpoint<'tcx>,
+        forward: &ForwardVisitResult<'tcx>,
+    ) -> bool {
+        checkpoint.args.iter().any(|operand| {
+            operand_place(operand)
+                .is_some_and(|place| self.disjoint_check_validates(forward, &place))
+        })
+    }
+
     /// Resolve the target place of a property directly from a contract place
     /// without going through callee argument mapping.
     pub(crate) fn property_target_direct(&self, property: &Property<'tcx>) -> Option<PlaceKey> {
@@ -4140,6 +4194,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 | crate::verify::call_summary::CallEffect::ReturnAligned { .. }
                 | crate::verify::call_summary::CallEffect::ReadMemory { .. }
                 | crate::verify::call_summary::CallEffect::WriteMemory { .. }
+                | crate::verify::call_summary::CallEffect::ChecksIndexBoundsDisjoint { .. }
                 | crate::verify::call_summary::CallEffect::ForgetArgFacts { .. } => {}
             }
         }
@@ -5451,6 +5506,57 @@ fn value_for_place<'a, 'tcx>(
 ) -> Option<&'a AbstractValue<'tcx>> {
     let local = place.local()?;
     forward.values.get(&local)
+}
+
+/// Base local of a pointer/reference/place abstract value.
+fn abstract_value_base_local(value: &AbstractValue<'_>) -> Option<Local> {
+    match value {
+        AbstractValue::Place(p) | AbstractValue::Ref(p) | AbstractValue::RawPtr(p) => p.local(),
+        AbstractValue::Cast(inner, _) => abstract_value_base_local(inner),
+        _ => None,
+    }
+}
+
+/// Follow copy/reference/cast chains through the caller MIR to the root local
+/// backing `start`.  Unlike [`resolve_root_local`], this does not depend on the
+/// forward slice retaining the intermediate definitions, so it can relate a
+/// call's argument (`&indices`) to a later use of the same array.
+fn resolve_root_local_mir(tcx: TyCtxt<'_>, caller: rustc_hir::def_id::DefId, start: Local) -> Local {
+    let body = tcx.optimized_mir(caller);
+    let mut cur = start;
+    let mut seen = HashSet::new();
+    while seen.insert(cur) {
+        let mut next = None;
+        for bb in body.basic_blocks.iter() {
+            for stmt in &bb.statements {
+                let rustc_middle::mir::StatementKind::Assign(assign) = &stmt.kind else {
+                    continue;
+                };
+                let (dest, rvalue) = &**assign;
+                if dest.local != cur || !dest.projection.is_empty() {
+                    continue;
+                }
+                next = rvalue_base_local(rvalue);
+            }
+        }
+        match next {
+            Some(n) if n != cur => cur = n,
+            _ => break,
+        }
+    }
+    cur
+}
+
+/// Base local flowing into a place from a reference/copy/cast rvalue.
+fn rvalue_base_local(rvalue: &Rvalue<'_>) -> Option<Local> {
+    match rvalue {
+        Rvalue::Ref(_, _, place)
+        | Rvalue::RawPtr(_, place)
+        | Rvalue::CopyForDeref(place) => Some(place.local),
+        Rvalue::Use(Operand::Copy(place) | Operand::Move(place), ..)
+        | Rvalue::Cast(_, Operand::Copy(place) | Operand::Move(place), _) => Some(place.local),
+        _ => None,
+    }
 }
 
 /// Return the pointee type of raw pointers and references.

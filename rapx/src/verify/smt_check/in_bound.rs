@@ -15,7 +15,10 @@
 
 use super::common::{SmtCheckResult, SmtChecker, SmtObligation, SmtTerm};
 use crate::verify::{
-    contract::Property, helpers::Checkpoint, primitive::PrimitiveCall, verifier::ForwardVisitResult,
+    contract::{ContractExpr, Property, PropertyArg},
+    helpers::Checkpoint,
+    primitive::PrimitiveCall,
+    verifier::ForwardVisitResult,
 };
 
 /// Check `InBound` by lowering it to a common bounds obligation.
@@ -25,6 +28,21 @@ pub(crate) fn check<'tcx>(
     property: &Property<'tcx>,
     forward: &ForwardVisitResult<'tcx>,
 ) -> SmtCheckResult {
+    // An `InBound(index_access(slice, indices))` over an array that a preceding
+    // `get_disjoint`-style validator has checked is discharged by that trusted
+    // summary.  Checked up front because the array-index contract does not
+    // always rebind to a resolvable place at the call site.
+    if property
+        .args
+        .iter()
+        .any(|arg| matches!(arg, PropertyArg::Expr(ContractExpr::IndexAccess { .. })))
+        && checker.checkpoint_uses_validated_array(checkpoint, forward)
+    {
+        return SmtCheckResult::proved(
+            "InBound proved: indices validated in-bounds by a preceding disjoint check",
+        );
+    }
+
     if let Some(predicates) =
         checker.property_index_access_in_bound_predicates(checkpoint, property)
     {

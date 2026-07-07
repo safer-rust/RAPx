@@ -113,6 +113,13 @@ pub enum CallEffect {
     /// A specific field of the returned tuple carries the length of a given
     /// argument (e.g. split_at(mid) returns (left, right) where left.len() == mid).
     ReturnTupleFieldLength { field: usize, from_arg: usize },
+    /// The call validates that every element of the array argument `indices_arg`
+    /// is `< args[len_arg]` and that the elements are pairwise distinct, returning
+    /// `Err` otherwise.  On the `Ok` continuation the caller may assume
+    /// `InBound(index_access(slice_of(len_arg), indices_arg))` and
+    /// `NonOverlap(indices_arg)`.  (A trusted interprocedural summary, like the
+    /// std-primitive summaries — the validator's body is not re-proved here.)
+    ChecksIndexBoundsDisjoint { indices_arg: usize, len_arg: usize },
     /// Facts about an argument must be forgotten conservatively.
     ForgetArgFacts { arg: usize, reason: ForgetReason },
 }
@@ -492,6 +499,18 @@ pub fn effect_summary<'tcx>(
                 name,
                 destination,
                 effects: vec![effect],
+                unsupported: false,
+            };
+        }
+        if let Some((indices_arg, len_arg)) = detect_index_disjoint_validator(tcx, callee) {
+            return CallEffectSummary {
+                callee: Some(callee),
+                name,
+                destination,
+                effects: vec![CallEffect::ChecksIndexBoundsDisjoint {
+                    indices_arg,
+                    len_arg,
+                }],
                 unsupported: false,
             };
         }
@@ -970,6 +989,132 @@ fn local_must_write_args(tcx: TyCtxt<'_>, callee: DefId) -> Option<Vec<usize>> {
             .collect::<Vec<_>>()
     }))
     .ok()
+}
+
+/// Detect an "index disjoint validator": a function whose body loads elements
+/// from an array argument, and returns early (`Err`) both when an element is
+/// out of range against a scalar argument (`>= len`) and when two elements are
+/// equal (a duplicate).  Returns `(indices_arg, len_arg)`.
+///
+/// This is a *trusted* structural interprocedural summary, in the same spirit
+/// as the name-based std-primitive summaries: the validator's loop coverage is
+/// not re-proved here.  It only fires when the body literally contains both an
+/// element-vs-scalar range comparison and an element-vs-element equality
+/// comparison over the same array argument.
+fn detect_index_disjoint_validator(tcx: TyCtxt<'_>, callee: DefId) -> Option<(usize, usize)> {
+    use rustc_middle::mir::{BinOp, ProjectionElem};
+    callee.as_local()?;
+    if !tcx.is_mir_available(callee) {
+        return None;
+    }
+    catch_unwind(AssertUnwindSafe(|| {
+        let body = tcx.optimized_mir(callee);
+        let arg_count = body.arg_count;
+        let mut elem_load_arg: HashSet<(Local, usize)> = HashSet::new();
+        let mut copy_of_arg: HashSet<(Local, usize)> = HashSet::new();
+
+        for bb in body.basic_blocks.iter() {
+            for stmt in &bb.statements {
+                let StatementKind::Assign(assign) = &stmt.kind else {
+                    continue;
+                };
+                let (dest, rvalue) = &**assign;
+                if !dest.projection.is_empty() {
+                    continue;
+                }
+                let Rvalue::Use(Operand::Copy(place) | Operand::Move(place), ..) = rvalue else {
+                    continue;
+                };
+                let Some(arg) = arg_of_local(place.local, arg_count) else {
+                    continue;
+                };
+                if place
+                    .projection
+                    .iter()
+                    .any(|p| matches!(p, ProjectionElem::Index(_)))
+                {
+                    elem_load_arg.insert((dest.local, arg));
+                } else if place.projection.is_empty() {
+                    copy_of_arg.insert((dest.local, arg));
+                }
+            }
+        }
+
+        let elem_arg = |op: &Operand<'_>| -> Option<usize> {
+            let (Operand::Copy(p) | Operand::Move(p)) = op else {
+                return None;
+            };
+            if !p.projection.is_empty() {
+                return None;
+            }
+            elem_load_arg
+                .iter()
+                .find(|(l, _)| *l == p.local)
+                .map(|(_, a)| *a)
+        };
+        let scalar_arg = |op: &Operand<'_>| -> Option<usize> {
+            let (Operand::Copy(p) | Operand::Move(p)) = op else {
+                return None;
+            };
+            if !p.projection.is_empty() {
+                return None;
+            }
+            arg_of_local(p.local, arg_count).or_else(|| {
+                copy_of_arg
+                    .iter()
+                    .find(|(l, _)| *l == p.local)
+                    .map(|(_, a)| *a)
+            })
+        };
+
+        let mut bounds: Option<(usize, usize)> = None;
+        let mut disjoint_arg: Option<usize> = None;
+        for bb in body.basic_blocks.iter() {
+            for stmt in &bb.statements {
+                let StatementKind::Assign(assign) = &stmt.kind else {
+                    continue;
+                };
+                let (_, Rvalue::BinaryOp(op, pair)) = &**assign else {
+                    continue;
+                };
+                let (a, b) = &**pair;
+                match op {
+                    BinOp::Ge | BinOp::Gt | BinOp::Le | BinOp::Lt => {
+                        if let (Some(idx), Some(len)) = (elem_arg(a), scalar_arg(b)) {
+                            bounds = Some((idx, len));
+                        } else if let (Some(idx), Some(len)) = (elem_arg(b), scalar_arg(a)) {
+                            bounds = Some((idx, len));
+                        }
+                    }
+                    BinOp::Eq | BinOp::Ne => {
+                        if let (Some(x), Some(y)) = (elem_arg(a), elem_arg(b))
+                            && x == y
+                        {
+                            disjoint_arg = Some(x);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        match (bounds, disjoint_arg) {
+            (Some((idx, len)), Some(dj)) if dj == idx && idx != len => Some((idx, len)),
+            _ => None,
+        }
+    }))
+    .ok()
+    .flatten()
+}
+
+/// Return the zero-based argument index of `local`, if it is a MIR argument.
+fn arg_of_local(local: Local, arg_count: usize) -> Option<usize> {
+    let i = local.as_usize();
+    if i >= 1 && i <= arg_count {
+        Some(i - 1)
+    } else {
+        None
+    }
 }
 
 fn path_ends_in_return(body: &rustc_middle::mir::Body<'_>, path: &[usize]) -> bool {
