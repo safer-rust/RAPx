@@ -207,6 +207,16 @@ pub fn dependency_summary<'tcx>(
         };
     }
 
+    if primitive == Some(PrimitiveCall::NumericArith) {
+        return CallDependencySummary {
+            callee,
+            name,
+            return_depends_on_args: (0..arg_count).collect(),
+            may_write_args: Vec::new(),
+            unsupported: false,
+        };
+    }
+
     if primitive.is_some_and(PrimitiveCall::is_layout_constant) {
         return CallDependencySummary {
             callee,
@@ -396,6 +406,19 @@ pub fn effect_summary<'tcx>(
     }
 
     if primitive == Some(PrimitiveCall::MaybeUninitUninit) {
+        return CallEffectSummary {
+            callee,
+            name,
+            destination,
+            effects: Vec::new(),
+            unsupported: false,
+        };
+    }
+
+    if primitive == Some(PrimitiveCall::NumericArith) {
+        // Pure arithmetic: no memory effect and never precision-losing.  The
+        // SMT model reconstructs the exact product/sum from the operands (see
+        // the `unchecked_mul` handling in `assert_forward_facts`).
         return CallEffectSummary {
             callee,
             name,

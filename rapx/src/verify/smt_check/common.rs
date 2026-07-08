@@ -2979,6 +2979,9 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                             }
                         }
                     }
+                    // `a.unchecked_mul(b)` and friends are pure arithmetic; the
+                    // exact value is reconstructed on demand in
+                    // `term_for_numeric_arith_call`, so no fact is needed here.
                 }
                 StateFact::KnownNonZero { place, reason } => {
                     self.assert_place_non_zero(solver, place, reason);
@@ -3566,6 +3569,22 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 .latest_value_definition_before(local, self.latest_cursor())?;
             match &def.value {
                 AbstractValue::Cast(inner, ty) => return Some(((**inner).clone(), *ty)),
+                // `<*const [T; N]>::cast::<T>()` is a reinterpret cast expressed
+                // as a method call rather than an `as` expression.  Treat it like
+                // `AbstractValue::Cast`: the receiver is the source pointer and the
+                // call destination's type is the cast target.
+                AbstractValue::CallResult(call)
+                    if PrimitiveCall::classify(&call.func) == Some(PrimitiveCall::PtrCast) =>
+                {
+                    let inner = call.args.first()?.clone();
+                    let ty = self
+                        .tcx
+                        .optimized_mir(self.checkpoint.caller)
+                        .local_decls
+                        .get(call.destination)?
+                        .ty;
+                    return Some((inner, ty));
+                }
                 AbstractValue::Place(next) if next.fields.is_empty() => cur = next.clone(),
                 _ => return None,
             }
@@ -4625,6 +4644,9 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 if let Some(term) = self.term_for_length_call(call, cursor, seen) {
                     return Some(term);
                 }
+                if let Some(term) = self.term_for_numeric_arith_call(call, cursor, seen) {
+                    return Some(term);
+                }
                 let place = PlaceKey {
                     base: PlaceBaseKey::Local(call.destination.as_usize()),
                     fields: Vec::new(),
@@ -4913,6 +4935,38 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             }
             SmtTerm::Value(_) | SmtTerm::Const(_) | SmtTerm::ConstParam(_) => {}
         }
+    }
+
+    /// Build an SMT term for a pure numeric-arithmetic intrinsic result
+    /// (`unchecked_mul`/`unchecked_add`/...), reconstructing the exact value
+    /// from its operands so downstream range checks can relate it back to the
+    /// source quantities (e.g. `self.len() * N` in `[[T; N]]::as_flattened`).
+    fn term_for_numeric_arith_call(
+        &mut self,
+        call: &CallSummary<'tcx>,
+        cursor: ValueCursor,
+        seen: &mut TraceSeen,
+    ) -> Option<Int<'ctx>> {
+        if PrimitiveCall::classify(&call.func) != Some(PrimitiveCall::NumericArith) {
+            return None;
+        }
+        let lhs = self.term_for_value_at(call.args.first()?, cursor, seen)?;
+        let rhs = self.term_for_value_at(call.args.get(1)?, cursor, seen)?;
+        let func = &call.func;
+        let term = if func.contains("unchecked_mul") {
+            Int::mul(self.ctx, &[lhs, rhs])
+        } else if func.contains("unchecked_add") {
+            Int::add(self.ctx, &[lhs, rhs])
+        } else if func.contains("unchecked_sub") {
+            Int::sub(self.ctx, &[lhs, rhs])
+        } else if func.contains("unchecked_div") || func.contains("exact_div") {
+            lhs.div(&rhs)
+        } else if func.contains("unchecked_rem") {
+            lhs.modulo(&rhs)
+        } else {
+            return None;
+        };
+        Some(term)
     }
 
     /// Lower a binary MIR operation to an integer term.

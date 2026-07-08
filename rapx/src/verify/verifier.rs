@@ -1078,6 +1078,27 @@ fn extract_const_param_name(text: &str) -> Option<String> {
             }
         }
     }
+    // Newer rustc prints a const parameter as e.g. `Ty(usize, N/#1)`, where the
+    // trailing `N/#1` is the parameter `N` with its index.  Recognize this so a
+    // const generic resolves to the same `ConstParam(N)` term everywhere it is
+    // used (call arguments, binary ops, and type strides), rather than an opaque
+    // per-spelling `Const(...)` symbol.
+    if let Some(open) = text.find('(')
+        && let Some(close) = text.rfind(')')
+        && open < close
+    {
+        let inner = &text[open + 1..close];
+        let last = inner.rsplit(',').next()?.trim();
+        if let Some((name, index)) = last.split_once("/#")
+            && !index.is_empty()
+            && index.bytes().all(|b| b.is_ascii_digit())
+            && !name.is_empty()
+            && name.bytes().next().is_some_and(|b| b.is_ascii_alphabetic() || b == b'_')
+            && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        {
+            return Some(name.to_string());
+        }
+    }
     None
 }
 

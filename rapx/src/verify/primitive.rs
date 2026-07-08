@@ -30,6 +30,10 @@ pub enum PrimitiveCall {
     FromRawPartsMut,
     SplitAt,
     SplitAtMut,
+    /// Pure integer arithmetic intrinsics such as `usize::unchecked_mul`.
+    /// The result is the exact arithmetic value of the operands (their safety
+    /// preconditions only forbid overflow); they have no memory effect.
+    NumericArith,
 }
 
 impl PrimitiveCall {
@@ -62,6 +66,15 @@ impl PrimitiveCall {
         }
         if name.contains("::byte_offset") || name.contains("::wrapping_byte_offset") {
             return Some(Self::PtrByteOffset);
+        }
+        if name.contains("::unchecked_mul")
+            || name.contains("::unchecked_add")
+            || name.contains("::unchecked_sub")
+            || name.contains("::unchecked_div")
+            || name.contains("::unchecked_rem")
+            || name.contains("::exact_div")
+        {
+            return Some(Self::NumericArith);
         }
         if name.contains("::add") || name.contains("::wrapping_add") {
             return Some(Self::PtrAdd);
