@@ -120,6 +120,12 @@ pub enum CallEffect {
     /// `NonOverlap(indices_arg)`.  (A trusted interprocedural summary, like the
     /// std-primitive summaries — the validator's body is not re-proved here.)
     ChecksIndexBoundsDisjoint { indices_arg: usize, len_arg: usize },
+    /// The call returns a `Range { start, end }` guaranteed to satisfy
+    /// `0 <= start <= end <= bounds`, where `bounds` is the `end` field (field 0)
+    /// of the `RangeTo` argument at `bounds_arg`.  Models `core::slice::range`,
+    /// whose result feeds subslice pointer arithmetic in callers such as
+    /// `slice::copy_within`.
+    ReturnBoundedRange { bounds_arg: usize },
     /// Facts about an argument must be forgotten conservatively.
     ForgetArgFacts { arg: usize, reason: ForgetReason },
 }
@@ -212,6 +218,16 @@ pub fn dependency_summary<'tcx>(
             callee,
             name,
             return_depends_on_args: (0..arg_count).collect(),
+            may_write_args: Vec::new(),
+            unsupported: false,
+        };
+    }
+
+    if is_slice_range_fn(&name) {
+        return CallDependencySummary {
+            callee,
+            name,
+            return_depends_on_args: vec![0, 1],
             may_write_args: Vec::new(),
             unsupported: false,
         };
@@ -446,6 +462,16 @@ pub fn effect_summary<'tcx>(
             name,
             destination,
             effects: Vec::new(),
+            unsupported: false,
+        };
+    }
+
+    if is_slice_range_fn(&name) {
+        return CallEffectSummary {
+            callee,
+            name,
+            destination,
+            effects: vec![CallEffect::ReturnBoundedRange { bounds_arg: 1 }],
             unsupported: false,
         };
     }
@@ -1036,6 +1062,13 @@ fn local_must_write_args(tcx: TyCtxt<'_>, callee: DefId) -> Option<Vec<usize>> {
             .collect::<Vec<_>>()
     }))
     .ok()
+}
+
+/// Recognize `core::slice::range` (re-exported as `slice::range`), whose result
+/// `Range { start, end }` satisfies `0 <= start <= end <= bounds.end`.
+fn is_slice_range_fn(name: &str) -> bool {
+    let base = name.split('<').next().unwrap_or(name);
+    base.ends_with("slice::range") || base.contains("slice::index::range")
 }
 
 /// Recognize the standard-library `get_disjoint_check_valid` helper as a

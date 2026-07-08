@@ -154,6 +154,14 @@ impl PrimitiveCall {
         matches!(self, Self::PtrSub | Self::PtrByteSub)
     }
 
+    /// Return true for element-stride pointer arithmetic (offset measured in
+    /// elements).  The result keeps the base pointer's alignment because
+    /// `size_of::<T>()` is always a multiple of `align_of::<T>()`.  Byte-offset
+    /// variants are excluded since they may break alignment.
+    pub fn is_element_pointer_arithmetic(self) -> bool {
+        matches!(self, Self::PtrAdd | Self::PtrSub | Self::PtrOffset)
+    }
+
     /// Return true for any pointer arithmetic primitive.
     pub fn is_pointer_arithmetic(self) -> bool {
         matches!(

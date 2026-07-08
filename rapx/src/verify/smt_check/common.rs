@@ -2985,6 +2985,19 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                     // `a.unchecked_mul(b)` and friends are pure arithmetic; the
                     // exact value is reconstructed on demand in
                     // `term_for_numeric_arith_call`, so no fact is needed here.
+
+                    // `core::slice::range` returns `Range { start, end }` with
+                    // `0 <= start <= end <= bounds.end`.  Assert this so callers
+                    // that derive subslice pointers from the result (e.g.
+                    // `slice::copy_within`) can prove the offsets are in bounds.
+                    if let Some(bounds_arg) = call.effects.iter().find_map(|effect| match effect {
+                        crate::verify::call_summary::CallEffect::ReturnBoundedRange {
+                            bounds_arg,
+                        } => Some(*bounds_arg),
+                        _ => None,
+                    }) {
+                        self.assert_bounded_range(solver, call, bounds_arg);
+                    }
                 }
                 StateFact::KnownNonZero { place, reason } => {
                     self.assert_place_non_zero(solver, place, reason);
@@ -3998,6 +4011,41 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         }
     }
 
+    /// Assert the `0 <= start <= end <= bounds.end` postcondition of a
+    /// `core::slice::range` result.  `call.destination` is the returned
+    /// `Range` (field 0 = start, field 1 = end); `bounds_arg` is a `RangeTo`
+    /// whose field 0 is the upper limit (the slice length).
+    fn assert_bounded_range(
+        &mut self,
+        solver: &Solver<'ctx>,
+        call: &CallSummary<'tcx>,
+        bounds_arg: usize,
+    ) {
+        let start = PlaceKey {
+            base: PlaceBaseKey::Local(call.destination.as_usize()),
+            fields: vec![0],
+        };
+        let end = PlaceKey {
+            base: PlaceBaseKey::Local(call.destination.as_usize()),
+            fields: vec![1],
+        };
+        let (Some(start_term), Some(end_term)) =
+            (self.term_for_place(&start), self.term_for_place(&end))
+        else {
+            return;
+        };
+        let zero = Int::from_u64(self.ctx, 0);
+        solver.assert(&start_term.ge(&zero));
+        solver.assert(&start_term.le(&end_term));
+        if let Some(AbstractValue::Place(bounds_place)) = call.args.get(bounds_arg) {
+            let mut bounds_end = bounds_place.clone();
+            bounds_end.fields.push(0);
+            if let Some(bounds_term) = self.term_for_place(&bounds_end) {
+                solver.assert(&end_term.le(&bounds_term));
+            }
+        }
+    }
+
     /// Assert known alignment for a place when its MIR type provides one.
     fn assert_place_alignment(&mut self, solver: &Solver<'ctx>, place: &PlaceKey) {
         let Some(ty) = self.place_ty(place) else {
@@ -4370,6 +4418,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 | crate::verify::call_summary::CallEffect::ReadMemory { .. }
                 | crate::verify::call_summary::CallEffect::WriteMemory { .. }
                 | crate::verify::call_summary::CallEffect::ChecksIndexBoundsDisjoint { .. }
+                | crate::verify::call_summary::CallEffect::ReturnBoundedRange { .. }
                 | crate::verify::call_summary::CallEffect::ForgetArgFacts { .. } => {}
             }
         }
@@ -5103,24 +5152,64 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
     /// alignment type to avoid proving alignment for reinterpreting casts (e.g.
     /// a `*const u8` view of a `*const u32`).
     fn place_is_reference_aligned(&self, place: &PlaceKey, ty_name: &str) -> bool {
-        let Some(AbstractValue::CallResult(call)) =
-            self.resolved_value_for_place(place, &mut TraceSeen::new())
-        else {
+        let Some(value) = self.resolved_value_for_place(place, &mut TraceSeen::new()) else {
             return false;
         };
-        if !is_as_ptr_call(&call.func) {
+        self.value_is_reference_aligned(&value, ty_name, 0)
+    }
+
+    /// See [`place_is_reference_aligned`]; follows element-stride pointer
+    /// arithmetic back to an `as_ptr`/`as_mut_ptr` base, since `p.add(k)` keeps
+    /// the alignment of `p` for element strides.
+    fn value_is_reference_aligned(
+        &self,
+        value: &AbstractValue<'tcx>,
+        ty_name: &str,
+        depth: usize,
+    ) -> bool {
+        if depth > 8 {
             return false;
         }
-        let dest = PlaceKey {
-            base: PlaceBaseKey::Local(call.destination.as_usize()),
-            fields: Vec::new(),
+        let AbstractValue::CallResult(call) = value else {
+            return false;
         };
-        let want = normalize_init_ty_name(ty_name);
-        let got = self
-            .place_ty(&dest)
-            .and_then(pointee_ty_str)
-            .map(|s| normalize_init_ty_name(&s));
-        got.as_deref() == Some(want.as_str())
+        if is_as_ptr_call(&call.func) {
+            let dest = PlaceKey {
+                base: PlaceBaseKey::Local(call.destination.as_usize()),
+                fields: Vec::new(),
+            };
+            let got = self
+                .place_ty(&dest)
+                .and_then(pointee_ty_str)
+                .map(|s| normalize_init_ty_name(&s));
+            return got.as_deref() == Some(normalize_init_ty_name(ty_name).as_str());
+        }
+        if PrimitiveCall::classify(&call.func)
+            .is_some_and(PrimitiveCall::is_element_pointer_arithmetic)
+        {
+            // The offset must be measured in `ty_name`-sized elements for the
+            // result to keep `ty_name` alignment.  A pointer of a different
+            // pointee (e.g. `*const u8`) advanced by its own stride can land on
+            // an address that is not `ty_name`-aligned, so reject those.
+            let dest = PlaceKey {
+                base: PlaceBaseKey::Local(call.destination.as_usize()),
+                fields: Vec::new(),
+            };
+            let dest_pointee = self
+                .place_ty(&dest)
+                .and_then(pointee_ty_str)
+                .map(|s| normalize_init_ty_name(&s));
+            if dest_pointee.as_deref() != Some(normalize_init_ty_name(ty_name).as_str()) {
+                return false;
+            }
+            if let Some(base) = call.args.first()
+                && let Some(base_value) =
+                    self.resolved_value_before(base, self.latest_cursor(), &mut TraceSeen::new())
+            {
+                return self.value_is_reference_aligned(&base_value, ty_name, depth + 1);
+            }
+        }
+        false
     }
 
     /// Resolve copy/cast chains for a MIR place into the value at their source.

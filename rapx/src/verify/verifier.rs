@@ -647,6 +647,8 @@ impl<'tcx> ForwardVerifier<'tcx> {
                 // Consumed by the InBound / NonOverlap checkers, which read the
                 // effect off the retained `StateFact::Call`.
                 CallEffect::ChecksIndexBoundsDisjoint { .. } => {}
+                // Postcondition asserted directly from the retained `StateFact::Call`.
+                CallEffect::ReturnBoundedRange { .. } => {}
                 CallEffect::ForgetArgFacts { reason, .. } => {
                     result.forgets.push(reason.clone());
                 }
