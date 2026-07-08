@@ -4974,9 +4974,15 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         let one = Int::from_u64(self.ctx, 1);
         let zero = Int::from_u64(self.ctx, 0);
         Some(match op {
-            BinOp::Add | BinOp::AddWithOverflow => Int::add(self.ctx, &[lhs.clone(), rhs.clone()]),
-            BinOp::Sub | BinOp::SubWithOverflow => Int::sub(self.ctx, &[lhs.clone(), rhs.clone()]),
-            BinOp::Mul | BinOp::MulWithOverflow => Int::mul(self.ctx, &[lhs.clone(), rhs.clone()]),
+            BinOp::Add | BinOp::AddWithOverflow | BinOp::AddUnchecked => {
+                Int::add(self.ctx, &[lhs.clone(), rhs.clone()])
+            }
+            BinOp::Sub | BinOp::SubWithOverflow | BinOp::SubUnchecked => {
+                Int::sub(self.ctx, &[lhs.clone(), rhs.clone()])
+            }
+            BinOp::Mul | BinOp::MulWithOverflow | BinOp::MulUnchecked => {
+                Int::mul(self.ctx, &[lhs.clone(), rhs.clone()])
+            }
             BinOp::Div => lhs.div(rhs),
             BinOp::Rem => lhs.modulo(rhs),
             BinOp::Eq => lhs._eq(rhs).ite(&one, &zero),
