@@ -26,6 +26,12 @@ pub(crate) fn check<'tcx>(
         return SmtCheckResult::unknown("ValidNum predicate could not be lowered to SMT");
     };
 
+    if checker.validnum_is_slice_size_invariant(checkpoint, property, forward) {
+        return SmtCheckResult::proved(
+            "ValidNum proved: slice-size language invariant size_of(T) * slice.len() <= isize::MAX",
+        );
+    }
+
     checker.prove_obligation(
         checkpoint,
         forward,

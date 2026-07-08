@@ -1890,6 +1890,144 @@ impl<'tcx> SmtChecker<'tcx> {
         self.contract_expr_to_smt_term(checkpoint.caller, &expr)
     }
 
+    /// Prove the Rust slice-size language invariant.
+    ///
+    /// A `ValidNum` obligation of the shape `size_of(T) * count <= isize::MAX`,
+    /// where `count` is the length of a genuine slice reference `s: &[T]` /
+    /// `&mut [T]` (or `&[[T; N]]`), is guaranteed for any existing slice by the
+    /// Rust reference: a slice's total byte size never exceeds `isize::MAX`.
+    /// The staged SMT model cannot rediscover this because it treats the slice
+    /// length as an unbounded symbol, so we discharge the idiom directly.
+    pub(crate) fn validnum_is_slice_size_invariant(
+        &self,
+        checkpoint: &Checkpoint<'tcx>,
+        property: &Property<'tcx>,
+        forward: &ForwardVisitResult<'tcx>,
+    ) -> bool {
+        let Some(predicates) = property.args.iter().find_map(|arg| match arg {
+            PropertyArg::Predicates(predicates) => Some(predicates),
+            _ => None,
+        }) else {
+            return false;
+        };
+        !predicates.is_empty()
+            && predicates.iter().all(|predicate| {
+                self.predicate_is_slice_size_invariant(checkpoint, predicate, forward)
+            })
+    }
+
+    fn predicate_is_slice_size_invariant(
+        &self,
+        checkpoint: &Checkpoint<'tcx>,
+        predicate: &NumericPredicate<'tcx>,
+        forward: &ForwardVisitResult<'tcx>,
+    ) -> bool {
+        if !matches!(predicate.op, RelOp::Le | RelOp::Lt) {
+            return false;
+        }
+        let ContractExpr::Const(bound) = &predicate.rhs else {
+            return false;
+        };
+        // isize::MAX on 64-bit targets; a bound at least this large is the
+        // slice-size ceiling and never smaller.
+        if *bound < i64::MAX as u128 {
+            return false;
+        }
+        let ContractExpr::Binary {
+            op: NumericOp::Mul,
+            lhs,
+            rhs,
+        } = &predicate.lhs
+        else {
+            return false;
+        };
+        let (size_ty, count) = match (lhs.as_ref(), rhs.as_ref()) {
+            (ContractExpr::SizeOf(ty), count) => (*ty, count),
+            (count, ContractExpr::SizeOf(ty)) => (*ty, count),
+            _ => return false,
+        };
+        self.count_is_genuine_slice_len(checkpoint, count, size_ty, forward)
+    }
+
+    /// True when `count` (a callee-argument contract expression) is the length
+    /// of a genuine slice reference on this path whose element type matches
+    /// `size_ty`.
+    fn count_is_genuine_slice_len(
+        &self,
+        checkpoint: &Checkpoint<'tcx>,
+        count: &ContractExpr<'tcx>,
+        size_ty: Ty<'tcx>,
+        forward: &ForwardVisitResult<'tcx>,
+    ) -> bool {
+        let ContractExpr::Place(contract_place) = count else {
+            return false;
+        };
+        if !contract_place.projections.is_empty() {
+            return false;
+        }
+        // The count is the `local`-th MIR local of the callee, i.e. callee
+        // argument index `local - 1` (local 0 is the return slot).
+        let Some(local) = contract_place.local_base() else {
+            return false;
+        };
+        if local == 0 {
+            return false;
+        }
+        let Some(count_place) = self.callsite_arg_place(checkpoint, local - 1) else {
+            return false;
+        };
+        let caller = checkpoint.caller;
+        let Some(count_root) = count_place
+            .local()
+            .map(|l| resolve_root_local_mir(self.tcx, caller, l))
+        else {
+            return false;
+        };
+        let want_elem = self.instantiate_callsite_ty(checkpoint, size_ty);
+        for fact in &forward.facts {
+            let StateFact::Call(call) = fact else {
+                continue;
+            };
+            let Some(len_arg) = call.effects.iter().find_map(|effect| match effect {
+                crate::verify::call_summary::CallEffect::ReturnLengthOfArg { arg } => Some(*arg),
+                _ => None,
+            }) else {
+                continue;
+            };
+            if resolve_root_local_mir(self.tcx, caller, call.destination) != count_root {
+                continue;
+            }
+            let Some(recv_local) = call.args.get(len_arg).and_then(abstract_value_base_local)
+            else {
+                continue;
+            };
+            if let Some(elem) = self.slice_ref_elem_ty(caller, recv_local)
+                && self.same_erased_ty(elem, want_elem)
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Element type of a genuine slice-reference / array-reference local.
+    fn slice_ref_elem_ty(
+        &self,
+        caller: rustc_hir::def_id::DefId,
+        local: Local,
+    ) -> Option<Ty<'tcx>> {
+        let ty = self.tcx.optimized_mir(caller).local_decls.get(local)?.ty;
+        let inner = pointee_ty(ty).unwrap_or(ty);
+        match inner.kind() {
+            TyKind::Slice(elem) | TyKind::Array(elem, _) => Some(*elem),
+            _ => None,
+        }
+    }
+
+    fn same_erased_ty(&self, a: Ty<'tcx>, b: Ty<'tcx>) -> bool {
+        a == b || format!("{a:?}") == format!("{b:?}")
+    }
+
     /// Return the pointee size for a concrete pointer place.
     pub(crate) fn place_pointee_size(
         &self,
