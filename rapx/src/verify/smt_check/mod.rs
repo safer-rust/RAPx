@@ -22,5 +22,6 @@ mod non_volatile;
 mod typed;
 mod valid_num;
 mod valid_ptr;
+mod valid_transmute;
 
 pub use common::{SmtCheckResult, SmtChecker, SmtObligation, SmtQuery};
