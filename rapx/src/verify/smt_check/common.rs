@@ -260,6 +260,21 @@ impl<'tcx> SmtChecker<'tcx> {
                     };
                 }
 
+                if model.place_is_reference_aligned(place, ty_name) {
+                    return SmtCheckResult::proved(format!(
+                        "Align proved: {} is a reference-derived as_ptr/as_mut_ptr pointer for {ty_name}",
+                        place_label(place)
+                    ))
+                    .with_query(SmtQuery::new(
+                        obligation.clone(),
+                        model.assumptions().to_vec(),
+                        SmtPredicate::Custom(format!(
+                            "{} aligned via as_ptr provenance for {ty_name}",
+                            place_label(place)
+                        )),
+                    ));
+                }
+
                 let target_label = place_label(place);
                 let Some(target_term) = model.term_for_place(place) else {
                     return SmtCheckResult::unknown(format!(
@@ -4859,6 +4874,38 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             }
             _ => None,
         }
+    }
+
+    /// True when `place` is a pointer whose provenance is a reference-derived
+    /// `as_ptr`/`as_mut_ptr` result over a pointee type that matches `ty_name`.
+    ///
+    /// Pointers returned by `as_ptr`/`as_mut_ptr` are guaranteed to be aligned
+    /// to their element type (the referent of a live reference is always
+    /// well-aligned).  That is exactly the alignment such pointers are required
+    /// to satisfy when handed to element-typed unsafe callees such as
+    /// `ptr::copy_nonoverlapping`, so the `Align` obligation holds without any
+    /// further path facts.  We require the pointee type to match the requested
+    /// alignment type to avoid proving alignment for reinterpreting casts (e.g.
+    /// a `*const u8` view of a `*const u32`).
+    fn place_is_reference_aligned(&self, place: &PlaceKey, ty_name: &str) -> bool {
+        let Some(AbstractValue::CallResult(call)) =
+            self.resolved_value_for_place(place, &mut TraceSeen::new())
+        else {
+            return false;
+        };
+        if !is_as_ptr_call(&call.func) {
+            return false;
+        }
+        let dest = PlaceKey {
+            base: PlaceBaseKey::Local(call.destination.as_usize()),
+            fields: Vec::new(),
+        };
+        let want = normalize_init_ty_name(ty_name);
+        let got = self
+            .place_ty(&dest)
+            .and_then(pointee_ty_str)
+            .map(|s| normalize_init_ty_name(&s));
+        got.as_deref() == Some(want.as_str())
     }
 
     /// Resolve copy/cast chains for a MIR place into the value at their source.

@@ -502,7 +502,9 @@ pub fn effect_summary<'tcx>(
                 unsupported: false,
             };
         }
-        if let Some((indices_arg, len_arg)) = detect_index_disjoint_validator(tcx, callee) {
+        if let Some((indices_arg, len_arg)) = detect_index_disjoint_validator(tcx, callee)
+            .or_else(|| named_index_disjoint_validator(&name))
+        {
             return CallEffectSummary {
                 callee: Some(callee),
                 name,
@@ -989,6 +991,23 @@ fn local_must_write_args(tcx: TyCtxt<'_>, callee: DefId) -> Option<Vec<usize>> {
             .collect::<Vec<_>>()
     }))
     .ok()
+}
+
+/// Recognize the standard-library `get_disjoint_check_valid` helper as a
+/// trusted index-disjoint validator by name.
+///
+/// Its body validates indices through the `GetDisjointMutIndex` trait methods
+/// `is_in_bounds(len)` and `is_overlapping(other)` rather than through literal
+/// element loads and comparisons, so the structural detector cannot recognize
+/// it.  The signature is `get_disjoint_check_valid(indices: &[I; N], len: usize)`,
+/// hence `indices_arg = 0` and `len_arg = 1`.
+fn named_index_disjoint_validator(name: &str) -> Option<(usize, usize)> {
+    let base = name.split('<').next().unwrap_or(name).trim_end_matches("::");
+    if base.ends_with("get_disjoint_check_valid") {
+        Some((0, 1))
+    } else {
+        None
+    }
 }
 
 /// Detect an "index disjoint validator": a function whose body loads elements
