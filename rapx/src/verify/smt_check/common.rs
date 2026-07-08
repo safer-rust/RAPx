@@ -4647,6 +4647,14 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 if let Some(term) = self.term_for_numeric_arith_call(call, cursor, seen) {
                     return Some(term);
                 }
+                // `Option/Result::expect/unwrap` yields the wrapped payload; the
+                // error case diverges before any later checkpoint, so the value
+                // is the inner term of the receiver on all reachable paths.
+                if PrimitiveCall::classify(&call.func) == Some(PrimitiveCall::OptionUnwrap)
+                    && let Some(inner) = call.args.first()
+                {
+                    return self.term_for_value_at(inner, cursor, seen);
+                }
                 let place = PlaceKey {
                     base: PlaceBaseKey::Local(call.destination.as_usize()),
                     fields: Vec::new(),
@@ -4963,6 +4971,12 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             lhs.div(&rhs)
         } else if func.contains("unchecked_rem") {
             lhs.modulo(&rhs)
+        } else if func.contains("checked_mul") {
+            Int::mul(self.ctx, &[lhs, rhs])
+        } else if func.contains("checked_add") {
+            Int::add(self.ctx, &[lhs, rhs])
+        } else if func.contains("checked_sub") {
+            Int::sub(self.ctx, &[lhs, rhs])
         } else {
             return None;
         };

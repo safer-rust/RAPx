@@ -34,11 +34,22 @@ pub enum PrimitiveCall {
     /// The result is the exact arithmetic value of the operands (their safety
     /// preconditions only forbid overflow); they have no memory effect.
     NumericArith,
+    /// `Option`/`Result` value extraction (`expect`/`unwrap`/`unwrap_unchecked`).
+    /// For value reasoning these are the identity on the wrapped payload; the
+    /// error/`None` case diverges and never reaches later checkpoints.
+    OptionUnwrap,
 }
 
 impl PrimitiveCall {
     /// Classify a stable rustc def-path string as a known primitive call.
     pub fn classify(name: &str) -> Option<Self> {
+        if (name.contains("Option") || name.contains("Result"))
+            && (name.contains("::expect")
+                || name.contains("::unwrap")
+                || name.contains("::unwrap_unchecked"))
+        {
+            return Some(Self::OptionUnwrap);
+        }
         if name.ends_with("::as_ptr")
             || (name.contains("::as_ptr") && !name.ends_with("::as_ptr_range"))
         {
@@ -73,6 +84,9 @@ impl PrimitiveCall {
             || name.contains("::unchecked_div")
             || name.contains("::unchecked_rem")
             || name.contains("::exact_div")
+            || name.contains("::checked_mul")
+            || name.contains("::checked_add")
+            || name.contains("::checked_sub")
         {
             return Some(Self::NumericArith);
         }

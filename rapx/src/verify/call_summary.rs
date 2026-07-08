@@ -217,6 +217,16 @@ pub fn dependency_summary<'tcx>(
         };
     }
 
+    if primitive == Some(PrimitiveCall::OptionUnwrap) {
+        return CallDependencySummary {
+            callee,
+            name,
+            return_depends_on_args: vec![0],
+            may_write_args: Vec::new(),
+            unsupported: false,
+        };
+    }
+
     if primitive.is_some_and(PrimitiveCall::is_layout_constant) {
         return CallDependencySummary {
             callee,
@@ -419,6 +429,18 @@ pub fn effect_summary<'tcx>(
         // Pure arithmetic: no memory effect and never precision-losing.  The
         // SMT model reconstructs the exact product/sum from the operands (see
         // the `unchecked_mul` handling in `assert_forward_facts`).
+        return CallEffectSummary {
+            callee,
+            name,
+            destination,
+            effects: Vec::new(),
+            unsupported: false,
+        };
+    }
+
+    if primitive == Some(PrimitiveCall::OptionUnwrap) {
+        // `expect`/`unwrap` extract the wrapped payload with no memory effect;
+        // the value is recovered from the receiver in `term_for_value_at`.
         return CallEffectSummary {
             callee,
             name,
