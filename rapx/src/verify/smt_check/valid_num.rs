@@ -32,6 +32,17 @@ pub(crate) fn check<'tcx>(
         );
     }
 
+    // `align_of::<T>()` is always >= 1 for any type.  When a ValidNum predicate
+    // is a single `x != 0` and `x` resolves to the align_of call argument at the
+    // callsite (e.g. `ptr::align_offset(ptr, align_of::<U>())` requiring `a != 0`),
+    // the constraint holds trivially.  The SMT model cannot prove this because
+    // `align_of` is a symbolic constant, so we short-circuit here.
+    if checker.validnum_is_align_nonzero(checkpoint, property, forward) {
+        return SmtCheckResult::proved(
+            "ValidNum proved: align_of::<T>() >= 1 for every T",
+        );
+    }
+
     checker.prove_obligation(
         checkpoint,
         forward,

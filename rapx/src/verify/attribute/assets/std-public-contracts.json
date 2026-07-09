@@ -5278,14 +5278,6 @@
       ]
     }
   ],
-  "core::ptr::align_offset": [
-    {
-      "tag": "ValidNum",
-      "args": [
-        "align != 0"
-      ]
-    }
-  ],
   "core::ptr::copy": [
     {
       "tag": "ValidPtr",

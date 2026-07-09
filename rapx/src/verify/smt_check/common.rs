@@ -1931,8 +1931,6 @@ impl<'tcx> SmtChecker<'tcx> {
         let ContractExpr::Const(bound) = &predicate.rhs else {
             return false;
         };
-        // isize::MAX on 64-bit targets; a bound at least this large is the
-        // slice-size ceiling and never smaller.
         if *bound < i64::MAX as u128 {
             return false;
         }
@@ -1950,6 +1948,70 @@ impl<'tcx> SmtChecker<'tcx> {
             _ => return false,
         };
         self.count_is_genuine_slice_len(checkpoint, count, size_ty, forward)
+    }
+
+    /// When every ValidNum predicate is a single `place != 0` and the place
+    /// resolves to a call to `align_of`, the constraint holds trivially:
+    /// `align_of::<T>() >= 1` for any type T by the Rust language rules.
+    /// The SMT model cannot prove this because `align_of` is a symbolic
+    /// constant, so we supply the invariant here.
+    pub(crate) fn validnum_is_align_nonzero(
+        &self,
+        checkpoint: &Checkpoint<'tcx>,
+        property: &Property<'tcx>,
+        forward: &ForwardVisitResult<'tcx>,
+    ) -> bool {
+        let Some(predicates) = property.args.iter().find_map(|arg| match arg {
+            PropertyArg::Predicates(predicates) => Some(predicates),
+            _ => None,
+        }) else {
+            return false;
+        };
+        !predicates.is_empty()
+            && predicates
+                .iter()
+                .all(|predicate| self.predicate_is_align_nonzero(checkpoint, predicate, forward))
+    }
+
+    fn predicate_is_align_nonzero(
+        &self,
+        checkpoint: &Checkpoint<'tcx>,
+        predicate: &NumericPredicate<'tcx>,
+        forward: &ForwardVisitResult<'tcx>,
+    ) -> bool {
+        if !matches!(predicate.op, RelOp::Ne) {
+            return false;
+        }
+        let ContractExpr::Place(contract_place) = &predicate.lhs else {
+            return false;
+        };
+        if !matches!(predicate.rhs, ContractExpr::Const(0)) {
+            return false;
+        }
+        let ContractExpr::Const(0) = predicate.rhs else {
+            return false;
+        };
+        let Some(local) = contract_place.local_base() else {
+            return false;
+        };
+        if local == 0 {
+            return false;
+        }
+        let Some(target_place) = self.callsite_arg_place(checkpoint, local - 1) else {
+            return false;
+        };
+        let caller = checkpoint.caller;
+        let Some(target_root) = target_place
+            .local()
+            .map(|l| resolve_root_local_mir(self.tcx, caller, l))
+        else {
+            return false;
+        };
+        forward.facts.iter().any(|fact| {
+            let StateFact::Call(call) = fact else { return false };
+            resolve_root_local_mir(self.tcx, caller, call.destination) == target_root
+                && PrimitiveCall::classify(&call.func) == Some(PrimitiveCall::AlignOf)
+        })
     }
 
     /// True when `count` (a callee-argument contract expression) is the length
