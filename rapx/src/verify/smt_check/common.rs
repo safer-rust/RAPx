@@ -5824,6 +5824,15 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             .filter(|&len| len > 0)
             .map(|len| (Int::from_u64(self.ctx, len), SmtTerm::Const(len)))
             .or_else(|| {
+                // A fixed array `[E; N]` (possibly wrapped in `MaybeUninit`) has a
+                // statically known element count `N`.  When `N` is a const-generic
+                // parameter the concrete value is unavailable, but the symbolic
+                // `ConstParam(N)` bound lets callers prove array writes `i < N`
+                // (e.g. the `for i in 0..N` loop in get_disjoint_unchecked_mut).
+                if let Some(param) = self.array_len_param_for_origin(origin_key) {
+                    let term = self.const_param_symbol(&param);
+                    return Some((term, SmtTerm::ConstParam(param)));
+                }
                 if self.is_maybe_uninit_origin(origin_key) {
                     let len_term = Int::from_u64(self.ctx, u64::MAX / 8);
                     Some((len_term, SmtTerm::Const(u64::MAX / 8)))
@@ -5836,6 +5845,28 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 }
             });
         result
+    }
+
+    /// The const-generic length parameter of a fixed-array allocation object
+    /// (optionally under references / `MaybeUninit`), if any.
+    fn array_len_param_for_origin(&self, origin_key: &str) -> Option<String> {
+        for fact in &self.forward.facts {
+            let StateFact::KnownAllocated { object, .. } = fact else {
+                continue;
+            };
+            if place_label(object) != origin_key {
+                continue;
+            }
+            let local = object.local()?;
+            let ty = self.place_ty(&PlaceKey {
+                base: PlaceBaseKey::Local(local.as_usize()),
+                fields: Vec::new(),
+            })?;
+            if let Some(param) = array_const_len_param(ty) {
+                return Some(param);
+            }
+        }
+        None
     }
 
     /// Return true if `origin_key` is the source of an `as_ptr`-like call
@@ -6088,6 +6119,24 @@ fn is_len_carrying_ty(ty: Ty<'_>) -> bool {
         TyKind::Ref(_, inner, _) => is_len_carrying_ty(*inner),
         TyKind::Slice(_) | TyKind::Str => true,
         _ => false,
+    }
+}
+
+/// The name of the const-generic length parameter of a fixed array `[E; N]`,
+/// looking through references and a `MaybeUninit` wrapper.  Returns `None` for
+/// concrete lengths or non-array types.
+fn array_const_len_param(ty: Ty<'_>) -> Option<String> {
+    match ty.kind() {
+        TyKind::Array(_, len) => match len.kind() {
+            ConstKind::Param(param) => Some(param.name.to_string()),
+            _ => None,
+        },
+        TyKind::Ref(_, inner, _) => array_const_len_param(*inner),
+        TyKind::Adt(_, args) if format!("{ty:?}").contains("MaybeUninit") => args
+            .first()
+            .and_then(|arg| arg.as_type())
+            .and_then(array_const_len_param),
+        _ => None,
     }
 }
 

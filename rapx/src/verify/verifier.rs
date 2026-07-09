@@ -12,8 +12,8 @@ use crate::compat::Spanned;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{
-        AggregateKind, BasicBlock, BinOp, Body, Local, Operand, Place, Rvalue, Statement,
-        StatementKind, Terminator, TerminatorKind, UnOp,
+        AggregateKind, BasicBlock, BinOp, Body, Local, Operand, Place, ProjectionElem, Rvalue,
+        Statement, StatementKind, Terminator, TerminatorKind, UnOp,
     },
     ty::{Ty, TyCtxt, TyKind},
 };
@@ -214,6 +214,25 @@ impl<'tcx> ForwardVerifier<'tcx> {
                             align,
                             ty_name: format!("{align}-aligned"),
                             reason: format!("{align}-byte alignment guard on path"),
+                        });
+                    }
+                    // On the `Some` continuation of a `Range<usize>::next()` (the
+                    // desugared `for i in a..b` loop body), the yielded value `i`
+                    // satisfies `i < b`.  Emit it as a comparison guard so array
+                    // writes `arr[i]` with `i < N` verify.
+                    if equals == 1
+                        && let Some((yielded, end)) = self.range_next_guard(block, discr, body)
+                    {
+                        result.facts.push(StateFact::BranchEq {
+                            value: AbstractValue::Binary(
+                                BinOp::Lt,
+                                Box::new(yielded.clone()),
+                                Box::new(end.clone()),
+                            ),
+                            equals: 1,
+                            cmp_op: Some(BinOp::Lt),
+                            cmp_lhs: Some(yielded),
+                            cmp_rhs: Some(end),
                         });
                     }
                 } else {
@@ -715,6 +734,194 @@ impl<'tcx> ForwardVerifier<'tcx> {
         let local = local?;
         let ty = self.tcx.optimized_mir(caller).local_decls[local].ty;
         fixed_allocation_elements(self.tcx, caller, ty)
+    }
+
+    /// Recognize the desugared `for i in a..b` loop head: a `switchInt` on
+    /// `discriminant(opt)` where `opt = Iterator::next(&mut r)` with `r: Range`.
+    /// Returns `(yielded, end)`: the `Some` payload (loop index `i`, resolved
+    /// through its binding copy) and the range upper bound `b` (as its
+    /// construction operand, e.g. the const generic `N`).  On the taken `Some`
+    /// branch, `i < b`.
+    fn range_next_guard(
+        &self,
+        block: BasicBlock,
+        discr: &Operand<'tcx>,
+        body: &Body<'tcx>,
+    ) -> Option<(AbstractValue<'tcx>, AbstractValue<'tcx>)> {
+        let discr_place = discr.place()?;
+        let opt_local = find_discriminant_source(block, &discr_place, body)?;
+        let range_local = self.find_range_next_source(opt_local, body)?;
+        let end = self.range_end_operand(range_local, body)?;
+        // yielded = the local bound to `(opt as Some).0` in the body.
+        let payload_local = self.find_some_payload_binding(opt_local, body)?;
+        let yielded = AbstractValue::Place(PlaceKey {
+            base: crate::verify::def_use::PlaceBaseKey::Local(payload_local.as_usize()),
+            fields: Vec::new(),
+        });
+        Some((yielded, end))
+    }
+
+    /// Recover the `end` operand (field 1) of the `Range { start, end }`
+    /// aggregate backing `range_local`, following copies and the identity
+    /// `Range::into_iter` call that a `for` loop inserts.
+    fn range_end_operand(
+        &self,
+        range_local: Local,
+        body: &Body<'tcx>,
+    ) -> Option<AbstractValue<'tcx>> {
+        let mut local = range_local;
+        for _ in 0..8 {
+            // Direct `local = Range { start, end }` aggregate.
+            for bb in body.basic_blocks.iter() {
+                for stmt in &bb.statements {
+                    let StatementKind::Assign(assign) = &stmt.kind else {
+                        continue;
+                    };
+                    let (dest, rvalue) = assign.as_ref();
+                    if dest.local != local || !dest.projection.is_empty() {
+                        continue;
+                    }
+                    if let Rvalue::Aggregate(_, operands) = rvalue {
+                        return operands.iter().nth(1).map(value_from_operand);
+                    }
+                }
+            }
+            // Otherwise follow `local = move other` / `local = into_iter(other)`.
+            let mut next = None;
+            for bb in body.basic_blocks.iter() {
+                for stmt in &bb.statements {
+                    let StatementKind::Assign(assign) = &stmt.kind else {
+                        continue;
+                    };
+                    let (dest, rvalue) = assign.as_ref();
+                    if dest.local != local || !dest.projection.is_empty() {
+                        continue;
+                    }
+                    if let Rvalue::Use(Operand::Copy(src) | Operand::Move(src)) = rvalue
+                        && src.projection.is_empty()
+                    {
+                        next = Some(src.local);
+                    }
+                }
+                if let Some(term) = &bb.terminator
+                    && let TerminatorKind::Call {
+                        func,
+                        args,
+                        destination,
+                        ..
+                    } = &term.kind
+                    && destination.local == local
+                    && call_summary::call_name(self.tcx, func).contains("into_iter")
+                    && let Some(src) = args.first().and_then(|a| a.node.place())
+                {
+                    next = Some(src.local);
+                }
+            }
+            match next {
+                Some(n) if n != local => local = n,
+                _ => return None,
+            }
+        }
+        None
+    }
+
+    /// Find `opt` such that `opt = Iterator::next(&mut r)` where `r: Range`, and
+    /// return `r`.
+    fn find_range_next_source(&self, opt_local: Local, body: &Body<'tcx>) -> Option<Local> {
+        for bb in body.basic_blocks.iter() {
+            let Some(term) = &bb.terminator else { continue };
+            let TerminatorKind::Call {
+                func,
+                args,
+                destination,
+                ..
+            } = &term.kind
+            else {
+                continue;
+            };
+            if destination.local != opt_local {
+                continue;
+            }
+            let name = call_summary::call_name(self.tcx, func);
+            if !name.contains("::next") {
+                return None;
+            }
+            let arg_place = args.first()?.node.place()?;
+            let range_local = self.deref_source_local(arg_place.local, body)?;
+            // The call name normalizes to the generic `Iterator::next`; the
+            // receiver type is what identifies a `Range` iterator.
+            let is_range = body
+                .local_decls
+                .get(range_local)
+                .map(|d| {
+                    let s = format!("{:?}", d.ty);
+                    s.contains("Range<") && !s.contains("RangeInclusive")
+                })
+                .unwrap_or(false);
+            return is_range.then_some(range_local);
+        }
+        None
+    }
+
+    /// Recover `x` from a local defined as `_ref = &mut x` (through copies).
+    fn deref_source_local(&self, mut local: Local, body: &Body<'tcx>) -> Option<Local> {
+        for _ in 0..8 {
+            let mut next = None;
+            for bb in body.basic_blocks.iter() {
+                for stmt in &bb.statements {
+                    let StatementKind::Assign(assign) = &stmt.kind else {
+                        continue;
+                    };
+                    let (dest, rvalue) = assign.as_ref();
+                    if dest.local != local || !dest.projection.is_empty() {
+                        continue;
+                    }
+                    match rvalue {
+                        Rvalue::Ref(_, _, src) | Rvalue::RawPtr(_, src) => next = Some(src.local),
+                        Rvalue::Use(Operand::Copy(src) | Operand::Move(src)) => {
+                            next = Some(src.local)
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            match next {
+                Some(n) if n != local => local = n,
+                _ => return Some(local),
+            }
+        }
+        Some(local)
+    }
+
+    /// Find the local bound to `(opt as Some).0` in the loop body.
+    fn find_some_payload_binding(&self, opt_local: Local, body: &Body<'tcx>) -> Option<Local> {
+        for bb in body.basic_blocks.iter() {
+            for stmt in &bb.statements {
+                let StatementKind::Assign(assign) = &stmt.kind else {
+                    continue;
+                };
+                let (dest, rvalue) = assign.as_ref();
+                if !dest.projection.is_empty() {
+                    continue;
+                }
+                let Rvalue::Use(Operand::Copy(src) | Operand::Move(src)) = rvalue else {
+                    continue;
+                };
+                if src.local == opt_local
+                    && src
+                        .projection
+                        .iter()
+                        .any(|p| matches!(p, ProjectionElem::Downcast(..)))
+                    && src
+                        .projection
+                        .iter()
+                        .any(|p| matches!(p, ProjectionElem::Field(..)))
+                {
+                    return Some(dest.local);
+                }
+            }
+        }
+        None
     }
 
     fn referenced_object_for_place(&self, caller: DefId, place: &Place<'tcx>) -> Option<PlaceKey> {
@@ -1509,4 +1716,28 @@ fn find_cmp_source<'tcx>(
         return (Some(*op), Some(value_from_operand(&pair.0)), Some(value_from_operand(&pair.1)));
     }
     (None, None, None)
+}
+
+/// Find the local `opt` behind `discr = discriminant(opt)` for a switch
+/// discriminant place.
+fn find_discriminant_source<'tcx>(
+    block: BasicBlock,
+    discr_place: &Place<'tcx>,
+    body: &Body<'tcx>,
+) -> Option<Local> {
+    for bb in [block].into_iter().chain(body.basic_blocks.indices()) {
+        for stmt in &body.basic_blocks[bb].statements {
+            let StatementKind::Assign(assign) = &stmt.kind else {
+                continue;
+            };
+            let (dest, rvalue) = assign.as_ref();
+            if dest.local != discr_place.local || !dest.projection.is_empty() {
+                continue;
+            }
+            if let Rvalue::Discriminant(place) = rvalue {
+                return Some(place.local);
+            }
+        }
+    }
+    None
 }
