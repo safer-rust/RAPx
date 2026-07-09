@@ -649,6 +649,7 @@ impl<'tcx> ForwardVerifier<'tcx> {
                 CallEffect::ChecksIndexBoundsDisjoint { .. } => {}
                 // Postcondition asserted directly from the retained `StateFact::Call`.
                 CallEffect::ReturnBoundedRange { .. } => {}
+                CallEffect::ReturnLcmSplit { .. } => {}
                 CallEffect::ForgetArgFacts { reason, .. } => {
                     result.forgets.push(reason.clone());
                 }

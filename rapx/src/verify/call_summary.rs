@@ -126,6 +126,10 @@ pub enum CallEffect {
     /// whose result feeds subslice pointer arithmetic in callers such as
     /// `slice::copy_within`.
     ReturnBoundedRange { bounds_arg: usize },
+    /// `align_to_offsets` returns `(us_len, ts_len)` where field 0 <=
+    /// `receiver.len()` / ts and field 1 < ts, ensuring the remaining
+    /// pointer arithmetic stays in bounds on the tail.
+    ReturnLcmSplit { receiver_arg: usize },
     /// Facts about an argument must be forgotten conservatively.
     ForgetArgFacts { arg: usize, reason: ForgetReason },
 }
@@ -228,6 +232,16 @@ pub fn dependency_summary<'tcx>(
             callee,
             name,
             return_depends_on_args: vec![0, 1],
+            may_write_args: Vec::new(),
+            unsupported: false,
+        };
+    }
+
+    if is_align_to_offsets_fn(&name) {
+        return CallDependencySummary {
+            callee,
+            name,
+            return_depends_on_args: (0..arg_count).collect(),
             may_write_args: Vec::new(),
             unsupported: false,
         };
@@ -472,6 +486,16 @@ pub fn effect_summary<'tcx>(
             name,
             destination,
             effects: vec![CallEffect::ReturnBoundedRange { bounds_arg: 1 }],
+            unsupported: false,
+        };
+    }
+
+    if is_align_to_offsets_fn(&name) {
+        return CallEffectSummary {
+            callee,
+            name,
+            destination,
+            effects: vec![CallEffect::ReturnLcmSplit { receiver_arg: 0 }],
             unsupported: false,
         };
     }
@@ -1086,6 +1110,11 @@ fn named_index_disjoint_validator(name: &str) -> Option<(usize, usize)> {
     } else {
         None
     }
+}
+
+fn is_align_to_offsets_fn(name: &str) -> bool {
+    let base = name.split('<').next().unwrap_or(name);
+    base.ends_with("::align_to_offsets")
 }
 
 /// Detect an "index disjoint validator": a function whose body loads elements

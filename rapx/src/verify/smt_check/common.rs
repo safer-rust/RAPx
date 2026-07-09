@@ -3060,6 +3060,21 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                     }) {
                         self.assert_bounded_range(solver, call, bounds_arg);
                     }
+
+                    // `align_to_offsets` returns `(us_len, ts_len)` where `ts_len
+                    // <= receiver.len()` and `us_len * size_of::<U>() <=
+                    // receiver.len() * size_of::<T>()` (the byte count does not
+                    // exceed the receiver).  The weaker `field_1 <= len(receiver)`
+                    // is enough for the tail `ptr.add(receiver.len() - field_1)`
+                    // to remain in bounds.
+                    if let Some(recv_arg) = call.effects.iter().find_map(|effect| match effect {
+                        crate::verify::call_summary::CallEffect::ReturnLcmSplit {
+                            receiver_arg,
+                        } => Some(*receiver_arg),
+                        _ => None,
+                    }) {
+                        self.assert_lcm_split_bounds(solver, call, recv_arg);
+                    }
                 }
                 StateFact::KnownNonZero { place, reason } => {
                     self.assert_place_non_zero(solver, place, reason);
@@ -4108,6 +4123,33 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         }
     }
 
+    /// Assert the weak `field_1 <= len(receiver)` postcondition of
+    /// `align_to_offsets`.  `call.destination` is the returned `(usize, usize)`
+    /// tuple (field 0 = us_len, field 1 = ts_len).
+    fn assert_lcm_split_bounds(
+        &mut self,
+        solver: &Solver<'ctx>,
+        call: &CallSummary<'tcx>,
+        receiver_arg: usize,
+    ) {
+        let ts_len = PlaceKey {
+            base: PlaceBaseKey::Local(call.destination.as_usize()),
+            fields: vec![1],
+        };
+        let (Some(ts_term), Some(recv)) = (
+            self.term_for_place(&ts_len),
+            call.args.get(receiver_arg),
+        ) else {
+            return;
+        };
+        let recv_key = self
+            .origin_key_for_value_before(recv, self.latest_cursor(), &mut TraceSeen::new())
+            .unwrap_or_else(|| value_label(recv));
+        let len_key = format!("len({recv_key})");
+        let bounds_len = self.symbolic_len_term(&len_key);
+        solver.assert(&ts_term.le(&bounds_len));
+    }
+
     /// Assert known alignment for a place when its MIR type provides one.
     fn assert_place_alignment(&mut self, solver: &Solver<'ctx>, place: &PlaceKey) {
         let Some(ty) = self.place_ty(place) else {
@@ -4481,6 +4523,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 | crate::verify::call_summary::CallEffect::WriteMemory { .. }
                 | crate::verify::call_summary::CallEffect::ChecksIndexBoundsDisjoint { .. }
                 | crate::verify::call_summary::CallEffect::ReturnBoundedRange { .. }
+                | crate::verify::call_summary::CallEffect::ReturnLcmSplit { .. }
                 | crate::verify::call_summary::CallEffect::ForgetArgFacts { .. } => {}
             }
         }
