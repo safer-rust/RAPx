@@ -797,7 +797,7 @@ impl<'tcx> ForwardVerifier<'tcx> {
                     if dest.local != local || !dest.projection.is_empty() {
                         continue;
                     }
-                    if let Rvalue::Use(Operand::Copy(src) | Operand::Move(src)) = rvalue
+                    if let Rvalue::Use(Operand::Copy(src) | Operand::Move(src), ..) = rvalue
                         && src.projection.is_empty()
                     {
                         next = Some(src.local);
@@ -878,7 +878,7 @@ impl<'tcx> ForwardVerifier<'tcx> {
                     }
                     match rvalue {
                         Rvalue::Ref(_, _, src) | Rvalue::RawPtr(_, src) => next = Some(src.local),
-                        Rvalue::Use(Operand::Copy(src) | Operand::Move(src)) => {
+                        Rvalue::Use(Operand::Copy(src) | Operand::Move(src), ..) => {
                             next = Some(src.local)
                         }
                         _ => {}
@@ -904,7 +904,7 @@ impl<'tcx> ForwardVerifier<'tcx> {
                 if !dest.projection.is_empty() {
                     continue;
                 }
-                let Rvalue::Use(Operand::Copy(src) | Operand::Move(src)) = rvalue else {
+                let Rvalue::Use(Operand::Copy(src) | Operand::Move(src), ..) = rvalue else {
                     continue;
                 };
                 if src.local == opt_local

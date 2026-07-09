@@ -6354,7 +6354,7 @@ fn mir_copy_root<'tcx>(body: &rustc_middle::mir::Body<'tcx>, mut local: Local) -
                 if dest.local != local || !dest.projection.is_empty() {
                     continue;
                 }
-                if let Rvalue::Use(Operand::Copy(src) | Operand::Move(src)) = rvalue
+                if let Rvalue::Use(Operand::Copy(src) | Operand::Move(src), ..) = rvalue
                     && src.projection.is_empty()
                 {
                     next = Some(src.local);
@@ -6418,7 +6418,7 @@ fn mir_ref_root<'tcx>(body: &rustc_middle::mir::Body<'tcx>, mut local: Local) ->
                 }
                 match rvalue {
                     Rvalue::Ref(_, _, src) | Rvalue::RawPtr(_, src) => next = Some(src.local),
-                    Rvalue::Use(Operand::Copy(src) | Operand::Move(src))
+                    Rvalue::Use(Operand::Copy(src) | Operand::Move(src), ..)
                         if src.projection.is_empty() =>
                     {
                         next = Some(src.local)
@@ -6524,7 +6524,7 @@ fn mir_some_payload_source<'tcx>(
             if dest.local != idx_local || !dest.projection.is_empty() {
                 continue;
             }
-            if let Rvalue::Use(Operand::Copy(src) | Operand::Move(src)) = rvalue
+            if let Rvalue::Use(Operand::Copy(src) | Operand::Move(src), ..) = rvalue
                 && src
                     .projection
                     .iter()
@@ -6617,7 +6617,7 @@ fn mir_range_end_param<'tcx>(
                 if dest.local != local || !dest.projection.is_empty() {
                     continue;
                 }
-                if let Rvalue::Use(Operand::Copy(src) | Operand::Move(src)) = rvalue
+                if let Rvalue::Use(Operand::Copy(src) | Operand::Move(src), ..) = rvalue
                     && src.projection.is_empty()
                 {
                     next = Some(src.local);
@@ -7225,7 +7225,7 @@ fn mir_is_tuple_field_of<'tcx>(
             if dest.local != root || !dest.projection.is_empty() {
                 continue;
             }
-            if let Rvalue::Use(Operand::Copy(src) | Operand::Move(src)) = rvalue
+            if let Rvalue::Use(Operand::Copy(src) | Operand::Move(src), ..) = rvalue
                 && src.local == tuple_dest
                 && src.projection.len() == 1
                 && matches!(src.projection[0], ProjectionElem::Field(..))
