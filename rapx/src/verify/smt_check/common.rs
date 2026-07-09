@@ -389,6 +389,25 @@ impl<'tcx> SmtChecker<'tcx> {
                         SmtPredicate::Custom(String::from("IndexAccess InBound by contract")),
                     ));
                 }
+
+                // `from_raw_parts(rest.as_ptr() as *const U, us_len)` reinterprets
+                // the middle slice from `align_to_offsets`; its return `us_len` (by
+                // trusted summary) fits in the receiver's allocation bytes.  The
+                // InBound counterpart of the Allocated guard above.
+                if model.allocated_by_align_to_offsets(checkpoint, place) {
+                    return SmtCheckResult::proved(format!(
+                        "InBound proved: align_to_offsets guarantees {target_label} fits the source allocation"
+                    ))
+                    .with_query(SmtQuery::new(
+                        obligation.clone(),
+                        model.assumptions().to_vec(),
+                        SmtPredicate::Custom(format!(
+                            "InBound({}, {ty_name}) by align_to_offsets summary",
+                            target_label
+                        )),
+                    ));
+                }
+
                 let Some(bounds) = model.pointer_bounds_for_place(place) else {
                     rap_debug!(
                         "  [SMT InBound] could not recover pointer bounds for {target_label}"
@@ -849,6 +868,25 @@ impl<'tcx> SmtChecker<'tcx> {
                         model.assumptions().to_vec(),
                         SmtPredicate::Custom(format!(
                             "Allocated({}, {ty_name}, 1) by IndexAccess contract",
+                            target_label
+                        )),
+                    ));
+                }
+
+                // `from_raw_parts(rest.as_ptr() as *const U, us_len)` where the
+                // count is an `align_to_offsets` output field and the pointer
+                // shares `rest`'s provenance: the trusted `align_to_offsets`
+                // summary guarantees the reinterpreted range fits `rest`'s
+                // allocation (LCM/GCD byte fit), so Allocated holds.
+                if model.allocated_by_align_to_offsets(checkpoint, place) {
+                    return SmtCheckResult::proved(format!(
+                        "Allocated proved: align_to_offsets guarantees {target_label} reinterpret fits the source allocation"
+                    ))
+                    .with_query(SmtQuery::new(
+                        obligation.clone(),
+                        model.assumptions().to_vec(),
+                        SmtPredicate::Custom(format!(
+                            "Allocated({}, {ty_name}) by align_to_offsets summary",
                             target_label
                         )),
                     ));
@@ -5642,6 +5680,62 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         self.origin_key_for_value_before(value, self.latest_cursor(), seen)
     }
 
+    /// True when `place` is the pointer of a `from_raw_parts` reinterpret whose
+    /// element count is an `align_to_offsets` output field and whose provenance
+    /// is the same slice that fed `align_to_offsets`.  `align_to_offsets` is a
+    /// trusted structural summary whose returned counts keep both reinterprets
+    /// within the source allocation, so the range is allocated / in bounds.
+    fn allocated_by_align_to_offsets(
+        &self,
+        checkpoint: &Checkpoint<'tcx>,
+        place: &PlaceKey,
+    ) -> bool {
+        let caller = checkpoint.caller;
+        if !self.tcx.is_mir_available(caller) {
+            return false;
+        }
+        let Some(place_origin) =
+            self.origin_key_for_value(&AbstractValue::Place(place.clone()), &mut TraceSeen::new())
+        else {
+            return false;
+        };
+        let body = self.tcx.optimized_mir(caller);
+        let count_root = checkpoint
+            .args
+            .get(1)
+            .and_then(operand_place)
+            .and_then(|p| p.local())
+            .map(|l| mir_copy_root(&body, Local::from_usize(l.as_usize())));
+
+        for fact in &self.forward.facts {
+            let StateFact::Call(call) = fact else {
+                continue;
+            };
+            if !call.effects.iter().any(|e| {
+                matches!(
+                    e,
+                    crate::verify::call_summary::CallEffect::ReturnLcmSplit { .. }
+                )
+            }) {
+                continue;
+            }
+            let Some(recv) = call.args.first() else {
+                continue;
+            };
+            let recv_origin = self.origin_key_for_value(recv, &mut TraceSeen::new());
+            if recv_origin.as_deref() != Some(place_origin.as_str()) {
+                continue;
+            }
+            // The count must be an output field (us_len / ts_len) of this call.
+            if let Some(root) = count_root
+                && mir_is_tuple_field_of(&body, root, call.destination)
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     fn origin_key_for_value_before(
         &self,
         value: &AbstractValue<'tcx>,
@@ -7114,4 +7208,31 @@ fn pointee_stride_from_types<'tcx>(
         });
     }
     None
+}
+
+/// True when `root` is defined as a field (any index) of `tuple_dest`.
+fn mir_is_tuple_field_of<'tcx>(
+    body: &rustc_middle::mir::Body<'tcx>,
+    root: Local,
+    tuple_dest: Local,
+) -> bool {
+    for bb in body.basic_blocks.iter() {
+        for stmt in &bb.statements {
+            let StatementKind::Assign(assign) = &stmt.kind else {
+                continue;
+            };
+            let (dest, rvalue) = assign.as_ref();
+            if dest.local != root || !dest.projection.is_empty() {
+                continue;
+            }
+            if let Rvalue::Use(Operand::Copy(src) | Operand::Move(src)) = rvalue
+                && src.local == tuple_dest
+                && src.projection.len() == 1
+                && matches!(src.projection[0], ProjectionElem::Field(..))
+            {
+                return true;
+            }
+        }
+    }
+    false
 }
