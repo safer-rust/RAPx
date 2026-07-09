@@ -30,6 +30,17 @@ pub(crate) fn check<'tcx>(
     let Some(required_ty) = checker.property_required_ty(checkpoint, property) else {
         return SmtCheckResult::unknown("Init type could not be resolved");
     };
+
+    // Detect the pattern `MaybeUninit<[E; N]>::assume_init()` following a
+    // covering `for i in 0..N { base.add(i).write(v) }` loop.  When the
+    // array length is a const generic and a write to every index `0..N` is
+    // on the forward path, the whole array is initialized.
+    if checker.maybeuninit_covering_init(checkpoint, &target, required_ty, forward) {
+        return SmtCheckResult::proved(format!(
+            "Init proved: MaybeUninit<[{required_ty:?}; N]> fully initialized by covering loop"
+        ));
+    }
+
     let Some(elements_expr) = checker.property_len_expr(checkpoint, property) else {
         return SmtCheckResult::unknown("Init element-count argument could not be resolved");
     };

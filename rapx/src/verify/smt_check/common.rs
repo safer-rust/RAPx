@@ -27,7 +27,10 @@
 use std::collections::{HashMap, HashSet};
 
 use rustc_middle::{
-    mir::{BinOp, Local, Operand, Rvalue, TerminatorKind, UnOp},
+    mir::{
+        BasicBlock, BinOp, Local, Operand, ProjectionElem, Rvalue, StatementKind, TerminatorKind,
+        UnOp,
+    },
     ty::{ConstKind, GenericArgKind, PseudoCanonicalInput, Ty, TyCtxt, TyKind, UintTy},
 };
 use z3::{
@@ -1905,6 +1908,106 @@ impl<'tcx> SmtChecker<'tcx> {
     ) -> Option<PlaceKey> {
         let operand = checkpoint.args.get(index)?;
         operand_place(operand)
+    }
+
+    /// Prove `MaybeUninit::<[E; N]>::assume_init()` when the whole array is
+    /// initialized by a covering `for i in 0..N { base.add(i).write(v) }` loop.
+    ///
+    /// This is a *trusted structural* summary: it fires only when every part of
+    /// the idiom is present and the write is unconditional per iteration (its
+    /// block dominates the loop's back-edge, so it runs for every `i` in
+    /// `0..N`), which soundly covers all `N` elements.
+    pub(crate) fn maybeuninit_covering_init(
+        &self,
+        checkpoint: &Checkpoint<'tcx>,
+        _target: &PlaceKey,
+        required_ty: Ty<'tcx>,
+        _forward: &ForwardVisitResult<'tcx>,
+    ) -> bool {
+        // The target array must be `[E; N]` with a const-generic length `N`.
+        let TyKind::Array(_, array_len) = required_ty.kind() else {
+            return false;
+        };
+        let ConstKind::Param(array_param) = array_len.kind() else {
+            return false;
+        };
+        let array_param = array_param.name.to_string();
+
+        let caller = checkpoint.caller;
+        if !self.tcx.is_mir_available(caller) {
+            return false;
+        }
+        let body = self.tcx.optimized_mir(caller);
+
+        // The assume_init receiver (arg 0) traces to a `MaybeUninit` local.
+        let Some(recv_local) = checkpoint
+            .args
+            .first()
+            .and_then(operand_place)
+            .and_then(|p| p.local())
+        else {
+            return false;
+        };
+        let arr_local = mir_copy_root(body, Local::from_usize(recv_local.as_usize()));
+
+        // Find the `MaybeUninit::as_mut_ptr(&mut arr)` base pointer local.
+        let Some(base_local) = find_as_mut_ptr_of(body, arr_local, self.tcx) else {
+            return false;
+        };
+
+        // Find a `write(ptr, _)` whose pointer traces to `base.cast().add(idx)`
+        // where `idx` is a `for i in 0..N` loop index over the same `N`.
+        for (bb, data) in body.basic_blocks.iter_enumerated() {
+            let Some(term) = &data.terminator else {
+                continue;
+            };
+            let TerminatorKind::Call { func, args, .. } = &term.kind else {
+                continue;
+            };
+            if !crate::verify::call_summary::call_name(self.tcx, func).contains("::write") {
+                continue;
+            }
+            let Some((idx_local, base_of_add)) =
+                args.first().and_then(|a| a.node.place()).and_then(|p| {
+                    pointer_add_index_and_base(body, p.local, self.tcx)
+                })
+            else {
+                continue;
+            };
+            // The add base must be (a cast of) `arr.as_mut_ptr()`.
+            if mir_ptr_cast_root(body, base_of_add, self.tcx) != base_local {
+                continue;
+            }
+            // The offset must be the `for i in 0..N` loop index over `array_param`.
+            let Some((header, range_param)) = self.loop_index_range(body, idx_local) else {
+                continue;
+            };
+            if range_param != array_param {
+                continue;
+            }
+            // The write must run every iteration: its block dominates every
+            // back-edge into the loop header.
+            if loop_write_covers(body, header, bb) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// If `idx_local` is the `Some` payload of a `for _ in a..b` loop, return
+    /// the loop header block and the const-generic name of the range's end `b`.
+    fn loop_index_range(
+        &self,
+        body: &rustc_middle::mir::Body<'tcx>,
+        idx_local: Local,
+    ) -> Option<(BasicBlock, String)> {
+        // idx_local = copy ((opt as Some).0), possibly through copies.
+        let idx_local = mir_copy_root(body, idx_local);
+        let opt_local = mir_some_payload_source(body, idx_local)?;
+        // opt = Iterator::next(&mut range); header = the block with that call.
+        let (header, range_local) = mir_range_next_call(body, opt_local, self.tcx)?;
+        let end = mir_range_end_param(body, range_local, self.tcx)?;
+        Some((header, end))
     }
 
     /// Return the `index`-th call argument as a common SMT term.
@@ -6139,6 +6242,371 @@ fn array_const_len_param(ty: Ty<'_>) -> Option<String> {
         _ => None,
     }
 }
+
+/// Follow `local = move/copy other` (no projections) to the root local.
+fn mir_copy_root<'tcx>(body: &rustc_middle::mir::Body<'tcx>, mut local: Local) -> Local {
+    for _ in 0..16 {
+        let mut next = None;
+        for bb in body.basic_blocks.iter() {
+            for stmt in &bb.statements {
+                let StatementKind::Assign(assign) = &stmt.kind else {
+                    continue;
+                };
+                let (dest, rvalue) = assign.as_ref();
+                if dest.local != local || !dest.projection.is_empty() {
+                    continue;
+                }
+                if let Rvalue::Use(Operand::Copy(src) | Operand::Move(src)) = rvalue
+                    && src.projection.is_empty()
+                {
+                    next = Some(src.local);
+                }
+            }
+        }
+        match next {
+            Some(n) if n != local => local = n,
+            _ => return local,
+        }
+    }
+    local
+}
+
+/// Find the destination of `MaybeUninit::as_mut_ptr(&mut arr)` for `arr_local`.
+fn find_as_mut_ptr_of<'tcx>(
+    body: &rustc_middle::mir::Body<'tcx>,
+    arr_local: Local,
+    tcx: TyCtxt<'tcx>,
+) -> Option<Local> {
+    for data in body.basic_blocks.iter() {
+        let Some(term) = &data.terminator else {
+            continue;
+        };
+        let TerminatorKind::Call {
+            func,
+            args,
+            destination,
+            ..
+        } = &term.kind
+        else {
+            continue;
+        };
+        let name = crate::verify::call_summary::call_name(tcx, func);
+        if !name.contains("as_mut_ptr") {
+            continue;
+        }
+        let Some(arg_local) = args.first().and_then(|a| a.node.place()).map(|p| p.local) else {
+            continue;
+        };
+        // arg is `&mut arr` (or a copy chain to it).
+        if mir_ref_root(body, arg_local) == arr_local {
+            return Some(destination.local);
+        }
+    }
+    None
+}
+
+/// Follow `local = &mut x` / copies to the referenced root local.
+fn mir_ref_root<'tcx>(body: &rustc_middle::mir::Body<'tcx>, mut local: Local) -> Local {
+    for _ in 0..16 {
+        let mut next = None;
+        for bb in body.basic_blocks.iter() {
+            for stmt in &bb.statements {
+                let StatementKind::Assign(assign) = &stmt.kind else {
+                    continue;
+                };
+                let (dest, rvalue) = assign.as_ref();
+                if dest.local != local || !dest.projection.is_empty() {
+                    continue;
+                }
+                match rvalue {
+                    Rvalue::Ref(_, _, src) | Rvalue::RawPtr(_, src) => next = Some(src.local),
+                    Rvalue::Use(Operand::Copy(src) | Operand::Move(src))
+                        if src.projection.is_empty() =>
+                    {
+                        next = Some(src.local)
+                    }
+                    _ => {}
+                }
+            }
+        }
+        match next {
+            Some(n) if n != local => local = n,
+            _ => return local,
+        }
+    }
+    local
+}
+
+/// If `ptr_local` is `base.add(idx)` (an element `ptr::add` call), return
+/// `(idx_local, base_local)`.
+fn pointer_add_index_and_base<'tcx>(
+    body: &rustc_middle::mir::Body<'tcx>,
+    ptr_local: Local,
+    tcx: TyCtxt<'tcx>,
+) -> Option<(Local, Local)> {
+    let ptr_local = mir_copy_root(body, ptr_local);
+    for data in body.basic_blocks.iter() {
+        let Some(term) = &data.terminator else {
+            continue;
+        };
+        let TerminatorKind::Call {
+            func,
+            args,
+            destination,
+            ..
+        } = &term.kind
+        else {
+            continue;
+        };
+        if destination.local != ptr_local {
+            continue;
+        }
+        let name = crate::verify::call_summary::call_name(tcx, func);
+        // Element-stride add only (byte variants change alignment/stride).
+                    if !(name.ends_with("::add") || name.contains("::add::")) {
+                        return None;
+                    }
+        let base = args.first().and_then(|a| a.node.place())?.local;
+        let idx = args.get(1).and_then(|a| a.node.place())?.local;
+        return Some((idx, base));
+    }
+    None
+}
+
+/// Follow `ptr::cast` / copies to the root pointer local.
+fn mir_ptr_cast_root<'tcx>(
+    body: &rustc_middle::mir::Body<'tcx>,
+    mut local: Local,
+    tcx: TyCtxt<'tcx>,
+) -> Local {
+    for _ in 0..16 {
+        let root = mir_copy_root(body, local);
+        let mut next = None;
+        for data in body.basic_blocks.iter() {
+            let Some(term) = &data.terminator else {
+                continue;
+            };
+            let TerminatorKind::Call {
+                func,
+                args,
+                destination,
+                ..
+            } = &term.kind
+            else {
+                continue;
+            };
+            if destination.local != root {
+                continue;
+            }
+            if crate::verify::call_summary::call_name(tcx, func).contains("::cast")
+                && let Some(src) = args.first().and_then(|a| a.node.place())
+            {
+                next = Some(src.local);
+            }
+        }
+        match next {
+            Some(n) if n != root => local = n,
+            _ => return root,
+        }
+    }
+    local
+}
+
+/// Find `opt` such that `idx = copy ((opt as Some).0)`.
+fn mir_some_payload_source<'tcx>(
+    body: &rustc_middle::mir::Body<'tcx>,
+    idx_local: Local,
+) -> Option<Local> {
+    for bb in body.basic_blocks.iter() {
+        for stmt in &bb.statements {
+            let StatementKind::Assign(assign) = &stmt.kind else {
+                continue;
+            };
+            let (dest, rvalue) = assign.as_ref();
+            if dest.local != idx_local || !dest.projection.is_empty() {
+                continue;
+            }
+            if let Rvalue::Use(Operand::Copy(src) | Operand::Move(src)) = rvalue
+                && src
+                    .projection
+                    .iter()
+                    .any(|p| matches!(p, ProjectionElem::Downcast(..)))
+                && src
+                    .projection
+                    .iter()
+                    .any(|p| matches!(p, ProjectionElem::Field(..)))
+            {
+                return Some(src.local);
+            }
+        }
+    }
+    None
+}
+
+/// Find `opt = Iterator::next(&mut r)` with `r: Range`; return `(header, r)`.
+fn mir_range_next_call<'tcx>(
+    body: &rustc_middle::mir::Body<'tcx>,
+    opt_local: Local,
+    tcx: TyCtxt<'tcx>,
+) -> Option<(BasicBlock, Local)> {
+    for (bb, data) in body.basic_blocks.iter_enumerated() {
+        let Some(term) = &data.terminator else {
+            continue;
+        };
+        let TerminatorKind::Call {
+            func,
+            args,
+            destination,
+            ..
+        } = &term.kind
+        else {
+            continue;
+        };
+        if destination.local != opt_local {
+            continue;
+        }
+        if !crate::verify::call_summary::call_name(tcx, func).contains("::next") {
+            return None;
+        }
+        let arg_local = args.first().and_then(|a| a.node.place())?.local;
+        let range_local = mir_ref_root(body, arg_local);
+        let is_range = body
+            .local_decls
+            .get(range_local)
+            .map(|d| {
+                let s = format!("{:?}", d.ty);
+                s.contains("Range<") && !s.contains("RangeInclusive")
+            })
+            .unwrap_or(false);
+        return is_range.then_some((bb, range_local));
+    }
+    None
+}
+
+/// Recover the const-generic name of a `Range { start, end }`'s `end`, tracing
+/// through copies and the `into_iter` identity.
+fn mir_range_end_param<'tcx>(
+    body: &rustc_middle::mir::Body<'tcx>,
+    range_local: Local,
+    tcx: TyCtxt<'tcx>,
+) -> Option<String> {
+    let mut local = range_local;
+    for _ in 0..8 {
+        for bb in body.basic_blocks.iter() {
+            for stmt in &bb.statements {
+                let StatementKind::Assign(assign) = &stmt.kind else {
+                    continue;
+                };
+                let (dest, rvalue) = assign.as_ref();
+                if dest.local != local || !dest.projection.is_empty() {
+                    continue;
+                }
+                if let Rvalue::Aggregate(_, operands) = rvalue
+                    && let Some(end) = operands.iter().nth(1)
+                    && let Some(param) = const_operand_param_name(end)
+                {
+                    return Some(param);
+                }
+            }
+        }
+        let mut next = None;
+        for bb in body.basic_blocks.iter() {
+            for stmt in &bb.statements {
+                let StatementKind::Assign(assign) = &stmt.kind else {
+                    continue;
+                };
+                let (dest, rvalue) = assign.as_ref();
+                if dest.local != local || !dest.projection.is_empty() {
+                    continue;
+                }
+                if let Rvalue::Use(Operand::Copy(src) | Operand::Move(src)) = rvalue
+                    && src.projection.is_empty()
+                {
+                    next = Some(src.local);
+                }
+            }
+            if let Some(term) = &bb.terminator
+                && let TerminatorKind::Call {
+                    func,
+                    args,
+                    destination,
+                    ..
+                } = &term.kind
+                && destination.local == local
+                && crate::verify::call_summary::call_name(tcx, func).contains("into_iter")
+                && let Some(src) = args.first().and_then(|a| a.node.place())
+            {
+                next = Some(src.local);
+            }
+        }
+        match next {
+            Some(n) if n != local => local = n,
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// Extract the const-generic parameter name of a constant operand such as
+/// `const N` (debug forms `N` or `Ty(usize, N/#1)`).
+fn const_operand_param_name(operand: &Operand<'_>) -> Option<String> {
+    let Operand::Constant(c) = operand else {
+        return None;
+    };
+    let text = format!("{:?}", c.const_);
+    // Newer rustc: `Ty(usize, N/#1)`; extract the `N` before `/#`.
+    if let Some(open) = text.find('(')
+        && let Some(close) = text.rfind(')')
+        && open < close
+    {
+        let inner = &text[open + 1..close];
+        if let Some(last) = inner.rsplit(',').next() {
+            let last = last.trim();
+            if let Some((name, index)) = last.split_once("/#")
+                && !index.is_empty()
+                && index.bytes().all(|b| b.is_ascii_digit())
+                && !name.is_empty()
+                && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+            {
+                return Some(name.to_string());
+            }
+        }
+    }
+    // Bare identifier form.
+    let t = text.trim();
+    if !t.is_empty()
+        && t.bytes().next().is_some_and(|b| b.is_ascii_alphabetic() || b == b'_')
+        && t.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+    {
+        return Some(t.to_string());
+    }
+    None
+}
+
+/// True when the write block `write_bb` dominates every back-edge into the loop
+/// header `header` (i.e. the write runs on every iteration), so all indices are
+/// covered.
+fn loop_write_covers<'tcx>(
+    body: &rustc_middle::mir::Body<'tcx>,
+    header: BasicBlock,
+    write_bb: BasicBlock,
+) -> bool {
+    let dominators = body.basic_blocks.dominators();
+    let preds = body.basic_blocks.predecessors();
+    let mut saw_latch = false;
+    for &pred in &preds[header] {
+        // A latch is a predecessor of the header that the header dominates
+        // (i.e. lies inside the loop).
+        if dominators.dominates(header, pred) {
+            saw_latch = true;
+            if !dominators.dominates(write_bb, pred) {
+                return false;
+            }
+        }
+    }
+    saw_latch
+}
+
 
 fn initialized_element_ty_name<'tcx>(ty: Ty<'tcx>) -> Option<String> {
     let ty_name = format!("{ty:?}");
