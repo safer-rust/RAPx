@@ -71,7 +71,11 @@ fn composed_entirely_of<'tcx>(
             .all(|inner| composed_entirely_of(tcx, inner, elem, depth + 1)),
         TyKind::Adt(def, args) if def.is_struct() && (def.repr().simd() || def.repr().transparent()) => {
             def.all_fields().all(|field| {
-                composed_entirely_of(tcx, field.ty(tcx, args), elem, depth + 1)
+                #[cfg(not(rapx_rustc_ge_198))]
+                let field_ty = field.ty(tcx, args);
+                #[cfg(rapx_rustc_ge_198)]
+                let field_ty = field.ty(tcx, args).skip_norm_wip();
+                composed_entirely_of(tcx, field_ty, elem, depth + 1)
             })
         }
         _ => false,
