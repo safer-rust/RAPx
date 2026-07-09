@@ -4274,6 +4274,10 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             .unwrap_or_else(|| value_label(recv));
         let len_key = format!("len({recv_key})");
         let bounds_len = self.symbolic_len_term(&len_key);
+        // ts_len >= 0 (usize lower bound); Z3 treats symbolic integers as
+        // unbounded, so without this the goal `(len - ts_len) <= len` can be
+        // defeated by a negative `ts_len`.
+        solver.assert(&ts_term.ge(&Int::from_u64(self.ctx, 0)));
         solver.assert(&ts_term.le(&bounds_len));
     }
 
