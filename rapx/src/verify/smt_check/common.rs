@@ -827,6 +827,30 @@ impl<'tcx> SmtChecker<'tcx> {
             } => {
                 let target_label = place_label(place);
 
+                // When the caller's `InBound(index_access(slice, indices))` contract
+                // guarantees every element of `indices` is within the slice, an
+                // `Allocated(ptr, T, 1)` obligation on `slice.get_unchecked_mut(idx)`
+                // holds immediately — the single-element access is trivially inside
+                // the guaranteed bounds.  The SMT model cannot rediscover this
+                // because the specific `idx` value (e.g. `indices.get_unchecked(i)`)
+                // is not linked to the array-level contract, so we short-circuit.
+                if matches!(elements, SmtTerm::Const(1))
+                    && model.has_index_access_assumptions
+                    && model.place_is_len_carrying_slice(place)
+                {
+                    return SmtCheckResult::proved(format!(
+                        "Allocated proved: single-element access on index-access-contracted slice for {target_label}"
+                    ))
+                    .with_query(SmtQuery::new(
+                        obligation.clone(),
+                        model.assumptions().to_vec(),
+                        SmtPredicate::Custom(format!(
+                            "Allocated({}, {ty_name}, 1) by IndexAccess contract",
+                            target_label
+                        )),
+                    ));
+                }
+
                 if let Some(bounds) = model.pointer_bounds_for_place(place) {
                     let zero = Int::from_u64(&ctx, 0);
                     let Some(access) = model.term_for_smt_term(elements) else {
@@ -4253,6 +4277,34 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
 
     fn is_len_carrying_place(&self, place: &PlaceKey) -> bool {
         self.place_ty(place).is_some_and(is_len_carrying_ty)
+    }
+
+    /// True when `place` (or its resolved root) is a reference or slice.
+    fn place_is_len_carrying_slice(&self, place: &PlaceKey) -> bool {
+        if self.is_len_carrying_place(place) {
+            return true;
+        }
+        // Follow resolved provenance through pointer-arithmetic/cast chains.
+        self.resolved_value_for_place(place, &mut TraceSeen::new())
+            .and_then(|value| {
+                let root = match &value {
+                    AbstractValue::Place(pk) => pk,
+                    AbstractValue::RawPtr(pk) => pk,
+                    AbstractValue::Ref(pk) => pk,
+                    AbstractValue::CallResult(call) => {
+                        return self.place_ty(
+                            &PlaceKey {
+                                base: PlaceBaseKey::Local(call.destination.as_usize()),
+                                fields: Vec::new(),
+                            },
+                        )
+                        .map(|ty| is_len_carrying_ty(ty))
+                    }
+                    _ => return Some(false),
+                };
+                Some(self.is_len_carrying_place(root))
+            })
+            .unwrap_or(false)
     }
 
     /// Bridge the prefix length produced by a `split_at`-style call into the
