@@ -1113,8 +1113,7 @@ fn named_index_disjoint_validator(name: &str) -> Option<(usize, usize)> {
 }
 
 fn is_align_to_offsets_fn(name: &str) -> bool {
-    let base = name.split('<').next().unwrap_or(name);
-    base.ends_with("::align_to_offsets")
+    name.contains("::align_to_offsets")
 }
 
 /// Detect an "index disjoint validator": a function whose body loads elements
