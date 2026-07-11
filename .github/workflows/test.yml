@@ -53,3 +53,14 @@ jobs:
       run: ./install.sh
     - name: Test
       run: cd rapx && cargo test
+    - name: Verify core::slice against rapx-verify-rust-std
+      run: |
+        git clone https://github.com/safer-rust/rapx-verify-rust-std.git
+        cd rapx-verify-rust-std
+        export RUSTUP_TOOLCHAIN=$(rustup show active-toolchain | cut -d ' ' -f 1)
+        export RAPX_SYSROOT=$(rustc --print sysroot)
+        export LD_LIBRARY_PATH="$RAPX_SYSROOT/lib"
+        export RUSTFLAGS="--cfg=rapx -Zcrate-attr=feature(register_tool) -Zcrate-attr=register_tool(rapx)"
+        export __CARGO_TESTS_ONLY_SRC_ROOT="$(pwd)/library"
+        cd library/core
+        cargo +$RUSTUP_TOOLCHAIN rapx verify --module slice --mode targeted
