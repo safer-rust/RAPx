@@ -1950,6 +1950,14 @@ fn verify_slice() {
         35,
         "expected 35 SOUND results"
     );
+    assert_contain(
+        &output,
+        "<[T] as SliceSafeExt<T>>::as_simd_ext",
+    );
+    assert_contain(
+        &output,
+        "<[T] as SliceSafeExt<T>>::as_simd_mut_ext",
+    );
 }
 
 #[test]

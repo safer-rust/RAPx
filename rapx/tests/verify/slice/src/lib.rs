@@ -550,7 +550,6 @@ impl<T> SliceSafeExt<T> for [T] {
     }
 
     #[rapx::verify]
-    #[rapx::requires(ValidTransmute(T, Simd::<T, LANES>))]
     fn as_simd_ext<const LANES: usize>(&self) -> (&[T], &[Simd<T, LANES>], &[T])
     where
         Simd<T, LANES>: AsRef<[T; LANES]>,
@@ -567,7 +566,6 @@ impl<T> SliceSafeExt<T> for [T] {
     }
 
     #[rapx::verify]
-    #[rapx::requires(ValidTransmute(T, Simd::<T, LANES>))]
     fn as_simd_mut_ext<const LANES: usize>(
         &mut self,
     ) -> (&mut [T], &mut [Simd<T, LANES>], &mut [T])
