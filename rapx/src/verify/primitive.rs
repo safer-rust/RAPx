@@ -66,7 +66,11 @@ impl PrimitiveCall {
         if name.ends_with("::as_mut_ptr_range") || name.contains("::as_mut_ptr_range") {
             return Some(Self::AsMutPtrRange);
         }
-        if name.contains("::cast") || name.contains("cast_array") || name.contains("cast_const") || name.contains("cast_mut") {
+        if name.contains("::cast")
+            || name.contains("cast_array")
+            || name.contains("cast_const")
+            || name.contains("cast_mut")
+        {
             return Some(Self::PtrCast);
         }
         if name.contains("::byte_add") || name.contains("::wrapping_byte_add") {

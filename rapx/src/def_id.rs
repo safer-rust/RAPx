@@ -33,9 +33,13 @@ fn init_inner(tcx: TyCtxt) -> Intrinsics {
             if let Some(name) = INTRINSICS.iter().enumerate().find_map(|(idx, paths)| {
                 if paths.iter().any(|&path| {
                     path == fn_name_str
-                        || path.strip_prefix("core::").is_some_and(|s| s == fn_name_str)
+                        || path
+                            .strip_prefix("core::")
+                            .is_some_and(|s| s == fn_name_str)
                         || path.strip_prefix("std::").is_some_and(|s| s == fn_name_str)
-                        || path.strip_prefix("alloc::").is_some_and(|s| s == fn_name_str)
+                        || path
+                            .strip_prefix("alloc::")
+                            .is_some_and(|s| s == fn_name_str)
                 }) {
                     assert_eq!(
                         indices.insert(idx, true),

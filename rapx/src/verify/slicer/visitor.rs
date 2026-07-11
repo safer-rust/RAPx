@@ -530,7 +530,10 @@ fn collect_statement_uses<'tcx>(
 /// by a projection out of another local's field — the shape produced when a
 /// tuple returned by a call (e.g. `split_at`) is destructured into its slice
 /// components.
-fn local_from_tuple_field_projection<'tcx>(body: &Body<'tcx>, local: rustc_middle::mir::Local) -> bool {
+fn local_from_tuple_field_projection<'tcx>(
+    body: &Body<'tcx>,
+    local: rustc_middle::mir::Local,
+) -> bool {
     use rustc_middle::mir::{Operand, Rvalue};
     let mut current = local;
     let mut seen = std::collections::HashSet::new();

@@ -489,10 +489,12 @@ impl<'tcx> Property<'tcx> {
                 if !Self::check_arg_length(exprs.len(), 2, "ValidTransmute") {
                     return Self::new_simple(PropertyKind::Unknown);
                 }
-                let Some(src_ty) = Self::parse_type(tcx, def_id, &exprs[0], "ValidTransmute") else {
+                let Some(src_ty) = Self::parse_type(tcx, def_id, &exprs[0], "ValidTransmute")
+                else {
                     return Self::new_simple(PropertyKind::Unknown);
                 };
-                let Some(dst_ty) = Self::parse_type(tcx, def_id, &exprs[1], "ValidTransmute") else {
+                let Some(dst_ty) = Self::parse_type(tcx, def_id, &exprs[1], "ValidTransmute")
+                else {
                     return Self::new_simple(PropertyKind::Unknown);
                 };
                 Self::new_with_args(
@@ -647,9 +649,7 @@ impl<'tcx> Property<'tcx> {
                 ContractExpr::Unknown
             }
             // Treat `x.len` (field-access sugar) as the slice length `len(x)`.
-            Expr::Field(expr_field)
-                if matches!(&expr_field.member, safety_parser::syn::Member::Named(ident) if ident == "len") =>
-            {
+            Expr::Field(expr_field) if matches!(&expr_field.member, safety_parser::syn::Member::Named(ident) if ident == "len") => {
                 ContractExpr::Len(Box::new(Self::parse_contract_expr(
                     tcx,
                     def_id,

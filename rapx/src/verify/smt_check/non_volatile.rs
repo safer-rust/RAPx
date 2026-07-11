@@ -30,7 +30,5 @@ pub(crate) fn check<'tcx>(
     }
     // For all other standard-library callers, the pointer originates from
     // a regular Rust allocation or borrow, never from volatile memory.
-    SmtCheckResult::proved(
-        "NonVolatile assumed — std memory is never volatile",
-    )
+    SmtCheckResult::proved("NonVolatile assumed — std memory is never volatile")
 }

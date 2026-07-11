@@ -38,9 +38,7 @@ pub(crate) fn check<'tcx>(
     // the constraint holds trivially.  The SMT model cannot prove this because
     // `align_of` is a symbolic constant, so we short-circuit here.
     if checker.validnum_is_align_nonzero(checkpoint, property, forward) {
-        return SmtCheckResult::proved(
-            "ValidNum proved: align_of::<T>() >= 1 for every T",
-        );
+        return SmtCheckResult::proved("ValidNum proved: align_of::<T>() >= 1 for every T");
     }
 
     checker.prove_obligation(

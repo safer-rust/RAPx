@@ -318,9 +318,7 @@ pub fn collect_raw_ptr_deref_info<'tcx>(
                 Rvalue::Use(Operand::Copy(place) | Operand::Move(place), ..) => {
                     (place_has_raw_deref(tcx, &body, place), false)
                 }
-                Rvalue::Ref(_, _, place) => {
-                    (place_has_raw_deref(tcx, &body, place), true)
-                }
+                Rvalue::Ref(_, _, place) => (place_has_raw_deref(tcx, &body, place), true),
                 _ => (false, false),
             };
 
@@ -377,7 +375,9 @@ fn ptr_operand_for_deref_place<'tcx>(place: &Place<'tcx>) -> Option<Operand<'tcx
         .iter()
         .position(|p| matches!(p.kind(), ProjectionElem::Deref));
 
-    if let Some(idx) = first_deref_idx && idx > 0 {
+    if let Some(idx) = first_deref_idx
+        && idx > 0
+    {
         return None;
     }
 

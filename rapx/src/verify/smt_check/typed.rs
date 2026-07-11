@@ -178,7 +178,15 @@ impl<'a, 'tcx> TypedContext<'a, 'tcx> {
     /// Return true when a previous write initialized this place as `required_ty`.
     fn known_init_matches(&self, place: &PlaceKey) -> bool {
         if self.forward.facts.iter().rev().any(|fact| {
-            let StateFact::KnownInit { place: init_place, ty_name, elements, .. } = fact else { return false };
+            let StateFact::KnownInit {
+                place: init_place,
+                ty_name,
+                elements,
+                ..
+            } = fact
+            else {
+                return false;
+            };
             init_place == place && *elements > 0 && self.ty_name_matches(ty_name)
         }) {
             return true;
@@ -188,7 +196,15 @@ impl<'a, 'tcx> TypedContext<'a, 'tcx> {
             while !ancestor.fields.is_empty() {
                 ancestor.fields.pop();
                 if self.forward.facts.iter().rev().any(|fact| {
-                    let StateFact::KnownInit { place: init_place, ty_name, elements, .. } = fact else { return false };
+                    let StateFact::KnownInit {
+                        place: init_place,
+                        ty_name,
+                        elements,
+                        ..
+                    } = fact
+                    else {
+                        return false;
+                    };
                     init_place == &ancestor && *elements > 0 && self.ty_name_matches(ty_name)
                 }) {
                     return true;

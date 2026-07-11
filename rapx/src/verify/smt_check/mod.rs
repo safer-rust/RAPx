@@ -19,10 +19,10 @@ mod init;
 mod non_null;
 mod non_overlap;
 mod non_volatile;
+mod transmute_without_align;
 mod typed;
 mod valid_num;
 mod valid_ptr;
 mod valid_transmute;
-mod transmute_without_align;
 
 pub use common::{SmtCheckResult, SmtChecker, SmtObligation, SmtQuery};

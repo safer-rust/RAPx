@@ -157,7 +157,10 @@ fn resolve_chain_contracts<'tcx>(
     tcx: TyCtxt<'tcx>,
     callee_def_id: DefId,
     max_depth: usize,
-    std_contracts: fn(TyCtxt<'tcx>, DefId) -> &'static [super::attribute::assets_parser::PropertyEntry],
+    std_contracts: fn(
+        TyCtxt<'tcx>,
+        DefId,
+    ) -> &'static [super::attribute::assets_parser::PropertyEntry],
 ) -> FnContracts<'tcx> {
     if max_depth == 0 {
         return Vec::new();
@@ -202,12 +205,7 @@ fn resolve_chain_contracts<'tcx>(
 
                 // If still no contracts, recurse into this callee.
                 if reqs.is_empty() {
-                    reqs = resolve_chain_contracts(
-                        tcx,
-                        sub_def_id,
-                        max_depth - 1,
-                        std_contracts,
-                    );
+                    reqs = resolve_chain_contracts(tcx, sub_def_id, max_depth - 1, std_contracts);
                 }
 
                 contracts.extend(reqs);
@@ -436,7 +434,10 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
                 continue;
             }
             let def_kind = self.tcx.def_kind(def_id);
-            if !matches!(def_kind, rustc_hir::def::DefKind::Fn | rustc_hir::def::DefKind::AssocFn) {
+            if !matches!(
+                def_kind,
+                rustc_hir::def::DefKind::Fn | rustc_hir::def::DefKind::AssocFn
+            ) {
                 continue;
             }
 
@@ -512,16 +513,12 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
     pub fn check_module_filter_result(&self) {
         if let Some(ref filter) = self.crate_filter {
             if !self.crate_filter_matched {
-                rap_warn!(
-                    "[rapx::verify] --crate \"{filter}\" matched no targets"
-                );
+                rap_warn!("[rapx::verify] --crate \"{filter}\" matched no targets");
             }
         }
         if let Some(ref filter) = self.module_filter {
             if !self.module_filter_matched {
-                rap_warn!(
-                    "[rapx::verify] --module \"{filter}\" matched no functions in the crate"
-                );
+                rap_warn!("[rapx::verify] --module \"{filter}\" matched no functions in the crate");
             }
         }
     }
@@ -1172,12 +1169,7 @@ pub(crate) fn get_contract_from_annotation<'tcx>(
         let hir_id = tcx.local_def_id_to_hir_id(local_def_id);
         let hir_attrs = tcx.hir_attrs(hir_id);
         // hir_attrs is &'tcx [Attribute<'tcx>]; iter yields &'tcx Attribute<'tcx>
-        return collect_properties_from_requires_attrs(
-            tcx,
-            hir_attrs,
-            def_id,
-            "requires",
-        );
+        return collect_properties_from_requires_attrs(tcx, hir_attrs, def_id, "requires");
     }
 
     #[allow(deprecated)]

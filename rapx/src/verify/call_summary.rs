@@ -529,7 +529,10 @@ pub fn effect_summary<'tcx>(
     }
 
     if let Some(prim) = primitive
-        && matches!(prim, PrimitiveCall::FromRawParts | PrimitiveCall::FromRawPartsMut)
+        && matches!(
+            prim,
+            PrimitiveCall::FromRawParts | PrimitiveCall::FromRawPartsMut
+        )
     {
         let mut effects = vec![
             CallEffect::ReturnAliasArg { arg: 0 },
@@ -688,7 +691,8 @@ fn ty_is_layout_safe_inner(ty: Ty<'_>, depth: usize) -> bool {
 }
 
 /// Return a stable, human-readable name for a MIR call operand.
-pub fn call_name(tcx: TyCtxt<'_>, func: &Operand<'_>) -> String {    callee_def_id(func)
+pub fn call_name(tcx: TyCtxt<'_>, func: &Operand<'_>) -> String {
+    callee_def_id(func)
         .map(|def_id| tcx.def_path_str(def_id))
         .unwrap_or_else(|| format!("{func:?}"))
 }
@@ -1104,7 +1108,11 @@ fn is_slice_range_fn(name: &str) -> bool {
 /// it.  The signature is `get_disjoint_check_valid(indices: &[I; N], len: usize)`,
 /// hence `indices_arg = 0` and `len_arg = 1`.
 fn named_index_disjoint_validator(name: &str) -> Option<(usize, usize)> {
-    let base = name.split('<').next().unwrap_or(name).trim_end_matches("::");
+    let base = name
+        .split('<')
+        .next()
+        .unwrap_or(name)
+        .trim_end_matches("::");
     if base.ends_with("get_disjoint_check_valid") {
         Some((0, 1))
     } else {

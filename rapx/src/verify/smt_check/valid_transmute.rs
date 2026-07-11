@@ -52,7 +52,7 @@ pub(crate) fn check<'tcx>(
 /// True when every leaf of `ty` is `elem`, so any sequence of valid `elem`
 /// values forms a valid `ty` (arrays, SIMD/transparent wrappers, and
 /// aggregates whose fields all reduce to `elem`).
-fn composed_entirely_of<'tcx>(
+pub(crate) fn composed_entirely_of<'tcx>(
     tcx: TyCtxt<'tcx>,
     ty: Ty<'tcx>,
     elem: Ty<'tcx>,
@@ -69,7 +69,9 @@ fn composed_entirely_of<'tcx>(
         TyKind::Tuple(elems) => elems
             .iter()
             .all(|inner| composed_entirely_of(tcx, inner, elem, depth + 1)),
-        TyKind::Adt(def, args) if def.is_struct() && (def.repr().simd() || def.repr().transparent()) => {
+        TyKind::Adt(def, args)
+            if def.is_struct() && (def.repr().simd() || def.repr().transparent()) =>
+        {
             def.all_fields().all(|field| {
                 #[cfg(not(rapx_rustc_ge_198))]
                 let field_ty = field.ty(tcx, args);

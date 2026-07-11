@@ -590,7 +590,7 @@ impl<'tcx> VerifyRun<'tcx> {
         }
 
         if unproved == 0 && !all_results.is_empty() {
-            rap_info!(green,"  result: SOUND");
+            rap_info!(green, "  result: SOUND");
         } else {
             rap_warn!("  result: UNSOUND ({unproved} unproved)");
         }
@@ -710,14 +710,10 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                                                 r.result,
                                                 super::report::CheckResult::Proved
                                             )
-                                            && !r
-                                                .diagnostics
-                                                .as_ref()
-                                                .is_some_and(|d| {
-                                                    d.forward.contains("path has precision loss")
-                                                        || d.forward
-                                                            .contains("could not connect")
-                                                })
+                                            && !r.diagnostics.as_ref().is_some_and(|d| {
+                                                d.forward.contains("path has precision loss")
+                                                    || d.forward.contains("could not connect")
+                                            })
                                     })
                                     .map(|r| (r.checkpoint_index, r.property_index))
                                     .collect();
@@ -921,7 +917,7 @@ fn emit_verify_summary<'tcx>(
     }
 
     if unproved == 0 {
-        rap_info!(green,"  result: SOUND");
+        rap_info!(green, "  result: SOUND");
     } else {
         rap_warn!("  result: UNSOUND ({unproved} unproved)");
     }
@@ -942,7 +938,7 @@ fn emit_property_rows(results: &[&PropertyCheckResult<'_>]) {
         for r in props.iter() {
             let line = format!("          {:?} | {:?}", r.property.kind, r.result);
             if matches!(r.result, super::report::CheckResult::Proved) {
-                rap_info!(green,"{line}");
+                rap_info!(green, "{line}");
             } else {
                 rap_warn!("{line}");
             }

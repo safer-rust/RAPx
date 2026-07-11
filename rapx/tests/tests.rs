@@ -119,7 +119,6 @@ fn assert_not_contain(output: &str, pattern: &str) {
     );
 }
 
-
 const CHECK_UAF_CMD: &[&str] = &["check", "-f"];
 const CHECK_MLEAK_CMD: &[&str] = &["check", "-m"];
 const ANALYZE_ALIAS_CMD: &[&str] = &["analyze", "alias"];
@@ -1280,10 +1279,7 @@ fn inbound_unsound_7() {
 #[test]
 fn inbound_unsound_8() {
     let output = run_with_args("verify/inbound_unsound_8", VERIFY_CMD);
-    assert_contain(
-        &output,
-        "function: unsound_inclusive_range_off_by_one",
-    );
+    assert_contain(&output, "function: unsound_inclusive_range_off_by_one");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -2120,7 +2116,13 @@ fn verify_module_filter() {
 fn verify_crate_filter() {
     let output = run_with_args(
         "verify/module_filter",
-        &["verify", "--mode", "targeted", "--crate", "verify_module_filter"],
+        &[
+            "verify",
+            "--mode",
+            "targeted",
+            "--crate",
+            "verify_module_filter",
+        ],
     );
     assert_contain(&output, "function: a::f");
     assert_contain(&output, "function: b::g");
@@ -2128,7 +2130,15 @@ fn verify_crate_filter() {
 
     let output = run_with_args(
         "verify/module_filter",
-        &["verify", "--mode", "targeted", "--crate", "verify_module_filter", "--module", "a"],
+        &[
+            "verify",
+            "--mode",
+            "targeted",
+            "--crate",
+            "verify_module_filter",
+            "--module",
+            "a",
+        ],
     );
     assert_contain(&output, "function: a::f");
     assert_not_contain(&output, "function: b::g");
@@ -2136,7 +2146,13 @@ fn verify_crate_filter() {
 
     let output = run_with_args(
         "verify/module_filter",
-        &["verify", "--mode", "targeted", "--crate", "nonexistent_crate"],
+        &[
+            "verify",
+            "--mode",
+            "targeted",
+            "--crate",
+            "nonexistent_crate",
+        ],
     );
     assert_contain(&output, "--crate \"nonexistent_crate\" matched no targets");
 }

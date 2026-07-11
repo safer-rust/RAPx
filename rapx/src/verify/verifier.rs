@@ -177,17 +177,24 @@ impl<'tcx> ForwardVerifier<'tcx> {
                     reason == KeepReason::Checkpoint,
                     result,
                 );
-                let is_uninit = call_summary::is_maybe_uninit_uninit_call(&call_summary::call_name(self.tcx, func));
+                let is_uninit = call_summary::is_maybe_uninit_uninit_call(
+                    &call_summary::call_name(self.tcx, func),
+                );
                 if is_uninit
-                    && let Some((_elem_ty_name, elements)) =
-                        self.allocated_element_summary(result.checkpoint.caller, Some(destination.local))
+                    && let Some((_elem_ty_name, elements)) = self.allocated_element_summary(
+                        result.checkpoint.caller,
+                        Some(destination.local),
+                    )
                 {
                     let dest_place = PlaceKey {
-                        base: crate::verify::def_use::PlaceBaseKey::Local(destination.local.as_usize()),
+                        base: crate::verify::def_use::PlaceBaseKey::Local(
+                            destination.local.as_usize(),
+                        ),
                         fields: Vec::new(),
                     };
-                    let actual_ty = self.tcx.optimized_mir(result.checkpoint.caller)
-                        .local_decls[destination.local].ty;
+                    let actual_ty = self.tcx.optimized_mir(result.checkpoint.caller).local_decls
+                        [destination.local]
+                        .ty;
                     result.facts.push(StateFact::KnownAllocated {
                         place: dest_place.clone(),
                         object: dest_place.clone(),
@@ -440,15 +447,13 @@ impl<'tcx> ForwardVerifier<'tcx> {
                     _ => None,
                 };
                 if let Some(source_place) = source_place {
-                    let has_projection = source_place
-                        .projection
-                        .iter()
-                        .any(|p| {
-                            matches!(p,
-                                rustc_middle::mir::ProjectionElem::Deref |
-                                rustc_middle::mir::ProjectionElem::Field(..)
-                            )
-                        });
+                    let has_projection = source_place.projection.iter().any(|p| {
+                        matches!(
+                            p,
+                            rustc_middle::mir::ProjectionElem::Deref
+                                | rustc_middle::mir::ProjectionElem::Field(..)
+                        )
+                    });
                     if !has_projection {
                         return;
                     }
@@ -468,15 +473,13 @@ impl<'tcx> ForwardVerifier<'tcx> {
                     _ => None,
                 };
                 if let Some(source_place) = source_place {
-                    let has_projection = source_place
-                        .projection
-                        .iter()
-                        .any(|p| {
-                            matches!(p,
-                                rustc_middle::mir::ProjectionElem::Deref |
-                                rustc_middle::mir::ProjectionElem::Field(..)
-                            )
-                        });
+                    let has_projection = source_place.projection.iter().any(|p| {
+                        matches!(
+                            p,
+                            rustc_middle::mir::ProjectionElem::Deref
+                                | rustc_middle::mir::ProjectionElem::Field(..)
+                        )
+                    });
                     if !has_projection {
                         return;
                     }
@@ -678,7 +681,8 @@ impl<'tcx> ForwardVerifier<'tcx> {
         if summary.unsupported && !is_target_checkpoint {
             let body = self.tcx.optimized_mir(result.checkpoint.caller);
             let preserves_layout = call_summary::call_args_preserve_layout(
-                args.iter().map(|arg| arg.node.ty(&body.local_decls, self.tcx)),
+                args.iter()
+                    .map(|arg| arg.node.ty(&body.local_decls, self.tcx)),
             );
             let reason = if preserves_layout {
                 ForgetReason::OpaqueContentCall
@@ -1115,9 +1119,7 @@ impl<'tcx> ForwardVisitResult<'tcx> {
     ) -> AbstractValue<'tcx> {
         let local_usize = local.as_usize();
         match value {
-            AbstractValue::Place(ref p)
-                if p.base == PlaceBaseKey::Local(local_usize) =>
-            {
+            AbstractValue::Place(ref p) if p.base == PlaceBaseKey::Local(local_usize) => {
                 snapshot.get(&local).cloned().unwrap_or(value)
             }
             AbstractValue::Binary(op, lhs, rhs) => AbstractValue::Binary(
@@ -1125,14 +1127,12 @@ impl<'tcx> ForwardVisitResult<'tcx> {
                 Box::new(Self::fold_self_ref(*lhs, local, snapshot)),
                 Box::new(Self::fold_self_ref(*rhs, local, snapshot)),
             ),
-            AbstractValue::Unary(op, inner) => AbstractValue::Unary(
-                op,
-                Box::new(Self::fold_self_ref(*inner, local, snapshot)),
-            ),
-            AbstractValue::Cast(inner, ty) => AbstractValue::Cast(
-                Box::new(Self::fold_self_ref(*inner, local, snapshot)),
-                ty,
-            ),
+            AbstractValue::Unary(op, inner) => {
+                AbstractValue::Unary(op, Box::new(Self::fold_self_ref(*inner, local, snapshot)))
+            }
+            AbstractValue::Cast(inner, ty) => {
+                AbstractValue::Cast(Box::new(Self::fold_self_ref(*inner, local, snapshot)), ty)
+            }
             _ => value,
         }
     }
@@ -1303,7 +1303,10 @@ fn extract_const_param_name(text: &str) -> Option<String> {
             && !index.is_empty()
             && index.bytes().all(|b| b.is_ascii_digit())
             && !name.is_empty()
-            && name.bytes().next().is_some_and(|b| b.is_ascii_alphabetic() || b == b'_')
+            && name
+                .bytes()
+                .next()
+                .is_some_and(|b| b.is_ascii_alphabetic() || b == b'_')
             && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
         {
             return Some(name.to_string());
@@ -1709,11 +1712,26 @@ fn find_cmp_source<'tcx>(
     };
     let bb = &body.basic_blocks[block];
     for stmt in &bb.statements {
-        let StatementKind::Assign(assign) = &stmt.kind else { continue };
-        if assign.0.local != place.local { continue };
-        let Rvalue::BinaryOp(op, pair) = &assign.1 else { continue };
-        if !matches!(op, BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::Eq | BinOp::Ne) { continue; }
-        return (Some(*op), Some(value_from_operand(&pair.0)), Some(value_from_operand(&pair.1)));
+        let StatementKind::Assign(assign) = &stmt.kind else {
+            continue;
+        };
+        if assign.0.local != place.local {
+            continue;
+        };
+        let Rvalue::BinaryOp(op, pair) = &assign.1 else {
+            continue;
+        };
+        if !matches!(
+            op,
+            BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::Eq | BinOp::Ne
+        ) {
+            continue;
+        }
+        return (
+            Some(*op),
+            Some(value_from_operand(&pair.0)),
+            Some(value_from_operand(&pair.1)),
+        );
     }
     (None, None, None)
 }

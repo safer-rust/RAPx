@@ -1,9 +1,9 @@
 use super::default::CallGraph;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir;
-use rustc_middle::ty::{FnDef, Instance, InstanceKind, TyCtxt, TypingEnv};
 #[cfg(rapx_rustc_ge_198)]
 use rustc_middle::ty::ShimKind;
+use rustc_middle::ty::{FnDef, Instance, InstanceKind, TyCtxt, TypingEnv};
 use std::collections::HashSet;
 
 pub struct CallGraphVisitor<'b, 'tcx> {

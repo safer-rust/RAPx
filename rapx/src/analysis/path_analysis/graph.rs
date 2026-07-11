@@ -195,16 +195,17 @@ impl<'tcx> PathGraph<'tcx> {
                                     | BinOp::Ne
                             ) =>
                         {
-                            let (lhs, rhs): (&Operand<'_>, &Operand<'_>) = (&operands.0, &operands.1);
-                            let (lhs_local, rhs_local) =
-                                match (lhs, rhs) {
-                                    (Operand::Copy(l) | Operand::Move(l), Operand::Copy(r) | Operand::Move(r)) => {
-                                        (l.local, r.local)
-                                    }
-                                    _ => {
-                                        continue;
-                                    }
-                                };
+                            let (lhs, rhs): (&Operand<'_>, &Operand<'_>) =
+                                (&operands.0, &operands.1);
+                            let (lhs_local, rhs_local) = match (lhs, rhs) {
+                                (
+                                    Operand::Copy(l) | Operand::Move(l),
+                                    Operand::Copy(r) | Operand::Move(r),
+                                ) => (l.local, r.local),
+                                _ => {
+                                    continue;
+                                }
+                            };
                             let lhs_local = lhs_local.as_usize();
                             let rhs_local = rhs_local.as_usize();
                             info.comparison_sources.insert(
@@ -216,7 +217,7 @@ impl<'tcx> PathGraph<'tcx> {
                                 },
                             );
                         }
-                        _ => {}  // close match rvalue
+                        _ => {} // close match rvalue
                     }
                 }
             }
@@ -425,12 +426,8 @@ impl<'tcx> PathGraph<'tcx> {
         // terminator-side assignments are handled here.
         if let Some(terminator) = self.terminator(cur) {
             let assigned = match &terminator.kind {
-                TerminatorKind::Call {
-                    destination, ..
-                } => Some(destination.local.as_usize()),
-                TerminatorKind::Yield {
-                    resume_arg, ..
-                } => Some(resume_arg.local.as_usize()),
+                TerminatorKind::Call { destination, .. } => Some(destination.local.as_usize()),
+                TerminatorKind::Yield { resume_arg, .. } => Some(resume_arg.local.as_usize()),
                 _ => None,
             };
             if let Some(local) = assigned {

@@ -88,10 +88,7 @@ fn array_elem_size<'tcx>(
     }
 }
 
-fn array_len_term<'tcx>(
-    checker: &SmtChecker<'tcx>,
-    ty: Ty<'tcx>,
-) -> Option<SmtTerm> {
+fn array_len_term<'tcx>(checker: &SmtChecker<'tcx>, ty: Ty<'tcx>) -> Option<SmtTerm> {
     use rustc_middle::ty::ConstKind;
     if let TyKind::Array(_, len) = ty.kind() {
         if let Some(val) = len.try_to_target_usize(checker.tcx) {
