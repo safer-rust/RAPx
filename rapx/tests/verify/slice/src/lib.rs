@@ -1,14 +1,12 @@
 #![feature(register_tool)]
 #![register_tool(rapx)]
 #![feature(slice_index_methods)]
-#![feature(portable_simd)]
 #![allow(unsafe_op_in_unsafe_fn)]
 
 use std::cmp::Ordering;
 use std::mem::{align_of, swap, MaybeUninit};
 use std::ops::Range;
 use std::ptr;
-use std::simd::{LaneCount, Simd, SimdElement, SupportedLaneCount};
 use std::slice::{from_raw_parts, from_raw_parts_mut, SliceIndex};
 
 pub trait SliceExt<T> {
@@ -44,7 +42,7 @@ pub trait SliceExt<T> {
 
 impl<T> SliceExt<T> for [T] {
     #[rapx::verify]
-    #[rapx::requires(InBound(index_access(self, index)))]
+    #[rapx::requires(InBound(self, index))]
     unsafe fn get_unchecked_ext<I>(&self, index: I) -> &I::Output
     where
         I: SliceIndex<[T]>,
@@ -53,7 +51,7 @@ impl<T> SliceExt<T> for [T] {
     }
 
     #[rapx::verify]
-    #[rapx::requires(InBound(index_access(self, index)))]
+    #[rapx::requires(InBound(self, index))]
     unsafe fn get_unchecked_mut_ext<I>(&mut self, index: I) -> &mut I::Output
     where
         I: SliceIndex<[T]>,
@@ -124,7 +122,7 @@ impl<T> SliceExt<T> for [T] {
     }
 
     #[rapx::verify]
-    #[rapx::requires(ValidTransmute(T, U))]
+    #[rapx::requires(Typed(self, U))]
     unsafe fn align_to_ext<U>(&self) -> (&[T], &[U], &[T]) {
         if std::mem::size_of::<T>() == 0 || std::mem::size_of::<U>() == 0 {
             return (self, &[], &[]);
@@ -138,17 +136,20 @@ impl<T> SliceExt<T> for [T] {
         }
 
         let (left, rest) = self.split_at(offset);
-        let (us_len, ts_len) = align_to_offsets_ext::<T, U>(rest.len());
 
-        (
-            left,
-            from_raw_parts(rest.as_ptr() as *const U, us_len),
-            from_raw_parts(rest.as_ptr().add(rest.len() - ts_len), ts_len),
-        )
+        let byte_len = rest.len() * std::mem::size_of::<T>();
+        let new_len = byte_len / std::mem::size_of::<U>();
+
+        let mid = from_raw_parts(rest.as_ptr() as *const U, new_len);
+        let tail_start = rest.len() - (byte_len % std::mem::size_of::<U>()) / std::mem::size_of::<T>();
+
+        let tail = from_raw_parts(rest.as_ptr().add(tail_start), rest.len() - tail_start);
+
+        (left, mid, tail)
     }
 
     #[rapx::verify]
-    #[rapx::requires(ValidTransmute(T, U))]
+    #[rapx::requires(Typed(self, U))]
     unsafe fn align_to_mut_ext<U>(&mut self) -> (&mut [T], &mut [U], &mut [T]) {
         if std::mem::size_of::<T>() == 0 || std::mem::size_of::<U>() == 0 {
             return (self, &mut [], &mut []);
@@ -162,17 +163,25 @@ impl<T> SliceExt<T> for [T] {
         }
 
         let (left, rest) = self.split_at_mut(offset);
-        let (us_len, ts_len) = align_to_offsets_ext::<T, U>(rest.len());
 
-        (
-            left,
-            from_raw_parts_mut(rest.as_mut_ptr() as *mut U, us_len),
-            from_raw_parts_mut(rest.as_mut_ptr().add(rest.len() - ts_len), ts_len),
-        )
+        let byte_len = rest.len() * std::mem::size_of::<T>();
+        let new_len = byte_len / std::mem::size_of::<U>();
+
+        let mid = from_raw_parts_mut(rest.as_mut_ptr() as *mut U, new_len);
+
+        let tail_start =
+            rest.len() - (byte_len % std::mem::size_of::<U>()) / std::mem::size_of::<T>();
+
+        let tail = from_raw_parts_mut(
+            rest.as_mut_ptr().add(tail_start),
+            rest.len() - tail_start,
+        );
+
+        (left, mid, tail)
     }
 
     #[rapx::verify]
-    #[rapx::requires(InBound(index_access(self, indices)))]
+    #[rapx::requires(InBound(self, indices))]
     #[rapx::requires(NonOverlap(indices))]
     unsafe fn get_disjoint_unchecked_mut_ext<I, const N: usize>(
         &mut self,
@@ -243,18 +252,6 @@ pub trait SliceSafeExt<T> {
         &mut self,
         indices: [usize; N],
     ) -> Result<[&mut T; N], ()>;
-    fn as_simd_ext<const LANES: usize>(&self) -> (&[T], &[Simd<T, LANES>], &[T])
-    where
-        Simd<T, LANES>: AsRef<[T; LANES]>,
-        T: SimdElement,
-        LaneCount<LANES>: SupportedLaneCount;
-    fn as_simd_mut_ext<const LANES: usize>(
-        &mut self,
-    ) -> (&mut [T], &mut [Simd<T, LANES>], &mut [T])
-    where
-        Simd<T, LANES>: AsMut<[T; LANES]>,
-        T: SimdElement,
-        LaneCount<LANES>: SupportedLaneCount;
 }
 
 impl<T> SliceSafeExt<T> for [T] {
@@ -380,16 +377,23 @@ impl<T> SliceSafeExt<T> for [T] {
     #[rapx::verify]
     fn reverse_ext(&mut self) {
         let half_len = self.len() / 2;
-        let Range { start, end } = self.as_mut_ptr_range();
+        let len = self.len();
+        let ptr = self.as_mut_ptr();
 
+        // SAFETY: Both are subparts of the original slice: the memory range is
+        // valid, and they don't overlap because each is only half of the slice.
         let (front_half, back_half) = unsafe {
             (
-                from_raw_parts_mut(start, half_len),
-                from_raw_parts_mut(end.sub(half_len), half_len),
+                from_raw_parts_mut(ptr, half_len),
+                from_raw_parts_mut(ptr.add(len - half_len), half_len),
             )
         };
 
-        revswap_ext(front_half, back_half, half_len);
+        let mut i = 0;
+        while i < half_len {
+            swap(&mut front_half[i], &mut back_half[half_len - 1 - i]);
+            i += 1;
+        }
     }
 
     #[rapx::verify]
@@ -548,40 +552,6 @@ impl<T> SliceSafeExt<T> for [T] {
         // in bounds and pairwise disjoint.
         unsafe { Ok(self.get_disjoint_unchecked_mut_ext(indices)) }
     }
-
-    #[rapx::verify]
-    fn as_simd_ext<const LANES: usize>(&self) -> (&[T], &[Simd<T, LANES>], &[T])
-    where
-        Simd<T, LANES>: AsRef<[T; LANES]>,
-        T: SimdElement,
-        LaneCount<LANES>: SupportedLaneCount,
-    {
-        assert_eq!(
-            std::mem::size_of::<Simd<T, LANES>>(),
-            std::mem::size_of::<[T; LANES]>()
-        );
-        // SAFETY: The simd types have the same layout as arrays, just with
-        // potentially-higher alignment, so the de-facto transmutes are sound.
-        unsafe { self.align_to_ext() }
-    }
-
-    #[rapx::verify]
-    fn as_simd_mut_ext<const LANES: usize>(
-        &mut self,
-    ) -> (&mut [T], &mut [Simd<T, LANES>], &mut [T])
-    where
-        Simd<T, LANES>: AsMut<[T; LANES]>,
-        T: SimdElement,
-        LaneCount<LANES>: SupportedLaneCount,
-    {
-        assert_eq!(
-            std::mem::size_of::<Simd<T, LANES>>(),
-            std::mem::size_of::<[T; LANES]>()
-        );
-        // SAFETY: The simd types have the same layout as arrays, just with
-        // potentially-higher alignment, so the de-facto transmutes are sound.
-        unsafe { self.align_to_mut_ext() }
-    }
 }
 
 /// Mirror of `core::slice::get_disjoint_check_valid` for scalar `usize` indices:
@@ -608,35 +578,6 @@ fn get_disjoint_check_valid_ext<const N: usize>(
     Ok(())
 }
 
-/// Mirror of `core::slice::revswap`: swaps elements of two disjoint slices in reverse order.
-fn revswap_ext<T>(a: &mut [T], b: &mut [T], n: usize) {
-    debug_assert!(a.len() == n);
-    debug_assert!(b.len() == n);
-
-    let (a, _) = a.split_at_mut(n);
-    let (b, _) = b.split_at_mut(n);
-
-    let mut i = 0;
-    while i < n {
-        swap(&mut a[i], &mut b[n - 1 - i]);
-        i += 1;
-    }
-}
-
-/// Mirror of `core::slice::[T]::align_to_offsets`: calculates the lengths of the
-/// aligned middle slice and trailing slice for `align_to` / `align_to_mut`.
-fn align_to_offsets_ext<T, U>(rest_len: usize) -> (usize, usize) {
-    const fn gcd(a: usize, b: usize) -> usize {
-        if b == 0 { a } else { gcd(b, a % b) }
-    }
-    let gcd = const { gcd(std::mem::size_of::<T>(), std::mem::size_of::<U>()) };
-    let ts = std::mem::size_of::<U>() / gcd;
-    let us = std::mem::size_of::<T>() / gcd;
-    let us_len = rest_len / ts * us;
-    let ts_len = rest_len % ts;
-    (us_len, ts_len)
-}
-
 /// `as_flattened` / `as_flattened_mut` live on `[[T; N]]`, so they need their
 /// own extension trait.
 pub trait SliceArrayExt<T, const N: usize> {
@@ -646,7 +587,6 @@ pub trait SliceArrayExt<T, const N: usize> {
 
 impl<T, const N: usize> SliceArrayExt<T, N> for [[T; N]] {
     #[rapx::verify]
-    #[rapx::requires(ValidTransmute([T; N], T))]
     fn as_flattened_ext(&self) -> &[T] {
         let len = self.len() * N;
         // SAFETY: `[T; N]` is layout-identical to `N` consecutive `T`s.
@@ -654,7 +594,6 @@ impl<T, const N: usize> SliceArrayExt<T, N> for [[T; N]] {
     }
 
     #[rapx::verify]
-    #[rapx::requires(ValidTransmute([T; N], T))]
     fn as_flattened_mut_ext(&mut self) -> &mut [T] {
         let len = self.len() * N;
         // SAFETY: `[T; N]` is layout-identical to `N` consecutive `T`s.

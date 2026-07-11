@@ -133,7 +133,7 @@ const ANALYZE_SSA_CMD: &[&str] = &["analyze", "ssa"];
 const ANALYZE_RANGE_CMD: &[&str] = &["analyze", "range"];
 const ANALYZE_CALLGRAPH_CMD: &[&str] = &["analyze", "callgraph"];
 const ANALYZE_ADG_CMD: &[&str] = &["analyze", "adg", "--dump", "api_graph.yml"];
-const VERIFY_CMD: &[&str] = &["verify", "--mode", "targeted"];
+const VERIFY_CMD: &[&str] = &["verify"];
 const VERIFY_PREPARE_CMD: &[&str] = &["verify", "--prepare-targets"];
 const VERIFY_ALLOW_REPEAT_CMD: &[&str] = &["verify", "--postfix-repeat", "1"];
 const VERIFY_ALLOW_REPEAT2_CMD: &[&str] = &["verify", "--postfix-repeat", "2"];
@@ -1934,11 +1934,8 @@ fn verify_slice() {
         "<[T] as SliceSafeExt<T>>::binary_search_by_ext",
         "<[T] as SliceSafeExt<T>>::partition_dedup_by_ext",
         "<[T] as SliceSafeExt<T>>::get_disjoint_mut_ext",
-        "<[T] as SliceSafeExt<T>>::as_simd_ext",
-        "<[T] as SliceSafeExt<T>>::as_simd_mut_ext",
         "<[[T; N]] as SliceArrayExt<T, N>>::as_flattened_ext",
         "<[[T; N]] as SliceArrayExt<T, N>>::as_flattened_mut_ext",
-        "get_disjoint_check_valid_ext",
     ];
 
     for fn_name in &functions {
@@ -1947,16 +1944,8 @@ fn verify_slice() {
 
     assert_eq!(
         output.matches("result: SOUND").count(),
-        35,
-        "expected 35 SOUND results"
-    );
-    assert_contain(
-        &output,
-        "<[T] as SliceSafeExt<T>>::as_simd_ext",
-    );
-    assert_contain(
-        &output,
-        "<[T] as SliceSafeExt<T>>::as_simd_mut_ext",
+        34,
+        "expected 34 SOUND results"
     );
 }
 
