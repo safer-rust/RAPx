@@ -561,9 +561,11 @@ impl<T> SliceSafeExt<T> for [T] {
 pub trait SliceSimdExt<T: std::simd::SimdElement> {
     fn as_simd_ext<const LANES: usize>(&self) -> (&[T], &[Simd<T, LANES>], &[T])
     where
+        std::simd::LaneCount<LANES>: std::simd::SupportedLaneCount,
         Simd<T, LANES>: AsRef<[T; LANES]>;
     fn as_simd_mut_ext<const LANES: usize>(&mut self) -> (&mut [T], &mut [Simd<T, LANES>], &mut [T])
     where
+        std::simd::LaneCount<LANES>: std::simd::SupportedLaneCount,
         Simd<T, LANES>: AsMut<[T; LANES]>;
 }
 
@@ -571,6 +573,7 @@ impl<T: std::simd::SimdElement> SliceSimdExt<T> for [T] {
     #[rapx::verify]
     fn as_simd_ext<const LANES: usize>(&self) -> (&[T], &[Simd<T, LANES>], &[T])
     where
+        std::simd::LaneCount<LANES>: std::simd::SupportedLaneCount,
         Simd<T, LANES>: AsRef<[T; LANES]>,
     {
         assert!(LANES != 0, "SIMD lane count must be non-zero");
@@ -580,6 +583,7 @@ impl<T: std::simd::SimdElement> SliceSimdExt<T> for [T] {
     #[rapx::verify]
     fn as_simd_mut_ext<const LANES: usize>(&mut self) -> (&mut [T], &mut [Simd<T, LANES>], &mut [T])
     where
+        std::simd::LaneCount<LANES>: std::simd::SupportedLaneCount,
         Simd<T, LANES>: AsMut<[T; LANES]>,
     {
         assert!(LANES != 0, "SIMD lane count must be non-zero");
