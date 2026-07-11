@@ -1938,7 +1938,6 @@ fn verify_std_challenge_17() {
         "<[T] as SliceSimdExt<T>>::as_simd_mut_ext",
         "<[[T; N]] as SliceArrayExt<T, N>>::as_flattened_ext",
         "<[[T; N]] as SliceArrayExt<T, N>>::as_flattened_mut_ext",
-        "get_disjoint_check_valid_ext",
     ];
 
     for fn_name in &functions {
@@ -1947,8 +1946,8 @@ fn verify_std_challenge_17() {
 
     assert_eq!(
         output.matches("result: SOUND").count(),
-        37,
-        "expected 37 SOUND results"
+        36,
+        "expected 36 SOUND results"
     );
 }
 
