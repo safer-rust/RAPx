@@ -1,6 +1,6 @@
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::BinOp as MirBinOp;
-use rustc_middle::ty::{GenericParamDefKind, Ty, TyCtxt};
+use rustc_middle::ty::{GenericParamDefKind, Ty, TyCtxt, TyKind};
 use safety_parser::syn::{
     BinOp as SynBinOp, Expr, GenericArgument, Lit, PathArguments, Type, UnOp,
 };
@@ -334,12 +334,30 @@ impl<'tcx> Property<'tcx> {
                         vec![target, PropertyArg::Ty(ty), PropertyArg::Expr(length)],
                     )
                 }
-                [target, len_expr] => {
+                [target, index_expr] => {
+                    // Slice-index form: `InBound(slice, index)` when the first
+                    // argument is a slice. This is shorthand for the explicit
+                    // `InBound(index_access(slice, index))` and lowers to the
+                    // same `ContractExpr::IndexAccess`.
+                    if Self::parse_target_type(tcx, def_id, target).is_some_and(ty_is_slice) {
+                        let slice = Self::parse_contract_expr(tcx, def_id, target, "InBound");
+                        let index = Self::parse_contract_expr(tcx, def_id, index_expr, "InBound");
+                        return Self::new_with_args(
+                            PropertyKind::InBound,
+                            vec![PropertyArg::Expr(ContractExpr::IndexAccess {
+                                slice: Box::new(slice),
+                                index: Box::new(index),
+                            })],
+                        );
+                    }
+
+                    // Pointer-arithmetic form: `InBound(ptr, count)` with the
+                    // element type inferred from the pointer.
                     let Some(ty) = Self::parse_target_type(tcx, def_id, target) else {
                         return Self::new_simple(PropertyKind::Unknown);
                     };
                     let target = Self::parse_target_arg(tcx, def_id, target);
-                    let length = Self::parse_contract_expr(tcx, def_id, len_expr, "InBound");
+                    let length = Self::parse_contract_expr(tcx, def_id, index_expr, "InBound");
                     Self::new_with_args(
                         PropertyKind::InBound,
                         vec![target, PropertyArg::Ty(ty), PropertyArg::Expr(length)],
@@ -999,4 +1017,9 @@ impl<'tcx> Property<'tcx> {
             ),
         ]
     }
+}
+
+/// True when `ty` denotes a slice `[T]`, possibly behind references.
+fn ty_is_slice(ty: Ty<'_>) -> bool {
+    matches!(ty.peel_refs().kind(), TyKind::Slice(_))
 }

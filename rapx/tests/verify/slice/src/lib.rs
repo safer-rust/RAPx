@@ -42,7 +42,7 @@ pub trait SliceExt<T> {
 
 impl<T> SliceExt<T> for [T] {
     #[rapx::verify]
-    #[rapx::requires(InBound(index_access(self, index)))]
+    #[rapx::requires(InBound(self, index))]
     unsafe fn get_unchecked_ext<I>(&self, index: I) -> &I::Output
     where
         I: SliceIndex<[T]>,
@@ -51,7 +51,7 @@ impl<T> SliceExt<T> for [T] {
     }
 
     #[rapx::verify]
-    #[rapx::requires(InBound(index_access(self, index)))]
+    #[rapx::requires(InBound(self, index))]
     unsafe fn get_unchecked_mut_ext<I>(&mut self, index: I) -> &mut I::Output
     where
         I: SliceIndex<[T]>,
@@ -60,7 +60,7 @@ impl<T> SliceExt<T> for [T] {
     }
 
     #[rapx::verify]
-    #[rapx::requires(ValidNum(mid, [0,self.len]))]
+    #[rapx::requires(ValidNum(mid, "[0,self.len]"))]
     unsafe fn split_at_unchecked_ext(&self, mid: usize) -> (&[T], &[T]) {
         let len = self.len();
         let ptr = self.as_ptr();
@@ -74,7 +74,7 @@ impl<T> SliceExt<T> for [T] {
     }
 
     #[rapx::verify]
-    #[rapx::requires(ValidNum(mid, [0,self.len]))]
+    #[rapx::requires(ValidNum(mid, "[0,self.len]"))]
 
     unsafe fn split_at_mut_unchecked_ext(&mut self, mid: usize) -> (&mut [T], &mut [T]) {
         let len = self.len();
@@ -122,7 +122,7 @@ impl<T> SliceExt<T> for [T] {
     }
 
     #[rapx::verify]
-    #[rapx::requires(ValidTransmute(T, U))]
+    #[rapx::requires(Typed(self, U))]
     unsafe fn align_to_ext<U>(&self) -> (&[T], &[U], &[T]) {
         if std::mem::size_of::<T>() == 0 || std::mem::size_of::<U>() == 0 {
             return (self, &[], &[]);
@@ -149,7 +149,7 @@ impl<T> SliceExt<T> for [T] {
     }
 
     #[rapx::verify]
-    #[rapx::requires(ValidTransmute(T, U))]
+    #[rapx::requires(Typed(self, U))]
     unsafe fn align_to_mut_ext<U>(&mut self) -> (&mut [T], &mut [U], &mut [T]) {
         if std::mem::size_of::<T>() == 0 || std::mem::size_of::<U>() == 0 {
             return (self, &mut [], &mut []);
@@ -181,7 +181,7 @@ impl<T> SliceExt<T> for [T] {
     }
 
     #[rapx::verify]
-    #[rapx::requires(InBound(index_access(self, indices)))]
+    #[rapx::requires(InBound(self, indices))]
     #[rapx::requires(NonOverlap(indices))]
     unsafe fn get_disjoint_unchecked_mut_ext<I, const N: usize>(
         &mut self,
