@@ -257,6 +257,7 @@ pub enum PropertyKind {
     Ptr2Ref,
     Layout,
     ValidTransmute,
+    TransmuteWithoutAlign,
     NonSize,
     Nullable,
     Unknown,
@@ -496,6 +497,21 @@ impl<'tcx> Property<'tcx> {
                 };
                 Self::new_with_args(
                     PropertyKind::ValidTransmute,
+                    vec![PropertyArg::Ty(src_ty), PropertyArg::Ty(dst_ty)],
+                )
+            }
+            "TransmuteWithoutAlign" => {
+                if !Self::check_arg_length(exprs.len(), 2, "TransmuteWithoutAlign") {
+                    return Self::new_simple(PropertyKind::Unknown);
+                }
+                let Some(src_ty) = Self::parse_type(tcx, def_id, &exprs[0], "TransmuteWithoutAlign") else {
+                    return Self::new_simple(PropertyKind::Unknown);
+                };
+                let Some(dst_ty) = Self::parse_type(tcx, def_id, &exprs[1], "TransmuteWithoutAlign") else {
+                    return Self::new_simple(PropertyKind::Unknown);
+                };
+                Self::new_with_args(
+                    PropertyKind::TransmuteWithoutAlign,
                     vec![PropertyArg::Ty(src_ty), PropertyArg::Ty(dst_ty)],
                 )
             }

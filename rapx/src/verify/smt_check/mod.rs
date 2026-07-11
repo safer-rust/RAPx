@@ -23,5 +23,6 @@ mod typed;
 mod valid_num;
 mod valid_ptr;
 mod valid_transmute;
+mod transmute_without_align;
 
 pub use common::{SmtCheckResult, SmtChecker, SmtObligation, SmtQuery};

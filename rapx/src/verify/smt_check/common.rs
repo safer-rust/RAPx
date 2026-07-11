@@ -139,6 +139,9 @@ impl<'tcx> SmtChecker<'tcx> {
             PropertyKind::ValidTransmute => {
                 super::valid_transmute::check(self, checkpoint, property, forward)
             }
+            PropertyKind::TransmuteWithoutAlign => {
+                super::transmute_without_align::check(self, checkpoint, property, forward)
+            }
             PropertyKind::NonVolatile => super::non_volatile::check(self, checkpoint, property, forward),
             _ => SmtCheckResult::unknown("no SMT lowering for this property yet"),
         }
