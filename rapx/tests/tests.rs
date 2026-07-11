@@ -137,7 +137,6 @@ const VERIFY_CMD: &[&str] = &["verify"];
 const VERIFY_PREPARE_CMD: &[&str] = &["verify", "--prepare-targets"];
 const VERIFY_ALLOW_REPEAT_CMD: &[&str] = &["verify", "--postfix-repeat", "1"];
 const VERIFY_ALLOW_REPEAT2_CMD: &[&str] = &["verify", "--postfix-repeat", "2"];
-const VERIFY_ALLOW_REPEAT9_CMD: &[&str] = &["verify", "--postfix-repeat", "9"];
 const VERIFY_SCAN_CMD: &[&str] = &["verify", "--mode", "scan"];
 const VERIFY_INVLESS_CMD: &[&str] = &["verify", "--mode", "invless"];
 
