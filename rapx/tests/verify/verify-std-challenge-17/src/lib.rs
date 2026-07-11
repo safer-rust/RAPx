@@ -558,6 +558,7 @@ impl<T> SliceSafeExt<T> for [T] {
 
 /// `as_simd` / `as_simd_mut` need the `SimdElement` bound on `T`, so they
 /// live in their own trait.
+#[cfg(not(rapx_rustc_ge_196))]
 pub trait SliceSimdExt<T: std::simd::SimdElement> {
     fn as_simd_ext<const LANES: usize>(&self) -> (&[T], &[Simd<T, LANES>], &[T])
     where
@@ -569,6 +570,7 @@ pub trait SliceSimdExt<T: std::simd::SimdElement> {
         Simd<T, LANES>: AsMut<[T; LANES]>;
 }
 
+#[cfg(not(rapx_rustc_ge_196))]
 impl<T: std::simd::SimdElement> SliceSimdExt<T> for [T] {
     #[rapx::verify]
     fn as_simd_ext<const LANES: usize>(&self) -> (&[T], &[Simd<T, LANES>], &[T])
@@ -584,6 +586,37 @@ impl<T: std::simd::SimdElement> SliceSimdExt<T> for [T] {
     fn as_simd_mut_ext<const LANES: usize>(&mut self) -> (&mut [T], &mut [Simd<T, LANES>], &mut [T])
     where
         std::simd::LaneCount<LANES>: std::simd::SupportedLaneCount,
+        Simd<T, LANES>: AsMut<[T; LANES]>,
+    {
+        assert!(LANES != 0, "SIMD lane count must be non-zero");
+        unsafe { self.align_to_mut_ext::<Simd<T, LANES>>() }
+    }
+}
+
+#[cfg(rapx_rustc_ge_196)]
+pub trait SliceSimdExt<T: std::simd::SimdElement> {
+    fn as_simd_ext<const LANES: usize>(&self) -> (&[T], &[Simd<T, LANES>], &[T])
+    where
+        Simd<T, LANES>: AsRef<[T; LANES]>;
+    fn as_simd_mut_ext<const LANES: usize>(&mut self) -> (&mut [T], &mut [Simd<T, LANES>], &mut [T])
+    where
+        Simd<T, LANES>: AsMut<[T; LANES]>;
+}
+
+#[cfg(rapx_rustc_ge_196)]
+impl<T: std::simd::SimdElement> SliceSimdExt<T> for [T] {
+    #[rapx::verify]
+    fn as_simd_ext<const LANES: usize>(&self) -> (&[T], &[Simd<T, LANES>], &[T])
+    where
+        Simd<T, LANES>: AsRef<[T; LANES]>,
+    {
+        assert!(LANES != 0, "SIMD lane count must be non-zero");
+        unsafe { self.align_to_ext::<Simd<T, LANES>>() }
+    }
+
+    #[rapx::verify]
+    fn as_simd_mut_ext<const LANES: usize>(&mut self) -> (&mut [T], &mut [Simd<T, LANES>], &mut [T])
+    where
         Simd<T, LANES>: AsMut<[T; LANES]>,
     {
         assert!(LANES != 0, "SIMD lane count must be non-zero");

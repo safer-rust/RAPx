@@ -3,4 +3,7 @@ name = "verify-std-challenge-17"
 version = "0.1.0"
 edition = "2024"
 
+[build-dependencies]
+rustc_version = "0.4"
+
 [dependencies]
