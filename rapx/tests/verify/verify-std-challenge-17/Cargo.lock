@@ -3,5 +3,5 @@
 version = 4
 
 [[package]]
-name = "slice"
+name = "verify-std-challenge-17"
 version = "0.1.0"

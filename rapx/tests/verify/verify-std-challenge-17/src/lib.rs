@@ -1,12 +1,14 @@
 #![feature(register_tool)]
 #![register_tool(rapx)]
 #![feature(slice_index_methods)]
+#![feature(portable_simd)]
 #![allow(unsafe_op_in_unsafe_fn)]
 
 use std::cmp::Ordering;
 use std::mem::{align_of, swap, MaybeUninit};
 use std::ops::Range;
 use std::ptr;
+use std::simd::Simd;
 use std::slice::{from_raw_parts, from_raw_parts_mut, SliceIndex};
 
 pub trait SliceExt<T> {
@@ -554,8 +556,36 @@ impl<T> SliceSafeExt<T> for [T] {
     }
 }
 
-/// Mirror of `core::slice::get_disjoint_check_valid` for scalar `usize` indices:
-/// checks every index against `len` and against each other.
+/// `as_simd` / `as_simd_mut` need the `SimdElement` bound on `T`, so they
+/// live in their own trait.
+pub trait SliceSimdExt<T: std::simd::SimdElement> {
+    fn as_simd_ext<const LANES: usize>(&self) -> (&[T], &[Simd<T, LANES>], &[T])
+    where
+        Simd<T, LANES>: AsRef<[T; LANES]>;
+    fn as_simd_mut_ext<const LANES: usize>(&mut self) -> (&mut [T], &mut [Simd<T, LANES>], &mut [T])
+    where
+        Simd<T, LANES>: AsMut<[T; LANES]>;
+}
+
+impl<T: std::simd::SimdElement> SliceSimdExt<T> for [T] {
+    #[rapx::verify]
+    fn as_simd_ext<const LANES: usize>(&self) -> (&[T], &[Simd<T, LANES>], &[T])
+    where
+        Simd<T, LANES>: AsRef<[T; LANES]>,
+    {
+        assert!(LANES != 0, "SIMD lane count must be non-zero");
+        unsafe { self.align_to_ext::<Simd<T, LANES>>() }
+    }
+
+    #[rapx::verify]
+    fn as_simd_mut_ext<const LANES: usize>(&mut self) -> (&mut [T], &mut [Simd<T, LANES>], &mut [T])
+    where
+        Simd<T, LANES>: AsMut<[T; LANES]>,
+    {
+        assert!(LANES != 0, "SIMD lane count must be non-zero");
+        unsafe { self.align_to_mut_ext::<Simd<T, LANES>>() }
+    }
+}
 #[rapx::verify]
 fn get_disjoint_check_valid_ext<const N: usize>(
     indices: &[usize; N],

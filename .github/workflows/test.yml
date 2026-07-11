@@ -63,4 +63,12 @@ jobs:
         export RUSTFLAGS="--cfg=rapx -Zcrate-attr=feature(register_tool) -Zcrate-attr=register_tool(rapx)"
         export __CARGO_TESTS_ONLY_SRC_ROOT="$(pwd)/library"
         cd library/core
-        cargo +$RUSTUP_TOOLCHAIN rapx verify --module slice --mode targeted
+        cargo +$RUSTUP_TOOLCHAIN rapx verify --module slice --mode targeted 2>&1 | tee /tmp/rapx-verify-output.txt
+    - name: Check SOUND count
+      run: |
+        SOUND_COUNT=$(grep -c 'result: SOUND' /tmp/rapx-verify-output.txt || true)
+        echo "SOUND results: $SOUND_COUNT"
+        if [ "$SOUND_COUNT" -ne 37 ]; then
+          echo "Expected 37 SOUND results, got $SOUND_COUNT"
+          exit 1
+        fi

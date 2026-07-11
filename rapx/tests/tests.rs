@@ -1898,8 +1898,8 @@ fn verify_static_mut_unknown() {
 }
 
 #[test]
-fn verify_slice() {
-    let output = run_with_args("verify/slice", VERIFY_CMD);
+fn verify_std_challenge_17() {
+    let output = run_with_args("verify/verify-std-challenge-17", VERIFY_CMD);
 
     let functions = [
         "<[T] as SliceExt<T>>::get_unchecked_ext",
@@ -1934,8 +1934,11 @@ fn verify_slice() {
         "<[T] as SliceSafeExt<T>>::binary_search_by_ext",
         "<[T] as SliceSafeExt<T>>::partition_dedup_by_ext",
         "<[T] as SliceSafeExt<T>>::get_disjoint_mut_ext",
+        "<[T] as SliceSimdExt<T>>::as_simd_ext",
+        "<[T] as SliceSimdExt<T>>::as_simd_mut_ext",
         "<[[T; N]] as SliceArrayExt<T, N>>::as_flattened_ext",
         "<[[T; N]] as SliceArrayExt<T, N>>::as_flattened_mut_ext",
+        "get_disjoint_check_valid_ext",
     ];
 
     for fn_name in &functions {
@@ -1944,8 +1947,8 @@ fn verify_slice() {
 
     assert_eq!(
         output.matches("result: SOUND").count(),
-        34,
-        "expected 34 SOUND results"
+        37,
+        "expected 37 SOUND results"
     );
 }
 

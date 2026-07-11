@@ -3124,6 +3124,12 @@
       "args": [
         "N != 0"
       ]
+    },
+    {
+      "tag": "ValidNum",
+      "args": [
+        "len(self) % N == 0"
+      ]
     }
   ],
   "core::slice::as_chunks_unchecked_mut": [
@@ -3131,6 +3137,12 @@
       "tag": "ValidNum",
       "args": [
         "N != 0"
+      ]
+    },
+    {
+      "tag": "ValidNum",
+      "args": [
+        "len(self) % N == 0"
       ]
     }
   ],
@@ -3152,13 +3164,6 @@
   ],
   "core::slice::align_to": [
     {
-      "tag": "Align",
-      "args": [
-        "self",
-        "T"
-      ]
-    },
-    {
       "tag": "Typed",
       "args": [
         "self",
@@ -3167,13 +3172,6 @@
     }
   ],
   "core::slice::align_to_mut": [
-    {
-      "tag": "Align",
-      "args": [
-        "self",
-        "T"
-      ]
-    },
     {
       "tag": "Typed",
       "args": [
@@ -3188,20 +3186,35 @@
       "args": [
         "index_access(self, indices)"
       ]
+    },
+    {
+      "tag": "NonOverlap",
+      "args": [
+        "indices"
+      ]
     }
   ],
   "core::slice::rotate::ptr_rotate": [
     {
       "tag": "NonNull",
-      "args": ["mid"]
+      "args": [
+        "mid"
+      ]
     },
     {
       "tag": "Align",
-      "args": ["mid", "T"]
+      "args": [
+        "mid",
+        "T"
+      ]
     },
     {
       "tag": "ValidPtr",
-      "args": ["mid", "T", "1"]
+      "args": [
+        "mid",
+        "T",
+        "1"
+      ]
     }
   ],
   "core::slice::ascii::as_ascii_unchecked": [
@@ -5426,95 +5439,132 @@
   "core::slice::<impl [T]>::reverse": [
     {
       "tag": "NonNull",
-      "args": ["arg:0"]
+      "args": [
+        "arg:0"
+      ]
     },
     {
       "tag": "Align",
-      "args": ["arg:0", "T"]
+      "args": [
+        "arg:0",
+        "T"
+      ]
     }
   ],
   "core::slice::<impl [T]>::as_chunks": [
     {
       "tag": "NonNull",
-      "args": ["arg:0"]
+      "args": [
+        "arg:0"
+      ]
     }
   ],
   "core::slice::<impl [T]>::as_chunks_mut": [
     {
       "tag": "NonNull",
-      "args": ["arg:0"]
+      "args": [
+        "arg:0"
+      ]
     }
   ],
   "core::slice::<impl [T]>::as_rchunks": [
     {
       "tag": "NonNull",
-      "args": ["arg:0"]
+      "args": [
+        "arg:0"
+      ]
     }
   ],
   "core::slice::<impl [T]>::split_at_unchecked": [
     {
       "tag": "NonNull",
-      "args": ["arg:0"]
+      "args": [
+        "arg:0"
+      ]
     }
   ],
   "core::slice::<impl [T]>::split_at_mut_unchecked": [
     {
       "tag": "NonNull",
-      "args": ["arg:0"]
+      "args": [
+        "arg:0"
+      ]
     }
   ],
   "core::slice::<impl [T]>::copy_from_slice": [
     {
       "tag": "NonNull",
-      "args": ["arg:0"]
+      "args": [
+        "arg:0"
+      ]
     }
   ],
   "core::slice::<impl [T]>::copy_within": [
     {
       "tag": "NonNull",
-      "args": ["arg:0"]
+      "args": [
+        "arg:0"
+      ]
     }
   ],
   "core::slice::<impl [T]>::align_to": [
     {
-      "tag": "NonNull",
-      "args": ["arg:0"]
+      "tag": "ValidTransmute",
+      "args": [
+        "T",
+        "U"
+      ]
     }
   ],
   "core::slice::<impl [T]>::align_to_mut": [
     {
-      "tag": "NonNull",
-      "args": ["arg:0"]
+      "tag": "ValidTransmute",
+      "args": [
+        "T",
+        "U"
+      ]
     }
   ],
   "core::slice::<impl [T]>::as_simd": [
     {
       "tag": "NonNull",
-      "args": ["arg:0"]
+      "args": [
+        "arg:0"
+      ]
     }
   ],
   "core::slice::<impl [T]>::as_simd_mut": [
     {
       "tag": "NonNull",
-      "args": ["arg:0"]
+      "args": [
+        "arg:0"
+      ]
     }
   ],
   "core::slice::<impl [T]>::get_disjoint_unchecked_mut": [
     {
       "tag": "NonNull",
-      "args": ["arg:0"]
+      "args": [
+        "arg:0"
+      ]
     }
   ],
   "core::slice::<impl [[T; N]]>::as_flattened": [
     {
-      "tag": "NonNull",
-      "args": ["arg:0"]
+      "tag": "ValidTransmute",
+      "args": [
+        "[T; N]",
+        "T"
+      ]
     }
   ],
   "core::slice::<impl [[T; N]]>::as_flattened_mut": [
     {
-      "tag": "NonNull",
-      "args": ["arg:0"]
+      "tag": "ValidTransmute",
+      "args": [
+        "[T; N]",
+        "T"
+      ]
     }
   ]
 }
