@@ -134,6 +134,7 @@ const ANALYZE_RANGE_CMD: &[&str] = &["analyze", "range"];
 const ANALYZE_CALLGRAPH_CMD: &[&str] = &["analyze", "callgraph"];
 const ANALYZE_ADG_CMD: &[&str] = &["analyze", "adg", "--dump", "api_graph.yml"];
 const VERIFY_CMD: &[&str] = &["verify"];
+const VERIFY_TARGETED_CMD: &[&str] = &["verify", "--mode", "targeted"];
 const VERIFY_PREPARE_CMD: &[&str] = &["verify", "--prepare-targets"];
 const VERIFY_ALLOW_REPEAT_CMD: &[&str] = &["verify", "--postfix-repeat", "1"];
 const VERIFY_ALLOW_REPEAT2_CMD: &[&str] = &["verify", "--postfix-repeat", "2"];
@@ -1899,7 +1900,7 @@ fn verify_static_mut_unknown() {
 
 #[test]
 fn verify_std_challenge_17() {
-    let output = run_with_args("verify/verify-std-challenge-17", VERIFY_CMD);
+    let output = run_with_args("verify/verify-std-challenge-17", VERIFY_TARGETED_CMD);
 
     let functions = [
         "<[T] as SliceExt<T>>::get_unchecked_ext",
@@ -1938,6 +1939,7 @@ fn verify_std_challenge_17() {
         "<[T] as SliceSimdExt<T>>::as_simd_mut_ext",
         "<[[T; N]] as SliceArrayExt<T, N>>::as_flattened_ext",
         "<[[T; N]] as SliceArrayExt<T, N>>::as_flattened_mut_ext",
+        "get_disjoint_check_valid_ext",
     ];
 
     for fn_name in &functions {
@@ -1946,8 +1948,8 @@ fn verify_std_challenge_17() {
 
     assert_eq!(
         output.matches("result: SOUND").count(),
-        36,
-        "expected 36 SOUND results"
+        37,
+        "expected 37 SOUND results"
     );
 }
 
