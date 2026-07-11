@@ -27,6 +27,7 @@ fn make_dummy_block() -> Block {
         id: DUMMY_NODE_ID,
         rules: BlockCheckMode::Default,
         span: DUMMY_SP,
+        #[cfg(not(rapx_rustc_ge_199))]
         tokens: None,
     }
 }
@@ -56,6 +57,7 @@ fn make_dummy_fn(ident_name: &str, build_std: bool) -> Box<Item> {
         vis: Visibility {
             span: DUMMY_SP,
             kind: VisibilityKind::Public,
+            #[cfg(not(rapx_rustc_ge_199))]
             tokens: None,
         },
         span: DUMMY_SP,

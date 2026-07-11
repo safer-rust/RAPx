@@ -58,12 +58,14 @@ pub(crate) fn create_struct(
             vis: Visibility {
                 span: DUMMY_SP,
                 kind: VisibilityKind::Public,
+                #[cfg(not(rapx_rustc_ge_199))]
                 tokens: None,
             },
             #[cfg(rapx_rustc_ge_198)]
             mut_restriction: MutRestriction {
                 kind: RestrictionKind::Unrestricted,
                 span: DUMMY_SP,
+                #[cfg(not(rapx_rustc_ge_199))]
                 tokens: None,
             },
             ident: Some(Ident::from_str(fname)),
@@ -71,6 +73,7 @@ pub(crate) fn create_struct(
                 id: NodeId::from_u32(0),
                 kind: TyKind::Path(None, Path::from_ident(Ident::with_dummy_span(fty))),
                 span: DUMMY_SP,
+                #[cfg(not(rapx_rustc_ge_199))]
                 tokens: None,
             }),
             id: NodeId::from_u32(0),
@@ -99,6 +102,7 @@ pub(crate) fn create_struct(
         vis: Visibility {
             span: DUMMY_SP,
             kind: VisibilityKind::Public,
+            #[cfg(not(rapx_rustc_ge_199))]
             tokens: None,
         },
         span: DUMMY_SP,
