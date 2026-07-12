@@ -102,7 +102,7 @@ impl<T> SliceExt<T> for [T] {
 
     #[rapx::verify]
     #[rapx::requires(ValidNum(N, "[1,)"))]
-    #[rapx::requires(ValidNum(len(self) % N == 0))]
+    #[rapx::requires(ValidNum(self.len() % N == 0))]
     unsafe fn as_chunks_unchecked_ext<const N: usize>(&self) -> &[[T; N]] {
         debug_assert!(N != 0);
         debug_assert!(self.len() % N == 0);
@@ -113,7 +113,7 @@ impl<T> SliceExt<T> for [T] {
 
     #[rapx::verify]
     #[rapx::requires(ValidNum(N, "[1,)"))]
-    #[rapx::requires(ValidNum(len(self) % N == 0))]
+    #[rapx::requires(ValidNum(self.len() % N == 0))]
     unsafe fn as_chunks_unchecked_mut_ext<const N: usize>(&mut self) -> &mut [[T; N]] {
         debug_assert!(N != 0);
         debug_assert!(self.len() % N == 0);
