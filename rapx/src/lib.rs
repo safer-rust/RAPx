@@ -280,6 +280,7 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
             mode,
             crate_name,
             module,
+            debug_contracts,
         }) => {
             if *prepare_targets {
                 PrepareTargets::new(tcx, *mode, crate_name.clone(), module.clone()).run();
@@ -290,6 +291,7 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
                     *mode,
                     crate_name.clone(),
                     module.clone(),
+                    *debug_contracts,
                 )
                 .run();
             }

@@ -33,4 +33,10 @@ pub struct VerifyArgs {
     /// interpreted relative to that crate. Applies to all verification modes.
     #[arg(long)]
     pub module: Option<String>,
+    /// Print all contract resolutions for every verification target: each
+    /// unsafe callee with its resolved contracts, and the caller's own
+    /// contracts (expanded form).  Useful for debugging missing or unexpected
+    /// contract resolutions.
+    #[arg(long)]
+    pub debug_contracts: bool,
 }
