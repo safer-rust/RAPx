@@ -25,12 +25,11 @@ use crate::{
         def_use::{PlaceBaseKey, PlaceKey},
         helpers::Checkpoint,
         primitive::PrimitiveCall,
-        report::CheckResult,
         verifier::{AbstractValue, ForwardVisitResult, StateFact},
     },
 };
 
-use super::common::{SmtCheckResult, SmtChecker};
+use super::common::{SmtCheckResult, SmtChecker, call_destination, failed_smt, operand_place, rvalue_source_place};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum HazardKind {
@@ -95,7 +94,7 @@ pub fn check<'tcx>(
             destination,
             &local_origins,
         ) {
-            return failed(reason);
+            return failed_smt(reason);
         }
         return SmtCheckResult::proved(
             "ownership-transfer API consumes the raw pointer and no later raw reuse was found",
@@ -116,7 +115,7 @@ pub fn check<'tcx>(
         &local_origins,
         kind,
     ) {
-        return failed(reason);
+        return failed_smt(reason);
     }
 
     if !destination_flows_to_return(checker.tcx, checkpoint.caller, destination) {
@@ -128,7 +127,7 @@ pub fn check<'tcx>(
     if let Some(origin) = self_field_origin(checker.tcx, checkpoint.caller, &origin) {
         if let Some(reason) = escaped_self_field_violation(checker.tcx, checkpoint.caller, &origin)
         {
-            return failed(reason);
+            return failed_smt(reason);
         }
         return SmtCheckResult::proved(format!(
             "returned view is backed by private field `{}` and no safe raw-field breaker was found",
@@ -146,15 +145,7 @@ pub fn check<'tcx>(
         "returned view escapes while the original pointer is not owned by a private self field [origin={:?}]",
         origin
     );
-    failed(err_msg)
-}
-
-fn failed(note: impl Into<String>) -> SmtCheckResult {
-    SmtCheckResult {
-        result: CheckResult::Failed,
-        query: None,
-        notes: vec![note.into()],
-    }
+    failed_smt(err_msg)
 }
 
 fn alias_producer(name: &str) -> Option<AliasProducer> {
@@ -189,24 +180,6 @@ fn is_ownership_transfer_api(name: &str) -> bool {
 fn is_vec_ownership_transfer_api(name: &str) -> bool {
     (name.contains("from_raw_parts") || name.contains("from_parts"))
         && (name.contains("Vec") || name.contains("vec::"))
-}
-
-fn operand_place(operand: &Operand<'_>) -> Option<PlaceKey> {
-    match operand {
-        Operand::Copy(place) | Operand::Move(place) => Some(PlaceKey::from_mir_place(place)),
-        Operand::Constant(_) => None,
-        #[cfg(rapx_rustc_ge_196)]
-        Operand::RuntimeChecks(_) => None,
-    }
-}
-
-fn call_destination<'tcx>(tcx: TyCtxt<'tcx>, checkpoint: &Checkpoint<'tcx>) -> Option<Local> {
-    let body = tcx.optimized_mir(checkpoint.caller);
-    let terminator = body.basic_blocks[checkpoint.block].terminator();
-    let TerminatorKind::Call { destination, .. } = &terminator.kind else {
-        return None;
-    };
-    Some(destination.local)
 }
 
 fn resolve_forward_place<'tcx>(
@@ -882,19 +855,6 @@ fn local_traces_to_self_field<'tcx>(
         }
     }
     false
-}
-
-fn rvalue_source_place<'a, 'tcx>(rvalue: &'a Rvalue<'tcx>) -> Option<&'a Place<'tcx>> {
-    match rvalue {
-        Rvalue::Use(Operand::Copy(place), ..)
-        | Rvalue::Use(Operand::Move(place), ..)
-        | Rvalue::Cast(_, Operand::Copy(place), _)
-        | Rvalue::Cast(_, Operand::Move(place), _)
-        | Rvalue::Ref(_, _, place)
-        | Rvalue::RawPtr(_, place)
-        | Rvalue::CopyForDeref(place) => Some(place),
-        _ => None,
-    }
 }
 
 fn method_exposes_self_field<'tcx>(tcx: TyCtxt<'tcx>, method: DefId, field_index: usize) -> bool {

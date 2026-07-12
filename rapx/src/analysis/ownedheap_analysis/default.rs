@@ -30,7 +30,10 @@ impl<'tcx> Analysis for OwnedHeapAnalyzer<'tcx> {
         self.start();
     }
     fn reset(&mut self) {
-        todo!();
+        self.adt_heap.clear();
+        self.fn_set.clear();
+        self.ty_map.clear();
+        self.adt_recorder.clear();
     }
 }
 

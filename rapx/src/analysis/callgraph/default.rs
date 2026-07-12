@@ -27,7 +27,8 @@ impl<'tcx> Analysis for CallGraphAnalyzer<'tcx> {
     }
 
     fn reset(&mut self) {
-        todo!();
+        self.graph.fn_calls.clear();
+        self.graph.functions.clear();
     }
 }
 

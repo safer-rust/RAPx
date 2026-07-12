@@ -49,7 +49,7 @@ fn phase_rustc_wrapper() {
 #[command(name = "cargo")]
 #[command(bin_name = "cargo")]
 #[command(version, about)]
-#[command(styles = help::CARGO_RAPX_STYLING)]
+#[command(styles = help::RAPX_STYLING)]
 enum CargoCli {
     #[command(override_usage = help::styled_cargo_rapx_usage())]
     #[command(version= help::RAPX_VERSION)]

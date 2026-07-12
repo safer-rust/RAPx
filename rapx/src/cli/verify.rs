@@ -1,4 +1,5 @@
 use clap::Args;
+use super::analyze::DEFAULT_POSTFIX_REPEAT;
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub enum VerifyMode {
@@ -18,7 +19,7 @@ pub struct VerifyArgs {
     pub prepare_targets: bool,
     /// Number of extra SCC postfix repetitions allowed during path enumeration.
     /// Default is 0 (postfix segments appear once each). Set to 1 to allow one extra repetition (two total occurrences), etc.
-    #[arg(long, default_value_t = 0)]
+    #[arg(long, default_value_t = DEFAULT_POSTFIX_REPEAT)]
     pub postfix_repeat: usize,
     /// Verification mode: `scan` auto-detects unannotated unsafe targets (default), `targeted` verifies #[rapx::verify] functions.
     #[arg(long, default_value = "scan")]

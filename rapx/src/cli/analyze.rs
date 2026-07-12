@@ -1,6 +1,8 @@
 use clap::{Args, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
+pub const DEFAULT_POSTFIX_REPEAT: usize = 0;
+
 #[derive(Debug, Clone, Args)]
 pub struct AdgArgs {
     #[arg(long)]
@@ -71,7 +73,7 @@ pub enum AnalysisKind {
     /// extract path-sensitive CFG paths
     Paths {
         /// allow repeated SCC postfix segments (default 0)
-        #[arg(long, default_value_t = 0)]
+        #[arg(long, default_value_t = DEFAULT_POSTFIX_REPEAT)]
         postfix_repeat: usize,
     },
     /// extract path constraints

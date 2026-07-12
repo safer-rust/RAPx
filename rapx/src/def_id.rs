@@ -18,9 +18,13 @@ pub fn init(tcx: TyCtxt) {
 fn init_inner(tcx: TyCtxt) -> Intrinsics {
     const CRATES: &[&str] = &["core", "std", "alloc"];
 
-    // The key is an index to INTRINSICS slice; the value means if the path is found.
-    let mut indices: IndexMap<_, _> = (0..INTRINSICS.len()).map(|idx| (idx, false)).collect();
+    let path_to_idx: std::collections::HashMap<&str, usize> = INTRINSICS
+        .iter()
+        .enumerate()
+        .flat_map(|(idx, paths)| paths.iter().map(move |&p| (p, idx)))
+        .collect();
 
+    let mut indices: IndexMap<_, _> = (0..INTRINSICS.len()).map(|idx| (idx, false)).collect();
     let mut map = IndexMap::<Box<str>, DefId>::with_capacity(INTRINSICS.len());
 
     for krate in std::iter::once(rustc_public::local_crate())
@@ -29,39 +33,24 @@ fn init_inner(tcx: TyCtxt) -> Intrinsics {
     {
         for fn_def in krate.fn_defs() {
             let fn_name: Box<str> = fn_def.name().into();
-            let fn_name_str: &str = &fn_name;
-            if let Some(name) = INTRINSICS.iter().enumerate().find_map(|(idx, paths)| {
-                if paths.iter().any(|&path| {
-                    path == fn_name_str
-                        || path
-                            .strip_prefix("core::")
-                            .is_some_and(|s| s == fn_name_str)
-                        || path.strip_prefix("std::").is_some_and(|s| s == fn_name_str)
-                        || path
-                            .strip_prefix("alloc::")
-                            .is_some_and(|s| s == fn_name_str)
-                }) {
-                    assert_eq!(
-                        indices.insert(idx, true),
-                        Some(false),
-                        "DefId for {fn_name} has been found: {:?}",
-                        map.get(&*fn_name)
-                    );
-                    Some(fn_name.clone())
-                } else {
-                    None
-                }
-            }) {
+            let idx = path_to_idx.get(&*fn_name).copied()
+                .or_else(|| fn_name.strip_prefix("core::").and_then(|s| path_to_idx.get(s).copied()))
+                .or_else(|| fn_name.strip_prefix("std::").and_then(|s| path_to_idx.get(s).copied()))
+                .or_else(|| fn_name.strip_prefix("alloc::").and_then(|s| path_to_idx.get(s).copied()));
+            if let Some(idx) = idx {
+                assert_eq!(
+                    indices.insert(idx, true),
+                    Some(false),
+                    "DefId for {fn_name} has been found: {:?}",
+                    map.get(&*fn_name)
+                );
                 let def_id = rustc_internal::internal(tcx, fn_def.def_id());
-                if map.contains_key(&name) {
-                    panic!("DefId of {fn_name} has been inserted: {def_id:?}");
-                } else {
-                    map.insert(name, def_id);
-                }
+                map.insert(fn_name, def_id);
             }
         }
     }
 
+    #[cfg(debug_assertions)]
     map.sort_unstable_by(|a, _, b, _| a.cmp(b));
 
     if INTRINSICS.len() != map.len() {

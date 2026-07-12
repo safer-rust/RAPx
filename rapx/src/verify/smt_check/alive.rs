@@ -13,7 +13,7 @@ use std::collections::HashSet;
 
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
-    mir::{Local, Operand, Rvalue, StatementKind, TerminatorKind},
+    mir::{Local, StatementKind},
     ty::{self, TyCtxt},
 };
 
@@ -24,12 +24,11 @@ use crate::{
         contract::Property,
         def_use::PlaceKey,
         helpers::Checkpoint,
-        report::CheckResult,
         verifier::{AbstractValue, CallSummary, ForwardVisitResult, StateFact},
     },
 };
 
-use super::common::{SmtCheckResult, SmtChecker};
+use super::common::{SmtCheckResult, SmtChecker, call_destination, failed_smt, rvalue_source_place};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum AliveProducer {
@@ -89,7 +88,7 @@ pub(crate) fn check<'tcx>(
 
     match &signature.return_lifetime {
         ReturnLifetime::Elided => check_elided_return(producer, &signature),
-        ReturnLifetime::Static => failed("Alive failed: returned slice is widened to 'static"),
+        ReturnLifetime::Static => failed_smt("Alive failed: returned slice is widened to 'static"),
         ReturnLifetime::Named(lifetime) => check_named_return(
             checker.tcx,
             checkpoint.caller,
@@ -117,7 +116,7 @@ fn check_elided_return(producer: AliveProducer, signature: &SignatureInfo) -> Sm
         );
     }
     if signature.has_ref_self && producer == AliveProducer::UniqueSlice {
-        return failed("Alive failed: mutable slice is tied only to a shared self borrow");
+        return failed_smt("Alive failed: mutable slice is tied only to a shared self borrow");
     }
     SmtCheckResult::unknown("Alive elided lifetime is not tied to a supported receiver")
 }
@@ -140,7 +139,7 @@ fn check_named_return<'tcx>(
             ));
         }
         if !source_params.is_empty() {
-            return failed(format!(
+            return failed_smt(format!(
                 "Alive failed: returned lifetime '{lifetime} is tied to a host parameter, but the pointer comes from another source"
             ));
         }
@@ -151,13 +150,13 @@ fn check_named_return<'tcx>(
         && !signature.consumes_self
         && source_params.is_empty()
     {
-        return failed(format!(
+        return failed_smt(format!(
             "Alive failed: returned mutable slice uses lifetime '{lifetime}, but that lifetime is not tied to this &mut self borrow"
         ));
     }
 
     if source_params.is_empty() {
-        return failed(format!(
+        return failed_smt(format!(
             "Alive failed: returned lifetime '{lifetime} has no proven source parameter"
         ));
     }
@@ -165,15 +164,6 @@ fn check_named_return<'tcx>(
     SmtCheckResult::unknown(format!(
         "Alive could not prove that the pointer is produced from lifetime '{lifetime}"
     ))
-}
-
-/// Builds a failed SMT check result with a single diagnostic note.
-fn failed(note: impl Into<String>) -> SmtCheckResult {
-    SmtCheckResult {
-        result: CheckResult::Failed,
-        query: None,
-        notes: vec![note.into()],
-    }
 }
 
 /// Classifies the borrowed view returned by the Alive-producing call destination.
@@ -284,16 +274,6 @@ fn params_with_lifetime(
         .collect()
 }
 
-/// Returns the destination local of the Alive-producing callsite.
-fn call_destination<'tcx>(tcx: TyCtxt<'tcx>, checkpoint: &Checkpoint<'tcx>) -> Option<Local> {
-    let body = tcx.optimized_mir(checkpoint.caller);
-    let terminator = body.basic_blocks[checkpoint.block].terminator();
-    let TerminatorKind::Call { destination, .. } = &terminator.kind else {
-        return None;
-    };
-    Some(destination.local)
-}
-
 /// Checks whether the call destination may escape through the function return.
 fn destination_flows_to_return<'tcx>(tcx: TyCtxt<'tcx>, caller: DefId, destination: Local) -> bool {
     if destination.as_usize() == 0 {
@@ -312,24 +292,12 @@ fn destination_flows_to_return<'tcx>(tcx: TyCtxt<'tcx>, caller: DefId, destinati
             if target.local.as_usize() != 0 {
                 continue;
             }
-            if rvalue_source_local(rvalue) == Some(destination) {
+            if rvalue_source_place(rvalue).is_some_and(|p| p.local == destination) {
                 return true;
             }
         }
     }
     false
-}
-
-/// Extracts the source local from simple copy, move, cast, or deref-copy rvalues.
-fn rvalue_source_local<'tcx>(rvalue: &Rvalue<'tcx>) -> Option<Local> {
-    match rvalue {
-        Rvalue::Use(Operand::Copy(place), ..)
-        | Rvalue::Use(Operand::Move(place), ..)
-        | Rvalue::Cast(_, Operand::Copy(place), _)
-        | Rvalue::Cast(_, Operand::Move(place), _)
-        | Rvalue::CopyForDeref(place) => Some(place.local),
-        _ => None,
-    }
 }
 
 /// Finds the caller argument local that originally produced a pointer place.

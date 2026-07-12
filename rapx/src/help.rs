@@ -45,7 +45,6 @@ pub const RAPX_VERSION: &str = concat!(
     env!("CARGO_PKG_AUTHORS"),
 );
 
-pub const CARGO_RAPX_STYLING: Styles = clap_cargo::style::CLAP_STYLING;
 pub const RAPX_STYLING: Styles = clap_cargo::style::CLAP_STYLING;
 
 pub fn styled_str(s: &str, style: &Style, bold: bool) -> String {
@@ -59,7 +58,7 @@ pub fn styled_str(s: &str, style: &Style, bold: bool) -> String {
 }
 
 pub fn styled_cargo_rapx_usage() -> String {
-    let style = CARGO_RAPX_STYLING.get_literal();
+    let style = RAPX_STYLING.get_literal();
     format!(
         "{} {}",
         styled_str("cargo rapx", &style, true),

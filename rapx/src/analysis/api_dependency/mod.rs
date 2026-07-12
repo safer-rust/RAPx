@@ -47,10 +47,6 @@ impl Default for Config {
     }
 }
 
-pub trait ApiDependencyAnalysis<'tcx> {
-    fn get_api_dependency_graph(&self) -> ApiDependencyGraph<'tcx>;
-}
-
 pub struct ApiDependencyAnalyzer<'tcx> {
     tcx: TyCtxt<'tcx>,
     config: Config,
@@ -139,12 +135,10 @@ impl<'tcx> Analysis for ApiDependencyAnalyzer<'tcx> {
     }
 
     fn reset(&mut self) {
-        todo!();
+        self.api_graph = ApiDependencyGraph::new(self.tcx);
     }
-}
-
-impl<'tcx> ApiDependencyAnalysis<'tcx> for ApiDependencyAnalyzer<'tcx> {
-    fn get_api_dependency_graph(&self) -> ApiDependencyGraph<'tcx> {
+}impl<'tcx> ApiDependencyAnalyzer<'tcx> {
+    pub fn get_api_dependency_graph(&self) -> ApiDependencyGraph<'tcx> {
         self.api_graph.clone()
     }
 }

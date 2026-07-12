@@ -180,7 +180,7 @@ impl<'tcx> Analysis for AliasAnalyzer<'tcx> {
     }
 
     fn reset(&mut self) {
-        todo!();
+        self.fn_map.clear();
     }
 }
 

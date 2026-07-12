@@ -110,6 +110,33 @@ fn safe_type_layout<'tcx>(
     }
 }
 
+pub(crate) fn call_destination<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    checkpoint: &Checkpoint<'tcx>,
+) -> Option<Local> {
+    let body = tcx.optimized_mir(checkpoint.caller);
+    let terminator = body.basic_blocks[checkpoint.block].terminator();
+    let TerminatorKind::Call { destination, .. } = &terminator.kind else {
+        return None;
+    };
+    Some(destination.local)
+}
+
+pub(crate) fn rvalue_source_place<'a, 'tcx>(
+    rvalue: &'a Rvalue<'tcx>,
+) -> Option<&'a rustc_middle::mir::Place<'tcx>> {
+    match rvalue {
+        Rvalue::Use(Operand::Copy(place), ..)
+        | Rvalue::Use(Operand::Move(place), ..)
+        | Rvalue::Cast(_, Operand::Copy(place), _)
+        | Rvalue::Cast(_, Operand::Move(place), _)
+        | Rvalue::Ref(_, _, place)
+        | Rvalue::RawPtr(_, place)
+        | Rvalue::CopyForDeref(place) => Some(place),
+        _ => None,
+    }
+}
+
 impl<'tcx> SmtChecker<'tcx> {
     /// Create an SMT checker for the current compiler type context.
     pub fn new(tcx: TyCtxt<'tcx>) -> Self {
@@ -2880,7 +2907,7 @@ impl SmtCheckResult {
     }
 }
 
-fn failed_smt(note: impl Into<String>) -> SmtCheckResult {
+pub(crate) fn failed_smt(note: impl Into<String>) -> SmtCheckResult {
     SmtCheckResult {
         result: CheckResult::Failed,
         query: None,
@@ -6268,7 +6295,7 @@ pub(crate) struct PointerBounds<'ctx> {
 }
 
 /// Convert an operand into a place key when it names a MIR place.
-fn operand_place(operand: &Operand<'_>) -> Option<PlaceKey> {
+pub(crate) fn operand_place(operand: &Operand<'_>) -> Option<PlaceKey> {
     match operand {
         Operand::Copy(place) | Operand::Move(place) => Some(PlaceKey::from_mir_place(place)),
         Operand::Constant(_) => None,

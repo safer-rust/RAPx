@@ -103,10 +103,6 @@ impl<'tcx> SafeDropGraph<'tcx> {
     /// constraint-based reachability checks during enumeration, so no
     /// per-path filtering is needed. State is saved at branch points and
     /// restored before each sibling subtree.
-    pub fn process_function_paths(&mut self, fn_map: &MopFnAliasMap) {
-        self.process_function_paths_opt(None, fn_map)
-    }
-
     pub fn process_function_paths_opt(
         &mut self,
         precomputed_paths: Option<PathTree>,

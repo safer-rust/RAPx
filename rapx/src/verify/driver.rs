@@ -928,12 +928,12 @@ fn fmt_contract_expanded(
     local_names: &[String],
     property: &crate::verify::contract::Property<'_>,
 ) -> String {
-    use crate::verify::contract::{PropertyArg, PropertyKind};
+    use crate::verify::contract::PropertyKind;
     let args: Vec<String> = property.args.iter().map(|a| fmt_arg_plain(tcx, local_names, a)).collect();
     let tag = format!("{:?}", property.kind);
     let call = format!("{}({})", tag, args.join(", "));
     let meaning = match property.kind {
-        PropertyKind::NonNull => format!("{} as usize != 0", args.first().map(|s| s.as_str()).unwrap_or("ptr")),
+        PropertyKind::NonNull => format!("{} as usize != 0", args.first().map(|s| s.as_str()).unwrap_or("_")),
         PropertyKind::Align => {
             let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
             let ty = args.get(1).map(|s| s.as_str()).unwrap_or("T");
@@ -950,10 +950,10 @@ fn fmt_contract_expanded(
             format!("ValidPtr({ptr}, {ty}, {cnt})  // dereferenceable for {cnt} × {ty}")
         }
         PropertyKind::Init => {
-            let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
+            let p = args.first().map(|s| s.as_str()).unwrap_or("ptr");
             let ty = args.get(1).map(|s| s.as_str()).unwrap_or("T");
             let cnt = args.get(2).map(|s| s.as_str()).unwrap_or("count");
-            format!("∀i∈0..{cnt}: *(p + i×sizeof({ty})) = valid({ty})")
+            format!("∀i∈0..{cnt}: *({p} + i×sizeof({ty})) = valid({ty})")
         }
         PropertyKind::Typed => {
             let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
