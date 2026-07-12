@@ -891,11 +891,7 @@ impl<'tcx> VerifyRun<'tcx> {
                         if property.kind != PropertyKind::Unknown
                             && !seen_kinds.contains(&property.kind)
                         {
-                            lines.push(fmt_contract_expanded(
-                                self.tcx,
-                                &callee_names,
-                                property,
-                            ));
+                            lines.push(fmt_contract_expanded(self.tcx, &callee_names, property));
                         }
                     }
                 }
@@ -966,11 +962,15 @@ fn fmt_contract_expanded(
             use crate::verify::contract::{ContractExpr, PropertyArg};
             let placeholder = format!("InBound({})", args.join(", "));
             match property.args.first() {
-                Some(PropertyArg::Expr(ContractExpr::IndexAccess { slice: _, index })) => {
-                    let idx = fmt_expr_plain(tcx, local_names, index);
-                    format!("byte range accessed through [{idx}] stays within slice bounds")
+                Some(PropertyArg::Expr(ContractExpr::IndexAccess { slice, index })) => {
+                    let mut s = fmt_expr_plain(tcx, local_names, slice);
+                    s = s.strip_prefix("&mut ").unwrap_or(&s).to_string();
+                    s = s.strip_prefix("&").unwrap_or(&s).to_string();
+                    let i = fmt_expr_plain(tcx, local_names, index);
+                    format!("0 ≤ {i} < {s}.len()")
                 }
-                Some(PropertyArg::Place(_)) => {
+                Some(PropertyArg::Place(place)) => {
+                    let ptr = fmt_place_plain(place, local_names);
                     let ty = property
                         .args
                         .get(1)
@@ -979,8 +979,12 @@ fn fmt_contract_expanded(
                             _ => None,
                         })
                         .unwrap_or_else(|| "?".to_string());
-                    let cnt = args.get(2).map(|s| s.as_str()).unwrap_or("?");
-                    format!("{cnt} × sizeof({ty}) bytes from pointer stay within allocation")
+                    let cnt = property
+                        .args
+                        .get(2)
+                        .map(|a| fmt_arg_plain(tcx, local_names, a))
+                        .unwrap_or_else(|| "?".to_string());
+                    format!("same_alloc([{ptr}, {ptr} + sizeof({ty}) · {cnt}])")
                 }
                 _ => placeholder,
             }
