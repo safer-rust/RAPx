@@ -907,8 +907,7 @@ impl<'tcx> VerifyRun<'tcx> {
                 emit_lines(&lines);
                 rap_info!("");
             } else {
-                let mut callee_ids: Vec<_> =
-                    target.callee_requires.keys().copied().collect();
+                let mut callee_ids: Vec<_> = target.callee_requires.keys().copied().collect();
                 callee_ids.sort_by_key(|def_id| self.tcx.def_path_str(*def_id));
                 for callee_id in callee_ids {
                     let callee_names = self.resolve_local_names(callee_id);
@@ -958,11 +957,7 @@ impl<'tcx> VerifyRun<'tcx> {
                         && !seen_kinds.contains(&property.kind)
                         && callee_seen.insert(property.kind.clone())
                     {
-                        callee_lines.push(fmt_contract_expanded(
-                            self.tcx,
-                            &callee_names,
-                            property,
-                        ));
+                        callee_lines.push(fmt_contract_expanded(self.tcx, &callee_names, property));
                     }
                 }
                 if !callee_lines.is_empty() {
