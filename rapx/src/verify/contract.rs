@@ -656,6 +656,15 @@ impl<'tcx> Property<'tcx> {
                     sp,
                 )))
             }
+            // Treat `self.len()` (method-call sugar) as the slice length `len(self)`.
+            Expr::MethodCall(expr_method) if expr_method.method == "len" && expr_method.args.is_empty() => {
+                ContractExpr::Len(Box::new(Self::parse_contract_expr(
+                    tcx,
+                    def_id,
+                    &expr_method.receiver,
+                    sp,
+                )))
+            }
             Expr::Unary(expr_unary) => {
                 let Some(op) = NumericUnaryOp::from_syn(&expr_unary.op) else {
                     return ContractExpr::Unknown;
