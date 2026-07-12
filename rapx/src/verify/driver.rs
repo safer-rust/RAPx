@@ -954,8 +954,7 @@ fn fmt_contract_expanded(
             Some(crate::verify::contract::PropertyArg::Expr(
                 crate::verify::contract::ContractExpr::IndexAccess { .. }
             ))
-        )
-    {
+        ) {
         use crate::verify::contract::{ContractExpr, PropertyArg};
         if let Some(PropertyArg::Expr(ContractExpr::IndexAccess { slice, index })) =
             property.args.first()
@@ -970,6 +969,18 @@ fn fmt_contract_expanded(
         }
     } else {
         format!("{tag}({})", args.join(", "))
+    };
+    let call = if matches!(property.kind, PropertyKind::ValidNum)
+        && let Some(crate::verify::contract::PropertyArg::Predicates(preds)) =
+            property.args.first()
+    {
+        let parts: Vec<String> = preds
+            .iter()
+            .map(|p| fmt_valid_num_pred(tcx, local_names, p))
+            .collect();
+        format!("{tag}({})", parts.join(", "))
+    } else {
+        call
     };
     let meaning = match property.kind {
         PropertyKind::NonNull => format!(
@@ -1245,6 +1256,20 @@ fn fmt_expr_plain(
         }
         ContractExpr::Unknown => "<?>".to_string(),
     }
+}
+
+fn fmt_valid_num_pred(
+    tcx: rustc_middle::ty::TyCtxt<'_>,
+    local_names: &[String],
+    pred: &crate::verify::contract::NumericPredicate<'_>,
+) -> String {
+    use crate::verify::contract::ContractExpr;
+    if matches!(pred.op, crate::verify::contract::RelOp::Ne)
+        && matches!(pred.rhs, ContractExpr::Const(0))
+    {
+        return fmt_expr_plain(tcx, local_names, &pred.lhs);
+    }
+    fmt_pred_plain(tcx, local_names, pred)
 }
 
 fn fmt_pred_plain(
