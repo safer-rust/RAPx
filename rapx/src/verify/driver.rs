@@ -876,12 +876,13 @@ impl<'tcx> VerifyRun<'tcx> {
             if target.caller_requires.is_empty() {
                 rap_info!("  caller contracts: <none>");
             } else {
-                rap_info!("  caller contracts:");
+                rap_info!("  caller contracts ({})", target_path);
+                let local_names = self.resolve_local_names(target.def_id);
                 for property in &target.caller_requires {
-                    rap_info!("    - {:?}:", property.kind);
-                    for arg in &property.args {
-                        rap_info!("        {}", fmt_property_arg(self.tcx, arg));
-                    }
+                    rap_info!(
+                        "    #[rapx::requires({})]",
+                        fmt_property_rust(self.tcx, &local_names, property)
+                    );
                 }
             }
 
@@ -892,25 +893,20 @@ impl<'tcx> VerifyRun<'tcx> {
                 callee_ids.sort_by_key(|def_id| self.tcx.def_path_str(*def_id));
                 for callee_id in callee_ids {
                     let callee_path = self.tcx.def_path_str(callee_id);
-                    rap_info!("  callee: {}", callee_path);
                     if let Some(contracts) = target.callee_requires.get(&callee_id) {
                         if contracts.is_empty() {
-                            rap_info!("    contracts: <none>");
+                            rap_info!("  callee {}: <no contracts>", callee_path);
                         } else {
+                            rap_info!("  callee {}", callee_path);
+                            let callee_names = self.resolve_local_names(callee_id);
                             for property in contracts {
                                 if property.kind == PropertyKind::Unknown {
-                                    rap_info!("    - (unresolved)");
+                                    rap_info!("    // (unresolved)");
                                 } else {
                                     rap_info!(
-                                        "    - {:?}:",
-                                        property.kind
+                                        "    #[rapx::requires({})]",
+                                        fmt_property_rust(self.tcx, &callee_names, property)
                                     );
-                                    for arg in &property.args {
-                                        rap_info!(
-                                            "        {}",
-                                            fmt_property_arg(self.tcx, arg)
-                                        );
-                                    }
                                 }
                             }
                         }
@@ -920,66 +916,173 @@ impl<'tcx> VerifyRun<'tcx> {
 
             if !target.struct_invariants.is_empty() {
                 rap_info!("  struct invariants:");
+                let local_names = self.resolve_local_names(target.def_id);
                 for property in &target.struct_invariants {
-                    rap_info!("    - {:?}:", property.kind);
-                    for arg in &property.args {
-                        rap_info!("        {}", fmt_property_arg(self.tcx, arg));
-                    }
+                    rap_info!(
+                        "    #[rapx::invariant({})]",
+                        fmt_property_rust(self.tcx, &local_names, property)
+                    );
                 }
             }
 
             rap_info!("");
         }
     }
-}
 
-fn fmt_property_arg(tcx: rustc_middle::ty::TyCtxt<'_>, arg: &crate::verify::contract::PropertyArg<'_>) -> String {
-    use crate::verify::contract::{ContractExpr, PropertyArg};
-    match arg {
-        PropertyArg::Place(place) => format!("Place({:?})", place),
-        PropertyArg::Ty(ty) => format!("Ty({:?})", ty),
-        PropertyArg::Expr(expr) => fmt_contract_expr(tcx, expr),
-        PropertyArg::Predicates(preds) => {
-            let pred_strs: Vec<_> = preds.iter().map(|p| fmt_numeric_predicate(p)).collect();
-            format!("{}", pred_strs.join(", "))
+    fn resolve_local_names(&self, def_id: rustc_hir::def_id::DefId) -> Vec<String> {
+        if !self.tcx.is_mir_available(def_id) {
+            return Vec::new();
         }
-        PropertyArg::Ident(id) => format!("Ident({})", id),
+        let body = self.tcx.optimized_mir(def_id);
+        body.local_decls
+            .iter()
+            .enumerate()
+            .map(|(i, decl)| {
+                let span = decl.source_info.span;
+                self.tcx
+                    .sess
+                    .source_map()
+                    .span_to_snippet(span)
+                    .unwrap_or_else(|_| format!("_{}", i))
+            })
+            .collect()
     }
 }
 
-fn fmt_contract_expr(tcx: rustc_middle::ty::TyCtxt<'_>, expr: &crate::verify::contract::ContractExpr<'_>) -> String {
+fn fmt_property_rust(
+    tcx: rustc_middle::ty::TyCtxt<'_>,
+    local_names: &[String],
+    property: &crate::verify::contract::Property<'_>,
+) -> String {
+    use crate::verify::contract::{PropertyArg, PropertyKind};
+    let kind_str = format!("{:?}", property.kind);
+    let args: Vec<String> = property.args.iter().map(|a| fmt_property_arg_rust(tcx, local_names, a)).collect();
+    format!("{}({})", kind_str, args.join(", "))
+}
+
+fn fmt_property_arg_rust(
+    tcx: rustc_middle::ty::TyCtxt<'_>,
+    local_names: &[String],
+    arg: &crate::verify::contract::PropertyArg<'_>,
+) -> String {
+    use crate::verify::contract::PropertyArg;
+    match arg {
+        PropertyArg::Place(place) => fmt_contract_place_rust(place, local_names),
+        PropertyArg::Ty(ty) => fmt_ty_rust(tcx, *ty),
+        PropertyArg::Expr(expr) => fmt_contract_expr_rust(tcx, local_names, expr),
+        PropertyArg::Predicates(preds) => {
+            let pred_strs: Vec<_> = preds.iter().map(|p| fmt_numeric_predicate_rust(tcx, local_names, p)).collect();
+            pred_strs.join(", ")
+        }
+        PropertyArg::Ident(id) => id.clone(),
+    }
+}
+
+fn fmt_contract_place_rust(
+    place: &crate::verify::contract::ContractPlace<'_>,
+    local_names: &[String],
+) -> String {
+    let base = match place.base {
+        crate::verify::contract::PlaceBase::Return => "return".to_string(),
+        crate::verify::contract::PlaceBase::Arg(i) => format!("arg:{}", i),
+        crate::verify::contract::PlaceBase::Local(l) => {
+            if l == 1 && local_names.len() >= 2 && local_names[1] == "self" {
+                "self".to_string()
+            } else {
+                local_names.get(l).cloned().unwrap_or_else(|| format!("local_{}", l))
+            }
+        }
+    };
+    if place.projections.is_empty() {
+        base
+    } else {
+        let proj: Vec<String> = place.projections.iter().map(|p| match p {
+            crate::verify::contract::ContractProjection::Field { index, .. } => index.to_string(),
+        }).collect();
+        format!("{}.{}", base, proj.join("."))
+    }
+}
+
+fn fmt_ty_rust(tcx: rustc_middle::ty::TyCtxt<'_>, ty: rustc_middle::ty::Ty<'_>) -> String {
+    format!("{}", ty)
+}
+
+fn fmt_contract_expr_rust(
+    tcx: rustc_middle::ty::TyCtxt<'_>,
+    local_names: &[String],
+    expr: &crate::verify::contract::ContractExpr<'_>,
+) -> String {
     use crate::verify::contract::ContractExpr;
     match expr {
-        ContractExpr::Place(place) => format!("Place({:?})", place),
+        ContractExpr::Place(place) => fmt_contract_place_rust(place, local_names),
         ContractExpr::Const(c) => format!("{}", c),
-        ContractExpr::ConstParam { index, name } => format!("ConstParam(idx={}, name={})", index, name),
-        ContractExpr::SizeOf(ty) => format!("size_of({:?})", ty),
-        ContractExpr::AlignOf(ty) => format!("align_of({:?})", ty),
-        ContractExpr::Len(inner) => format!("len({})", fmt_contract_expr(tcx, inner)),
+        ContractExpr::ConstParam { name, .. } => name.clone(),
+        ContractExpr::SizeOf(ty) => format!("size_of::<{}>()", fmt_ty_rust(tcx, *ty)),
+        ContractExpr::AlignOf(ty) => format!("align_of::<{}>()", fmt_ty_rust(tcx, *ty)),
+        ContractExpr::Len(inner) => {
+            let inner_str = fmt_contract_expr_rust(tcx, local_names, inner);
+            // If inner is a place, use method-call form `self.len()` for readability
+            if matches!(inner.as_ref(), ContractExpr::Place(_)) {
+                format!("{}.len()", inner_str)
+            } else {
+                format!("len({})", inner_str)
+            }
+        }
         ContractExpr::IndexAccess { slice, index } => {
             format!(
                 "index_access({}, {})",
-                fmt_contract_expr(tcx, slice),
-                fmt_contract_expr(tcx, index)
+                fmt_contract_expr_rust(tcx, local_names, slice),
+                fmt_contract_expr_rust(tcx, local_names, index)
             )
         }
         ContractExpr::Binary { op, lhs, rhs } => {
+            let op_str = match op {
+                crate::verify::contract::NumericOp::Add => "+",
+                crate::verify::contract::NumericOp::Sub => "-",
+                crate::verify::contract::NumericOp::Mul => "*",
+                crate::verify::contract::NumericOp::Div => "/",
+                crate::verify::contract::NumericOp::Rem => "%",
+                crate::verify::contract::NumericOp::BitAnd => "&",
+                crate::verify::contract::NumericOp::BitOr => "|",
+                crate::verify::contract::NumericOp::BitXor => "^",
+            };
             format!(
-                "({} {:?} {})",
-                fmt_contract_expr(tcx, lhs),
-                op,
-                fmt_contract_expr(tcx, rhs)
+                "{} {} {}",
+                fmt_contract_expr_rust(tcx, local_names, lhs),
+                op_str,
+                fmt_contract_expr_rust(tcx, local_names, rhs)
             )
         }
         ContractExpr::Unary { op, expr: inner } => {
-            format!("({:?} {})", op, fmt_contract_expr(tcx, inner))
+            let op_str = match op {
+                crate::verify::contract::NumericUnaryOp::Not => "!",
+                crate::verify::contract::NumericUnaryOp::Neg => "-",
+            };
+            format!("{}{}", op_str, fmt_contract_expr_rust(tcx, local_names, inner))
         }
         ContractExpr::Unknown => "<?>".to_string(),
     }
 }
 
-fn fmt_numeric_predicate(pred: &crate::verify::contract::NumericPredicate<'_>) -> String {
-    format!("{:?} {:?} {:?}", pred.lhs, pred.op, pred.rhs)
+fn fmt_numeric_predicate_rust(
+    tcx: rustc_middle::ty::TyCtxt<'_>,
+    local_names: &[String],
+    pred: &crate::verify::contract::NumericPredicate<'_>,
+) -> String {
+    let op_str = match pred.op {
+        crate::verify::contract::RelOp::Eq => "==",
+        crate::verify::contract::RelOp::Ne => "!=",
+        crate::verify::contract::RelOp::Lt => "<",
+        crate::verify::contract::RelOp::Le => "<=",
+        crate::verify::contract::RelOp::Gt => ">",
+        crate::verify::contract::RelOp::Ge => ">=",
+    };
+    format!(
+        "{} {} {}",
+        fmt_contract_expr_rust(tcx, local_names, &pred.lhs),
+        op_str,
+        fmt_contract_expr_rust(tcx, local_names, &pred.rhs)
+    )
 }
 
 fn emit_verify_summary<'tcx>(
