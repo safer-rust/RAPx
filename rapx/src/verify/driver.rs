@@ -871,76 +871,109 @@ impl<'tcx> VerifyRun<'tcx> {
         rap_info!("");
 
         for target in targets {
-            if target.caller_requires.is_empty() {
-                continue;
-            }
-
-            let mut lines: Vec<(String, String)> = Vec::new();
-            let mut seen_kinds = FxHashSet::default();
             let local_names = self.resolve_local_names(target.def_id);
+            let has_caller = target
+                .caller_requires
+                .iter()
+                .any(|p| p.kind != PropertyKind::Unknown);
+            let has_inv = !target.struct_invariants.is_empty();
 
-            for property in &target.caller_requires {
-                if property.kind != PropertyKind::Unknown {
+            if has_caller || has_inv {
+                let mut lines: Vec<(String, String)> = Vec::new();
+                let mut seen_kinds = FxHashSet::default();
+
+                for property in &target.caller_requires {
+                    if property.kind != PropertyKind::Unknown {
+                        lines.push(fmt_contract_expanded(self.tcx, &local_names, property));
+                        seen_kinds.insert(property.kind.clone());
+                    }
+                }
+
+                for property in &target.struct_invariants {
                     lines.push(fmt_contract_expanded(self.tcx, &local_names, property));
-                    seen_kinds.insert(property.kind.clone());
                 }
-            }
 
-            let mut callee_ids: Vec<_> = target.callee_requires.keys().copied().collect();
-            callee_ids.sort_by_key(|def_id| self.tcx.def_path_str(*def_id));
-            for callee_id in callee_ids {
-                let callee_names = self.resolve_local_names(callee_id);
-                if let Some(contracts) = target.callee_requires.get(&callee_id) {
-                    let mut callee_seen = FxHashSet::default();
-                    let mut callee_lines: Vec<(String, String)> = Vec::new();
-                    for property in contracts {
-                        if property.kind != PropertyKind::Unknown
-                            && !seen_kinds.contains(&property.kind)
-                            && callee_seen.insert(property.kind.clone())
-                        {
-                            callee_lines.push(fmt_contract_expanded(
-                                self.tcx,
-                                &callee_names,
-                                property,
-                            ));
+                self.append_callee_contracts(&target, &mut lines, &mut seen_kinds);
+
+                if lines.is_empty() {
+                    continue;
+                }
+
+                let target_path = self.tcx.def_path_str(target.def_id);
+                rap_info!("fn {}", target_path);
+                rap_info!("{:-<1$}", "", 76);
+                emit_lines(&lines);
+                rap_info!("");
+            } else {
+                let mut seen_kinds = FxHashSet::default();
+                let mut callee_ids: Vec<_> =
+                    target.callee_requires.keys().copied().collect();
+                callee_ids.sort_by_key(|def_id| self.tcx.def_path_str(*def_id));
+                for callee_id in callee_ids {
+                    let callee_names = self.resolve_local_names(callee_id);
+                    if let Some(contracts) = target.callee_requires.get(&callee_id) {
+                        let mut lines: Vec<(String, String)> = Vec::new();
+                        for property in contracts {
+                            if property.kind != PropertyKind::Unknown
+                                && !seen_kinds.contains(&property.kind)
+                            {
+                                seen_kinds.insert(property.kind.clone());
+                                lines.push(fmt_contract_expanded(
+                                    self.tcx,
+                                    &callee_names,
+                                    property,
+                                ));
+                            }
                         }
-                    }
-                    if !callee_lines.is_empty() {
                         if !lines.is_empty() {
-                            lines.push((String::new(), String::new()));
+                            let callee_path = self.tcx.def_path_str(callee_id);
+                            rap_info!("callee `{callee_path}`");
+                            rap_info!("{:-<1$}", "", 76);
+                            emit_lines(&lines);
+                            rap_info!("");
                         }
-                        let callee_path = self.tcx.def_path_str(callee_id);
-                        lines.push((
-                            format!("callee `{callee_path}`"),
-                            String::new(),
-                        ));
-                        lines.extend(callee_lines);
                     }
                 }
             }
+        }
+    }
 
-            for property in &target.struct_invariants {
-                lines.push(fmt_contract_expanded(self.tcx, &local_names, property));
-            }
-
-            if lines.is_empty() {
-                continue;
-            }
-
-            let target_path = self.tcx.def_path_str(target.def_id);
-            rap_info!("fn {}", target_path);
-            rap_info!("{:-<1$}", "", 76);
-            for (tag, meaning) in &lines {
-                if tag.is_empty() && meaning.is_empty() {
-                    rap_info!("");
-                } else if meaning.is_empty() {
-                    rap_info!("  // {tag}");
-                } else {
-                    rap_info!("  Safety Tag: {tag}");
-                    rap_info!("    Meaning:   {meaning}");
+    fn append_callee_contracts(
+        &self,
+        target: &FunctionTarget<'tcx>,
+        lines: &mut Vec<(String, String)>,
+        seen_kinds: &mut crate::compat::FxHashSet<crate::verify::contract::PropertyKind>,
+    ) {
+        use crate::compat::FxHashSet;
+        use crate::verify::contract::PropertyKind;
+        let mut callee_ids: Vec<_> = target.callee_requires.keys().copied().collect();
+        callee_ids.sort_by_key(|def_id| self.tcx.def_path_str(*def_id));
+        for callee_id in callee_ids {
+            let callee_names = self.resolve_local_names(callee_id);
+            if let Some(contracts) = target.callee_requires.get(&callee_id) {
+                let mut callee_seen = FxHashSet::default();
+                let mut callee_lines: Vec<(String, String)> = Vec::new();
+                for property in contracts {
+                    if property.kind != PropertyKind::Unknown
+                        && !seen_kinds.contains(&property.kind)
+                        && callee_seen.insert(property.kind.clone())
+                    {
+                        callee_lines.push(fmt_contract_expanded(
+                            self.tcx,
+                            &callee_names,
+                            property,
+                        ));
+                    }
+                }
+                if !callee_lines.is_empty() {
+                    if !lines.is_empty() {
+                        lines.push((String::new(), String::new()));
+                    }
+                    let callee_path = self.tcx.def_path_str(callee_id);
+                    lines.push((format!("callee `{callee_path}`"), String::new()));
+                    lines.extend(callee_lines);
                 }
             }
-            rap_info!("");
         }
     }
 
@@ -961,6 +994,19 @@ impl<'tcx> VerifyRun<'tcx> {
                     .unwrap_or_else(|_| format!("_{}", i))
             })
             .collect()
+    }
+}
+
+fn emit_lines(lines: &[(String, String)]) {
+    for (tag, meaning) in lines {
+        if tag.is_empty() && meaning.is_empty() {
+            rap_info!("");
+        } else if meaning.is_empty() {
+            rap_info!("  // {tag}");
+        } else {
+            rap_info!("  Safety Tag: {tag}");
+            rap_info!("    Meaning:   {meaning}");
+        }
     }
 }
 
