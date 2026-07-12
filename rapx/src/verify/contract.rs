@@ -506,15 +506,14 @@ impl<'tcx> Property<'tcx> {
                 if !Self::check_arg_length(exprs.len(), 2, "TransmuteWithoutAlign") {
                     return Self::new_simple(PropertyKind::Unknown);
                 }
-                let Some(src_ty) = Self::parse_type(tcx, def_id, &exprs[0], "TransmuteWithoutAlign") else {
-                    return Self::new_simple(PropertyKind::Unknown);
-                };
-                let Some(dst_ty) = Self::parse_type(tcx, def_id, &exprs[1], "TransmuteWithoutAlign") else {
+                let src_elem = unwrap_array_expr(tcx, def_id, &exprs[0]);
+                let dst_elem = unwrap_array_expr(tcx, def_id, &exprs[1]);
+                let (Some(src_elem), Some(dst_elem)) = (src_elem, dst_elem) else {
                     return Self::new_simple(PropertyKind::Unknown);
                 };
                 Self::new_with_args(
                     PropertyKind::TransmuteWithoutAlign,
-                    vec![PropertyArg::Ty(src_ty), PropertyArg::Ty(dst_ty)],
+                    vec![PropertyArg::Ty(src_elem), PropertyArg::Ty(dst_elem)],
                 )
             }
             "NonSize" => Self::new_simple(PropertyKind::NonSize),
@@ -1038,4 +1037,17 @@ impl<'tcx> Property<'tcx> {
 /// True when `ty` denotes a slice `[T]`, possibly behind references.
 fn ty_is_slice(ty: Ty<'_>) -> bool {
     matches!(ty.peel_refs().kind(), TyKind::Slice(_))
+}
+
+/// Extract the inner type from an `Expr::Array` (the `[T]` notation in
+/// `TransmuteWithoutAlign([T], [U])`), then resolve it via `parse_type`.
+fn unwrap_array_expr<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def_id: DefId,
+    expr: &Expr,
+) -> Option<Ty<'tcx>> {
+    if let Expr::Array(arr) = expr && arr.elems.len() == 1 {
+        return Property::parse_type(tcx, def_id, &arr.elems[0], "TransmuteWithoutAlign");
+    }
+    Property::parse_type(tcx, def_id, expr, "TransmuteWithoutAlign")
 }
