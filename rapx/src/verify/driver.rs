@@ -990,7 +990,7 @@ fn fmt_contract_expanded(
                     s = s.strip_prefix("&mut ").unwrap_or(&s).to_string();
                     s = s.strip_prefix("&").unwrap_or(&s).to_string();
                     let i = fmt_expr_plain(tcx, local_names, index);
-                    format!("0 ≤ {i} < {s}.len()")
+                    format!("0 <= {i} < {s}.len()")
                 }
                 Some(PropertyArg::Place(place)) => {
                     let ptr = fmt_place_plain(place, local_names);
@@ -1007,36 +1007,52 @@ fn fmt_contract_expanded(
                         .get(2)
                         .map(|a| fmt_arg_plain(tcx, local_names, a))
                         .unwrap_or_else(|| "?".to_string());
-                    format!("same_alloc([{ptr}, {ptr} + sizeof({ty}) · {cnt}])")
+                    format!("same_alloc([{ptr}, {ptr} + sizeof({ty})*{cnt}])")
                 }
                 _ => placeholder,
             }
         }
         PropertyKind::ValidPtr => {
-            let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
-            let ty = args.get(1).map(|s| s.as_str()).unwrap_or("T");
-            let cnt = args.get(2).map(|s| s.as_str()).unwrap_or("count");
-            format!("ValidPtr({ptr}, {ty}, {cnt})  // dereferenceable for {cnt} × {ty}")
+            use crate::verify::contract::PropertyArg;
+            let ptr = property
+                .args
+                .first()
+                .map(|a| fmt_arg_plain(tcx, local_names, a))
+                .unwrap_or_else(|| "?".to_string());
+            let ty = property
+                .args
+                .get(1)
+                .and_then(|a| match a {
+                    PropertyArg::Ty(ty) => Some(ty.to_string()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| "?".to_string());
+            let cnt = property
+                .args
+                .get(2)
+                .map(|a| fmt_arg_plain(tcx, local_names, a))
+                .unwrap_or_else(|| "?".to_string());
+            format!("same_alloc([{ptr}, {ptr} + sizeof({ty})*{cnt}])")
         }
         PropertyKind::Init => {
             let p = args.first().map(|s| s.as_str()).unwrap_or("ptr");
             let ty = args.get(1).map(|s| s.as_str()).unwrap_or("T");
             let cnt = args.get(2).map(|s| s.as_str()).unwrap_or("count");
-            format!("∀i∈0..{cnt}: *({p} + i×sizeof({ty})) = valid({ty})")
+            format!("for all i in 0..{cnt}: *({p} + i*sizeof({ty})) = valid({ty})")
         }
         PropertyKind::Typed => {
             let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
             let ty = args.get(1).map(|s| s.as_str()).unwrap_or("T");
-            format!("*{ptr} ⊨ TypeInvariant({ty})")
+            format!("*{ptr} holds TypeInvariant({ty})")
         }
-        PropertyKind::Alive => format!(
-            "lifetime(*{ptr}) ⊇ 'call",
-            ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr")
-        ),
-        PropertyKind::Alias => format!(
-            "Alias({ptr}, ⊥)",
-            ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr")
-        ),
+        PropertyKind::Alive => {
+            let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
+            format!("lifetime(*{ptr}) within lifetimes(caller_args)")
+        }
+        PropertyKind::Alias => {
+            let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
+            format!("no conflicting mutable alias for {ptr}")
+        }
         PropertyKind::Allocated => {
             let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
             let suffix = if args.len() >= 3 {
@@ -1044,79 +1060,84 @@ fn fmt_contract_expanded(
             } else {
                 String::new()
             };
-            format!("Allocated({ptr}{suffix})")
+            format!("{ptr} points to live heap/stack allocation{suffix}")
         }
-        PropertyKind::NonOverlap => format!("!Overlap({})", args.join(", ")),
+        PropertyKind::NonOverlap => {
+            let joined = args.join(", ");
+            format!("[{joined}] are pairwise disjoint memory ranges")
+        }
         PropertyKind::ValidNum => args.join(" && "),
         PropertyKind::ValidTransmute => {
             let src = args.first().map(|s| s.as_str()).unwrap_or("Src");
             let dst = args.get(1).map(|s| s.as_str()).unwrap_or("Dst");
-            format!("composed_entirely_of({dst}, {src})")
+            format!("bytes_of({dst}) within bytes_of({src})")
         }
         PropertyKind::TransmuteWithoutAlign => {
-            format!("TransmuteWithoutAlign({})", args.join(", "))
+            let joined = args.join(", ");
+            format!("size_of({joined}) are equal and alignment-compatible")
         }
         PropertyKind::Deref => {
             let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
-            format!("Allocated({ptr}) ∧ InBound({ptr})")
+            format!("same_alloc({ptr}) and 0 <= byte_offset({ptr}) < alloc_len({ptr})")
         }
         PropertyKind::Ptr2Ref => {
             let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
-            format!("Ptr2Ref({ptr})")
+            format!("can soundly convert {ptr} to &/&mut reference")
         }
-        PropertyKind::Owning => format!(
-            "!Owned({})",
-            args.first().map(|s| s.as_str()).unwrap_or("ptr")
-        ),
-        PropertyKind::ValidSlice => format!(
-            "ValidSlice({})",
-            args.first().map(|s| s.as_str()).unwrap_or("slice")
-        ),
-        PropertyKind::Layout => format!(
-            "Layout({})",
-            args.first().map(|s| s.as_str()).unwrap_or("layout")
-        ),
-        PropertyKind::Size => format!(
-            "Size({})",
-            args.first().map(|s| s.as_str()).unwrap_or("ptr")
-        ),
-        PropertyKind::NonSize => "Size(T, ≠0)".to_string(),
-        PropertyKind::NoPadding => format!(
-            "padding({}) == 0",
-            args.first().map(|s| s.as_str()).unwrap_or("T")
-        ),
-        PropertyKind::Unwrap => format!(
-            "unwrap({})",
-            args.first().map(|s| s.as_str()).unwrap_or("x")
-        ),
-        PropertyKind::ValidString => format!(
-            "ValidString({})",
-            args.first().map(|s| s.as_str()).unwrap_or("v")
-        ),
-        PropertyKind::ValidCStr => format!(
-            "ValidCStr({})",
-            args.first().map(|s| s.as_str()).unwrap_or("ptr")
-        ),
-        PropertyKind::Pinned => format!(
-            "Pinned({})",
-            args.first().map(|s| s.as_str()).unwrap_or("ptr")
-        ),
-        PropertyKind::NonVolatile => format!(
-            "!Volatile({})",
-            args.first().map(|s| s.as_str()).unwrap_or("ptr")
-        ),
-        PropertyKind::Opened => format!(
-            "Opened({})",
-            args.first().map(|s| s.as_str()).unwrap_or("fd")
-        ),
+        PropertyKind::Owning => {
+            let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
+            format!("{ptr} has unique ownership, no other write-capable alias")
+        }
+        PropertyKind::ValidSlice => {
+            let s = args.first().map(|s| s.as_str()).unwrap_or("slice");
+            format!("{s} points to valid slice with non-null aligned data")
+        }
+        PropertyKind::Layout => {
+            let l = args.first().map(|s| s.as_str()).unwrap_or("layout");
+            format!("{l} matches prior allocation size and alignment")
+        }
+        PropertyKind::Size => {
+            let p = args.first().map(|s| s.as_str()).unwrap_or("ptr");
+            format!("sizeof(type_pointed_by({p})) > 0")
+        }
+        PropertyKind::NonSize => "Size(T, !=0)".to_string(),
+        PropertyKind::NoPadding => {
+            let t = args.first().map(|s| s.as_str()).unwrap_or("T");
+            format!("{t} has no padding bytes between fields")
+        }
+        PropertyKind::Unwrap => {
+            let x = args.first().map(|s| s.as_str()).unwrap_or("x");
+            format!("{x} is in expected variant / not None / not Err")
+        }
+        PropertyKind::ValidString => {
+            let v = args.first().map(|s| s.as_str()).unwrap_or("v");
+            format!("{v} is valid UTF-8")
+        }
+        PropertyKind::ValidCStr => {
+            let p = args.first().map(|s| s.as_str()).unwrap_or("ptr");
+            format!("{p} is a null-terminated valid UTF-8 byte sequence")
+        }
+        PropertyKind::Pinned => {
+            let p = args.first().map(|s| s.as_str()).unwrap_or("ptr");
+            format!("{p} will not be moved")
+        }
+        PropertyKind::NonVolatile => {
+            let p = args.first().map(|s| s.as_str()).unwrap_or("ptr");
+            format!("{p} does not reference volatile memory")
+        }
+        PropertyKind::Opened => {
+            let f = args.first().map(|s| s.as_str()).unwrap_or("fd");
+            format!("{f} is a valid open file descriptor")
+        }
         PropertyKind::Trait => {
-            format!("Trait({})", args.first().map(|s| s.as_str()).unwrap_or("T"))
+            let t = args.first().map(|s| s.as_str()).unwrap_or("T");
+            format!("{t} upholds its unsafe trait contract")
         }
-        PropertyKind::Nullable => format!(
-            "Nullable({})",
-            args.first().map(|s| s.as_str()).unwrap_or("ptr")
-        ),
-        PropertyKind::Unreachable => "!Reachable()".to_string(),
+        PropertyKind::Nullable => {
+            let p = args.first().map(|s| s.as_str()).unwrap_or("ptr");
+            format!("{p} may be null")
+        }
+        PropertyKind::Unreachable => "not Reachable()".to_string(),
         PropertyKind::Unknown => "(unresolved contract)".to_string(),
     };
     (call, meaning)
