@@ -871,10 +871,6 @@ impl<'tcx> VerifyRun<'tcx> {
         rap_info!("");
 
         for target in targets {
-            if target.caller_requires.is_empty() && target.struct_invariants.is_empty() {
-                continue;
-            }
-
             let mut lines: Vec<(String, String)> = Vec::new();
             let mut seen_kinds = FxHashSet::default();
             let local_names = self.resolve_local_names(target.def_id);
@@ -891,12 +887,30 @@ impl<'tcx> VerifyRun<'tcx> {
             for callee_id in callee_ids {
                 let callee_names = self.resolve_local_names(callee_id);
                 if let Some(contracts) = target.callee_requires.get(&callee_id) {
+                    let mut callee_seen = FxHashSet::default();
+                    let mut callee_lines: Vec<(String, String)> = Vec::new();
                     for property in contracts {
                         if property.kind != PropertyKind::Unknown
                             && !seen_kinds.contains(&property.kind)
+                            && callee_seen.insert(property.kind.clone())
                         {
-                            lines.push(fmt_contract_expanded(self.tcx, &callee_names, property));
+                            callee_lines.push(fmt_contract_expanded(
+                                self.tcx,
+                                &callee_names,
+                                property,
+                            ));
                         }
+                    }
+                    if !callee_lines.is_empty() {
+                        if !lines.is_empty() {
+                            lines.push((String::new(), String::new()));
+                        }
+                        let callee_path = self.tcx.def_path_str(callee_id);
+                        lines.push((
+                            format!("callee `{callee_path}`"),
+                            String::new(),
+                        ));
+                        lines.extend(callee_lines);
                     }
                 }
             }
@@ -913,8 +927,14 @@ impl<'tcx> VerifyRun<'tcx> {
             rap_info!("fn {}", target_path);
             rap_info!("{:-<1$}", "", 76);
             for (tag, meaning) in &lines {
-                rap_info!("  Safety Tag: {tag}");
-                rap_info!("    Meaning:   {meaning}");
+                if tag.is_empty() && meaning.is_empty() {
+                    rap_info!("");
+                } else if meaning.is_empty() {
+                    rap_info!("  // {tag}");
+                } else {
+                    rap_info!("  Safety Tag: {tag}");
+                    rap_info!("    Meaning:   {meaning}");
+                }
             }
             rap_info!("");
         }
