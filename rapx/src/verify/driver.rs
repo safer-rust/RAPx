@@ -870,6 +870,8 @@ impl<'tcx> VerifyRun<'tcx> {
         rap_info!("============================================================");
         rap_info!("");
 
+        let mut global_seen = FxHashSet::default();
+
         for target in targets {
             let local_names = self.resolve_local_names(target.def_id);
             let has_caller = target
@@ -905,7 +907,6 @@ impl<'tcx> VerifyRun<'tcx> {
                 emit_lines(&lines);
                 rap_info!("");
             } else {
-                let mut seen_kinds = FxHashSet::default();
                 let mut callee_ids: Vec<_> =
                     target.callee_requires.keys().copied().collect();
                 callee_ids.sort_by_key(|def_id| self.tcx.def_path_str(*def_id));
@@ -915,9 +916,8 @@ impl<'tcx> VerifyRun<'tcx> {
                         let mut lines: Vec<(String, String)> = Vec::new();
                         for property in contracts {
                             if property.kind != PropertyKind::Unknown
-                                && !seen_kinds.contains(&property.kind)
+                                && global_seen.insert(property.kind.clone())
                             {
-                                seen_kinds.insert(property.kind.clone());
                                 lines.push(fmt_contract_expanded(
                                     self.tcx,
                                     &callee_names,
