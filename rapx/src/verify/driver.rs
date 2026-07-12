@@ -871,6 +871,10 @@ impl<'tcx> VerifyRun<'tcx> {
         rap_info!("");
 
         for target in targets {
+            if target.caller_requires.is_empty() && target.struct_invariants.is_empty() {
+                continue;
+            }
+
             let mut lines: Vec<(String, String)> = Vec::new();
             let mut seen_kinds = FxHashSet::default();
             let local_names = self.resolve_local_names(target.def_id);
@@ -971,8 +975,7 @@ fn fmt_contract_expanded(
         format!("{tag}({})", args.join(", "))
     };
     let call = if matches!(property.kind, PropertyKind::ValidNum)
-        && let Some(crate::verify::contract::PropertyArg::Predicates(preds)) =
-            property.args.first()
+        && let Some(crate::verify::contract::PropertyArg::Predicates(preds)) = property.args.first()
     {
         format!("{tag}({})", fmt_valid_num_call(tcx, local_names, preds))
     } else {
@@ -1284,7 +1287,13 @@ fn fmt_valid_num_call(
         if lower_val == upper_val {
             let lo = match lower.op {
                 RelOp::Gt | RelOp::Le => lower_l,
-                _ => return preds.iter().map(|p| fmt_valid_num_pred(tcx,local_names,p)).collect::<Vec<_>>().join(", "),
+                _ => {
+                    return preds
+                        .iter()
+                        .map(|p| fmt_valid_num_pred(tcx, local_names, p))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                }
             };
             let lb = if matches!(lower.op, RelOp::Ge | RelOp::Le) {
                 "["
@@ -1298,7 +1307,13 @@ fn fmt_valid_num_call(
             };
             let hi = match upper.op {
                 RelOp::Le | RelOp::Lt => upper_r,
-                _ => return preds.iter().map(|p| fmt_valid_num_pred(tcx,local_names,p)).collect::<Vec<_>>().join(", "),
+                _ => {
+                    return preds
+                        .iter()
+                        .map(|p| fmt_valid_num_pred(tcx, local_names, p))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                }
             };
             return format!("{upper_val}, {lb}{lo}, {hi}{ub}");
         }
