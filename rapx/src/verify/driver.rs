@@ -963,8 +963,27 @@ fn fmt_contract_expanded(
             format!("({ptr} as usize) % align_of::<{ty}>() == 0")
         }
         PropertyKind::InBound => {
-            let joined = args.join(", ");
-            format!("InBound({joined})")
+            use crate::verify::contract::{ContractExpr, PropertyArg};
+            let placeholder = format!("InBound({})", args.join(", "));
+            match property.args.first() {
+                Some(PropertyArg::Expr(ContractExpr::IndexAccess { slice: _, index })) => {
+                    let idx = fmt_expr_plain(tcx, local_names, index);
+                    format!("byte range accessed through [{idx}] stays within slice bounds")
+                }
+                Some(PropertyArg::Place(_)) => {
+                    let ty = property
+                        .args
+                        .get(1)
+                        .and_then(|a| match a {
+                            PropertyArg::Ty(ty) => Some(ty.to_string()),
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| "?".to_string());
+                    let cnt = args.get(2).map(|s| s.as_str()).unwrap_or("?");
+                    format!("{cnt} × sizeof({ty}) bytes from pointer stay within allocation")
+                }
+                _ => placeholder,
+            }
         }
         PropertyKind::ValidPtr => {
             let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
