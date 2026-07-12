@@ -28,7 +28,9 @@ use crate::{
     },
 };
 
-use super::common::{SmtCheckResult, SmtChecker, call_destination, failed_smt, rvalue_source_place};
+use super::common::{
+    SmtCheckResult, SmtChecker, call_destination, failed_smt, rvalue_source_place,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum AliveProducer {

@@ -75,9 +75,7 @@ impl<'tcx> CallGraphAnalyzer<'tcx> {
                         &self.tcx.mir_for_ctfe(def_id)
                     }
                     #[cfg(all(rapx_rustc_ge_196, not(rapx_rustc_ge_199)))]
-                    DefKind::InlineConst => {
-                        &self.tcx.mir_for_ctfe(def_id)
-                    }
+                    DefKind::InlineConst => &self.tcx.mir_for_ctfe(def_id),
                     #[cfg(not(rapx_rustc_ge_196))]
                     DefKind::Const
                     | DefKind::Static { .. }
@@ -87,9 +85,7 @@ impl<'tcx> CallGraphAnalyzer<'tcx> {
                         &self.tcx.mir_for_ctfe(def_id)
                     }
                     #[cfg(all(not(rapx_rustc_ge_196), not(rapx_rustc_ge_199)))]
-                    DefKind::InlineConst => {
-                        &self.tcx.mir_for_ctfe(def_id)
-                    }
+                    DefKind::InlineConst => &self.tcx.mir_for_ctfe(def_id),
                     // These don't have MIR or shouldn't be visited
                     _ => {
                         rap_debug!("Skipping def_id {:?} with kind {:?}", def_id, def_kind);

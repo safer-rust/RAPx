@@ -33,10 +33,24 @@ fn init_inner(tcx: TyCtxt) -> Intrinsics {
     {
         for fn_def in krate.fn_defs() {
             let fn_name: Box<str> = fn_def.name().into();
-            let idx = path_to_idx.get(&*fn_name).copied()
-                .or_else(|| fn_name.strip_prefix("core::").and_then(|s| path_to_idx.get(s).copied()))
-                .or_else(|| fn_name.strip_prefix("std::").and_then(|s| path_to_idx.get(s).copied()))
-                .or_else(|| fn_name.strip_prefix("alloc::").and_then(|s| path_to_idx.get(s).copied()));
+            let idx = path_to_idx
+                .get(&*fn_name)
+                .copied()
+                .or_else(|| {
+                    fn_name
+                        .strip_prefix("core::")
+                        .and_then(|s| path_to_idx.get(s).copied())
+                })
+                .or_else(|| {
+                    fn_name
+                        .strip_prefix("std::")
+                        .and_then(|s| path_to_idx.get(s).copied())
+                })
+                .or_else(|| {
+                    fn_name
+                        .strip_prefix("alloc::")
+                        .and_then(|s| path_to_idx.get(s).copied())
+                });
             if let Some(idx) = idx {
                 assert_eq!(
                     indices.insert(idx, true),

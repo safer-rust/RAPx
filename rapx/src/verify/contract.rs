@@ -657,7 +657,9 @@ impl<'tcx> Property<'tcx> {
                 )))
             }
             // Treat `self.len()` (method-call sugar) as the slice length `len(self)`.
-            Expr::MethodCall(expr_method) if expr_method.method == "len" && expr_method.args.is_empty() => {
+            Expr::MethodCall(expr_method)
+                if expr_method.method == "len" && expr_method.args.is_empty() =>
+            {
                 ContractExpr::Len(Box::new(Self::parse_contract_expr(
                     tcx,
                     def_id,
@@ -1050,12 +1052,10 @@ fn ty_is_slice(ty: Ty<'_>) -> bool {
 
 /// Extract the inner type from an `Expr::Array` (the `[T]` notation in
 /// `TransmuteWithoutAlign([T], [U])`), then resolve it via `parse_type`.
-fn unwrap_array_expr<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    def_id: DefId,
-    expr: &Expr,
-) -> Option<Ty<'tcx>> {
-    if let Expr::Array(arr) = expr && arr.elems.len() == 1 {
+fn unwrap_array_expr<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, expr: &Expr) -> Option<Ty<'tcx>> {
+    if let Expr::Array(arr) = expr
+        && arr.elems.len() == 1
+    {
         return Property::parse_type(tcx, def_id, &arr.elems[0], "TransmuteWithoutAlign");
     }
     Property::parse_type(tcx, def_id, expr, "TransmuteWithoutAlign")

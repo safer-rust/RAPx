@@ -2,7 +2,11 @@ use rustc_middle::ty::{Ty, TyCtxt, TyKind};
 
 use super::common::{SmtCheckResult, SmtChecker};
 use super::valid_transmute;
-use crate::verify::{contract::{Property, PropertyArg}, helpers::Checkpoint, verifier::ForwardVisitResult};
+use crate::verify::{
+    contract::{Property, PropertyArg},
+    helpers::Checkpoint,
+    verifier::ForwardVisitResult,
+};
 
 pub(crate) fn check<'tcx>(
     checker: &SmtChecker<'tcx>,
@@ -11,7 +15,8 @@ pub(crate) fn check<'tcx>(
     _forward: &ForwardVisitResult<'tcx>,
 ) -> SmtCheckResult {
     let tys: Vec<Ty<'tcx>> = property
-        .args.iter()
+        .args
+        .iter()
         .filter_map(|arg| match arg {
             PropertyArg::Ty(ty) => Some(checker.instantiate_callsite_ty(checkpoint, *ty)),
             _ => None,
@@ -55,8 +60,15 @@ fn slice_element(ty: Ty<'_>) -> Option<Ty<'_>> {
     }
 }
 
-fn try_size_of<'tcx>(tcx: TyCtxt<'tcx>, def_id: rustc_span::def_id::DefId, ty: Ty<'tcx>) -> Option<u64> {
+fn try_size_of<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def_id: rustc_span::def_id::DefId,
+    ty: Ty<'tcx>,
+) -> Option<u64> {
     let typing_env = rustc_middle::ty::TypingEnv::post_analysis(tcx, def_id);
-    let input = rustc_middle::ty::PseudoCanonicalInput { typing_env, value: ty };
+    let input = rustc_middle::ty::PseudoCanonicalInput {
+        typing_env,
+        value: ty,
+    };
     tcx.layout_of(input).ok().map(|l| l.size.bytes())
 }

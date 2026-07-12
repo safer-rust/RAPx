@@ -1,5 +1,5 @@
-use clap::Args;
 use super::analyze::DEFAULT_POSTFIX_REPEAT;
+use clap::Args;
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub enum VerifyMode {

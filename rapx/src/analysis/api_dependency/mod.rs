@@ -137,7 +137,8 @@ impl<'tcx> Analysis for ApiDependencyAnalyzer<'tcx> {
     fn reset(&mut self) {
         self.api_graph = ApiDependencyGraph::new(self.tcx);
     }
-}impl<'tcx> ApiDependencyAnalyzer<'tcx> {
+}
+impl<'tcx> ApiDependencyAnalyzer<'tcx> {
     pub fn get_api_dependency_graph(&self) -> ApiDependencyGraph<'tcx> {
         self.api_graph.clone()
     }
