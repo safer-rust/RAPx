@@ -862,6 +862,7 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
 
 impl<'tcx> VerifyRun<'tcx> {
     fn print_contracts_debug(&self, targets: &[FunctionTarget<'tcx>]) {
+        use crate::compat::FxHashSet;
         use crate::verify::contract::PropertyKind;
 
         rap_info!("============================================================");
@@ -870,17 +871,15 @@ impl<'tcx> VerifyRun<'tcx> {
         rap_info!("");
 
         for target in targets {
-            let target_path = self.tcx.def_path_str(target.def_id);
-            rap_info!("fn {}", target_path);
-            rap_info!("{:-<1$}", "", 76);
-
+            let mut lines: Vec<String> = Vec::new();
+            let mut seen_kinds = FxHashSet::default();
             let local_names = self.resolve_local_names(target.def_id);
 
             for property in &target.caller_requires {
-                rap_info!(
-                    "  {}",
-                    fmt_contract_expanded(self.tcx, &local_names, property)
-                );
+                if property.kind != PropertyKind::Unknown {
+                    lines.push(fmt_contract_expanded(self.tcx, &local_names, property));
+                    seen_kinds.insert(property.kind.clone());
+                }
             }
 
             let mut callee_ids: Vec<_> = target.callee_requires.keys().copied().collect();
@@ -889,26 +888,33 @@ impl<'tcx> VerifyRun<'tcx> {
                 let callee_names = self.resolve_local_names(callee_id);
                 if let Some(contracts) = target.callee_requires.get(&callee_id) {
                     for property in contracts {
-                        if property.kind == PropertyKind::Unknown {
-                            continue;
+                        if property.kind != PropertyKind::Unknown
+                            && !seen_kinds.contains(&property.kind)
+                        {
+                            lines.push(fmt_contract_expanded(
+                                self.tcx,
+                                &callee_names,
+                                property,
+                            ));
                         }
-                        rap_info!(
-                            "  {}",
-                            fmt_contract_expanded(self.tcx, &callee_names, property)
-                        );
                     }
                 }
             }
 
-            if !target.struct_invariants.is_empty() {
-                for property in &target.struct_invariants {
-                    rap_info!(
-                        "  {}",
-                        fmt_contract_expanded(self.tcx, &local_names, property)
-                    );
-                }
+            for property in &target.struct_invariants {
+                lines.push(fmt_contract_expanded(self.tcx, &local_names, property));
             }
 
+            if lines.is_empty() {
+                continue;
+            }
+
+            let target_path = self.tcx.def_path_str(target.def_id);
+            rap_info!("fn {}", target_path);
+            rap_info!("{:-<1$}", "", 76);
+            for line in &lines {
+                rap_info!("  // {line}");
+            }
             rap_info!("");
         }
     }
@@ -1065,9 +1071,9 @@ fn fmt_contract_expanded(
             args.first().map(|s| s.as_str()).unwrap_or("ptr")
         ),
         PropertyKind::Unreachable => "!Reachable()".to_string(),
-        PropertyKind::Unknown => return "// (unresolved contract)".to_string(),
+        PropertyKind::Unknown => "(unresolved contract)".to_string(),
     };
-    format!("// {call}  ⇒  {meaning}")
+    format!("{call}  ⇒  {meaning}")
 }
 
 fn fmt_arg_plain(
