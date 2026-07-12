@@ -871,6 +871,10 @@ impl<'tcx> VerifyRun<'tcx> {
         rap_info!("");
 
         for target in targets {
+            if target.caller_requires.is_empty() {
+                continue;
+            }
+
             let mut lines: Vec<(String, String)> = Vec::new();
             let mut seen_kinds = FxHashSet::default();
             let local_names = self.resolve_local_names(target.def_id);
