@@ -871,7 +871,7 @@ impl<'tcx> VerifyRun<'tcx> {
         rap_info!("");
 
         for target in targets {
-            let mut lines: Vec<String> = Vec::new();
+            let mut lines: Vec<(String, String)> = Vec::new();
             let mut seen_kinds = FxHashSet::default();
             let local_names = self.resolve_local_names(target.def_id);
 
@@ -908,8 +908,9 @@ impl<'tcx> VerifyRun<'tcx> {
             let target_path = self.tcx.def_path_str(target.def_id);
             rap_info!("fn {}", target_path);
             rap_info!("{:-<1$}", "", 76);
-            for line in &lines {
-                rap_info!("  // {line}");
+            for (tag, meaning) in &lines {
+                rap_info!("  Safety Tag: {tag}");
+                rap_info!("    Meaning:   {meaning}");
             }
             rap_info!("");
         }
@@ -939,7 +940,7 @@ fn fmt_contract_expanded(
     tcx: rustc_middle::ty::TyCtxt<'_>,
     local_names: &[String],
     property: &crate::verify::contract::Property<'_>,
-) -> String {
+) -> (String, String) {
     use crate::verify::contract::PropertyKind;
     let args: Vec<String> = property
         .args
@@ -947,7 +948,29 @@ fn fmt_contract_expanded(
         .map(|a| fmt_arg_plain(tcx, local_names, a))
         .collect();
     let tag = format!("{:?}", property.kind);
-    let call = format!("{}({})", tag, args.join(", "));
+    let call = if matches!(property.kind, PropertyKind::InBound)
+        && matches!(
+            property.args.first(),
+            Some(crate::verify::contract::PropertyArg::Expr(
+                crate::verify::contract::ContractExpr::IndexAccess { .. }
+            ))
+        )
+    {
+        use crate::verify::contract::{ContractExpr, PropertyArg};
+        if let Some(PropertyArg::Expr(ContractExpr::IndexAccess { slice, index })) =
+            property.args.first()
+        {
+            let mut s = fmt_expr_plain(tcx, local_names, slice);
+            s = s.strip_prefix("&mut ").unwrap_or(&s).to_string();
+            s = s.strip_prefix("&").unwrap_or(&s).to_string();
+            let i = fmt_expr_plain(tcx, local_names, index);
+            format!("{tag}({s}, {i})")
+        } else {
+            unreachable!()
+        }
+    } else {
+        format!("{tag}({})", args.join(", "))
+    };
     let meaning = match property.kind {
         PropertyKind::NonNull => format!(
             "{} as usize != 0",
@@ -1096,7 +1119,7 @@ fn fmt_contract_expanded(
         PropertyKind::Unreachable => "!Reachable()".to_string(),
         PropertyKind::Unknown => "(unresolved contract)".to_string(),
     };
-    format!("{call}  ⇒  {meaning}")
+    (call, meaning)
 }
 
 fn fmt_arg_plain(
