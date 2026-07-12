@@ -974,11 +974,7 @@ fn fmt_contract_expanded(
         && let Some(crate::verify::contract::PropertyArg::Predicates(preds)) =
             property.args.first()
     {
-        let parts: Vec<String> = preds
-            .iter()
-            .map(|p| fmt_valid_num_pred(tcx, local_names, p))
-            .collect();
-        format!("{tag}({})", parts.join(", "))
+        format!("{tag}({})", fmt_valid_num_call(tcx, local_names, preds))
     } else {
         call
     };
@@ -1270,6 +1266,49 @@ fn fmt_valid_num_pred(
         return fmt_expr_plain(tcx, local_names, &pred.lhs);
     }
     fmt_pred_plain(tcx, local_names, pred)
+}
+
+fn fmt_valid_num_call(
+    tcx: rustc_middle::ty::TyCtxt<'_>,
+    local_names: &[String],
+    preds: &[crate::verify::contract::NumericPredicate<'_>],
+) -> String {
+    use crate::verify::contract::RelOp;
+
+    if preds.len() == 2 {
+        let (lower, upper) = (&preds[0], &preds[1]);
+        let lower_l = fmt_expr_plain(tcx, local_names, &lower.lhs);
+        let lower_val = fmt_expr_plain(tcx, local_names, &lower.rhs);
+        let upper_val = fmt_expr_plain(tcx, local_names, &upper.lhs);
+        let upper_r = fmt_expr_plain(tcx, local_names, &upper.rhs);
+        if lower_val == upper_val {
+            let lo = match lower.op {
+                RelOp::Gt | RelOp::Le => lower_l,
+                _ => return preds.iter().map(|p| fmt_valid_num_pred(tcx,local_names,p)).collect::<Vec<_>>().join(", "),
+            };
+            let lb = if matches!(lower.op, RelOp::Ge | RelOp::Le) {
+                "["
+            } else {
+                "("
+            };
+            let ub = if matches!(upper.op, RelOp::Le | RelOp::Ge) {
+                "]"
+            } else {
+                ")"
+            };
+            let hi = match upper.op {
+                RelOp::Le | RelOp::Lt => upper_r,
+                _ => return preds.iter().map(|p| fmt_valid_num_pred(tcx,local_names,p)).collect::<Vec<_>>().join(", "),
+            };
+            return format!("{upper_val}, {lb}{lo}, {hi}{ub}");
+        }
+    }
+
+    preds
+        .iter()
+        .map(|p| fmt_valid_num_pred(tcx, local_names, p))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn fmt_pred_plain(
