@@ -874,6 +874,7 @@ impl<'tcx> VerifyRun<'tcx> {
 
         for target in targets {
             let local_names = self.resolve_local_names(target.def_id);
+            let arg_names = self.resolve_arg_names(target.def_id);
             let has_caller = target
                 .caller_requires
                 .iter()
@@ -902,15 +903,17 @@ impl<'tcx> VerifyRun<'tcx> {
                 }
 
                 let target_path = self.tcx.def_path_str(target.def_id);
-                rap_info!("fn {}", target_path);
+                rap_info!("{}", fmt_fn_with_params(&target_path, &arg_names));
                 rap_info!("{:-<1$}", "", 76);
                 emit_lines(&lines);
                 rap_info!("");
             } else {
                 let mut callee_ids: Vec<_> = target.callee_requires.keys().copied().collect();
                 callee_ids.sort_by_key(|def_id| self.tcx.def_path_str(*def_id));
+                let mut first_callee = true;
                 for callee_id in callee_ids {
                     let callee_names = self.resolve_local_names(callee_id);
+                    let callee_arg_names = self.resolve_arg_names(callee_id);
                     if let Some(contracts) = target.callee_requires.get(&callee_id) {
                         let mut lines: Vec<(String, String)> = Vec::new();
                         for property in contracts {
@@ -925,11 +928,14 @@ impl<'tcx> VerifyRun<'tcx> {
                             }
                         }
                         if !lines.is_empty() {
+                            if !first_callee {
+                                rap_info!("");
+                            }
+                            first_callee = false;
                             let callee_path = self.tcx.def_path_str(callee_id);
-                            rap_info!("callee `{callee_path}`");
+                            rap_info!("{}", fmt_fn_with_params(&callee_path, &callee_arg_names));
                             rap_info!("{:-<1$}", "", 76);
                             emit_lines(&lines);
-                            rap_info!("");
                         }
                     }
                 }
@@ -961,11 +967,8 @@ impl<'tcx> VerifyRun<'tcx> {
                     }
                 }
                 if !callee_lines.is_empty() {
-                    if !lines.is_empty() {
-                        lines.push((String::new(), String::new()));
-                    }
                     let callee_path = self.tcx.def_path_str(callee_id);
-                    lines.push((format!("callee `{callee_path}`"), String::new()));
+                    lines.push((format!("[{}]", callee_path), String::new()));
                     lines.extend(callee_lines);
                 }
             }
@@ -990,18 +993,57 @@ impl<'tcx> VerifyRun<'tcx> {
             })
             .collect()
     }
+
+    fn resolve_arg_names(&self, def_id: rustc_hir::def_id::DefId) -> Vec<String> {
+        if !self.tcx.is_mir_available(def_id) {
+            return Vec::new();
+        }
+        let body = self.tcx.optimized_mir(def_id);
+        body.local_decls
+            .iter()
+            .enumerate()
+            .skip(1) // skip _0 (return place)
+            .take(body.arg_count)
+            .map(|(i, decl)| {
+                let span = decl.source_info.span;
+                self.tcx
+                    .sess
+                    .source_map()
+                    .span_to_snippet(span)
+                    .unwrap_or_else(|_| format!("_{}", i))
+            })
+            .collect()
+    }
+}
+
+fn fmt_fn_with_params(path: &str, arg_names: &[String]) -> String {
+    if arg_names.is_empty() {
+        format!("fn {}", path)
+    } else {
+        format!("fn {}({})", path, arg_names.join(", "))
+    }
 }
 
 fn emit_lines(lines: &[(String, String)]) {
+    let mut first = true;
     for (tag, meaning) in lines {
         if tag.is_empty() && meaning.is_empty() {
             rap_info!("");
         } else if meaning.is_empty() {
-            rap_info!("  // {tag}");
+            if let Some(path) = tag.strip_prefix("[").and_then(|s| s.strip_suffix("]")) {
+                if !first {
+                    rap_info!("");
+                }
+                rap_info!("fn {}", path);
+                rap_info!("{:-<1$}", "", 76);
+            } else {
+                rap_info!("  // {tag}");
+            }
         } else {
             rap_info!("  Safety Tag: {tag}");
             rap_info!("    Meaning:   {meaning}");
         }
+        first = false;
     }
 }
 
@@ -1017,13 +1059,17 @@ fn fmt_contract_expanded(
         .map(|a| fmt_arg_plain(tcx, local_names, a))
         .collect();
     let tag = format!("{:?}", property.kind);
-    let call = if matches!(property.kind, PropertyKind::InBound)
+    let call = if matches!(property.kind, PropertyKind::TransmuteWithoutAlign) {
+        let wrapped: Vec<String> = args.iter().map(|a| format!("[{a}]")).collect();
+        format!("{tag}({})", wrapped.join(", "))
+    } else if matches!(property.kind, PropertyKind::InBound)
         && matches!(
             property.args.first(),
             Some(crate::verify::contract::PropertyArg::Expr(
                 crate::verify::contract::ContractExpr::IndexAccess { .. }
             ))
-        ) {
+        )
+    {
         use crate::verify::contract::{ContractExpr, PropertyArg};
         if let Some(PropertyArg::Expr(ContractExpr::IndexAccess { slice, index })) =
             property.args.first()
@@ -1148,8 +1194,15 @@ fn fmt_contract_expanded(
             format!("bytes_of({dst}) within bytes_of({src})")
         }
         PropertyKind::TransmuteWithoutAlign => {
-            let joined = args.join(", ");
-            format!("size_of({joined}) are equal and alignment-compatible")
+            let src = args.first().map(|s| s.as_str()).unwrap_or("T");
+            let dst = args.get(1).map(|s| s.as_str()).unwrap_or("U");
+            let line1 = format!(
+                "[{src}] as [{dst}]: every size_of({dst})-byte contiguous chunk of [{src}] is a valid bit-pattern of {dst} (type_invariant satisfied, alignment not required)"
+            );
+            let line2 = format!(
+                "               forall w subset bytes([{src}]), |w| == |{dst}|: reinterpret_as_{dst}(w) |= type_invariant({dst}) \\ align_of({dst})",
+            );
+            format!("{line1}\n{line2}")
         }
         PropertyKind::Deref => {
             let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
@@ -1242,7 +1295,7 @@ fn fmt_place_plain(
     place: &crate::verify::contract::ContractPlace<'_>,
     local_names: &[String],
 ) -> String {
-    let base = match place.base {
+    let mut base = match place.base {
         crate::verify::contract::PlaceBase::Return => "return".to_string(),
         crate::verify::contract::PlaceBase::Arg(i) => format!("arg:{}", i),
         crate::verify::contract::PlaceBase::Local(l) => local_names
@@ -1250,6 +1303,8 @@ fn fmt_place_plain(
             .cloned()
             .unwrap_or_else(|| format!("local_{}", l)),
     };
+    base = base.strip_prefix("&mut ").unwrap_or(&base).to_string();
+    base = base.strip_prefix("&").unwrap_or(&base).to_string();
     if place.projections.is_empty() {
         base
     } else {
@@ -1380,7 +1435,7 @@ fn fmt_valid_num_call(
                         .join(", ");
                 }
             };
-            return format!("{upper_val}, {lb}{lo}, {hi}{ub}");
+            return format!("\"{upper_val}, {lb}{lo}, {hi}{ub}\"");
         }
     }
 

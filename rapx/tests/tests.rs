@@ -162,13 +162,11 @@ fn uaf_3() {
     assert_contain(&output, "Double free detected");
 }
 
-/*
 #[test]
 fn uaf_4() {
     let output = run_with_args("check/uaf_4", CHECK_UAF_CMD);
     assert_contain(&output, "Dangling pointer detected in function \"call\"");
 }
-*/
 
 #[test]
 fn uaf_5() {
@@ -1947,6 +1945,37 @@ fn verify_std_challenge_17() {
         37,
         "expected 37 SOUND results"
     );
+}
+
+#[test]
+fn transmute_without_align_unsound() {
+    let output = run_with_args("verify/transmute_without_align_unsound", VERIFY_CMD);
+    assert_contain(&output, "function: align_without_contract_generic");
+    assert_contain(&output, "result: UNSOUND");
+    assert_contain(&output, "function: align_without_contract_u32");
+    assert_contain(&output, "result: UNSOUND");
+    assert_contain(&output, "function: align_without_contract_u16");
+    assert_contain(&output, "result: UNSOUND");
+    assert_contain(&output, "function: align_without_contract_u8");
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn transmute_without_align_nonzero() {
+    let output = run_with_args("verify/transmute_without_align_nonzero", VERIFY_CMD);
+    assert_contain(&output, "function: align_to_nonzero_u16");
+    assert_contain(&output, "result: UNSOUND");
+    assert_contain(&output, "function: align_to_nonzero_u32");
+    assert_contain(&output, "result: UNSOUND");
+    assert_contain(&output, "function: align_to_nonzero_u8");
+    assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn transmute_without_align_sound() {
+    let output = run_with_args("verify/transmute_without_align_sound", VERIFY_CMD);
+    assert_contain(&output, "function: align_to_u8_sound");
+    assert_contain(&output, "result: SOUND");
 }
 
 #[test]

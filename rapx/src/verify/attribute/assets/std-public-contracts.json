@@ -3164,19 +3164,19 @@
   ],
   "core::slice::align_to": [
     {
-      "tag": "Typed",
+      "tag": "TransmuteWithoutAlign",
       "args": [
-        "self",
-        "U"
+        "[T]",
+        "[U]"
       ]
     }
   ],
   "core::slice::align_to_mut": [
     {
-      "tag": "Typed",
+      "tag": "TransmuteWithoutAlign",
       "args": [
-        "self",
-        "U"
+        "[T]",
+        "[U]"
       ]
     }
   ],
@@ -5509,19 +5509,19 @@
   ],
   "core::slice::<impl [T]>::align_to": [
     {
-      "tag": "ValidTransmute",
+      "tag": "TransmuteWithoutAlign",
       "args": [
-        "T",
-        "U"
+        "[T]",
+        "[U]"
       ]
     }
   ],
   "core::slice::<impl [T]>::align_to_mut": [
     {
-      "tag": "ValidTransmute",
+      "tag": "TransmuteWithoutAlign",
       "args": [
-        "T",
-        "U"
+        "[T]",
+        "[U]"
       ]
     }
   ],

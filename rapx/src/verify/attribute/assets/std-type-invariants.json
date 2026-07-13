@@ -13,5 +13,23 @@
       {"tag": "NonNull", "args": ["$ptr"]},
       {"tag": "Init", "args": ["$ptr", "$elem_ty", "$len"]}
     ]
+  },
+  "core::num::NonZero<T>": {
+    "comment": "NonZero integer — inner value must be non-zero",
+    "invariants": [
+      {"tag": "ValidNum", "args": ["$self != 0"]}
+    ]
+  },
+  "core::num::nonzero::NonZero<T>": {
+    "comment": "NonZero integer (full path) — inner value must be non-zero",
+    "invariants": [
+      {"tag": "ValidNum", "args": ["$self != 0"]}
+    ]
+  },
+  "std::num::NonZero<T>": {
+    "comment": "NonZero integer (std path) — inner value must be non-zero",
+    "invariants": [
+      {"tag": "ValidNum", "args": ["$self != 0"]}
+    ]
   }
 }
