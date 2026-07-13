@@ -21,16 +21,14 @@ use crate::{
     helpers::name::parse_signature,
     verify::{
         call_summary::CallEffect,
-        contract::Property,
+        contract::{Property, PropertyArg},
         def_use::PlaceKey,
         helpers::Checkpoint,
         verifier::{AbstractValue, CallSummary, ForwardVisitResult, StateFact},
     },
 };
 
-use super::common::{
-    SmtCheckResult, SmtChecker, call_destination, failed_smt, rvalue_source_place,
-};
+use super::common::{SmtCheckResult, SmtChecker, call_destination, failed_smt, rvalue_source_place};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum AliveProducer {
@@ -91,14 +89,28 @@ pub(crate) fn check<'tcx>(
     match &signature.return_lifetime {
         ReturnLifetime::Elided => check_elided_return(producer, &signature),
         ReturnLifetime::Static => failed_smt("Alive failed: returned slice is widened to 'static"),
-        ReturnLifetime::Named(lifetime) => check_named_return(
-            checker.tcx,
-            checkpoint.caller,
-            producer,
-            &signature,
-            lifetime,
-            pointer_origin_param,
-        ),
+        ReturnLifetime::Named(lifetime) => {
+            let contract_lifetime = property.args.get(1).and_then(|a| match a {
+                PropertyArg::Ident(id) => Some(id.as_str()),
+                _ => None,
+            });
+            if let Some(cl) = contract_lifetime {
+                let cl = cl.strip_prefix('\'').unwrap_or(cl);
+                if !lifetime.contains(cl) {
+                    return failed_smt(format!(
+                        "Alive failed: contract declares lifetime '{cl} but return uses '{lifetime}"
+                    ));
+                }
+            }
+            check_named_return(
+                checker.tcx,
+                checkpoint.caller,
+                producer,
+                &signature,
+                lifetime,
+                pointer_origin_param,
+            )
+        }
         ReturnLifetime::Unknown => {
             SmtCheckResult::unknown("Alive return lifetime shape is not supported yet")
         }

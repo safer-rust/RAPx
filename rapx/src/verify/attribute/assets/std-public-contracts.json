@@ -790,7 +790,8 @@
     {
       "tag": "Alive",
       "args": [
-        "ptr"
+        "ptr",
+        "'a"
       ]
     }
   ],
@@ -1604,7 +1605,8 @@
     {
       "tag": "Alive",
       "args": [
-        "self"
+        "self",
+        "'a"
       ]
     },
     {
@@ -1647,7 +1649,8 @@
     {
       "tag": "Alive",
       "args": [
-        "self"
+        "self",
+        "'a"
       ]
     },
     {
@@ -2027,7 +2030,8 @@
     {
       "tag": "Alive",
       "args": [
-        "self"
+        "self",
+        "'a"
       ]
     },
     {
@@ -2688,7 +2692,8 @@
     {
       "tag": "Alive",
       "args": [
-        "self"
+        "self",
+        "'a"
       ]
     },
     {
@@ -2731,7 +2736,8 @@
     {
       "tag": "Alive",
       "args": [
-        "self"
+        "self",
+        "'a"
       ]
     },
     {
@@ -3387,7 +3393,8 @@
     {
       "tag": "Alive",
       "args": [
-        "range"
+        "range",
+        "'a"
       ]
     },
     {
@@ -3442,7 +3449,8 @@
     {
       "tag": "Alive",
       "args": [
-        "range"
+        "range",
+        "'a"
       ]
     },
     {
@@ -3579,7 +3587,8 @@
     {
       "tag": "Alive",
       "args": [
-        "ptr"
+        "ptr",
+        "'a"
       ]
     },
     {
@@ -3643,7 +3652,8 @@
     {
       "tag": "Alive",
       "args": [
-        "ptr"
+        "ptr",
+        "'a"
       ]
     },
     {
@@ -5077,7 +5087,8 @@
     {
       "tag": "Alive",
       "args": [
-        "self"
+        "self",
+        "'a"
       ]
     }
   ],
@@ -5093,7 +5104,8 @@
     {
       "tag": "Alive",
       "args": [
-        "name"
+        "name",
+        "'a"
       ]
     },
     {
