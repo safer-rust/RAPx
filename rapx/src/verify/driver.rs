@@ -1236,7 +1236,7 @@ fn fmt_contract_expanded(
         PropertyKind::Alive => {
             let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
             if let Some(lt) = args.get(1) {
-                format!("{ptr}: '{lt}")
+                format!("{ptr} outlives '{lt}")
             } else {
                 format!("{ptr} outlives return")
             }
