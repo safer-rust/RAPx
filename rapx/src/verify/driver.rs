@@ -871,6 +871,7 @@ impl<'tcx> VerifyRun<'tcx> {
         rap_info!("");
 
         let mut global_seen = FxHashSet::default();
+        let mut global_seen_callees = FxHashSet::default();
 
         for target in targets {
             let local_names = self.resolve_local_names(target.def_id);
@@ -896,22 +897,31 @@ impl<'tcx> VerifyRun<'tcx> {
                     lines.push(fmt_contract_expanded(self.tcx, &local_names, property));
                 }
 
-                self.append_callee_contracts(&target, &mut lines, &mut seen_kinds);
+                self.append_callee_contracts(
+                    &target,
+                    &mut lines,
+                    &mut seen_kinds,
+                    &mut global_seen_callees,
+                );
 
                 if lines.is_empty() {
                     continue;
                 }
 
-                let target_path = self.tcx.def_path_str(target.def_id);
+                let target_path = fmt_fn_path_with_generics(self.tcx, target.def_id);
                 rap_info!("{}", fmt_fn_with_params(&target_path, &arg_names));
                 rap_info!("{:-<1$}", "", 76);
                 emit_lines(&lines);
+                rap_info!("{:-<1$}", "", 76);
                 rap_info!("");
             } else {
                 let mut callee_ids: Vec<_> = target.callee_requires.keys().copied().collect();
                 callee_ids.sort_by_key(|def_id| self.tcx.def_path_str(*def_id));
                 let mut first_callee = true;
                 for callee_id in callee_ids {
+                    if !global_seen_callees.insert(callee_id) {
+                        continue;
+                    }
                     let callee_names = self.resolve_local_names(callee_id);
                     let callee_arg_names = self.resolve_arg_names(callee_id);
                     if let Some(contracts) = target.callee_requires.get(&callee_id) {
@@ -932,10 +942,12 @@ impl<'tcx> VerifyRun<'tcx> {
                                 rap_info!("");
                             }
                             first_callee = false;
-                            let callee_path = self.tcx.def_path_str(callee_id);
+                            let callee_path = fmt_fn_path_with_generics(self.tcx, callee_id);
                             rap_info!("{}", fmt_fn_with_params(&callee_path, &callee_arg_names));
                             rap_info!("{:-<1$}", "", 76);
                             emit_lines(&lines);
+                            rap_info!("{:-<1$}", "", 76);
+                            rap_info!("");
                         }
                     }
                 }
@@ -948,12 +960,16 @@ impl<'tcx> VerifyRun<'tcx> {
         target: &FunctionTarget<'tcx>,
         lines: &mut Vec<(String, String)>,
         seen_kinds: &mut crate::compat::FxHashSet<crate::verify::contract::PropertyKind>,
+        global_seen_callees: &mut crate::compat::FxHashSet<rustc_hir::def_id::DefId>,
     ) {
         use crate::compat::FxHashSet;
         use crate::verify::contract::PropertyKind;
         let mut callee_ids: Vec<_> = target.callee_requires.keys().copied().collect();
         callee_ids.sort_by_key(|def_id| self.tcx.def_path_str(*def_id));
         for callee_id in callee_ids {
+            if !global_seen_callees.insert(callee_id) {
+                continue;
+            }
             let callee_names = self.resolve_local_names(callee_id);
             if let Some(contracts) = target.callee_requires.get(&callee_id) {
                 let mut callee_seen = FxHashSet::default();
@@ -967,8 +983,10 @@ impl<'tcx> VerifyRun<'tcx> {
                     }
                 }
                 if !callee_lines.is_empty() {
-                    let callee_path = self.tcx.def_path_str(callee_id);
-                    lines.push((format!("[{}]", callee_path), String::new()));
+                    let callee_arg_names = self.resolve_arg_names(callee_id);
+                    let callee_path = fmt_fn_path_with_generics(self.tcx, callee_id);
+                    let header = fmt_fn_with_params(&callee_path, &callee_arg_names);
+                    lines.push((format!("[{header}]"), String::new()));
                     lines.extend(callee_lines);
                 }
             }
@@ -1024,17 +1042,33 @@ fn fmt_fn_with_params(path: &str, arg_names: &[String]) -> String {
     }
 }
 
+fn fmt_fn_path_with_generics(
+    tcx: rustc_middle::ty::TyCtxt<'_>,
+    def_id: rustc_hir::def_id::DefId,
+) -> String {
+    let path = tcx.def_path_str(def_id);
+    let generics = tcx.generics_of(def_id);
+    let params: Vec<_> = generics
+        .own_params
+        .iter()
+        .filter(|p| !matches!(p.kind, rustc_middle::ty::GenericParamDefKind::Lifetime))
+        .map(|p| p.name.to_string())
+        .collect();
+    if params.is_empty() {
+        path
+    } else {
+        format!("{}::<{}>", path, params.join(", "))
+    }
+}
+
 fn emit_lines(lines: &[(String, String)]) {
-    let mut first = true;
     for (tag, meaning) in lines {
         if tag.is_empty() && meaning.is_empty() {
             rap_info!("");
         } else if meaning.is_empty() {
-            if let Some(path) = tag.strip_prefix("[").and_then(|s| s.strip_suffix("]")) {
-                if !first {
-                    rap_info!("");
-                }
-                rap_info!("fn {}", path);
+            if let Some(header) = tag.strip_prefix("[").and_then(|s| s.strip_suffix("]")) {
+                rap_info!("");
+                rap_info!("{}", header);
                 rap_info!("{:-<1$}", "", 76);
             } else {
                 rap_info!("  // {tag}");
@@ -1043,7 +1077,6 @@ fn emit_lines(lines: &[(String, String)]) {
             rap_info!("  Safety Tag: {tag}");
             rap_info!("    Meaning:   {meaning}");
         }
-        first = false;
     }
 }
 
@@ -1159,7 +1192,11 @@ fn fmt_contract_expanded(
             let p = args.first().map(|s| s.as_str()).unwrap_or("ptr");
             let ty = args.get(1).map(|s| s.as_str()).unwrap_or("T");
             let cnt = args.get(2).map(|s| s.as_str()).unwrap_or("count");
-            format!("for all i in 0..{cnt}: *({p} + i*sizeof({ty})) = valid({ty})")
+            let line1 = format!("{cnt} element(s) of type {ty} at {p} are initialized");
+            let line2 = format!(
+                "                     forall i in 0..{cnt}: *({p} + i*sizeof({ty})) |= type_invariant({ty})"
+            );
+            format!("{line1}\n{line2}")
         }
         PropertyKind::Typed => {
             let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
@@ -1168,11 +1205,11 @@ fn fmt_contract_expanded(
         }
         PropertyKind::Alive => {
             let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
-            format!("lifetime(*{ptr}) within lifetimes(caller_args)")
+            format!("{ptr} points to live allocation (not freed)")
         }
         PropertyKind::Alias => {
             let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
-            format!("no conflicting mutable alias for {ptr}")
+            format!("{ptr} has exclusive access (no conflicting mutable aliases)")
         }
         PropertyKind::Allocated => {
             let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
@@ -1200,7 +1237,7 @@ fn fmt_contract_expanded(
                 "[{src}] as [{dst}]: every size_of({dst})-byte contiguous chunk of [{src}] is a valid bit-pattern of {dst} (type_invariant satisfied, alignment not required)"
             );
             let line2 = format!(
-                "               forall w subset bytes([{src}]), |w| == |{dst}|: reinterpret_as_{dst}(w) |= type_invariant({dst}) \\ align_of({dst})",
+                "                     forall w subset bytes([{src}]), |w| == |{dst}|: reinterpret_as_{dst}(w) |= type_invariant({dst}) \\ align_of({dst})",
             );
             format!("{line1}\n{line2}")
         }
@@ -1435,7 +1472,7 @@ fn fmt_valid_num_call(
                         .join(", ");
                 }
             };
-            return format!("\"{upper_val}, {lb}{lo}, {hi}{ub}\"");
+            return format!("{upper_val}, \"{lb}{lo}, {hi}{ub}\"");
         }
     }
 
