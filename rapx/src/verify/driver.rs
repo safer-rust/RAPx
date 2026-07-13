@@ -1204,7 +1204,11 @@ fn fmt_contract_expanded(
         }
         PropertyKind::Alive => {
             let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
-            format!("lifetime(return) anchored to {ptr}")
+            if let Some(lt) = args.get(1) {
+                format!("lifetime({ptr}) anchored to lifetime({lt})")
+            } else {
+                format!("lifetime(return) anchored to {ptr}")
+            }
         }
         PropertyKind::Alias => {
             let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");

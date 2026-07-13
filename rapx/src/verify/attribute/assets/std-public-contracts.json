@@ -3251,7 +3251,8 @@
     {
       "tag": "Alive",
       "args": [
-        "data"
+        "data",
+        "'a"
       ]
     },
     {
@@ -3300,7 +3301,8 @@
     {
       "tag": "Alive",
       "args": [
-        "data"
+        "data",
+        "'a"
       ]
     },
     {

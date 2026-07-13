@@ -416,7 +416,7 @@ impl<'tcx> Property<'tcx> {
             }
             "Owning" => Self::new_with_target(PropertyKind::Owning, tcx, def_id, exprs),
             "Alias" => Self::new_with_target(PropertyKind::Alias, tcx, def_id, exprs),
-            "Alive" => Self::new_with_target(PropertyKind::Alive, tcx, def_id, exprs),
+            "Alive" => Self::new_with_targets(PropertyKind::Alive, tcx, def_id, exprs),
             "Pinned" => Self::new_with_target(PropertyKind::Pinned, tcx, def_id, exprs),
             "NonVolatile" => Self::new_with_target(PropertyKind::NonVolatile, tcx, def_id, exprs),
             "Opened" => Self::new_with_target(PropertyKind::Opened, tcx, def_id, exprs),
