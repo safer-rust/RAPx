@@ -12,6 +12,8 @@ use crate::verify::helpers::get_cleaned_def_path_name;
 pub struct PropertyEntry {
     pub tag: String,
     pub args: Vec<String>,
+    #[serde(default)]
+    pub kind: Option<String>,
 }
 
 /// Looks up backup contracts for a standard-library function by its normalized path.

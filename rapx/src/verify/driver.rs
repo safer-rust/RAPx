@@ -564,7 +564,12 @@ impl<'tcx> VerifyRun<'tcx> {
 
         let unproved = all_results
             .iter()
-            .filter(|r| !matches!(r.result, super::report::CheckResult::Proved))
+            .filter(|r| {
+                if r.property.contract_kind == crate::verify::contract::ContractKind::Hazard {
+                    return false;
+                }
+                !matches!(r.result, super::report::CheckResult::Proved)
+            })
             .count();
 
         let mut groups: IndexMap<(CheckpointLocation, String), Vec<&PropertyCheckResult<'_>>> =
@@ -1118,6 +1123,11 @@ fn fmt_contract_expanded(
         .map(|a| fmt_arg_plain(tcx, local_names, a))
         .collect();
     let tag = format!("{:?}", property.kind);
+    let tag = if property.contract_kind == crate::verify::contract::ContractKind::Hazard {
+        format!("[hazard] {tag}")
+    } else {
+        tag
+    };
     let call = if matches!(property.kind, PropertyKind::TransmuteWithoutAlign) {
         let wrapped: Vec<String> = args.iter().map(|a| format!("[{a}]")).collect();
         format!("{tag}({})", wrapped.join(", "))

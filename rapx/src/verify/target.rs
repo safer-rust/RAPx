@@ -1020,7 +1020,12 @@ fn get_contract_from_entry<'tcx>(
             continue;
         }
 
-        let property = Property::new(tcx, def_id, entry.tag.as_str(), &exprs);
+        let mut property = Property::new(tcx, def_id, entry.tag.as_str(), &exprs);
+        if let Some(ref kind_str) = entry.kind {
+            if kind_str == "hazard" {
+                property.contract_kind = crate::verify::contract::ContractKind::Hazard;
+            }
+        }
         if matches!(property.kind, PropertyKind::Unknown) {
             rap_debug!(
                 "skip unsupported std safety contract tag '{}' for callee {:?}",
@@ -1176,7 +1181,13 @@ fn collect_properties_from_named_attrs<'tcx>(
         };
 
         results.extend(parsed.properties.into_iter().map(|property| {
-            Property::new(tcx, property_def_id, property.tag.as_str(), &property.args)
+            let mut p = Property::new(tcx, property_def_id, property.tag.as_str(), &property.args);
+            if let Some(ref kind_str) = property.kind {
+                if kind_str == "hazard" {
+                    p.contract_kind = crate::verify::contract::ContractKind::Hazard;
+                }
+            }
+            p
         }));
     }
 
@@ -1311,22 +1322,22 @@ fn build_raw_ptr_deref_checks<'tcx>(
 
             let mut properties = if info.is_ref {
                 vec![
-                    Property {
+                    Property { contract_kind: crate::verify::contract::ContractKind::Precond,
                         kind: PropertyKind::NonNull,
                         args: vec![target.clone()],
                     },
-                    Property {
+                    Property { contract_kind: crate::verify::contract::ContractKind::Precond,
                         kind: PropertyKind::Align,
                         args: vec![target.clone(), ty.clone()],
                     },
                 ]
             } else {
                 vec![
-                    Property {
+                    Property { contract_kind: crate::verify::contract::ContractKind::Precond,
                         kind: PropertyKind::ValidPtr,
                         args: vec![target.clone(), ty.clone(), count.clone()],
                     },
-                    Property {
+                    Property { contract_kind: crate::verify::contract::ContractKind::Precond,
                         kind: PropertyKind::Align,
                         args: vec![target.clone(), ty.clone()],
                     },
@@ -1334,7 +1345,7 @@ fn build_raw_ptr_deref_checks<'tcx>(
             };
 
             if info.is_read && !info.is_ref {
-                properties.push(Property {
+                properties.push(Property { contract_kind: crate::verify::contract::ContractKind::Precond,
                     kind: PropertyKind::Typed,
                     args: vec![target, ty],
                 });
@@ -1378,15 +1389,15 @@ fn build_static_mut_checks<'tcx>(
             let count = PropertyArg::Expr(ContractExpr::Const(1));
 
             let properties = vec![
-                Property {
+                Property { contract_kind: crate::verify::contract::ContractKind::Precond,
                     kind: PropertyKind::ValidPtr,
                     args: vec![target.clone(), ty.clone(), count.clone()],
                 },
-                Property {
+                Property { contract_kind: crate::verify::contract::ContractKind::Precond,
                     kind: PropertyKind::Align,
                     args: vec![target.clone(), ty.clone()],
                 },
-                Property {
+                Property { contract_kind: crate::verify::contract::ContractKind::Precond,
                     kind: PropertyKind::Init,
                     args: vec![target, ty, count],
                 },

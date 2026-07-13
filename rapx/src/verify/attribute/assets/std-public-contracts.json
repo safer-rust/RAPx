@@ -308,6 +308,7 @@
   "core::cell::try_borrow_unguarded": [
     {
       "tag": "Alias",
+      "kind": "hazard",
       "args": [
         "self"
       ]
@@ -408,6 +409,7 @@
     },
     {
       "tag": "Alias",
+      "kind": "hazard",
       "args": [
         "ptr"
       ]
@@ -783,6 +785,7 @@
     },
     {
       "tag": "Alias",
+      "kind": "hazard",
       "args": [
         "ptr"
       ]
@@ -844,6 +847,7 @@
     },
     {
       "tag": "Alias",
+      "kind": "hazard",
       "args": [
         "src"
       ]
@@ -879,6 +883,7 @@
     },
     {
       "tag": "Alias",
+      "kind": "hazard",
       "args": [
         "src"
       ]
@@ -912,6 +917,7 @@
     },
     {
       "tag": "Alias",
+      "kind": "hazard",
       "args": [
         "dst"
       ]
@@ -968,6 +974,7 @@
     },
     {
       "tag": "Alias",
+      "kind": "hazard",
       "args": [
         "src"
       ]
@@ -1001,6 +1008,7 @@
     },
     {
       "tag": "Alias",
+      "kind": "hazard",
       "args": [
         "dst"
       ]
@@ -1322,6 +1330,7 @@
     },
     {
       "tag": "Alias",
+      "kind": "hazard",
       "args": [
         "self"
       ]
@@ -1370,6 +1379,7 @@
     },
     {
       "tag": "Alias",
+      "kind": "hazard",
       "args": [
         "self"
       ]
@@ -1405,6 +1415,7 @@
     },
     {
       "tag": "Alias",
+      "kind": "hazard",
       "args": [
         "self"
       ]
@@ -1447,6 +1458,7 @@
     },
     {
       "tag": "Alias",
+      "kind": "hazard",
       "args": [
         "self"
       ]
@@ -1611,6 +1623,7 @@
     },
     {
       "tag": "Alias",
+      "kind": "hazard",
       "args": [
         "self"
       ]
@@ -1655,6 +1668,7 @@
     },
     {
       "tag": "Alias",
+      "kind": "hazard",
       "args": [
         "self"
       ]
@@ -1959,6 +1973,7 @@
     },
     {
       "tag": "Alias",
+      "kind": "hazard",
       "args": [
         "self"
       ]
@@ -2007,6 +2022,7 @@
     },
     {
       "tag": "Alias",
+      "kind": "hazard",
       "args": [
         "self"
       ]
@@ -2036,6 +2052,7 @@
     },
     {
       "tag": "Alias",
+      "kind": "hazard",
       "args": [
         "self"
       ]
@@ -2371,6 +2388,7 @@
     },
     {
       "tag": "Alias",
+      "kind": "hazard",
       "args": [
         "self"
       ]
@@ -2419,6 +2437,7 @@
     },
     {
       "tag": "Alias",
+      "kind": "hazard",
       "args": [
         "self"
       ]
@@ -2454,6 +2473,7 @@
     },
     {
       "tag": "Alias",
+      "kind": "hazard",
       "args": [
         "self"
       ]
@@ -2496,6 +2516,7 @@
     },
     {
       "tag": "Alias",
+      "kind": "hazard",
       "args": [
         "self"
       ]
@@ -2698,6 +2719,7 @@
     },
     {
       "tag": "Alias",
+      "kind": "hazard",
       "args": [
         "self"
       ]
@@ -2742,6 +2764,7 @@
     },
     {
       "tag": "Alias",
+      "kind": "hazard",
       "args": [
         "self"
       ]
@@ -3263,6 +3286,7 @@
     },
     {
       "tag": "Alias",
+      "kind": "hazard",
       "args": [
         "data"
       ]
@@ -3313,6 +3337,7 @@
     },
     {
       "tag": "Alias",
+      "kind": "hazard",
       "args": [
         "data"
       ]
@@ -3399,6 +3424,7 @@
     },
     {
       "tag": "Alias",
+      "kind": "hazard",
       "args": [
         "range"
       ]
@@ -3455,6 +3481,7 @@
     },
     {
       "tag": "Alias",
+      "kind": "hazard",
       "args": [
         "range"
       ]
@@ -3593,6 +3620,7 @@
     },
     {
       "tag": "Alias",
+      "kind": "hazard",
       "args": [
         "ptr"
       ]
@@ -3658,6 +3686,7 @@
     },
     {
       "tag": "Alias",
+      "kind": "hazard",
       "args": [
         "ptr"
       ]
@@ -3809,6 +3838,7 @@
     },
     {
       "tag": "Alias",
+      "kind": "hazard",
       "args": [
         "ptr"
       ]
@@ -3860,6 +3890,7 @@
     },
     {
       "tag": "Alias",
+      "kind": "hazard",
       "args": [
         "ptr"
       ]
@@ -3911,6 +3942,7 @@
     },
     {
       "tag": "Alias",
+      "kind": "hazard",
       "args": [
         "ptr"
       ]
@@ -3962,6 +3994,7 @@
     },
     {
       "tag": "Alias",
+      "kind": "hazard",
       "args": [
         "ptr"
       ]
@@ -4146,6 +4179,7 @@
     },
     {
       "tag": "Alias",
+      "kind": "hazard",
       "args": [
         "raw"
       ]
@@ -4168,6 +4202,7 @@
     },
     {
       "tag": "Alias",
+      "kind": "hazard",
       "args": [
         "ptr"
       ]
@@ -4190,6 +4225,7 @@
     },
     {
       "tag": "Alias",
+      "kind": "hazard",
       "args": [
         "raw"
       ]
@@ -4212,6 +4248,7 @@
     },
     {
       "tag": "Alias",
+      "kind": "hazard",
       "args": [
         "raw"
       ]
@@ -4283,6 +4320,7 @@
     },
     {
       "tag": "Alias",
+      "kind": "hazard",
       "args": [
         "ptr"
       ]
@@ -4481,6 +4519,7 @@
     },
     {
       "tag": "Alias",
+      "kind": "hazard",
       "args": [
         "this"
       ]
@@ -4580,6 +4619,7 @@
     },
     {
       "tag": "Alias",
+      "kind": "hazard",
       "args": [
         "this"
       ]

@@ -79,7 +79,7 @@ pub(crate) fn check<'tcx>(
 
 /// Reuse the original arguments while checking one primitive component.
 fn primitive_property<'tcx>(property: &Property<'tcx>, kind: PropertyKind) -> Property<'tcx> {
-    Property {
+    Property { contract_kind: property.contract_kind.clone(),
         kind,
         args: property.args.clone(),
     }
