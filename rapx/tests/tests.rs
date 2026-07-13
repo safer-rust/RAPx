@@ -21,7 +21,7 @@ pub fn detected_high_confidence(output: &str) -> bool {
     })
 }
 
-#[inline(always)]
+
 fn project_path(dir: &str) -> PathBuf {
     Path::new("tests").join(dir)
 }
@@ -2120,6 +2120,17 @@ fn adg_simple_graph() {
     assert_contain(&graph_str, "to: 2");
     assert_contain(&graph_str, "from: 3");
     assert_contain(&graph_str, "to: 4");
+}
+
+#[test]
+fn alias_from_raw_parts_mut_hazard() {
+    let output = run_with_args("verify/alias_from_raw_parts_mut_hazard", VERIFY_CMD);
+    assert_contain(&output, "function: as_bytes_mut_sound");
+    assert_contain(&output, "result: SOUND");
+    assert_contain(&output, "function: as_bytes_sound");
+    assert_contain(&output, "result: SOUND");
+    assert_contain(&output, "function: as_bytes_mut_unsound");
+    assert_contain(&output, "result: UNSOUND");
 }
 
 #[test]

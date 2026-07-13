@@ -818,7 +818,9 @@ impl<'tcx> SmtChecker<'tcx> {
                             solver.pop(1);
                             if matches!(check, SatResult::Unsat) {
                                 checked_any_init_fact = true;
-                                matched_elements = matched_elements.saturating_add(*init_elements);
+                                matched_elements = matched_elements
+                                    .saturating_add(*init_elements
+                                        * init_elem_size_ratio(init_ty_name, ty_name));
                                 matched_notes.push(format!(
                                     "{} element(s) from {} ({init_reason})",
                                     init_elements,
@@ -7157,7 +7159,51 @@ fn init_type_compatible(init_ty_name: &str, required_ty_name: &str) -> bool {
             return true;
         }
     }
+    // Scalar types (integers, floats, raw pointers) have all-bit-patterns-valid
+    // initialization. A KnownInit fact for any scalar covers same-address sub-type
+    // initialization.
+    if is_trivial_init_type(init_ty_name) && is_trivial_init_type(required_ty_name) {
+        return true;
+    }
     false
+}
+
+fn is_trivial_init_type(ty_name: &str) -> bool {
+    let n = normalize_init_ty_name(ty_name);
+    matches!(
+        n.as_str(),
+        "u8" | "u16" | "u32" | "u64" | "u128" | "usize"
+            | "i8" | "i16" | "i32" | "i64" | "i128" | "isize"
+            | "f32" | "f64"
+    ) || n.starts_with("*const ") || n.starts_with("*mut ")
+}
+
+fn scalar_size_bytes(ty_name: &str) -> u64 {
+    let n = normalize_init_ty_name(ty_name);
+    match n.as_str() {
+        "u8" | "i8" => 1,
+        "u16" | "i16" => 2,
+        "u32" | "i32" | "f32" => 4,
+        "u64" | "i64" | "f64" => 8,
+        "u128" | "i128" => 16,
+        _ => {
+            if n.starts_with("*const ") || n.starts_with("*mut ") {
+                8 // assume 64-bit pointers
+            } else {
+                0
+            }
+        }
+    }
+}
+
+fn init_elem_size_ratio(init_ty_name: &str, required_ty_name: &str) -> u64 {
+    let is = scalar_size_bytes(init_ty_name);
+    let rs = scalar_size_bytes(required_ty_name);
+    if is > 0 && rs > 0 && is >= rs && is % rs == 0 {
+        is / rs
+    } else {
+        1
+    }
 }
 
 fn allocated_type_compatible(allocated_ty_name: &str, required_ty_name: &str) -> bool {

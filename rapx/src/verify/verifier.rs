@@ -44,6 +44,22 @@ impl<'tcx> ForwardVerifier<'tcx> {
             ForwardVisitResult::new(items.checkpoint, items.property.clone(), items.path.clone());
         let body = self.tcx.optimized_mir(items.checkpoint.caller);
 
+        // Add KnownInit facts for reference-typed parameters: &T and &mut T
+        // guarantee the pointee memory is initialized.
+        for local in 1..body.local_decls.len() {
+            let decl_ty = body.local_decls[Local::from_usize(local)].ty;
+            if let TyKind::Ref(_, pointee_ty, _) = decl_ty.kind() {
+                result.facts.push(StateFact::KnownInit {
+                    place: PlaceKey::from_mir_place(
+                        &rustc_middle::mir::Place::from(Local::from_usize(local)),
+                    ),
+                    ty_name: pointee_ty.to_string(),
+                    elements: 1,
+                    reason: "reference parameter guarantees initialized pointee".to_string(),
+                });
+            }
+        }
+
         for item in &items.items {
             match item {
                 BackwardItem::Statement {
