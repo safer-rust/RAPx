@@ -910,7 +910,10 @@ impl<'tcx> VerifyRun<'tcx> {
                 }
 
                 let target_path = fmt_fn_path_with_generics(self.tcx, target.def_id);
-                rap_info!("{}", fmt_fn_with_params(&target_path, &arg_names_typed, ret_ty.as_deref()));
+                rap_info!(
+                    "{}",
+                    fmt_fn_with_params(&target_path, &arg_names_typed, ret_ty.as_deref())
+                );
                 rap_info!("{:-<1$}", "", 76);
                 emit_lines(&lines);
                 rap_info!("{:-<1$}", "", 76);
@@ -944,7 +947,14 @@ impl<'tcx> VerifyRun<'tcx> {
                             }
                             first_callee = false;
                             let callee_path = fmt_fn_path_with_generics(self.tcx, callee_id);
-                            rap_info!("{}", fmt_fn_with_params(&callee_path, &callee_typed, callee_ret.as_deref()));
+                            rap_info!(
+                                "{}",
+                                fmt_fn_with_params(
+                                    &callee_path,
+                                    &callee_typed,
+                                    callee_ret.as_deref()
+                                )
+                            );
                             rap_info!("{:-<1$}", "", 76);
                             emit_lines(&lines);
                             rap_info!("{:-<1$}", "", 76);
@@ -986,7 +996,8 @@ impl<'tcx> VerifyRun<'tcx> {
                 if !callee_lines.is_empty() {
                     let (callee_typed, callee_ret) = self.resolve_arg_names_with_types(callee_id);
                     let callee_path = fmt_fn_path_with_generics(self.tcx, callee_id);
-                    let header = fmt_fn_with_params(&callee_path, &callee_typed, callee_ret.as_deref());
+                    let header =
+                        fmt_fn_with_params(&callee_path, &callee_typed, callee_ret.as_deref());
                     lines.push((format!("[{header}]"), String::new()));
                     lines.extend(callee_lines);
                 }

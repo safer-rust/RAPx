@@ -612,6 +612,19 @@ impl<'tcx> Property<'tcx> {
     }
 
     fn parse_target_arg(tcx: TyCtxt<'tcx>, def_id: DefId, expr: &Expr) -> PropertyArg<'tcx> {
+        // For simple identifiers that aren't local variables (e.g., lifetime param 'a
+        // parsed as ident `a`), store as Ident rather than Expr which would become Unknown.
+        if let Expr::Path(expr_path) = expr {
+            if let Some(ident) = expr_path.path.get_ident() {
+                let s = ident.to_string();
+                if s != "return"
+                    && !s.starts_with("Arg_")
+                    && parse_expr_into_local_and_ty(tcx, def_id, expr).is_none()
+                {
+                    return PropertyArg::Ident(s);
+                }
+            }
+        }
         Self::parse_contract_place(tcx, def_id, expr)
             .map(PropertyArg::Place)
             .unwrap_or_else(|| {
