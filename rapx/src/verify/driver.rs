@@ -1115,7 +1115,11 @@ fn fmt_contract_expanded(
             unreachable!()
         }
     } else {
-        format!("{tag}({})", args.join(", "))
+        if matches!(property.kind, PropertyKind::Alive) && args.len() >= 2 {
+            format!("{tag}({}, '{})", args[0], args[1])
+        } else {
+            format!("{tag}({})", args.join(", "))
+        }
     };
     let call = if matches!(property.kind, PropertyKind::ValidNum)
         && let Some(crate::verify::contract::PropertyArg::Predicates(preds)) = property.args.first()
@@ -1205,7 +1209,7 @@ fn fmt_contract_expanded(
         PropertyKind::Alive => {
             let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
             if let Some(lt) = args.get(1) {
-                format!("lifetime({ptr}) anchored to lifetime({lt})")
+                format!("lifetime({ptr}) anchored to lifetime('{lt})")
             } else {
                 format!("lifetime(return) anchored to {ptr}")
             }

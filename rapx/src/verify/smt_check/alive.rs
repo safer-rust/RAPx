@@ -28,7 +28,9 @@ use crate::{
     },
 };
 
-use super::common::{SmtCheckResult, SmtChecker, call_destination, failed_smt, rvalue_source_place};
+use super::common::{
+    SmtCheckResult, SmtChecker, call_destination, failed_smt, rvalue_source_place,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum AliveProducer {
@@ -95,8 +97,7 @@ pub(crate) fn check<'tcx>(
                 _ => None,
             });
             if let Some(cl) = contract_lifetime {
-                let cl = cl.strip_prefix('\'').unwrap_or(cl);
-                if !lifetime.contains(cl) {
+                if !lifetime.contains(cl) && !lifetime.contains(&format!("'{cl}")) {
                     return failed_smt(format!(
                         "Alive failed: contract declares lifetime '{cl} but return uses '{lifetime}"
                     ));
