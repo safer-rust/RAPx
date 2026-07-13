@@ -1051,7 +1051,6 @@ fn fmt_fn_path_with_generics(
     let params: Vec<_> = generics
         .own_params
         .iter()
-        .filter(|p| !matches!(p.kind, rustc_middle::ty::GenericParamDefKind::Lifetime))
         .map(|p| p.name.to_string())
         .collect();
     if params.is_empty() {
@@ -1205,7 +1204,7 @@ fn fmt_contract_expanded(
         }
         PropertyKind::Alive => {
             let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
-            format!("{ptr} points to live allocation (not freed)")
+            format!("lifetime(return) anchored to {ptr}")
         }
         PropertyKind::Alias => {
             let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
