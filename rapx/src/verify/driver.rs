@@ -875,7 +875,6 @@ impl<'tcx> VerifyRun<'tcx> {
 
         for target in targets {
             let local_names = self.resolve_local_names(target.def_id);
-            let arg_names = self.resolve_arg_names(target.def_id);
             let (arg_names_typed, ret_ty) = self.resolve_arg_names_with_types(target.def_id);
             let has_caller = target
                 .caller_requires
@@ -1013,27 +1012,6 @@ impl<'tcx> VerifyRun<'tcx> {
         body.local_decls
             .iter()
             .enumerate()
-            .map(|(i, decl)| {
-                let span = decl.source_info.span;
-                self.tcx
-                    .sess
-                    .source_map()
-                    .span_to_snippet(span)
-                    .unwrap_or_else(|_| format!("_{}", i))
-            })
-            .collect()
-    }
-
-    fn resolve_arg_names(&self, def_id: rustc_hir::def_id::DefId) -> Vec<String> {
-        if !self.tcx.is_mir_available(def_id) {
-            return Vec::new();
-        }
-        let body = self.tcx.optimized_mir(def_id);
-        body.local_decls
-            .iter()
-            .enumerate()
-            .skip(1)
-            .take(body.arg_count)
             .map(|(i, decl)| {
                 let span = decl.source_info.span;
                 self.tcx
