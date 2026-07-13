@@ -1050,11 +1050,7 @@ impl<'tcx> VerifyRun<'tcx> {
                 format!("{name}: {ty}")
             })
             .collect();
-        let ret_ty = self.tcx
-            .fn_sig(def_id)
-            .skip_binder()
-            .output()
-            .skip_binder();
+        let ret_ty = self.tcx.fn_sig(def_id).skip_binder().output().skip_binder();
         let ret_ty = if ret_ty.is_unit() {
             None
         } else {
@@ -1240,9 +1236,9 @@ fn fmt_contract_expanded(
         PropertyKind::Alive => {
             let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
             if let Some(lt) = args.get(1) {
-                format!("lifetime({ptr}) anchored to lifetime('{lt})")
+                format!("{ptr}: '{lt}")
             } else {
-                format!("lifetime(return) anchored to {ptr}")
+                format!("{ptr} outlives return")
             }
         }
         PropertyKind::Alias => {
