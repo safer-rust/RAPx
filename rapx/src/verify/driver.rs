@@ -876,6 +876,7 @@ impl<'tcx> VerifyRun<'tcx> {
         for target in targets {
             let local_names = self.resolve_local_names(target.def_id);
             let arg_names = self.resolve_arg_names(target.def_id);
+            let (arg_names_typed, ret_ty) = self.resolve_arg_names_with_types(target.def_id);
             let has_caller = target
                 .caller_requires
                 .iter()
@@ -909,7 +910,7 @@ impl<'tcx> VerifyRun<'tcx> {
                 }
 
                 let target_path = fmt_fn_path_with_generics(self.tcx, target.def_id);
-                rap_info!("{}", fmt_fn_with_params(&target_path, &arg_names));
+                rap_info!("{}", fmt_fn_with_params(&target_path, &arg_names_typed, ret_ty.as_deref()));
                 rap_info!("{:-<1$}", "", 76);
                 emit_lines(&lines);
                 rap_info!("{:-<1$}", "", 76);
@@ -923,7 +924,7 @@ impl<'tcx> VerifyRun<'tcx> {
                         continue;
                     }
                     let callee_names = self.resolve_local_names(callee_id);
-                    let callee_arg_names = self.resolve_arg_names(callee_id);
+                    let (callee_typed, callee_ret) = self.resolve_arg_names_with_types(callee_id);
                     if let Some(contracts) = target.callee_requires.get(&callee_id) {
                         let mut lines: Vec<(String, String)> = Vec::new();
                         for property in contracts {
@@ -943,7 +944,7 @@ impl<'tcx> VerifyRun<'tcx> {
                             }
                             first_callee = false;
                             let callee_path = fmt_fn_path_with_generics(self.tcx, callee_id);
-                            rap_info!("{}", fmt_fn_with_params(&callee_path, &callee_arg_names));
+                            rap_info!("{}", fmt_fn_with_params(&callee_path, &callee_typed, callee_ret.as_deref()));
                             rap_info!("{:-<1$}", "", 76);
                             emit_lines(&lines);
                             rap_info!("{:-<1$}", "", 76);
@@ -983,9 +984,9 @@ impl<'tcx> VerifyRun<'tcx> {
                     }
                 }
                 if !callee_lines.is_empty() {
-                    let callee_arg_names = self.resolve_arg_names(callee_id);
+                    let (callee_typed, callee_ret) = self.resolve_arg_names_with_types(callee_id);
                     let callee_path = fmt_fn_path_with_generics(self.tcx, callee_id);
-                    let header = fmt_fn_with_params(&callee_path, &callee_arg_names);
+                    let header = fmt_fn_with_params(&callee_path, &callee_typed, callee_ret.as_deref());
                     lines.push((format!("[{header}]"), String::new()));
                     lines.extend(callee_lines);
                 }
@@ -1020,7 +1021,7 @@ impl<'tcx> VerifyRun<'tcx> {
         body.local_decls
             .iter()
             .enumerate()
-            .skip(1) // skip _0 (return place)
+            .skip(1)
             .take(body.arg_count)
             .map(|(i, decl)| {
                 let span = decl.source_info.span;
@@ -1032,13 +1033,46 @@ impl<'tcx> VerifyRun<'tcx> {
             })
             .collect()
     }
+
+    fn resolve_arg_names_with_types(
+        &self,
+        def_id: rustc_hir::def_id::DefId,
+    ) -> (Vec<String>, Option<String>) {
+        if !self.tcx.is_mir_available(def_id) {
+            return (Vec::new(), None);
+        }
+        let body = self.tcx.optimized_mir(def_id);
+        let args: Vec<String> = body
+            .local_decls
+            .iter()
+            .enumerate()
+            .skip(1)
+            .take(body.arg_count)
+            .map(|(i, decl)| {
+                let name = {
+                    let span = decl.source_info.span;
+                    self.tcx
+                        .sess
+                        .source_map()
+                        .span_to_snippet(span)
+                        .unwrap_or_else(|_| format!("_{}", i))
+                };
+                let ty = decl.ty.to_string();
+                format!("{name}: {ty}")
+            })
+            .collect();
+        let ret_ty = body.local_decls.iter().next().map(|d| d.ty);
+        let ret_ty = ret_ty.filter(|ty| !ty.is_unit()).map(|ty| ty.to_string());
+        (args, ret_ty)
+    }
 }
 
-fn fmt_fn_with_params(path: &str, arg_names: &[String]) -> String {
-    if arg_names.is_empty() {
-        format!("fn {}", path)
-    } else {
-        format!("fn {}({})", path, arg_names.join(", "))
+fn fmt_fn_with_params(path: &str, arg_names: &[String], ret_ty: Option<&str>) -> String {
+    let args = arg_names.join(", ");
+    match ret_ty {
+        Some(ret) => format!("fn {path}({args}) -> {ret}"),
+        None if args.is_empty() => format!("fn {path}"),
+        None => format!("fn {path}({args})"),
     }
 }
 
