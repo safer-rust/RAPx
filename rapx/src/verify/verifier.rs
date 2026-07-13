@@ -45,14 +45,17 @@ impl<'tcx> ForwardVerifier<'tcx> {
         let body = self.tcx.optimized_mir(items.checkpoint.caller);
 
         // Add KnownInit facts for reference-typed parameters: &T and &mut T
-        // guarantee the pointee memory is initialized.
+        // guarantee the pointee memory is initialized.  The init fact is placed
+        // directly on the parameter so that term_for_place() returns the
+        // pointee address (the reference's value).
         for local in 1..body.local_decls.len() {
-            let decl_ty = body.local_decls[Local::from_usize(local)].ty;
-            if let TyKind::Ref(_, pointee_ty, _) = decl_ty.kind() {
+            let decl = &body.local_decls[Local::from_usize(local)];
+            if let TyKind::Ref(_, pointee_ty, _) = decl.ty.kind() {
                 result.facts.push(StateFact::KnownInit {
-                    place: PlaceKey::from_mir_place(
-                        &rustc_middle::mir::Place::from(Local::from_usize(local)),
-                    ),
+                    place: PlaceKey {
+                        base: PlaceBaseKey::Local(local),
+                        fields: vec![],
+                    },
                     ty_name: pointee_ty.to_string(),
                     elements: 1,
                     reason: "reference parameter guarantees initialized pointee".to_string(),
