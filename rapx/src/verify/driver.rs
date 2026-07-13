@@ -1050,8 +1050,16 @@ impl<'tcx> VerifyRun<'tcx> {
                 format!("{name}: {ty}")
             })
             .collect();
-        let ret_ty = body.local_decls.iter().next().map(|d| d.ty);
-        let ret_ty = ret_ty.filter(|ty| !ty.is_unit()).map(|ty| ty.to_string());
+        let ret_ty = self.tcx
+            .fn_sig(def_id)
+            .skip_binder()
+            .output()
+            .skip_binder();
+        let ret_ty = if ret_ty.is_unit() {
+            None
+        } else {
+            Some(ret_ty.to_string())
+        };
         (args, ret_ty)
     }
 }
