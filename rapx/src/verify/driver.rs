@@ -1243,7 +1243,7 @@ fn fmt_contract_expanded(
         }
         PropertyKind::Alias => {
             let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
-            format!("{ptr} has exclusive access (no conflicting mutable aliases)")
+            format!("!Alias(*{ptr})")
         }
         PropertyKind::Allocated => {
             let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
