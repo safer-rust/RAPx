@@ -978,11 +978,36 @@ fn get_contract_from_entry<'tcx>(
             match syn::parse_str::<Expr>(&normalized_arg) {
                 Ok(expr) => exprs.push(expr),
                 Err(_) => {
-                    rap_error!(
-                        "JSON Contract Error: Failed to parse arg '{}' as Rust Expr for tag {}",
-                        arg_str,
-                        entry.tag
-                    );
+                    // Lifetime arguments like 'a are not valid Rust expressions.
+                    // Parse them as an identifier path (without the tick) so they
+                    // can be stored as PropertyArg::Ident.
+                    if let Some(lifetime) = normalized_arg.strip_prefix('\'') {
+                        if lifetime.chars().all(|c| c.is_alphabetic() || c == '_') {
+                            match syn::parse_str::<Expr>(lifetime) {
+                                Ok(expr) => exprs.push(expr),
+                                Err(_) => {
+                                    rap_error!(
+                                        "JSON Contract Error: Failed to parse lifetime \
+                                         '{}' as Rust Expr for tag {}",
+                                        arg_str,
+                                        entry.tag
+                                    );
+                                }
+                            }
+                        } else {
+                            rap_error!(
+                                "JSON Contract Error: Failed to parse arg '{}' as Rust Expr for tag {}",
+                                arg_str,
+                                entry.tag
+                            );
+                        }
+                    } else {
+                        rap_error!(
+                            "JSON Contract Error: Failed to parse arg '{}' as Rust Expr for tag {}",
+                            arg_str,
+                            entry.tag
+                        );
+                    }
                 }
             }
         }
