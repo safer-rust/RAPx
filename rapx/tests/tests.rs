@@ -184,141 +184,72 @@ const VERIFY_INVLESS_CMD: &[&str] = &["verify", "--mode", "invless"];
 
 // ================Dangling Pointer Detection Test=====================
 #[test]
-fn uaf_1() {
+fn uaf_cases() {
     let output = run_with_args("check/uaf_1", CHECK_UAF_CMD);
-    assert_contain(
-        &output,
-        "Dangling pointer detected in function \"create_vec\"",
-    );
-}
+    assert_contain(&output, "Dangling pointer detected in function \"create_vec\"");
 
-#[test]
-fn uaf_2() {
     let output = run_with_args("check/uaf_2", CHECK_UAF_CMD);
     assert_contain(&output, "Double free detected in function \"main\"");
-}
 
-#[test]
-fn uaf_3() {
     let output = run_with_args("check/uaf_3", CHECK_UAF_CMD);
     assert_contain(&output, "Double free detected");
-}
 
-#[test]
-fn uaf_4() {
     let output = run_with_args("check/uaf_4", CHECK_UAF_CMD);
     assert_contain(&output, "Dangling pointer detected in function \"call\"");
-}
 
-#[test]
-fn uaf_5() {
     let output = run_with_args("check/uaf_5", CHECK_UAF_CMD);
     assert_contain(&output, "Use-after-free detected in function \"main\"");
-}
 
-#[test]
-fn uaf_6() {
     let output = run_with_args("check/uaf_6", CHECK_UAF_CMD);
     assert_contain(&output, "Use-after-free detected in function \"main\"");
-}
 
-#[test]
-fn uaf_7() {
     let output = run_with_args("check/uaf_7", CHECK_UAF_CMD);
     assert_contain(&output, "Double free detected in function \"main\"");
-}
 
-#[test]
-fn uaf_8() {
     let output = run_with_args("check/uaf_8", CHECK_UAF_CMD);
     assert_contain(&output, "Use-after-free detected in function \"main\"");
-}
 
-#[test]
-fn uaf_9() {
     let output = run_with_args("check/uaf_9", CHECK_UAF_CMD);
     assert_contain(&output, "Use-after-free detected in function \"main\"");
-}
 
-#[test]
-fn uaf_10() {
     let output = run_with_args("check/uaf_10", CHECK_UAF_CMD);
     assert_contain(&output, "Double free detected in function \"evil_test\"");
 }
 
 #[test]
-fn uaf_false_1() {
+fn uaf_false_cases() {
     let output = run_with_args("check/uaf_false_1", CHECK_UAF_CMD);
-    assert!(
-        !detected_high_confidence(&output),
-        "Unexpected high-confidence bug in output:\n{}",
-        output
-    );
-}
+    assert!(!detected_high_confidence(&output), "Unexpected high-confidence bug in output:\n{}", output);
 
-#[test]
-fn uaf_false_2() {
     let output = run_with_args("check/uaf_false_2", CHECK_UAF_CMD);
     assert_not_contain(&output, "detected");
-}
 
-#[test]
-fn uaf_false_3() {
     let output = run_with_args("check/uaf_false_3", CHECK_UAF_CMD);
-    assert!(
-        !detected_high_confidence(&output),
-        "Unexpected high-confidence bug in output:\n{}",
-        output
-    );
-}
+    assert!(!detected_high_confidence(&output), "Unexpected high-confidence bug in output:\n{}", output);
 
-#[test]
-fn uaf_false_4() {
     let output = run_with_args("check/uaf_false_4", CHECK_UAF_CMD);
     assert_not_contain(&output, "detected");
-}
 
-#[test]
-fn uaf_false_5() {
     #[allow(unused)]
     let output = run_with_args("check/uaf_false_5", CHECK_UAF_CMD);
     assert_not_contain(&output, "detected");
-}
 
-#[test]
-fn uaf_false_6() {
     #[allow(unused)]
     let output = run_with_args("check/uaf_false_6", CHECK_UAF_CMD);
-    assert!(
-        !detected_high_confidence(&output),
-        "Unexpected high-confidence bug in output:\n{}",
-        output
-    );
-}
+    assert!(!detected_high_confidence(&output), "Unexpected high-confidence bug in output:\n{}", output);
 
-#[test]
-fn uaf_false_8() {
     #[allow(unused)]
     let output = run_with_args("check/uaf_false_8", CHECK_UAF_CMD);
     assert_not_contain(&output, "detected");
-}
 
-#[test]
-fn uaf_false_9() {
     #[allow(unused)]
     let output = run_with_args("check/uaf_false_9", CHECK_UAF_CMD);
     assert_not_contain(&output, "detected");
-}
 
-#[test]
-fn uaf_false_10() {
     #[allow(unused)]
     let output = run_with_args("check/uaf_false_10", CHECK_UAF_CMD);
     assert_not_contain(&output, "detected");
-}
 
-#[test]
-fn uaf_false_11() {
     #[allow(unused)]
     let output = run_with_args("check/uaf_false_11", CHECK_UAF_CMD);
     assert_not_contain(&output, "detected");
