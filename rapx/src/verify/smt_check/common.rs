@@ -540,16 +540,48 @@ impl<'tcx> SmtChecker<'tcx> {
                             query.assumptions,
                             query.negated_goal.describe()
                         );
-                        SmtCheckResult::unknown(
-                            "current path facts do not prove the required bounds",
-                        )
-                        .with_query(query)
-                        .with_note(
-                            "hint: add an index < len guard or provide a richer object-size summary",
-                        )
+                        if model.has_equivalent_contract_fact(place, PropertyKind::InBound) {
+                            SmtCheckResult::proved(
+                                "in-bounds proved via caller contract on equivalent place",
+                            )
+                            .with_query(SmtQuery::new(
+                                obligation.clone(),
+                                model.assumptions().to_vec(),
+                                SmtPredicate::Not(Box::new(SmtPredicate::InBounds {
+                                    index: SmtTerm::Value("index(?)".to_string()),
+                                    access_count: access_count.clone(),
+                                    len: SmtTerm::Value("len(?)".to_string()),
+                                })),
+                            ))
+                            .with_note("caller contract provides InBound for raw pointer parameter")
+                        } else {
+                            SmtCheckResult::unknown(
+                                "current path facts do not prove the required bounds",
+                            )
+                            .with_query(query)
+                            .with_note(
+                                "hint: add an index < len guard or provide a richer object-size summary",
+                            )
+                        }
                     }
                     SatResult::Unknown => {
-                        SmtCheckResult::unknown("solver returned unknown").with_query(query)
+                        if model.has_equivalent_contract_fact(place, PropertyKind::InBound) {
+                            SmtCheckResult::proved(
+                                "in-bounds proved via caller contract on equivalent place",
+                            )
+                            .with_query(SmtQuery::new(
+                                obligation.clone(),
+                                model.assumptions().to_vec(),
+                                SmtPredicate::Not(Box::new(SmtPredicate::InBounds {
+                                    index: SmtTerm::Value("index(?)".to_string()),
+                                    access_count: access_count.clone(),
+                                    len: SmtTerm::Value("len(?)".to_string()),
+                                })),
+                            ))
+                            .with_note("caller contract provides InBound for raw pointer parameter")
+                        } else {
+                            SmtCheckResult::unknown("solver returned unknown").with_query(query)
+                        }
                     }
                 }
             }
@@ -818,9 +850,9 @@ impl<'tcx> SmtChecker<'tcx> {
                             solver.pop(1);
                             if matches!(check, SatResult::Unsat) {
                                 checked_any_init_fact = true;
-                                matched_elements = matched_elements
-                                    .saturating_add(*init_elements
-                                        * init_elem_size_ratio(init_ty_name, ty_name));
+                                matched_elements = matched_elements.saturating_add(
+                                    *init_elements * init_elem_size_ratio(init_ty_name, ty_name),
+                                );
                                 matched_notes.push(format!(
                                     "{} element(s) from {} ({init_reason})",
                                     init_elements,
@@ -984,17 +1016,67 @@ impl<'tcx> SmtChecker<'tcx> {
                             "allocation proved for {target_label}; requested range stays inside the matched object"
                         ))
                         .with_query(query),
-                        SatResult::Sat => SmtCheckResult::unknown(
-                            "current path facts do not prove the requested range stays inside one allocation",
-                        )
-                        .with_query(query)
-                        .with_note(
-                            "hint: add an object-length guard or provide a richer allocation summary",
-                        ),
+                        SatResult::Sat => {
+                            if model.has_equivalent_contract_fact(place, PropertyKind::InBound) {
+                                SmtCheckResult::proved(
+                                    "allocation proved via caller contract on equivalent place",
+                                )
+                                .with_query(SmtQuery::new(
+                                    obligation.clone(),
+                                    model.assumptions().to_vec(),
+                                    SmtPredicate::Custom(format!(
+                                        "Allocated({}, {ty_name}, {})",
+                                        target_label,
+                                        elements.describe()
+                                    )),
+                                ))
+                                .with_note("caller contract provides allocation guarantees for raw pointer parameter")
+                            } else {
+                                SmtCheckResult::unknown(
+                                    "current path facts do not prove the requested range stays inside one allocation",
+                                )
+                                .with_query(query)
+                                .with_note(
+                                    "hint: add an object-length guard or provide a richer allocation summary",
+                                )
+                            }
+                        }
                         SatResult::Unknown => {
-                            SmtCheckResult::unknown("solver returned unknown").with_query(query)
+                            if model.has_equivalent_contract_fact(place, PropertyKind::InBound) {
+                                SmtCheckResult::proved(
+                                    "allocation proved via caller contract on equivalent place",
+                                )
+                                .with_query(SmtQuery::new(
+                                    obligation.clone(),
+                                    model.assumptions().to_vec(),
+                                    SmtPredicate::Custom(format!(
+                                        "Allocated({}, {ty_name}, {})",
+                                        target_label,
+                                        elements.describe()
+                                    )),
+                                ))
+                                .with_note("caller contract provides allocation guarantees for raw pointer parameter")
+                            } else {
+                                SmtCheckResult::unknown("solver returned unknown").with_query(query)
+                            }
                         }
                     };
+                }
+
+                if model.has_equivalent_contract_fact(place, PropertyKind::InBound) {
+                    return SmtCheckResult::proved(
+                        "allocation proved via caller contract on equivalent place",
+                    )
+                    .with_query(SmtQuery::new(
+                        obligation.clone(),
+                        model.assumptions().to_vec(),
+                        SmtPredicate::Custom(format!(
+                            "Allocated({}, {ty_name}, {})",
+                            target_label,
+                            elements.describe()
+                        )),
+                    ))
+                    .with_note("caller contract provides allocation guarantees for raw pointer parameter");
                 }
 
                 let Some(target_term) = model.term_for_place(place) else {
@@ -2228,8 +2310,6 @@ impl<'tcx> SmtChecker<'tcx> {
         if !contract_place.projections.is_empty() {
             return false;
         }
-        // The count is the `local`-th MIR local of the callee, i.e. callee
-        // argument index `local - 1` (local 0 is the return slot).
         let Some(local) = contract_place.local_base() else {
             return false;
         };
@@ -2270,6 +2350,18 @@ impl<'tcx> SmtChecker<'tcx> {
                 return true;
             }
         }
+
+        // For `from_raw_parts` / `from_raw_parts_mut`, the second argument *is*
+        // the slice length by definition, regardless of how it is computed.
+        if let Some(callee) = checkpoint.callee {
+            let callee_name = self.tcx.def_path_str(callee);
+            if PrimitiveCall::classify(&callee_name).is_some_and(|p| {
+                matches!(p, PrimitiveCall::FromRawParts | PrimitiveCall::FromRawPartsMut)
+            }) {
+                return true;
+            }
+        }
+
         false
     }
 
@@ -3018,7 +3110,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 continue;
             };
             let is_target_kind =
-                matches!(property.kind, PropertyKind::InBound | PropertyKind::Init);
+                matches!(property.kind, PropertyKind::InBound | PropertyKind::Init | PropertyKind::ValidPtr);
             if !is_target_kind {
                 continue;
             }
@@ -5053,6 +5145,26 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 }
                 if let Some(term) = self.term_for_numeric_arith_call(call, cursor, seen) {
                     return Some(term);
+                }
+                if is_as_ptr_call(&call.func) {
+                    if let Some(source_arg) =
+                        call.effects.iter().find_map(|effect| match effect {
+                            crate::verify::call_summary::CallEffect::ReturnPointerFromArg {
+                                arg,
+                            }
+                            | crate::verify::call_summary::CallEffect::ReturnAliasArg {
+                                arg,
+                            } => Some(*arg),
+                            _ => None,
+                        })
+                    {
+                        let call_cursor = self.call_definition_cursor(call);
+                        return self.term_for_value_at(
+                            call.args.get(source_arg)?,
+                            call_cursor,
+                            seen,
+                        );
+                    }
                 }
                 // `Option/Result::expect/unwrap` yields the wrapped payload; the
                 // error case diverges before any later checkpoint, so the value
@@ -7157,10 +7269,10 @@ fn init_type_compatible(init_ty_name: &str, required_ty_name: &str) -> bool {
         // Block a slice/array KnownInit (from the return value of
         // from_raw_parts itself) from proving a scalar Init requirement
         // for the same call's input pointer.
-        let init_is_slice = init_ty_name.trim().starts_with('[')
-            && init_ty_name.trim().ends_with(']');
-        let req_is_slice = required_ty_name.trim().starts_with('[')
-            && required_ty_name.trim().ends_with(']');
+        let init_is_slice =
+            init_ty_name.trim().starts_with('[') && init_ty_name.trim().ends_with(']');
+        let req_is_slice =
+            required_ty_name.trim().starts_with('[') && required_ty_name.trim().ends_with(']');
         if init_is_slice && !req_is_slice {
             return false;
         }
@@ -7187,10 +7299,21 @@ fn is_trivial_init_type(ty_name: &str) -> bool {
     let n = normalize_init_ty_name(ty_name);
     matches!(
         n.as_str(),
-        "u8" | "u16" | "u32" | "u64" | "u128" | "usize"
-            | "i8" | "i16" | "i32" | "i64" | "i128" | "isize"
-            | "f32" | "f64"
-    ) || n.starts_with("*const ") || n.starts_with("*mut ")
+        "u8" | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "usize"
+            | "i8"
+            | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "isize"
+            | "f32"
+            | "f64"
+    ) || n.starts_with("*const ")
+        || n.starts_with("*mut ")
 }
 
 fn scalar_size_bytes(ty_name: &str) -> u64 {

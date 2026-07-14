@@ -31,7 +31,7 @@ pub fn as_bytes_mut_unsound(x: &u16) -> &mut [u8] {
 #[rapx::requires(Init(ptr, u8, 2))]
 #[rapx::requires(Alive(ptr, 'a))]
 pub unsafe fn as_bytes_mut_ptr_missing_alias<'a>(ptr: *mut u16) -> &'a mut [u8] {
-    slice::from_raw_parts_mut(ptr.cast::<u8>(), mem::size_of::<u16>())
+    unsafe { slice::from_raw_parts_mut(ptr.cast::<u8>(), mem::size_of::<u16>()) }
 }
 
 /// UNSOUND: same as above with explicit `len`, but *missing Alias*.
@@ -44,5 +44,5 @@ pub unsafe fn as_bytes_mut_ptr_len_missing_alias<'a>(
     ptr: *mut u16,
     len: usize,
 ) -> &'a mut [u8] {
-    slice::from_raw_parts_mut(ptr.cast::<u8>(), len * mem::size_of::<u16>())
+    unsafe { slice::from_raw_parts_mut(ptr.cast::<u8>(), len * mem::size_of::<u16>()) }
 }

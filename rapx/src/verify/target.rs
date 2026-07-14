@@ -1322,22 +1322,26 @@ fn build_raw_ptr_deref_checks<'tcx>(
 
             let mut properties = if info.is_ref {
                 vec![
-                    Property { contract_kind: crate::verify::contract::ContractKind::Precond,
+                    Property {
+                        contract_kind: crate::verify::contract::ContractKind::Precond,
                         kind: PropertyKind::NonNull,
                         args: vec![target.clone()],
                     },
-                    Property { contract_kind: crate::verify::contract::ContractKind::Precond,
+                    Property {
+                        contract_kind: crate::verify::contract::ContractKind::Precond,
                         kind: PropertyKind::Align,
                         args: vec![target.clone(), ty.clone()],
                     },
                 ]
             } else {
                 vec![
-                    Property { contract_kind: crate::verify::contract::ContractKind::Precond,
+                    Property {
+                        contract_kind: crate::verify::contract::ContractKind::Precond,
                         kind: PropertyKind::ValidPtr,
                         args: vec![target.clone(), ty.clone(), count.clone()],
                     },
-                    Property { contract_kind: crate::verify::contract::ContractKind::Precond,
+                    Property {
+                        contract_kind: crate::verify::contract::ContractKind::Precond,
                         kind: PropertyKind::Align,
                         args: vec![target.clone(), ty.clone()],
                     },
@@ -1345,7 +1349,8 @@ fn build_raw_ptr_deref_checks<'tcx>(
             };
 
             if info.is_read && !info.is_ref {
-                properties.push(Property { contract_kind: crate::verify::contract::ContractKind::Precond,
+                properties.push(Property {
+                    contract_kind: crate::verify::contract::ContractKind::Precond,
                     kind: PropertyKind::Typed,
                     args: vec![target, ty],
                 });
@@ -1389,15 +1394,18 @@ fn build_static_mut_checks<'tcx>(
             let count = PropertyArg::Expr(ContractExpr::Const(1));
 
             let properties = vec![
-                Property { contract_kind: crate::verify::contract::ContractKind::Precond,
+                Property {
+                    contract_kind: crate::verify::contract::ContractKind::Precond,
                     kind: PropertyKind::ValidPtr,
                     args: vec![target.clone(), ty.clone(), count.clone()],
                 },
-                Property { contract_kind: crate::verify::contract::ContractKind::Precond,
+                Property {
+                    contract_kind: crate::verify::contract::ContractKind::Precond,
                     kind: PropertyKind::Align,
                     args: vec![target.clone(), ty.clone()],
                 },
-                Property { contract_kind: crate::verify::contract::ContractKind::Precond,
+                Property {
+                    contract_kind: crate::verify::contract::ContractKind::Precond,
                     kind: PropertyKind::Init,
                     args: vec![target, ty, count],
                 },

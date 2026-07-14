@@ -560,7 +560,11 @@ impl<'tcx> Property<'tcx> {
     }
 
     fn new_with_args(kind: PropertyKind, args: Vec<PropertyArg<'tcx>>) -> Self {
-        Self { kind, args, contract_kind: ContractKind::Precond }
+        Self {
+            kind,
+            args,
+            contract_kind: ContractKind::Precond,
+        }
     }
 
     fn new_with_target(
@@ -574,7 +578,11 @@ impl<'tcx> Property<'tcx> {
             .map(|expr| Self::parse_target_arg(tcx, def_id, expr))
             .into_iter()
             .collect();
-        Self { kind, args, contract_kind: ContractKind::Precond }
+        Self {
+            kind,
+            args,
+            contract_kind: ContractKind::Precond,
+        }
     }
 
     fn new_with_targets(
@@ -587,7 +595,11 @@ impl<'tcx> Property<'tcx> {
             .iter()
             .map(|expr| Self::parse_target_arg(tcx, def_id, expr))
             .collect();
-        Self { kind, args, contract_kind: ContractKind::Precond }
+        Self {
+            kind,
+            args,
+            contract_kind: ContractKind::Precond,
+        }
     }
 
     fn check_arg_length(expr_len: usize, required_len: usize, sp: &str) -> bool {

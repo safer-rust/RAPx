@@ -135,12 +135,9 @@ pub fn check<'tcx>(
 
     if origin.base == PlaceBaseKey::Local(1) && origin.fields.is_empty() {
         if let PlaceBaseKey::Local(local_index) = origin.base {
-            if let Some(result) = alias_proved_for_param_local(
-                checker.tcx,
-                checkpoint.caller,
-                local_index,
-                kind,
-            ) {
+            if let Some(result) =
+                alias_proved_for_param_local(checker.tcx, checkpoint.caller, local_index, kind)
+            {
                 return result;
             }
         }
@@ -176,12 +173,9 @@ pub fn check<'tcx>(
 
     if origin.base == PlaceBaseKey::Local(1) && origin.fields.is_empty() {
         if let PlaceBaseKey::Local(local_index) = origin.base {
-            if let Some(result) = alias_proved_for_param_local(
-                checker.tcx,
-                checkpoint.caller,
-                local_index,
-                kind,
-            ) {
+            if let Some(result) =
+                alias_proved_for_param_local(checker.tcx, checkpoint.caller, local_index, kind)
+            {
                 return result;
             }
         }

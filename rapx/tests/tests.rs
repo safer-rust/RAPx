@@ -21,7 +21,6 @@ pub fn detected_high_confidence(output: &str) -> bool {
     })
 }
 
-
 fn project_path(dir: &str) -> PathBuf {
     Path::new("tests").join(dir)
 }
