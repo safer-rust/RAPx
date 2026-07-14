@@ -25,7 +25,7 @@ pub fn unsound_nested_scc_controller(
 
     while outer < outer_limit {
         let mut p = base;
-        let q = unsafe { base.add(1) };
+        let q = base.wrapping_add(1);
         let mut inner = 0;
 
         while inner < inner_limit {

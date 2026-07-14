@@ -774,6 +774,101 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                 }
             }
 
+            // Phase 1.6: Align loop-depth detector
+            //
+            // Same logic as Phase 1.5 but for Align properties.
+            // When wrapping_add replaces unsafe add, the InBound
+            // check disappears, but alignment violations inside SCCs
+            // may still be detectable with deeper unrolling.
+            if self.postfix_repeat == 0 && !all_results.is_empty() {
+                let has_align = all_results
+                    .iter()
+                    .any(|r| matches!(r.property.kind, PropertyKind::Align));
+                let all_align_proven = all_results
+                    .iter()
+                    .filter(|r| matches!(r.property.kind, PropertyKind::Align))
+                    .all(|r| matches!(r.result, super::report::CheckResult::Proved));
+
+                if has_align && all_align_proven {
+                    let mut proven_history: Vec<Vec<(usize, usize)>> = Vec::new();
+
+                    let seed: Vec<_> = {
+                        let mut v: Vec<_> = all_results
+                            .iter()
+                            .filter(|r| {
+                                matches!(r.property.kind, PropertyKind::Align)
+                                    && matches!(r.result, super::report::CheckResult::Proved)
+                            })
+                            .map(|r| (r.checkpoint_index, r.property_index))
+                            .collect();
+                        v.sort();
+                        v
+                    };
+                    proven_history.push(seed);
+
+                    for repeat in 1..=MAX_LOOP_INBOUND_UNROLL {
+                        let detector_driver =
+                            VerifyDriver::new_with_repeat(self.tcx, target, repeat);
+                        let result =
+                            catch_unwind(AssertUnwindSafe(|| detector_driver.verify_function()));
+                        match result {
+                            Ok(report) => {
+                                let current_unproven: FxHashSet<_> = report
+                                    .results
+                                    .iter()
+                                    .filter(|r| {
+                                        matches!(r.property.kind, PropertyKind::Align)
+                                            && !matches!(
+                                                r.result,
+                                                super::report::CheckResult::Proved
+                                            )
+                                            && !r.diagnostics.as_ref().is_some_and(|d| {
+                                                d.forward.contains("path has precision loss")
+                                                    || d.forward.contains("could not connect")
+                                            })
+                                    })
+                                    .map(|r| (r.checkpoint_index, r.property_index))
+                                    .collect();
+
+                                if !current_unproven.is_empty() {
+                                    all_results.extend(report.results);
+                                    break;
+                                }
+
+                                let mut current_proven: Vec<_> = report
+                                    .results
+                                    .iter()
+                                    .filter(|r| {
+                                        matches!(r.property.kind, PropertyKind::Align)
+                                            && matches!(
+                                                r.result,
+                                                super::report::CheckResult::Proved
+                                            )
+                                    })
+                                    .map(|r| (r.checkpoint_index, r.property_index))
+                                    .collect();
+                                current_proven.sort();
+
+                                if proven_history.contains(&current_proven) {
+                                    break;
+                                }
+
+                                let len = proven_history.len();
+                                if len >= 3
+                                    && proven_history[len - 1] == proven_history[len - 3]
+                                    && current_proven == proven_history[len - 2]
+                                {
+                                    break;
+                                }
+
+                                proven_history.push(current_proven);
+                            }
+                            Err(_) => break,
+                        }
+                    }
+                }
+            }
+
             // Phase 2: struct invariant verification
             if !target.struct_invariants.is_empty() && !matches!(self.mode, VerifyMode::Invless) {
                 let driver = VerifyDriver::new_with_repeat(self.tcx, target, self.postfix_repeat);

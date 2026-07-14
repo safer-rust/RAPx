@@ -1,4 +1,3 @@
-use super::analyze::DEFAULT_POSTFIX_REPEAT;
 use clap::Args;
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
@@ -11,6 +10,36 @@ pub enum VerifyMode {
     Invless,
 }
 
+/// Postfix repeat count: `auto` (default) enables automatic loop-depth
+/// detection; a number N ≥ 0 sets a fixed repeat count.
+#[derive(Debug, Clone)]
+pub enum PostfixRepeat {
+    Auto,
+    Fixed(usize),
+}
+
+impl std::fmt::Display for PostfixRepeat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PostfixRepeat::Auto => write!(f, "auto"),
+            PostfixRepeat::Fixed(n) => write!(f, "{n}"),
+        }
+    }
+}
+
+impl std::str::FromStr for PostfixRepeat {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.eq_ignore_ascii_case("auto") {
+            Ok(PostfixRepeat::Auto)
+        } else {
+            s.parse::<usize>()
+                .map(PostfixRepeat::Fixed)
+                .map_err(|_| format!("expected 'auto' or a non-negative integer, got '{s}'"))
+        }
+    }
+}
+
 /// Arguments for the `verify` command.
 #[derive(Debug, Clone, Args)]
 pub struct VerifyArgs {
@@ -18,9 +47,10 @@ pub struct VerifyArgs {
     #[arg(long)]
     pub prepare_targets: bool,
     /// Number of extra SCC postfix repetitions allowed during path enumeration.
-    /// Default is 0 (postfix segments appear once each). Set to 1 to allow one extra repetition (two total occurrences), etc.
-    #[arg(long, default_value_t = DEFAULT_POSTFIX_REPEAT)]
-    pub postfix_repeat: usize,
+    /// `auto` (default): automatic loop-depth detection for InBound and Align.
+    /// A number ≥ 0 sets a fixed repeat count.
+    #[arg(long, default_value = "auto", value_parser = clap::value_parser!(PostfixRepeat))]
+    pub postfix_repeat: PostfixRepeat,
     /// Verification mode: `scan` auto-detects unannotated unsafe targets (default), `targeted` verifies #[rapx::verify] functions.
     #[arg(long, default_value = "scan")]
     pub mode: VerifyMode,

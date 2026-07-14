@@ -10,7 +10,7 @@ pub fn unsound_byte_offset_one(data: &[u8]) {
     let base = data.as_ptr();
 
     if (base as usize) % 4 == 0 {
-        let ptr = unsafe { base.add(1) } as *const u32;
+        let ptr = base.wrapping_add(1) as *const u32;
         unsafe {
             require_align_u32(ptr);
         }

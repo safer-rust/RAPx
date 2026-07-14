@@ -639,9 +639,8 @@ fn align_sound_2() {
 fn align_unsound_1() {
     let output = run_with_args("verify/align_unsound_1", VERIFY_CMD);
     assert_contain(&output, "function: unsound_enum_paths_inside_scc");
-    assert_contain(&output, "InBound | Unknown");
     assert_contain(&output, "Align | Unknown");
-    assert_contain(&output, "result: UNSOUND");
+    assert_contain(&output, "result: UNSOUND (1 unproved)");
 }
 
 #[test]
@@ -671,8 +670,7 @@ fn align_unsound_3() {
     let output = run_with_args("verify/align_unsound_3", VERIFY_CMD);
     assert_contain(&output, "function: unsound_scc_computes_misaligned_offset");
     assert_contain(&output, "Align | Unknown");
-    assert_contain(&output, "InBound | Unknown");
-    assert_contain(&output, "result: UNSOUND");
+    assert_contain(&output, "result: UNSOUND (1 unproved)");
 }
 
 #[test]
@@ -684,9 +682,8 @@ fn align_sound_5() {
 
 #[test]
 fn align_unsound_4() {
-    let output = run_with_args("verify/align_unsound_4", VERIFY_ALLOW_REPEAT_CMD);
+    let output = run_with_args("verify/align_unsound_4", VERIFY_CMD);
     assert_contain(&output, "function: unsound_nested_scc_controller");
-    assert_contain(&output, "InBound | Unknown");
     assert_contain(&output, "Align | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
@@ -776,10 +773,8 @@ fn align_sound_11() {
 fn align_unsound_8() {
     let output = run_with_args("verify/align_unsound_8", VERIFY_CMD);
     assert_contain(&output, "function: unsound_helper_with_disjunctive_guard");
-    assert_contain(&output, "NonNull | Unknown");
-    assert_contain(&output, "InBound | Unknown");
     assert_contain(&output, "Align | Unknown");
-    assert_contain(&output, "result: UNSOUND");
+    assert_contain(&output, "result: UNSOUND (2 unproved)");
 }
 
 #[test]
@@ -796,10 +791,8 @@ fn align_unsound_9() {
         &output,
         "function: unsound_helper_return_path_selects_bad_ptr",
     );
-    assert_contain(&output, "NonNull | Unknown");
-    assert_contain(&output, "InBound | Unknown");
     assert_contain(&output, "Align | Unknown");
-    assert_contain(&output, "result: UNSOUND");
+    assert_contain(&output, "result: UNSOUND (1 unproved)");
 }
 
 #[test]
@@ -820,10 +813,8 @@ fn align_sound_14() {
 fn align_unsound_10() {
     let output = run_with_args("verify/align_unsound_10", VERIFY_CMD);
     assert_contain(&output, "function: unsound_multi_hop_missing_offset_guard");
-    assert_contain(&output, "NonNull | Unknown");
-    assert_contain(&output, "InBound | Unknown");
     assert_contain(&output, "Align | Unknown");
-    assert_contain(&output, "result: UNSOUND");
+    assert_contain(&output, "result: UNSOUND (1 unproved)");
 }
 
 #[test]
@@ -845,8 +836,7 @@ fn align_unsound_11() {
     let output = run_with_args("verify/align_unsound_11", VERIFY_CMD);
     assert_contain(&output, "function: unsound_sub_missing_guard");
     assert_contain(&output, "Align | Unknown");
-    assert_contain(&output, "InBound | Unknown");
-    assert_contain(&output, "result: UNSOUND");
+    assert_contain(&output, "result: UNSOUND (1 unproved)");
 }
 
 #[test]
@@ -861,8 +851,7 @@ fn align_unsound_12() {
     let output = run_with_args("verify/align_unsound_12", VERIFY_CMD);
     assert_contain(&output, "function: unsound_byte_offset_one");
     assert_contain(&output, "Align | Unknown");
-    assert_contain(&output, "InBound | Unknown");
-    assert_contain(&output, "result: UNSOUND");
+    assert_contain(&output, "result: UNSOUND (1 unproved)");
 }
 
 #[test]

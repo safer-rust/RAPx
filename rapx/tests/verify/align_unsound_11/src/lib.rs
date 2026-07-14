@@ -10,7 +10,7 @@ pub fn unsound_sub_missing_guard(data: &[u8], add_a: usize, sub_b: usize) {
     let base = data.as_ptr();
 
     if (base as usize) % 4 == 0 && add_a % 4 == 0 {
-        let ptr = unsafe { base.add(add_a).sub(sub_b) as *const u32 };
+        let ptr = base.wrapping_add(add_a).wrapping_sub(sub_b) as *const u32;
         unsafe {
             require_align_u32(ptr);
         }

@@ -20,8 +20,8 @@ pub fn unsound_enum_paths_inside_scc(data: &[u32], limit: usize, choice: Selecto
 
     while i < limit {
         selected = match choice {
-            Selector::First => unsafe { base.add(i * 4) },
-            Selector::Second => unsafe { base.add(i * 4 + 1) },
+            Selector::First => base.wrapping_add(i * 4),
+            Selector::Second => base.wrapping_add(i * 4 + 1),
         };
 
         i += 1;

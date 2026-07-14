@@ -6,7 +6,7 @@
 unsafe fn require_align_arg0(_ptr: *const u32) {}
 
 fn byte_add_as_u32(base: *const u8, offset: usize) -> *const u32 {
-    unsafe { base.add(offset) as *const u32 }
+    base.wrapping_add(offset) as *const u32
 }
 
 #[rapx::verify]
