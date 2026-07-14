@@ -2123,12 +2123,24 @@ fn adg_simple_graph() {
 }
 
 #[test]
-fn alias_from_raw_parts_mut_hazard() {
+fn alias_from_raw_parts_mut_sound() {
     let output = run_with_args("verify/alias_from_raw_parts_mut_hazard", VERIFY_CMD);
     assert_contain(&output, "function: as_bytes_mut_sound");
+    assert_contain(&output, "result: SOUND");
     assert_contain(&output, "function: as_bytes_sound");
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn alias_from_raw_parts_mut_shared_to_mut() {
+    let output = run_with_args("verify/alias_from_raw_parts_mut_hazard", VERIFY_CMD);
     assert_contain(&output, "function: as_bytes_mut_unsound");
     assert_contain(&output, "result: UNSOUND");
+}
+
+#[test]
+fn alias_from_raw_parts_mut_missing_alias() {
+    let output = run_with_args("verify/alias_from_raw_parts_mut_hazard", VERIFY_CMD);
     assert_contain(&output, "function: as_bytes_mut_ptr_missing_alias");
     assert_contain(&output, "result: UNSOUND");
     assert_contain(&output, "function: as_bytes_mut_ptr_len_missing_alias");

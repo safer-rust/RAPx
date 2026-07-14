@@ -21,7 +21,7 @@ use crate::{
     helpers::name::parse_signature,
     verify::{
         call_summary::CallEffect,
-        contract::{Property, PropertyArg},
+        contract::{PlaceBase, Property, PropertyArg, PropertyKind},
         def_use::PlaceKey,
         helpers::Checkpoint,
         verifier::{AbstractValue, CallSummary, ForwardVisitResult, StateFact},
@@ -31,6 +31,7 @@ use crate::{
 use super::common::{
     SmtCheckResult, SmtChecker, call_destination, failed_smt, rvalue_source_place,
 };
+use crate::verify::report::CheckResult;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum AliveProducer {
@@ -89,7 +90,19 @@ pub(crate) fn check<'tcx>(
     });
 
     match &signature.return_lifetime {
-        ReturnLifetime::Elided => check_elided_return(producer, &signature),
+        ReturnLifetime::Elided => {
+            let result = check_elided_return(producer, &signature);
+            if result.result == CheckResult::Unknown {
+                if let Some(origin) = pointer_origin_param {
+                    if let Some(fallback) =
+                        check_elided_param_ref(checker.tcx, checkpoint.caller, origin, producer)
+                    {
+                        return fallback;
+                    }
+                }
+            }
+            result
+        }
         ReturnLifetime::Static => failed_smt("Alive failed: returned slice is widened to 'static"),
         ReturnLifetime::Named(lifetime) => {
             let contract_lifetime = property.args.get(1).and_then(|a| match a {
@@ -136,6 +149,74 @@ fn check_elided_return(producer: AliveProducer, signature: &SignatureInfo) -> Sm
     SmtCheckResult::unknown("Alive elided lifetime is not tied to a supported receiver")
 }
 
+/// Fallback check: when the elided return check fails (no &self/&mut self),
+/// try matching the pointer origin against a non-self reference parameter.
+fn check_elided_param_ref<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    caller: DefId,
+    origin: usize,
+    producer: AliveProducer,
+) -> Option<SmtCheckResult> {
+    let body = tcx.optimized_mir(caller);
+    if origin > body.arg_count {
+        return None;
+    }
+    let ty = body.local_decls[Local::from_usize(origin)].ty;
+    match ty.kind() {
+        ty::Ref(_, _, ty::Mutability::Mut) => {
+            if producer == AliveProducer::UniqueSlice {
+                Some(SmtCheckResult::proved(
+                    "Alive proved: returned mutable slice is tied to the &mut param borrow",
+                ))
+            } else {
+                Some(failed_smt(
+                    "Alive failed: shared slice is tied only to a &mut param borrow",
+                ))
+            }
+        }
+        ty::Ref(_, _, ty::Mutability::Not) => {
+            if producer == AliveProducer::SharedSlice {
+                Some(SmtCheckResult::proved(
+                    "Alive proved: returned shared slice is tied to the & param borrow",
+                ))
+            } else if producer == AliveProducer::UniqueSlice {
+                Some(failed_smt(
+                    "Alive failed: mutable slice is tied only to a shared & param borrow",
+                ))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Checks whether the caller has an `Alive(param, lifetime)` contract that
+/// covers the pointer origin parameter. Used for raw pointer parameters that
+/// cannot carry lifetime information in their Rust type.
+fn caller_alive_contract_covers(
+    tcx: TyCtxt<'_>,
+    caller: DefId,
+    origin_param: usize,
+    lifetime: &str,
+) -> bool {
+    let contracts = crate::verify::target::get_contract_from_annotation(tcx, caller);
+    contracts.iter().any(|prop| {
+        if prop.kind != PropertyKind::Alive {
+            return false;
+        }
+        let contract_lifetime = prop.args.get(1).and_then(|a| match a {
+            PropertyArg::Ident(id) => Some(id.as_str()),
+            _ => None,
+        });
+        if contract_lifetime != Some(lifetime) {
+            return false;
+        }
+        matches!(prop.args.first(), Some(PropertyArg::Place(place))
+            if place.base == PlaceBase::Local(origin_param) && place.projections.is_empty())
+    })
+}
+
 /// Checks whether an explicit return lifetime is tied to the pointer source.
 fn check_named_return<'tcx>(
     tcx: TyCtxt<'tcx>,
@@ -171,6 +252,13 @@ fn check_named_return<'tcx>(
     }
 
     if source_params.is_empty() {
+        if let Some(origin) = pointer_origin_param
+            && caller_alive_contract_covers(tcx, caller, origin, lifetime)
+        {
+            return SmtCheckResult::proved(format!(
+                "Alive proved: caller Alive contract covers raw pointer origin for lifetime '{lifetime}"
+            ));
+        }
         return failed_smt(format!(
             "Alive failed: returned lifetime '{lifetime} has no proven source parameter"
         ));

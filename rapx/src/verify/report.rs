@@ -9,7 +9,7 @@ use rustc_hir::def_id::DefId;
 use super::{contract::Property, helpers::CheckpointLocation};
 
 /// Verification status for one required property on one path.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum CheckResult {
     /// The property has been proved for this path.
     Proved,

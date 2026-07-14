@@ -7151,7 +7151,19 @@ fn const_int_from_debug(text: &str) -> Option<u128> {
 }
 
 fn init_type_compatible(init_ty_name: &str, required_ty_name: &str) -> bool {
-    if normalize_init_ty_name(init_ty_name) == normalize_init_ty_name(required_ty_name) {
+    let n_init = normalize_init_ty_name(init_ty_name);
+    let n_req = normalize_init_ty_name(required_ty_name);
+    if n_init == n_req {
+        // Block a slice/array KnownInit (from the return value of
+        // from_raw_parts itself) from proving a scalar Init requirement
+        // for the same call's input pointer.
+        let init_is_slice = init_ty_name.trim().starts_with('[')
+            && init_ty_name.trim().ends_with(']');
+        let req_is_slice = required_ty_name.trim().starts_with('[')
+            && required_ty_name.trim().ends_with(']');
+        if init_is_slice && !req_is_slice {
+            return false;
+        }
         return true;
     }
     if let Some(array_elem) = array_elem_type(required_ty_name) {
@@ -7159,11 +7171,14 @@ fn init_type_compatible(init_ty_name: &str, required_ty_name: &str) -> bool {
             return true;
         }
     }
-    // Scalar types (integers, floats, raw pointers) have all-bit-patterns-valid
-    // initialization. A KnownInit fact for any scalar covers same-address sub-type
-    // initialization.
+    // Scalars have all-bit-patterns-valid init.
+    // Larger init types can cover smaller required types.
     if is_trivial_init_type(init_ty_name) && is_trivial_init_type(required_ty_name) {
-        return true;
+        let is = scalar_size_bytes(init_ty_name);
+        let rs = scalar_size_bytes(required_ty_name);
+        if is >= rs {
+            return true;
+        }
     }
     false
 }
@@ -7201,6 +7216,8 @@ fn init_elem_size_ratio(init_ty_name: &str, required_ty_name: &str) -> u64 {
     let rs = scalar_size_bytes(required_ty_name);
     if is > 0 && rs > 0 && is >= rs && is % rs == 0 {
         is / rs
+    } else if is > 0 && rs > 0 {
+        0
     } else {
         1
     }
@@ -7242,18 +7259,6 @@ fn allocation_object_invalidated<'tcx>(
 
 fn normalize_init_ty_name(ty_name: &str) -> String {
     let ty_name = ty_name.trim();
-    for prefix in [
-        "std::mem::MaybeUninit<",
-        "core::mem::MaybeUninit<",
-        "MaybeUninit<",
-    ] {
-        if let Some(inner) = ty_name
-            .strip_prefix(prefix)
-            .and_then(|s| s.strip_suffix('>'))
-        {
-            return normalize_init_ty_name(inner);
-        }
-    }
     if let Some(rest) = ty_name.strip_prefix('[')
         && rest.ends_with(']')
     {

@@ -58,6 +58,36 @@ enum RawAccessKind {
     Write,
 }
 
+/// Determines whether a `Local(1)` origin is trivially alias-safe based on
+/// the parameter type and the produced view kind. Returns `None` when the
+/// origin type requires further checking (e.g., raw pointers).
+fn alias_proved_for_param_local<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    caller: DefId,
+    local_index: usize,
+    kind: HazardKind,
+) -> Option<SmtCheckResult> {
+    let body = tcx.optimized_mir(caller);
+    let ty = body.local_decls[Local::from_usize(local_index)].ty;
+    match ty.kind() {
+        ty::Ref(_, _, ty::Mutability::Mut) => Some(SmtCheckResult::proved(
+            "returned view reinterprets a &mut param; no hidden raw-pointer conflict",
+        )),
+        ty::Ref(_, _, ty::Mutability::Not) => {
+            if kind == HazardKind::UniqueView {
+                Some(failed_smt(
+                    "shared reference origin cannot safely produce a unique mut view",
+                ))
+            } else {
+                Some(SmtCheckResult::proved(
+                    "returned shared view tied to shared reference; no alias conflict",
+                ))
+            }
+        }
+        _ => None,
+    }
+}
+
 /// Check the path-sensitive / escaped hazard part of `Alias`.
 pub fn check<'tcx>(
     checker: &SmtChecker<'tcx>,
@@ -104,9 +134,16 @@ pub fn check<'tcx>(
     };
 
     if origin.base == PlaceBaseKey::Local(1) && origin.fields.is_empty() {
-        return SmtCheckResult::proved(
-            "returned view reinterprets the self parameter; no hidden raw-pointer conflict",
-        );
+        if let PlaceBaseKey::Local(local_index) = origin.base {
+            if let Some(result) = alias_proved_for_param_local(
+                checker.tcx,
+                checkpoint.caller,
+                local_index,
+                kind,
+            ) {
+                return result;
+            }
+        }
     }
 
     if let Some(reason) = local_hazard_violation(
@@ -138,9 +175,16 @@ pub fn check<'tcx>(
     }
 
     if origin.base == PlaceBaseKey::Local(1) && origin.fields.is_empty() {
-        return SmtCheckResult::proved(
-            "returned view reinterprets the self parameter; no hidden raw-pointer conflict",
-        );
+        if let PlaceBaseKey::Local(local_index) = origin.base {
+            if let Some(result) = alias_proved_for_param_local(
+                checker.tcx,
+                checkpoint.caller,
+                local_index,
+                kind,
+            ) {
+                return result;
+            }
+        }
     }
 
     let err_msg = format!(

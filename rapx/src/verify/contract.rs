@@ -10,7 +10,7 @@ use super::helpers::{
     parse_expr_into_number,
 };
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum PlaceBase {
     Return,
     Arg(usize),

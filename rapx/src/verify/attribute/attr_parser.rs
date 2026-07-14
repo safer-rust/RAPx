@@ -17,6 +17,9 @@ use syn::{
     parse::{Parse, ParseStream},
 };
 
+use regex::Regex;
+use std::sync::LazyLock;
+
 /// A parsed `requires` property in the form `tag(arg0, arg1, ...)`.
 #[derive(Debug, Clone)]
 pub struct ParsedProperty {
@@ -101,8 +104,9 @@ impl Parse for RequireOuterAttribute {
 /// Returns an empty default value when the attribute does not match
 /// `rapx::requires` or when it is not a list attribute.
 pub fn parse_rapx_attr(attr_str: &str, expected_name: &str) -> SynResult<ParsedRapxAttr> {
+    let attr_str = strip_lifetime_ticks(attr_str);
     // Parse the raw string into a single outer attribute node.
-    let attr = syn::parse_str::<RequireOuterAttribute>(attr_str)?.attr;
+    let attr = syn::parse_str::<RequireOuterAttribute>(&attr_str)?.attr;
     if !is_expected_syn_rapx_attr(&attr, expected_name) {
         return Ok(ParsedRapxAttr::default());
     }
@@ -158,4 +162,14 @@ fn parse_property_expr(expr: Expr) -> SynResult<ParsedProperty> {
             "unsupported RAPx property expression",
         )),
     }
+}
+
+/// Strips the leading `'` from Rust lifetime tokens so that `syn` can
+/// parse them as regular identifier expressions inside attribute arguments.
+/// For example, `'a` becomes `a`, `'static` becomes `static`.
+static LIFETIME_TICK_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"'([a-zA-Z_][a-zA-Z0-9_]*)").unwrap());
+
+fn strip_lifetime_ticks(s: &str) -> String {
+    LIFETIME_TICK_RE.replace_all(s, "$1").to_string()
 }
