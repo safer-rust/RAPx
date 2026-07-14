@@ -415,7 +415,7 @@ fn leak_cases() {
 }
 
 #[test]
-fn heap_cell() {
+fn heap_cases() {
     let output = run_with_args("analyze/ownedheap_cell", ANALYZE_OWNED_HEAP_CMD);
     for pattern in [
         "Cell\": False, <1>",
@@ -427,10 +427,7 @@ fn heap_cell() {
     ] {
         assert_contain(&output, pattern);
     }
-}
 
-#[test]
-fn heap_collections() {
     let output = run_with_args("analyze/ownedheap_collections", ANALYZE_OWNED_HEAP_CMD);
     for pattern in [
         "Unique\": True, <0>",
@@ -455,11 +452,8 @@ fn heap_collections() {
         assert_contain(&output, "BTreeMap\": True, <0,0,1>");
         assert_contain(&output, "BTreeSet\": True, <0,1>");
     }
-}
 
-#[test]
-fn heap_nested() {
-    let output: String = run_with_args("analyze/ownedheap_nested", ANALYZE_OWNED_HEAP_CMD);
+    let output = run_with_args("analyze/ownedheap_nested", ANALYZE_OWNED_HEAP_CMD);
     for pattern in [
         "X\": False, <1>",
         "Y\": False, <1>",
@@ -467,10 +461,7 @@ fn heap_nested() {
     ] {
         assert_contain(&output, pattern);
     }
-}
 
-#[test]
-fn heap_proxy() {
     let output = run_with_args("analyze/ownedheap_proxy", ANALYZE_OWNED_HEAP_CMD);
     for pattern in [
         "Proxy1\": False, <0>",
