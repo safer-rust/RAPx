@@ -257,25 +257,16 @@ fn uaf_false_cases() {
 
 // ===============Alias(MOP) Analysis Test==============
 #[test]
-fn alias_1() {
+fn alias_cases() {
     let output = run_with_args("analyze/alias_1", ANALYZE_ALIAS_CMD);
     assert_contain(&output, "foo\": (0.0,1)");
-}
 
-#[test]
-fn alias_2() {
     let output = run_with_args("analyze/alias_2", ANALYZE_ALIAS_CMD);
     assert_contain(&output, "foo\": (0,1)");
-}
 
-#[test]
-fn alias_3() {
     let output = run_with_args("analyze/alias_3", ANALYZE_ALIAS_CMD);
     assert_contain(&output, "foo\": null");
-}
 
-#[test]
-fn alias_4() {
     let output = run_with_args("analyze/alias_4", ANALYZE_ALIAS_CMD);
     let has_either = output.contains("\"foo\": (0,1.1), (0,1.0)")
         || output.contains("\"foo\": (0,1.0), (0,1.1)");
@@ -284,72 +275,41 @@ fn alias_4() {
         "Missing alias field variations\nFull output:\n{}",
         output
     );
-}
 
-#[test]
-fn alias_5() {
     let output = run_with_args("analyze/alias_5", ANALYZE_ALIAS_CMD);
     assert_contain(&output, "new\": (0.0,1.0)");
-}
 
-#[test]
-fn alias_6() {
     let output = run_with_args("analyze/alias_6", ANALYZE_ALIAS_CMD);
     assert_contain(&output, "foo\": (0,1)");
-}
 
-#[test]
-fn alias_7() {
     let output = run_with_args("analyze/alias_7", ANALYZE_ALIAS_CMD);
     assert_contain(&output, "foo\": (0,1)");
-}
 
-#[test]
-fn alias_8() {
     let output = run_with_args("analyze/alias_8", ANALYZE_ALIAS_CMD);
     assert_contain(&output, "foo\": (0,1), (0,2)");
-}
 
-#[test]
-fn alias_9() {
     let output = run_with_args("analyze/alias_9", ANALYZE_ALIAS_CMD);
     assert_contain(&output, "foo\": (0,1)");
-}
 
-#[test]
-fn alias_10() {
     let output = run_with_args("analyze/alias_10", ANALYZE_ALIAS_CMD);
     assert_contain(&output, "new\": (0.0,1.0)");
-}
 
-#[test]
-fn alias_11() {
     let output = run_with_args("analyze/alias_11", ANALYZE_ALIAS_CMD);
     assert_contain(&output, "iter_prop\": (0.0,1.0)");
 }
 
 // ===============Alias(MFP) Analysis Test==============
 #[test]
-fn alias_1_mfp() {
+fn alias_mfp_cases() {
     let output = run_with_args("analyze/alias_1", ANALYZE_ALIAS_MFP_CMD);
     assert_contain(&output, "foo\": (0.0,1)");
-}
 
-#[test]
-fn alias_2_mfp() {
     let output = run_with_args("analyze/alias_2", ANALYZE_ALIAS_MFP_CMD);
-    // MOP expects "foo": (0,1) but MFP reports a slightly different format.
-    assert_contain(&output, "foo\": (0.0,1)"); // This is slightly different from MOP
-}
+    assert_contain(&output, "foo\": (0.0,1)");
 
-#[test]
-fn alias_3_mfp() {
     let output = run_with_args("analyze/alias_3", ANALYZE_ALIAS_MFP_CMD);
     assert_contain(&output, "foo\": null");
-}
 
-#[test]
-fn alias_4_mfp() {
     let output = run_with_args("analyze/alias_4", ANALYZE_ALIAS_MFP_CMD);
     let has_either = output.contains("\"foo\": (0,1.1), (0,1.0)")
         || output.contains("\"foo\": (0,1.0), (0,1.1)");
@@ -358,46 +318,25 @@ fn alias_4_mfp() {
         "Missing alias field variations\nFull output:\n{}",
         output
     );
-}
 
-#[test]
-fn alias_5_mfp() {
     let output = run_with_args("analyze/alias_5", ANALYZE_ALIAS_MFP_CMD);
     assert_contain(&output, "new\": (0.0,1.0)");
-}
 
-#[test]
-fn alias_6_mfp() {
     let output = run_with_args("analyze/alias_6", ANALYZE_ALIAS_MFP_CMD);
     assert_contain(&output, "foo\": (0,1)");
-}
 
-#[test]
-fn alias_7_mfp() {
     let output = run_with_args("analyze/alias_7", ANALYZE_ALIAS_MFP_CMD);
     assert_contain(&output, "foo\": (0,1)");
-}
 
-#[test]
-fn alias_8_mfp() {
     let output = run_with_args("analyze/alias_8", ANALYZE_ALIAS_MFP_CMD);
     assert_contain(&output, "foo\": (0,1), (0,2)");
-}
 
-#[test]
-fn alias_9_mfp() {
     let output = run_with_args("analyze/alias_9", ANALYZE_ALIAS_MFP_CMD);
     assert_contain(&output, "foo\": (0,1)");
-}
 
-#[test]
-fn alias_10_mfp() {
     let output = run_with_args("analyze/alias_10", ANALYZE_ALIAS_MFP_CMD);
     assert_contain(&output, "new\": (0.0,1.0)");
-}
 
-#[test]
-fn alias_11_mfp() {
     let output = run_with_args("analyze/alias_11", ANALYZE_ALIAS_MFP_CMD);
     assert_contain(&output, "iter_prop\": (0.0,1.0)");
 }
@@ -1593,27 +1532,34 @@ fn adg_simple_graph() {
     assert_contain(&graph_str, "to: 4");
 }
 
-// ================ Alias Verify Sound Cases =============
 #[test]
-fn alias_verify_sound_cases() {
+fn alias_sound_13() {
     let output = run_with_args("verify/alias_sound_13", VERIFY_CMD);
     assert_contain(&output, "function: as_bytes_mut_sound");
     assert_contain(&output, "result: SOUND");
+}
 
+#[test]
+fn alias_sound_14() {
     let output = run_with_args("verify/alias_sound_14", VERIFY_CMD);
     assert_contain(&output, "function: as_bytes_sound");
     assert_contain(&output, "result: SOUND");
 }
 
-// ================ Alias Verify Unsound Cases =============
 #[test]
-fn alias_verify_unsound_cases() {
+fn alias_unsound_18() {
     let output = run_with_args("verify/alias_unsound_18", VERIFY_CMD);
     assert_unproved_exclusive(&output, "as_bytes_mut_unsound", &["Alias"]);
+}
 
+#[test]
+fn alias_unsound_19() {
     let output = run_with_args("verify/alias_unsound_19", VERIFY_CMD);
     assert_unproved_exclusive(&output, "as_bytes_mut_ptr_missing_alias", &["Alias"]);
+}
 
+#[test]
+fn alias_unsound_20() {
     let output = run_with_args("verify/alias_unsound_20", VERIFY_CMD);
     assert_unproved_exclusive(&output, "as_bytes_mut_ptr_len_missing_alias", &["Alias"]);
 }
