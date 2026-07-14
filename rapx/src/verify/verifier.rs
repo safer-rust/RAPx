@@ -15,7 +15,7 @@ use rustc_middle::{
         AggregateKind, BasicBlock, BinOp, Body, Local, Operand, Place, ProjectionElem, Rvalue,
         Statement, StatementKind, Terminator, TerminatorKind, UnOp,
     },
-    ty::{Ty, TyCtxt, TyKind},
+    ty::{GenericArgKind, Ty, TyCtxt, TyKind},
 };
 
 use super::{
@@ -1640,7 +1640,7 @@ fn fixed_allocation_elements<'tcx>(
             let ty_name = format!("{ty:?}");
             if ty_name.contains("MaybeUninit") {
                 if let Some(first) = args.first()
-                    && let Some(inner_ty) = first.as_type()
+                    && let GenericArgKind::Type(inner_ty) = first.kind()
                     && let TyKind::Array(elem, len) = inner_ty.kind()
                 {
                     // For const-generic N where length can't be

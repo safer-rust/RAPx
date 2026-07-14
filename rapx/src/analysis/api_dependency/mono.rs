@@ -11,7 +11,7 @@ use rustc_hir::def_id::DefId;
 use rustc_infer::infer::DefineOpaqueTypes;
 use rustc_infer::infer::{InferCtxt, TyCtxtInferExt};
 use rustc_infer::traits::{ImplSource, Obligation, ObligationCause};
-use rustc_middle::ty::{self, GenericArgsRef, Ty, TyCtxt, TypeVisitableExt, TypingEnv};
+use rustc_middle::ty::{self, GenericArgKind, GenericArgsRef, Ty, TyCtxt, TypeVisitableExt, TypingEnv};
 use rustc_span::DUMMY_SP;
 use rustc_trait_selection::traits::query::evaluate_obligation::InferCtxtExt as _;
 use std::collections::HashSet;
@@ -58,7 +58,7 @@ impl<'tcx> Mono<'tcx> {
         for i in 0..self.value.len() {
             let arg = self.value[i];
             let other_arg = other.value[i];
-            let new_arg = if let Some(ty) = arg.as_type() {
+            let new_arg = if let GenericArgKind::Type(ty) = arg.kind() {
                 let other_ty = other_arg.expect_ty();
                 if ty.is_ty_var() && other_ty.is_ty_var() {
                     arg
@@ -85,7 +85,7 @@ impl<'tcx> Mono<'tcx> {
         rap_trace!("fill unbound: {:?}", self);
 
         for (i, arg) in self.value.iter().enumerate() {
-            if let Some(ty) = arg.as_type() {
+            if let GenericArgKind::Type(ty) = arg.kind() {
                 if ty.is_ty_var() {
                     let mut last = Vec::new();
                     std::mem::swap(&mut res, &mut last);
@@ -500,7 +500,7 @@ fn unify_trait<'tcx>(
     assert!(lhs.args.len() == rhs.args.len());
     let mut s = Mono::new(identity);
     for (lhs_arg, rhs_arg) in lhs.args.iter().zip(rhs.args.iter()) {
-        if let (Some(lhs_ty), Some(rhs_ty)) = (lhs_arg.as_type(), rhs_arg.as_type()) {
+        if let (GenericArgKind::Type(lhs_ty), GenericArgKind::Type(rhs_ty)) = (lhs_arg.kind(), rhs_arg.kind()) {
             if rhs_ty.has_infer_types() || rhs_ty.has_param() {
                 // if rhs has infer types, we cannot unify it with lhs
                 return None;
@@ -530,7 +530,7 @@ pub fn resolve_mono_apis<'tcx>(
     let ret = ret.filter(|mono| {
         is_args_fit_trait_bound(fn_did, &mono.value, tcx)
             && mono.value.iter().all(|arg| {
-                if let Some(ty) = arg.as_type() {
+                if let GenericArgKind::Type(ty) = arg.kind() {
                     !utils::is_ty_unstable(ty, tcx)
                 } else {
                     true
@@ -592,7 +592,7 @@ pub fn eliminate_infer_var<'tcx>(
     let mut res = Vec::new();
     let identity = ty::GenericArgs::identity_for_item(tcx, fn_did);
     for (i, arg) in args.iter().enumerate() {
-        if let Some(ty) = arg.as_type() {
+        if let GenericArgKind::Type(ty) = arg.kind() {
             if ty.is_ty_var() {
                 res.push(identity[i]);
             } else {
@@ -636,7 +636,7 @@ pub fn get_unbound_generic_candidates<'tcx>(tcx: TyCtxt<'tcx>) -> Vec<ty::Ty<'tc
 // complexity = sum of complexity of each type argument
 pub fn get_mono_complexity<'tcx>(args: &GenericArgsRef<'tcx>) -> usize {
     args.iter().fold(0, |acc, arg| {
-        if let Some(ty) = arg.as_type() {
+        if let GenericArgKind::Type(ty) = arg.kind() {
             acc + utils::ty_complexity(ty)
         } else {
             acc

@@ -2441,6 +2441,8 @@ impl<'tcx> SmtChecker<'tcx> {
         let TyKind::FnDef(_, args) = func_constant.const_.ty().kind() else {
             return ty;
         };
+        #[cfg(rapx_rustc_ge_200)]
+        let args = args.skip_binder();
         let Some(arg) = args.get(param.index as usize) else {
             return ty;
         };
@@ -2467,6 +2469,8 @@ impl<'tcx> SmtChecker<'tcx> {
         let TyKind::FnDef(_, args) = func_constant.const_.ty().kind() else {
             return None;
         };
+        #[cfg(rapx_rustc_ge_200)]
+        let args = args.skip_binder();
         let arg = args.get(index as usize)?;
         match arg.kind() {
             GenericArgKind::Const(actual_const) => actual_const
@@ -6535,7 +6539,10 @@ fn array_const_len_param(ty: Ty<'_>) -> Option<String> {
         TyKind::Ref(_, inner, _) => array_const_len_param(*inner),
         TyKind::Adt(_, args) if format!("{ty:?}").contains("MaybeUninit") => args
             .first()
-            .and_then(|arg| arg.as_type())
+            .and_then(|arg| match arg.kind() {
+                GenericArgKind::Type(ty) => Some(ty),
+                _ => None,
+            })
             .and_then(array_const_len_param),
         _ => None,
     }

@@ -781,7 +781,10 @@ fn layout_call_ty<'tcx>(func: &Operand<'tcx>) -> Option<Ty<'tcx>> {
     let TyKind::FnDef(_, args) = func_constant.const_.ty().kind() else {
         return None;
     };
-    args.iter().find_map(|arg| arg.as_type())
+    args.iter().find_map(|arg| match arg.kind() {
+        GenericArgKind::Type(ty) => Some(ty),
+        _ => None,
+    })
 }
 
 /// Trace backward from an operand (inner call arg) through Copy/Move/Cast
@@ -1361,7 +1364,10 @@ fn nonnull_inner_ty<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<Ty<'tcx>> {
     if !path.contains("ptr::non_null::NonNull") {
         return None;
     }
-    args.iter().find_map(|arg| arg.as_type())
+    args.iter().find_map(|arg| match arg.kind() {
+        GenericArgKind::Type(ty) => Some(ty),
+        _ => None,
+    })
 }
 
 fn type_layout<'tcx>(tcx: TyCtxt<'tcx>, caller: DefId, ty: Ty<'tcx>) -> Option<(u64, u64)> {

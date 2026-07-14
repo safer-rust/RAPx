@@ -219,6 +219,8 @@ pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<C
         let ty::FnDef(callee_def_id, callee_args) = func_constant.const_.ty().kind() else {
             continue;
         };
+        #[cfg(rapx_rustc_ge_200)]
+        let callee_args = callee_args.skip_binder();
 
         if check_safety(tcx, *callee_def_id) != Safety::Unsafe {
             continue;

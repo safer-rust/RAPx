@@ -2,7 +2,7 @@
 use super::fuzzable;
 use rustc_hir::LangItem;
 use rustc_hir::def_id::DefId;
-use rustc_middle::ty::{self, FnSig, GenericArgsRef, Ty, TyCtxt, TyKind};
+use rustc_middle::ty::{self, FnSig, GenericArgKind, GenericArgsRef, Ty, TyCtxt, TyKind};
 use rustc_span::sym;
 
 pub fn is_def_id_public(fn_def_id: impl Into<DefId>, tcx: TyCtxt<'_>) -> bool {
@@ -71,7 +71,7 @@ pub fn ty_complexity<'tcx>(ty: Ty<'tcx>) -> usize {
         // ADT
         TyKind::Adt(_, args) => {
             args.iter().fold(0, |ans, arg| {
-                if let Some(ty) = arg.as_type() {
+                if let GenericArgKind::Type(ty) = arg.kind() {
                     ans.max(ty_complexity(ty))
                 } else {
                     ans
