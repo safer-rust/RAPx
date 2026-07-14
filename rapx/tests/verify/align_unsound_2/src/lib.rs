@@ -29,7 +29,7 @@ pub fn unsound_scc_selects_mixed_source(data: &[u32], limit: usize, choice: Sele
                     stack_ptr
                 }
             }
-            Selector::Second => unsafe { slice_base.add(1) },
+            Selector::Second => slice_base.wrapping_add(1),
         };
 
         i += 1;

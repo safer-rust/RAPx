@@ -16,9 +16,9 @@ pub fn unsound_four_phase_scc_alignment(data: &[u32], limit: usize) {
     while i < limit {
         selected = match phase {
             0 => base,                   // aligned
-            1 => unsafe { base.add(1) }, // unaligned
-            2 => unsafe { base.add(4) }, // aligned
-            _ => unsafe { base.add(5) }, // unaligned
+            1 => base.wrapping_add(1), // unaligned
+            2 => base.wrapping_add(4), // aligned
+            _ => base.wrapping_add(5), // unaligned
         };
         phase = (phase + 1) % 4;
         i += 1;

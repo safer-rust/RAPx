@@ -14,7 +14,7 @@ unsafe fn require_align_arg0(_ptr: *const u32) {}
 fn maybe_unaligned(base: *const u8, choice: Selector) -> *const u32 {
     match choice {
         Selector::First => base as *const u32,
-        Selector::Second => unsafe { base.add(1) as *const u32 },
+        Selector::Second => (unsafe { base.add(1) }) as *const u32,
     }
 }
 

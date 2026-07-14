@@ -22,7 +22,7 @@ pub fn unsound_iteration_count_can_leave_unaligned(data: &[u32], limit: usize) {
         selected = if i % 2 == 0 {
             base
         } else {
-            unsafe { base.add(1) }
+            base.wrapping_add(1)
         };
 
         i += 1;

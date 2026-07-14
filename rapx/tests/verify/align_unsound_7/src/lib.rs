@@ -25,10 +25,10 @@ pub fn unsound_scc_guard_only_on_one_branch(data: &[u8], limit: usize, choice: S
                 if (base as usize) % 4 == 0 {
                     base
                 } else {
-                    unsafe { base.add(4) }
+                    base.wrapping_add(4)
                 }
             }
-            Selector::Second => unsafe { base.add(1) },
+            Selector::Second => base.wrapping_add(1),
         };
 
         i += 1;

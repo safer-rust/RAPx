@@ -656,7 +656,6 @@ fn align_unsound_2() {
     let output = run_with_args("verify/align_unsound_2", VERIFY_CMD);
     assert_contain(&output, "function: unsound_scc_selects_mixed_source");
     assert_contain(&output, "Align | Unknown");
-    assert_contain(&output, "InBound | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -710,7 +709,6 @@ fn align_unsound_5() {
         "function: unsound_iteration_count_can_leave_unaligned",
     );
     assert_contain(&output, "Align | Unknown");
-    assert_contain(&output, "InBound | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -749,7 +747,6 @@ fn align_unsound_6() {
         "function: unsound_pre_scc_guard_overwritten_by_scc",
     );
     assert_contain(&output, "Align | Unknown");
-    assert_contain(&output, "InBound | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -765,7 +762,6 @@ fn align_unsound_7() {
     let output = run_with_args("verify/align_unsound_7", VERIFY_CMD);
     assert_contain(&output, "function: unsound_scc_guard_only_on_one_branch");
     assert_contain(&output, "Align | Unknown");
-    assert_contain(&output, "InBound | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -931,7 +927,6 @@ fn align_sound_23() {
 fn align_unsound_15() {
     let output = run_with_args("verify/align_unsound_15", VERIFY_CMD);
     assert_contain(&output, "function: unsound_four_phase_scc_alignment");
-    assert_contain(&output, "InBound | Unknown");
     assert_contain(&output, "Align | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }

@@ -23,7 +23,7 @@ pub fn unsound_pre_scc_guard_overwritten_by_scc(data: &[u8], limit: usize, choic
         while i < limit {
             selected = match choice {
                 Selector::First => base,
-                Selector::Second => unsafe { base.add(1) },
+                Selector::Second => base.wrapping_add(1),
             };
 
             i += 1;
