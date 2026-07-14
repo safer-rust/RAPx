@@ -106,7 +106,7 @@ impl<'b, 'tcx> CallGraphVisitor<'b, 'tcx> {
             if let mir::Operand::Constant(constant) = func {
                 if let FnDef(callee_def_id, callee_substs) = constant.const_.ty().kind() {
                     let ty_env = TypingEnv::post_analysis(self.tcx, self.def_id);
-                    #[cfg(rapx_rustc_ge_200)]
+                    #[cfg(rapx_rustc_ge_199)]
                     let callee_substs = callee_substs.skip_binder();
                     if let Ok(Some(instance)) =
                         Instance::try_resolve(self.tcx, ty_env, *callee_def_id, callee_substs)

@@ -2441,7 +2441,7 @@ impl<'tcx> SmtChecker<'tcx> {
         let TyKind::FnDef(_, args) = func_constant.const_.ty().kind() else {
             return ty;
         };
-        #[cfg(rapx_rustc_ge_200)]
+        #[cfg(rapx_rustc_ge_199)]
         let args = args.skip_binder();
         let Some(arg) = args.get(param.index as usize) else {
             return ty;
@@ -2469,7 +2469,7 @@ impl<'tcx> SmtChecker<'tcx> {
         let TyKind::FnDef(_, args) = func_constant.const_.ty().kind() else {
             return None;
         };
-        #[cfg(rapx_rustc_ge_200)]
+        #[cfg(rapx_rustc_ge_199)]
         let args = args.skip_binder();
         let arg = args.get(index as usize)?;
         match arg.kind() {

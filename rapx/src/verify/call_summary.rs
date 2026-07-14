@@ -781,9 +781,13 @@ fn layout_call_ty<'tcx>(func: &Operand<'tcx>) -> Option<Ty<'tcx>> {
     let TyKind::FnDef(_, args) = func_constant.const_.ty().kind() else {
         return None;
     };
-    args.iter().find_map(|arg| match arg.kind() {
+    args.iter().find_map(|arg| {
+        #[cfg(rapx_rustc_ge_199)]
+        let arg = arg.skip_binder();
+        match arg.kind() {
         GenericArgKind::Type(ty) => Some(ty),
         _ => None,
+    }
     })
 }
 
