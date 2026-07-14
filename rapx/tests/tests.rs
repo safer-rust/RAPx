@@ -683,6 +683,12 @@ fn nonnull_sound_cases() {
     let output = run_with_args("verify/nonnull_sound_6", VERIFY_CMD);
     assert_contain(&output, "function: sound_nonnull_wrapper_from_ref");
     assert_contain(&output, "result: SOUND");
+
+    let output = run_with_args("verify/nonnull_sound_1", VERIFY_CMD);
+    assert_contain(&output, "function: caller_with_contract");
+    assert_contain(&output, "result: SOUND");
+    assert_contain(&output, "function: sound_chained_propagation");
+    assert_contain(&output, "result: SOUND");
 }
 
 // ================ NonNull Unsound Cases =============
@@ -1469,15 +1475,6 @@ fn symbolic_interval() {
             output
         );
     }
-}
-
-#[test]
-fn nonnull_sound_1() {
-    let output = run_with_args("verify/nonnull_sound_1", VERIFY_CMD);
-    assert_contain(&output, "function: caller_with_contract");
-    assert_contain(&output, "result: SOUND");
-    assert_contain(&output, "function: sound_chained_propagation");
-    assert_contain(&output, "result: SOUND");
 }
 
 #[test]
