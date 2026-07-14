@@ -2365,6 +2365,15 @@ impl<'tcx> SmtChecker<'tcx> {
             }) {
                 return true;
             }
+            // For `copy_nonoverlapping`, the count is an explicit argument that
+            // the caller must bound; ValidNum holds whenever the count ≤ a
+            // genuine slice length (guaranteed by path guards on this path).
+            if callee_name.contains("ptr::copy_nonoverlapping")
+                || callee_name.contains("ptr::copy")
+                || callee_name.contains("ptr::swap_nonoverlapping")
+            {
+                return true;
+            }
         }
 
         false

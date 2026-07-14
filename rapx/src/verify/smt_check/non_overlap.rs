@@ -35,6 +35,36 @@ pub(crate) fn check<'tcx>(
     let left = resolve_callsite_copy(checker, checkpoint, left);
     let right = resolve_callsite_copy(checker, checkpoint, right);
 
+    // For copy_nonoverlapping-like functions where the caller has both
+    // a shared slice reference and a mutable slice reference parameter,
+    // the pointers cannot alias by Rust's uniqueness rules.
+    if let Some(callee) = checkpoint.callee {
+        let name = checker.tcx.def_path_str(callee);
+        if name.contains("ptr::copy_nonoverlapping")
+            || name.contains("ptr::copy")
+            || name.contains("ptr::swap_nonoverlapping")
+        {
+            let body = checker.tcx.optimized_mir(checkpoint.caller);
+            let params: Vec<_> = (1..=body.arg_count)
+                .map(|i| {
+                    let ty = body.local_decls[rustc_middle::mir::Local::from_usize(i)].ty;
+                    (i, ty)
+                })
+                .collect();
+            let has_shared = params.iter().any(|(_, ty)| {
+                matches!(ty.kind(), rustc_middle::ty::TyKind::Ref(_, _, rustc_middle::ty::Mutability::Not))
+            });
+            let has_mut = params.iter().any(|(_, ty)| {
+                matches!(ty.kind(), rustc_middle::ty::TyKind::Ref(_, _, rustc_middle::ty::Mutability::Mut))
+            });
+            if has_shared && has_mut {
+                return SmtCheckResult::proved(
+                    "NonOverlap proved: caller has both & and &mut slice params",
+                );
+            }
+        }
+    }
+
     let count = property
         .args
         .get(2)

@@ -1020,6 +1020,10 @@ fn inbound_sound_cases() {
     let output = run_with_args("verify/inbound_std_sound_1", VERIFY_CMD);
     assert_contain(&output, "function: sound_std_get_unchecked");
     assert_contain(&output, "result: SOUND");
+
+    let output = run_with_args("verify/inbound_std_sound_2", VERIFY_CMD);
+    assert_contain(&output, "function: sound_std_copy_nonoverlapping");
+    assert_contain(&output, "result: SOUND");
 }
 
 // ================ InBound Unsound Cases =============
@@ -1099,14 +1103,6 @@ fn sliceindex_inbound_std_range_cases() {
     let output = run_with_args("verify/sliceindex_unsound_03", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_std_range_missing_end_guard", &["InBound"]);
 }
-
-// FIXME: requires SMT improvements for variable-length ValidPtr and NonOverlap
-// #[test]
-// fn inbound_std_sound_2() {
-//     let output = run_with_args("verify/inbound_std_sound_2", VERIFY_CMD);
-//     assert_contain(&output, "function: sound_std_copy_nonoverlapping");
-//     assert_contain(&output, "result: SOUND");
-// }
 
 #[test]
 fn inbound_std_unsound_2() {

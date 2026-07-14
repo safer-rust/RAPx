@@ -3,5 +3,5 @@
 version = 4
 
 [[package]]
-name = "inbound_std_sound_02"
+name = "inbound_std_sound_2"
 version = "0.1.0"
