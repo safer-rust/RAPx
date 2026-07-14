@@ -464,10 +464,7 @@ fn path_cases() {
     assert_contain(&output, "Path [0, 1, 3, 4, 6, 7, 8, 4, 5, 9, 1, 2]");
     assert_contain(&output, "Path [0, 1, 3, 4, 6, 7, 8, 4, 5, 9, 1, 3, 4, 5, 9, 1, 2]");
     assert_eq!(path_count_for(&output, "walk"), 4);
-}
 
-#[test]
-fn path_repeat_cases() {
     let output = run_with_args("analyze/path_false_1", ANALYZE_PATHS_REPEAT1_CMD);
     assert_eq!(path_count_for(&output, "classify"), 39);
     assert_contain(&output, "Path [0, 1, 2]");
@@ -530,6 +527,9 @@ fn align_unsound_cases() {
 
     let output = run_with_args("verify/align_unsound_17", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_contract_type_param_binds_generic", &["Align"]);
+
+    let output = run_with_args("verify/align_repeat_threshold", VERIFY_ALLOW_REPEAT2_CMD);
+    assert_unproved_exclusive(&output, "repeat2_reveals_delayed_unaligned", &["Align"]);
 }
 
 // ================ Align Sound Cases =============
@@ -650,21 +650,12 @@ fn align_sound_cases() {
     let output = run_with_args("verify/align_sound_26", VERIFY_CMD);
     assert_contain(&output, "function: sound_contract_type_param_binds_generic");
     assert_contain(&output, "result: SOUND");
-}
 
-
-#[test]
-fn align_repeat_threshold_repeat1_sound() {
     let output = run_with_args("verify/align_repeat_threshold", VERIFY_ALLOW_REPEAT_CMD);
     assert_contain(&output, "function: repeat2_reveals_delayed_unaligned");
     assert_contain(&output, "result: SOUND");
 }
 
-#[test]
-fn align_repeat_threshold_repeat2_unsound() {
-    let output = run_with_args("verify/align_repeat_threshold", VERIFY_ALLOW_REPEAT2_CMD);
-    assert_unproved_exclusive(&output, "repeat2_reveals_delayed_unaligned", &["Align"]);
-}
 
 // ================ NonNull Sound Cases =============
 #[test]
