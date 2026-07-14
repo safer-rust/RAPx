@@ -118,21 +118,43 @@ fn assert_not_contain(output: &str, pattern: &str) {
     );
 }
 
-fn assert_unsound(output: &str, function: &str, unproved: usize, failed: &[&str]) {
+fn assert_unsound(output: &str, function: &str, failed: &[&str]) {
     assert_contain(output, &format!("function: {function}"));
+    let block = extract_block_after(output, &format!("function: {function}"));
     for prop in failed {
         assert!(
-            output[output.find(&format!("function: {function}")).unwrap_or(0)..]
-                .find(&format!("{prop} | Failed"))
-                .is_some()
-                || output[output.find(&format!("function: {function}")).unwrap_or(0)..]
-                    .find(&format!("{prop} | Unknown"))
-                    .is_some(),
-            "Expected {prop} | Failed/Unknown for {function}"
+            block.contains(&format!("{prop} | Failed"))
+                || block.contains(&format!("{prop} | Unknown")),
+            "Expected {prop} | Failed/Unknown for {function}\nBlock:\n{block}"
         );
     }
-    assert_contain(output, &format!("result: UNSOUND ({unproved} unproved)"));
+    for &prop in ALL_PROPS {
+        if failed.iter().any(|&p| p == prop) {
+            continue;
+        }
+        assert!(
+            !block.contains(&format!("{prop} | Failed"))
+                && !block.contains(&format!("{prop} | Unknown")),
+            "Unexpected {prop} | Failed/Unknown for {function}\nBlock:\n{block}"
+        );
+    }
+    assert_contain(output, "result: UNSOUND");
 }
+
+fn extract_block_after<'a>(text: &'a str, marker: &str) -> &'a str {
+    let Some(pos) = text.find(marker) else { return "" };
+    let rest = &text[pos + marker.len()..];
+    match rest.find("function: ") {
+        Some(end) => &rest[..end],
+        None => rest,
+    }
+}
+
+const ALL_PROPS: &[&str] = &[
+    "NonNull", "ValidPtr", "Init", "Alive", "Alias", "Align", "InBound",
+    "Allocated", "Deref", "ValidNum", "NonOverlap", "Typed",
+    "ValidTransmute", "TransmuteWithoutAlign", "NonVolatile",
+];
 
 const CHECK_UAF_CMD: &[&str] = &["check", "-f"];
 const CHECK_MLEAK_CMD: &[&str] = &["check", "-m"];
@@ -654,7 +676,7 @@ fn align_sound_2() {
 #[test]
 fn align_unsound_1() {
     let output = run_with_args("verify/align_unsound_1", VERIFY_CMD);
-    assert_unsound(&output, "unsound_enum_paths_inside_scc", 1, &["Align"]);
+    assert_unsound(&output, "unsound_enum_paths_inside_scc", &["Align"]);
 }
 
 #[test]
@@ -667,12 +689,7 @@ fn align_sound_3() {
 #[test]
 fn align_unsound_2() {
     let output = run_with_args("verify/align_unsound_2", VERIFY_CMD);
-    assert_unsound(
-        &output,
-        "unsound_scc_selects_mixed_source",
-        1,
-        &["Align"],
-    );
+    assert_unsound(&output, "unsound_scc_selects_mixed_source", &["Align"]);
 }
 
 #[test]
@@ -685,7 +702,7 @@ fn align_sound_4() {
 #[test]
 fn align_unsound_3() {
     let output = run_with_args("verify/align_unsound_3", VERIFY_CMD);
-    assert_unsound(&output, "unsound_scc_computes_misaligned_offset", 1, &["Align"]);
+    assert_unsound(&output, "unsound_scc_computes_misaligned_offset", &["Align"]);
 }
 
 #[test]
@@ -698,12 +715,7 @@ fn align_sound_5() {
 #[test]
 fn align_unsound_4() {
     let output = run_with_args("verify/align_unsound_4", VERIFY_CMD);
-    assert_unsound(
-        &output,
-        "unsound_nested_scc_controller",
-        2,
-        &["Align"],
-    );
+    assert_unsound(&output, "unsound_nested_scc_controller", &["Align"]);
 }
 
 #[test]
@@ -719,12 +731,7 @@ fn align_sound_6() {
 #[test]
 fn align_unsound_5() {
     let output = run_with_args("verify/align_unsound_5", VERIFY_CMD);
-    assert_unsound(
-        &output,
-        "unsound_iteration_count_can_leave_unaligned",
-        1,
-        &["Align"],
-    );
+    assert_unsound(&output, "unsound_iteration_count_can_leave_unaligned", &["Align"]);
 }
 
 #[test]
@@ -757,12 +764,7 @@ fn align_sound_9() {
 #[test]
 fn align_unsound_6() {
     let output = run_with_args("verify/align_unsound_6", VERIFY_CMD);
-    assert_unsound(
-        &output,
-        "unsound_pre_scc_guard_overwritten_by_scc",
-        1,
-        &["Align"],
-    );
+    assert_unsound(&output, "unsound_pre_scc_guard_overwritten_by_scc", &["Align"]);
 }
 
 #[test]
@@ -775,7 +777,7 @@ fn align_sound_10() {
 #[test]
 fn align_unsound_7() {
     let output = run_with_args("verify/align_unsound_7", VERIFY_CMD);
-    assert_unsound(&output, "unsound_scc_guard_only_on_one_branch", 6, &["Align"]);
+    assert_unsound(&output, "unsound_scc_guard_only_on_one_branch", &["Align"]);
 }
 
 #[test]
@@ -788,7 +790,7 @@ fn align_sound_11() {
 #[test]
 fn align_unsound_8() {
     let output = run_with_args("verify/align_unsound_8", VERIFY_CMD);
-    assert_unsound(&output, "unsound_helper_with_disjunctive_guard", 2, &["Align"]);
+    assert_unsound(&output, "unsound_helper_with_disjunctive_guard", &["Align"]);
 }
 
 #[test]
@@ -801,7 +803,7 @@ fn align_sound_12() {
 #[test]
 fn align_unsound_9() {
     let output = run_with_args("verify/align_unsound_9", VERIFY_CMD);
-    assert_unsound(&output, "unsound_helper_return_path_selects_bad_ptr", 1, &["Align"]);
+    assert_unsound(&output, "unsound_helper_return_path_selects_bad_ptr", &["Align"]);
 }
 
 #[test]
@@ -821,7 +823,7 @@ fn align_sound_14() {
 #[test]
 fn align_unsound_10() {
     let output = run_with_args("verify/align_unsound_10", VERIFY_CMD);
-    assert_unsound(&output, "unsound_multi_hop_missing_offset_guard", 1, &["Align"]);
+    assert_unsound(&output, "unsound_multi_hop_missing_offset_guard", &["Align"]);
 }
 
 #[test]
@@ -841,7 +843,7 @@ fn align_sound_16() {
 #[test]
 fn align_unsound_11() {
     let output = run_with_args("verify/align_unsound_11", VERIFY_CMD);
-    assert_unsound(&output, "unsound_sub_missing_guard", 1, &["Align"]);
+    assert_unsound(&output, "unsound_sub_missing_guard", &["Align"]);
 }
 
 #[test]
@@ -854,7 +856,7 @@ fn align_sound_17() {
 #[test]
 fn align_unsound_12() {
     let output = run_with_args("verify/align_unsound_12", VERIFY_CMD);
-    assert_unsound(&output, "unsound_byte_offset_one", 1, &["Align"]);
+    assert_unsound(&output, "unsound_byte_offset_one", &["Align"]);
 }
 
 #[test]
@@ -874,7 +876,7 @@ fn align_sound_19() {
 #[test]
 fn align_unsound_13() {
     let output = run_with_args("verify/align_unsound_13", VERIFY_CMD);
-    assert_unsound(&output, "unsound_usize_add_missing_offset_guard", 1, &["Align"]);
+    assert_unsound(&output, "unsound_usize_add_missing_offset_guard", &["Align"]);
 }
 
 #[test]
@@ -901,7 +903,7 @@ fn align_sound_22() {
 #[test]
 fn align_unsound_14() {
     let output = run_with_args("verify/align_unsound_14", VERIFY_CMD);
-    assert_unsound(&output, "unsound_repr_packed_field", 1, &["Align"]);
+    assert_unsound(&output, "unsound_repr_packed_field", &["Align"]);
 }
 
 #[test]
@@ -914,13 +916,13 @@ fn align_sound_23() {
 #[test]
 fn align_unsound_15() {
     let output = run_with_args("verify/align_unsound_15", VERIFY_CMD);
-    assert_unsound(&output, "unsound_four_phase_scc_alignment", 12, &["Align"]);
+    assert_unsound(&output, "unsound_four_phase_scc_alignment", &["Align"]);
 }
 
 #[test]
 fn align_unsound_16() {
     let output = run_with_args("verify/align_unsound_16", VERIFY_CMD);
-    assert_unsound(&output, "unsound_trait_bound_cross_cast", 1, &["Align"]);
+    assert_unsound(&output, "unsound_trait_bound_cross_cast", &["Align"]);
 }
 
 #[test]
@@ -950,12 +952,7 @@ fn align_sound_26() {
 #[test]
 fn align_unsound_17() {
     let output = run_with_args("verify/align_unsound_17", VERIFY_CMD);
-    assert_unsound(
-        &output,
-        "unsound_contract_type_param_binds_generic",
-        1,
-        &["Align"],
-    );
+    assert_unsound(&output, "unsound_contract_type_param_binds_generic", &["Align"]);
 }
 
 #[test]
