@@ -1116,9 +1116,6 @@ fn alive_lifetime_sound_cases() {
 
 #[test]
 fn alive_lifetime_unsound_cases() {
-    let output = run_with_args("verify/alive_unsound_01", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "DangerousAliaser::<'a, T>::get_mut", &["Alive", "NonNull", "ValidPtr"]);
-
     let output = run_with_args("verify/alive_unsound_02", VERIFY_CMD);
     assert_unproved_exclusive(&output, "slice_tied_to_unrelated_host", &["Alias", "Alive", "Init", "NonNull", "ValidPtr"]);
 
@@ -1504,6 +1501,9 @@ fn alias_verify_unsound_cases() {
 
     let output = run_with_args("verify/alias_unsound_20", VERIFY_CMD);
     assert_unproved_exclusive(&output, "as_bytes_mut_ptr_len_missing_alias", &["Alias"]);
+
+    let output = run_with_args("verify/alias_unsound_21", VERIFY_CMD);
+    assert_unproved_exclusive(&output, "DangerousAliaser::<'a, T>::get_mut", &["Alive", "Alias", "NonNull", "ValidPtr"]);
 }
 
 #[test]
