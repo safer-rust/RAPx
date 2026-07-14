@@ -639,6 +639,8 @@ fn align_sound_2() {
 fn align_unsound_1() {
     let output = run_with_args("verify/align_unsound_1", VERIFY_CMD);
     assert_contain(&output, "function: unsound_enum_paths_inside_scc");
+    assert_contain(&output, "InBound | Unknown");
+    assert_contain(&output, "Align | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -653,6 +655,8 @@ fn align_sound_3() {
 fn align_unsound_2() {
     let output = run_with_args("verify/align_unsound_2", VERIFY_CMD);
     assert_contain(&output, "function: unsound_scc_selects_mixed_source");
+    assert_contain(&output, "Align | Unknown");
+    assert_contain(&output, "InBound | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -667,6 +671,8 @@ fn align_sound_4() {
 fn align_unsound_3() {
     let output = run_with_args("verify/align_unsound_3", VERIFY_CMD);
     assert_contain(&output, "function: unsound_scc_computes_misaligned_offset");
+    assert_contain(&output, "Align | Unknown");
+    assert_contain(&output, "InBound | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -681,6 +687,8 @@ fn align_sound_5() {
 fn align_unsound_4() {
     let output = run_with_args("verify/align_unsound_4", VERIFY_ALLOW_REPEAT_CMD);
     assert_contain(&output, "function: unsound_nested_scc_controller");
+    assert_contain(&output, "InBound | Unknown");
+    assert_contain(&output, "Align | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -701,6 +709,8 @@ fn align_unsound_5() {
         &output,
         "function: unsound_iteration_count_can_leave_unaligned",
     );
+    assert_contain(&output, "Align | Unknown");
+    assert_contain(&output, "InBound | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -738,6 +748,8 @@ fn align_unsound_6() {
         &output,
         "function: unsound_pre_scc_guard_overwritten_by_scc",
     );
+    assert_contain(&output, "Align | Unknown");
+    assert_contain(&output, "InBound | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -752,6 +764,8 @@ fn align_sound_10() {
 fn align_unsound_7() {
     let output = run_with_args("verify/align_unsound_7", VERIFY_CMD);
     assert_contain(&output, "function: unsound_scc_guard_only_on_one_branch");
+    assert_contain(&output, "Align | Unknown");
+    assert_contain(&output, "InBound | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -766,6 +780,9 @@ fn align_sound_11() {
 fn align_unsound_8() {
     let output = run_with_args("verify/align_unsound_8", VERIFY_CMD);
     assert_contain(&output, "function: unsound_helper_with_disjunctive_guard");
+    assert_contain(&output, "NonNull | Unknown");
+    assert_contain(&output, "InBound | Unknown");
+    assert_contain(&output, "Align | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -783,6 +800,9 @@ fn align_unsound_9() {
         &output,
         "function: unsound_helper_return_path_selects_bad_ptr",
     );
+    assert_contain(&output, "NonNull | Unknown");
+    assert_contain(&output, "InBound | Unknown");
+    assert_contain(&output, "Align | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -804,6 +824,9 @@ fn align_sound_14() {
 fn align_unsound_10() {
     let output = run_with_args("verify/align_unsound_10", VERIFY_CMD);
     assert_contain(&output, "function: unsound_multi_hop_missing_offset_guard");
+    assert_contain(&output, "NonNull | Unknown");
+    assert_contain(&output, "InBound | Unknown");
+    assert_contain(&output, "Align | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -825,6 +848,8 @@ fn align_sound_16() {
 fn align_unsound_11() {
     let output = run_with_args("verify/align_unsound_11", VERIFY_CMD);
     assert_contain(&output, "function: unsound_sub_missing_guard");
+    assert_contain(&output, "Align | Unknown");
+    assert_contain(&output, "InBound | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -839,6 +864,8 @@ fn align_sound_17() {
 fn align_unsound_12() {
     let output = run_with_args("verify/align_unsound_12", VERIFY_CMD);
     assert_contain(&output, "function: unsound_byte_offset_one");
+    assert_contain(&output, "Align | Unknown");
+    assert_contain(&output, "InBound | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -860,6 +887,7 @@ fn align_sound_19() {
 fn align_unsound_13() {
     let output = run_with_args("verify/align_unsound_13", VERIFY_CMD);
     assert_contain(&output, "function: unsound_usize_add_missing_offset_guard");
+    assert_contain(&output, "Align | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -888,6 +916,7 @@ fn align_sound_22() {
 fn align_unsound_14() {
     let output = run_with_args("verify/align_unsound_14", VERIFY_CMD);
     assert_contain(&output, "function: unsound_repr_packed_field");
+    assert_contain(&output, "Align | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -902,6 +931,8 @@ fn align_sound_23() {
 fn align_unsound_15() {
     let output = run_with_args("verify/align_unsound_15", VERIFY_CMD);
     assert_contain(&output, "function: unsound_four_phase_scc_alignment");
+    assert_contain(&output, "InBound | Unknown");
+    assert_contain(&output, "Align | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -909,6 +940,7 @@ fn align_unsound_15() {
 fn align_unsound_16() {
     let output = run_with_args("verify/align_unsound_16", VERIFY_CMD);
     assert_contain(&output, "function: unsound_trait_bound_cross_cast");
+    assert_contain(&output, "Align | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -943,6 +975,7 @@ fn align_unsound_17() {
         &output,
         "function: unsound_contract_type_param_binds_generic",
     );
+    assert_contain(&output, "Align | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -957,6 +990,7 @@ fn align_repeat_threshold_repeat1_sound() {
 fn align_repeat_threshold_repeat2_unsound() {
     let output = run_with_args("verify/align_repeat_threshold", VERIFY_ALLOW_REPEAT2_CMD);
     assert_contain(&output, "function: repeat2_reveals_delayed_unaligned");
+    assert_contain(&output, "Align | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1006,6 +1040,7 @@ fn nonnull_sound_6() {
 fn nonnull_unsound_1() {
     let output = run_with_args("verify/nonnull_unsound_1", VERIFY_CMD);
     assert_contain(&output, "function: unsound_explicit_null_constant");
+    assert_contain(&output, "NonNull | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1013,6 +1048,7 @@ fn nonnull_unsound_1() {
 fn nonnull_unsound_2() {
     let output = run_with_args("verify/nonnull_unsound_2", VERIFY_CMD);
     assert_contain(&output, "function: unsound_raw_pointer_argument");
+    assert_contain(&output, "NonNull | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1020,6 +1056,7 @@ fn nonnull_unsound_2() {
 fn nonnull_unsound_3() {
     let output = run_with_args("verify/nonnull_unsound_3", VERIFY_CMD);
     assert_contain(&output, "function: unsound_branch_selects_null");
+    assert_contain(&output, "NonNull | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1027,6 +1064,7 @@ fn nonnull_unsound_3() {
 fn nonnull_unsound_4() {
     let output = run_with_args("verify/nonnull_unsound_4", VERIFY_CMD);
     assert_contain(&output, "function: unsound_scc_overwrites_with_null");
+    assert_contain(&output, "NonNull | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1034,6 +1072,7 @@ fn nonnull_unsound_4() {
 fn nonnull_unsound_5() {
     let output = run_with_args("verify/nonnull_unsound_5", VERIFY_CMD);
     assert_contain(&output, "function: unsound_unrelated_guard");
+    assert_contain(&output, "NonNull | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1041,6 +1080,7 @@ fn nonnull_unsound_5() {
 fn nonnull_unsound_6() {
     let output = run_with_args("verify/nonnull_unsound_6", VERIFY_CMD);
     assert_contain(&output, "function: unsound_nonnull_wrapper_from_null");
+    assert_contain(&output, "NonNull | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1104,6 +1144,7 @@ fn allocated_sound_8() {
 fn allocated_unsound_1() {
     let output = run_with_args("verify/allocated_unsound_1", VERIFY_CMD);
     assert_contain(&output, "function: unsound_null_not_allocated");
+    assert_contain(&output, "Allocated | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1111,6 +1152,7 @@ fn allocated_unsound_1() {
 fn allocated_unsound_2() {
     let output = run_with_args("verify/allocated_unsound_2", VERIFY_CMD);
     assert_contain(&output, "function: unsound_stack_scope_ended");
+    assert_contain(&output, "Allocated | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1118,6 +1160,8 @@ fn allocated_unsound_2() {
 fn allocated_unsound_3() {
     let output = run_with_args("verify/allocated_unsound_3", VERIFY_CMD);
     assert_contain(&output, "function: unsound_vec_dropped_before_use");
+    assert_contain(&output, "Allocated | Unknown");
+    assert_contain(&output, "ValidPtr | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1125,6 +1169,7 @@ fn allocated_unsound_3() {
 fn allocated_unsound_4() {
     let output = run_with_args("verify/allocated_unsound_4", VERIFY_CMD);
     assert_contain(&output, "function: unsound_empty_slice_needs_one_element");
+    assert_contain(&output, "Allocated | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1132,6 +1177,7 @@ fn allocated_unsound_4() {
 fn allocated_unsound_5() {
     let output = run_with_args("verify/allocated_unsound_5", VERIFY_CMD);
     assert_contain(&output, "function: unsound_branch_may_select_null");
+    assert_contain(&output, "Allocated | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1139,6 +1185,7 @@ fn allocated_unsound_5() {
 fn allocated_unsound_6() {
     let output = run_with_args("verify/allocated_unsound_6", VERIFY_CMD);
     assert_contain(&output, "function: unsound_scc_overwrites_with_null");
+    assert_contain(&output, "Allocated | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1146,6 +1193,7 @@ fn allocated_unsound_6() {
 fn allocated_unsound_7() {
     let output = run_with_args("verify/allocated_unsound_7", VERIFY_CMD);
     assert_contain(&output, "function: unsound_vec_reallocates_old_pointer");
+    assert_contain(&output, "Allocated | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1156,6 +1204,7 @@ fn allocated_unsound_8() {
         &output,
         "function: unsound_slice_too_short_for_requested_len",
     );
+    assert_contain(&output, "Allocated | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1163,6 +1212,7 @@ fn allocated_unsound_8() {
 fn allocated_unsound_9() {
     let output = run_with_args("verify/allocated_unsound_9", VERIFY_CMD);
     assert_contain(&output, "function: unsound_intra_returns_dangling_pointer");
+    assert_contain(&output, "Allocated | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1170,6 +1220,7 @@ fn allocated_unsound_9() {
 fn allocated_unsound_10() {
     let output = run_with_args("verify/allocated_unsound_10", VERIFY_CMD);
     assert_contain(&output, "function: unsound_scc_selects_dead_temporary");
+    assert_contain(&output, "Allocated | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1180,6 +1231,7 @@ fn allocated_unsound_11() {
         &output,
         "function: unsound_adjacent_stack_objects_do_not_merge",
     );
+    assert_contain(&output, "Allocated | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1194,6 +1246,7 @@ fn inbound_sound_1() {
 fn inbound_unsound_1() {
     let output = run_with_args("verify/inbound_unsound_1", VERIFY_CMD);
     assert_contain(&output, "function: unsound_ptr_add_without_guard");
+    assert_contain(&output, "InBound | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1211,6 +1264,7 @@ fn inbound_unsound_2() {
         &output,
         "function: unsound_from_raw_parts_two_only_nonempty",
     );
+    assert_contain(&output, "InBound | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1225,6 +1279,7 @@ fn inbound_sound_3() {
 fn inbound_unsound_3() {
     let output = run_with_args("verify/inbound_unsound_3", VERIFY_CMD);
     assert_contain(&output, "function: unsound_get_unchecked_wrong_guard");
+    assert_contain(&output, "InBound | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1242,6 +1297,7 @@ fn inbound_unsound_4() {
         &output,
         "function: unsound_copy_nonoverlapping_dst_unguarded",
     );
+    assert_contain(&output, "InBound | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1256,6 +1312,7 @@ fn inbound_sound_5() {
 fn inbound_unsound_5() {
     let output = run_with_args("verify/inbound_unsound_5", VERIFY_CMD);
     assert_contain(&output, "function: unsound_branch_selects_unguarded_index");
+    assert_contain(&output, "InBound | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1263,6 +1320,7 @@ fn inbound_unsound_5() {
 fn inbound_unsound_6() {
     let output = run_with_args("verify/inbound_unsound_6", VERIFY_CMD);
     assert_contain(&output, "function: unsound_scc_off_by_one");
+    assert_contain(&output, "InBound | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1270,6 +1328,7 @@ fn inbound_unsound_6() {
 fn inbound_unsound_7() {
     let output = run_with_args("verify/inbound_unsound_7", VERIFY_CMD);
     assert_contain(&output, "function: unsound_len_guard_off_by_one");
+    assert_contain(&output, "InBound | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1277,6 +1336,7 @@ fn inbound_unsound_7() {
 fn inbound_unsound_8() {
     let output = run_with_args("verify/inbound_unsound_8", VERIFY_CMD);
     assert_contain(&output, "function: unsound_inclusive_range_off_by_one");
+    assert_contain(&output, "InBound | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1284,6 +1344,7 @@ fn inbound_unsound_8() {
 fn inbound_unsound_9() {
     let output = run_with_args("verify/inbound_unsound_9", VERIFY_CMD);
     assert_contain(&output, "function: unsound_ptr_add_off_by_one");
+    assert_contain(&output, "InBound | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1305,6 +1366,7 @@ fn inbound_std_sound_1() {
 fn inbound_std_unsound_1() {
     let output = run_with_args("verify/inbound_std_unsound_1", VERIFY_CMD);
     assert_contain(&output, "function: unsound_std_get_unchecked_wrong_guard");
+    assert_contain(&output, "InBound | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1319,6 +1381,7 @@ fn sliceindex_inbound_sound_1() {
 fn sliceindex_inbound_unsound_1() {
     let output = run_with_args("verify/sliceindex_unsound_01", VERIFY_CMD);
     assert_contain(&output, "function: unsound_scalar_index_wrong_guard");
+    assert_contain(&output, "InBound | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1333,6 +1396,7 @@ fn sliceindex_inbound_sound_2() {
 fn sliceindex_inbound_unsound_2() {
     let output = run_with_args("verify/sliceindex_unsound_02", VERIFY_CMD);
     assert_contain(&output, "function: unsound_range_index_missing_end_guard");
+    assert_contain(&output, "InBound | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1351,6 +1415,7 @@ fn sliceindex_inbound_std_range_cases() {
 
     let output = run_with_args("verify/sliceindex_unsound_03", VERIFY_CMD);
     assert_contain(&output, "function: unsound_std_range_missing_end_guard");
+    assert_contain(&output, "InBound | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1369,6 +1434,9 @@ fn inbound_std_unsound_2() {
         &output,
         "function: unsound_std_copy_nonoverlapping_dst_unguarded",
     );
+    assert_contain(&output, "ValidPtr | Unknown");
+    assert_contain(&output, "NonOverlap | Failed");
+    assert_contain(&output, "ValidNum | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1418,6 +1486,7 @@ fn init_std_sound_6() {
 fn init_std_unsound_1() {
     let output = run_with_args("verify/init_std_unsound_1", VERIFY_CMD);
     assert_contain(&output, "function: unsound_assume_init_read_without_write");
+    assert_contain(&output, "Init | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1425,6 +1494,7 @@ fn init_std_unsound_1() {
 fn init_std_unsound_2() {
     let output = run_with_args("verify/init_std_unsound_2", VERIFY_CMD);
     assert_contain(&output, "function: unsound_assume_init_without_write");
+    assert_contain(&output, "Init | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1432,6 +1502,7 @@ fn init_std_unsound_2() {
 fn init_std_unsound_3() {
     let output = run_with_args("verify/init_std_unsound_3", VERIFY_CMD);
     assert_contain(&output, "function: unsound_conditional_write_then_assume");
+    assert_contain(&output, "Init | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1439,6 +1510,7 @@ fn init_std_unsound_3() {
 fn init_std_unsound_4() {
     let output = run_with_args("verify/init_std_unsound_4", VERIFY_CMD);
     assert_contain(&output, "function: unsound_write_different_slot");
+    assert_contain(&output, "Init | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1446,6 +1518,9 @@ fn init_std_unsound_4() {
 fn init_std_unsound_5() {
     let output = run_with_args("verify/init_std_unsound_5", VERIFY_CMD);
     assert_contain(&output, "function: unsound_intra_helper_maybe_initializes");
+    assert_contain(&output, "Init | Unknown");
+    assert_contain(&output, "Align | Unknown");
+    assert_contain(&output, "ValidPtr | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1453,6 +1528,7 @@ fn init_std_unsound_5() {
 fn init_std_unsound_6() {
     let output = run_with_args("verify/init_std_unsound_6", VERIFY_CMD);
     assert_contain(&output, "function: unsound_from_raw_parts_uninitialized");
+    assert_contain(&output, "Init | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1489,6 +1565,7 @@ fn validnum_sound_1() {
 fn validnum_unsound_1() {
     let output = run_with_args("verify/validnum_unsound_1", VERIFY_CMD);
     assert_contain(&output, "function: unsound_missing_less_than_guard");
+    assert_contain(&output, "ValidNum | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1503,6 +1580,7 @@ fn validnum_sound_2() {
 fn validnum_unsound_2() {
     let output = run_with_args("verify/validnum_unsound_2", VERIFY_CMD);
     assert_contain(&output, "function: unsound_missing_nonzero_guard");
+    assert_contain(&output, "ValidNum | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1517,6 +1595,7 @@ fn validnum_sound_3() {
 fn validnum_unsound_3() {
     let output = run_with_args("verify/validnum_unsound_3", VERIFY_CMD);
     assert_contain(&output, "function: unsound_partial_sum_guard");
+    assert_contain(&output, "ValidNum | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1531,6 +1610,7 @@ fn validnum_sound_4() {
 fn validnum_unsound_4() {
     let output = run_with_args("verify/validnum_unsound_4", VERIFY_CMD);
     assert_contain(&output, "function: unsound_trait_bound_missing_size_limit");
+    assert_contain(&output, "ValidNum | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1559,6 +1639,7 @@ fn validnum_sound_7() {
 fn validnum_unsound_5() {
     let output = run_with_args("verify/validnum_unsound_5", VERIFY_CMD);
     assert_contain(&output, "function: unsound_interval_inclusive_guard");
+    assert_contain(&output, "ValidNum | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1584,6 +1665,8 @@ fn validnum_std_unsound_1() {
         "function: unsound_std_from_raw_parts_validnum_overflow",
     );
     assert_contain(&output, "ValidNum | Unknown");
+    assert_contain(&output, "ValidPtr | Unknown");
+    assert_contain(&output, "Init | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1602,6 +1685,8 @@ fn validnum_std_unsound_2() {
         "function: unsound_std_copy_nonoverlapping_validnum",
     );
     assert_contain(&output, "ValidNum | Unknown");
+    assert_contain(&output, "ValidPtr | Unknown");
+    assert_contain(&output, "NonOverlap | Failed");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1621,8 +1706,10 @@ fn as_chunks_unchecked_validnum_unsound_1() {
         &output,
         "function: unsound_as_chunks_unchecked_missing_exact_div",
     );
+    assert_contain(&output, "ValidNum | Unknown");
     assert_contain(&output, "result: UNSOUND");
     assert_contain(&output, "function: unsound_exact_div_missing_guard");
+    assert_contain(&output, "ValidNum | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1653,18 +1740,22 @@ fn validptr_size_or_deref_sound_cases() {
 fn validptr_size_or_deref_unsound_cases() {
     let output = run_with_args("verify/validptr_unsound_1", VERIFY_CMD);
     assert_contain(&output, "function: unsound_non_zst_dangling_not_allocated");
+    assert_contain(&output, "ValidPtr | Unknown");
     assert_contain(&output, "result: UNSOUND");
 
     let output = run_with_args("verify/validptr_unsound_2", VERIFY_CMD);
     assert_contain(&output, "function: unsound_one_past_requires_one_element");
+    assert_contain(&output, "ValidPtr | Unknown");
     assert_contain(&output, "result: UNSOUND");
 
     let output = run_with_args("verify/validptr_unsound_3", VERIFY_CMD);
     assert_contain(&output, "function: unsound_stack_array_len_too_large");
+    assert_contain(&output, "ValidPtr | Unknown");
     assert_contain(&output, "result: UNSOUND");
 
     let output = run_with_args("verify/validptr_unsound_4", VERIFY_CMD);
     assert_contain(&output, "function: unsound_scc_branch_uses_one_past");
+    assert_contain(&output, "ValidPtr | Unknown");
     assert_contain(&output, "result: UNSOUND");
 
     let output = run_with_args("verify/validptr_unsound_5", VERIFY_CMD);
@@ -1672,6 +1763,7 @@ fn validptr_size_or_deref_unsound_cases() {
         &output,
         "function: unsound_signed_suffix_missing_lower_bound",
     );
+    assert_contain(&output, "InBound | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1744,16 +1836,27 @@ fn alive_lifetime_unsound_cases() {
     let output = run_with_args("verify/alive_unsound_01", VERIFY_CMD);
     assert_contain(&output, "function: DangerousAliaser::<'a, T>::get_mut");
     assert_contain(&output, "Alive | Failed");
+    assert_contain(&output, "NonNull | Unknown");
+    assert_contain(&output, "ValidPtr | Unknown");
     assert_contain(&output, "result: UNSOUND");
 
     let output = run_with_args("verify/alive_unsound_02", VERIFY_CMD);
     assert_contain(&output, "function: slice_tied_to_unrelated_host");
+    assert_contain(&output, "Alias | Failed");
     assert_contain(&output, "Alive | Failed");
+    assert_contain(&output, "Init | Unknown");
+    assert_contain(&output, "NonNull | Unknown");
+    assert_contain(&output, "ValidPtr | Unknown");
     assert_contain(&output, "result: UNSOUND");
 
     let output = run_with_args("verify/alive_unsound_03", VERIFY_CMD);
     assert_contain(&output, "function: static_slice_from_local_vec");
+    assert_contain(&output, "Alias | Failed");
+    assert_contain(&output, "Align | Unknown");
     assert_contain(&output, "Alive | Failed");
+    assert_contain(&output, "Init | Unknown");
+    assert_contain(&output, "NonNull | Unknown");
+    assert_contain(&output, "ValidPtr | Unknown");
     assert_contain(&output, "result: UNSOUND");
 }
 
@@ -1950,13 +2053,14 @@ fn verify_std_challenge_17() {
 fn transmute_without_align_unsound() {
     let output = run_with_args("verify/transmute_without_align_unsound", VERIFY_CMD);
     assert_contain(&output, "function: align_without_contract_generic");
+    assert_contain(&output, "TransmuteWithoutAlign | Unknown");
     assert_contain(&output, "result: UNSOUND");
     assert_contain(&output, "function: align_without_contract_u32");
-    assert_contain(&output, "result: UNSOUND");
+    assert_contain(&output, "result: SOUND");
     assert_contain(&output, "function: align_without_contract_u16");
-    assert_contain(&output, "result: UNSOUND");
+    assert_contain(&output, "result: SOUND");
     assert_contain(&output, "function: align_without_contract_u8");
-    assert_contain(&output, "result: UNSOUND");
+    assert_contain(&output, "result: SOUND");
 }
 
 #[test]
@@ -2122,28 +2226,41 @@ fn adg_simple_graph() {
 }
 
 #[test]
-fn alias_from_raw_parts_mut_sound() {
-    let output = run_with_args("verify/alias_from_raw_parts_mut_hazard", VERIFY_CMD);
+fn alias_sound_13() {
+    let output = run_with_args("verify/alias_sound_13", VERIFY_CMD);
     assert_contain(&output, "function: as_bytes_mut_sound");
     assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn alias_sound_14() {
+    let output = run_with_args("verify/alias_sound_14", VERIFY_CMD);
     assert_contain(&output, "function: as_bytes_sound");
     assert_contain(&output, "result: SOUND");
 }
 
 #[test]
-fn alias_from_raw_parts_mut_shared_to_mut() {
-    let output = run_with_args("verify/alias_from_raw_parts_mut_hazard", VERIFY_CMD);
+fn alias_unsound_18() {
+    let output = run_with_args("verify/alias_unsound_18", VERIFY_CMD);
     assert_contain(&output, "function: as_bytes_mut_unsound");
-    assert_contain(&output, "result: UNSOUND");
+    assert_contain(&output, "result: UNSOUND (1 unproved)");
+    assert_contain(&output, "Alias | Failed");
 }
 
 #[test]
-fn alias_from_raw_parts_mut_missing_alias() {
-    let output = run_with_args("verify/alias_from_raw_parts_mut_hazard", VERIFY_CMD);
+fn alias_unsound_19() {
+    let output = run_with_args("verify/alias_unsound_19", VERIFY_CMD);
     assert_contain(&output, "function: as_bytes_mut_ptr_missing_alias");
-    assert_contain(&output, "result: UNSOUND");
+    assert_contain(&output, "result: UNSOUND (1 unproved)");
+    assert_contain(&output, "Alias | Failed");
+}
+
+#[test]
+fn alias_unsound_20() {
+    let output = run_with_args("verify/alias_unsound_20", VERIFY_CMD);
     assert_contain(&output, "function: as_bytes_mut_ptr_len_missing_alias");
-    assert_contain(&output, "result: UNSOUND");
+    assert_contain(&output, "result: UNSOUND (1 unproved)");
+    assert_contain(&output, "Alias | Failed");
 }
 
 #[test]

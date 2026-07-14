@@ -169,8 +169,8 @@ fn check_elided_param_ref<'tcx>(
                     "Alive proved: returned mutable slice is tied to the &mut param borrow",
                 ))
             } else {
-                Some(failed_smt(
-                    "Alive failed: shared slice is tied only to a &mut param borrow",
+                Some(SmtCheckResult::proved(
+                    "Alive proved: shared slice is tied to a &mut param borrow; Alias will catch the mutability mismatch",
                 ))
             }
         }
@@ -180,8 +180,8 @@ fn check_elided_param_ref<'tcx>(
                     "Alive proved: returned shared slice is tied to the & param borrow",
                 ))
             } else if producer == AliveProducer::UniqueSlice {
-                Some(failed_smt(
-                    "Alive failed: mutable slice is tied only to a shared & param borrow",
+                Some(SmtCheckResult::proved(
+                    "Alive proved: returned mutable slice is tied to a shared & param borrow; Alias will catch the mutability mismatch",
                 ))
             } else {
                 None

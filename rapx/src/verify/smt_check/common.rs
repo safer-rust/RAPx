@@ -1076,7 +1076,9 @@ impl<'tcx> SmtChecker<'tcx> {
                             elements.describe()
                         )),
                     ))
-                    .with_note("caller contract provides allocation guarantees for raw pointer parameter");
+                    .with_note(
+                        "caller contract provides allocation guarantees for raw pointer parameter",
+                    );
                 }
 
                 let Some(target_term) = model.term_for_place(place) else {
@@ -2356,7 +2358,10 @@ impl<'tcx> SmtChecker<'tcx> {
         if let Some(callee) = checkpoint.callee {
             let callee_name = self.tcx.def_path_str(callee);
             if PrimitiveCall::classify(&callee_name).is_some_and(|p| {
-                matches!(p, PrimitiveCall::FromRawParts | PrimitiveCall::FromRawPartsMut)
+                matches!(
+                    p,
+                    PrimitiveCall::FromRawParts | PrimitiveCall::FromRawPartsMut
+                )
             }) {
                 return true;
             }
@@ -3109,8 +3114,10 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             let StateFact::Contract(property) = fact else {
                 continue;
             };
-            let is_target_kind =
-                matches!(property.kind, PropertyKind::InBound | PropertyKind::Init | PropertyKind::ValidPtr);
+            let is_target_kind = matches!(
+                property.kind,
+                PropertyKind::InBound | PropertyKind::Init | PropertyKind::ValidPtr
+            );
             if !is_target_kind {
                 continue;
             }
@@ -5147,17 +5154,13 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                     return Some(term);
                 }
                 if is_as_ptr_call(&call.func) {
-                    if let Some(source_arg) =
-                        call.effects.iter().find_map(|effect| match effect {
-                            crate::verify::call_summary::CallEffect::ReturnPointerFromArg {
-                                arg,
-                            }
-                            | crate::verify::call_summary::CallEffect::ReturnAliasArg {
-                                arg,
-                            } => Some(*arg),
-                            _ => None,
-                        })
-                    {
+                    if let Some(source_arg) = call.effects.iter().find_map(|effect| match effect {
+                        crate::verify::call_summary::CallEffect::ReturnPointerFromArg { arg }
+                        | crate::verify::call_summary::CallEffect::ReturnAliasArg { arg } => {
+                            Some(*arg)
+                        }
+                        _ => None,
+                    }) {
                         let call_cursor = self.call_definition_cursor(call);
                         return self.term_for_value_at(
                             call.args.get(source_arg)?,
