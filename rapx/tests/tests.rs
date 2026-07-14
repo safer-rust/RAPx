@@ -403,19 +403,13 @@ fn alias_11_mfp() {
 }
 
 #[test]
-fn leak_1() {
+fn leak_cases() {
     let output = run_with_args("check/memleak_1", CHECK_MLEAK_CMD);
     assert_not_contain(&output, "Memory Leak detected in function main");
-}
 
-#[test]
-fn leak_2() {
     let output = run_with_args("check/memleak_2", CHECK_MLEAK_CMD);
     assert_contain(&output, "Memory Leak detected in function main");
-}
 
-#[test]
-fn leak_3() {
     let output = run_with_args("check/memleak_3", CHECK_MLEAK_CMD);
     assert_contain(&output, "Memory Leak detected in function main");
 }
