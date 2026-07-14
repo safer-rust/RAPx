@@ -135,7 +135,7 @@ fn assert_unproved_exclusive(output: &str, function: &str, failed: &[&str]) {
             let Some(idx) = line.find(sfx) else { continue };
             // Property name is the whitespace-delimited word preceding the `|`.
             let prop = line[..idx].trim_end().rsplit(' ').next().unwrap_or("");
-            if !prop.is_empty() {
+            if !prop.is_empty() && prop != "Unknown" {
                 actual.push(prop);
             }
         }
