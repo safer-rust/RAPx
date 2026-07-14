@@ -308,8 +308,20 @@ pub fn collect_raw_ptr_deref_info<'tcx>(
     }
 
     let body = tcx.optimized_mir(def_id);
+    // Filter: only check statements from the function's own source file,
+    // not from inlined library code (Vec, Box, etc.).
+    let fn_span = tcx.def_span(def_id);
+    let local_file = tcx.sess.source_map().lookup_char_pos(fn_span.lo()).file;
+
     for (bb, data) in body.basic_blocks.iter_enumerated() {
         for stmt in &data.statements {
+            let stmt_file = tcx.sess.source_map().lookup_char_pos(stmt.source_info.span.lo()).file;
+            if !std::ptr::addr_eq(
+                std::sync::Arc::as_ptr(&stmt_file),
+                std::sync::Arc::as_ptr(&local_file),
+            ) {
+                continue;
+            }
             let StatementKind::Assign(assign) = &stmt.kind else {
                 continue;
             };
