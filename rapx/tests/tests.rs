@@ -685,38 +685,24 @@ fn nonnull_sound_cases() {
     assert_contain(&output, "result: SOUND");
 }
 
+// ================ NonNull Unsound Cases =============
 #[test]
-fn nonnull_unsound_1() {
+fn nonnull_unsound_cases() {
     let output = run_with_args("verify/nonnull_unsound_1", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_explicit_null_constant", &["NonNull"]);
-}
 
-#[test]
-fn nonnull_unsound_2() {
     let output = run_with_args("verify/nonnull_unsound_2", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_raw_pointer_argument", &["NonNull"]);
-}
 
-#[test]
-fn nonnull_unsound_3() {
     let output = run_with_args("verify/nonnull_unsound_3", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_branch_selects_null", &["NonNull"]);
-}
 
-#[test]
-fn nonnull_unsound_4() {
     let output = run_with_args("verify/nonnull_unsound_4", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_scc_overwrites_with_null", &["NonNull"]);
-}
 
-#[test]
-fn nonnull_unsound_5() {
     let output = run_with_args("verify/nonnull_unsound_5", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_unrelated_guard", &["NonNull"]);
-}
 
-#[test]
-fn nonnull_unsound_6() {
     let output = run_with_args("verify/nonnull_unsound_6", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_nonnull_wrapper_from_null", &["NonNull"]);
 }
