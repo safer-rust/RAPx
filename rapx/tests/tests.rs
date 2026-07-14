@@ -1020,7 +1020,7 @@ fn validnum_unsound_cases() {
 }
 
 #[test]
-fn validptr_size_or_deref_sound_cases() {
+fn validptr_sound_cases() {
     let output = run_with_args("verify/validptr_sound_1", VERIFY_CMD);
     assert_contain(&output, "function: sound_zst_dangling_valid_for_any_len");
     assert_contain(&output, "result: SOUND");
@@ -1040,10 +1040,15 @@ fn validptr_size_or_deref_sound_cases() {
     let output = run_with_args("verify/validptr_sound_4", VERIFY_CMD);
     assert_contain(&output, "function: sound_scc_each_slice_element");
     assert_contain(&output, "result: SOUND");
+
+    let output = run_with_args("verify/deref_sound_1", VERIFY_CMD);
+    assert_contain(&output, "function: sound_deref_slice_prefix");
+    assert_contain(&output, "Deref | Proved");
+    assert_contain(&output, "result: SOUND");
 }
 
 #[test]
-fn validptr_size_or_deref_unsound_cases() {
+fn validptr_unsound_cases() {
     let output = run_with_args("verify/validptr_unsound_1", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_non_zst_dangling_not_allocated", &["ValidPtr"]);
 
@@ -1058,14 +1063,6 @@ fn validptr_size_or_deref_unsound_cases() {
 
     let output = run_with_args("verify/validptr_unsound_5", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_signed_suffix_missing_lower_bound", &["InBound"]);
-}
-
-#[test]
-fn deref_allocated_and_inbound_cases() {
-    let output = run_with_args("verify/deref_sound_1", VERIFY_CMD);
-    assert_contain(&output, "function: sound_deref_slice_prefix");
-    assert_contain(&output, "Deref | Proved");
-    assert_contain(&output, "result: SOUND");
 
     let output = run_with_args("verify/deref_unsound_1", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_deref_one_past", &["Deref"]);
