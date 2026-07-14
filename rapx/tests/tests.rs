@@ -1326,7 +1326,6 @@ fn typed_provenance_cases() {
     assert_unproved_exclusive(&output, "unsound_invalid_enum_discriminant", &["Typed"]);
     assert_unproved_exclusive(&output, "unsound_branch_selects_untyped_source", &["Typed"]);
     assert_unproved_exclusive(&output, "unsound_scc_overwrites_with_untyped_source", &["Typed"]);
-    assert_unproved_exclusive(&output, "unsound_align_to_bool_from_bytes", &["TransmuteWithoutAlign"]);
 }
 
 #[test]
@@ -1549,6 +1548,7 @@ fn verify_std_challenge_17() {
 fn transmute_without_align_unsound() {
     let output = run_with_args("verify/transmute_without_align_unsound", VERIFY_CMD);
     assert_unproved_exclusive(&output, "align_without_contract_generic", &["TransmuteWithoutAlign"]);
+    assert_unproved_exclusive(&output, "unsound_align_to_bool_from_bytes", &["TransmuteWithoutAlign"]);
     assert_contain(&output, "function: align_without_contract_u32");
     assert_contain(&output, "result: SOUND");
     assert_contain(&output, "function: align_without_contract_u16");

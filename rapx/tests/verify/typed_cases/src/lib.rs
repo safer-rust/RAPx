@@ -210,10 +210,3 @@ pub fn unsound_scc_overwrites_with_untyped_source(
         require_typed_u32(ptr);
     }
 }
-
-// UNSOUND: `align_to::<bool>` may reinterpret arbitrary bytes as invalid bools.
-#[rapx::verify]
-pub fn unsound_align_to_bool_from_bytes(data: &[u8]) -> usize {
-    let (_, middle, _) = unsafe { data.align_to::<bool>() };
-    middle.len()
-}

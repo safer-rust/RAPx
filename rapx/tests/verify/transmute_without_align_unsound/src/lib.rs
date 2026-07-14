@@ -27,3 +27,10 @@ pub fn align_without_contract_u16(slice: &[MyType]) -> (&[MyType], &[u16], &[MyT
 pub fn align_without_contract_u8(slice: &[MyType]) -> (&[MyType], &[u8], &[MyType]) {
     unsafe { slice.align_to::<u8>() }
 }
+
+// UNSOUND: `align_to::<bool>` from `&[u8]` without `TransmuteWithoutAlign`.
+#[rapx::verify]
+pub fn unsound_align_to_bool_from_bytes(data: &[u8]) -> usize {
+    let (_, middle, _) = unsafe { data.align_to::<bool>() };
+    middle.len()
+}
