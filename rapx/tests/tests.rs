@@ -1301,32 +1301,31 @@ fn deref_allocated_and_inbound_cases() {
 fn typed_provenance_cases() {
     let output = run_with_args("verify/typed_cases", VERIFY_CMD);
 
-    for function in [
-        "sound_reference_source",
-        "sound_slice_element_source",
-        "sound_repr_c_field_source",
-        "sound_generic_reference_source",
-        "sound_branch_all_sources_typed",
-        "sound_scc_preserves_typed_source",
-        "sound_maybeuninit_after_write",
-        "sound_align_to_same_type",
-    ] {
-        assert_contain(&output, &format!("function: {function}"));
-        assert_contain(&output, "result: SOUND");
-    }
+    assert_contain(&output, "function: sound_reference_source");
+    assert_contain(&output, "result: SOUND");
+    assert_contain(&output, "function: sound_slice_element_source");
+    assert_contain(&output, "result: SOUND");
+    assert_contain(&output, "function: sound_repr_c_field_source");
+    assert_contain(&output, "result: SOUND");
+    assert_contain(&output, "function: sound_generic_reference_source");
+    assert_contain(&output, "result: SOUND");
+    assert_contain(&output, "function: sound_branch_all_sources_typed");
+    assert_contain(&output, "result: SOUND");
+    assert_contain(&output, "function: sound_scc_preserves_typed_source");
+    assert_contain(&output, "result: SOUND");
+    assert_contain(&output, "function: sound_maybeuninit_after_write");
+    assert_contain(&output, "result: SOUND");
+    assert_contain(&output, "function: sound_align_to_same_type");
+    assert_contain(&output, "result: SOUND");
 
-    for function in [
-        "unsound_u8_bytes_as_u32",
-        "unsound_u16_slice_as_u32",
-        "unsound_uninit_memory_as_u32",
-        "unsound_invalid_bool_bits",
-        "unsound_invalid_char_bits",
-        "unsound_invalid_enum_discriminant",
-        "unsound_branch_selects_untyped_source",
-        "unsound_scc_overwrites_with_untyped_source",
-    ] {
-        assert_unproved_exclusive(&output, function, &["Typed"]);
-    }
+    assert_unproved_exclusive(&output, "unsound_u8_bytes_as_u32", &["Typed"]);
+    assert_unproved_exclusive(&output, "unsound_u16_slice_as_u32", &["Typed"]);
+    assert_unproved_exclusive(&output, "unsound_uninit_memory_as_u32", &["Typed"]);
+    assert_unproved_exclusive(&output, "unsound_invalid_bool_bits", &["Typed"]);
+    assert_unproved_exclusive(&output, "unsound_invalid_char_bits", &["Typed"]);
+    assert_unproved_exclusive(&output, "unsound_invalid_enum_discriminant", &["Typed"]);
+    assert_unproved_exclusive(&output, "unsound_branch_selects_untyped_source", &["Typed"]);
+    assert_unproved_exclusive(&output, "unsound_scc_overwrites_with_untyped_source", &["Typed"]);
     assert_unproved_exclusive(&output, "unsound_align_to_bool_from_bytes", &["TransmuteWithoutAlign"]);
 }
 
