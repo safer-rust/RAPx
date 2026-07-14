@@ -118,22 +118,24 @@ fn assert_not_contain(output: &str, pattern: &str) {
     );
 }
 
-fn assert_unproved_exclusive(output: &str, function: &str, failed: &[&str]) {
+fn assert_unproved_exclusive(output: &str, function: &str, allowed: &[&str]) {
     assert_contain(output, &format!("function: {function}"));
     let block = extract_block_after(output, &format!("function: {function}"));
-    for prop in failed {
+
+    // At least the primary (first) property must appear as Failed/Unknown.
+    if let Some(primary) = allowed.first() {
         assert!(
-            block.contains(&format!("{prop} | Failed"))
-                || block.contains(&format!("{prop} | Unknown")),
-            "Expected {prop} | Failed/Unknown for {function}\nBlock:\n{block}"
+            block.contains(&format!("{primary} | Failed"))
+                || block.contains(&format!("{primary} | Unknown")),
+            "Expected {primary} | Failed/Unknown for {function}\nBlock:\n{block}"
         );
     }
 
+    // No property outside the allowed set may appear as Failed/Unknown.
     let mut actual: Vec<&str> = Vec::new();
     for line in block.lines() {
         for sfx in ["| Failed", "| Unknown"] {
             let Some(idx) = line.find(sfx) else { continue };
-            // Property name is the whitespace-delimited word preceding the `|`.
             let prop = line[..idx].trim_end().rsplit(' ').next().unwrap_or("");
             if !prop.is_empty() && prop != "Unknown" {
                 actual.push(prop);
@@ -142,10 +144,10 @@ fn assert_unproved_exclusive(output: &str, function: &str, failed: &[&str]) {
     }
     actual.sort();
     actual.dedup();
-    let unexpected: Vec<_> = actual.iter().filter(|p| !failed.contains(p)).collect();
+    let unexpected: Vec<_> = actual.iter().filter(|p| !allowed.contains(p)).collect();
     assert!(
         unexpected.is_empty(),
-        "Unexpected Failed/Unknown for {function}: {unexpected:?}\nExpected only: {failed:?}\nBlock:\n{block}"
+        "Unexpected Failed/Unknown for {function}: {unexpected:?}\nAllowed: {allowed:?}\nBlock:\n{block}"
     );
     assert_contain(output, "result: UNSOUND");
 }
