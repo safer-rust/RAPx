@@ -128,16 +128,25 @@ fn assert_unproved_exclusive(output: &str, function: &str, failed: &[&str]) {
             "Expected {prop} | Failed/Unknown for {function}\nBlock:\n{block}"
         );
     }
-    for &prop in ALL_PROPS {
-        if failed.iter().any(|&p| p == prop) {
-            continue;
+
+    let mut actual: Vec<&str> = Vec::new();
+    for line in block.lines() {
+        for sfx in ["| Failed", "| Unknown"] {
+            let Some(idx) = line.find(sfx) else { continue };
+            // Property name is the whitespace-delimited word preceding the `|`.
+            let prop = line[..idx].trim_end().rsplit(' ').next().unwrap_or("");
+            if !prop.is_empty() {
+                actual.push(prop);
+            }
         }
-        assert!(
-            !block.contains(&format!("{prop} | Failed"))
-                && !block.contains(&format!("{prop} | Unknown")),
-            "Unexpected {prop} | Failed/Unknown for {function}\nBlock:\n{block}"
-        );
     }
+    actual.sort();
+    actual.dedup();
+    let unexpected: Vec<_> = actual.iter().filter(|p| !failed.contains(p)).collect();
+    assert!(
+        unexpected.is_empty(),
+        "Unexpected Failed/Unknown for {function}: {unexpected:?}\nExpected only: {failed:?}\nBlock:\n{block}"
+    );
     assert_contain(output, "result: UNSOUND");
 }
 
@@ -149,12 +158,6 @@ fn extract_block_after<'a>(text: &'a str, marker: &str) -> &'a str {
         None => rest,
     }
 }
-
-const ALL_PROPS: &[&str] = &[
-    "NonNull", "ValidPtr", "Init", "Alive", "Alias", "Align", "InBound",
-    "Allocated", "Deref", "ValidNum", "NonOverlap", "Typed",
-    "ValidTransmute", "TransmuteWithoutAlign", "NonVolatile",
-];
 
 const CHECK_UAF_CMD: &[&str] = &["check", "-f"];
 const CHECK_MLEAK_CMD: &[&str] = &["check", "-m"];
