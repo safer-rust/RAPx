@@ -1509,34 +1509,27 @@ fn adg_simple_graph() {
     assert_contain(&graph_str, "to: 4");
 }
 
+// ================ Alias Verify Sound Cases =============
 #[test]
-fn alias_sound_13() {
+fn alias_verify_sound_cases() {
     let output = run_with_args("verify/alias_sound_13", VERIFY_CMD);
     assert_contain(&output, "function: as_bytes_mut_sound");
     assert_contain(&output, "result: SOUND");
-}
 
-#[test]
-fn alias_sound_14() {
     let output = run_with_args("verify/alias_sound_14", VERIFY_CMD);
     assert_contain(&output, "function: as_bytes_sound");
     assert_contain(&output, "result: SOUND");
 }
 
+// ================ Alias Verify Unsound Cases =============
 #[test]
-fn alias_unsound_18() {
+fn alias_verify_unsound_cases() {
     let output = run_with_args("verify/alias_unsound_18", VERIFY_CMD);
     assert_unproved_exclusive(&output, "as_bytes_mut_unsound", &["Alias"]);
-}
 
-#[test]
-fn alias_unsound_19() {
     let output = run_with_args("verify/alias_unsound_19", VERIFY_CMD);
     assert_unproved_exclusive(&output, "as_bytes_mut_ptr_missing_alias", &["Alias"]);
-}
 
-#[test]
-fn alias_unsound_20() {
     let output = run_with_args("verify/alias_unsound_20", VERIFY_CMD);
     assert_unproved_exclusive(&output, "as_bytes_mut_ptr_len_missing_alias", &["Alias"]);
 }
