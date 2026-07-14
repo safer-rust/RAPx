@@ -383,6 +383,11 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
             })
             .unwrap_or_default();
 
+        // Struct invariants are implicit preconditions for every method:
+        // safe methods need them as automatic entry facts (no requires
+        // needed), and unsafe constructors verify they hold at return.
+        caller_requires.extend(struct_invariants.clone());
+
         FunctionTarget {
             def_id,
             owner_struct_def_id,

@@ -4,6 +4,9 @@
 
 use std::marker::PhantomData;
 
+#[rapx::invariant(NonNull(ptr))]
+#[rapx::invariant(ValidPtr(ptr, T, len))]
+#[rapx::invariant(Init(ptr, T, len))]
 pub struct DangerousAliaser<'a, T> {
     ptr: *mut T,
     len: usize,
@@ -20,10 +23,11 @@ impl<'a, T> DangerousAliaser<'a, T> {
     }
 
     // SOUND: `PhantomData<&'a mut [T]>` ties `'a` to `data`'s lifetime,
-    // and `&mut self` prevents concurrent calls.  The raw pointer cannot
-    // escape the borrowed context.  RAPx currently reports Alive | Failed
-    // because it does not propagate lifetime information through PhantomData
-    // and struct fields — a known engine limitation.
+    // and `&mut self` prevents concurrent calls.  Alive | Failed is a
+    // verifier limitation (PhantomData lifetime not propagated).
+    // NonNull / ValidPtr / Init are unproved due to type mismatch
+    // between struct invariant `ValidPtr(ptr, T, len)` and
+    // from_raw_parts_mut which needs `ValidPtr(ptr, u8, len * size_of::<T>())`.
     #[rapx::verify]
     pub fn get_mut(&mut self) -> &'a mut [T] {
         unsafe { std::slice::from_raw_parts_mut(self.ptr, self.len) }
