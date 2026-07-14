@@ -961,7 +961,7 @@ fn allocated_unsound_cases() {
     assert_unproved_exclusive(&output, "unsound_stack_scope_ended", &["Allocated"]);
 
     let output = run_with_args("verify/allocated_unsound_3", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "unsound_vec_dropped_before_use", &["Allocated"]);
+    assert_unproved_exclusive(&output, "unsound_vec_dropped_before_use", &["Allocated", "ValidPtr"]);
 
     let output = run_with_args("verify/allocated_unsound_4", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_empty_slice_needs_one_element", &["Allocated"]);
