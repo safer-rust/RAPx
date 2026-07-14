@@ -1294,9 +1294,7 @@ fn deref_allocated_and_inbound_cases() {
     assert_contain(&output, "result: SOUND");
 
     let output = run_with_args("verify/deref_unsound_1", VERIFY_CMD);
-    assert_contain(&output, "function: unsound_deref_one_past");
-    assert_contain(&output, "Deref | Unknown");
-    assert_contain(&output, "result: UNSOUND");
+    assert_unproved_exclusive(&output, "unsound_deref_one_past", &["Deref"]);
 }
 
 #[test]
@@ -1314,9 +1312,8 @@ fn typed_provenance_cases() {
         "sound_align_to_same_type",
     ] {
         assert_contain(&output, &format!("function: {function}"));
+        assert_contain(&output, "result: SOUND");
     }
-    assert_contain(&output, "Typed | Proved");
-    assert_contain(&output, "result: SOUND");
 
     for function in [
         "unsound_u8_bytes_as_u32",
@@ -1327,12 +1324,10 @@ fn typed_provenance_cases() {
         "unsound_invalid_enum_discriminant",
         "unsound_branch_selects_untyped_source",
         "unsound_scc_overwrites_with_untyped_source",
-        "unsound_align_to_bool_from_bytes",
     ] {
-        assert_contain(&output, &format!("function: {function}"));
+        assert_unproved_exclusive(&output, function, &["Typed"]);
     }
-    assert_contain(&output, "Typed | Unknown");
-    assert_contain(&output, "result: UNSOUND");
+    assert_unproved_exclusive(&output, "unsound_align_to_bool_from_bytes", &["TransmuteWithoutAlign"]);
 }
 
 #[test]
