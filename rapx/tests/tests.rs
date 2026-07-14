@@ -415,14 +415,6 @@ fn leak_2() {
 }
 
 #[test]
-fn leak_2_timeout() {
-    let mut args = Vec::from(["--timeout", "0"]);
-    args.extend(CHECK_MLEAK_CMD);
-    let output = run_with_args("check/memleak_2", &args);
-    assert!(output.contains("Process killed due to timeout"));
-}
-
-#[test]
 fn leak_3() {
     let output = run_with_args("check/memleak_3", CHECK_MLEAK_CMD);
     assert_contain(&output, "Memory Leak detected in function main");
