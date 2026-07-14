@@ -820,6 +820,22 @@ fn inbound_sound_cases() {
     let output = run_with_args("verify/inbound_std_sound_2", VERIFY_CMD);
     assert_contain(&output, "function: sound_std_copy_nonoverlapping");
     assert_contain(&output, "result: SOUND");
+
+    let output = run_with_args("verify/sliceindex_sound_01", VERIFY_CMD);
+    assert_contain(&output, "function: sound_scalar_index_guard");
+    assert_contain(&output, "result: SOUND");
+
+    let output = run_with_args("verify/sliceindex_sound_02", VERIFY_CMD);
+    assert_contain(&output, "function: sound_range_index_guard");
+    assert_contain(&output, "result: SOUND");
+
+    let output = run_with_args("verify/sliceindex_sound_03", VERIFY_CMD);
+    assert_contain(&output, "function: sound_std_get_unchecked_sliceindex");
+    assert_contain(&output, "result: SOUND");
+
+    let output = run_with_args("verify/sliceindex_sound_04", VERIFY_CMD);
+    assert_contain(&output, "function: sound_std_range_get_unchecked");
+    assert_contain(&output, "result: SOUND");
 }
 
 // ================ InBound Unsound Cases =============
@@ -854,59 +870,21 @@ fn inbound_unsound_cases() {
 
     let output = run_with_args("verify/inbound_std_unsound_1", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_std_get_unchecked_wrong_guard", &["InBound"]);
-}
 
+    let output = run_with_args("verify/inbound_std_unsound_2", VERIFY_CMD);
+    assert_unproved_exclusive(&output, "unsound_std_copy_nonoverlapping_dst_unguarded", &["ValidPtr", "NonOverlap", "ValidNum"]);
 
-#[test]
-fn sliceindex_inbound_sound_1() {
-    let output = run_with_args("verify/sliceindex_sound_01", VERIFY_CMD);
-    assert_contain(&output, "function: sound_scalar_index_guard");
-    assert_contain(&output, "result: SOUND");
-}
-
-#[test]
-fn sliceindex_inbound_unsound_1() {
     let output = run_with_args("verify/sliceindex_unsound_01", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_scalar_index_wrong_guard", &["InBound"]);
-}
 
-#[test]
-fn sliceindex_inbound_sound_2() {
-    let output = run_with_args("verify/sliceindex_sound_02", VERIFY_CMD);
-    assert_contain(&output, "function: sound_range_index_guard");
-    assert_contain(&output, "result: SOUND");
-}
-
-#[test]
-fn sliceindex_inbound_unsound_2() {
     let output = run_with_args("verify/sliceindex_unsound_02", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_range_index_missing_end_guard", &["InBound"]);
-}
-
-#[test]
-fn sliceindex_inbound_std_sound_1() {
-    let output = run_with_args("verify/sliceindex_sound_03", VERIFY_CMD);
-    assert_contain(&output, "function: sound_std_get_unchecked_sliceindex");
-    assert_contain(&output, "result: SOUND");
-}
-
-#[test]
-fn sliceindex_inbound_std_range_cases() {
-    let output = run_with_args("verify/sliceindex_sound_04", VERIFY_CMD);
-    assert_contain(&output, "function: sound_std_range_get_unchecked");
-    assert_contain(&output, "result: SOUND");
 
     let output = run_with_args("verify/sliceindex_unsound_03", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_std_range_missing_end_guard", &["InBound"]);
 }
 
-#[test]
-fn inbound_std_unsound_2() {
-    let output = run_with_args("verify/inbound_std_unsound_2", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "unsound_std_copy_nonoverlapping_dst_unguarded", &["ValidPtr", "NonOverlap", "ValidNum"]);
-}
 
-// ================ Init Std Sound Cases =============
 #[test]
 fn init_std_sound_cases() {
     let output = run_with_args("verify/init_std_sound_1", VERIFY_CMD);
