@@ -2,10 +2,10 @@ mod analyze;
 mod check;
 mod verify;
 
-pub use verify::PostfixRepeat;
 pub use analyze::*;
 pub use check::*;
 use clap::{Args, Subcommand};
+pub use verify::PostfixRepeat;
 pub use verify::*;
 
 #[derive(Args, Debug, Clone)]

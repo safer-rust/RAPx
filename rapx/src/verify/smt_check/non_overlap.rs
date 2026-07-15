@@ -52,10 +52,16 @@ pub(crate) fn check<'tcx>(
                 })
                 .collect();
             let has_shared = params.iter().any(|(_, ty)| {
-                matches!(ty.kind(), rustc_middle::ty::TyKind::Ref(_, _, rustc_middle::ty::Mutability::Not))
+                matches!(
+                    ty.kind(),
+                    rustc_middle::ty::TyKind::Ref(_, _, rustc_middle::ty::Mutability::Not)
+                )
             });
             let has_mut = params.iter().any(|(_, ty)| {
-                matches!(ty.kind(), rustc_middle::ty::TyKind::Ref(_, _, rustc_middle::ty::Mutability::Mut))
+                matches!(
+                    ty.kind(),
+                    rustc_middle::ty::TyKind::Ref(_, _, rustc_middle::ty::Mutability::Mut)
+                )
             });
             if has_shared && has_mut {
                 return SmtCheckResult::proved(

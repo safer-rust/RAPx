@@ -11,7 +11,9 @@ use rustc_hir::def_id::DefId;
 use rustc_infer::infer::DefineOpaqueTypes;
 use rustc_infer::infer::{InferCtxt, TyCtxtInferExt};
 use rustc_infer::traits::{ImplSource, Obligation, ObligationCause};
-use rustc_middle::ty::{self, GenericArgKind, GenericArgsRef, Ty, TyCtxt, TypeVisitableExt, TypingEnv};
+use rustc_middle::ty::{
+    self, GenericArgKind, GenericArgsRef, Ty, TyCtxt, TypeVisitableExt, TypingEnv,
+};
 use rustc_span::DUMMY_SP;
 use rustc_trait_selection::traits::query::evaluate_obligation::InferCtxtExt as _;
 use std::collections::HashSet;
@@ -500,7 +502,9 @@ fn unify_trait<'tcx>(
     assert!(lhs.args.len() == rhs.args.len());
     let mut s = Mono::new(identity);
     for (lhs_arg, rhs_arg) in lhs.args.iter().zip(rhs.args.iter()) {
-        if let (GenericArgKind::Type(lhs_ty), GenericArgKind::Type(rhs_ty)) = (lhs_arg.kind(), rhs_arg.kind()) {
+        if let (GenericArgKind::Type(lhs_ty), GenericArgKind::Type(rhs_ty)) =
+            (lhs_arg.kind(), rhs_arg.kind())
+        {
             if rhs_ty.has_infer_types() || rhs_ty.has_param() {
                 // if rhs has infer types, we cannot unify it with lhs
                 return None;

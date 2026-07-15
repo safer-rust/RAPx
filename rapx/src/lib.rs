@@ -38,7 +38,9 @@ extern crate thin_vec;
 use crate::{
     analysis::{alias_analysis::mfp::MfpAliasAnalyzer, api_dependency, scan::ScanAnalysis},
     check::{opt::Opt, rcanary::rCanary, safedrop::SafeDrop},
-    cli::{AliasStrategyKind, AnalysisKind, CheckArgs, Commands, PostfixRepeat, RapxArgs, VerifyArgs},
+    cli::{
+        AliasStrategyKind, AnalysisKind, CheckArgs, Commands, PostfixRepeat, RapxArgs, VerifyArgs,
+    },
     verify::{driver::VerifyRun, target::PrepareTargets},
 };
 use analysis::{

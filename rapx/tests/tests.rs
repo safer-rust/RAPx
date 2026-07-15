@@ -153,7 +153,9 @@ fn assert_unproved_exclusive(output: &str, function: &str, allowed: &[&str]) {
 }
 
 fn extract_block_after<'a>(text: &'a str, marker: &str) -> &'a str {
-    let Some(pos) = text.find(marker) else { return "" };
+    let Some(pos) = text.find(marker) else {
+        return "";
+    };
     let rest = &text[pos + marker.len()..];
     match rest.find("function: ") {
         Some(end) => &rest[..end],
@@ -186,7 +188,10 @@ const VERIFY_INVLESS_CMD: &[&str] = &["verify", "--mode", "invless"];
 #[test]
 fn uaf_cases() {
     let output = run_with_args("check/uaf_1", CHECK_UAF_CMD);
-    assert_contain(&output, "Dangling pointer detected in function \"create_vec\"");
+    assert_contain(
+        &output,
+        "Dangling pointer detected in function \"create_vec\"",
+    );
 
     let output = run_with_args("check/uaf_2", CHECK_UAF_CMD);
     assert_contain(&output, "Double free detected in function \"main\"");
@@ -219,13 +224,21 @@ fn uaf_cases() {
 #[test]
 fn uaf_false_cases() {
     let output = run_with_args("check/uaf_false_1", CHECK_UAF_CMD);
-    assert!(!detected_high_confidence(&output), "Unexpected high-confidence bug in output:\n{}", output);
+    assert!(
+        !detected_high_confidence(&output),
+        "Unexpected high-confidence bug in output:\n{}",
+        output
+    );
 
     let output = run_with_args("check/uaf_false_2", CHECK_UAF_CMD);
     assert_not_contain(&output, "detected");
 
     let output = run_with_args("check/uaf_false_3", CHECK_UAF_CMD);
-    assert!(!detected_high_confidence(&output), "Unexpected high-confidence bug in output:\n{}", output);
+    assert!(
+        !detected_high_confidence(&output),
+        "Unexpected high-confidence bug in output:\n{}",
+        output
+    );
 
     let output = run_with_args("check/uaf_false_4", CHECK_UAF_CMD);
     assert_not_contain(&output, "detected");
@@ -236,7 +249,11 @@ fn uaf_false_cases() {
 
     #[allow(unused)]
     let output = run_with_args("check/uaf_false_6", CHECK_UAF_CMD);
-    assert!(!detected_high_confidence(&output), "Unexpected high-confidence bug in output:\n{}", output);
+    assert!(
+        !detected_high_confidence(&output),
+        "Unexpected high-confidence bug in output:\n{}",
+        output
+    );
 
     #[allow(unused)]
     let output = run_with_args("check/uaf_false_8", CHECK_UAF_CMD);
@@ -462,7 +479,10 @@ fn path_cases() {
     assert_contain(&output, "Path [0, 1, 2]");
     assert_contain(&output, "Path [0, 1, 3, 4, 5, 9, 1, 2]");
     assert_contain(&output, "Path [0, 1, 3, 4, 6, 7, 8, 4, 5, 9, 1, 2]");
-    assert_contain(&output, "Path [0, 1, 3, 4, 6, 7, 8, 4, 5, 9, 1, 3, 4, 5, 9, 1, 2]");
+    assert_contain(
+        &output,
+        "Path [0, 1, 3, 4, 6, 7, 8, 4, 5, 9, 1, 3, 4, 5, 9, 1, 2]",
+    );
     assert_eq!(path_count_for(&output, "walk"), 4);
 
     let output = run_with_args("analyze/path_false_1", ANALYZE_PATHS_REPEAT1_CMD);
@@ -477,214 +497,247 @@ fn path_cases() {
 // ================ Align Unsound Cases =============
 #[test]
 fn align_unsound_cases() {
-    let output = run_with_args("verify/align_unsound_1", VERIFY_CMD);
+    let output = run_with_args("verify_units/align_unsound_1", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_enum_paths_inside_scc", &["Align"]);
 
-    let output = run_with_args("verify/align_unsound_2", VERIFY_CMD);
+    let output = run_with_args("verify_units/align_unsound_2", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_scc_selects_mixed_source", &["Align"]);
 
-    let output = run_with_args("verify/align_unsound_3", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "unsound_scc_computes_misaligned_offset", &["Align"]);
+    let output = run_with_args("verify_units/align_unsound_3", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "unsound_scc_computes_misaligned_offset",
+        &["Align"],
+    );
 
-    let output = run_with_args("verify/align_unsound_4", VERIFY_CMD);
+    let output = run_with_args("verify_units/align_unsound_4", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_nested_scc_controller", &["Align"]);
 
-    let output = run_with_args("verify/align_unsound_5", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "unsound_iteration_count_can_leave_unaligned", &["Align"]);
+    let output = run_with_args("verify_units/align_unsound_5", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "unsound_iteration_count_can_leave_unaligned",
+        &["Align"],
+    );
 
-    let output = run_with_args("verify/align_unsound_6", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "unsound_pre_scc_guard_overwritten_by_scc", &["Align"]);
+    let output = run_with_args("verify_units/align_unsound_6", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "unsound_pre_scc_guard_overwritten_by_scc",
+        &["Align"],
+    );
 
-    let output = run_with_args("verify/align_unsound_7", VERIFY_CMD);
+    let output = run_with_args("verify_units/align_unsound_7", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_scc_guard_only_on_one_branch", &["Align"]);
 
-    let output = run_with_args("verify/align_unsound_8", VERIFY_CMD);
+    let output = run_with_args("verify_units/align_unsound_8", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_helper_with_disjunctive_guard", &["Align"]);
 
-    let output = run_with_args("verify/align_unsound_9", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "unsound_helper_return_path_selects_bad_ptr", &["Align"]);
+    let output = run_with_args("verify_units/align_unsound_9", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "unsound_helper_return_path_selects_bad_ptr",
+        &["Align"],
+    );
 
-    let output = run_with_args("verify/align_unsound_10", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "unsound_multi_hop_missing_offset_guard", &["Align"]);
+    let output = run_with_args("verify_units/align_unsound_10", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "unsound_multi_hop_missing_offset_guard",
+        &["Align"],
+    );
 
-    let output = run_with_args("verify/align_unsound_11", VERIFY_CMD);
+    let output = run_with_args("verify_units/align_unsound_11", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_sub_missing_guard", &["Align"]);
 
-    let output = run_with_args("verify/align_unsound_12", VERIFY_CMD);
+    let output = run_with_args("verify_units/align_unsound_12", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_byte_offset_one", &["Align"]);
 
-    let output = run_with_args("verify/align_unsound_13", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "unsound_usize_add_missing_offset_guard", &["Align"]);
+    let output = run_with_args("verify_units/align_unsound_13", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "unsound_usize_add_missing_offset_guard",
+        &["Align"],
+    );
 
-    let output = run_with_args("verify/align_unsound_14", VERIFY_CMD);
+    let output = run_with_args("verify_units/align_unsound_14", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_repr_packed_field", &["Align"]);
 
-    let output = run_with_args("verify/align_unsound_15", VERIFY_CMD);
+    let output = run_with_args("verify_units/align_unsound_15", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_four_phase_scc_alignment", &["Align"]);
 
-    let output = run_with_args("verify/align_unsound_16", VERIFY_CMD);
+    let output = run_with_args("verify_units/align_unsound_16", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_trait_bound_cross_cast", &["Align"]);
 
-    let output = run_with_args("verify/align_unsound_17", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "unsound_contract_type_param_binds_generic", &["Align"]);
+    let output = run_with_args("verify_units/align_unsound_17", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "unsound_contract_type_param_binds_generic",
+        &["Align"],
+    );
 
-    let output = run_with_args("verify/align_repeat_threshold", VERIFY_ALLOW_REPEAT2_CMD);
+    let output = run_with_args(
+        "verify_units/align_repeat_threshold",
+        VERIFY_ALLOW_REPEAT2_CMD,
+    );
     assert_unproved_exclusive(&output, "repeat2_reveals_delayed_unaligned", &["Align"]);
 }
 
 // ================ Align Sound Cases =============
 #[test]
 fn align_sound_cases() {
-    let output = run_with_args("verify/align_sound_1", VERIFY_CMD);
+    let output = run_with_args("verify_units/align_sound_1", VERIFY_CMD);
     assert_contain(&output, "function: sound_named_contract_binds_callsite_arg");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/align_sound_2", VERIFY_CMD);
+    let output = run_with_args("verify_units/align_sound_2", VERIFY_CMD);
     assert_contain(&output, "function: sound_enum_paths_inside_scc");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/align_sound_3", VERIFY_CMD);
+    let output = run_with_args("verify_units/align_sound_3", VERIFY_CMD);
     assert_contain(&output, "function: sound_scc_selects_aligned_source");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/align_sound_4", VERIFY_CMD);
+    let output = run_with_args("verify_units/align_sound_4", VERIFY_CMD);
     assert_contain(&output, "function: sound_scc_computes_aligned_offset");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/align_sound_5", VERIFY_CMD);
+    let output = run_with_args("verify_units/align_sound_5", VERIFY_CMD);
     assert_contain(&output, "function: sound_nested_scc_controller");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/align_sound_6", VERIFY_CMD);
+    let output = run_with_args("verify_units/align_sound_6", VERIFY_CMD);
     assert_contain(
         &output,
         "function: sound_iteration_count_switches_aligned_offsets",
     );
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/align_sound_7", VERIFY_CMD);
+    let output = run_with_args("verify_units/align_sound_7", VERIFY_CMD);
     assert_contain(
         &output,
         "function: sound_unrelated_scc_does_not_pollute_align",
     );
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/align_sound_8", VERIFY_CMD);
+    let output = run_with_args("verify_units/align_sound_8", VERIFY_CMD);
     assert_contain(
         &output,
         "function: sound_unrelated_nested_scc_with_bad_scratch",
     );
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/align_sound_9", VERIFY_CMD);
+    let output = run_with_args("verify_units/align_sound_9", VERIFY_CMD);
     assert_contain(&output, "function: sound_pre_scc_guard_with_scc_offsets");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/align_sound_10", VERIFY_CMD);
+    let output = run_with_args("verify_units/align_sound_10", VERIFY_CMD);
     assert_contain(&output, "function: sound_scc_internal_noise_ignored");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/align_sound_11", VERIFY_CMD);
+    let output = run_with_args("verify_units/align_sound_11", VERIFY_CMD);
     assert_contain(&output, "function: sound_helper_with_conjunctive_guard");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/align_sound_12", VERIFY_CMD);
+    let output = run_with_args("verify_units/align_sound_12", VERIFY_CMD);
     assert_contain(&output, "function: sound_nested_if_before_helper");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/align_sound_13", VERIFY_CMD);
+    let output = run_with_args("verify_units/align_sound_13", VERIFY_CMD);
     assert_contain(&output, "function: sound_helper_return_paths_all_aligned");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/align_sound_14", VERIFY_CMD);
+    let output = run_with_args("verify_units/align_sound_14", VERIFY_CMD);
     assert_contain(&output, "function: sound_multi_hop_helper");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/align_sound_15", VERIFY_CMD);
+    let output = run_with_args("verify_units/align_sound_15", VERIFY_CMD);
     assert_contain(&output, "function: sound_unrelated_condition_ignored");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/align_sound_16", VERIFY_CMD);
+    let output = run_with_args("verify_units/align_sound_16", VERIFY_CMD);
     assert_contain(&output, "function: sound_add_sub_chain");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/align_sound_17", VERIFY_CMD);
+    let output = run_with_args("verify_units/align_sound_17", VERIFY_CMD);
     assert_contain(&output, "function: sound_offset_zero_preserves_align");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/align_sound_18", VERIFY_CMD);
+    let output = run_with_args("verify_units/align_sound_18", VERIFY_CMD);
     assert_contain(&output, "function: sound_usize_round_trip");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/align_sound_19", VERIFY_CMD);
+    let output = run_with_args("verify_units/align_sound_19", VERIFY_CMD);
     assert_contain(&output, "function: sound_usize_add_guarded");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/align_sound_20", VERIFY_CMD);
+    let output = run_with_args("verify_units/align_sound_20", VERIFY_CMD);
     assert_contain(&output, "function: sound_usize_mul_div_offset");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/align_sound_21", VERIFY_CMD);
+    let output = run_with_args("verify_units/align_sound_21", VERIFY_CMD);
     assert_contain(&output, "function: sound_repr_c_field");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/align_sound_22", VERIFY_CMD);
+    let output = run_with_args("verify_units/align_sound_22", VERIFY_CMD);
     assert_contain(&output, "function: sound_repr_align_object");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/align_sound_23", VERIFY_CMD);
+    let output = run_with_args("verify_units/align_sound_23", VERIFY_CMD);
     assert_contain(&output, "function: sound_zst_trivial_alignment");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/align_sound_24", VERIFY_CMD);
+    let output = run_with_args("verify_units/align_sound_24", VERIFY_CMD);
     assert_contain(&output, "function: sound_trait_bound_cross_cast");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/align_sound_25", VERIFY_CMD);
+    let output = run_with_args("verify_units/align_sound_25", VERIFY_CMD);
     assert_contain(
         &output,
         "function: sound_contract_type_param_binds_concrete",
     );
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/align_sound_26", VERIFY_CMD);
+    let output = run_with_args("verify_units/align_sound_26", VERIFY_CMD);
     assert_contain(&output, "function: sound_contract_type_param_binds_generic");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/align_repeat_threshold", VERIFY_ALLOW_REPEAT_CMD);
+    let output = run_with_args(
+        "verify_units/align_repeat_threshold",
+        VERIFY_ALLOW_REPEAT_CMD,
+    );
     assert_contain(&output, "function: repeat2_reveals_delayed_unaligned");
     assert_contain(&output, "result: SOUND");
 }
 
-
 // ================ NonNull Sound Cases =============
 #[test]
 fn nonnull_sound_cases() {
-    let output = run_with_args("verify/nonnull_sound_7", VERIFY_CMD);
+    let output = run_with_args("verify_units/nonnull_sound_7", VERIFY_CMD);
     assert_contain(&output, "function: sound_ref_cast_copy_chain");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/nonnull_sound_2", VERIFY_CMD);
+    let output = run_with_args("verify_units/nonnull_sound_2", VERIFY_CMD);
     assert_contain(&output, "function: sound_slice_as_ptr_branch");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/nonnull_sound_3", VERIFY_CMD);
+    let output = run_with_args("verify_units/nonnull_sound_3", VERIFY_CMD);
     assert_contain(&output, "function: sound_intra_helper_from_ref");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/nonnull_sound_4", VERIFY_CMD);
+    let output = run_with_args("verify_units/nonnull_sound_4", VERIFY_CMD);
     assert_contain(&output, "function: sound_scc_unrelated_state");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/nonnull_sound_5", VERIFY_CMD);
+    let output = run_with_args("verify_units/nonnull_sound_5", VERIFY_CMD);
     assert_contain(&output, "function: sound_raw_arg_guarded");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/nonnull_sound_6", VERIFY_CMD);
+    let output = run_with_args("verify_units/nonnull_sound_6", VERIFY_CMD);
     assert_contain(&output, "function: sound_nonnull_wrapper_from_ref");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/nonnull_sound_1", VERIFY_CMD);
+    let output = run_with_args("verify_units/nonnull_sound_1", VERIFY_CMD);
     assert_contain(&output, "function: caller_with_contract");
     assert_contain(&output, "result: SOUND");
     assert_contain(&output, "function: sound_chained_propagation");
@@ -694,57 +747,57 @@ fn nonnull_sound_cases() {
 // ================ NonNull Unsound Cases =============
 #[test]
 fn nonnull_unsound_cases() {
-    let output = run_with_args("verify/nonnull_unsound_1", VERIFY_CMD);
+    let output = run_with_args("verify_units/nonnull_unsound_1", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_explicit_null_constant", &["NonNull"]);
 
-    let output = run_with_args("verify/nonnull_unsound_2", VERIFY_CMD);
+    let output = run_with_args("verify_units/nonnull_unsound_2", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_raw_pointer_argument", &["NonNull"]);
 
-    let output = run_with_args("verify/nonnull_unsound_3", VERIFY_CMD);
+    let output = run_with_args("verify_units/nonnull_unsound_3", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_branch_selects_null", &["NonNull"]);
 
-    let output = run_with_args("verify/nonnull_unsound_4", VERIFY_CMD);
+    let output = run_with_args("verify_units/nonnull_unsound_4", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_scc_overwrites_with_null", &["NonNull"]);
 
-    let output = run_with_args("verify/nonnull_unsound_5", VERIFY_CMD);
+    let output = run_with_args("verify_units/nonnull_unsound_5", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_unrelated_guard", &["NonNull"]);
 
-    let output = run_with_args("verify/nonnull_unsound_6", VERIFY_CMD);
+    let output = run_with_args("verify_units/nonnull_unsound_6", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_nonnull_wrapper_from_null", &["NonNull"]);
 }
 
 // ================ Allocated Sound Cases =============
 #[test]
 fn allocated_sound_cases() {
-    let output = run_with_args("verify/allocated_sound_1", VERIFY_CMD);
+    let output = run_with_args("verify_units/allocated_sound_1", VERIFY_CMD);
     assert_contain(&output, "function: sound_stack_local_allocated");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/allocated_sound_2", VERIFY_CMD);
+    let output = run_with_args("verify_units/allocated_sound_2", VERIFY_CMD);
     assert_contain(&output, "function: sound_slice_prefix_allocated");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/allocated_sound_3", VERIFY_CMD);
+    let output = run_with_args("verify_units/allocated_sound_3", VERIFY_CMD);
     assert_contain(&output, "function: sound_live_vec_allocated");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/allocated_sound_4", VERIFY_CMD);
+    let output = run_with_args("verify_units/allocated_sound_4", VERIFY_CMD);
     assert_contain(&output, "function: sound_live_box_allocated");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/allocated_sound_5", VERIFY_CMD);
+    let output = run_with_args("verify_units/allocated_sound_5", VERIFY_CMD);
     assert_contain(&output, "function: sound_branch_selects_live_local");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/allocated_sound_6", VERIFY_CMD);
+    let output = run_with_args("verify_units/allocated_sound_6", VERIFY_CMD);
     assert_contain(&output, "function: sound_loop_slice_element_allocated");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/allocated_sound_7", VERIFY_CMD);
+    let output = run_with_args("verify_units/allocated_sound_7", VERIFY_CMD);
     assert_contain(&output, "function: sound_scc_selects_live_array");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/allocated_sound_8", VERIFY_CMD);
+    let output = run_with_args("verify_units/allocated_sound_8", VERIFY_CMD);
     assert_contain(&output, "function: sound_intra_returns_slice_pointer");
     assert_contain(&output, "result: SOUND");
 }
@@ -752,88 +805,112 @@ fn allocated_sound_cases() {
 // ================ Allocated Unsound Cases =============
 #[test]
 fn allocated_unsound_cases() {
-    let output = run_with_args("verify/allocated_unsound_1", VERIFY_CMD);
+    let output = run_with_args("verify_units/allocated_unsound_1", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_null_not_allocated", &["Allocated"]);
 
-    let output = run_with_args("verify/allocated_unsound_2", VERIFY_CMD);
+    let output = run_with_args("verify_units/allocated_unsound_2", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_stack_scope_ended", &["Allocated"]);
 
-    let output = run_with_args("verify/allocated_unsound_3", VERIFY_CMD);
+    let output = run_with_args("verify_units/allocated_unsound_3", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_vec_dropped_before_use", &["Allocated"]);
 
-    let output = run_with_args("verify/allocated_unsound_4", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "unsound_empty_slice_needs_one_element", &["Allocated"]);
+    let output = run_with_args("verify_units/allocated_unsound_4", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "unsound_empty_slice_needs_one_element",
+        &["Allocated"],
+    );
 
-    let output = run_with_args("verify/allocated_unsound_5", VERIFY_CMD);
+    let output = run_with_args("verify_units/allocated_unsound_5", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_branch_may_select_null", &["Allocated"]);
 
-    let output = run_with_args("verify/allocated_unsound_6", VERIFY_CMD);
+    let output = run_with_args("verify_units/allocated_unsound_6", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_scc_overwrites_with_null", &["Allocated"]);
 
-    let output = run_with_args("verify/allocated_unsound_7", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "unsound_vec_reallocates_old_pointer", &["Allocated"]);
+    let output = run_with_args("verify_units/allocated_unsound_7", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "unsound_vec_reallocates_old_pointer",
+        &["Allocated"],
+    );
 
-    let output = run_with_args("verify/allocated_unsound_8", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "unsound_slice_too_short_for_requested_len", &["Allocated"]);
+    let output = run_with_args("verify_units/allocated_unsound_8", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "unsound_slice_too_short_for_requested_len",
+        &["Allocated"],
+    );
 
-    let output = run_with_args("verify/allocated_unsound_9", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "unsound_intra_returns_dangling_pointer", &["Allocated"]);
+    let output = run_with_args("verify_units/allocated_unsound_9", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "unsound_intra_returns_dangling_pointer",
+        &["Allocated"],
+    );
 
-    let output = run_with_args("verify/allocated_unsound_10", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "unsound_scc_selects_dead_temporary", &["Allocated"]);
+    let output = run_with_args("verify_units/allocated_unsound_10", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "unsound_scc_selects_dead_temporary",
+        &["Allocated"],
+    );
 
-    let output = run_with_args("verify/allocated_unsound_11", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "unsound_adjacent_stack_objects_do_not_merge", &["Allocated"]);
+    let output = run_with_args("verify_units/allocated_unsound_11", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "unsound_adjacent_stack_objects_do_not_merge",
+        &["Allocated"],
+    );
 }
 
 // ================ InBound Sound Cases =============
 #[test]
 fn inbound_sound_cases() {
-    let output = run_with_args("verify/inbound_sound_1", VERIFY_CMD);
+    let output = run_with_args("verify_units/inbound_sound_1", VERIFY_CMD);
     assert_contain(&output, "function: sound_ptr_add_guarded");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/inbound_sound_2", VERIFY_CMD);
+    let output = run_with_args("verify_units/inbound_sound_2", VERIFY_CMD);
     assert_contain(&output, "function: sound_from_raw_parts_prefix_two");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/inbound_sound_3", VERIFY_CMD);
+    let output = run_with_args("verify_units/inbound_sound_3", VERIFY_CMD);
     assert_contain(&output, "function: sound_get_unchecked_generic");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/inbound_sound_4", VERIFY_CMD);
+    let output = run_with_args("verify_units/inbound_sound_4", VERIFY_CMD);
     assert_contain(&output, "function: sound_copy_nonoverlapping_one");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/inbound_sound_5", VERIFY_CMD);
+    let output = run_with_args("verify_units/inbound_sound_5", VERIFY_CMD);
     assert_contain(&output, "function: sound_intra_slice_add_guarded");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/inbound_sound_6", VERIFY_CMD);
+    let output = run_with_args("verify_units/inbound_sound_6", VERIFY_CMD);
     assert_contain(&output, "function: sound_scc_loop_index_guard");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/inbound_std_sound_1", VERIFY_CMD);
+    let output = run_with_args("verify_units/inbound_std_sound_1", VERIFY_CMD);
     assert_contain(&output, "function: sound_std_get_unchecked");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/inbound_std_sound_2", VERIFY_CMD);
+    let output = run_with_args("verify_units/inbound_std_sound_2", VERIFY_CMD);
     assert_contain(&output, "function: sound_std_copy_nonoverlapping");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/sliceindex_sound_01", VERIFY_CMD);
+    let output = run_with_args("verify_units/sliceindex_sound_01", VERIFY_CMD);
     assert_contain(&output, "function: sound_scalar_index_guard");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/sliceindex_sound_02", VERIFY_CMD);
+    let output = run_with_args("verify_units/sliceindex_sound_02", VERIFY_CMD);
     assert_contain(&output, "function: sound_range_index_guard");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/sliceindex_sound_03", VERIFY_CMD);
+    let output = run_with_args("verify_units/sliceindex_sound_03", VERIFY_CMD);
     assert_contain(&output, "function: sound_std_get_unchecked_sliceindex");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/sliceindex_sound_04", VERIFY_CMD);
+    let output = run_with_args("verify_units/sliceindex_sound_04", VERIFY_CMD);
     assert_contain(&output, "function: sound_std_range_get_unchecked");
     assert_contain(&output, "result: SOUND");
 }
@@ -841,73 +918,96 @@ fn inbound_sound_cases() {
 // ================ InBound Unsound Cases =============
 #[test]
 fn inbound_unsound_cases() {
-    let output = run_with_args("verify/inbound_unsound_1", VERIFY_CMD);
+    let output = run_with_args("verify_units/inbound_unsound_1", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_ptr_add_without_guard", &["InBound"]);
 
-    let output = run_with_args("verify/inbound_unsound_2", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "unsound_from_raw_parts_two_only_nonempty", &["InBound"]);
+    let output = run_with_args("verify_units/inbound_unsound_2", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "unsound_from_raw_parts_two_only_nonempty",
+        &["InBound"],
+    );
 
-    let output = run_with_args("verify/inbound_unsound_3", VERIFY_CMD);
+    let output = run_with_args("verify_units/inbound_unsound_3", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_get_unchecked_wrong_guard", &["InBound"]);
 
-    let output = run_with_args("verify/inbound_unsound_4", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "unsound_copy_nonoverlapping_dst_unguarded", &["InBound"]);
+    let output = run_with_args("verify_units/inbound_unsound_4", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "unsound_copy_nonoverlapping_dst_unguarded",
+        &["InBound"],
+    );
 
-    let output = run_with_args("verify/inbound_unsound_5", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "unsound_branch_selects_unguarded_index", &["InBound"]);
+    let output = run_with_args("verify_units/inbound_unsound_5", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "unsound_branch_selects_unguarded_index",
+        &["InBound"],
+    );
 
-    let output = run_with_args("verify/inbound_unsound_6", VERIFY_CMD);
+    let output = run_with_args("verify_units/inbound_unsound_6", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_scc_off_by_one", &["InBound"]);
 
-    let output = run_with_args("verify/inbound_unsound_7", VERIFY_CMD);
+    let output = run_with_args("verify_units/inbound_unsound_7", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_len_guard_off_by_one", &["InBound"]);
 
-    let output = run_with_args("verify/inbound_unsound_8", VERIFY_CMD);
+    let output = run_with_args("verify_units/inbound_unsound_8", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_inclusive_range_off_by_one", &["InBound"]);
 
-    let output = run_with_args("verify/inbound_unsound_9", VERIFY_CMD);
+    let output = run_with_args("verify_units/inbound_unsound_9", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_ptr_add_off_by_one", &["InBound"]);
 
-    let output = run_with_args("verify/inbound_std_unsound_1", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "unsound_std_get_unchecked_wrong_guard", &["InBound"]);
+    let output = run_with_args("verify_units/inbound_std_unsound_1", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "unsound_std_get_unchecked_wrong_guard",
+        &["InBound"],
+    );
 
-    let output = run_with_args("verify/inbound_std_unsound_2", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "unsound_std_copy_nonoverlapping_dst_unguarded", &["ValidPtr", "NonOverlap", "ValidNum"]);
+    let output = run_with_args("verify_units/inbound_std_unsound_2", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "unsound_std_copy_nonoverlapping_dst_unguarded",
+        &["ValidPtr", "NonOverlap", "ValidNum"],
+    );
 
-    let output = run_with_args("verify/sliceindex_unsound_01", VERIFY_CMD);
+    let output = run_with_args("verify_units/sliceindex_unsound_01", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_scalar_index_wrong_guard", &["InBound"]);
 
-    let output = run_with_args("verify/sliceindex_unsound_02", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "unsound_range_index_missing_end_guard", &["InBound"]);
+    let output = run_with_args("verify_units/sliceindex_unsound_02", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "unsound_range_index_missing_end_guard",
+        &["InBound"],
+    );
 
-    let output = run_with_args("verify/sliceindex_unsound_03", VERIFY_CMD);
+    let output = run_with_args("verify_units/sliceindex_unsound_03", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_std_range_missing_end_guard", &["InBound"]);
 }
 
-
 #[test]
 fn init_std_sound_cases() {
-    let output = run_with_args("verify/init_std_sound_1", VERIFY_CMD);
+    let output = run_with_args("verify_units/init_std_sound_1", VERIFY_CMD);
     assert_contain(&output, "function: sound_assume_init_read_after_write");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/init_std_sound_2", VERIFY_CMD);
+    let output = run_with_args("verify_units/init_std_sound_2", VERIFY_CMD);
     assert_contain(&output, "function: sound_assume_init_after_write");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/init_std_sound_3", VERIFY_CMD);
+    let output = run_with_args("verify_units/init_std_sound_3", VERIFY_CMD);
     assert_contain(&output, "function: sound_branch_local_init");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/init_std_sound_4", VERIFY_CMD);
+    let output = run_with_args("verify_units/init_std_sound_4", VERIFY_CMD);
     assert_contain(&output, "function: sound_intra_helper_initializes");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/init_std_sound_5", VERIFY_CMD);
+    let output = run_with_args("verify_units/init_std_sound_5", VERIFY_CMD);
     assert_contain(&output, "function: sound_loop_initializes_slice");
     assert_contain(&output, "Init | Proved");
 
-    let output = run_with_args("verify/init_std_sound_6", VERIFY_CMD);
+    let output = run_with_args("verify_units/init_std_sound_6", VERIFY_CMD);
     assert_contain(&output, "function: sound_len_bound_loop_initializes_slice");
     assert_contain(&output, "Init | Proved");
 }
@@ -915,75 +1015,83 @@ fn init_std_sound_cases() {
 // ================ Init Std Unsound Cases =============
 #[test]
 fn init_std_unsound_cases() {
-    let output = run_with_args("verify/init_std_unsound_1", VERIFY_CMD);
+    let output = run_with_args("verify_units/init_std_unsound_1", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_assume_init_read_without_write", &["Init"]);
 
-    let output = run_with_args("verify/init_std_unsound_2", VERIFY_CMD);
+    let output = run_with_args("verify_units/init_std_unsound_2", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_assume_init_without_write", &["Init"]);
 
-    let output = run_with_args("verify/init_std_unsound_3", VERIFY_CMD);
+    let output = run_with_args("verify_units/init_std_unsound_3", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_conditional_write_then_assume", &["Init"]);
 
-    let output = run_with_args("verify/init_std_unsound_4", VERIFY_CMD);
+    let output = run_with_args("verify_units/init_std_unsound_4", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_write_different_slot", &["Init"]);
 
-    let output = run_with_args("verify/init_std_unsound_5", VERIFY_CMD);
+    let output = run_with_args("verify_units/init_std_unsound_5", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_intra_helper_maybe_initializes", &["Init"]);
 
-    let output = run_with_args("verify/init_std_unsound_6", VERIFY_CMD);
+    let output = run_with_args("verify_units/init_std_unsound_6", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_from_raw_parts_uninitialized", &["Init"]);
 
-    let output = run_with_args("verify/init_std_unsound_7", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "unsound_from_raw_parts_wrong_element_type", &["Init"]);
+    let output = run_with_args("verify_units/init_std_unsound_7", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "unsound_from_raw_parts_wrong_element_type",
+        &["Init"],
+    );
 
-    let output = run_with_args("verify/init_std_unsound_8", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "unsound_len_bound_loop_skips_even_indices", &["Init"]);
+    let output = run_with_args("verify_units/init_std_unsound_8", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "unsound_len_bound_loop_skips_even_indices",
+        &["Init"],
+    );
 }
 
 // ================ ValidNum Sound Cases =============
 #[test]
 fn validnum_sound_cases() {
-    let output = run_with_args("verify/validnum_sound_1", VERIFY_CMD);
+    let output = run_with_args("verify_units/validnum_sound_1", VERIFY_CMD);
     assert_contain(&output, "function: sound_guarded_less_than");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/validnum_sound_2", VERIFY_CMD);
+    let output = run_with_args("verify_units/validnum_sound_2", VERIFY_CMD);
     assert_contain(&output, "function: sound_guarded_nonzero");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/validnum_sound_3", VERIFY_CMD);
+    let output = run_with_args("verify_units/validnum_sound_3", VERIFY_CMD);
     assert_contain(&output, "function: sound_constant_sum_below_cap");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/validnum_sound_4", VERIFY_CMD);
+    let output = run_with_args("verify_units/validnum_sound_4", VERIFY_CMD);
     assert_contain(&output, "function: sound_trait_bound_size_limit");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/validnum_sound_5", VERIFY_CMD);
+    let output = run_with_args("verify_units/validnum_sound_5", VERIFY_CMD);
     assert_contain(&output, "function: sound_scc_validnum_index_guard");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/validnum_sound_6", VERIFY_CMD);
+    let output = run_with_args("verify_units/validnum_sound_6", VERIFY_CMD);
     assert_contain(&output, "function: sound_guarded_variable_sum");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/validnum_sound_7", VERIFY_CMD);
+    let output = run_with_args("verify_units/validnum_sound_7", VERIFY_CMD);
     assert_contain(&output, "function: sound_interval_guard");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/validnum_sound_8", VERIFY_CMD);
+    let output = run_with_args("verify_units/validnum_sound_8", VERIFY_CMD);
     assert_contain(&output, "function: sound_trait_bound_align_order");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/validnum_std_sound_1", VERIFY_CMD);
+    let output = run_with_args("verify_units/validnum_std_sound_1", VERIFY_CMD);
     assert_contain(&output, "function: sound_std_from_raw_parts_validnum");
     assert_contain(&output, "ValidNum | Proved");
 
-    let output = run_with_args("verify/validnum_std_sound_2", VERIFY_CMD);
+    let output = run_with_args("verify_units/validnum_std_sound_2", VERIFY_CMD);
     assert_contain(&output, "function: sound_std_copy_nonoverlapping_validnum");
     assert_contain(&output, "ValidNum | Proved");
 
-    let output = run_with_args("verify/as_chunks_sound_01", VERIFY_CMD);
+    let output = run_with_args("verify_units/as_chunks_sound_01", VERIFY_CMD);
     assert_contain(&output, "function: sound_as_chunks_unchecked_exact_div");
     assert_contain(&output, "result: SOUND");
     assert_contain(&output, "function: sound_exact_div_guard");
@@ -993,55 +1101,71 @@ fn validnum_sound_cases() {
 // ================ ValidNum Unsound Cases =============
 #[test]
 fn validnum_unsound_cases() {
-    let output = run_with_args("verify/validnum_unsound_1", VERIFY_CMD);
+    let output = run_with_args("verify_units/validnum_unsound_1", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_missing_less_than_guard", &["ValidNum"]);
 
-    let output = run_with_args("verify/validnum_unsound_2", VERIFY_CMD);
+    let output = run_with_args("verify_units/validnum_unsound_2", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_missing_nonzero_guard", &["ValidNum"]);
 
-    let output = run_with_args("verify/validnum_unsound_3", VERIFY_CMD);
+    let output = run_with_args("verify_units/validnum_unsound_3", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_partial_sum_guard", &["ValidNum"]);
 
-    let output = run_with_args("verify/validnum_unsound_4", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "unsound_trait_bound_missing_size_limit", &["ValidNum"]);
+    let output = run_with_args("verify_units/validnum_unsound_4", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "unsound_trait_bound_missing_size_limit",
+        &["ValidNum"],
+    );
 
-    let output = run_with_args("verify/validnum_unsound_5", VERIFY_CMD);
+    let output = run_with_args("verify_units/validnum_unsound_5", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_interval_inclusive_guard", &["ValidNum"]);
 
-    let output = run_with_args("verify/validnum_std_unsound_1", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "unsound_std_from_raw_parts_validnum_overflow", &["ValidNum", "ValidPtr", "Init"]);
+    let output = run_with_args("verify_units/validnum_std_unsound_1", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "unsound_std_from_raw_parts_validnum_overflow",
+        &["ValidNum", "ValidPtr", "Init"],
+    );
 
-    let output = run_with_args("verify/validnum_std_unsound_2", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "unsound_std_copy_nonoverlapping_validnum", &["ValidNum", "ValidPtr", "NonOverlap"]);
+    let output = run_with_args("verify_units/validnum_std_unsound_2", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "unsound_std_copy_nonoverlapping_validnum",
+        &["ValidNum", "ValidPtr", "NonOverlap"],
+    );
 
-    let output = run_with_args("verify/as_chunks_unsound_01", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "unsound_as_chunks_unchecked_missing_exact_div", &["ValidNum"]);
+    let output = run_with_args("verify_units/as_chunks_unsound_01", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "unsound_as_chunks_unchecked_missing_exact_div",
+        &["ValidNum"],
+    );
     assert_unproved_exclusive(&output, "unsound_exact_div_missing_guard", &["ValidNum"]);
 }
 
 #[test]
 fn validptr_sound_cases() {
-    let output = run_with_args("verify/validptr_sound_1", VERIFY_CMD);
+    let output = run_with_args("verify_units/validptr_sound_1", VERIFY_CMD);
     assert_contain(&output, "function: sound_zst_dangling_valid_for_any_len");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/validptr_sound_2", VERIFY_CMD);
+    let output = run_with_args("verify_units/validptr_sound_2", VERIFY_CMD);
     assert_contain(&output, "function: sound_stack_array_full_range");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/validptr_sound_3", VERIFY_CMD);
+    let output = run_with_args("verify_units/validptr_sound_3", VERIFY_CMD);
     assert_contain(&output, "function: sound_slice_suffix_guarded");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/validptr_sound_5", VERIFY_CMD);
+    let output = run_with_args("verify_units/validptr_sound_5", VERIFY_CMD);
     assert_contain(&output, "function: sound_signed_suffix_guarded");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/validptr_sound_4", VERIFY_CMD);
+    let output = run_with_args("verify_units/validptr_sound_4", VERIFY_CMD);
     assert_contain(&output, "function: sound_scc_each_slice_element");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/deref_sound_1", VERIFY_CMD);
+    let output = run_with_args("verify_units/deref_sound_1", VERIFY_CMD);
     assert_contain(&output, "function: sound_deref_slice_prefix");
     assert_contain(&output, "Deref | Proved");
     assert_contain(&output, "result: SOUND");
@@ -1049,28 +1173,40 @@ fn validptr_sound_cases() {
 
 #[test]
 fn validptr_unsound_cases() {
-    let output = run_with_args("verify/validptr_unsound_1", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "unsound_non_zst_dangling_not_allocated", &["ValidPtr"]);
+    let output = run_with_args("verify_units/validptr_unsound_1", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "unsound_non_zst_dangling_not_allocated",
+        &["ValidPtr"],
+    );
 
-    let output = run_with_args("verify/validptr_unsound_2", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "unsound_one_past_requires_one_element", &["ValidPtr"]);
+    let output = run_with_args("verify_units/validptr_unsound_2", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "unsound_one_past_requires_one_element",
+        &["ValidPtr"],
+    );
 
-    let output = run_with_args("verify/validptr_unsound_3", VERIFY_CMD);
+    let output = run_with_args("verify_units/validptr_unsound_3", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_stack_array_len_too_large", &["ValidPtr"]);
 
-    let output = run_with_args("verify/validptr_unsound_4", VERIFY_CMD);
+    let output = run_with_args("verify_units/validptr_unsound_4", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_scc_branch_uses_one_past", &["ValidPtr"]);
 
-    let output = run_with_args("verify/validptr_unsound_5", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "unsound_signed_suffix_missing_lower_bound", &["InBound"]);
+    let output = run_with_args("verify_units/validptr_unsound_5", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "unsound_signed_suffix_missing_lower_bound",
+        &["InBound"],
+    );
 
-    let output = run_with_args("verify/deref_unsound_1", VERIFY_CMD);
+    let output = run_with_args("verify_units/deref_unsound_1", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_deref_one_past", &["Deref"]);
 }
 
 #[test]
 fn typed_provenance_cases() {
-    let output = run_with_args("verify/typed_cases", VERIFY_CMD);
+    let output = run_with_args("verify_units/typed_cases", VERIFY_CMD);
 
     assert_contain(&output, "function: sound_reference_source");
     assert_contain(&output, "result: SOUND");
@@ -1096,39 +1232,55 @@ fn typed_provenance_cases() {
     assert_unproved_exclusive(&output, "unsound_invalid_char_bits", &["Typed"]);
     assert_unproved_exclusive(&output, "unsound_invalid_enum_discriminant", &["Typed"]);
     assert_unproved_exclusive(&output, "unsound_branch_selects_untyped_source", &["Typed"]);
-    assert_unproved_exclusive(&output, "unsound_scc_overwrites_with_untyped_source", &["Typed"]);
+    assert_unproved_exclusive(
+        &output,
+        "unsound_scc_overwrites_with_untyped_source",
+        &["Typed"],
+    );
 }
 
 #[test]
 fn alive_lifetime_sound_cases() {
-    let output = run_with_args("verify/alive_sound_01", VERIFY_CMD);
+    let output = run_with_args("verify_units/alive_sound_01", VERIFY_CMD);
     assert_contain(&output, "function: SliceHost::<'a, T>::get");
     assert_contain(&output, "Alive | Proved");
 
-    let output = run_with_args("verify/alive_sound_02", VERIFY_CMD);
+    let output = run_with_args("verify_units/alive_sound_02", VERIFY_CMD);
     assert_contain(&output, "function: MutSliceHost::<'a, T>::get_mut");
     assert_contain(&output, "Alive | Proved");
 
-    let output = run_with_args("verify/alive_sound_03", VERIFY_CMD);
+    let output = run_with_args("verify_units/alive_sound_03", VERIFY_CMD);
     assert_contain(&output, "function: slice_from_host");
     assert_contain(&output, "Alive | Proved");
 }
 
 #[test]
 fn alive_lifetime_unsound_cases() {
-    let output = run_with_args("verify/alive_unsound_01", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "DangerousAliaser::<'a, T>::get_mut", &["Alive", "NonNull", "ValidPtr"]);
+    let output = run_with_args("verify_units/alive_unsound_01", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "DangerousAliaser::<'a, T>::get_mut",
+        &["Alive", "NonNull", "ValidPtr"],
+    );
 
-    let output = run_with_args("verify/alive_unsound_02", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "slice_tied_to_unrelated_host", &["Alias", "Alive", "Init", "NonNull", "ValidPtr"]);
+    let output = run_with_args("verify_units/alive_unsound_02", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "slice_tied_to_unrelated_host",
+        &["Alias", "Alive", "Init", "NonNull", "ValidPtr"],
+    );
 
-    let output = run_with_args("verify/alive_unsound_03", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "static_slice_from_local_vec", &["Alias", "Align", "Alive", "Init", "NonNull", "ValidPtr"]);
+    let output = run_with_args("verify_units/alive_unsound_03", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "static_slice_from_local_vec",
+        &["Alias", "Align", "Alive", "Init", "NonNull", "ValidPtr"],
+    );
 }
 
 #[test]
 fn struct_invariant_1() {
-    let output = run_with_args("verify/struct_invariant_1", VERIFY_CMD);
+    let output = run_with_args("verify_units/struct_invariant_1", VERIFY_CMD);
     // unsound_new: constructor with requires, all struct invariants proved
     assert_contain(&output, "function: Wrapper::<T>::unsound_new");
     assert_contain(&output, "Align | Proved");
@@ -1143,8 +1295,28 @@ fn struct_invariant_1() {
 }
 
 #[test]
+fn linked_list_nonnull() {
+    let output = run_with_args("verify_cases/linked_list_nonnull", VERIFY_CMD);
+    // from_vec: linked list with Option<NonNull<Node>>, invariants via unwrap_some
+    assert_contain(&output, "function: LinkedList::from_vec");
+    // struct invariants section present (Align via unwrap_some)
+    assert_contain(&output, "struct invariants");
+}
+
+#[test]
+fn linked_list_rawptr() {
+    let output = run_with_args("verify_cases/linked_list_rawptr", VERIFY_CMD);
+    // from_vec: linked list with *mut Node, invariants directly on raw pointers
+    assert_contain(&output, "function: LinkedList::from_vec");
+    // struct invariants present, NonNull and Align checked
+    assert_contain(&output, "struct invariants");
+    assert_contain(&output, "NonNull");
+    assert_contain(&output, "Align");
+}
+
+#[test]
 fn invless_skips_struct_invariant() {
-    let output = run_with_args("verify/struct_invariant_1", VERIFY_INVLESS_CMD);
+    let output = run_with_args("verify_units/struct_invariant_1", VERIFY_INVLESS_CMD);
     // 4 sequences: 2 read methods × 2 options (direct, through set_len)
     assert_contain(&output, "sequence: unsound_new -> sound_read");
     assert_contain(
@@ -1169,7 +1341,7 @@ fn invless_skips_struct_invariant() {
 
 #[test]
 fn invless_1_no_annotations() {
-    let output = run_with_args("verify/invless_1", VERIFY_INVLESS_CMD);
+    let output = run_with_args("verify_units/invless_1", VERIFY_INVLESS_CMD);
     // 4 sequences generated
     assert_contain(&output, "sequence: unsound_new -> sound_read");
     assert_contain(
@@ -1194,7 +1366,7 @@ fn invless_1_no_annotations() {
 
 #[test]
 fn invless_2_with_contracts() {
-    let output = run_with_args("verify/invless_2", VERIFY_INVLESS_CMD);
+    let output = run_with_args("verify_units/invless_2", VERIFY_INVLESS_CMD);
     // 4 sequences generated
     assert_contain(&output, "sequence: unsound_new -> sound_read");
     assert_contain(
@@ -1221,7 +1393,7 @@ fn invless_2_with_contracts() {
 
 #[test]
 fn invless_sound_callee() {
-    let output = run_with_args("verify/align_sound_1", VERIFY_INVLESS_CMD);
+    let output = run_with_args("verify_units/align_sound_1", VERIFY_INVLESS_CMD);
     assert_contain(&output, "function: sound_named_contract_binds_callsite_arg");
     assert_contain(&output, "result: SOUND");
 }
@@ -1262,7 +1434,7 @@ fn verify_static_mut_unknown() {
 
 #[test]
 fn verify_std_challenge_17() {
-    let output = run_with_args("verify/verify-std-challenge-17", VERIFY_TARGETED_CMD);
+    let output = run_with_args("verify_cases/std-challenge-17", VERIFY_TARGETED_CMD);
 
     let functions = [
         "<[T] as SliceExt<T>>::get_unchecked_ext",
@@ -1317,9 +1489,17 @@ fn verify_std_challenge_17() {
 
 #[test]
 fn transmute_without_align_unsound() {
-    let output = run_with_args("verify/transmute_without_align_unsound", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "align_without_contract_generic", &["TransmuteWithoutAlign"]);
-    assert_unproved_exclusive(&output, "unsound_align_to_bool_from_bytes", &["TransmuteWithoutAlign"]);
+    let output = run_with_args("verify_units/transmute_without_align_unsound", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "align_without_contract_generic",
+        &["TransmuteWithoutAlign"],
+    );
+    assert_unproved_exclusive(
+        &output,
+        "unsound_align_to_bool_from_bytes",
+        &["TransmuteWithoutAlign"],
+    );
     assert_contain(&output, "function: align_without_contract_u32");
     assert_contain(&output, "result: SOUND");
     assert_contain(&output, "function: align_without_contract_u16");
@@ -1330,7 +1510,7 @@ fn transmute_without_align_unsound() {
 
 #[test]
 fn transmute_without_align_nonzero() {
-    let output = run_with_args("verify/transmute_without_align_nonzero", VERIFY_CMD);
+    let output = run_with_args("verify_units/transmute_without_align_nonzero", VERIFY_CMD);
     assert_contain(&output, "function: align_to_nonzero_u16");
     assert_contain(&output, "result: UNSOUND");
     assert_contain(&output, "function: align_to_nonzero_u32");
@@ -1341,14 +1521,14 @@ fn transmute_without_align_nonzero() {
 
 #[test]
 fn transmute_without_align_sound() {
-    let output = run_with_args("verify/transmute_without_align_sound", VERIFY_CMD);
+    let output = run_with_args("verify_units/transmute_without_align_sound", VERIFY_CMD);
     assert_contain(&output, "function: align_to_u8_sound");
     assert_contain(&output, "result: SOUND");
 }
 
 #[test]
 fn trait_unsound_1() {
-    let output = run_with_args("verify/trait_unsound_1", VERIFY_PREPARE_CMD);
+    let output = run_with_args("verify_units/trait_unsound_1", VERIFY_PREPARE_CMD);
     assert_contain(&output, "prepare targets for unsafe trait: Buffer");
     assert_contain(&output, "impl for: VecBuf");
     assert_contain(&output, "ensures");
@@ -1357,7 +1537,7 @@ fn trait_unsound_1() {
 
 #[test]
 fn trait_unsound_1_verify() {
-    let output = run_with_args("verify/trait_unsound_1", VERIFY_CMD);
+    let output = run_with_args("verify_units/trait_unsound_1", VERIFY_CMD);
     assert_contain(&output, "unsafe trait impl: Buffer");
     assert_contain(&output, "impl for: VecBuf");
     assert_contain(&output, "ensures");
@@ -1484,11 +1664,11 @@ fn adg_simple_graph() {
 // ================ Alias Verify Sound Cases =============
 #[test]
 fn alias_verify_sound_cases() {
-    let output = run_with_args("verify/alias_sound_13", VERIFY_CMD);
+    let output = run_with_args("verify_units/alias_sound_13", VERIFY_CMD);
     assert_contain(&output, "function: as_bytes_mut_sound");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify/alias_sound_14", VERIFY_CMD);
+    let output = run_with_args("verify_units/alias_sound_14", VERIFY_CMD);
     assert_contain(&output, "function: as_bytes_sound");
     assert_contain(&output, "result: SOUND");
 }
@@ -1496,20 +1676,20 @@ fn alias_verify_sound_cases() {
 // ================ Alias Verify Unsound Cases =============
 #[test]
 fn alias_verify_unsound_cases() {
-    let output = run_with_args("verify/alias_unsound_18", VERIFY_CMD);
+    let output = run_with_args("verify_units/alias_unsound_18", VERIFY_CMD);
     assert_unproved_exclusive(&output, "as_bytes_mut_unsound", &["Alias"]);
 
-    let output = run_with_args("verify/alias_unsound_19", VERIFY_CMD);
+    let output = run_with_args("verify_units/alias_unsound_19", VERIFY_CMD);
     assert_unproved_exclusive(&output, "as_bytes_mut_ptr_missing_alias", &["Alias"]);
 
-    let output = run_with_args("verify/alias_unsound_20", VERIFY_CMD);
+    let output = run_with_args("verify_units/alias_unsound_20", VERIFY_CMD);
     assert_unproved_exclusive(&output, "as_bytes_mut_ptr_len_missing_alias", &["Alias"]);
 }
 
 #[test]
 fn verify_module_filter() {
     let output = run_with_args(
-        "verify/module_filter",
+        "verify_units/module_filter",
         &["verify", "--mode", "targeted", "--module", "a"],
     );
     assert_contain(&output, "function: a::f");
@@ -1517,7 +1697,7 @@ fn verify_module_filter() {
     assert_not_contain(&output, "function: c::h");
 
     let output = run_with_args(
-        "verify/module_filter",
+        "verify_units/module_filter",
         &["verify", "--mode", "scan", "--module", "b"],
     );
     assert_contain(&output, "function: b::g");
@@ -1528,7 +1708,7 @@ fn verify_module_filter() {
 #[test]
 fn verify_crate_filter() {
     let output = run_with_args(
-        "verify/module_filter",
+        "verify_units/module_filter",
         &[
             "verify",
             "--mode",
@@ -1542,7 +1722,7 @@ fn verify_crate_filter() {
     assert_contain(&output, "function: c::h");
 
     let output = run_with_args(
-        "verify/module_filter",
+        "verify_units/module_filter",
         &[
             "verify",
             "--mode",
@@ -1558,7 +1738,7 @@ fn verify_crate_filter() {
     assert_not_contain(&output, "function: c::h");
 
     let output = run_with_args(
-        "verify/module_filter",
+        "verify_units/module_filter",
         &[
             "verify",
             "--mode",

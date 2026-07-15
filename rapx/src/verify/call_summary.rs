@@ -785,9 +785,9 @@ fn layout_call_ty<'tcx>(func: &Operand<'tcx>) -> Option<Ty<'tcx>> {
         #[cfg(rapx_rustc_ge_199)]
         let arg = arg.skip_binder();
         match arg.kind() {
-        GenericArgKind::Type(ty) => Some(ty),
-        _ => None,
-    }
+            GenericArgKind::Type(ty) => Some(ty),
+            _ => None,
+        }
     })
 }
 

@@ -20,6 +20,7 @@ pub enum PlaceBase {
 #[derive(Clone, Debug)]
 pub enum ContractProjection<'tcx> {
     Field { index: usize, ty: Option<Ty<'tcx>> },
+    Downcast { variant_index: usize },
 }
 
 #[derive(Clone, Debug)]
@@ -64,8 +65,9 @@ impl<'tcx> ContractPlace<'tcx> {
     pub fn field_indices(&self) -> Vec<usize> {
         self.projections
             .iter()
-            .map(|projection| match projection {
-                ContractProjection::Field { index, .. } => *index,
+            .filter_map(|projection| match projection {
+                ContractProjection::Field { index, .. } => Some(*index),
+                ContractProjection::Downcast { .. } => None,
             })
             .collect()
     }
@@ -912,6 +914,48 @@ impl<'tcx> Property<'tcx> {
         def_id: DefId,
         expr: &Expr,
     ) -> Option<ContractPlace<'tcx>> {
+        // Handle .unwrap_some() method call — downcast to the Some variant.
+        if let Expr::MethodCall(expr_method) = expr {
+            if expr_method.method == "unwrap_some" && expr_method.args.is_empty() {
+                if let Some((base, fields, recv_ty)) =
+                    parse_expr_into_local_and_ty(tcx, def_id, &expr_method.receiver)
+                {
+                    let peeled_ty = recv_ty.peel_refs();
+                    if let TyKind::Adt(adt_def, _) = peeled_ty.kind() {
+                        if adt_def.is_enum() {
+                            let some_variant =
+                                adt_def.variants().iter_enumerated().find_map(|(vidx, v)| {
+                                    if v.name.to_string() == "Some" {
+                                        Some(vidx.as_usize())
+                                    } else {
+                                        None
+                                    }
+                                });
+                            if let Some(variant_index) = some_variant {
+                                let mut projections: Vec<ContractProjection> = fields
+                                    .into_iter()
+                                    .map(|(index, ty)| ContractProjection::Field {
+                                        index,
+                                        ty: Some(ty),
+                                    })
+                                    .collect();
+                                projections.push(ContractProjection::Downcast { variant_index });
+                                let base_enum = if base == 0 {
+                                    PlaceBase::Return
+                                } else {
+                                    PlaceBase::Local(base)
+                                };
+                                return Some(ContractPlace {
+                                    base: base_enum,
+                                    projections,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         if let Some((base, fields, _ty)) = parse_expr_into_local_and_ty(tcx, def_id, expr) {
             return Some(ContractPlace::local(base, fields));
         }

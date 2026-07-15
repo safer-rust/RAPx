@@ -1491,6 +1491,9 @@ fn fmt_place_plain(
                 crate::verify::contract::ContractProjection::Field { index, .. } => {
                     index.to_string()
                 }
+                crate::verify::contract::ContractProjection::Downcast { .. } => {
+                    "unwrapped".to_string()
+                }
             })
             .collect();
         format!("{}.{}", base, proj.join("."))
@@ -1780,10 +1783,14 @@ fn property_field_indices(property: &crate::verify::contract::Property<'_>) -> V
         };
         if let Some(place) = place {
             for proj in &place.projections {
-                let crate::verify::contract::ContractProjection::Field { index, .. } = proj;
-                let idx = *index;
-                if !indices.contains(&idx) {
-                    indices.push(idx);
+                match proj {
+                    crate::verify::contract::ContractProjection::Field { index, .. } => {
+                        let idx = *index;
+                        if !indices.contains(&idx) {
+                            indices.push(idx);
+                        }
+                    }
+                    crate::verify::contract::ContractProjection::Downcast { .. } => {}
                 }
             }
         }
