@@ -388,6 +388,12 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
         // needed), and unsafe constructors verify they hold at return.
         caller_requires.extend(struct_invariants.clone());
 
+        // Standard-library type invariants: for each function parameter (and
+        // the return type for constructors), look up the type's invariants
+        // from std-type-invariants.json and add them as preconditions.
+        let type_invariants = build_type_invariants_from_params(self.tcx, def_id);
+        caller_requires.extend(type_invariants);
+
         FunctionTarget {
             def_id,
             owner_struct_def_id,
@@ -1430,4 +1436,161 @@ fn build_static_mut_checks<'tcx>(
             )
         })
         .collect()
+}
+
+/// For each function parameter (and the return type), look up the type's
+/// invariants from `std-type-invariants.json` and create preconditions.
+fn build_type_invariants_from_params<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def_id: DefId,
+) -> Vec<Property<'tcx>> {
+    let db = crate::verify::attribute::assets_parser::get_std_type_invariants();
+    if db.is_empty() {
+        return Vec::new();
+    }
+
+    let fn_sig = tcx.fn_sig(def_id).skip_binder();
+    let inputs = fn_sig.inputs().skip_binder();
+    let output = fn_sig.output().skip_binder();
+
+    let mut results = Vec::new();
+
+    // Use the existing signature parser for parameter names.
+    let (param_names, _param_tys) = crate::helpers::name::parse_signature(tcx, def_id);
+
+    // Add invariants for each parameter
+    for (index, &param_ty) in inputs.iter().enumerate() {
+        if param_ty.is_primitive() {
+            continue;
+        }
+        let param_name = param_names.get(index).cloned().unwrap_or_default();
+        let type_path = type_path_key(tcx, param_ty);
+        collect_type_invariants(
+            tcx,
+            def_id,
+            &db,
+            &type_path,
+            &param_name,
+            &mut results,
+        );
+    }
+
+    // Also add invariants for the return type
+    if !output.is_unit() && !output.is_primitive() {
+        let type_path = type_path_key(tcx, output);
+        collect_type_invariants(
+            tcx,
+            def_id,
+            &db,
+            &type_path,
+            "return",
+            &mut results,
+        );
+    }
+
+    results
+}
+
+/// Look up the type path in the DB and add instantiated invariants to `results`.
+fn collect_type_invariants<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def_id: DefId,
+    db: &std::collections::HashMap<
+        String,
+        crate::verify::attribute::assets_parser::TypeInvariantEntry,
+    >,
+    type_path: &str,
+    param_name: &str,
+    results: &mut Vec<Property<'tcx>>,
+) {
+    if let Some(entry) = db.get(type_path) {
+        for prop_entry in &entry.invariants {
+            if let Some(property) =
+                instantiate_type_invariant(tcx, def_id, prop_entry, param_name)
+            {
+                results.push(property);
+            }
+        }
+    }
+    // Also try with common alloc/std prefixes
+    for prefix in ["alloc::", "std::"] {
+        let prefixed = format!("{prefix}{type_path}");
+        if prefixed != type_path {
+            if let Some(entry) = db.get(&prefixed) {
+                for prop_entry in &entry.invariants {
+                    if let Some(property) =
+                        instantiate_type_invariant(tcx, def_id, prop_entry, param_name)
+                    {
+                        results.push(property);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Create a property from a type invariant entry, substituting the parameter name.
+fn instantiate_type_invariant<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def_id: DefId,
+    entry: &crate::verify::attribute::assets_parser::PropertyEntry,
+    param_name: &str,
+) -> Option<Property<'tcx>> {
+    let mut exprs: Vec<syn::Expr> = Vec::new();
+    for arg_str in &entry.args {
+        // Substitute struct field references like "0" → "param_name.0"
+        let resolved = if is_numeric_field_access(arg_str) {
+            format!("{}.{}", param_name, arg_str)
+        } else {
+            arg_str.clone()
+        };
+        match syn::parse_str::<syn::Expr>(&resolved) {
+            Ok(expr) => exprs.push(expr),
+            Err(_) => {
+                rap_debug!(
+                    "  [type-invariant] failed to parse arg '{}' for tag {}",
+                    resolved,
+                    entry.tag
+                );
+                return None;
+            }
+        }
+    }
+    if exprs.is_empty() {
+        return None;
+    }
+    let mut property = Property::new(tcx, def_id, &entry.tag, &exprs);
+    if let Some(ref kind) = entry.kind
+        && kind == "hazard"
+    {
+        property.contract_kind = crate::verify::contract::ContractKind::Hazard;
+    }
+    if !matches!(
+        property.kind,
+        crate::verify::contract::PropertyKind::Unknown
+    ) {
+        Some(property)
+    } else {
+        None
+    }
+}
+
+/// Check if a string looks like a numeric field access (e.g. "0").
+fn is_numeric_field_access(s: &str) -> bool {
+    let trimmed = s.trim();
+    !trimmed.is_empty()
+        && trimmed
+            .split('.')
+            .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
+}
+
+/// Generate a normalised type path key for lookups in the type-invariants DB.
+fn type_path_key<'tcx>(tcx: TyCtxt<'tcx>, ty: rustc_middle::ty::Ty<'tcx>) -> String {
+    match ty.kind() {
+        rustc_middle::ty::TyKind::Adt(adt_def, _) => {
+            let path = tcx.def_path_str(adt_def.did());
+            path
+        }
+        _ => format!("{ty:?}"),
+    }
 }

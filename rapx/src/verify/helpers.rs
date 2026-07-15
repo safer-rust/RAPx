@@ -10,6 +10,8 @@ use rustc_middle::{
 use rustc_span::Symbol;
 use syn::Expr;
 
+use crate::helpers::fn_info::{FnKind, get_type};
+
 pub use crate::helpers::fn_info::parse_expr_into_number;
 pub use crate::helpers::mir_scan::{
     Checkpoint, CheckpointKind, CheckpointLocation, collect_unsafe_callsites,
@@ -54,7 +56,7 @@ pub fn parse_expr_into_local_and_ty<'tcx>(
         }
 
         if let Some(struct_ty) = get_struct_self_ty(tcx, def_id) {
-            return resolve_projection_from_struct_ident(tcx, base_ident, fields, struct_ty);
+            return resolve_projection_from_struct_ident(tcx, def_id, base_ident, fields, struct_ty);
         }
     }
     None
@@ -186,6 +188,7 @@ fn resolve_projection_from_base_ident<'tcx>(
 
 fn resolve_projection_from_struct_ident<'tcx>(
     tcx: TyCtxt<'tcx>,
+    def_id: DefId,
     base_ident: String,
     fields: Vec<String>,
     struct_ty: Ty<'tcx>,
@@ -206,7 +209,13 @@ fn resolve_projection_from_struct_ident<'tcx>(
         field_indices.push((next_field_idx, current_ty));
     }
 
-    Some((1, field_indices, current_ty))
+    let base_local = if get_type(tcx, def_id) == FnKind::Constructor {
+        0
+    } else {
+        1
+    };
+
+    Some((base_local, field_indices, current_ty))
 }
 
 fn resolve_next_field<'tcx>(

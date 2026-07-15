@@ -52,11 +52,13 @@ impl PrimitiveCall {
         }
         if name.ends_with("::as_ptr")
             || (name.contains("::as_ptr") && !name.ends_with("::as_ptr_range"))
+            || name.ends_with("::into_raw")
         {
             return Some(Self::AsPtr);
         }
         if name.ends_with("::as_mut_ptr")
             || (name.contains("::as_mut_ptr") && !name.ends_with("::as_mut_ptr_range"))
+            || name.ends_with("::into_raw_mut")
         {
             return Some(Self::AsMutPtr);
         }

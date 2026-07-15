@@ -31,5 +31,33 @@
     "invariants": [
       {"tag": "ValidNum", "args": ["$self != 0"]}
     ]
+  },
+  "alloc::boxed::Box<T>": {
+    "comment": "Box<T> — the internal pointer is non-null and aligned for one element",
+    "invariants": [
+      {"tag": "NonNull", "args": ["0"]},
+      {"tag": "Align", "args": ["0", "T"]}
+    ]
+  },
+  "std::boxed::Box<T>": {
+    "comment": "Box<T> (std path)",
+    "invariants": [
+      {"tag": "NonNull", "args": ["0"]},
+      {"tag": "Align", "args": ["0", "T"]}
+    ]
+  },
+  "alloc::vec::Vec<T>": {
+    "comment": "Vec<T> — pointer field is non-null and aligned for T",
+    "invariants": [
+      {"tag": "NonNull", "args": ["0.0"]},
+      {"tag": "Align", "args": ["0.0", "T"]}
+    ]
+  },
+  "std::vec::Vec<T>": {
+    "comment": "Vec<T> (std path)",
+    "invariants": [
+      {"tag": "NonNull", "args": ["0.0"]},
+      {"tag": "Align", "args": ["0.0", "T"]}
+    ]
   }
 }

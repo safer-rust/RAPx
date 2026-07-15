@@ -53,3 +53,35 @@ pub(crate) fn check<'tcx>(
         },
     )
 }
+
+/// Check `Allocated` at a return checkpoint for struct invariant verification.
+pub(crate) fn check_for_checkpoint<'tcx>(
+    checker: &SmtChecker<'tcx>,
+    caller: rustc_hir::def_id::DefId,
+    property: &Property<'tcx>,
+    forward: &ForwardVisitResult<'tcx>,
+) -> SmtCheckResult {
+    let Some(target) = checker.property_target_direct(property) else {
+        return SmtCheckResult::unknown("Allocated target could not be resolved");
+    };
+    let Some(required_ty) = checker.property_required_ty_direct(property) else {
+        return SmtCheckResult::unknown("Allocated type could not be resolved");
+    };
+    let Some(elements_expr) = checker.property_len_expr_direct(property) else {
+        return SmtCheckResult::unknown("Allocated element-count argument could not be resolved");
+    };
+    let Some(elements) = checker.contract_expr_to_smt_term(caller, &elements_expr) else {
+        return SmtCheckResult::unknown(
+            "Allocated element-count argument could not be lowered to SMT",
+        );
+    };
+    checker.prove_obligation_for_checkpoint(
+        caller,
+        forward,
+        SmtObligation::Allocated {
+            place: target,
+            ty_name: format!("{required_ty:?}"),
+            elements,
+        },
+    )
+}

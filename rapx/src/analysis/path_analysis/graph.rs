@@ -80,6 +80,9 @@ pub struct BlockConstantInfo {
     /// Maps a boolean local (e.g., a guard result) to the binary comparison
     /// that produced it: `(op, lhs_local, rhs_kind)`.
     pub comparison_sources: FxHashMap<usize, ComparisonSource>,
+    /// Set of locals that are provably non-null (e.g. assigned from
+    /// `Box::into_raw`).  Used for path reachability pruning.
+    pub known_nonnull_locals: FxHashSet<usize>,
 }
 
 /// Records the origin of a boolean temporary produced by a binary
@@ -223,8 +226,22 @@ impl<'tcx> PathGraph<'tcx> {
             }
 
             let Some(terminator) = &bb.terminator else {
+                cfg_blocks.push(cfg_block);
+                block_info.push(info);
                 continue;
             };
+
+            if let TerminatorKind::Call { destination, ref func, .. } = terminator.kind {
+                let name = super::super::super::verify::call_summary::call_name(tcx, func);
+                if name.contains("::into_raw")
+                    || (name.contains("::new") && name.contains("Box"))
+                {
+                    info.known_nonnull_locals.insert(destination.local.as_usize());
+                }
+                if name.contains("null_mut") || (name.contains("null") && name.contains("ptr::")) {
+                    info.constants.insert(destination.local.as_usize(), 0);
+                }
+            }
 
             match terminator.kind.clone() {
                 TerminatorKind::Goto { ref target } => {
@@ -418,6 +435,9 @@ impl<'tcx> PathGraph<'tcx> {
                 }
                 constraints.remove(local);
             }
+            for local in &info.known_nonnull_locals {
+                constraints.insert(*local, usize::MAX);
+            }
         }
 
         // Also clear constraints for locals assigned by the terminator
@@ -431,7 +451,18 @@ impl<'tcx> PathGraph<'tcx> {
                 _ => None,
             };
             if let Some(local) = assigned {
-                constraints.remove(&local);
+                // Propagate known nullness from BlockConstantInfo.
+                if let Some(block_info) = self.block_info.get(cur) {
+                    if let Some(&val) = block_info.constants.get(&local) {
+                        constraints.insert(local, val);
+                    } else if block_info.known_nonnull_locals.contains(&local) {
+                        constraints.insert(local, usize::MAX);
+                    } else {
+                        constraints.remove(&local);
+                    }
+                } else {
+                    constraints.remove(&local);
+                }
             }
         }
 
@@ -509,6 +540,48 @@ impl<'tcx> PathGraph<'tcx> {
                 if let Some(local) = constraint_local {
                     if let Some(&known_val) = constraints.get(&local) {
                         let expected = resolve_switch_target(targets, known_val as u128);
+                        if next != expected {
+                            return false;
+                        }
+                        return true;
+                    }
+                }
+
+                // Try to infer the discriminant from a comparison source
+                // (e.g. `_X = Ne(ptr, 0)`) when we know whether `ptr` is null.
+                if let Some(discr_local) = discr_local
+                    && let Some(info) = self.block_info.get(cur)
+                    && let Some(cmp) = info.comparison_sources.get(&discr_local)
+                    && matches!(cmp.op, BinOp::Ne | BinOp::Eq)
+                {
+                    let is_ne = matches!(cmp.op, BinOp::Ne);
+                    let pointer_is_nonnull = self.local_is_known_nonnull(
+                        constraints, cmp.lhs_local,
+                    );
+                    let pointer_is_null = self.local_is_known_null(
+                        constraints, cmp.lhs_local,
+                    );
+                    if pointer_is_nonnull {
+                        let expected_val = if is_ne { 1 } else { 0 };
+                        let expected = resolve_switch_target(targets, expected_val);
+                        let val = expected_val as usize;
+                        constraints.insert(discr_local, val);
+                        if let Some(local) = constraint_local {
+                            constraints.insert(local, val);
+                        }
+                        if next != expected {
+                            return false;
+                        }
+                        return true;
+                    }
+                    if pointer_is_null {
+                        let expected_val = if is_ne { 0 } else { 1 };
+                        let expected = resolve_switch_target(targets, expected_val);
+                        let val = expected_val as usize;
+                        constraints.insert(discr_local, val);
+                        if let Some(local) = constraint_local {
+                            constraints.insert(local, val);
+                        }
                         if next != expected {
                             return false;
                         }
@@ -638,6 +711,30 @@ impl<'tcx> PathGraph<'tcx> {
             return target.as_usize() == next;
         }
         false
+    }
+
+    /// Return true if `local` is known to be a non-null pointer.
+    fn local_is_known_nonnull(
+        &self,
+        constraints: &FxHashMap<usize, usize>,
+        local: usize,
+    ) -> bool {
+        let Some(&val) = constraints.get(&local) else {
+            return false;
+        };
+        val > 0
+    }
+
+    /// Return true if `local` is known to be a null pointer.
+    fn local_is_known_null(
+        &self,
+        constraints: &FxHashMap<usize, usize>,
+        local: usize,
+    ) -> bool {
+        let Some(&val) = constraints.get(&local) else {
+            return false;
+        };
+        val == 0
     }
 
     /// Populate the `child_sccs` field for a given SCC entry block, then

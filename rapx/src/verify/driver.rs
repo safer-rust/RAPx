@@ -280,6 +280,8 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
                 tree.len()
             );
 
+            let paths = tree.to_vecs();
+
             for (property_index, invariant) in invariants.iter().enumerate() {
                 let results = self.engine.check_invariant_from_tree(
                     self.target.def_id,
@@ -290,6 +292,15 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
                 );
 
                 for (path_index, check) in results.iter().enumerate() {
+                    let path_description = paths
+                        .get(path_index)
+                        .map(|p| {
+                            p.iter()
+                                .map(|b| b.to_string())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        })
+                        .unwrap_or_default();
                     report.push(PropertyCheckResult {
                         checkpoint: checkpoint,
                         checkpoint_index: checkpoint.block.as_usize(),
@@ -301,7 +312,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
                             check.slicing_diag.clone(),
                             check.verification_diag.clone(),
                         )),
-                        path_description: String::new(),
+                        path_description,
                         callee_name: format!("struct-invariant(bb{})", checkpoint.block.as_usize()),
                     });
                 }

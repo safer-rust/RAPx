@@ -172,6 +172,8 @@ impl<'tcx> SmtChecker<'tcx> {
             PropertyKind::NonVolatile => {
                 super::non_volatile::check(self, checkpoint, property, forward)
             }
+            PropertyKind::Owning => super::owning::check(self, checkpoint, property, forward),
+            PropertyKind::Ptr2Ref => super::ptr2ref::check(self, checkpoint, property, forward),
             _ => SmtCheckResult::unknown("no SMT lowering for this property yet"),
         }
     }
@@ -190,10 +192,10 @@ impl<'tcx> SmtChecker<'tcx> {
         match property.kind {
             PropertyKind::Align => align::check_for_checkpoint(self, caller, property, forward),
             PropertyKind::Allocated => {
-                SmtCheckResult::unknown("Allocated struct invariant not implemented yet")
+                allocated::check_for_checkpoint(self, caller, property, forward)
             }
             PropertyKind::NonNull => {
-                SmtCheckResult::unknown("NonNull struct invariant not implemented yet")
+                non_null::check_for_checkpoint(self, caller, property, forward)
             }
             PropertyKind::InBound => {
                 in_bound::check_for_checkpoint(self, caller, property, forward)
@@ -3278,18 +3280,22 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
 
     /// Assert facts collected by the forward visitor.
     pub(crate) fn assert_forward_facts(&mut self, solver: &Solver<'ctx>) {
-        for fact in &self.forward.facts {
+        // Two-pass processing: non-Contract facts first (establish value chain),
+        // then Contract facts (which depend on the chain for term resolution).
+        // Clone the facts so we can process them in dependency order without
+        // changing the forward-facing list.
+        let facts: Vec<StateFact<'tcx>> = self.forward.facts.clone();
+        for fact in facts
+            .iter()
+            .filter(|f| !matches!(f, StateFact::Contract(_)))
+            .chain(
+                facts
+                    .iter()
+                    .filter(|f| matches!(f, StateFact::Contract(_))),
+            )
+        {
             match fact {
                 StateFact::PointsTo { pointer, source } => {
-                    self.assert_place_non_zero(
-                        solver,
-                        pointer,
-                        "created from a reference/raw pointer",
-                    );
-                    // Only assert alignment on the pointer when the pointee types
-                    // match — pointer-arithmetic wrappers produce pointers of a
-                    // different pointee type whose alignment must be proved from
-                    // guard facts, not from the raw type alone.
                     // Normalize types (strip MaybeUninit, array/slice brackets)
                     // so that e.g. [T] and T share the same alignment key.
                     let ptr_pointee_str = self
@@ -3836,11 +3842,6 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         }
 
         // Assert unsigned-integer function arguments are non-negative.
-        // Arguments are atomic inputs (MIR locals `1..=arg_count`), so this is
-        // universally true for usize / u8..u128 and does not over-constrain any
-        // computed value.  It is required for proving bounds goals where the
-        // offset involves subtraction (e.g. `ptr.add(len - k)` needs `k >= 0`
-        // together with `len >= 0`).
         let body = self.tcx.optimized_mir(self.checkpoint.caller);
         for arg in 1..=body.arg_count {
             let place = PlaceKey {
@@ -3862,10 +3863,6 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 .push(SmtPredicate::Ge(SmtTerm::Place(place), SmtTerm::Const(0)));
         }
 
-        // Round-down products `(x / d) * d` are always multiples of `d`.
-        // Assert this divisibility explicitly so downstream `_ % d == 0`
-        // obligations discharge without z3's nonlinear-integer solver, which
-        // diverges on modular arithmetic with a symbolic divisor.
         self.assert_round_down_products(solver);
     }
 
@@ -4403,12 +4400,12 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         place: &PlaceKey,
         reason: &str,
     ) {
+        let label = place_label(place);
         if let Some(term) = self.term_for_place(place) {
             let zero = Int::from_u64(self.ctx, 0);
             solver.assert(&term._eq(&zero).not());
             self.assumptions.push(SmtPredicate::Custom(format!(
-                "{} != 0 ({reason})",
-                place_label(place)
+                "{label} != 0 ({reason})",
             )));
         }
     }
@@ -4999,13 +4996,36 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         }
 
         if place.fields.as_slice() != [0] {
+            // For non-field-0 projections (e.g., field 1 for `tail`), try to
+            // follow a struct move to another local and resolve the field there.
+            if let AbstractValue::Place(other_place) = value {
+                let mut alt_place = other_place.clone();
+                alt_place.fields = place.fields.clone();
+                if let Some(term) =
+                    self.term_for_place_before(&alt_place, definition.ordinal, seen)
+                {
+                    return Some(term);
+                }
+            }
             return None;
         }
-        let AbstractValue::Binary(op, lhs, rhs) = value else {
-            return None;
+        let (op, lhs, rhs) = match value {
+            AbstractValue::Binary(op, lhs, rhs) => (op, lhs, rhs),
+            AbstractValue::Place(other_place) => {
+                // Follow a struct move: return.0 -> _2.0
+                let mut alt_place = other_place.clone();
+                alt_place.fields = place.fields.clone();
+                if let Some(term) =
+                    self.term_for_place_before(&alt_place, definition.ordinal, seen)
+                {
+                    return Some(term);
+                }
+                return None;
+            }
+            _ => return None,
         };
         if !matches!(
-            op,
+            *op,
             BinOp::AddWithOverflow | BinOp::SubWithOverflow | BinOp::MulWithOverflow
         ) {
             return None;

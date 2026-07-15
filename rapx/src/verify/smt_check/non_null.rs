@@ -36,3 +36,17 @@ pub(crate) fn check<'tcx>(
     let obligation = SmtObligation::NonZero { place: target };
     checker.prove_obligation(checkpoint, forward, obligation)
 }
+
+/// Check `NonNull` at a return checkpoint for struct invariant verification.
+pub(crate) fn check_for_checkpoint<'tcx>(
+    checker: &SmtChecker<'tcx>,
+    caller: rustc_hir::def_id::DefId,
+    property: &Property<'tcx>,
+    forward: &ForwardVisitResult<'tcx>,
+) -> SmtCheckResult {
+    let Some(target) = checker.property_target_direct(property) else {
+        return SmtCheckResult::unknown("SMT NonNull target could not be resolved");
+    };
+    let obligation = SmtObligation::NonZero { place: target };
+    checker.prove_obligation_for_checkpoint(caller, forward, obligation)
+}

@@ -125,3 +125,24 @@ fn normalize_json_trailing_commas(input: &str) -> String {
 
     normalized
 }
+
+/// Serialisation-friendly struct for the type-invariants JSON.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TypeInvariantEntry {
+    #[serde(default)]
+    pub comment: Option<String>,
+    pub invariants: Vec<PropertyEntry>,
+}
+
+/// Returns the std-type-invariants database, mapping a type path key
+/// (e.g. `"alloc::boxed::Box<T>"`) to its invariant entries.
+pub fn get_std_type_invariants(
+) -> &'static HashMap<String, TypeInvariantEntry> {
+    static TYPE_INVARIANTS: OnceLock<HashMap<String, TypeInvariantEntry>> = OnceLock::new();
+    TYPE_INVARIANTS.get_or_init(|| {
+        let raw = include_str!("assets/std-type-invariants.json");
+        let normalized = normalize_json_trailing_commas(raw);
+        serde_json::from_str(normalized.as_str())
+            .unwrap_or_else(|err| panic!("failed to parse std type invariants: {err}"))
+    })
+}

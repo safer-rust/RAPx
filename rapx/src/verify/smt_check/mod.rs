@@ -19,6 +19,8 @@ mod init;
 mod non_null;
 mod non_overlap;
 mod non_volatile;
+mod owning;
+mod ptr2ref;
 mod transmute_without_align;
 mod typed;
 mod valid_num;
