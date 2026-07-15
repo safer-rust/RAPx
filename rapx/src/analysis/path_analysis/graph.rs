@@ -84,7 +84,6 @@ pub struct BlockConstantInfo {
     /// `Box::into_raw`).  Used for path reachability pruning.
     pub known_nonnull_locals: FxHashSet<usize>,
 }
-
 /// Records the origin of a boolean temporary produced by a binary
 /// comparison during guard-clause evaluation.
 #[derive(Clone, Debug)]
@@ -92,6 +91,32 @@ pub struct ComparisonSource {
     pub op: rustc_middle::mir::BinOp,
     pub lhs_local: usize,
     pub rhs_local: usize,
+}
+
+/// Encode a `(local, field_index)` pair into a single `usize`.
+const AGGREGATE_FIELD_MULT: usize = 256;
+const AGGREGATE_FIELD_SENTINEL: usize = 1 << (usize::BITS as usize - 1);
+
+fn encode_aggregate_field(local: usize, field: usize) -> usize {
+    debug_assert!(field < AGGREGATE_FIELD_MULT);
+    AGGREGATE_FIELD_SENTINEL | (local * AGGREGATE_FIELD_MULT + field)
+}
+
+fn decode_aggregate_field(encoded: usize) -> Option<(usize, usize)> {
+    if encoded & AGGREGATE_FIELD_SENTINEL == 0 {
+        return None;
+    }
+    let raw = encoded & !AGGREGATE_FIELD_SENTINEL;
+    Some((raw / AGGREGATE_FIELD_MULT, raw % AGGREGATE_FIELD_MULT))
+}
+
+fn first_field_projection(place: &rustc_middle::mir::Place<'_>) -> Option<usize> {
+    for proj in place.projection.iter() {
+        if let rustc_middle::mir::ProjectionElem::Field(field, _) = proj {
+            return Some(field.as_usize());
+        }
+    }
+    None
 }
 
 /// Enum discriminant metadata used by [`check_switch_transition`].
@@ -119,6 +144,12 @@ pub struct PathGraph<'tcx> {
     pub cfg: ControlFlowGraph<'tcx>,
     pub block_info: Vec<BlockConstantInfo>,
     pub disc_info: DiscriminantInfo,
+    /// Global store: maps encoded `(local, field_idx)` to source local from Aggregates.
+    pub aggregate_field_sources: FxHashMap<usize, usize>,
+    /// Global store: maps `dest` to `src` for pointer-cast chains.
+    pub cast_chains: FxHashMap<usize, usize>,
+    /// Global store: maps `_dest` to encoded `(base, field_idx)` from field-projection copies.
+    pub field_projection_source: FxHashMap<usize, usize>,
 }
 
 impl<'tcx> PathGraph<'tcx> {
@@ -128,6 +159,9 @@ impl<'tcx> PathGraph<'tcx> {
         let mut cfg_blocks = Vec::<CfgBlock>::new();
         let mut block_info = Vec::new();
         let mut disc_info = DiscriminantInfo::default();
+        let mut aggregate_field_sources: FxHashMap<usize, usize> = FxHashMap::default();
+        let mut field_projection_source: FxHashMap<usize, usize> = FxHashMap::default();
+        let mut cast_chains: FxHashMap<usize, usize> = FxHashMap::default();
 
         for i in 0..basicblocks.len() {
             let bb = &basicblocks[BasicBlock::from(i)];
@@ -157,7 +191,12 @@ impl<'tcx> PathGraph<'tcx> {
                             }
                         }
                         Rvalue::Use(Operand::Copy(src) | Operand::Move(src), ..) => {
-                            info.constraint_copies.insert(dest, src.local.as_usize());
+                            let src_local = src.local.as_usize();
+                            if let Some(field_proj) = first_field_projection(src) {
+                                let encoded = encode_aggregate_field(src_local, field_proj);
+                                field_projection_source.insert(dest, encoded);
+                            }
+                            info.constraint_copies.insert(dest, src_local);
                         }
                         Rvalue::Discriminant(rv_place) => {
                             disc_info.source_of.insert(dest, rv_place.local.as_usize());
@@ -172,9 +211,24 @@ impl<'tcx> PathGraph<'tcx> {
                                 }
                             }
                         }
-                        Rvalue::Aggregate(kind, _) => {
-                            if let AggregateKind::Adt(_, variant_idx, _, _, _) = kind.as_ref() {
-                                let discr = variant_idx.as_usize();
+                        Rvalue::Aggregate(kind, operands) => {
+                            if let AggregateKind::Adt(_, _, _, _, _) = kind.as_ref() {
+                                let agg_local = place.local.as_usize();
+                                for (field_idx, operand) in operands.iter().enumerate() {
+                                    if let Operand::Copy(src) | Operand::Move(src) = operand {
+                                        let key = encode_aggregate_field(agg_local, field_idx);
+                                        let src_local = src.local.as_usize();
+                                        aggregate_field_sources.insert(key, src_local);
+                                    }
+                                }
+                            }
+                            let discr = match kind.as_ref() {
+                                AggregateKind::Adt(_, variant_idx, _, _, _) => {
+                                    Some(variant_idx.as_usize())
+                                }
+                                _ => None,
+                            };
+                            if let Some(discr) = discr {
                                 info.constants.insert(dest, discr);
                                 if !disc_info.variant_count_of.contains_key(&dest) {
                                     let dest_ty = body.local_decls[place.local].ty;
@@ -240,6 +294,16 @@ impl<'tcx> PathGraph<'tcx> {
                                         rhs_local,
                                     },
                                 );
+                            }
+                        }
+                        Rvalue::Cast(_, operand, _) => {
+                            if let Operand::Copy(src) | Operand::Move(src) = operand
+                                && matches!(
+                                    body.local_decls[place.local].ty.kind(),
+                                    TyKind::RawPtr(..) | TyKind::Int(..) | TyKind::Uint(..)
+                                )
+                            {
+                                cast_chains.insert(dest, src.local.as_usize());
                             }
                         }
                         _ => {} // close match rvalue
@@ -368,6 +432,9 @@ impl<'tcx> PathGraph<'tcx> {
             cfg,
             block_info,
             disc_info,
+            aggregate_field_sources,
+            field_projection_source,
+            cast_chains,
         }
     }
 
@@ -441,8 +508,8 @@ impl<'tcx> PathGraph<'tcx> {
         if let Some(info) = self.block_info.get(cur) {
             for local in &info.assigned_locals {
                 if let Some(&src) = info.constraint_copies.get(local) {
-                    if let Some(&src_val) = constraints.get(&src) {
-                        constraints.insert(*local, src_val);
+                    if let Some(val) = self.resolve_local_value(src, constraints) {
+                        constraints.insert(*local, val);
                         continue;
                     }
                     if let Some(&dst_val) = constraints.get(local) {
@@ -684,6 +751,48 @@ impl<'tcx> PathGraph<'tcx> {
             constraints.insert(src, val);
             current = src;
         }
+    }
+
+    /// Recursively resolve a local's value through constraint copies,
+    /// cast chains, field projections, and aggregate sources (global maps).
+    fn resolve_local_value(
+        &self,
+        local: usize,
+        constraints: &FxHashMap<usize, usize>,
+    ) -> Option<usize> {
+        let mut stack = vec![local];
+        let mut seen = FxHashSet::default();
+        while let Some(cur) = stack.pop() {
+            if !seen.insert(cur) {
+                continue;
+            }
+            if let Some(&val) = constraints.get(&cur) {
+                return Some(val);
+            }
+            // Follow constraint copies in any block (per-block metadata).
+            for info in &self.block_info {
+                if let Some(&src) = info.constraint_copies.get(&cur) {
+                    stack.push(src);
+                }
+                if let Some(&val) = info.constants.get(&cur) {
+                    return Some(val);
+                }
+            }
+            // Follow global cast chains.
+            if let Some(&cast_src) = self.cast_chains.get(&cur) {
+                stack.push(cast_src);
+            }
+            // Follow field projection -> aggregate source.
+            if let Some(&encoded) = self.field_projection_source.get(&cur) {
+                if let Some((agg_local, field_idx)) = decode_aggregate_field(encoded) {
+                    let key = encode_aggregate_field(agg_local, field_idx);
+                    if let Some(&source) = self.aggregate_field_sources.get(&key) {
+                        stack.push(source);
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// For the "otherwise" branch of a `SwitchInt`, try to infer the single
