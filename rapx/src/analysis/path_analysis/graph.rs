@@ -7,7 +7,7 @@ use crate::graphs::{
 use rustc_middle::{
     mir::{
         AggregateKind, BasicBlock, BinOp, Local, Operand, Rvalue, StatementKind, SwitchTargets,
-        Terminator, TerminatorKind, UnwindAction,
+        Terminator, TerminatorKind, UnOp, UnwindAction,
     },
     ty::{TyCtxt, TyKind, TypingEnv},
 };
@@ -83,6 +83,8 @@ pub struct BlockConstantInfo {
     /// Set of locals that are provably non-null (e.g. assigned from
     /// `Box::into_raw`).  Used for path reachability pruning.
     pub known_nonnull_locals: FxHashSet<usize>,
+    /// Maps destination to source for `Not` operations (used by assert eval).
+    pub negation_sources: FxHashMap<usize, usize>,
 }
 /// Records the origin of a boolean temporary produced by a binary
 /// comparison during guard-clause evaluation.
@@ -304,6 +306,14 @@ impl<'tcx> PathGraph<'tcx> {
                                 )
                             {
                                 cast_chains.insert(dest, src.local.as_usize());
+                            }
+                        }
+                        Rvalue::UnaryOp(unop, operand) => {
+                            if matches!(unop, UnOp::Not)
+                                && let Operand::Copy(src) | Operand::Move(src) = operand
+                            {
+                                info.negation_sources
+                                    .insert(dest, src.local.as_usize());
                             }
                         }
                         _ => {} // close match rvalue
@@ -566,6 +576,10 @@ impl<'tcx> PathGraph<'tcx> {
             return false;
         }
 
+        if !self.check_assert_transition(cur, next, constraints) {
+            return false;
+        }
+
         true
     }
 
@@ -751,6 +765,81 @@ impl<'tcx> PathGraph<'tcx> {
             constraints.insert(src, val);
             current = src;
         }
+    }
+
+    fn check_assert_transition(
+        &self,
+        cur: usize,
+        next: usize,
+        constraints: &FxHashMap<usize, usize>,
+    ) -> bool {
+        let Some(terminator) = self.cfg.terminator(cur) else { return true };
+        let TerminatorKind::Assert { cond, target, .. } = &terminator.kind else {
+            return true;
+        };
+        if next != target.as_usize() {
+            return true;
+        }
+        let cond_local = match cond {
+            Operand::Copy(p) | Operand::Move(p) => p.local.as_usize(),
+            Operand::Constant(c) => {
+                let typing_env =
+                    rustc_middle::ty::TypingEnv::post_analysis(self.cfg.tcx, self.cfg.def_id);
+                return c.const_.try_eval_bool(self.cfg.tcx, typing_env).unwrap_or(true);
+            }
+            #[cfg(rapx_rustc_ge_196)]
+            Operand::RuntimeChecks(_) => return true,
+        };
+        let v = self.resolve_bool_local(cond_local, constraints);
+        if let Some(v) = v {
+            return v == 1;
+        }
+        true
+    }
+
+    fn resolve_bool_local(
+        &self,
+        local: usize,
+        constraints: &FxHashMap<usize, usize>,
+    ) -> Option<usize> {
+        let mut stack = vec![(local, false)];
+        let mut seen = FxHashSet::default();
+        while let Some((cur, negated)) = stack.pop() {
+            let key = if negated { cur | (1 << 31) } else { cur };
+            if !seen.insert(key) { continue; }
+            if let Some(&val) = constraints.get(&cur) {
+                if val <= 1 {
+                    return Some(if negated { 1 - val } else { val });
+                }
+            }
+            for info in &self.block_info {
+                if let Some(&src) = info.constraint_copies.get(&cur) {
+                    stack.push((src, negated));
+                }
+                if let Some(&val) = info.constants.get(&cur) {
+                    if val <= 1 {
+                        return Some(if negated { 1 - val } else { val });
+                    }
+                }
+                if let Some(&src) = info.negation_sources.get(&cur) {
+                    stack.push((src, !negated));
+                }
+                if let Some(cmp) = info.comparison_sources.get(&cur) {
+                    if matches!(cmp.op, BinOp::Eq | BinOp::Ne) {
+                        let is_eq = matches!(cmp.op, BinOp::Eq);
+                        if let Some(lhs_val) = self.resolve_local_value(cmp.lhs_local, constraints) {
+                            let cmp_result = if is_eq {
+                                if lhs_val == cmp.rhs_local { 1 } else { 0 }
+                            } else {
+                                if lhs_val != cmp.rhs_local { 1 } else { 0 }
+                            };
+                            return Some(if negated { 1 - cmp_result } else { cmp_result });
+                        }
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// Recursively resolve a local's value through constraint copies,
