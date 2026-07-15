@@ -1240,7 +1240,7 @@ fn typed_provenance_cases() {
 }
 
 #[test]
-fn alive_lifetime_sound_cases() {
+fn alive_sound_cases() {
     let output = run_with_args("verify_units/alive_sound_01", VERIFY_CMD);
     assert_contain(&output, "function: SliceHost::<'a, T>::get");
     assert_contain(&output, "Alive | Proved");
@@ -1255,7 +1255,7 @@ fn alive_lifetime_sound_cases() {
 }
 
 #[test]
-fn alive_lifetime_unsound_cases() {
+fn alive_unsound_cases() {
     let output = run_with_args("verify_units/alive_unsound_01", VERIFY_CMD);
     assert_unproved_exclusive(
         &output,
@@ -1279,7 +1279,7 @@ fn alive_lifetime_unsound_cases() {
 }
 
 #[test]
-fn struct_invariant_1() {
+fn struct_invariant() {
     let output = run_with_args("verify_units/struct_invariant_1", VERIFY_CMD);
     // unsound_new: constructor with requires, all struct invariants proved
     assert_contain(&output, "function: Wrapper::<T>::unsound_new");
@@ -1340,7 +1340,7 @@ fn invless_skips_struct_invariant() {
 }
 
 #[test]
-fn invless_1_no_annotations() {
+fn invless_no_annotations() {
     let output = run_with_args("verify_units/invless_1", VERIFY_INVLESS_CMD);
     // 4 sequences generated
     assert_contain(&output, "sequence: unsound_new -> sound_read");
@@ -1365,7 +1365,7 @@ fn invless_1_no_annotations() {
 }
 
 #[test]
-fn invless_2_with_contracts() {
+fn invless_with_contracts() {
     let output = run_with_args("verify_units/invless_2", VERIFY_INVLESS_CMD);
     // 4 sequences generated
     assert_contain(&output, "sequence: unsound_new -> sound_read");
@@ -1417,7 +1417,7 @@ fn safetyflow_static_mut() {
 }
 
 #[test]
-fn verify_raw_ptr_stack_local_sound() {
+fn scan_raw_ptr_deref() {
     let output = run_with_args("analyze/safetyflow_raw_ptr", VERIFY_SCAN_CMD);
     assert_contain(&output, "[rapx::verify] function: main");
     assert_contain(&output, "ValidPtr | Proved");
@@ -1425,7 +1425,7 @@ fn verify_raw_ptr_stack_local_sound() {
 }
 
 #[test]
-fn verify_static_mut_unknown() {
+fn scan_static_mut() {
     let output = run_with_args("analyze/safetyflow_static_mut", VERIFY_SCAN_CMD);
     assert_contain(&output, "[rapx::verify] function: main");
     assert_contain(&output, "Unknown");
@@ -1433,7 +1433,7 @@ fn verify_static_mut_unknown() {
 }
 
 #[test]
-fn verify_std_challenge_17() {
+fn std_challenge_17() {
     let output = run_with_args("verify_cases/std-challenge-17", VERIFY_TARGETED_CMD);
 
     let functions = [
@@ -1488,7 +1488,7 @@ fn verify_std_challenge_17() {
 }
 
 #[test]
-fn transmute_without_align_unsound() {
+fn transmute_align_unsound() {
     let output = run_with_args("verify_units/transmute_without_align_unsound", VERIFY_CMD);
     assert_unproved_exclusive(
         &output,
@@ -1509,7 +1509,7 @@ fn transmute_without_align_unsound() {
 }
 
 #[test]
-fn transmute_without_align_nonzero() {
+fn transmute_align_nonzero() {
     let output = run_with_args("verify_units/transmute_without_align_nonzero", VERIFY_CMD);
     assert_contain(&output, "function: align_to_nonzero_u16");
     assert_contain(&output, "result: UNSOUND");
@@ -1520,14 +1520,14 @@ fn transmute_without_align_nonzero() {
 }
 
 #[test]
-fn transmute_without_align_sound() {
+fn transmute_align_sound() {
     let output = run_with_args("verify_units/transmute_without_align_sound", VERIFY_CMD);
     assert_contain(&output, "function: align_to_u8_sound");
     assert_contain(&output, "result: SOUND");
 }
 
 #[test]
-fn trait_unsound_1() {
+fn trait_unsound_prepare() {
     let output = run_with_args("verify_units/trait_unsound_1", VERIFY_PREPARE_CMD);
     assert_contain(&output, "prepare targets for unsafe trait: Buffer");
     assert_contain(&output, "impl for: VecBuf");
@@ -1536,7 +1536,7 @@ fn trait_unsound_1() {
 }
 
 #[test]
-fn trait_unsound_1_verify() {
+fn trait_unsound_verify() {
     let output = run_with_args("verify_units/trait_unsound_1", VERIFY_CMD);
     assert_contain(&output, "unsafe trait impl: Buffer");
     assert_contain(&output, "impl for: VecBuf");
@@ -1576,7 +1576,7 @@ fn range_analysis() {
 
 #[test]
 
-fn interprocedual_range_analysis() {
+fn interprocedural_range_analysis() {
     let output = run_with_args("analyze/range_2", ANALYZE_RANGE_CMD);
 
     let expected_ranges = vec![
@@ -1633,7 +1633,7 @@ fn symbolic_interval() {
 }
 
 #[test]
-fn adg_bug() {
+fn adg_bug_regression() {
     // This test pass if don't panic (e.g., stack overflow) during ADG construction and resolution.
     let _ = run_with_args("analyze/adg_bug_regression", ANALYZE_ADG_CMD);
 }
@@ -1663,7 +1663,7 @@ fn adg_simple_graph() {
 
 // ================ Alias Verify Sound Cases =============
 #[test]
-fn alias_verify_sound_cases() {
+fn alias_verify_sound() {
     let output = run_with_args("verify_units/alias_sound_13", VERIFY_CMD);
     assert_contain(&output, "function: as_bytes_mut_sound");
     assert_contain(&output, "result: SOUND");
@@ -1675,7 +1675,7 @@ fn alias_verify_sound_cases() {
 
 // ================ Alias Verify Unsound Cases =============
 #[test]
-fn alias_verify_unsound_cases() {
+fn alias_verify_unsound() {
     let output = run_with_args("verify_units/alias_unsound_18", VERIFY_CMD);
     assert_unproved_exclusive(&output, "as_bytes_mut_unsound", &["Alias"]);
 
@@ -1687,7 +1687,7 @@ fn alias_verify_unsound_cases() {
 }
 
 #[test]
-fn verify_module_filter() {
+fn filter_by_module() {
     let output = run_with_args(
         "verify_units/module_filter",
         &["verify", "--mode", "targeted", "--module", "a"],
@@ -1706,7 +1706,7 @@ fn verify_module_filter() {
 }
 
 #[test]
-fn verify_crate_filter() {
+fn filter_by_crate() {
     let output = run_with_args(
         "verify_units/module_filter",
         &[
