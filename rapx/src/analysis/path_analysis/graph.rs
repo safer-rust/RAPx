@@ -200,25 +200,47 @@ impl<'tcx> PathGraph<'tcx> {
                         {
                             let (lhs, rhs): (&Operand<'_>, &Operand<'_>) =
                                 (&operands.0, &operands.1);
-                            let (lhs_local, rhs_local) = match (lhs, rhs) {
-                                (
-                                    Operand::Copy(l) | Operand::Move(l),
-                                    Operand::Copy(r) | Operand::Move(r),
-                                ) => (l.local, r.local),
-                                _ => {
-                                    continue;
+                            let lhs_local = match lhs {
+                                Operand::Copy(l) | Operand::Move(l) if l.projection.is_empty() => {
+                                    Some(l.local.as_usize())
                                 }
+                                _ => None,
                             };
-                            let lhs_local = lhs_local.as_usize();
-                            let rhs_local = rhs_local.as_usize();
-                            info.comparison_sources.insert(
-                                dest,
-                                ComparisonSource {
-                                    op: *op,
-                                    lhs_local,
-                                    rhs_local,
-                                },
-                            );
+                            // Allow Constant RHS (e.g. `Ne(ptr, const 0_usize)` for null checks)
+                            let rhs_is_zero = match rhs {
+                                Operand::Constant(c) => {
+                                    let typing_env = TypingEnv::post_analysis(tcx, def_id);
+                                    c.const_
+                                        .try_eval_bits(tcx, typing_env)
+                                        .map(|v| v == 0)
+                                        .unwrap_or(false)
+                                }
+                                _ => false,
+                            };
+                            if let Some(lhs_local) = lhs_local {
+                                let rhs_local = if rhs_is_zero {
+                                    0
+                                } else {
+                                    match rhs {
+                                        Operand::Copy(r) | Operand::Move(r)
+                                            if r.projection.is_empty() =>
+                                        {
+                                            r.local.as_usize()
+                                        }
+                                        _ => {
+                                            continue;
+                                        }
+                                    }
+                                };
+                                info.comparison_sources.insert(
+                                    dest,
+                                    ComparisonSource {
+                                        op: *op,
+                                        lhs_local,
+                                        rhs_local,
+                                    },
+                                );
+                            }
                         }
                         _ => {} // close match rvalue
                     }
