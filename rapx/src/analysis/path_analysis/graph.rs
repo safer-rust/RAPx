@@ -83,8 +83,8 @@ pub struct BlockConstantInfo {
     /// Set of locals that are provably non-null (e.g. assigned from
     /// `Box::into_raw`).  Used for path reachability pruning.
     pub known_nonnull_locals: FxHashSet<usize>,
-    /// Maps destination to source for `Not` operations (used by assert eval).
     pub negation_sources: FxHashMap<usize, usize>,
+    pub and_sources: FxHashMap<usize, (usize, usize)>,
 }
 /// Records the origin of a boolean temporary produced by a binary
 /// comparison during guard-clause evaluation.
@@ -252,6 +252,7 @@ impl<'tcx> PathGraph<'tcx> {
                                     | BinOp::Ge
                                     | BinOp::Eq
                                     | BinOp::Ne
+                                    | BinOp::BitAnd
                             ) =>
                         {
                             let (lhs, rhs): (&Operand<'_>, &Operand<'_>) =
@@ -296,6 +297,18 @@ impl<'tcx> PathGraph<'tcx> {
                                         rhs_local,
                                     },
                                 );
+                                if matches!(op, BinOp::BitAnd)
+                                    && matches!(body.local_decls[place.local].ty.kind(), TyKind::Bool)
+                                {
+                                    info.and_sources.insert(dest, (lhs_local, rhs_local));
+                                }
+                            }
+                        }
+                        Rvalue::UnaryOp(unop, operand) => {
+                            if matches!(unop, UnOp::Not)
+                                && let Operand::Copy(src) | Operand::Move(src) = operand
+                            {
+                                info.negation_sources.insert(dest, src.local.as_usize());
                             }
                         }
                         Rvalue::Cast(_, operand, _) => {
@@ -306,14 +319,6 @@ impl<'tcx> PathGraph<'tcx> {
                                 )
                             {
                                 cast_chains.insert(dest, src.local.as_usize());
-                            }
-                        }
-                        Rvalue::UnaryOp(unop, operand) => {
-                            if matches!(unop, UnOp::Not)
-                                && let Operand::Copy(src) | Operand::Move(src) = operand
-                            {
-                                info.negation_sources
-                                    .insert(dest, src.local.as_usize());
                             }
                         }
                         _ => {} // close match rvalue
@@ -583,6 +588,108 @@ impl<'tcx> PathGraph<'tcx> {
         true
     }
 
+    fn check_assert_transition(
+        &self,
+        cur: usize,
+        next: usize,
+        constraints: &FxHashMap<usize, usize>,
+    ) -> bool {
+        let Some(terminator) = self.cfg.terminator(cur) else { return true };
+        let TerminatorKind::Assert { cond, target, .. } = &terminator.kind else {
+            return true;
+        };
+        if next != target.as_usize() {
+            return true;
+        }
+        let cond_local = match cond {
+            Operand::Copy(p) | Operand::Move(p) => p.local.as_usize(),
+            Operand::Constant(c) => {
+                let typing_env =
+                    rustc_middle::ty::TypingEnv::post_analysis(self.cfg.tcx, self.cfg.def_id);
+                return c.const_.try_eval_bool(self.cfg.tcx, typing_env).unwrap_or(true);
+            }
+            #[cfg(rapx_rustc_ge_196)]
+            Operand::RuntimeChecks(_) => return true,
+        };
+        self.resolve_bool_local(cond_local, constraints)
+            .map_or(true, |v| v == 1)
+    }
+
+    fn resolve_simple_bool(
+        &self,
+        local: usize,
+        constraints: &FxHashMap<usize, usize>,
+    ) -> Option<usize> {
+        if let Some(&val) = constraints.get(&local)
+            && val <= 1
+        {
+            return Some(val);
+        }
+        for info in &self.block_info {
+            if let Some(&val) = info.constants.get(&local)
+                && val <= 1
+            {
+                return Some(val);
+            }
+            if let Some(cmp) = info.comparison_sources.get(&local) {
+                if matches!(cmp.op, BinOp::Eq | BinOp::Ne) {
+                    let is_eq = matches!(cmp.op, BinOp::Eq);
+                    let lhs_val = self.resolve_local_value(cmp.lhs_local, constraints);
+                    let rhs_val = self.resolve_local_value(cmp.rhs_local, constraints);
+                    if let Some(known_val) = lhs_val.or(rhs_val) {
+                        let other = if lhs_val.is_some() {
+                            cmp.rhs_local
+                        } else {
+                            cmp.lhs_local
+                        };
+                        return Some(if is_eq {
+                            if known_val == other { 1 } else { 0 }
+                        } else {
+                            if known_val != other { 1 } else { 0 }
+                        });
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn resolve_bool_local(
+        &self,
+        local: usize,
+        constraints: &FxHashMap<usize, usize>,
+    ) -> Option<usize> {
+        let mut stack = vec![(local, false)];
+        let mut seen = FxHashSet::default();
+        while let Some((cur, negated)) = stack.pop() {
+            let key = if negated { cur | (1 << 31) } else { cur };
+            if !seen.insert(key) { continue; }
+            if let Some(v) = self.resolve_simple_bool(cur, constraints) {
+                return Some(if negated { 1 - v } else { v });
+            }
+            for info in &self.block_info {
+                if let Some(&src) = info.constraint_copies.get(&cur) {
+                    stack.push((src, negated));
+                }
+                if let Some(&src) = info.negation_sources.get(&cur) {
+                    stack.push((src, !negated));
+                }
+                if let Some(&(lhs, rhs)) = info.and_sources.get(&cur) {
+                    let a = self.resolve_simple_bool(lhs, constraints);
+                    let b = self.resolve_simple_bool(rhs, constraints);
+                    if let (Some(a), Some(b)) = (a, b) {
+                        let r = if a == 1 && b == 1 { 1 } else { 0 };
+                        return Some(if negated { 1 - r } else { r });
+                    }
+                }
+            }
+            if let Some(&src) = self.cast_chains.get(&cur) {
+                stack.push((src, negated));
+            }
+        }
+        None
+    }
+
     /// Check whether `cur → next` is a valid `SwitchInt` transition given
     /// current discriminant constraints. Returns `false` when the transition
     /// contradicts a known discriminant value. Also records newly learned
@@ -765,81 +872,6 @@ impl<'tcx> PathGraph<'tcx> {
             constraints.insert(src, val);
             current = src;
         }
-    }
-
-    fn check_assert_transition(
-        &self,
-        cur: usize,
-        next: usize,
-        constraints: &FxHashMap<usize, usize>,
-    ) -> bool {
-        let Some(terminator) = self.cfg.terminator(cur) else { return true };
-        let TerminatorKind::Assert { cond, target, .. } = &terminator.kind else {
-            return true;
-        };
-        if next != target.as_usize() {
-            return true;
-        }
-        let cond_local = match cond {
-            Operand::Copy(p) | Operand::Move(p) => p.local.as_usize(),
-            Operand::Constant(c) => {
-                let typing_env =
-                    rustc_middle::ty::TypingEnv::post_analysis(self.cfg.tcx, self.cfg.def_id);
-                return c.const_.try_eval_bool(self.cfg.tcx, typing_env).unwrap_or(true);
-            }
-            #[cfg(rapx_rustc_ge_196)]
-            Operand::RuntimeChecks(_) => return true,
-        };
-        let v = self.resolve_bool_local(cond_local, constraints);
-        if let Some(v) = v {
-            return v == 1;
-        }
-        true
-    }
-
-    fn resolve_bool_local(
-        &self,
-        local: usize,
-        constraints: &FxHashMap<usize, usize>,
-    ) -> Option<usize> {
-        let mut stack = vec![(local, false)];
-        let mut seen = FxHashSet::default();
-        while let Some((cur, negated)) = stack.pop() {
-            let key = if negated { cur | (1 << 31) } else { cur };
-            if !seen.insert(key) { continue; }
-            if let Some(&val) = constraints.get(&cur) {
-                if val <= 1 {
-                    return Some(if negated { 1 - val } else { val });
-                }
-            }
-            for info in &self.block_info {
-                if let Some(&src) = info.constraint_copies.get(&cur) {
-                    stack.push((src, negated));
-                }
-                if let Some(&val) = info.constants.get(&cur) {
-                    if val <= 1 {
-                        return Some(if negated { 1 - val } else { val });
-                    }
-                }
-                if let Some(&src) = info.negation_sources.get(&cur) {
-                    stack.push((src, !negated));
-                }
-                if let Some(cmp) = info.comparison_sources.get(&cur) {
-                    if matches!(cmp.op, BinOp::Eq | BinOp::Ne) {
-                        let is_eq = matches!(cmp.op, BinOp::Eq);
-                        if let Some(lhs_val) = self.resolve_local_value(cmp.lhs_local, constraints) {
-                            let cmp_result = if is_eq {
-                                if lhs_val == cmp.rhs_local { 1 } else { 0 }
-                            } else {
-                                if lhs_val != cmp.rhs_local { 1 } else { 0 }
-                            };
-                            return Some(if negated { 1 - cmp_result } else { cmp_result });
-                        }
-                    }
-                }
-            }
-        }
-        None
     }
 
     /// Recursively resolve a local's value through constraint copies,
