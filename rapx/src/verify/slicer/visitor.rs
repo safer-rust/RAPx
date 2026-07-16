@@ -294,8 +294,25 @@ impl<'tcx> BackwardSlicer<'tcx> {
             // (e.g. an aggregate struct literal) would re-add a field
             // whose definition was already found earlier in the walk,
             // skip it to prevent wrong (duplicate) matches.
-            let already_seen: crate::compat::FxHashSet<crate::verify::def_use::PlaceKey> =
-                relevant.places.clone();
+            let mut already_seen: crate::compat::FxHashSet<
+                crate::verify::def_use::PlaceKey,
+            > = relevant.places.clone();
+            // For aggregate (struct literal) statements, also block uses
+            // that were already saturated by a descendant block.  This
+            // prevents fields like `_4` from being re-added when they
+            // were already resolved outside this block (e.g. via a copy
+            // `_4 = _8`).  Without this guard, the wrong definition
+            // (e.g. `_4 = null_mut()` from struct field init) may match.
+            let is_aggregate = if let rustc_middle::mir::StatementKind::Assign(assign) =
+                &statement.kind
+            {
+                matches!(assign.1, rustc_middle::mir::Rvalue::Aggregate(..))
+            } else {
+                false
+            };
+            if is_aggregate {
+                already_seen.extend(relevant.saturated.iter().cloned());
+            }
             relevant.remove_all(&defs);
             uses.places.retain(|p| !already_seen.contains(p));
             relevant.extend(uses);

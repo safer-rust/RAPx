@@ -124,6 +124,11 @@ pub struct RelevantPlaces {
     pub places: FxHashSet<PlaceKey>,
     /// MIR locals that are already known from local contract places.
     pub locals: FxHashSet<Local>,
+    /// Places whose definition has been found during the backward walk.
+    /// Populated by [`remove_all`].  Used when processing aggregate
+    /// (struct literal) statements to prevent re-adding fields that
+    /// were already resolved by a descendant block.
+    pub saturated: FxHashSet<PlaceKey>,
 }
 
 impl RelevantPlaces {
@@ -206,13 +211,19 @@ impl RelevantPlaces {
             .any(|sp| other.places.iter().any(|op| sp.overlaps(op)))
     }
 
-    /// Remove all roots contained in `other` from this set.
+    /// Remove all roots contained in `other` from this set, marking them
+    /// as saturated (definition found).
     pub fn remove_all(&mut self, other: &RelevantPlaces) {
         for local in &other.locals {
+            self.saturated.insert(PlaceKey {
+                base: PlaceBaseKey::Local(local.as_usize()),
+                fields: vec![],
+            });
             self.locals.remove(local);
             self.places.retain(|place| place.local() != Some(*local));
         }
         for place in &other.places {
+            self.saturated.insert(place.clone());
             self.places.remove(place);
             if let Some(local) = place.local() {
                 self.locals.remove(&local);
