@@ -6485,6 +6485,20 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                     queue.push(source.clone());
                 }
             }
+            // Also follow Cast links — copies that transfer a pointer
+            // value (e.g. `_17 = Copy(_8)`) which may be the only link
+            // to a PointsTo-backed allocation when the backward slicer
+            // does not capture the intermediate copy statement.
+            for fact in &self.forward.facts {
+                let StateFact::Cast { target, source, .. } = fact else {
+                    continue;
+                };
+                if *target == cur {
+                    if let AbstractValue::Place(p) = source {
+                        queue.push(p.clone());
+                    }
+                }
+            }
         }
         None
     }
