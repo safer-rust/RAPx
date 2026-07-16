@@ -143,6 +143,8 @@ impl<'b, 'tcx> CallGraphVisitor<'b, 'tcx> {
                                 }
                                 _ => todo!(),
                             },
+                            #[allow(unreachable_patterns)]
+                            _ => None,
                         };
 
                         #[cfg(not(rapx_rustc_ge_198))]
