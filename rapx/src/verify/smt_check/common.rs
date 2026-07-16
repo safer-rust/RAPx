@@ -4100,9 +4100,23 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         let base_origin =
             self.origin_key_for_value_before(&value, self.latest_cursor(), &mut TraceSeen::new())?;
         let zero = AbstractValue::ConstInt(0);
+        // When the origin key traces to a null literal (e.g. null_mut()),
+        // bounds_len_for_origin may return bogus index offsets like
+        // len(null_ref).  Skip it and use the PointsTo fallback instead.
+        let is_null_origin = base_origin.contains("null_mut")
+            || base_origin.contains("null(" )
+            || value_label(&value).contains("null_mut");
         let (mut len_term_int, mut len_term) =
-            if let Some(bounds) = self.bounds_len_for_origin(&base_origin, Some(&zero)) {
-                bounds
+            if !is_null_origin {
+                if let Some(bounds) = self.bounds_len_for_origin(&base_origin, Some(&zero)) {
+                    bounds
+                } else if let Some(bounds) =
+                    self.allocated_bounds_via_points_to(place, &value, &base_origin)
+                {
+                    bounds
+                } else {
+                    return None;
+                }
             } else if let Some(bounds) =
                 self.allocated_bounds_via_points_to(place, &value, &base_origin)
             {
