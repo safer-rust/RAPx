@@ -358,6 +358,27 @@ impl<'tcx> ForwardVerifier<'tcx> {
     ) {
         let target = PlaceKey::from_mir_place(place);
         match rvalue {
+            #[cfg(not(rapx_rustc_ge_196))]
+            Rvalue::ShallowInitBox(_, _) => {
+                result.facts.push(StateFact::KnownNonZero {
+                    place: target.clone(),
+                    reason: "Box allocation is always non-null".to_string(),
+                });
+                if let Some((ty_name, elements)) =
+                    self.allocated_element_summary(
+                        result.checkpoint.caller,
+                        Some(place.local),
+                    )
+                {
+                    result.facts.push(StateFact::KnownAllocated {
+                        place: target.clone(),
+                        object: target.clone(),
+                        ty_name,
+                        elements,
+                        reason: "Box::new heap allocation".to_string(),
+                    });
+                }
+            }
             Rvalue::Ref(_, _, source) => {
                 let source = PlaceKey::from_mir_place(source);
                 let object = allocation_object_for_source(&source, result);
