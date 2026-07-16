@@ -4101,7 +4101,15 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             self.origin_key_for_value_before(&value, self.latest_cursor(), &mut TraceSeen::new())?;
         let zero = AbstractValue::ConstInt(0);
         let (mut len_term_int, mut len_term) =
-            self.bounds_len_for_origin(&base_origin, Some(&zero))?;
+            if let Some(bounds) = self.bounds_len_for_origin(&base_origin, Some(&zero)) {
+                bounds
+            } else if let Some(bounds) =
+                self.allocated_bounds_via_points_to(place, &value, &base_origin)
+            {
+                bounds
+            } else {
+                return None;
+            };
 
         if place.fields.is_empty()
             && let Some((inner, cast_ty)) = self.defining_cast(place)
@@ -6419,6 +6427,52 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             }
             _ => None,
         })
+    }
+
+    /// Fallback for `pointer_bounds_for_place` when origin-based tracing
+    /// fails (e.g. loop-carried definitions missed by the backward slicer).
+    /// Walks PointsTo links from `place` and collects the elements count
+    /// from any `KnownAllocated` fact whose object is reachable.
+    fn allocated_bounds_via_points_to(
+        &mut self,
+        place: &PlaceKey,
+        _value: &AbstractValue<'tcx>,
+        _origin_key: &str,
+    ) -> Option<(Int<'ctx>, SmtTerm)> {
+        let mut visited: crate::compat::FxHashSet<PlaceKey> = Default::default();
+        let mut queue = vec![place.clone()];
+        while let Some(cur) = queue.pop() {
+            if !visited.insert(cur.clone()) {
+                continue;
+            }
+            for fact in &self.forward.facts {
+                let StateFact::KnownAllocated {
+                    place: alloc_place,
+                    object,
+                    elements,
+                    ..
+                } = fact
+                else {
+                    continue;
+                };
+                if *object == cur || *alloc_place == cur {
+                    if *elements > 0 {
+                        let len_term = SmtTerm::Const(*elements);
+                        let len_int = Int::from_u64(self.ctx, *elements);
+                        return Some((len_int, len_term));
+                    }
+                }
+            }
+            for fact in &self.forward.facts {
+                let StateFact::PointsTo { pointer, source } = fact else {
+                    continue;
+                };
+                if *pointer == cur {
+                    queue.push(source.clone());
+                }
+            }
+        }
+        None
     }
 
     fn origin_is_initialized_for_ty(&self, origin_key: &str, required_ty_name: &str) -> bool {
