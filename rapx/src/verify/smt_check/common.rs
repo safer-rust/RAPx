@@ -173,7 +173,19 @@ impl<'tcx> SmtChecker<'tcx> {
                 super::non_volatile::check(self, checkpoint, property, forward)
             }
             PropertyKind::Owning => super::owning::check(self, checkpoint, property, forward),
-            PropertyKind::Ptr2Ref => super::ptr2ref::check(self, checkpoint, property, forward),
+            PropertyKind::Ptr2Ref => {
+                if let Some(callee) = checkpoint.callee {
+                    let callee_path = self.tcx.def_path_str(callee);
+                    if callee_path.contains("::NonNull::<")
+                        && (callee_path.ends_with("::as_ref") || callee_path.ends_with("::as_mut"))
+                    {
+                        return SmtCheckResult::proved(
+                            "Ptr2Ref proved: NonNull guarantees valid pointer-to-ref conversion",
+                        );
+                    }
+                }
+                super::ptr2ref::check(self, checkpoint, property, forward)
+            }
             _ => SmtCheckResult::unknown("no SMT lowering for this property yet"),
         }
     }

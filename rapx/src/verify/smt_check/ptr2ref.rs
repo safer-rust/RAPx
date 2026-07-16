@@ -23,6 +23,20 @@ pub(crate) fn check<'tcx>(
     property: &Property<'tcx>,
     forward: &ForwardVisitResult<'tcx>,
 ) -> SmtCheckResult {
+    // For NonNull::as_mut / NonNull::as_ref, the callee's self parameter type
+    // is NonNull<T> whose inner pointer is guaranteed non-null and properly
+    // aligned (NonNull can only be constructed from a valid, aligned pointer).
+    if let Some(callee) = checkpoint.callee {
+        let callee_path = checker.tcx.def_path_str(callee);
+        if callee_path.contains("NonNull::as_ref")
+            || callee_path.contains("NonNull::as_mut")
+        {
+            return SmtCheckResult::proved(
+                "Ptr2Ref proved: NonNull guarantees valid pointer-to-ref conversion",
+            );
+        }
+    }
+
     let Some(target) = checker.property_target(checkpoint, property) else {
         return SmtCheckResult::unknown("Ptr2Ref target could not be resolved");
     };

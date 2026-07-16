@@ -16,8 +16,25 @@
 //! and `as_ptr` results as non-zero assumptions, then asks whether the target can
 //! still be zero.
 
+use rustc_middle::ty::{TyCtxt, TyKind};
+
 use super::common::{SmtCheckResult, SmtChecker, SmtObligation};
-use crate::verify::{contract::Property, helpers::Checkpoint, verifier::ForwardVisitResult};
+use crate::verify::{
+    contract::{ContractPlace, PlaceBase, Property, PropertyArg},
+    helpers::Checkpoint,
+    verifier::ForwardVisitResult,
+};
+
+fn is_nonnull_param_ty(tcx: TyCtxt<'_>, ty: rustc_middle::ty::Ty<'_>) -> bool {
+    let peeled = ty.peel_refs();
+    if let TyKind::Adt(def, _) = peeled.kind() {
+        let path = tcx.def_path_str(def.did());
+        if path.contains("ptr::non_null::NonNull") {
+            return true;
+        }
+    }
+    false
+}
 
 /// Check `NonNull` by lowering it to `SmtObligation::NonZero`.
 pub(crate) fn check<'tcx>(
@@ -29,6 +46,28 @@ pub(crate) fn check<'tcx>(
     if checkpoint.is_ref {
         return SmtCheckResult::proved("NonNull trivially holds for ref-derived pointer");
     }
+
+    // If the target maps to a callee parameter whose type is NonNull<T>,
+    // the pointer is guaranteed non-null by construction.
+    if let Some(callee) = checkpoint.callee {
+        if let Some(PropertyArg::Place(ContractPlace {
+            base: PlaceBase::Arg(arg_index),
+            ..
+        })) = property.args.first()
+        {
+            let tcx = checker.tcx;
+            let fn_sig = tcx.fn_sig(callee).skip_binder();
+            let input_tys = fn_sig.inputs().skip_binder();
+            if let Some(param_ty) = input_tys.get(*arg_index) {
+                if is_nonnull_param_ty(tcx, *param_ty) {
+                    return SmtCheckResult::proved(
+                        "NonNull trivially holds: callee parameter type is NonNull<T>",
+                    );
+                }
+            }
+        }
+    }
+
     let Some(target) = checker.property_target(checkpoint, property) else {
         return SmtCheckResult::unknown("NonNull target could not be resolved");
     };

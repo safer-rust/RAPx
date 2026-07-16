@@ -1106,7 +1106,7 @@
     {
       "tag": "Ptr2Ref",
       "args": [
-        "self"
+        "self.0"
       ]
     }
   ],
@@ -1114,7 +1114,7 @@
     {
       "tag": "Ptr2Ref",
       "args": [
-        "self"
+        "self.0"
       ]
     }
   ],
