@@ -24,6 +24,7 @@ use super::{
     def_use::{PlaceBaseKey, PlaceKey},
     helpers::CheckpointLocation,
     path_extractor::{Path, PathStep},
+    primitive::PrimitiveCall,
     slicer::{BackwardItem, ForgetReason, KeepReason, RelevantMirItems},
 };
 
@@ -44,21 +45,27 @@ impl<'tcx> ForwardVerifier<'tcx> {
             ForwardVisitResult::new(items.checkpoint, items.property.clone(), items.path.clone());
         let body = self.tcx.optimized_mir(items.checkpoint.caller);
 
-        // Add KnownInit facts for reference-typed parameters: &T and &mut T
-        // guarantee the pointee memory is initialized.  The init fact is placed
-        // directly on the parameter so that term_for_place() returns the
-        // pointee address (the reference's value).
+        // Add KnownInit and KnownNonZero facts for reference-typed parameters:
+        // &T and &mut T guarantee the pointee memory is initialized and the
+        // pointer itself is non-null.  The init fact is placed directly on the
+        // parameter so that term_for_place() returns the pointee address (the
+        // reference's value).
         for local in 1..body.local_decls.len() {
             let decl = &body.local_decls[Local::from_usize(local)];
             if let TyKind::Ref(_, pointee_ty, _) = decl.ty.kind() {
+                let param_place = PlaceKey {
+                    base: PlaceBaseKey::Local(local),
+                    fields: vec![],
+                };
                 result.facts.push(StateFact::KnownInit {
-                    place: PlaceKey {
-                        base: PlaceBaseKey::Local(local),
-                        fields: vec![],
-                    },
+                    place: param_place.clone(),
                     ty_name: pointee_ty.to_string(),
                     elements: 1,
                     reason: "reference parameter guarantees initialized pointee".to_string(),
+                });
+                result.facts.push(StateFact::KnownNonZero {
+                    place: param_place,
+                    reason: "reference parameter is always non-null".to_string(),
                 });
             }
         }
@@ -753,10 +760,18 @@ impl<'tcx> ForwardVerifier<'tcx> {
                     if let Some(source) =
                         args.get(*base_arg).and_then(|arg| operand_place(&arg.node))
                     {
+                        let base_val = AbstractValue::Place(source.clone());
                         result.facts.push(StateFact::PointsTo {
                             pointer: destination_place.clone(),
                             source,
                         });
+                        if known_nonzero_of(&base_val, result) {
+                            result.facts.push(StateFact::KnownNonZero {
+                                place: destination_place.clone(),
+                                reason: "pointer arithmetic preserves non-nullness from base"
+                                    .to_string(),
+                            });
+                        }
                     }
                 }
                 CallEffect::ReturnNonZero => result.facts.push(StateFact::KnownNonZero {
@@ -817,6 +832,31 @@ impl<'tcx> ForwardVerifier<'tcx> {
                 CallEffect::ReturnLcmSplit { .. } => {}
                 CallEffect::ForgetArgFacts { reason, .. } => {
                     result.forgets.push(reason.clone());
+                }
+            }
+        }
+
+        // as_ptr_range / as_mut_ptr_range return a Range<*const T> /
+        // Range<*mut T> where both fields (start, end) are non-null pointers
+        // derived from the receiver reference.  Record KnownNonZero for each
+        // field individually so that downstream pointer arithmetic (e.g. sub)
+        // can also propagate the non-null fact.
+        if let Some(destination) = summary.destination {
+            let prim = PrimitiveCall::classify(&summary.name);
+            if prim == Some(PrimitiveCall::AsPtrRange)
+                || prim == Some(PrimitiveCall::AsMutPtrRange)
+            {
+                for field in 0..2 {
+                    let mut field_place = PlaceKey {
+                        base: PlaceBaseKey::Local(destination.as_usize()),
+                        fields: vec![],
+                    };
+                    field_place.fields.push(field);
+                    result.facts.push(StateFact::KnownNonZero {
+                        place: field_place,
+                        reason: "as_ptr_range/as_mut_ptr_range field is non-null (derived from reference)"
+                            .to_string(),
+                    });
                 }
             }
         }
