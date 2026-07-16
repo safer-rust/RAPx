@@ -50,6 +50,18 @@ impl PrimitiveCall {
         {
             return Some(Self::OptionUnwrap);
         }
+        // NonNull::from, NonNull::as_ref, NonNull::as_mut: pointer-identity
+        // operations on NonNull<T>.  from(*mut T) → NonNull<T>, as_ref/ as_mut
+        // produce &T / &mut T.
+        if name.ends_with("::from") && name.contains("ptr::non_null") {
+            return Some(Self::AsMutPtr);
+        }
+        if name.ends_with("::as_ref") && name.contains("ptr::non_null") {
+            return Some(Self::AsPtr);
+        }
+        if name.ends_with("::as_mut") && name.contains("ptr::non_null") {
+            return Some(Self::AsMutPtr);
+        }
         if name.ends_with("::as_ptr")
             || (name.contains("::as_ptr") && !name.ends_with("::as_ptr_range"))
             || name.ends_with("::into_raw")

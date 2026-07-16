@@ -861,6 +861,25 @@ impl<'tcx> ForwardVerifier<'tcx> {
             }
         }
 
+        // NonNull::from, NonNull::as_ref, NonNull::as_mut: the receiver
+        // (arg 0) is a NonNull value whose inner pointer is guaranteed
+        // non-null by construction.  Record KnownNonZero so that Ptr2Ref
+        // (NonNull + Align) obligations can discharge the NonNull half.
+        if summary.name.contains("ptr::non_null::NonNull")
+            && (summary.name.ends_with("::from")
+                || summary.name.ends_with("::as_ref")
+                || summary.name.ends_with("::as_mut"))
+        {
+            if let Some(receiver) =
+                args.first().and_then(|arg| operand_place(&arg.node))
+            {
+                result.facts.push(StateFact::KnownNonZero {
+                    place: receiver,
+                    reason: "NonNull is always non-null by construction".to_string(),
+                });
+            }
+        }
+
         if summary.unsupported && !is_target_checkpoint {
             let body = self.tcx.optimized_mir(result.checkpoint.caller);
             let preserves_layout = call_summary::call_args_preserve_layout(

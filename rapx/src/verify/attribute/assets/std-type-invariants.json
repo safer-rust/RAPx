@@ -59,5 +59,17 @@
       {"tag": "NonNull", "args": ["0.0"]},
       {"tag": "Align", "args": ["0.0", "T"]}
     ]
+  },
+  "core::ptr::non_null::NonNull<T>": {
+    "comment": "NonNull<T> — the inner raw pointer is always non-null",
+    "invariants": [
+      {"tag": "NonNull", "args": ["0"]}
+    ]
+  },
+  "std::ptr::non_null::NonNull<T>": {
+    "comment": "NonNull<T> (std path) — the inner raw pointer is always non-null",
+    "invariants": [
+      {"tag": "NonNull", "args": ["0"]}
+    ]
   }
 }

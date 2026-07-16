@@ -72,15 +72,26 @@ pub fn get_struct_name(tcx: TyCtxt<'_>, def_id: DefId) -> Option<String> {
 }
 
 /// Return the resolved `self` type for a method whose `DefId` points to an
-/// associated item that lives inside an `impl` block returning an ADT.
+/// associated item that lives inside an `impl` block returning an ADT, or for
+/// a struct/enum DefId directly (needed for parsing struct-invariant annotations).
 pub fn get_struct_self_ty<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Option<Ty<'tcx>> {
-    let assoc_item = tcx.opt_associated_item(def_id)?;
-    let impl_id = assoc_item.impl_container(tcx)?;
-    let self_ty = tcx.type_of(impl_id).skip_binder();
-    match self_ty.kind() {
-        TyKind::Adt(_, _) => Some(self_ty),
-        _ => None,
+    if let Some(assoc_item) = tcx.opt_associated_item(def_id) {
+        let impl_id = assoc_item.impl_container(tcx)?;
+        let self_ty = tcx.type_of(impl_id).skip_binder();
+        match self_ty.kind() {
+            TyKind::Adt(_, _) => return Some(self_ty),
+            _ => return None,
+        }
     }
+    let def_kind = tcx.def_kind(def_id);
+    if matches!(def_kind, rustc_hir::def::DefKind::Struct | rustc_hir::def::DefKind::Enum) {
+        let self_ty = tcx.type_of(def_id).skip_binder();
+        match self_ty.kind() {
+            TyKind::Adt(_, _) => return Some(self_ty),
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Return the JSON value loaded from the pre-computed standard-library

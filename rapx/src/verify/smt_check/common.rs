@@ -5233,7 +5233,14 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 _ => None,
             },
             #[cfg(not(rapx_rustc_ge_196))]
-            AbstractValue::ShallowInitBox(_, _) => None,
+            AbstractValue::ShallowInitBox(_, _) => {
+                let name = sanitize_smt_name(&value_label(value));
+                if name.is_empty() {
+                    None
+                } else {
+                    Some(Int::new_const(self.ctx, name))
+                }
+            }
         }
     }
 
@@ -7391,7 +7398,11 @@ fn allocated_type_compatible(allocated_ty_name: &str, required_ty_name: &str) ->
     }
     // Box<T> allocation is compatible with T: into_raw transfers ownership
     // to a raw pointer that points to the inner allocation.
-    if let Some(rest) = allocated_ty_name.strip_prefix("std::boxed::Box<") {
+    let box_inner = allocated_ty_name
+        .strip_prefix("std::boxed::Box<")
+        .or_else(|| allocated_ty_name.strip_prefix("alloc::boxed::Box<"))
+        .or_else(|| allocated_ty_name.strip_prefix("Box<"));
+    if let Some(rest) = box_inner {
         if let Some(inner_end) = rest.rfind('>') {
             let inner_ty = &rest[..inner_end];
             if let Some(comma) = inner_ty.find(", ") {
