@@ -6,8 +6,8 @@ use crate::graphs::{
 };
 use rustc_middle::{
     mir::{
-        AggregateKind, BasicBlock, BinOp, Local, Operand, Rvalue, StatementKind, SwitchTargets,
-        Terminator, TerminatorKind, UnOp, UnwindAction,
+        AggregateKind, BasicBlock, BinOp, Local, Operand, ProjectionElem, Rvalue,
+        StatementKind, SwitchTargets, Terminator, TerminatorKind, UnOp, UnwindAction,
     },
     ty::{TyCtxt, TyKind, TypingEnv},
 };
@@ -175,7 +175,15 @@ impl<'tcx> PathGraph<'tcx> {
                 if let StatementKind::Assign(assign) = &stmt.kind {
                     let (place, rvalue) = &**assign;
                     let dest = place.local.as_usize();
-                    info.assigned_locals.insert(dest);
+                    // Writing through (*ptr).field doesn't reassign ptr itself,
+                    // so ptr's constraint should not be cleared.
+                    let is_deref = place
+                        .projection
+                        .iter()
+                        .any(|p| matches!(p, ProjectionElem::Deref));
+                    if !is_deref {
+                        info.assigned_locals.insert(dest);
+                    }
                     match rvalue {
                         Rvalue::Use(Operand::Constant(c), ..) => {
                             let typing_env = TypingEnv::post_analysis(tcx, def_id);
@@ -300,7 +308,10 @@ impl<'tcx> PathGraph<'tcx> {
                                     },
                                 );
                                 if matches!(op, BinOp::BitAnd)
-                                    && matches!(body.local_decls[place.local].ty.kind(), TyKind::Bool)
+                                    && matches!(
+                                        body.local_decls[place.local].ty.kind(),
+                                        TyKind::Bool
+                                    )
                                 {
                                     info.and_sources.insert(dest, (lhs_local, rhs_local));
                                 }
@@ -334,14 +345,20 @@ impl<'tcx> PathGraph<'tcx> {
                 continue;
             };
 
-            if let TerminatorKind::Call { destination, ref func, .. } = terminator.kind {
+            if let TerminatorKind::Call {
+                destination,
+                ref func,
+                ..
+            } = terminator.kind
+            {
                 let name = super::super::super::verify::call_summary::call_name(tcx, func);
                 if name.contains("::into_raw")
                     || (name.contains("::new") && name.contains("Box"))
                     || name.contains("::as_mut_ptr")
                     || name.contains("::as_ptr")
                 {
-                    info.known_nonnull_locals.insert(destination.local.as_usize());
+                    info.known_nonnull_locals
+                        .insert(destination.local.as_usize());
                 }
                 if name.contains("null_mut") || (name.contains("null") && name.contains("ptr::")) {
                     info.constants.insert(destination.local.as_usize(), 0);
@@ -598,7 +615,9 @@ impl<'tcx> PathGraph<'tcx> {
         next: usize,
         constraints: &FxHashMap<usize, usize>,
     ) -> bool {
-        let Some(terminator) = self.cfg.terminator(cur) else { return true };
+        let Some(terminator) = self.cfg.terminator(cur) else {
+            return true;
+        };
         let TerminatorKind::Assert { cond, target, .. } = &terminator.kind else {
             return true;
         };
@@ -610,7 +629,10 @@ impl<'tcx> PathGraph<'tcx> {
             Operand::Constant(c) => {
                 let typing_env =
                     rustc_middle::ty::TypingEnv::post_analysis(self.cfg.tcx, self.cfg.def_id);
-                return c.const_.try_eval_bool(self.cfg.tcx, typing_env).unwrap_or(true);
+                return c
+                    .const_
+                    .try_eval_bool(self.cfg.tcx, typing_env)
+                    .unwrap_or(true);
             }
             #[cfg(rapx_rustc_ge_196)]
             Operand::RuntimeChecks(_) => return true,
@@ -639,8 +661,7 @@ impl<'tcx> PathGraph<'tcx> {
                 if matches!(cmp.op, BinOp::Eq | BinOp::Ne) {
                     let is_eq = matches!(cmp.op, BinOp::Eq);
                     if cmp.rhs_is_constant {
-                        if let Some(lhs_val) =
-                            self.resolve_local_value(cmp.lhs_local, constraints)
+                        if let Some(lhs_val) = self.resolve_local_value(cmp.lhs_local, constraints)
                         {
                             return Some(if is_eq {
                                 if lhs_val == cmp.rhs_local { 1 } else { 0 }
@@ -682,7 +703,9 @@ impl<'tcx> PathGraph<'tcx> {
         let mut seen = FxHashSet::default();
         while let Some((cur, negated)) = stack.pop() {
             let key = if negated { cur | (1 << 31) } else { cur };
-            if !seen.insert(key) { continue; }
+            if !seen.insert(key) {
+                continue;
+            }
             if let Some(v) = self.resolve_simple_bool(cur, constraints) {
                 return Some(if negated { 1 - v } else { v });
             }
@@ -784,12 +807,9 @@ impl<'tcx> PathGraph<'tcx> {
                     && matches!(cmp.op, BinOp::Ne | BinOp::Eq)
                 {
                     let is_ne = matches!(cmp.op, BinOp::Ne);
-                    let pointer_is_nonnull = self.local_is_known_nonnull(
-                        constraints, cmp.lhs_local,
-                    );
-                    let pointer_is_null = self.local_is_known_null(
-                        constraints, cmp.lhs_local,
-                    );
+                    let pointer_is_nonnull =
+                        self.local_is_known_nonnull(constraints, cmp.lhs_local);
+                    let pointer_is_null = self.local_is_known_null(constraints, cmp.lhs_local);
                     if pointer_is_nonnull {
                         let expected_val = if is_ne { 1 } else { 0 };
                         let expected = resolve_switch_target(targets, expected_val);
@@ -985,11 +1005,7 @@ impl<'tcx> PathGraph<'tcx> {
     }
 
     /// Return true if `local` is known to be a non-null pointer.
-    fn local_is_known_nonnull(
-        &self,
-        constraints: &FxHashMap<usize, usize>,
-        local: usize,
-    ) -> bool {
+    fn local_is_known_nonnull(&self, constraints: &FxHashMap<usize, usize>, local: usize) -> bool {
         let Some(&val) = constraints.get(&local) else {
             return false;
         };
@@ -997,11 +1013,7 @@ impl<'tcx> PathGraph<'tcx> {
     }
 
     /// Return true if `local` is known to be a null pointer.
-    fn local_is_known_null(
-        &self,
-        constraints: &FxHashMap<usize, usize>,
-        local: usize,
-    ) -> bool {
+    fn local_is_known_null(&self, constraints: &FxHashMap<usize, usize>, local: usize) -> bool {
         let Some(&val) = constraints.get(&local) else {
             return false;
         };
