@@ -634,18 +634,11 @@ impl<'tcx> PathGraph<'tcx> {
             if let Some(cmp) = info.comparison_sources.get(&local) {
                 if matches!(cmp.op, BinOp::Eq | BinOp::Ne) {
                     let is_eq = matches!(cmp.op, BinOp::Eq);
-                    let lhs_val = self.resolve_local_value(cmp.lhs_local, constraints);
-                    let rhs_val = self.resolve_local_value(cmp.rhs_local, constraints);
-                    if let Some(known_val) = lhs_val.or(rhs_val) {
-                        let other = if lhs_val.is_some() {
-                            cmp.rhs_local
-                        } else {
-                            cmp.lhs_local
-                        };
+                    if let Some(lhs_val) = self.resolve_local_value(cmp.lhs_local, constraints) {
                         return Some(if is_eq {
-                            if known_val == other { 1 } else { 0 }
+                            if lhs_val == cmp.rhs_local { 1 } else { 0 }
                         } else {
-                            if known_val != other { 1 } else { 0 }
+                            if lhs_val != cmp.rhs_local { 1 } else { 0 }
                         });
                     }
                 }
