@@ -283,13 +283,21 @@ impl<'tcx> BackwardSlicer<'tcx> {
         }
 
         if defs.intersects(relevant) {
-            let uses = collect_statement_uses(statement, block, statement_index, flow, body);
+            let mut uses = collect_statement_uses(statement, block, statement_index, flow, body);
             items.push(BackwardItem::Statement {
                 block,
                 statement_index,
                 kind: statement_keep_reason(statement),
             });
+            // Save places already in the relevance set before removing
+            // the current definition.  When the uses of this statement
+            // (e.g. an aggregate struct literal) would re-add a field
+            // whose definition was already found earlier in the walk,
+            // skip it to prevent wrong (duplicate) matches.
+            let already_seen: crate::compat::FxHashSet<crate::verify::def_use::PlaceKey> =
+                relevant.places.clone();
             relevant.remove_all(&defs);
+            uses.places.retain(|p| !already_seen.contains(p));
             relevant.extend(uses);
             return;
         }
