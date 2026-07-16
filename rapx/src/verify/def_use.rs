@@ -125,10 +125,14 @@ pub struct RelevantPlaces {
     /// MIR locals that are already known from local contract places.
     pub locals: FxHashSet<Local>,
     /// Places whose definition has been found during the backward walk.
-    /// Populated by [`remove_all`].  Used when processing aggregate
+    /// Populated by [`remove_all`]; used when processing aggregate
     /// (struct literal) statements to prevent re-adding fields that
     /// were already resolved by a descendant block.
     pub saturated: FxHashSet<PlaceKey>,
+    /// Places added to the relevance set during the current pass.
+    /// Cleared between passes; used to trigger a second scan of
+    /// definitions that became relevant mid-block.
+    pub just_added: FxHashSet<PlaceKey>,
 }
 
 impl RelevantPlaces {
@@ -159,17 +163,20 @@ impl RelevantPlaces {
         self.locals.len()
     }
 
-    /// Insert a MIR local as a relevance root.
+    /// Insert a MIR local as a relevance root, tracking the addition.
     pub fn insert_local(&mut self, local: Local) {
-        self.locals.insert(local);
-        self.places.insert(PlaceKey {
+        let pk = PlaceKey {
             base: if local.as_usize() == 0 {
                 PlaceBaseKey::Return
             } else {
                 PlaceBaseKey::Local(local.as_usize())
             },
             fields: Vec::new(),
-        });
+        };
+        if self.places.insert(pk.clone()) {
+            self.just_added.insert(pk);
+        }
+        self.locals.insert(local);
     }
 
     /// Insert a MIR place as a relevance root.
@@ -182,18 +189,26 @@ impl RelevantPlaces {
         self.insert_place_key(PlaceKey::from_contract_place(place));
     }
 
-    /// Insert a prebuilt place key as a relevance root.
+    /// Insert a prebuilt place key as a relevance root, tracking addition.
     pub fn insert_place_key(&mut self, place: PlaceKey) {
         if let Some(local) = place.local() {
             self.locals.insert(local);
         }
-        self.places.insert(place);
+        if self.places.insert(place.clone()) {
+            self.just_added.insert(place);
+        }
     }
 
-    /// Merge another relevance set into this one.
+    /// Merge another relevance set into this one, tracking additions.
     pub fn extend(&mut self, other: RelevantPlaces) {
-        self.places.extend(other.places);
-        self.locals.extend(other.locals);
+        for place in other.places {
+            if self.places.insert(place.clone()) {
+                self.just_added.insert(place);
+            }
+        }
+        for local in other.locals {
+            self.locals.insert(local);
+        }
     }
 
     /// Remove a list of place keys and rebuild the derived local set.

@@ -177,6 +177,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
                 block: checkpoint_block,
                 kind: KeepReason::Checkpoint,
             });
+            // Pass 1: normal processing.
             for (si, stmt) in block_data.statements.iter().enumerate().rev() {
                 visitor.visit_statement(
                     checkpoint_block,
@@ -188,6 +189,37 @@ impl<'tcx> BackwardSlicer<'tcx> {
                     &mut items,
                     keep_alloc,
                 );
+            }
+            // Pass 2: re-visit definitions that became relevant
+            // only during pass 1 (e.g. `_17 = _4` adds `_4` which
+            // enables `_4 = _8` to match on the second pass).
+            let newly_added = std::mem::take(&mut relevant.just_added);
+            if !newly_added.is_empty() {
+                for (si, stmt) in block_data.statements.iter().enumerate().rev() {
+                    let defs = match &stmt.kind {
+                        rustc_middle::mir::StatementKind::Assign(assign) => {
+                            let mut d = crate::verify::def_use::RelevantPlaces::new();
+                            d.insert_mir_place(&assign.0);
+                            d
+                        }
+                        _ => continue,
+                    };
+                    let any_new_match = defs.places.iter().any(|dp| {
+                        newly_added.iter().any(|np| dp.local() == np.local())
+                    });
+                    if any_new_match {
+                        visitor.visit_statement(
+                            checkpoint_block,
+                            si,
+                            stmt,
+                            flow,
+                            body,
+                            &mut relevant,
+                            &mut items,
+                            keep_alloc,
+                        );
+                    }
+                }
             }
             (items, relevant)
         } else {
