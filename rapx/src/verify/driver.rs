@@ -880,6 +880,80 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                 }
             }
 
+            // Phase 1.7: Allocated loop-depth detector
+            //
+            // Same logic as Phase 1.5/1.6.  Fresh Box/heap allocations
+            // inside SCCs need enough unrolling for the slicer to
+            // include the allocating call's effects (PointsTo /
+            // KnownAllocated) so the SMT check can find matching facts.
+            let mut proven_history_allocated: Vec<Vec<(usize, usize)>> = Vec::new();
+            if self.postfix_repeat == 0 && !all_results.is_empty() {
+                let has_allocated = all_results
+                    .iter()
+                    .any(|r| matches!(r.property.kind, PropertyKind::Allocated
+                                       | PropertyKind::ValidPtr
+                                       | PropertyKind::Deref));
+                let any_allocated_unproven = all_results
+                    .iter()
+                    .filter(|r| matches!(r.property.kind, PropertyKind::Allocated
+                                         | PropertyKind::ValidPtr
+                                         | PropertyKind::Deref))
+                    .any(|r| !matches!(r.result, super::report::CheckResult::Proved));
+
+                if has_allocated && any_allocated_unproven {
+                    for repeat in 1..=MAX_LOOP_INBOUND_UNROLL {
+                        let detector_driver =
+                            VerifyDriver::new_with_repeat(self.tcx, target, repeat);
+                        let result =
+                            catch_unwind(AssertUnwindSafe(|| detector_driver.verify_function()));
+                        match result {
+                            Ok(report) => {
+                                let still_unproven: FxHashSet<_> = report
+                                    .results
+                                    .iter()
+                                    .filter(|r| {
+                                        matches!(r.property.kind, PropertyKind::Allocated
+                                                 | PropertyKind::ValidPtr
+                                                 | PropertyKind::Deref)
+                                            && !matches!(
+                                                r.result,
+                                                super::report::CheckResult::Proved
+                                            )
+                                            && !r.diagnostics.as_ref().is_some_and(|d| {
+                                                d.forward.contains("path has precision loss")
+                                                    || d.forward.contains("could not connect")
+                                            })
+                                    })
+                                    .map(|r| (r.checkpoint_index, r.property_index))
+                                    .collect();
+
+                                if still_unproven.is_empty() {
+                                    // All now proved — use these results.
+                                    all_results.extend(report.results);
+                                    break;
+                                }
+
+                                // Check if the set of unproven results has converged.
+                                let mut current_unproven: Vec<_> = still_unproven
+                                    .iter()
+                                    .cloned()
+                                    .collect();
+                                current_unproven.sort();
+
+                                let len = proven_history_allocated.len();
+                                proven_history_allocated.push(current_unproven.clone());
+                                if len >= 1
+                                    && proven_history_allocated[len - 1] == current_unproven
+                                {
+                                    break;
+                                }
+                            }
+                            Err(_) => break,
+                        }
+                    }
+                }
+            }
+
             // Phase 2: struct invariant verification
             if !target.struct_invariants.is_empty() && !matches!(self.mode, VerifyMode::Invless) {
                 let driver = VerifyDriver::new_with_repeat(self.tcx, target, self.postfix_repeat);
