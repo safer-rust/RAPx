@@ -338,6 +338,8 @@ impl<'tcx> PathGraph<'tcx> {
                 let name = super::super::super::verify::call_summary::call_name(tcx, func);
                 if name.contains("::into_raw")
                     || (name.contains("::new") && name.contains("Box"))
+                    || name.contains("::as_mut_ptr")
+                    || name.contains("::as_ptr")
                 {
                     info.known_nonnull_locals.insert(destination.local.as_usize());
                 }
