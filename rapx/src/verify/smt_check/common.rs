@@ -5994,6 +5994,18 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 })
                 .or_else(|| Some(place_label(&place))),
             AbstractValue::Cast(inner, _) => self.origin_key_for_value_before(&inner, cursor, seen),
+            #[cfg(not(rapx_rustc_ge_196))]
+            AbstractValue::ShallowInitBox(_, _) => {
+                // ShallowInitBox (Box::new) is a heap allocation.  When reached
+                // via PointsTo tracing from a pointer (e.g. Box::into_raw),
+                // use the original `value`'s place key as the origin so that
+                // Phase 1 Allocated check can find the matching KnownAllocated
+                // fact by place label.
+                if let AbstractValue::Place(p) = value {
+                    return Some(place_label(p));
+                }
+                Some(value_label(&resolved))
+            }
             AbstractValue::CallResult(call) if is_as_ptr_call(&call.func) => {
                 let source_arg = call.effects.iter().find_map(|effect| match effect {
                     crate::verify::call_summary::CallEffect::ReturnPointerFromArg { arg }
