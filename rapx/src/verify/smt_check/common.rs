@@ -1139,7 +1139,7 @@ impl<'tcx> SmtChecker<'tcx> {
                     if !allocated_type_compatible(&alloc_ty_name, ty_name) {
                         continue;
                     }
-                    if allocation_object_invalidated(forward, &object) {
+                    if allocation_object_invalidated(forward, &object, &alloc_place) {
                         continue;
                     }
                     let Some(alloc_term) = model.term_for_place(&alloc_place) else {
@@ -7389,6 +7389,17 @@ fn allocated_type_compatible(allocated_ty_name: &str, required_ty_name: &str) ->
     if normalize_init_ty_name(allocated_ty_name) == normalize_init_ty_name(required_ty_name) {
         return true;
     }
+    // Box<T> allocation is compatible with T: into_raw transfers ownership
+    // to a raw pointer that points to the inner allocation.
+    if let Some(rest) = allocated_ty_name.strip_prefix("std::boxed::Box<") {
+        if let Some(inner_end) = rest.rfind('>') {
+            let inner_ty = &rest[..inner_end];
+            if let Some(comma) = inner_ty.find(", ") {
+                return allocated_type_compatible(&inner_ty[..comma], required_ty_name);
+            }
+            return allocated_type_compatible(inner_ty, required_ty_name);
+        }
+    }
     if let Some(array_elem) = array_elem_type(required_ty_name) {
         if allocated_type_compatible(allocated_ty_name, &array_elem) {
             return true;
@@ -7411,9 +7422,19 @@ fn array_elem_type(ty_name: &str) -> Option<String> {
 fn allocation_object_invalidated<'tcx>(
     forward: &ForwardVisitResult<'tcx>,
     object: &PlaceKey,
+    alloc_place: &PlaceKey,
 ) -> bool {
     forward.facts.iter().any(|fact| match fact {
-        StateFact::LocalDead(local) => object.local() == Some(*local),
+        StateFact::LocalDead(local) => {
+            object.local() == Some(*local)
+                // A KnownAllocated fact referencing a dead object is still
+                // valid when a PointsTo link transfers the allocation from
+                // the (now dead) wrapper to a live pointer (e.g. Box into_raw).
+                && !forward.facts.iter().any(|f| {
+                    matches!(f, StateFact::PointsTo { pointer, source }
+                        if *pointer == *alloc_place && *source == *object)
+                })
+        }
         StateFact::Drop(place) => place.overlaps(object) || object.overlaps(place),
         _ => false,
     })
