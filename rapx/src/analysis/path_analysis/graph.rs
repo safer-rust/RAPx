@@ -93,6 +93,7 @@ pub struct ComparisonSource {
     pub op: rustc_middle::mir::BinOp,
     pub lhs_local: usize,
     pub rhs_local: usize,
+    pub rhs_is_constant: bool,
 }
 
 /// Encode a `(local, field_index)` pair into a single `usize`.
@@ -295,6 +296,7 @@ impl<'tcx> PathGraph<'tcx> {
                                         op: *op,
                                         lhs_local,
                                         rhs_local,
+                                        rhs_is_constant: rhs_is_zero,
                                     },
                                 );
                                 if matches!(op, BinOp::BitAnd)
@@ -634,12 +636,34 @@ impl<'tcx> PathGraph<'tcx> {
             if let Some(cmp) = info.comparison_sources.get(&local) {
                 if matches!(cmp.op, BinOp::Eq | BinOp::Ne) {
                     let is_eq = matches!(cmp.op, BinOp::Eq);
-                    if let Some(lhs_val) = self.resolve_local_value(cmp.lhs_local, constraints) {
-                        return Some(if is_eq {
-                            if lhs_val == cmp.rhs_local { 1 } else { 0 }
-                        } else {
-                            if lhs_val != cmp.rhs_local { 1 } else { 0 }
-                        });
+                    if cmp.rhs_is_constant {
+                        if let Some(lhs_val) =
+                            self.resolve_local_value(cmp.lhs_local, constraints)
+                        {
+                            return Some(if is_eq {
+                                if lhs_val == cmp.rhs_local { 1 } else { 0 }
+                            } else {
+                                if lhs_val != cmp.rhs_local { 1 } else { 0 }
+                            });
+                        }
+                    } else {
+                        let lhs_val = self.resolve_local_value(cmp.lhs_local, constraints);
+                        let rhs_val = self.resolve_local_value(cmp.rhs_local, constraints);
+                        if let Some(lhs_val) = lhs_val {
+                            if let Some(rhs_val) = rhs_val {
+                                return Some(if is_eq {
+                                    if lhs_val == rhs_val { 1 } else { 0 }
+                                } else {
+                                    if lhs_val != rhs_val { 1 } else { 0 }
+                                });
+                            }
+                        } else if let Some(rhs_val) = rhs_val {
+                            return Some(if is_eq {
+                                if cmp.lhs_local == rhs_val { 1 } else { 0 }
+                            } else {
+                                if cmp.lhs_local != rhs_val { 1 } else { 0 }
+                            });
+                        }
                     }
                 }
             }
