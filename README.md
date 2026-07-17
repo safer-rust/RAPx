@@ -162,6 +162,31 @@ unsafe fn custom_ptr_op(_ptr: *const i32) -> i32 {
 }
 ```
 
+Struct fields holding raw pointers can carry `#[rapx::invariant(...)]` annotations. Methods assume the invariants on entry (constructors re-establish them at return), which lets RAPx verify patterns like linked-list `Drop` implementations where the pointer's provenance lives in the type's invariant rather than in the function body:
+
+```rust
+// Fields that may be null use the `any(...)` combinator (logical OR;
+// commas inside a parenthesised group mean logical AND): every property
+// holds whenever the pointer is non-null and vacuously when it is null.
+#[rapx::invariant(any(Null(next), (Align(next, Node), ValidPtr(next, Node, 1), Init(next, Node, 1), Owning(next))))]
+struct Node {
+    value: i32,
+    prev: *mut Node,
+    next: *mut Node,
+}
+
+// Option<NonNull<T>> fields express the same conditionality with
+// `unwrap_some()`: the property constrains the Some payload only.
+#[rapx::invariant(Align(head.unwrap_some(), Node))]
+#[rapx::invariant(Allocated(head.unwrap_some(), Node, 1))]
+#[rapx::invariant(Owning(head.unwrap_some()))]
+struct List {
+    head: Option<core::ptr::NonNull<Node>>,
+}
+```
+
+See `tests/verify_cases/linked_list_rawptr` and `tests/verify_cases/linked_list_nonnull` for complete examples proved SOUND end-to-end (including `Box::from_raw` in `Drop`).
+
 Safety properties include: `Align`, `NonNull`, `Allocated`, `InBound`, `Init`, `ValidPtr`, `Deref`, `Ptr2Ref`, and more. See the [RAPx-Book](https://safer-rust.github.io/RAPx-Book/) for the full list.
 
 ### Verification Property Support Checklist
@@ -185,7 +210,7 @@ This checklist maps RAPx's contract verification to the [Primitive Safety Proper
 | `Init`         | Init(p, T, len)             |     ✅    |
 | `Unwrap`       | Unwrap(x, T)                |     —     |
 | `Typed`        | Typed(p, T)                 |     ✅    |
-| `Owning`       | !Owned(p)                   |     —     |
+| `Owning`       | Owning(p)                   |     ✅    |
 | `Alias`        | Alias(p1, p2)               |     ✅    |
 | `Alive`        | Alive(p, l)                 |     ✅    |
 | `Pinned`       | Pinned(p, l)                |     —     |
@@ -195,10 +220,10 @@ This checklist maps RAPx's contract verification to the [Primitive Safety Proper
 | `Unreachable`  | !Reachable()                |     —     |
 | `ValidPtr` \*  | ValidPtr(p, T, len)         |     ✅    |
 | `Deref` \*     | Deref(p, T, len)            |     ✅    |
-| `Ptr2Ref` \*   | Ptr2Ref(p, T)               |     —     |
+| `Ptr2Ref` \*   | Ptr2Ref(p, T)               |     ✅    |
 | `Layout` \*    | Layout(p, layout)           |     —     |
 
-> \* Compound safety properties are composed from primitive SPs. For example, `ValidPtr` combines `NonNull`, `Align`, `Allocated`, `InBound`, and `Init`; `Deref` combines `Allocated` and `InBound`; `Ptr2Ref` combines `Init`, `Align`, and non-aliasing.
+> \* Compound safety properties are composed from primitive SPs: `ValidPtr(p, T, len) = Size(T, 0) || (!Size(T, 0) && Deref(p, T, len))`, `Deref(p, T, len) = Allocated(p, T, len) && InBound(p, T, len)`, and `Ptr2Ref(p, T) = Init(p, T, 1) && Align(p, T) && Alias(p, 0)`.
 
 RAPx ships with a curated set of `std` library safety contracts (`std-contracts.json`) that annotate standard library functions with property tags. This enables contract-based verification for common `std`/`core` APIs without requiring user annotations.
 
