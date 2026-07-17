@@ -112,7 +112,7 @@ pub fn check<'tcx>(
         return SmtCheckResult::unknown("Alias pointer argument is not a MIR place");
     };
     let origin = resolve_forward_place(origin_place.clone(), forward);
-    let mut local_origins = vec![origin_place];
+    let mut local_origins = vec![origin_place.clone()];
     if !local_origins.contains(&origin) {
         local_origins.push(origin.clone());
     }
@@ -124,7 +124,7 @@ pub fn check<'tcx>(
             checkpoint.caller,
             checkpoint.block,
             destination,
-            &local_origins,
+            &origin_place,
         ) {
             return failed_smt(reason);
         }
@@ -712,53 +712,365 @@ fn ownership_transfer_violation<'tcx>(
     caller: DefId,
     call_block: BasicBlock,
     destination: Option<Local>,
-    origins: &[PlaceKey],
+    origin_place: &PlaceKey,
 ) -> Option<String> {
     let body = tcx.optimized_mir(caller);
-    let aliases = collect_place_aliases(tcx, caller);
-    let mut origins = origins.to_vec();
-    expand_origin_aliases(&aliases, &mut origins);
     let mut owner_locals: HashSet<Local> = destination.into_iter().collect();
     expand_hazard_alias_locals(tcx, caller, &mut owner_locals);
     let reachable = blocks_reachable_after_call(tcx, caller, call_block);
 
-    for (block_index, block) in body.basic_blocks.iter_enumerated() {
-        if !reachable.contains(&block_index) {
-            continue;
+    // When any post-call block hands ownership back to a raw pointer via an
+    // `into_raw`-style call on the owning value, later raw uses are governed
+    // by that new transfer rather than this checkpoint.
+    for block_index in &reachable {
+        if let Some(terminator) = &body.basic_blocks[*block_index].terminator
+            && terminator_returns_ownership(tcx, &terminator.kind, &owner_locals)
+        {
+            return None;
         }
+    }
 
+    let origins = places_holding_transferred_pointer(tcx, caller, call_block, origin_place);
+
+    // Flow-sensitive forward scan from the transfer call.  Each CFG edge
+    // carries the set of still-live origin places; an origin dies as soon as
+    // its place is strongly redefined (a `Deref`-free assignment or call
+    // destination) or its storage ends, and a copy of a live origin value
+    // revives its target.  Loop back-edges therefore stop flagging reads of
+    // *re-assigned* locals in later iterations as reuse of the transferred
+    // pointer, while straight-line reuse is still detected.
+    let start = match &body.basic_blocks[call_block].terminator().kind {
+        TerminatorKind::Call {
+            target: Some(target),
+            ..
+        } => *target,
+        _ => return None,
+    };
+
+    let mut entry_states: HashMap<BasicBlock, Vec<PlaceKey>> = HashMap::new();
+    let mut worklist: Vec<(BasicBlock, Vec<PlaceKey>)> = vec![(start, origins)];
+
+    while let Some((block_index, incoming)) = worklist.pop() {
+        let mut live = match entry_states.get_mut(&block_index) {
+            Some(known) => {
+                let mut changed = false;
+                for origin in &incoming {
+                    if !known.contains(origin) {
+                        known.push(origin.clone());
+                        changed = true;
+                    }
+                }
+                if !changed {
+                    continue;
+                }
+                known.clone()
+            }
+            None => {
+                entry_states.insert(block_index, incoming.clone());
+                incoming
+            }
+        };
+
+        let block = &body.basic_blocks[block_index];
         for statement in &block.statements {
-            let StatementKind::Assign(assign) = &statement.kind else {
-                continue;
-            };
-            let (target, rvalue) = assign.as_ref();
-            if place_is_raw_access_to_any_origin(target, &origins, &aliases)
-                || rvalue_reads_any_origin(rvalue, &origins, &aliases)
-            {
-                return Some(
-                    "raw pointer reused after ownership was transferred to an owning value"
-                        .to_string(),
-                );
+            match &statement.kind {
+                StatementKind::Assign(assign) => {
+                    let (target, rvalue) = assign.as_ref();
+                    if place_is_raw_access_to_live_origin(target, &live)
+                        || rvalue_reads_live_origin(rvalue, &live)
+                    {
+                        return Some(
+                            "raw pointer reused after ownership was transferred to an owning value"
+                                .to_string(),
+                        );
+                    }
+                    let copies_origin = rvalue_copies_live_origin_value(rvalue, &live);
+                    kill_strongly_updated_origins(target, &mut live);
+                    if copies_origin
+                        && !target
+                            .projection
+                            .iter()
+                            .any(|projection| matches!(projection, ProjectionElem::Deref))
+                    {
+                        let target_key = PlaceKey::from_mir_place(target);
+                        if !live.contains(&target_key) {
+                            live.push(target_key);
+                        }
+                    }
+                }
+                StatementKind::StorageDead(local) => {
+                    live.retain(|origin| origin.base != PlaceBaseKey::Local(local.as_usize()));
+                }
+                _ => {}
             }
         }
 
         let Some(terminator) = &block.terminator else {
             continue;
         };
-        if terminator_returns_ownership(tcx, &terminator.kind, &owner_locals) {
-            return None;
-        }
-        if origins
-            .iter()
-            .any(|origin| terminator_uses_origin(tcx, caller, &terminator.kind, origin, &aliases))
-        {
+        if terminator_uses_live_origin(&terminator.kind, &live) {
             return Some(
                 "raw pointer passed to another call after ownership was transferred".to_string(),
             );
         }
+        if let TerminatorKind::Call {
+            destination: call_destination,
+            ..
+        } = &terminator.kind
+        {
+            kill_strongly_updated_origins(call_destination, &mut live);
+        }
+        if live.is_empty() {
+            continue;
+        }
+        for successor in terminator.successors() {
+            worklist.push((successor, live.clone()));
+        }
     }
 
     None
+}
+
+/// Collect the places that still hold the transferred pointer *value* when
+/// the ownership-transfer call executes.
+///
+/// Starting from the callee argument, this walks the call block (and its
+/// unique-predecessor chain) backwards, following value copies while a
+/// kill-set records locals that are re-assigned between a definition and the
+/// call: such stale locals no longer hold the pointer at the call and must
+/// not seed the reuse scan.  This keeps loop-carried locals (re-assigned each
+/// iteration) out of the origin set while straight-line aliases stay in.
+fn places_holding_transferred_pointer<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    caller: DefId,
+    call_block: BasicBlock,
+    origin_place: &PlaceKey,
+) -> Vec<PlaceKey> {
+    let body = tcx.optimized_mir(caller);
+    let mut holders = vec![origin_place.clone()];
+    let mut killed: HashSet<Local> = HashSet::new();
+    let mut block_index = call_block;
+
+    loop {
+        let block = &body.basic_blocks[block_index];
+        for statement in block.statements.iter().rev() {
+            let StatementKind::Assign(assign) = &statement.kind else {
+                continue;
+            };
+            let (target, rvalue) = assign.as_ref();
+            if target
+                .projection
+                .iter()
+                .any(|projection| matches!(projection, ProjectionElem::Deref))
+            {
+                continue;
+            }
+            let target_key = PlaceKey::from_mir_place(target);
+            let target_defines_holder =
+                !killed.contains(&target.local) && holders.iter().any(|h| target_key.overlaps(h));
+
+            let source_place = match rvalue {
+                Rvalue::Use(Operand::Copy(place), ..)
+                | Rvalue::Use(Operand::Move(place), ..)
+                | Rvalue::Cast(_, Operand::Copy(place), _)
+                | Rvalue::Cast(_, Operand::Move(place), _)
+                | Rvalue::CopyForDeref(place) => Some(place),
+                _ => None,
+            };
+
+            if target_defines_holder {
+                // This is the latest pre-call definition of a holder: the
+                // value came from the rvalue source, which therefore also
+                // holds the pointer unless it was re-assigned afterwards.
+                if let Some(source) = source_place
+                    && !killed.contains(&source.local)
+                {
+                    let source_key = PlaceKey::from_mir_place(source);
+                    for holder in holders.clone() {
+                        if let Some(spliced) =
+                            splice_holder_fields(&target_key, &holder, &source_key)
+                            && !holders.contains(&spliced)
+                        {
+                            holders.push(spliced);
+                        }
+                    }
+                }
+            } else if let Some(source) = source_place
+                && !killed.contains(&target.local)
+                && !source
+                    .projection
+                    .iter()
+                    .any(|projection| matches!(projection, ProjectionElem::Deref))
+            {
+                // A pre-call copy *out of* a holder: the target received the
+                // pointer value earlier and has not been re-assigned since,
+                // so it still holds it at the call.
+                let source_key = PlaceKey::from_mir_place(source);
+                if holders.iter().any(|h| source_key.overlaps(h)) && !holders.contains(&target_key)
+                {
+                    holders.push(target_key.clone());
+                }
+            }
+            killed.insert(target.local);
+        }
+
+        // Step to the unique predecessor and account for its terminator.
+        let predecessors = &body.basic_blocks.predecessors()[block_index];
+        if predecessors.len() != 1 {
+            break;
+        }
+        block_index = predecessors[0];
+        let terminator = body.basic_blocks[block_index].terminator();
+        if let TerminatorKind::Call {
+            func,
+            args,
+            destination: call_destination,
+            ..
+        } = &terminator.kind
+        {
+            let destination_key = PlaceKey::from_mir_place(call_destination);
+            if !killed.contains(&call_destination.local)
+                && holders.iter().any(|h| destination_key.overlaps(h))
+            {
+                let name = crate::verify::call_summary::call_name(tcx, func);
+                if PrimitiveCall::classify(&name).is_some_and(PrimitiveCall::is_as_ptr_like)
+                    && let Some(arg) = args.first()
+                    && let Operand::Copy(place) | Operand::Move(place) = &arg.node
+                    && !killed.contains(&place.local)
+                {
+                    let key = PlaceKey::from_mir_place(place);
+                    if !holders.contains(&key) {
+                        holders.push(key);
+                    }
+                }
+            }
+            killed.insert(call_destination.local);
+        }
+    }
+
+    holders
+}
+
+/// Rebase `holder` (a place rooted at `target`) onto `source`, keeping the
+/// projection suffix that extends past the assignment target.
+fn splice_holder_fields(
+    target: &PlaceKey,
+    holder: &PlaceKey,
+    source: &PlaceKey,
+) -> Option<PlaceKey> {
+    if !place_key_is_prefix_of(target, holder) {
+        return None;
+    }
+    let mut fields = source.fields.clone();
+    fields.extend_from_slice(&holder.fields[target.fields.len()..]);
+    Some(PlaceKey {
+        base: source.base.clone(),
+        fields,
+    })
+}
+
+/// Remove origins invalidated by a strong update of `target`.
+///
+/// A `Deref`-free assignment fully redefines the assigned place, so any origin
+/// it is a prefix of no longer holds the transferred pointer.  Writes through
+/// pointers (`(*p).f = ...`) do not redefine the pointer-holding place itself
+/// and keep every origin alive.
+fn kill_strongly_updated_origins<'tcx>(target: &Place<'tcx>, live: &mut Vec<PlaceKey>) {
+    if target
+        .projection
+        .iter()
+        .any(|projection| matches!(projection, ProjectionElem::Deref))
+    {
+        return;
+    }
+    let target_key = PlaceKey::from_mir_place(target);
+    live.retain(|origin| !place_key_is_prefix_of(&target_key, origin));
+}
+
+/// True when `prefix` denotes the same place as `place` or one of its parents
+/// (same base and `prefix.fields` is a leading segment of `place.fields`).
+fn place_key_is_prefix_of(prefix: &PlaceKey, place: &PlaceKey) -> bool {
+    prefix.base == place.base
+        && prefix.fields.len() <= place.fields.len()
+        && place.fields[..prefix.fields.len()] == prefix.fields[..]
+}
+
+/// True when `place` reads or writes through a still-live transferred pointer.
+fn place_is_raw_access_to_live_origin<'tcx>(place: &Place<'tcx>, live: &[PlaceKey]) -> bool {
+    if !place
+        .projection
+        .iter()
+        .any(|projection| matches!(projection, ProjectionElem::Deref))
+    {
+        return false;
+    }
+    let key = PlaceKey::from_mir_place(place);
+    live.iter().any(|origin| key.overlaps(origin))
+}
+
+/// True when the rvalue dereferences a still-live transferred pointer.
+fn rvalue_reads_live_origin<'tcx>(rvalue: &Rvalue<'tcx>, live: &[PlaceKey]) -> bool {
+    match rvalue {
+        Rvalue::Use(Operand::Copy(place), ..)
+        | Rvalue::Use(Operand::Move(place), ..)
+        | Rvalue::Cast(_, Operand::Copy(place), _)
+        | Rvalue::Cast(_, Operand::Move(place), _)
+        | Rvalue::CopyForDeref(place) => place_is_raw_access_to_live_origin(place, live),
+        Rvalue::Aggregate(_, operands) => operands.iter().any(|operand| match operand {
+            Operand::Copy(place) | Operand::Move(place) => {
+                place_is_raw_access_to_live_origin(place, live)
+            }
+            Operand::Constant(_) => false,
+            #[cfg(rapx_rustc_ge_196)]
+            Operand::RuntimeChecks(_) => false,
+        }),
+        _ => false,
+    }
+}
+
+/// True when the rvalue copies the *value* of a still-live origin (or takes
+/// its address), so the assignment target keeps referring to the transferred
+/// pointer and must join the live set.
+fn rvalue_copies_live_origin_value<'tcx>(rvalue: &Rvalue<'tcx>, live: &[PlaceKey]) -> bool {
+    let place = match rvalue {
+        Rvalue::Use(Operand::Copy(place), ..)
+        | Rvalue::Use(Operand::Move(place), ..)
+        | Rvalue::Cast(_, Operand::Copy(place), _)
+        | Rvalue::Cast(_, Operand::Move(place), _)
+        | Rvalue::Ref(_, _, place)
+        | Rvalue::RawPtr(_, place)
+        | Rvalue::CopyForDeref(place) => place,
+        _ => return false,
+    };
+    if place
+        .projection
+        .iter()
+        .any(|projection| matches!(projection, ProjectionElem::Deref))
+    {
+        return false;
+    }
+    let key = PlaceKey::from_mir_place(place);
+    live.iter().any(|origin| key.overlaps(origin))
+}
+
+/// True when a call terminator passes a still-live transferred pointer to
+/// another function.
+fn terminator_uses_live_origin<'tcx>(kind: &TerminatorKind<'tcx>, live: &[PlaceKey]) -> bool {
+    let TerminatorKind::Call { args, .. } = kind else {
+        return false;
+    };
+    args.iter().any(|arg| {
+        let Some(place) = (match &arg.node {
+            Operand::Copy(place) | Operand::Move(place) => Some(place),
+            Operand::Constant(_) => None,
+            #[cfg(rapx_rustc_ge_196)]
+            Operand::RuntimeChecks(_) => None,
+        }) else {
+            return false;
+        };
+        let key = PlaceKey::from_mir_place(place);
+        live.iter().any(|origin| key.overlaps(origin))
+    })
 }
 
 fn expand_origin_aliases(aliases: &HashMap<Local, PlaceKey>, origins: &mut Vec<PlaceKey>) {
