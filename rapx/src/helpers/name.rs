@@ -1,5 +1,5 @@
 use rustc_hir::def_id::DefId;
-use rustc_middle::ty::{Ty, TyCtxt, TyKind};
+use rustc_middle::ty::{GenericArgKind, Ty, TyCtxt, TyKind};
 use serde_json::Value;
 use syn::Expr;
 
@@ -368,6 +368,13 @@ pub fn find_generic_in_ty<'tcx>(
                 let field_ty = field.ty(tcx, substs).skip_norm_wip();
                 if let Some(found) = find_generic_in_ty(tcx, field_ty, type_ident) {
                     return Some(found);
+                }
+            }
+            for subst in substs.iter() {
+                if let GenericArgKind::Type(subst_ty) = subst.kind() {
+                    if let Some(found) = find_generic_in_ty(tcx, subst_ty, type_ident) {
+                        return Some(found);
+                    }
                 }
             }
         }

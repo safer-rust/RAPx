@@ -184,7 +184,7 @@ const VERIFY_ALLOW_REPEAT2_CMD: &[&str] = &["verify", "--postfix-repeat", "2"];
 const VERIFY_SCAN_CMD: &[&str] = &["verify", "--mode", "scan"];
 const VERIFY_INVLESS_CMD: &[&str] = &["verify", "--mode", "invless"];
 
-// ================Dangling Pointer Detection Test=====================
+// ==================== Dangling Pointer Detection Tests ====================
 #[test]
 fn uaf_cases() {
     let output = run_with_args("check/uaf_1", CHECK_UAF_CMD);
@@ -578,6 +578,12 @@ fn align_unsound_cases() {
 
     let output = run_with_args(
         "verify_units/align_repeat_threshold",
+        VERIFY_ALLOW_REPEAT_CMD,
+    );
+    assert_unproved_exclusive(&output, "repeat2_reveals_delayed_unaligned", &["Align"]);
+
+    let output = run_with_args(
+        "verify_units/align_repeat_threshold",
         VERIFY_ALLOW_REPEAT2_CMD,
     );
     assert_unproved_exclusive(&output, "repeat2_reveals_delayed_unaligned", &["Align"]);
@@ -701,20 +707,15 @@ fn align_sound_cases() {
     let output = run_with_args("verify_units/align_sound_26", VERIFY_CMD);
     assert_contain(&output, "function: sound_contract_type_param_binds_generic");
     assert_contain(&output, "result: SOUND");
-
-    let output = run_with_args(
-        "verify_units/align_repeat_threshold",
-        VERIFY_ALLOW_REPEAT_CMD,
-    );
-    assert_contain(&output, "function: repeat2_reveals_delayed_unaligned");
-    assert_contain(&output, "result: SOUND");
 }
 
 // ================ NonNull Sound Cases =============
 #[test]
 fn nonnull_sound_cases() {
-    let output = run_with_args("verify_units/nonnull_sound_7", VERIFY_CMD);
-    assert_contain(&output, "function: sound_ref_cast_copy_chain");
+    let output = run_with_args("verify_units/nonnull_sound_1", VERIFY_CMD);
+    assert_contain(&output, "function: caller_with_contract");
+    assert_contain(&output, "result: SOUND");
+    assert_contain(&output, "function: sound_chained_propagation");
     assert_contain(&output, "result: SOUND");
 
     let output = run_with_args("verify_units/nonnull_sound_2", VERIFY_CMD);
@@ -737,10 +738,8 @@ fn nonnull_sound_cases() {
     assert_contain(&output, "function: sound_nonnull_wrapper_from_ref");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify_units/nonnull_sound_1", VERIFY_CMD);
-    assert_contain(&output, "function: caller_with_contract");
-    assert_contain(&output, "result: SOUND");
-    assert_contain(&output, "function: sound_chained_propagation");
+    let output = run_with_args("verify_units/nonnull_sound_7", VERIFY_CMD);
+    assert_contain(&output, "function: sound_ref_cast_copy_chain");
     assert_contain(&output, "result: SOUND");
 }
 
@@ -897,7 +896,10 @@ fn inbound_sound_cases() {
     let output = run_with_args("verify_units/inbound_std_sound_2", VERIFY_CMD);
     assert_contain(&output, "function: sound_std_copy_nonoverlapping");
     assert_contain(&output, "result: SOUND");
+}
 
+#[test]
+fn sliceindex_sound_cases() {
     let output = run_with_args("verify_units/sliceindex_sound_01", VERIFY_CMD);
     assert_contain(&output, "function: sound_scalar_index_guard");
     assert_contain(&output, "result: SOUND");
@@ -970,7 +972,10 @@ fn inbound_unsound_cases() {
         "unsound_std_copy_nonoverlapping_dst_unguarded",
         &["ValidPtr", "NonOverlap", "ValidNum"],
     );
+}
 
+#[test]
+fn sliceindex_unsound_cases() {
     let output = run_with_args("verify_units/sliceindex_unsound_01", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_scalar_index_wrong_guard", &["InBound"]);
 
@@ -1090,7 +1095,10 @@ fn validnum_sound_cases() {
     let output = run_with_args("verify_units/validnum_std_sound_2", VERIFY_CMD);
     assert_contain(&output, "function: sound_std_copy_nonoverlapping_validnum");
     assert_contain(&output, "ValidNum | Proved");
+}
 
+#[test]
+fn as_chunks_sound_cases() {
     let output = run_with_args("verify_units/as_chunks_sound_01", VERIFY_CMD);
     assert_contain(&output, "function: sound_as_chunks_unchecked_exact_div");
     assert_contain(&output, "result: SOUND");
@@ -1133,7 +1141,10 @@ fn validnum_unsound_cases() {
         "unsound_std_copy_nonoverlapping_validnum",
         &["ValidNum", "ValidPtr", "NonOverlap"],
     );
+}
 
+#[test]
+fn as_chunks_unsound_cases() {
     let output = run_with_args("verify_units/as_chunks_unsound_01", VERIFY_CMD);
     assert_unproved_exclusive(
         &output,
@@ -1157,14 +1168,17 @@ fn validptr_sound_cases() {
     assert_contain(&output, "function: sound_slice_suffix_guarded");
     assert_contain(&output, "result: SOUND");
 
-    let output = run_with_args("verify_units/validptr_sound_5", VERIFY_CMD);
-    assert_contain(&output, "function: sound_signed_suffix_guarded");
-    assert_contain(&output, "result: SOUND");
-
     let output = run_with_args("verify_units/validptr_sound_4", VERIFY_CMD);
     assert_contain(&output, "function: sound_scc_each_slice_element");
     assert_contain(&output, "result: SOUND");
 
+    let output = run_with_args("verify_units/validptr_sound_5", VERIFY_CMD);
+    assert_contain(&output, "function: sound_signed_suffix_guarded");
+    assert_contain(&output, "result: SOUND");
+}
+
+#[test]
+fn deref_sound_cases() {
     let output = run_with_args("verify_units/deref_sound_1", VERIFY_CMD);
     assert_contain(&output, "function: sound_deref_slice_prefix");
     assert_contain(&output, "Deref | Proved");
@@ -1199,7 +1213,10 @@ fn validptr_unsound_cases() {
         "unsound_signed_suffix_missing_lower_bound",
         &["InBound"],
     );
+}
 
+#[test]
+fn deref_unsound_cases() {
     let output = run_with_args("verify_units/deref_unsound_1", VERIFY_CMD);
     assert_unproved_exclusive(&output, "unsound_deref_one_past", &["Deref"]);
 }
@@ -1488,7 +1505,7 @@ fn std_challenge_17() {
 }
 
 #[test]
-fn transmute_align_unsound() {
+fn transmute_without_align_unsound() {
     let output = run_with_args("verify_units/transmute_without_align_unsound", VERIFY_CMD);
     assert_unproved_exclusive(
         &output,
@@ -1509,7 +1526,7 @@ fn transmute_align_unsound() {
 }
 
 #[test]
-fn transmute_align_nonzero() {
+fn transmute_without_align_nonzero() {
     let output = run_with_args("verify_units/transmute_without_align_nonzero", VERIFY_CMD);
     assert_contain(&output, "function: align_to_nonzero_u16");
     assert_contain(&output, "result: UNSOUND");
@@ -1520,7 +1537,7 @@ fn transmute_align_nonzero() {
 }
 
 #[test]
-fn transmute_align_sound() {
+fn transmute_without_align_sound() {
     let output = run_with_args("verify_units/transmute_without_align_sound", VERIFY_CMD);
     assert_contain(&output, "function: align_to_u8_sound");
     assert_contain(&output, "result: SOUND");
@@ -1663,7 +1680,7 @@ fn adg_simple_graph() {
 
 // ================ Alias Verify Sound Cases =============
 #[test]
-fn alias_verify_sound() {
+fn alias_sound_verify_cases() {
     let output = run_with_args("verify_units/alias_sound_13", VERIFY_CMD);
     assert_contain(&output, "function: as_bytes_mut_sound");
     assert_contain(&output, "result: SOUND");
@@ -1675,7 +1692,7 @@ fn alias_verify_sound() {
 
 // ================ Alias Verify Unsound Cases =============
 #[test]
-fn alias_verify_unsound() {
+fn alias_unsound_verify_cases() {
     let output = run_with_args("verify_units/alias_unsound_18", VERIFY_CMD);
     assert_unproved_exclusive(&output, "as_bytes_mut_unsound", &["Alias"]);
 

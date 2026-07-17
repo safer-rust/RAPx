@@ -5029,6 +5029,16 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             }
         }
 
+        // Search for a Cast fact that maps this field projection directly to
+        // a source value.  This handles field-level reassignments where the
+        // local's latest definition points to a *different* field (e.g. _2's
+        // latest def is from _2.1 but we are resolving _2.0) and aggregate
+        // (enum variant) fields whose inner values are only reachable through
+        // the decomposed Cast facts (e.g. Option::Some(f) → field 0).
+        if let Some(term) = self.resolve_field_through_casts(place, definition.ordinal, seen) {
+            return Some(term);
+        }
+
         if place.fields.as_slice() != [0] {
             // For non-field-0 projections (e.g., field 1 for `tail`), try to
             // follow a struct move to another local and resolve the field there.
@@ -5075,6 +5085,56 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         let lhs = self.term_for_value_at(lhs, definition.ordinal, seen)?;
         let rhs = self.term_for_value_at(rhs, definition.ordinal, seen)?;
         self.term_for_binary(*op, &lhs, &rhs)
+    }
+
+    /// Resolve a field projection by searching Cast facts, including
+    /// progressive resolution for multi-field projections (e.g. a field-of-a-
+    /// field where the intermediate is an enum-variant aggregate).
+    fn resolve_field_through_casts(
+        &mut self,
+        place: &PlaceKey,
+        cursor: ValueCursor,
+        seen: &mut TraceSeen,
+    ) -> Option<Int<'ctx>> {
+        // 1) Direct Cast fact for the exact field projection.
+        for fact in &self.forward.facts {
+            if let StateFact::Cast { target, source, .. } = fact {
+                if *target == *place {
+                    let source = source.clone();
+                    return self.term_for_value_at(&source, cursor, seen);
+                }
+            }
+        }
+
+        // 2) Progressive resolution: if the place has more than one field
+        //    projection, try to resolve the prefix through a Cast fact, then
+        //    continue with the remaining fields on the resolved source.
+        if place.fields.len() > 1 {
+            let mut prefix = place.clone();
+            let last_field = prefix.fields.pop().unwrap_or(0);
+
+            for fact in &self.forward.facts {
+                if let StateFact::Cast { target, source, .. } = fact {
+                    if *target == prefix {
+                        if let AbstractValue::Place(p) = source {
+                            let mut src_place = p.clone();
+                            src_place.fields.push(last_field);
+                            return self.term_for_place_before(&src_place, cursor, seen);
+                        }
+                        // If the source is a CallResult or other concrete value,
+                        // try to resolve through the value itself first, and
+                        // then project the last field.
+                        let source = source.clone();
+                        if let Some(term) = self.term_for_value_at(&source, cursor, seen) {
+                            return Some(term);
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        None
     }
 
     /// Build an SMT term for an abstract value.
