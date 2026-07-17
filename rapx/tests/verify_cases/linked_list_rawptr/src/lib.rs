@@ -6,6 +6,10 @@
 #[rapx::invariant(NonNull(next))]
 #[rapx::invariant(Align(prev, Node))]
 #[rapx::invariant(Align(next, Node))]
+#[rapx::invariant(ValidPtr(next, Node, 1))]
+#[rapx::invariant(Typed(next, Node))]
+#[rapx::invariant(Allocated(next, Node, 1))]
+#[rapx::invariant(Owning(next))]
 struct Node {
     value: i32,
     prev: *mut Node,
@@ -16,6 +20,10 @@ struct Node {
 #[rapx::invariant(NonNull(tail))]
 #[rapx::invariant(Align(head, Node))]
 #[rapx::invariant(Align(tail, Node))]
+#[rapx::invariant(ValidPtr(head, Node, 1))]
+#[rapx::invariant(Typed(head, Node))]
+#[rapx::invariant(Allocated(head, Node, 1))]
+#[rapx::invariant(Owning(head))]
 struct LinkedList {
     head: *mut Node,
     tail: *mut Node,

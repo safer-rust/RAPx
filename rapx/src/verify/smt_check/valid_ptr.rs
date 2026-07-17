@@ -59,6 +59,10 @@ pub(crate) fn check<'tcx>(
                         checker, checkpoint, property, forward, true,
                     ) {
                         SmtCheckResult::proved(format!("ValidPtr proved: {reason}"))
+                    } else if let Some(reason) =
+                        field_invariant_reason(checker, checkpoint, property, forward, required_ty)
+                    {
+                        SmtCheckResult::proved(format!("ValidPtr proved: {reason}"))
                     } else {
                         SmtCheckResult::unknown("ValidPtr unknown: non-ZST Deref is not proved")
                     }
@@ -90,4 +94,31 @@ fn primitive_property<'tcx>(property: &Property<'tcx>, kind: PropertyKind) -> Pr
         kind,
         args: property.args.clone(),
     }
+}
+
+/// Try to discharge `ValidPtr` from a struct field invariant covering the
+/// dereferenced pointer (same field path, type, and element count).
+fn field_invariant_reason<'tcx>(
+    checker: &SmtChecker<'tcx>,
+    checkpoint: &Checkpoint<'tcx>,
+    property: &Property<'tcx>,
+    forward: &ForwardVisitResult<'tcx>,
+    required_ty: rustc_middle::ty::Ty<'tcx>,
+) -> Option<String> {
+    let target = checker.property_target(checkpoint, property)?;
+    let required_elements = checker
+        .property_len_expr(checkpoint, property)
+        .and_then(|expr| match expr {
+            crate::verify::contract::ContractExpr::Const(value) => u64::try_from(value).ok(),
+            _ => None,
+        });
+    super::field_invariant::discharge_from_field_invariant(
+        checker.tcx,
+        checkpoint.caller,
+        &target,
+        forward,
+        PropertyKind::ValidPtr,
+        Some(required_ty),
+        required_elements,
+    )
 }

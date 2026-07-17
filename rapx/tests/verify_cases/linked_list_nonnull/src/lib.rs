@@ -6,6 +6,8 @@ use std::ptr::NonNull;
 
 #[rapx::invariant(Align(prev.unwrap_some(), Node))]
 #[rapx::invariant(Align(next.unwrap_some(), Node))]
+#[rapx::invariant(Allocated(next.unwrap_some(), Node, 1))]
+#[rapx::invariant(Owning(next.unwrap_some()))]
 struct Node {
     value: i32,
     prev: Option<NonNull<Node>>,
@@ -14,6 +16,8 @@ struct Node {
 
 #[rapx::invariant(Align(head.unwrap_some(), Node))]
 #[rapx::invariant(Align(tail.unwrap_some(), Node))]
+#[rapx::invariant(Allocated(head.unwrap_some(), Node, 1))]
+#[rapx::invariant(Owning(head.unwrap_some()))]
 struct LinkedList {
     head: Option<NonNull<Node>>,
     tail: Option<NonNull<Node>>,

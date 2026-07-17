@@ -224,8 +224,24 @@ impl<'tcx> SmtChecker<'tcx> {
                 in_bound::check_for_checkpoint(self, caller, property, forward)
             }
             PropertyKind::Init => init::check_for_checkpoint(self, caller, property, forward),
+            PropertyKind::Owning => {
+                super::owning::check_for_checkpoint(self, caller, property, forward)
+            }
             PropertyKind::ValidPtr => {
+                if let Some(reason) =
+                    super::field_invariant::discharge_from_contract_fact(property, forward)
+                {
+                    return SmtCheckResult::proved(format!("ValidPtr proved: {reason}"));
+                }
                 SmtCheckResult::unknown("ValidPtr struct invariant not implemented yet")
+            }
+            PropertyKind::Typed => {
+                if let Some(reason) =
+                    super::field_invariant::discharge_from_contract_fact(property, forward)
+                {
+                    return SmtCheckResult::proved(format!("Typed proved: {reason}"));
+                }
+                SmtCheckResult::unknown("no struct invariant SMT lowering for this property yet")
             }
             _ => SmtCheckResult::unknown("no struct invariant SMT lowering for this property yet"),
         }

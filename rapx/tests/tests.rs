@@ -1316,8 +1316,13 @@ fn linked_list_nonnull() {
     let output = run_with_args("verify_cases/linked_list_nonnull", VERIFY_CMD);
     // from_vec: linked list with Option<NonNull<Node>>, invariants via unwrap_some
     assert_contain(&output, "function: LinkedList::from_vec");
-    // struct invariants section present (Align via unwrap_some)
+    // struct invariants section present (Align/Allocated/Owning via unwrap_some)
     assert_contain(&output, "struct invariants");
+    // drop: Box::from_raw discharged via struct field invariants
+    assert_contain(&output, "function: <LinkedList as std::ops::Drop>::drop");
+    // both functions verify without any unproved property
+    assert_contain(&output, "result: SOUND");
+    assert_not_contain(&output, "result: UNSOUND");
 }
 
 #[test]
@@ -1329,6 +1334,11 @@ fn linked_list_rawptr() {
     assert_contain(&output, "struct invariants");
     assert_contain(&output, "NonNull");
     assert_contain(&output, "Align");
+    // drop: raw-ptr deref and Box::from_raw discharged via struct field invariants
+    assert_contain(&output, "function: <LinkedList as std::ops::Drop>::drop");
+    // both functions verify without any unproved property
+    assert_contain(&output, "result: SOUND");
+    assert_not_contain(&output, "result: UNSOUND");
 }
 
 #[test]

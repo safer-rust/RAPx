@@ -47,15 +47,36 @@ pub(crate) fn check<'tcx>(
         return SmtCheckResult::proved(format!("Allocated proved: {reason}"));
     }
 
-    checker.prove_obligation(
+    let result = checker.prove_obligation(
         checkpoint,
         forward,
         SmtObligation::Allocated {
-            place: target,
+            place: target.clone(),
             ty_name: format!("{required_ty:?}"),
-            elements,
+            elements: elements.clone(),
         },
-    )
+    );
+    if matches!(result.result, crate::verify::report::CheckResult::Proved) {
+        return result;
+    }
+
+    let required_elements = match elements {
+        super::common::SmtTerm::Const(value) => Some(value),
+        _ => None,
+    };
+    if let Some(reason) = super::field_invariant::discharge_from_field_invariant(
+        checker.tcx,
+        checkpoint.caller,
+        &target,
+        forward,
+        crate::verify::contract::PropertyKind::Allocated,
+        Some(required_ty),
+        required_elements,
+    ) {
+        return SmtCheckResult::proved(format!("Allocated proved: {reason}"));
+    }
+
+    result
 }
 
 /// Check `Allocated` at a return checkpoint for struct invariant verification.
@@ -79,7 +100,7 @@ pub(crate) fn check_for_checkpoint<'tcx>(
             "Allocated element-count argument could not be lowered to SMT",
         );
     };
-    checker.prove_obligation_for_checkpoint(
+    let result = checker.prove_obligation_for_checkpoint(
         caller,
         forward,
         SmtObligation::Allocated {
@@ -87,5 +108,12 @@ pub(crate) fn check_for_checkpoint<'tcx>(
             ty_name: format!("{required_ty:?}"),
             elements,
         },
-    )
+    );
+    if matches!(result.result, crate::verify::report::CheckResult::Proved) {
+        return result;
+    }
+    if let Some(reason) = super::field_invariant::discharge_from_contract_fact(property, forward) {
+        return SmtCheckResult::proved(format!("Allocated proved: {reason}"));
+    }
+    result
 }

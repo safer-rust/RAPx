@@ -51,6 +51,16 @@ pub(crate) fn check<'tcx>(
             place_debug(&target),
             required_ty
         ))
+    } else if let Some(reason) = super::field_invariant::discharge_from_field_invariant(
+        checker.tcx,
+        checkpoint.caller,
+        &target,
+        forward,
+        crate::verify::contract::PropertyKind::Typed,
+        Some(required_ty),
+        None,
+    ) {
+        SmtCheckResult::proved(format!("Typed proved: {reason}"))
     } else {
         SmtCheckResult::unknown(format!(
             "current path facts do not prove {} is typed as {:?}",

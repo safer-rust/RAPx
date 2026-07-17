@@ -67,6 +67,68 @@ pub(crate) fn check<'tcx>(
         ));
     }
 
+    if let Some(reason) = super::field_invariant::discharge_from_field_invariant(
+        checker.tcx,
+        checkpoint.caller,
+        &target,
+        forward,
+        crate::verify::contract::PropertyKind::Owning,
+        None,
+        None,
+    ) {
+        return SmtCheckResult::proved(format!("Owning proved: {reason}"));
+    }
+
+    SmtCheckResult::unknown(format!(
+        "Owning: {target_label} does not trace to a known ownership source on this path",
+    ))
+}
+
+/// Check `Owning` at a return checkpoint for struct invariant verification.
+///
+/// First tries to trace the invariant place to a real ownership source
+/// produced on this path (`Box::into_raw`, `Box::leak`, ...); when the field
+/// was not (re-)assigned from a traceable source, falls back to the matching
+/// entry contract fact, mirroring how `Align` invariants are preserved by
+/// frame reasoning.
+pub(crate) fn check_for_checkpoint<'tcx>(
+    checker: &SmtChecker<'tcx>,
+    _caller: rustc_hir::def_id::DefId,
+    property: &Property<'tcx>,
+    forward: &ForwardVisitResult<'tcx>,
+) -> SmtCheckResult {
+    let _ = checker;
+    let Some(target) = checker.property_target_direct(property) else {
+        return SmtCheckResult::unknown("Owning target could not be resolved");
+    };
+    let target_label = place_label(&target);
+
+    for fact in &forward.facts {
+        let StateFact::KnownAllocated {
+            place,
+            object: _,
+            ty_name,
+            elements: _,
+            reason,
+        } = fact
+        else {
+            continue;
+        };
+        if !is_ownership_source(reason) {
+            continue;
+        }
+        if !places_refer_to_same(place, &target, forward) {
+            continue;
+        }
+        return SmtCheckResult::proved(format!(
+            "Owning proved: {target_label} traces to ownership source ({reason}) for {ty_name}",
+        ));
+    }
+
+    if let Some(reason) = super::field_invariant::discharge_from_contract_fact(property, forward) {
+        return SmtCheckResult::proved(format!("Owning proved: {reason}"));
+    }
+
     SmtCheckResult::unknown(format!(
         "Owning: {target_label} does not trace to a known ownership source on this path",
     ))

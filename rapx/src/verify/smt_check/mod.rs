@@ -14,6 +14,7 @@ mod alive;
 mod allocated;
 mod common;
 mod deref;
+mod field_invariant;
 mod in_bound;
 mod init;
 mod non_null;
