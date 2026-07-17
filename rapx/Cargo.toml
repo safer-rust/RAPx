@@ -1,6 +1,6 @@
 [package]
 name = "rapx"
-version = "0.7.24"
+version = "0.7.25"
 edition = "2024"
 authors = ["safer-rust <xuh@fudan.edu.cn>"]
 default-run = "rapx"
