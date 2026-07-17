@@ -110,9 +110,15 @@ pub enum CallEffect {
     WriteMemory { pointer_arg: usize },
     /// The return value is the length of an aggregate argument.
     ReturnLengthOfArg { arg: usize },
+    /// The return value is `1` iff the length of the aggregate argument is 0.
+    ReturnIsEmptyOfArg { arg: usize },
     /// A specific field of the returned tuple carries the length of a given
     /// argument (e.g. split_at(mid) returns (left, right) where left.len() == mid).
     ReturnTupleFieldLength { field: usize, from_arg: usize },
+    /// The return value is known to own initialized memory of the type pointed
+    /// to by the indicated argument (e.g. `Box::from_raw(p)` owns one initialized
+    /// `T` element reached through `p`).
+    OwnsInitMemory { arg: usize },
     /// The call validates that every element of the array argument `indices_arg`
     /// is `< args[len_arg]` and that the elements are pairwise distinct, returning
     /// `Err` otherwise.  On the `Ok` continuation the caller may assume
@@ -144,6 +150,26 @@ pub fn dependency_summary<'tcx>(
     let name = call_name(tcx, func);
 
     let primitive = PrimitiveCall::classify(&name);
+
+    if name.ends_with("mem::forget") || name.ends_with("::capacity") {
+        return CallDependencySummary {
+            callee,
+            name,
+            return_depends_on_args: vec![0],
+            may_write_args: Vec::new(),
+            unsupported: false,
+        };
+    }
+
+    if is_ownership_reconstruction(&name) {
+        return CallDependencySummary {
+            callee,
+            name,
+            return_depends_on_args: vec![0],
+            may_write_args: Vec::new(),
+            unsupported: false,
+        };
+    }
 
     if primitive.is_some_and(PrimitiveCall::is_as_ptr_like) {
         return CallDependencySummary {
@@ -197,7 +223,7 @@ pub fn dependency_summary<'tcx>(
         };
     }
 
-    if primitive == Some(PrimitiveCall::Len) {
+    if primitive == Some(PrimitiveCall::Len) || primitive == Some(PrimitiveCall::IsEmpty) {
         return CallDependencySummary {
             callee,
             name,
@@ -334,6 +360,17 @@ pub fn dependency_summary<'tcx>(
     CallDependencySummary::unknown(callee, name, arg_count)
 }
 
+/// Ownership-reconstructing conversions (`Box::from_raw`, `CString::from_raw`)
+/// whose return value wraps the same allocation as the raw pointer argument.
+pub fn is_ownership_reconstruction(name: &str) -> bool {
+    name.contains("from_raw")
+        && !name.contains("from_raw_parts")
+        && (name.contains("boxed")
+            || name.contains("Box")
+            || name.contains("CString")
+            || name.contains("ffi::c_str"))
+}
+
 /// Return effect information for a MIR call terminator.
 pub fn effect_summary<'tcx>(
     tcx: TyCtxt<'tcx>,
@@ -346,6 +383,30 @@ pub fn effect_summary<'tcx>(
     let destination = Some(destination);
 
     let primitive = PrimitiveCall::classify(&name);
+
+    if name.ends_with("mem::forget") || name.ends_with("::capacity") {
+        return CallEffectSummary {
+            callee,
+            name,
+            destination,
+            effects: Vec::new(),
+            unsupported: false,
+        };
+    }
+
+    if is_ownership_reconstruction(&name) {
+        return CallEffectSummary {
+            callee,
+            name,
+            destination,
+            effects: vec![
+                CallEffect::ReturnAliasArg { arg: 0 },
+                CallEffect::ReturnNonZero,
+                CallEffect::OwnsInitMemory { arg: 0 },
+            ],
+            unsupported: false,
+        };
+    }
 
     if primitive.is_some_and(PrimitiveCall::is_as_ptr_like) {
         let mut effects = vec![
@@ -441,6 +502,16 @@ pub fn effect_summary<'tcx>(
             name,
             destination,
             effects: vec![CallEffect::ReturnLengthOfArg { arg: 0 }],
+            unsupported: false,
+        };
+    }
+
+    if primitive == Some(PrimitiveCall::IsEmpty) {
+        return CallEffectSummary {
+            callee,
+            name,
+            destination,
+            effects: vec![CallEffect::ReturnIsEmptyOfArg { arg: 0 }],
             unsupported: false,
         };
     }

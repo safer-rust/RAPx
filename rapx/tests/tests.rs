@@ -1681,6 +1681,54 @@ fn adg_simple_graph() {
 // ================ Alias Verify Sound Cases =============
 #[test]
 fn alias_sound_verify_cases() {
+    let output = run_with_args("verify_units/alias_sound_01", VERIFY_CMD);
+    assert_contain(&output, "function: sound_shared_slice_no_raw_mutation");
+    assert_contain(&output, "result: SOUND");
+
+    let output = run_with_args("verify_units/alias_sound_02", VERIFY_CMD);
+    assert_contain(&output, "function: sound_raw_use_after_slice_scope");
+    assert_contain(&output, "result: SOUND");
+
+    let output = run_with_args("verify_units/alias_sound_03", VERIFY_CMD);
+    assert_contain(&output, "function: sound_box_from_raw_consumes_pointer");
+    assert_contain(&output, "result: SOUND");
+
+    let output = run_with_args("verify_units/alias_sound_04", VERIFY_CMD);
+    assert_contain(&output, "function: RawBuf::as_slice_mut");
+    assert_contain(&output, "result: SOUND");
+
+    let output = run_with_args("verify_units/alias_sound_05", VERIFY_CMD);
+    assert_contain(&output, "function: build_slice");
+    assert_contain(&output, "result: SOUND");
+
+    let output = run_with_args("verify_units/alias_sound_06", VERIFY_CMD);
+    assert_contain(&output, "function: sound_cstr_from_ptr_read_only");
+    assert_contain(&output, "result: SOUND");
+
+    let output = run_with_args("verify_units/alias_sound_07", VERIFY_CMD);
+    assert_contain(&output, "function: PrivateSlot::as_slice_mut");
+    assert_contain(&output, "result: SOUND");
+
+    let output = run_with_args("verify_units/alias_sound_08", VERIFY_CMD);
+    assert_contain(&output, "function: ReadOnlySlot::<'a>::as_slice");
+    assert_contain(&output, "result: SOUND");
+
+    let output = run_with_args("verify_units/alias_sound_09", VERIFY_CMD);
+    assert_contain(&output, "function: sound_box_from_raw_then_into_raw");
+    assert_contain(&output, "result: SOUND");
+
+    let output = run_with_args("verify_units/alias_sound_10", VERIFY_CMD);
+    assert_contain(&output, "function: sound_cstring_from_raw_no_reuse");
+    assert_contain(&output, "result: SOUND");
+
+    let output = run_with_args("verify_units/alias_sound_11", VERIFY_CMD);
+    assert_contain(&output, "function: sound_copy_nonoverlapping_disjoint");
+    assert_contain(&output, "result: SOUND");
+
+    let output = run_with_args("verify_units/alias_sound_12", VERIFY_CMD);
+    assert_contain(&output, "function: sound_vec_reserve_before_raw_slice");
+    assert_contain(&output, "result: SOUND");
+
     let output = run_with_args("verify_units/alias_sound_13", VERIFY_CMD);
     assert_contain(&output, "function: as_bytes_mut_sound");
     assert_contain(&output, "result: SOUND");
@@ -1693,6 +1741,109 @@ fn alias_sound_verify_cases() {
 // ================ Alias Verify Unsound Cases =============
 #[test]
 fn alias_unsound_verify_cases() {
+    let output = run_with_args("verify_units/alias_unsound_01", VERIFY_CMD);
+    assert_unproved_exclusive(&output, "unsound_shared_slice_then_raw_write", &["Alias"]);
+
+    let output = run_with_args("verify_units/alias_unsound_02", VERIFY_CMD);
+    assert_unproved_exclusive(&output, "unsound_mut_slice_then_raw_read", &["Alias"]);
+
+    let output = run_with_args("verify_units/alias_unsound_03", VERIFY_CMD);
+    assert_unproved_exclusive(&output, "unsound_vec_push_while_raw_slice_live", &["Alias"]);
+
+    let output = run_with_args("verify_units/alias_unsound_04", VERIFY_CMD);
+    assert_unproved_exclusive(&output, "unsound_box_from_raw_then_raw_write", &["Alias"]);
+
+    let output = run_with_args("verify_units/alias_unsound_05", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "unsound_box_from_raw_drop_then_raw_read",
+        &["Alias", "Allocated", "ValidPtr", "Typed"],
+    );
+
+    let output = run_with_args("verify_units/alias_unsound_06", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "RawSlot::as_slice_mut",
+        &["Alias", "Alive", "Init", "NonNull", "ValidPtr"],
+    );
+
+    let output = run_with_args("verify_units/alias_unsound_07", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "make_mut_slice",
+        &["Alias", "Alive", "Init", "NonNull", "ValidPtr"],
+    );
+
+    let output = run_with_args("verify_units/alias_unsound_08", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "unsound_copy_nonoverlapping_overlap",
+        &["NonOverlap"],
+    );
+
+    let output = run_with_args("verify_units/alias_unsound_09", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "unsound_cstring_from_raw_then_raw_write",
+        &["Alias"],
+    );
+
+    let output = run_with_args("verify_units/alias_unsound_10", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "unsound_cstr_from_ptr_then_raw_mutation",
+        &["Alias"],
+    );
+
+    let output = run_with_args("verify_units/alias_unsound_11", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "PublicRawSlot::as_slice_mut",
+        &["Alias", "Alive", "Init", "NonNull", "ValidPtr"],
+    );
+
+    let output = run_with_args("verify_units/alias_unsound_12", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "GetterSlot::as_slice_mut",
+        &["Alias", "Alive", "Init", "NonNull", "ValidPtr"],
+    );
+
+    let output = run_with_args("verify_units/alias_unsound_13", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "WriterSlot::as_slice_mut",
+        &["Alias", "Alive", "Init", "NonNull", "ValidPtr"],
+    );
+
+    let output = run_with_args("verify_units/alias_unsound_14", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "SplitSlot::as_slice_mut",
+        &["Alias", "Alive", "Init", "NonNull", "ValidPtr"],
+    );
+
+    let output = run_with_args("verify_units/alias_unsound_15", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "unsound_vec_from_raw_parts_then_raw_write",
+        &["Alias"],
+    );
+
+    let output = run_with_args("verify_units/alias_unsound_16", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "unsound_vec_reserve_while_raw_slice_live",
+        &["Alias"],
+    );
+
+    let output = run_with_args("verify_units/alias_unsound_17", VERIFY_CMD);
+    assert_unproved_exclusive(
+        &output,
+        "TraitSlot::as_slice_mut",
+        &["Alias", "Alive", "Init", "NonNull", "ValidPtr"],
+    );
+
     let output = run_with_args("verify_units/alias_unsound_18", VERIFY_CMD);
     assert_unproved_exclusive(&output, "as_bytes_mut_unsound", &["Alias"]);
 

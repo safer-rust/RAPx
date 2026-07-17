@@ -173,6 +173,17 @@ impl<'tcx> SmtChecker<'tcx> {
                 super::non_volatile::check(self, checkpoint, property, forward)
             }
             PropertyKind::Owning => super::owning::check(self, checkpoint, property, forward),
+            PropertyKind::ValidCStr => {
+                super::valid_cstr::check(self, checkpoint, property, forward)
+            }
+            PropertyKind::Layout => {
+                if let Some(reason) =
+                    super::provenance::vec_from_raw_parts_roundtrip(self, checkpoint)
+                {
+                    return SmtCheckResult::proved(format!("Layout proved: {reason}"));
+                }
+                SmtCheckResult::unknown("no SMT lowering for this property yet")
+            }
             PropertyKind::Ptr2Ref => {
                 if let Some(callee) = checkpoint.callee {
                     let callee_path = self.tcx.def_path_str(callee);
@@ -452,6 +463,24 @@ impl<'tcx> SmtChecker<'tcx> {
                         SmtPredicate::Custom(format!(
                             "InBound({}, {ty_name}) by align_to_offsets summary",
                             target_label
+                        )),
+                    ));
+                }
+
+                // A pointer that still denotes the base of a live allocation
+                // with at least `access_count` elements is trivially in
+                // bounds; the trace refuses pointer-arithmetic hops.
+                if let Some(fact_ty_name) = model.allocated_ty_via_known_fact(place, access_count) {
+                    return SmtCheckResult::proved(format!(
+                        "InBound proved: {target_label} is the base of a live {fact_ty_name} allocation"
+                    ))
+                    .with_query(SmtQuery::new(
+                        obligation.clone(),
+                        model.assumptions().to_vec(),
+                        SmtPredicate::Custom(format!(
+                            "InBound({}, {ty_name}, {}) by KnownAllocated fact",
+                            target_label,
+                            access_count.describe()
                         )),
                     ));
                 }
@@ -930,6 +959,22 @@ impl<'tcx> SmtChecker<'tcx> {
                 elements,
             } => {
                 let target_label = place_label(place);
+
+                if let Some(fact_ty_name) = model.allocated_ty_via_known_fact(place, elements) {
+                    return SmtCheckResult::proved(format!(
+                        "Allocated proved: {} traces to a KnownAllocated {fact_ty_name} fact",
+                        target_label
+                    ))
+                    .with_query(SmtQuery::new(
+                        obligation.clone(),
+                        model.assumptions().to_vec(),
+                        SmtPredicate::Custom(format!(
+                            "Allocated({}, {ty_name}, {}) by KnownAllocated fact",
+                            target_label,
+                            elements.describe()
+                        )),
+                    ));
+                }
 
                 // When the caller's `InBound(index_access(slice, indices))` contract
                 // guarantees every element of `indices` is within the slice, an
@@ -3300,11 +3345,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         for fact in facts
             .iter()
             .filter(|f| !matches!(f, StateFact::Contract(_)))
-            .chain(
-                facts
-                    .iter()
-                    .filter(|f| matches!(f, StateFact::Contract(_))),
-            )
+            .chain(facts.iter().filter(|f| matches!(f, StateFact::Contract(_))))
         {
             match fact {
                 StateFact::PointsTo { pointer, source } => {
@@ -4104,26 +4145,25 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         // bounds_len_for_origin may return bogus index offsets like
         // len(null_ref).  Skip it and use the PointsTo fallback instead.
         let is_null_origin = base_origin.contains("null_mut")
-            || base_origin.contains("null(" )
+            || base_origin.contains("null(")
             || value_label(&value).contains("null_mut");
-        let (mut len_term_int, mut len_term) =
-            if !is_null_origin {
-                if let Some(bounds) = self.bounds_len_for_origin(&base_origin, Some(&zero)) {
-                    bounds
-                } else if let Some(bounds) =
-                    self.allocated_bounds_via_points_to(place, &value, &base_origin)
-                {
-                    bounds
-                } else {
-                    return None;
-                }
+        let (mut len_term_int, mut len_term) = if !is_null_origin {
+            if let Some(bounds) = self.bounds_len_for_origin(&base_origin, Some(&zero)) {
+                bounds
             } else if let Some(bounds) =
                 self.allocated_bounds_via_points_to(place, &value, &base_origin)
             {
                 bounds
             } else {
                 return None;
-            };
+            }
+        } else if let Some(bounds) =
+            self.allocated_bounds_via_points_to(place, &value, &base_origin)
+        {
+            bounds
+        } else {
+            return None;
+        };
 
         if place.fields.is_empty()
             && let Some((inner, cast_ty)) = self.defining_cast(place)
@@ -4438,9 +4478,8 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         if let Some(term) = self.term_for_place(place) {
             let zero = Int::from_u64(self.ctx, 0);
             solver.assert(&term._eq(&zero).not());
-            self.assumptions.push(SmtPredicate::Custom(format!(
-                "{label} != 0 ({reason})",
-            )));
+            self.assumptions
+                .push(SmtPredicate::Custom(format!("{label} != 0 ({reason})",)));
         }
     }
 
@@ -4862,6 +4901,27 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                         SmtTerm::Value(len_key),
                     ));
                 }
+                crate::verify::call_summary::CallEffect::ReturnIsEmptyOfArg { arg } => {
+                    let raw_source = call
+                        .args
+                        .get(*arg)
+                        .and_then(|value| {
+                            self.origin_key_for_value_before(value, cursor, &mut TraceSeen::new())
+                        })
+                        .or_else(|| call.args.get(*arg).map(value_label))
+                        .unwrap_or_else(|| format!("arg{arg}"));
+                    let source = raw_source.split('.').next().unwrap_or(&raw_source);
+                    let len_key = format!("len({source})");
+                    let len_term = self.symbolic_len_term(&len_key);
+                    let zero = Int::from_u64(self.ctx, 0);
+                    let one = Int::from_u64(self.ctx, 1);
+                    let term = len_term._eq(&zero).ite(&one, &zero);
+                    self.place_terms.insert(destination.clone(), term);
+                    self.assumptions.push(SmtPredicate::Custom(format!(
+                        "{} == ({len_key} == 0)",
+                        place_label(&destination)
+                    )));
+                }
                 crate::verify::call_summary::CallEffect::ReturnPointerFromArg { arg }
                 | crate::verify::call_summary::CallEffect::ReturnAliasArg { arg } => {
                     let source_value = call.args.get(*arg);
@@ -4914,6 +4974,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 | crate::verify::call_summary::CallEffect::ChecksIndexBoundsDisjoint { .. }
                 | crate::verify::call_summary::CallEffect::ReturnBoundedRange { .. }
                 | crate::verify::call_summary::CallEffect::ReturnLcmSplit { .. }
+                | crate::verify::call_summary::CallEffect::OwnsInitMemory { .. }
                 | crate::verify::call_summary::CallEffect::ForgetArgFacts { .. } => {}
             }
         }
@@ -5045,8 +5106,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             if let AbstractValue::Place(other_place) = value {
                 let mut alt_place = other_place.clone();
                 alt_place.fields = place.fields.clone();
-                if let Some(term) =
-                    self.term_for_place_before(&alt_place, definition.ordinal, seen)
+                if let Some(term) = self.term_for_place_before(&alt_place, definition.ordinal, seen)
                 {
                     return Some(term);
                 }
@@ -5059,8 +5119,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 // Follow a struct move: return.0 -> _2.0
                 let mut alt_place = other_place.clone();
                 alt_place.fields = place.fields.clone();
-                if let Some(term) =
-                    self.term_for_place_before(&alt_place, definition.ordinal, seen)
+                if let Some(term) = self.term_for_place_before(&alt_place, definition.ordinal, seen)
                 {
                     return Some(term);
                 }
@@ -6491,15 +6550,266 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 ty_name,
                 ..
             } if place_label(object) == origin_key || place_label(place) == origin_key => {
-                // MaybeUninit<[T; N]> with const-generic N has dynamic
-                // length — return None so guarded_len_for_index can
-                // try the loop guard instead of using elements=1.
                 if *elements == 0 || (ty_name.contains("MaybeUninit") && ty_name.contains('[')) {
                     return None;
                 }
                 Some(*elements)
             }
             _ => None,
+        })
+    }
+
+    /// When a KnownAllocated fact directly or transitively covers the target
+    /// place, return the fact's type name so the caller can short-circuit
+    /// the full SMT bounds proof.  The trace never crosses pointer-arithmetic
+    /// results (they may point past the object base) and skips facts whose
+    /// allocation object has been dropped or gone out of scope.
+    fn allocated_ty_via_known_fact(
+        &self,
+        place: &PlaceKey,
+        required_elements: &SmtTerm,
+    ) -> Option<String> {
+        let required = match required_elements {
+            SmtTerm::Const(n) => *n,
+            _ => return None,
+        };
+        if required == 0 {
+            return None;
+        }
+        let mut visited: crate::compat::FxHashSet<PlaceKey> = Default::default();
+        let mut queue = vec![place.clone()];
+        while let Some(cur) = queue.pop() {
+            if !visited.insert(cur.clone()) {
+                continue;
+            }
+            if self.place_defined_by_pointer_arith(&cur) {
+                continue;
+            }
+            if cur.fields.is_empty() {
+                if let Some(local) = cur.local() {
+                    if let Some(value) = self.forward.values.get(&local) {
+                        let mut cursor = value;
+                        let root = loop {
+                            match cursor {
+                                AbstractValue::Place(p)
+                                | AbstractValue::Ref(p)
+                                | AbstractValue::RawPtr(p) => break p.clone(),
+                                AbstractValue::Cast(inner, _) => cursor = inner.as_ref(),
+                                _ => {
+                                    break PlaceKey {
+                                        base: crate::verify::def_use::PlaceBaseKey::Local(0),
+                                        fields: Vec::new(),
+                                    };
+                                }
+                            }
+                        };
+                        if root.local().is_some() {
+                            queue.push(root);
+                        }
+                    }
+                }
+            }
+            for fact in &self.forward.facts {
+                let StateFact::KnownAllocated {
+                    place: alloc_place,
+                    object,
+                    elements,
+                    ty_name,
+                    ..
+                } = fact
+                else {
+                    continue;
+                };
+                if allocation_object_invalidated(self.forward, object, alloc_place) {
+                    continue;
+                }
+                if self.allocation_freed_by_owner_drop(object) {
+                    continue;
+                }
+                if self.allocation_dropped_on_path(object, alloc_place) {
+                    continue;
+                }
+                if *object == cur && *elements >= required {
+                    return Some(ty_name.clone());
+                }
+                if *alloc_place == cur && *elements >= required {
+                    return Some(ty_name.clone());
+                }
+            }
+            for fact in &self.forward.facts {
+                let StateFact::PointsTo { pointer, source } = fact else {
+                    continue;
+                };
+                if *pointer == cur {
+                    queue.push(source.clone());
+                }
+            }
+            for fact in &self.forward.facts {
+                let StateFact::Cast { target, source, .. } = fact else {
+                    continue;
+                };
+                if *target == cur {
+                    if let AbstractValue::Place(p) = source {
+                        queue.push(p.clone());
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Return true when an owning wrapper sharing the allocation's provenance
+    /// root is dropped on the executed path *before* the checkpoint.  This
+    /// consults the full MIR body, because the backward slicer may prune the
+    /// drop (it does not define the checked pointer) even though it frees the
+    /// underlying memory.
+    fn allocation_dropped_on_path(&self, object: &PlaceKey, alloc_place: &PlaceKey) -> bool {
+        use crate::verify::path_extractor::PathStep;
+        use rustc_middle::mir::TerminatorKind;
+
+        let caller = self.checkpoint.caller;
+        let body = self.tcx.optimized_mir(caller);
+        let checkpoint_block = self.forward.checkpoint.block;
+        let Some(obj_local) = object.local().or_else(|| alloc_place.local()) else {
+            return false;
+        };
+        let parents = body_value_parents(self.tcx, caller);
+        let obj_root = follow_value_parents(&parents, obj_local);
+
+        for step in &self.forward.path.steps {
+            let PathStep::Block(bb) = step else {
+                break;
+            };
+            if *bb == checkpoint_block {
+                break;
+            }
+            let Some(data) = body.basic_blocks.get(*bb) else {
+                continue;
+            };
+            let Some(terminator) = &data.terminator else {
+                continue;
+            };
+            let dropped_local = match &terminator.kind {
+                TerminatorKind::Drop { place, .. } => Some(place.local),
+                TerminatorKind::Call { func, args, .. } => {
+                    let name = crate::verify::call_summary::call_name(self.tcx, func);
+                    if name.ends_with("mem::drop")
+                        || name == "std::mem::drop"
+                        || name.contains("drop_in_place")
+                    {
+                        args.first().and_then(|arg| match &arg.node {
+                            Operand::Copy(place) | Operand::Move(place) => Some(place.local),
+                            _ => None,
+                        })
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+            let Some(dropped_local) = dropped_local else {
+                continue;
+            };
+            let dropped_ty = body.local_decls[dropped_local].ty;
+            if !is_owning_wrapper_ty(&format!("{dropped_ty:?}")) {
+                continue;
+            }
+            if follow_value_parents(&parents, dropped_local) == obj_root {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Return true when the place's local is the destination of a
+    /// pointer-arithmetic primitive call on this path.
+    fn place_defined_by_pointer_arith(&self, place: &PlaceKey) -> bool {
+        let Some(local) = place.local() else {
+            return false;
+        };
+        self.forward.facts.iter().any(|fact| {
+            let StateFact::Call(call) = fact else {
+                return false;
+            };
+            call.destination == local
+                && crate::verify::primitive::PrimitiveCall::classify(&call.func)
+                    .is_some_and(|p| p.is_pointer_arithmetic())
+        })
+    }
+
+    /// Return true when an owning wrapper (Box/Vec/CString/...) that carries
+    /// this allocation object was dropped earlier on the path, freeing the
+    /// underlying memory even though the object local itself stays in scope.
+    fn allocation_freed_by_owner_drop(&self, object: &PlaceKey) -> bool {
+        self.forward.facts.iter().any(|fact| {
+            let dropped = match fact {
+                StateFact::Drop(place) => place.clone(),
+                StateFact::Call(call)
+                    if call.func.ends_with("mem::drop")
+                        || call.func.ends_with("::drop")
+                        || call.func.contains("drop_in_place") =>
+                {
+                    let Some(root) = call.args.first().and_then(|value| {
+                        let mut inner = value;
+                        loop {
+                            match inner {
+                                AbstractValue::Place(p)
+                                | AbstractValue::Ref(p)
+                                | AbstractValue::RawPtr(p) => break Some(p.clone()),
+                                AbstractValue::Cast(v, _) => inner = v.as_ref(),
+                                _ => break None,
+                            }
+                        }
+                    }) else {
+                        return false;
+                    };
+                    root
+                }
+                _ => return false,
+            };
+            let mut roots = vec![dropped.clone()];
+            let mut cursor = dropped.clone();
+            for _ in 0..8 {
+                if !cursor.fields.is_empty() {
+                    break;
+                }
+                let Some(local) = cursor.local() else {
+                    break;
+                };
+                let Some(value) = self.forward.values.get(&local) else {
+                    break;
+                };
+                let mut inner = value;
+                let next = loop {
+                    match inner {
+                        AbstractValue::Place(p)
+                        | AbstractValue::Ref(p)
+                        | AbstractValue::RawPtr(p) => break Some(p.clone()),
+                        AbstractValue::Cast(v, _) => inner = v.as_ref(),
+                        _ => break None,
+                    }
+                };
+                let Some(next) = next else {
+                    break;
+                };
+                if roots.contains(&next) {
+                    break;
+                }
+                roots.push(next.clone());
+                cursor = next;
+            }
+
+            roots.iter().any(|dropped_root| {
+                if dropped_root.overlaps(object) || object.overlaps(dropped_root) {
+                    return true;
+                }
+                self.forward.facts.iter().any(|owner| {
+                    matches!(owner, StateFact::KnownAllocated { place, object: owner_object, ty_name, .. }
+                        if owner_object == object
+                            && (place.overlaps(dropped_root) || dropped_root.overlaps(place))
+                            && is_owning_wrapper_ty(ty_name))
+                })
+            })
         })
     }
 
@@ -7594,6 +7904,85 @@ fn array_elem_type(ty_name: &str) -> Option<String> {
         }
     }
     None
+}
+/// Owning wrapper types whose drop frees the carried allocation.
+fn is_owning_wrapper_ty(ty_name: &str) -> bool {
+    ty_name.contains("Box<")
+        || ty_name.contains("Vec<")
+        || ty_name.contains("String")
+        || ty_name.contains("CString")
+}
+
+/// Build a body-wide value-provenance map: each local points to the local it
+/// was derived from via copies, casts, refs, or pointer/ownership-transfer
+/// calls (`into_raw`, `from_raw`, `as_ptr`, ...).
+fn body_value_parents<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def_id: rustc_hir::def_id::DefId,
+) -> crate::compat::FxHashMap<Local, Local> {
+    use rustc_middle::mir::TerminatorKind;
+
+    let mut parents: crate::compat::FxHashMap<Local, Local> = Default::default();
+    let body = tcx.optimized_mir(def_id);
+    for data in body.basic_blocks.iter() {
+        for statement in &data.statements {
+            let StatementKind::Assign(assign) = &statement.kind else {
+                continue;
+            };
+            let (target, rvalue) = assign.as_ref();
+            let source = match rvalue {
+                Rvalue::Use(Operand::Copy(place) | Operand::Move(place), ..)
+                | Rvalue::Cast(_, Operand::Copy(place) | Operand::Move(place), _)
+                | Rvalue::Ref(_, _, place)
+                | Rvalue::RawPtr(_, place)
+                | Rvalue::CopyForDeref(place) => Some(place.local),
+                _ => None,
+            };
+            if let Some(source) = source {
+                parents.entry(target.local).or_insert(source);
+            }
+        }
+        let Some(terminator) = &data.terminator else {
+            continue;
+        };
+        let TerminatorKind::Call {
+            func,
+            args,
+            destination,
+            ..
+        } = &terminator.kind
+        else {
+            continue;
+        };
+        let name = crate::verify::call_summary::call_name(tcx, func);
+        let transfers = name.contains("into_raw")
+            || crate::verify::call_summary::is_ownership_reconstruction(&name)
+            || PrimitiveCall::classify(&name).is_some_and(|p| p.is_as_ptr_like());
+        if !transfers {
+            continue;
+        }
+        let Some(source) = args.first().and_then(|arg| match &arg.node {
+            Operand::Copy(place) | Operand::Move(place) => Some(place.local),
+            _ => None,
+        }) else {
+            continue;
+        };
+        parents.entry(destination.local).or_insert(source);
+    }
+    parents
+}
+
+/// Follow the provenance map to the root local (with a cycle guard).
+fn follow_value_parents(parents: &crate::compat::FxHashMap<Local, Local>, start: Local) -> Local {
+    let mut current = start;
+    let mut seen = std::collections::HashSet::new();
+    while seen.insert(current) {
+        let Some(next) = parents.get(&current) else {
+            break;
+        };
+        current = *next;
+    }
+    current
 }
 
 fn allocation_object_invalidated<'tcx>(

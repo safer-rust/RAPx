@@ -365,10 +365,7 @@ impl<'tcx> ForwardVerifier<'tcx> {
                     reason: "Box allocation is always non-null".to_string(),
                 });
                 if let Some((ty_name, elements)) =
-                    self.allocated_element_summary(
-                        result.checkpoint.caller,
-                        Some(place.local),
-                    )
+                    self.allocated_element_summary(result.checkpoint.caller, Some(place.local))
                 {
                     result.facts.push(StateFact::KnownAllocated {
                         place: target.clone(),
@@ -517,8 +514,7 @@ impl<'tcx> ForwardVerifier<'tcx> {
                         reason: "cast preserves non-nullness".to_string(),
                     });
                 }
-                if let Some((ty_name, elements, object)) =
-                    known_allocated_for(&source_val, result)
+                if let Some((ty_name, elements, object)) = known_allocated_for(&source_val, result)
                 {
                     result.facts.push(StateFact::KnownAllocated {
                         place: target.clone(),
@@ -659,8 +655,7 @@ impl<'tcx> ForwardVerifier<'tcx> {
                         reason: "copy preserves non-nullness".to_string(),
                     });
                 }
-                if let Some((ty_name, elements, object)) =
-                    known_allocated_for(&source_val, result)
+                if let Some((ty_name, elements, object)) = known_allocated_for(&source_val, result)
                 {
                     result.facts.push(StateFact::KnownAllocated {
                         place: target.clone(),
@@ -774,6 +769,44 @@ impl<'tcx> ForwardVerifier<'tcx> {
                             place: destination_place.clone(),
                             reason: format!("returned by {}", summary.name),
                         });
+                        // Forward any KnownInit from the source Box's inner
+                        // field so that Typed propagates through into_raw.
+                        if summary.name.contains("::into_raw") {
+                            let mut candidates = copy_chain_places(&source, result);
+                            if !candidates.contains(&source) {
+                                candidates.push(source.clone());
+                            }
+                            let init_forwarded = candidates.iter().any(|candidate| {
+                                let mut inner = candidate.clone();
+                                inner.fields.extend_from_slice(&[0, 0]);
+                                result.facts.iter().any(|fact| {
+                                    let StateFact::KnownInit {
+                                        place: init_place, ..
+                                    } = fact
+                                    else {
+                                        return false;
+                                    };
+                                    *init_place == inner
+                                })
+                            });
+                            if init_forwarded {
+                                let ty_name = self
+                                    .pointee_ty_name(result.checkpoint.caller, &destination_place)
+                                    .or_else(|| {
+                                        self.pointee_ty_name(result.checkpoint.caller, &source)
+                                    });
+                                if let Some(ty_name) = ty_name {
+                                    result.facts.push(StateFact::KnownInit {
+                                        place: destination_place.clone(),
+                                        ty_name,
+                                        elements: 1,
+                                        reason: format!(
+                                            "into_raw preserves initialization from Box"
+                                        ),
+                                    });
+                                }
+                            }
+                        }
                     }
                 }
                 CallEffect::ReturnPointerAdd { base_arg, .. }
@@ -799,6 +832,22 @@ impl<'tcx> ForwardVerifier<'tcx> {
                     place: destination_place.clone(),
                     reason: format!("returned by {}", summary.name),
                 }),
+                CallEffect::OwnsInitMemory { arg } => {
+                    if let Some(source) = args.get(*arg).and_then(|arg| operand_place(&arg.node)) {
+                        if let Some(init_ty_name) =
+                            self.pointee_ty_name(result.checkpoint.caller, &source)
+                        {
+                            let mut inner = destination_place.clone();
+                            inner.fields.extend_from_slice(&[0, 0]);
+                            result.facts.push(StateFact::KnownInit {
+                                place: inner,
+                                ty_name: init_ty_name,
+                                elements: 1,
+                                reason: format!("Box owns initialized memory by {}", summary.name),
+                            });
+                        }
+                    }
+                }
                 CallEffect::ReturnAligned { align, ty_name } => {
                     result.facts.push(StateFact::KnownAligned {
                         place: destination_place.clone(),
@@ -844,6 +893,7 @@ impl<'tcx> ForwardVerifier<'tcx> {
                     }
                 }
                 CallEffect::ReturnLengthOfArg { .. } => {}
+                CallEffect::ReturnIsEmptyOfArg { .. } => {}
                 CallEffect::ReturnTupleFieldLength { .. } => {}
                 // Consumed by the InBound / NonOverlap checkers, which read the
                 // effect off the retained `StateFact::Call`.
@@ -864,8 +914,7 @@ impl<'tcx> ForwardVerifier<'tcx> {
         // can also propagate the non-null fact.
         if let Some(destination) = summary.destination {
             let prim = PrimitiveCall::classify(&summary.name);
-            if prim == Some(PrimitiveCall::AsPtrRange)
-                || prim == Some(PrimitiveCall::AsMutPtrRange)
+            if prim == Some(PrimitiveCall::AsPtrRange) || prim == Some(PrimitiveCall::AsMutPtrRange)
             {
                 for field in 0..2 {
                     let mut field_place = PlaceKey {
@@ -891,9 +940,7 @@ impl<'tcx> ForwardVerifier<'tcx> {
                 || summary.name.ends_with("::as_ref")
                 || summary.name.ends_with("::as_mut"))
         {
-            if let Some(receiver) =
-                args.first().and_then(|arg| operand_place(&arg.node))
-            {
+            if let Some(receiver) = args.first().and_then(|arg| operand_place(&arg.node)) {
                 result.facts.push(StateFact::KnownNonZero {
                     place: receiver,
                     reason: "NonNull is always non-null by construction".to_string(),
@@ -1879,10 +1926,7 @@ fn maybe_uninit_inner_ty_name(ty_name: &str) -> Option<String> {
     None
 }
 
-fn known_nonzero_of<'tcx>(
-    value: &AbstractValue<'tcx>,
-    result: &ForwardVisitResult<'tcx>,
-) -> bool {
+fn known_nonzero_of<'tcx>(value: &AbstractValue<'tcx>, result: &ForwardVisitResult<'tcx>) -> bool {
     let mut cur = value.clone();
     let mut seen = HashSet::new();
     loop {

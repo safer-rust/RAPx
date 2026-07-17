@@ -73,7 +73,15 @@ pub(crate) fn check<'tcx>(
     };
 
     let obligation = SmtObligation::NonZero { place: target };
-    checker.prove_obligation(checkpoint, forward, obligation)
+    let result = checker.prove_obligation(checkpoint, forward, obligation);
+    if result.result == crate::verify::report::CheckResult::Unknown {
+        if let Some(reason) =
+            super::provenance::pedigree_proof(checker, checkpoint, property, forward, false)
+        {
+            return SmtCheckResult::proved(format!("NonNull proved: {reason}"));
+        }
+    }
+    result
 }
 
 /// Check `NonNull` at a return checkpoint for struct invariant verification.

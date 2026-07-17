@@ -55,7 +55,13 @@ pub(crate) fn check<'tcx>(
                     )],
                 },
                 CheckResult::Unknown => {
-                    SmtCheckResult::unknown("ValidPtr unknown: non-ZST Deref is not proved")
+                    if let Some(reason) = super::provenance::pedigree_proof(
+                        checker, checkpoint, property, forward, true,
+                    ) {
+                        SmtCheckResult::proved(format!("ValidPtr proved: {reason}"))
+                    } else {
+                        SmtCheckResult::unknown("ValidPtr unknown: non-ZST Deref is not proved")
+                    }
                 }
             }
             .with_note(format!("primitive Deref via SMT: {:?}", deref.result))

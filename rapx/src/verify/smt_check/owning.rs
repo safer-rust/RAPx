@@ -17,7 +17,7 @@ use std::collections::HashSet;
 
 use rustc_middle::mir::Local;
 
-use super::common::{place_label, SmtCheckResult, SmtChecker};
+use super::common::{SmtCheckResult, SmtChecker, place_label};
 use crate::verify::{
     contract::Property,
     helpers::Checkpoint,
@@ -74,7 +74,10 @@ pub(crate) fn check<'tcx>(
 
 fn is_ownership_source(reason: &str) -> bool {
     let lower = reason.to_lowercase();
-    lower.contains("box") || lower.contains("ownership") || lower.contains("alloc::")
+    lower.contains("box")
+        || lower.contains("ownership")
+        || lower.contains("alloc::")
+        || lower.contains("into_raw")
 }
 
 fn places_refer_to_same(
@@ -105,9 +108,9 @@ fn resolve_root_local(
         };
         let value = forward.values.get(&local)?;
         let next = match value {
-            AbstractValue::Place(next)
-            | AbstractValue::Ref(next)
-            | AbstractValue::RawPtr(next) => next.clone(),
+            AbstractValue::Place(next) | AbstractValue::Ref(next) | AbstractValue::RawPtr(next) => {
+                next.clone()
+            }
             AbstractValue::Cast(inner, _) => match inner.as_ref() {
                 AbstractValue::Place(next)
                 | AbstractValue::Ref(next)

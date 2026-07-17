@@ -46,10 +46,10 @@ enum AliasProducer {
 }
 
 #[derive(Clone, Debug)]
-struct SelfFieldOrigin {
-    struct_def_id: DefId,
-    field_index: usize,
-    field_name: String,
+pub(super) struct SelfFieldOrigin {
+    pub(super) struct_def_id: DefId,
+    pub(super) field_index: usize,
+    pub(super) field_name: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -133,16 +133,6 @@ pub fn check<'tcx>(
         );
     };
 
-    if origin.base == PlaceBaseKey::Local(1) && origin.fields.is_empty() {
-        if let PlaceBaseKey::Local(local_index) = origin.base {
-            if let Some(result) =
-                alias_proved_for_param_local(checker.tcx, checkpoint.caller, local_index, kind)
-            {
-                return result;
-            }
-        }
-    }
-
     if let Some(reason) = local_hazard_violation(
         checker.tcx,
         checkpoint.caller,
@@ -181,11 +171,242 @@ pub fn check<'tcx>(
         }
     }
 
+    if let Some(result) =
+        private_fn_callsite_delegation(checker.tcx, checkpoint.caller, &origin, kind)
+    {
+        return result;
+    }
+
     let err_msg = format!(
         "returned view escapes while the original pointer is not owned by a private self field [origin={:?}]",
         origin
     );
     failed_smt(err_msg)
+}
+
+/// When the view producer lives in a crate-private helper whose pointer origin
+/// is a parameter, the alias obligation is discharged at each in-crate call
+/// site instead: the helper itself has no local conflicting access, so the
+/// hazard (if any) must appear in the caller that owns both the pointer and
+/// the returned view.
+fn private_fn_callsite_delegation<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    caller: DefId,
+    origin: &PlaceKey,
+    kind: HazardKind,
+) -> Option<SmtCheckResult> {
+    let param_index = param_index_of_origin(tcx, caller, origin)?;
+    if is_externally_reachable(tcx, caller) {
+        return None;
+    }
+
+    for site in local_callsites(tcx, caller) {
+        let mut origins = callsite_arg_origins(tcx, site.caller, &site.args, param_index);
+        if origins.is_empty() {
+            continue;
+        }
+        let extra = as_ptr_provenance_origins(tcx, site.caller, &origins);
+        for place in extra {
+            if !origins.contains(&place) {
+                origins.push(place);
+            }
+        }
+        if let Some(reason) = local_hazard_violation_with(
+            tcx,
+            site.caller,
+            site.block,
+            site.destination,
+            &origins,
+            kind,
+            true,
+        ) {
+            return Some(failed_smt(format!(
+                "call site `{}` conflicts with the returned view: {reason}",
+                tcx.def_path_str(site.caller)
+            )));
+        }
+    }
+
+    Some(SmtCheckResult::proved(
+        "crate-private helper: every in-crate call site keeps the original pointer unused while the view is live",
+    ))
+}
+
+/// Returns the parameter index (0-based) when the resolved origin is a raw
+/// pointer parameter of `caller`.
+pub(super) fn param_index_of_origin<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    caller: DefId,
+    origin: &PlaceKey,
+) -> Option<usize> {
+    let PlaceBaseKey::Local(local) = origin.base else {
+        return None;
+    };
+    if !origin.fields.is_empty() {
+        return None;
+    }
+    let body = tcx.optimized_mir(caller);
+    if local == 0 || local > body.arg_count {
+        return None;
+    }
+    let ty = body.local_decls[Local::from_usize(local)].ty;
+    is_raw_pointer_ty(ty).then_some(local - 1)
+}
+
+/// Returns true when the function may be called from outside this crate.
+pub(super) fn is_externally_reachable<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> bool {
+    let Some(local) = def_id.as_local() else {
+        return true;
+    };
+    tcx.effective_visibilities(()).is_reachable(local)
+}
+
+pub(super) struct LocalCallsite<'tcx> {
+    pub(super) caller: DefId,
+    pub(super) block: BasicBlock,
+    pub(super) args: Vec<Operand<'tcx>>,
+    pub(super) destination: Option<Local>,
+}
+
+/// Finds all MIR call sites of `callee` inside the current crate.
+pub(super) fn local_callsites<'tcx>(tcx: TyCtxt<'tcx>, callee: DefId) -> Vec<LocalCallsite<'tcx>> {
+    let mut sites = Vec::new();
+    for def_id in tcx.mir_keys(()) {
+        let def_id = def_id.to_def_id();
+        if def_id == callee {
+            continue;
+        }
+        if !matches!(tcx.def_kind(def_id), DefKind::Fn | DefKind::AssocFn) {
+            continue;
+        }
+        if !tcx.is_mir_available(def_id) {
+            continue;
+        }
+        let body = tcx.optimized_mir(def_id);
+        for (block, data) in body.basic_blocks.iter_enumerated() {
+            let Some(terminator) = &data.terminator else {
+                continue;
+            };
+            let TerminatorKind::Call {
+                func,
+                args,
+                destination,
+                ..
+            } = &terminator.kind
+            else {
+                continue;
+            };
+            let Some(target) = call_target_def_id(func) else {
+                continue;
+            };
+            if target != callee {
+                continue;
+            }
+            sites.push(LocalCallsite {
+                caller: def_id,
+                block,
+                args: args.iter().map(|arg| arg.node.clone()).collect(),
+                destination: Some(destination.local),
+            });
+        }
+    }
+    sites
+}
+
+fn call_target_def_id<'tcx>(func: &Operand<'tcx>) -> Option<DefId> {
+    let Operand::Constant(constant) = func else {
+        return None;
+    };
+    match constant.const_.ty().kind() {
+        TyKind::FnDef(def_id, _) => Some(*def_id),
+        _ => None,
+    }
+}
+
+/// Resolves the actual argument passed for `param_index` at a call site.
+pub(super) fn callsite_arg_origins<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    caller: DefId,
+    args: &[Operand<'tcx>],
+    param_index: usize,
+) -> Vec<PlaceKey> {
+    let Some(arg) = args.get(param_index) else {
+        return Vec::new();
+    };
+    let Some(place) = (match arg {
+        Operand::Copy(place) | Operand::Move(place) => Some(PlaceKey::from_mir_place(place)),
+        Operand::Constant(_) => None,
+        #[cfg(rapx_rustc_ge_196)]
+        Operand::RuntimeChecks(_) => None,
+    }) else {
+        return Vec::new();
+    };
+    let aliases = collect_place_aliases(tcx, caller);
+    let mut origins = vec![place.clone()];
+    if let Some(local) = place.local() {
+        if let Some(alias) = aliases.get(&local) {
+            if !origins.contains(alias) {
+                origins.push(alias.clone());
+            }
+        }
+    }
+    origins
+}
+
+/// Adds the receiver of `as_ptr`/`as_mut_ptr` calls that produced any of the
+/// current origin locals, so writes through the original owner are also seen.
+pub(super) fn as_ptr_provenance_origins<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    caller: DefId,
+    origins: &[PlaceKey],
+) -> Vec<PlaceKey> {
+    let body = tcx.optimized_mir(caller);
+    let aliases = collect_place_aliases(tcx, caller);
+    let mut extra = Vec::new();
+    for block in body.basic_blocks.iter() {
+        let Some(terminator) = &block.terminator else {
+            continue;
+        };
+        let TerminatorKind::Call {
+            func,
+            args,
+            destination,
+            ..
+        } = &terminator.kind
+        else {
+            continue;
+        };
+        let name = crate::verify::call_summary::call_name(tcx, func);
+        if !PrimitiveCall::classify(&name).is_some_and(|primitive| primitive.is_as_ptr_like()) {
+            continue;
+        }
+        let destination_key = PlaceKey {
+            base: PlaceBaseKey::Local(destination.local.as_usize()),
+            fields: Vec::new(),
+        };
+        if !origins
+            .iter()
+            .any(|origin| destination_key.overlaps(origin))
+        {
+            continue;
+        }
+        let Some(receiver) = args.first() else {
+            continue;
+        };
+        let Some(place) = (match &receiver.node {
+            Operand::Copy(place) | Operand::Move(place) => Some(place),
+            Operand::Constant(_) => None,
+            #[cfg(rapx_rustc_ge_196)]
+            Operand::RuntimeChecks(_) => None,
+        }) else {
+            continue;
+        };
+        let resolved = resolve_mir_place(tcx, caller, place, &aliases);
+        if !extra.contains(&resolved) {
+            extra.push(resolved);
+        }
+    }
+    extra
 }
 
 fn alias_producer(name: &str) -> Option<AliasProducer> {
@@ -222,7 +443,7 @@ fn is_vec_ownership_transfer_api(name: &str) -> bool {
         && (name.contains("Vec") || name.contains("vec::"))
 }
 
-fn resolve_forward_place<'tcx>(
+pub(super) fn resolve_forward_place<'tcx>(
     mut place: PlaceKey,
     forward: &ForwardVisitResult<'tcx>,
 ) -> PlaceKey {
@@ -340,6 +561,18 @@ fn local_hazard_violation<'tcx>(
     origins: &[PlaceKey],
     kind: HazardKind,
 ) -> Option<String> {
+    local_hazard_violation_with(tcx, caller, call_block, destination, origins, kind, false)
+}
+
+fn local_hazard_violation_with<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    caller: DefId,
+    call_block: BasicBlock,
+    destination: Option<Local>,
+    origins: &[PlaceKey],
+    kind: HazardKind,
+    strict_call_escape: bool,
+) -> Option<String> {
     let body = tcx.optimized_mir(caller);
     let mut aliases = collect_place_aliases(tcx, caller);
     let mut origins = origins.to_vec();
@@ -349,7 +582,7 @@ fn local_hazard_violation<'tcx>(
     let vec_owners = vec_owners_for_origins(tcx, caller, &origins, &aliases);
     let reachable = blocks_reachable_after_call(tcx, caller, call_block);
 
-    for (block_index, block) in body.basic_blocks.iter_enumerated() {
+    for (block_index, block) in reverse_postorder_blocks(body) {
         if !reachable.contains(&block_index) {
             continue;
         }
@@ -432,10 +665,46 @@ fn local_hazard_violation<'tcx>(
                     "Vec may reallocate while a raw-derived mutable view is still live".to_string(),
                 );
             }
+            if strict_call_escape
+                && block_index != call_block
+                && !terminator_is_benign_origin_use(tcx, &terminator.kind)
+                && origins.iter().any(|origin| {
+                    terminator_uses_origin(tcx, caller, &terminator.kind, origin, &aliases)
+                })
+                && hazard_used_after_block(tcx, caller, block_index, &hazard_locals)
+            {
+                return Some(format!(
+                    "raw pointer escapes to another call while the {:?} view is live",
+                    kind
+                ));
+            }
         }
     }
 
     None
+}
+
+/// Calls that read pointer metadata without granting memory access.
+fn terminator_is_benign_origin_use<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    terminator: &TerminatorKind<'tcx>,
+) -> bool {
+    let TerminatorKind::Call { func, .. } = terminator else {
+        return true;
+    };
+    let name = crate::verify::call_summary::call_name(tcx, func);
+    PrimitiveCall::classify(&name).is_some_and(|primitive| primitive.is_as_ptr_like())
+        || name.ends_with("::len")
+        || name.ends_with("::is_empty")
+        || name.ends_with("::is_null")
+        || name.ends_with("::addr")
+        || name.ends_with("::cast")
+}
+
+fn reverse_postorder_blocks<'a, 'tcx>(
+    body: &'a rustc_middle::mir::Body<'tcx>,
+) -> impl Iterator<Item = (BasicBlock, &'a rustc_middle::mir::BasicBlockData<'tcx>)> {
+    rustc_middle::mir::traversal::reverse_postorder(body).map(|(block, data)| (block, data))
 }
 
 fn ownership_transfer_violation<'tcx>(
@@ -688,7 +957,7 @@ fn raw_access_conflicts(kind: HazardKind, access: RawAccessKind) -> bool {
     }
 }
 
-fn self_field_origin<'tcx>(
+pub(super) fn self_field_origin<'tcx>(
     tcx: TyCtxt<'tcx>,
     caller: DefId,
     place: &PlaceKey,
@@ -712,7 +981,7 @@ fn self_field_origin<'tcx>(
     })
 }
 
-fn escaped_self_field_violation<'tcx>(
+pub(super) fn escaped_self_field_violation<'tcx>(
     tcx: TyCtxt<'tcx>,
     current: DefId,
     origin: &SelfFieldOrigin,

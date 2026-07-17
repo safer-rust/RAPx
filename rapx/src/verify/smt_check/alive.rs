@@ -13,7 +13,7 @@ use std::collections::HashSet;
 
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
-    mir::{Local, StatementKind},
+    mir::{Local, ProjectionElem, StatementKind},
     ty::{self, TyCtxt},
 };
 
@@ -123,6 +123,8 @@ pub(crate) fn check<'tcx>(
                 &signature,
                 lifetime,
                 pointer_origin_param,
+                target.as_ref(),
+                forward,
             )
         }
         ReturnLifetime::Unknown => {
@@ -218,6 +220,7 @@ fn caller_alive_contract_covers(
 }
 
 /// Checks whether an explicit return lifetime is tied to the pointer source.
+#[allow(clippy::too_many_arguments)]
 fn check_named_return<'tcx>(
     tcx: TyCtxt<'tcx>,
     caller: DefId,
@@ -225,6 +228,8 @@ fn check_named_return<'tcx>(
     signature: &SignatureInfo,
     lifetime: &str,
     pointer_origin_param: Option<usize>,
+    target: Option<&PlaceKey>,
+    forward: &ForwardVisitResult<'tcx>,
 ) -> SmtCheckResult {
     let source_params = params_with_lifetime(tcx, caller, signature, lifetime);
 
@@ -246,6 +251,11 @@ fn check_named_return<'tcx>(
         && !signature.consumes_self
         && source_params.is_empty()
     {
+        if lifetime_declared_on_method(tcx, caller, lifetime) {
+            if let Some(result) = encapsulated_self_field_anchor(tcx, caller, target, forward) {
+                return result;
+            }
+        }
         return failed_smt(format!(
             "Alive failed: returned mutable slice uses lifetime '{lifetime}, but that lifetime is not tied to this &mut self borrow"
         ));
@@ -259,6 +269,15 @@ fn check_named_return<'tcx>(
                 "Alive proved: caller Alive contract covers raw pointer origin for lifetime '{lifetime}"
             ));
         }
+        if lifetime_declared_on_method(tcx, caller, lifetime) {
+            if let Some(result) = encapsulated_self_field_anchor(tcx, caller, target, forward) {
+                return result;
+            }
+            if let Some(result) = private_fn_callsite_anchor(tcx, caller, target, forward, lifetime)
+            {
+                return result;
+            }
+        }
         return failed_smt(format!(
             "Alive failed: returned lifetime '{lifetime} has no proven source parameter"
         ));
@@ -267,6 +286,110 @@ fn check_named_return<'tcx>(
     SmtCheckResult::unknown(format!(
         "Alive could not prove that the pointer is produced from lifetime '{lifetime}"
     ))
+}
+
+/// True when the returned lifetime is a generic parameter of the method
+/// itself (a caller-chosen fresh lifetime).  Lifetimes declared on the impl
+/// or struct are tied to borrows stored inside the receiver, so escaping
+/// views must not be anchored through encapsulation reasoning.
+fn lifetime_declared_on_method(tcx: TyCtxt<'_>, caller: DefId, lifetime: &str) -> bool {
+    let generics = tcx.generics_of(caller);
+    generics.own_params.iter().any(|param| {
+        matches!(param.kind, rustc_middle::ty::GenericParamDefKind::Lifetime)
+            && param.name.as_str().trim_start_matches('\'') == lifetime
+    })
+}
+
+/// Anchors an escaping view whose pointer comes from a private, non-exposed
+/// raw self field: the struct is the only writer, so the view stays tied to
+/// the receiver borrow in every safe usage.
+fn encapsulated_self_field_anchor<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    caller: DefId,
+    target: Option<&PlaceKey>,
+    forward: &ForwardVisitResult<'tcx>,
+) -> Option<SmtCheckResult> {
+    let place = target?;
+    let resolved = super::alias::resolve_forward_place(place.clone(), forward);
+    let origin = super::alias::self_field_origin(tcx, caller, &resolved)?;
+    if super::alias::escaped_self_field_violation(tcx, caller, &origin).is_none() {
+        return Some(SmtCheckResult::proved(format!(
+            "Alive proved: returned view is anchored to encapsulated private raw field `{}`",
+            origin.field_name
+        )));
+    }
+    None
+}
+
+/// Anchors the unbounded return lifetime of a crate-private helper by checking
+/// that every in-crate call site passes a pointer derived from a live
+/// reference or owned aggregate in that caller.
+fn private_fn_callsite_anchor<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    caller: DefId,
+    target: Option<&PlaceKey>,
+    forward: &ForwardVisitResult<'tcx>,
+    lifetime: &str,
+) -> Option<SmtCheckResult> {
+    let place = target?;
+    let resolved = super::alias::resolve_forward_place(place.clone(), forward);
+    let param_index = super::alias::param_index_of_origin(tcx, caller, &resolved)?;
+    if super::alias::is_externally_reachable(tcx, caller) {
+        return None;
+    }
+
+    let sites = super::alias::local_callsites(tcx, caller);
+    for site in &sites {
+        if !callsite_anchors_pointer(tcx, site, param_index) {
+            return Some(failed_smt(format!(
+                "Alive failed: call site `{}` passes a pointer with no live anchor for lifetime '{lifetime}",
+                tcx.def_path_str(site.caller)
+            )));
+        }
+    }
+
+    Some(SmtCheckResult::proved(format!(
+        "Alive proved: crate-private helper; every in-crate call site anchors the pointer to a live source for lifetime '{lifetime}"
+    )))
+}
+
+/// Checks whether the actual pointer argument at a call site derives from a
+/// reference or an owned aggregate that outlives the call.
+fn callsite_anchors_pointer<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    site: &super::alias::LocalCallsite<'tcx>,
+    param_index: usize,
+) -> bool {
+    let mut origins = super::alias::callsite_arg_origins(tcx, site.caller, &site.args, param_index);
+    if origins.is_empty() {
+        return false;
+    }
+    let extra = super::alias::as_ptr_provenance_origins(tcx, site.caller, &origins);
+    for place in extra {
+        if !origins.contains(&place) {
+            origins.push(place);
+        }
+    }
+
+    let body = tcx.optimized_mir(site.caller);
+    origins.iter().any(|place| {
+        let Some(local) = place.local() else {
+            return false;
+        };
+        if local.as_usize() >= body.local_decls.len() {
+            return false;
+        }
+        let ty = body.local_decls[local].ty;
+        match ty.kind() {
+            ty::Ref(..) => true,
+            ty::Adt(adt, _) => {
+                let name = tcx.def_path_str(adt.did());
+                name.contains("Vec") || name.contains("Box") || name.contains("String")
+            }
+            ty::Array(..) | ty::Slice(..) => true,
+            _ => false,
+        }
+    })
 }
 
 /// Classifies the borrowed view returned by the Alive-producing call destination.
@@ -395,7 +518,12 @@ fn destination_flows_to_return<'tcx>(tcx: TyCtxt<'tcx>, caller: DefId, destinati
             if target.local.as_usize() != 0 {
                 continue;
             }
-            if rvalue_source_place(rvalue).is_some_and(|p| p.local == destination) {
+            if rvalue_source_place(rvalue).is_some_and(|p| {
+                p.local == destination
+                    && p.projection
+                        .iter()
+                        .all(|elem| matches!(elem, ProjectionElem::Deref))
+            }) {
                 return true;
             }
         }

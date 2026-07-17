@@ -51,7 +51,7 @@ pub(crate) fn check<'tcx>(
 
     let elem_size = compute_elem_size(checker, checkpoint.caller, required_ty);
 
-    checker.prove_obligation(
+    let result = checker.prove_obligation(
         checkpoint,
         forward,
         SmtObligation::Initialized {
@@ -62,7 +62,15 @@ pub(crate) fn check<'tcx>(
             array_elem_size: array_elem_size(checker, checkpoint.caller, required_ty),
             array_len_term: array_len_term(checker, required_ty),
         },
-    )
+    );
+    if result.result == crate::verify::report::CheckResult::Unknown {
+        if let Some(reason) =
+            super::provenance::pedigree_proof(checker, checkpoint, property, forward, true)
+        {
+            return SmtCheckResult::proved(format!("Init proved: {reason}"));
+        }
+    }
+    result
 }
 
 fn compute_elem_size<'tcx>(

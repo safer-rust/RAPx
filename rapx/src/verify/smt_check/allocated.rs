@@ -43,6 +43,10 @@ pub(crate) fn check<'tcx>(
         );
     };
 
+    if let Some(reason) = super::provenance::vec_from_raw_parts_roundtrip(checker, checkpoint) {
+        return SmtCheckResult::proved(format!("Allocated proved: {reason}"));
+    }
+
     checker.prove_obligation(
         checkpoint,
         forward,

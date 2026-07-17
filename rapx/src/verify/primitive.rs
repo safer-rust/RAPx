@@ -23,6 +23,7 @@ pub enum PrimitiveCall {
     PtrRead,
     PtrWrite,
     Len,
+    IsEmpty,
     MaybeUninitUninit,
     AlignOf,
     SizeOf,
@@ -129,6 +130,9 @@ impl PrimitiveCall {
         }
         if name.ends_with("::len") || name.contains("::len") {
             return Some(Self::Len);
+        }
+        if name.ends_with("::is_empty") {
+            return Some(Self::IsEmpty);
         }
         if name.contains("MaybeUninit") && name.ends_with("::uninit") {
             return Some(Self::MaybeUninitUninit);

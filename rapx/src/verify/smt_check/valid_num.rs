@@ -41,6 +41,10 @@ pub(crate) fn check<'tcx>(
         return SmtCheckResult::proved("ValidNum proved: align_of::<T>() >= 1 for every T");
     }
 
+    if let Some(reason) = super::provenance::vec_from_raw_parts_roundtrip(checker, checkpoint) {
+        return SmtCheckResult::proved(format!("ValidNum proved: {reason}"));
+    }
+
     checker.prove_obligation(
         checkpoint,
         forward,
