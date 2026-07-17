@@ -255,6 +255,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
                     &mut items,
                     keep_alloc,
                 );
+                let block_stmt_count = block_data.statements.len();
                 for (si, stmt) in block_data.statements.iter().enumerate().rev() {
                     visitor.visit_statement(
                         block,
@@ -266,6 +267,45 @@ impl<'tcx> BackwardSlicer<'tcx> {
                         &mut items,
                         keep_alloc,
                     );
+                }
+                // For ancestors of the checkpoint block, do a second
+                // pass limited to statements whose defs became relevant
+                // only during pass 1.  This catches the case where a
+                // copy adds a place to relevance, enabling an earlier
+                // definition to match.  Limited to 3 levels above the
+                // checkpoint to avoid spurious matches in deep trees.
+                let dist_to_target = child_path.iter().position(|&b| b == target_block);
+                if block_stmt_count > 0
+                    && dist_to_target.map_or(false, |d| d <= 2)
+                {
+                    let newly_added = std::mem::take(&mut relevant.just_added);
+                    if !newly_added.is_empty() {
+                        for (si, stmt) in block_data.statements.iter().enumerate().rev() {
+                            let defs = match &stmt.kind {
+                                rustc_middle::mir::StatementKind::Assign(assign) => {
+                                    let mut d = crate::verify::def_use::RelevantPlaces::new();
+                                    d.insert_mir_place(&assign.0);
+                                    d
+                                }
+                                _ => continue,
+                            };
+                            let any_new_match = defs.places.iter().any(|dp| {
+                                newly_added.iter().any(|np| dp.local() == np.local())
+                            });
+                            if any_new_match {
+                                visitor.visit_statement(
+                                    block,
+                                    si,
+                                    stmt,
+                                    flow,
+                                    body,
+                                    &mut relevant,
+                                    &mut items,
+                                    keep_alloc,
+                                );
+                            }
+                        }
+                    }
                 }
                 child_path.insert(0, node.block);
                 results.push((child_path, items, relevant));
