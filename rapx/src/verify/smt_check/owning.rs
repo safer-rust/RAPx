@@ -1,10 +1,11 @@
-//! SMT lowering for the `Owning` safety property.
+//! SMT lowering for the `Owning` safety property (psp IV.1 in primitive-sp.md).
 //!
-//! `Owning(p)` means the caller has unique ownership of the memory pointed to
-//! by `p`.  This is required by `Box::from_raw` and similar ownership-transfer
-//! APIs to ensure the pointer was obtained from a known ownership source
-//! (`Box::into_raw`, `Box::leak`, `alloc::alloc`) and no conflicting aliases
-//! remain.
+//! `Owning(p)` means `ownership(*p) = none`: no live owner aliases the
+//! pointee, so the caller may (re)claim unique ownership of the memory
+//! pointed to by `p`.  This is required by `Box::from_raw` and similar
+//! ownership-transfer APIs to ensure the pointer was obtained from a known
+//! ownership source (`Box::into_raw`, `Box::leak`, `alloc::alloc`) whose
+//! owner has been dissolved, with no conflicting aliases remaining.
 //!
 //! The check is performed by examining the forward facts for:
 //! 1. A `KnownAllocated` fact that traces to an ownership-producing operation.

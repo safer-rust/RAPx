@@ -1475,7 +1475,7 @@ fn fmt_contract_expanded(
         }
         PropertyKind::Owning => {
             let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
-            format!("{ptr} has unique ownership, no other write-capable alias")
+            format!("ownership(*{ptr}) = none: no live owner aliases the pointee")
         }
         PropertyKind::ValidSlice => {
             let s = args.first().map(|s| s.as_str()).unwrap_or("slice");

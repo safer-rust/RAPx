@@ -61,6 +61,7 @@ pub(super) fn discharge_from_field_invariant<'tcx>(
 
         if let Some(reason) = field_invariant_matches(
             tcx,
+            caller,
             body,
             &current,
             kind.clone(),
@@ -123,6 +124,7 @@ fn substitute_base<'tcx>(place: &PlaceKey, forward: &ForwardVisitResult<'tcx>) -
 /// of the requested kind.
 fn field_invariant_matches<'tcx>(
     tcx: TyCtxt<'tcx>,
+    caller: DefId,
     body: &rustc_middle::mir::Body<'tcx>,
     place: &PlaceKey,
     kind: PropertyKind,
@@ -150,7 +152,7 @@ fn field_invariant_matches<'tcx>(
     let struct_def_id = adt_def.did();
 
     for invariant in get_struct_invariants_for_adt(tcx, struct_def_id) {
-        if invariant.kind != kind {
+        if !invariant_kind_implies(tcx, caller, &invariant.kind, &kind, required_ty) {
             continue;
         }
         let Some(PropertyArg::Place(contract_place)) = invariant.args.first() else {
@@ -171,6 +173,41 @@ fn field_invariant_matches<'tcx>(
     }
 
     None
+}
+
+/// True when a declared invariant of kind `declared` establishes the checked
+/// kind `required`.
+///
+/// Besides exact matches, two documented implications are used
+/// (primitive-sp.md):
+/// - `Init(p, T, len)` implies `Typed(p, T)` (psp III.4: initialized memory
+///   always satisfies the type invariant, while the converse does not hold).
+/// - For non-ZST `T`, `ValidPtr(p, T, len)` implies
+///   `Deref(p, T, len) = Allocated(p, T, len) && InBound(p, T, len)`
+///   (compound-SP table).  The ZST guard matters because
+///   `ValidPtr = Size(T, 0) || (!Size(T, 0) && Deref)` holds vacuously for
+///   zero-sized pointees without any allocation.
+fn invariant_kind_implies<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    caller: DefId,
+    declared: &PropertyKind,
+    required: &PropertyKind,
+    required_ty: Option<Ty<'tcx>>,
+) -> bool {
+    if declared == required {
+        return true;
+    }
+    if matches!(declared, PropertyKind::Init) && matches!(required, PropertyKind::Typed) {
+        return true;
+    }
+    if matches!(declared, PropertyKind::ValidPtr)
+        && matches!(required, PropertyKind::Allocated | PropertyKind::InBound)
+    {
+        return required_ty.is_some_and(|ty| {
+            super::common::safe_type_layout(tcx, caller, ty).is_some_and(|(_, size)| size > 0)
+        });
+    }
+    false
 }
 
 /// True when a declared invariant's type/count arguments cover the requested

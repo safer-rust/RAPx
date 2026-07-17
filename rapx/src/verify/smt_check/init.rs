@@ -131,7 +131,7 @@ pub(crate) fn check_for_checkpoint<'tcx>(
         return SmtCheckResult::unknown("Init element-count argument could not be lowered to SMT");
     };
 
-    checker.prove_obligation_for_checkpoint(
+    let result = checker.prove_obligation_for_checkpoint(
         caller,
         forward,
         SmtObligation::Initialized {
@@ -142,5 +142,12 @@ pub(crate) fn check_for_checkpoint<'tcx>(
             array_elem_size: array_elem_size(checker, caller, required_ty),
             array_len_term: array_len_term(checker, required_ty),
         },
-    )
+    );
+    if matches!(result.result, crate::verify::report::CheckResult::Proved) {
+        return result;
+    }
+    if let Some(reason) = super::field_invariant::discharge_from_contract_fact(property, forward) {
+        return SmtCheckResult::proved(format!("Init proved: {reason}"));
+    }
+    result
 }

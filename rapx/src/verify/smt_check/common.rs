@@ -85,7 +85,7 @@ fn ty_has_param_const(ty: Ty<'_>) -> bool {
     false
 }
 
-fn safe_type_layout<'tcx>(
+pub(super) fn safe_type_layout<'tcx>(
     tcx: TyCtxt<'tcx>,
     caller: rustc_hir::def_id::DefId,
     ty: Ty<'tcx>,

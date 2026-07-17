@@ -245,6 +245,8 @@ pub enum PropertyKind {
     Init,
     Unwrap,
     Typed,
+    /// `ownership(*p) = none` — no live owner aliases the pointee, so the
+    /// callee may (re)claim ownership (psp IV.1 in primitive-sp.md).
     Owning,
     Alias,
     Alive,
