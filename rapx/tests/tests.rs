@@ -1328,11 +1328,12 @@ fn linked_list_nonnull() {
 #[test]
 fn linked_list_rawptr() {
     let output = run_with_args("verify_cases/linked_list_rawptr", VERIFY_CMD);
-    // from_vec: linked list with *mut Node, invariants directly on raw pointers
+    // from_vec: linked list with *mut Node, invariants guarded by
+    // any(Null(p), ...) so they hold vacuously for empty/terminal pointers
     assert_contain(&output, "function: LinkedList::from_vec");
-    // struct invariants present, NonNull and Align checked
+    // struct invariants present, ValidPtr and Align checked
     assert_contain(&output, "struct invariants");
-    assert_contain(&output, "NonNull");
+    assert_contain(&output, "ValidPtr");
     assert_contain(&output, "Align");
     // drop: raw-ptr deref and Box::from_raw discharged via struct field invariants
     assert_contain(&output, "function: <LinkedList as std::ops::Drop>::drop");

@@ -563,6 +563,118 @@ impl<'tcx> Property<'tcx> {
         }
     }
 
+    /// Parse one annotation entry into the properties it denotes.
+    ///
+    /// Plain entries (`Align(p, T)`, `Owning(p)`, ...) yield one property.
+    /// The `any(...)` combinator may expand to several: see [`Self::parse_any`].
+    pub fn parse_list(tcx: TyCtxt<'tcx>, def_id: DefId, name: &str, exprs: &[Expr]) -> Vec<Self> {
+        if name == "any" {
+            return Self::parse_any(tcx, def_id, exprs);
+        }
+        vec![Self::new(tcx, def_id, name, exprs)]
+    }
+
+    /// Parse the disjunctive combinator `any(D1, D2)` written in DNF:
+    /// `any` means logical OR between disjuncts, and commas inside a
+    /// parenthesised disjunct mean logical AND:
+    ///
+    /// ```text
+    /// any((Null(p)), (P1(p, ...), P2(p, ...), ...))
+    /// ```
+    ///
+    /// A disjunct is either a single property application `P(...)` or a
+    /// parenthesised conjunction `(P1(...), ..., Pn(...))`.  The shape the
+    /// verifier currently supports is a null guard: exactly two disjuncts,
+    /// one being `Null(p)` alone, the other a conjunction of properties over
+    /// the same place `p`.  The disjunction expands to the conjunct
+    /// properties, each holding whenever `p` is non-null and vacuously for a
+    /// null `p` (e.g. an empty list's `head` or the last node's `next`) —
+    /// the raw-pointer counterpart of `Option` invariants written through
+    /// `unwrap_some()`.  Use sites are expected to be dominated by their own
+    /// null checks.
+    fn parse_any(tcx: TyCtxt<'tcx>, def_id: DefId, exprs: &[Expr]) -> Vec<Self> {
+        if !Self::check_arg_length(exprs.len(), 2, "any") {
+            return vec![Self::new_simple(PropertyKind::Unknown)];
+        }
+
+        let (Some(first), Some(second)) = (
+            Self::disjunct_parts(&exprs[0]),
+            Self::disjunct_parts(&exprs[1]),
+        ) else {
+            rap_error!("any(...) disjuncts must be property applications or (P1, P2, ...) groups");
+            return vec![Self::new_simple(PropertyKind::Unknown)];
+        };
+
+        let is_null_guard =
+            |disjunct: &[(String, Vec<Expr>)]| disjunct.len() == 1 && disjunct[0].0 == "Null";
+        let (guard, conjuncts) = if is_null_guard(&first) && !is_null_guard(&second) {
+            (first, second)
+        } else if is_null_guard(&second) && !is_null_guard(&first) {
+            (second, first)
+        } else {
+            rap_error!(
+                "any(...) currently supports exactly one Null(p) disjunct next to \
+                 one conjunction of properties over the same place"
+            );
+            return vec![Self::new_simple(PropertyKind::Unknown)];
+        };
+
+        let guard_args = &guard[0].1;
+        if guard_args.len() != 1 {
+            rap_error!("Null(...) guard inside any(...) takes exactly one place");
+            return vec![Self::new_simple(PropertyKind::Unknown)];
+        }
+        let Some(guard_place) = Self::parse_contract_place(tcx, def_id, &guard_args[0]) else {
+            rap_error!("cannot resolve the place guarded by Null(...) inside any(...)");
+            return vec![Self::new_simple(PropertyKind::Unknown)];
+        };
+        let guard_key = crate::verify::def_use::PlaceKey::from_contract_place(&guard_place);
+
+        let mut properties = Vec::new();
+        for (inner_name, inner_args) in &conjuncts {
+            let property = Self::new(tcx, def_id, inner_name, inner_args);
+            let inner_place = property.args.first().and_then(|arg| match arg {
+                PropertyArg::Place(place) => Some(place),
+                PropertyArg::Expr(ContractExpr::Place(place)) => Some(place),
+                _ => None,
+            });
+            let places_match = inner_place.is_some_and(|place| {
+                crate::verify::def_use::PlaceKey::from_contract_place(place) == guard_key
+            });
+            if !places_match {
+                rap_error!(
+                    "any(Null(p), ...) requires every conjunct ({inner_name}) to \
+                     constrain the guarded place"
+                );
+                return vec![Self::new_simple(PropertyKind::Unknown)];
+            }
+            properties.push(property);
+        }
+        properties
+    }
+
+    /// Split one disjunct into its conjunct calls: a `(P1, P2, ...)` tuple, a
+    /// parenthesised single property `(P)`, or a bare property application.
+    fn disjunct_parts(expr: &Expr) -> Option<Vec<(String, Vec<Expr>)>> {
+        match expr {
+            Expr::Tuple(tuple) => tuple.elems.iter().map(Self::call_parts).collect(),
+            Expr::Paren(paren) => Self::call_parts(&paren.expr).map(|parts| vec![parts]),
+            _ => Self::call_parts(expr).map(|parts| vec![parts]),
+        }
+    }
+
+    /// Split a `Name(arg, ...)` call expression into its name and arguments.
+    fn call_parts(expr: &Expr) -> Option<(String, Vec<Expr>)> {
+        let Expr::Call(call) = expr else {
+            return None;
+        };
+        let Expr::Path(path) = call.func.as_ref() else {
+            return None;
+        };
+        let name = path.path.get_ident()?.to_string();
+        Some((name, call.args.iter().cloned().collect()))
+    }
+
     fn new_with_args(kind: PropertyKind, args: Vec<PropertyArg<'tcx>>) -> Self {
         Self {
             kind,
