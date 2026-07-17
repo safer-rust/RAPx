@@ -167,17 +167,7 @@ fn const_value_bytes<'tcx>(tcx: TyCtxt<'tcx>, value: ConstValue, depth: usize) -
         return None;
     }
     match value {
-        #[cfg(not(rapx_rustc_ge_198))]
-        ConstValue::Slice { data, meta } => {
-            let len = usize::try_from(meta).ok()?;
-            let alloc = data.inner();
-            let len = len.min(alloc.len());
-            Some(
-                alloc
-                    .inspect_with_uninit_and_ptr_outside_interpreter(0..len)
-                    .to_vec(),
-            )
-        }
+        ConstValue::Slice { alloc_id, .. } => alloc_id_bytes(tcx, alloc_id, depth),
         ConstValue::Scalar(scalar) => {
             let ptr = scalar.to_pointer(&tcx).discard_err()?;
             let alloc_id = ptr.provenance?.alloc_id();
