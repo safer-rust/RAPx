@@ -566,7 +566,23 @@ impl<'tcx> Property<'tcx> {
             "Pinned" => Self::new_with_target(PropertyKind::Pinned, tcx, def_id, exprs),
             "NonVolatile" => Self::new_with_target(PropertyKind::NonVolatile, tcx, def_id, exprs),
             "Opened" => Self::new_with_target(PropertyKind::Opened, tcx, def_id, exprs),
-            "Trait" => Self::new_with_target(PropertyKind::Trait, tcx, def_id, exprs),
+            "Trait" => {
+                if let [type_expr, ident_expr] = exprs {
+                    let Some(ty) = Self::parse_type(tcx, def_id, type_expr, "Trait") else {
+                        return Self::new_simple(PropertyKind::Unknown);
+                    };
+                    let trait_name = access_ident_recursive(ident_expr)
+                        .map(|(s, _)| s)
+                        .unwrap_or_else(|| "?".to_string());
+                    Self::new_with_args(
+                        PropertyKind::Trait,
+                        vec![PropertyArg::Ty(ty), PropertyArg::Ident(trait_name)],
+                    )
+                } else {
+                    Self::check_arg_length(exprs.len(), 2, "Trait");
+                    Self::new_simple(PropertyKind::Unknown)
+                }
+            }
             "Unreachable" => Self::new_with_target(PropertyKind::Unreachable, tcx, def_id, exprs),
             "ValidPtr" => {
                 if !Self::check_arg_length(exprs.len(), 3, "ValidPtr") {
@@ -1396,10 +1412,6 @@ impl<'tcx> Property<'tcx> {
 }
 
 /// True when `ty` denotes a slice `[T]`, possibly behind references.
-fn ty_is_slice(ty: Ty<'_>) -> bool {
-    matches!(ty.peel_refs().kind(), TyKind::Slice(_))
-}
-
 /// Extract the inner type from an `Expr::Array` (the `[T]` notation in
 /// `TransmuteWithoutAlign([T], [U])`), then resolve it via `parse_type`.
 fn unwrap_array_expr<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, expr: &Expr) -> Option<Ty<'tcx>> {
