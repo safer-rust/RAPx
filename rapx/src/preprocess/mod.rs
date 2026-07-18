@@ -46,11 +46,11 @@ fn stability_attr() -> Attribute {
         delim: Delimiter::Parenthesis,
         tokens: TokenStream::new(tokens),
     };
-    #[cfg(all(rapx_rustc_ge_196, rapx_has_attr_item_kind))]
+    #[cfg(rapx_has_attr_item_kind)]
     {
         attr.item.args = rustc_ast::AttrItemKind::Unparsed(AttrArgs::Delimited(delim_args));
     }
-    #[cfg(not(all(rapx_rustc_ge_196, rapx_has_attr_item_kind)))]
+    #[cfg(not(rapx_has_attr_item_kind))]
     {
         attr.item.args = AttrArgs::Delimited(delim_args);
     }
