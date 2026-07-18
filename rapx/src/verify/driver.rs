@@ -1632,7 +1632,7 @@ fn fmt_place_plain(
                     }
                 }
                 crate::verify::contract::ContractProjection::Downcast { .. } => {
-                    "unwrapped".to_string()
+                    "unwrap_some()".to_string()
                 }
             })
             .collect();
