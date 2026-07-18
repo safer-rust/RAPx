@@ -903,8 +903,21 @@ impl<'tcx> PrepareTargets<'tcx> {
         unsafe_callee_ids.sort_by_key(|def_id| self.tcx.def_path_str(*def_id));
 
         for unsafe_callee_def_id in unsafe_callee_ids {
+            let fn_sig = self.tcx.fn_sig(unsafe_callee_def_id).skip_binder();
             let unsafe_callee_path = self.tcx.def_path_str(unsafe_callee_def_id);
-            rap_info!("      unsafe callee: {}", unsafe_callee_path,);
+            let inputs: Vec<String> = fn_sig
+                .inputs()
+                .skip_binder()
+                .iter()
+                .map(|ty| format!("{}", ty))
+                .collect();
+            let output = format!("{}", fn_sig.output().skip_binder());
+            rap_info!(
+                "      unsafe callee: {}({}) -> {}",
+                unsafe_callee_path,
+                inputs.join(", "),
+                output,
+            );
 
             if let Some(requires) = target.callee_requires.get(&unsafe_callee_def_id) {
                 if requires.is_empty() {
@@ -938,11 +951,10 @@ impl<'tcx> PrepareTargets<'tcx> {
         for group in &groups {
             for checkpoint in &group.checkpoints {
                 rap_info!(
-                    "        #{} {} at bb{} ({} arg(s))",
+                    "        #{} {} at bb{}",
                     display_index,
                     checkpoint.callee_name(self.tcx),
                     checkpoint.block.as_usize(),
-                    checkpoint.args.len()
                 );
                 display_index += 1;
 
