@@ -829,7 +829,14 @@ impl<'tcx> PrepareTargets<'tcx> {
         } else {
             rap_info!("  struct invariants:");
             for property in &struct_target.invariants {
-                rap_info!("    - {:?}, args={:?}", property.kind, property.args);
+                rap_info!(
+                    "    - {}",
+                    property.display_for_report(
+                        self.tcx,
+                        Some(struct_target.def_id),
+                        None,
+                    )
+                );
             }
         }
     }
@@ -845,7 +852,14 @@ impl<'tcx> PrepareTargets<'tcx> {
             for (method_name, contracts) in &trait_target.ensures {
                 rap_info!("    fn {}:", method_name);
                 for property in contracts {
-                    rap_info!("      - {:?}, args={:?}", property.kind, property.args);
+                    rap_info!(
+                        "      - {}",
+                        property.display_for_report(
+                            self.tcx,
+                            trait_target.self_ty_def_id,
+                            None,
+                        )
+                    );
                 }
             }
         }
@@ -900,7 +914,14 @@ impl<'tcx> PrepareTargets<'tcx> {
                 } else {
                     rap_info!("        safety contracts:");
                     for property in requires {
-                        rap_info!("          - {:?}, args={:?}", property.kind, property.args);
+                        rap_info!(
+                            "          - {}",
+                            property.display_for_report(
+                                self.tcx,
+                                target.owner_struct_def_id,
+                                Some(unsafe_callee_def_id),
+                            )
+                        );
                     }
                 }
             }

@@ -1027,7 +1027,14 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                     for (method_name, contracts) in &trait_target.ensures {
                         rap_info!("    fn {}:", method_name);
                         for property in contracts {
-                            rap_info!("      - {:?}, args={:?}", property.kind, property.args);
+                            rap_info!(
+                                "      - {}",
+                                property.display_for_report(
+                                    self.tcx,
+                                    trait_target.self_ty_def_id,
+                                    None,
+                                )
+                            );
                         }
                     }
                 }

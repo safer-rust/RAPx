@@ -31,6 +31,77 @@ pub struct ContractPlace<'tcx> {
 }
 
 impl<'tcx> ContractPlace<'tcx> {
+    pub fn display_user_friendly(
+        &self,
+        tcx: TyCtxt<'tcx>,
+        struct_def_id: Option<DefId>,
+        fn_def_id: Option<DefId>,
+    ) -> String {
+        let base_str = match self.base {
+            PlaceBase::Return => "return".to_string(),
+            PlaceBase::Arg(idx) => format!("arg{}", idx),
+            PlaceBase::Local(n) => {
+                if n == 0 {
+                    "return".to_string()
+                } else if let Some(fn_def_id) = fn_def_id
+                    && tcx.is_mir_available(fn_def_id)
+                {
+                    let body = tcx.optimized_mir(fn_def_id);
+                    if n < body.local_decls.len() {
+                        let local = rustc_middle::mir::Local::from_usize(n);
+                        let span = body.local_decls[local].source_info.span;
+                        if let Ok(snippet) = tcx.sess.source_map().span_to_snippet(span) {
+                            snippet
+                        } else {
+                            format!("arg{}", n)
+                        }
+                    } else {
+                        format!("arg{}", n)
+                    }
+                } else {
+                    format!("arg{}", n)
+                }
+            }
+        };
+
+        let base_str = base_str
+            .strip_prefix("&mut ")
+            .unwrap_or(&base_str)
+            .to_string();
+        let base_str = base_str.strip_prefix("&").unwrap_or(&base_str).to_string();
+
+        if self.projections.is_empty() {
+            return base_str;
+        }
+
+        let mut result = base_str;
+        for projection in &self.projections {
+            match projection {
+                ContractProjection::Field { index, ty: _ } => {
+                    let field_name = if let Some(struct_def_id) = struct_def_id
+                        && let TyKind::Adt(adt_def, _) =
+                            tcx.type_of(struct_def_id).skip_binder().kind()
+                    {
+                        let variant = adt_def.non_enum_variant();
+                        let field_idx = rustc_abi::FieldIdx::from_usize(*index);
+                        if field_idx.as_usize() < variant.fields.len() {
+                            variant.fields[field_idx].name.to_string()
+                        } else {
+                            index.to_string()
+                        }
+                    } else {
+                        index.to_string()
+                    };
+                    result.push_str(&format!(".{}", field_name));
+                }
+                ContractProjection::Downcast { .. } => {
+                    result.push_str(".unwrap_some()");
+                }
+            }
+        }
+        result
+    }
+
     pub fn local(base: usize, fields: Vec<(usize, Ty<'tcx>)>) -> Self {
         Self {
             base: if base == 0 {
@@ -274,6 +345,54 @@ pub enum PropertyArg<'tcx> {
     Expr(ContractExpr<'tcx>),
     Predicates(Vec<NumericPredicate<'tcx>>),
     Ident(String),
+}
+
+fn display_expr_user_friendly<'tcx>(
+    expr: &ContractExpr<'tcx>,
+    tcx: TyCtxt<'tcx>,
+    struct_def_id: Option<DefId>,
+    fn_def_id: Option<DefId>,
+) -> String {
+    match expr {
+        ContractExpr::Const(n) => format!("{n}"),
+        ContractExpr::ConstParam { name, .. } => name.clone(),
+        ContractExpr::Place(p) => p.display_user_friendly(tcx, struct_def_id, fn_def_id),
+        ContractExpr::SizeOf(ty) => format!("size_of({ty})"),
+        ContractExpr::AlignOf(ty) => format!("align_of({ty})"),
+        ContractExpr::Len(e) => {
+            format!("len({})", display_expr_user_friendly(e, tcx, struct_def_id, fn_def_id))
+        }
+        ContractExpr::IndexAccess { slice, index } => {
+            format!(
+                "index_access({}, {})",
+                display_expr_user_friendly(slice, tcx, struct_def_id, fn_def_id),
+                display_expr_user_friendly(index, tcx, struct_def_id, fn_def_id),
+            )
+        }
+        _ => format!("{:?}", expr),
+    }
+}
+
+impl<'tcx> PropertyArg<'tcx> {
+    pub fn display_for_report(
+        &self,
+        tcx: TyCtxt<'tcx>,
+        struct_def_id: Option<DefId>,
+        fn_def_id: Option<DefId>,
+    ) -> String {
+        match self {
+            PropertyArg::Place(place) => {
+                place.display_user_friendly(tcx, struct_def_id, fn_def_id)
+            }
+            PropertyArg::Ty(ty) => format!("{}", ty),
+            PropertyArg::Expr(expr) => display_expr_user_friendly(expr, tcx, struct_def_id, fn_def_id),
+            PropertyArg::Predicates(preds) => {
+                let p: Vec<_> = preds.iter().map(|pred| format!("{:?}", pred)).collect();
+                p.join(" && ")
+            }
+            PropertyArg::Ident(s) => s.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -563,6 +682,25 @@ impl<'tcx> Property<'tcx> {
                 PropertyArg::Expr(len),
             ],
         )
+    }
+
+    pub fn display_for_report(
+        &self,
+        tcx: TyCtxt<'tcx>,
+        struct_def_id: Option<DefId>,
+        fn_def_id: Option<DefId>,
+    ) -> String {
+        let args: Vec<String> = self
+            .args
+            .iter()
+            .map(|arg| arg.display_for_report(tcx, struct_def_id, fn_def_id))
+            .collect();
+        let kind_str = format!("{:?}", self.kind);
+        if args.is_empty() {
+            kind_str
+        } else {
+            format!("{}({})", kind_str, args.join(", "))
+        }
     }
 
     fn new_simple(kind: PropertyKind) -> Self {
