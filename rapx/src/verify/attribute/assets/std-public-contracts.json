@@ -310,7 +310,8 @@
       "tag": "Alias",
       "kind": "hazard",
       "args": [
-        "self"
+        "self",
+        "ret"
       ]
     }
   ],
@@ -411,7 +412,8 @@
       "tag": "Alias",
       "kind": "hazard",
       "args": [
-        "ptr"
+        "ptr",
+        "ret"
       ]
     }
   ],
@@ -787,7 +789,8 @@
       "tag": "Alias",
       "kind": "hazard",
       "args": [
-        "ptr"
+        "ptr",
+        "ret"
       ]
     },
     {
@@ -849,7 +852,8 @@
       "tag": "Alias",
       "kind": "hazard",
       "args": [
-        "src"
+        "src",
+        "dst"
       ]
     },
     {
@@ -885,7 +889,8 @@
       "tag": "Alias",
       "kind": "hazard",
       "args": [
-        "src"
+        "src",
+        "dst"
       ]
     },
     {
@@ -911,13 +916,6 @@
     },
     {
       "tag": "NonVolatile",
-      "args": [
-        "dst"
-      ]
-    },
-    {
-      "tag": "Alias",
-      "kind": "hazard",
       "args": [
         "dst"
       ]
@@ -976,7 +974,8 @@
       "tag": "Alias",
       "kind": "hazard",
       "args": [
-        "src"
+        "src",
+        "dst"
       ]
     },
     {
@@ -1002,13 +1001,6 @@
     },
     {
       "tag": "NonVolatile",
-      "args": [
-        "dst"
-      ]
-    },
-    {
-      "tag": "Alias",
-      "kind": "hazard",
       "args": [
         "dst"
       ]
@@ -1332,7 +1324,8 @@
       "tag": "Alias",
       "kind": "hazard",
       "args": [
-        "self"
+        "self",
+        "dst"
       ]
     },
     {
@@ -1381,7 +1374,8 @@
       "tag": "Alias",
       "kind": "hazard",
       "args": [
-        "self"
+        "self",
+        "dst"
       ]
     }
   ],
@@ -1417,7 +1411,8 @@
       "tag": "Alias",
       "kind": "hazard",
       "args": [
-        "self"
+        "self",
+        "src"
       ]
     }
   ],
@@ -1460,7 +1455,8 @@
       "tag": "Alias",
       "kind": "hazard",
       "args": [
-        "self"
+        "self",
+        "src"
       ]
     }
   ],
@@ -1625,7 +1621,8 @@
       "tag": "Alias",
       "kind": "hazard",
       "args": [
-        "self"
+        "self",
+        "ret"
       ]
     },
     {
@@ -1670,7 +1667,8 @@
       "tag": "Alias",
       "kind": "hazard",
       "args": [
-        "self"
+        "self",
+        "ret"
       ]
     },
     {
@@ -1975,7 +1973,8 @@
       "tag": "Alias",
       "kind": "hazard",
       "args": [
-        "self"
+        "self",
+        "dst"
       ]
     },
     {
@@ -2024,7 +2023,8 @@
       "tag": "Alias",
       "kind": "hazard",
       "args": [
-        "self"
+        "self",
+        "dst"
       ]
     }
   ],
@@ -2054,7 +2054,8 @@
       "tag": "Alias",
       "kind": "hazard",
       "args": [
-        "self"
+        "self",
+        "ret"
       ]
     },
     {
@@ -2390,7 +2391,8 @@
       "tag": "Alias",
       "kind": "hazard",
       "args": [
-        "self"
+        "self",
+        "dst"
       ]
     },
     {
@@ -2439,7 +2441,8 @@
       "tag": "Alias",
       "kind": "hazard",
       "args": [
-        "self"
+        "self",
+        "dst"
       ]
     }
   ],
@@ -2475,7 +2478,8 @@
       "tag": "Alias",
       "kind": "hazard",
       "args": [
-        "self"
+        "self",
+        "src"
       ]
     }
   ],
@@ -2518,7 +2522,8 @@
       "tag": "Alias",
       "kind": "hazard",
       "args": [
-        "self"
+        "self",
+        "src"
       ]
     }
   ],
@@ -2721,7 +2726,8 @@
       "tag": "Alias",
       "kind": "hazard",
       "args": [
-        "self"
+        "self",
+        "ret"
       ]
     },
     {
@@ -2766,7 +2772,8 @@
       "tag": "Alias",
       "kind": "hazard",
       "args": [
-        "self"
+        "self",
+        "ret"
       ]
     },
     {
@@ -3288,7 +3295,8 @@
       "tag": "Alias",
       "kind": "hazard",
       "args": [
-        "data"
+        "data",
+        "ret"
       ]
     },
     {
@@ -3339,7 +3347,8 @@
       "tag": "Alias",
       "kind": "hazard",
       "args": [
-        "data"
+        "data",
+        "ret"
       ]
     },
     {
@@ -3426,7 +3435,8 @@
       "tag": "Alias",
       "kind": "hazard",
       "args": [
-        "range"
+        "range",
+        "ret"
       ]
     },
     {
@@ -3483,7 +3493,8 @@
       "tag": "Alias",
       "kind": "hazard",
       "args": [
-        "range"
+        "range",
+        "ret"
       ]
     },
     {
@@ -3622,7 +3633,8 @@
       "tag": "Alias",
       "kind": "hazard",
       "args": [
-        "ptr"
+        "ptr",
+        "ret"
       ]
     },
     {
@@ -3688,7 +3700,8 @@
       "tag": "Alias",
       "kind": "hazard",
       "args": [
-        "ptr"
+        "ptr",
+        "ret"
       ]
     },
     {
@@ -3840,7 +3853,8 @@
       "tag": "Alias",
       "kind": "hazard",
       "args": [
-        "ptr"
+        "ptr",
+        "ret"
       ]
     }
   ],
@@ -3892,7 +3906,8 @@
       "tag": "Alias",
       "kind": "hazard",
       "args": [
-        "ptr"
+        "ptr",
+        "ret"
       ]
     }
   ],
@@ -3944,7 +3959,8 @@
       "tag": "Alias",
       "kind": "hazard",
       "args": [
-        "ptr"
+        "ptr",
+        "ret"
       ]
     }
   ],
@@ -3996,7 +4012,8 @@
       "tag": "Alias",
       "kind": "hazard",
       "args": [
-        "ptr"
+        "ptr",
+        "ret"
       ]
     }
   ],
@@ -4181,7 +4198,8 @@
       "tag": "Alias",
       "kind": "hazard",
       "args": [
-        "raw"
+        "raw",
+        "ret"
       ]
     }
   ],
@@ -4204,7 +4222,8 @@
       "tag": "Alias",
       "kind": "hazard",
       "args": [
-        "ptr"
+        "ptr",
+        "ret"
       ]
     }
   ],
@@ -4227,7 +4246,8 @@
       "tag": "Alias",
       "kind": "hazard",
       "args": [
-        "raw"
+        "raw",
+        "ret"
       ]
     }
   ],
@@ -4250,7 +4270,8 @@
       "tag": "Alias",
       "kind": "hazard",
       "args": [
-        "raw"
+        "raw",
+        "ret"
       ]
     }
   ],
@@ -4322,7 +4343,8 @@
       "tag": "Alias",
       "kind": "hazard",
       "args": [
-        "ptr"
+        "ptr",
+        "ret"
       ]
     }
   ],
@@ -4521,7 +4543,8 @@
       "tag": "Alias",
       "kind": "hazard",
       "args": [
-        "this"
+        "this",
+        "ret"
       ]
     }
   ],
@@ -4621,7 +4644,8 @@
       "tag": "Alias",
       "kind": "hazard",
       "args": [
-        "this"
+        "this",
+        "ret"
       ]
     }
   ],

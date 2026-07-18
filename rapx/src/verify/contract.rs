@@ -433,7 +433,7 @@ impl<'tcx> Property<'tcx> {
             }
             "Owning" => Self::new_with_target(PropertyKind::Owning, tcx, def_id, exprs),
             "Alias" => {
-                let mut prop = Self::new_with_target(PropertyKind::Alias, tcx, def_id, exprs);
+                let mut prop = Self::new_with_targets(PropertyKind::Alias, tcx, def_id, exprs);
                 prop.contract_kind = ContractKind::Hazard;
                 prop
             }
