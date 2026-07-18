@@ -1080,13 +1080,23 @@ impl<'tcx> VerifyRun<'tcx> {
 
                 for property in &target.caller_requires {
                     if property.kind != PropertyKind::Unknown {
-                        lines.push(fmt_contract_expanded(self.tcx, &local_names, property));
+                    lines.push(fmt_contract_expanded(
+                        self.tcx,
+                        &local_names,
+                        property,
+                        target.owner_struct_def_id,
+                    ));
                         seen_kinds.insert(property.kind.clone());
                     }
                 }
 
                 for property in &target.struct_invariants {
-                    lines.push(fmt_contract_expanded(self.tcx, &local_names, property));
+                    lines.push(fmt_contract_expanded(
+                        self.tcx,
+                        &local_names,
+                        property,
+                        target.owner_struct_def_id,
+                    ));
                 }
 
                 self.append_callee_contracts(
@@ -1125,11 +1135,12 @@ impl<'tcx> VerifyRun<'tcx> {
                             if property.kind != PropertyKind::Unknown
                                 && global_seen.insert(property.kind.clone())
                             {
-                                lines.push(fmt_contract_expanded(
-                                    self.tcx,
-                                    &callee_names,
-                                    property,
-                                ));
+                            lines.push(fmt_contract_expanded(
+                                self.tcx,
+                                &callee_names,
+                                property,
+                                None,
+                            ));
                             }
                         }
                         if !lines.is_empty() {
@@ -1181,7 +1192,12 @@ impl<'tcx> VerifyRun<'tcx> {
                         && !seen_kinds.contains(&property.kind)
                         && callee_seen.insert(property.kind.clone())
                     {
-                        callee_lines.push(fmt_contract_expanded(self.tcx, &callee_names, property));
+                        callee_lines.push(fmt_contract_expanded(
+                            self.tcx,
+                            &callee_names,
+                            property,
+                            None,
+                        ));
                     }
                 }
                 if !callee_lines.is_empty() {
@@ -1302,12 +1318,13 @@ fn fmt_contract_expanded(
     tcx: rustc_middle::ty::TyCtxt<'_>,
     local_names: &[String],
     property: &crate::verify::contract::Property<'_>,
+    struct_def_id: Option<rustc_hir::def_id::DefId>,
 ) -> (String, String) {
     use crate::verify::contract::PropertyKind;
     let args: Vec<String> = property
         .args
         .iter()
-        .map(|a| fmt_arg_plain(tcx, local_names, a))
+        .map(|a| fmt_arg_plain(tcx, local_names, a, struct_def_id))
         .collect();
     let tag = format!("{:?}", property.kind);
     let tag = if property.contract_kind == crate::verify::contract::ContractKind::Hazard {
@@ -1374,7 +1391,7 @@ fn fmt_contract_expanded(
                     format!("0 <= {i} < {s}.len()")
                 }
                 Some(PropertyArg::Place(place)) => {
-                    let ptr = fmt_place_plain(place, local_names);
+                    let ptr = fmt_place_plain(tcx, place, local_names, struct_def_id);
                     let ty = property
                         .args
                         .get(1)
@@ -1386,7 +1403,7 @@ fn fmt_contract_expanded(
                     let cnt = property
                         .args
                         .get(2)
-                        .map(|a| fmt_arg_plain(tcx, local_names, a))
+                        .map(|a| fmt_arg_plain(tcx, local_names, a, struct_def_id))
                         .unwrap_or_else(|| "?".to_string());
                     format!("same_alloc([{ptr}, {ptr} + sizeof({ty})*{cnt}])")
                 }
@@ -1398,7 +1415,7 @@ fn fmt_contract_expanded(
             let ptr = property
                 .args
                 .first()
-                .map(|a| fmt_arg_plain(tcx, local_names, a))
+                .map(|a| fmt_arg_plain(tcx, local_names, a, struct_def_id))
                 .unwrap_or_else(|| "?".to_string());
             let ty = property
                 .args
@@ -1411,7 +1428,7 @@ fn fmt_contract_expanded(
             let cnt = property
                 .args
                 .get(2)
-                .map(|a| fmt_arg_plain(tcx, local_names, a))
+                .map(|a| fmt_arg_plain(tcx, local_names, a, struct_def_id))
                 .unwrap_or_else(|| "?".to_string());
             format!("same_alloc([{ptr}, {ptr} + sizeof({ty})*{cnt}])")
         }
@@ -1546,9 +1563,12 @@ fn fmt_arg_plain(
     tcx: rustc_middle::ty::TyCtxt<'_>,
     local_names: &[String],
     arg: &crate::verify::contract::PropertyArg<'_>,
+    struct_def_id: Option<rustc_hir::def_id::DefId>,
 ) -> String {
     match arg {
-        crate::verify::contract::PropertyArg::Place(place) => fmt_place_plain(place, local_names),
+        crate::verify::contract::PropertyArg::Place(place) => {
+            fmt_place_plain(tcx, place, local_names, struct_def_id)
+        }
         crate::verify::contract::PropertyArg::Ty(ty) => format!("{}", ty),
         crate::verify::contract::PropertyArg::Expr(expr) => fmt_expr_plain(tcx, local_names, expr),
         crate::verify::contract::PropertyArg::Predicates(preds) => {
@@ -1563,8 +1583,10 @@ fn fmt_arg_plain(
 }
 
 fn fmt_place_plain(
+    tcx: rustc_middle::ty::TyCtxt<'_>,
     place: &crate::verify::contract::ContractPlace<'_>,
     local_names: &[String],
+    struct_def_id: Option<rustc_hir::def_id::DefId>,
 ) -> String {
     let has_projections = !place.projections.is_empty();
     let mut base = match place.base {
@@ -1594,7 +1616,20 @@ fn fmt_place_plain(
             .iter()
             .map(|p| match p {
                 crate::verify::contract::ContractProjection::Field { index, .. } => {
-                    index.to_string()
+                    if let Some(struct_def_id) = struct_def_id
+                        && let rustc_middle::ty::TyKind::Adt(adt_def, _) =
+                            tcx.type_of(struct_def_id).skip_binder().kind()
+                    {
+                        let variant = adt_def.non_enum_variant();
+                        let field_idx = rustc_abi::FieldIdx::from_usize(*index);
+                        if field_idx.as_usize() < variant.fields.len() {
+                            variant.fields[field_idx].name.to_string()
+                        } else {
+                            index.to_string()
+                        }
+                    } else {
+                        index.to_string()
+                    }
                 }
                 crate::verify::contract::ContractProjection::Downcast { .. } => {
                     "unwrapped".to_string()
@@ -1616,7 +1651,7 @@ fn fmt_expr_plain(
 ) -> String {
     use crate::verify::contract::ContractExpr;
     match expr {
-        ContractExpr::Place(place) => fmt_place_plain(place, local_names),
+        ContractExpr::Place(place) => fmt_place_plain(tcx, place, local_names, None),
         ContractExpr::Const(c) => format!("{}", c),
         ContractExpr::ConstParam { name, .. } => name.clone(),
         ContractExpr::SizeOf(ty) => format!("size_of::<{}>()", ty),
