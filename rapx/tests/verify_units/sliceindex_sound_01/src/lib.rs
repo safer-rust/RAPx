@@ -2,7 +2,7 @@
 #![register_tool(rapx)]
 #![allow(dead_code)]
 
-#[rapx::requires(InBound(index_access(_slice, _index)), kind = "precond")]
+#[rapx::requires(InBound(_slice, _index), kind = "precond")]
 unsafe fn require_slice_index<T>(_slice: &[T], _index: usize) {}
 
 // SOUND: the scalar slice index is guarded by the matching slice length.

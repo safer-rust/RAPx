@@ -4,7 +4,7 @@
 
 use std::ops::Range;
 
-#[rapx::requires(InBound(index_access(_slice, _range)), kind = "precond")]
+#[rapx::requires(InBound(_slice, _range), kind = "precond")]
 unsafe fn require_slice_range<T>(_slice: &[T], _range: Range<usize>) {}
 
 // SOUND: the half-open range is ordered and its end is inside the slice.

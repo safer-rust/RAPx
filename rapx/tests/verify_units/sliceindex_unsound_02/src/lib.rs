@@ -4,7 +4,7 @@
 
 use std::ops::Range;
 
-#[rapx::requires(InBound(index_access(_slice, _range)), kind = "precond")]
+#[rapx::requires(InBound(_slice, _range), kind = "precond")]
 unsafe fn require_slice_range<T>(_slice: &[T], _range: Range<usize>) {}
 
 // UNSOUND: the start is guarded, but the range end may exceed the slice length.

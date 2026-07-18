@@ -481,14 +481,6 @@ impl<'tcx> Property<'tcx> {
                 }
             },
             "InBound" | "InBounded" => match exprs {
-                [expr] => {
-                    let expr = Self::parse_contract_expr(tcx, def_id, expr, "InBound");
-                    if matches!(expr, ContractExpr::IndexAccess { .. }) {
-                        Self::new_with_args(PropertyKind::InBound, vec![PropertyArg::Expr(expr)])
-                    } else {
-                        Self::new_simple(PropertyKind::Unknown)
-                    }
-                }
                 [_target, ty_expr, len_expr] => {
                     let target = Self::parse_target_arg(tcx, def_id, &exprs[0]);
                     let Some(ty) = Self::parse_type(tcx, def_id, ty_expr, "InBound") else {
@@ -501,21 +493,18 @@ impl<'tcx> Property<'tcx> {
                     )
                 }
                 [target, index_expr] => {
-                    // Slice-index form: `InBound(slice, index)` — auto-expands
-                    // to `InBound(index_access(slice, index))` internally.
-                    if Self::parse_target_type(tcx, def_id, target).is_some_and(ty_is_slice) {
-                        let slice = Self::parse_contract_expr(tcx, def_id, target, "InBound");
-                        let index = Self::parse_contract_expr(tcx, def_id, index_expr, "InBound");
-                        return Self::new_with_args(
-                            PropertyKind::InBound,
-                            vec![PropertyArg::Expr(ContractExpr::IndexAccess {
-                                slice: Box::new(slice),
-                                index: Box::new(index),
-                            })],
-                        );
+                    let slice = Self::parse_contract_expr(tcx, def_id, target, "InBound");
+                    let index = Self::parse_contract_expr(tcx, def_id, index_expr, "InBound");
+                    if matches!(slice, ContractExpr::Unknown) || matches!(index, ContractExpr::Unknown) {
+                        return Self::new_simple(PropertyKind::Unknown);
                     }
-                    rap_error!("InBound with 2 args requires the first argument to be a slice; use InBound(ptr, Ty, count) for pointer arithmetic");
-                    Self::new_simple(PropertyKind::Unknown)
+                    Self::new_with_args(
+                        PropertyKind::InBound,
+                        vec![PropertyArg::Expr(ContractExpr::IndexAccess {
+                            slice: Box::new(slice),
+                            index: Box::new(index),
+                        })],
+                    )
                 }
                 _ => {
                     Self::check_arg_length(exprs.len(), 3, "InBound");

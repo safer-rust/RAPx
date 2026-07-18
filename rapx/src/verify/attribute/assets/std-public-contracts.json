@@ -3112,7 +3112,8 @@
     {
       "tag": "InBound",
       "args": [
-        "index_access(self, index)"
+        "self",
+        "index"
       ]
     }
   ],
@@ -3120,7 +3121,8 @@
     {
       "tag": "InBound",
       "args": [
-        "index_access(arg:1, arg:0)"
+        "arg:1",
+        "arg:0"
       ]
     }
   ],
@@ -3128,7 +3130,8 @@
     {
       "tag": "InBound",
       "args": [
-        "index_access(arg:1, arg:0)"
+        "arg:1",
+        "arg:0"
       ]
     }
   ],
@@ -3136,7 +3139,8 @@
     {
       "tag": "InBound",
       "args": [
-        "index_access(self, index)"
+        "self",
+        "index"
       ]
     }
   ],
@@ -3144,13 +3148,15 @@
     {
       "tag": "InBound",
       "args": [
-        "index_access(self, a)"
+        "self",
+        "a"
       ]
     },
     {
       "tag": "InBound",
       "args": [
-        "index_access(self, b)"
+        "self",
+        "b"
       ]
     }
   ],
@@ -3220,7 +3226,8 @@
     {
       "tag": "InBound",
       "args": [
-        "index_access(self, indices)"
+        "self",
+        "indices"
       ]
     },
     {
