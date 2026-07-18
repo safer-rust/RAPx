@@ -8,12 +8,14 @@ fn main() {
     emit_check_cfg("rapx_rustc_ge_196");
     emit_check_cfg("rapx_rustc_ge_198");
     emit_check_cfg("rapx_rustc_ge_199");
+    emit_check_cfg("rapx_rustc_ge_100");
 
     emit_cfg("rustc_spanned_at_root", minor >= 96);
     emit_cfg("rapx_rustc_ge_193", minor >= 93);
     emit_cfg("rapx_rustc_ge_196", minor >= 96);
     emit_cfg("rapx_rustc_ge_198", minor >= 98);
     emit_cfg("rapx_rustc_ge_199", minor >= 99);
+    emit_cfg("rapx_rustc_ge_100", minor >= 100);
 }
 
 fn emit_check_cfg(name: &str) {
