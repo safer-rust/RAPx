@@ -50,11 +50,7 @@ fn stability_attr() -> Attribute {
     {
         attr.item.args = rustc_ast::AttrItemKind::Unparsed(AttrArgs::Delimited(delim_args));
     }
-    #[cfg(not(rapx_rustc_ge_196))]
-    {
-        attr.item.args = AttrArgs::Delimited(delim_args);
-    }
-    #[cfg(all(rapx_rustc_ge_196, not(rapx_has_attr_item_kind)))]
+    #[cfg(not(all(rapx_rustc_ge_196, rapx_has_attr_item_kind)))]
     {
         attr.item.args = AttrArgs::Delimited(delim_args);
     }

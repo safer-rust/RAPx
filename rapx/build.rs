@@ -8,7 +8,6 @@ fn main() {
     emit_check_cfg("rapx_rustc_ge_196");
     emit_check_cfg("rapx_rustc_ge_198");
     emit_check_cfg("rapx_rustc_ge_199");
-    emit_check_cfg("rapx_rustc_ge_100");
     emit_check_cfg("rapx_has_attr_item_kind");
 
     emit_cfg("rustc_spanned_at_root", minor >= 96);
@@ -16,8 +15,7 @@ fn main() {
     emit_cfg("rapx_rustc_ge_196", minor >= 96);
     emit_cfg("rapx_rustc_ge_198", minor >= 98);
     emit_cfg("rapx_rustc_ge_199", minor >= 99);
-    emit_cfg("rapx_rustc_ge_100", minor >= 100);
-    emit_cfg("rapx_has_attr_item_kind", has_attr_item_kind());
+    emit_cfg("rapx_has_attr_item_kind", rustc_src_contains("pub enum AttrItemKind"));
 }
 
 fn emit_check_cfg(name: &str) {
@@ -49,9 +47,9 @@ fn detect_rustc_version() -> (u32, u32, u32) {
     (major, minor, patch)
 }
 
-/// Check whether `rustc_ast::AttrItemKind` is still available (removed in
-/// a mid-1.99-cycle nightly when `AttrItem::args` reverted to plain `AttrArgs`).
-fn has_attr_item_kind() -> bool {
+/// Check whether the rustc source tree contains a specific string (requires
+/// the `rust-src` component to be installed).
+fn rustc_src_contains(needle: &str) -> bool {
     let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".to_string());
     let sysroot = Command::new(&rustc)
         .arg("--print")
@@ -61,21 +59,8 @@ fn has_attr_item_kind() -> bool {
         .and_then(|o| String::from_utf8(o.stdout).ok())
         .map(|s| s.trim().to_string())
         .unwrap_or_default();
-
-    let src = "#![allow(internal_features)]\n\
-               #![feature(rustc_private)]\n\
-               extern crate rustc_ast;\n\
-               fn main() { let _: rustc_ast::AttrItemKind; }";
-    let out_dir = std::env::var("OUT_DIR").unwrap();
-    let src_path = std::path::Path::new(&out_dir).join("check_attr_item_kind.rs");
-    std::fs::write(&src_path, src).ok();
-    Command::new(&rustc)
-        .args([
-            "--edition", "2021",
-            "--sysroot", &sysroot,
-            src_path.to_str().unwrap_or(""),
-        ])
-        .output()
-        .map(|o| o.status.success())
+    let ast = format!("{}/lib/rustlib/rustc-src/rust/compiler/rustc_ast/src/ast.rs", sysroot);
+    std::fs::read_to_string(ast)
+        .map(|s| s.contains(needle))
         .unwrap_or(false)
 }
