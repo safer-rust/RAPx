@@ -432,7 +432,11 @@ impl<'tcx> Property<'tcx> {
                 Self::new_with_args(PropertyKind::Typed, vec![target, PropertyArg::Ty(ty)])
             }
             "Owning" => Self::new_with_target(PropertyKind::Owning, tcx, def_id, exprs),
-            "Alias" => Self::new_with_target(PropertyKind::Alias, tcx, def_id, exprs),
+            "Alias" => {
+                let mut prop = Self::new_with_target(PropertyKind::Alias, tcx, def_id, exprs);
+                prop.contract_kind = ContractKind::Hazard;
+                prop
+            }
             "Alive" => Self::new_with_targets(PropertyKind::Alive, tcx, def_id, exprs),
             "Pinned" => Self::new_with_target(PropertyKind::Pinned, tcx, def_id, exprs),
             "NonVolatile" => Self::new_with_target(PropertyKind::NonVolatile, tcx, def_id, exprs),

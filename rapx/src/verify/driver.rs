@@ -1742,7 +1742,17 @@ fn emit_verify_summary<'tcx>(
 ) {
     let unproved = all_results
         .iter()
-        .filter(|r| !matches!(r.result, super::report::CheckResult::Proved))
+        .filter(|r| {
+            r.property.contract_kind != crate::verify::contract::ContractKind::Hazard
+                && !matches!(r.result, super::report::CheckResult::Proved)
+        })
+        .count();
+    let hazard_failed = all_results
+        .iter()
+        .filter(|r| {
+            r.property.contract_kind == crate::verify::contract::ContractKind::Hazard
+                && !matches!(r.result, super::report::CheckResult::Proved)
+        })
         .count();
 
     rap_info!("============================================================");
@@ -1799,6 +1809,11 @@ fn emit_verify_summary<'tcx>(
 
     if unproved == 0 {
         rap_info!(green, "  result: SOUND");
+        if hazard_failed > 0 {
+            rap_warn!("  result: HAZARD ({hazard_failed} unproved)");
+        }
+    } else if hazard_failed > 0 {
+        rap_warn!("  result: UNSOUND ({unproved} unproved, {hazard_failed} hazard)");
     } else {
         rap_warn!("  result: UNSOUND ({unproved} unproved)");
     }
@@ -1817,7 +1832,12 @@ fn emit_property_rows(results: &[&PropertyCheckResult<'_>]) {
     for (path_desc, props) in &path_groups {
         rap_info!("        path {path_desc}:");
         for r in props.iter() {
-            let line = format!("          {:?} | {:?}", r.property.kind, r.result);
+            let tag = if r.property.contract_kind == crate::verify::contract::ContractKind::Hazard {
+                format!("[hazard] {:?}", r.property.kind)
+            } else {
+                format!("{:?}", r.property.kind)
+            };
+            let line = format!("          {tag} | {:?}", r.result);
             if matches!(r.result, super::report::CheckResult::Proved) {
                 rap_info!(green, "{line}");
             } else {

@@ -119,14 +119,23 @@ fn assert_not_contain(output: &str, pattern: &str) {
 }
 
 fn assert_unproved_exclusive(output: &str, function: &str, allowed: &[&str]) {
+    assert_unproved_exclusive_with_result(output, function, allowed, "UNSOUND");
+}
+
+/// Like assert_unproved_exclusive but expects a different result string (e.g. "HAZARD").
+fn assert_unproved_exclusive_with_result(output: &str, function: &str, allowed: &[&str], result_pat: &str) {
     assert_contain(output, &format!("function: {function}"));
     let block = extract_block_after(output, &format!("function: {function}"));
 
     // At least the primary (first) property must appear as Failed/Unknown.
+    // Hazard properties are printed with a [hazard] prefix; match either form.
     if let Some(primary) = allowed.first() {
+        let matches_plain = block.contains(&format!("{primary} | Failed"))
+            || block.contains(&format!("{primary} | Unknown"));
+        let matches_hazard = block.contains(&format!("[hazard] {primary} | Failed"))
+            || block.contains(&format!("[hazard] {primary} | Unknown"));
         assert!(
-            block.contains(&format!("{primary} | Failed"))
-                || block.contains(&format!("{primary} | Unknown")),
+            matches_plain || matches_hazard,
             "Expected {primary} | Failed/Unknown for {function}\nBlock:\n{block}"
         );
     }
@@ -136,7 +145,13 @@ fn assert_unproved_exclusive(output: &str, function: &str, allowed: &[&str]) {
     for line in block.lines() {
         for sfx in ["| Failed", "| Unknown"] {
             let Some(idx) = line.find(sfx) else { continue };
-            let prop = line[..idx].trim_end().rsplit(' ').next().unwrap_or("");
+            // Strip [hazard] prefix if present.
+            let prefix = line[..idx].trim_end();
+            let prop = if let Some(stripped) = prefix.strip_prefix("[hazard] ") {
+                stripped.rsplit(' ').next().unwrap_or("")
+            } else {
+                prefix.rsplit(' ').next().unwrap_or("")
+            };
             if !prop.is_empty() && prop != "Unknown" {
                 actual.push(prop);
             }
@@ -149,7 +164,7 @@ fn assert_unproved_exclusive(output: &str, function: &str, allowed: &[&str]) {
         unexpected.is_empty(),
         "Unexpected Failed/Unknown for {function}: {unexpected:?}\nAllowed: {allowed:?}\nBlock:\n{block}"
     );
-    assert_contain(output, "result: UNSOUND");
+    assert_contain(output, &format!("result: {result_pat}"));
 }
 
 fn extract_block_after<'a>(text: &'a str, marker: &str) -> &'a str {
@@ -1753,16 +1768,16 @@ fn alias_sound_verify_cases() {
 #[test]
 fn alias_unsound_verify_cases() {
     let output = run_with_args("verify_units/alias_unsound_01", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "unsound_shared_slice_then_raw_write", &["Alias"]);
+    assert_unproved_exclusive_with_result(&output, "unsound_shared_slice_then_raw_write", &["Alias"], "HAZARD");
 
     let output = run_with_args("verify_units/alias_unsound_02", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "unsound_mut_slice_then_raw_read", &["Alias"]);
+    assert_unproved_exclusive_with_result(&output, "unsound_mut_slice_then_raw_read", &["Alias"], "HAZARD");
 
     let output = run_with_args("verify_units/alias_unsound_03", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "unsound_vec_push_while_raw_slice_live", &["Alias"]);
+    assert_unproved_exclusive_with_result(&output, "unsound_vec_push_while_raw_slice_live", &["Alias"], "HAZARD");
 
     let output = run_with_args("verify_units/alias_unsound_04", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "unsound_box_from_raw_then_raw_write", &["Alias"]);
+    assert_unproved_exclusive_with_result(&output, "unsound_box_from_raw_then_raw_write", &["Alias"], "HAZARD");
 
     let output = run_with_args("verify_units/alias_unsound_05", VERIFY_CMD);
     assert_unproved_exclusive(
@@ -1793,17 +1808,19 @@ fn alias_unsound_verify_cases() {
     );
 
     let output = run_with_args("verify_units/alias_unsound_09", VERIFY_CMD);
-    assert_unproved_exclusive(
+    assert_unproved_exclusive_with_result(
         &output,
         "unsound_cstring_from_raw_then_raw_write",
         &["Alias"],
+        "HAZARD",
     );
 
     let output = run_with_args("verify_units/alias_unsound_10", VERIFY_CMD);
-    assert_unproved_exclusive(
+    assert_unproved_exclusive_with_result(
         &output,
         "unsound_cstr_from_ptr_then_raw_mutation",
         &["Alias"],
+        "HAZARD",
     );
 
     let output = run_with_args("verify_units/alias_unsound_11", VERIFY_CMD);
@@ -1835,17 +1852,19 @@ fn alias_unsound_verify_cases() {
     );
 
     let output = run_with_args("verify_units/alias_unsound_15", VERIFY_CMD);
-    assert_unproved_exclusive(
+    assert_unproved_exclusive_with_result(
         &output,
         "unsound_vec_from_raw_parts_then_raw_write",
         &["Alias"],
+        "HAZARD",
     );
 
     let output = run_with_args("verify_units/alias_unsound_16", VERIFY_CMD);
-    assert_unproved_exclusive(
+    assert_unproved_exclusive_with_result(
         &output,
         "unsound_vec_reserve_while_raw_slice_live",
         &["Alias"],
+        "HAZARD",
     );
 
     let output = run_with_args("verify_units/alias_unsound_17", VERIFY_CMD);
@@ -1856,13 +1875,13 @@ fn alias_unsound_verify_cases() {
     );
 
     let output = run_with_args("verify_units/alias_unsound_18", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "as_bytes_mut_unsound", &["Alias"]);
+    assert_unproved_exclusive_with_result(&output, "as_bytes_mut_unsound", &["Alias"], "HAZARD");
 
     let output = run_with_args("verify_units/alias_unsound_19", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "as_bytes_mut_ptr_missing_alias", &["Alias"]);
+    assert_unproved_exclusive_with_result(&output, "as_bytes_mut_ptr_missing_alias", &["Alias"], "HAZARD");
 
     let output = run_with_args("verify_units/alias_unsound_20", VERIFY_CMD);
-    assert_unproved_exclusive(&output, "as_bytes_mut_ptr_len_missing_alias", &["Alias"]);
+    assert_unproved_exclusive_with_result(&output, "as_bytes_mut_ptr_len_missing_alias", &["Alias"], "HAZARD");
 }
 
 #[test]
