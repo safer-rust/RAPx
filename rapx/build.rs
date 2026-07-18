@@ -9,7 +9,7 @@ fn main() {
     emit_check_cfg("rapx_rustc_ge_198");
     emit_check_cfg("rapx_rustc_ge_199");
     emit_check_cfg("rapx_rustc_ge_100");
-    emit_check_cfg("rapx_has_mik_unparsed");
+    emit_check_cfg("rapx_has_attr_item_kind");
 
     emit_cfg("rustc_spanned_at_root", minor >= 96);
     emit_cfg("rapx_rustc_ge_193", minor >= 93);
@@ -17,7 +17,7 @@ fn main() {
     emit_cfg("rapx_rustc_ge_198", minor >= 98);
     emit_cfg("rapx_rustc_ge_199", minor >= 99);
     emit_cfg("rapx_rustc_ge_100", minor >= 100);
-    emit_cfg("rapx_has_mik_unparsed", has_meta_item_kind_unparsed());
+    emit_cfg("rapx_has_attr_item_kind", has_attr_item_kind());
 }
 
 fn emit_check_cfg(name: &str) {
@@ -49,9 +49,9 @@ fn detect_rustc_version() -> (u32, u32, u32) {
     (major, minor, patch)
 }
 
-/// Check whether `MetaItemKind::Unparsed` is available (AttrItemKind was
-/// merged into MetaItemKind in a mid-1.99-cycle nightly).
-fn has_meta_item_kind_unparsed() -> bool {
+/// Check whether `rustc_ast::AttrItemKind` is still available (removed in
+/// a mid-1.99-cycle nightly when `AttrItem::args` reverted to plain `AttrArgs`).
+fn has_attr_item_kind() -> bool {
     let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".to_string());
     let sysroot = Command::new(&rustc)
         .arg("--print")
@@ -62,22 +62,17 @@ fn has_meta_item_kind_unparsed() -> bool {
         .map(|s| s.trim().to_string())
         .unwrap_or_default();
 
-    let src = format!(
-        "#![allow(internal_features)]\n\
-         #![feature(rustc_private)]\n\
-         extern crate rustc_ast;\n\
-         use rustc_ast::MetaItemKind;\n\
-         fn main() {{ let _: fn(rustc_ast::AttrArgs) -> MetaItemKind = MetaItemKind::Unparsed; }}"
-    );
+    let src = "#![allow(internal_features)]\n\
+               #![feature(rustc_private)]\n\
+               extern crate rustc_ast;\n\
+               fn main() { let _: rustc_ast::AttrItemKind; }";
     let out_dir = std::env::var("OUT_DIR").unwrap();
-    let src_path = std::path::Path::new(&out_dir).join("check_mik_unparsed.rs");
+    let src_path = std::path::Path::new(&out_dir).join("check_attr_item_kind.rs");
     std::fs::write(&src_path, src).ok();
     Command::new(&rustc)
         .args([
-            "--edition",
-            "2021",
-            "--sysroot",
-            &sysroot,
+            "--edition", "2021",
+            "--sysroot", &sysroot,
             src_path.to_str().unwrap_or(""),
         ])
         .output()
