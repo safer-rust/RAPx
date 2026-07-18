@@ -13,10 +13,16 @@ fn raw_write(ptr: *mut u32, value: u32) {
 }
 
 // UNSOUND: a helper returns a mutable slice, then another helper writes through the original pointer.
+#[rapx::requires(NonNull(ptr))]
+#[rapx::requires(ValidPtr(ptr, u32, len))]
+#[rapx::requires(Align(ptr, u32))]
+#[rapx::requires(Init(ptr, u32, len))]
+#[rapx::requires(Alive(ptr))]
+#[rapx::requires(Owning(ptr))]
+#[rapx::requires(ValidNum(size_of(u32) * len <= isize::MAX))]
 #[rapx::verify]
-pub fn unsound_cross_function_raw_write(data: &mut [u32]) -> u32 {
-    let ptr = data.as_mut_ptr();
-    let slice = make_mut_slice(ptr, data.len());
+pub unsafe fn unsound_cross_function_raw_write(ptr: *mut u32, len: usize) -> u32 {
+    let slice = make_mut_slice(ptr, len);
     if !slice.is_empty() {
         raw_write(ptr, 21);
         slice[0]

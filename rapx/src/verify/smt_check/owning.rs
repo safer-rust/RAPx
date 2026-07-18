@@ -80,6 +80,10 @@ pub(crate) fn check<'tcx>(
         return SmtCheckResult::proved(format!("Owning proved: {reason}"));
     }
 
+    if let Some(reason) = super::field_invariant::discharge_from_contract_fact(property, forward) {
+        return SmtCheckResult::proved(format!("Owning proved: {reason}"));
+    }
+
     SmtCheckResult::unknown(format!(
         "Owning: {target_label} does not trace to a known ownership source on this path",
     ))

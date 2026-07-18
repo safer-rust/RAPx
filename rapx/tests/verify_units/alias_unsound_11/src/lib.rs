@@ -2,6 +2,7 @@
 #![register_tool(rapx)]
 #![allow(dead_code)]
 
+#[rapx::invariant(Owning(self.ptr))]
 pub struct PublicRawSlot {
     pub ptr: *mut u32,
 }

@@ -11,6 +11,7 @@ use std::slice;
 #[rapx::requires(ValidPtr(ptr, u8, len * 2))]
 #[rapx::requires(Init(ptr, u8, len * 2))]
 #[rapx::requires(Alive(ptr, 'a))]
+#[rapx::requires(Owning(ptr))]
 pub unsafe fn as_bytes_mut_ptr_len_missing_alias<'a>(
     ptr: *mut u16,
     len: usize,

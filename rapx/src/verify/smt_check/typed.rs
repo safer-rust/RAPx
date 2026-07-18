@@ -61,6 +61,10 @@ pub(crate) fn check<'tcx>(
         None,
     ) {
         SmtCheckResult::proved(format!("Typed proved: {reason}"))
+    } else if let Some(reason) =
+        super::field_invariant::discharge_from_contract_fact(property, forward)
+    {
+        SmtCheckResult::proved(format!("Typed proved: {reason}"))
     } else {
         SmtCheckResult::unknown(format!(
             "current path facts do not prove {} is typed as {:?}",

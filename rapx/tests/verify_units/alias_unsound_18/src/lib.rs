@@ -5,8 +5,14 @@
 use std::mem;
 use std::slice;
 
-/// UNSOUND: `&u16` → `from_raw_parts_mut` → `&mut [u8]`, shared→mutable.
+/// UNSOUND: `*const u16` → `from_raw_parts_mut` → `&mut [u8]`, missing Alias hazard.
+#[rapx::requires(NonNull(ptr))]
+#[rapx::requires(ValidPtr(ptr, u8, 2))]
+#[rapx::requires(Align(ptr, u8))]
+#[rapx::requires(Init(ptr, u8, 2))]
+#[rapx::requires(Alive(ptr, 'a))]
+#[rapx::requires(Owning(ptr))]
 #[rapx::verify]
-pub fn as_bytes_mut_unsound(x: &u16) -> &mut [u8] {
-    unsafe { slice::from_raw_parts_mut(x as *const u16 as *mut u8, mem::size_of::<u16>()) }
+pub unsafe fn as_bytes_mut_unsound<'a>(ptr: *const u16) -> &'a mut [u8] {
+    unsafe { slice::from_raw_parts_mut(ptr as *mut u8, mem::size_of::<u16>()) }
 }

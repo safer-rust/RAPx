@@ -256,7 +256,8 @@ pub(super) fn discharge_from_contract_fact<'tcx>(
     property: &Property<'tcx>,
     forward: &ForwardVisitResult<'tcx>,
 ) -> Option<String> {
-    let target_key = contract_property_key(property)?;
+    let property_key = contract_property_key(property)?;
+    let target_key = substitute_base(&property_key, forward).unwrap_or(property_key.clone());
 
     for fact in &forward.facts {
         let StateFact::Contract(contract) = fact else {

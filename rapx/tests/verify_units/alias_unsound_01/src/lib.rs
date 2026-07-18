@@ -2,11 +2,17 @@
 #![register_tool(rapx)]
 #![allow(dead_code)]
 
-// UNSOUND: the raw pointer mutates memory while a shared slice from the same pointer is live.
+/// UNSOUND: the raw pointer mutates memory while a shared slice from the same pointer is live.
+#[rapx::requires(NonNull(ptr))]
+#[rapx::requires(ValidPtr(ptr, u32, len))]
+#[rapx::requires(Align(ptr, u32))]
+#[rapx::requires(Init(ptr, u32, len))]
+#[rapx::requires(Alive(ptr))]
+#[rapx::requires(Owning(ptr))]
+#[rapx::requires(ValidNum(size_of(u32) * len <= isize::MAX))]
 #[rapx::verify]
-pub fn unsound_shared_slice_then_raw_write(data: &mut [u32]) -> u32 {
-    let ptr = data.as_mut_ptr();
-    let slice = unsafe { std::slice::from_raw_parts(ptr, data.len()) };
+pub unsafe fn unsound_shared_slice_then_raw_write(ptr: *mut u32, len: usize) -> u32 {
+    let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
 
     if !slice.is_empty() {
         unsafe {
