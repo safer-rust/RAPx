@@ -1432,8 +1432,9 @@ fn fmt_contract_expanded(
             }
         }
         PropertyKind::Alias => {
-            let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
-            format!("!Alias(*{ptr})")
+            let p1 = args.first().map(|s| s.as_str()).unwrap_or("p1");
+            let p2 = args.get(1).map(|s| s.as_str()).unwrap_or("p2");
+            format!("{p1} and {p2} alias each other (hazard)")
         }
         PropertyKind::Allocated => {
             let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
