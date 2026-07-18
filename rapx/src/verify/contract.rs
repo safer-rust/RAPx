@@ -37,9 +37,34 @@ impl<'tcx> ContractPlace<'tcx> {
         struct_def_id: Option<DefId>,
         fn_def_id: Option<DefId>,
     ) -> String {
+        let has_projections = !self.projections.is_empty();
+
         let base_str = match self.base {
-            PlaceBase::Return => "return".to_string(),
-            PlaceBase::Arg(idx) => format!("arg{}", idx),
+            PlaceBase::Return => {
+                if has_projections {
+                    String::new()
+                } else {
+                    "return".to_string()
+                }
+            }
+            PlaceBase::Arg(idx) => {
+                if let Some(fn_def_id) = fn_def_id
+                    && tcx.is_mir_available(fn_def_id)
+                {
+                    let mir_local = idx + 1;
+                    let body = tcx.optimized_mir(fn_def_id);
+                    if mir_local < body.local_decls.len() {
+                        let local = rustc_middle::mir::Local::from_usize(mir_local);
+                        let span = body.local_decls[local].source_info.span;
+                        if let Ok(snippet) = tcx.sess.source_map().span_to_snippet(span)
+                            && !snippet.is_empty()
+                        {
+                            return snippet;
+                        }
+                    }
+                }
+                format!("arg{}", idx)
+            }
             PlaceBase::Local(n) => {
                 if n == 0 {
                     "return".to_string()
@@ -92,7 +117,11 @@ impl<'tcx> ContractPlace<'tcx> {
                     } else {
                         index.to_string()
                     };
-                    result.push_str(&format!(".{}", field_name));
+                    if result.is_empty() {
+                        result = field_name;
+                    } else {
+                        result.push_str(&format!(".{}", field_name));
+                    }
                 }
                 ContractProjection::Downcast { .. } => {
                     result.push_str(".unwrap_some()");
