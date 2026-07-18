@@ -481,6 +481,14 @@ impl<'tcx> Property<'tcx> {
                 }
             },
             "InBound" | "InBounded" => match exprs {
+                [expr] => {
+                    let expr = Self::parse_contract_expr(tcx, def_id, expr, "InBound");
+                    if matches!(expr, ContractExpr::IndexAccess { .. }) {
+                        Self::new_with_args(PropertyKind::InBound, vec![PropertyArg::Expr(expr)])
+                    } else {
+                        Self::new_simple(PropertyKind::Unknown)
+                    }
+                }
                 [_target, ty_expr, len_expr] => {
                     let target = Self::parse_target_arg(tcx, def_id, &exprs[0]);
                     let Some(ty) = Self::parse_type(tcx, def_id, ty_expr, "InBound") else {

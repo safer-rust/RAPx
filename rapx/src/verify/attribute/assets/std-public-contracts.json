@@ -3121,8 +3121,8 @@
     {
       "tag": "InBound",
       "args": [
-        "arg:1",
-        "arg:0"
+        "slice",
+        "self"
       ]
     }
   ],
@@ -3130,8 +3130,8 @@
     {
       "tag": "InBound",
       "args": [
-        "arg:1",
-        "arg:0"
+        "slice",
+        "self"
       ]
     }
   ],
