@@ -978,6 +978,12 @@ fn get_contract_from_entry<'tcx>(
     contract_entries: &[PropertyEntry],
 ) -> FnContracts<'tcx> {
     let mut results = Vec::new();
+
+    // Resolve parameter names for this function so JSON contracts can use
+    // named references (e.g. "src") instead of positional ones ("arg:0").
+    let (param_names, _) = crate::helpers::name::parse_signature(tcx, def_id);
+    let has_names = !param_names.is_empty() && !param_names[0].chars().all(|c| c.is_ascii_digit());
+
     for entry in contract_entries {
         if entry.args.is_empty() {
             continue;
@@ -985,7 +991,13 @@ fn get_contract_from_entry<'tcx>(
 
         let mut exprs: Vec<Expr> = Vec::new();
         for arg_str in &entry.args {
-            let normalized_arg = normalize_json_contract_arg(arg_str);
+            // Resolve simple identifiers to `arg:N` when parameter names are known.
+            let resolved = if has_names {
+                resolve_json_param_name(arg_str, &param_names)
+            } else {
+                arg_str.clone()
+            };
+            let normalized_arg = normalize_json_contract_arg(&resolved);
             match syn::parse_str::<Expr>(&normalized_arg) {
                 Ok(expr) => exprs.push(expr),
                 Err(_) => {
@@ -1048,6 +1060,30 @@ fn get_contract_from_entry<'tcx>(
         results.push(property);
     }
     results
+}
+
+/// Resolve a simple parameter-name reference in a JSON contract arg string to
+/// the `arg:N` positional form.  Complex expressions (containing function
+/// calls, field access, etc.) are left unchanged — they are handled later by
+/// the expression parser which already knows how to resolve named parameters.
+fn resolve_json_param_name(arg: &str, param_names: &[String]) -> String {
+    // Only rewrite top-level simple identifiers, not expressions.
+    if arg.starts_with("arg:")
+        || arg.starts_with("const:")
+        || arg.starts_with("ty:")
+        || arg.contains('(')
+        || arg.contains('.')
+        || arg.contains("::")
+        || arg.contains(' ')
+        || arg.starts_with('\'')
+    {
+        return arg.to_string();
+    }
+    if let Some(pos) = param_names.iter().position(|n| n == arg) {
+        format!("arg:{pos}")
+    } else {
+        arg.to_string()
+    }
 }
 
 /// Convert explicit JSON contract tokens into the expression syntax accepted by

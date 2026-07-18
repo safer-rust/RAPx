@@ -5373,43 +5373,43 @@
     {
       "tag": "ValidPtr",
       "args": [
-        "arg:0",
+        "src",
         "T",
-        "arg:2"
+        "count"
       ]
     },
     {
       "tag": "Align",
       "args": [
-        "arg:0",
+        "src",
         "T"
       ]
     },
     {
       "tag": "NonVolatile",
       "args": [
-        "arg:0"
+        "src"
       ]
     },
     {
       "tag": "ValidPtr",
       "args": [
-        "arg:1",
+        "dst",
         "T",
-        "arg:2"
+        "count"
       ]
     },
     {
       "tag": "Align",
       "args": [
-        "arg:1",
+        "dst",
         "T"
       ]
     },
     {
       "tag": "NonVolatile",
       "args": [
-        "arg:1"
+        "dst"
       ]
     }
   ],
@@ -5518,13 +5518,13 @@
     {
       "tag": "NonNull",
       "args": [
-        "arg:0"
+        "self"
       ]
     },
     {
       "tag": "Align",
       "args": [
-        "arg:0",
+        "self",
         "T"
       ]
     }
@@ -5533,7 +5533,7 @@
     {
       "tag": "NonNull",
       "args": [
-        "arg:0"
+        "self"
       ]
     }
   ],
@@ -5541,7 +5541,7 @@
     {
       "tag": "NonNull",
       "args": [
-        "arg:0"
+        "self"
       ]
     }
   ],
@@ -5549,7 +5549,7 @@
     {
       "tag": "NonNull",
       "args": [
-        "arg:0"
+        "self"
       ]
     }
   ],
@@ -5557,7 +5557,7 @@
     {
       "tag": "NonNull",
       "args": [
-        "arg:0"
+        "self"
       ]
     }
   ],
@@ -5565,7 +5565,7 @@
     {
       "tag": "NonNull",
       "args": [
-        "arg:0"
+        "self"
       ]
     }
   ],
@@ -5573,7 +5573,7 @@
     {
       "tag": "NonNull",
       "args": [
-        "arg:0"
+        "self"
       ]
     }
   ],
@@ -5581,7 +5581,7 @@
     {
       "tag": "NonNull",
       "args": [
-        "arg:0"
+        "self"
       ]
     }
   ],
@@ -5607,7 +5607,7 @@
     {
       "tag": "NonNull",
       "args": [
-        "arg:0"
+        "self"
       ]
     }
   ],
@@ -5615,7 +5615,7 @@
     {
       "tag": "NonNull",
       "args": [
-        "arg:0"
+        "self"
       ]
     }
   ],
@@ -5623,7 +5623,7 @@
     {
       "tag": "NonNull",
       "args": [
-        "arg:0"
+        "self"
       ]
     }
   ],

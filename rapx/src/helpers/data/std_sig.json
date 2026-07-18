@@ -1130,5 +1130,47 @@
     "src",
     "dst",
     "count"
+  ],
+  "core::ptr::copy": [
+    "src",
+    "dst",
+    "count"
+  ],
+  "core::slice::<impl [T]>::as_chunks": [
+    "self"
+  ],
+  "core::slice::<impl [T]>::as_chunks_mut": [
+    "self"
+  ],
+  "core::slice::<impl [T]>::as_rchunks": [
+    "self"
+  ],
+  "core::slice::<impl [T]>::as_simd": [
+    "self"
+  ],
+  "core::slice::<impl [T]>::as_simd_mut": [
+    "self"
+  ],
+  "core::slice::<impl [T]>::copy_from_slice": [
+    "self",
+    "src"
+  ],
+  "core::slice::<impl [T]>::copy_within": [
+    "self"
+  ],
+  "core::slice::<impl [T]>::get_disjoint_unchecked_mut": [
+    "self",
+    "indices"
+  ],
+  "core::slice::<impl [T]>::reverse": [
+    "self"
+  ],
+  "core::slice::<impl [T]>::split_at_mut_unchecked": [
+    "self",
+    "mid"
+  ],
+  "core::slice::<impl [T]>::split_at_unchecked": [
+    "self",
+    "mid"
   ]
 }
