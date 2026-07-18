@@ -759,8 +759,6 @@ impl<'tcx> Analysis for PrepareTargets<'tcx> {
             for target in &struct_target.function_targets {
                 self.log_method_target(target);
             }
-
-            rap_info!("");
         }
 
         // Traits with impl methods
