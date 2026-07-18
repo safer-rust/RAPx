@@ -501,10 +501,8 @@ impl<'tcx> Property<'tcx> {
                     )
                 }
                 [target, index_expr] => {
-                    // Slice-index form: `InBound(slice, index)` when the first
-                    // argument is a slice. This is shorthand for the explicit
-                    // `InBound(index_access(slice, index))` and lowers to the
-                    // same `ContractExpr::IndexAccess`.
+                    // Slice-index form: `InBound(slice, index)` — auto-expands
+                    // to `InBound(index_access(slice, index))` internally.
                     if Self::parse_target_type(tcx, def_id, target).is_some_and(ty_is_slice) {
                         let slice = Self::parse_contract_expr(tcx, def_id, target, "InBound");
                         let index = Self::parse_contract_expr(tcx, def_id, index_expr, "InBound");
@@ -516,18 +514,8 @@ impl<'tcx> Property<'tcx> {
                             })],
                         );
                     }
-
-                    // Pointer-arithmetic form: `InBound(ptr, count)` with the
-                    // element type inferred from the pointer.
-                    let Some(ty) = Self::parse_target_type(tcx, def_id, target) else {
-                        return Self::new_simple(PropertyKind::Unknown);
-                    };
-                    let target = Self::parse_target_arg(tcx, def_id, target);
-                    let length = Self::parse_contract_expr(tcx, def_id, index_expr, "InBound");
-                    Self::new_with_args(
-                        PropertyKind::InBound,
-                        vec![target, PropertyArg::Ty(ty), PropertyArg::Expr(length)],
-                    )
+                    rap_error!("InBound with 2 args requires the first argument to be a slice; use InBound(ptr, Ty, count) for pointer arithmetic");
+                    Self::new_simple(PropertyKind::Unknown)
                 }
                 _ => {
                     Self::check_arg_length(exprs.len(), 3, "InBound");
