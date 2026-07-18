@@ -46,11 +46,11 @@ fn stability_attr() -> Attribute {
         delim: Delimiter::Parenthesis,
         tokens: TokenStream::new(tokens),
     };
-    #[cfg(rapx_rustc_ge_100)]
+    #[cfg(all(rapx_rustc_ge_196, rapx_has_mik_unparsed))]
     {
         attr.item.args = rustc_ast::MetaItemKind::Unparsed(AttrArgs::Delimited(delim_args));
     }
-    #[cfg(all(rapx_rustc_ge_196, not(rapx_rustc_ge_100)))]
+    #[cfg(all(rapx_rustc_ge_196, not(rapx_has_mik_unparsed)))]
     {
         attr.item.args = rustc_ast::AttrItemKind::Unparsed(AttrArgs::Delimited(delim_args));
     }
