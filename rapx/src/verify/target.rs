@@ -152,17 +152,17 @@ pub struct TraitEnsurance<'tcx> {
 /// contracts (e.g. D), inherit them.  The chain `A -> B -> C -> D` means A's
 /// checkpoint on B is verified using D's contracts.
 ///
-/// `max_depth` limits recursion to avoid cycles or infinite chains.
+/// `visited` prevents infinite recursion on mutually-recursive functions.
 fn resolve_chain_contracts<'tcx>(
     tcx: TyCtxt<'tcx>,
     callee_def_id: DefId,
-    max_depth: usize,
+    visited: &mut HashSet<DefId>,
     std_contracts: fn(
         TyCtxt<'tcx>,
         DefId,
     ) -> &'static [super::attribute::assets_parser::PropertyEntry],
 ) -> FnContracts<'tcx> {
-    if max_depth == 0 {
+    if !visited.insert(callee_def_id) {
         return Vec::new();
     }
 
@@ -205,7 +205,7 @@ fn resolve_chain_contracts<'tcx>(
 
                 // If still no contracts, recurse into this callee.
                 if reqs.is_empty() {
-                    reqs = resolve_chain_contracts(tcx, sub_def_id, max_depth - 1, std_contracts);
+                    reqs = resolve_chain_contracts(tcx, sub_def_id, visited, std_contracts);
                 }
 
                 contracts.extend(reqs);
@@ -271,13 +271,6 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
 
         let trait_requires = get_trait_method_requires(self.tcx, callee_def_id);
 
-        let module_filter = self.module_filter.clone();
-        let is_targeted = matches!(self.mode, VerifyMode::Targeted);
-        let callee_in_filter = module_filter
-            .as_ref()
-            .map(|_| self.module_path_matches(callee_def_id))
-            .unwrap_or(false);
-
         self.fn_contract_cache
             .entry(callee_def_id)
             .or_insert_with(|| {
@@ -298,27 +291,21 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
                     // Recursively resolve contracts from the callee's call chain.
                     // e.g. A -> B -> C -> D where B,C are unsafe unannotated,
                     // D has contracts; follow the chain to D and use its contracts.
+                    let mut visited = HashSet::new();
                     requires = resolve_chain_contracts(
                         self.tcx,
                         callee_def_id,
-                        3, // max chain depth
+                        &mut visited,
                         get_std_contracts_from_assets,
                     );
                     if requires.is_empty() {
-                        let show_warning = match module_filter {
-                            Some(_) => callee_in_filter,
-                            None => is_targeted,
-                        };
-                        if show_warning {
-                            let path = crate::helpers::name::get_cleaned_def_path_name(
-                                self.tcx,
-                                callee_def_id,
-                            );
-                            rap_warn!(
-                                "no safety contracts found for std callee \"{path}\" \
-                                 (missing from std-contracts.json)"
-                            );
-                        }
+                        let path = crate::helpers::name::get_cleaned_def_path_name(
+                            self.tcx,
+                            callee_def_id,
+                        );
+                        rap_warn!(
+                            "no safety contracts found for callee \"{path}\""
+                        );
                     } else {
                         let path = crate::helpers::name::get_cleaned_def_path_name(
                             self.tcx,
