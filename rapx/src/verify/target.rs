@@ -1354,11 +1354,13 @@ fn build_raw_ptr_deref_checks<'tcx>(
             let mut properties = if info.is_ref {
                 vec![
                     Property {
+                    null_guard: None,
                         contract_kind: crate::verify::contract::ContractKind::Precond,
                         kind: PropertyKind::NonNull,
                         args: vec![target.clone()],
                     },
                     Property {
+                    null_guard: None,
                         contract_kind: crate::verify::contract::ContractKind::Precond,
                         kind: PropertyKind::Align,
                         args: vec![target.clone(), ty.clone()],
@@ -1367,11 +1369,13 @@ fn build_raw_ptr_deref_checks<'tcx>(
             } else {
                 vec![
                     Property {
+                    null_guard: None,
                         contract_kind: crate::verify::contract::ContractKind::Precond,
                         kind: PropertyKind::ValidPtr,
                         args: vec![target.clone(), ty.clone(), count.clone()],
                     },
                     Property {
+                    null_guard: None,
                         contract_kind: crate::verify::contract::ContractKind::Precond,
                         kind: PropertyKind::Align,
                         args: vec![target.clone(), ty.clone()],
@@ -1381,6 +1385,7 @@ fn build_raw_ptr_deref_checks<'tcx>(
 
             if info.is_read && !info.is_ref {
                 properties.push(Property {
+                    null_guard: None,
                     contract_kind: crate::verify::contract::ContractKind::Precond,
                     kind: PropertyKind::Typed,
                     args: vec![target, ty],
@@ -1426,16 +1431,19 @@ fn build_static_mut_checks<'tcx>(
 
             let properties = vec![
                 Property {
+                    null_guard: None,
                     contract_kind: crate::verify::contract::ContractKind::Precond,
                     kind: PropertyKind::ValidPtr,
                     args: vec![target.clone(), ty.clone(), count.clone()],
                 },
                 Property {
+                    null_guard: None,
                     contract_kind: crate::verify::contract::ContractKind::Precond,
                     kind: PropertyKind::Align,
                     args: vec![target.clone(), ty.clone()],
                 },
                 Property {
+                    null_guard: None,
                     contract_kind: crate::verify::contract::ContractKind::Precond,
                     kind: PropertyKind::Init,
                     args: vec![target, ty, count],

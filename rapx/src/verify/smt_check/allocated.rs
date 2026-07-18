@@ -55,6 +55,7 @@ pub(crate) fn check<'tcx>(
             ty_name: format!("{required_ty:?}"),
             elements: elements.clone(),
         },
+        property.null_guard.as_ref(),
     );
     if matches!(result.result, crate::verify::report::CheckResult::Proved) {
         return result;

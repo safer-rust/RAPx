@@ -51,5 +51,6 @@ pub(crate) fn check<'tcx>(
         SmtObligation::Predicate {
             predicates: smt_predicates,
         },
+        property.null_guard.as_ref(),
     )
 }

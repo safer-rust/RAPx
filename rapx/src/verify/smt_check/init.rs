@@ -62,6 +62,7 @@ pub(crate) fn check<'tcx>(
             array_elem_size: array_elem_size(checker, checkpoint.caller, required_ty),
             array_len_term: array_len_term(checker, required_ty),
         },
+        property.null_guard.as_ref(),
     );
     if result.result == crate::verify::report::CheckResult::Unknown {
         if let Some(reason) =

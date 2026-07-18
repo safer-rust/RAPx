@@ -253,6 +253,7 @@ impl<'tcx> SmtChecker<'tcx> {
         checkpoint: &Checkpoint<'tcx>,
         forward: &ForwardVisitResult<'tcx>,
         obligation: SmtObligation,
+        null_guard: Option<&PlaceKey>,
     ) -> SmtCheckResult {
         let has_contracts = forward
             .facts
@@ -319,6 +320,16 @@ impl<'tcx> SmtChecker<'tcx> {
         // model.  The contract assertions may be sufficient to
         // discharge the obligation even without full path precision.
         // (No early return — fall through to obligation match.)
+
+        // If the property has a null guard from `any(Null(p), ...)`,
+        // assert that the guard is non-null. Proving the obligation under
+        // `guard != 0` establishes `(guard == 0) ∨ obligation_holds`.
+        if let Some(guard) = null_guard {
+            if let Some(guard_term) = model.term_for_place(guard) {
+                let zero = Int::from_u64(&ctx, 0);
+                solver.assert(&guard_term._eq(&zero).not());
+            }
+        }
 
         match &obligation {
             SmtObligation::Aligned {
@@ -1505,7 +1516,7 @@ impl<'tcx> SmtChecker<'tcx> {
             kind: crate::helpers::mir_scan::CheckpointKind::UnsafeCall,
             is_ref: false,
         };
-        self.prove_obligation(&dummy_checkpoint, forward, obligation)
+        self.prove_obligation(&dummy_checkpoint, forward, obligation, None)
     }
 
     /// Resolve the target place of a property at a concrete checkpoint.

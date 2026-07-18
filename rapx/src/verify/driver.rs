@@ -1486,10 +1486,12 @@ fn fmt_contract_expanded(
             format!("{l} matches prior allocation size and alignment")
         }
         PropertyKind::Size => {
-            let p = args.first().map(|s| s.as_str()).unwrap_or("ptr");
-            format!("sizeof(type_pointed_by({p})) > 0")
+            if let Some(p) = args.first() {
+                format!("sizeof(type_pointed_by({p})) > 0")
+            } else {
+                "Size(T, !=0)".to_string()
+            }
         }
-        PropertyKind::NonSize => "Size(T, !=0)".to_string(),
         PropertyKind::NoPadding => {
             let t = args.first().map(|s| s.as_str()).unwrap_or("T");
             format!("{t} has no padding bytes between fields")

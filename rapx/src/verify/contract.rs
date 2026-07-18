@@ -5,6 +5,7 @@ use safety_parser::syn::{
     BinOp as SynBinOp, Expr, GenericArgument, Lit, PathArguments, Type, UnOp,
 };
 
+use super::def_use::PlaceKey;
 use super::helpers::{
     access_ident_recursive, match_ty_with_ident, parse_expr_into_local_and_ty,
     parse_expr_into_number,
@@ -262,7 +263,6 @@ pub enum PropertyKind {
     Layout,
     ValidTransmute,
     TransmuteWithoutAlign,
-    NonSize,
     Nullable,
     Unknown,
 }
@@ -287,6 +287,9 @@ pub struct Property<'tcx> {
     pub kind: PropertyKind,
     pub args: Vec<PropertyArg<'tcx>>,
     pub contract_kind: ContractKind,
+    /// When set, this property came from an `any(Null(guard), ...)` expansion
+    /// and is vacuously true when `guard` is null.
+    pub null_guard: Option<PlaceKey>,
 }
 
 impl<'tcx> Property<'tcx> {
@@ -302,7 +305,10 @@ impl<'tcx> Property<'tcx> {
                 };
                 Self::new_with_args(PropertyKind::Align, vec![target, PropertyArg::Ty(ty)])
             }
-            "Size" => Self::new_with_target(PropertyKind::Size, tcx, def_id, exprs),
+            "Size" => match exprs {
+                [] => Self::new_simple(PropertyKind::Size),
+                _ => Self::new_with_target(PropertyKind::Size, tcx, def_id, exprs),
+            },
             "NoPadding" => Self::new_with_target(PropertyKind::NoPadding, tcx, def_id, exprs),
             "NonNull" => Self::new_with_target(PropertyKind::NonNull, tcx, def_id, exprs),
             "Allocated" => match exprs {
@@ -527,7 +533,7 @@ impl<'tcx> Property<'tcx> {
                     vec![PropertyArg::Ty(src_elem), PropertyArg::Ty(dst_elem)],
                 )
             }
-            "NonSize" => Self::new_simple(PropertyKind::NonSize),
+            "NonSize" => Self::new_simple(PropertyKind::Size),
             "Null" => Self::new_with_target(PropertyKind::Nullable, tcx, def_id, exprs),
             _ => Self::new_simple(PropertyKind::Unknown),
         }
@@ -560,6 +566,7 @@ impl<'tcx> Property<'tcx> {
             kind,
             args: Vec::new(),
             contract_kind: ContractKind::Precond,
+            null_guard: None,
         }
     }
 
@@ -632,7 +639,7 @@ impl<'tcx> Property<'tcx> {
 
         let mut properties = Vec::new();
         for (inner_name, inner_args) in &conjuncts {
-            let property = Self::new(tcx, def_id, inner_name, inner_args);
+            let mut property = Self::new(tcx, def_id, inner_name, inner_args);
             let inner_place = property.args.first().and_then(|arg| match arg {
                 PropertyArg::Place(place) => Some(place),
                 PropertyArg::Expr(ContractExpr::Place(place)) => Some(place),
@@ -648,6 +655,7 @@ impl<'tcx> Property<'tcx> {
                 );
                 return vec![Self::new_simple(PropertyKind::Unknown)];
             }
+            property.null_guard = Some(guard_key.clone());
             properties.push(property);
         }
         properties
@@ -680,6 +688,7 @@ impl<'tcx> Property<'tcx> {
             kind,
             args,
             contract_kind: ContractKind::Precond,
+            null_guard: None,
         }
     }
 
@@ -698,6 +707,7 @@ impl<'tcx> Property<'tcx> {
             kind,
             args,
             contract_kind: ContractKind::Precond,
+            null_guard: None,
         }
     }
 
@@ -715,6 +725,7 @@ impl<'tcx> Property<'tcx> {
             kind,
             args,
             contract_kind: ContractKind::Precond,
+            null_guard: None,
         }
     }
 

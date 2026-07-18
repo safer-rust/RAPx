@@ -49,6 +49,7 @@ pub(crate) fn check<'tcx>(
         SmtObligation::NonZero {
             place: target.clone(),
         },
+        property.null_guard.as_ref(),
     );
 
     let Some(pointee_ty) = checker.infer_pointee_ty(checkpoint.caller, &target) else {
@@ -97,6 +98,7 @@ pub(crate) fn check<'tcx>(
             align: required_align,
             ty_name: format!("{pointee_ty:?}"),
         },
+        property.null_guard.as_ref(),
     );
 
     match (&nonnull_result.result, &align_result.result) {

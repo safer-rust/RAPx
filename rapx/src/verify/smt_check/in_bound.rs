@@ -50,6 +50,7 @@ pub(crate) fn check<'tcx>(
             checkpoint,
             forward,
             SmtObligation::Predicate { predicates },
+            property.null_guard.as_ref(),
         );
     }
 
@@ -76,7 +77,7 @@ pub(crate) fn check<'tcx>(
     if let Some(obligation) =
         pointer_arithmetic_obligation(checker, checkpoint, required_ty, access_count.clone())
     {
-        return checker.prove_obligation(checkpoint, forward, obligation);
+        return checker.prove_obligation(checkpoint, forward, obligation, property.null_guard.as_ref());
     }
 
     checker.prove_obligation(
@@ -88,6 +89,7 @@ pub(crate) fn check<'tcx>(
             elem_size,
             access_count,
         },
+        property.null_guard.as_ref(),
     )
 }
 

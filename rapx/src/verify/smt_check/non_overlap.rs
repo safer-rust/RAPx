@@ -94,6 +94,7 @@ pub(crate) fn check<'tcx>(
             right_count: count,
             elem_size,
         },
+        property.null_guard.as_ref(),
     )
 }
 

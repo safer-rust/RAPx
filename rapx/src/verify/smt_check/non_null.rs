@@ -73,7 +73,7 @@ pub(crate) fn check<'tcx>(
     };
 
     let obligation = SmtObligation::NonZero { place: target };
-    let result = checker.prove_obligation(checkpoint, forward, obligation);
+    let result = checker.prove_obligation(checkpoint, forward, obligation, property.null_guard.as_ref());
     if result.result == crate::verify::report::CheckResult::Unknown {
         if let Some(reason) =
             super::provenance::pedigree_proof(checker, checkpoint, property, forward, false)
