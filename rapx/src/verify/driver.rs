@@ -1566,9 +1566,19 @@ fn fmt_place_plain(
     place: &crate::verify::contract::ContractPlace<'_>,
     local_names: &[String],
 ) -> String {
+    let has_projections = !place.projections.is_empty();
     let mut base = match place.base {
-        crate::verify::contract::PlaceBase::Return => "return".to_string(),
-        crate::verify::contract::PlaceBase::Arg(i) => format!("arg:{}", i),
+        crate::verify::contract::PlaceBase::Return => {
+            if has_projections {
+                String::new()
+            } else {
+                "return".to_string()
+            }
+        }
+        crate::verify::contract::PlaceBase::Arg(i) => local_names
+            .get(i + 1)
+            .cloned()
+            .unwrap_or_else(|| format!("arg:{}", i)),
         crate::verify::contract::PlaceBase::Local(l) => local_names
             .get(l)
             .cloned()
@@ -1591,7 +1601,11 @@ fn fmt_place_plain(
                 }
             })
             .collect();
-        format!("{}.{}", base, proj.join("."))
+        if base.is_empty() {
+            proj.join(".")
+        } else {
+            format!("{}.{}", base, proj.join("."))
+        }
     }
 }
 
