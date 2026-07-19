@@ -558,7 +558,13 @@ impl<'tcx> Property<'tcx> {
                     args.push(PropertyArg::Expr(count));
                     Self::new_with_args(PropertyKind::NonOverlap, args)
                 }
-                _ => Self::new_with_targets(PropertyKind::NonOverlap, tcx, def_id, exprs),
+                _ => {
+                    rap_error!(
+                        "Wrong args length for NonOverlap Tag! expected 4, got {}",
+                        exprs.len()
+                    );
+                    Self::new_simple(PropertyKind::Unknown)
+                }
             },
             "ValidNum" => {
                 let predicates = Self::parse_valid_num(tcx, def_id, exprs);
@@ -661,8 +667,8 @@ impl<'tcx> Property<'tcx> {
                 }
             },
             "Deref" => match exprs {
-                [_target, ty_expr, len_expr] => {
-                    let target = Self::parse_target_arg(tcx, def_id, &exprs[0]);
+                [target, ty_expr, len_expr] => {
+                    let target = Self::parse_target_arg(tcx, def_id, target);
                     let Some(ty) = Self::parse_type(tcx, def_id, ty_expr, "Deref") else {
                         return Self::new_simple(PropertyKind::Unknown);
                     };
@@ -672,18 +678,13 @@ impl<'tcx> Property<'tcx> {
                         vec![target, PropertyArg::Ty(ty), PropertyArg::Expr(length)],
                     )
                 }
-                [target, len_expr] => {
-                    let Some(ty) = Self::parse_target_type(tcx, def_id, target) else {
-                        return Self::new_simple(PropertyKind::Unknown);
-                    };
-                    let target = Self::parse_target_arg(tcx, def_id, target);
-                    let length = Self::parse_contract_expr(tcx, def_id, len_expr, "Deref");
-                    Self::new_with_args(
-                        PropertyKind::Deref,
-                        vec![target, PropertyArg::Ty(ty), PropertyArg::Expr(length)],
-                    )
+                _ => {
+                    rap_error!(
+                        "Wrong args length for Deref Tag! expected 3, got {}",
+                        exprs.len()
+                    );
+                    Self::new_simple(PropertyKind::Unknown)
                 }
-                _ => Self::new_with_target(PropertyKind::Deref, tcx, def_id, exprs),
             },
             "Ptr2Ref" | "ValidPtr2Ref" => {
                 Self::new_with_target(PropertyKind::Ptr2Ref, tcx, def_id, exprs)
