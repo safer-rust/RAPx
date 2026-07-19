@@ -3,7 +3,7 @@
 #![allow(dead_code)]
 
 unsafe trait Buffer {
-    #[rapx::ensures(Size(return))]
+    #[rapx::ensures(NonNull(return))]
     fn as_bytes(&self) -> &[u8];
 
     #[rapx::requires(InBound(index, u8, 1))]

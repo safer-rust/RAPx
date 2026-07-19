@@ -67,7 +67,8 @@
     {
       "tag": "Size",
       "args": [
-        "val"
+        "T",
+        "1"
       ]
     },
     {
@@ -616,7 +617,8 @@
     {
       "tag": "Size",
       "args": [
-        "val"
+        "T",
+        "1"
       ]
     },
     {
@@ -630,7 +632,8 @@
     {
       "tag": "Size",
       "args": [
-        "val"
+        "T",
+        "1"
       ]
     },
     {
@@ -1051,7 +1054,10 @@
     },
     {
       "tag": "Size",
-      "args": []
+      "args": [
+        "T",
+        "1"
+      ]
     }
   ],
   "core::ptr::alignment::new_unchecked": [
@@ -1179,7 +1185,10 @@
     },
     {
       "tag": "Size",
-      "args": []
+      "args": [
+        "T",
+        "1"
+      ]
     }
   ],
   "core::ptr::non_null::byte_offset_from": [
@@ -1193,7 +1202,10 @@
     },
     {
       "tag": "Size",
-      "args": []
+      "args": [
+        "T",
+        "1"
+      ]
     }
   ],
   "core::ptr::non_null::sub_ptr": [
@@ -1207,7 +1219,10 @@
     },
     {
       "tag": "Size",
-      "args": []
+      "args": [
+        "T",
+        "1"
+      ]
     }
   ],
   "core::ptr::non_null::sub": [
@@ -1804,7 +1819,10 @@
     },
     {
       "tag": "Size",
-      "args": []
+      "args": [
+        "T",
+        "1"
+      ]
     }
   ],
   "core::ptr::const_ptr::byte_offset_from": [
@@ -1818,7 +1836,10 @@
     },
     {
       "tag": "Size",
-      "args": []
+      "args": [
+        "T",
+        "1"
+      ]
     }
   ],
   "core::ptr::const_ptr::non_null::sub_ptr": [
@@ -1832,7 +1853,10 @@
     },
     {
       "tag": "Size",
-      "args": []
+      "args": [
+        "T",
+        "1"
+      ]
     }
   ],
   "core::ptr::const_ptr::sub_ptr": [
@@ -1846,7 +1870,10 @@
     },
     {
       "tag": "Size",
-      "args": []
+      "args": [
+        "T",
+        "1"
+      ]
     }
   ],
   "core::ptr::const_ptr::byte_add": [
@@ -2229,7 +2256,10 @@
     },
     {
       "tag": "Size",
-      "args": []
+      "args": [
+        "T",
+        "1"
+      ]
     }
   ],
   "core::ptr::mut_ptr::byte_offset_from": [
@@ -2243,7 +2273,10 @@
     },
     {
       "tag": "Size",
-      "args": []
+      "args": [
+        "T",
+        "1"
+      ]
     }
   ],
   "core::ptr::mut_ptr::sub_ptr": [
@@ -2257,7 +2290,10 @@
     },
     {
       "tag": "Size",
-      "args": []
+      "args": [
+        "T",
+        "1"
+      ]
     }
   ],
   "core::ptr::mut_ptr::byte_add": [
@@ -3494,7 +3530,10 @@
     },
     {
       "tag": "Size",
-      "args": []
+      "args": [
+        "T",
+        "1"
+      ]
     }
   ],
   "core::slice::raw::from_mut_ptr_range": [
@@ -5321,7 +5360,8 @@
     {
       "tag": "Size",
       "args": [
-        "ptr"
+        "T",
+        "1"
       ]
     },
     {
@@ -5335,7 +5375,8 @@
     {
       "tag": "Size",
       "args": [
-        "ptr"
+        "T",
+        "1"
       ]
     },
     {

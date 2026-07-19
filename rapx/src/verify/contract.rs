@@ -452,9 +452,23 @@ impl<'tcx> Property<'tcx> {
                 };
                 Self::new_with_args(PropertyKind::Align, vec![target, PropertyArg::Ty(ty)])
             }
-            "Size" => match exprs {
-                [] => Self::new_simple(PropertyKind::Size),
-                _ => Self::new_with_target(PropertyKind::Size, tcx, def_id, exprs),
+            "Size" | "NonSize" => match exprs {
+                [ty_expr, const_expr] => {
+                    let mut args = Vec::new();
+                    if let Some(ty) = Self::parse_type(tcx, def_id, ty_expr, "Size") {
+                        args.push(PropertyArg::Ty(ty));
+                    }
+                    let c = Self::parse_contract_expr(tcx, def_id, const_expr, "Size");
+                    args.push(PropertyArg::Expr(c));
+                    Self::new_with_args(PropertyKind::Size, args)
+                }
+                _ => {
+                    rap_error!(
+                        "Wrong args length for Size Tag! expected 2, got {}",
+                        exprs.len()
+                    );
+                    Self::new_simple(PropertyKind::Unknown)
+                }
             },
             "NoPadding" => Self::new_with_target(PropertyKind::NoPadding, tcx, def_id, exprs),
             "NonNull" => Self::new_with_target(PropertyKind::NonNull, tcx, def_id, exprs),
@@ -761,7 +775,6 @@ impl<'tcx> Property<'tcx> {
                     vec![PropertyArg::Ty(src_elem), PropertyArg::Ty(dst_elem)],
                 )
             }
-            "NonSize" => Self::new_simple(PropertyKind::Size),
             "Null" => Self::new_with_target(PropertyKind::Nullable, tcx, def_id, exprs),
             _ => Self::new_simple(PropertyKind::Unknown),
         }
