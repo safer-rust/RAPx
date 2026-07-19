@@ -576,8 +576,42 @@ impl<'tcx> Property<'tcx> {
                     )
                 }
             }
-            "ValidString" => Self::new_with_target(PropertyKind::ValidString, tcx, def_id, exprs),
-            "ValidCStr" => Self::new_with_target(PropertyKind::ValidCStr, tcx, def_id, exprs),
+            "ValidString" => match exprs {
+                [ptr_expr, ty_expr, len_expr] => {
+                    let target = Self::parse_target_arg(tcx, def_id, ptr_expr);
+                    let mut args = vec![target];
+                    if let Some(ty) = Self::parse_type(tcx, def_id, ty_expr, "ValidString") {
+                        args.push(PropertyArg::Ty(ty));
+                    }
+                    let len = Self::parse_contract_expr(tcx, def_id, len_expr, "ValidString");
+                    args.push(PropertyArg::Expr(len));
+                    Self::new_with_args(PropertyKind::ValidString, args)
+                }
+                _ => {
+                    rap_error!(
+                        "Wrong args length for ValidString Tag! expected 3, got {}",
+                        exprs.len()
+                    );
+                    Self::new_simple(PropertyKind::Unknown)
+                }
+            },
+            "ValidCStr" => match exprs {
+                [ptr_expr, len_expr] => {
+                    let target = Self::parse_target_arg(tcx, def_id, ptr_expr);
+                    let len = Self::parse_contract_expr(tcx, def_id, len_expr, "ValidCStr");
+                    Self::new_with_args(
+                        PropertyKind::ValidCStr,
+                        vec![target, PropertyArg::Expr(len)],
+                    )
+                }
+                _ => {
+                    rap_error!(
+                        "Wrong args length for ValidCStr Tag! expected 2, got {}",
+                        exprs.len()
+                    );
+                    Self::new_simple(PropertyKind::Unknown)
+                }
+            },
             "Init" => {
                 if !Self::check_arg_length(exprs.len(), 3, "Init") {
                     return Self::new_simple(PropertyKind::Unknown);

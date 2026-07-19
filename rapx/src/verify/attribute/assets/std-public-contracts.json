@@ -313,7 +313,9 @@
     {
       "tag": "ValidString",
       "args": [
-        "i"
+        "i",
+        "u32",
+        "1"
       ]
     }
   ],
@@ -321,7 +323,9 @@
     {
       "tag": "ValidString",
       "args": [
-        "i"
+        "i",
+        "u32",
+        "1"
       ]
     }
   ],
@@ -329,7 +333,9 @@
     {
       "tag": "ValidString",
       "args": [
-        "i"
+        "i",
+        "u32",
+        "1"
       ]
     }
   ],
@@ -385,7 +391,8 @@
     {
       "tag": "ValidCStr",
       "args": [
-        "ptr"
+        "ptr",
+        "1"
       ]
     },
     {
@@ -415,7 +422,8 @@
     {
       "tag": "ValidCStr",
       "args": [
-        "bytes"
+        "bytes",
+        "1"
       ]
     }
   ],
@@ -3535,7 +3543,9 @@
     {
       "tag": "ValidString",
       "args": [
-        "self"
+        "self",
+        "u8",
+        "1"
       ]
     },
     {
@@ -3551,7 +3561,9 @@
     {
       "tag": "ValidString",
       "args": [
-        "self"
+        "self",
+        "u8",
+        "1"
       ]
     },
     {
@@ -3567,7 +3579,9 @@
     {
       "tag": "ValidString",
       "args": [
-        "self"
+        "self",
+        "u8",
+        "1"
       ]
     },
     {
@@ -3583,7 +3597,9 @@
     {
       "tag": "ValidString",
       "args": [
-        "self"
+        "self",
+        "u8",
+        "1"
       ]
     },
     {
@@ -3599,7 +3615,9 @@
     {
       "tag": "ValidString",
       "args": [
-        "self"
+        "self",
+        "u8",
+        "1"
       ]
     }
   ],
@@ -3607,7 +3625,9 @@
     {
       "tag": "ValidString",
       "args": [
-        "v"
+        "v",
+        "u8",
+        "1"
       ]
     }
   ],
@@ -3615,7 +3635,9 @@
     {
       "tag": "ValidString",
       "args": [
-        "v"
+        "v",
+        "u8",
+        "1"
       ]
     }
   ],
@@ -3757,7 +3779,9 @@
     {
       "tag": "ValidString",
       "args": [
-        "self"
+        "self",
+        "u8",
+        "1"
       ]
     },
     {
@@ -3773,7 +3797,9 @@
     {
       "tag": "ValidString",
       "args": [
-        "self"
+        "self",
+        "u8",
+        "1"
       ]
     },
     {
@@ -4340,7 +4366,9 @@
     {
       "tag": "ValidString",
       "args": [
-        "v"
+        "v",
+        "u8",
+        "1"
       ]
     }
   ],
@@ -4372,7 +4400,8 @@
     {
       "tag": "ValidCStr",
       "args": [
-        "v"
+        "v",
+        "1"
       ]
     }
   ],
@@ -4588,7 +4617,9 @@
     {
       "tag": "ValidString",
       "args": [
-        "v"
+        "v",
+        "u8",
+        "1"
       ]
     }
   ],
@@ -4617,7 +4648,9 @@
     {
       "tag": "ValidString",
       "args": [
-        "buf"
+        "buf",
+        "u8",
+        "capacity"
       ]
     },
     {
@@ -4640,7 +4673,9 @@
     {
       "tag": "ValidString",
       "args": [
-        "bytes"
+        "bytes",
+        "u8",
+        "1"
       ]
     }
   ],
@@ -4648,7 +4683,9 @@
     {
       "tag": "ValidString",
       "args": [
-        "self"
+        "self",
+        "u8",
+        "1"
       ]
     }
   ],
@@ -4878,7 +4915,9 @@
     {
       "tag": "ValidString",
       "args": [
-        "s"
+        "s",
+        "u8",
+        "1"
       ]
     }
   ],
@@ -5373,7 +5412,9 @@
     {
       "tag": "ValidString",
       "args": [
-        "s"
+        "s",
+        "u8",
+        "1"
       ]
     }
   ],
