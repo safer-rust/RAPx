@@ -235,7 +235,14 @@ pub fn parse_signature<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> (Vec<String>, 
         if let Some((names, tys)) = parse_trait_fn_sig(tcx, def_id) {
             return (names, tys);
         }
-        parse_outside_signature(tcx, def_id)
+        if matches!(
+            tcx.def_kind(def_id),
+            rustc_hir::def::DefKind::Fn | rustc_hir::def::DefKind::AssocFn
+        ) {
+            parse_outside_signature(tcx, def_id)
+        } else {
+            (vec!["0".to_string()], Vec::new())
+        }
     } else {
         parse_outside_signature(tcx, def_id)
     }
