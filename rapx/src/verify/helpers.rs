@@ -56,7 +56,9 @@ pub fn parse_expr_into_local_and_ty<'tcx>(
         }
 
         if let Some(struct_ty) = get_struct_self_ty(tcx, def_id) {
-            return resolve_projection_from_struct_ident(tcx, def_id, base_ident, fields, struct_ty);
+            return resolve_projection_from_struct_ident(
+                tcx, def_id, base_ident, fields, struct_ty,
+            );
         }
     }
     None

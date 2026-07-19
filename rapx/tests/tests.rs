@@ -123,7 +123,12 @@ fn assert_unproved_exclusive(output: &str, function: &str, allowed: &[&str]) {
 }
 
 /// Like assert_unproved_exclusive but expects a different result string (e.g. "HAZARD").
-fn assert_unproved_exclusive_with_result(output: &str, function: &str, allowed: &[&str], result_pat: &str) {
+fn assert_unproved_exclusive_with_result(
+    output: &str,
+    function: &str,
+    allowed: &[&str],
+    result_pat: &str,
+) {
     assert_contain(output, &format!("function: {function}"));
     let block = extract_block_after(output, &format!("function: {function}"));
 
@@ -1531,17 +1536,17 @@ fn std_challenge_17() {
 }
 
 #[test]
-fn transmute_without_align_unsound() {
-    let output = run_with_args("verify_units/transmute_without_align_unsound", VERIFY_CMD);
+fn split_transmute_unsound() {
+    let output = run_with_args("verify_units/split_transmute_unsound", VERIFY_CMD);
     assert_unproved_exclusive(
         &output,
         "align_without_contract_generic",
-        &["TransmuteWithoutAlign"],
+        &["SplitTransmute"],
     );
     assert_unproved_exclusive(
         &output,
         "unsound_align_to_bool_from_bytes",
-        &["TransmuteWithoutAlign"],
+        &["SplitTransmute"],
     );
     assert_contain(&output, "function: align_without_contract_u32");
     assert_contain(&output, "result: SOUND");
@@ -1552,8 +1557,8 @@ fn transmute_without_align_unsound() {
 }
 
 #[test]
-fn transmute_without_align_nonzero() {
-    let output = run_with_args("verify_units/transmute_without_align_nonzero", VERIFY_CMD);
+fn split_transmute_nonzero() {
+    let output = run_with_args("verify_units/split_transmute_nonzero", VERIFY_CMD);
     assert_contain(&output, "function: align_to_nonzero_u16");
     assert_contain(&output, "result: UNSOUND");
     assert_contain(&output, "function: align_to_nonzero_u32");
@@ -1563,8 +1568,8 @@ fn transmute_without_align_nonzero() {
 }
 
 #[test]
-fn transmute_without_align_sound() {
-    let output = run_with_args("verify_units/transmute_without_align_sound", VERIFY_CMD);
+fn split_transmute_sound() {
+    let output = run_with_args("verify_units/split_transmute_sound", VERIFY_CMD);
     assert_contain(&output, "function: align_to_u8_sound");
     assert_contain(&output, "result: SOUND");
 }
@@ -1768,16 +1773,36 @@ fn alias_sound_verify_cases() {
 #[test]
 fn alias_unsound_verify_cases() {
     let output = run_with_args("verify_units/alias_unsound_01", VERIFY_CMD);
-    assert_unproved_exclusive_with_result(&output, "unsound_shared_slice_then_raw_write", &["Alias"], "HAZARD");
+    assert_unproved_exclusive_with_result(
+        &output,
+        "unsound_shared_slice_then_raw_write",
+        &["Alias"],
+        "HAZARD",
+    );
 
     let output = run_with_args("verify_units/alias_unsound_02", VERIFY_CMD);
-    assert_unproved_exclusive_with_result(&output, "unsound_mut_slice_then_raw_read", &["Alias"], "HAZARD");
+    assert_unproved_exclusive_with_result(
+        &output,
+        "unsound_mut_slice_then_raw_read",
+        &["Alias"],
+        "HAZARD",
+    );
 
     let output = run_with_args("verify_units/alias_unsound_03", VERIFY_CMD);
-    assert_unproved_exclusive_with_result(&output, "unsound_vec_push_while_raw_slice_live", &["Alias"], "HAZARD");
+    assert_unproved_exclusive_with_result(
+        &output,
+        "unsound_vec_push_while_raw_slice_live",
+        &["Alias"],
+        "HAZARD",
+    );
 
     let output = run_with_args("verify_units/alias_unsound_04", VERIFY_CMD);
-    assert_unproved_exclusive_with_result(&output, "unsound_box_from_raw_then_raw_write", &["Alias"], "HAZARD");
+    assert_unproved_exclusive_with_result(
+        &output,
+        "unsound_box_from_raw_then_raw_write",
+        &["Alias"],
+        "HAZARD",
+    );
 
     let output = run_with_args("verify_units/alias_unsound_05", VERIFY_CMD);
     assert_unproved_exclusive(
@@ -1878,10 +1903,20 @@ fn alias_unsound_verify_cases() {
     assert_unproved_exclusive_with_result(&output, "as_bytes_mut_unsound", &["Alias"], "HAZARD");
 
     let output = run_with_args("verify_units/alias_unsound_19", VERIFY_CMD);
-    assert_unproved_exclusive_with_result(&output, "as_bytes_mut_ptr_missing_alias", &["Alias"], "HAZARD");
+    assert_unproved_exclusive_with_result(
+        &output,
+        "as_bytes_mut_ptr_missing_alias",
+        &["Alias"],
+        "HAZARD",
+    );
 
     let output = run_with_args("verify_units/alias_unsound_20", VERIFY_CMD);
-    assert_unproved_exclusive_with_result(&output, "as_bytes_mut_ptr_len_missing_alias", &["Alias"], "HAZARD");
+    assert_unproved_exclusive_with_result(
+        &output,
+        "as_bytes_mut_ptr_len_missing_alias",
+        &["Alias"],
+        "HAZARD",
+    );
 }
 
 #[test]

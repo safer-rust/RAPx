@@ -829,11 +829,7 @@ impl<'tcx> PrepareTargets<'tcx> {
             for property in &struct_target.invariants {
                 rap_info!(
                     "    - {}",
-                    property.display_for_report(
-                        self.tcx,
-                        Some(struct_target.def_id),
-                        None,
-                    )
+                    property.display_for_report(self.tcx, Some(struct_target.def_id), None,)
                 );
             }
         }
@@ -852,11 +848,7 @@ impl<'tcx> PrepareTargets<'tcx> {
                 for property in contracts {
                     rap_info!(
                         "      - {}",
-                        property.display_for_report(
-                            self.tcx,
-                            trait_target.self_ty_def_id,
-                            None,
-                        )
+                        property.display_for_report(self.tcx, trait_target.self_ty_def_id, None,)
                     );
                 }
             }
@@ -1408,13 +1400,13 @@ fn build_raw_ptr_deref_checks<'tcx>(
             let mut properties = if info.is_ref {
                 vec![
                     Property {
-                    null_guard: None,
+                        null_guard: None,
                         contract_kind: crate::verify::contract::ContractKind::Precond,
                         kind: PropertyKind::NonNull,
                         args: vec![target.clone()],
                     },
                     Property {
-                    null_guard: None,
+                        null_guard: None,
                         contract_kind: crate::verify::contract::ContractKind::Precond,
                         kind: PropertyKind::Align,
                         args: vec![target.clone(), ty.clone()],
@@ -1423,13 +1415,13 @@ fn build_raw_ptr_deref_checks<'tcx>(
             } else {
                 vec![
                     Property {
-                    null_guard: None,
+                        null_guard: None,
                         contract_kind: crate::verify::contract::ContractKind::Precond,
                         kind: PropertyKind::ValidPtr,
                         args: vec![target.clone(), ty.clone(), count.clone()],
                     },
                     Property {
-                    null_guard: None,
+                        null_guard: None,
                         contract_kind: crate::verify::contract::ContractKind::Precond,
                         kind: PropertyKind::Align,
                         args: vec![target.clone(), ty.clone()],
@@ -1547,27 +1539,13 @@ fn build_type_invariants_from_params<'tcx>(
         }
         let param_name = param_names.get(index).cloned().unwrap_or_default();
         let type_path = type_path_key(tcx, param_ty);
-        collect_type_invariants(
-            tcx,
-            def_id,
-            &db,
-            &type_path,
-            &param_name,
-            &mut results,
-        );
+        collect_type_invariants(tcx, def_id, &db, &type_path, &param_name, &mut results);
     }
 
     // Also add invariants for the return type
     if !output.is_unit() && !output.is_primitive() {
         let type_path = type_path_key(tcx, output);
-        collect_type_invariants(
-            tcx,
-            def_id,
-            &db,
-            &type_path,
-            "return",
-            &mut results,
-        );
+        collect_type_invariants(tcx, def_id, &db, &type_path, "return", &mut results);
     }
 
     results
@@ -1587,8 +1565,7 @@ fn collect_type_invariants<'tcx>(
 ) {
     if let Some(entry) = db.get(type_path) {
         for prop_entry in &entry.invariants {
-            if let Some(property) =
-                instantiate_type_invariant(tcx, def_id, prop_entry, param_name)
+            if let Some(property) = instantiate_type_invariant(tcx, def_id, prop_entry, param_name)
             {
                 results.push(property);
             }

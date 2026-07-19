@@ -77,7 +77,12 @@ pub(crate) fn check<'tcx>(
     if let Some(obligation) =
         pointer_arithmetic_obligation(checker, checkpoint, required_ty, access_count.clone())
     {
-        return checker.prove_obligation(checkpoint, forward, obligation, property.null_guard.as_ref());
+        return checker.prove_obligation(
+            checkpoint,
+            forward,
+            obligation,
+            property.null_guard.as_ref(),
+        );
     }
 
     checker.prove_obligation(

@@ -6,8 +6,8 @@ use crate::graphs::{
 };
 use rustc_middle::{
     mir::{
-        AggregateKind, BasicBlock, BinOp, Local, Operand, ProjectionElem, Rvalue,
-        StatementKind, SwitchTargets, Terminator, TerminatorKind, UnOp, UnwindAction,
+        AggregateKind, BasicBlock, BinOp, Local, Operand, ProjectionElem, Rvalue, StatementKind,
+        SwitchTargets, Terminator, TerminatorKind, UnOp, UnwindAction,
     },
     ty::{TyCtxt, TyKind, TypingEnv},
 };

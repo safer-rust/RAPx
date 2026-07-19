@@ -84,7 +84,10 @@ pub fn get_struct_self_ty<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Option<Ty<'
         }
     }
     let def_kind = tcx.def_kind(def_id);
-    if matches!(def_kind, rustc_hir::def::DefKind::Struct | rustc_hir::def::DefKind::Enum) {
+    if matches!(
+        def_kind,
+        rustc_hir::def::DefKind::Struct | rustc_hir::def::DefKind::Enum
+    ) {
         let self_ty = tcx.type_of(def_id).skip_binder();
         match self_ty.kind() {
             TyKind::Adt(_, _) => return Some(self_ty),
@@ -197,7 +200,9 @@ fn parse_trait_fn_sig<'tcx>(
         return None;
     }
     let trait_item_id = rustc_hir::TraitItemId {
-        owner_id: rustc_hir::OwnerId { def_id: local_def_id },
+        owner_id: rustc_hir::OwnerId {
+            def_id: local_def_id,
+        },
     };
     let item = tcx.hir_trait_item(trait_item_id);
     let (_sig, trait_fn) = match &item.kind {

@@ -46,7 +46,12 @@ pub(crate) fn check<'tcx>(
         align: required_align,
         ty_name: format!("{required_ty:?}"),
     };
-    checker.prove_obligation(checkpoint, forward, obligation, property.null_guard.as_ref())
+    checker.prove_obligation(
+        checkpoint,
+        forward,
+        obligation,
+        property.null_guard.as_ref(),
+    )
 }
 
 /// Check `Align` at a return checkpoint for struct invariant verification.

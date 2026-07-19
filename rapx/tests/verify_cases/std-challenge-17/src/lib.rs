@@ -123,7 +123,7 @@ impl<T> SliceExt<T> for [T] {
     }
 
     #[rapx::verify]
-    #[rapx::requires(TransmuteWithoutAlign([T], [U]))]
+    #[rapx::requires(SplitTransmute([T], [U]))]
     unsafe fn align_to_ext<U>(&self) -> (&[T], &[U], &[T]) {
         if std::mem::size_of::<T>() == 0 || std::mem::size_of::<U>() == 0 {
             return (self, &[], &[]);
@@ -150,7 +150,7 @@ impl<T> SliceExt<T> for [T] {
     }
 
     #[rapx::verify]
-    #[rapx::requires(TransmuteWithoutAlign([T], [U]))]
+    #[rapx::requires(SplitTransmute([T], [U]))]
     unsafe fn align_to_mut_ext<U>(&mut self) -> (&mut [T], &mut [U], &mut [T]) {
         if std::mem::size_of::<T>() == 0 || std::mem::size_of::<U>() == 0 {
             return (self, &mut [], &mut []);

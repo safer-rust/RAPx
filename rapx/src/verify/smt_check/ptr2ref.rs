@@ -9,12 +9,9 @@
 //! The remaining requirements (Allocated + InBound + Init) are not checked here
 //! because they require richer provenance and element-count tracking.
 
-use super::common::{place_label, SmtCheckResult, SmtChecker, SmtObligation};
+use super::common::{SmtCheckResult, SmtChecker, SmtObligation, place_label};
 use crate::verify::{
-    contract::Property,
-    helpers::Checkpoint,
-    report::CheckResult,
-    verifier::ForwardVisitResult,
+    contract::Property, helpers::Checkpoint, report::CheckResult, verifier::ForwardVisitResult,
 };
 
 pub(crate) fn check<'tcx>(
@@ -28,9 +25,7 @@ pub(crate) fn check<'tcx>(
     // aligned (NonNull can only be constructed from a valid, aligned pointer).
     if let Some(callee) = checkpoint.callee {
         let callee_path = checker.tcx.def_path_str(callee);
-        if callee_path.contains("NonNull::as_ref")
-            || callee_path.contains("NonNull::as_mut")
-        {
+        if callee_path.contains("NonNull::as_ref") || callee_path.contains("NonNull::as_mut") {
             return SmtCheckResult::proved(
                 "Ptr2Ref proved: NonNull guarantees valid pointer-to-ref conversion",
             );
@@ -54,9 +49,9 @@ pub(crate) fn check<'tcx>(
 
     let Some(pointee_ty) = checker.infer_pointee_ty(checkpoint.caller, &target) else {
         return match &nonnull_result.result {
-            CheckResult::Proved => {
-                SmtCheckResult::proved("Ptr2Ref: NonNull proved, alignment skipped (no pointee type)")
-            }
+            CheckResult::Proved => SmtCheckResult::proved(
+                "Ptr2Ref: NonNull proved, alignment skipped (no pointee type)",
+            ),
             CheckResult::Failed => SmtCheckResult {
                 result: CheckResult::Failed,
                 query: None,
@@ -69,7 +64,7 @@ pub(crate) fn check<'tcx>(
                 SmtCheckResult::unknown("Ptr2Ref: could not infer pointee type for alignment check")
             }
         }
-        .with_note("Ptr2Ref alignment check skipped: could not infer pointee type")
+        .with_note("Ptr2Ref alignment check skipped: could not infer pointee type");
     };
 
     let Some(required_align) = checker.required_alignment(checkpoint.caller, pointee_ty) else {

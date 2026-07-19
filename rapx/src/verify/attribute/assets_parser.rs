@@ -136,8 +136,7 @@ pub struct TypeInvariantEntry {
 
 /// Returns the std-type-invariants database, mapping a type path key
 /// (e.g. `"alloc::boxed::Box<T>"`) to its invariant entries.
-pub fn get_std_type_invariants(
-) -> &'static HashMap<String, TypeInvariantEntry> {
+pub fn get_std_type_invariants() -> &'static HashMap<String, TypeInvariantEntry> {
     static TYPE_INVARIANTS: OnceLock<HashMap<String, TypeInvariantEntry>> = OnceLock::new();
     TYPE_INVARIANTS.get_or_init(|| {
         let raw = include_str!("assets/std-type-invariants.json");

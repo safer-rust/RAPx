@@ -15,7 +15,10 @@ fn main() {
     emit_cfg("rapx_rustc_ge_196", minor >= 96);
     emit_cfg("rapx_rustc_ge_198", minor >= 98);
     emit_cfg("rapx_rustc_ge_199", minor >= 99);
-    emit_cfg("rapx_has_attr_item_kind", rustc_src_contains("pub enum AttrItemKind"));
+    emit_cfg(
+        "rapx_has_attr_item_kind",
+        rustc_src_contains("pub enum AttrItemKind"),
+    );
 }
 
 fn emit_check_cfg(name: &str) {
@@ -59,7 +62,10 @@ fn rustc_src_contains(needle: &str) -> bool {
         .and_then(|o| String::from_utf8(o.stdout).ok())
         .map(|s| s.trim().to_string())
         .unwrap_or_default();
-    let ast = format!("{}/lib/rustlib/rustc-src/rust/compiler/rustc_ast/src/ast.rs", sysroot);
+    let ast = format!(
+        "{}/lib/rustlib/rustc-src/rust/compiler/rustc_ast/src/ast.rs",
+        sysroot
+    );
     std::fs::read_to_string(ast)
         .map(|s| s.contains(needle))
         .unwrap_or(false)

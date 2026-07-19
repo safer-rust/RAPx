@@ -1,5 +1,5 @@
 [package]
-name = "transmute_without_align_sound"
+name = "split_transmute_sound"
 version = "0.1.0"
 edition = "2024"
 

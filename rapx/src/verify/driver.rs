@@ -888,16 +888,20 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
             // KnownAllocated) so the SMT check can find matching facts.
             let mut proven_history_allocated: Vec<Vec<(usize, usize)>> = Vec::new();
             if self.postfix_repeat == 0 && !all_results.is_empty() {
-                let has_allocated = all_results
-                    .iter()
-                    .any(|r| matches!(r.property.kind, PropertyKind::Allocated
-                                       | PropertyKind::ValidPtr
-                                       | PropertyKind::Deref));
+                let has_allocated = all_results.iter().any(|r| {
+                    matches!(
+                        r.property.kind,
+                        PropertyKind::Allocated | PropertyKind::ValidPtr | PropertyKind::Deref
+                    )
+                });
                 let any_allocated_unproven = all_results
                     .iter()
-                    .filter(|r| matches!(r.property.kind, PropertyKind::Allocated
-                                         | PropertyKind::ValidPtr
-                                         | PropertyKind::Deref))
+                    .filter(|r| {
+                        matches!(
+                            r.property.kind,
+                            PropertyKind::Allocated | PropertyKind::ValidPtr | PropertyKind::Deref
+                        )
+                    })
                     .any(|r| !matches!(r.result, super::report::CheckResult::Proved));
 
                 if has_allocated && any_allocated_unproven {
@@ -912,13 +916,12 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                                     .results
                                     .iter()
                                     .filter(|r| {
-                                        matches!(r.property.kind, PropertyKind::Allocated
-                                                 | PropertyKind::ValidPtr
-                                                 | PropertyKind::Deref)
-                                            && !matches!(
-                                                r.result,
-                                                super::report::CheckResult::Proved
-                                            )
+                                        matches!(
+                                            r.property.kind,
+                                            PropertyKind::Allocated
+                                                | PropertyKind::ValidPtr
+                                                | PropertyKind::Deref
+                                        ) && !matches!(r.result, super::report::CheckResult::Proved)
                                             && !r.diagnostics.as_ref().is_some_and(|d| {
                                                 d.forward.contains("path has precision loss")
                                                     || d.forward.contains("could not connect")
@@ -934,16 +937,13 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                                 }
 
                                 // Check if the set of unproven results has converged.
-                                let mut current_unproven: Vec<_> = still_unproven
-                                    .iter()
-                                    .cloned()
-                                    .collect();
+                                let mut current_unproven: Vec<_> =
+                                    still_unproven.iter().cloned().collect();
                                 current_unproven.sort();
 
                                 let len = proven_history_allocated.len();
                                 proven_history_allocated.push(current_unproven.clone());
-                                if len >= 1
-                                    && proven_history_allocated[len - 1] == current_unproven
+                                if len >= 1 && proven_history_allocated[len - 1] == current_unproven
                                 {
                                     break;
                                 }
@@ -1080,12 +1080,12 @@ impl<'tcx> VerifyRun<'tcx> {
 
                 for property in &target.caller_requires {
                     if property.kind != PropertyKind::Unknown {
-                    lines.push(fmt_contract_expanded(
-                        self.tcx,
-                        &local_names,
-                        property,
-                        target.owner_struct_def_id,
-                    ));
+                        lines.push(fmt_contract_expanded(
+                            self.tcx,
+                            &local_names,
+                            property,
+                            target.owner_struct_def_id,
+                        ));
                         seen_kinds.insert(property.kind.clone());
                     }
                 }
@@ -1135,12 +1135,12 @@ impl<'tcx> VerifyRun<'tcx> {
                             if property.kind != PropertyKind::Unknown
                                 && global_seen.insert(property.kind.clone())
                             {
-                            lines.push(fmt_contract_expanded(
-                                self.tcx,
-                                &callee_names,
-                                property,
-                                None,
-                            ));
+                                lines.push(fmt_contract_expanded(
+                                    self.tcx,
+                                    &callee_names,
+                                    property,
+                                    None,
+                                ));
                             }
                         }
                         if !lines.is_empty() {

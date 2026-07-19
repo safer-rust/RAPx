@@ -388,7 +388,10 @@ fn display_expr_user_friendly<'tcx>(
         ContractExpr::SizeOf(ty) => format!("size_of({ty})"),
         ContractExpr::AlignOf(ty) => format!("align_of({ty})"),
         ContractExpr::Len(e) => {
-            format!("len({})", display_expr_user_friendly(e, tcx, struct_def_id, fn_def_id))
+            format!(
+                "len({})",
+                display_expr_user_friendly(e, tcx, struct_def_id, fn_def_id)
+            )
         }
         ContractExpr::IndexAccess { slice, index } => {
             format!(
@@ -409,11 +412,11 @@ impl<'tcx> PropertyArg<'tcx> {
         fn_def_id: Option<DefId>,
     ) -> String {
         match self {
-            PropertyArg::Place(place) => {
-                place.display_user_friendly(tcx, struct_def_id, fn_def_id)
-            }
+            PropertyArg::Place(place) => place.display_user_friendly(tcx, struct_def_id, fn_def_id),
             PropertyArg::Ty(ty) => format!("{}", ty),
-            PropertyArg::Expr(expr) => display_expr_user_friendly(expr, tcx, struct_def_id, fn_def_id),
+            PropertyArg::Expr(expr) => {
+                display_expr_user_friendly(expr, tcx, struct_def_id, fn_def_id)
+            }
             PropertyArg::Predicates(preds) => {
                 let p: Vec<_> = preds.iter().map(|pred| format!("{:?}", pred)).collect();
                 p.join(" && ")
@@ -559,7 +562,9 @@ impl<'tcx> Property<'tcx> {
                 [target, index_expr] => {
                     let slice = Self::parse_contract_expr(tcx, def_id, target, "InBound");
                     let index = Self::parse_contract_expr(tcx, def_id, index_expr, "InBound");
-                    if matches!(slice, ContractExpr::Unknown) || matches!(index, ContractExpr::Unknown) {
+                    if matches!(slice, ContractExpr::Unknown)
+                        || matches!(index, ContractExpr::Unknown)
+                    {
                         return Self::new_simple(PropertyKind::Unknown);
                     }
                     Self::new_with_args(
@@ -583,8 +588,7 @@ impl<'tcx> Property<'tcx> {
                 [a, b, ty_expr, count_expr] => {
                     let left = Self::parse_target_arg(tcx, def_id, a);
                     let right = Self::parse_target_arg(tcx, def_id, b);
-                    let count =
-                        Self::parse_contract_expr(tcx, def_id, count_expr, "NonOverlap");
+                    let count = Self::parse_contract_expr(tcx, def_id, count_expr, "NonOverlap");
                     let mut args = vec![left, right];
                     if let Some(ty) = Self::parse_type(tcx, def_id, ty_expr, "NonOverlap") {
                         args.push(PropertyArg::Ty(ty));

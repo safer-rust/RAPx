@@ -6,7 +6,7 @@ use std::num::NonZero;
 
 struct MyType(u16, u8);
 
-// UNSOUND: `MyType(u16, u8)` → `NonZero<u16>` without `TransmuteWithoutAlign` contract.
+// UNSOUND: `MyType(u16, u8)` → `NonZero<u16>` without `SplitTransmute` contract.
 // `NonZero<u16>` has non-trivial type_invariant (value ≠ 0).
 #[rapx::verify]
 pub fn align_to_nonzero_u16(slice: &[MyType]) -> (&[MyType], &[NonZero<u16>], &[MyType]) {
