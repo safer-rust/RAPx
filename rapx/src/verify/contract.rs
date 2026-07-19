@@ -476,7 +476,22 @@ impl<'tcx> Property<'tcx> {
                     Self::new_simple(PropertyKind::Unknown)
                 }
             },
-            "NoPadding" => Self::new_with_target(PropertyKind::NoPadding, tcx, def_id, exprs),
+            "NoPadding" => match exprs {
+                [ty_expr] => {
+                    let mut args = Vec::new();
+                    if let Some(ty) = Self::parse_type(tcx, def_id, ty_expr, "NoPadding") {
+                        args.push(PropertyArg::Ty(ty));
+                    }
+                    Self::new_with_args(PropertyKind::NoPadding, args)
+                }
+                _ => {
+                    rap_error!(
+                        "Wrong args length for NoPadding Tag! expected 1, got {}",
+                        exprs.len()
+                    );
+                    Self::new_simple(PropertyKind::Unknown)
+                }
+            },
             "NonNull" => Self::new_with_target(PropertyKind::NonNull, tcx, def_id, exprs),
             "Allocated" => match exprs {
                 [target] => Self::new_with_args(
