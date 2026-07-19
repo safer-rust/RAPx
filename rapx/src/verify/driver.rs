@@ -1507,10 +1507,12 @@ fn fmt_contract_expanded(
             format!("{l} matches prior allocation size and alignment")
         }
         PropertyKind::Size => {
-            if let Some(p) = args.first() {
-                format!("sizeof(type_pointed_by({p})) > 0")
-            } else {
-                "Size(T, !=0)".to_string()
+            let ty = args.first().map(|s| s.as_str()).unwrap_or("T");
+            let sz = args.get(1).map(|s| s.as_str()).unwrap_or("1");
+            match sz {
+                "sized" => format!("{ty} is Sized (non-ZST)"),
+                "unsized" => format!("{ty} is !Sized"),
+                n => format!("sizeof({ty}) = {n}"),
             }
         }
         PropertyKind::NoPadding => {

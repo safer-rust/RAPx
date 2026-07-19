@@ -458,6 +458,12 @@ impl<'tcx> Property<'tcx> {
                     if let Some(ty) = Self::parse_type(tcx, def_id, ty_expr, "Size") {
                         args.push(PropertyArg::Ty(ty));
                     }
+                    if let Some((ident, _)) = access_ident_recursive(const_expr) {
+                        if ident == "sized" || ident == "unsized" {
+                            args.push(PropertyArg::Ident(ident));
+                            return Self::new_with_args(PropertyKind::Size, args);
+                        }
+                    }
                     let c = Self::parse_contract_expr(tcx, def_id, const_expr, "Size");
                     args.push(PropertyArg::Expr(c));
                     Self::new_with_args(PropertyKind::Size, args)
