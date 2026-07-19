@@ -661,7 +661,26 @@ impl<'tcx> Property<'tcx> {
                     vec![target, PropertyArg::Ty(ty), PropertyArg::Expr(length)],
                 )
             }
-            "Unwrap" => Self::new_with_target(PropertyKind::Unwrap, tcx, def_id, exprs),
+            "Unwrap" => match exprs {
+                [ptr_expr, variant_expr] => {
+                    let target = Self::parse_target_arg(tcx, def_id, ptr_expr);
+                    let variant = access_ident_recursive(variant_expr)
+                        .map(|(name, _)| name)
+                        .unwrap_or_default();
+                    let mut args = vec![target];
+                    if !variant.is_empty() {
+                        args.push(PropertyArg::Ident(variant));
+                    }
+                    Self::new_with_args(PropertyKind::Unwrap, args)
+                }
+                _ => {
+                    rap_error!(
+                        "Wrong args length for Unwrap Tag! expected 2, got {}",
+                        exprs.len()
+                    );
+                    Self::new_simple(PropertyKind::Unknown)
+                }
+            },
             "Typed" => {
                 if !Self::check_arg_length(exprs.len(), 2, "Typed") {
                     return Self::new_simple(PropertyKind::Unknown);

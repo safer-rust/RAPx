@@ -1521,7 +1521,8 @@ fn fmt_contract_expanded(
         }
         PropertyKind::Unwrap => {
             let x = args.first().map(|s| s.as_str()).unwrap_or("x");
-            format!("{x} is in expected variant / not None / not Err")
+            let v = args.get(1).map(|s| s.as_str()).unwrap_or("T");
+            format!("unwrap({x}) = {v}")
         }
         PropertyKind::ValidString => {
             let v = args.first().map(|s| s.as_str()).unwrap_or("v");
