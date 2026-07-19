@@ -716,7 +716,20 @@ impl<'tcx> Property<'tcx> {
                     Self::new_simple(PropertyKind::Unknown)
                 }
             },
-            "Layout" => Self::new_with_target(PropertyKind::Layout, tcx, def_id, exprs),
+            "Layout" => match exprs {
+                [ptr_expr, layout_expr] => {
+                    let ptr = Self::parse_target_arg(tcx, def_id, ptr_expr);
+                    let layout = Self::parse_target_arg(tcx, def_id, layout_expr);
+                    Self::new_with_args(PropertyKind::Layout, vec![ptr, layout])
+                }
+                _ => {
+                    rap_error!(
+                        "Wrong args length for Layout Tag! expected 2, got {}",
+                        exprs.len()
+                    );
+                    Self::new_simple(PropertyKind::Unknown)
+                }
+            },
             "ValidTransmute" => {
                 if !Self::check_arg_length(exprs.len(), 2, "ValidTransmute") {
                     return Self::new_simple(PropertyKind::Unknown);
