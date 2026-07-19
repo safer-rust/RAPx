@@ -185,13 +185,57 @@ pub fn parse_outside_signature<'tcx>(
     (args_name, param_tys)
 }
 
+/// Extract parameter names from a HIR trait method declaration and pair them
+/// with types from the function signature.  Handles `TraitFn::Required` (names
+/// directly in the declaration) and `TraitFn::Provided` (names in the body).
+fn parse_trait_fn_sig<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def_id: DefId,
+) -> Option<(Vec<String>, Vec<Ty<'tcx>>)> {
+    let local_def_id = def_id.as_local()?;
+    if !matches!(tcx.def_kind(def_id), rustc_hir::def::DefKind::AssocFn) {
+        return None;
+    }
+    let trait_item_id = rustc_hir::TraitItemId {
+        owner_id: rustc_hir::OwnerId { def_id: local_def_id },
+    };
+    let item = tcx.hir_trait_item(trait_item_id);
+    let (_sig, trait_fn) = match &item.kind {
+        rustc_hir::TraitItemKind::Fn(sig, tf) => (sig, tf),
+        _ => return None,
+    };
+    let names: Vec<String> = match trait_fn {
+        rustc_hir::TraitFn::Required(param_names) => param_names
+            .iter()
+            .filter_map(|opt| opt.map(|ident| ident.name.to_string()))
+            .collect(),
+        rustc_hir::TraitFn::Provided(body_id) => {
+            let body = tcx.hir_body(*body_id);
+            body.params
+                .iter()
+                .filter_map(|param| extract_pat_ident(&param.pat).map(|i| i.name.to_string()))
+                .collect()
+        }
+    };
+    let sig = tcx.fn_sig(def_id).skip_binder();
+    let param_tys: Vec<Ty<'tcx>> = sig.inputs().skip_binder().iter().copied().collect();
+    if names.len() == param_tys.len() {
+        Some((names, param_tys))
+    } else {
+        None
+    }
+}
+
 /// Dispatch argument-name/type parsing to either the local HIR path or the
 /// external type-based path.
 pub fn parse_signature<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> (Vec<String>, Vec<Ty<'tcx>>) {
     if def_id.as_local().is_some() && tcx.is_mir_available(def_id) {
         parse_local_signature(tcx, def_id)
     } else if def_id.is_local() {
-        (vec!["0".to_string()], Vec::new())
+        if let Some((names, tys)) = parse_trait_fn_sig(tcx, def_id) {
+            return (names, tys);
+        }
+        parse_outside_signature(tcx, def_id)
     } else {
         parse_outside_signature(tcx, def_id)
     }
