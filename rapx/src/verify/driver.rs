@@ -1846,35 +1846,11 @@ fn emit_verify_summary<'tcx>(
     if !checkpoint_groups.is_empty() {
         rap_info!("  --- unsafe checkpoints ---");
         for ((checkpoint, callee_name), results) in &checkpoint_groups {
-            // Split paths within a checkpoint by their endpoint BB,
-            // so that different loop-iteration depths show as separate entries.
-            let mut endpoint_order: Vec<String> = Vec::new();
-            let mut endpoint_groups: FxHashMap<String, Vec<&PropertyCheckResult<'_>>> =
-                FxHashMap::default();
-            for r in results.iter() {
-                let endpoint = last_bb_from_path_desc(&r.path_description)
-                    .unwrap_or_else(|| "?".to_string());
-                if !endpoint_groups.contains_key(&endpoint) {
-                    endpoint_order.push(endpoint.clone());
-                }
-                endpoint_groups.entry(endpoint).or_default().push(r);
-            }
-            let multi = endpoint_order.len() > 1;
-            for endpoint in &endpoint_order {
-                let group = &endpoint_groups[endpoint];
-                if multi {
-                    rap_info!(
-                        "      unsafe checkpoint: bb{} -> {callee_name} (ends at bb{endpoint})",
-                        checkpoint.block.as_usize(),
-                    );
-                } else {
-                    rap_info!(
-                        "      unsafe checkpoint: bb{} -> {callee_name}",
-                        checkpoint.block.as_usize(),
-                    );
-                }
-                emit_property_rows(group);
-            }
+            rap_info!(
+                "      unsafe checkpoint: bb{} -> {callee_name}",
+                checkpoint.block.as_usize(),
+            );
+            emit_property_rows(results);
         }
     }
 
@@ -1925,13 +1901,6 @@ fn emit_property_rows(results: &[&PropertyCheckResult<'_>]) {
             }
         }
     }
-}
-
-/// Extract the last basic-block index from a path description string
-/// like `[0, 1, 2, 10]` → `"10"`.
-fn last_bb_from_path_desc(desc: &str) -> Option<String> {
-    let inner = desc.strip_prefix('[')?.strip_suffix(']')?;
-    inner.split(',').last().map(|s| s.trim().to_string())
 }
 
 /// Analysis pass that dumps backward and forward visitor diagnostics.
