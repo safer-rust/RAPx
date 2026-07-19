@@ -1072,7 +1072,8 @@
     {
       "tag": "Ptr2Ref",
       "args": [
-        "self"
+        "self",
+        "T"
       ]
     }
   ],
@@ -1086,7 +1087,8 @@
     {
       "tag": "Ptr2Ref",
       "args": [
-        "self"
+        "self",
+        "T"
       ]
     }
   ],
@@ -1102,7 +1104,8 @@
     {
       "tag": "Ptr2Ref",
       "args": [
-        "self.0"
+        "self.0",
+        "T"
       ]
     }
   ],
@@ -1110,7 +1113,8 @@
     {
       "tag": "Ptr2Ref",
       "args": [
-        "self.0"
+        "self.0",
+        "T"
       ]
     }
   ],
@@ -1707,7 +1711,8 @@
     {
       "tag": "Ptr2Ref",
       "args": [
-        "self"
+        "self",
+        "T"
       ]
     }
   ],
@@ -1715,7 +1720,8 @@
     {
       "tag": "Ptr2Ref",
       "args": [
-        "self"
+        "self",
+        "T"
       ]
     }
   ],
@@ -1729,7 +1735,8 @@
     {
       "tag": "Ptr2Ref",
       "args": [
-        "self"
+        "self",
+        "T"
       ]
     }
   ],
@@ -2096,7 +2103,8 @@
     {
       "tag": "Ptr2Ref",
       "args": [
-        "self"
+        "self",
+        "T"
       ]
     }
   ],
@@ -2104,7 +2112,8 @@
     {
       "tag": "Ptr2Ref",
       "args": [
-        "self"
+        "self",
+        "T"
       ]
     }
   ],
@@ -2118,7 +2127,8 @@
     {
       "tag": "Ptr2Ref",
       "args": [
-        "self"
+        "self",
+        "T"
       ]
     }
   ],
@@ -2136,7 +2146,8 @@
     {
       "tag": "Ptr2Ref",
       "args": [
-        "self"
+        "self",
+        "T"
       ]
     }
   ],
@@ -2144,7 +2155,8 @@
     {
       "tag": "Ptr2Ref",
       "args": [
-        "self"
+        "self",
+        "T"
       ]
     }
   ],
@@ -2158,7 +2170,8 @@
     {
       "tag": "Ptr2Ref",
       "args": [
-        "self"
+        "self",
+        "T"
       ]
     }
   ],

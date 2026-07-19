@@ -686,9 +686,23 @@ impl<'tcx> Property<'tcx> {
                     Self::new_simple(PropertyKind::Unknown)
                 }
             },
-            "Ptr2Ref" | "ValidPtr2Ref" => {
-                Self::new_with_target(PropertyKind::Ptr2Ref, tcx, def_id, exprs)
-            }
+            "Ptr2Ref" | "ValidPtr2Ref" => match exprs {
+                [ptr_expr, ty_expr] => {
+                    let target = Self::parse_target_arg(tcx, def_id, ptr_expr);
+                    let mut args = vec![target];
+                    if let Some(ty) = Self::parse_type(tcx, def_id, ty_expr, "Ptr2Ref") {
+                        args.push(PropertyArg::Ty(ty));
+                    }
+                    Self::new_with_args(PropertyKind::Ptr2Ref, args)
+                }
+                _ => {
+                    rap_error!(
+                        "Wrong args length for Ptr2Ref Tag! expected 2, got {}",
+                        exprs.len()
+                    );
+                    Self::new_simple(PropertyKind::Unknown)
+                }
+            },
             "Layout" => Self::new_with_target(PropertyKind::Layout, tcx, def_id, exprs),
             "ValidTransmute" => {
                 if !Self::check_arg_length(exprs.len(), 2, "ValidTransmute") {
