@@ -23,7 +23,7 @@ mod non_volatile;
 mod owning;
 mod provenance;
 mod ptr2ref;
-mod transmute_without_align;
+mod valid_transmute_without_align;
 mod typed;
 mod valid_cstr;
 mod valid_num;

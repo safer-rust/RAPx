@@ -1332,7 +1332,7 @@ fn fmt_contract_expanded(
     } else {
         tag
     };
-    let call = if matches!(property.kind, PropertyKind::TransmuteWithoutAlign) {
+    let call = if matches!(property.kind, PropertyKind::ValidTransmuteWithoutAlign) {
         let wrapped: Vec<String> = args.iter().map(|a| format!("[{a}]")).collect();
         format!("{tag}({})", wrapped.join(", "))
     } else if matches!(property.kind, PropertyKind::InBound)
@@ -1479,7 +1479,7 @@ fn fmt_contract_expanded(
             let dst = args.get(1).map(|s| s.as_str()).unwrap_or("Dst");
             format!("bytes_of({dst}) within bytes_of({src})")
         }
-        PropertyKind::TransmuteWithoutAlign => {
+        PropertyKind::ValidTransmuteWithoutAlign => {
             let src = args.first().map(|s| s.as_str()).unwrap_or("T");
             let dst = args.get(1).map(|s| s.as_str()).unwrap_or("U");
             let line1 = format!(

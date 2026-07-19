@@ -361,7 +361,7 @@ pub enum PropertyKind {
     Ptr2Ref,
     Layout,
     ValidTransmute,
-    TransmuteWithoutAlign,
+    ValidTransmuteWithoutAlign,
     Nullable,
     Unknown,
 }
@@ -838,8 +838,8 @@ impl<'tcx> Property<'tcx> {
                     vec![PropertyArg::Ty(src_ty), PropertyArg::Ty(dst_ty)],
                 )
             }
-            "TransmuteWithoutAlign" => {
-                if !Self::check_arg_length(exprs.len(), 2, "TransmuteWithoutAlign") {
+            "ValidTransmuteWithoutAlign" => {
+                if !Self::check_arg_length(exprs.len(), 2, "ValidTransmuteWithoutAlign") {
                     return Self::new_simple(PropertyKind::Unknown);
                 }
                 let src_elem = unwrap_array_expr(tcx, def_id, &exprs[0]);
@@ -848,7 +848,7 @@ impl<'tcx> Property<'tcx> {
                     return Self::new_simple(PropertyKind::Unknown);
                 };
                 Self::new_with_args(
-                    PropertyKind::TransmuteWithoutAlign,
+                    PropertyKind::ValidTransmuteWithoutAlign,
                     vec![PropertyArg::Ty(src_elem), PropertyArg::Ty(dst_elem)],
                 )
             }
@@ -1582,12 +1582,12 @@ impl<'tcx> Property<'tcx> {
 
 /// True when `ty` denotes a slice `[T]`, possibly behind references.
 /// Extract the inner type from an `Expr::Array` (the `[T]` notation in
-/// `TransmuteWithoutAlign([T], [U])`), then resolve it via `parse_type`.
+/// `ValidTransmuteWithoutAlign([T], [U])`), then resolve it via `parse_type`.
 fn unwrap_array_expr<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, expr: &Expr) -> Option<Ty<'tcx>> {
     if let Expr::Array(arr) = expr
         && arr.elems.len() == 1
     {
-        return Property::parse_type(tcx, def_id, &arr.elems[0], "TransmuteWithoutAlign");
+        return Property::parse_type(tcx, def_id, &arr.elems[0], "ValidTransmuteWithoutAlign");
     }
-    Property::parse_type(tcx, def_id, expr, "TransmuteWithoutAlign")
+    Property::parse_type(tcx, def_id, expr, "ValidTransmuteWithoutAlign")
 }
