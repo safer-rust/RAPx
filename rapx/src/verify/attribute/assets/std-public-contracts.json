@@ -3249,6 +3249,24 @@
       ]
     }
   ],
+  "core::slice::<impl [T]>::get_unchecked": [
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "index"
+      ]
+    }
+  ],
+  "core::slice::<impl [T]>::get_unchecked_mut": [
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "index"
+      ]
+    }
+  ],
   "core::slice::swap_unchecked": [
     {
       "tag": "InBound",
