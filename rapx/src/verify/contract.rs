@@ -686,7 +686,7 @@ impl<'tcx> Property<'tcx> {
                     Self::new_simple(PropertyKind::Unknown)
                 }
             },
-            "Ptr2Ref" | "ValidPtr2Ref" => match exprs {
+            "Ptr2Ref" => match exprs {
                 [ptr_expr, ty_expr] => {
                     let target = Self::parse_target_arg(tcx, def_id, ptr_expr);
                     let mut args = vec![target];
