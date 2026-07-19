@@ -475,8 +475,30 @@ impl<'tcx> Property<'tcx> {
                         vec![target, PropertyArg::Ty(ty), PropertyArg::Expr(length)],
                     )
                 }
+                [target_expr, ty_expr, len_expr, allocator_expr] => {
+                    let target = Self::parse_target_arg(tcx, def_id, target_expr);
+                    let Some(ty) = Self::parse_type(tcx, def_id, ty_expr, "Allocated") else {
+                        return Self::new_simple(PropertyKind::Unknown);
+                    };
+                    let length = Self::parse_contract_expr(tcx, def_id, len_expr, "Allocated");
+                    let allocator = access_ident_recursive(allocator_expr)
+                        .map(|(name, _)| name)
+                        .unwrap_or_else(|| "global".to_string());
+                    Self::new_with_args(
+                        PropertyKind::Allocated,
+                        vec![
+                            target,
+                            PropertyArg::Ty(ty),
+                            PropertyArg::Expr(length),
+                            PropertyArg::Ident(allocator),
+                        ],
+                    )
+                }
                 _ => {
-                    Self::check_arg_length(exprs.len(), 3, "Allocated");
+                    rap_error!(
+                        "Wrong args length for Allocated Tag! expected 3 or 4, got {}",
+                        exprs.len()
+                    );
                     Self::new_simple(PropertyKind::Unknown)
                 }
             },
