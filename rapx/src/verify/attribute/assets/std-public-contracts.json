@@ -69,13 +69,6 @@
       ]
     },
     {
-      "tag": "ValidSlice",
-      "args": [
-        "val",
-        "T"
-      ]
-    },
-    {
       "tag": "ValidTraitObj",
       "args": [
         "t"
@@ -609,13 +602,6 @@
       ]
     },
     {
-      "tag": "ValidSlice",
-      "args": [
-        "val",
-        "T"
-      ]
-    },
-    {
       "tag": "ValidTraitObj",
       "args": [
         "val"
@@ -627,13 +613,6 @@
       "tag": "Size",
       "args": [
         "val"
-      ]
-    },
-    {
-      "tag": "ValidSlice",
-      "args": [
-        "val",
-        "T"
       ]
     },
     {
@@ -5311,13 +5290,6 @@
       ]
     },
     {
-      "tag": "ValidSlice",
-      "args": [
-        "ptr",
-        "T"
-      ]
-    },
-    {
       "tag": "ValidTraitObj",
       "args": [
         "ptr"
@@ -5329,13 +5301,6 @@
       "tag": "Size",
       "args": [
         "ptr"
-      ]
-    },
-    {
-      "tag": "ValidSlice",
-      "args": [
-        "ptr",
-        "T"
       ]
     },
     {

@@ -357,7 +357,6 @@ pub enum PropertyKind {
     Trait,
     Unreachable,
     ValidPtr,
-    ValidSlice,
     Deref,
     Ptr2Ref,
     Layout,
@@ -646,22 +645,6 @@ impl<'tcx> Property<'tcx> {
                     vec![target, PropertyArg::Ty(ty), PropertyArg::Expr(length)],
                 )
             }
-            "ValidSlice" => match exprs {
-                [target_expr, ty_expr] => {
-                    let target = Self::parse_target_arg(tcx, def_id, target_expr);
-                    let Some(ty) = Self::parse_type(tcx, def_id, ty_expr, "ValidSlice") else {
-                        return Self::new_simple(PropertyKind::Unknown);
-                    };
-                    Self::new_with_args(PropertyKind::ValidSlice, vec![target, PropertyArg::Ty(ty)])
-                }
-                _ => {
-                    rap_error!(
-                        "Wrong args length for ValidSlice Tag! expected 2, got {}",
-                        exprs.len()
-                    );
-                    Self::new_simple(PropertyKind::Unknown)
-                }
-            },
             "Deref" => match exprs {
                 [target, ty_expr, len_expr] => {
                     let target = Self::parse_target_arg(tcx, def_id, target);

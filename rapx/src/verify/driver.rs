@@ -1502,10 +1502,6 @@ fn fmt_contract_expanded(
             let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
             format!("ownership(*{ptr}) = none: no live owner aliases the pointee")
         }
-        PropertyKind::ValidSlice => {
-            let s = args.first().map(|s| s.as_str()).unwrap_or("slice");
-            format!("{s} points to valid slice with non-null aligned data")
-        }
         PropertyKind::Layout => {
             let l = args.first().map(|s| s.as_str()).unwrap_or("layout");
             format!("{l} matches prior allocation size and alignment")

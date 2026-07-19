@@ -1575,7 +1575,7 @@ fn trait_unsound_prepare() {
     assert_contain(&output, "prepare targets for unsafe trait: Buffer");
     assert_contain(&output, "impl for: VecBuf");
     assert_contain(&output, "ensures");
-    assert_contain(&output, "ValidSlice");
+    assert_contain(&output, "Size");
 }
 
 #[test]
@@ -1584,7 +1584,7 @@ fn trait_unsound_verify() {
     assert_contain(&output, "unsafe trait impl: Buffer");
     assert_contain(&output, "impl for: VecBuf");
     assert_contain(&output, "ensures");
-    assert_contain(&output, "ValidSlice");
+    assert_contain(&output, "Size");
     assert_contain(&output, "verification: deferred");
 }
 
