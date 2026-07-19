@@ -718,7 +718,25 @@ impl<'tcx> Property<'tcx> {
                     Self::new_simple(PropertyKind::Unknown)
                 }
             },
-            "NonVolatile" => Self::new_with_target(PropertyKind::NonVolatile, tcx, def_id, exprs),
+            "NonVolatile" => match exprs {
+                [ptr_expr, ty_expr, len_expr] => {
+                    let target = Self::parse_target_arg(tcx, def_id, ptr_expr);
+                    let mut args = vec![target];
+                    if let Some(ty) = Self::parse_type(tcx, def_id, ty_expr, "NonVolatile") {
+                        args.push(PropertyArg::Ty(ty));
+                    }
+                    let len = Self::parse_contract_expr(tcx, def_id, len_expr, "NonVolatile");
+                    args.push(PropertyArg::Expr(len));
+                    Self::new_with_args(PropertyKind::NonVolatile, args)
+                }
+                _ => {
+                    rap_error!(
+                        "Wrong args length for NonVolatile Tag! expected 3, got {}",
+                        exprs.len()
+                    );
+                    Self::new_simple(PropertyKind::Unknown)
+                }
+            },
             "Opened" => Self::new_with_target(PropertyKind::Opened, tcx, def_id, exprs),
             "Trait" => {
                 if let [type_expr, ident_expr] = exprs {
