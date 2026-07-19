@@ -3892,13 +3892,6 @@
       ]
     },
     {
-      "tag": "Layout",
-      "args": [
-        "1",
-        "ptr"
-      ]
-    },
-    {
       "tag": "Allocated",
       "args": [
         "ptr",
@@ -3943,13 +3936,6 @@
       "tag": "ValidNum",
       "args": [
         "size_of(T) * count <= isize::MAX"
-      ]
-    },
-    {
-      "tag": "Layout",
-      "args": [
-        "1",
-        "ptr"
       ]
     },
     {
@@ -4000,13 +3986,6 @@
       ]
     },
     {
-      "tag": "Layout",
-      "args": [
-        "1",
-        "ptr"
-      ]
-    },
-    {
       "tag": "Allocated",
       "args": [
         "ptr",
@@ -4051,13 +4030,6 @@
       "tag": "ValidNum",
       "args": [
         "size_of(T) * count <= isize::MAX"
-      ]
-    },
-    {
-      "tag": "Layout",
-      "args": [
-        "1",
-        "ptr"
       ]
     },
     {
@@ -4114,7 +4086,7 @@
       "tag": "Layout",
       "args": [
         "1",
-        "ptr"
+        "layout"
       ]
     }
   ],
