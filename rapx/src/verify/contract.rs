@@ -546,6 +546,18 @@ impl<'tcx> Property<'tcx> {
                     let target = Self::parse_target_arg(tcx, def_id, indices);
                     Self::new_with_args(PropertyKind::NonOverlap, vec![target])
                 }
+                [a, b, ty_expr, count_expr] => {
+                    let left = Self::parse_target_arg(tcx, def_id, a);
+                    let right = Self::parse_target_arg(tcx, def_id, b);
+                    let count =
+                        Self::parse_contract_expr(tcx, def_id, count_expr, "NonOverlap");
+                    let mut args = vec![left, right];
+                    if let Some(ty) = Self::parse_type(tcx, def_id, ty_expr, "NonOverlap") {
+                        args.push(PropertyArg::Ty(ty));
+                    }
+                    args.push(PropertyArg::Expr(count));
+                    Self::new_with_args(PropertyKind::NonOverlap, args)
+                }
                 _ => Self::new_with_targets(PropertyKind::NonOverlap, tcx, def_id, exprs),
             },
             "ValidNum" => {
