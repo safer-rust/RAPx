@@ -3311,7 +3311,7 @@
   ],
   "core::slice::align_to": [
     {
-      "tag": "ValidTransmuteWithoutAlign",
+      "tag": "SplitTransmute",
       "args": [
         "[T]",
         "[U]"
@@ -3320,7 +3320,7 @@
   ],
   "core::slice::align_to_mut": [
     {
-      "tag": "ValidTransmuteWithoutAlign",
+      "tag": "SplitTransmute",
       "args": [
         "[T]",
         "[U]"
@@ -5717,7 +5717,7 @@
   ],
   "core::slice::<impl [T]>::align_to": [
     {
-      "tag": "ValidTransmuteWithoutAlign",
+      "tag": "SplitTransmute",
       "args": [
         "[T]",
         "[U]"
@@ -5726,7 +5726,7 @@
   ],
   "core::slice::<impl [T]>::align_to_mut": [
     {
-      "tag": "ValidTransmuteWithoutAlign",
+      "tag": "SplitTransmute",
       "args": [
         "[T]",
         "[U]"
