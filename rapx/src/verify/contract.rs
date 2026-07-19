@@ -654,15 +654,11 @@ impl<'tcx> Property<'tcx> {
                     };
                     Self::new_with_args(PropertyKind::ValidSlice, vec![target, PropertyArg::Ty(ty)])
                 }
-                [target_expr] => {
-                    let Some(ty) = Self::parse_target_type(tcx, def_id, target_expr) else {
-                        return Self::new_simple(PropertyKind::Unknown);
-                    };
-                    let target = Self::parse_target_arg(tcx, def_id, target_expr);
-                    Self::new_with_args(PropertyKind::ValidSlice, vec![target, PropertyArg::Ty(ty)])
-                }
                 _ => {
-                    Self::check_arg_length(exprs.len(), 2, "ValidSlice");
+                    rap_error!(
+                        "Wrong args length for ValidSlice Tag! expected 2, got {}",
+                        exprs.len()
+                    );
                     Self::new_simple(PropertyKind::Unknown)
                 }
             },
@@ -973,10 +969,6 @@ impl<'tcx> Property<'tcx> {
             rap_debug!("Cannot get type in {:?} Tag!", sp);
         }
         ty
-    }
-
-    fn parse_target_type(tcx: TyCtxt<'tcx>, def_id: DefId, expr: &Expr) -> Option<Ty<'tcx>> {
-        parse_expr_into_local_and_ty(tcx, def_id, expr).map(|(_, _, ty)| ty)
     }
 
     fn parse_target_arg(tcx: TyCtxt<'tcx>, def_id: DefId, expr: &Expr) -> PropertyArg<'tcx> {
