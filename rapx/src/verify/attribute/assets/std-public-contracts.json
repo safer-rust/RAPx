@@ -736,7 +736,8 @@
     {
       "tag": "Pinned",
       "args": [
-        "self"
+        "self",
+        "a"
       ]
     }
   ],
@@ -744,7 +745,8 @@
     {
       "tag": "Pinned",
       "args": [
-        "self"
+        "self",
+        "a"
       ]
     }
   ],
@@ -752,7 +754,8 @@
     {
       "tag": "Pinned",
       "args": [
-        "pointer"
+        "pointer",
+        "a"
       ]
     }
   ],
@@ -760,7 +763,8 @@
     {
       "tag": "Pinned",
       "args": [
-        "pin"
+        "pin",
+        "a"
       ]
     }
   ],
@@ -768,7 +772,8 @@
     {
       "tag": "Pinned",
       "args": [
-        "self"
+        "self",
+        "a"
       ]
     }
   ],

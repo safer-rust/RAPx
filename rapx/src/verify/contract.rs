@@ -698,7 +698,26 @@ impl<'tcx> Property<'tcx> {
                 prop
             }
             "Alive" => Self::new_with_targets(PropertyKind::Alive, tcx, def_id, exprs),
-            "Pinned" => Self::new_with_target(PropertyKind::Pinned, tcx, def_id, exprs),
+            "Pinned" => match exprs {
+                [ptr_expr, lifetime_expr] => {
+                    let target = Self::parse_target_arg(tcx, def_id, ptr_expr);
+                    let lifetime = access_ident_recursive(lifetime_expr)
+                        .map(|(name, _)| name)
+                        .unwrap_or_default();
+                    let mut args = vec![target];
+                    if !lifetime.is_empty() {
+                        args.push(PropertyArg::Ident(lifetime));
+                    }
+                    Self::new_with_args(PropertyKind::Pinned, args)
+                }
+                _ => {
+                    rap_error!(
+                        "Wrong args length for Pinned Tag! expected 2, got {}",
+                        exprs.len()
+                    );
+                    Self::new_simple(PropertyKind::Unknown)
+                }
+            },
             "NonVolatile" => Self::new_with_target(PropertyKind::NonVolatile, tcx, def_id, exprs),
             "Opened" => Self::new_with_target(PropertyKind::Opened, tcx, def_id, exprs),
             "Trait" => {
