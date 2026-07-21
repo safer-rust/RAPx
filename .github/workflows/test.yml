@@ -68,7 +68,7 @@ jobs:
       run: |
         SOUND_COUNT=$(grep -c 'result: SOUND' /tmp/rapx-verify-output.txt || true)
         echo "SOUND results: $SOUND_COUNT"
-        if [ "$SOUND_COUNT" -ne 37 ]; then
-          echo "Expected 37 SOUND results, got $SOUND_COUNT"
+        if [ "$SOUND_COUNT" -ne 38 ]; then
+          echo "Expected 38 SOUND results, got $SOUND_COUNT"
           exit 1
         fi
