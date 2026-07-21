@@ -1,4 +1,3 @@
 [toolchain]
-# The default version of the rustc compiler
-channel = "nightly"
+channel = "nightly-2025-11-25"
 components = ["rustc-dev", "rust-src", "llvm-tools-preview", "rustfmt"]
