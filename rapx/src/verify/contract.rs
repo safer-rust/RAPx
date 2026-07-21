@@ -329,6 +329,28 @@ impl<'tcx> NumericPredicate<'tcx> {
         RelOp::from_mir(op)
             .map(|rel| Self::new(ContractExpr::new_var(lhs), rel, ContractExpr::new_var(rhs)))
     }
+
+    pub fn display_user_friendly(
+        &self,
+        tcx: TyCtxt<'tcx>,
+        struct_def_id: Option<DefId>,
+        fn_def_id: Option<DefId>,
+    ) -> String {
+        let op_str = match self.op {
+            RelOp::Eq => "==",
+            RelOp::Ne => "!=",
+            RelOp::Lt => "<",
+            RelOp::Le => "<=",
+            RelOp::Gt => ">",
+            RelOp::Ge => ">=",
+        };
+        format!(
+            "{} {} {}",
+            display_expr_user_friendly(&self.lhs, tcx, struct_def_id, fn_def_id),
+            op_str,
+            display_expr_user_friendly(&self.rhs, tcx, struct_def_id, fn_def_id),
+        )
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -375,13 +397,13 @@ pub enum PropertyArg<'tcx> {
     Ident(String),
 }
 
-fn display_expr_user_friendly<'tcx>(
-    expr: &ContractExpr<'tcx>,
-    tcx: TyCtxt<'tcx>,
-    struct_def_id: Option<DefId>,
-    fn_def_id: Option<DefId>,
-) -> String {
-    match expr {
+    fn display_expr_user_friendly<'tcx>(
+        expr: &ContractExpr<'tcx>,
+        tcx: TyCtxt<'tcx>,
+        struct_def_id: Option<DefId>,
+        fn_def_id: Option<DefId>,
+    ) -> String {
+        match expr {
         ContractExpr::Const(n) => format!("{n}"),
         ContractExpr::ConstParam { name, .. } => name.clone(),
         ContractExpr::Place(p) => p.display_user_friendly(tcx, struct_def_id, fn_def_id),
@@ -398,6 +420,35 @@ fn display_expr_user_friendly<'tcx>(
                 "index_access({}, {})",
                 display_expr_user_friendly(slice, tcx, struct_def_id, fn_def_id),
                 display_expr_user_friendly(index, tcx, struct_def_id, fn_def_id),
+            )
+        }
+        ContractExpr::Binary { op, lhs, rhs } => {
+            let op_str = match op {
+                NumericOp::Add => "+",
+                NumericOp::Sub => "-",
+                NumericOp::Mul => "*",
+                NumericOp::Div => "/",
+                NumericOp::Rem => "%",
+                NumericOp::BitAnd => "&",
+                NumericOp::BitOr => "|",
+                NumericOp::BitXor => "^",
+            };
+            format!(
+                "{} {} {}",
+                display_expr_user_friendly(lhs, tcx, struct_def_id, fn_def_id),
+                op_str,
+                display_expr_user_friendly(rhs, tcx, struct_def_id, fn_def_id),
+            )
+        }
+        ContractExpr::Unary { op, expr } => {
+            let op_str = match op {
+                NumericUnaryOp::Not => "!",
+                NumericUnaryOp::Neg => "-",
+            };
+            format!(
+                "{}{}",
+                op_str,
+                display_expr_user_friendly(expr, tcx, struct_def_id, fn_def_id),
             )
         }
         _ => format!("{:?}", expr),
@@ -418,7 +469,12 @@ impl<'tcx> PropertyArg<'tcx> {
                 display_expr_user_friendly(expr, tcx, struct_def_id, fn_def_id)
             }
             PropertyArg::Predicates(preds) => {
-                let p: Vec<_> = preds.iter().map(|pred| format!("{:?}", pred)).collect();
+                let p: Vec<_> = preds
+                    .iter()
+                    .map(|pred| {
+                        pred.display_user_friendly(tcx, struct_def_id, fn_def_id)
+                    })
+                    .collect();
                 p.join(" && ")
             }
             PropertyArg::Ident(s) => s.clone(),
@@ -889,12 +945,43 @@ impl<'tcx> Property<'tcx> {
         struct_def_id: Option<DefId>,
         fn_def_id: Option<DefId>,
     ) -> String {
+        let kind_str = format!("{:?}", self.kind);
+
+        if matches!(self.kind, PropertyKind::InBound)
+            && matches!(
+                self.args.first(),
+                Some(PropertyArg::Expr(ContractExpr::IndexAccess { .. }))
+            )
+        {
+            if let Some(PropertyArg::Expr(ContractExpr::IndexAccess { slice, index })) =
+                self.args.first()
+            {
+                let slice_str =
+                    display_expr_user_friendly(slice, tcx, struct_def_id, fn_def_id);
+                let index_str =
+                    display_expr_user_friendly(index, tcx, struct_def_id, fn_def_id);
+                return format!("{}({}, {})", kind_str, slice_str, index_str);
+            }
+        }
+
+        if matches!(self.kind, PropertyKind::ValidNum)
+            && let Some(PropertyArg::Predicates(preds)) = self.args.first()
+        {
+            let inner: Vec<String> = preds
+                .iter()
+                .map(|pred| pred.display_user_friendly(tcx, struct_def_id, fn_def_id))
+                .collect();
+            if inner.is_empty() {
+                return format!("{}", kind_str);
+            }
+            return format!("{}({})", kind_str, inner.join(", "));
+        }
+
         let args: Vec<String> = self
             .args
             .iter()
             .map(|arg| arg.display_for_report(tcx, struct_def_id, fn_def_id))
             .collect();
-        let kind_str = format!("{:?}", self.kind);
         if args.is_empty() {
             kind_str
         } else {

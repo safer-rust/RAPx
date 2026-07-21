@@ -6,7 +6,7 @@ use crate::cli::VerifyMode;
 use crate::helpers::fn_info::get_cons;
 use crate::helpers::mir_scan::{collect_raw_ptr_deref_info, collect_static_mut_access_info};
 use rustc_hir::{
-    Attribute, BodyId, FnDecl, ItemKind,
+    Attribute, BodyId, FnDecl, ItemKind, LangItem,
     def_id::{DefId, LocalDefId},
     intravisit::{FnKind, Visitor},
 };
@@ -364,7 +364,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
         let static_mut_checks = build_static_mut_checks(self.tcx, def_id);
 
         let owner_struct_def_id = get_owner_struct_def_id(self.tcx, def_id);
-        let struct_invariants = owner_struct_def_id
+        let mut struct_invariants = owner_struct_def_id
             .map(|struct_def_id| {
                 get_struct_invariants_from_annotation(self.tcx, struct_def_id, def_id)
             })
@@ -374,6 +374,12 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
         // safe methods need them as automatic entry facts (no requires
         // needed), and unsafe constructors verify they hold at return.
         caller_requires.extend(struct_invariants.clone());
+
+        // drop is a destructor — the struct is being torn down, so we skip
+        // struct invariant checks at exit points.
+        if is_drop_impl(self.tcx, def_id) {
+            struct_invariants.clear();
+        }
 
         // Standard-library type invariants: for each function parameter (and
         // the return type for constructors), look up the type's invariants
@@ -1652,4 +1658,12 @@ fn type_path_key<'tcx>(tcx: TyCtxt<'tcx>, ty: rustc_middle::ty::Ty<'tcx>) -> Str
         }
         _ => format!("{ty:?}"),
     }
+}
+
+fn is_drop_impl(tcx: TyCtxt<'_>, fn_did: DefId) -> bool {
+    let Some(impl_id) = tcx.trait_impl_of_assoc(fn_did) else {
+        return false;
+    };
+    let trait_did = tcx.impl_trait_id(impl_id);
+    tcx.is_lang_item(trait_did, LangItem::Drop)
 }
