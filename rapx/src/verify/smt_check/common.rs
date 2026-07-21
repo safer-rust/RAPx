@@ -197,6 +197,16 @@ impl<'tcx> SmtChecker<'tcx> {
                 }
                 super::ptr2ref::check(self, checkpoint, property, forward)
             }
+            PropertyKind::Trait => {
+                if let Some(reason) = self.check_trait_obligation(checkpoint, property) {
+                    return SmtCheckResult::proved(reason);
+                }
+                SmtCheckResult::unknown("trait bound not proven in calling context")
+            }
+            PropertyKind::Or => {
+                // Or is handled by verify_function in driver.rs — shouldn't reach here.
+                SmtCheckResult::unknown("Or dispatched without expansion")
+            }
             _ => SmtCheckResult::unknown("no SMT lowering for this property yet"),
         }
     }
@@ -2712,6 +2722,40 @@ impl<'tcx> SmtChecker<'tcx> {
             .filter_map(|candidate| self.type_layout(caller, *candidate).map(|(_, size)| size))
             .collect::<Vec<_>>();
         if sizes.is_empty() { None } else { Some(sizes) }
+    }
+
+    /// Check whether a `Trait(T, TraitName)` property is satisfied by the
+    /// calling context: looks at the caller function's where-clause predicates.
+    fn check_trait_obligation(
+        &self,
+        checkpoint: &Checkpoint<'tcx>,
+        property: &Property<'tcx>,
+    ) -> Option<String> {
+        use crate::verify::contract::PropertyArg;
+        use rustc_middle::ty::ClauseKind;
+
+        let ty = match property.args.first()? {
+            PropertyArg::Ty(ty) => *ty,
+            _ => return None,
+        };
+        let trait_name = match property.args.get(1)? {
+            PropertyArg::Ident(name) => name.as_str(),
+            _ => return None,
+        };
+
+        let predicates = self.tcx.predicates_of(checkpoint.caller);
+        for (predicate, _span) in predicates.predicates.iter() {
+            if let ClauseKind::Trait(trait_ref) = predicate.kind().skip_binder() {
+                if trait_ref.self_ty() == ty {
+                    let def_path = self.tcx.def_path_str(trait_ref.def_id());
+                    let short_name = def_path.rsplit("::").next().unwrap_or(&def_path);
+                    if short_name == trait_name {
+                        return Some(format!("trait bound {trait_name} satisfied in caller"));
+                    }
+                }
+            }
+        }
+        None
     }
 }
 

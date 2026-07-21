@@ -386,6 +386,9 @@ pub enum PropertyKind {
     SplitTransmute,
     Nullable,
     Unknown,
+    /// Logical OR over alternative property groups.
+    /// Each inner group is a conjunction (AND); at least one group must hold.
+    Or,
 }
 
 #[derive(Clone, Debug)]
@@ -397,13 +400,13 @@ pub enum PropertyArg<'tcx> {
     Ident(String),
 }
 
-    fn display_expr_user_friendly<'tcx>(
-        expr: &ContractExpr<'tcx>,
-        tcx: TyCtxt<'tcx>,
-        struct_def_id: Option<DefId>,
-        fn_def_id: Option<DefId>,
-    ) -> String {
-        match expr {
+fn display_expr_user_friendly<'tcx>(
+    expr: &ContractExpr<'tcx>,
+    tcx: TyCtxt<'tcx>,
+    struct_def_id: Option<DefId>,
+    fn_def_id: Option<DefId>,
+) -> String {
+    match expr {
         ContractExpr::Const(n) => format!("{n}"),
         ContractExpr::ConstParam { name, .. } => name.clone(),
         ContractExpr::Place(p) => p.display_user_friendly(tcx, struct_def_id, fn_def_id),
@@ -471,9 +474,7 @@ impl<'tcx> PropertyArg<'tcx> {
             PropertyArg::Predicates(preds) => {
                 let p: Vec<_> = preds
                     .iter()
-                    .map(|pred| {
-                        pred.display_user_friendly(tcx, struct_def_id, fn_def_id)
-                    })
+                    .map(|pred| pred.display_user_friendly(tcx, struct_def_id, fn_def_id))
                     .collect();
                 p.join(" && ")
             }
@@ -496,6 +497,10 @@ pub struct Property<'tcx> {
     /// When set, this property came from an `any(Null(guard), ...)` expansion
     /// and is vacuously true when `guard` is null.
     pub null_guard: Option<PlaceKey>,
+    /// For `PropertyKind::Or`: alternative property groups.
+    /// Each inner `Vec` is a conjunction (all must hold); at least one group
+    /// must hold in a disjunction.
+    pub or_alternatives: Vec<Vec<Box<Property<'tcx>>>>,
 }
 
 impl<'tcx> Property<'tcx> {
@@ -956,10 +961,8 @@ impl<'tcx> Property<'tcx> {
             if let Some(PropertyArg::Expr(ContractExpr::IndexAccess { slice, index })) =
                 self.args.first()
             {
-                let slice_str =
-                    display_expr_user_friendly(slice, tcx, struct_def_id, fn_def_id);
-                let index_str =
-                    display_expr_user_friendly(index, tcx, struct_def_id, fn_def_id);
+                let slice_str = display_expr_user_friendly(slice, tcx, struct_def_id, fn_def_id);
+                let index_str = display_expr_user_friendly(index, tcx, struct_def_id, fn_def_id);
                 return format!("{}({}, {})", kind_str, slice_str, index_str);
             }
         }
@@ -995,6 +998,7 @@ impl<'tcx> Property<'tcx> {
             args: Vec::new(),
             contract_kind: ContractKind::Precond,
             null_guard: None,
+            or_alternatives: Vec::new(),
         }
     }
 
@@ -1009,24 +1013,27 @@ impl<'tcx> Property<'tcx> {
         vec![Self::new(tcx, def_id, name, exprs)]
     }
 
-    /// Parse the disjunctive combinator `any(D1, D2)` written in DNF:
+    /// Parse the disjunctive combinator `any(D1, D2, ...)` written in DNF:
     /// `any` means logical OR between disjuncts, and commas inside a
     /// parenthesised disjunct mean logical AND:
     ///
     /// ```text
-    /// any((Null(p)), (P1(p, ...), P2(p, ...), ...))
+    /// any(Null(p), (P1(p, ...), P2(p, ...), ...))
     /// ```
     ///
     /// A disjunct is either a single property application `P(...)` or a
-    /// parenthesised conjunction `(P1(...), ..., Pn(...))`.  The shape the
-    /// verifier currently supports is a null guard: exactly two disjuncts,
-    /// one being `Null(p)` alone, the other a conjunction of properties over
-    /// the same place `p`.  The disjunction expands to the conjunct
-    /// properties, each holding whenever `p` is non-null and vacuously for a
-    /// null `p` (e.g. an empty list's `head` or the last node's `next`) —
-    /// the raw-pointer counterpart of `Option` invariants written through
-    /// `unwrap_some()`.  Use sites are expected to be dominated by their own
-    /// null checks.
+    /// parenthesised conjunction `(P1(...), ..., Pn(...))`.  Two patterns are
+    /// supported:
+    ///
+    /// 1. **Null guard**: exactly two disjuncts, one being `Null(p)` alone,
+    ///    the other a conjunction of properties over the same place `p`.  The
+    ///    disjunction expands to the conjunct properties, each holding
+    ///    whenever `p` is non-null and vacuously for a null `p`.
+    ///
+    /// 2. **General disjunction**: each disjunct is standalone or a
+    ///    conjunction, e.g., `any(Trait(T, Copy), Trait(T, TrivialClone))`.
+    ///    Produces a single `PropertyKind::Or` whose `or_alternatives`
+    ///    encode the DNF structure: each inner `Vec` is one AND-group.
     fn parse_any(tcx: TyCtxt<'tcx>, def_id: DefId, exprs: &[Expr]) -> Vec<Self> {
         if !Self::check_arg_length(exprs.len(), 2, "any") {
             return vec![Self::new_simple(PropertyKind::Unknown)];
@@ -1040,20 +1047,46 @@ impl<'tcx> Property<'tcx> {
             return vec![Self::new_simple(PropertyKind::Unknown)];
         };
 
+        // --- null-guard pattern ---
         let is_null_guard =
             |disjunct: &[(String, Vec<Expr>)]| disjunct.len() == 1 && disjunct[0].0 == "Null";
-        let (guard, conjuncts) = if is_null_guard(&first) && !is_null_guard(&second) {
-            (first, second)
-        } else if is_null_guard(&second) && !is_null_guard(&first) {
-            (second, first)
-        } else {
-            rap_error!(
-                "any(...) currently supports exactly one Null(p) disjunct next to \
-                 one conjunction of properties over the same place"
-            );
-            return vec![Self::new_simple(PropertyKind::Unknown)];
-        };
+        if is_null_guard(&first) && !is_null_guard(&second) {
+            return Self::build_null_guard(tcx, def_id, &first, &second);
+        }
+        if is_null_guard(&second) && !is_null_guard(&first) {
+            return Self::build_null_guard(tcx, def_id, &second, &first);
+        }
 
+        // --- general disjunction: build a single Or property ---
+        let all_standalone = [&first, &second].iter().all(|d| d.len() == 1);
+        if all_standalone {
+            let mut groups: Vec<Vec<Box<Self>>> = Vec::new();
+            for parts in [first, second] {
+                let mut group: Vec<Box<Self>> = Vec::new();
+                for (name, args) in parts {
+                    group.push(Box::new(Self::new(tcx, def_id, &name, &args)));
+                }
+                groups.push(group);
+            }
+            let mut or_prop = Self::new_simple(PropertyKind::Or);
+            or_prop.or_alternatives = groups;
+            return vec![or_prop];
+        }
+
+        rap_error!(
+            "any(...) currently supports either a Null(p) guard pattern or \
+             standalone property applications"
+        );
+        vec![Self::new_simple(PropertyKind::Unknown)]
+    }
+
+    /// Build the null-guard expansion: `Null(p) OR (P1 & P2 & ...)`.
+    fn build_null_guard(
+        tcx: TyCtxt<'tcx>,
+        def_id: DefId,
+        guard: &[(String, Vec<Expr>)],
+        conjuncts: &[(String, Vec<Expr>)],
+    ) -> Vec<Self> {
         let guard_args = &guard[0].1;
         if guard_args.len() != 1 {
             rap_error!("Null(...) guard inside any(...) takes exactly one place");
@@ -1066,7 +1099,7 @@ impl<'tcx> Property<'tcx> {
         let guard_key = crate::verify::def_use::PlaceKey::from_contract_place(&guard_place);
 
         let mut properties = Vec::new();
-        for (inner_name, inner_args) in &conjuncts {
+        for (inner_name, inner_args) in conjuncts {
             let mut property = Self::new(tcx, def_id, inner_name, inner_args);
             let inner_place = property.args.first().and_then(|arg| match arg {
                 PropertyArg::Place(place) => Some(place),
@@ -1117,6 +1150,7 @@ impl<'tcx> Property<'tcx> {
             args,
             contract_kind: ContractKind::Precond,
             null_guard: None,
+            or_alternatives: Vec::new(),
         }
     }
 
@@ -1136,6 +1170,7 @@ impl<'tcx> Property<'tcx> {
             args,
             contract_kind: ContractKind::Precond,
             null_guard: None,
+            or_alternatives: Vec::new(),
         }
     }
 
@@ -1154,6 +1189,7 @@ impl<'tcx> Property<'tcx> {
             args,
             contract_kind: ContractKind::Precond,
             null_guard: None,
+            or_alternatives: Vec::new(),
         }
     }
 

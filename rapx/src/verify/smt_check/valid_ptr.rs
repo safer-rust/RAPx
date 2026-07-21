@@ -91,6 +91,7 @@ pub(crate) fn check<'tcx>(
 fn primitive_property<'tcx>(property: &Property<'tcx>, kind: PropertyKind) -> Property<'tcx> {
     Property {
         null_guard: None,
+        or_alternatives: Vec::new(),
         contract_kind: property.contract_kind.clone(),
         kind,
         args: property.args.clone(),

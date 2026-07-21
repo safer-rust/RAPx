@@ -342,7 +342,16 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
             .collect();
         let callee_requires = unsafe_callees
             .iter()
-            .map(|callee_def_id| (*callee_def_id, self.get_fn_contracts(*callee_def_id)))
+            .map(|callee_def_id| {
+                let mut contracts = self.get_fn_contracts(*callee_def_id);
+                contracts.retain(|p| {
+                    !matches!(
+                        p.kind,
+                        crate::verify::contract::PropertyKind::Unknown
+                    )
+                });
+                (*callee_def_id, contracts)
+            })
             .collect();
 
         let mut caller_requires = self.get_fn_contracts(def_id);
@@ -1407,12 +1416,14 @@ fn build_raw_ptr_deref_checks<'tcx>(
                 vec![
                     Property {
                         null_guard: None,
+                        or_alternatives: Vec::new(),
                         contract_kind: crate::verify::contract::ContractKind::Precond,
                         kind: PropertyKind::NonNull,
                         args: vec![target.clone()],
                     },
                     Property {
                         null_guard: None,
+                        or_alternatives: Vec::new(),
                         contract_kind: crate::verify::contract::ContractKind::Precond,
                         kind: PropertyKind::Align,
                         args: vec![target.clone(), ty.clone()],
@@ -1422,12 +1433,14 @@ fn build_raw_ptr_deref_checks<'tcx>(
                 vec![
                     Property {
                         null_guard: None,
+                        or_alternatives: Vec::new(),
                         contract_kind: crate::verify::contract::ContractKind::Precond,
                         kind: PropertyKind::ValidPtr,
                         args: vec![target.clone(), ty.clone(), count.clone()],
                     },
                     Property {
                         null_guard: None,
+                        or_alternatives: Vec::new(),
                         contract_kind: crate::verify::contract::ContractKind::Precond,
                         kind: PropertyKind::Align,
                         args: vec![target.clone(), ty.clone()],
@@ -1438,6 +1451,7 @@ fn build_raw_ptr_deref_checks<'tcx>(
             if info.is_read && !info.is_ref {
                 properties.push(Property {
                     null_guard: None,
+                    or_alternatives: Vec::new(),
                     contract_kind: crate::verify::contract::ContractKind::Precond,
                     kind: PropertyKind::Typed,
                     args: vec![target, ty],
@@ -1484,18 +1498,21 @@ fn build_static_mut_checks<'tcx>(
             let properties = vec![
                 Property {
                     null_guard: None,
+                    or_alternatives: Vec::new(),
                     contract_kind: crate::verify::contract::ContractKind::Precond,
                     kind: PropertyKind::ValidPtr,
                     args: vec![target.clone(), ty.clone(), count.clone()],
                 },
                 Property {
                     null_guard: None,
+                    or_alternatives: Vec::new(),
                     contract_kind: crate::verify::contract::ContractKind::Precond,
                     kind: PropertyKind::Align,
                     args: vec![target.clone(), ty.clone()],
                 },
                 Property {
                     null_guard: None,
+                    or_alternatives: Vec::new(),
                     contract_kind: crate::verify::contract::ContractKind::Precond,
                     kind: PropertyKind::Init,
                     args: vec![target, ty, count],

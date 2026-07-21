@@ -148,31 +148,136 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
 
         for view in self.iter_callsite_checks() {
             for (property_index, property) in view.properties.iter().enumerate() {
-                let bulk = self.engine.check_callsite_from_tree(
-                    view.tree,
-                    view.checkpoint,
-                    property,
-                    &self.target.caller_requires,
-                );
-                for (path_index, (forward, smt_check)) in bulk.iter().enumerate() {
-                    let check_diagnostics =
-                        format!("{}\n{}", forward.describe(), smt_check.describe());
-                    report.push(PropertyCheckResult {
-                        checkpoint: view.checkpoint.location(),
-                        checkpoint_index: view.checkpoint_index,
-                        path_index,
-                        property_index,
-                        property: property.clone(),
-                        result: smt_check.result.clone(),
-                        diagnostics: Some(VisitDiagnostics::new(String::new(), check_diagnostics)),
-                        path_description: forward.path.describe_indices(),
-                        callee_name: view.checkpoint.callee_name(self.tcx),
-                    });
+                if property.kind == PropertyKind::Or {
+                    self.check_or_property(
+                        &mut report, &view, property_index, property,
+                    );
+                } else {
+                    let bulk = self.engine.check_callsite_from_tree(
+                        view.tree,
+                        view.checkpoint,
+                        property,
+                        &self.target.caller_requires,
+                    );
+                    for (path_index, (forward, smt_check)) in bulk.iter().enumerate() {
+                        let check_diagnostics =
+                            format!("{}\n{}", forward.describe(), smt_check.describe());
+                        report.push(PropertyCheckResult {
+                            checkpoint: view.checkpoint.location(),
+                            checkpoint_index: view.checkpoint_index,
+                            path_index,
+                            property_index,
+                            property: property.clone(),
+                            result: smt_check.result.clone(),
+                            diagnostics: Some(VisitDiagnostics::new(String::new(), check_diagnostics)),
+                            path_description: forward.path.describe_indices(),
+                            callee_name: view.checkpoint.callee_name(self.tcx),
+                        });
+                    }
                 }
             }
         }
 
         report
+    }
+
+    /// Check an `Or` property by trying each alternative group.
+    /// At least one group must be fully proved on each path for the OR to hold.
+    fn check_or_property(
+        &self,
+        report: &mut VerificationReport<'tcx>,
+        view: &CheckpointCheckView<'_, '_, 'tcx>,
+        property_index: usize,
+        or_property: &Property<'tcx>,
+    ) {
+        use crate::verify::report::CheckResult;
+
+        let num_groups = or_property.or_alternatives.len();
+        let mut best_per_path: Vec<Option<(usize, super::smt_check::SmtCheckResult, String)>> =
+            Vec::new();
+
+        for (group_idx, group) in or_property.or_alternatives.iter().enumerate() {
+            let mut group_proved = true;
+
+            for sub_prop in group.iter() {
+                let bulk = self.engine.check_callsite_from_tree(
+                    view.tree,
+                    view.checkpoint,
+                    sub_prop,
+                    &self.target.caller_requires,
+                );
+                if best_per_path.is_empty() {
+                    best_per_path.resize(bulk.len(), None);
+                }
+                for (path_idx, (_forward, smt)) in bulk.iter().enumerate() {
+                    if !matches!(smt.result, CheckResult::Proved) {
+                        group_proved = false;
+                    }
+                    let better = match &best_per_path[path_idx] {
+                        None => true,
+                        Some((_, existing, _)) => {
+                            matches!(smt.result, CheckResult::Proved)
+                                && !matches!(existing.result, CheckResult::Proved)
+                        }
+                    };
+                    if better {
+                        let desc = format!(
+                            "OR group {}/{}",
+                            group_idx + 1,
+                            num_groups,
+                        );
+                        best_per_path[path_idx] = Some((group_idx, smt.clone(), desc));
+                    }
+                }
+            }
+
+            if group_proved {
+                for _path_idx in 0..best_per_path.len() {
+                    let desc = format!(
+                        "OR group {}/{} ({} sub-properties all proved)",
+                        group_idx + 1,
+                        num_groups,
+                        group.len(),
+                    );
+                    report.push(PropertyCheckResult {
+                        checkpoint: view.checkpoint.location(),
+                        checkpoint_index: view.checkpoint_index,
+                        path_index: 0,
+                        property_index,
+                        property: or_property.clone(),
+                        result: CheckResult::Proved,
+                        diagnostics: Some(VisitDiagnostics::new(String::new(), desc.clone())),
+                        path_description: format!("group-{}/{}", group_idx + 1, num_groups),
+                        callee_name: view.checkpoint.callee_name(self.tcx),
+                    });
+                }
+                return;
+            }
+        }
+
+        // No group was fully proved — report the best attempt per path.
+        for (path_idx, best) in best_per_path.iter().enumerate() {
+            if let Some((group_idx, smt, path_desc)) = best {
+                report.push(PropertyCheckResult {
+                    checkpoint: view.checkpoint.location(),
+                    checkpoint_index: view.checkpoint_index,
+                    path_index: path_idx,
+                    property_index,
+                    property: or_property.clone(),
+                    result: smt.result.clone(),
+                    diagnostics: Some(VisitDiagnostics::new(
+                        String::new(),
+                        format!(
+                            "OR: best effort group {}/{} did not prove",
+                            group_idx + 1,
+                            num_groups,
+                        ),
+                    )),
+                    path_description: path_desc.clone(),
+                    callee_name: view.checkpoint.callee_name(self.tcx),
+                });
+            }
+        }
     }
 
     /// Return the required properties for a concrete unsafe checkpoint.
@@ -963,7 +1068,16 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
             }
 
             if all_results.is_empty() {
-                if target.checkpoints.is_empty()
+                let all_callees_skipped = !target.checkpoints.is_empty()
+                    && target.checkpoints.iter().all(|ckpt| {
+                        ckpt.callee.map_or(false, |callee| {
+                            target
+                                .callee_requires
+                                .get(&callee)
+                                .map_or(true, |c| c.is_empty())
+                        })
+                    });
+                if (target.checkpoints.is_empty() || all_callees_skipped)
                     && target.raw_ptr_deref_checks.is_empty()
                     && target.static_mut_checks.is_empty()
                     && target.struct_invariants.is_empty()
@@ -1554,6 +1668,10 @@ fn fmt_contract_expanded(
         }
         PropertyKind::Unreachable => "not Reachable()".to_string(),
         PropertyKind::Unknown => "(unresolved contract)".to_string(),
+        PropertyKind::Or => {
+            let group_count = property.or_alternatives.len();
+            format!("any of {group_count} alternative group(s)")
+        }
     };
     (call, meaning)
 }

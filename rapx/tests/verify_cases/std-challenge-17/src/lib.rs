@@ -431,15 +431,8 @@ impl<T> SliceSafeExt<T> for [T] {
     where
         T: Copy,
     {
-        assert!(
-            self.len() == src.len(),
-            "source slice length does not match destination slice length"
-        );
-        // SAFETY: `self` and `src` have the same length and cannot overlap
-        // because mutable references are exclusive.
-        unsafe {
-            ptr::copy_nonoverlapping(src.as_ptr(), self.as_mut_ptr(), self.len());
-        }
+        // SAFETY: `T` implements `Copy`.
+        unsafe { copy_from_slice_impl(self, src) }
     }
 
     #[rapx::verify]
@@ -642,6 +635,20 @@ fn get_disjoint_check_valid_ext<const N: usize>(
         i += 1;
     }
     Ok(())
+}
+
+#[rapx::verify]
+#[rapx::requires(any(Trait(T, Copy), Trait(T, TrivialClone)))]
+unsafe fn copy_from_slice_impl<T: Clone>(dest: &mut [T], src: &[T]) {
+    assert!(
+        dest.len() == src.len(),
+        "source slice length does not match destination slice length"
+    );
+    // SAFETY: `self` and `src` have the same length and cannot overlap
+    // because mutable references are exclusive.
+    unsafe {
+        ptr::copy_nonoverlapping(src.as_ptr(), dest.as_mut_ptr(), dest.len());
+    }
 }
 
 /// `as_flattened` / `as_flattened_mut` live on `[[T; N]]`, so they need their
