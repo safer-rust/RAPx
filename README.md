@@ -1,4 +1,4 @@
-# ![logo](https://raw.githubusercontent.com/safer-rust/RAPx/main/logo.png)
+# <img src="https://raw.githubusercontent.com/safer-rust/RAPx/main/logo.png" width="50%">
 RAPx (Rust Analysis Platform with Extensions) [![license: MPL 2.0](https://img.shields.io/badge/license-MPL%202.0-brightgreen)](./LICENSE-MPL)[![docs.rs](https://img.shields.io/badge/docs-docs.rs-blue)](https://docs.rs/rapx) is an advanced static analysis platform for Rust. It provides an extensible framework for building and integrating powerful analysis capabilities that go beyond those available in the standard rustc compiler, empowering developers to reason about safety, robustness, and performance at a deeper level.
 
 RAPx is available on crates.io. [![crates.io](https://img.shields.io/badge/crates.io-latest-orange)](https://crates.io/crates/rapx)
