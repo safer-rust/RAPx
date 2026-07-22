@@ -583,13 +583,15 @@ impl<'tcx> SmtChecker<'tcx> {
                 let len_non_negative = bounds.len.ge(&zero);
                 let covered_end = Int::add(&ctx, &[bounds.index.clone(), access]);
                 let within_len = covered_end.le(&bounds.len);
-                solver.assert(&index_non_negative);
                 solver.assert(&access_non_negative);
                 solver.assert(&len_non_negative);
-                model.assumptions.push(SmtPredicate::Ge(
-                    bounds.index_term.clone(),
-                    SmtTerm::Const(0),
-                ));
+                if !bounds.index_is_signed {
+                    solver.assert(&index_non_negative);
+                    model.assumptions.push(SmtPredicate::Ge(
+                        bounds.index_term.clone(),
+                        SmtTerm::Const(0),
+                    ));
+                }
                 model
                     .assumptions
                     .push(SmtPredicate::Ge(access_count.clone(), SmtTerm::Const(0)));
@@ -4197,12 +4199,16 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 result_index_smt = SmtTerm::Value(value_label(index));
             }
 
+            let is_signed = PrimitiveCall::classify(&call.func)
+                .is_some_and(|p| p.is_signed_pointer_arithmetic());
+
             return Some(PointerBounds {
                 index: result_index_val,
                 len: len_term_int,
                 index_term: result_index_smt,
                 len_term,
                 origin_key: base_origin,
+                index_is_signed: is_signed,
             });
         }
 
@@ -4280,6 +4286,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             index_term,
             len_term,
             origin_key: base_origin,
+            index_is_signed: false,
         })
     }
 
@@ -6996,6 +7003,7 @@ pub(crate) struct PointerBounds<'ctx> {
     index_term: SmtTerm,
     len_term: SmtTerm,
     origin_key: String,
+    index_is_signed: bool,
 }
 
 /// Convert an operand into a place key when it names a MIR place.
