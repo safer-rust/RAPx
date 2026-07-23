@@ -280,6 +280,10 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
                     requires = trait_requires.clone();
                 }
 
+                if requires.is_empty() && !trait_requires.is_empty() {
+                    requires = trait_requires.clone();
+                }
+
                 if requires.is_empty() && is_std {
                     requires = get_contract_from_entry(
                         self.tcx,

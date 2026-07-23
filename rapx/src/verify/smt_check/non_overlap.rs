@@ -75,7 +75,7 @@ pub(crate) fn check<'tcx>(
         .args
         .get(2)
         .and_then(|_| checker.property_len_expr(checkpoint, property))
-        .and_then(|expr| checker.contract_expr_to_smt_term(checkpoint.caller, &expr))
+        .and_then(|expr| checker.contract_expr_to_smt_term(checkpoint.caller, &expr, None))
         .or_else(|| checker.callsite_arg_smt_term(checkpoint, 2))
         .unwrap_or(SmtTerm::Const(1));
 

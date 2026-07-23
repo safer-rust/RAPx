@@ -44,7 +44,7 @@ pub(crate) fn check<'tcx>(
     let Some(elements_expr) = checker.property_len_expr(checkpoint, property) else {
         return SmtCheckResult::unknown("Init element-count argument could not be resolved");
     };
-    let Some(elements_term) = checker.contract_expr_to_smt_term(checkpoint.caller, &elements_expr)
+    let Some(elements_term) = checker.contract_expr_to_smt_term(checkpoint.caller, &elements_expr, None)
     else {
         return SmtCheckResult::unknown("Init element-count argument could not be lowered to SMT");
     };
@@ -128,7 +128,7 @@ pub(crate) fn check_for_checkpoint<'tcx>(
     let Some(elements_expr) = checker.property_len_expr_direct(property) else {
         return SmtCheckResult::unknown("Init element-count argument could not be resolved");
     };
-    let Some(elements) = checker.contract_expr_to_smt_term(caller, &elements_expr) else {
+    let Some(elements) = checker.contract_expr_to_smt_term(caller, &elements_expr, None) else {
         return SmtCheckResult::unknown("Init element-count argument could not be lowered to SMT");
     };
 

@@ -112,6 +112,9 @@ pub enum CallEffect {
     ReturnLengthOfArg { arg: usize },
     /// The return value is `1` iff the length of the aggregate argument is 0.
     ReturnIsEmptyOfArg { arg: usize },
+    /// The return value is `min(lhs_arg, rhs_arg)`, satisfying
+    /// `return <= lhs_arg` and `return <= rhs_arg`.
+    ReturnMin { lhs_arg: usize, rhs_arg: usize },
     /// A specific field of the returned tuple carries the length of a given
     /// argument (e.g. split_at(mid) returns (left, right) where left.len() == mid).
     ReturnTupleFieldLength { field: usize, from_arg: usize },
@@ -243,7 +246,7 @@ pub fn dependency_summary<'tcx>(
         };
     }
 
-    if primitive == Some(PrimitiveCall::NumericArith) {
+    if primitive == Some(PrimitiveCall::NumericArith) || primitive == Some(PrimitiveCall::CmpMin) {
         return CallDependencySummary {
             callee,
             name,
@@ -522,6 +525,16 @@ pub fn effect_summary<'tcx>(
             name,
             destination,
             effects: Vec::new(),
+            unsupported: false,
+        };
+    }
+
+    if primitive == Some(PrimitiveCall::CmpMin) {
+        return CallEffectSummary {
+            callee,
+            name,
+            destination,
+            effects: vec![CallEffect::ReturnMin { lhs_arg: 0, rhs_arg: 1 }],
             unsupported: false,
         };
     }

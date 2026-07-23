@@ -894,6 +894,7 @@ impl<'tcx> ForwardVerifier<'tcx> {
                 }
                 CallEffect::ReturnLengthOfArg { .. } => {}
                 CallEffect::ReturnIsEmptyOfArg { .. } => {}
+                CallEffect::ReturnMin { .. } => {}
                 CallEffect::ReturnTupleFieldLength { .. } => {}
                 // Consumed by the InBound / NonOverlap checkers, which read the
                 // effect off the retained `StateFact::Call`.

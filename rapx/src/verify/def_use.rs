@@ -120,19 +120,14 @@ impl PlaceKey {
 /// Set of places that make MIR items relevant to a property.
 #[derive(Clone, Debug, Default)]
 pub struct RelevantPlaces {
-    /// Contract-level places, including callee arguments before binding.
     pub places: FxHashSet<PlaceKey>,
-    /// MIR locals that are already known from local contract places.
     pub locals: FxHashSet<Local>,
-    /// Places whose definition has been found during the backward walk.
-    /// Populated by [`remove_all`]; used when processing aggregate
-    /// (struct literal) statements to prevent re-adding fields that
-    /// were already resolved by a descendant block.
     pub saturated: FxHashSet<PlaceKey>,
-    /// Places added to the relevance set during the current pass.
-    /// Cleared between passes; used to trigger a second scan of
-    /// definitions that became relevant mid-block.
     pub just_added: FxHashSet<PlaceKey>,
+    /// Places whose length is needed by a `Len(place)` contract expression.
+    /// Carried through the backward slice to trigger inclusion of `slice::len()`
+    /// calls whose argument traces to the same origin.
+    pub need_len: FxHashSet<PlaceKey>,
 }
 
 impl RelevantPlaces {
@@ -208,6 +203,9 @@ impl RelevantPlaces {
         }
         for local in other.locals {
             self.locals.insert(local);
+        }
+        for place in other.need_len {
+            self.need_len.insert(place);
         }
     }
 
@@ -312,7 +310,12 @@ impl RelevantPlaces {
                 self.collect_contract_expr(rhs);
             }
             ContractExpr::Unary { expr, .. } => self.collect_contract_expr(expr),
-            ContractExpr::Len(expr) => self.collect_contract_expr(expr),
+            ContractExpr::Len(expr) => {
+                self.collect_contract_expr(expr);
+                if let ContractExpr::Place(place) = expr.as_ref() {
+                    self.need_len.insert(PlaceKey::from_contract_place(place));
+                }
+            }
             ContractExpr::IndexAccess { slice, index } => {
                 self.collect_contract_expr(slice);
                 self.collect_contract_expr(index);
@@ -369,6 +372,32 @@ pub fn bind_callsite_roots(
 
     relevance.remove_place_keys(&rebound_roots);
     relevance.extend(bound_roots);
+
+    // Bind need_len places: contract `Len(place)` expressions where the
+    // inner place is a callee argument.  The bound callsite place is
+    // registered in relevance.need_len so the backward slicer can match
+    // `slice::len()` calls that operate on the same pointer/slice.
+    {
+        let need_len_roots: Vec<(PlaceKey, usize)> = relevance
+            .need_len
+            .iter()
+            .filter_map(|place| match place.base {
+                PlaceBaseKey::Arg(index) => Some((place.clone(), index)),
+                PlaceBaseKey::Local(local) => checkpoint
+                    .callee
+                    .and_then(|callee| callee_param_index_for_local(tcx, callee, local))
+                    .map(|index| (place.clone(), index)),
+                _ => None,
+            })
+            .collect();
+        for (root, index) in need_len_roots {
+            if let Some(operand) = checkpoint.args.get(index) {
+                if let Some(place) = bind_operand_place(operand, &root.fields) {
+                    relevance.need_len.insert(place);
+                }
+            }
+        }
+    }
 }
 
 fn bind_operand_place(operand: &Operand<'_>, fields: &[usize]) -> Option<PlaceKey> {

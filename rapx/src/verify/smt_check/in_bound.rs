@@ -71,7 +71,7 @@ pub(crate) fn check<'tcx>(
         .unwrap_or(0);
     let access_count = checker
         .property_len_expr(checkpoint, property)
-        .and_then(|expr| checker.contract_expr_to_smt_term(checkpoint.caller, &expr))
+        .and_then(|expr| checker.contract_expr_to_smt_term(checkpoint.caller, &expr, None))
         .unwrap_or(SmtTerm::Const(1));
 
     if let Some(obligation) =
@@ -149,7 +149,7 @@ pub(crate) fn check_for_checkpoint<'tcx>(
     let Some(access_count_expr) = checker.property_len_expr_direct(property) else {
         return SmtCheckResult::unknown("InBound length argument could not be resolved");
     };
-    let Some(access_count) = checker.contract_expr_to_smt_term(caller, &access_count_expr) else {
+    let Some(access_count) = checker.contract_expr_to_smt_term(caller, &access_count_expr, None) else {
         return SmtCheckResult::unknown("InBound length argument could not be lowered to SMT");
     };
 

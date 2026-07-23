@@ -1605,6 +1605,27 @@ impl<'tcx> Property<'tcx> {
             }
         }
 
+        // Simplify `!self.is_empty()` to `self.len() != 0`.
+        if let Expr::Unary(expr_unary) = expr
+            && matches!(expr_unary.op, syn::UnOp::Not(..))
+        {
+            if let Expr::MethodCall(expr_method) = expr_unary.expr.as_ref()
+                && expr_method.method == "is_empty"
+                && expr_method.args.is_empty()
+            {
+                return Some(NumericPredicate::new(
+                    ContractExpr::Len(Box::new(Self::parse_contract_expr(
+                        tcx,
+                        def_id,
+                        &expr_method.receiver,
+                        "ValidNum",
+                    ))),
+                    RelOp::Ne,
+                    ContractExpr::Const(0),
+                ));
+            }
+        }
+
         Some(NumericPredicate::new(
             Self::parse_contract_expr(tcx, def_id, expr, "ValidNum"),
             RelOp::Ne,

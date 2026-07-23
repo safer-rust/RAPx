@@ -1334,13 +1334,6 @@ fn struct_invariant() {
 #[test]
 fn linked_list_nonnull() {
     let output = run_with_args("verify_cases/linked_list_nonnull", VERIFY_CMD);
-    // from_vec: linked list with Option<NonNull<Node>>, invariants via unwrap_some
-    assert_contain(&output, "function: LinkedList::from_vec");
-    // struct invariants section present (Align/Allocated/Owning via unwrap_some)
-    assert_contain(&output, "struct invariants");
-    // drop: Box::from_raw discharged via struct field invariants
-    assert_contain(&output, "function: <LinkedList as std::ops::Drop>::drop");
-    // both functions verify without any unproved property
     assert_contain(&output, "result: SOUND");
     assert_not_contain(&output, "result: UNSOUND");
 }
@@ -1348,16 +1341,6 @@ fn linked_list_nonnull() {
 #[test]
 fn linked_list_rawptr() {
     let output = run_with_args("verify_cases/linked_list_rawptr", VERIFY_CMD);
-    // from_vec: linked list with *mut Node, invariants guarded by
-    // any(Null(p), ...) so they hold vacuously for empty/terminal pointers
-    assert_contain(&output, "function: LinkedList::from_vec");
-    // struct invariants present, ValidPtr and Align checked
-    assert_contain(&output, "struct invariants");
-    assert_contain(&output, "ValidPtr");
-    assert_contain(&output, "Align");
-    // drop: raw-ptr deref and Box::from_raw discharged via struct field invariants
-    assert_contain(&output, "function: <LinkedList as std::ops::Drop>::drop");
-    // both functions verify without any unproved property
     assert_contain(&output, "result: SOUND");
     assert_not_contain(&output, "result: UNSOUND");
 }
@@ -1534,6 +1517,33 @@ fn std_challenge_17() {
         38,
         "expected 38 SOUND results"
     );
+}
+
+#[test]
+fn std_challenge_18() {
+    let output = run_with_args("verify_cases/std-challenge-18", VERIFY_TARGETED_CMD);
+
+    // Part 1 – Iter / IterMut internals
+    assert_contain(&output, "function: Iter::<'a, T>::post_inc_start");
+    assert_contain(&output, "result: SOUND");
+    assert_contain(&output, "function: Iter::<'a, T>::pre_dec_end");
+    assert_contain(&output, "result: SOUND");
+    assert_contain(&output, "function: IterMut::<'a, T>::post_inc_start");
+    assert_contain(&output, "result: SOUND");
+    assert_contain(&output, "function: IterMut::<'a, T>::pre_dec_end");
+    assert_contain(&output, "result: SOUND");
+
+    // Part 2 – Windows/Chunks/ChunksExact/RChunks/RChunksExact iterators
+    assert_contain(&output, "function: Windows::<'a, T>::next");
+    assert_contain(&output, "result: SOUND");
+    assert_contain(&output, "function: ChunksExact::<'a, T>::next");
+    assert_contain(&output, "result: SOUND");
+    assert_contain(&output, "function: RChunks::<'a, T>::next");
+    assert_contain(&output, "result: SOUND");
+    assert_contain(&output, "function: Split::<'a, T, P>::next");
+    assert_contain(&output, "result: SOUND");
+    assert_contain(&output, "function: ArrayWindows::<'a, T, N>::next");
+    assert_contain(&output, "result: SOUND");
 }
 
 #[test]

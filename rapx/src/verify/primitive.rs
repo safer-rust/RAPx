@@ -35,6 +35,9 @@ pub enum PrimitiveCall {
     /// The result is the exact arithmetic value of the operands (their safety
     /// preconditions only forbid overflow); they have no memory effect.
     NumericArith,
+    /// `std::cmp::min` — the return value is ≤ each argument and equal to
+    /// one of them.
+    CmpMin,
     /// `Option`/`Result` value extraction (`expect`/`unwrap`/`unwrap_unchecked`).
     /// For value reasoning these are the identity on the wrapped payload; the
     /// error/`None` case diverges and never reaches later checkpoints.
@@ -51,10 +54,14 @@ impl PrimitiveCall {
         {
             return Some(Self::OptionUnwrap);
         }
-        // NonNull::from, NonNull::as_ref, NonNull::as_mut: pointer-identity
-        // operations on NonNull<T>.  from(*mut T) → NonNull<T>, as_ref/ as_mut
-        // produce &T / &mut T.
+        // NonNull::from, NonNull::new_unchecked, NonNull::as_ref, NonNull::as_mut:
+        // pointer-identity operations on NonNull<T>.
+        // from(*mut T) / new_unchecked(*mut T) → NonNull<T>,
+        // as_ref / as_mut produce &T / &mut T.
         if name.ends_with("::from") && name.contains("ptr::non_null") {
+            return Some(Self::AsMutPtr);
+        }
+        if name.ends_with("::new_unchecked") && name.contains("ptr::non_null") {
             return Some(Self::AsMutPtr);
         }
         if name.ends_with("::as_ref") && name.contains("ptr::non_null") {
@@ -136,6 +143,11 @@ impl PrimitiveCall {
         }
         if name.contains("MaybeUninit") && name.ends_with("::uninit") {
             return Some(Self::MaybeUninitUninit);
+        }
+        if (name.contains("::cmp::min") || name.starts_with("core::cmp::min"))
+            && !name.contains("min_by")
+        {
+            return Some(Self::NumericArith);
         }
         if name.contains("align_of") {
             return Some(Self::AlignOf);

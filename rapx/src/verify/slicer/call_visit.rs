@@ -13,7 +13,7 @@ use crate::analysis::dataflow::types::DataflowGraph;
 
 use super::super::{
     call_summary,
-    def_use::{RelevantPlaces, call_args_uses_at, operand_uses},
+    def_use::{PlaceKey, RelevantPlaces, call_args_uses_at, operand_uses},
 };
 
 use super::types::{BackwardItem, ForgetReason, KeepReason};
@@ -97,4 +97,63 @@ pub(crate) fn visit<'tcx>(
         });
         relevant.extend(call_args_uses_at(args, &summary.may_write_args));
     }
+
+    // If the contract requires the length of a place (via `Len(place)`),
+    // and this call is a `slice::len()` whose argument traces to the
+    // same origin, add the destination to relevance so the length term
+    // is available for the contract obligation.
+    if !relevant.need_len.is_empty() {
+        let name = call_summary::call_name(tcx, func);
+        if name.ends_with("::len") || name.contains("::len(") {
+            if let Some(first) = args.first() {
+                let arg_place = match &first.node {
+                    Operand::Copy(p) | Operand::Move(p) => Some(PlaceKey::from_mir_place(p)),
+                    _ => None,
+                };
+                if let Some(arg_key) = arg_place {
+                    let matches = relevant.need_len.contains(&arg_key)
+                        || relevant.need_len.iter().any(|nl| same_origin_via_body(body, nl, &arg_key));
+                    if matches {
+                        let dest_key = PlaceKey::from_mir_place(destination);
+                        if relevant.places.insert(dest_key.clone()) {
+                            relevant.just_added.insert(dest_key.clone());
+                        }
+                        if let Some(local) = dest_key.local() {
+                            relevant.locals.insert(local);
+                        }
+                        items.push(BackwardItem::Terminator {
+                            block,
+                            kind: KeepReason::PointerFlow,
+                        });
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn same_origin_via_body(body: &rustc_middle::mir::Body<'_>, a: &PlaceKey, b: &PlaceKey) -> bool {
+    if a == b { return true; }
+    let origin = |p: &PlaceKey| -> Option<PlaceKey> {
+        let local = p.local()?;
+        for (_, data) in body.basic_blocks.iter_enumerated() {
+            for stmt in &data.statements {
+                if let rustc_middle::mir::StatementKind::Assign(assign) = &stmt.kind {
+                    if assign.0.local == local {
+                        if let rustc_middle::mir::Rvalue::Use(
+                            rustc_middle::mir::Operand::Copy(src) | rustc_middle::mir::Operand::Move(src),
+                            ..
+                        ) = &assign.1 {
+                            return Some(PlaceKey::from_mir_place(src));
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        None
+    };
+    let ao = origin(a).unwrap_or_else(|| a.clone());
+    let bo = origin(b).unwrap_or_else(|| b.clone());
+    ao == bo
 }

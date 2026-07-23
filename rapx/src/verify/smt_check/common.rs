@@ -1723,6 +1723,7 @@ impl<'tcx> SmtChecker<'tcx> {
         &self,
         caller: rustc_hir::def_id::DefId,
         expr: &ContractExpr<'tcx>,
+        forward: Option<&ForwardVisitResult<'tcx>>,
     ) -> Option<SmtTerm> {
         match expr {
             ContractExpr::Place(place) => {
@@ -1738,14 +1739,19 @@ impl<'tcx> SmtChecker<'tcx> {
                 let align = self.required_alignment(caller, *ty)?;
                 Some(SmtTerm::Const(align))
             }
-            ContractExpr::Len(expr) => Some(SmtTerm::Value(format!(
-                "len({})",
-                self.contract_expr_label(expr)?
-            ))),
+            ContractExpr::Len(inner) => {
+                if let Some(fwd) = forward {
+                    self.len_call_term(inner, fwd)
+                } else {
+                    let label = self.contract_expr_label(inner)?;
+                    let base = label.split('.').next().unwrap_or(&label);
+                    Some(SmtTerm::Value(format!("len({})", base)))
+                }
+            }
             ContractExpr::IndexAccess { .. } => None,
             ContractExpr::Binary { op, lhs, rhs } => {
-                let lhs = Box::new(self.contract_expr_to_smt_term(caller, lhs)?);
-                let rhs = Box::new(self.contract_expr_to_smt_term(caller, rhs)?);
+                let lhs = Box::new(self.contract_expr_to_smt_term(caller, lhs, forward)?);
+                let rhs = Box::new(self.contract_expr_to_smt_term(caller, rhs, forward)?);
                 match op {
                     NumericOp::Add => Some(SmtTerm::Add(lhs, rhs)),
                     NumericOp::Sub => Some(SmtTerm::Sub(lhs, rhs)),
@@ -1787,9 +1793,10 @@ impl<'tcx> SmtChecker<'tcx> {
         &self,
         caller: rustc_hir::def_id::DefId,
         predicate: &NumericPredicate<'tcx>,
+        forward: Option<&ForwardVisitResult<'tcx>>,
     ) -> Option<SmtPredicate> {
-        let lhs = self.contract_expr_to_smt_term(caller, &predicate.lhs)?;
-        let rhs = self.contract_expr_to_smt_term(caller, &predicate.rhs)?;
+        let lhs = self.contract_expr_to_smt_term(caller, &predicate.lhs, forward)?;
+        let rhs = self.contract_expr_to_smt_term(caller, &predicate.rhs, forward)?;
         Some(match predicate.op {
             RelOp::Eq => SmtPredicate::Eq(lhs, rhs),
             RelOp::Ne => SmtPredicate::Ne(lhs, rhs),
@@ -1805,6 +1812,7 @@ impl<'tcx> SmtChecker<'tcx> {
         &self,
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
+        forward: Option<&ForwardVisitResult<'tcx>>,
     ) -> Option<Vec<SmtPredicate>> {
         let predicates = self.property_numeric_predicates(checkpoint, property)?;
         let mut lowered = Vec::new();
@@ -1812,8 +1820,9 @@ impl<'tcx> SmtChecker<'tcx> {
             if let Some(expanded) = self.expand_index_access_predicate(checkpoint, &predicate)? {
                 lowered.extend(expanded);
             } else {
-                lowered
-                    .push(self.numeric_predicate_to_smt_predicate(checkpoint.caller, &predicate)?);
+                lowered.push(
+                    self.numeric_predicate_to_smt_predicate(checkpoint.caller, &predicate, forward)?,
+                );
             }
         }
         Some(lowered)
@@ -1885,7 +1894,7 @@ impl<'tcx> SmtChecker<'tcx> {
         index: &ContractExpr<'tcx>,
         len: SmtTerm,
     ) -> Option<(SmtTerm, SmtTerm)> {
-        let index_term = self.contract_expr_to_smt_term(caller, index)?;
+        let index_term = self.contract_expr_to_smt_term(caller, index, None)?;
         let Some(kind) = self.slice_index_kind(caller, index) else {
             return Some((
                 index_term.clone(),
@@ -1965,7 +1974,7 @@ impl<'tcx> SmtChecker<'tcx> {
     ) -> Option<SmtTerm> {
         let mut place = self.contract_expr_place(expr)?;
         place.fields.push(field);
-        self.contract_expr_to_smt_term(caller, &contract_expr_from_place_key(place))
+        self.contract_expr_to_smt_term(caller, &contract_expr_from_place_key(place), None)
     }
 
     fn contract_expr_place(&self, expr: &ContractExpr<'tcx>) -> Option<PlaceKey> {
@@ -1973,6 +1982,73 @@ impl<'tcx> SmtChecker<'tcx> {
             return None;
         };
         Some(PlaceKey::from_contract_place(place))
+    }
+
+    /// Resolve `Len(place)` via the forward trace, returning a `Place` term
+    /// pointing at the matching `len()` result so it shares the same Z3
+    /// variable that `record_call_effect_assumptions` already created.
+    fn len_call_term(
+        &self,
+        inner: &ContractExpr<'tcx>,
+        forward: &ForwardVisitResult<'tcx>,
+    ) -> Option<SmtTerm> {
+        let cp = match inner {
+            ContractExpr::Place(cp) => cp,
+            _ => return None,
+        };
+        let key = PlaceKey::from_contract_place(cp);
+        let origin = self.place_origin_label(&key, forward).unwrap_or_else(|| place_label(&key));
+
+        for fact in &forward.facts {
+            let StateFact::Call(call) = fact else { continue; };
+            if !call.func.ends_with("::len") && !call.func.contains("::len(") { continue; }
+            for effect in &call.effects {
+                let crate::verify::call_summary::CallEffect::ReturnLengthOfArg { arg } = effect else { continue; };
+                let Some(arg_value) = call.args.get(*arg) else { continue; };
+                let arg_origin = match arg_value {
+                    AbstractValue::Place(p) => self.place_origin_label(p, forward).unwrap_or_else(|| place_label(p)),
+                    _ => continue,
+                };
+                if arg_origin == origin {
+                    return Some(SmtTerm::Place(PlaceKey {
+                        base: PlaceBaseKey::Local(call.destination.as_usize()),
+                        fields: Vec::new(),
+                    }));
+                }
+            }
+        }
+        // Fallback: use the original label (not the origin) to preserve
+        // backward compatibility with Z3 variables already used by
+        // other constraints.
+        Some(SmtTerm::Value(format!("len({})", place_label(&key))))
+    }
+
+    fn place_origin_label(
+        &self,
+        place: &PlaceKey,
+        forward: &ForwardVisitResult<'tcx>,
+    ) -> Option<String> {
+        let mut current = place.clone();
+        for _ in 0..8 {
+            if let Some(source) = forward.facts.iter().find_map(|f| match f {
+                StateFact::PointsTo { pointer, source: s } if *pointer == current => Some(s.clone()),
+                _ => None,
+            }) {
+                current = source;
+                continue;
+            }
+            break;
+        }
+        if let Some(local) = current.local() {
+            if let Some(def) = forward.value_definitions.iter().rev().find(|d| d.local == local)
+                && let AbstractValue::Place(p) = &def.value
+            {
+                current = p.clone();
+            }
+        }
+        let label = place_label(&current);
+        let base = label.split('.').next().unwrap_or(&label);
+        Some(base.to_string())
     }
 
     fn contract_expr_label(&self, expr: &ContractExpr<'tcx>) -> Option<String> {
@@ -2268,7 +2344,7 @@ impl<'tcx> SmtChecker<'tcx> {
         index: usize,
     ) -> Option<SmtTerm> {
         let expr = self.callsite_arg_expr(checkpoint, index, &[])?;
-        self.contract_expr_to_smt_term(checkpoint.caller, &expr)
+        self.contract_expr_to_smt_term(checkpoint.caller, &expr, None)
     }
 
     /// Prove the Rust slice-size language invariant.
@@ -3351,7 +3427,6 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                             base: PlaceBaseKey::Local(call.destination.as_usize()),
                             fields: Vec::new(),
                         };
-                        // Remember first len call for fallback.
                         if first_len_dest.is_none() {
                             first_len_dest = Some(dest.clone());
                         }
@@ -3447,7 +3522,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                         self.assert_place_non_zero(solver, &place, "returned by as_ptr");
                         self.assert_place_alignment(solver, &place);
                     }
-                    self.record_call_effect_assumptions(call);
+                    self.record_call_effect_assumptions(solver, call);
                     // `split_at`-style calls expose the length of the returned
                     // prefix slice (field 0) as `mid`.  Bridge that length into
                     // the `len(...)` namespace so that downstream `len(self)`
@@ -3479,6 +3554,37 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                                 self.assumptions.push(SmtPredicate::Le(
                                     SmtTerm::Place(dest),
                                     SmtTerm::Value(value_label(arg0)),
+                                ));
+                            }
+                        }
+                    }
+                    // cmp::min(a, b) => result <= a && result <= b
+                    if call.func.contains("::cmp::min") {
+                        let dest = PlaceKey {
+                            base: PlaceBaseKey::Local(call.destination.as_usize()),
+                            fields: Vec::new(),
+                        };
+                        let cursor = self.call_definition_cursor(call);
+                        if let Some(dest_term) = self.term_for_place(&dest) {
+                            if let Some(arg0) = call.args.get(0)
+                                && let Some(arg0_term) =
+                                    self.term_for_value_at(arg0, cursor, &mut TraceSeen::new())
+                            {
+                                solver.assert(&dest_term.le(&arg0_term));
+                                self.place_terms.insert(dest.clone(), dest_term.clone());
+                                self.assumptions.push(SmtPredicate::Le(
+                                    SmtTerm::Place(dest.clone()),
+                                    SmtTerm::Value(value_label(arg0)),
+                                ));
+                            }
+                            if let Some(arg1) = call.args.get(1)
+                                && let Some(arg1_term) =
+                                    self.term_for_value_at(arg1, cursor, &mut TraceSeen::new())
+                            {
+                                solver.assert(&dest_term.le(&arg1_term));
+                                self.assumptions.push(SmtPredicate::Le(
+                                    SmtTerm::Place(dest),
+                                    SmtTerm::Value(value_label(arg1)),
                                 ));
                             }
                         }
@@ -3953,6 +4059,9 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                                     if let Some(z3_bool) = self.bool_for_predicate(&smt_pred) {
                                         solver.assert(&z3_bool);
                                     }
+                                    // Assert len >= 0 for len terms so that
+                                    // len != 0 implies len >= 1 downstream.
+                                    self.assert_numeric_term_non_negativity(solver, &smt_pred);
                                     self.assumptions.push(smt_pred);
                                 }
                             }
@@ -4370,7 +4479,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                                                                 SmtTerm::Value(len_key),
                                                                 len_val,
                                                             );
-                                                        }
+                    }
                                                     }
                                                 }
                                             }
@@ -4911,7 +5020,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
     }
 
     /// Record call-effect definitions that the term builder understands.
-    fn record_call_effect_assumptions(&mut self, call: &CallSummary<'tcx>) {
+    fn record_call_effect_assumptions(&mut self, solver: &Solver<'ctx>, call: &CallSummary<'tcx>) {
         let destination = PlaceKey {
             base: PlaceBaseKey::Local(call.destination.as_usize()),
             fields: Vec::new(),
@@ -4973,6 +5082,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                     let source = raw_source.split('.').next().unwrap_or(&raw_source);
                     let len_key = format!("len({source})");
                     let len_term = self.symbolic_len_term(&len_key);
+                    solver.assert(&len_term.ge(&Int::from_u64(self.ctx, 0)));
                     self.place_terms.insert(destination.clone(), len_term);
                     self.assumptions.push(SmtPredicate::Eq(
                         SmtTerm::Place(destination.clone()),
@@ -4994,6 +5104,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                     let zero = Int::from_u64(self.ctx, 0);
                     let one = Int::from_u64(self.ctx, 1);
                     let term = len_term._eq(&zero).ite(&one, &zero);
+                    solver.assert(&len_term.ge(&zero));
                     self.place_terms.insert(destination.clone(), term);
                     self.assumptions.push(SmtPredicate::Custom(format!(
                         "{} == ({len_key} == 0)",
@@ -5045,6 +5156,38 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                         }
                     }
                 }
+                crate::verify::call_summary::CallEffect::ReturnMin { lhs_arg, rhs_arg } => {
+                    let dest_term = SmtTerm::Place(destination.clone());
+                    let lhs_val = call.args.get(*lhs_arg);
+                    let rhs_val = call.args.get(*rhs_arg);
+                    let lhs_term = lhs_val.and_then(smt_term_for_value);
+                    let rhs_term = rhs_val.and_then(smt_term_for_value);
+                    if let (Some(lhs), Some(rhs)) = (lhs_term, rhs_term) {
+                        let dest_int = self
+                            .place_terms
+                            .entry(destination.clone())
+                            .or_insert_with(|| {
+                                Int::new_const(self.ctx, place_name(&destination))
+                            })
+                            .clone();
+                        let lhs_int = self.term_for_smt_term(&lhs);
+                        let rhs_int = self.term_for_smt_term(&rhs);
+                        if let Some(lhs_z3) = lhs_int {
+                            solver.assert(&dest_int.le(&lhs_z3));
+                        }
+                        if let Some(rhs_z3) = rhs_int {
+                            solver.assert(&dest_int.le(&rhs_z3));
+                        }
+                        self.assumptions.push(SmtPredicate::Le(
+                            dest_term.clone(),
+                            lhs,
+                        ));
+                        self.assumptions.push(SmtPredicate::Le(
+                            dest_term.clone(),
+                            rhs,
+                        ));
+                    }
+                }
                 crate::verify::call_summary::CallEffect::ReturnNonZero
                 | crate::verify::call_summary::CallEffect::ReturnAligned { .. }
                 | crate::verify::call_summary::CallEffect::ReadMemory { .. }
@@ -5059,7 +5202,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
     }
 
     /// Build an SMT term for a place.
-    pub(crate) fn term_for_place(&mut self, place: &PlaceKey) -> Option<Int<'ctx>> {
+    pub(crate)     fn term_for_place(&mut self, place: &PlaceKey) -> Option<Int<'ctx>> {
         self.term_for_place_before(place, self.latest_cursor(), &mut TraceSeen::new())
     }
 
@@ -5625,6 +5768,52 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         }
     }
 
+    /// For every `len(...)` value in a predicate, assert `len >= 0` so that
+    /// `len != 0` can imply `len >= 1`.
+    fn assert_numeric_term_non_negativity(
+        &mut self,
+        solver: &Solver<'ctx>,
+        predicate: &SmtPredicate,
+    ) {
+        let mut collect = |term: &SmtTerm| {
+            self.assert_len_term_non_negativity(solver, term);
+        };
+        match predicate {
+            SmtPredicate::Eq(lhs, rhs) | SmtPredicate::Ne(lhs, rhs)
+            | SmtPredicate::Lt(lhs, rhs) | SmtPredicate::Le(lhs, rhs)
+            | SmtPredicate::Gt(lhs, rhs) | SmtPredicate::Ge(lhs, rhs) => {
+                collect(lhs);
+                collect(rhs);
+            }
+            SmtPredicate::And(preds) => {
+                for p in preds {
+                    self.assert_numeric_term_non_negativity(solver, p);
+                }
+            }
+            SmtPredicate::Not(pred) => {
+                self.assert_numeric_term_non_negativity(solver, pred);
+            }
+            _ => {}
+        }
+    }
+
+    fn assert_len_term_non_negativity(&mut self, solver: &Solver<'ctx>, term: &SmtTerm) {
+        match term {
+            SmtTerm::Value(name) if name.starts_with("len(") => {
+                let len_term = self.symbolic_len_term(name);
+                let zero = Int::from_u64(self.ctx, 0);
+                solver.assert(&len_term.ge(&zero));
+            }
+            SmtTerm::Add(lhs, rhs) | SmtTerm::Sub(lhs, rhs)
+            | SmtTerm::Mul(lhs, rhs) | SmtTerm::Div(lhs, rhs)
+            | SmtTerm::Rem(lhs, rhs) => {
+                self.assert_len_term_non_negativity(solver, lhs);
+                self.assert_len_term_non_negativity(solver, rhs);
+            }
+            _ => {}
+        }
+    }
+
     /// Assert Rust unsigned integer lower bounds for terms that appear in a
     /// numeric obligation.
     fn assert_unsigned_bounds_for_predicates(
@@ -5770,6 +5959,8 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             Int::add(self.ctx, &[lhs, rhs])
         } else if func.contains("checked_sub") {
             Int::sub(self.ctx, &[lhs, rhs])
+        } else if func.contains("::cmp::min") {
+            lhs.le(&rhs).ite(&lhs, &rhs)
         } else {
             return None;
         };
