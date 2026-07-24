@@ -122,6 +122,15 @@ fn assert_unproved_exclusive(output: &str, function: &str, allowed: &[&str]) {
     assert_unproved_exclusive_with_result(output, function, allowed, "UNSOUND");
 }
 
+fn assert_function_result(output: &str, function: &str, result_pat: &str) {
+    assert_contain(output, &format!("function: {function}"));
+    let block = extract_block_after(output, &format!("function: {function}"));
+    assert!(
+        block.contains(&format!("result: {result_pat}")),
+        "Expected result: {result_pat} for {function}\nBlock:\n{block}"
+    );
+}
+
 /// Like assert_unproved_exclusive but expects a different result string (e.g. "HAZARD").
 fn assert_unproved_exclusive_with_result(
     output: &str,
@@ -607,6 +616,108 @@ fn align_unsound_cases() {
         VERIFY_ALLOW_REPEAT2_CMD,
     );
     assert_unproved_exclusive(&output, "repeat2_reveals_delayed_unaligned", &["Align"]);
+}
+
+#[test]
+fn loop_repeat_threshold_cases() {
+    let functions = [
+        "repeat1_sound_repeat2_unsound_align",
+        "repeat1_sound_repeat2_unsound_nonnull",
+        "repeat1_sound_repeat2_unsound_allocated",
+        "repeat1_sound_repeat2_unsound_validptr",
+        "repeat1_sound_repeat2_unsound_deref",
+        "repeat1_sound_repeat2_unsound_init",
+        "repeat1_sound_repeat2_unsound_typed",
+        "repeat1_sound_repeat2_unsound_inbound_counter",
+        "repeat1_sound_repeat2_unsound_validnum_counter",
+        "repeat1_sound_repeat2_unsound_validnum_parity_oscillation",
+    ];
+
+    let output = run_with_args(
+        "verify_units/loop_repeat_threshold",
+        VERIFY_ALLOW_REPEAT_CMD,
+    );
+    for function in functions {
+        assert_function_result(&output, function, "SOUND");
+    }
+
+    let output = run_with_args(
+        "verify_units/loop_repeat_threshold",
+        VERIFY_ALLOW_REPEAT2_CMD,
+    );
+    assert_unproved_exclusive(&output, "repeat1_sound_repeat2_unsound_align", &["Align"]);
+    assert_unproved_exclusive(
+        &output,
+        "repeat1_sound_repeat2_unsound_nonnull",
+        &["NonNull"],
+    );
+    assert_unproved_exclusive(
+        &output,
+        "repeat1_sound_repeat2_unsound_allocated",
+        &["Allocated"],
+    );
+    assert_unproved_exclusive(
+        &output,
+        "repeat1_sound_repeat2_unsound_validptr",
+        &["ValidPtr"],
+    );
+    assert_unproved_exclusive(&output, "repeat1_sound_repeat2_unsound_deref", &["Deref"]);
+    assert_unproved_exclusive(&output, "repeat1_sound_repeat2_unsound_init", &["Init"]);
+    assert_unproved_exclusive(&output, "repeat1_sound_repeat2_unsound_typed", &["Typed"]);
+    assert_unproved_exclusive(
+        &output,
+        "repeat1_sound_repeat2_unsound_inbound_counter",
+        &["InBound"],
+    );
+    assert_unproved_exclusive(
+        &output,
+        "repeat1_sound_repeat2_unsound_validnum_counter",
+        &["ValidNum"],
+    );
+    assert_unproved_exclusive(
+        &output,
+        "repeat1_sound_repeat2_unsound_validnum_parity_oscillation",
+        &["ValidNum"],
+    );
+}
+
+#[test]
+fn loop_repeat_threshold_auto_cases() {
+    let output = run_with_args("verify_units/loop_repeat_threshold", VERIFY_CMD);
+    assert_unproved_exclusive(&output, "repeat1_sound_repeat2_unsound_align", &["Align"]);
+    assert_unproved_exclusive(
+        &output,
+        "repeat1_sound_repeat2_unsound_nonnull",
+        &["NonNull"],
+    );
+    assert_unproved_exclusive(
+        &output,
+        "repeat1_sound_repeat2_unsound_allocated",
+        &["Allocated"],
+    );
+    assert_unproved_exclusive(
+        &output,
+        "repeat1_sound_repeat2_unsound_validptr",
+        &["ValidPtr"],
+    );
+    assert_unproved_exclusive(&output, "repeat1_sound_repeat2_unsound_deref", &["Deref"]);
+    assert_unproved_exclusive(&output, "repeat1_sound_repeat2_unsound_init", &["Init"]);
+    assert_unproved_exclusive(&output, "repeat1_sound_repeat2_unsound_typed", &["Typed"]);
+    assert_unproved_exclusive(
+        &output,
+        "repeat1_sound_repeat2_unsound_inbound_counter",
+        &["InBound"],
+    );
+    assert_unproved_exclusive(
+        &output,
+        "repeat1_sound_repeat2_unsound_validnum_counter",
+        &["ValidNum"],
+    );
+    assert_unproved_exclusive(
+        &output,
+        "repeat1_sound_repeat2_unsound_validnum_parity_oscillation",
+        &["ValidNum"],
+    );
 }
 
 // ================ Align Sound Cases =============
