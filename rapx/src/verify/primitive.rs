@@ -42,6 +42,8 @@ pub enum PrimitiveCall {
     /// For value reasoning these are the identity on the wrapped payload; the
     /// error/`None` case diverges and never reaches later checkpoints.
     OptionUnwrap,
+    /// `usize::saturating_sub` — returns `max(0, self - other)`.
+    SaturatingSub,
 }
 
 impl PrimitiveCall {
@@ -118,6 +120,9 @@ impl PrimitiveCall {
         }
         if name.contains("::add") || name.contains("::wrapping_add") {
             return Some(Self::PtrAdd);
+        }
+        if name.contains("::saturating_sub") {
+            return Some(Self::SaturatingSub);
         }
         if name.contains("::sub") || name.contains("::wrapping_sub") {
             return Some(Self::PtrSub);

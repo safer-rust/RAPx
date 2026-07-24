@@ -246,7 +246,7 @@ pub fn dependency_summary<'tcx>(
         };
     }
 
-    if primitive == Some(PrimitiveCall::NumericArith) || primitive == Some(PrimitiveCall::CmpMin) {
+    if primitive == Some(PrimitiveCall::NumericArith) || primitive == Some(PrimitiveCall::CmpMin) || primitive == Some(PrimitiveCall::SaturatingSub) {
         return CallDependencySummary {
             callee,
             name,
@@ -542,7 +542,7 @@ pub fn effect_summary<'tcx>(
         };
     }
 
-    if primitive == Some(PrimitiveCall::NumericArith) {
+    if primitive == Some(PrimitiveCall::NumericArith) || primitive == Some(PrimitiveCall::SaturatingSub) {
         // Pure arithmetic: no memory effect and never precision-losing.  The
         // SMT model reconstructs the exact product/sum from the operands (see
         // the `unchecked_mul` handling in `assert_forward_facts`).
@@ -607,10 +607,13 @@ pub fn effect_summary<'tcx>(
             callee,
             name,
             destination,
-            effects: vec![CallEffect::ReturnTupleFieldLength {
-                field: 0,
-                from_arg: 1,
-            }],
+            effects: vec![
+                CallEffect::ReturnAliasArg { arg: 0 },
+                CallEffect::ReturnTupleFieldLength {
+                    field: 0,
+                    from_arg: 1,
+                },
+            ],
             unsupported: false,
         };
     }

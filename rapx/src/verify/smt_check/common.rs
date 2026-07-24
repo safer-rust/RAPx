@@ -699,6 +699,10 @@ impl<'tcx> SmtChecker<'tcx> {
                     );
                 };
 
+                if let Some(reason) = model.prove_pointer_bounds_via_valid_num(&bounds, &upper_delta) {
+                    return SmtCheckResult::proved(reason);
+                }
+
                 let Some(lower) = model.term_for_smt_term(lower_delta) else {
                     return SmtCheckResult::unknown(format!(
                         "could not build a lower pointer-range term for {}",
@@ -1028,6 +1032,25 @@ impl<'tcx> SmtChecker<'tcx> {
                             elements.describe()
                         )),
                     ));
+                }
+
+                // If the pointer traces to a struct field with an InBound
+                // invariant, the allocation is guaranteed by the contract.
+                if let Some(bounds) = model.pointer_bounds_for_place(place) {
+                    if model.improve_allocated_via_inbound_contract(&bounds) {
+                        return SmtCheckResult::proved(format!(
+                            "Allocated proved: {target_label} points into a contract-guarded allocation"
+                        ))
+                        .with_query(SmtQuery::new(
+                            obligation.clone(),
+                            model.assumptions().to_vec(),
+                            SmtPredicate::Custom(format!(
+                                "Allocated({}, {ty_name}, {}) by InBound contract",
+                                target_label,
+                                elements.describe()
+                            )),
+                        ));
+                    }
                 }
 
                 // When the caller's `InBound(index_access(slice, indices))` contract

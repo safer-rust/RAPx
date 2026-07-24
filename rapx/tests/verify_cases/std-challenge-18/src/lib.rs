@@ -509,7 +509,7 @@ impl<'a, T> Chunks<'a, T> {
     }
 
     #[rapx::verify]
-    #[rapx::requires(ValidNum(idx < (if self.v.is_empty() { 0 } else { let n = self.v.len() / self.chunk_size; let rem = self.v.len() % self.chunk_size; if rem > 0 { n + 1 } else { n } })))]
+    #[rapx::requires(ValidNum(idx * self.chunk_size < self.v.len()))]
     unsafe fn get_unchecked(&mut self, idx: usize) -> &'a [T] {
         let start = idx * self.chunk_size;
         let len = cmp::min(self.v.len() - start, self.chunk_size);
@@ -585,7 +585,7 @@ impl<'a, T> ChunksMut<'a, T> {
     }
 
     #[rapx::verify]
-    #[rapx::requires(ValidNum(idx < (if self.v.is_empty() { 0 } else { let n = self.v.len() / self.chunk_size; let rem = self.v.len() % self.chunk_size; if rem > 0 { n + 1 } else { n } })))]
+    #[rapx::requires(ValidNum(idx * self.chunk_size < self.v.len()))]
     unsafe fn get_unchecked(&mut self, idx: usize) -> &'a mut [T] {
         let start = idx * self.chunk_size;
         let len = cmp::min(self.v.len() - start, self.chunk_size);
@@ -747,7 +747,7 @@ impl<'a, T> RChunks<'a, T> {
     }
 
     #[rapx::verify]
-    #[rapx::requires(ValidNum(idx < (if self.v.is_empty() { 0 } else { let n = self.v.len() / self.chunk_size; let rem = self.v.len() % self.chunk_size; if rem > 0 { n + 1 } else { n } })))]
+    #[rapx::requires(ValidNum(idx * self.chunk_size < self.v.len()))]
     unsafe fn get_unchecked(&mut self, idx: usize) -> &'a [T] {
         let end = self.v.len() - idx * self.chunk_size;
         let start = end.saturating_sub(self.chunk_size);
@@ -831,7 +831,7 @@ impl<'a, T> RChunksMut<'a, T> {
     }
 
     #[rapx::verify]
-    #[rapx::requires(ValidNum(idx < (if self.v.is_empty() { 0 } else { let n = self.v.len() / self.chunk_size; let rem = self.v.len() % self.chunk_size; if rem > 0 { n + 1 } else { n } })))]
+    #[rapx::requires(ValidNum(idx * self.chunk_size < self.v.len()))]
     unsafe fn get_unchecked(&mut self, idx: usize) -> &'a mut [T] {
         let end = self.v.len() - idx * self.chunk_size;
         let start = end.saturating_sub(self.chunk_size);
@@ -877,7 +877,7 @@ impl<'a, T> RChunksExact<'a, T> {
     }
 
     #[rapx::verify]
-    #[rapx::requires(ValidNum(idx < self.v.len() / self.chunk_size))]
+    #[rapx::requires(ValidNum((idx + 1) * self.chunk_size <= self.v.len()))]
     unsafe fn get_unchecked(&mut self, idx: usize) -> &'a [T] {
         let end = self.v.len() - idx * self.chunk_size;
         let start = end - self.chunk_size;

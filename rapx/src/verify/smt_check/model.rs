@@ -228,7 +228,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
 
                 Some(SmtTerm::Value(format!("len({})", origin_str)))
             }
-            ContractExpr::Binary { op, lhs, rhs } => {
+        ContractExpr::Binary { op, lhs, rhs } => {
                 let lhs = Box::new(self.smt_term_from_contract_expr(lhs)?);
                 let rhs = Box::new(self.smt_term_from_contract_expr(rhs)?);
                 Some(match op {
@@ -507,14 +507,29 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                     lhs,
                     rhs,
                 } => {
-                    self.assumptions.push(SmtPredicate::Eq(
-                        SmtTerm::Place(target.clone()),
-                        SmtTerm::Value(format!(
+                    let lhs_term = abstract_value_to_smt_term(lhs);
+                    let rhs_term = abstract_value_to_smt_term(rhs);
+                    let combined = match op {
+                        BinOp::Add | BinOp::AddWithOverflow | BinOp::AddUnchecked =>
+                            SmtTerm::Add(Box::new(lhs_term), Box::new(rhs_term)),
+                        BinOp::Sub | BinOp::SubWithOverflow | BinOp::SubUnchecked =>
+                            SmtTerm::Sub(Box::new(lhs_term), Box::new(rhs_term)),
+                        BinOp::Mul | BinOp::MulWithOverflow | BinOp::MulUnchecked =>
+                            SmtTerm::Mul(Box::new(lhs_term), Box::new(rhs_term)),
+                        BinOp::Div =>
+                            SmtTerm::Div(Box::new(lhs_term), Box::new(rhs_term)),
+                        BinOp::Rem =>
+                            SmtTerm::Rem(Box::new(lhs_term), Box::new(rhs_term)),
+                        _ => SmtTerm::Value(format!(
                             "({} {} {})",
                             value_label(lhs),
                             binop_label(*op),
                             value_label(rhs)
                         )),
+                    };
+                    self.assumptions.push(SmtPredicate::Eq(
+                        SmtTerm::Place(target.clone()),
+                        combined,
                     ));
                 }
                 StateFact::Contract(property) => match property.kind {
@@ -4101,5 +4116,296 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
     pub(crate) fn initialized_element_ty_for_place(&self, place: &PlaceKey) -> Option<String> {
         let ty = self.place_ty(place)?;
         initialized_element_ty_name(ty)
+    }
+
+    /// Check whether a struct InBound invariant backs this pointer's origin,
+    /// providing a contract-level guarantee of allocation.
+    pub(crate) fn improve_allocated_via_inbound_contract(&self, bounds: &PointerBounds<'ctx>) -> bool {
+        let origin_key = &bounds.origin_key;
+        self.forward.facts.iter().any(|fact| {
+            let StateFact::Contract(property) = fact else { return false; };
+            if property.kind != PropertyKind::InBound { return false; }
+            property.args.first().is_some_and(|arg| {
+                let PropertyArg::Place(cp) = arg else { return false; };
+                let mut key = PlaceKey::from_contract_place(cp);
+                if let PlaceBaseKey::Arg(ix) = key.base {
+                    key.base = PlaceBaseKey::Local(ix + 1);
+                }
+                let label = super::common::place_label(&key);
+                label == *origin_key
+                    || contract_expr_refers_to_origin_deep(
+                        self,
+                        &ContractExpr::Len(Box::new(ContractExpr::Place(cp.clone()))),
+                        origin_key,
+                    )
+            })
+        })
+    }
+
+    /// Short-circuit: if a ValidNum constraint bounds the pointer arithmetic
+    /// delta relative to the same origin, the InBound check holds without Z3.
+    pub(crate) fn prove_pointer_bounds_via_valid_num(
+        &self,
+        bounds: &PointerBounds<'ctx>,
+        upper_delta: &SmtTerm,
+    ) -> Option<String> {
+        let origin_key = &bounds.origin_key;
+        for fact in &self.forward.facts {
+            let StateFact::Contract(property) = fact else { continue; };
+            if property.kind != PropertyKind::ValidNum { continue; }
+            let Some(PropertyArg::Predicates(predicates)) = property.args.first() else { continue; };
+            for predicate in predicates {
+                if !matches!(predicate.op, RelOp::Lt | RelOp::Le) { continue; }
+                if !contract_expr_refers_to_origin_deep(self, &predicate.rhs, origin_key) { continue; }
+                if smt_term_matches_expr(self, upper_delta, &predicate.lhs) {
+                    return Some(format!(
+                        "pointer arithmetic proved by ValidNum contract on origin {origin_key}"
+                    ));
+                }
+                // saturating_sub(a,b) ≤ a: if the first argument satisfies
+                // the ValidNum bound, the saturated result does too.
+                if let Some(inner) = resolve_if_saturating_sub(self, upper_delta) {
+                    if smt_term_matches_expr(self, &inner, &predicate.lhs) {
+                        return Some(format!(
+                            "pointer arithmetic proved via saturating_sub bound on origin {origin_key}"
+                        ));
+                    }
+                }
+            }
+        }
+        // No direct ValidNum match: check if the offset expression itself
+        // is structurally bounded by a len(...) chain (Sub(len, ...) ≤ len).
+        if smt_term_derives_from_len(self, upper_delta) {
+            return Some(format!(
+                "pointer arithmetic proved: offset derives from len-sub chain"
+            ));
+        }
+        None
+    }
+}
+
+fn resolve_if_saturating_sub(model: &SmtModel<'_, '_, '_>, term: &SmtTerm) -> Option<SmtTerm> {
+    if let SmtTerm::Place(place) = term {
+        let resolved = resolved_term_for_place(model, place)?;
+        match &resolved {
+            SmtTerm::Place(_) => resolve_if_saturating_sub(model, &resolved),
+            _ if resolved.describe().contains("saturating") => None,
+            _ => None,
+        }
+    } else {
+        None
+    }
+}
+
+/// Check if `term` resolves to a Sub chain from a len term — always ≤ len.
+fn smt_term_derives_from_len(model: &SmtModel<'_, '_, '_>, term: &SmtTerm) -> bool {
+    match term {
+        SmtTerm::Value(name) => name.starts_with("len("),
+        SmtTerm::Place(place) => {
+            resolved_term_for_place(model, place)
+                .is_some_and(|r| smt_term_derives_from_len(model, &r))
+        }
+        SmtTerm::Sub(tl, _tr) => smt_term_derives_from_len(model, tl),
+        _ => false,
+    }
+}
+
+fn abstract_value_to_smt_term(value: &AbstractValue<'_>) -> SmtTerm {
+    match value {
+        AbstractValue::Place(place) => SmtTerm::Place(place.clone()),
+        AbstractValue::ConstInt(n) => SmtTerm::Const(*n as u64),
+        AbstractValue::Ref(place) => SmtTerm::Place(place.clone()),
+        AbstractValue::RawPtr(place) => SmtTerm::Place(place.clone()),
+        other => SmtTerm::Value(super::common::value_label(other)),
+    }
+}
+
+fn contract_expr_refers_to_origin(expr: &ContractExpr<'_>, origin_key: &str) -> bool {
+    match expr {
+        ContractExpr::Len(inner) => {
+            let ContractExpr::Place(cp) = inner.as_ref() else { return false; };
+            let mut key = PlaceKey::from_contract_place(cp);
+            if let PlaceBaseKey::Arg(ix) = key.base {
+                key.base = PlaceBaseKey::Local(ix + 1);
+            }
+            super::common::place_label(&key) == origin_key
+        }
+        ContractExpr::Place(cp) => {
+            let mut key = PlaceKey::from_contract_place(cp);
+            if let PlaceBaseKey::Arg(ix) = key.base {
+                key.base = PlaceBaseKey::Local(ix + 1);
+            }
+            super::common::place_label(&key) == origin_key
+        }
+        ContractExpr::Binary { op: _, lhs, rhs } => {
+            contract_expr_refers_to_origin(lhs, origin_key)
+                || contract_expr_refers_to_origin(rhs, origin_key)
+        }
+        _ => false,
+    }
+}
+
+/// Like contract_expr_refers_to_origin but also traces the origin_key
+/// back through value definitions to find the contract place.
+fn contract_expr_refers_to_origin_deep(model: &SmtModel<'_, '_, '_>, expr: &ContractExpr<'_>, origin_key: &str) -> bool {
+    if contract_expr_refers_to_origin(expr, origin_key) {
+        return true;
+    }
+    let mut visited = HashSet::new();
+    let mut queue = vec![origin_key.to_string()];
+    // Also try stripping fields: e.g. "_1.0" → "_1"
+    if let Some(dot) = origin_key.rfind('.') {
+        queue.push(origin_key[..dot].to_string());
+    }
+    while let Some(cur) = queue.pop() {
+        if !visited.insert(cur.clone()) { continue; }
+        if contract_expr_refers_to_origin(expr, &cur) {
+            return true;
+        }
+        if let Ok(parts) = parse_origin_parts(&cur) {
+            let local = rustc_middle::mir::Local::from_usize(parts.local);
+            if let Some(def) = model.forward.latest_value_definition_before(local, model.forward.value_definitions.len()) {
+                let next = origin_key_from_value(&def.value);
+                queue.push(next);
+            }
+        }
+    }
+    false
+}
+
+fn parse_origin_parts(origin: &str) -> Result<OriginParts, ()> {
+    if !origin.starts_with('_') { return Err(()); }
+    let rest = &origin[1..];
+    let dot_pos = rest.find('.');
+    let local_str = if let Some(pos) = dot_pos { &rest[..pos] } else { rest };
+    let local: usize = local_str.parse().map_err(|_| ())?;
+    Ok(OriginParts { local })
+}
+
+struct OriginParts {
+    local: usize,
+}
+
+fn origin_key_from_value(value: &AbstractValue<'_>) -> String {
+    match value {
+        AbstractValue::Place(p) => super::common::place_label(p),
+        AbstractValue::Ref(p) | AbstractValue::RawPtr(p) => super::common::place_label(p),
+        _ => super::common::value_label(value),
+    }
+}
+
+fn smt_term_matches_expr(
+    model: &SmtModel<'_, '_, '_>,
+    term: &SmtTerm,
+    expr: &ContractExpr<'_>,
+) -> bool {
+    let expr_term = contract_expr_to_smt_term_helper(expr);
+    smt_eq_deep(model, term, &expr_term)
+}
+
+fn contract_expr_to_smt_term_helper(expr: &ContractExpr<'_>) -> SmtTerm {
+    match expr {
+        ContractExpr::Place(cp) => {
+            let mut key = PlaceKey::from_contract_place(cp);
+            if let PlaceBaseKey::Arg(ix) = key.base {
+                key.base = PlaceBaseKey::Local(ix + 1);
+            }
+            SmtTerm::Place(key)
+        }
+        ContractExpr::Const(val) => SmtTerm::Const(*val as u64),
+        ContractExpr::Binary { op, lhs, rhs } => {
+            let l = Box::new(contract_expr_to_smt_term_helper(lhs.as_ref()));
+            let r = Box::new(contract_expr_to_smt_term_helper(rhs.as_ref()));
+            match op {
+                NumericOp::Add => SmtTerm::Add(l, r),
+                NumericOp::Sub => SmtTerm::Sub(l, r),
+                NumericOp::Mul => SmtTerm::Mul(l, r),
+                NumericOp::Div => SmtTerm::Div(l, r),
+                NumericOp::Rem => SmtTerm::Rem(l, r),
+                _ => SmtTerm::Const(0),
+            }
+        }
+        _ => SmtTerm::Const(0),
+    }
+}
+
+fn smt_eq_deep(model: &SmtModel<'_, '_, '_>, term: &SmtTerm, target: &SmtTerm) -> bool {
+    if term.describe() == target.describe() { return true; }
+    if let SmtTerm::Place(place) = term {
+        if let Some(resolved) = resolved_term_for_place(model, place) {
+            return smt_eq_deep(model, &resolved, target);
+        }
+    }
+    match (term, target) {
+        (SmtTerm::Add(tl, tr), SmtTerm::Add(sl, sr))
+        | (SmtTerm::Sub(tl, tr), SmtTerm::Sub(sl, sr))
+        | (SmtTerm::Mul(tl, tr), SmtTerm::Mul(sl, sr))
+        | (SmtTerm::Div(tl, tr), SmtTerm::Div(sl, sr))
+        | (SmtTerm::Rem(tl, tr), SmtTerm::Rem(sl, sr)) =>
+            smt_eq_deep(model, tl, sl) && smt_eq_deep(model, tr, sr),
+        // Sub(len, expr) where expr matches target: Sub ≤ len,
+        // so target < len (from ValidNum) implies Sub < len.
+        (SmtTerm::Sub(tl, tr), _) if resolves_to_len(model, tl) =>
+            smt_eq_deep(model, tr, target),
+        _ => false,
+    }
+}
+
+fn resolves_to_len(model: &SmtModel<'_, '_, '_>, term: &SmtTerm) -> bool {
+    match term {
+        SmtTerm::Value(name) => name.starts_with("len("),
+        SmtTerm::Place(place) => {
+            resolved_term_for_place(model, place)
+                .is_some_and(|r| resolves_to_len(model, &r))
+        }
+        // Sub(len, x) ≤ len for any x ≥ 0, so Sub(len, x) is a "len-derived" bound
+        SmtTerm::Sub(tl, _tr) => resolves_to_len(model, tl),
+        _ => false,
+    }
+}
+
+
+fn resolved_term_for_place(model: &SmtModel<'_, '_, '_>, place: &PlaceKey) -> Option<SmtTerm> {
+    let local = place.local()?;
+    let cursor = model.forward.value_definitions.len();
+    model.forward.latest_value_definition_before(local, cursor)
+        .and_then(|def| abstract_value_to_smt_term_def(&def.value))
+}
+
+fn abstract_value_to_smt_term_def(value: &AbstractValue<'_>) -> Option<SmtTerm> {
+    match value {
+        AbstractValue::Place(p) => Some(SmtTerm::Place(p.clone())),
+        AbstractValue::ConstInt(n) => Some(SmtTerm::Const(*n as u64)),
+        AbstractValue::Ref(p) => Some(SmtTerm::Place(p.clone())),
+        AbstractValue::RawPtr(p) => Some(SmtTerm::Place(p.clone())),
+        AbstractValue::Binary(op, lhs, rhs) => {
+            let l = abstract_value_to_smt_term(lhs.as_ref());
+            let r = abstract_value_to_smt_term(rhs.as_ref());
+            match op {
+                BinOp::Add | BinOp::AddWithOverflow | BinOp::AddUnchecked =>
+                    Some(SmtTerm::Add(Box::new(l), Box::new(r))),
+                BinOp::Sub | BinOp::SubWithOverflow | BinOp::SubUnchecked =>
+                    Some(SmtTerm::Sub(Box::new(l), Box::new(r))),
+                BinOp::Mul | BinOp::MulWithOverflow | BinOp::MulUnchecked =>
+                    Some(SmtTerm::Mul(Box::new(l), Box::new(r))),
+                BinOp::Div => Some(SmtTerm::Div(Box::new(l), Box::new(r))),
+                BinOp::Rem => Some(SmtTerm::Rem(Box::new(l), Box::new(r))),
+                _ => None,
+            }
+        }
+        AbstractValue::CallResult(call) if call.func.contains("saturating_sub") => {
+            call.args.first().map(|a| abstract_value_to_smt_term(a))
+        }
+        AbstractValue::CallResult(call) if call.func.ends_with("::len") => {
+            call.args.first().and_then(|a| {
+                if let AbstractValue::Place(p) = a {
+                    Some(SmtTerm::Value(format!("len({})", super::common::place_label(p))))
+                } else {
+                    None
+                }
+            })
+        }
+        AbstractValue::Cast(inner, _) => abstract_value_to_smt_term_def(inner.as_ref()),
+        _ => None,
     }
 }

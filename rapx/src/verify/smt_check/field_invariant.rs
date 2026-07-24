@@ -141,12 +141,13 @@ fn field_invariant_matches<'tcx>(
         return None;
     }
     let base_ty = body.local_decls[local].ty;
-    let pointee = match base_ty.kind() {
-        TyKind::Ref(_, pointee, _) | TyKind::RawPtr(pointee, _) => *pointee,
+    let (adt_def, substs) = match base_ty.kind() {
+        TyKind::Ref(_, pointee, _) | TyKind::RawPtr(pointee, _) => match pointee.kind() {
+            TyKind::Adt(adt, subs) => (*adt, *subs),
+            _ => return None,
+        },
+        TyKind::Adt(adt, subs) => (*adt, *subs),
         _ => return None,
-    };
-    let TyKind::Adt(adt_def, substs) = pointee.kind() else {
-        return None;
     };
     if !adt_def.is_struct() {
         return None;

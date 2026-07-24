@@ -482,6 +482,22 @@ pub(super) fn resolve_forward_place<'tcx>(
                 };
                 place = resolve_forward_place(source, forward);
             }
+            AbstractValue::CallResult(call)
+                if PrimitiveCall::classify(&call.func)
+                    .is_some_and(PrimitiveCall::is_pointer_arithmetic) =>
+            {
+                // ptr::add/sub/offset create a new pointer from the base;
+                // follow PointsTo (ReturnPointerAdd effect) to the base.
+                let Some(source) = forward.facts.iter().find_map(|fact| match fact {
+                    StateFact::PointsTo { pointer, source } if pointer.overlaps(&place) => {
+                        Some(source.clone())
+                    }
+                    _ => None,
+                }) else {
+                    return place;
+                };
+                place = resolve_forward_place(source, forward);
+            }
             _ => return place,
         }
     }
