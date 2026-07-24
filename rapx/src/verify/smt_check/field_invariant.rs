@@ -26,6 +26,8 @@
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::{Ty, TyCtxt, TyKind};
 
+use rustc_abi::FieldIdx;
+
 use crate::verify::{
     contract::{ContractExpr, Property, PropertyArg, PropertyKind},
     def_use::{PlaceBaseKey, PlaceKey},
@@ -143,7 +145,7 @@ fn field_invariant_matches<'tcx>(
         TyKind::Ref(_, pointee, _) | TyKind::RawPtr(pointee, _) => *pointee,
         _ => return None,
     };
-    let TyKind::Adt(adt_def, _) = pointee.kind() else {
+    let TyKind::Adt(adt_def, substs) = pointee.kind() else {
         return None;
     };
     if !adt_def.is_struct() {
@@ -170,6 +172,34 @@ fn field_invariant_matches<'tcx>(
             "{kind:?} assumed from struct invariant on `{struct_name}` for pointee field path {:?}",
             place.fields
         ));
+    }
+
+    // No explicit invariant matched — fall back to type-based reasoning.
+    // When the pointer traces to a struct field whose type is a Rust
+    // reference (`&'a T`, `&'a [T]`, `&'a mut T`), `Alive` is trivially
+    // satisfied because a live reference always points to live memory for
+    // its declared lifetime.  The base local must also be behind a reference
+    // (to reach the struct), but the *field* governs the safety: a raw-pointer
+    // field like `*mut T` behind a reference to its struct is NOT trivially
+    // alive.
+    if kind == PropertyKind::Alive
+        && matches!(base_ty.kind(), TyKind::Ref(..))
+        && place.fields.len() == 1
+    {
+        let field_idx = FieldIdx::from_usize(place.fields[0]);
+        let variant = adt_def.non_enum_variant();
+        if field_idx.as_usize() < variant.fields.len() {
+            #[cfg(not(rapx_rustc_ge_198))]
+            let field_ty = variant.fields[field_idx].ty(tcx, substs);
+            #[cfg(rapx_rustc_ge_198)]
+            let field_ty = variant.fields[field_idx].ty(tcx, substs).skip_norm_wip();
+            if matches!(field_ty.kind(), TyKind::Ref(..)) {
+                let struct_name = tcx.def_path_str(struct_def_id);
+                return Some(format!(
+                    "Alive inferred from reference-typed field in `{struct_name}`"
+                ));
+            }
+        }
     }
 
     None

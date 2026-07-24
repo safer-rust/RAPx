@@ -30,10 +30,10 @@ pub(crate) fn check<'tcx>(
     property: &Property<'tcx>,
     forward: &ForwardVisitResult<'tcx>,
 ) -> SmtCheckResult {
-    let Some(target) = checker.property_target(checkpoint, property) else {
+    let Some(target) = checker.property_target(Some(checkpoint), property) else {
         return SmtCheckResult::unknown("Typed target could not be resolved");
     };
-    let Some(required_ty) = checker.property_required_ty(checkpoint, property) else {
+    let Some(required_ty) = checker.property_required_ty(Some(checkpoint), property) else {
         return SmtCheckResult::unknown("Typed type could not be resolved");
     };
 

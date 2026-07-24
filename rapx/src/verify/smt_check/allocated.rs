@@ -15,11 +15,11 @@ pub(crate) fn check<'tcx>(
     property: &Property<'tcx>,
     forward: &ForwardVisitResult<'tcx>,
 ) -> SmtCheckResult {
-    let Some(target) = checker.property_target(checkpoint, property) else {
+    let Some(target) = checker.property_target(Some(checkpoint), property) else {
         return SmtCheckResult::unknown("Allocated target could not be resolved");
     };
-    if checker.property_required_ty(checkpoint, property).is_none()
-        && checker.property_len_expr(checkpoint, property).is_none()
+    if checker.property_required_ty(Some(checkpoint), property).is_none()
+        && checker.property_len_expr(Some(checkpoint), property).is_none()
     {
         if checker.is_len_carrying_place_for_caller(checkpoint.caller, &target) {
             return SmtCheckResult::proved(
@@ -30,10 +30,10 @@ pub(crate) fn check<'tcx>(
             "Allocated target has no type/count arguments and is not a supported slice/reference",
         );
     }
-    let Some(required_ty) = checker.property_required_ty(checkpoint, property) else {
+    let Some(required_ty) = checker.property_required_ty(Some(checkpoint), property) else {
         return SmtCheckResult::unknown("Allocated type could not be resolved");
     };
-    let Some(elements_expr) = checker.property_len_expr(checkpoint, property) else {
+    let Some(elements_expr) = checker.property_len_expr(Some(checkpoint), property) else {
         return SmtCheckResult::unknown("Allocated element-count argument could not be resolved");
     };
     let Some(elements) = checker.contract_expr_to_smt_term(checkpoint.caller, &elements_expr, None)
@@ -87,13 +87,13 @@ pub(crate) fn check_for_checkpoint<'tcx>(
     property: &Property<'tcx>,
     forward: &ForwardVisitResult<'tcx>,
 ) -> SmtCheckResult {
-    let Some(target) = checker.property_target_direct(property) else {
+    let Some(target) = checker.property_target(None, property) else {
         return SmtCheckResult::unknown("Allocated target could not be resolved");
     };
-    let Some(required_ty) = checker.property_required_ty_direct(property) else {
+    let Some(required_ty) = checker.property_required_ty(None, property) else {
         return SmtCheckResult::unknown("Allocated type could not be resolved");
     };
-    let Some(elements_expr) = checker.property_len_expr_direct(property) else {
+    let Some(elements_expr) = checker.property_len_expr(None, property) else {
         return SmtCheckResult::unknown("Allocated element-count argument could not be resolved");
     };
     let Some(elements) = checker.contract_expr_to_smt_term(caller, &elements_expr, None) else {

@@ -112,7 +112,10 @@ pub(crate) fn visit<'tcx>(
                 };
                 if let Some(arg_key) = arg_place {
                     let matches = relevant.need_len.contains(&arg_key)
-                        || relevant.need_len.iter().any(|nl| same_origin_via_body(body, nl, &arg_key));
+                        || relevant
+                            .need_len
+                            .iter()
+                            .any(|nl| same_origin_via_body(body, nl, &arg_key));
                     if matches {
                         let dest_key = PlaceKey::from_mir_place(destination);
                         if relevant.places.insert(dest_key.clone()) {
@@ -133,7 +136,9 @@ pub(crate) fn visit<'tcx>(
 }
 
 fn same_origin_via_body(body: &rustc_middle::mir::Body<'_>, a: &PlaceKey, b: &PlaceKey) -> bool {
-    if a == b { return true; }
+    if a == b {
+        return true;
+    }
     let origin = |p: &PlaceKey| -> Option<PlaceKey> {
         let local = p.local()?;
         for (_, data) in body.basic_blocks.iter_enumerated() {
@@ -141,9 +146,11 @@ fn same_origin_via_body(body: &rustc_middle::mir::Body<'_>, a: &PlaceKey, b: &Pl
                 if let rustc_middle::mir::StatementKind::Assign(assign) = &stmt.kind {
                     if assign.0.local == local {
                         if let rustc_middle::mir::Rvalue::Use(
-                            rustc_middle::mir::Operand::Copy(src) | rustc_middle::mir::Operand::Move(src),
-                            ..
-                        ) = &assign.1 {
+                            rustc_middle::mir::Operand::Copy(src)
+                            | rustc_middle::mir::Operand::Move(src),
+                            ..,
+                        ) = &assign.1
+                        {
                             return Some(PlaceKey::from_mir_place(src));
                         }
                         break;

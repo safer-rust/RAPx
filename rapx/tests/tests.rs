@@ -1231,7 +1231,7 @@ fn validptr_unsound_cases() {
     assert_unproved_exclusive(
         &output,
         "unsound_signed_suffix_missing_lower_bound",
-        &["InBound", "ValidPtr"],
+        &["ValidPtr"],
     );
 }
 

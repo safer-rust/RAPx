@@ -320,6 +320,10 @@ impl RelevantPlaces {
                 self.collect_contract_expr(slice);
                 self.collect_contract_expr(index);
             }
+            ContractExpr::Min { a, b } | ContractExpr::Max { a, b } => {
+                self.collect_contract_expr(a);
+                self.collect_contract_expr(b);
+            }
             ContractExpr::Const(_)
             | ContractExpr::ConstParam { .. }
             | ContractExpr::SizeOf(_)

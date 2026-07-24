@@ -32,7 +32,7 @@ pub(crate) fn check<'tcx>(
     property: &Property<'tcx>,
     forward: &ForwardVisitResult<'tcx>,
 ) -> SmtCheckResult {
-    let Some(required_ty) = checker.property_required_ty(checkpoint, property) else {
+    let Some(required_ty) = checker.property_required_ty(Some(checkpoint), property) else {
         return SmtCheckResult::unknown("ValidPtr type could not be resolved");
     };
 
@@ -107,9 +107,9 @@ fn field_invariant_reason<'tcx>(
     forward: &ForwardVisitResult<'tcx>,
     required_ty: rustc_middle::ty::Ty<'tcx>,
 ) -> Option<String> {
-    let target = checker.property_target(checkpoint, property)?;
+    let target = checker.property_target(Some(checkpoint), property)?;
     let required_elements = checker
-        .property_len_expr(checkpoint, property)
+        .property_len_expr(Some(checkpoint), property)
         .and_then(|expr| match expr {
             crate::verify::contract::ContractExpr::Const(value) => u64::try_from(value).ok(),
             _ => None,

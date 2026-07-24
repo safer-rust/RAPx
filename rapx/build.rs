@@ -8,16 +8,23 @@ fn main() {
     emit_check_cfg("rapx_rustc_ge_196");
     emit_check_cfg("rapx_rustc_ge_198");
     emit_check_cfg("rapx_rustc_ge_199");
+    emit_check_cfg("rapx_rustc_ge_200");
     emit_check_cfg("rapx_has_attr_item_kind");
+    emit_check_cfg("rapx_has_fielddef_extras");
 
     emit_cfg("rustc_spanned_at_root", minor >= 96);
     emit_cfg("rapx_rustc_ge_193", minor >= 93);
     emit_cfg("rapx_rustc_ge_196", minor >= 96);
     emit_cfg("rapx_rustc_ge_198", minor >= 98);
     emit_cfg("rapx_rustc_ge_199", minor >= 99);
+    emit_cfg("rapx_rustc_ge_200", minor >= 100);
     emit_cfg(
         "rapx_has_attr_item_kind",
         rustc_src_contains("pub enum AttrItemKind"),
+    );
+    emit_cfg(
+        "rapx_has_fielddef_extras",
+        rustc_src_contains("pub struct FieldDefExtras"),
     );
 }
 

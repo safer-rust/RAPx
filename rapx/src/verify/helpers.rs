@@ -5,7 +5,7 @@ use rustc_hir::{
 };
 use rustc_middle::{
     mir::{BasicBlock, TerminatorKind},
-    ty::{Ty, TyCtxt, TyKind},
+    ty::{ConstKind, GenericArgKind, Ty, TyCtxt, TyKind},
 };
 use rustc_span::Symbol;
 use syn::Expr;
@@ -258,4 +258,19 @@ fn resolve_next_field<'tcx>(
         }
     }
     None
+}
+
+/// True when a type transitively contains a const-generic parameter or
+/// an associated type alias (which may be layout-ambiguous).
+pub(crate) fn ty_has_param_const(ty: Ty<'_>) -> bool {
+    for arg in ty.walk() {
+        match arg.kind() {
+            GenericArgKind::Const(c) if matches!(c.kind(), ConstKind::Param(_)) => return true,
+            GenericArgKind::Type(inner_ty) if matches!(inner_ty.kind(), TyKind::Alias(..)) => {
+                return true;
+            }
+            _ => {}
+        }
+    }
+    false
 }

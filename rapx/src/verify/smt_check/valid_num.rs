@@ -22,7 +22,9 @@ pub(crate) fn check<'tcx>(
     property: &Property<'tcx>,
     forward: &ForwardVisitResult<'tcx>,
 ) -> SmtCheckResult {
-    let Some(smt_predicates) = checker.property_numeric_smt_predicates(checkpoint, property, Some(forward)) else {
+    let Some(smt_predicates) =
+        checker.property_numeric_smt_predicates(checkpoint, property, Some(forward))
+    else {
         return SmtCheckResult::unknown("ValidNum predicate could not be lowered to SMT");
     };
 

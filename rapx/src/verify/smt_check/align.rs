@@ -28,10 +28,10 @@ pub(crate) fn check<'tcx>(
     if checkpoint.is_ref {
         return SmtCheckResult::proved("Align trivially holds for ref-derived pointer");
     }
-    let Some(target) = checker.property_target(checkpoint, property) else {
+    let Some(target) = checker.property_target(Some(checkpoint), property) else {
         return SmtCheckResult::unknown("SMT Align target could not be resolved");
     };
-    let Some(required_ty) = checker.property_required_ty(checkpoint, property) else {
+    let Some(required_ty) = checker.property_required_ty(Some(checkpoint), property) else {
         return SmtCheckResult::unknown("SMT Align type could not be resolved");
     };
     let Some(required_align) = checker.required_alignment(checkpoint.caller, required_ty) else {
@@ -61,10 +61,10 @@ pub(crate) fn check_for_checkpoint<'tcx>(
     property: &Property<'tcx>,
     forward: &ForwardVisitResult<'tcx>,
 ) -> SmtCheckResult {
-    let Some(target) = checker.property_target_direct(property) else {
+    let Some(target) = checker.property_target(None, property) else {
         return SmtCheckResult::unknown("SMT Align target could not be resolved");
     };
-    let Some(required_ty) = checker.property_required_ty_direct(property) else {
+    let Some(required_ty) = checker.property_required_ty(None, property) else {
         return SmtCheckResult::unknown("SMT Align type could not be resolved");
     };
     let required_align = checker

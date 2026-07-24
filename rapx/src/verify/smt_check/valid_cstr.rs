@@ -27,7 +27,7 @@ pub(crate) fn check<'tcx>(
 ) -> SmtCheckResult {
     let tcx = checker.tcx;
     let Some(target) = checker
-        .property_target(checkpoint, property)
+        .property_target(Some(checkpoint), property)
         .or_else(|| checker.callsite_arg_place(checkpoint, 0))
     else {
         return SmtCheckResult::unknown("ValidCStr target could not be resolved");

@@ -47,7 +47,7 @@ pub(super) fn pedigree_proof<'tcx>(
 ) -> Option<String> {
     let tcx = checker.tcx;
     let ptr_place = checker
-        .property_target(checkpoint, property)
+        .property_target(Some(checkpoint), property)
         .or_else(|| checker.callsite_arg_place(checkpoint, 0))?;
     let resolved = alias::resolve_forward_place(ptr_place, forward);
 
@@ -103,7 +103,7 @@ fn resolve_count_spec<'tcx>(
     property: &Property<'tcx>,
     _forward: &ForwardVisitResult<'tcx>,
 ) -> Option<CountSpec> {
-    match checker.property_len_expr(checkpoint, property) {
+    match checker.property_len_expr(Some(checkpoint), property) {
         Some(ContractExpr::Const(1)) => Some(CountSpec::One),
         Some(_) => Some(CountSpec::PairedWithSource),
         None => Some(CountSpec::One),

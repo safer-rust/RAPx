@@ -149,9 +149,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
         for view in self.iter_callsite_checks() {
             for (property_index, property) in view.properties.iter().enumerate() {
                 if property.kind == PropertyKind::Or {
-                    self.check_or_property(
-                        &mut report, &view, property_index, property,
-                    );
+                    self.check_or_property(&mut report, &view, property_index, property);
                 } else {
                     let bulk = self.engine.check_callsite_from_tree(
                         view.tree,
@@ -169,7 +167,10 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
                             property_index,
                             property: property.clone(),
                             result: smt_check.result.clone(),
-                            diagnostics: Some(VisitDiagnostics::new(String::new(), check_diagnostics)),
+                            diagnostics: Some(VisitDiagnostics::new(
+                                String::new(),
+                                check_diagnostics,
+                            )),
                             path_description: forward.path.describe_indices(),
                             callee_name: view.checkpoint.callee_name(self.tcx),
                         });
@@ -221,11 +222,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
                         }
                     };
                     if better {
-                        let desc = format!(
-                            "OR group {}/{}",
-                            group_idx + 1,
-                            num_groups,
-                        );
+                        let desc = format!("OR group {}/{}", group_idx + 1, num_groups,);
                         best_per_path[path_idx] = Some((group_idx, smt.clone(), desc));
                     }
                 }
@@ -648,16 +645,11 @@ impl<'tcx> VerifyRun<'tcx> {
                     all_results.extend(report.results);
                 }
                 Err(e) => {
-                    let msg = e
-                        .downcast_ref::<String>()
-                        .map(|s| s.as_str())
-                        .or_else(|| e.downcast_ref::<&str>().copied())
-                        .unwrap_or("<rustc ICE>");
+                    let msg = panic_downcast_msg(e);
                     rap_warn!(
-                        "Skipping invless constructor {} (repeat {}): {}",
+                        "Skipping invless constructor {} (repeat {}): {msg}",
                         self.tcx.def_path_str(con_id),
                         repeat,
-                        msg
                     );
                     all_results.clear();
                     break;
@@ -762,16 +754,11 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                         all_results.extend(report.results);
                     }
                     Err(e) => {
-                        let msg = e
-                            .downcast_ref::<String>()
-                            .map(|s| s.as_str())
-                            .or_else(|| e.downcast_ref::<&str>().copied())
-                            .unwrap_or("<rustc ICE>");
+                        let msg = panic_downcast_msg(e);
                         rap_warn!(
-                            "Skipping function {} (repeat {}): {}",
+                            "Skipping function {} (repeat {}): {msg}",
                             target_path,
                             repeat,
-                            msg
                         );
                         all_results.clear();
                         break;
@@ -779,284 +766,41 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                 }
             }
 
-            // Phase 1.5: InBound loop-depth detector
+            // Phase 1.5–1.7: Loop-depth detectors
             //
             // When postfix_repeat == 0, a loop body appears at most once per path,
-            // which can miss off-by-one bugs that only manifest on later iterations.
+            // which can miss bugs that only manifest on later iterations.
             //
-            // The detector tries progressively deeper unrolling and tracks the
-            // set of Proved InBound properties at each level.  Three stopping criteria:
-            //
-            //  1. Unproven InBound found → unsound, propagate results, stop.
-            //  2. State converged (same Proven set as a previous level) → stop.
-            //  3. State oscillates (Proven set alternates between two states) → stop.
-            const MAX_LOOP_INBOUND_UNROLL: usize = 16;
-
-            if self.postfix_repeat == 0 && !all_results.is_empty() {
-                let has_inbound = all_results
-                    .iter()
-                    .any(|r| matches!(r.property.kind, PropertyKind::InBound));
-                let all_inbound_proven = all_results
-                    .iter()
-                    .filter(|r| matches!(r.property.kind, PropertyKind::InBound))
-                    .all(|r| matches!(r.result, super::report::CheckResult::Proved));
-
-                if has_inbound && all_inbound_proven {
-                    // Proven-set history: each entry is a sorted vector of
-                    // (checkpoint_index, property_index) for Proved InBound results.
-                    let mut proven_history: Vec<Vec<(usize, usize)>> = Vec::new();
-
-                    // Seed with the repeat=0 Proven set.
-                    let seed: Vec<_> = {
-                        let mut v: Vec<_> = all_results
-                            .iter()
-                            .filter(|r| {
-                                matches!(r.property.kind, PropertyKind::InBound)
-                                    && matches!(r.result, super::report::CheckResult::Proved)
-                            })
-                            .map(|r| (r.checkpoint_index, r.property_index))
-                            .collect();
-                        v.sort();
-                        v
-                    };
-                    proven_history.push(seed);
-
-                    for repeat in 1..=MAX_LOOP_INBOUND_UNROLL {
-                        let detector_driver =
-                            VerifyDriver::new_with_repeat(self.tcx, target, repeat);
-                        let result =
-                            catch_unwind(AssertUnwindSafe(|| detector_driver.verify_function()));
-                        match result {
-                            Ok(report) => {
-                                // Collect genuinely non-Proved InBound (excluding
-                                // SMT precision-loss noise).
-                                let current_unproven: FxHashSet<_> = report
-                                    .results
-                                    .iter()
-                                    .filter(|r| {
-                                        matches!(r.property.kind, PropertyKind::InBound)
-                                            && !matches!(
-                                                r.result,
-                                                super::report::CheckResult::Proved
-                                            )
-                                            && !r.diagnostics.as_ref().is_some_and(|d| {
-                                                d.forward.contains("path has precision loss")
-                                                    || d.forward.contains("could not connect")
-                                            })
-                                    })
-                                    .map(|r| (r.checkpoint_index, r.property_index))
-                                    .collect();
-
-                                // Pattern 1: violation found.
-                                if !current_unproven.is_empty() {
-                                    all_results.extend(report.results);
-                                    break;
-                                }
-
-                                // Collect Proven InBound set for this level.
-                                let mut current_proven: Vec<_> = report
-                                    .results
-                                    .iter()
-                                    .filter(|r| {
-                                        matches!(r.property.kind, PropertyKind::InBound)
-                                            && matches!(
-                                                r.result,
-                                                super::report::CheckResult::Proved
-                                            )
-                                    })
-                                    .map(|r| (r.checkpoint_index, r.property_index))
-                                    .collect();
-                                current_proven.sort();
-
-                                // Pattern 2: same Proven set as any prior level.
-                                if proven_history.contains(&current_proven) {
-                                    break;
-                                }
-
-                                // Pattern 3: oscillation — alternation between two sets.
-                                let len = proven_history.len();
-                                if len >= 3
-                                    && proven_history[len - 1] == proven_history[len - 3]
-                                    && current_proven == proven_history[len - 2]
-                                {
-                                    break;
-                                }
-
-                                proven_history.push(current_proven);
-                            }
-                            Err(_) => break,
-                        }
-                    }
-                }
-            }
-
-            // Phase 1.6: Align loop-depth detector
-            //
-            // Same logic as Phase 1.5 but for Align properties.
-            // When wrapping_add replaces unsafe add, the InBound
-            // check disappears, but alignment violations inside SCCs
-            // may still be detectable with deeper unrolling.
-            if self.postfix_repeat == 0 && !all_results.is_empty() {
-                let has_align = all_results
-                    .iter()
-                    .any(|r| matches!(r.property.kind, PropertyKind::Align));
-                let all_align_proven = all_results
-                    .iter()
-                    .filter(|r| matches!(r.property.kind, PropertyKind::Align))
-                    .all(|r| matches!(r.result, super::report::CheckResult::Proved));
-
-                if has_align && all_align_proven {
-                    let mut proven_history: Vec<Vec<(usize, usize)>> = Vec::new();
-
-                    let seed: Vec<_> = {
-                        let mut v: Vec<_> = all_results
-                            .iter()
-                            .filter(|r| {
-                                matches!(r.property.kind, PropertyKind::Align)
-                                    && matches!(r.result, super::report::CheckResult::Proved)
-                            })
-                            .map(|r| (r.checkpoint_index, r.property_index))
-                            .collect();
-                        v.sort();
-                        v
-                    };
-                    proven_history.push(seed);
-
-                    for repeat in 1..=MAX_LOOP_INBOUND_UNROLL {
-                        let detector_driver =
-                            VerifyDriver::new_with_repeat(self.tcx, target, repeat);
-                        let result =
-                            catch_unwind(AssertUnwindSafe(|| detector_driver.verify_function()));
-                        match result {
-                            Ok(report) => {
-                                let current_unproven: FxHashSet<_> = report
-                                    .results
-                                    .iter()
-                                    .filter(|r| {
-                                        matches!(r.property.kind, PropertyKind::Align)
-                                            && !matches!(
-                                                r.result,
-                                                super::report::CheckResult::Proved
-                                            )
-                                            && !r.diagnostics.as_ref().is_some_and(|d| {
-                                                d.forward.contains("path has precision loss")
-                                                    || d.forward.contains("could not connect")
-                                            })
-                                    })
-                                    .map(|r| (r.checkpoint_index, r.property_index))
-                                    .collect();
-
-                                if !current_unproven.is_empty() {
-                                    all_results.extend(report.results);
-                                    break;
-                                }
-
-                                let mut current_proven: Vec<_> = report
-                                    .results
-                                    .iter()
-                                    .filter(|r| {
-                                        matches!(r.property.kind, PropertyKind::Align)
-                                            && matches!(
-                                                r.result,
-                                                super::report::CheckResult::Proved
-                                            )
-                                    })
-                                    .map(|r| (r.checkpoint_index, r.property_index))
-                                    .collect();
-                                current_proven.sort();
-
-                                if proven_history.contains(&current_proven) {
-                                    break;
-                                }
-
-                                let len = proven_history.len();
-                                if len >= 3
-                                    && proven_history[len - 1] == proven_history[len - 3]
-                                    && current_proven == proven_history[len - 2]
-                                {
-                                    break;
-                                }
-
-                                proven_history.push(current_proven);
-                            }
-                            Err(_) => break,
-                        }
-                    }
-                }
-            }
-
-            // Phase 1.7: Allocated loop-depth detector
-            //
-            // Same logic as Phase 1.5/1.6.  Fresh Box/heap allocations
-            // inside SCCs need enough unrolling for the slicer to
-            // include the allocating call's effects (PointsTo /
-            // KnownAllocated) so the SMT check can find matching facts.
-            let mut proven_history_allocated: Vec<Vec<(usize, usize)>> = Vec::new();
-            if self.postfix_repeat == 0 && !all_results.is_empty() {
-                let has_allocated = all_results.iter().any(|r| {
-                    matches!(
-                        r.property.kind,
-                        PropertyKind::Allocated | PropertyKind::ValidPtr | PropertyKind::Deref
-                    )
-                });
-                let any_allocated_unproven = all_results
-                    .iter()
-                    .filter(|r| {
-                        matches!(
-                            r.property.kind,
-                            PropertyKind::Allocated | PropertyKind::ValidPtr | PropertyKind::Deref
-                        )
-                    })
-                    .any(|r| !matches!(r.result, super::report::CheckResult::Proved));
-
-                if has_allocated && any_allocated_unproven {
-                    for repeat in 1..=MAX_LOOP_INBOUND_UNROLL {
-                        let detector_driver =
-                            VerifyDriver::new_with_repeat(self.tcx, target, repeat);
-                        let result =
-                            catch_unwind(AssertUnwindSafe(|| detector_driver.verify_function()));
-                        match result {
-                            Ok(report) => {
-                                let still_unproven: FxHashSet<_> = report
-                                    .results
-                                    .iter()
-                                    .filter(|r| {
-                                        matches!(
-                                            r.property.kind,
-                                            PropertyKind::Allocated
-                                                | PropertyKind::ValidPtr
-                                                | PropertyKind::Deref
-                                        ) && !matches!(r.result, super::report::CheckResult::Proved)
-                                            && !r.diagnostics.as_ref().is_some_and(|d| {
-                                                d.forward.contains("path has precision loss")
-                                                    || d.forward.contains("could not connect")
-                                            })
-                                    })
-                                    .map(|r| (r.checkpoint_index, r.property_index))
-                                    .collect();
-
-                                if still_unproven.is_empty() {
-                                    // All now proved — use these results.
-                                    all_results.extend(report.results);
-                                    break;
-                                }
-
-                                // Check if the set of unproven results has converged.
-                                let mut current_unproven: Vec<_> =
-                                    still_unproven.iter().cloned().collect();
-                                current_unproven.sort();
-
-                                let len = proven_history_allocated.len();
-                                proven_history_allocated.push(current_unproven.clone());
-                                if len >= 1 && proven_history_allocated[len - 1] == current_unproven
-                                {
-                                    break;
-                                }
-                            }
-                            Err(_) => break,
-                        }
-                    }
-                }
+            // Three detectors share the same core logic but differ in:
+            //   - which PropertyKinds to inspect
+            //   - entry condition (all Proven vs. any Unproven)
+            //   - stop conditions (violation/oscillation vs. empty/convergence)
+            if self.postfix_repeat == 0 {
+                detect_loop_depth(
+                    LoopDetectMode::ProvenAll,
+                    &[PropertyKind::InBound],
+                    &mut all_results,
+                    self.tcx,
+                    target,
+                );
+                detect_loop_depth(
+                    LoopDetectMode::ProvenAll,
+                    &[PropertyKind::Align],
+                    &mut all_results,
+                    self.tcx,
+                    target,
+                );
+                detect_loop_depth(
+                    LoopDetectMode::UnprovenAny,
+                    &[
+                        PropertyKind::Allocated,
+                        PropertyKind::ValidPtr,
+                        PropertyKind::Deref,
+                    ],
+                    &mut all_results,
+                    self.tcx,
+                    target,
+                );
             }
 
             // Phase 2: struct invariant verification
@@ -1813,6 +1557,20 @@ fn fmt_expr_plain(
             };
             format!("{}{}", op_str, fmt_expr_plain(tcx, local_names, inner))
         }
+        ContractExpr::Min { a, b } => {
+            format!(
+                "min({}, {})",
+                fmt_expr_plain(tcx, local_names, a),
+                fmt_expr_plain(tcx, local_names, b),
+            )
+        }
+        ContractExpr::Max { a, b } => {
+            format!(
+                "max({}, {})",
+                fmt_expr_plain(tcx, local_names, a),
+                fmt_expr_plain(tcx, local_names, b),
+            )
+        }
         ContractExpr::Unknown => "<?>".to_string(),
     }
 }
@@ -2138,4 +1896,143 @@ impl<'tcx> Analysis for VerifyVisitDump<'tcx> {
     }
 
     fn reset(&mut self) {}
+}
+
+// ---------------------------------------------------------------------------
+// Loop-depth convergence detector
+// ---------------------------------------------------------------------------
+
+enum LoopDetectMode {
+    ProvenAll,
+    UnprovenAny,
+}
+
+/// Detector for properties affected by bounded loop unrolling.
+///
+/// - `ProvenAll`: all matching results are Proven at repeat=0.  Tracks Proven
+///   sets; stops on violation, convergence, or oscillation.
+/// - `UnprovenAny`: some matching results are Unproven at repeat=0.  Tracks
+///   Unproven sets; stops when all become Proven or the set converges.
+fn detect_loop_depth<'tcx>(
+    mode: LoopDetectMode,
+    kind_filter: &[PropertyKind],
+    results: &mut Vec<PropertyCheckResult<'tcx>>,
+    tcx: TyCtxt<'tcx>,
+    target: &FunctionTarget<'tcx>,
+) {
+    const MAX_UNROLL: usize = 16;
+
+    if results.is_empty() {
+        return;
+    }
+
+    let matching: Vec<_> = results
+        .iter()
+        .filter(|r| kind_filter.contains(&r.property.kind))
+        .collect();
+
+    if matching.is_empty() {
+        return;
+    }
+
+    let should_enter = match mode {
+        LoopDetectMode::ProvenAll => matching
+            .iter()
+            .all(|r| matches!(r.result, super::report::CheckResult::Proved)),
+        LoopDetectMode::UnprovenAny => matching
+            .iter()
+            .any(|r| !matches!(r.result, super::report::CheckResult::Proved)),
+    };
+    if !should_enter {
+        return;
+    }
+
+    #[allow(clippy::type_complexity)]
+    let mut history: Vec<Vec<(usize, usize)>> = Vec::new();
+
+    if matches!(mode, LoopDetectMode::ProvenAll) {
+        let mut seed: Vec<_> = results
+            .iter()
+            .filter(|r| {
+                kind_filter.contains(&r.property.kind)
+                    && matches!(r.result, super::report::CheckResult::Proved)
+            })
+            .map(|r| (r.checkpoint_index, r.property_index))
+            .collect();
+        seed.sort();
+        history.push(seed);
+    }
+
+    for repeat in 1..=MAX_UNROLL {
+        let detector_driver = VerifyDriver::new_with_repeat(tcx, target, repeat);
+        let run_result = catch_unwind(AssertUnwindSafe(|| detector_driver.verify_function()));
+        match run_result {
+            Ok(report) => {
+                let unproven: FxHashSet<_> = report
+                    .results
+                    .iter()
+                    .filter(|r| {
+                        kind_filter.contains(&r.property.kind)
+                            && !matches!(r.result, super::report::CheckResult::Proved)
+                            && !r.diagnostics.as_ref().is_some_and(|d| {
+                                d.forward.contains("path has precision loss")
+                                    || d.forward.contains("could not connect")
+                            })
+                    })
+                    .map(|r| (r.checkpoint_index, r.property_index))
+                    .collect();
+
+                match mode {
+                    LoopDetectMode::ProvenAll => {
+                        if !unproven.is_empty() {
+                            results.extend(report.results);
+                            break;
+                        }
+                        let mut current: Vec<_> = report
+                            .results
+                            .iter()
+                            .filter(|r| {
+                                kind_filter.contains(&r.property.kind)
+                                    && matches!(r.result, super::report::CheckResult::Proved)
+                            })
+                            .map(|r| (r.checkpoint_index, r.property_index))
+                            .collect();
+                        current.sort();
+                        if history.contains(&current) {
+                            break;
+                        }
+                        let len = history.len();
+                        if len >= 3
+                            && history[len - 1] == history[len - 3]
+                            && current == history[len - 2]
+                        {
+                            break;
+                        }
+                        history.push(current);
+                    }
+                    LoopDetectMode::UnprovenAny => {
+                        if unproven.is_empty() {
+                            results.extend(report.results);
+                            break;
+                        }
+                        let mut current: Vec<_> = unproven.iter().cloned().collect();
+                        current.sort();
+                        let len = history.len();
+                        history.push(current.clone());
+                        if len >= 1 && history[len - 1] == current {
+                            break;
+                        }
+                    }
+                }
+            }
+            Err(_) => break,
+        }
+    }
+}
+
+fn panic_downcast_msg(e: Box<dyn std::any::Any + Send>) -> String {
+    e.downcast_ref::<String>()
+        .map(|s| s.clone())
+        .or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()))
+        .unwrap_or_else(|| "<rustc ICE>".to_string())
 }

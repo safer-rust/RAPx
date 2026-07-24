@@ -3,6 +3,8 @@
 #![feature(raw_slice_split)]
 #![feature(slice_ptr_get)]
 #![allow(unsafe_op_in_unsafe_fn)]
+#![allow(dead_code)]
+#![allow(unused_mut)]
 
 use std::cmp;
 use std::mem;
@@ -16,6 +18,7 @@ use std::slice::{from_raw_parts, from_raw_parts_mut};
 
 #[rapx::invariant(Align(ptr, T))]
 #[rapx::invariant(InBound(ptr, T, (end_or_len - ptr) / size_of::<T>()))]
+#[rapx::invariant(Alive(ptr, 'a))]
 pub struct Iter<'a, T: 'a> {
     ptr: NonNull<T>,
     end_or_len: *const T,
@@ -24,6 +27,7 @@ pub struct Iter<'a, T: 'a> {
 
 #[rapx::invariant(Align(ptr, T))]
 #[rapx::invariant(InBound(ptr, T, (end_or_len - ptr) / size_of::<T>()))]
+#[rapx::invariant(Alive(ptr, 'a))]
 pub struct IterMut<'a, T: 'a> {
     ptr: NonNull<T>,
     end_or_len: *mut T,
@@ -438,6 +442,7 @@ impl<'a, T> IterMut<'a, T> {
 
 // --- Windows ----------------------------------------------------------------
 
+#[rapx::invariant(InBound(v, T, v.len()))]
 pub struct Windows<'a, T: 'a> {
     v: &'a [T],
     size: NonZero<usize>,
@@ -470,7 +475,7 @@ impl<'a, T> Windows<'a, T> {
     }
 
     #[rapx::verify]
-    #[rapx::requires(ValidNum(idx < self.v.len().saturating_sub(self.size.get() - 1)))]
+    #[rapx::requires(ValidNum(idx < self.v.len() - self.size.get() + 1))]
     unsafe fn get_unchecked(&mut self, idx: usize) -> &'a [T] {
         unsafe { from_raw_parts(self.v.as_ptr().add(idx), self.size.get()) }
     }
@@ -478,6 +483,7 @@ impl<'a, T> Windows<'a, T> {
 
 // --- Chunks -----------------------------------------------------------------
 
+#[rapx::invariant(InBound(v, T, v.len()))]
 pub struct Chunks<'a, T: 'a> {
     v: &'a [T],
     chunk_size: usize,
@@ -514,6 +520,7 @@ impl<'a, T> Chunks<'a, T> {
 // --- ChunksMut --------------------------------------------------------------
 
 #[rapx::invariant(InBound(v, T, v.len()))]
+#[rapx::invariant(Alive(v, 'a))]
 pub struct ChunksMut<'a, T: 'a> {
     v: *mut [T],
     chunk_size: usize,
@@ -588,6 +595,7 @@ impl<'a, T> ChunksMut<'a, T> {
 
 // --- ChunksExact ------------------------------------------------------------
 
+#[rapx::invariant(InBound(v, T, v.len()))]
 pub struct ChunksExact<'a, T: 'a> {
     v: &'a [T],
     rem: &'a [T],
@@ -634,6 +642,7 @@ impl<'a, T> ChunksExact<'a, T> {
 // --- ChunksExactMut ---------------------------------------------------------
 
 #[rapx::invariant(InBound(v, T, v.len()))]
+#[rapx::invariant(Alive(v, 'a))]
 pub struct ChunksExactMut<'a, T: 'a> {
     v: *mut [T],
     rem: &'a mut [T],
@@ -701,6 +710,7 @@ impl<'a, T> ChunksExactMut<'a, T> {
 
 // --- RChunks ----------------------------------------------------------------
 
+#[rapx::invariant(InBound(v, T, v.len()))]
 pub struct RChunks<'a, T: 'a> {
     v: &'a [T],
     chunk_size: usize,
@@ -748,6 +758,7 @@ impl<'a, T> RChunks<'a, T> {
 // --- RChunksMut -------------------------------------------------------------
 
 #[rapx::invariant(InBound(v, T, v.len()))]
+#[rapx::invariant(Alive(v, 'a))]
 pub struct RChunksMut<'a, T: 'a> {
     v: *mut [T],
     chunk_size: usize,
@@ -830,6 +841,7 @@ impl<'a, T> RChunksMut<'a, T> {
 
 // --- RChunksExact -----------------------------------------------------------
 
+#[rapx::invariant(InBound(v, T, v.len()))]
 pub struct RChunksExact<'a, T: 'a> {
     v: &'a [T],
     rem: &'a [T],
@@ -876,6 +888,7 @@ impl<'a, T> RChunksExact<'a, T> {
 // --- RChunksExactMut --------------------------------------------------------
 
 #[rapx::invariant(InBound(v, T, v.len()))]
+#[rapx::invariant(Alive(v, 'a))]
 pub struct RChunksExactMut<'a, T: 'a> {
     v: *mut [T],
     rem: &'a mut [T],
@@ -945,6 +958,7 @@ impl<'a, T> RChunksExactMut<'a, T> {
 
 // --- ArrayWindows -----------------------------------------------------------
 
+#[rapx::invariant(InBound(v, T, v.len()))]
 pub struct ArrayWindows<'a, T: 'a, const N: usize> {
     v: &'a [T],
 }
@@ -979,6 +993,7 @@ impl<'a, T, const N: usize> ArrayWindows<'a, T, N> {
 
 // --- Split ------------------------------------------------------------------
 
+#[rapx::invariant(InBound(v, T, v.len()))]
 pub struct Split<'a, T: 'a, P> where P: FnMut(&T) -> bool {
     v: &'a [T],
     pred: P,

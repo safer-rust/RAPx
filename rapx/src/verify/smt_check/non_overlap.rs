@@ -5,11 +5,11 @@
 //! usually comes from the call itself, e.g. `copy_nonoverlapping(src, dst,
 //! count)`.
 
-use super::common::{SmtCheckResult, SmtChecker, SmtObligation, SmtTerm};
+use super::common::{SmtCheckResult, SmtChecker, SmtObligation, SmtTerm, rvalue_source_place};
 use crate::verify::{
     contract::Property, def_use::PlaceKey, helpers::Checkpoint, verifier::ForwardVisitResult,
 };
-use rustc_middle::mir::{Operand, Rvalue, StatementKind};
+use rustc_middle::mir::StatementKind;
 
 /// Check `NonOverlap` by lowering two pointer ranges to a common SMT obligation.
 pub(crate) fn check<'tcx>(
@@ -74,7 +74,7 @@ pub(crate) fn check<'tcx>(
     let count = property
         .args
         .get(2)
-        .and_then(|_| checker.property_len_expr(checkpoint, property))
+        .and_then(|_| checker.property_len_expr(Some(checkpoint), property))
         .and_then(|expr| checker.contract_expr_to_smt_term(checkpoint.caller, &expr, None))
         .or_else(|| checker.callsite_arg_smt_term(checkpoint, 2))
         .unwrap_or(SmtTerm::Const(1));
@@ -152,15 +152,4 @@ fn assignment_source_for_local<'a, 'tcx>(
     rvalue_source_place(rvalue)
 }
 
-fn rvalue_source_place<'a, 'tcx>(
-    rvalue: &'a Rvalue<'tcx>,
-) -> Option<&'a rustc_middle::mir::Place<'tcx>> {
-    match rvalue {
-        Rvalue::Use(Operand::Copy(place), ..)
-        | Rvalue::Use(Operand::Move(place), ..)
-        | Rvalue::Cast(_, Operand::Copy(place), _)
-        | Rvalue::Cast(_, Operand::Move(place), _)
-        | Rvalue::CopyForDeref(place) => Some(place),
-        _ => None,
-    }
-}
+// rvalue_source_place is re-exported from common.

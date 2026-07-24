@@ -242,6 +242,14 @@ pub enum ContractExpr<'tcx> {
         op: NumericUnaryOp,
         expr: Box<ContractExpr<'tcx>>,
     },
+    Min {
+        a: Box<ContractExpr<'tcx>>,
+        b: Box<ContractExpr<'tcx>>,
+    },
+    Max {
+        a: Box<ContractExpr<'tcx>>,
+        b: Box<ContractExpr<'tcx>>,
+    },
     Unknown,
 }
 
@@ -452,6 +460,20 @@ fn display_expr_user_friendly<'tcx>(
                 "{}{}",
                 op_str,
                 display_expr_user_friendly(expr, tcx, struct_def_id, fn_def_id),
+            )
+        }
+        ContractExpr::Min { a, b } => {
+            format!(
+                "min({}, {})",
+                display_expr_user_friendly(a, tcx, struct_def_id, fn_def_id),
+                display_expr_user_friendly(b, tcx, struct_def_id, fn_def_id),
+            )
+        }
+        ContractExpr::Max { a, b } => {
+            format!(
+                "max({}, {})",
+                display_expr_user_friendly(a, tcx, struct_def_id, fn_def_id),
+                display_expr_user_friendly(b, tcx, struct_def_id, fn_def_id),
             )
         }
         _ => format!("{:?}", expr),
@@ -922,28 +944,6 @@ impl<'tcx> Property<'tcx> {
         }
     }
 
-    pub fn new_partial_order(lhs: usize, rhs: usize, op: MirBinOp) -> Self {
-        if let Some(predicate) = NumericPredicate::from_mir_locals(lhs, rhs, op) {
-            Self::new_with_args(
-                PropertyKind::ValidNum,
-                vec![PropertyArg::Predicates(vec![predicate])],
-            )
-        } else {
-            Self::new_simple(PropertyKind::Unknown)
-        }
-    }
-
-    pub fn new_obj_boundary(ty: Ty<'tcx>, len: ContractExpr<'tcx>) -> Self {
-        Self::new_with_args(
-            PropertyKind::InBound,
-            vec![
-                PropertyArg::Expr(ContractExpr::Unknown),
-                PropertyArg::Ty(ty),
-                PropertyArg::Expr(len),
-            ],
-        )
-    }
-
     pub fn display_for_report(
         &self,
         tcx: TyCtxt<'tcx>,
@@ -1265,6 +1265,9 @@ impl<'tcx> Property<'tcx> {
                 if let Some(expr) = Self::parse_layout_expr(tcx, def_id, expr_call) {
                     return expr;
                 }
+                if let Some(expr) = Self::parse_builtin_fn_expr(tcx, def_id, expr_call) {
+                    return expr;
+                }
                 ContractExpr::Unknown
             }
             // Treat `x.len` (field-access sugar) as the slice length `len(x)`.
@@ -1412,6 +1415,30 @@ impl<'tcx> Property<'tcx> {
             "align_of" => ContractExpr::AlignOf(ty),
             _ => return None,
         })
+    }
+
+    fn parse_builtin_fn_expr(
+        tcx: TyCtxt<'tcx>,
+        def_id: DefId,
+        expr_call: &safety_parser::syn::ExprCall,
+    ) -> Option<ContractExpr<'tcx>> {
+        let Expr::Path(func_path) = expr_call.func.as_ref() else {
+            return None;
+        };
+        let name = func_path.path.segments.last()?.ident.to_string();
+        match name.as_str() {
+            "min" if expr_call.args.len() == 2 => {
+                let a = Self::parse_contract_expr(tcx, def_id, &expr_call.args[0], "min");
+                let b = Self::parse_contract_expr(tcx, def_id, &expr_call.args[1], "min");
+                Some(ContractExpr::Min { a: Box::new(a), b: Box::new(b) })
+            }
+            "max" if expr_call.args.len() == 2 => {
+                let a = Self::parse_contract_expr(tcx, def_id, &expr_call.args[0], "max");
+                let b = Self::parse_contract_expr(tcx, def_id, &expr_call.args[1], "max");
+                Some(ContractExpr::Max { a: Box::new(a), b: Box::new(b) })
+            }
+            _ => None,
+        }
     }
 
     fn parse_turbofish_type(

@@ -32,7 +32,7 @@ pub(crate) fn check<'tcx>(
         }
     }
 
-    let Some(target) = checker.property_target(checkpoint, property) else {
+    let Some(target) = checker.property_target(Some(checkpoint), property) else {
         return SmtCheckResult::unknown("Ptr2Ref target could not be resolved");
     };
 

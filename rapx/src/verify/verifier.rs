@@ -26,6 +26,7 @@ use super::{
     path_extractor::{Path, PathStep},
     primitive::PrimitiveCall,
     slicer::{BackwardItem, ForgetReason, KeepReason, RelevantMirItems},
+    smt_check::common::{const_int_from_debug, operand_place},
 };
 
 /// Visits relevant MIR items forward and builds an abstract state.
@@ -1606,47 +1607,7 @@ fn value_from_operand<'tcx>(operand: &Operand<'tcx>) -> AbstractValue<'tcx> {
     }
 }
 
-/// Convert an operand into a place key when it names a MIR place.
-fn operand_place(operand: &Operand<'_>) -> Option<PlaceKey> {
-    match operand {
-        Operand::Copy(place) | Operand::Move(place) => Some(PlaceKey::from_mir_place(place)),
-        Operand::Constant(_) => None,
-        #[cfg(rapx_rustc_ge_196)]
-        Operand::RuntimeChecks(_) => None,
-    }
-}
-
-/// Extract a small integer constant from rustc's debug representation.
-fn const_int_from_debug(text: &str) -> Option<u128> {
-    let text = text.trim();
-    if text == "const true" {
-        return Some(1);
-    }
-    if text == "const false" {
-        return Some(0);
-    }
-    if let Some(rest) = text.strip_prefix("const ") {
-        let digits = rest
-            .chars()
-            .take_while(|ch| ch.is_ascii_digit())
-            .collect::<String>();
-        if digits.is_empty() {
-            return None;
-        }
-        return digits.parse().ok();
-    }
-
-    let scalar = text.strip_prefix("Val(Scalar(0x")?;
-    let digits = scalar
-        .chars()
-        .take_while(|ch| ch.is_ascii_hexdigit())
-        .collect::<String>();
-    if digits.is_empty() {
-        None
-    } else {
-        u128::from_str_radix(&digits, 16).ok()
-    }
-}
+// operand_place and const_int_from_debug are imported from smt_check::common.
 
 /// Return the concrete SwitchInt value that selects the next path block.
 fn chosen_switch_value(
@@ -1927,20 +1888,24 @@ fn maybe_uninit_inner_ty_name(ty_name: &str) -> Option<String> {
     None
 }
 
-fn known_nonzero_of<'tcx>(value: &AbstractValue<'tcx>, result: &ForwardVisitResult<'tcx>) -> bool {
+/// Walk an abstract-value chain (Place → values → Cast → inner) calling
+/// `on_place` for each MIR-place node encountered along the chain.
+/// Returns the first `Some` result from `on_place`, or `None` when the
+/// chain terminates.
+fn for_each_place_in_chain<'tcx, T>(
+    value: &AbstractValue<'tcx>,
+    result: &ForwardVisitResult<'tcx>,
+    mut on_place: impl FnMut(&PlaceKey) -> Option<T>,
+) -> Option<T> {
     let mut cur = value.clone();
     let mut seen = HashSet::new();
     loop {
         if !seen.insert(format!("{cur:?}")) {
-            break;
+            return None;
         }
         if let AbstractValue::Place(ref p) = cur {
-            for f in &result.facts {
-                if let StateFact::KnownNonZero { place, .. } = f {
-                    if place == p {
-                        return true;
-                    }
-                }
+            if let Some(r) = on_place(p) {
+                return Some(r);
             }
         }
         cur = match &cur {
@@ -1948,64 +1913,46 @@ fn known_nonzero_of<'tcx>(value: &AbstractValue<'tcx>, result: &ForwardVisitResu
                 if let PlaceBaseKey::Local(ix) = &p.base {
                     match result.values.get(&Local::from_usize(*ix)) {
                         Some(v) => v.clone(),
-                        None => break,
+                        None => return None,
                     }
                 } else {
-                    break;
+                    return None;
                 }
             }
             AbstractValue::Cast(inner, _) => (**inner).clone(),
-            _ => break,
+            _ => return None,
         };
     }
-    false
+}
+
+fn known_nonzero_of<'tcx>(value: &AbstractValue<'tcx>, result: &ForwardVisitResult<'tcx>) -> bool {
+    for_each_place_in_chain(value, result, |p| {
+        result.facts.iter().any(|f| {
+            matches!(f, StateFact::KnownNonZero { place, .. } if place == p)
+        }).then_some(())
+    }).is_some()
 }
 
 fn known_allocated_for<'tcx>(
     value: &AbstractValue<'tcx>,
     result: &ForwardVisitResult<'tcx>,
 ) -> Option<(String, u64, PlaceKey)> {
-    let mut cur = value.clone();
-    let mut seen = HashSet::new();
-    loop {
-        if !seen.insert(format!("{cur:?}")) {
-            break;
-        }
-        if let AbstractValue::Place(ref p) = cur {
-            for f in &result.facts {
-                if let StateFact::KnownAllocated {
-                    place,
-                    object,
-                    ty_name,
-                    elements,
-                    ..
-                } = f
-                {
-                    if place == p {
-                        return Some((ty_name.clone(), *elements, object.clone()));
-                    }
-                    if place.fields.is_empty() && p.fields.is_empty() && place.base == p.base {
-                        return Some((ty_name.clone(), *elements, object.clone()));
-                    }
+    for_each_place_in_chain(value, result, |p| {
+        for f in &result.facts {
+            if let StateFact::KnownAllocated {
+                place, object, ty_name, elements, ..
+            } = f
+            {
+                if place == p {
+                    return Some((ty_name.clone(), *elements, object.clone()));
+                }
+                if place.fields.is_empty() && p.fields.is_empty() && place.base == p.base {
+                    return Some((ty_name.clone(), *elements, object.clone()));
                 }
             }
         }
-        cur = match &cur {
-            AbstractValue::Place(p) => {
-                if let PlaceBaseKey::Local(ix) = &p.base {
-                    match result.values.get(&Local::from_usize(*ix)) {
-                        Some(v) => v.clone(),
-                        None => break,
-                    }
-                } else {
-                    break;
-                }
-            }
-            AbstractValue::Cast(inner, _) => (**inner).clone(),
-            _ => break,
-        };
-    }
-    None
+        None
+    })
 }
 
 fn known_alignment_of<'tcx>(
@@ -2013,39 +1960,19 @@ fn known_alignment_of<'tcx>(
     result: &ForwardVisitResult<'tcx>,
 ) -> Option<u64> {
     let mut best: Option<u64> = None;
-    let mut cur = value.clone();
-    let mut seen = HashSet::new();
-    loop {
-        if !seen.insert(format!("{cur:?}")) {
-            break;
-        }
-        if let AbstractValue::Place(ref p) = cur {
-            for f in &result.facts {
-                if let StateFact::KnownAligned { place, align, .. } = f {
-                    if place == p {
-                        best = best.map_or(Some(*align), |b| Some(b.max(*align)));
-                    }
-                    if place.fields.is_empty() != p.fields.is_empty() && place.base == p.base {
-                        best = best.map_or(Some(*align), |b| Some(b.max(*align)));
-                    }
+    for_each_place_in_chain(value, result, |p| {
+        for f in &result.facts {
+            if let StateFact::KnownAligned { place, align, .. } = f {
+                if place == p {
+                    best = best.map_or(Some(*align), |b| Some(b.max(*align)));
+                }
+                if place.fields.is_empty() != p.fields.is_empty() && place.base == p.base {
+                    best = best.map_or(Some(*align), |b| Some(b.max(*align)));
                 }
             }
         }
-        cur = match &cur {
-            AbstractValue::Place(p) => {
-                if let PlaceBaseKey::Local(ix) = &p.base {
-                    match result.values.get(&Local::from_usize(*ix)) {
-                        Some(v) => v.clone(),
-                        None => break,
-                    }
-                } else {
-                    break;
-                }
-            }
-            AbstractValue::Cast(inner, _) => (**inner).clone(),
-            _ => break,
-        };
-    }
+        None::<()>
+    });
     best
 }
 

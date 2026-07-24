@@ -15,13 +15,13 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{BasicBlock, Local, Operand, Rvalue, StatementKind, TerminatorKind},
-    ty::{ConstKind, GenericArgKind, PseudoCanonicalInput, Ty, TyCtxt, TyKind},
+    ty::{GenericArgKind, PseudoCanonicalInput, Ty, TyCtxt, TyKind},
 };
 
 use crate::analysis::dataflow::{DataflowAnalysis, default::DataflowAnalyzer};
 use crate::analysis::path_analysis::graph::{PathEnumerator, PathGraph};
 
-use super::{primitive::PrimitiveCall, slicer::ForgetReason};
+use super::{helpers::ty_has_param_const, primitive::PrimitiveCall, slicer::ForgetReason, smt_check::common::pointee_ty};
 
 /// Dependency summary consumed by the backward visitor.
 #[derive(Clone, Debug)]
@@ -534,7 +534,10 @@ pub fn effect_summary<'tcx>(
             callee,
             name,
             destination,
-            effects: vec![CallEffect::ReturnMin { lhs_arg: 0, rhs_arg: 1 }],
+            effects: vec![CallEffect::ReturnMin {
+                lhs_arg: 0,
+                rhs_arg: 1,
+            }],
             unsupported: false,
         };
     }
@@ -737,7 +740,7 @@ pub fn call_args_preserve_layout<'tcx>(arg_tys: impl Iterator<Item = Ty<'tcx>>) 
 }
 
 /// See [`call_args_preserve_layout`].
-pub fn ty_is_layout_safe_arg(ty: Ty<'_>) -> bool {
+fn ty_is_layout_safe_arg(ty: Ty<'_>) -> bool {
     ty_is_layout_safe_inner(ty, 0)
 }
 
@@ -781,54 +784,9 @@ pub fn call_name(tcx: TyCtxt<'_>, func: &Operand<'_>) -> String {
         .unwrap_or_else(|| format!("{func:?}"))
 }
 
-/// Return true for slice/string/vector pointer extraction calls.
-pub fn is_as_ptr_call(name: &str) -> bool {
-    PrimitiveCall::classify(name) == Some(PrimitiveCall::AsPtr)
-}
-
-/// Return true for mutable pointer extraction calls.
-pub fn is_as_mut_ptr_call(name: &str) -> bool {
-    PrimitiveCall::classify(name) == Some(PrimitiveCall::AsMutPtr)
-}
-
-/// Return true for typed pointer addition calls.
-pub fn is_pointer_add_call(name: &str) -> bool {
-    PrimitiveCall::classify(name).is_some_and(PrimitiveCall::is_pointer_add_like)
-}
-
-/// Return true for typed pointer subtraction calls.
-pub fn is_pointer_sub_call(name: &str) -> bool {
-    PrimitiveCall::classify(name).is_some_and(PrimitiveCall::is_pointer_sub_like)
-}
-
-/// Return true for typed pointer offset calls.
-pub fn is_pointer_offset_call(name: &str) -> bool {
-    PrimitiveCall::classify(name) == Some(PrimitiveCall::PtrOffset)
-}
-
-/// Return true for pointer reads.
-pub fn is_pointer_read_call(name: &str) -> bool {
-    PrimitiveCall::classify(name) == Some(PrimitiveCall::PtrRead)
-}
-
-/// Return true for pointer writes that initialize one element.
-pub fn is_pointer_write_call(name: &str) -> bool {
-    PrimitiveCall::classify(name) == Some(PrimitiveCall::PtrWrite)
-}
-
-/// Return true for slice/string/vector length queries.
-pub fn is_len_call(name: &str) -> bool {
-    PrimitiveCall::classify(name) == Some(PrimitiveCall::Len)
-}
-
 /// Return true for `MaybeUninit::<T>::uninit`.
 pub fn is_maybe_uninit_uninit_call(name: &str) -> bool {
     PrimitiveCall::classify(name) == Some(PrimitiveCall::MaybeUninitUninit)
-}
-
-/// Return true for layout constant producers.
-pub fn is_layout_constant_call(name: &str) -> bool {
-    PrimitiveCall::classify(name).is_some_and(PrimitiveCall::is_layout_constant)
 }
 
 fn is_from_trait_call(name: &str) -> bool {
@@ -1436,13 +1394,8 @@ fn is_nonnull_destination<'tcx>(
     nonnull_inner_ty(tcx, ty).is_some() || format!("{ty:?}").contains("NonNull<")
 }
 
-/// Return the pointee type of raw pointers and references.
-fn pointee_ty<'tcx>(ty: Ty<'tcx>) -> Option<Ty<'tcx>> {
-    match ty.kind() {
-        TyKind::RawPtr(ty, _) | TyKind::Ref(_, ty, _) => Some(*ty),
-        _ => None,
-    }
-}
+// pointee_ty imported from smt_check::common.
+
 
 fn nonnull_inner_ty<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<Ty<'tcx>> {
     let TyKind::Adt(def, args) = ty.kind() else {
@@ -1474,15 +1427,4 @@ fn type_layout<'tcx>(tcx: TyCtxt<'tcx>, caller: DefId, ty: Ty<'tcx>) -> Option<(
     }
 }
 
-fn ty_has_param_const(ty: Ty<'_>) -> bool {
-    for arg in ty.walk() {
-        match arg.kind() {
-            GenericArgKind::Const(c) if matches!(c.kind(), ConstKind::Param(_)) => return true,
-            GenericArgKind::Type(inner_ty) if matches!(inner_ty.kind(), TyKind::Alias(..)) => {
-                return true;
-            }
-            _ => {}
-        }
-    }
-    false
-}
+// ty_has_param_const imported from helpers.

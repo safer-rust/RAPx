@@ -348,12 +348,8 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
             .iter()
             .map(|callee_def_id| {
                 let mut contracts = self.get_fn_contracts(*callee_def_id);
-                contracts.retain(|p| {
-                    !matches!(
-                        p.kind,
-                        crate::verify::contract::PropertyKind::Unknown
-                    )
-                });
+                contracts
+                    .retain(|p| !matches!(p.kind, crate::verify::contract::PropertyKind::Unknown));
                 (*callee_def_id, contracts)
             })
             .collect();

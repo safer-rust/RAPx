@@ -5,30 +5,18 @@
 //! types, so SMT lowering can reason about layout requirements that mention
 //! generic parameters.
 
+use super::helpers::ty_has_param_const;
 use std::collections::{HashMap, HashSet};
 
 use if_chain::if_chain;
 use rustc_hir::{ImplPolarity, ItemId, ItemKind, hir_id::OwnerId};
 use rustc_middle::ty::{
-    ConstKind, FloatTy, GenericArgKind, IntTy, ParamEnv, Ty, TyCtxt, TyKind, UintTy,
+    FloatTy, IntTy, ParamEnv, Ty, TyCtxt, TyKind, UintTy,
 };
 
 /// Representative concrete types satisfying generic trait bounds.
 pub struct GenericTypeCandidates<'tcx> {
     trait_map: HashMap<String, HashSet<Ty<'tcx>>>,
-}
-
-fn ty_has_param_const(ty: Ty<'_>) -> bool {
-    for arg in ty.walk() {
-        match arg.kind() {
-            GenericArgKind::Const(c) if matches!(c.kind(), ConstKind::Param(_)) => return true,
-            GenericArgKind::Type(inner_ty) if matches!(inner_ty.kind(), TyKind::Alias(..)) => {
-                return true;
-            }
-            _ => {}
-        }
-    }
-    false
 }
 
 impl<'tcx> GenericTypeCandidates<'tcx> {

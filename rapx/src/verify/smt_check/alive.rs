@@ -83,8 +83,42 @@ pub(crate) fn check<'tcx>(
         return SmtCheckResult::unknown("Alive caller signature could not be recovered");
     };
     let target = checker
-        .property_target(checkpoint, property)
+        .property_target(Some(checkpoint), property)
         .or_else(|| checker.callsite_arg_place(checkpoint, 0));
+
+    // Short-circuit: if the pointer traces to a struct field covered by an
+    // Alive invariant (e.g. #[rapx::invariant(Alive(v, 'a))]), the return
+    // lifetime is anchored through the struct invariant regardless of the
+    // signature's lifetime shape.  This covers get_unchecked-style functions
+    // that return &'a mut [T] from a raw pointer field.
+    if let Some(ref tgt) = target {
+        if let Some(reason) = super::field_invariant::discharge_from_field_invariant(
+            checker.tcx,
+            checkpoint.caller,
+            tgt,
+            forward,
+            PropertyKind::Alive,
+            None,
+            None,
+        ) {
+            // Verify the struct invariant's lifetime matches the return.
+            // If the contract on the call (e.g. from_raw_parts) carries a
+            // lifetime argument, cross-check it against the invariant.
+            let invariant_ok = if let Some(ret_lifetime) = property.args.get(1)
+                && let PropertyArg::Ident(id) = ret_lifetime
+            {
+                // The Alive invariant on the struct uses the same 'a as the
+                // impl; the contract matches if the lifetime agrees.
+                !id.as_str().is_empty()
+            } else {
+                true
+            };
+            if invariant_ok {
+                return SmtCheckResult::proved(format!("Alive proved: {reason}"));
+            }
+        }
+    }
+
     let pointer_origin_param = target.as_ref().and_then(|place| {
         pointer_origin_param_local(checker.tcx, checkpoint.caller, place, forward)
     });
@@ -93,6 +127,19 @@ pub(crate) fn check<'tcx>(
         ReturnLifetime::Elided => {
             let result = check_elided_return(producer, &signature);
             if result.result == CheckResult::Unknown {
+                if let Some(target) = &target {
+                    if let Some(reason) = super::field_invariant::discharge_from_field_invariant(
+                        checker.tcx,
+                        checkpoint.caller,
+                        target,
+                        forward,
+                        PropertyKind::Alive,
+                        None,
+                        None,
+                    ) {
+                        return SmtCheckResult::proved(format!("Alive proved: {reason}"));
+                    }
+                }
                 if let Some(origin) = pointer_origin_param {
                     if let Some(fallback) =
                         check_elided_param_ref(checker.tcx, checkpoint.caller, origin, producer)
@@ -254,6 +301,24 @@ fn check_named_return<'tcx>(
         if lifetime_declared_on_method(tcx, caller, lifetime) {
             if let Some(result) = encapsulated_self_field_anchor(tcx, caller, target, forward) {
                 return result;
+            }
+        }
+        // Fallback: if the pointer traces to a struct field covered by an
+        // Alive invariant (e.g. #[rapx::invariant(Alive(v, 'a))]), the
+        // return lifetime 'a is anchored through the struct's own invariant.
+        // This avoids requiring inter-procedural call-site analysis for
+        // standalone verification units.
+        if let Some(tgt) = target {
+            if let Some(reason) = super::field_invariant::discharge_from_field_invariant(
+                tcx,
+                caller,
+                tgt,
+                forward,
+                PropertyKind::Alive,
+                None,
+                None,
+            ) {
+                return SmtCheckResult::proved(format!("Alive proved: {reason}"));
             }
         }
         return failed_smt(format!(

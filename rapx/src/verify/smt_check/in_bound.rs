@@ -54,12 +54,12 @@ pub(crate) fn check<'tcx>(
         );
     }
 
-    let Some(target) = checker.property_target(checkpoint, property) else {
+    let Some(target) = checker.property_target(Some(checkpoint), property) else {
         rap_debug!("  [SMT InBound] target could not be resolved");
         return SmtCheckResult::unknown("InBound target could not be resolved");
     };
     let Some(required_ty) = checker
-        .property_required_ty(checkpoint, property)
+        .property_required_ty(Some(checkpoint), property)
         .or_else(|| checker.infer_pointee_ty(checkpoint.caller, &target))
     else {
         rap_debug!("  [SMT InBound] type could not be resolved");
@@ -70,7 +70,7 @@ pub(crate) fn check<'tcx>(
         .map(|(_, s)| s)
         .unwrap_or(0);
     let access_count = checker
-        .property_len_expr(checkpoint, property)
+        .property_len_expr(Some(checkpoint), property)
         .and_then(|expr| checker.contract_expr_to_smt_term(checkpoint.caller, &expr, None))
         .unwrap_or(SmtTerm::Const(1));
 
@@ -136,20 +136,21 @@ pub(crate) fn check_for_checkpoint<'tcx>(
     property: &Property<'tcx>,
     forward: &ForwardVisitResult<'tcx>,
 ) -> SmtCheckResult {
-    let Some(target) = checker.property_target_direct(property) else {
+    let Some(target) = checker.property_target(None, property) else {
         return SmtCheckResult::unknown("InBound target could not be resolved");
     };
-    let Some(required_ty) = checker.property_required_ty_direct(property) else {
+    let Some(required_ty) = checker.property_required_ty(None, property) else {
         return SmtCheckResult::unknown("InBound type could not be resolved");
     };
     let elem_size = checker
         .type_layout(caller, required_ty)
         .map(|(_, s)| s)
         .unwrap_or(0);
-    let Some(access_count_expr) = checker.property_len_expr_direct(property) else {
+    let Some(access_count_expr) = checker.property_len_expr(None, property) else {
         return SmtCheckResult::unknown("InBound length argument could not be resolved");
     };
-    let Some(access_count) = checker.contract_expr_to_smt_term(caller, &access_count_expr, None) else {
+    let Some(access_count) = checker.contract_expr_to_smt_term(caller, &access_count_expr, None)
+    else {
         return SmtCheckResult::unknown("InBound length argument could not be lowered to SMT");
     };
 
