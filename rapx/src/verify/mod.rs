@@ -6,6 +6,7 @@ pub mod driver;
 pub mod engine;
 pub mod generic;
 mod helpers;
+pub mod loop_sensitivity;
 pub mod path_extractor;
 pub mod primitive;
 pub mod report;

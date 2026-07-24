@@ -41,7 +41,7 @@ use crate::{
     cli::{
         AliasStrategyKind, AnalysisKind, CheckArgs, Commands, PostfixRepeat, RapxArgs, VerifyArgs,
     },
-    verify::{driver::VerifyRun, target::PrepareTargets},
+    verify::{driver::VerifyRun, loop_sensitivity::RepeatStrategy, target::PrepareTargets},
 };
 use analysis::{
     Analysis,
@@ -287,13 +287,13 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
             if *prepare_targets {
                 PrepareTargets::new(tcx, *mode, crate_name.clone(), module.clone()).run();
             } else {
-                let postfix_repeat = match postfix_repeat {
-                    PostfixRepeat::Auto => 0,
-                    PostfixRepeat::Fixed(n) => *n,
+                let repeat_strategy = match postfix_repeat {
+                    PostfixRepeat::Auto => RepeatStrategy::Auto,
+                    PostfixRepeat::Fixed(n) => RepeatStrategy::Fixed(*n),
                 };
                 VerifyRun::new(
                     tcx,
-                    postfix_repeat,
+                    repeat_strategy,
                     *mode,
                     crate_name.clone(),
                     module.clone(),
