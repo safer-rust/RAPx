@@ -1489,7 +1489,9 @@ fn collect_rvalue_sources(rvalue: &Rvalue<'_>, out: &mut FxHashSet<Local>) {
         }
         #[cfg(not(rapx_rustc_ge_196))]
         Rvalue::ShallowInitBox(operand, _) => collect_operand_sources(operand, out),
-        Rvalue::ThreadLocalRef(_) | Rvalue::NullaryOp(..) => {}
+        Rvalue::ThreadLocalRef(_) => {}
+        #[cfg(not(rapx_rustc_ge_196))]
+        Rvalue::NullaryOp(..) => {}
         _ => {}
     }
 }
