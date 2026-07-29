@@ -117,7 +117,8 @@ Usage: cargo rapx verify [OPTIONS]
 Options:
       --prepare-targets            identify #[rapx::verify] functions and list their safety contracts
       --postfix-repeat <N>       number of extra SCC postfix repetitions during path enumeration (default 0)
-      --mode <MODE>               verification mode: scan, targeted, invless (default scan)
+      --mode <MODE>               verification mode: scan, targeted (default scan)
+      --skip-invariant            skip struct invariant checks and derive safety via constructor-mutator-method chains
       --crate <CRATE>             filter verification targets to a specific crate (Rust crate name or Cargo package name)
       --module <MODULE_PATH>     filter verification targets to a specific module path within the crate
   -h, --help                      Print help
@@ -126,7 +127,9 @@ Options:
 Verification modes:
 - `scan` — auto-detect: verify all functions with unsafe callees or struct invariants
 - `targeted` — only verify functions annotated with `#[rapx::verify]`
-- `invless` — verify without struct invariants as pre/post-conditions, deriving safety requirements automatically from the safety flow graph
+
+Options:
+- `--skip-invariant` — works with both modes; skips struct invariant checks and instead derives safety requirements automatically from constructor-mutator-method chains
 
 **Filtering targets:** `--crate` and `--module` work in any mode and can be combined. When analyzing standard-library workspaces or sub-workspaces:
 
@@ -168,7 +171,7 @@ Struct fields holding raw pointers can carry `#[rapx::invariant(...)]` annotatio
 // Fields that may be null use the `any(...)` combinator (logical OR;
 // commas inside a parenthesised group mean logical AND): every property
 // holds whenever the pointer is non-null and vacuously when it is null.
-#[rapx::invariant(any(Null(next), (Align(next, Node), ValidPtr(next, Node, 1), Init(next, Node, 1), Owning(next))))]
+#[rapx::invariant(any(Null(next), (Align(next, Node), ValidPtr(next, Node, 1), Allocated(next, Node, 1), Typed(next, Node), Owning(next))))]
 struct Node {
     value: i32,
     prev: *mut Node,
@@ -179,6 +182,7 @@ struct Node {
 // `unwrap_some()`: the property constrains the Some payload only.
 #[rapx::invariant(Align(head.unwrap_some(), Node))]
 #[rapx::invariant(Allocated(head.unwrap_some(), Node, 1))]
+#[rapx::invariant(Typed(head.unwrap_some(), Node))]
 #[rapx::invariant(Owning(head.unwrap_some()))]
 struct List {
     head: Option<core::ptr::NonNull<Node>>,
@@ -206,7 +210,7 @@ This checklist maps RAPx's contract verification to the [Primitive Safety Proper
 | `NonOverlap`   | !Overlap(dst, src, T, len)  |     ✅    |
 | `ValidNum`     | ValidNum(exp, vrange)       |     ✅    |
 | `ValidString`  | ValidString(arange)         |     —     |
-| `ValidCStr`    | ValidCStr(p, len)           |     —     |
+| `ValidCStr`    | ValidCStr(p, len)           |     ✅    |
 | `Init`         | Init(p, T, len)             |     ✅    |
 | `Unwrap`       | Unwrap(x, T)                |     —     |
 | `Typed`        | Typed(p, T)                 |     ✅    |

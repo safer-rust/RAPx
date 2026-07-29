@@ -25,7 +25,7 @@ use crate::analysis::path_analysis::{
     graph::{PathEnumerator, PathGraph},
 };
 
-use super::helpers::{Checkpoint, CheckpointLocation};
+use crate::helpers::mir_scan::{Checkpoint, CheckpointLocation};
 
 pub(crate) const PATH_LIMIT: usize = 1024;
 

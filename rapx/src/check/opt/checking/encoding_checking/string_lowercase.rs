@@ -1,6 +1,5 @@
 use annotate_snippets::{Level, Renderer, Snippet};
 
-use once_cell::sync::OnceCell;
 
 use rustc_hir::{Expr, ExprKind, intravisit};
 use rustc_middle::ty::TyCtxt;
@@ -9,25 +8,15 @@ use rustc_span::Span;
 
 use crate::analysis::dataflow::Graph;
 use crate::check::opt::OptCheck;
-use crate::helpers::def_path::DefPath;
 
-use crate::utils::log::{
+use crate::utils::span::{
     relative_pos_range, span_to_filename, span_to_line_number, span_to_source_code,
 };
 
-struct DefPaths {
-    string_to_lowercase: DefPath,
+crate::def_paths! {
+    string_to_lowercase: "str::to_lowercase",
 }
 
-static DEFPATHS: OnceCell<DefPaths> = OnceCell::new();
-
-impl DefPaths {
-    pub fn new(tcx: &TyCtxt<'_>) -> Self {
-        Self {
-            string_to_lowercase: DefPath::new("str::to_lowercase", tcx),
-        }
-    }
-}
 
 struct LowercaseFinder<'tcx> {
     typeck_results: &'tcx TypeckResults<'tcx>,

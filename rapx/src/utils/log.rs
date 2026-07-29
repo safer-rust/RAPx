@@ -117,6 +117,3 @@ pub fn rap_error_and_exit(msg: impl AsRef<str>) -> ! {
     rap_error!("{}", msg.as_ref());
     std::process::exit(1)
 }
-
-// Re-export span utilities so existing imports from utils::log keep working.
-pub use super::span::*;

@@ -57,7 +57,7 @@ pub struct OHAResultMapWrapper(pub HashMap<DefId, Vec<(OwnedHeap, Vec<bool>)>>);
 
 impl Display for OHAResultMapWrapper {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "=== Print owned heap analysis resuts ===")?;
+        writeln!(f, "=== Print owned heap analysis results ===")?;
         for (def_id, units) in &self.0 {
             let fn_name = get_fn_name_byid(def_id);
             let owning = units

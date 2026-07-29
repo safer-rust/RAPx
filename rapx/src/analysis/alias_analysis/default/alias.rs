@@ -98,7 +98,7 @@ impl<'tcx> AliasGraph<'tcx> {
                         }
                         recursion_set.insert(target_id);
                         let mut alias_graph = AliasGraph::new(self.tcx(), target_id);
-                        alias_graph.find_scc();
+                        alias_graph.path_graph.find_scc();
                         alias_graph.process_function_paths(fn_map, recursion_set);
                         let ret_alias = alias_graph.ret_alias.clone();
                         rap_debug!("Find aliases of {:?}: {:?}", target_id, ret_alias);

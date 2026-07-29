@@ -14,7 +14,8 @@
 
 use super::common::{SmtCheckResult, SmtChecker, SmtObligation, SmtTerm};
 
-use crate::verify::{contract::Property, helpers::Checkpoint, verifier::ForwardVisitResult};
+use crate::verify::{contract::Property, verifier::ForwardVisitResult};
+use crate::helpers::mir_scan::Checkpoint;
 use rustc_middle::ty::{Ty, TyKind};
 
 /// Check `Init` by lowering it to a common initialized-memory obligation.
@@ -24,6 +25,12 @@ pub(crate) fn check<'tcx>(
     property: &Property<'tcx>,
     forward: &ForwardVisitResult<'tcx>,
 ) -> SmtCheckResult {
+    if let Some(reason) = super::field_invariant::discharge_from_contract_fact_with_checkpoint(
+        property, forward, checkpoint,
+    ) {
+        return SmtCheckResult::proved(format!("Init proved: {reason}"));
+    }
+
     let Some(target) = checker.property_target(Some(checkpoint), property) else {
         return SmtCheckResult::unknown("Init target could not be resolved");
     };
@@ -35,7 +42,7 @@ pub(crate) fn check<'tcx>(
     // covering `for i in 0..N { base.add(i).write(v) }` loop.  When the
     // array length is a const generic and a write to every index `0..N` is
     // on the forward path, the whole array is initialized.
-    if checker.maybeuninit_covering_init(checkpoint, &target, required_ty, forward) {
+    if checker.maybeuninit_covering_init(checkpoint, required_ty) {
         return SmtCheckResult::proved(format!(
             "Init proved: MaybeUninit<[{required_ty:?}; N]> fully initialized by covering loop"
         ));
@@ -65,14 +72,11 @@ pub(crate) fn check<'tcx>(
         },
         property.null_guard.as_ref(),
     );
-    if result.result == crate::verify::report::CheckResult::Unknown {
-        if let Some(reason) =
-            super::provenance::pedigree_proof(checker, checkpoint, property, forward, true)
-        {
-            return SmtCheckResult::proved(format!("Init proved: {reason}"));
-        }
-    }
-    result
+    result.or_try(|| {
+        super::provenance::pedigree_proof(checker, checkpoint, property, forward, true)
+            .map(|reason| SmtCheckResult::proved(format!("Init proved: {reason}")))
+            .unwrap_or_else(|| SmtCheckResult::unknown("Init: pedigree proof inconclusive"))
+    })
 }
 
 fn compute_elem_size<'tcx>(

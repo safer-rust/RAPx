@@ -10,20 +10,19 @@ use rustc_middle::{
     mir::{BinOp, Local, Operand, UnOp},
     ty::{Ty, TyCtxt, TyKind},
 };
+
+use crate::helpers::mir_scan::Checkpoint;
 use z3::{
-    ast::{Ast, Bool, Int},
     Context, Solver,
+    ast::{Ast, Bool, Int},
 };
 
 use crate::verify::{
-    contract::{
-        ContractExpr, NumericOp, NumericPredicate, PropertyArg, PropertyKind, RelOp,
-    },
+    contract::{ContractExpr, NumericOp, NumericPredicate, PropertyArg, PropertyKind, RelOp},
     def_use::{PlaceBaseKey, PlaceKey},
+    call_summary::fn_simulator,
     generic::GenericTypeCandidates,
-    helpers::Checkpoint,
     path_extractor::PathStep,
-    primitive::PrimitiveCall,
     verifier::{AbstractValue, CallSummary, ForwardVisitResult, StateFact},
 };
 
@@ -104,7 +103,11 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
     ///
     /// Used by struct-invariant checkpoint checks to short-circuit when a
     /// caller `#[rapx::requires]` already establishes the property.
-    pub(crate) fn has_equivalent_contract_fact(&mut self, place: &PlaceKey, _kind: PropertyKind) -> bool {
+    pub(crate) fn has_equivalent_contract_fact(
+        &mut self,
+        place: &PlaceKey,
+        _kind: PropertyKind,
+    ) -> bool {
         let Some(target_term) = self.term_for_place(place) else {
             return false;
         };
@@ -158,7 +161,10 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         })
     }
 
-    pub(crate) fn smt_term_from_contract_expr(&mut self, expr: &ContractExpr<'tcx>) -> Option<SmtTerm> {
+    pub(crate) fn smt_term_from_contract_expr(
+        &mut self,
+        expr: &ContractExpr<'tcx>,
+    ) -> Option<SmtTerm> {
         match expr {
             ContractExpr::Place(place) => {
                 let mut key = PlaceKey::from_contract_place(place);
@@ -228,7 +234,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
 
                 Some(SmtTerm::Value(format!("len({})", origin_str)))
             }
-        ContractExpr::Binary { op, lhs, rhs } => {
+            ContractExpr::Binary { op, lhs, rhs } => {
                 let lhs = Box::new(self.smt_term_from_contract_expr(lhs)?);
                 let rhs = Box::new(self.smt_term_from_contract_expr(rhs)?);
                 Some(match op {
@@ -257,6 +263,60 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 Some(Int::new_const(self.ctx, sanitize_smt_name(name).as_str()))
             }
             _ => None,
+        }
+    }
+
+    fn assert_call_fact(&mut self, solver: &Solver<'ctx>, call: &CallSummary<'tcx>) {
+        if is_as_ptr_call(&call.func) {
+            let place = PlaceKey { base: PlaceBaseKey::Local(call.destination.as_usize()), fields: Vec::new() };
+            self.assert_place_non_zero(solver, &place, "returned by as_ptr");
+            self.assert_place_alignment(solver, &place);
+        }
+        self.record_call_effect_assumptions(solver, call);
+        self.bridge_tuple_field_lengths(solver, call);
+        if call.func.contains("exact_div") {
+            let dest = PlaceKey { base: PlaceBaseKey::Local(call.destination.as_usize()), fields: Vec::new() };
+            if let Some(dest_term) = self.term_for_place(&dest)
+                && let Some(arg0) = call.args.get(0)
+            {
+                let cursor = self.call_definition_cursor(call);
+                if let Some(arg0_term) = self.term_for_value_at(arg0, cursor, &mut TraceSeen::new()) {
+                    solver.assert(&dest_term.le(&arg0_term));
+                    self.place_terms.insert(dest.clone(), dest_term);
+                    self.assumptions.push(SmtPredicate::Le(SmtTerm::Place(dest), SmtTerm::Value(value_label(arg0))));
+                }
+            }
+        }
+        if call.func.contains("::cmp::min") {
+            let dest = PlaceKey { base: PlaceBaseKey::Local(call.destination.as_usize()), fields: Vec::new() };
+            let cursor = self.call_definition_cursor(call);
+            if let Some(dest_term) = self.term_for_place(&dest) {
+                if let Some(arg0) = call.args.get(0)
+                    && let Some(arg0_term) = self.term_for_value_at(arg0, cursor, &mut TraceSeen::new())
+                {
+                    solver.assert(&dest_term.le(&arg0_term));
+                    self.place_terms.insert(dest.clone(), dest_term.clone());
+                    self.assumptions.push(SmtPredicate::Le(SmtTerm::Place(dest.clone()), SmtTerm::Value(value_label(arg0))));
+                }
+                if let Some(arg1) = call.args.get(1)
+                    && let Some(arg1_term) = self.term_for_value_at(arg1, cursor, &mut TraceSeen::new())
+                {
+                    solver.assert(&dest_term.le(&arg1_term));
+                    self.assumptions.push(SmtPredicate::Le(SmtTerm::Place(dest), SmtTerm::Value(value_label(arg1))));
+                }
+            }
+        }
+        if let Some(bounds_arg) = call.effects.iter().find_map(|e| match e {
+            crate::verify::call_summary::CallEffect::ReturnBoundedRange { bounds_arg } => Some(*bounds_arg),
+            _ => None,
+        }) {
+            self.assert_bounded_range(solver, call, bounds_arg);
+        }
+        if let Some(recv_arg) = call.effects.iter().find_map(|e| match e {
+            crate::verify::call_summary::CallEffect::ReturnLcmSplit { receiver_arg } => Some(*receiver_arg),
+            _ => None,
+        }) {
+            self.assert_lcm_split_bounds(solver, call, recv_arg);
         }
     }
 
@@ -290,114 +350,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                     self.assert_place_alignment(solver, source);
                     self.assert_length_alias(solver, pointer, source);
                 }
-                StateFact::Call(call) => {
-                    if is_as_ptr_call(&call.func) {
-                        let place = PlaceKey {
-                            base: PlaceBaseKey::Local(call.destination.as_usize()),
-                            fields: Vec::new(),
-                        };
-                        self.assert_place_non_zero(solver, &place, "returned by as_ptr");
-                        self.assert_place_alignment(solver, &place);
-                    }
-                    self.record_call_effect_assumptions(solver, call);
-                    // `split_at`-style calls expose the length of the returned
-                    // prefix slice (field 0) as `mid`.  Bridge that length into
-                    // the `len(...)` namespace so that downstream `len(self)`
-                    // contracts on the destructured prefix (e.g.
-                    // `as_chunks_unchecked_ext` requiring `len(self) % N == 0`)
-                    // can see `len(prefix) == mid` instead of a free symbol.
-                    self.bridge_tuple_field_lengths(solver, call);
-                    // exact_div(x, y) returns x / y.  Assert result <= x
-                    // so that downstream bounds checks (e.g.
-                    // from_raw_parts(ptr, exact_div(len, N))) can infer
-                    // chunk_count <= len.
-                    if call.func.contains("exact_div") {
-                        let dest = PlaceKey {
-                            base: PlaceBaseKey::Local(call.destination.as_usize()),
-                            fields: Vec::new(),
-                        };
-                        if let Some(dest_term) = self.term_for_place(&dest)
-                            && let Some(arg0) = call.args.get(0)
-                        {
-                            let cursor = self.call_definition_cursor(call);
-                            if let Some(arg0_term) =
-                                self.term_for_value_at(arg0, cursor, &mut TraceSeen::new())
-                            {
-                                solver.assert(&dest_term.le(&arg0_term));
-                                // Cache the term so subsequent uses of this
-                                // local (e.g. Allocated check) get the same
-                                // Z3 variable.
-                                self.place_terms.insert(dest.clone(), dest_term);
-                                self.assumptions.push(SmtPredicate::Le(
-                                    SmtTerm::Place(dest),
-                                    SmtTerm::Value(value_label(arg0)),
-                                ));
-                            }
-                        }
-                    }
-                    // cmp::min(a, b) => result <= a && result <= b
-                    if call.func.contains("::cmp::min") {
-                        let dest = PlaceKey {
-                            base: PlaceBaseKey::Local(call.destination.as_usize()),
-                            fields: Vec::new(),
-                        };
-                        let cursor = self.call_definition_cursor(call);
-                        if let Some(dest_term) = self.term_for_place(&dest) {
-                            if let Some(arg0) = call.args.get(0)
-                                && let Some(arg0_term) =
-                                    self.term_for_value_at(arg0, cursor, &mut TraceSeen::new())
-                            {
-                                solver.assert(&dest_term.le(&arg0_term));
-                                self.place_terms.insert(dest.clone(), dest_term.clone());
-                                self.assumptions.push(SmtPredicate::Le(
-                                    SmtTerm::Place(dest.clone()),
-                                    SmtTerm::Value(value_label(arg0)),
-                                ));
-                            }
-                            if let Some(arg1) = call.args.get(1)
-                                && let Some(arg1_term) =
-                                    self.term_for_value_at(arg1, cursor, &mut TraceSeen::new())
-                            {
-                                solver.assert(&dest_term.le(&arg1_term));
-                                self.assumptions.push(SmtPredicate::Le(
-                                    SmtTerm::Place(dest),
-                                    SmtTerm::Value(value_label(arg1)),
-                                ));
-                            }
-                        }
-                    }
-                    // `a.unchecked_mul(b)` and friends are pure arithmetic; the
-                    // exact value is reconstructed on demand in
-                    // `term_for_numeric_arith_call`, so no fact is needed here.
-
-                    // `core::slice::range` returns `Range { start, end }` with
-                    // `0 <= start <= end <= bounds.end`.  Assert this so callers
-                    // that derive subslice pointers from the result (e.g.
-                    // `slice::copy_within`) can prove the offsets are in bounds.
-                    if let Some(bounds_arg) = call.effects.iter().find_map(|effect| match effect {
-                        crate::verify::call_summary::CallEffect::ReturnBoundedRange {
-                            bounds_arg,
-                        } => Some(*bounds_arg),
-                        _ => None,
-                    }) {
-                        self.assert_bounded_range(solver, call, bounds_arg);
-                    }
-
-                    // `align_to_offsets` returns `(us_len, ts_len)` where `ts_len
-                    // <= receiver.len()` and `us_len * size_of::<U>() <=
-                    // receiver.len() * size_of::<T>()` (the byte count does not
-                    // exceed the receiver).  The weaker `field_1 <= len(receiver)`
-                    // is enough for the tail `ptr.add(receiver.len() - field_1)`
-                    // to remain in bounds.
-                    if let Some(recv_arg) = call.effects.iter().find_map(|effect| match effect {
-                        crate::verify::call_summary::CallEffect::ReturnLcmSplit {
-                            receiver_arg,
-                        } => Some(*receiver_arg),
-                        _ => None,
-                    }) {
-                        self.assert_lcm_split_bounds(solver, call, recv_arg);
-                    }
-                }
+                StateFact::Call(call) => self.assert_call_fact(solver, call),
                 StateFact::KnownNonZero { place, reason } => {
                     self.assert_place_non_zero(solver, place, reason);
                 }
@@ -510,16 +463,25 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                     let lhs_term = abstract_value_to_smt_term(lhs);
                     let rhs_term = abstract_value_to_smt_term(rhs);
                     let combined = match op {
-                        BinOp::Add | BinOp::AddWithOverflow | BinOp::AddUnchecked =>
-                            SmtTerm::Add(Box::new(lhs_term), Box::new(rhs_term)),
-                        BinOp::Sub | BinOp::SubWithOverflow | BinOp::SubUnchecked =>
-                            SmtTerm::Sub(Box::new(lhs_term), Box::new(rhs_term)),
-                        BinOp::Mul | BinOp::MulWithOverflow | BinOp::MulUnchecked =>
-                            SmtTerm::Mul(Box::new(lhs_term), Box::new(rhs_term)),
-                        BinOp::Div =>
-                            SmtTerm::Div(Box::new(lhs_term), Box::new(rhs_term)),
-                        BinOp::Rem =>
-                            SmtTerm::Rem(Box::new(lhs_term), Box::new(rhs_term)),
+                        BinOp::Add | BinOp::AddWithOverflow | BinOp::AddUnchecked => {
+                            SmtTerm::Add(Box::new(lhs_term), Box::new(rhs_term))
+                        }
+                        BinOp::Sub | BinOp::SubWithOverflow | BinOp::SubUnchecked => {
+                            SmtTerm::Sub(Box::new(lhs_term), Box::new(rhs_term))
+                        }
+                        BinOp::Mul | BinOp::MulWithOverflow | BinOp::MulUnchecked => {
+                            SmtTerm::Mul(Box::new(lhs_term), Box::new(rhs_term))
+                        }
+                        BinOp::Div => SmtTerm::Div(Box::new(lhs_term), Box::new(rhs_term)),
+                        BinOp::Rem => SmtTerm::Rem(Box::new(lhs_term), Box::new(rhs_term)),
+                        BinOp::BitAnd => {
+                            let result_int = Int::new_const(
+                                self.ctx,
+                                place_label(&target),
+                            );
+                            self.place_terms.insert(target.clone(), result_int.clone());
+                            SmtTerm::Place(target.clone())
+                        }
                         _ => SmtTerm::Value(format!(
                             "({} {} {})",
                             value_label(lhs),
@@ -527,10 +489,8 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                             value_label(rhs)
                         )),
                     };
-                    self.assumptions.push(SmtPredicate::Eq(
-                        SmtTerm::Place(target.clone()),
-                        combined,
-                    ));
+                    self.assumptions
+                        .push(SmtPredicate::Eq(SmtTerm::Place(target.clone()), combined));
                 }
                 StateFact::Contract(property) => match property.kind {
                     PropertyKind::Align => {
@@ -742,7 +702,8 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                                     // was already created above; just assert non‑negativity
                                     // and record it so pointer‑bounds recovery can discover
                                     // it later.
-                                    let len_int = self.symbolic_len_term(&format!("len({slice_label})"));
+                                    let len_int =
+                                        self.symbolic_len_term(&format!("len({slice_label})"));
                                     let zero = Int::from_u64(self.ctx, 0);
                                     solver.assert(&len_int.ge(&zero));
                                     self.assumptions.push(SmtPredicate::Le(
@@ -751,17 +712,17 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                                     ));
                                     // Record this bound so that `pointer_bounds_for_place`
                                     // can find the allocation length for sub‑range queries.
-                                self.contract_inbound_lens
-                                    .insert(slice_label.to_string(), (len_int, len.clone()));
-                                // Also assert the full InBounds fact so that
-                                // `allocated_len_for_origin` / KnownAllocated
-                                // paths see the length.
-                                self.assumptions.push(SmtPredicate::InBounds {
-                                    index: SmtTerm::Const(0),
-                                    access_count: SmtTerm::Const(1),
-                                    len: len.clone(),
-                                });
-                                self.has_index_access_assumptions = true;
+                                    self.contract_inbound_lens
+                                        .insert(slice_label.to_string(), (len_int, len.clone()));
+                                    // Also assert the full InBounds fact so that
+                                    // `allocated_len_for_origin` / KnownAllocated
+                                    // paths see the length.
+                                    self.assumptions.push(SmtPredicate::InBounds {
+                                        index: SmtTerm::Const(0),
+                                        access_count: SmtTerm::Const(1),
+                                        len: len.clone(),
+                                    });
+                                    self.has_index_access_assumptions = true;
                                     continue;
                                 }
                                 _ => None,
@@ -891,6 +852,11 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                                     self.assert_numeric_term_non_negativity(solver, &smt_pred);
                                     self.assumptions.push(smt_pred);
                                 }
+                                // For predicates of the form `SizeOf(T) * X <= Bound`,
+                                // also assert `X <= Bound`.  Sound because
+                                // `size_of::<T>() >= 1` for every type T, so
+                                // `X * size_of::<T>() <= Bound` ⇒ `X <= Bound`.
+                                self.assert_sizeof_simplified_bound(solver, predicate);
                             }
                         }
                     }
@@ -899,7 +865,8 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 StateFact::PathCondition(_)
                 | StateFact::Drop(_)
                 | StateFact::LocalDead(_)
-                | StateFact::CallEffect(_) => {}
+                | StateFact::CallEffect(_)
+                | StateFact::ElementOf { .. } => {}
             }
         }
 
@@ -1009,7 +976,10 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
 
     /// Walk a pointer place's definition chain through plain copies to the
     /// nearest defining `Cast`, returning `(cast_operand, cast_target_ty)`.
-    pub(crate) fn defining_cast(&self, place: &PlaceKey) -> Option<(AbstractValue<'tcx>, Ty<'tcx>)> {
+    pub(crate) fn defining_cast(
+        &self,
+        place: &PlaceKey,
+    ) -> Option<(AbstractValue<'tcx>, Ty<'tcx>)> {
         let mut cur = place.clone();
         for _ in 0..8 {
             let local = cur.local()?;
@@ -1023,7 +993,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 // `AbstractValue::Cast`: the receiver is the source pointer and the
                 // call destination's type is the cast target.
                 AbstractValue::CallResult(call)
-                    if PrimitiveCall::classify(&call.func) == Some(PrimitiveCall::PtrCast) =>
+                    if fn_simulator::is_ptr_cast(&call.func) =>
                 {
                     let inner = call.args.first()?.clone();
                     let ty = self
@@ -1046,7 +1016,11 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
     /// `*const [T; N] -> *const () -> *const T` reinterpret shape emitted by
     /// some toolchains, where the immediate operand's pointee (`()`) would
     /// otherwise hide the real `[T; N]` source element type.
-    pub(crate) fn cast_source_pointee(&self, value: &AbstractValue<'tcx>, depth: usize) -> Option<Ty<'tcx>> {
+    pub(crate) fn cast_source_pointee(
+        &self,
+        value: &AbstractValue<'tcx>,
+        depth: usize,
+    ) -> Option<Ty<'tcx>> {
         if depth > 8 {
             return None;
         }
@@ -1135,8 +1109,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 result_index_smt = SmtTerm::Value(value_label(index));
             }
 
-            let is_signed = PrimitiveCall::classify(&call.func)
-                .is_some_and(|p| p.is_signed_pointer_arithmetic());
+            let is_signed = fn_simulator::is_signed_ptr_arith(&call.func);
 
             return Some(PointerBounds {
                 index: result_index_val,
@@ -1148,7 +1121,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             });
         }
 
-                let value = self
+        let value = self
             .resolved_value_for_place(place, &mut TraceSeen::new())
             .unwrap_or_else(|| AbstractValue::Place(place.clone()));
         let base_origin =
@@ -1214,8 +1187,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
 
         // Compute the correct index for field projections from Range types.
         // Field [0] (start) is at offset 0; field [1] (end) is at offset len.
-        let (mut index_term, mut index_val) =
-            self.field_projection_index(place, &base_origin);
+        let (mut index_term, mut index_val) = self.field_projection_index(place, &base_origin);
 
         // When the place traces to a pointer-arithmetic call result
         // (e.g. `.add(idx)`), use the call's offset argument as the index
@@ -1229,16 +1201,15 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         if let Some(call) = pointer_add_call {
             for effect in &call.effects {
                 if let crate::verify::call_summary::CallEffect::ReturnPointerAdd {
-                    offset_arg, ..
+                    offset_arg,
+                    ..
                 } = effect
                 {
                     if let Some(offset) = call.args.get(*offset_arg) {
                         let call_cursor = self.call_definition_cursor(&call);
-                        if let Some(off_val) = self.term_for_value_at(
-                            offset,
-                            call_cursor,
-                            &mut TraceSeen::new(),
-                        ) {
+                        if let Some(off_val) =
+                            self.term_for_value_at(offset, call_cursor, &mut TraceSeen::new())
+                        {
                             index_term = SmtTerm::Value(value_label(offset));
                             index_val = off_val;
                         }
@@ -1282,9 +1253,8 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                     {
                         let is_range = match &definition.value {
                             AbstractValue::CallResult(call) => {
-                                let prim = PrimitiveCall::classify(&call.func);
-                                prim == Some(PrimitiveCall::AsPtrRange)
-                                    || prim == Some(PrimitiveCall::AsMutPtrRange)
+                                fn_simulator::is_as_ptr_range(&call.func)
+                                    || fn_simulator::is_as_mut_ptr_range(&call.func)
                             }
                             AbstractValue::Aggregate(_, _) => true,
                             _ => false,
@@ -1319,15 +1289,11 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                                                     if let AbstractValue::CallResult(inner_call) =
                                                         &inner_def.value
                                                     {
-                                                        let inner_prim = PrimitiveCall::classify(
+                                                        if fn_simulator::is_as_ptr_range(
                                                             &inner_call.func,
-                                                        );
-                                                        if inner_prim
-                                                            == Some(PrimitiveCall::AsPtrRange)
-                                                            || inner_prim
-                                                                == Some(
-                                                                    PrimitiveCall::AsMutPtrRange,
-                                                                )
+                                                        ) || fn_simulator::is_as_mut_ptr_range(
+                                                            &inner_call.func,
+                                                        )
                                                         {
                                                             let len_key =
                                                                 format!("len({})", origin_key);
@@ -1374,7 +1340,10 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
     /// place. This is intentionally small: it handles base pointers returned by
     /// `as_ptr`/`as_mut_ptr` and offsets produced by pointer arithmetic
     /// summaries.
-    pub(crate) fn pointer_object_offset_for_place(&self, place: &PlaceKey) -> Option<(PlaceKey, SmtTerm)> {
+    pub(crate) fn pointer_object_offset_for_place(
+        &self,
+        place: &PlaceKey,
+    ) -> Option<(PlaceKey, SmtTerm)> {
         self.pointer_object_offset_for_place_before(
             place,
             self.latest_cursor(),
@@ -1683,7 +1652,12 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
     }
 
     /// Assert equal slice lengths for two slice-like places that alias.
-    pub(crate) fn assert_length_alias(&mut self, solver: &Solver<'ctx>, left: &PlaceKey, right: &PlaceKey) {
+    pub(crate) fn assert_length_alias(
+        &mut self,
+        solver: &Solver<'ctx>,
+        left: &PlaceKey,
+        right: &PlaceKey,
+    ) {
         if !self.is_len_carrying_place(left) || !self.is_len_carrying_place(right) {
             return;
         }
@@ -1742,7 +1716,11 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
     /// `len(self)` obligation on the prefix — or a reborrow of it linked via
     /// `assert_length_alias` — resolves to the correct `mid` rather than a
     /// free symbol.
-    pub(crate) fn bridge_tuple_field_lengths(&mut self, solver: &Solver<'ctx>, call: &CallSummary<'tcx>) {
+    pub(crate) fn bridge_tuple_field_lengths(
+        &mut self,
+        solver: &Solver<'ctx>,
+        call: &CallSummary<'tcx>,
+    ) {
         for effect in &call.effects {
             let crate::verify::call_summary::CallEffect::ReturnTupleFieldLength { field, .. } =
                 effect
@@ -1817,7 +1795,10 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
     /// `d`.  Such a value is always a multiple of `d`.  Recognises the
     /// `slice.len() / N * N` (round-down-to-multiple) idiom, including the
     /// `MulWithOverflow`/`.0` shape produced by MIR overflow checks.
-    pub(crate) fn multiple_divisor(&self, value: &AbstractValue<'tcx>) -> Option<AbstractValue<'tcx>> {
+    pub(crate) fn multiple_divisor(
+        &self,
+        value: &AbstractValue<'tcx>,
+    ) -> Option<AbstractValue<'tcx>> {
         let AbstractValue::Binary(op, lhs, rhs) = self.resolve_arith(value, 0)? else {
             return None;
         };
@@ -1878,7 +1859,11 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
     }
 
     /// Record call-effect definitions that the term builder understands.
-    pub(crate) fn record_call_effect_assumptions(&mut self, solver: &Solver<'ctx>, call: &CallSummary<'tcx>) {
+    pub(crate) fn record_call_effect_assumptions(
+        &mut self,
+        solver: &Solver<'ctx>,
+        call: &CallSummary<'tcx>,
+    ) {
         let destination = PlaceKey {
             base: PlaceBaseKey::Local(call.destination.as_usize()),
             fields: Vec::new(),
@@ -2145,8 +2130,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         // Field 0 is the start pointer (== arg0's address).
         // Field 1 is the end pointer (== arg0's address + len of arg0).
         if let AbstractValue::CallResult(call) = value {
-            let prim = PrimitiveCall::classify(&call.func);
-            if prim == Some(PrimitiveCall::AsPtrRange) || prim == Some(PrimitiveCall::AsMutPtrRange)
+            if fn_simulator::is_as_ptr_range(&call.func) || fn_simulator::is_as_mut_ptr_range(&call.func)
             {
                 let arg_index = if place.fields.as_slice() == [0] {
                     0 // field 0 = start = arg0.as_ptr()
@@ -2431,7 +2415,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 // `Option/Result::expect/unwrap` yields the wrapped payload; the
                 // error case diverges before any later checkpoint, so the value
                 // is the inner term of the receiver on all reachable paths.
-                if PrimitiveCall::classify(&call.func) == Some(PrimitiveCall::OptionUnwrap)
+                if fn_simulator::is_option_unwrap(&call.func)
                     && let Some(inner) = call.args.first()
                 {
                     return self.term_for_value_at(inner, cursor, seen);
@@ -2527,7 +2511,10 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
     }
 
     /// Build a boolean term for a conjunction of shared predicates.
-    pub(crate) fn bool_for_predicates(&mut self, predicates: &[SmtPredicate]) -> Option<Bool<'ctx>> {
+    pub(crate) fn bool_for_predicates(
+        &mut self,
+        predicates: &[SmtPredicate],
+    ) -> Option<Bool<'ctx>> {
         match predicates {
             [] => None,
             [predicate] => self.bool_for_predicate(predicate),
@@ -2662,6 +2649,54 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         }
     }
 
+    /// For predicates of the form `SizeOf(T) * X <= Bound`, also assert
+    /// `X <= Bound`.  This is sound because `size_of::<T>() >= 1` for every
+    /// Rust type, so the simplified bound is strictly weaker.
+    fn assert_sizeof_simplified_bound(
+        &mut self,
+        solver: &Solver<'ctx>,
+        predicate: &crate::verify::contract::NumericPredicate<'tcx>,
+    ) {
+        use crate::verify::contract::{ContractExpr, NumericOp, RelOp};
+        if !matches!(predicate.op, RelOp::Le | RelOp::Lt) {
+            return;
+        }
+        let bound_val = match &predicate.rhs {
+            ContractExpr::Const(v) => *v,
+            _ => return,
+        };
+        let (factor, rest) = match &predicate.lhs {
+            ContractExpr::Binary { op: NumericOp::Mul, lhs, rhs } => (lhs, rhs),
+            _ => return,
+        };
+        let _ty = match factor.as_ref() {
+            ContractExpr::SizeOf(ty) => ty,
+            _ => match rest.as_ref() {
+                ContractExpr::SizeOf(ty) => ty,
+                _ => return,
+            },
+        };
+        let rest_expr = if matches!(factor.as_ref(), ContractExpr::SizeOf(_)) {
+            rest.as_ref().clone()
+        } else {
+            factor.as_ref().clone()
+        };
+        if matches!(&rest_expr, ContractExpr::Const(0)) {
+            return;
+        }
+        let simplified = crate::verify::contract::NumericPredicate::new(
+            rest_expr,
+            predicate.op,
+            ContractExpr::Const(bound_val),
+        );
+        if let Some(smt_pred) = self.contract_predicate_to_smt(&simplified) {
+            if let Some(z3_bool) = self.bool_for_predicate(&smt_pred) {
+                solver.assert(&z3_bool);
+            }
+            self.assumptions.push(smt_pred);
+        }
+    }
+
     pub(crate) fn assert_len_term_non_negativity(&mut self, solver: &Solver<'ctx>, term: &SmtTerm) {
         match term {
             SmtTerm::Value(name) if name.starts_with("len(") => {
@@ -2790,7 +2825,11 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                     SmtTerm::Const(0),
                 ));
             }
-            SmtTerm::Value(_) | SmtTerm::Const(_) | SmtTerm::ConstParam(_) | SmtTerm::Min(..) | SmtTerm::Max(..) => {}
+            SmtTerm::Value(_)
+            | SmtTerm::Const(_)
+            | SmtTerm::ConstParam(_)
+            | SmtTerm::Min(..)
+            | SmtTerm::Max(..) => {}
         }
     }
 
@@ -2804,7 +2843,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         cursor: ValueCursor,
         seen: &mut TraceSeen,
     ) -> Option<Int<'ctx>> {
-        if PrimitiveCall::classify(&call.func) != Some(PrimitiveCall::NumericArith) {
+        if !fn_simulator::is_numeric_arith(&call.func) {
             return None;
         }
         let lhs = self.term_for_value_at(call.args.first()?, cursor, seen)?;
@@ -2835,7 +2874,12 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
     }
 
     /// Lower a binary MIR operation to an integer term.
-    pub(crate) fn term_for_binary(&self, op: BinOp, lhs: &Int<'ctx>, rhs: &Int<'ctx>) -> Option<Int<'ctx>> {
+    pub(crate) fn term_for_binary(
+        &self,
+        op: BinOp,
+        lhs: &Int<'ctx>,
+        rhs: &Int<'ctx>,
+    ) -> Option<Int<'ctx>> {
         let one = Int::from_u64(self.ctx, 1);
         let zero = Int::from_u64(self.ctx, 0);
         Some(match op {
@@ -2986,8 +3030,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 .map(|s| normalize_init_ty_name(&s));
             return got.as_deref() == Some(normalize_init_ty_name(ty_name).as_str());
         }
-        if PrimitiveCall::classify(&call.func)
-            .is_some_and(PrimitiveCall::is_element_pointer_arithmetic)
+        if fn_simulator::is_element_ptr_arith(&call.func)
         {
             // The offset must be measured in `ty_name`-sized elements for the
             // result to keep `ty_name` alignment.  A pointer of a different
@@ -3040,9 +3083,8 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             if let Some(definition) = self.forward.latest_value_definition_before(local, cursor) {
                 // Handle as_ptr_range / as_mut_ptr_range (call result)
                 if let AbstractValue::CallResult(call) = &definition.value {
-                    let prim = PrimitiveCall::classify(&call.func);
-                    if prim == Some(PrimitiveCall::AsPtrRange)
-                        || prim == Some(PrimitiveCall::AsMutPtrRange)
+                    if fn_simulator::is_as_ptr_range(&call.func)
+                        || fn_simulator::is_as_mut_ptr_range(&call.func)
                     {
                         if let Some(source_arg) =
                             call.effects.iter().find_map(|effect| match effect {
@@ -3211,7 +3253,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             .get(1)
             .and_then(operand_place)
             .and_then(|p| p.local())
-            .map(|l| mir_copy_root(&body, Local::from_usize(l.as_usize())));
+            .map(|l| mir_copy_root(body, Local::from_usize(l.as_usize())));
 
         for fact in &self.forward.facts {
             let StateFact::Call(call) = fact else {
@@ -3365,7 +3407,11 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
     }
 
     /// Return true when `haystack` contains the same resolved value as `needle`.
-    pub(crate) fn value_mentions(&self, haystack: &AbstractValue<'tcx>, needle: &AbstractValue<'tcx>) -> bool {
+    pub(crate) fn value_mentions(
+        &self,
+        haystack: &AbstractValue<'tcx>,
+        needle: &AbstractValue<'tcx>,
+    ) -> bool {
         self.value_mentions_inner(haystack, needle, &mut HashSet::new())
     }
 
@@ -3594,7 +3640,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 base: PlaceBaseKey::Local(local.as_usize()),
                 fields: Vec::new(),
             })?;
-            if let Some(param) = array_const_len_param(ty) {
+            if let Some(param) = array_const_len_param(self.tcx, ty) {
                 return Some(param);
             }
         }
@@ -3611,9 +3657,8 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 return false;
             };
             let is_ptr_like = is_as_ptr_call(&call.func);
-            let is_ptr_range = PrimitiveCall::classify(&call.func).is_some_and(|p| {
-                matches!(p, PrimitiveCall::AsPtrRange | PrimitiveCall::AsMutPtrRange)
-            });
+            let is_ptr_range = fn_simulator::is_as_ptr_range(&call.func)
+                || fn_simulator::is_as_mut_ptr_range(&call.func);
             (is_ptr_like || is_ptr_range)
                 && call.effects.iter().any(|effect| {
                     matches!(
@@ -3652,7 +3697,10 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
 
     /// Look up a symbolic length in `contract_inbound_lens` for `origin_key`,
     /// trying exact match, single-entry fallback, and substring heuristics.
-    pub(crate) fn contract_inbound_lens_find(&self, origin_key: &str) -> Option<(Int<'ctx>, SmtTerm)> {
+    pub(crate) fn contract_inbound_lens_find(
+        &self,
+        origin_key: &str,
+    ) -> Option<(Int<'ctx>, SmtTerm)> {
         if let Some((term, smt)) = self.contract_inbound_lens.get(origin_key) {
             return Some((term.clone(), smt.clone()));
         }
@@ -3677,7 +3725,10 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
     /// that `pointer_bounds_for_place` can discover the allocation length and
     /// combine it with path conditions (e.g. `ValidNum(idx < self.len())`)
     /// to prove sub-range bounds for `.add(idx)` and similar pointer arithmetic.
-    pub(crate) fn bounds_len_from_contract_fact(&mut self, origin_key: &str) -> Option<(Int<'ctx>, SmtTerm)> {
+    pub(crate) fn bounds_len_from_contract_fact(
+        &mut self,
+        origin_key: &str,
+    ) -> Option<(Int<'ctx>, SmtTerm)> {
         for fact in &self.forward.facts {
             let StateFact::Contract(property) = fact else {
                 continue;
@@ -3685,17 +3736,13 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             if property.kind != PropertyKind::InBound {
                 continue;
             }
-            if let Some(target_place) = property
-                .args
-                .get(0)
-                .and_then(|arg| {
-                    if let PropertyArg::Place(place) = arg {
-                        Some(place)
-                    } else {
-                        None
-                    }
-                })
-            {
+            if let Some(target_place) = property.args.get(0).and_then(|arg| {
+                if let PropertyArg::Place(place) = arg {
+                    Some(place)
+                } else {
+                    None
+                }
+            }) {
                 let mut key = PlaceKey::from_contract_place(target_place);
                 if let PlaceBaseKey::Arg(ix) = key.base {
                     key.base = PlaceBaseKey::Local(ix + 1);
@@ -3760,11 +3807,30 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         })
     }
 
+    /// Extract every PlaceKey leaf from an AbstractValue by unwrapping
+    /// Cast wrappers.  E.g. `Cast(Cast(Place(p), _), _)` yields `[p]`.
+    fn extract_place_keys(value: &AbstractValue<'_>) -> Vec<PlaceKey> {
+        let mut result = Vec::new();
+        let mut worklist = vec![value];
+        while let Some(v) = worklist.pop() {
+            match v {
+                AbstractValue::Place(p) | AbstractValue::Ref(p) | AbstractValue::RawPtr(p) => {
+                    result.push(p.clone());
+                }
+                AbstractValue::Cast(inner, _) => {
+                    worklist.push(inner.as_ref());
+                }
+                _ => {}
+            }
+        }
+        result
+    }
+
     /// When a KnownAllocated fact directly or transitively covers the target
     /// place, return the fact's type name so the caller can short-circuit
     /// the full SMT bounds proof.  The trace never crosses pointer-arithmetic
     /// results (they may point past the object base) and skips facts whose
-    /// allocation object has been dropped or gone out of scope.
+    /// allocation object has been invalidated on the current path.
     pub(crate) fn allocated_ty_via_known_fact(
         &self,
         place: &PlaceKey,
@@ -3794,18 +3860,15 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                             match cursor {
                                 AbstractValue::Place(p)
                                 | AbstractValue::Ref(p)
-                                | AbstractValue::RawPtr(p) => break p.clone(),
+                                | AbstractValue::RawPtr(p) => break Some(p.clone()),
                                 AbstractValue::Cast(inner, _) => cursor = inner.as_ref(),
-                                _ => {
-                                    break PlaceKey {
-                                        base: crate::verify::def_use::PlaceBaseKey::Local(0),
-                                        fields: Vec::new(),
-                                    };
-                                }
+                                _ => break None,
                             }
                         };
-                        if root.local().is_some() {
-                            queue.push(root);
+                        if let Some(r) = root
+                            && r.local().is_some()
+                        {
+                            queue.push(r);
                         }
                     }
                 }
@@ -3850,8 +3913,27 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                     continue;
                 };
                 if *target == cur {
-                    if let AbstractValue::Place(p) = source {
-                        queue.push(p.clone());
+                    for p in Self::extract_place_keys(source) {
+                        queue.push(p);
+                    }
+                }
+            }
+            for fact in &self.forward.facts {
+                let StateFact::Binary {
+                    target: bin_target,
+                    lhs,
+                    rhs,
+                    ..
+                } = fact
+                else {
+                    continue;
+                };
+                if *bin_target == cur {
+                    for p in Self::extract_place_keys(lhs) {
+                        queue.push(p);
+                    }
+                    for p in Self::extract_place_keys(rhs) {
+                        queue.push(p);
                     }
                 }
             }
@@ -3864,7 +3946,11 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
     /// consults the full MIR body, because the backward slicer may prune the
     /// drop (it does not define the checked pointer) even though it frees the
     /// underlying memory.
-    pub(crate) fn allocation_dropped_on_path(&self, object: &PlaceKey, alloc_place: &PlaceKey) -> bool {
+    pub(crate) fn allocation_dropped_on_path(
+        &self,
+        object: &PlaceKey,
+        alloc_place: &PlaceKey,
+    ) -> bool {
         use crate::verify::path_extractor::PathStep;
         use rustc_middle::mir::TerminatorKind;
 
@@ -3893,7 +3979,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
             let dropped_local = match &terminator.kind {
                 TerminatorKind::Drop { place, .. } => Some(place.local),
                 TerminatorKind::Call { func, args, .. } => {
-                    let name = crate::verify::call_summary::call_name(self.tcx, func);
+                    let name = crate::helpers::mir_utils::call_name(self.tcx, func);
                     if name.ends_with("mem::drop")
                         || name == "std::mem::drop"
                         || name.contains("drop_in_place")
@@ -3933,8 +4019,7 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                 return false;
             };
             call.destination == local
-                && crate::verify::primitive::PrimitiveCall::classify(&call.func)
-                    .is_some_and(|p| p.is_pointer_arithmetic())
+                && fn_simulator::is_pointer_arithmetic(&call.func)
         })
     }
 
@@ -4065,8 +4150,27 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
                     continue;
                 };
                 if *target == cur {
-                    if let AbstractValue::Place(p) = source {
-                        queue.push(p.clone());
+                    for p in Self::extract_place_keys(source) {
+                        queue.push(p);
+                    }
+                }
+            }
+            for fact in &self.forward.facts {
+                let StateFact::Binary {
+                    target: bin_target,
+                    lhs,
+                    rhs,
+                    ..
+                } = fact
+                else {
+                    continue;
+                };
+                if *bin_target == cur {
+                    for p in Self::extract_place_keys(lhs) {
+                        queue.push(p);
+                    }
+                    for p in Self::extract_place_keys(rhs) {
+                        queue.push(p);
                     }
                 }
             }
@@ -4074,7 +4178,11 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
         None
     }
 
-    pub(crate) fn origin_is_initialized_for_ty(&self, origin_key: &str, required_ty_name: &str) -> bool {
+    pub(crate) fn origin_is_initialized_for_ty(
+        &self,
+        origin_key: &str,
+        required_ty_name: &str,
+    ) -> bool {
         if self.forward.facts.iter().any(|fact| {
             let StateFact::KnownAllocated {
                 place,
@@ -4120,13 +4228,22 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
 
     /// Check whether a struct InBound invariant backs this pointer's origin,
     /// providing a contract-level guarantee of allocation.
-    pub(crate) fn improve_allocated_via_inbound_contract(&self, bounds: &PointerBounds<'ctx>) -> bool {
+    pub(crate) fn improve_allocated_via_inbound_contract(
+        &self,
+        bounds: &PointerBounds<'ctx>,
+    ) -> bool {
         let origin_key = &bounds.origin_key;
         self.forward.facts.iter().any(|fact| {
-            let StateFact::Contract(property) = fact else { return false; };
-            if property.kind != PropertyKind::InBound { return false; }
+            let StateFact::Contract(property) = fact else {
+                return false;
+            };
+            if !property.kind.kind_implies(&PropertyKind::Allocated) {
+                return false;
+            }
             property.args.first().is_some_and(|arg| {
-                let PropertyArg::Place(cp) = arg else { return false; };
+                let PropertyArg::Place(cp) = arg else {
+                    return false;
+                };
                 let mut key = PlaceKey::from_contract_place(cp);
                 if let PlaceBaseKey::Arg(ix) = key.base {
                     key.base = PlaceBaseKey::Local(ix + 1);
@@ -4151,12 +4268,22 @@ impl<'a, 'ctx, 'tcx> SmtModel<'a, 'ctx, 'tcx> {
     ) -> Option<String> {
         let origin_key = &bounds.origin_key;
         for fact in &self.forward.facts {
-            let StateFact::Contract(property) = fact else { continue; };
-            if property.kind != PropertyKind::ValidNum { continue; }
-            let Some(PropertyArg::Predicates(predicates)) = property.args.first() else { continue; };
+            let StateFact::Contract(property) = fact else {
+                continue;
+            };
+            if property.kind != PropertyKind::ValidNum {
+                continue;
+            }
+            let Some(PropertyArg::Predicates(predicates)) = property.args.first() else {
+                continue;
+            };
             for predicate in predicates {
-                if !matches!(predicate.op, RelOp::Lt | RelOp::Le) { continue; }
-                if !contract_expr_refers_to_origin_deep(self, &predicate.rhs, origin_key) { continue; }
+                if !matches!(predicate.op, RelOp::Lt | RelOp::Le) {
+                    continue;
+                }
+                if !contract_expr_refers_to_origin_deep(self, &predicate.rhs, origin_key) {
+                    continue;
+                }
                 if smt_term_matches_expr(self, upper_delta, &predicate.lhs) {
                     return Some(format!(
                         "pointer arithmetic proved by ValidNum contract on origin {origin_key}"
@@ -4201,10 +4328,8 @@ fn resolve_if_saturating_sub(model: &SmtModel<'_, '_, '_>, term: &SmtTerm) -> Op
 fn smt_term_derives_from_len(model: &SmtModel<'_, '_, '_>, term: &SmtTerm) -> bool {
     match term {
         SmtTerm::Value(name) => name.starts_with("len("),
-        SmtTerm::Place(place) => {
-            resolved_term_for_place(model, place)
-                .is_some_and(|r| smt_term_derives_from_len(model, &r))
-        }
+        SmtTerm::Place(place) => resolved_term_for_place(model, place)
+            .is_some_and(|r| smt_term_derives_from_len(model, &r)),
         SmtTerm::Sub(tl, _tr) => smt_term_derives_from_len(model, tl),
         _ => false,
     }
@@ -4223,7 +4348,9 @@ fn abstract_value_to_smt_term(value: &AbstractValue<'_>) -> SmtTerm {
 fn contract_expr_refers_to_origin(expr: &ContractExpr<'_>, origin_key: &str) -> bool {
     match expr {
         ContractExpr::Len(inner) => {
-            let ContractExpr::Place(cp) = inner.as_ref() else { return false; };
+            let ContractExpr::Place(cp) = inner.as_ref() else {
+                return false;
+            };
             let mut key = PlaceKey::from_contract_place(cp);
             if let PlaceBaseKey::Arg(ix) = key.base {
                 key.base = PlaceBaseKey::Local(ix + 1);
@@ -4247,7 +4374,11 @@ fn contract_expr_refers_to_origin(expr: &ContractExpr<'_>, origin_key: &str) -> 
 
 /// Like contract_expr_refers_to_origin but also traces the origin_key
 /// back through value definitions to find the contract place.
-fn contract_expr_refers_to_origin_deep(model: &SmtModel<'_, '_, '_>, expr: &ContractExpr<'_>, origin_key: &str) -> bool {
+fn contract_expr_refers_to_origin_deep(
+    model: &SmtModel<'_, '_, '_>,
+    expr: &ContractExpr<'_>,
+    origin_key: &str,
+) -> bool {
     if contract_expr_refers_to_origin(expr, origin_key) {
         return true;
     }
@@ -4258,13 +4389,18 @@ fn contract_expr_refers_to_origin_deep(model: &SmtModel<'_, '_, '_>, expr: &Cont
         queue.push(origin_key[..dot].to_string());
     }
     while let Some(cur) = queue.pop() {
-        if !visited.insert(cur.clone()) { continue; }
+        if !visited.insert(cur.clone()) {
+            continue;
+        }
         if contract_expr_refers_to_origin(expr, &cur) {
             return true;
         }
         if let Ok(parts) = parse_origin_parts(&cur) {
             let local = rustc_middle::mir::Local::from_usize(parts.local);
-            if let Some(def) = model.forward.latest_value_definition_before(local, model.forward.value_definitions.len()) {
+            if let Some(def) = model
+                .forward
+                .latest_value_definition_before(local, model.forward.value_definitions.len())
+            {
                 let next = origin_key_from_value(&def.value);
                 queue.push(next);
             }
@@ -4274,10 +4410,16 @@ fn contract_expr_refers_to_origin_deep(model: &SmtModel<'_, '_, '_>, expr: &Cont
 }
 
 fn parse_origin_parts(origin: &str) -> Result<OriginParts, ()> {
-    if !origin.starts_with('_') { return Err(()); }
+    if !origin.starts_with('_') {
+        return Err(());
+    }
     let rest = &origin[1..];
     let dot_pos = rest.find('.');
-    let local_str = if let Some(pos) = dot_pos { &rest[..pos] } else { rest };
+    let local_str = if let Some(pos) = dot_pos {
+        &rest[..pos]
+    } else {
+        rest
+    };
     let local: usize = local_str.parse().map_err(|_| ())?;
     Ok(OriginParts { local })
 }
@@ -4330,7 +4472,9 @@ fn contract_expr_to_smt_term_helper(expr: &ContractExpr<'_>) -> SmtTerm {
 }
 
 fn smt_eq_deep(model: &SmtModel<'_, '_, '_>, term: &SmtTerm, target: &SmtTerm) -> bool {
-    if term.describe() == target.describe() { return true; }
+    if term.describe() == target.describe() {
+        return true;
+    }
     if let SmtTerm::Place(place) = term {
         if let Some(resolved) = resolved_term_for_place(model, place) {
             return smt_eq_deep(model, &resolved, target);
@@ -4341,12 +4485,12 @@ fn smt_eq_deep(model: &SmtModel<'_, '_, '_>, term: &SmtTerm, target: &SmtTerm) -
         | (SmtTerm::Sub(tl, tr), SmtTerm::Sub(sl, sr))
         | (SmtTerm::Mul(tl, tr), SmtTerm::Mul(sl, sr))
         | (SmtTerm::Div(tl, tr), SmtTerm::Div(sl, sr))
-        | (SmtTerm::Rem(tl, tr), SmtTerm::Rem(sl, sr)) =>
-            smt_eq_deep(model, tl, sl) && smt_eq_deep(model, tr, sr),
+        | (SmtTerm::Rem(tl, tr), SmtTerm::Rem(sl, sr)) => {
+            smt_eq_deep(model, tl, sl) && smt_eq_deep(model, tr, sr)
+        }
         // Sub(len, expr) where expr matches target: Sub ≤ len,
         // so target < len (from ValidNum) implies Sub < len.
-        (SmtTerm::Sub(tl, tr), _) if resolves_to_len(model, tl) =>
-            smt_eq_deep(model, tr, target),
+        (SmtTerm::Sub(tl, tr), _) if resolves_to_len(model, tl) => smt_eq_deep(model, tr, target),
         _ => false,
     }
 }
@@ -4355,8 +4499,7 @@ fn resolves_to_len(model: &SmtModel<'_, '_, '_>, term: &SmtTerm) -> bool {
     match term {
         SmtTerm::Value(name) => name.starts_with("len("),
         SmtTerm::Place(place) => {
-            resolved_term_for_place(model, place)
-                .is_some_and(|r| resolves_to_len(model, &r))
+            resolved_term_for_place(model, place).is_some_and(|r| resolves_to_len(model, &r))
         }
         // Sub(len, x) ≤ len for any x ≥ 0, so Sub(len, x) is a "len-derived" bound
         SmtTerm::Sub(tl, _tr) => resolves_to_len(model, tl),
@@ -4364,11 +4507,12 @@ fn resolves_to_len(model: &SmtModel<'_, '_, '_>, term: &SmtTerm) -> bool {
     }
 }
 
-
 fn resolved_term_for_place(model: &SmtModel<'_, '_, '_>, place: &PlaceKey) -> Option<SmtTerm> {
     let local = place.local()?;
     let cursor = model.forward.value_definitions.len();
-    model.forward.latest_value_definition_before(local, cursor)
+    model
+        .forward
+        .latest_value_definition_before(local, cursor)
         .and_then(|def| abstract_value_to_smt_term_def(&def.value))
 }
 
@@ -4382,12 +4526,15 @@ fn abstract_value_to_smt_term_def(value: &AbstractValue<'_>) -> Option<SmtTerm> 
             let l = abstract_value_to_smt_term(lhs.as_ref());
             let r = abstract_value_to_smt_term(rhs.as_ref());
             match op {
-                BinOp::Add | BinOp::AddWithOverflow | BinOp::AddUnchecked =>
-                    Some(SmtTerm::Add(Box::new(l), Box::new(r))),
-                BinOp::Sub | BinOp::SubWithOverflow | BinOp::SubUnchecked =>
-                    Some(SmtTerm::Sub(Box::new(l), Box::new(r))),
-                BinOp::Mul | BinOp::MulWithOverflow | BinOp::MulUnchecked =>
-                    Some(SmtTerm::Mul(Box::new(l), Box::new(r))),
+                BinOp::Add | BinOp::AddWithOverflow | BinOp::AddUnchecked => {
+                    Some(SmtTerm::Add(Box::new(l), Box::new(r)))
+                }
+                BinOp::Sub | BinOp::SubWithOverflow | BinOp::SubUnchecked => {
+                    Some(SmtTerm::Sub(Box::new(l), Box::new(r)))
+                }
+                BinOp::Mul | BinOp::MulWithOverflow | BinOp::MulUnchecked => {
+                    Some(SmtTerm::Mul(Box::new(l), Box::new(r)))
+                }
                 BinOp::Div => Some(SmtTerm::Div(Box::new(l), Box::new(r))),
                 BinOp::Rem => Some(SmtTerm::Rem(Box::new(l), Box::new(r))),
                 _ => None,
@@ -4399,7 +4546,10 @@ fn abstract_value_to_smt_term_def(value: &AbstractValue<'_>) -> Option<SmtTerm> 
         AbstractValue::CallResult(call) if call.func.ends_with("::len") => {
             call.args.first().and_then(|a| {
                 if let AbstractValue::Place(p) = a {
-                    Some(SmtTerm::Value(format!("len({})", super::common::place_label(p))))
+                    Some(SmtTerm::Value(format!(
+                        "len({})",
+                        super::common::place_label(p)
+                    )))
                 } else {
                     None
                 }

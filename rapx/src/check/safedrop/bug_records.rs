@@ -2,7 +2,7 @@ use crate::compat::FxHashMap;
 use annotate_snippets::{Level, Renderer, Snippet};
 use rustc_span::{Span, symbol::Symbol};
 
-use crate::utils::log::{
+use crate::utils::span::{
     are_spans_in_same_file, get_basic_block_span, get_variable_name, relative_pos_range,
     span_to_filename, span_to_line_number, span_to_source_code,
 };

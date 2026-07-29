@@ -1,11 +1,9 @@
 use crate::{
     analysis::dataflow::*,
     check::opt::OptCheck,
-    helpers::def_path::DefPath,
-    utils::log::{relative_pos_range, span_to_filename, span_to_line_number, span_to_source_code},
+    utils::span::{relative_pos_range, span_to_filename, span_to_line_number, span_to_source_code},
 };
 use annotate_snippets::{Level, Renderer, Snippet};
-use once_cell::sync::OnceCell;
 
 use super::super::LEVEL;
 use rustc_middle::{
@@ -16,25 +14,12 @@ use rustc_span::Span;
 use std::cell::Cell;
 use std::collections::HashSet;
 
-static DEFPATHS: OnceCell<DefPaths> = OnceCell::new();
-
-struct DefPaths {
-    clone: DefPath,
-    //to_string: DefPath,
-    to_owned: DefPath,
-    deref: DefPath,
+crate::def_paths! {
+    clone: "std::clone::Clone::clone",
+    to_owned: "std::borrow::ToOwned::to_owned",
+    deref: "std::ops::Deref::deref",
 }
 
-impl DefPaths {
-    pub fn new(tcx: &TyCtxt<'_>) -> Self {
-        Self {
-            clone: DefPath::new("std::clone::Clone::clone", tcx),
-            //to_string: DefPath::new("std::string::ToString::to_string", tcx),
-            to_owned: DefPath::new("std::borrow::ToOwned::to_owned", tcx),
-            deref: DefPath::new("std::ops::Deref::deref", tcx),
-        }
-    }
-}
 
 // whether the cloned value is used as a parameter
 fn find_downside_use_as_param(graph: &Graph, clone_node_idx: Local) -> Option<(Local, EdgeIdx)> {

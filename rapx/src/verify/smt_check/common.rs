@@ -26,6 +26,7 @@
 
 use std::collections::HashSet;
 
+use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{
         BasicBlock, BinOp, Local, Operand, ProjectionElem, Rvalue, StatementKind, TerminatorKind,
@@ -39,23 +40,25 @@ use z3::{
 };
 
 use super::{
-    alias, align, alive, allocated, deref, in_bound, init, non_null, non_overlap, typed, valid_num,
+    alias, align, alive, allocated, in_bound, init, non_null, non_overlap, typed, valid_num,
     valid_ptr,
 };
 
+use crate::helpers::mir_utils::{callee_param_index_for_local, ty_has_param_const};
 use crate::verify::{
     contract::{
-        ContractExpr, ContractPlace, ContractProjection, NumericOp, NumericPredicate, PlaceBase,
-        Property, PropertyArg, PropertyKind, RelOp,
+        self, ContractExpr, ContractPlace, ContractProjection, NumericOp, NumericPredicate,
+        PlaceBase, Property, PropertyArg, PropertyKind, RelOp,
     },
     def_use::{PlaceBaseKey, PlaceKey},
+    call_summary::fn_simulator,
     generic::GenericTypeCandidates,
-    helpers::{Checkpoint, callee_param_index_for_local, ty_has_param_const},
-    primitive::PrimitiveCall,
     report::CheckResult,
     slicer::ForgetReason,
     verifier::{AbstractValue, CallSummary, ForwardVisitResult, StateFact},
 };
+
+use crate::helpers::mir_scan::Checkpoint;
 
 use super::model::SmtModel;
 
@@ -69,6 +72,8 @@ pub(crate) struct PathCursorCutoff {
 }
 
 /// SMT backend for verifier properties.
+// ── SMT Engine ────────────────────────────────────────────────────────
+
 pub struct SmtChecker<'tcx> {
     pub(crate) tcx: TyCtxt<'tcx>,
 }
@@ -131,6 +136,49 @@ impl<'tcx> SmtChecker<'tcx> {
         Self { tcx }
     }
 
+    /// Try to prove a compound SP by decomposing into primitives, checking each
+    /// recursively, and combining the results.  Decomposition is driven entirely
+    /// by the central rules in `contract/decomp.rs`.
+    fn check_decomposed(
+        &self,
+        checkpoint: &Checkpoint<'tcx>,
+        property: &Property<'tcx>,
+        forward: &ForwardVisitResult<'tcx>,
+    ) -> SmtCheckResult {
+        let primitives = property.kind.primitive_components().unwrap_or(&[]);
+
+        let mut results: Vec<SmtCheckResult> = Vec::new();
+        for &kind in primitives {
+            let primitive = contract::with_kind(property, kind);
+            let result = self.check(checkpoint, &primitive, forward);
+            results.push(result);
+        }
+
+        let all_proved = results
+            .iter()
+            .all(|r| matches!(r.result, CheckResult::Proved));
+        let any_failed = results
+            .iter()
+            .any(|r| matches!(r.result, CheckResult::Failed));
+
+        let kind_name = format!("{:?}", property.kind);
+        if all_proved {
+            SmtCheckResult::proved(format!("{kind_name} proved: all primitives hold"))
+        } else if any_failed {
+            SmtCheckResult {
+                result: CheckResult::Failed,
+                query: None,
+                notes: vec![format!(
+                    "{kind_name} failed: one or more primitives do not hold"
+                )],
+            }
+        } else {
+            SmtCheckResult::unknown(format!(
+                "{kind_name} unknown: one or more primitives are unproven"
+            ))
+        }
+    }
+
     /// Try to prove one property using SMT.
     pub fn check(
         &self,
@@ -143,7 +191,7 @@ impl<'tcx> SmtChecker<'tcx> {
             PropertyKind::Alias => alias::check(self, checkpoint, property, forward),
             PropertyKind::Alive => alive::check(self, checkpoint, property, forward),
             PropertyKind::Allocated => allocated::check(self, checkpoint, property, forward),
-            PropertyKind::Deref => deref::check(self, checkpoint, property, forward),
+            PropertyKind::Deref => self.check_decomposed(checkpoint, property, forward),
             PropertyKind::NonNull => non_null::check(self, checkpoint, property, forward),
             PropertyKind::InBound => in_bound::check(self, checkpoint, property, forward),
             PropertyKind::Init => init::check(self, checkpoint, property, forward),
@@ -159,13 +207,9 @@ impl<'tcx> SmtChecker<'tcx> {
             }
             PropertyKind::NonVolatile => {
                 if checkpoint.is_ref {
-                    SmtCheckResult::proved(
-                        "NonVolatile holds for ref-derived pointer",
-                    )
+                    SmtCheckResult::proved("NonVolatile holds for ref-derived pointer")
                 } else {
-                    SmtCheckResult::proved(
-                        "NonVolatile assumed — std memory is never volatile",
-                    )
+                    SmtCheckResult::proved("NonVolatile assumed — std memory is never volatile")
                 }
             }
             PropertyKind::Owning => super::owning::check(self, checkpoint, property, forward),
@@ -669,10 +713,10 @@ impl<'tcx> SmtChecker<'tcx> {
                             .with_note("caller contract provides InBound for raw pointer parameter")
                         } else {
                             SmtCheckResult::unknown("solver returned unknown").with_query(query)
-                        }
-                    }
-                }
             }
+        }
+    }
+}
             SmtObligation::PointerRangeInBounds {
                 place,
                 ty_name,
@@ -699,7 +743,9 @@ impl<'tcx> SmtChecker<'tcx> {
                     );
                 };
 
-                if let Some(reason) = model.prove_pointer_bounds_via_valid_num(&bounds, &upper_delta) {
+                if let Some(reason) =
+                    model.prove_pointer_bounds_via_valid_num(&bounds, &upper_delta)
+                {
                     return SmtCheckResult::proved(reason);
                 }
 
@@ -733,10 +779,9 @@ impl<'tcx> SmtChecker<'tcx> {
                 // Assert count >= 0 so Z3 can derive count <= len from
                 // ValidNum constraints that imply len >= count + 1.
                 solver.assert(&upper.ge(&zero));
-                model.assumptions.push(SmtPredicate::Ge(
-                    upper_delta.clone(),
-                    SmtTerm::Const(0),
-                ));
+                model
+                    .assumptions
+                    .push(SmtPredicate::Ge(upper_delta.clone(), SmtTerm::Const(0)));
 
                 let lower_index = Int::add(&ctx, &[bounds.index.clone(), lower]);
                 let upper_index = Int::add(&ctx, &[bounds.index.clone(), upper]);
@@ -934,7 +979,7 @@ impl<'tcx> SmtChecker<'tcx> {
                         }
 
                         for init_term in &init_terms {
-                let query = SmtQuery::new(
+                            let query = SmtQuery::new(
                                 obligation.clone(),
                                 model.assumptions().to_vec(),
                                 SmtPredicate::Custom(format!(
@@ -2020,7 +2065,6 @@ impl<'tcx> SmtChecker<'tcx> {
         Some(PlaceKey::from_contract_place(place))
     }
 
-
     fn contract_expr_label(&self, expr: &ContractExpr<'tcx>) -> Option<String> {
         match expr {
             ContractExpr::Place(place) => {
@@ -2231,9 +2275,7 @@ impl<'tcx> SmtChecker<'tcx> {
     pub(crate) fn maybeuninit_covering_init(
         &self,
         checkpoint: &Checkpoint<'tcx>,
-        _target: &PlaceKey,
         required_ty: Ty<'tcx>,
-        _forward: &ForwardVisitResult<'tcx>,
     ) -> bool {
         // The target array must be `[E; N]` with a const-generic length `N`.
         let TyKind::Array(_, array_len) = required_ty.kind() else {
@@ -2275,7 +2317,7 @@ impl<'tcx> SmtChecker<'tcx> {
             let TerminatorKind::Call { func, args, .. } = &term.kind else {
                 continue;
             };
-            if !crate::verify::call_summary::call_name(self.tcx, func).contains("::write") {
+            if !crate::helpers::mir_utils::call_name(self.tcx, func).contains("::write") {
                 continue;
             }
             let Some((idx_local, base_of_add)) = args
@@ -2312,7 +2354,6 @@ impl<'tcx> SmtChecker<'tcx> {
         body: &rustc_middle::mir::Body<'tcx>,
         idx_local: Local,
     ) -> Option<(BasicBlock, String)> {
-        // idx_local = copy ((opt as Some).0), possibly through copies.
         let idx_local = mir_copy_root(body, idx_local);
         let opt_local = mir_some_payload_source(body, idx_local)?;
         // opt = Iterator::next(&mut range); header = the block with that call.
@@ -2450,7 +2491,7 @@ impl<'tcx> SmtChecker<'tcx> {
                 return false;
             };
             resolve_root_local_mir(self.tcx, caller, call.destination) == target_root
-                && PrimitiveCall::classify(&call.func) == Some(PrimitiveCall::AlignOf)
+                && fn_simulator::is_align_of(&call.func)
         })
     }
 
@@ -2515,12 +2556,7 @@ impl<'tcx> SmtChecker<'tcx> {
         // the slice length by definition, regardless of how it is computed.
         if let Some(callee) = checkpoint.callee {
             let callee_name = self.tcx.def_path_str(callee);
-            if PrimitiveCall::classify(&callee_name).is_some_and(|p| {
-                matches!(
-                    p,
-                    PrimitiveCall::FromRawParts | PrimitiveCall::FromRawPartsMut
-                )
-            }) {
+            if fn_simulator::is_from_raw_parts(&callee_name) {
                 return true;
             }
             // For `copy_nonoverlapping`, the count is an explicit argument that
@@ -2608,9 +2644,7 @@ impl<'tcx> SmtChecker<'tcx> {
         let TyKind::FnDef(_, args) = func_constant.const_.ty().kind() else {
             return ty;
         };
-        #[cfg(rapx_rustc_ge_199)]
-        let args = args.skip_binder();
-        let Some(arg) = args.get(param.index as usize) else {
+        let Some(arg) = crate::compat::args_get(args, param.index as usize) else {
             return ty;
         };
         match arg.kind() {
@@ -2636,9 +2670,7 @@ impl<'tcx> SmtChecker<'tcx> {
         let TyKind::FnDef(_, args) = func_constant.const_.ty().kind() else {
             return None;
         };
-        #[cfg(rapx_rustc_ge_199)]
-        let args = args.skip_binder();
-        let arg = args.get(index as usize)?;
+        let arg = crate::compat::args_get(args, index as usize)?;
         match arg.kind() {
             GenericArgKind::Const(actual_const) => actual_const
                 .try_to_target_usize(self.tcx)
@@ -2805,8 +2837,12 @@ impl<'tcx> SmtChecker<'tcx> {
             _ => return None,
         };
 
-        let predicates = self.tcx.predicates_of(checkpoint.caller);
-        for (predicate, _span) in predicates.predicates.iter() {
+        let predicates = crate::compat::predicates_of(self.tcx, checkpoint.caller);
+        #[cfg(not(rapx_rustc_ge_199))]
+        let pred_iter = predicates.predicates.iter();
+        #[cfg(rapx_rustc_ge_199)]
+        let pred_iter = predicates.clauses.iter();
+        for (predicate, _span) in pred_iter {
             if let ClauseKind::Trait(trait_ref) = predicate.kind().skip_binder() {
                 if trait_ref.self_ty() == ty {
                     let def_path = self.tcx.def_path_str(trait_ref.def_id());
@@ -2820,6 +2856,8 @@ impl<'tcx> SmtChecker<'tcx> {
         None
     }
 }
+
+// ── SMT Data Types ─────────────────────────────────────────────────────
 
 /// Trivalent size classification for type-dependent composite SPs.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -3117,6 +3155,8 @@ impl SmtPredicate {
     }
 }
 
+// ── SMT Query + Result Types ───────────────────────────────────────────
+
 /// Solver query built from path facts plus one negated obligation.
 #[derive(Clone, Debug)]
 pub struct SmtQuery {
@@ -3185,6 +3225,15 @@ impl SmtCheckResult {
         self
     }
 
+    /// When `self` is `Unknown` or `Failed`, try the given fallback.
+    /// Returns the original result if already `Proved`.
+    pub fn or_try(self, f: impl FnOnce() -> SmtCheckResult) -> SmtCheckResult {
+        match self.result {
+            CheckResult::Proved => self,
+            _ => f(),
+        }
+    }
+
     /// Render this SMT result as a diagnostic block.
     pub fn describe(&self) -> String {
         let mut lines = vec![format!("      smt check: {:?}", self.result)];
@@ -3214,6 +3263,8 @@ impl SmtCheckResult {
         lines.join("\n")
     }
 }
+
+// ── MIR / Type / Label Helpers ─────────────────────────────────────────
 
 pub(crate) fn failed_smt(note: impl Into<String>) -> SmtCheckResult {
     SmtCheckResult {
@@ -3370,25 +3421,36 @@ pub(crate) fn is_len_carrying_ty(ty: Ty<'_>) -> bool {
 /// The name of the const-generic length parameter of a fixed array `[E; N]`,
 /// looking through references and a `MaybeUninit` wrapper.  Returns `None` for
 /// concrete lengths or non-array types.
-pub(crate) fn array_const_len_param(ty: Ty<'_>) -> Option<String> {
+pub(crate) fn array_const_len_param(tcx: TyCtxt<'_>, ty: Ty<'_>) -> Option<String> {
     match ty.kind() {
         TyKind::Array(_, len) => match len.kind() {
             ConstKind::Param(param) => Some(param.name.to_string()),
             _ => None,
         },
-        TyKind::Ref(_, inner, _) => array_const_len_param(*inner),
-        TyKind::Adt(_, args) if format!("{ty:?}").contains("MaybeUninit") => args
-            .first()
-            .and_then(|arg| match arg.kind() {
-                GenericArgKind::Type(ty) => Some(ty),
-                _ => None,
-            })
-            .and_then(array_const_len_param),
+        TyKind::Ref(_, inner, _) => array_const_len_param(tcx, *inner),
+        TyKind::Adt(adt_def, args) => {
+            if !is_maybe_uninit_adt(tcx, adt_def.did()) {
+                return None;
+            }
+            args.first()
+                .and_then(|arg| match arg.kind() {
+                    GenericArgKind::Type(ty) => Some(ty),
+                    _ => None,
+                })
+                .and_then(|ty| array_const_len_param(tcx, ty))
+        }
         _ => None,
     }
 }
 
-/// Follow `local = move/copy other` (no projections) to the root local.
+fn is_maybe_uninit_adt(tcx: TyCtxt<'_>, did: DefId) -> bool {
+    tcx.def_path_str(did).contains("::mem::MaybeUninit")
+        || tcx.def_path_str(did).ends_with("::MaybeUninit")
+        || tcx.def_path_str(did) == "MaybeUninit"
+}
+
+/// Follow Copy/Move edges upward in the dataflow graph to find the
+/// root real local behind any copy chains (no projections).
 pub(crate) fn mir_copy_root<'tcx>(body: &rustc_middle::mir::Body<'tcx>, mut local: Local) -> Local {
     for _ in 0..16 {
         let mut next = None;
@@ -3435,7 +3497,7 @@ pub(crate) fn find_as_mut_ptr_of<'tcx>(
         else {
             continue;
         };
-        let name = crate::verify::call_summary::call_name(tcx, func);
+        let name = crate::helpers::mir_utils::call_name(tcx, func);
         if !name.contains("as_mut_ptr") {
             continue;
         }
@@ -3506,7 +3568,7 @@ pub(crate) fn pointer_add_index_and_base<'tcx>(
         if destination.local != ptr_local {
             continue;
         }
-        let name = crate::verify::call_summary::call_name(tcx, func);
+        let name = crate::helpers::mir_utils::call_name(tcx, func);
         // Element-stride add only (byte variants change alignment/stride).
         if !(name.ends_with("::add") || name.contains("::add::")) {
             return None;
@@ -3543,7 +3605,7 @@ pub(crate) fn mir_ptr_cast_root<'tcx>(
             if destination.local != root {
                 continue;
             }
-            if crate::verify::call_summary::call_name(tcx, func).contains("::cast")
+            if crate::helpers::mir_utils::call_name(tcx, func).contains("::cast")
                 && let Some(src) = args.first().and_then(|a| a.node.place())
             {
                 next = Some(src.local);
@@ -3610,7 +3672,7 @@ pub(crate) fn mir_range_next_call<'tcx>(
         if destination.local != opt_local {
             continue;
         }
-        if !crate::verify::call_summary::call_name(tcx, func).contains("::next") {
+        if !crate::helpers::mir_utils::call_name(tcx, func).contains("::next") {
             return None;
         }
         let arg_local = args.first().and_then(|a| a.node.place())?.local;
@@ -3678,7 +3740,7 @@ pub(crate) fn mir_range_end_param<'tcx>(
                     ..
                 } = &term.kind
                 && destination.local == local
-                && crate::verify::call_summary::call_name(tcx, func).contains("into_iter")
+                && crate::helpers::mir_utils::call_name(tcx, func).contains("into_iter")
                 && let Some(src) = args.first().and_then(|a| a.node.place())
             {
                 next = Some(src.local);
@@ -3788,17 +3850,17 @@ pub(crate) fn is_unsigned_integral_ty(ty: Ty<'_>) -> bool {
 
 /// Return true when a call summary is a typed pointer addition.
 pub(crate) fn is_pointer_add_call(func: &str) -> bool {
-    PrimitiveCall::classify(func).is_some_and(PrimitiveCall::is_pointer_add_like)
+    fn_simulator::is_pointer_add(func)
 }
 
 /// Return true when a call summary is a typed pointer subtraction.
 pub(crate) fn is_pointer_sub_call(func: &str) -> bool {
-    PrimitiveCall::classify(func).is_some_and(PrimitiveCall::is_pointer_sub_like)
+    fn_simulator::is_pointer_sub(func)
 }
 
 /// Return true when a call summary extracts a pointer from a slice-like object.
 pub(crate) fn is_as_ptr_call(func: &str) -> bool {
-    PrimitiveCall::classify(func).is_some_and(PrimitiveCall::is_as_ptr_like)
+    fn_simulator::is_as_ptr(func)
 }
 
 /// Return true when a call summary carries pointer-add semantics.
@@ -3820,7 +3882,9 @@ pub(crate) fn call_has_pointer_sub_effect(call: &CallSummary<'_>) -> bool {
     })
 }
 
-pub(crate) fn abstract_value_from_rvalue<'tcx>(rvalue: &Rvalue<'tcx>) -> Option<AbstractValue<'tcx>> {
+pub(crate) fn abstract_value_from_rvalue<'tcx>(
+    rvalue: &Rvalue<'tcx>,
+) -> Option<AbstractValue<'tcx>> {
     Some(match rvalue {
         Rvalue::Use(operand, ..) => abstract_value_from_operand(operand),
         Rvalue::Repeat(operand, _) => {
@@ -4282,10 +4346,10 @@ pub(crate) fn body_value_parents<'tcx>(
         else {
             continue;
         };
-        let name = crate::verify::call_summary::call_name(tcx, func);
+        let name = crate::helpers::mir_utils::call_name(tcx, func);
         let transfers = name.contains("into_raw")
-            || crate::verify::call_summary::is_ownership_reconstruction(&name)
-            || PrimitiveCall::classify(&name).is_some_and(|p| p.is_as_ptr_like());
+            || fn_simulator::is_ownership_reconstruction(&name)
+            || fn_simulator::is_as_ptr(&name);
         if !transfers {
             continue;
         }
@@ -4301,7 +4365,10 @@ pub(crate) fn body_value_parents<'tcx>(
 }
 
 /// Follow the provenance map to the root local (with a cycle guard).
-pub(crate) fn follow_value_parents(parents: &crate::compat::FxHashMap<Local, Local>, start: Local) -> Local {
+pub(crate) fn follow_value_parents(
+    parents: &crate::compat::FxHashMap<Local, Local>,
+    start: Local,
+) -> Local {
     let mut current = start;
     let mut seen = std::collections::HashSet::new();
     while seen.insert(current) {
@@ -4463,4 +4530,60 @@ pub(crate) fn mir_is_tuple_field_of<'tcx>(
         }
     }
     false
+}
+
+/// Per-body provenance parents: copies, casts, refs, and pointer-extraction
+/// calls collapse to the underlying source local.
+pub(crate) fn body_parents<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    body: &rustc_middle::mir::Body<'tcx>,
+) -> crate::compat::FxHashMap<rustc_middle::mir::Local, rustc_middle::mir::Local> {
+    use rustc_middle::mir::Local;
+    use rustc_middle::mir::{Operand, Rvalue, StatementKind, TerminatorKind};
+
+    let mut parents: crate::compat::FxHashMap<Local, Local> = Default::default();
+    for data in body.basic_blocks.iter() {
+        for statement in &data.statements {
+            let StatementKind::Assign(assign) = &statement.kind else {
+                continue;
+            };
+            let (target, rvalue) = assign.as_ref();
+            let source = match rvalue {
+                Rvalue::Use(Operand::Copy(place) | Operand::Move(place), ..)
+                | Rvalue::Cast(_, Operand::Copy(place) | Operand::Move(place), _)
+                | Rvalue::Ref(_, _, place)
+                | Rvalue::RawPtr(_, place)
+                | Rvalue::CopyForDeref(place) => Some(place.local),
+                _ => None,
+            };
+            if let Some(source) = source {
+                parents.entry(target.local).or_insert(source);
+            }
+        }
+        let Some(terminator) = &data.terminator else {
+            continue;
+        };
+        let TerminatorKind::Call {
+            func,
+            args,
+            destination,
+            ..
+        } = &terminator.kind
+        else {
+            continue;
+        };
+        let name = crate::helpers::mir_utils::call_name(tcx, func);
+        if !fn_simulator::is_as_ptr(&name)
+        {
+            continue;
+        }
+        let Some(source) = args.first().and_then(|arg| match &arg.node {
+            Operand::Copy(place) | Operand::Move(place) => Some(place.local),
+            _ => None,
+        }) else {
+            continue;
+        };
+        parents.entry(destination.local).or_insert(source);
+    }
+    parents
 }

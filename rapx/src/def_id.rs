@@ -87,10 +87,11 @@ fn init_inner(tcx: TyCtxt) -> Intrinsics {
 }
 
 macro_rules! intrinsics {
-    ($( $id:ident : $paths:expr ,)+ ) => {
+    ($( $id:ident : $paths:expr ,)+) => {
         const INTRINSICS: &[&[&str]] = &[$( $paths ,)+];
         $(
             paste::paste! {
+                #[allow(dead_code)]
                 pub fn [<$id _opt>] () -> Option<DefId> {
                     let map = &INIT.get().expect("Intrinsics DefIds haven't been initialized.").map;
                     for path in $paths {

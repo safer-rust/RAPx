@@ -1,33 +1,20 @@
-use once_cell::sync::OnceCell;
 
 use rustc_middle::ty::TyCtxt;
 
 use crate::{
     analysis::dataflow::*,
     check::opt::OptCheck,
-    helpers::def_path::DefPath,
-    utils::log::{relative_pos_range, span_to_filename, span_to_line_number, span_to_source_code},
+    utils::span::{relative_pos_range, span_to_filename, span_to_line_number, span_to_source_code},
 };
 use annotate_snippets::{Level, Renderer, Snippet};
 use rustc_span::Span;
 
-static DEFPATHS: OnceCell<DefPaths> = OnceCell::new();
-
-struct DefPaths {
-    flat_map: DefPath,
-    flatten: DefPath,
-    collect: DefPath,
+crate::def_paths! {
+    flat_map: "std::iter::Iterator::flat_map",
+    flatten: "std::iter::Iterator::flatten",
+    collect: "std::iter::Iterator::collect",
 }
 
-impl DefPaths {
-    fn new(tcx: &TyCtxt<'_>) -> Self {
-        Self {
-            flat_map: DefPath::new("std::iter::Iterator::flat_map", tcx),
-            flatten: DefPath::new("std::iter::Iterator::flatten", tcx),
-            collect: DefPath::new("std::iter::Iterator::collect", tcx),
-        }
-    }
-}
 
 pub struct FlattenCollectCheck {
     record: Vec<Span>,

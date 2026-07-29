@@ -6,6 +6,7 @@
 //! finite verification path; keeping it separate lets the core visit logic stay
 //! focused on path-level decisions (calls, SCC exits, path conditions).
 
+use crate::analysis::dataflow::types::DataflowGraph;
 use crate::compat::FxHashSet;
 use crate::compat::Spanned;
 use rustc_middle::mir::{
@@ -18,8 +19,9 @@ use super::{
         ContractExpr, ContractPlace, ContractProjection, NumericPredicate, PlaceBase, Property,
         PropertyArg, PropertyKind,
     },
-    helpers::{Checkpoint, callee_param_index_for_local},
 };
+use crate::helpers::mir_utils::callee_param_index_for_local;
+use crate::helpers::mir_scan::Checkpoint;
 
 /// Definitions and uses collected from one MIR item.
 #[derive(Clone, Debug, Default)]
@@ -72,6 +74,7 @@ impl PlaceKey {
                 .filter_map(|projection| match projection {
                     ContractProjection::Field { index, .. } => Some(*index),
                     ContractProjection::Downcast { .. } => Some(0),
+                    ContractProjection::IterElements => None,
                 })
                 .collect(),
         }
@@ -518,4 +521,29 @@ pub fn rvalue_operands<'tcx>(rvalue: &'tcx Rvalue<'tcx>) -> Vec<&'tcx Operand<'t
         Rvalue::Discriminant(_) | Rvalue::CopyForDeref(_) | Rvalue::ThreadLocalRef(_) | _ => {}
     }
     operands
+}
+
+// ── chain-tracing helpers ────────────────────────────────────────────
+
+/// Follow Copy/Move edges in the dataflow graph upward to find the
+/// root real local behind any copy chains (no projections).
+pub fn trace_local_origin(flow: &DataflowGraph, local: Local) -> Local {
+    flow.trace_origin(local)
+}
+
+/// Like [`trace_local_origin`] but on a [`PlaceKey`].
+pub fn trace_place_origin(flow: &DataflowGraph, key: &PlaceKey) -> PlaceKey {
+    let Some(local) = key.local() else {
+        return key.clone();
+    };
+    PlaceKey {
+        base: PlaceBaseKey::Local(flow.trace_origin(local).as_usize()),
+        fields: key.fields.clone(),
+    }
+}
+
+/// True when a local's origin was destructured from a tuple field
+/// (e.g. `(tuple.0, tuple.1)` after a call returning a tuple).
+pub fn is_from_tuple_field(flow: &DataflowGraph, local: Local) -> bool {
+    flow.is_from_tuple_field(local)
 }

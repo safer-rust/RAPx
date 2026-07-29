@@ -21,7 +21,7 @@ jobs:
     - name: Build
       run: ./install.sh
     - name: Test
-      run: cd rapx && cargo test
+      run: cd rapx && cargo test -- --test-threads=1
 
   asterinas:
     runs-on: ubuntu-22.04
@@ -36,7 +36,7 @@ jobs:
     - name: Build
       run: ./install.sh
     - name: Test
-      run: cd rapx && cargo test
+      run: cd rapx && cargo test -- --test-threads=1
 
   verify-std:
     runs-on: ubuntu-22.04
@@ -52,7 +52,7 @@ jobs:
     - name: Build
       run: ./install.sh
     - name: Test
-      run: cd rapx && cargo test
+      run: cd rapx && cargo test -- --test-threads=1
     - name: Verify core::slice against rapx-verify-rust-std
       run: |
         git clone https://github.com/safer-rust/rapx-verify-rust-std.git

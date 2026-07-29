@@ -29,11 +29,13 @@ use rustc_middle::ty::{Ty, TyCtxt, TyKind};
 use rustc_abi::FieldIdx;
 
 use crate::verify::{
-    contract::{ContractExpr, Property, PropertyArg, PropertyKind},
+    contract::{ContractExpr, ContractPlace, Property, PropertyArg, PropertyKind},
     def_use::{PlaceBaseKey, PlaceKey},
     target::get_struct_invariants_for_adt,
     verifier::{AbstractValue, ForwardVisitResult, StateFact},
 };
+
+use crate::helpers::mir_scan::Checkpoint;
 
 /// Maximum substitution steps while tracing the pointer back to a field.
 const MAX_TRACE_STEPS: usize = 32;
@@ -225,18 +227,18 @@ fn invariant_kind_implies<'tcx>(
     required: &PropertyKind,
     required_ty: Option<Ty<'tcx>>,
 ) -> bool {
-    if declared == required {
+    if declared.kind_implies(required) {
+        // For ValidPtr ⇒ Allocated|InBound, ZST types are vacuously valid
+        // without allocation — the implication only holds for non-ZST.
+        if matches!(declared, PropertyKind::ValidPtr)
+            && matches!(required, PropertyKind::Allocated | PropertyKind::InBound)
+            && !required_ty.is_some_and(|ty| {
+                super::common::safe_type_layout(tcx, caller, ty).is_some_and(|(_, size)| size > 0)
+            })
+        {
+            return false;
+        }
         return true;
-    }
-    if matches!(declared, PropertyKind::Init) && matches!(required, PropertyKind::Typed) {
-        return true;
-    }
-    if matches!(declared, PropertyKind::ValidPtr)
-        && matches!(required, PropertyKind::Allocated | PropertyKind::InBound)
-    {
-        return required_ty.is_some_and(|ty| {
-            super::common::safe_type_layout(tcx, caller, ty).is_some_and(|(_, size)| size > 0)
-        });
     }
     false
 }
@@ -289,11 +291,12 @@ pub(super) fn discharge_from_contract_fact<'tcx>(
 ) -> Option<String> {
     let target_key = contract_property_key(property)?;
 
+    // Pass 1: exact place match.
     for fact in &forward.facts {
         let StateFact::Contract(contract) = fact else {
             continue;
         };
-        if contract.kind != property.kind {
+        if !contract.kind.kind_implies(&property.kind) {
             continue;
         }
         let Some(contract_key) = contract_property_key(contract) else {
@@ -311,7 +314,70 @@ pub(super) fn discharge_from_contract_fact<'tcx>(
         ));
     }
 
+    // Pass 2: for_each — target is an element of the container.
+    for fact in &forward.facts {
+        let StateFact::Contract(contract) = fact else {
+            continue;
+        };
+        let Some(ref for_each_container) = contract.for_each else {
+            continue;
+        };
+        if !contract.kind.kind_implies(&property.kind) {
+            continue;
+        }
+        let contract_root = resolve_root_local(
+            &PlaceKey::from_contract_place(for_each_container),
+            forward,
+        );
+        let Some(contract_root) = contract_root else {
+            continue;
+        };
+        let target_root = resolve_root_local(&target_key, forward);
+        if Some(contract_root) == target_root {
+            // Target is reachable from the container — either an element or the
+            // container pointer itself.  Exact matches are handled in pass 1;
+            // here we cover derived pointers (e.g. slice elements).
+            return Some(format!(
+                "{:?} discharged from for_each invariant on container",
+                property.kind
+            ));
+        }
+    }
+
     None
+}
+
+fn resolve_root_local(
+    place: &PlaceKey,
+    forward: &ForwardVisitResult,
+) -> Option<PlaceKey> {
+    let mut current = place.clone();
+    let mut seen = std::collections::HashSet::new();
+    loop {
+        if !seen.insert(current.clone()) {
+            break;
+        }
+        let Some(local) = current.local() else {
+            return None;
+        };
+        let Some(value) = forward.values.get(&local) else {
+            return Some(current);
+        };
+        let next = match value {
+            crate::verify::verifier::AbstractValue::Place(next)
+            | crate::verify::verifier::AbstractValue::Ref(next)
+            | crate::verify::verifier::AbstractValue::RawPtr(next) => next.clone(),
+            crate::verify::verifier::AbstractValue::Cast(inner, _) => match inner.as_ref() {
+                crate::verify::verifier::AbstractValue::Place(next)
+                | crate::verify::verifier::AbstractValue::Ref(next)
+                | crate::verify::verifier::AbstractValue::RawPtr(next) => next.clone(),
+                _ => break,
+            },
+            _ => break,
+        };
+        current = next;
+    }
+    Some(current)
 }
 
 /// Resolve the first place argument of a property, normalising `Arg(n)` bases
@@ -360,4 +426,136 @@ fn contract_args_cover<'tcx>(contract: &Property<'tcx>, property: &Property<'tcx
         (Some(_), None) => false,
     };
     ty_ok && elements_ok
+}
+
+pub(super) fn discharge_from_contract_fact_with_checkpoint<'tcx>(
+    property: &Property<'tcx>,
+    forward: &ForwardVisitResult<'tcx>,
+    checkpoint: &Checkpoint<'tcx>,
+) -> Option<String> {
+    let target_key =
+        checkpoint_target_key(checkpoint, property).or_else(|| contract_property_key(property))?;
+
+    for fact in &forward.facts {
+        let StateFact::Contract(contract) = fact else {
+            continue;
+        };
+        if !contract.kind.kind_implies(&property.kind) {
+            continue;
+        }
+        let Some(contract_key) = contract_property_key(contract) else {
+            continue;
+        };
+        if contract_key != target_key
+            && !provenance_chain_reaches(&contract_key, &target_key, forward)
+        {
+            continue;
+        }
+        if !contract_args_cover(contract, property) {
+            continue;
+        }
+        return Some(format!(
+            "{:?} assumed from an entry contract covering the same place",
+            property.kind
+        ));
+    }
+
+    // Pass 2: for_each via checkpoint target root tracing.
+    for fact in &forward.facts {
+        let StateFact::Contract(contract) = fact else {
+            continue;
+        };
+        let Some(ref for_each_container) = contract.for_each else {
+            continue;
+        };
+        if !contract.kind.kind_implies(&property.kind) {
+            continue;
+        }
+        let contract_root =
+            resolve_root_local(&PlaceKey::from_contract_place(for_each_container), forward);
+        let Some(contract_root) = contract_root else {
+            continue;
+        };
+        let target_root = resolve_root_local(&target_key, forward);
+        if Some(contract_root) == target_root {
+            return Some(format!(
+                "{:?} discharged from for_each invariant on container",
+                property.kind
+            ));
+        }
+    }
+
+    None
+}
+
+fn checkpoint_target_key<'tcx>(
+    checkpoint: &Checkpoint<'tcx>,
+    property: &Property<'tcx>,
+) -> Option<PlaceKey> {
+    let arg = property.args.first()?;
+    let place = match arg {
+        PropertyArg::Place(place) => place,
+        PropertyArg::Expr(ContractExpr::Place(place)) => place,
+        _ => return None,
+    };
+    if let ContractPlace {
+        base: crate::verify::contract::PlaceBase::Arg(index),
+        ..
+    } = place
+    {
+        let operand = checkpoint.args.get(*index)?;
+        match operand {
+            rustc_middle::mir::Operand::Copy(mir_place)
+            | rustc_middle::mir::Operand::Move(mir_place) => {
+                Some(PlaceKey::from_mir_place(mir_place))
+            }
+            _ => None,
+        }
+    } else {
+        None
+    }
+}
+
+fn provenance_chain_reaches<'tcx>(
+    contract: &PlaceKey,
+    target: &PlaceKey,
+    forward: &ForwardVisitResult<'tcx>,
+) -> bool {
+    let mut seen: std::collections::HashSet<PlaceKey> = std::collections::HashSet::new();
+    let mut queue: Vec<PlaceKey> = vec![target.clone()];
+    while let Some(cur) = queue.pop() {
+        if &cur == contract {
+            return true;
+        }
+        if !seen.insert(cur.clone()) {
+            continue;
+        }
+        if cur.fields.is_empty() {
+            if let Some(local) = cur.local()
+                && let Some(def) =
+                    forward.latest_value_definition_before(local, forward.value_definitions.len())
+            {
+                match &def.value {
+                    AbstractValue::Place(p) | AbstractValue::Ref(p) | AbstractValue::RawPtr(p) => {
+                        queue.push(p.clone())
+                    }
+                    _ => {}
+                }
+            }
+        }
+        for fact in &forward.facts {
+            let StateFact::Cast { target, source, .. } = fact else {
+                continue;
+            };
+            if target == &cur {
+                match source {
+                    AbstractValue::Place(p) | AbstractValue::Ref(p) | AbstractValue::RawPtr(p) => {
+                        queue.push(p.clone())
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    false
 }

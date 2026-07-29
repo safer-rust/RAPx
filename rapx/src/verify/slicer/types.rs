@@ -8,9 +8,9 @@
 use crate::verify::{
     contract,
     def_use::RelevantPlaces,
-    helpers::CheckpointLocation,
     path_extractor::{Path, PathStep},
 };
+use crate::helpers::mir_scan::CheckpointLocation;
 use rustc_middle::mir::BasicBlock;
 
 /// MIR items relevant to one `(checkpoint, path, property)` item.

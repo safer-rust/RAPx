@@ -17,9 +17,10 @@ use crate::verify::{
     call_summary::CallEffect,
     contract::Property,
     def_use::PlaceKey,
-    helpers::Checkpoint,
     verifier::{AbstractValue, ForwardVisitResult, StateFact},
 };
+
+use crate::helpers::mir_scan::Checkpoint;
 
 const MAX_TYPED_TRACE_DEPTH: usize = 32;
 
@@ -30,6 +31,14 @@ pub(crate) fn check<'tcx>(
     property: &Property<'tcx>,
     forward: &ForwardVisitResult<'tcx>,
 ) -> SmtCheckResult {
+    if let Some(reason) =
+        super::field_invariant::discharge_from_contract_fact_with_checkpoint(
+            property, forward, checkpoint,
+        )
+    {
+        return SmtCheckResult::proved(format!("Typed proved: {reason}"));
+    }
+
     let Some(target) = checker.property_target(Some(checkpoint), property) else {
         return SmtCheckResult::unknown("Typed target could not be resolved");
     };
@@ -42,6 +51,7 @@ pub(crate) fn check<'tcx>(
         caller: checkpoint.caller,
         forward,
         required_ty,
+        callee: checkpoint.callee,
     };
 
     let mut seen = HashSet::new();
@@ -79,6 +89,7 @@ struct TypedContext<'a, 'tcx> {
     caller: DefId,
     forward: &'a ForwardVisitResult<'tcx>,
     required_ty: Ty<'tcx>,
+    callee: Option<DefId>,
 }
 
 impl<'a, 'tcx> TypedContext<'a, 'tcx> {
@@ -238,8 +249,37 @@ impl<'a, 'tcx> TypedContext<'a, 'tcx> {
             TyKind::RawPtr(_, _) => false,
             TyKind::Ref(_, inner, _) => self.ty_matches(payload_ty(inner)),
             TyKind::Slice(element) | TyKind::Array(element, _) => self.ty_matches(element),
+            TyKind::Adt(_, args) => {
+                // MaybeUninit<T> is a union: default field `uninit: ()` is
+                // active → Typed(MaybeUninit<T>) but not Typed(T).  Writing
+                // through a `*mut T` from `as_mut_ptr()` targets field 1
+                // (`value: ManuallyDrop<T>`), transitioning it.  Allow
+                // Typed(T) when the callee is a write operation that
+                // initializes the value variant through its mutable parameter.
+                if let Some(callee) = self.callee
+                    && let Some(inner_ty) = args.first()
+                        .and_then(|a| match a.kind() {
+                            rustc_middle::ty::GenericArgKind::Type(t) => Some(t),
+                            _ => None,
+                        })
+                    && self.ty_matches(inner_ty)
+                    && self.callee_writes_to_target(callee)
+                {
+                    return true;
+                }
+                self.ty_matches(ty)
+            }
             _ => self.ty_matches(ty),
         }
+    }
+
+    /// Return true when the callee writes to its target (has a `*mut T` or
+    /// `&mut T` parameter), initializing `MaybeUninit` storage.  Checked via
+    /// the callee name: write / copy / swap operations all take mutable
+    /// provenance.
+    fn callee_writes_to_target(&self, callee: DefId) -> bool {
+        let name = self.checker.tcx.def_path_str(callee);
+        name.contains("write") || name.contains("copy") || name.contains("swap")
     }
 
     /// Resolve a place type from MIR locals and field projections.

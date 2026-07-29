@@ -84,16 +84,8 @@ impl<'tcx> PathAnalyzer<'tcx> {
 }
 
 impl<'tcx> Analysis for PathAnalyzer<'tcx> {
-    fn name(&self) -> &'static str {
-        "Path Analysis"
-    }
-
     fn run(&mut self) {
         self.analyze_all();
     }
 
-    fn reset(&mut self) {
-        self.paths.clear();
-        self.graphs.clear();
-    }
 }

@@ -30,6 +30,7 @@ impl<'tcx> rCanary<'tcx> {
         heap.run();
         let adt_owner = heap.get_all_items();
         let rcx_boxed = Box::new(rCanary::new(self.tcx, adt_owner));
+        // Leak to create a 'static reference needed for FlowAnalysis lifetime.
         let rcx = Box::leak(rcx_boxed);
         FlowAnalysis::new(rcx).start();
     }

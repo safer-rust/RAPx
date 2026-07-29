@@ -520,18 +520,5 @@ pub fn is_z3_goal_verbose() -> bool {
     match env::var_os("Z3") {
         Some(_) => true,
         _ => false,
-    }
-}
-
-#[derive(Debug, Copy, Clone, Hash)]
-pub enum IcxSliceDisplay {
-    Verbose,
-    Disabled,
-}
-
-pub fn is_icx_slice_verbose() -> bool {
-    match env::var_os("ICX_SLICE") {
-        Some(_) => true,
-        _ => false,
-    }
+     }
 }

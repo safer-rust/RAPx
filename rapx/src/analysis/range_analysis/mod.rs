@@ -108,7 +108,7 @@ where
     T: IntervalArithmetic + Clone + PartialOrd + Display,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "=== Print range analysis resuts ===")?;
+        writeln!(f, "=== Print range analysis results ===")?;
         for (def_id, vec_of_maps) in &self.0 {
             let fn_name = get_fn_name_byid(def_id);
             writeln!(f, "Function: {:?} =>", fn_name)?;

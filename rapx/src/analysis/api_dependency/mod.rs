@@ -64,10 +64,6 @@ impl<'tcx> ApiDependencyAnalyzer<'tcx> {
 }
 
 impl<'tcx> Analysis for ApiDependencyAnalyzer<'tcx> {
-    fn name(&self) -> &'static str {
-        "Default API dependency graph analysis algorithm."
-    }
-
     fn run(&mut self) {
         let local_crate_name = self.tcx.crate_name(LOCAL_CRATE);
         let local_crate_type = self.tcx.crate_types()[0];
@@ -134,9 +130,6 @@ impl<'tcx> Analysis for ApiDependencyAnalyzer<'tcx> {
         }
     }
 
-    fn reset(&mut self) {
-        self.api_graph = ApiDependencyGraph::new(self.tcx);
-    }
 }
 impl<'tcx> ApiDependencyAnalyzer<'tcx> {
     pub fn get_api_dependency_graph(&self) -> ApiDependencyGraph<'tcx> {

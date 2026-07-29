@@ -20,18 +20,23 @@ use crate::compat::{FxHashMap, FxHashSet};
 use indexmap::IndexMap;
 use rustc_middle::mir::BasicBlock;
 use rustc_middle::ty::TyCtxt;
-use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use super::{
     contract::Property,
+    display::{
+        emit_lines, emit_property_rows, emit_verify_summary, fmt_contract_expanded,
+        fmt_fn_path_with_generics, fmt_fn_with_params,
+    },
     engine::VerifyEngine,
-    helpers::{Checkpoint, CheckpointKind, CheckpointLocation, collect_return_block_indices},
     loop_sensitivity::{LoopSensitivityAnalyzer, RepeatStrategy},
     path_extractor::{CallGroup, PATH_LIMIT, PathExtractor},
     report::{PropertyCheckResult, VerificationReport, VisitDiagnostics},
     slicer::BackwardItem,
     target::{FunctionTarget, VerifyTargetCollector},
 };
+use crate::helpers::mir_utils::collect_return_block_indices;
+
+use crate::helpers::mir_scan::{Checkpoint, CheckpointLocation};
 
 /// Orchestrates the three-stage verification pipeline (backward data-dependency
 /// analysis → forward state simulation → SMT checking) for a single function
@@ -110,13 +115,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
         target: &'target FunctionTarget<'tcx>,
         allow_repeat: usize,
     ) -> Self {
-        let mut all_checkpoints = target.checkpoints.clone();
-        for (checkpoint, _) in &target.raw_ptr_deref_checks {
-            all_checkpoints.push(checkpoint.clone());
-        }
-        for (checkpoint, _) in &target.static_mut_checks {
-            all_checkpoints.push(checkpoint.clone());
-        }
+        let all_checkpoints: Vec<_> = target.all_checkpoints().into_iter().cloned().collect();
         let path_info = PathExtractor::new(tcx, target.def_id, all_checkpoints, allow_repeat).run();
         let engine = VerifyEngine::new(tcx);
         Self {
@@ -230,25 +229,23 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
             }
 
             if group_proved {
-                for _path_idx in 0..best_per_path.len() {
-                    let desc = format!(
-                        "OR group {}/{} ({} sub-properties all proved)",
-                        group_idx + 1,
-                        num_groups,
-                        group.len(),
-                    );
-                    report.push(PropertyCheckResult {
-                        checkpoint: view.checkpoint.location(),
-                        checkpoint_index: view.checkpoint_index,
-                        path_index: 0,
-                        property_index,
-                        property: or_property.clone(),
-                        result: CheckResult::Proved,
-                        diagnostics: Some(VisitDiagnostics::new(String::new(), desc.clone())),
-                        path_description: format!("group-{}/{}", group_idx + 1, num_groups),
-                        callee_name: view.checkpoint.callee_name(self.tcx),
-                    });
-                }
+                let desc = format!(
+                    "OR group {}/{} ({} sub-properties all proved)",
+                    group_idx + 1,
+                    num_groups,
+                    group.len(),
+                );
+                report.push(PropertyCheckResult {
+                    checkpoint: view.checkpoint.location(),
+                    checkpoint_index: view.checkpoint_index,
+                    path_index: 0,
+                    property_index,
+                    property: or_property.clone(),
+                    result: CheckResult::Proved,
+                    diagnostics: Some(VisitDiagnostics::new(String::new(), desc)),
+                    path_description: format!("group-{}/{}", group_idx + 1, num_groups),
+                    callee_name: view.checkpoint.callee_name(self.tcx),
+                });
                 return;
             }
         }
@@ -288,36 +285,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
         &self,
         checkpoint: &Checkpoint<'tcx>,
     ) -> &'target [Property<'tcx>] {
-        let loc = checkpoint.location();
-        match checkpoint.kind {
-            CheckpointKind::RawPtrDeref => {
-                for (cs, props) in &self.target.raw_ptr_deref_checks {
-                    if cs.location() == loc {
-                        return props.as_slice();
-                    }
-                }
-                &[]
-            }
-            CheckpointKind::StaticMutAccess => {
-                for (cs, props) in &self.target.static_mut_checks {
-                    if cs.location() == loc {
-                        return props.as_slice();
-                    }
-                }
-                &[]
-            }
-            CheckpointKind::UnsafeCall => {
-                if let Some(callee) = checkpoint.callee {
-                    self.target
-                        .callee_requires
-                        .get(&callee)
-                        .map(Vec::as_slice)
-                        .unwrap_or(&[])
-                } else {
-                    &[]
-                }
-            }
-        }
+        self.target.properties_for_callsite(checkpoint)
     }
 
     /// Iterate over checkpoints together with their shared path tree and properties.
@@ -512,6 +480,7 @@ pub struct VerifyRun<'tcx> {
     tcx: TyCtxt<'tcx>,
     repeat_strategy: RepeatStrategy,
     mode: VerifyMode,
+    skip_invariant: bool,
     crate_filter: Option<String>,
     module_filter: Option<String>,
     debug_contracts: bool,
@@ -523,6 +492,7 @@ impl<'tcx> VerifyRun<'tcx> {
         tcx: TyCtxt<'tcx>,
         repeat_strategy: RepeatStrategy,
         mode: VerifyMode,
+        skip_invariant: bool,
         crate_filter: Option<String>,
         module_filter: Option<String>,
         debug_contracts: bool,
@@ -531,6 +501,7 @@ impl<'tcx> VerifyRun<'tcx> {
             tcx,
             repeat_strategy,
             mode,
+            skip_invariant,
             crate_filter,
             module_filter,
             debug_contracts,
@@ -548,7 +519,7 @@ impl<'tcx> VerifyRun<'tcx> {
         }
     }
 
-    /// In invless mode, generate verification sequences for each read method
+    /// With `--skip-invariant`, generate verification sequences for each read method
     /// that chain through constructors and mutators.
     ///
     /// Produces sequences like:
@@ -568,18 +539,16 @@ impl<'tcx> VerifyRun<'tcx> {
 
             for &con_id in &cons {
                 let con_target = self.build_virtual_target(target, read_def_id, con_id, &[]);
-                self.verify_and_emit_sequence(target, read_def_id, &con_target, con_id, &[], 0);
+                self.verify_and_emit_sequence(read_def_id, &con_target, con_id, &[]);
 
-                for (mut_idx, &mut_id) in muts.iter().enumerate() {
+                for &mut_id in &muts {
                     let con_target =
                         self.build_virtual_target(target, read_def_id, con_id, &[mut_id]);
                     self.verify_and_emit_sequence(
-                        target,
                         read_def_id,
                         &con_target,
                         con_id,
                         &[mut_id],
-                        1 + mut_idx,
                     );
                 }
             }
@@ -595,8 +564,12 @@ impl<'tcx> VerifyRun<'tcx> {
     ) -> FunctionTarget<'tcx> {
         let mut accumulated_requires: Vec<Property<'tcx>> = Vec::new();
 
-        // Start with the constructor's requires
-        let con_contracts = get_contract_from_annotation(self.tcx, con_id);
+        // Start with the constructor's requires, remapped to refer to struct
+        // fields (self.field) instead of constructor parameters.
+        let con_contracts: Vec<Property<'tcx>> = get_contract_from_annotation(self.tcx, con_id)
+            .into_iter()
+            .map(|c| remap_constructor_contract(c))
+            .collect();
         accumulated_requires.extend(con_contracts);
 
         // Remove contracts that are invalidated by mutators
@@ -617,13 +590,12 @@ impl<'tcx> VerifyRun<'tcx> {
             }
         }
 
-        // Also include the read method's own requires
-        let own_requires = get_contract_from_annotation(self.tcx, read_def_id);
-        for req in own_requires {
-            if !accumulated_requires.iter().any(|p| same_property(p, &req)) {
-                accumulated_requires.push(req);
-            }
-        }
+        // Also include the read method's own caller requires (which already
+        // contains struct invariants merged by build_function_target).
+        // This is broader than just `get_contract_from_annotation` because
+        // it propagates struct-level properties even when the method has no
+        // explicit `#[rapx::requires]`.
+        accumulated_requires.extend(read_target.caller_requires.clone());
 
         FunctionTarget {
             def_id: read_def_id,
@@ -639,28 +611,24 @@ impl<'tcx> VerifyRun<'tcx> {
 
     fn verify_and_emit_sequence(
         &self,
-        _read_target: &FunctionTarget<'tcx>,
         read_def_id: rustc_hir::def_id::DefId,
         con_target: &FunctionTarget<'tcx>,
         con_id: rustc_hir::def_id::DefId,
         mut_ids: &[rustc_hir::def_id::DefId],
-        _seq_index: usize,
     ) {
         let mut all_results: Vec<PropertyCheckResult<'_>> = Vec::new();
 
         let (_, repeat_rounds) = self.repeat_rounds_for_target(con_target);
         for repeat in repeat_rounds {
             let driver = VerifyDriver::new_with_repeat(self.tcx, con_target, repeat);
-            let result = catch_unwind(AssertUnwindSafe(|| driver.verify_function()));
-            match result {
+            match crate::helpers::mir_utils::catch_panic(|| driver.verify_function()) {
                 Ok(report) => {
                     rap_debug!("{}", report.describe());
                     all_results.extend(report.results);
                 }
-                Err(e) => {
-                    let msg = panic_downcast_msg(e);
+                Err(msg) => {
                     rap_warn!(
-                        "Skipping invless constructor {} (repeat {}): {msg}",
+                        "Skipping constructor {} (repeat {}): {msg}",
                         self.tcx.def_path_str(con_id),
                         repeat,
                     );
@@ -686,7 +654,9 @@ impl<'tcx> VerifyRun<'tcx> {
         let unproved = all_results
             .iter()
             .filter(|r| {
-                if r.property.contract_kind == crate::verify::contract::ContractKind::Hazard {
+                if r.property.contract_kind == crate::verify::contract::ContractKind::Hazard
+                    || r.property.contract_kind == crate::verify::contract::ContractKind::Option_
+                {
                     return false;
                 }
                 !matches!(r.result, super::report::CheckResult::Proved)
@@ -718,7 +688,9 @@ impl<'tcx> VerifyRun<'tcx> {
             }
         }
 
-        if unproved == 0 && !all_results.is_empty() {
+        if all_results.is_empty() {
+            rap_info!("  result: SOUND (no unsafe checkpoints)");
+        } else if unproved == 0 {
             rap_info!(green, "  result: SOUND");
         } else {
             rap_warn!("  result: UNSOUND ({unproved} unproved)");
@@ -728,10 +700,6 @@ impl<'tcx> VerifyRun<'tcx> {
 }
 
 impl<'tcx> Analysis for VerifyRun<'tcx> {
-    fn name(&self) -> &'static str {
-        "Verify Driver"
-    }
-
     /// Collect verify targets, run the staged driver, and emit a compact summary.
     ///
     /// For each target, extracts paths with increasing `postfix-repeat`
@@ -742,6 +710,7 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
         let mut collector = VerifyTargetCollector::new(
             self.tcx,
             self.mode,
+            self.skip_invariant,
             self.crate_filter.clone(),
             self.module_filter.clone(),
         );
@@ -762,14 +731,12 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
             // Phase 1: unsafe checkpoint verification
             for repeat in repeat_rounds {
                 let driver = VerifyDriver::new_with_repeat(self.tcx, target, repeat);
-                let result = catch_unwind(AssertUnwindSafe(|| driver.verify_function()));
-                match result {
+                match crate::helpers::mir_utils::catch_panic(|| driver.verify_function()) {
                     Ok(report) => {
                         rap_debug!("{}", report.describe());
                         all_results.extend(report.results);
                     }
-                    Err(e) => {
-                        let msg = panic_downcast_msg(e);
+                    Err(msg) => {
                         rap_warn!(
                             "Skipping function {} (repeat {}): {msg}",
                             target_path,
@@ -782,7 +749,7 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
             }
 
             // Phase 2: struct invariant verification
-            if !target.struct_invariants.is_empty() && !matches!(self.mode, VerifyMode::Invless) {
+            if !target.struct_invariants.is_empty() && !self.skip_invariant {
                 let driver = VerifyDriver::new_with_repeat(self.tcx, target, planned_repeat);
                 let struct_report = driver.verify_struct_invariants();
                 rap_debug!("{}", struct_report.describe());
@@ -807,7 +774,7 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                     rap_info!("============================================================");
                     rap_info!("[rapx::verify] function: {target_path}");
                     rap_info!("============================================================");
-                    if matches!(self.mode, VerifyMode::Invless) {
+                    if self.skip_invariant {
                         let cons = get_cons(self.tcx, target.def_id);
                         for con in &cons {
                             rap_info!("  + constructor: {}", self.tcx.def_path_str(*con));
@@ -822,11 +789,9 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                 continue;
             }
 
-            // In invless mode, skip standalone emission for methods that
+            // When --skip-invariant is set, skip standalone emission for methods that
             // have constructors — sequences will generate dedicated entries.
-            if matches!(self.mode, VerifyMode::Invless)
-                && !get_cons(self.tcx, target.def_id).is_empty()
-            {
+            if self.skip_invariant && !get_cons(self.tcx, target.def_id).is_empty() {
                 continue;
             }
 
@@ -835,7 +800,7 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                 &target_path,
                 target.def_id,
                 &all_results,
-                self.mode,
+                self.skip_invariant,
             );
         }
 
@@ -879,13 +844,12 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
             }
         }
 
-        // Invless mode: generate constructor-mutator-method sequences
-        if matches!(self.mode, VerifyMode::Invless) {
+        // --skip-invariant: generate constructor-mutator-method sequences
+        if self.skip_invariant {
             self.run_invless_sequences(&collector.function_targets);
         }
     }
 
-    fn reset(&mut self) {}
 }
 
 impl<'tcx> VerifyRun<'tcx> {
@@ -1104,666 +1068,6 @@ impl<'tcx> VerifyRun<'tcx> {
     }
 }
 
-fn fmt_fn_with_params(path: &str, arg_names: &[String], ret_ty: Option<&str>) -> String {
-    let args = arg_names.join(", ");
-    match ret_ty {
-        Some(ret) => format!("fn {path}({args}) -> {ret}"),
-        None if args.is_empty() => format!("fn {path}"),
-        None => format!("fn {path}({args})"),
-    }
-}
-
-fn fmt_fn_path_with_generics(
-    tcx: rustc_middle::ty::TyCtxt<'_>,
-    def_id: rustc_hir::def_id::DefId,
-) -> String {
-    let path = tcx.def_path_str(def_id);
-    let generics = tcx.generics_of(def_id);
-    let params: Vec<_> = generics
-        .own_params
-        .iter()
-        .map(|p| p.name.to_string())
-        .collect();
-    if params.is_empty() {
-        path
-    } else {
-        format!("{}::<{}>", path, params.join(", "))
-    }
-}
-
-fn emit_lines(lines: &[(String, String)]) {
-    for (tag, meaning) in lines {
-        if tag.is_empty() && meaning.is_empty() {
-            rap_info!("");
-        } else if meaning.is_empty() {
-            if let Some(header) = tag.strip_prefix("[").and_then(|s| s.strip_suffix("]")) {
-                rap_info!("");
-                rap_info!("{}", header);
-                rap_info!("{:-<1$}", "", 76);
-            } else {
-                rap_info!("  // {tag}");
-            }
-        } else {
-            rap_info!("  Safety Tag: {tag}");
-            rap_info!("    Meaning:   {meaning}");
-        }
-    }
-}
-
-fn fmt_contract_expanded(
-    tcx: rustc_middle::ty::TyCtxt<'_>,
-    local_names: &[String],
-    property: &crate::verify::contract::Property<'_>,
-    struct_def_id: Option<rustc_hir::def_id::DefId>,
-) -> (String, String) {
-    use crate::verify::contract::PropertyKind;
-    let args: Vec<String> = property
-        .args
-        .iter()
-        .map(|a| fmt_arg_plain(tcx, local_names, a, struct_def_id))
-        .collect();
-    let tag = format!("{:?}", property.kind);
-    let tag = if property.contract_kind == crate::verify::contract::ContractKind::Hazard {
-        format!("[hazard] {tag}")
-    } else {
-        tag
-    };
-    let call = if matches!(property.kind, PropertyKind::SplitTransmute) {
-        let wrapped: Vec<String> = args.iter().map(|a| format!("[{a}]")).collect();
-        format!("{tag}({})", wrapped.join(", "))
-    } else if matches!(property.kind, PropertyKind::InBound)
-        && matches!(
-            property.args.first(),
-            Some(crate::verify::contract::PropertyArg::Expr(
-                crate::verify::contract::ContractExpr::IndexAccess { .. }
-            ))
-        )
-    {
-        use crate::verify::contract::{ContractExpr, PropertyArg};
-        if let Some(PropertyArg::Expr(ContractExpr::IndexAccess { slice, index })) =
-            property.args.first()
-        {
-            let mut s = fmt_expr_plain(tcx, local_names, slice);
-            s = s.strip_prefix("&mut ").unwrap_or(&s).to_string();
-            s = s.strip_prefix("&").unwrap_or(&s).to_string();
-            let i = fmt_expr_plain(tcx, local_names, index);
-            format!("{tag}({s}, {i})")
-        } else {
-            unreachable!()
-        }
-    } else {
-        if matches!(property.kind, PropertyKind::Alive) && args.len() >= 2 {
-            format!("{tag}({}, '{})", args[0], args[1])
-        } else {
-            format!("{tag}({})", args.join(", "))
-        }
-    };
-    let call = if matches!(property.kind, PropertyKind::ValidNum)
-        && let Some(crate::verify::contract::PropertyArg::Predicates(preds)) = property.args.first()
-    {
-        format!("{tag}({})", fmt_valid_num_call(tcx, local_names, preds))
-    } else {
-        call
-    };
-    let meaning = match property.kind {
-        PropertyKind::NonNull => format!(
-            "{} as usize != 0",
-            args.first().map(|s| s.as_str()).unwrap_or("_")
-        ),
-        PropertyKind::Align => {
-            let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
-            let ty = args.get(1).map(|s| s.as_str()).unwrap_or("T");
-            format!("({ptr} as usize) % align_of::<{ty}>() == 0")
-        }
-        PropertyKind::InBound => {
-            use crate::verify::contract::{ContractExpr, PropertyArg};
-            let placeholder = format!("InBound({})", args.join(", "));
-            match property.args.first() {
-                Some(PropertyArg::Expr(ContractExpr::IndexAccess { slice, index })) => {
-                    let mut s = fmt_expr_plain(tcx, local_names, slice);
-                    s = s.strip_prefix("&mut ").unwrap_or(&s).to_string();
-                    s = s.strip_prefix("&").unwrap_or(&s).to_string();
-                    let i = fmt_expr_plain(tcx, local_names, index);
-                    format!("0 <= {i} < {s}.len()")
-                }
-                Some(PropertyArg::Place(place)) => {
-                    let ptr = fmt_place_plain(tcx, place, local_names, struct_def_id);
-                    let ty = property
-                        .args
-                        .get(1)
-                        .and_then(|a| match a {
-                            PropertyArg::Ty(ty) => Some(ty.to_string()),
-                            _ => None,
-                        })
-                        .unwrap_or_else(|| "?".to_string());
-                    let cnt = property
-                        .args
-                        .get(2)
-                        .map(|a| fmt_arg_plain(tcx, local_names, a, struct_def_id))
-                        .unwrap_or_else(|| "?".to_string());
-                    format!("same_alloc([{ptr}, {ptr} + sizeof({ty})*{cnt}])")
-                }
-                _ => placeholder,
-            }
-        }
-        PropertyKind::ValidPtr => {
-            use crate::verify::contract::PropertyArg;
-            let ptr = property
-                .args
-                .first()
-                .map(|a| fmt_arg_plain(tcx, local_names, a, struct_def_id))
-                .unwrap_or_else(|| "?".to_string());
-            let ty = property
-                .args
-                .get(1)
-                .and_then(|a| match a {
-                    PropertyArg::Ty(ty) => Some(ty.to_string()),
-                    _ => None,
-                })
-                .unwrap_or_else(|| "?".to_string());
-            let cnt = property
-                .args
-                .get(2)
-                .map(|a| fmt_arg_plain(tcx, local_names, a, struct_def_id))
-                .unwrap_or_else(|| "?".to_string());
-            format!("same_alloc([{ptr}, {ptr} + sizeof({ty})*{cnt}])")
-        }
-        PropertyKind::Init => {
-            let p = args.first().map(|s| s.as_str()).unwrap_or("ptr");
-            let ty = args.get(1).map(|s| s.as_str()).unwrap_or("T");
-            let cnt = args.get(2).map(|s| s.as_str()).unwrap_or("count");
-            let line1 = format!("{cnt} element(s) of type {ty} at {p} are initialized");
-            let line2 = format!(
-                "                     forall i in 0..{cnt}: *({p} + i*sizeof({ty})) |= type_invariant({ty})"
-            );
-            format!("{line1}\n{line2}")
-        }
-        PropertyKind::Typed => {
-            let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
-            let ty = args.get(1).map(|s| s.as_str()).unwrap_or("T");
-            format!("*{ptr} holds TypeInvariant({ty})")
-        }
-        PropertyKind::Alive => {
-            let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
-            if let Some(lt) = args.get(1) {
-                format!("*{ptr} outlives '{lt}")
-            } else {
-                format!("*{ptr} outlives return")
-            }
-        }
-        PropertyKind::Alias => {
-            let p1 = args.first().map(|s| s.as_str()).unwrap_or("p1");
-            let p2 = args.get(1).map(|s| s.as_str()).unwrap_or("p2");
-            format!("{p1} and {p2} alias each other (hazard)")
-        }
-        PropertyKind::Allocated => {
-            let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
-            let suffix = if args.len() >= 3 {
-                format!(", {}, {}", args[1], args[2])
-            } else {
-                String::new()
-            };
-            format!("{ptr} points to live heap/stack allocation{suffix}")
-        }
-        PropertyKind::NonOverlap => {
-            let joined = args.join(", ");
-            format!("[{joined}] are pairwise disjoint memory ranges")
-        }
-        PropertyKind::ValidNum => args.join(" && "),
-        PropertyKind::ValidTransmute => {
-            let src = args.first().map(|s| s.as_str()).unwrap_or("Src");
-            let dst = args.get(1).map(|s| s.as_str()).unwrap_or("Dst");
-            format!("bytes_of({dst}) within bytes_of({src})")
-        }
-        PropertyKind::SplitTransmute => {
-            let src = args.first().map(|s| s.as_str()).unwrap_or("T");
-            let dst = args.get(1).map(|s| s.as_str()).unwrap_or("U");
-            let line1 = format!(
-                "[{src}] as [{dst}]: every size_of({dst})-byte contiguous chunk of [{src}] is a valid bit-pattern of {dst} (type_invariant satisfied, alignment not required)"
-            );
-            let line2 = format!(
-                "                     forall w subset bytes([{src}]), |w| == |{dst}|: reinterpret_as_{dst}(w) |= type_invariant({dst}) \\ align_of({dst})",
-            );
-            format!("{line1}\n{line2}")
-        }
-        PropertyKind::Deref => {
-            let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
-            format!("same_alloc({ptr}) and 0 <= byte_offset({ptr}) < alloc_len({ptr})")
-        }
-        PropertyKind::Ptr2Ref => {
-            let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
-            format!("can soundly convert {ptr} to &/&mut reference")
-        }
-        PropertyKind::Owning => {
-            let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
-            format!("ownership(*{ptr}) = none: no live owner aliases the pointee")
-        }
-        PropertyKind::Layout => {
-            let l = args.first().map(|s| s.as_str()).unwrap_or("layout");
-            format!("{l} matches prior allocation size and alignment")
-        }
-        PropertyKind::Size => {
-            let ty = args.first().map(|s| s.as_str()).unwrap_or("T");
-            let sz = args.get(1).map(|s| s.as_str()).unwrap_or("1");
-            match sz {
-                "sized" => format!("{ty} is Sized (non-ZST)"),
-                "unsized" => format!("{ty} is !Sized"),
-                n => format!("sizeof({ty}) = {n}"),
-            }
-        }
-        PropertyKind::NoPadding => {
-            let t = args.first().map(|s| s.as_str()).unwrap_or("T");
-            format!("{t} has no padding bytes between fields")
-        }
-        PropertyKind::Unwrap => {
-            let x = args.first().map(|s| s.as_str()).unwrap_or("x");
-            let v = args.get(1).map(|s| s.as_str()).unwrap_or("T");
-            format!("unwrap({x}) = {v}")
-        }
-        PropertyKind::ValidString => {
-            let v = args.first().map(|s| s.as_str()).unwrap_or("v");
-            format!("{v} is valid UTF-8")
-        }
-        PropertyKind::ValidCStr => {
-            let p = args.first().map(|s| s.as_str()).unwrap_or("ptr");
-            format!("{p} is a null-terminated valid UTF-8 byte sequence")
-        }
-        PropertyKind::Pinned => {
-            let p = args.first().map(|s| s.as_str()).unwrap_or("ptr");
-            format!("{p} will not be moved")
-        }
-        PropertyKind::NonVolatile => {
-            let p = args.first().map(|s| s.as_str()).unwrap_or("ptr");
-            format!("{p} does not reference volatile memory")
-        }
-        PropertyKind::Opened => {
-            let f = args.first().map(|s| s.as_str()).unwrap_or("fd");
-            format!("{f} is a valid open file descriptor")
-        }
-        PropertyKind::Trait => {
-            let t = args.first().map(|s| s.as_str()).unwrap_or("T");
-            format!("{t} upholds its unsafe trait contract")
-        }
-        PropertyKind::Nullable => {
-            let p = args.first().map(|s| s.as_str()).unwrap_or("ptr");
-            format!("{p} may be null")
-        }
-        PropertyKind::Unreachable => "not Reachable()".to_string(),
-        PropertyKind::Unknown => "(unresolved contract)".to_string(),
-        PropertyKind::Or => {
-            let group_count = property.or_alternatives.len();
-            format!("any of {group_count} alternative group(s)")
-        }
-    };
-    (call, meaning)
-}
-
-fn fmt_arg_plain(
-    tcx: rustc_middle::ty::TyCtxt<'_>,
-    local_names: &[String],
-    arg: &crate::verify::contract::PropertyArg<'_>,
-    struct_def_id: Option<rustc_hir::def_id::DefId>,
-) -> String {
-    match arg {
-        crate::verify::contract::PropertyArg::Place(place) => {
-            fmt_place_plain(tcx, place, local_names, struct_def_id)
-        }
-        crate::verify::contract::PropertyArg::Ty(ty) => format!("{}", ty),
-        crate::verify::contract::PropertyArg::Expr(expr) => fmt_expr_plain(tcx, local_names, expr),
-        crate::verify::contract::PropertyArg::Predicates(preds) => {
-            let p: Vec<_> = preds
-                .iter()
-                .map(|p| fmt_pred_plain(tcx, local_names, p))
-                .collect();
-            p.join(" && ")
-        }
-        crate::verify::contract::PropertyArg::Ident(id) => id.clone(),
-    }
-}
-
-fn fmt_place_plain(
-    tcx: rustc_middle::ty::TyCtxt<'_>,
-    place: &crate::verify::contract::ContractPlace<'_>,
-    local_names: &[String],
-    struct_def_id: Option<rustc_hir::def_id::DefId>,
-) -> String {
-    let has_projections = !place.projections.is_empty();
-    let mut base = match place.base {
-        crate::verify::contract::PlaceBase::Return => {
-            if has_projections {
-                String::new()
-            } else {
-                "return".to_string()
-            }
-        }
-        crate::verify::contract::PlaceBase::Arg(i) => local_names
-            .get(i + 1)
-            .cloned()
-            .unwrap_or_else(|| format!("arg:{}", i)),
-        crate::verify::contract::PlaceBase::Local(l) => local_names
-            .get(l)
-            .cloned()
-            .unwrap_or_else(|| format!("local_{}", l)),
-    };
-    base = base.strip_prefix("&mut ").unwrap_or(&base).to_string();
-    base = base.strip_prefix("&").unwrap_or(&base).to_string();
-    if place.projections.is_empty() {
-        base
-    } else {
-        let proj: Vec<String> = place
-            .projections
-            .iter()
-            .map(|p| match p {
-                crate::verify::contract::ContractProjection::Field { index, .. } => {
-                    if let Some(struct_def_id) = struct_def_id
-                        && let rustc_middle::ty::TyKind::Adt(adt_def, _) =
-                            tcx.type_of(struct_def_id).skip_binder().kind()
-                    {
-                        let variant = adt_def.non_enum_variant();
-                        let field_idx = rustc_abi::FieldIdx::from_usize(*index);
-                        if field_idx.as_usize() < variant.fields.len() {
-                            variant.fields[field_idx].name.to_string()
-                        } else {
-                            index.to_string()
-                        }
-                    } else {
-                        index.to_string()
-                    }
-                }
-                crate::verify::contract::ContractProjection::Downcast { .. } => {
-                    "unwrap_some()".to_string()
-                }
-            })
-            .collect();
-        if base.is_empty() {
-            proj.join(".")
-        } else {
-            format!("{}.{}", base, proj.join("."))
-        }
-    }
-}
-
-fn fmt_expr_plain(
-    tcx: rustc_middle::ty::TyCtxt<'_>,
-    local_names: &[String],
-    expr: &crate::verify::contract::ContractExpr<'_>,
-) -> String {
-    use crate::verify::contract::ContractExpr;
-    match expr {
-        ContractExpr::Place(place) => fmt_place_plain(tcx, place, local_names, None),
-        ContractExpr::Const(c) => format!("{}", c),
-        ContractExpr::ConstParam { name, .. } => name.clone(),
-        ContractExpr::SizeOf(ty) => format!("size_of::<{}>()", ty),
-        ContractExpr::AlignOf(ty) => format!("align_of::<{}>()", ty),
-        ContractExpr::Len(inner) => {
-            let inner_str = fmt_expr_plain(tcx, local_names, inner);
-            if matches!(inner.as_ref(), ContractExpr::Place(_)) {
-                format!("{}.len()", inner_str)
-            } else {
-                format!("len({})", inner_str)
-            }
-        }
-        ContractExpr::IndexAccess { slice, index } => {
-            format!(
-                "index_access({}, {})",
-                fmt_expr_plain(tcx, local_names, slice),
-                fmt_expr_plain(tcx, local_names, index)
-            )
-        }
-        ContractExpr::Binary { op, lhs, rhs } => {
-            let op_str = match op {
-                crate::verify::contract::NumericOp::Add => "+",
-                crate::verify::contract::NumericOp::Sub => "-",
-                crate::verify::contract::NumericOp::Mul => "*",
-                crate::verify::contract::NumericOp::Div => "/",
-                crate::verify::contract::NumericOp::Rem => "%",
-                crate::verify::contract::NumericOp::BitAnd => "&",
-                crate::verify::contract::NumericOp::BitOr => "|",
-                crate::verify::contract::NumericOp::BitXor => "^",
-            };
-            format!(
-                "{} {} {}",
-                fmt_expr_plain(tcx, local_names, lhs),
-                op_str,
-                fmt_expr_plain(tcx, local_names, rhs)
-            )
-        }
-        ContractExpr::Unary { op, expr: inner } => {
-            let op_str = match op {
-                crate::verify::contract::NumericUnaryOp::Not => "!",
-                crate::verify::contract::NumericUnaryOp::Neg => "-",
-            };
-            format!("{}{}", op_str, fmt_expr_plain(tcx, local_names, inner))
-        }
-        ContractExpr::Min { a, b } => {
-            format!(
-                "min({}, {})",
-                fmt_expr_plain(tcx, local_names, a),
-                fmt_expr_plain(tcx, local_names, b),
-            )
-        }
-        ContractExpr::Max { a, b } => {
-            format!(
-                "max({}, {})",
-                fmt_expr_plain(tcx, local_names, a),
-                fmt_expr_plain(tcx, local_names, b),
-            )
-        }
-        ContractExpr::Unknown => "<?>".to_string(),
-    }
-}
-
-fn fmt_valid_num_pred(
-    tcx: rustc_middle::ty::TyCtxt<'_>,
-    local_names: &[String],
-    pred: &crate::verify::contract::NumericPredicate<'_>,
-) -> String {
-    use crate::verify::contract::ContractExpr;
-    if matches!(pred.op, crate::verify::contract::RelOp::Ne)
-        && matches!(pred.rhs, ContractExpr::Const(0))
-    {
-        return fmt_expr_plain(tcx, local_names, &pred.lhs);
-    }
-    fmt_pred_plain(tcx, local_names, pred)
-}
-
-fn fmt_valid_num_call(
-    tcx: rustc_middle::ty::TyCtxt<'_>,
-    local_names: &[String],
-    preds: &[crate::verify::contract::NumericPredicate<'_>],
-) -> String {
-    use crate::verify::contract::RelOp;
-
-    if preds.len() == 2 {
-        let (lower, upper) = (&preds[0], &preds[1]);
-        let lower_l = fmt_expr_plain(tcx, local_names, &lower.lhs);
-        let lower_val = fmt_expr_plain(tcx, local_names, &lower.rhs);
-        let upper_val = fmt_expr_plain(tcx, local_names, &upper.lhs);
-        let upper_r = fmt_expr_plain(tcx, local_names, &upper.rhs);
-        if lower_val == upper_val {
-            let lo = match lower.op {
-                RelOp::Gt | RelOp::Le => lower_l,
-                _ => {
-                    return preds
-                        .iter()
-                        .map(|p| fmt_valid_num_pred(tcx, local_names, p))
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                }
-            };
-            let lb = if matches!(lower.op, RelOp::Ge | RelOp::Le) {
-                "["
-            } else {
-                "("
-            };
-            let ub = if matches!(upper.op, RelOp::Le | RelOp::Ge) {
-                "]"
-            } else {
-                ")"
-            };
-            let hi = match upper.op {
-                RelOp::Le | RelOp::Lt => upper_r,
-                _ => {
-                    return preds
-                        .iter()
-                        .map(|p| fmt_valid_num_pred(tcx, local_names, p))
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                }
-            };
-            return format!("{upper_val}, \"{lb}{lo}, {hi}{ub}\"");
-        }
-    }
-
-    preds
-        .iter()
-        .map(|p| fmt_valid_num_pred(tcx, local_names, p))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-fn fmt_pred_plain(
-    tcx: rustc_middle::ty::TyCtxt<'_>,
-    local_names: &[String],
-    pred: &crate::verify::contract::NumericPredicate<'_>,
-) -> String {
-    let op = match pred.op {
-        crate::verify::contract::RelOp::Eq => "==",
-        crate::verify::contract::RelOp::Ne => "!=",
-        crate::verify::contract::RelOp::Lt => "<",
-        crate::verify::contract::RelOp::Le => "<=",
-        crate::verify::contract::RelOp::Gt => ">",
-        crate::verify::contract::RelOp::Ge => ">=",
-    };
-    format!(
-        "{} {} {}",
-        fmt_expr_plain(tcx, local_names, &pred.lhs),
-        op,
-        fmt_expr_plain(tcx, local_names, &pred.rhs)
-    )
-}
-
-fn emit_verify_summary<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    target_path: &str,
-    def_id: rustc_hir::def_id::DefId,
-    all_results: &[PropertyCheckResult<'tcx>],
-    mode: VerifyMode,
-) {
-    let unproved = all_results
-        .iter()
-        .filter(|r| {
-            r.property.contract_kind != crate::verify::contract::ContractKind::Hazard
-                && !matches!(r.result, super::report::CheckResult::Proved)
-        })
-        .count();
-    let hazard_failed = all_results
-        .iter()
-        .filter(|r| {
-            r.property.contract_kind == crate::verify::contract::ContractKind::Hazard
-                && !matches!(r.result, super::report::CheckResult::Proved)
-        })
-        .count();
-
-    rap_info!("============================================================");
-    rap_info!("[rapx::verify] function: {target_path}");
-    rap_info!("============================================================");
-
-    if matches!(mode, VerifyMode::Invless) {
-        let cons = get_cons(tcx, def_id);
-        for con in &cons {
-            rap_info!("  + constructor: {}", tcx.def_path_str(*con));
-        }
-    }
-
-    // Group results by (checkpoint, callee_name)
-    let mut groups: IndexMap<(CheckpointLocation, String), Vec<&PropertyCheckResult<'_>>> =
-        IndexMap::new();
-    for r in all_results {
-        groups
-            .entry((r.checkpoint, r.callee_name.clone()))
-            .or_default()
-            .push(r);
-    }
-
-    // Separate into checkpoint groups and struct-invariant groups
-    let checkpoint_groups: Vec<_> = groups
-        .iter()
-        .filter(|((_, name), _)| !name.starts_with("struct-invariant"))
-        .collect();
-    let invariant_groups: Vec<_> = groups
-        .iter()
-        .filter(|((_, name), _)| name.starts_with("struct-invariant"))
-        .collect();
-
-    // Print unsafe checkpoint results
-    if !checkpoint_groups.is_empty() {
-        rap_info!("  --- unsafe checkpoints ---");
-        for ((checkpoint, callee_name), results) in &checkpoint_groups {
-            rap_info!(
-                "      unsafe checkpoint: bb{} -> {callee_name}",
-                checkpoint.block.as_usize(),
-            );
-            emit_property_rows(results);
-        }
-    }
-
-    // Print struct invariant results
-    if !invariant_groups.is_empty() {
-        rap_info!("  --- struct invariants ---");
-        for ((checkpoint, _), results) in &invariant_groups {
-            rap_info!("      checkpoint bb{}:", checkpoint.block.as_usize(),);
-            emit_property_rows(results);
-        }
-    }
-
-    if unproved == 0 {
-        rap_info!(green, "  result: SOUND");
-        if hazard_failed > 0 {
-            rap_warn!("  result: HAZARD ({hazard_failed} unproved)");
-        }
-    } else if hazard_failed > 0 {
-        rap_warn!("  result: UNSOUND ({unproved} unproved, {hazard_failed} hazard)");
-    } else {
-        rap_warn!("  result: UNSOUND ({unproved} unproved)");
-    }
-
-    rap_info!("");
-}
-
-fn emit_property_rows(results: &[&PropertyCheckResult<'_>]) {
-    let mut path_groups: FxHashMap<&str, Vec<_>> = FxHashMap::default();
-    for r in results.iter() {
-        path_groups
-            .entry(r.path_description.as_str())
-            .or_default()
-            .push(r);
-    }
-    for (path_desc, props) in &path_groups {
-        rap_info!("        path {path_desc}:");
-        for r in props.iter() {
-            let tag = if r.property.contract_kind == crate::verify::contract::ContractKind::Hazard {
-                format!("[hazard] {:?}", r.property.kind)
-            } else {
-                format!("{:?}", r.property.kind)
-            };
-            let line = format!("          {tag} | {:?}", r.result);
-            if matches!(r.result, super::report::CheckResult::Proved) {
-                rap_info!(green, "{line}");
-            } else {
-                rap_warn!("{line}");
-            }
-        }
-    }
-}
-
-/// Analysis pass that dumps backward and forward visitor diagnostics.
-pub struct VerifyVisitDump<'tcx> {
-    tcx: TyCtxt<'tcx>,
-    postfix_repeat: usize,
-    mode: VerifyMode,
-}
-
 /// Extract the last segment of a def-path (the bare function name).
 fn short_fn_name(tcx: TyCtxt<'_>, def_id: rustc_hir::def_id::DefId) -> String {
     let path = tcx.def_path_str(def_id);
@@ -1771,20 +1075,6 @@ fn short_fn_name(tcx: TyCtxt<'_>, def_id: rustc_hir::def_id::DefId) -> String {
 }
 
 /// Return true when two properties have the same kind.
-fn same_property(
-    a: &crate::verify::contract::Property<'_>,
-    b: &crate::verify::contract::Property<'_>,
-) -> bool {
-    matches!(
-        (&a.kind, &b.kind),
-        (PropertyKind::Align, PropertyKind::Align)
-            | (PropertyKind::InBound, PropertyKind::InBound)
-            | (PropertyKind::Init, PropertyKind::Init)
-            | (PropertyKind::NonNull, PropertyKind::NonNull)
-            | (PropertyKind::ValidPtr, PropertyKind::ValidPtr)
-    )
-}
-
 /// Collect struct field indices referenced by a property's contract places.
 ///
 /// Used to determine which invariants are invalidated when a mutator writes
@@ -1808,6 +1098,7 @@ fn property_field_indices(property: &crate::verify::contract::Property<'_>) -> V
                         }
                     }
                     crate::verify::contract::ContractProjection::Downcast { .. } => {}
+                    crate::verify::contract::ContractProjection::IterElements => {}
                 }
             }
         }
@@ -1815,70 +1106,48 @@ fn property_field_indices(property: &crate::verify::contract::Property<'_>) -> V
     indices
 }
 
-impl<'tcx> VerifyVisitDump<'tcx> {
-    /// Create a diagnostic dump pass for the current compiler type context.
-    pub fn new(tcx: TyCtxt<'tcx>, postfix_repeat: usize, mode: VerifyMode) -> Self {
-        Self {
-            tcx,
-            postfix_repeat,
-            mode,
+fn remap_constructor_contract<'tcx>(
+    property: crate::verify::contract::Property<'tcx>,
+) -> crate::verify::contract::Property<'tcx> {
+    use crate::verify::contract::{
+        ContractExpr, ContractPlace, ContractProjection, PlaceBase, PropertyArg,
+    };
+
+    fn remap_place_arg<'tcx>(arg: &PropertyArg<'tcx>) -> PropertyArg<'tcx> {
+        let place = match arg {
+            PropertyArg::Place(p) => p,
+            PropertyArg::Expr(ContractExpr::Place(p)) => p,
+            _ => return arg.clone(),
+        };
+        let PlaceBase::Arg(field_idx) = place.base else {
+            return arg.clone();
+        };
+        let projection = ContractProjection::Field {
+            index: field_idx,
+            ty: None,
+        };
+        let mut new_place = ContractPlace {
+            base: PlaceBase::Arg(0),
+            projections: vec![projection],
+        };
+        new_place
+            .projections
+            .extend(place.projections.iter().cloned());
+        match arg {
+            PropertyArg::Place(_) => PropertyArg::Place(new_place),
+            PropertyArg::Expr(_) => PropertyArg::Expr(ContractExpr::Place(new_place)),
+            _ => unreachable!(),
         }
     }
-}
 
-impl<'tcx> Analysis for VerifyVisitDump<'tcx> {
-    fn name(&self) -> &'static str {
-        "Verify Visitor Diagnostic Dump"
+    let new_args: Vec<PropertyArg<'tcx>> = property
+        .args
+        .iter()
+        .map(|arg| remap_place_arg(arg))
+        .collect();
+
+    crate::verify::contract::Property {
+        args: new_args,
+        ..property
     }
-
-    /// Collect verify targets and print the current staged visitor output.
-    fn run(&mut self) {
-        rap_debug!("======== #[rapx::verify] visitor diagnostics ========");
-        let mut collector = VerifyTargetCollector::new(self.tcx, self.mode, None, None);
-        self.tcx.hir_visit_all_item_likes_in_crate(&mut collector);
-
-        for target in &collector.function_targets {
-            let target_path = self.tcx.def_path_str(target.def_id);
-            rap_debug!(
-                "[rapx::verify::diagnostics] target: {} (DefId: {:?})",
-                target_path,
-                target.def_id
-            );
-
-            for repeat in 0..=self.postfix_repeat {
-                if self.postfix_repeat > 0 {
-                    rap_debug!(
-                        "[rapx::verify::diagnostics] round {}/{}: postfix-repeat={}",
-                        repeat,
-                        self.postfix_repeat,
-                        repeat
-                    );
-                }
-                let driver = VerifyDriver::new_with_repeat(self.tcx, target, repeat);
-                let result = catch_unwind(AssertUnwindSafe(|| driver.verify_function()));
-                match result {
-                    Ok(report) => {
-                        rap_debug!("{}", report.describe());
-                    }
-                    Err(_) => {
-                        rap_debug!(
-                            "[rapx::verify::diagnostics] function {} skipped due to ICE",
-                            self.tcx.def_path_str(target.def_id)
-                        );
-                    }
-                }
-            }
-        }
-
-        rap_debug!("=======================================");
-    }
-
-    fn reset(&mut self) {}
-}
-
-fn panic_downcast_msg(e: Box<dyn std::any::Any + Send>) -> String {
-    e.downcast_ref::<String>()
-        .map(|s| s.clone())
-        .or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()))
-        .unwrap_or_else(|| "<rustc ICE>".to_string())
 }

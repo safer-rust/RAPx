@@ -91,7 +91,7 @@ pub(crate) fn create_struct(
                         #[cfg(not(rapx_rustc_ge_199))]
                         tokens: None,
                     },
-                    #[cfg(rapx_rustc_ge_198)]
+                    #[cfg(all(rapx_rustc_ge_198, not(rapx_rustc_ge_199)))]
                     mut_restriction: MutRestriction {
                         kind: RestrictionKind::Unrestricted,
                         span: DUMMY_SP,
@@ -109,7 +109,9 @@ pub(crate) fn create_struct(
                     id: NodeId::from_u32(0),
                     span: DUMMY_SP,
                     is_placeholder: false,
+                    #[cfg(not(rapx_rustc_ge_199))]
                     safety: Safety::Default,
+                    #[cfg(not(rapx_rustc_ge_199))]
                     default: None,
                 }
             }

@@ -5,9 +5,10 @@ use super::common::{SmtCheckResult, SmtChecker};
 use super::valid_transmute;
 use crate::verify::{
     contract::{Property, PropertyArg},
-    helpers::Checkpoint,
     verifier::ForwardVisitResult,
 };
+
+use crate::helpers::mir_scan::Checkpoint;
 
 pub(crate) fn check<'tcx>(
     checker: &SmtChecker<'tcx>,

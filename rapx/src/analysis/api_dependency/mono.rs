@@ -2,6 +2,7 @@
 
 use super::graph::TyWrapper;
 use super::utils::{self, fn_sig_with_generic_args};
+use crate::compat;
 use crate::helpers::def_path::path_str_def_id;
 use crate::{rap_debug, rap_trace};
 use rand::Rng;
@@ -155,10 +156,7 @@ impl<'tcx> MonoSet<'tcx> {
         res
     }
 
-    fn filter_unbound_solution(mut self) -> Self {
-        self.monos.retain(|mono| mono.has_infer_types());
-        self
-    }
+
 
     // if the unbound generic type is still exist (this could happen
     // if `T` has no trait bounds at all)
@@ -247,15 +245,19 @@ fn is_args_fit_trait_bound<'tcx>(
         ty::GenericArgs::identity_for_item(tcx, fn_did)
     );
     let infcx = tcx.infer_ctxt().build(ty::TypingMode::PostAnalysis);
-    let pred = tcx.predicates_of(fn_did);
-    let inst_pred = pred.instantiate(tcx, args);
     let param_env = tcx.param_env(fn_did);
+    let pred = crate::compat::predicates_of(tcx, fn_did);
+    let inst_pred = pred.instantiate(tcx, args);
     rap_trace!(
         "[trait bound] check {}",
         tcx.def_path_str_with_args(fn_did, args)
     );
 
-    for pred in inst_pred.predicates.iter() {
+    #[cfg(not(rapx_rustc_ge_199))]
+    let iter = inst_pred.predicates.iter();
+    #[cfg(rapx_rustc_ge_199)]
+    let iter = inst_pred.clauses.iter();
+    for pred in iter {
         #[cfg(rapx_rustc_ge_198)]
         let pred = pred.skip_norm_wip();
         let obligation = Obligation::new(
@@ -285,10 +287,16 @@ fn is_args_fit_trait_bound<'tcx>(
 }
 
 fn is_fn_solvable<'tcx>(fn_did: DefId, tcx: TyCtxt<'tcx>) -> bool {
-    for pred in tcx
-        .predicates_of(fn_did)
+    let predicates = crate::compat::predicates_of(tcx, fn_did);
+    #[cfg(not(rapx_rustc_ge_199))]
+    let iter = predicates
         .instantiate_identity(tcx)
-        .predicates
+        .predicates;
+    #[cfg(rapx_rustc_ge_199)]
+    let iter = predicates
+        .instantiate_identity(tcx)
+        .clauses;
+    for pred in iter
     {
         #[cfg(rapx_rustc_ge_198)]
         let pred = pred.skip_norm_wip();
@@ -419,10 +427,15 @@ fn solve_unbound_type_generics<'tcx>(
         return;
     }
     let args = tcx.mk_args(&mono.value);
-    let preds = tcx.predicates_of(did).instantiate(tcx, args);
+    let preds = crate::compat::predicates_of(tcx, did);
+    let preds = preds.instantiate(tcx, args);
     let mut mset = MonoSet::all(args);
     rap_debug!("[solve_unbound] did = {did:?}, mset={mset:?}");
-    for pred in preds.predicates.iter() {
+    #[cfg(not(rapx_rustc_ge_199))]
+    let pred_iter = preds.predicates.iter();
+    #[cfg(rapx_rustc_ge_199)]
+    let pred_iter = preds.clauses.iter();
+    for pred in pred_iter {
         rap_debug!("[solve_unbound] pred = {:?}", pred);
         #[cfg(rapx_rustc_ge_198)]
         let pred = pred.skip_norm_wip();
@@ -551,63 +564,9 @@ pub fn resolve_mono_apis<'tcx>(
     ret
 }
 
-pub fn add_transform_tys<'tcx>(available_ty: &mut HashSet<TyWrapper<'tcx>>, tcx: TyCtxt<'tcx>) {
-    let mut new_tys = Vec::new();
-    available_ty.iter().for_each(|ty| {
-        new_tys.push(
-            Ty::new_ref(
-                tcx,
-                tcx.lifetimes.re_erased,
-                (*ty).into(),
-                ty::Mutability::Not,
-            )
-            .into(),
-        );
-        new_tys.push(Ty::new_ref(
-            tcx,
-            tcx.lifetimes.re_erased,
-            (*ty).into(),
-            ty::Mutability::Mut,
-        ));
-        new_tys.push(Ty::new_ref(
-            tcx,
-            tcx.lifetimes.re_erased,
-            Ty::new_slice(tcx, (*ty).into()),
-            ty::Mutability::Not,
-        ));
-        new_tys.push(Ty::new_ref(
-            tcx,
-            tcx.lifetimes.re_erased,
-            Ty::new_slice(tcx, (*ty).into()),
-            ty::Mutability::Mut,
-        ));
-    });
 
-    new_tys.into_iter().for_each(|ty| {
-        available_ty.insert(ty.into());
-    });
-}
 
-pub fn eliminate_infer_var<'tcx>(
-    fn_did: DefId,
-    args: &[ty::GenericArg<'tcx>],
-    tcx: TyCtxt<'tcx>,
-) -> Vec<ty::GenericArg<'tcx>> {
-    let mut res = Vec::new();
-    let identity = ty::GenericArgs::identity_for_item(tcx, fn_did);
-    for (i, arg) in args.iter().enumerate() {
-        if let GenericArgKind::Type(ty) = arg.kind() {
-            if ty.is_ty_var() {
-                res.push(identity[i]);
-            } else {
-                res.push(*arg);
-            }
-        } else {
-            res.push(*arg);
-        }
-    }
-    res
-}
+
 
 /// if type parameter is unbound, e.g., `T` in `fn foo<T>()`,
 /// we use some predefined types to substitute it
@@ -659,7 +618,8 @@ pub fn get_impls<'tcx>(
         args
     );
     let mut impls = HashSet::new();
-    let preds = tcx.predicates_of(fn_did).instantiate(tcx, args);
+    let preds = crate::compat::predicates_of(tcx, fn_did);
+    let preds = preds.instantiate(tcx, args);
     for (pred, _) in preds {
         #[cfg(rapx_rustc_ge_198)]
         let pred = pred.skip_norm_wip();

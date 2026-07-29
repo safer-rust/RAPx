@@ -5,8 +5,7 @@
 //! agnostic: clients provide successor queries and receive each discovered SCC
 //! through `on_scc_found`.
 
-use crate::compat::{FxHashMap, FxHashSet};
-use rustc_middle::mir::BasicBlock;
+use crate::compat::FxHashSet;
 use std::cmp;
 
 /// An outgoing edge from an SCC body to a block outside the SCC.
@@ -66,108 +65,6 @@ impl SccInfo {
     /// Compatibility accessor for older callers.
     pub fn enter(&self) -> usize {
         self.enter
-    }
-}
-
-/// A cyclic SCC region specialized for MIR basic blocks.
-#[derive(Clone, Debug)]
-pub struct SccRegion {
-    /// Stable representative block used as the key for this SCC region.
-    pub representative: BasicBlock,
-    /// Blocks that belong to the SCC region.
-    pub blocks: Vec<BasicBlock>,
-    /// Edges that leave the SCC region.
-    pub exits: Vec<SccRegionExit>,
-    /// Edges inside the SCC region that go back to an earlier block or the representative.
-    pub backedges: Vec<(BasicBlock, BasicBlock)>,
-}
-
-/// An edge that leaves a detected MIR SCC region.
-#[derive(Clone, Debug)]
-pub struct SccRegionExit {
-    /// Source block inside the SCC region.
-    pub from: BasicBlock,
-    /// Destination block outside the SCC region.
-    pub to: BasicBlock,
-}
-
-/// Detect cyclic SCC regions in a MIR CFG successor graph.
-pub fn find_scc_regions(
-    successors: &[Vec<BasicBlock>],
-) -> (Vec<SccRegion>, FxHashMap<BasicBlock, BasicBlock>) {
-    let successors_usize: Vec<Vec<usize>> = successors
-        .iter()
-        .map(|nexts| nexts.iter().map(|bb| bb.as_usize()).collect())
-        .collect();
-    let components = collect_scc_components(&successors_usize);
-
-    let mut scc_regions = Vec::new();
-    let mut block_to_scc = FxHashMap::default();
-    for mut component in components {
-        component.sort_unstable();
-        let has_self_edge = component.len() == 1
-            && successors[component[0]]
-                .iter()
-                .any(|succ| succ.as_usize() == component[0]);
-        if component.len() <= 1 && !has_self_edge {
-            continue;
-        }
-
-        let representative = BasicBlock::from_usize(component[0]);
-        let block_set: FxHashSet<usize> = component.iter().copied().collect();
-        let mut exits = Vec::new();
-        let mut backedges = Vec::new();
-
-        for &block_idx in &component {
-            let block = BasicBlock::from_usize(block_idx);
-            for &succ in &successors[block_idx] {
-                let succ_idx = succ.as_usize();
-                if block_set.contains(&succ_idx) {
-                    if succ_idx <= block_idx || succ == representative {
-                        backedges.push((block, succ));
-                    }
-                } else {
-                    exits.push(SccRegionExit {
-                        from: block,
-                        to: succ,
-                    });
-                }
-            }
-        }
-
-        for &block_idx in &component {
-            block_to_scc.insert(BasicBlock::from_usize(block_idx), representative);
-        }
-
-        scc_regions.push(SccRegion {
-            representative,
-            blocks: component.into_iter().map(BasicBlock::from_usize).collect(),
-            exits,
-            backedges,
-        });
-    }
-
-    (scc_regions, block_to_scc)
-}
-
-/// Collect all SCC components from a successor graph.
-pub fn collect_scc_components(successors: &[Vec<usize>]) -> Vec<Vec<usize>> {
-    let mut collector = SccComponentCollector::new(successors.to_vec());
-    collector.find_scc();
-    collector.components
-}
-
-struct SccComponentCollector {
-    successors: Vec<Vec<usize>>,
-    components: Vec<Vec<usize>>,
-}
-
-impl SccComponentCollector {
-    fn new(successors: Vec<Vec<usize>>) -> Self {
-        Self {
-            successors,
-            components: Vec::new(),
-        }
     }
 }
 
@@ -251,23 +148,5 @@ pub trait Scc {
             }
             self.on_scc_found(index, &component);
         }
-    }
-}
-
-impl Scc for SccComponentCollector {
-    fn on_scc_found(&mut self, _root: usize, scc_components: &[usize]) {
-        self.components.push(scc_components.to_vec());
-    }
-
-    fn get_next(&mut self, root: usize) -> FxHashSet<usize> {
-        self.successors
-            .get(root)
-            .into_iter()
-            .flat_map(|successors| successors.iter().copied())
-            .collect()
-    }
-
-    fn get_size(&mut self) -> usize {
-        self.successors.len()
     }
 }

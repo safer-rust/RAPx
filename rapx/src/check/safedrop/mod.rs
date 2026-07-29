@@ -86,7 +86,7 @@ pub fn query_safedrop<'tcx>(
             });
         let mut safedrop_graph = SafeDropGraph::from_path_graph(tcx, def_id, path_graph, adt_owner);
         rap_debug!("safedrop grah (raw): {}", safedrop_graph);
-        safedrop_graph.alias_graph.find_scc();
+        safedrop_graph.alias_graph.path_graph.find_scc();
         rap_debug!("safedrop graph (scc): {}", safedrop_graph);
         safedrop_graph.process_function_paths_opt(paths, fn_map);
         let visit_times = safedrop_graph.alias_graph.visit_times();

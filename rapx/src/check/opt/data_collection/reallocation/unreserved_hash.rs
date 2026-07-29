@@ -3,36 +3,21 @@ use std::collections::HashSet;
 use crate::{
     analysis::dataflow::*,
     check::opt::OptCheck,
-    helpers::def_path::DefPath,
-    utils::log::{relative_pos_range, span_to_filename, span_to_line_number, span_to_source_code},
+    utils::span::{relative_pos_range, span_to_filename, span_to_line_number, span_to_source_code},
 };
-use once_cell::sync::OnceCell;
 use rustc_middle::{mir::Local, ty::TyCtxt};
 
 use annotate_snippets::{Level, Renderer, Snippet};
 use rustc_span::Span;
 
-static DEFPATHS: OnceCell<DefPaths> = OnceCell::new();
-
-struct DefPaths {
-    hashset_new: DefPath,
-    hashset_insert: DefPath,
-    hashmap_new: DefPath,
-    hashmap_insert: DefPath,
-    entry: DefPath,
+crate::def_paths! {
+    hashset_insert: "std::collections::HashSet::insert",
+    hashmap_insert: "std::collections::HashMap::insert",
+    hashset_new: "std::collections::HashSet::new",
+    hashmap_new: "std::collections::HashMap::new",
+    entry: "std::collections::HashMap::entry",
 }
 
-impl DefPaths {
-    pub fn new(tcx: &TyCtxt<'_>) -> Self {
-        Self {
-            hashset_insert: DefPath::new("std::collections::HashSet::insert", tcx),
-            hashmap_insert: DefPath::new("std::collections::HashMap::insert", tcx),
-            hashset_new: DefPath::new("std::collections::HashSet::new", tcx),
-            hashmap_new: DefPath::new("std::collections::HashMap::new", tcx),
-            entry: DefPath::new("std::collections::HashMap::entry", tcx),
-        }
-    }
-}
 
 pub struct UnreservedHashCheck {
     record: Vec<(Span, Span)>,

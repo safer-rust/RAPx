@@ -17,13 +17,14 @@ use rustc_middle::{
     ty::{self, TyCtxt},
 };
 
+use crate::helpers::mir_scan::Checkpoint;
+
 use crate::{
     helpers::name::parse_signature,
     verify::{
         call_summary::CallEffect,
         contract::{PlaceBase, Property, PropertyArg, PropertyKind},
         def_use::PlaceKey,
-        helpers::Checkpoint,
         verifier::{AbstractValue, CallSummary, ForwardVisitResult, StateFact},
     },
 };

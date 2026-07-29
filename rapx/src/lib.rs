@@ -5,12 +5,12 @@ pub mod utils;
 pub mod analysis;
 pub mod check;
 pub mod cli;
-pub mod compat;
-pub mod def_id;
-pub mod graphs;
+pub(crate) mod compat;
+pub(crate) mod def_id;
+pub(crate) mod graphs;
 pub mod help;
-pub mod helpers;
-pub mod preprocess;
+pub(crate) mod helpers;
+pub(crate) mod preprocess;
 pub mod verify;
 
 extern crate rustc_abi;
@@ -280,12 +280,20 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
             prepare_targets,
             postfix_repeat,
             mode,
+            skip_invariant,
             crate_name,
             module,
             debug_contracts,
         }) => {
             if *prepare_targets {
-                PrepareTargets::new(tcx, *mode, crate_name.clone(), module.clone()).run();
+                PrepareTargets::new(
+                    tcx,
+                    *mode,
+                    *skip_invariant,
+                    crate_name.clone(),
+                    module.clone(),
+                )
+                .run();
             } else {
                 let repeat_strategy = match postfix_repeat {
                     PostfixRepeat::Auto => RepeatStrategy::Auto,
@@ -295,6 +303,7 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
                     tcx,
                     repeat_strategy,
                     *mode,
+                    *skip_invariant,
                     crate_name.clone(),
                     module.clone(),
                     *debug_contracts,

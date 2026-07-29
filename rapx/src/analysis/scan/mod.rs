@@ -15,10 +15,6 @@ pub struct ScanAnalysis<'tcx> {
 }
 
 impl<'tcx> Analysis for ScanAnalysis<'tcx> {
-    fn name(&self) -> &'static str {
-        "Scan Analysis"
-    }
-
     fn run(&mut self) {
         let crate_name = self.tcx.crate_name(LOCAL_CRATE);
         let crate_type = self.tcx.crate_types()[0];
@@ -35,7 +31,6 @@ impl<'tcx> Analysis for ScanAnalysis<'tcx> {
         rap_info!("============================");
     }
 
-    fn reset(&mut self) {}
 }
 
 impl<'tcx> ScanAnalysis<'tcx> {

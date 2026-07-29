@@ -103,8 +103,6 @@ pub struct DataflowGraph {
     pub edges: GraphEdges,
     pub n_locals: usize,
     pub closures: HashSet<DefId>,
-    pub block: usize,
-    pub statement_index: usize,
 }
 
 impl DataflowGraph {
@@ -117,8 +115,6 @@ impl DataflowGraph {
             edges: GraphEdges::new(),
             n_locals,
             closures: HashSet::new(),
-            block: 0,
-            statement_index: 0,
         }
     }
 
@@ -138,15 +134,22 @@ impl DataflowGraph {
         idx >= Local::from_usize(self.n_locals)
     }
 
-    pub fn add_node_edge(&mut self, src: Local, dst: Local, op: EdgeOp) -> EdgeIdx {
+    pub fn add_node_edge(
+        &mut self,
+        src: Local,
+        dst: Local,
+        op: EdgeOp,
+        block: usize,
+        statement_index: usize,
+    ) -> EdgeIdx {
         let seq = self.nodes[dst].seq;
         let edge_idx = self.edges.push(DataflowEdge {
             src,
             dst,
             op,
             seq,
-            block: self.block,
-            statement_index: self.statement_index,
+            block,
+            statement_index,
         });
         self.nodes[dst].in_edges.push(edge_idx);
         self.nodes[src].out_edges.push(edge_idx);
@@ -159,6 +162,8 @@ impl DataflowGraph {
         src_ty: String,
         dst: Local,
         op: EdgeOp,
+        block: usize,
+        statement_index: usize,
     ) -> EdgeIdx {
         let seq = self.nodes[dst].seq;
         let mut const_node = DataflowNode::new();
@@ -169,8 +174,8 @@ impl DataflowGraph {
             dst,
             op,
             seq,
-            block: self.block,
-            statement_index: self.statement_index,
+            block,
+            statement_index,
         });
         self.nodes[dst].in_edges.push(edge_idx);
         edge_idx
@@ -384,7 +389,12 @@ impl DataflowGraph {
         set
     }
 
-    pub fn collect_ancestor_locals(&self, local: Local, self_included: bool) -> HashSet<Local> {
+    fn collect_by_direction(
+        &self,
+        local: Local,
+        self_included: bool,
+        direction: Direction,
+    ) -> HashSet<Local> {
         let mut ret = HashSet::new();
         let mut node_operator = |_: &DataflowGraph, idx: Local| -> DFSStatus {
             ret.insert(idx);
@@ -393,7 +403,7 @@ impl DataflowGraph {
         let mut seen = HashSet::new();
         self.dfs(
             local,
-            Direction::Upside,
+            direction,
             &mut node_operator,
             &mut DataflowGraph::always_true_edge_validator,
             true,
@@ -405,25 +415,12 @@ impl DataflowGraph {
         ret
     }
 
+    pub fn collect_ancestor_locals(&self, local: Local, self_included: bool) -> HashSet<Local> {
+        self.collect_by_direction(local, self_included, Direction::Upside)
+    }
+
     pub fn collect_descending_locals(&self, local: Local, self_included: bool) -> HashSet<Local> {
-        let mut ret = HashSet::new();
-        let mut node_operator = |_: &DataflowGraph, idx: Local| -> DFSStatus {
-            ret.insert(idx);
-            DFSStatus::Continue
-        };
-        let mut seen = HashSet::new();
-        self.dfs(
-            local,
-            Direction::Downside,
-            &mut node_operator,
-            &mut DataflowGraph::always_true_edge_validator,
-            true,
-            &mut seen,
-        );
-        if !self_included {
-            ret.remove(&local);
-        }
-        ret
+        self.collect_by_direction(local, self_included, Direction::Downside)
     }
 
     pub fn get_field_sequence(&self, local: Local) -> Option<(Local, Vec<usize>)> {
@@ -459,6 +456,108 @@ impl DataflowGraph {
         } else {
             Some((var.get(), fields))
         }
+    }
+
+    /// Follow Copy/Move edges upward to find the root real local behind any
+    /// copy chains (no projections). Stops at 16 hops to bound cycles.
+    pub fn trace_origin(&self, local: Local) -> Local {
+        let mut current = local;
+        let mut seen = HashSet::new();
+        for _ in 0..16 {
+            if !seen.insert(current) {
+                break;
+            }
+            let next = self.nodes[current]
+                .in_edges
+                .iter()
+                .find_map(|&ei| {
+                    let e = &self.edges[ei];
+                    if matches!(e.op, EdgeOp::Copy | EdgeOp::Move)
+                        && !self.is_marker(e.src)
+                    {
+                        Some(e.src)
+                    } else {
+                        None
+                    }
+                });
+            match next {
+                Some(src) if src != current => current = src,
+                _ => break,
+            }
+        }
+        current
+    }
+
+    /// Return `true` when `local` originates from a tuple field destructuring
+    /// (e.g. `(tuple.0, tuple.1)` after a call returning a tuple).
+    /// Follows Copy/Move chains upward through marker nodes and checks for
+    /// any `Field` edge along the projection chain.
+    pub fn is_from_tuple_field(&self, local: Local) -> bool {
+        let mut current = local;
+        let mut seen = HashSet::new();
+        for _ in 0..8 {
+            if !seen.insert(current) {
+                return false;
+            }
+            let mut next_local = None;
+            for &ei in &self.nodes[current].in_edges {
+                let e = &self.edges[ei];
+                if !matches!(e.op, EdgeOp::Copy | EdgeOp::Move) {
+                    continue;
+                }
+                if self.is_marker(e.src) {
+                    if self.marker_chain_has_field(e.src) {
+                        return true;
+                    }
+                    if let Some(real) = self.marker_to_real(e.src) {
+                        next_local = Some(real);
+                        break;
+                    }
+                } else {
+                    next_local = Some(e.src);
+                    break;
+                }
+            }
+            match next_local {
+                Some(src) if src != current => current = src,
+                _ => return false,
+            }
+        }
+        false
+    }
+
+    /// Walk up a projection-marker chain to find the underlying real local.
+    fn marker_to_real(&self, marker: Local) -> Option<Local> {
+        let mut current = marker;
+        for _ in 0..8 {
+            if !self.is_marker(current) {
+                return Some(current);
+            }
+            current = self.nodes[current]
+                .in_edges
+                .first()
+                .map(|&ei| self.edges[ei].src)?;
+        }
+        None
+    }
+
+    /// Check whether a projection-marker chain contains a `Field` edge.
+    fn marker_chain_has_field(&self, marker: Local) -> bool {
+        let mut current = marker;
+        for _ in 0..8 {
+            if !self.is_marker(current) {
+                return false;
+            }
+            let ei = match self.nodes[current].in_edges.first() {
+                Some(&ei) => ei,
+                None => return false,
+            };
+            if matches!(self.edges[ei].op, EdgeOp::Field(_)) {
+                return true;
+            }
+            current = self.edges[ei].src;
+        }
+        false
     }
 }
 

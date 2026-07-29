@@ -13,7 +13,8 @@
 //! satisfiable under the forward path facts.
 
 use super::common::{SmtCheckResult, SmtChecker, SmtObligation};
-use crate::verify::{contract::Property, helpers::Checkpoint, verifier::ForwardVisitResult};
+use crate::verify::{contract::Property, verifier::ForwardVisitResult};
+use crate::helpers::mir_scan::Checkpoint;
 
 /// Check `ValidNum` by lowering all predicates to a common predicate obligation.
 pub(crate) fn check<'tcx>(

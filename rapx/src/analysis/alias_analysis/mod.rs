@@ -103,7 +103,7 @@ impl fmt::Display for FnAliasPairs {
 
 impl fmt::Display for FnAliasMapWrapper {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "=== Print alias analysis resuts ===")?;
+        writeln!(f, "=== Print alias analysis results ===")?;
         for (def_id, result) in &self.0 {
             let fn_name = get_fn_name_byid(def_id);
             writeln!(f, "Alias of {:?}: {}", fn_name, result)?;

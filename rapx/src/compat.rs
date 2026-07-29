@@ -20,3 +20,61 @@ pub use rustc_hash::FxHashSet;
 pub use rustc_span::Spanned;
 #[cfg(not(rustc_spanned_at_root))]
 pub use rustc_span::source_map::Spanned;
+
+// ── predicates_of / clauses_of (rustc ≥ 1.99 2026-07-28) ─────────────
+
+use rustc_hir::def_id::DefId;
+use rustc_middle::ty::TyCtxt;
+
+/// Type alias for the return type of `predicates_of`.
+#[cfg(not(rapx_rustc_ge_199))]
+pub type GenericPredicatesC<'tcx> =
+    rustc_middle::ty::GenericPredicates<'tcx>;
+#[cfg(rapx_rustc_ge_199)]
+pub type GenericPredicatesC<'tcx> =
+    rustc_middle::ty::GenericClauses<'tcx>;
+
+/// Fetch generic predicates/clauses for a definition.
+#[cfg(not(rapx_rustc_ge_199))]
+#[inline]
+pub fn predicates_of<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def_id: DefId,
+) -> GenericPredicatesC<'tcx> {
+    tcx.predicates_of(def_id)
+}
+#[cfg(rapx_rustc_ge_199)]
+#[inline]
+pub fn predicates_of<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def_id: DefId,
+) -> GenericPredicatesC<'tcx> {
+    tcx.clauses_of(def_id)
+}
+
+// ── OwnerId (rustc ≥ 1.99) ────────────────────────────────────────────
+
+#[cfg(not(rapx_rustc_ge_199))]
+pub use rustc_hir::hir_id::OwnerId;
+#[cfg(rapx_rustc_ge_199)]
+pub use rustc_hir::OwnerId;
+
+// ── GenericArgsRef::get (Binder wrapping in rustc ≥ 1.99) ─────────────
+
+#[cfg(not(rapx_rustc_ge_199))]
+pub fn args_get<'tcx>(
+    args: &rustc_middle::ty::GenericArgsRef<'tcx>,
+    index: usize,
+) -> Option<&'tcx rustc_middle::ty::GenericArg<'tcx>> {
+    args.get(index)
+}
+#[cfg(rapx_rustc_ge_199)]
+pub fn args_get<'tcx>(
+    args: &rustc_middle::ty::Binder<
+        'tcx,
+        &'tcx rustc_middle::ty::GenericArgs<'tcx>,
+    >,
+    index: usize,
+) -> Option<rustc_middle::ty::GenericArg<'tcx>> {
+    args.skip_binder().get(index).copied()
+}

@@ -15,11 +15,11 @@ const PADDING: &str = "    ";
 const EXPLAIN: &str = " @ ";
 
 // This trait is a wrapper towards std::Display or std::Debug, and is to resolve orphan restrictions.
-pub trait Display {
+pub trait MirDisplay {
     fn display(&self) -> String;
 }
 
-impl<'tcx> Display for Terminator<'tcx> {
+impl<'tcx> MirDisplay for Terminator<'tcx> {
     fn display(&self) -> String {
         let mut s = String::new();
         s += &format!("{}{:?}{}", PADDING, self.kind, self.kind.display());
@@ -27,7 +27,7 @@ impl<'tcx> Display for Terminator<'tcx> {
     }
 }
 
-impl<'tcx> Display for TerminatorKind<'tcx> {
+impl<'tcx> MirDisplay for TerminatorKind<'tcx> {
     fn display(&self) -> String {
         let mut s = String::new();
         s += EXPLAIN;
@@ -60,7 +60,7 @@ impl<'tcx> Display for TerminatorKind<'tcx> {
     }
 }
 
-impl<'tcx> Display for Statement<'tcx> {
+impl<'tcx> MirDisplay for Statement<'tcx> {
     fn display(&self) -> String {
         let mut s = String::new();
         s += &format!("{}{:?}{}", PADDING, self.kind, self.kind.display());
@@ -68,7 +68,7 @@ impl<'tcx> Display for Statement<'tcx> {
     }
 }
 
-impl<'tcx> Display for StatementKind<'tcx> {
+impl<'tcx> MirDisplay for StatementKind<'tcx> {
     fn display(&self) -> String {
         let mut s = String::new();
         s += EXPLAIN;
@@ -94,7 +94,7 @@ impl<'tcx> Display for StatementKind<'tcx> {
     }
 }
 
-impl<'tcx> Display for Rvalue<'tcx> {
+impl<'tcx> MirDisplay for Rvalue<'tcx> {
     fn display(&self) -> String {
         let mut s = String::new();
         s += EXPLAIN;
@@ -120,7 +120,7 @@ impl<'tcx> Display for Rvalue<'tcx> {
     }
 }
 
-impl<'tcx> Display for BasicBlocks<'tcx> {
+impl<'tcx> MirDisplay for BasicBlocks<'tcx> {
     fn display(&self) -> String {
         let mut s = String::new();
         for (index, bb) in self.iter().enumerate() {
@@ -136,7 +136,7 @@ impl<'tcx> Display for BasicBlocks<'tcx> {
     }
 }
 
-impl<'tcx> Display for BasicBlockData<'tcx> {
+impl<'tcx> MirDisplay for BasicBlockData<'tcx> {
     fn display(&self) -> String {
         let mut s = String::new();
         s += &format!("CleanUp: {}{}", self.is_cleanup, NEXT_LINE);
@@ -152,7 +152,7 @@ impl<'tcx> Display for BasicBlockData<'tcx> {
     }
 }
 
-impl<'tcx> Display for LocalDecls<'tcx> {
+impl<'tcx> MirDisplay for LocalDecls<'tcx> {
     fn display(&self) -> String {
         let mut s = String::new();
         for (index, ld) in self.iter().enumerate() {
@@ -162,7 +162,7 @@ impl<'tcx> Display for LocalDecls<'tcx> {
     }
 }
 
-impl<'tcx> Display for LocalDecl<'tcx> {
+impl<'tcx> MirDisplay for LocalDecl<'tcx> {
     fn display(&self) -> String {
         let mut s = String::new();
         s += &format!("{}{}", EXPLAIN, self.ty.kind().display());
@@ -170,7 +170,7 @@ impl<'tcx> Display for LocalDecl<'tcx> {
     }
 }
 
-impl<'tcx> Display for Body<'tcx> {
+impl<'tcx> MirDisplay for Body<'tcx> {
     fn display(&self) -> String {
         let mut s = String::new();
         s += &self.local_decls.display();
@@ -179,7 +179,7 @@ impl<'tcx> Display for Body<'tcx> {
     }
 }
 
-impl<'tcx> Display for TyKind<'tcx> {
+impl<'tcx> MirDisplay for TyKind<'tcx> {
     fn display(&self) -> String {
         let mut s = String::new();
         s += &format!("{:?}", self);
@@ -187,7 +187,7 @@ impl<'tcx> Display for TyKind<'tcx> {
     }
 }
 
-impl Display for DefId {
+impl MirDisplay for DefId {
     fn display(&self) -> String {
         format!("{:?}", self)
     }

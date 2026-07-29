@@ -424,6 +424,10 @@
     "self",
     "origin"
   ],
+  "core::ptr::const_ptr::offset_from_unsigned": [
+    "self",
+    "origin"
+  ],
   "core::ptr::const_ptr::byte_offset_from": [
     "self",
     "origin"
@@ -499,6 +503,10 @@
     "count"
   ],
   "core::ptr::mut_ptr::offset_from": [
+    "self",
+    "origin"
+  ],
+  "core::ptr::mut_ptr::offset_from_unsigned": [
     "self",
     "origin"
   ],

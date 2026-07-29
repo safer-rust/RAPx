@@ -4,6 +4,7 @@ use std::io::Write;
 use std::process::Command;
 
 use crate::analysis::Analysis;
+use crate::analysis::dataflow::graph::build_dataflow_graph_from_body;
 use crate::analysis::dataflow::*;
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
@@ -18,15 +19,12 @@ pub struct DataflowAnalyzer<'tcx> {
 }
 
 impl<'tcx> DataflowAnalysis for DataflowAnalyzer<'tcx> {
-    fn get_fn_dataflow(&self, def_id: DefId) -> Option<DataFlowGraph> {
-        self.graphs.get(&def_id).cloned().map(Into::into)
+    fn get_fn_dataflow(&self, def_id: DefId) -> Option<DataflowGraph> {
+        self.graphs.get(&def_id).cloned()
     }
 
-    fn get_all_dataflow(&self) -> DataFlowGraphMap {
-        self.graphs
-            .iter()
-            .map(|(&def_id, graph)| (def_id, graph.clone().into()))
-            .collect()
+    fn get_all_dataflow(&self) -> DataflowGraphMap {
+        self.graphs.clone()
     }
 
     fn has_flow_between(&self, def_id: DefId, local1: Local, local2: Local) -> bool {
@@ -55,20 +53,10 @@ impl<'tcx> DataflowAnalysis for DataflowAnalyzer<'tcx> {
 }
 
 impl<'tcx> Analysis for DataflowAnalyzer<'tcx> {
-    fn name(&self) -> &'static str {
-        "DataFlow Analysis"
-    }
-
     fn run(&mut self) {
-        self.build_graphs();
-        if self.draw {
-            self.draw_graphs();
-        }
+        self.start();
     }
 
-    fn reset(&mut self) {
-        self.graphs.clear();
-    }
 }
 
 impl<'tcx> DataflowAnalyzer<'tcx> {
@@ -110,20 +98,7 @@ impl<'tcx> DataflowAnalyzer<'tcx> {
             return;
         }
         let body: &Body = self.tcx.optimized_mir(def_id);
-        let mut graph =
-            DataflowGraph::new(def_id, body.span, body.arg_count, body.local_decls.len());
-        let basic_blocks = &body.basic_blocks;
-        for (block_idx, basic_block_data) in basic_blocks.iter().enumerate() {
-            graph.block = block_idx;
-            for (stmt_idx, statement) in basic_block_data.statements.iter().enumerate() {
-                graph.statement_index = stmt_idx;
-                graph.add_statm_to_graph(&statement);
-            }
-            if let Some(terminator) = &basic_block_data.terminator {
-                graph.statement_index = basic_block_data.statements.len();
-                graph.add_terminator_to_graph(&terminator);
-            }
-        }
+        let graph = build_dataflow_graph_from_body(def_id, body);
         for closure_id in graph.closures.iter() {
             self.build_graph(*closure_id);
         }

@@ -9,16 +9,16 @@
 
 use rustc_hir::{def::DefKind, def_id::DefId};
 use rustc_middle::{
-    mir::{AggregateKind, BasicBlock, Body, Local, Operand, Rvalue, StatementKind, TerminatorKind},
+    mir::{AggregateKind, Body, Local, Operand, Rvalue, StatementKind, TerminatorKind},
     ty::{TyCtxt, TyKind},
 };
 
 use crate::verify::{
     contract::{ContractExpr, Property},
-    helpers::Checkpoint,
-    primitive::PrimitiveCall,
+    call_summary::fn_simulator,
     verifier::ForwardVisitResult,
 };
+use crate::helpers::mir_scan::Checkpoint;
 
 use super::{alias, common::SmtChecker};
 
@@ -130,7 +130,7 @@ fn field_pedigree_proof<'tcx>(
     let mut store_count = 0usize;
     for def_id in crate_fn_ids(tcx) {
         let body = tcx.optimized_mir(def_id);
-        let parents = body_parents(tcx, body);
+        let parents = super::common::body_parents(tcx, body);
 
         for data in body.basic_blocks.iter() {
             for statement in &data.statements {
@@ -229,7 +229,7 @@ fn param_pedigree_proof<'tcx>(
     }
     for site in &sites {
         let body = tcx.optimized_mir(site.caller);
-        let parents = body_parents(tcx, body);
+        let parents = super::common::body_parents(tcx, body);
         let ptr_operand = site.args.get(ptr_param)?.clone();
         if !operand_is_ref_rooted(tcx, body, &parents, &ptr_operand, count) {
             return None;
@@ -266,7 +266,7 @@ pub(super) fn vec_from_raw_parts_roundtrip<'tcx>(
         return None;
     }
     let body = tcx.optimized_mir(checkpoint.caller);
-    let parents = body_parents(tcx, body);
+    let parents = super::common::body_parents(tcx, body);
 
     let arg_local = |index: usize| -> Option<Local> {
         match checkpoint.args.get(index)? {
@@ -285,10 +285,10 @@ pub(super) fn vec_from_raw_parts_roundtrip<'tcx>(
     }
 
     let len_receiver =
-        call_receiver_root(tcx, body, &parents, arg_local(1)?, |primitive, name| {
-            primitive == Some(PrimitiveCall::Len) || name.ends_with("::len")
+        call_receiver_root(tcx, body, &parents, arg_local(1)?, |name| {
+            fn_simulator::is_len(name) || name.ends_with("::len")
         })?;
-    let cap_receiver = call_receiver_root(tcx, body, &parents, arg_local(2)?, |_, name| {
+    let cap_receiver = call_receiver_root(tcx, body, &parents, arg_local(2)?, |name| {
         name.ends_with("::capacity")
     })?;
 
@@ -307,7 +307,7 @@ fn call_receiver_root<'tcx>(
     body: &Body<'tcx>,
     parents: &crate::compat::FxHashMap<Local, Local>,
     start: Local,
-    matches: impl Fn(Option<PrimitiveCall>, &str) -> bool,
+    matches: impl Fn(&str) -> bool,
 ) -> Option<Local> {
     let mut current = start;
     let mut seen = std::collections::HashSet::new();
@@ -328,8 +328,8 @@ fn call_receiver_root<'tcx>(
             if destination.local != current {
                 continue;
             }
-            let name = crate::verify::call_summary::call_name(tcx, func);
-            if !matches(PrimitiveCall::classify(&name), &name) {
+            let name = crate::helpers::mir_utils::call_name(tcx, func);
+            if !matches(&name) {
                 return None;
             }
             let receiver = args.first().and_then(|arg| match &arg.node {
@@ -358,58 +358,6 @@ fn crate_fn_ids(tcx: TyCtxt<'_>) -> Vec<DefId> {
                 && tcx.is_mir_available(*def_id)
         })
         .collect()
-}
-
-/// Per-body provenance parents: copies, casts, refs, and pointer-extraction
-/// calls collapse to the underlying source local.
-fn body_parents<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    body: &Body<'tcx>,
-) -> crate::compat::FxHashMap<Local, Local> {
-    let mut parents: crate::compat::FxHashMap<Local, Local> = Default::default();
-    for data in body.basic_blocks.iter() {
-        for statement in &data.statements {
-            let StatementKind::Assign(assign) = &statement.kind else {
-                continue;
-            };
-            let (target, rvalue) = assign.as_ref();
-            let source = match rvalue {
-                Rvalue::Use(Operand::Copy(place) | Operand::Move(place), ..)
-                | Rvalue::Cast(_, Operand::Copy(place) | Operand::Move(place), _)
-                | Rvalue::Ref(_, _, place)
-                | Rvalue::RawPtr(_, place)
-                | Rvalue::CopyForDeref(place) => Some(place.local),
-                _ => None,
-            };
-            if let Some(source) = source {
-                parents.entry(target.local).or_insert(source);
-            }
-        }
-        let Some(terminator) = &data.terminator else {
-            continue;
-        };
-        let TerminatorKind::Call {
-            func,
-            args,
-            destination,
-            ..
-        } = &terminator.kind
-        else {
-            continue;
-        };
-        let name = crate::verify::call_summary::call_name(tcx, func);
-        if !PrimitiveCall::classify(&name).is_some_and(|p| p.is_as_ptr_like()) {
-            continue;
-        }
-        let Some(source) = args.first().and_then(|arg| match &arg.node {
-            Operand::Copy(place) | Operand::Move(place) => Some(place.local),
-            _ => None,
-        }) else {
-            continue;
-        };
-        parents.entry(destination.local).or_insert(source);
-    }
-    parents
 }
 
 fn follow_parents(parents: &crate::compat::FxHashMap<Local, Local>, start: Local) -> Local {
@@ -515,8 +463,8 @@ fn len_call_receiver<'tcx>(tcx: TyCtxt<'tcx>, body: &Body<'tcx>, local: Local) -
         if destination.local != local {
             continue;
         }
-        let name = crate::verify::call_summary::call_name(tcx, func);
-        if PrimitiveCall::classify(&name) != Some(PrimitiveCall::Len) {
+        let name = crate::helpers::mir_utils::call_name(tcx, func);
+        if !fn_simulator::is_len(&name) {
             return None;
         }
         return args.first().and_then(|arg| match &arg.node {
@@ -526,6 +474,3 @@ fn len_call_receiver<'tcx>(tcx: TyCtxt<'tcx>, body: &Body<'tcx>, local: Local) -
     }
     None
 }
-
-#[allow(dead_code)]
-fn unused_block(_: BasicBlock) {}

@@ -21,9 +21,10 @@ use rustc_middle::mir::Local;
 use super::common::{SmtCheckResult, SmtChecker, place_label};
 use crate::verify::{
     contract::Property,
-    helpers::Checkpoint,
     verifier::{AbstractValue, ForwardVisitResult, StateFact},
 };
+
+use crate::helpers::mir_scan::Checkpoint;
 
 pub(crate) fn check<'tcx>(
     checker: &SmtChecker<'tcx>,
@@ -80,7 +81,9 @@ pub(crate) fn check<'tcx>(
         return SmtCheckResult::proved(format!("Owning proved: {reason}"));
     }
 
-    if let Some(reason) = super::field_invariant::discharge_from_contract_fact(property, forward) {
+    if let Some(reason) = super::field_invariant::discharge_from_contract_fact_with_checkpoint(
+        property, forward, checkpoint,
+    ) {
         return SmtCheckResult::proved(format!("Owning proved: {reason}"));
     }
 
@@ -102,7 +105,6 @@ pub(crate) fn check_for_checkpoint<'tcx>(
     property: &Property<'tcx>,
     forward: &ForwardVisitResult<'tcx>,
 ) -> SmtCheckResult {
-    let _ = checker;
     let Some(target) = checker.property_target(None, property) else {
         return SmtCheckResult::unknown("Owning target could not be resolved");
     };

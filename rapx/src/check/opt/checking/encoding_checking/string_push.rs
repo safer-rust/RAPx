@@ -1,6 +1,5 @@
 use std::collections::HashSet;
 
-use once_cell::sync::OnceCell;
 
 use rustc_middle::{mir::Local, ty::TyCtxt};
 use rustc_span::Span;
@@ -8,26 +7,15 @@ use rustc_span::Span;
 use super::value_is_from_const;
 use crate::{
     analysis::dataflow::*,
-    helpers::def_path::DefPath,
-    utils::log::{relative_pos_range, span_to_filename, span_to_line_number, span_to_source_code},
+    utils::span::{relative_pos_range, span_to_filename, span_to_line_number, span_to_source_code},
 };
 use annotate_snippets::{Level, Renderer, Snippet};
 
-static DEFPATHS: OnceCell<DefPaths> = OnceCell::new();
-
-struct DefPaths {
-    string_new: DefPath,
-    string_push: DefPath,
+crate::def_paths! {
+    string_new: "std::string::String::new",
+    string_push: "std::string::String::push",
 }
 
-impl DefPaths {
-    pub fn new(tcx: &TyCtxt<'_>) -> Self {
-        Self {
-            string_new: DefPath::new("std::string::String::new", tcx),
-            string_push: DefPath::new("std::string::String::push", tcx),
-        }
-    }
-}
 
 use crate::check::opt::OptCheck;
 

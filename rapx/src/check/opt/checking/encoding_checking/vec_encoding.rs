@@ -1,35 +1,19 @@
 use std::collections::HashSet;
 
 use crate::analysis::dataflow::*;
-use crate::helpers::def_path::DefPath;
-use once_cell::sync::OnceCell;
 use rustc_middle::{mir::Local, ty::TyCtxt};
 use rustc_span::Span;
 
 use super::{report_encoding_bug, value_is_from_const};
 
-static DEFPATHS: OnceCell<DefPaths> = OnceCell::new();
-
-struct DefPaths {
-    string_from_utf8: DefPath,
-    string_from_utf8_lossy: DefPath,
-    vec_new: DefPath,
-    vec_with_capacity: DefPath,
-    vec_push: DefPath,
+crate::def_paths! {
+    string_from_utf8: "std::string::String::from_utf8",
+    string_from_utf8_lossy: "std::string::String::from_utf8_lossy",
+    vec_new: "std::vec::Vec::new",
+    vec_with_capacity: "std::vec::Vec::with_capacity",
+    vec_push: "std::vec::Vec::push",
 }
 
-impl DefPaths {
-    // only supports push operation (can't support direct assignment)
-    pub fn new(tcx: &TyCtxt<'_>) -> Self {
-        Self {
-            string_from_utf8: DefPath::new("std::string::String::from_utf8", tcx),
-            string_from_utf8_lossy: DefPath::new("std::string::String::from_utf8_lossy", tcx),
-            vec_new: DefPath::new("std::vec::Vec::new", tcx),
-            vec_with_capacity: DefPath::new("std::vec::Vec::with_capacity", tcx),
-            vec_push: DefPath::new("std::vec::Vec::push", tcx),
-        }
-    }
-}
 
 use crate::check::opt::OptCheck;
 

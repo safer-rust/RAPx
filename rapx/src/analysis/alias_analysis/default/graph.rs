@@ -449,10 +449,6 @@ impl<'tcx> AliasGraph<'tcx> {
         self.path_graph.terminator(index)
     }
 
-    pub fn find_scc(&mut self) {
-        self.path_graph.find_scc();
-    }
-
     pub fn enumerate_paths(&self) -> PathTree {
         let mut enumerator = PathEnumerator::new(&self.path_graph);
         enumerator.enumerate_paths()

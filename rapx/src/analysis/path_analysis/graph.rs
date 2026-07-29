@@ -351,7 +351,7 @@ impl<'tcx> PathGraph<'tcx> {
                 ..
             } = terminator.kind
             {
-                let name = super::super::super::verify::call_summary::call_name(tcx, func);
+                let name = crate::helpers::mir_utils::call_name(tcx, func);
                 if name.contains("::into_raw")
                     || (name.contains("::new") && name.contains("Box"))
                     || name.contains("::as_mut_ptr")

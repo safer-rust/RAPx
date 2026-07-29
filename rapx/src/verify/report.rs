@@ -6,7 +6,8 @@
 
 use rustc_hir::def_id::DefId;
 
-use super::{contract::Property, helpers::CheckpointLocation};
+use super::{contract::Property};
+use crate::helpers::mir_scan::CheckpointLocation;
 
 /// Verification status for one required property on one path.
 #[derive(Clone, Debug, PartialEq)]

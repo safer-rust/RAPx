@@ -6,8 +6,6 @@ pub enum VerifyMode {
     Scan,
     #[value(help = "Only verify functions annotated with #[rapx::verify]")]
     Targeted,
-    #[value(help = "Like `scan` or `targeted` but skip struct invariant checks")]
-    Invless,
 }
 
 /// Postfix repeat count: `auto` (default) enables automatic loop-depth
@@ -54,6 +52,10 @@ pub struct VerifyArgs {
     /// Verification mode: `scan` auto-detects unannotated unsafe targets (default), `targeted` verifies #[rapx::verify] functions.
     #[arg(long, default_value = "scan")]
     pub mode: VerifyMode,
+    /// Skip struct invariant checks and derive safety via constructor-mutator-method chains.
+    /// Works with both `scan` and `targeted` modes.
+    #[arg(long)]
+    pub skip_invariant: bool,
     /// Filter verification targets to only those within the specified crate
     /// (Rust crate name or Cargo package name, e.g. `std`, `core`, `my-crate`).
     /// Useful for standard-library workspaces and sub-workspaces.

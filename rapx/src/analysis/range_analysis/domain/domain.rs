@@ -6,8 +6,8 @@
 #![allow(non_snake_case)]
 use rust_intervals::NothingBetween;
 
-use crate::analysis::range_analysis::domain::ConstraintGraph::ConstraintGraph;
-use crate::analysis::range_analysis::domain::SymbolicExpr::{
+use crate::analysis::range_analysis::domain::ConstraintGraph;
+use crate::analysis::range_analysis::domain::symbolic_expr::{
     BasicInterval, IntervalType, IntervalTypeTrait, SymbExpr,
 };
 use crate::analysis::range_analysis::{Range, RangeType};
@@ -35,52 +35,28 @@ pub trait ConstConvert: Sized {
     fn from_const(c: &Const) -> Option<Self>;
 }
 
-impl ConstConvert for u32 {
-    fn from_const(c: &Const) -> Option<Self> {
-        if let Some(scalar) = c.try_to_scalar_int() {
-            Some(scalar.to_bits(scalar.size()) as u32)
-        } else {
-            None
+macro_rules! impl_const_convert {
+    ($t:ty) => {
+        impl ConstConvert for $t {
+            fn from_const(c: &Const) -> Option<Self> {
+                c.try_to_scalar_int().map(|s| s.to_bits(s.size()) as $t)
+            }
         }
-    }
-}
-impl ConstConvert for usize {
-    fn from_const(c: &Const) -> Option<Self> {
-        if let Some(scalar) = c.try_to_scalar_int() {
-            Some(scalar.to_bits(scalar.size()) as usize)
-        } else {
-            None
-        }
-    }
-}
-impl ConstConvert for i32 {
-    fn from_const(c: &Const) -> Option<Self> {
-        if let Some(scalar) = c.try_to_scalar_int() {
-            Some(scalar.to_bits(scalar.size()) as i32)
-        } else {
-            None
-        }
-    }
+    };
 }
 
-impl ConstConvert for i64 {
-    fn from_const(c: &Const) -> Option<Self> {
-        if let Some(scalar) = c.try_to_scalar_int() {
-            Some(scalar.to_bits(scalar.size()) as i64)
-        } else {
-            None
-        }
-    }
-}
-impl ConstConvert for i128 {
-    fn from_const(c: &Const) -> Option<Self> {
-        if let Some(scalar) = c.try_to_scalar_int() {
-            Some(scalar.to_bits(scalar.size()) as i128)
-        } else {
-            None
-        }
-    }
-}
+impl_const_convert!(u32);
+impl_const_convert!(usize);
+impl_const_convert!(i32);
+impl_const_convert!(i64);
+impl_const_convert!(i128);
+impl_const_convert!(u64);
+impl_const_convert!(u128);
+impl_const_convert!(i8);
+impl_const_convert!(i16);
+impl_const_convert!(u8);
+impl_const_convert!(u16);
+
 pub trait IntervalArithmetic:
     PartialOrd
     + Clone
@@ -100,16 +76,22 @@ pub trait IntervalArithmetic:
 {
 }
 
-impl IntervalArithmetic for i32 {}
-impl IntervalArithmetic for usize {}
-impl IntervalArithmetic for i64 {}
-use rustc_middle::ty::Ty;
-
-// Define the basic operation trait
-pub trait Operation<T: IntervalArithmetic + ConstConvert + Debug> {
-    fn eval(&self) -> Range<T>; // Method to evaluate the range of the operation
-    fn print(&self, os: &mut dyn fmt::Write);
+macro_rules! impl_interval_arith {
+    ($t:ty) => {
+        impl IntervalArithmetic for $t {}
+    };
 }
+
+impl_interval_arith!(i32);
+impl_interval_arith!(usize);
+impl_interval_arith!(i64);
+impl_interval_arith!(u64);
+impl_interval_arith!(u128);
+impl_interval_arith!(i8);
+impl_interval_arith!(i16);
+impl_interval_arith!(u8);
+impl_interval_arith!(u16);
+use rustc_middle::ty::Ty;
 
 #[derive(Debug, Clone)]
 pub enum BasicOpKind<'tcx, T: IntervalArithmetic + ConstConvert + Debug> {
@@ -180,6 +162,22 @@ impl<'tcx, T: IntervalArithmetic + ConstConvert + Debug> fmt::Display for BasicO
         }
     }
 }
+macro_rules! basic_op_match {
+    ($self:expr, |$op:ident| $body:expr) => {
+        match $self {
+            BasicOpKind::Unary($op) => $body,
+            BasicOpKind::Binary($op) => $body,
+            BasicOpKind::Essa($op) => $body,
+            BasicOpKind::ControlDep($op) => $body,
+            BasicOpKind::Phi($op) => $body,
+            BasicOpKind::Use($op) => $body,
+            BasicOpKind::Call($op) => $body,
+            BasicOpKind::Ref($op) => $body,
+            BasicOpKind::Aggregate($op) => $body,
+        }
+    };
+}
+
 impl<'tcx, T: IntervalArithmetic + ConstConvert + Debug> BasicOpKind<'tcx, T> {
     pub fn eval(&self, vars: &VarNodes<'tcx, T>) -> Range<T> {
         match self {
@@ -192,6 +190,18 @@ impl<'tcx, T: IntervalArithmetic + ConstConvert + Debug> BasicOpKind<'tcx, T> {
             BasicOpKind::Call(op) => op.eval(vars),
             BasicOpKind::Ref(op) => op.eval(vars),
             BasicOpKind::Aggregate(op) => op.eval(vars),
+        }
+    }
+
+    pub fn eval_interproc(
+        &self,
+        vars: &VarNodes<'tcx, T>,
+        cg_map: &FxHashMap<DefId, Rc<RefCell<ConstraintGraph<'tcx, T>>>>,
+        vars_map: &mut FxHashMap<DefId, Vec<RefCell<VarNodes<'tcx, T>>>>,
+    ) -> Range<T> {
+        match self {
+            BasicOpKind::Call(call_op) => call_op.eval_call(vars, cg_map, vars_map),
+            _ => self.eval(vars),
         }
     }
     pub fn get_type_name(&self) -> &'static str {
@@ -208,17 +218,7 @@ impl<'tcx, T: IntervalArithmetic + ConstConvert + Debug> BasicOpKind<'tcx, T> {
         }
     }
     pub fn get_sink(&self) -> &'tcx Place<'tcx> {
-        match self {
-            BasicOpKind::Unary(op) => op.sink,
-            BasicOpKind::Binary(op) => op.sink,
-            BasicOpKind::Essa(op) => op.sink,
-            BasicOpKind::ControlDep(op) => op.sink,
-            BasicOpKind::Phi(op) => op.sink,
-            BasicOpKind::Use(op) => op.sink,
-            BasicOpKind::Call(op) => op.sink,
-            BasicOpKind::Ref(op) => op.sink,
-            BasicOpKind::Aggregate(op) => op.sink,
-        }
+        basic_op_match!(self, |op| op.sink)
     }
     pub fn get_instruction(&self) -> Option<&'tcx Statement<'tcx>> {
         match self {
@@ -234,17 +234,7 @@ impl<'tcx, T: IntervalArithmetic + ConstConvert + Debug> BasicOpKind<'tcx, T> {
         }
     }
     pub fn get_intersect(&self) -> &IntervalType<'tcx, T> {
-        match self {
-            BasicOpKind::Unary(op) => &op.intersect,
-            BasicOpKind::Binary(op) => &op.intersect,
-            BasicOpKind::Essa(op) => &op.intersect,
-            BasicOpKind::ControlDep(op) => &op.intersect,
-            BasicOpKind::Phi(op) => &op.intersect,
-            BasicOpKind::Use(op) => &op.intersect,
-            BasicOpKind::Call(op) => &op.intersect,
-            BasicOpKind::Ref(op) => &op.intersect,
-            BasicOpKind::Aggregate(op) => &op.intersect,
-        }
+        basic_op_match!(self, |op| &op.intersect)
     }
     pub fn op_fix_intersects(&mut self, v: &VarNode<'tcx, T>, sink: &VarNode<'tcx, T>) {
         let intersect = self.get_intersect_mut();
@@ -262,43 +252,13 @@ impl<'tcx, T: IntervalArithmetic + ConstConvert + Debug> BasicOpKind<'tcx, T> {
         }
     }
     pub fn set_sink(&mut self, new_sink: &'tcx Place<'tcx>) {
-        match self {
-            BasicOpKind::Unary(op) => op.sink = new_sink,
-            BasicOpKind::Binary(op) => op.sink = new_sink,
-            BasicOpKind::Essa(op) => op.sink = new_sink,
-            BasicOpKind::ControlDep(op) => op.sink = new_sink,
-            BasicOpKind::Phi(op) => op.sink = new_sink,
-            BasicOpKind::Use(op) => op.sink = new_sink,
-            BasicOpKind::Call(op) => op.sink = new_sink,
-            BasicOpKind::Ref(op) => op.sink = new_sink,
-            BasicOpKind::Aggregate(op) => op.sink = new_sink,
-        }
+        basic_op_match!(self, |op| { op.sink = new_sink })
     }
     pub fn set_intersect(&mut self, new_intersect: Range<T>) {
-        match self {
-            BasicOpKind::Unary(op) => op.intersect.set_range(new_intersect),
-            BasicOpKind::Binary(op) => op.intersect.set_range(new_intersect),
-            BasicOpKind::Essa(op) => op.intersect.set_range(new_intersect),
-            BasicOpKind::ControlDep(op) => op.intersect.set_range(new_intersect),
-            BasicOpKind::Phi(op) => op.intersect.set_range(new_intersect),
-            BasicOpKind::Use(op) => op.intersect.set_range(new_intersect),
-            BasicOpKind::Call(op) => op.intersect.set_range(new_intersect),
-            BasicOpKind::Ref(op) => op.intersect.set_range(new_intersect),
-            BasicOpKind::Aggregate(op) => op.intersect.set_range(new_intersect),
-        }
+        basic_op_match!(self, |op| op.intersect.set_range(new_intersect))
     }
     pub fn get_intersect_mut(&mut self) -> &mut IntervalType<'tcx, T> {
-        match self {
-            BasicOpKind::Unary(op) => &mut op.intersect,
-            BasicOpKind::Binary(op) => &mut op.intersect,
-            BasicOpKind::Essa(op) => &mut op.intersect,
-            BasicOpKind::ControlDep(op) => &mut op.intersect,
-            BasicOpKind::Phi(op) => &mut op.intersect,
-            BasicOpKind::Use(op) => &mut op.intersect,
-            BasicOpKind::Call(op) => &mut op.intersect,
-            BasicOpKind::Ref(op) => &mut op.intersect,
-            BasicOpKind::Aggregate(op) => &mut op.intersect,
-        }
+        basic_op_match!(self, |op| &mut op.intersect)
     }
     pub fn get_sources(&self) -> Vec<&'tcx Place<'tcx>> {
         match self {
@@ -346,9 +306,6 @@ pub struct CallOp<'tcx, T: IntervalArithmetic + ConstConvert + Debug> {
 }
 
 impl<'tcx, T: IntervalArithmetic + ConstConvert + Debug> CallOp<'tcx, T> {
-    pub fn convert_const(c: &Const) -> Option<T> {
-        T::from_const(c)
-    }
     pub fn new(
         intersect: IntervalType<'tcx, T>,
         sink: &'tcx Place<'tcx>,
@@ -370,242 +327,7 @@ impl<'tcx, T: IntervalArithmetic + ConstConvert + Debug> CallOp<'tcx, T> {
     }
 
     pub fn eval(&self, caller_vars: &VarNodes<'tcx, T>) -> Range<T> {
-        return Range::default(T::min_value());
-    }
-    pub fn eval_call(
-        &self,
-        caller_vars: &VarNodes<'tcx, T>,
-        cg_map: &FxHashMap<DefId, Rc<RefCell<ConstraintGraph<'tcx, T>>>>,
-        vars_map: &mut FxHashMap<DefId, Vec<RefCell<VarNodes<'tcx, T>>>>,
-    ) -> Range<T> {
-        match self.fun_path.as_str() {
-            "std::iter::IntoIterator::into_iter" => match self.args.first() {
-                Some(Operand::Copy(place)) | Some(Operand::Move(place)) => {
-                    rap_trace!(
-                        "Iterator detected on place {:?}, returning its range",
-                        place
-                    );
-                    if let Some(var_node) = caller_vars.get(place) {
-                        let range = var_node.get_range().clone();
-                        rap_trace!(
-                            "Iterator detected on place {:?}, returning its range: {:?}",
-                            place,
-                            range
-                        );
-                        return range;
-                    }
-                }
-                _ => {}
-            },
-            "std::iter::Iterator::next" => match self.args.first() {
-                Some(Operand::Copy(place)) | Some(Operand::Move(place)) => {
-                    rap_trace!(
-                        "Iterator next detected on place {:?}, returning its range",
-                        place
-                    );
-                    if let Some(var_node) = caller_vars.get(place) {
-                        let range = var_node.get_range().clone();
-                        rap_trace!(
-                            "Iterator next detected on place {:?}, returning its range: {:?}",
-                            place,
-                            range
-                        );
-                        return range;
-                    }
-                }
-                _ => {}
-            },
-            "core::slice::<impl [T]>::len" => {
-                let mut result = Range::default(T::min_value());
-                match self.args.last() {
-                    Some(Operand::Copy(place)) | Some(Operand::Move(place)) => {
-                        let range = caller_vars[place].get_range().clone();
-                        let len = range.get_upper().clone() - range.get_lower().clone();
-                        result = Range::new(len.clone(), len.clone(), RangeType::Regular);
-                    }
-                    Some(Operand::Constant(c)) => {}
-                    None => {}
-                    #[cfg(rapx_rustc_ge_196)]
-                    _ => {}
-                }
-                rap_trace!(
-                    "len() detected on place {:?}, returning its range: {:?}",
-                    self.sink,
-                    result
-                );
-                return result;
-            }
-            "std::ops::IndexMut::index_mut" => {
-                let mut result = Range::default(T::min_value());
-
-                match self.args.last() {
-                    Some(Operand::Copy(place)) | Some(Operand::Move(place)) => {
-                        result = caller_vars[place].get_range().clone();
-                    }
-                    Some(Operand::Constant(c)) => {}
-                    None => {}
-                    #[cfg(rapx_rustc_ge_196)]
-                    _ => {}
-                }
-
-                rap_trace!(
-                    "IndexMut detected on place {:?}, returning its range: {:?}",
-                    self.sink,
-                    result
-                );
-                return result;
-            }
-            "std::ops::Index::index" => {
-                let mut result = Range::default(T::min_value());
-
-                match self.args.last() {
-                    Some(Operand::Copy(place)) | Some(Operand::Move(place)) => {
-                        result = caller_vars[place].get_range().clone();
-                    }
-                    Some(Operand::Constant(c)) => {}
-                    None => {}
-                    #[cfg(rapx_rustc_ge_196)]
-                    _ => {}
-                }
-
-                rap_trace!(
-                    "Index detected on place {:?}, returning its range: {:?}",
-                    self.sink,
-                    result
-                );
-                return result;
-            }
-            "core::panicking::panic" | "std::panicking::panic" => {
-                rap_trace!("Panic call detected, returning bottom range.");
-                return Range::new(T::max_value(), T::min_value(), RangeType::Empty);
-            }
-            _ => {}
-        }
-        // 1. Find the callee's ConstraintGraph in the map.
-        if let Some(rc_callee_cg_cell) = cg_map.get(&self.def_id) {
-            rap_debug!(
-                "Evaluating call to {:?} with args {:?}",
-                self.def_id,
-                self.args
-            );
-            // 2. Try to get a mutable borrow of the callee's graph.
-            //    Using `try_borrow_mut` is safer than `borrow_mut` to avoid panicking on recursive calls.
-            if let Ok(mut callee_cg) = rc_callee_cg_cell.try_borrow_mut() {
-                // 3. Pass arguments from caller to callee.
-                //    This assumes arguments are in order and `_1`, `_2`, ... in the callee MIR.
-                for (i, caller_arg_operand) in self.args.iter().enumerate() {
-                    rap_debug!(
-                        "Processing argument {}: {:?} to callee {:?}",
-                        i,
-                        caller_arg_operand,
-                        self.def_id
-                    );
-                    match caller_arg_operand {
-                        Operand::Copy(caller_arg_place) | Operand::Move(caller_arg_place) => {
-                            // Add the variable node for the caller's argument.
-                            // Callee arguments are typically `_1`, `_2`, ...
-                            let callee_arg_local = rustc_middle::mir::Local::from_usize(i + 1);
-
-                            // Find the corresponding Place and VarNode in the callee.
-                            if let Some(callee_arg_node) = callee_cg.vars.values_mut().find(|v| {
-                                v.v.local == callee_arg_local && v.v.projection.is_empty()
-                            }) {
-                                // Get the range from the caller's variable and set it for the callee's argument.
-                                if let Some(caller_arg_node) = caller_vars.get(&caller_arg_place) {
-                                    let arg_range = caller_arg_node.get_range().clone();
-                                    callee_arg_node.set_range(arg_range);
-                                    rap_debug!(
-                                        "Passing argument from {:?} to callee {:?} : {:?} {:?} -> {:?}",
-                                        caller_arg_place,
-                                        self.def_id,
-                                        callee_arg_node.get_value(),
-                                        caller_arg_node.get_range(),
-                                        callee_arg_node.get_range()
-                                    );
-                                }
-                            }
-                        }
-                        Operand::Constant(const_operand) => {
-                            rap_debug!(
-                                "constant argument {:?} to callee {:?}",
-                                const_operand,
-                                self.def_id
-                            );
-                            let callee_arg_local = rustc_middle::mir::Local::from_usize(i + 1);
-                            if let Some(const_value) = Self::convert_const(&const_operand.const_) {
-                                if let Some(callee_arg_node) =
-                                    callee_cg.vars.values_mut().find(|v| {
-                                        v.v.local == callee_arg_local && v.v.projection.is_empty()
-                                    })
-                                {
-                                    // Get the range from the caller's variable and set it for the callee's argument.
-
-                                    let arg_range = Range::new(
-                                        const_value.clone(),
-                                        const_value.clone(),
-                                        RangeType::Regular,
-                                    );
-                                    callee_arg_node.set_range(arg_range.clone());
-                                    rap_debug!(
-                                        "Passing argument from {:?} to callee {:?} : {:?} {:?} -> {:?}",
-                                        const_value,
-                                        self.def_id,
-                                        callee_arg_node.get_value(),
-                                        arg_range,
-                                        callee_arg_node.get_range()
-                                    );
-                                }
-                            }
-                            // Find the corresponding Place and VarNode in the callee.
-                        }
-                        #[cfg(rapx_rustc_ge_196)]
-                        Operand::RuntimeChecks(_) => {}
-                    }
-                }
-
-                // 4. Run analysis on the callee.
-                //    NOTE: This is a simplification. A full implementation would use memoization
-                //    or a bottom-up analysis order to avoid re-analyzing functions repeatedly.
-                //    For now, we re-run it to ensure argument values are propagated.
-                callee_cg.find_intervals(cg_map, vars_map);
-
-                // 5. Retrieve the return value.
-                //    The return value is stored in `_0` (RETURN_PLACE).
-                let return_place_local = 0 as usize; // `_0` is typically the first local.
-                let mut return_range = Range::default(T::min_value());
-
-                // Find all variables that contribute to the return value.
-                // The `rerurn_places` set in the callee's graph tracks these.
-                if let Some(return_node) = callee_cg.vars.get_mut(&Place::return_place()) {
-                    return_range = return_node.get_range().clone();
-                    rap_debug!(" final return range {:?} ", return_range);
-                    return return_range;
-                }
-                let Some(callee_varnodes_vec) = vars_map.get_mut(&self.def_id) else {
-                    panic!(
-                        "No variable map entry for this function {:?}, skipping Nuutila\n",
-                        self.def_id
-                    );
-                };
-                callee_cg.reset_vars(callee_varnodes_vec);
-            } else {
-                // Recursive call detected or graph is already borrowed.
-                // Conservatively return a full range.
-                rap_trace!(
-                    "Recursive call or existing borrow for {:?}, returning top.",
-                    self.def_id
-                );
-                return Range::new(T::min_value(), T::max_value(), RangeType::Regular);
-            }
-        }
-
-        // Callee not found (e.g., external library function, function pointer).
-        // Return a conservative full range.
-        rap_trace!(
-            "Callee ConstraintGraph for {:?} not found, returning top.",
-            self.def_id
-        );
-        Range::new(T::min_value(), T::max_value(), RangeType::Regular)
+        return Range::bottom();
     }
 }
 #[derive(Debug, Clone)]
@@ -645,7 +367,7 @@ impl<'tcx, T: IntervalArithmetic + ConstConvert + Debug> AggregateOp<'tcx, T> {
             return self.intersect.get_range().clone();
         }
 
-        let mut result: Range<T> = Range::default(T::min_value());
+        let mut result: Range<T> = Range::bottom();
         match self.unique_adt {
             0 => {
                 // If unique_adt is 0, we assume it's a regular array or slice.
@@ -725,7 +447,7 @@ impl<'tcx, T: IntervalArithmetic + ConstConvert + Debug> UseOp<'tcx, T> {
     pub fn eval(&self, vars: &VarNodes<'tcx, T>) -> Range<T> {
         if let Some(source) = self.source {
             let range = vars[source].get_range().clone();
-            let mut result = Range::default(T::min_value());
+            let mut result = Range::bottom();
             if range.is_regular() {
                 result = range
             } else {
@@ -764,7 +486,7 @@ impl<'tcx, T: IntervalArithmetic + ConstConvert + Debug> UnaryOp<'tcx, T> {
     }
 
     pub fn eval(&self) -> Range<T> {
-        Range::default(T::min_value())
+        Range::bottom()
     }
 }
 #[derive(Debug, Clone)]
@@ -774,7 +496,6 @@ pub struct EssaOp<'tcx, T: IntervalArithmetic + ConstConvert + Debug> {
     pub sink: &'tcx Place<'tcx>,
     pub inst: &'tcx Statement<'tcx>,
     pub source: &'tcx Place<'tcx>,
-    pub opcode: u32,
     pub unresolved: bool,
 }
 
@@ -784,7 +505,6 @@ impl<'tcx, T: IntervalArithmetic + ConstConvert + Debug> EssaOp<'tcx, T> {
         sink: &'tcx Place<'tcx>,
         inst: &'tcx Statement<'tcx>,
         source: &'tcx Place<'tcx>,
-        opcode: u32,
         unresolved: bool,
     ) -> Self {
         Self {
@@ -792,7 +512,6 @@ impl<'tcx, T: IntervalArithmetic + ConstConvert + Debug> EssaOp<'tcx, T> {
             sink,
             inst,
             source,
-            opcode,
             unresolved,
         }
     }
@@ -845,9 +564,6 @@ pub struct BinaryOp<'tcx, T: IntervalArithmetic + ConstConvert + Debug> {
 }
 
 impl<'tcx, T: IntervalArithmetic + ConstConvert + Debug> BinaryOp<'tcx, T> {
-    pub fn convert_const(c: &Const) -> Option<T> {
-        T::from_const(c)
-    }
     pub fn new(
         intersect: IntervalType<'tcx, T>,
         sink: &'tcx Place<'tcx>,
@@ -871,15 +587,15 @@ impl<'tcx, T: IntervalArithmetic + ConstConvert + Debug> BinaryOp<'tcx, T> {
 
     pub fn eval(&self, vars: &VarNodes<'tcx, T>) -> Range<T> {
         let op1 = vars[self.source1.unwrap()].get_range().clone();
-        let mut op2 = Range::default(T::min_value());
+        let mut op2 = Range::bottom();
         if let Some(const_value) = &self.const_value {
             // If const_value is provided, use it as the second operand
-            let value = Self::convert_const(const_value).unwrap();
+            let value = T::from_const(const_value).unwrap();
             op2 = Range::new(value, value, RangeType::Regular);
         } else {
             op2 = vars[self.source2.unwrap()].get_range().clone();
         }
-        let mut result = Range::default(T::min_value());
+        let mut result = Range::bottom();
         match &self.inst.kind {
             StatementKind::Assign(assign) => {
                 let (place, rvalue) = &**assign;
@@ -915,7 +631,6 @@ pub struct PhiOp<'tcx, T: IntervalArithmetic + ConstConvert + Debug> {
     pub sink: &'tcx Place<'tcx>,
     pub inst: &'tcx Statement<'tcx>,
     pub sources: Vec<&'tcx Place<'tcx>>,
-    pub opcode: u32,
 }
 
 impl<'tcx, T: IntervalArithmetic + ConstConvert + Debug> PhiOp<'tcx, T> {
@@ -923,14 +638,12 @@ impl<'tcx, T: IntervalArithmetic + ConstConvert + Debug> PhiOp<'tcx, T> {
         intersect: IntervalType<'tcx, T>,
         sink: &'tcx Place<'tcx>,
         inst: &'tcx Statement<'tcx>,
-        opcode: u32,
     ) -> Self {
         Self {
             intersect,
             sink,
             inst,
             sources: vec![],
-            opcode,
         }
     }
 
@@ -1030,36 +743,30 @@ impl<'tcx, T: IntervalArithmetic + ConstConvert + Debug> ControlDep<'tcx, T> {
     }
 
     pub fn eval(&self) -> Range<T> {
-        Range::default(T::min_value())
+        Range::bottom()
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct VarNode<'tcx, T: IntervalArithmetic + ConstConvert + Debug> {
-    // The program variable which is represented.
     pub v: &'tcx Place<'tcx>,
-    // A Range associated to the variable.
     pub interval: IntervalType<'tcx, T>,
-    // Used by the crop meet operator.
-    pub abstract_state: char,
 }
 impl<'tcx, T: IntervalArithmetic + ConstConvert + Debug> VarNode<'tcx, T> {
     pub fn new(v: &'tcx Place<'tcx>) -> Self {
         Self {
             v,
-            interval: IntervalType::Basic(BasicInterval::new(Range::default(T::min_value()))),
-            abstract_state: '?',
+            interval: IntervalType::Basic(BasicInterval::default()),
         }
     }
     pub fn new_symb(v: &'tcx Place<'tcx>, symb_expr: SymbExpr<'tcx>) -> Self {
         Self {
             v,
             interval: IntervalType::Basic(BasicInterval::new_symb(
-                Range::default(T::min_value()),
+                Range::bottom(),
                 symb_expr.clone(),
                 symb_expr.clone(),
             )),
-            abstract_state: '?',
         }
     }
     pub fn get_range(&self) -> &Range<T> {
@@ -1079,15 +786,12 @@ impl<'tcx, T: IntervalArithmetic + ConstConvert + Debug> VarNode<'tcx, T> {
     }
 
     pub fn set_default(&mut self) {
-        let mut range = Range::default(T::min_value());
+        let mut range = Range::bottom();
         range.set_default();
         self.interval.set_range(range);
     }
     pub fn get_value(&self) -> &'tcx Place<'tcx> {
         self.v
-    }
-    pub fn init(&mut self, outside: bool) {
-        let value = self.get_value();
     }
 }
 

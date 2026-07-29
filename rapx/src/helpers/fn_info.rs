@@ -2,7 +2,7 @@ use rustc_hir::{Safety, def::DefKind, def_id::DefId};
 use rustc_middle::{
     mir::Local,
     ty,
-    ty::{AssocKind, Mutability, Ty, TyCtxt, TyKind},
+    ty::{AssocKind, Mutability, TyCtxt, TyKind},
 };
 use rustc_span::{kw, sym};
 use std::{
@@ -12,15 +12,8 @@ use std::{
 };
 use syn::Expr;
 
-pub use super::mir_scan::{
-    check_safety, collect_global_local_pairs, get_rawptr_deref, get_unsafe_callees,
-    place_has_raw_deref,
-};
-pub use super::name::{
-    access_ident_recursive, find_generic_in_ty, find_generic_param, get_cleaned_def_path_name,
-    get_known_std_names, get_std_api_signature_json, get_struct_name, match_primitive_type,
-    match_ty_with_ident, parse_local_signature, parse_outside_signature, parse_signature,
-};
+pub use super::mir_scan::check_safety;
+pub use super::name::get_cleaned_def_path_name;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum FnKind {
@@ -184,26 +177,6 @@ pub fn get_adt_def_id_by_adt_method(tcx: TyCtxt<'_>, def_id: DefId) -> Option<De
         }
     }
     None
-}
-
-// get the pointee or wrapped type
-pub fn get_pointee(matched_ty: Ty<'_>) -> Ty<'_> {
-    // progress_info!("get_pointee: > {:?} as type: {:?}", matched_ty, matched_ty.kind());
-    let pointee = if let ty::RawPtr(ty_mut, _) = matched_ty.kind() {
-        get_pointee(*ty_mut)
-    } else if let ty::Ref(_, referred_ty, _) = matched_ty.kind() {
-        get_pointee(*referred_ty)
-    } else {
-        matched_ty
-    };
-    pointee
-}
-
-pub fn is_ptr(matched_ty: Ty<'_>) -> bool {
-    if let ty::RawPtr(_, _) = matched_ty.kind() {
-        return true;
-    }
-    false
 }
 
 pub fn has_mut_self_param(tcx: TyCtxt, def_id: DefId) -> bool {
@@ -402,7 +375,7 @@ pub fn get_ptr_deref_dummy_def_id(tcx: TyCtxt<'_>) -> Option<DefId> {
 /// Return field indices that a `&mut self` method writes to.
 ///
 /// Scans the MIR body for assignments to `(*self).field_n` and returns the
-/// set of field indices that are modified.  Used by invless mode to know which
+/// set of field indices that are modified.  Used by --skip-invariant mode to know which
 /// constructor-inherited invariants are invalidated by a mutator.
 pub fn get_mutated_fields(tcx: TyCtxt<'_>, def_id: DefId) -> Vec<usize> {
     use rustc_middle::mir::{ProjectionElem, StatementKind};

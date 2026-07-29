@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use crate::{
     analysis::dataflow::*,
     check::opt::OptCheck,
-    utils::log::{relative_pos_range, span_to_filename, span_to_line_number, span_to_source_code},
+    utils::span::{relative_pos_range, span_to_filename, span_to_line_number, span_to_source_code},
 };
 use annotate_snippets::{Level, Renderer, Snippet};
 

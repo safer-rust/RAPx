@@ -18,18 +18,10 @@ pub struct CallGraphAnalyzer<'tcx> {
 }
 
 impl<'tcx> Analysis for CallGraphAnalyzer<'tcx> {
-    fn name(&self) -> &'static str {
-        "Default call graph analysis algorithm."
-    }
-
     fn run(&mut self) {
         self.start();
     }
 
-    fn reset(&mut self) {
-        self.graph.fn_calls.clear();
-        self.graph.functions.clear();
-    }
 }
 
 impl<'tcx> CallGraphAnalysis for CallGraphAnalyzer<'tcx> {

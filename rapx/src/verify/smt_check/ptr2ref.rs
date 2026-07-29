@@ -1,18 +1,20 @@
 //! SMT lowering for the `Ptr2Ref` safety property.
 //!
-//! `Ptr2Ref(p)` means the pointer `p` can be soundly converted to a `&T` or
-//! `&mut T` reference.  This module decomposes it into the primitive checks:
+//! Per `contract/decomp.rs`, the spec decomposition is:
 //!
-//! - `NonNull(p)`: the pointer is not null.
-//! - `Align(p, T)`: the pointer is aligned for its pointee type.
+//! ```text
+//! Ptr2Ref(p, T) = Init(p, T, 1) && Align(p, T) && Alias(p, ret)
+//! ```
 //!
-//! The remaining requirements (Allocated + InBound + Init) are not checked here
-//! because they require richer provenance and element-count tracking.
+//! Currently only `NonNull` and `Align` are checked via SMT.  `Init` and
+//! `Alias` require richer provenance and element-count tracking and are
+//! deferred to future implementation.
 
 use super::common::{SmtCheckResult, SmtChecker, SmtObligation, place_label};
 use crate::verify::{
-    contract::Property, helpers::Checkpoint, report::CheckResult, verifier::ForwardVisitResult,
+    contract::Property, report::CheckResult, verifier::ForwardVisitResult,
 };
+use crate::helpers::mir_scan::Checkpoint;
 
 pub(crate) fn check<'tcx>(
     checker: &SmtChecker<'tcx>,

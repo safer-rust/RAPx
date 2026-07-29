@@ -18,6 +18,7 @@ use std::slice::{from_raw_parts, from_raw_parts_mut};
 
 #[rapx::invariant(Align(ptr, T))]
 #[rapx::invariant(InBound(ptr, T, (end_or_len - ptr) / size_of::<T>()))]
+#[rapx::invariant(InBound(end_or_len, T, 0))]
 #[rapx::invariant(Alive(ptr, 'a))]
 pub struct Iter<'a, T: 'a> {
     ptr: NonNull<T>,
@@ -27,6 +28,7 @@ pub struct Iter<'a, T: 'a> {
 
 #[rapx::invariant(Align(ptr, T))]
 #[rapx::invariant(InBound(ptr, T, (end_or_len - ptr) / size_of::<T>()))]
+#[rapx::invariant(InBound(end_or_len, T, 0))]
 #[rapx::invariant(Alive(ptr, 'a))]
 pub struct IterMut<'a, T: 'a> {
     ptr: NonNull<T>,
@@ -42,7 +44,8 @@ impl<'a, T> Iter<'a, T> {
         if mem::size_of::<T>() == 0 {
             self.end_or_len.addr()
         } else {
-            let end: NonNull<T> = unsafe { mem::transmute::<*const T, NonNull<T>>(self.end_or_len) };
+            let end: NonNull<T> =
+                unsafe { mem::transmute::<*const T, NonNull<T>>(self.end_or_len) };
             unsafe { end.as_ptr().offset_from_unsigned(self.ptr.as_ptr()) }
         }
     }
@@ -60,9 +63,12 @@ impl<'a, T> Iter<'a, T> {
     #[rapx::requires(ValidNum(offset <= self.len()))]
     unsafe fn post_inc_start(&mut self, offset: usize) {
         if mem::size_of::<T>() == 0 {
-            self.end_or_len = std::ptr::without_provenance_mut(self.end_or_len.addr().wrapping_sub(offset));
+            self.end_or_len =
+                std::ptr::without_provenance_mut(self.end_or_len.addr().wrapping_sub(offset));
         } else {
-            unsafe { self.ptr = NonNull::new_unchecked(self.ptr.as_ptr().add(offset)); }
+            unsafe {
+                self.ptr = NonNull::new_unchecked(self.ptr.as_ptr().add(offset));
+            }
         }
     }
 
@@ -70,10 +76,14 @@ impl<'a, T> Iter<'a, T> {
     #[rapx::requires(ValidNum(offset <= self.len()))]
     unsafe fn pre_dec_end(&mut self, offset: usize) {
         if mem::size_of::<T>() == 0 {
-            self.end_or_len = std::ptr::without_provenance_mut(self.end_or_len.addr().wrapping_sub(offset));
+            self.end_or_len =
+                std::ptr::without_provenance_mut(self.end_or_len.addr().wrapping_sub(offset));
         } else {
-            let end: NonNull<T> = unsafe { mem::transmute::<*const T, NonNull<T>>(self.end_or_len) };
-            unsafe { self.end_or_len = end.sub(offset).as_ptr() as *const T; }
+            let end: NonNull<T> =
+                unsafe { mem::transmute::<*const T, NonNull<T>>(self.end_or_len) };
+            unsafe {
+                self.end_or_len = end.sub(offset).as_ptr() as *const T;
+            }
         }
     }
 
@@ -87,15 +97,23 @@ impl<'a, T> Iter<'a, T> {
     #[rapx::requires(ValidNum(!self.is_empty()))]
     unsafe fn next_unchecked(&mut self) -> *const T {
         let old = self.ptr;
-        unsafe { self.post_inc_start(1); }
+        unsafe {
+            self.post_inc_start(1);
+        }
         old.as_ptr()
     }
 
     #[rapx::verify]
     #[rapx::requires(ValidNum(!self.is_empty()))]
     unsafe fn next_back_unchecked(&mut self) -> *const T {
-        unsafe { self.pre_dec_end(1); }
-        if mem::size_of::<T>() == 0 { self.ptr.as_ptr() } else { self.end_or_len }
+        unsafe {
+            self.pre_dec_end(1);
+        }
+        if mem::size_of::<T>() == 0 {
+            self.ptr.as_ptr()
+        } else {
+            self.end_or_len
+        }
     }
 
     #[rapx::verify]
@@ -113,7 +131,11 @@ impl<'a, T> Iter<'a, T> {
         } else {
             unsafe { ptr.as_ptr().add(len) as *const T }
         };
-        Iter { ptr, end_or_len, _marker: std::marker::PhantomData }
+        Iter {
+            ptr,
+            end_or_len,
+            _marker: std::marker::PhantomData,
+        }
     }
 }
 
@@ -123,8 +145,11 @@ impl<'a, T> Iter<'a, T> {
     #[rapx::verify]
     fn next(&mut self) -> Option<&'a T> {
         unsafe {
-            if self.is_empty() { None }
-            else { Some(&*self.next_unchecked()) }
+            if self.is_empty() {
+                None
+            } else {
+                Some(&*self.next_unchecked())
+            }
         }
     }
 
@@ -135,14 +160,19 @@ impl<'a, T> Iter<'a, T> {
     }
 
     #[rapx::verify]
-    fn count(self) -> usize { self.len() }
+    fn count(self) -> usize {
+        self.len()
+    }
 
     #[rapx::verify]
     fn nth(&mut self, n: usize) -> Option<&'a T> {
         unsafe {
             if n >= self.len() {
-                if mem::size_of::<T>() == 0 { self.end_or_len = std::ptr::without_provenance_mut(0); }
-                else { self.ptr = mem::transmute::<*const T, NonNull<T>>(self.end_or_len); }
+                if mem::size_of::<T>() == 0 {
+                    self.end_or_len = std::ptr::without_provenance_mut(0);
+                } else {
+                    self.ptr = mem::transmute::<*const T, NonNull<T>>(self.end_or_len);
+                }
                 return None;
             }
             self.post_inc_start(n);
@@ -153,50 +183,84 @@ impl<'a, T> Iter<'a, T> {
     #[rapx::verify]
     fn advance_by(&mut self, n: usize) -> Result<(), NonZero<usize>> {
         let advance = cmp::min(self.len(), n);
-        unsafe { self.post_inc_start(advance); }
+        unsafe {
+            self.post_inc_start(advance);
+        }
         NonZero::new(n - advance).map_or(Ok(()), Err)
     }
 
     #[rapx::verify]
-    fn last(mut self) -> Option<&'a T> { self.next_back() }
+    fn last(mut self) -> Option<&'a T> {
+        self.next_back()
+    }
 
     #[rapx::verify]
-    fn fold<B, F>(mut self, init: B, mut f: F) -> B where F: FnMut(B, &T) -> B {
-        if self.is_empty() { return init; }
+    fn fold<B, F>(mut self, init: B, mut f: F) -> B
+    where
+        F: FnMut(B, &T) -> B,
+    {
+        if self.is_empty() {
+            return init;
+        }
         let mut acc = init;
         let mut i = 0;
         let len = self.len();
         loop {
-            unsafe { acc = f(acc, &*self.ptr.as_ptr().add(i)); }
+            unsafe {
+                acc = f(acc, &*self.ptr.as_ptr().add(i));
+            }
             i = unsafe { i.unchecked_add(1) };
-            if i == len { break; }
+            if i == len {
+                break;
+            }
         }
         acc
     }
 
     #[rapx::verify]
-    fn for_each<F>(mut self, mut f: F) where F: FnMut(&T) {
-        while let Some(x) = self.next() { f(x); }
+    fn for_each<F>(mut self, mut f: F)
+    where
+        F: FnMut(&T),
+    {
+        while let Some(x) = self.next() {
+            f(x);
+        }
     }
 
     #[rapx::verify]
-    fn position<P>(&mut self, mut predicate: P) -> Option<usize> where P: FnMut(&T) -> bool {
+    fn position<P>(&mut self, mut predicate: P) -> Option<usize>
+    where
+        P: FnMut(&T) -> bool,
+    {
         let n = self.len();
         let mut i = 0;
         while let Some(x) = self.next() {
-            if predicate(x) { unsafe { std::hint::assert_unchecked(i < n); } return Some(i); }
+            if predicate(x) {
+                unsafe {
+                    std::hint::assert_unchecked(i < n);
+                }
+                return Some(i);
+            }
             i += 1;
         }
         None
     }
 
     #[rapx::verify]
-    fn rposition<P>(&mut self, mut predicate: P) -> Option<usize> where P: FnMut(&T) -> bool {
+    fn rposition<P>(&mut self, mut predicate: P) -> Option<usize>
+    where
+        P: FnMut(&T) -> bool,
+    {
         let n = self.len();
         let mut i = n;
         while let Some(x) = self.next_back() {
             i -= 1;
-            if predicate(x) { unsafe { std::hint::assert_unchecked(i < n); } return Some(i); }
+            if predicate(x) {
+                unsafe {
+                    std::hint::assert_unchecked(i < n);
+                }
+                return Some(i);
+            }
         }
         None
     }
@@ -204,8 +268,11 @@ impl<'a, T> Iter<'a, T> {
     #[rapx::verify]
     fn next_back(&mut self) -> Option<&'a T> {
         unsafe {
-            if self.is_empty() { None }
-            else { Some(&*self.next_back_unchecked()) }
+            if self.is_empty() {
+                None
+            } else {
+                Some(&*self.next_back_unchecked())
+            }
         }
     }
 
@@ -213,8 +280,11 @@ impl<'a, T> Iter<'a, T> {
     fn nth_back(&mut self, n: usize) -> Option<&'a T> {
         unsafe {
             if n >= self.len() {
-                if mem::size_of::<T>() == 0 { self.end_or_len = std::ptr::without_provenance_mut(0); }
-                else { self.ptr = mem::transmute::<*const T, NonNull<T>>(self.end_or_len); }
+                if mem::size_of::<T>() == 0 {
+                    self.end_or_len = std::ptr::without_provenance_mut(0);
+                } else {
+                    self.ptr = mem::transmute::<*const T, NonNull<T>>(self.end_or_len);
+                }
                 return None;
             }
             self.pre_dec_end(n);
@@ -225,7 +295,9 @@ impl<'a, T> Iter<'a, T> {
     #[rapx::verify]
     fn advance_back_by(&mut self, n: usize) -> Result<(), NonZero<usize>> {
         let advance = cmp::min(self.len(), n);
-        unsafe { self.pre_dec_end(advance); }
+        unsafe {
+            self.pre_dec_end(advance);
+        }
         NonZero::new(n - advance).map_or(Ok(()), Err)
     }
 }
@@ -256,9 +328,12 @@ impl<'a, T> IterMut<'a, T> {
     #[rapx::requires(ValidNum(offset <= self.len()))]
     unsafe fn post_inc_start(&mut self, offset: usize) {
         if mem::size_of::<T>() == 0 {
-            self.end_or_len = std::ptr::without_provenance_mut(self.end_or_len.addr().wrapping_sub(offset));
+            self.end_or_len =
+                std::ptr::without_provenance_mut(self.end_or_len.addr().wrapping_sub(offset));
         } else {
-            unsafe { self.ptr = NonNull::new_unchecked(self.ptr.as_ptr().add(offset)); }
+            unsafe {
+                self.ptr = NonNull::new_unchecked(self.ptr.as_ptr().add(offset));
+            }
         }
     }
 
@@ -266,10 +341,13 @@ impl<'a, T> IterMut<'a, T> {
     #[rapx::requires(ValidNum(offset <= self.len()))]
     unsafe fn pre_dec_end(&mut self, offset: usize) {
         if mem::size_of::<T>() == 0 {
-            self.end_or_len = std::ptr::without_provenance_mut(self.end_or_len.addr().wrapping_sub(offset));
+            self.end_or_len =
+                std::ptr::without_provenance_mut(self.end_or_len.addr().wrapping_sub(offset));
         } else {
             let end: NonNull<T> = unsafe { mem::transmute::<*mut T, NonNull<T>>(self.end_or_len) };
-            unsafe { self.end_or_len = end.sub(offset).as_ptr(); }
+            unsafe {
+                self.end_or_len = end.sub(offset).as_ptr();
+            }
         }
     }
 
@@ -283,15 +361,23 @@ impl<'a, T> IterMut<'a, T> {
     #[rapx::requires(ValidNum(!self.is_empty()))]
     unsafe fn next_unchecked(&mut self) -> *mut T {
         let old = self.ptr;
-        unsafe { self.post_inc_start(1); }
+        unsafe {
+            self.post_inc_start(1);
+        }
         old.as_ptr()
     }
 
     #[rapx::verify]
     #[rapx::requires(ValidNum(!self.is_empty()))]
     unsafe fn next_back_unchecked(&mut self) -> *mut T {
-        unsafe { self.pre_dec_end(1); }
-        if mem::size_of::<T>() == 0 { self.ptr.as_ptr() } else { self.end_or_len }
+        unsafe {
+            self.pre_dec_end(1);
+        }
+        if mem::size_of::<T>() == 0 {
+            self.ptr.as_ptr()
+        } else {
+            self.end_or_len
+        }
     }
 
     #[rapx::verify]
@@ -309,7 +395,11 @@ impl<'a, T> IterMut<'a, T> {
         } else {
             unsafe { ptr.as_ptr().add(len) }
         };
-        IterMut { ptr, end_or_len, _marker: std::marker::PhantomData }
+        IterMut {
+            ptr,
+            end_or_len,
+            _marker: std::marker::PhantomData,
+        }
     }
 
     #[rapx::verify]
@@ -327,8 +417,11 @@ impl<'a, T> IterMut<'a, T> {
     #[rapx::verify]
     fn next(&mut self) -> Option<&'a mut T> {
         unsafe {
-            if self.is_empty() { None }
-            else { Some(&mut *self.next_unchecked()) }
+            if self.is_empty() {
+                None
+            } else {
+                Some(&mut *self.next_unchecked())
+            }
         }
     }
 
@@ -339,14 +432,19 @@ impl<'a, T> IterMut<'a, T> {
     }
 
     #[rapx::verify]
-    fn count(self) -> usize { self.len() }
+    fn count(self) -> usize {
+        self.len()
+    }
 
     #[rapx::verify]
     fn nth(&mut self, n: usize) -> Option<&'a mut T> {
         unsafe {
             if n >= self.len() {
-                if mem::size_of::<T>() == 0 { self.end_or_len = std::ptr::without_provenance_mut(0); }
-                else { self.ptr = mem::transmute::<*mut T, NonNull<T>>(self.end_or_len); }
+                if mem::size_of::<T>() == 0 {
+                    self.end_or_len = std::ptr::without_provenance_mut(0);
+                } else {
+                    self.ptr = mem::transmute::<*mut T, NonNull<T>>(self.end_or_len);
+                }
                 return None;
             }
             self.post_inc_start(n);
@@ -357,50 +455,84 @@ impl<'a, T> IterMut<'a, T> {
     #[rapx::verify]
     fn advance_by(&mut self, n: usize) -> Result<(), NonZero<usize>> {
         let advance = cmp::min(self.len(), n);
-        unsafe { self.post_inc_start(advance); }
+        unsafe {
+            self.post_inc_start(advance);
+        }
         NonZero::new(n - advance).map_or(Ok(()), Err)
     }
 
     #[rapx::verify]
-    fn last(mut self) -> Option<&'a mut T> { self.next_back() }
+    fn last(mut self) -> Option<&'a mut T> {
+        self.next_back()
+    }
 
     #[rapx::verify]
-    fn fold<B, F>(mut self, init: B, mut f: F) -> B where F: FnMut(B, &mut T) -> B {
-        if self.is_empty() { return init; }
+    fn fold<B, F>(mut self, init: B, mut f: F) -> B
+    where
+        F: FnMut(B, &mut T) -> B,
+    {
+        if self.is_empty() {
+            return init;
+        }
         let mut acc = init;
         let mut i = 0;
         let len = self.len();
         loop {
-            unsafe { acc = f(acc, &mut *self.ptr.as_ptr().add(i)); }
+            unsafe {
+                acc = f(acc, &mut *self.ptr.as_ptr().add(i));
+            }
             i = unsafe { i.unchecked_add(1) };
-            if i == len { break; }
+            if i == len {
+                break;
+            }
         }
         acc
     }
 
     #[rapx::verify]
-    fn for_each<F>(mut self, mut f: F) where F: FnMut(&mut T) {
-        while let Some(x) = self.next() { f(x); }
+    fn for_each<F>(mut self, mut f: F)
+    where
+        F: FnMut(&mut T),
+    {
+        while let Some(x) = self.next() {
+            f(x);
+        }
     }
 
     #[rapx::verify]
-    fn position<P>(&mut self, mut predicate: P) -> Option<usize> where P: FnMut(&mut T) -> bool {
+    fn position<P>(&mut self, mut predicate: P) -> Option<usize>
+    where
+        P: FnMut(&mut T) -> bool,
+    {
         let n = self.len();
         let mut i = 0;
         while let Some(x) = self.next() {
-            if predicate(x) { unsafe { std::hint::assert_unchecked(i < n); } return Some(i); }
+            if predicate(x) {
+                unsafe {
+                    std::hint::assert_unchecked(i < n);
+                }
+                return Some(i);
+            }
             i += 1;
         }
         None
     }
 
     #[rapx::verify]
-    fn rposition<P>(&mut self, mut predicate: P) -> Option<usize> where P: FnMut(&mut T) -> bool {
+    fn rposition<P>(&mut self, mut predicate: P) -> Option<usize>
+    where
+        P: FnMut(&mut T) -> bool,
+    {
         let n = self.len();
         let mut i = n;
         while let Some(x) = self.next_back() {
             i -= 1;
-            if predicate(x) { unsafe { std::hint::assert_unchecked(i < n); } return Some(i); }
+            if predicate(x) {
+                unsafe {
+                    std::hint::assert_unchecked(i < n);
+                }
+                return Some(i);
+            }
         }
         None
     }
@@ -408,8 +540,11 @@ impl<'a, T> IterMut<'a, T> {
     #[rapx::verify]
     fn next_back(&mut self) -> Option<&'a mut T> {
         unsafe {
-            if self.is_empty() { None }
-            else { Some(&mut *self.next_back_unchecked()) }
+            if self.is_empty() {
+                None
+            } else {
+                Some(&mut *self.next_back_unchecked())
+            }
         }
     }
 
@@ -417,8 +552,11 @@ impl<'a, T> IterMut<'a, T> {
     fn nth_back(&mut self, n: usize) -> Option<&'a mut T> {
         unsafe {
             if n >= self.len() {
-                if mem::size_of::<T>() == 0 { self.end_or_len = std::ptr::without_provenance_mut(0); }
-                else { self.ptr = mem::transmute::<*mut T, NonNull<T>>(self.end_or_len); }
+                if mem::size_of::<T>() == 0 {
+                    self.end_or_len = std::ptr::without_provenance_mut(0);
+                } else {
+                    self.ptr = mem::transmute::<*mut T, NonNull<T>>(self.end_or_len);
+                }
                 return None;
             }
             self.pre_dec_end(n);
@@ -429,7 +567,9 @@ impl<'a, T> IterMut<'a, T> {
     #[rapx::verify]
     fn advance_back_by(&mut self, n: usize) -> Result<(), NonZero<usize>> {
         let advance = cmp::min(self.len(), n);
-        unsafe { self.pre_dec_end(advance); }
+        unsafe {
+            self.pre_dec_end(advance);
+        }
         NonZero::new(n - advance).map_or(Ok(()), Err)
     }
 }
@@ -456,8 +596,9 @@ impl<'a, T> Windows<'a, T> {
 
     #[rapx::verify]
     fn next(&mut self) -> Option<&'a [T]> {
-        if self.size.get() > self.v.len() { None }
-        else {
+        if self.size.get() > self.v.len() {
+            None
+        } else {
             let ret = &self.v[..self.size.get()];
             self.v = &self.v[1..];
             Some(ret)
@@ -466,8 +607,9 @@ impl<'a, T> Windows<'a, T> {
 
     #[rapx::verify]
     fn next_back(&mut self) -> Option<&'a [T]> {
-        if self.size.get() > self.v.len() { None }
-        else {
+        if self.size.get() > self.v.len() {
+            None
+        } else {
             let ret = &self.v[self.v.len() - self.size.get()..];
             self.v = &self.v[..self.v.len() - 1];
             Some(ret)
@@ -492,15 +634,23 @@ pub struct Chunks<'a, T: 'a> {
 impl<'a, T> Chunks<'a, T> {
     #[rapx::verify]
     fn new(slice: &'a [T], size: usize) -> Chunks<'a, T> {
-        Chunks { v: slice, chunk_size: size }
+        Chunks {
+            v: slice,
+            chunk_size: size,
+        }
     }
 
     #[rapx::verify]
     fn next_back(&mut self) -> Option<&'a [T]> {
-        if self.v.is_empty() { None }
-        else {
+        if self.v.is_empty() {
+            None
+        } else {
             let remainder = self.v.len() % self.chunk_size;
-            let chunksz = if remainder != 0 { remainder } else { self.chunk_size };
+            let chunksz = if remainder != 0 {
+                remainder
+            } else {
+                self.chunk_size
+            };
             let mid = self.v.len() - chunksz;
             let (fst, snd) = self.v.split_at(mid);
             self.v = fst;
@@ -530,13 +680,18 @@ pub struct ChunksMut<'a, T: 'a> {
 impl<'a, T> ChunksMut<'a, T> {
     #[rapx::verify]
     fn new(slice: &'a mut [T], size: usize) -> ChunksMut<'a, T> {
-        ChunksMut { v: slice, chunk_size: size, _marker: std::marker::PhantomData }
+        ChunksMut {
+            v: slice,
+            chunk_size: size,
+            _marker: std::marker::PhantomData,
+        }
     }
 
     #[rapx::verify]
     fn next(&mut self) -> Option<&'a mut [T]> {
-        if self.v.is_empty() { None }
-        else {
+        if self.v.is_empty() {
+            None
+        } else {
             let sz = cmp::min(self.v.len(), self.chunk_size);
             let (head, tail) = unsafe { self.v.split_at_mut(sz) };
             self.v = tail;
@@ -547,9 +702,13 @@ impl<'a, T> ChunksMut<'a, T> {
     #[rapx::verify]
     fn nth(&mut self, n: usize) -> Option<&'a mut [T]> {
         let (start, overflow) = n.overflowing_mul(self.chunk_size);
-        if start >= self.v.len() || overflow { self.v = &mut []; return None; }
+        if start >= self.v.len() || overflow {
+            self.v = &mut [];
+            return None;
+        }
         let end = match start.checked_add(self.chunk_size) {
-            Some(sum) => cmp::min(self.v.len(), sum), None => self.v.len(),
+            Some(sum) => cmp::min(self.v.len(), sum),
+            None => self.v.len(),
         };
         let (head, tail) = unsafe { self.v.split_at_mut(end) };
         let (_, nth) = unsafe { head.split_at_mut(start) };
@@ -559,10 +718,15 @@ impl<'a, T> ChunksMut<'a, T> {
 
     #[rapx::verify]
     fn next_back(&mut self) -> Option<&'a mut [T]> {
-        if self.v.is_empty() { None }
-        else {
+        if self.v.is_empty() {
+            None
+        } else {
             let remainder = self.v.len() % self.chunk_size;
-            let sz = if remainder != 0 { remainder } else { self.chunk_size };
+            let sz = if remainder != 0 {
+                remainder
+            } else {
+                self.chunk_size
+            };
             let len = self.v.len();
             let (head, tail) = unsafe { self.v.split_at_mut(len - sz) };
             self.v = head;
@@ -572,11 +736,21 @@ impl<'a, T> ChunksMut<'a, T> {
 
     #[rapx::verify]
     fn nth_back(&mut self, n: usize) -> Option<&'a mut [T]> {
-        let chunk_count = if self.v.is_empty() { 0 } else { let n = self.v.len() / self.chunk_size; let rem = self.v.len() % self.chunk_size; if rem > 0 { n + 1 } else { n } };
-        if n >= chunk_count { self.v = &mut []; return None; }
+        let chunk_count = if self.v.is_empty() {
+            0
+        } else {
+            let n = self.v.len() / self.chunk_size;
+            let rem = self.v.len() % self.chunk_size;
+            if rem > 0 { n + 1 } else { n }
+        };
+        if n >= chunk_count {
+            self.v = &mut [];
+            return None;
+        }
         let start = (chunk_count - 1 - n) * self.chunk_size;
         let end = match start.checked_add(self.chunk_size) {
-            Some(res) => cmp::min(self.v.len(), res), None => self.v.len(),
+            Some(res) => cmp::min(self.v.len(), res),
+            None => self.v.len(),
         };
         let (temp, _tail) = unsafe { self.v.split_at_mut(end) };
         let (head, nth_back) = unsafe { temp.split_at_mut(start) };
@@ -608,13 +782,18 @@ impl<'a, T> ChunksExact<'a, T> {
         let rem = slice.len() % chunk_size;
         let fst_len = slice.len() - rem;
         let (fst, snd) = slice.split_at(fst_len);
-        ChunksExact { v: fst, rem: snd, chunk_size }
+        ChunksExact {
+            v: fst,
+            rem: snd,
+            chunk_size,
+        }
     }
 
     #[rapx::verify]
     fn next(&mut self) -> Option<&'a [T]> {
-        if self.v.len() < self.chunk_size { None }
-        else {
+        if self.v.len() < self.chunk_size {
+            None
+        } else {
             let (fst, snd) = self.v.split_at(self.chunk_size);
             self.v = snd;
             Some(fst)
@@ -623,8 +802,9 @@ impl<'a, T> ChunksExact<'a, T> {
 
     #[rapx::verify]
     fn next_back(&mut self) -> Option<&'a [T]> {
-        if self.v.len() < self.chunk_size { None }
-        else {
+        if self.v.len() < self.chunk_size {
+            None
+        } else {
             let (fst, snd) = self.v.split_at(self.v.len() - self.chunk_size);
             self.v = fst;
             Some(snd)
@@ -656,13 +836,19 @@ impl<'a, T> ChunksExactMut<'a, T> {
         let rem = slice.len() % chunk_size;
         let fst_len = slice.len() - rem;
         let (fst, snd) = slice.split_at_mut(fst_len);
-        ChunksExactMut { v: fst, rem: snd, chunk_size, _marker: std::marker::PhantomData }
+        ChunksExactMut {
+            v: fst,
+            rem: snd,
+            chunk_size,
+            _marker: std::marker::PhantomData,
+        }
     }
 
     #[rapx::verify]
     fn next(&mut self) -> Option<&'a mut [T]> {
-        if self.v.len() < self.chunk_size { None }
-        else {
+        if self.v.len() < self.chunk_size {
+            None
+        } else {
             let (head, tail) = unsafe { self.v.split_at_mut(self.chunk_size) };
             self.v = tail;
             Some(unsafe { &mut *head })
@@ -672,7 +858,10 @@ impl<'a, T> ChunksExactMut<'a, T> {
     #[rapx::verify]
     fn nth(&mut self, n: usize) -> Option<&'a mut [T]> {
         let (start, overflow) = n.overflowing_mul(self.chunk_size);
-        if start >= self.v.len() || overflow { self.v = &mut []; return None; }
+        if start >= self.v.len() || overflow {
+            self.v = &mut [];
+            return None;
+        }
         let (_, snd) = unsafe { self.v.split_at_mut(start) };
         self.v = snd;
         self.next()
@@ -680,8 +869,9 @@ impl<'a, T> ChunksExactMut<'a, T> {
 
     #[rapx::verify]
     fn next_back(&mut self) -> Option<&'a mut [T]> {
-        if self.v.len() < self.chunk_size { None }
-        else {
+        if self.v.len() < self.chunk_size {
+            None
+        } else {
             let (head, tail) = unsafe { self.v.split_at_mut(self.v.len() - self.chunk_size) };
             self.v = head;
             Some(unsafe { &mut *tail })
@@ -691,7 +881,10 @@ impl<'a, T> ChunksExactMut<'a, T> {
     #[rapx::verify]
     fn nth_back(&mut self, n: usize) -> Option<&'a mut [T]> {
         let len = self.v.len() / self.chunk_size;
-        if n >= len { self.v = &mut []; return None; }
+        if n >= len {
+            self.v = &mut [];
+            return None;
+        }
         let start = (len - 1 - n) * self.chunk_size;
         let end = start + self.chunk_size;
         let (temp, _tail) = unsafe { mem::replace(&mut self.v, &mut []).split_at_mut(end) };
@@ -719,13 +912,17 @@ pub struct RChunks<'a, T: 'a> {
 impl<'a, T> RChunks<'a, T> {
     #[rapx::verify]
     fn new(slice: &'a [T], size: usize) -> RChunks<'a, T> {
-        RChunks { v: slice, chunk_size: size }
+        RChunks {
+            v: slice,
+            chunk_size: size,
+        }
     }
 
     #[rapx::verify]
     fn next(&mut self) -> Option<&'a [T]> {
-        if self.v.is_empty() { None }
-        else {
+        if self.v.is_empty() {
+            None
+        } else {
             let len = self.v.len();
             let chunksz = cmp::min(len, self.chunk_size);
             let (fst, snd) = self.v.split_at(len - chunksz);
@@ -736,10 +933,15 @@ impl<'a, T> RChunks<'a, T> {
 
     #[rapx::verify]
     fn next_back(&mut self) -> Option<&'a [T]> {
-        if self.v.is_empty() { None }
-        else {
+        if self.v.is_empty() {
+            None
+        } else {
             let remainder = self.v.len() % self.chunk_size;
-            let chunksz = if remainder != 0 { remainder } else { self.chunk_size };
+            let chunksz = if remainder != 0 {
+                remainder
+            } else {
+                self.chunk_size
+            };
             let (fst, snd) = self.v.split_at(chunksz);
             self.v = snd;
             Some(fst)
@@ -768,13 +970,18 @@ pub struct RChunksMut<'a, T: 'a> {
 impl<'a, T> RChunksMut<'a, T> {
     #[rapx::verify]
     fn new(slice: &'a mut [T], size: usize) -> RChunksMut<'a, T> {
-        RChunksMut { v: slice, chunk_size: size, _marker: std::marker::PhantomData }
+        RChunksMut {
+            v: slice,
+            chunk_size: size,
+            _marker: std::marker::PhantomData,
+        }
     }
 
     #[rapx::verify]
     fn next(&mut self) -> Option<&'a mut [T]> {
-        if self.v.is_empty() { None }
-        else {
+        if self.v.is_empty() {
+            None
+        } else {
             let sz = cmp::min(self.v.len(), self.chunk_size);
             let len = self.v.len();
             let (head, tail) = unsafe { self.v.split_at_mut(len - sz) };
@@ -786,7 +993,10 @@ impl<'a, T> RChunksMut<'a, T> {
     #[rapx::verify]
     fn nth(&mut self, n: usize) -> Option<&'a mut [T]> {
         let (end, overflow) = n.overflowing_mul(self.chunk_size);
-        if end >= self.v.len() || overflow { self.v = &mut []; return None; }
+        if end >= self.v.len() || overflow {
+            self.v = &mut [];
+            return None;
+        }
         let end = self.v.len() - end;
         let start = end.saturating_sub(self.chunk_size);
         let (head, tail) = unsafe { self.v.split_at_mut(start) };
@@ -797,8 +1007,9 @@ impl<'a, T> RChunksMut<'a, T> {
 
     #[rapx::verify]
     fn last(mut self) -> Option<&'a mut [T]> {
-        if self.v.is_empty() { None }
-        else {
+        if self.v.is_empty() {
+            None
+        } else {
             let rem = self.v.len() % self.chunk_size;
             let end = if rem == 0 { self.chunk_size } else { rem };
             Some(unsafe { &mut *self.v.get_unchecked_mut(0..end) })
@@ -807,10 +1018,15 @@ impl<'a, T> RChunksMut<'a, T> {
 
     #[rapx::verify]
     fn next_back(&mut self) -> Option<&'a mut [T]> {
-        if self.v.is_empty() { None }
-        else {
+        if self.v.is_empty() {
+            None
+        } else {
             let remainder = self.v.len() % self.chunk_size;
-            let sz = if remainder != 0 { remainder } else { self.chunk_size };
+            let sz = if remainder != 0 {
+                remainder
+            } else {
+                self.chunk_size
+            };
             let (head, tail) = unsafe { self.v.split_at_mut(sz) };
             self.v = tail;
             Some(unsafe { &mut *head })
@@ -819,8 +1035,17 @@ impl<'a, T> RChunksMut<'a, T> {
 
     #[rapx::verify]
     fn nth_back(&mut self, n: usize) -> Option<&'a mut [T]> {
-        let chunk_count = if self.v.is_empty() { 0 } else { let n = self.v.len() / self.chunk_size; let rem = self.v.len() % self.chunk_size; if rem > 0 { n + 1 } else { n } };
-        if n >= chunk_count { self.v = &mut []; return None; }
+        let chunk_count = if self.v.is_empty() {
+            0
+        } else {
+            let n = self.v.len() / self.chunk_size;
+            let rem = self.v.len() % self.chunk_size;
+            if rem > 0 { n + 1 } else { n }
+        };
+        if n >= chunk_count {
+            self.v = &mut [];
+            return None;
+        }
         let offset_from_end = (chunk_count - 1 - n) * self.chunk_size;
         let end = self.v.len() - offset_from_end;
         let start = end.saturating_sub(self.chunk_size);
@@ -853,13 +1078,18 @@ impl<'a, T> RChunksExact<'a, T> {
     fn new(slice: &'a [T], chunk_size: usize) -> RChunksExact<'a, T> {
         let rem = slice.len() % chunk_size;
         let (fst, snd) = slice.split_at(rem);
-        RChunksExact { v: snd, rem: fst, chunk_size }
+        RChunksExact {
+            v: snd,
+            rem: fst,
+            chunk_size,
+        }
     }
 
     #[rapx::verify]
     fn next(&mut self) -> Option<&'a [T]> {
-        if self.v.len() < self.chunk_size { None }
-        else {
+        if self.v.len() < self.chunk_size {
+            None
+        } else {
             let (fst, snd) = self.v.split_at(self.v.len() - self.chunk_size);
             self.v = fst;
             Some(snd)
@@ -868,8 +1098,9 @@ impl<'a, T> RChunksExact<'a, T> {
 
     #[rapx::verify]
     fn next_back(&mut self) -> Option<&'a [T]> {
-        if self.v.len() < self.chunk_size { None }
-        else {
+        if self.v.len() < self.chunk_size {
+            None
+        } else {
             let (fst, snd) = self.v.split_at(self.chunk_size);
             self.v = snd;
             Some(fst)
@@ -900,13 +1131,18 @@ impl<'a, T> RChunksExactMut<'a, T> {
     fn new(slice: &'a mut [T], chunk_size: usize) -> RChunksExactMut<'a, T> {
         let rem = slice.len() % chunk_size;
         let (fst, snd) = slice.split_at_mut(rem);
-        RChunksExactMut { v: snd, rem: fst, chunk_size }
+        RChunksExactMut {
+            v: snd,
+            rem: fst,
+            chunk_size,
+        }
     }
 
     #[rapx::verify]
     fn next(&mut self) -> Option<&'a mut [T]> {
-        if self.v.len() < self.chunk_size { None }
-        else {
+        if self.v.len() < self.chunk_size {
+            None
+        } else {
             let len = self.v.len();
             let (head, tail) = unsafe { self.v.split_at_mut(len - self.chunk_size) };
             self.v = head;
@@ -917,7 +1153,10 @@ impl<'a, T> RChunksExactMut<'a, T> {
     #[rapx::verify]
     fn nth(&mut self, n: usize) -> Option<&'a mut [T]> {
         let (end, overflow) = n.overflowing_mul(self.chunk_size);
-        if end >= self.v.len() || overflow { self.v = &mut []; return None; }
+        if end >= self.v.len() || overflow {
+            self.v = &mut [];
+            return None;
+        }
         let len = self.v.len();
         let (fst, _) = unsafe { self.v.split_at_mut(len - end) };
         self.v = fst;
@@ -926,8 +1165,9 @@ impl<'a, T> RChunksExactMut<'a, T> {
 
     #[rapx::verify]
     fn next_back(&mut self) -> Option<&'a mut [T]> {
-        if self.v.len() < self.chunk_size { None }
-        else {
+        if self.v.len() < self.chunk_size {
+            None
+        } else {
             let (head, tail) = unsafe { self.v.split_at_mut(self.chunk_size) };
             self.v = tail;
             Some(unsafe { &mut *head })
@@ -937,7 +1177,10 @@ impl<'a, T> RChunksExactMut<'a, T> {
     #[rapx::verify]
     fn nth_back(&mut self, n: usize) -> Option<&'a mut [T]> {
         let len = self.v.len() / self.chunk_size;
-        if n >= len { self.v = &mut []; return None; }
+        if n >= len {
+            self.v = &mut [];
+            return None;
+        }
         let offset = (len - n) * self.chunk_size;
         let start = self.v.len() - offset;
         let end = start + self.chunk_size;
@@ -971,8 +1214,9 @@ impl<'a, T, const N: usize> ArrayWindows<'a, T, N> {
 
     #[rapx::verify]
     fn next(&mut self) -> Option<&'a [T; N]> {
-        if self.v.len() < N { None }
-        else {
+        if self.v.len() < N {
+            None
+        } else {
             let ret = unsafe { &*(self.v.as_ptr() as *const [T; N]) };
             self.v = &self.v[1..];
             Some(ret)
@@ -981,8 +1225,9 @@ impl<'a, T, const N: usize> ArrayWindows<'a, T, N> {
 
     #[rapx::verify]
     fn next_back(&mut self) -> Option<&'a [T; N]> {
-        if self.v.len() < N { None }
-        else {
+        if self.v.len() < N {
+            None
+        } else {
             let start = self.v.len() - N;
             let ret = unsafe { &*(self.v[start..].as_ptr() as *const [T; N]) };
             self.v = &self.v[..self.v.len() - 1];
@@ -994,7 +1239,10 @@ impl<'a, T, const N: usize> ArrayWindows<'a, T, N> {
 // --- Split ------------------------------------------------------------------
 
 #[rapx::invariant(InBound(v, T, v.len()))]
-pub struct Split<'a, T: 'a, P> where P: FnMut(&T) -> bool {
+pub struct Split<'a, T: 'a, P>
+where
+    P: FnMut(&T) -> bool,
+{
     v: &'a [T],
     pred: P,
     finished: bool,
@@ -1003,14 +1251,23 @@ pub struct Split<'a, T: 'a, P> where P: FnMut(&T) -> bool {
 impl<'a, T, P: FnMut(&T) -> bool> Split<'a, T, P> {
     #[rapx::verify]
     fn new(slice: &'a [T], pred: P) -> Split<'a, T, P> {
-        Split { v: slice, pred, finished: false }
+        Split {
+            v: slice,
+            pred,
+            finished: false,
+        }
     }
 
     #[rapx::verify]
     fn next(&mut self) -> Option<&'a [T]> {
-        if self.finished { return None; }
+        if self.finished {
+            return None;
+        }
         match self.v.iter().position(|x| (self.pred)(x)) {
-            None => { self.finished = true; Some(self.v) }
+            None => {
+                self.finished = true;
+                Some(self.v)
+            }
             Some(idx) => {
                 let ret = &self.v[..idx];
                 self.v = &self.v[idx + 1..];
@@ -1021,9 +1278,14 @@ impl<'a, T, P: FnMut(&T) -> bool> Split<'a, T, P> {
 
     #[rapx::verify]
     fn next_back(&mut self) -> Option<&'a [T]> {
-        if self.finished { return None; }
+        if self.finished {
+            return None;
+        }
         match self.v.iter().rposition(|x| (self.pred)(x)) {
-            None => { self.finished = true; Some(self.v) }
+            None => {
+                self.finished = true;
+                Some(self.v)
+            }
             Some(idx) => {
                 let ret = &self.v[idx + 1..];
                 self.v = &self.v[..idx];

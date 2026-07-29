@@ -4,7 +4,8 @@ use std::fmt::Write;
 
 use rustc_middle::ty::TyCtxt;
 
-use crate::verify::{helpers::CheckpointLocation, path_extractor::PathStep};
+use crate::helpers::mir_scan::CheckpointLocation;
+use crate::verify::path_extractor::PathStep;
 
 use super::types::{BackwardItem, ForgetReason, KeepReason, RelevantMirItems};
 
@@ -13,7 +14,7 @@ impl<'tcx> RelevantMirItems<'tcx> {
     pub fn describe(
         &self,
         tcx: TyCtxt<'tcx>,
-        checkpoint: &crate::verify::helpers::Checkpoint<'tcx>,
+        checkpoint: &crate::helpers::mir_scan::Checkpoint<'tcx>,
         path_index: usize,
     ) -> String {
         let header = format!(

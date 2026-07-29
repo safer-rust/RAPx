@@ -1,7 +1,25 @@
 pub mod checking;
 pub mod data_collection;
-pub mod iterator;
+pub mod loop_visitors;
 pub mod memory_cloning;
+
+#[macro_export]
+macro_rules! def_paths {
+    ($($field:ident : $path:literal),+ $(,)?) => {
+        static DEFPATHS: once_cell::sync::OnceCell<DefPaths> = once_cell::sync::OnceCell::new();
+        struct DefPaths {
+            $(pub $field: $crate::helpers::def_path::DefPath),+
+        }
+        impl DefPaths {
+            #[allow(dead_code)]
+            fn new(tcx: &rustc_middle::ty::TyCtxt<'_>) -> Self {
+                Self {
+                    $($field: $crate::helpers::def_path::DefPath::new($path, tcx)),+
+                }
+            }
+        }
+    };
+}
 
 use rustc_middle::ty::TyCtxt;
 
@@ -18,8 +36,8 @@ use rustc_span::symbol::Symbol;
 use std::sync::Mutex;
 
 lazy_static! {
-    pub static ref NO_STD: Mutex<bool> = Mutex::new(false);
-    pub static ref LEVEL: Mutex<usize> = Mutex::new(0);
+    pub(crate) static ref NO_STD: Mutex<bool> = Mutex::new(false);
+    pub(crate) static ref LEVEL: Mutex<usize> = Mutex::new(0);
 }
 
 pub struct Opt<'tcx> {

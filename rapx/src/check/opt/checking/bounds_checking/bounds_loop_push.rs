@@ -1,13 +1,12 @@
 use once_cell::sync::OnceCell;
 
-use rustc_hir::{Expr, ExprKind, intravisit};
+use rustc_hir::intravisit;
 use rustc_middle::ty::TyCtxt;
-use rustc_middle::ty::TypeckResults;
 use rustc_span::Span;
 
 use crate::analysis::dataflow::Graph;
 use crate::helpers::def_path::DefPath;
-use crate::utils::log::{
+use crate::utils::span::{
     relative_pos_range, span_to_filename, span_to_first_line, span_to_line_number,
     span_to_source_code, span_to_trimmed_span,
 };
@@ -15,6 +14,7 @@ use annotate_snippets::{Level, Renderer, Snippet};
 
 use super::super::super::LEVEL;
 use super::super::super::NO_STD;
+use super::super::super::loop_visitors::LoopFinder;
 static DEFPATHS: OnceCell<DefPaths> = OnceCell::new();
 
 struct DefPaths {
@@ -36,52 +36,6 @@ impl DefPaths {
     }
 }
 
-pub struct LoopFinder<'tcx> {
-    pub typeck_results: &'tcx TypeckResults<'tcx>,
-    pub record: Vec<(Span, Vec<Span>)>,
-}
-
-pub struct PushFinder<'tcx> {
-    typeck_results: &'tcx TypeckResults<'tcx>,
-    record: Vec<Span>,
-}
-
-impl<'tcx> intravisit::Visitor<'tcx> for PushFinder<'tcx> {
-    fn visit_expr(&mut self, ex: &'tcx Expr<'tcx>) {
-        if let ExprKind::MethodCall(.., span) = ex.kind {
-            let def_id = self
-                .typeck_results
-                .type_dependent_def_id(ex.hir_id)
-                .unwrap();
-            let target_def_id = (&DEFPATHS.get().unwrap()).vec_push.last_def_id();
-            if def_id == target_def_id {
-                self.record.push(span);
-            }
-        }
-        intravisit::walk_expr(self, ex);
-    }
-}
-
-impl<'tcx> intravisit::Visitor<'tcx> for LoopFinder<'tcx> {
-    fn visit_expr(&mut self, ex: &'tcx Expr<'tcx>) {
-        if let ExprKind::Loop(block, ..) = ex.kind {
-            let mut push_finder = PushFinder {
-                typeck_results: self.typeck_results,
-                record: Vec::new(),
-            };
-            intravisit::walk_block(&mut push_finder, block);
-            // if !push_finder.record.is_empty() {
-            //     self.record.push((ex.span, push_finder.record));
-            // }
-            if push_finder.record.len() == 1 {
-                // we only use simple cases
-                self.record.push((ex.span, push_finder.record));
-            }
-        }
-        intravisit::walk_expr(self, ex);
-    }
-}
-
 use crate::check::opt::OptCheck;
 
 pub struct BoundsLoopPushCheck {
@@ -94,18 +48,16 @@ impl OptCheck for BoundsLoopPushCheck {
     }
 
     fn check(&mut self, graph: &Graph, tcx: &TyCtxt) {
-        let _ = &DEFPATHS.get_or_init(|| DefPaths::new(tcx));
+        let def_paths = &DEFPATHS.get_or_init(|| DefPaths::new(tcx));
         let level = LEVEL.lock().unwrap();
         if *level == 2 {
             let def_id = graph.def_id;
             let body = tcx.hir_body_owned_by(def_id.as_local().unwrap());
             let typeck_results = tcx.typeck(def_id.as_local().unwrap());
-            let mut loop_finder = LoopFinder {
-                typeck_results,
-                record: Vec::new(),
-            };
+            let target_def_id = def_paths.vec_push.last_def_id();
+            let mut loop_finder = LoopFinder::new(typeck_results, target_def_id);
             intravisit::walk_body(&mut loop_finder, body);
-            self.record = loop_finder.record;
+            self.record = loop_finder.into_record();
         }
     }
 

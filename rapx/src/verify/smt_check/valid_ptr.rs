@@ -14,16 +14,14 @@
 //! Zero-sized types do not require an allocated dereferenceable range.  For
 //! non-ZSTs, `ValidPtr` delegates to the `Deref` composite checker.
 
-use super::{
-    common::{SmtCheckResult, SmtChecker, TypeSizeClass},
-    deref,
-};
+use super::common::{SmtCheckResult, SmtChecker, TypeSizeClass};
 use crate::verify::{
-    contract::{Property, PropertyKind},
-    helpers::Checkpoint,
+    contract::{self, Property, PropertyKind},
     report::CheckResult,
     verifier::ForwardVisitResult,
 };
+
+use crate::helpers::mir_scan::Checkpoint;
 
 /// Check `ValidPtr` using `Size(T,0) || (!Size(T,0) && Deref(p,T,n))`.
 pub(crate) fn check<'tcx>(
@@ -41,8 +39,8 @@ pub(crate) fn check<'tcx>(
             SmtCheckResult::proved(format!("ValidPtr proved by Size({required_ty:?}, 0)"))
         }
         TypeSizeClass::NonZero => {
-            let deref_property = primitive_property(property, PropertyKind::Deref);
-            let deref = deref::check(checker, checkpoint, &deref_property, forward);
+            let deref_property = contract::with_kind(property, PropertyKind::Deref);
+            let deref = checker.check(checkpoint, &deref_property, forward);
             match &deref.result {
                 CheckResult::Proved => {
                     SmtCheckResult::proved("ValidPtr proved: non-ZST target satisfies Deref")
@@ -60,6 +58,12 @@ pub(crate) fn check<'tcx>(
                     ) {
                         SmtCheckResult::proved(format!("ValidPtr proved: {reason}"))
                     } else if let Some(reason) =
+                        super::field_invariant::discharge_from_contract_fact_with_checkpoint(
+                            property, forward, checkpoint,
+                        )
+                    {
+                        SmtCheckResult::proved(format!("ValidPtr proved: {reason}"))
+                    } else if let Some(reason) =
                         field_invariant_reason(checker, checkpoint, property, forward, required_ty)
                     {
                         SmtCheckResult::proved(format!("ValidPtr proved: {reason}"))
@@ -71,8 +75,8 @@ pub(crate) fn check<'tcx>(
             .with_note(format!("primitive Deref via SMT: {:?}", deref.result))
         }
         TypeSizeClass::Unknown => {
-            let deref_property = primitive_property(property, PropertyKind::Deref);
-            let deref = deref::check(checker, checkpoint, &deref_property, forward);
+            let deref_property = contract::with_kind(property, PropertyKind::Deref);
+            let deref = checker.check(checkpoint, &deref_property, forward);
             match &deref.result {
                 CheckResult::Proved => SmtCheckResult::proved(
                     "ValidPtr proved: Deref holds, so the formula holds for zero and non-zero sizes",
@@ -84,17 +88,6 @@ pub(crate) fn check<'tcx>(
             .with_note("type size: Unknown")
             .with_note(format!("primitive Deref via SMT: {:?}", deref.result))
         }
-    }
-}
-
-/// Reuse the original arguments while checking one primitive component.
-fn primitive_property<'tcx>(property: &Property<'tcx>, kind: PropertyKind) -> Property<'tcx> {
-    Property {
-        null_guard: None,
-        or_alternatives: Vec::new(),
-        contract_kind: property.contract_kind.clone(),
-        kind,
-        args: property.args.clone(),
     }
 }
 

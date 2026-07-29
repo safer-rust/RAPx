@@ -7,8 +7,10 @@
 
 use super::common::{SmtCheckResult, SmtChecker, SmtObligation, SmtTerm, rvalue_source_place};
 use crate::verify::{
-    contract::Property, def_use::PlaceKey, helpers::Checkpoint, verifier::ForwardVisitResult,
+    contract::Property, verifier::ForwardVisitResult,
+    def_use::PlaceKey,
 };
+use crate::helpers::mir_scan::Checkpoint;
 use rustc_middle::mir::StatementKind;
 
 /// Check `NonOverlap` by lowering two pointer ranges to a common SMT obligation.

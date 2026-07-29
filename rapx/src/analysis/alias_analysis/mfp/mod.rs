@@ -136,10 +136,6 @@ impl<'tcx> MfpAliasAnalyzer<'tcx> {
 }
 
 impl<'tcx> RapxAnalysis for MfpAliasAnalyzer<'tcx> {
-    fn name(&self) -> &'static str {
-        "Alias Analysis (MFP)"
-    }
-
     fn run(&mut self) {
         // Get all functions to analyze
         let mir_keys = self.tcx.mir_keys(());
@@ -240,9 +236,6 @@ impl<'tcx> RapxAnalysis for MfpAliasAnalyzer<'tcx> {
         }
     }
 
-    fn reset(&mut self) {
-        self.fn_map.clear();
-    }
 }
 
 impl<'tcx> AliasAnalysis for MfpAliasAnalyzer<'tcx> {

@@ -5,8 +5,8 @@
 #![allow(unused_parens)]
 #![allow(non_snake_case)]
 
-pub mod Replacer;
-pub mod SSATransformer;
+pub mod replacer;
+pub mod ssa_transformer;
 
 use crate::{rap_info, rap_warn};
 use rustc_hir::{
@@ -218,8 +218,8 @@ impl<'tcx> PassRunner<'tcx> {
     pub fn run_pass(&mut self, body: &mut Body<'tcx>, ssa_def_id: DefId, essa_def_id: DefId) {
         let arg_count = body.arg_count;
         let ssatransformer =
-            SSATransformer::SSATransformer::new(self.tcx, body, ssa_def_id, essa_def_id, arg_count);
-        let mut replacer = Replacer::Replacer {
+            ssa_transformer::SSATransformer::new(self.tcx, body, ssa_def_id, essa_def_id, arg_count);
+        let mut replacer = replacer::Replacer {
             tcx: self.tcx,
             ssatransformer,
             new_local_collection: HashSet::default(),

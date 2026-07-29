@@ -410,8 +410,6 @@ fn ptr_operand_for_deref_place<'tcx>(place: &Place<'tcx>) -> Option<Operand<'tcx
 pub struct StaticMutAccessInfo<'tcx> {
     /// Basic block containing the access.
     pub block: BasicBlock,
-    /// The mutable static being accessed.
-    pub static_def_id: DefId,
     /// The pointee type (i.e. the type of the static itself, `T` in `static mut X: T`).
     pub ty: Ty<'tcx>,
     /// The MIR operand holding the pointer to the static.
@@ -443,7 +441,6 @@ pub fn collect_static_mut_access_info<'tcx>(
                             let ty = tcx.type_of(static_id).skip_binder();
                             infos.push(StaticMutAccessInfo {
                                 block: bb,
-                                static_def_id: static_id,
                                 ty,
                                 ptr_operand: op.clone(),
                             });
@@ -464,7 +461,6 @@ pub fn collect_static_mut_access_info<'tcx>(
                                     let ty = tcx.type_of(static_id).skip_binder();
                                     infos.push(StaticMutAccessInfo {
                                         block: bb,
-                                        static_def_id: static_id,
                                         ty,
                                         ptr_operand: op.clone(),
                                     });

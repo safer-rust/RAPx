@@ -158,10 +158,6 @@ pub struct AliasAnalyzer<'tcx> {
 }
 
 impl<'tcx> Analysis for AliasAnalyzer<'tcx> {
-    fn name(&self) -> &'static str {
-        "Alias Analysis (MoP)"
-    }
-
     fn run(&mut self) {
         rap_debug!("Start alias analysis via MoP.");
         let mir_keys = self.tcx.mir_keys(());
@@ -179,9 +175,6 @@ impl<'tcx> Analysis for AliasAnalyzer<'tcx> {
         self.handle_conor_cases();
     }
 
-    fn reset(&mut self) {
-        self.fn_map.clear();
-    }
 }
 
 impl<'tcx> AliasAnalysis for AliasAnalyzer<'tcx> {
@@ -252,7 +245,7 @@ impl<'tcx> AliasAnalyzer<'tcx> {
             let mut alias_graph = AliasGraph::from_path_graph(self.tcx, def_id, path_graph);
             rap_debug!("Alias graph created: {}", alias_graph);
             rap_debug!("Search scc components in the graph.");
-            alias_graph.find_scc();
+            alias_graph.path_graph.find_scc();
             rap_trace!("After searching scc: {}", alias_graph);
             let mut recursion_set = HashSet::default();
             alias_graph.process_function_paths_opt(paths, &mut self.fn_map, &mut recursion_set);

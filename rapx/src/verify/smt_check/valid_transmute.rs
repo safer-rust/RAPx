@@ -15,9 +15,10 @@ use rustc_middle::ty::{Ty, TyCtxt, TyKind};
 use super::common::{SmtCheckResult, SmtChecker};
 use crate::verify::{
     contract::{Property, PropertyArg},
-    helpers::Checkpoint,
     verifier::ForwardVisitResult,
 };
+
+use crate::helpers::mir_scan::Checkpoint;
 
 /// Check `ValidTransmute(src, dst)`.
 pub(crate) fn check<'tcx>(

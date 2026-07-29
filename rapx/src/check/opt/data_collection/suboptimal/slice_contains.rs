@@ -1,30 +1,19 @@
 use annotate_snippets::{Level, Renderer, Snippet};
 
-use once_cell::sync::OnceCell;
 
 use crate::{
     analysis::dataflow::Graph,
     check::opt::OptCheck,
-    helpers::def_path::DefPath,
-    utils::log::{relative_pos_range, span_to_filename, span_to_line_number, span_to_source_code},
+    utils::span::{relative_pos_range, span_to_filename, span_to_line_number, span_to_source_code},
 };
 use rustc_hir::{Expr, ExprKind, intravisit};
 use rustc_middle::ty::{TyCtxt, TypeckResults};
 use rustc_span::Span;
 
-struct DefPaths {
-    slice_contains: DefPath,
+crate::def_paths! {
+    slice_contains: "slice::contains",
 }
 
-static DEFPATHS: OnceCell<DefPaths> = OnceCell::new();
-
-impl DefPaths {
-    pub fn new(tcx: &TyCtxt<'_>) -> Self {
-        Self {
-            slice_contains: DefPath::new("slice::contains", tcx),
-        }
-    }
-}
 
 struct ContainsFinder<'tcx> {
     typeck_results: &'tcx TypeckResults<'tcx>,

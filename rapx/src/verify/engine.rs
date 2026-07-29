@@ -12,12 +12,12 @@ use crate::analysis::path_analysis::PathTree;
 
 use super::{
     contract::Property,
-    helpers::{Checkpoint, CheckpointLocation},
     report::CheckResult,
     slicer::{BackwardItem, BackwardSlicer},
     smt_check::{SmtCheckResult, SmtChecker},
     verifier::{ForwardVerifier, ForwardVisitResult},
 };
+use crate::helpers::mir_scan::{Checkpoint, CheckpointLocation};
 
 /// Result of checking one invariant along one reachability path.
 pub struct InvariantCheckResult {

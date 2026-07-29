@@ -1,0 +1,6125 @@
+{
+  "core::alloc::global::GlobalAlloc::alloc": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "layout.size() != 0"
+      ]
+    }
+  ],
+  "core::alloc::global::GlobalAlloc::realloc": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "u8",
+        "layout.size()"
+      ]
+    },
+    {
+      "tag": "Layout",
+      "args": [
+        "ptr",
+        "layout"
+      ]
+    },
+    {
+      "tag": "ValidNum",
+      "args": [
+        "new_size != 0"
+      ]
+    }
+  ],
+  "core::alloc::global::GlobalAlloc::dealloc": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "u8",
+        "layout.size()"
+      ]
+    },
+    {
+      "tag": "Layout",
+      "args": [
+        "ptr",
+        "layout"
+      ]
+    }
+  ],
+  "core::alloc::global::GlobalAlloc::alloc_zeroed": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "layout.size() != 0"
+      ]
+    }
+  ],
+  "core::alloc::layout::from_size_align_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "align != 0"
+      ]
+    },
+    {
+      "tag": "ValidNum",
+      "args": [
+        "(align & (align - 1)) == 0"
+      ]
+    }
+  ],
+  "core::alloc::layout::for_value_raw": [
+    {
+      "tag": "Size",
+      "args": [
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "ValidTraitObj",
+      "args": [
+        "t"
+      ]
+    }
+  ],
+  "core::alloc::Allocator::grow": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "u8",
+        "old_layout.size()"
+      ]
+    },
+    {
+      "tag": "Layout",
+      "args": [
+        "self",
+        "old_layout"
+      ]
+    },
+    {
+      "tag": "ValidNum",
+      "args": [
+        "new_layout.size() > old_layout.size()"
+      ]
+    }
+  ],
+  "core::alloc::Allocator::grow_zeroed": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "u8",
+        "old_layout.size()"
+      ]
+    },
+    {
+      "tag": "Layout",
+      "args": [
+        "self",
+        "old_layout"
+      ]
+    },
+    {
+      "tag": "ValidNum",
+      "args": [
+        "new_layout.size() > old_layout.size()"
+      ]
+    }
+  ],
+  "core::alloc::Allocator::shrink": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "u8",
+        "old_layout.size()"
+      ]
+    },
+    {
+      "tag": "Layout",
+      "args": [
+        "self",
+        "old_layout"
+      ]
+    },
+    {
+      "tag": "ValidNum",
+      "args": [
+        "new_layout.size() <= old_layout.size()"
+      ]
+    }
+  ],
+  "core::alloc::Allocator::deallocate": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "u8",
+        "layout.size()"
+      ]
+    },
+    {
+      "tag": "Layout",
+      "args": [
+        "self",
+        "layout"
+      ]
+    }
+  ],
+  "core::alloc::deallocate": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "u8",
+        "layout.size()"
+      ]
+    },
+    {
+      "tag": "Layout",
+      "args": [
+        "ptr",
+        "layout"
+      ]
+    }
+  ],
+  "core::alloc::grow": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "u8",
+        "old_layout.size()"
+      ]
+    },
+    {
+      "tag": "Layout",
+      "args": [
+        "ptr",
+        "old_layout"
+      ]
+    },
+    {
+      "tag": "ValidNum",
+      "args": [
+        "new_layout.size() > old_layout.size()"
+      ]
+    }
+  ],
+  "core::alloc::grow_zeroed": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "u8",
+        "old_layout.size()"
+      ]
+    },
+    {
+      "tag": "Layout",
+      "args": [
+        "ptr",
+        "old_layout"
+      ]
+    },
+    {
+      "tag": "ValidNum",
+      "args": [
+        "new_layout.size() > old_layout.size()"
+      ]
+    }
+  ],
+  "core::alloc::shrink": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "u8",
+        "old_layout.size()"
+      ]
+    },
+    {
+      "tag": "Layout",
+      "args": [
+        "ptr",
+        "old_layout"
+      ]
+    },
+    {
+      "tag": "ValidNum",
+      "args": [
+        "new_layout.size() <= old_layout.size()"
+      ]
+    }
+  ],
+  "core::any::downcast_ref_unchecked": [
+    {
+      "tag": "Typed",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "core::any::downcast_mut_unchecked": [
+    {
+      "tag": "Typed",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "core::array::iter::new_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "N != 0"
+      ]
+    },
+    {
+      "tag": "Init",
+      "args": [
+        "buffer",
+        "T",
+        "N"
+      ]
+    }
+  ],
+  "core::array::ascii::as_ascii_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "self.iter()",
+        "[0, 127]"
+      ]
+    }
+  ],
+  "core::ascii::ascii_char::digit_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "48 <= b && b <= 57"
+      ]
+    }
+  ],
+  "core::ascii::ascii_char::from_u8_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "0 <= b && b <= 127"
+      ]
+    }
+  ],
+  "core::cell::try_borrow_unguarded": [
+    {
+      "tag": "Alias",
+      "kind": "hazard",
+      "args": [
+        "self",
+        "ret"
+      ]
+    }
+  ],
+  "core::char::from_u32_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "i <= 0x10FFFF && (i < 0xD800 || i > 0xDFFF)"
+      ]
+    }
+  ],
+  "core::char::convert::from_u32_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "i <= 0x10FFFF && (i < 0xD800 || i > 0xDFFF)"
+      ]
+    }
+  ],
+  "core::char::methods::from_u32_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "i <= 0x10FFFF && (i < 0xD800 || i > 0xDFFF)"
+      ]
+    }
+  ],
+  "core::f128::to_int_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "self",
+        "[Int::MIN, Int::MAX]"
+      ]
+    }
+  ],
+  "core::f64::to_int_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "self",
+        "[Int::MIN, Int::MAX]"
+      ]
+    }
+  ],
+  "core::f32::to_int_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "self",
+        "[Int::MIN, Int::MAX]"
+      ]
+    }
+  ],
+  "core::f16::to_int_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "self",
+        "[Int::MIN, Int::MAX]"
+      ]
+    }
+  ],
+  "core::convert::num::FloatToInt::to_int_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "self",
+        "[Int::MIN, Int::MAX]"
+      ]
+    }
+  ],
+  "core::convert::num::to_int_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "self",
+        "[Int::MIN, Int::MAX]"
+      ]
+    }
+  ],
+  "core::ffi::c_str::from_ptr": [
+    {
+      "tag": "ValidCStr",
+      "args": [
+        "ptr",
+        "1"
+      ]
+    },
+    {
+      "tag": "Allocated",
+      "args": [
+        "raw",
+        "T",
+        "1",
+        "global"
+      ]
+    },
+    {
+      "tag": "NonNull",
+      "args": [
+        "ptr"
+      ]
+    },
+    {
+      "tag": "Alias",
+      "kind": "hazard",
+      "args": [
+        "ptr",
+        "ret"
+      ]
+    },
+    {
+      "tag": "Alive",
+      "args": [
+        "ptr",
+        "'a"
+      ]
+    }
+  ],
+  "core::ffi::c_str::from_bytes_with_nul_unchecked": [
+    {
+      "tag": "ValidCStr",
+      "args": [
+        "bytes",
+        "1"
+      ]
+    }
+  ],
+  "core::future::async_drop::async_drop_in_place": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "_to_drop",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "_to_drop",
+        "T"
+      ]
+    },
+    {
+      "tag": "NonNull",
+      "args": [
+        "_to_drop"
+      ]
+    },
+    {
+      "tag": "Allocated",
+      "args": [
+        "_to_drop",
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "core::iter::range::forward_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "start <= end"
+      ]
+    }
+  ],
+  "core::iter::range::backward_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "start <= end"
+      ]
+    }
+  ],
+  "core::iter::range::Step::forward_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "start <= end"
+      ]
+    }
+  ],
+  "core::iter::range::Step::backward_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "start <= end"
+      ]
+    }
+  ],
+  "core::mem::manually_drop::take": [
+    {
+      "tag": "Owning",
+      "args": [
+        "slot"
+      ]
+    }
+  ],
+  "core::mem::manually_drop::drop": [
+    {
+      "tag": "Owning",
+      "args": [
+        "slot"
+      ]
+    }
+  ],
+  "core::mem::maybe_uninit::assume_init": [
+    {
+      "tag": "Init",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "core::mem::maybe_uninit::assume_init_read": [
+    {
+      "tag": "Init",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Trait",
+      "args": [
+        "T",
+        "Copy"
+      ],
+      "kind": "option"
+    }
+  ],
+  "core::mem::maybe_uninit::assume_init_drop": [
+    {
+      "tag": "Init",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Allocated",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "core::mem::maybe_uninit::assume_init_ref": [
+    {
+      "tag": "Init",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "core::mem::maybe_uninit::assume_init_mut": [
+    {
+      "tag": "Init",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "core::mem::maybe_uninit::array_assume_init": [
+    {
+      "tag": "Init",
+      "args": [
+        "self",
+        "T",
+        "N"
+      ]
+    }
+  ],
+  "core::mem::maybe_uninit::slice_assume_init_ref": [
+    {
+      "tag": "Init",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "core::mem::maybe_uninit::slice_assume_init_mut": [
+    {
+      "tag": "Init",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "core::mem::size_of_val_raw": [
+    {
+      "tag": "Size",
+      "args": [
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "ValidTraitObj",
+      "args": [
+        "val"
+      ]
+    }
+  ],
+  "core::mem::align_of_val_raw": [
+    {
+      "tag": "Size",
+      "args": [
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "ValidTraitObj",
+      "args": [
+        "val"
+      ]
+    }
+  ],
+  "core::mem::zeroed": [
+    {
+      "tag": "Typed",
+      "args": [
+        "T",
+        "T"
+      ]
+    }
+  ],
+  "core::mem::uninitialized": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "0 == 0"
+      ]
+    }
+  ],
+  "core::mem::transmute_copy": [
+    {
+      "tag": "DoubleAligned",
+      "args": [
+        "src",
+        "Src",
+        "Dst"
+      ]
+    },
+    {
+      "tag": "Typed",
+      "args": [
+        "src",
+        "Src"
+      ]
+    },
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "dst",
+        "Dst",
+        "1"
+      ]
+    }
+  ],
+  "core::mem::transmutability::TransmuteFrom::transmute": [
+    {
+      "tag": "DoubleAligned",
+      "args": [
+        "self",
+        "Src",
+        "Dst"
+      ]
+    },
+    {
+      "tag": "Typed",
+      "args": [
+        "self",
+        "Src"
+      ]
+    }
+  ],
+  "core::num::nonzero::new_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "n != 0"
+      ]
+    }
+  ],
+  "core::num::nonzero::from_mut_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "self != 0"
+      ]
+    }
+  ],
+  "core::num::unchecked_neg": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "self != Self::MIN"
+      ]
+    }
+  ],
+  "core::hint::unreachable_unchecked": [
+    {
+      "tag": "Unreachable",
+      "args": []
+    }
+  ],
+  "core::hint::assert_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "cond"
+      ]
+    }
+  ],
+  "core::pin::map_unchecked": [
+    {
+      "tag": "Pinned",
+      "args": [
+        "self",
+        "a"
+      ]
+    }
+  ],
+  "core::pin::map_unchecked_mut": [
+    {
+      "tag": "Pinned",
+      "args": [
+        "self",
+        "a"
+      ]
+    }
+  ],
+  "core::pin::new_unchecked": [
+    {
+      "tag": "Pinned",
+      "args": [
+        "pointer",
+        "a"
+      ]
+    }
+  ],
+  "core::pin::into_inner_unchecked": [
+    {
+      "tag": "Pinned",
+      "args": [
+        "pin",
+        "a"
+      ]
+    }
+  ],
+  "core::pin::get_unchecked_mut": [
+    {
+      "tag": "Pinned",
+      "args": [
+        "self",
+        "a"
+      ]
+    }
+  ],
+  "core::sync::atomic::from_ptr": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "ptr",
+        "AtomicBool",
+        "1"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "ptr",
+        "AtomicBool"
+      ]
+    },
+    {
+      "tag": "Alias",
+      "kind": "hazard",
+      "args": [
+        "ptr",
+        "ret"
+      ]
+    },
+    {
+      "tag": "Alive",
+      "args": [
+        "ptr",
+        "'a"
+      ]
+    }
+  ],
+  "core::intrinsics::float_to_int_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "self",
+        "[Int::MIN, Int::MAX]"
+      ]
+    }
+  ],
+  "core::intrinsics::typed_swap_nonoverlapping": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "x",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "NonOverlap",
+      "args": [
+        "x",
+        "y",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "y",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "x",
+        "T"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "y",
+        "T"
+      ]
+    }
+  ],
+  "core::intrinsics::copy": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "src",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "src",
+        "T"
+      ]
+    },
+    {
+      "tag": "NonVolatile",
+      "args": [
+        "src",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Alias",
+      "kind": "hazard",
+      "args": [
+        "src",
+        "dst"
+      ]
+    },
+    {
+      "tag": "Trait",
+      "args": [
+        "T",
+        "Copy"
+      ],
+      "kind": "option"
+    }
+  ],
+  "core::intrinsics::copy::copy": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "src",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "src",
+        "T"
+      ]
+    },
+    {
+      "tag": "NonVolatile",
+      "args": [
+        "src",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Alias",
+      "kind": "hazard",
+      "args": [
+        "src",
+        "dst"
+      ]
+    },
+    {
+      "tag": "Trait",
+      "args": [
+        "T",
+        "Copy"
+      ],
+      "kind": "option"
+    },
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "dst",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "dst",
+        "T"
+      ]
+    },
+    {
+      "tag": "NonVolatile",
+      "args": [
+        "dst",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Trait",
+      "args": [
+        "T",
+        "Copy"
+      ],
+      "kind": "option"
+    }
+  ],
+  "core::intrinsics::exact_div": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "y != 0"
+      ]
+    },
+    {
+      "tag": "ValidNum",
+      "args": [
+        "x % y == 0"
+      ]
+    }
+  ],
+  "core::intrinsics::copy_nonoverlapping": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "src",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "src",
+        "T"
+      ]
+    },
+    {
+      "tag": "NonOverlap",
+      "args": [
+        "src",
+        "dst",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "NonVolatile",
+      "args": [
+        "src",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Alias",
+      "kind": "hazard",
+      "args": [
+        "src",
+        "dst"
+      ]
+    },
+    {
+      "tag": "Trait",
+      "args": [
+        "T",
+        "Copy"
+      ],
+      "kind": "option"
+    },
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "dst",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "dst",
+        "T"
+      ]
+    },
+    {
+      "tag": "NonVolatile",
+      "args": [
+        "dst",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Trait",
+      "args": [
+        "T",
+        "Copy"
+      ],
+      "kind": "option"
+    }
+  ],
+  "core::intrinsics::write_bytes": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "dst",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "dst",
+        "T"
+      ]
+    },
+    {
+      "tag": "Typed",
+      "args": [
+        "dst",
+        "T"
+      ]
+    }
+  ],
+  "core::intrinsics::ptr_offset_from": [
+    {
+      "tag": "InBound",
+      "args": [
+        "ptr",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Size",
+      "args": [
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "core::ptr::alignment::new_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "align != 0"
+      ]
+    }
+  ],
+  "core::ptr::non_null::as_uninit_ref": [
+    {
+      "tag": "NonNull",
+      "args": [
+        "self"
+      ]
+    },
+    {
+      "tag": "Ptr2Ref",
+      "args": [
+        "self",
+        "T"
+      ]
+    }
+  ],
+  "core::ptr::non_null::as_uninit_mut": [
+    {
+      "tag": "NonNull",
+      "args": [
+        "self"
+      ]
+    },
+    {
+      "tag": "Ptr2Ref",
+      "args": [
+        "self",
+        "T"
+      ]
+    }
+  ],
+  "core::ptr::non_null::new_unchecked": [
+    {
+      "tag": "NonNull",
+      "args": [
+        "ptr"
+      ]
+    }
+  ],
+  "core::ptr::non_null::as_ref": [
+    {
+      "tag": "Ptr2Ref",
+      "args": [
+        "self.0",
+        "T"
+      ]
+    }
+  ],
+  "core::ptr::non_null::as_mut": [
+    {
+      "tag": "Ptr2Ref",
+      "args": [
+        "self.0",
+        "T"
+      ]
+    }
+  ],
+  "core::ptr::non_null::offset": [
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "T",
+        "count"
+      ]
+    }
+  ],
+  "core::ptr::non_null::add": [
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "T",
+        "count"
+      ]
+    }
+  ],
+  "core::ptr::non_null::byte_offset": [
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "u8",
+        "count"
+      ]
+    }
+  ],
+  "core::ptr::non_null::byte_add": [
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "u8",
+        "count"
+      ]
+    }
+  ],
+  "core::ptr::non_null::byte_sub": [
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "u8",
+        "count"
+      ]
+    }
+  ],
+  "core::ptr::non_null::offset_from": [
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Size",
+      "args": [
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "core::ptr::non_null::byte_offset_from": [
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "u8",
+        "1"
+      ]
+    }
+  ],
+  "core::ptr::non_null::sub_ptr": [
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Size",
+      "args": [
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "core::ptr::non_null::sub": [
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "T",
+        "count"
+      ]
+    }
+  ],
+  "core::ptr::non_null::read": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "self",
+        "T"
+      ]
+    },
+    {
+      "tag": "Trait",
+      "args": [
+        "T",
+        "Copy"
+      ],
+      "kind": "option"
+    },
+    {
+      "tag": "Init",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "core::ptr::non_null::read_volatile": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "self",
+        "T"
+      ]
+    },
+    {
+      "tag": "Trait",
+      "args": [
+        "T",
+        "Copy"
+      ],
+      "kind": "option"
+    },
+    {
+      "tag": "Init",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "core::ptr::non_null::read_unaligned": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Trait",
+      "args": [
+        "T",
+        "Copy"
+      ],
+      "kind": "option"
+    },
+    {
+      "tag": "Init",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "core::ptr::non_null::copy_to": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "self",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "self",
+        "T"
+      ]
+    },
+    {
+      "tag": "NonVolatile",
+      "args": [
+        "self",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Alias",
+      "kind": "hazard",
+      "args": [
+        "self",
+        "dst"
+      ]
+    },
+    {
+      "tag": "Trait",
+      "args": [
+        "T",
+        "Copy"
+      ],
+      "kind": "option"
+    },
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "dst",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "dst",
+        "T"
+      ]
+    }
+  ],
+  "core::ptr::non_null::copy_to_nonoverlapping": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "self",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "self",
+        "T"
+      ]
+    },
+    {
+      "tag": "NonOverlap",
+      "args": [
+        "self",
+        "dest",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "NonVolatile",
+      "args": [
+        "self",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Trait",
+      "args": [
+        "T",
+        "Copy"
+      ],
+      "kind": "option"
+    },
+    {
+      "tag": "Alias",
+      "kind": "hazard",
+      "args": [
+        "self",
+        "dst"
+      ]
+    },
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "dest",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "dest",
+        "T"
+      ]
+    }
+  ],
+  "core::ptr::non_null::copy_from": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "self",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "self",
+        "T"
+      ]
+    },
+    {
+      "tag": "NonVolatile",
+      "args": [
+        "self",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Trait",
+      "args": [
+        "T",
+        "Copy"
+      ],
+      "kind": "option"
+    },
+    {
+      "tag": "Alias",
+      "kind": "hazard",
+      "args": [
+        "self",
+        "src"
+      ]
+    },
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "src",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "src",
+        "T"
+      ]
+    }
+  ],
+  "core::ptr::non_null::copy_from_nonoverlapping": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "self",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "self",
+        "T"
+      ]
+    },
+    {
+      "tag": "NonOverlap",
+      "args": [
+        "self",
+        "src",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "NonVolatile",
+      "args": [
+        "self",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Trait",
+      "args": [
+        "T",
+        "Copy"
+      ],
+      "kind": "option"
+    },
+    {
+      "tag": "Alias",
+      "kind": "hazard",
+      "args": [
+        "self",
+        "src"
+      ]
+    },
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "src",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "src",
+        "T"
+      ]
+    }
+  ],
+  "core::ptr::non_null::drop_in_place": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "self",
+        "T"
+      ]
+    }
+  ],
+  "core::ptr::non_null::write": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "self",
+        "T"
+      ]
+    }
+  ],
+  "core::ptr::non_null::write_bytes": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "self",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "self",
+        "T"
+      ]
+    },
+    {
+      "tag": "Typed",
+      "args": [
+        "self",
+        "T"
+      ]
+    }
+  ],
+  "core::ptr::non_null::write_volatile": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "self",
+        "T"
+      ]
+    }
+  ],
+  "core::ptr::non_null::write_unaligned": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "core::ptr::non_null::replace": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "self",
+        "T"
+      ]
+    },
+    {
+      "tag": "Init",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "core::ptr::non_null::swap": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "self",
+        "T"
+      ]
+    },
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "other",
+        "T"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "other",
+        "T"
+      ]
+    }
+  ],
+  "core::ptr::non_null::as_uninit_slice": [
+    {
+      "tag": "NonNull",
+      "args": [
+        "self"
+      ]
+    },
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Alive",
+      "args": [
+        "self",
+        "'a"
+      ]
+    },
+    {
+      "tag": "Alias",
+      "kind": "hazard",
+      "args": [
+        "self",
+        "ret"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "self",
+        "T"
+      ]
+    }
+  ],
+  "core::ptr::non_null::as_uninit_slice_mut": [
+    {
+      "tag": "NonNull",
+      "args": [
+        "self"
+      ]
+    },
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Alive",
+      "args": [
+        "self",
+        "'a"
+      ]
+    },
+    {
+      "tag": "Alias",
+      "kind": "hazard",
+      "args": [
+        "self",
+        "ret"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "self",
+        "T"
+      ]
+    }
+  ],
+  "core::ptr::non_null::get_unchecked_mut": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "core::ptr::const_ptr::as_ref": [
+    {
+      "tag": "Null",
+      "args": [
+        "self"
+      ]
+    },
+    {
+      "tag": "Ptr2Ref",
+      "args": [
+        "self",
+        "T"
+      ]
+    }
+  ],
+  "core::ptr::const_ptr::as_ref_unchecked": [
+    {
+      "tag": "Ptr2Ref",
+      "args": [
+        "self",
+        "T"
+      ]
+    }
+  ],
+  "core::ptr::const_ptr::as_uninit_ref": [
+    {
+      "tag": "Null",
+      "args": [
+        "self"
+      ]
+    },
+    {
+      "tag": "Ptr2Ref",
+      "args": [
+        "self",
+        "T"
+      ]
+    }
+  ],
+  "core::ptr::const_ptr::offset": [
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "T",
+        "count"
+      ]
+    }
+  ],
+  "core::ptr::const_ptr::add": [
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "T",
+        "count"
+      ]
+    }
+  ],
+  "core::ptr::const_ptr::sub": [
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "T",
+        "count"
+      ]
+    }
+  ],
+  "core::ptr::const_ptr::byte_offset": [
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "u8",
+        "count"
+      ]
+    }
+  ],
+  "core::ptr::const_ptr::offset_from": [
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Size",
+      "args": [
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "core::ptr::const_ptr::offset_from_unsigned": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "self - origin >= 0"
+      ]
+    },
+    {
+      "tag": "ValidNum",
+      "args": [
+        "(self - origin) % size_of(T) == 0"
+      ]
+    },
+    {
+      "tag": "InBound",
+      "args": [
+        "origin",
+        "T",
+        "(self - origin) / size_of(T)"
+      ]
+    }
+  ],
+  "core::ptr::const_ptr::byte_offset_from": [
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "u8",
+        "1"
+      ]
+    }
+  ],
+  "core::ptr::const_ptr::non_null::sub_ptr": [
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Size",
+      "args": [
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "core::ptr::const_ptr::sub_ptr": [
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Size",
+      "args": [
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "core::ptr::const_ptr::byte_add": [
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "u8",
+        "count"
+      ]
+    }
+  ],
+  "core::ptr::const_ptr::byte_sub": [
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "u8",
+        "count"
+      ]
+    }
+  ],
+  "core::ptr::const_ptr::read": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "self",
+        "T"
+      ]
+    },
+    {
+      "tag": "Typed",
+      "args": [
+        "self",
+        "T"
+      ]
+    },
+    {
+      "tag": "Init",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Trait",
+      "args": [
+        "T",
+        "Copy"
+      ],
+      "kind": "option"
+    }
+  ],
+  "core::ptr::const_ptr::read_volatile": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "self",
+        "T"
+      ]
+    },
+    {
+      "tag": "Init",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Trait",
+      "args": [
+        "T",
+        "Copy"
+      ],
+      "kind": "option"
+    }
+  ],
+  "core::ptr::const_ptr::read_unaligned": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Init",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Trait",
+      "args": [
+        "T",
+        "Copy"
+      ],
+      "kind": "option"
+    }
+  ],
+  "core::ptr::const_ptr::copy_to": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "self",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "self",
+        "T"
+      ]
+    },
+    {
+      "tag": "NonVolatile",
+      "args": [
+        "self",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Alias",
+      "kind": "hazard",
+      "args": [
+        "self",
+        "dst"
+      ]
+    },
+    {
+      "tag": "Trait",
+      "args": [
+        "T",
+        "Copy"
+      ],
+      "kind": "option"
+    },
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "dst",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "dst",
+        "T"
+      ]
+    }
+  ],
+  "core::ptr::const_ptr::copy_to_nonoverlapping": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "self",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "self",
+        "T"
+      ]
+    },
+    {
+      "tag": "NonOverlap",
+      "args": [
+        "self",
+        "dest",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "NonVolatile",
+      "args": [
+        "self",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Trait",
+      "args": [
+        "T",
+        "Copy"
+      ],
+      "kind": "option"
+    },
+    {
+      "tag": "Alias",
+      "kind": "hazard",
+      "args": [
+        "self",
+        "dst"
+      ]
+    },
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "dest",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "dest",
+        "T"
+      ]
+    }
+  ],
+  "core::ptr::const_ptr::as_uninit_slice": [
+    {
+      "tag": "Null",
+      "args": [
+        "self"
+      ]
+    },
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Alive",
+      "args": [
+        "self",
+        "'a"
+      ]
+    },
+    {
+      "tag": "Alias",
+      "kind": "hazard",
+      "args": [
+        "self",
+        "ret"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "self",
+        "T"
+      ]
+    }
+  ],
+  "core::ptr::const_ptr::get_unchecked": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "core::ptr::mut_ptr::as_ref": [
+    {
+      "tag": "Null",
+      "args": [
+        "self"
+      ]
+    },
+    {
+      "tag": "Ptr2Ref",
+      "args": [
+        "self",
+        "T"
+      ]
+    }
+  ],
+  "core::ptr::mut_ptr::as_ref_unchecked": [
+    {
+      "tag": "Ptr2Ref",
+      "args": [
+        "self",
+        "T"
+      ]
+    }
+  ],
+  "core::ptr::mut_ptr::as_uninit_ref": [
+    {
+      "tag": "NonNull",
+      "args": [
+        "self"
+      ]
+    },
+    {
+      "tag": "Ptr2Ref",
+      "args": [
+        "self",
+        "T"
+      ]
+    }
+  ],
+  "core::ptr::mut_ptr::offset": [
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "T",
+        "count"
+      ]
+    }
+  ],
+  "core::ptr::mut_ptr::as_mut": [
+    {
+      "tag": "Ptr2Ref",
+      "args": [
+        "self",
+        "T"
+      ]
+    }
+  ],
+  "core::ptr::mut_ptr::as_mut_unchecked": [
+    {
+      "tag": "Ptr2Ref",
+      "args": [
+        "self",
+        "T"
+      ]
+    }
+  ],
+  "core::ptr::mut_ptr::as_uninit_mut": [
+    {
+      "tag": "NonNull",
+      "args": [
+        "self"
+      ]
+    },
+    {
+      "tag": "Ptr2Ref",
+      "args": [
+        "self",
+        "T"
+      ]
+    }
+  ],
+  "core::ptr::mut_ptr::add": [
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "T",
+        "count"
+      ]
+    }
+  ],
+  "core::ptr::mut_ptr::sub": [
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "T",
+        "count"
+      ]
+    }
+  ],
+  "core::ptr::mut_ptr::byte_offset": [
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "u8",
+        "count"
+      ]
+    }
+  ],
+  "core::ptr::mut_ptr::offset_from": [
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Size",
+      "args": [
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "core::ptr::mut_ptr::offset_from_unsigned": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "self - origin >= 0"
+      ]
+    },
+    {
+      "tag": "ValidNum",
+      "args": [
+        "(self - origin) % size_of(T) == 0"
+      ]
+    },
+    {
+      "tag": "InBound",
+      "args": [
+        "origin",
+        "T",
+        "(self - origin) / size_of(T)"
+      ]
+    }
+  ],
+  "core::ptr::mut_ptr::byte_offset_from": [
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "u8",
+        "1"
+      ]
+    }
+  ],
+  "core::ptr::mut_ptr::sub_ptr": [
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Size",
+      "args": [
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "core::ptr::mut_ptr::byte_add": [
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "u8",
+        "count"
+      ]
+    }
+  ],
+  "core::ptr::mut_ptr::byte_sub": [
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "u8",
+        "count"
+      ]
+    }
+  ],
+  "core::ptr::mut_ptr::read": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "src",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "src",
+        "T"
+      ]
+    },
+    {
+      "tag": "Typed",
+      "args": [
+        "src",
+        "T"
+      ]
+    },
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "self",
+        "T"
+      ]
+    },
+    {
+      "tag": "Trait",
+      "args": [
+        "T",
+        "Copy"
+      ],
+      "kind": "option"
+    },
+    {
+      "tag": "Init",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "core::ptr::mut_ptr::read_volatile": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "self",
+        "T"
+      ]
+    },
+    {
+      "tag": "Trait",
+      "args": [
+        "T",
+        "Copy"
+      ],
+      "kind": "option"
+    },
+    {
+      "tag": "Init",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "core::ptr::mut_ptr::read_unaligned": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Trait",
+      "args": [
+        "T",
+        "Copy"
+      ],
+      "kind": "option"
+    },
+    {
+      "tag": "Init",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "core::ptr::mut_ptr::copy_to": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "self",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "self",
+        "T"
+      ]
+    },
+    {
+      "tag": "NonVolatile",
+      "args": [
+        "self",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Alias",
+      "kind": "hazard",
+      "args": [
+        "self",
+        "dst"
+      ]
+    },
+    {
+      "tag": "Trait",
+      "args": [
+        "T",
+        "Copy"
+      ],
+      "kind": "option"
+    },
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "dst",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "dst",
+        "T"
+      ]
+    }
+  ],
+  "core::ptr::mut_ptr::copy_to_nonoverlapping": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "self",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "self",
+        "T"
+      ]
+    },
+    {
+      "tag": "NonOverlap",
+      "args": [
+        "self",
+        "dest",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "NonVolatile",
+      "args": [
+        "self",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Trait",
+      "args": [
+        "T",
+        "Copy"
+      ],
+      "kind": "option"
+    },
+    {
+      "tag": "Alias",
+      "kind": "hazard",
+      "args": [
+        "self",
+        "dst"
+      ]
+    },
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "dest",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "dest",
+        "T"
+      ]
+    }
+  ],
+  "core::ptr::mut_ptr::copy_from": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "self",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "self",
+        "T"
+      ]
+    },
+    {
+      "tag": "NonVolatile",
+      "args": [
+        "self",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Trait",
+      "args": [
+        "T",
+        "Copy"
+      ],
+      "kind": "option"
+    },
+    {
+      "tag": "Alias",
+      "kind": "hazard",
+      "args": [
+        "self",
+        "src"
+      ]
+    },
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "src",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "src",
+        "T"
+      ]
+    }
+  ],
+  "core::ptr::mut_ptr::copy_from_nonoverlapping": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "self",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "self",
+        "T"
+      ]
+    },
+    {
+      "tag": "NonOverlap",
+      "args": [
+        "self",
+        "src",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "NonVolatile",
+      "args": [
+        "self",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Trait",
+      "args": [
+        "T",
+        "Copy"
+      ],
+      "kind": "option"
+    },
+    {
+      "tag": "Alias",
+      "kind": "hazard",
+      "args": [
+        "self",
+        "src"
+      ]
+    },
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "src",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "src",
+        "T"
+      ]
+    }
+  ],
+  "core::ptr::mut_ptr::drop_in_place": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "self",
+        "T"
+      ]
+    },
+    {
+      "tag": "NonNull",
+      "args": [
+        "self"
+      ]
+    }
+  ],
+  "core::ptr::mut_ptr::write": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "self",
+        "T"
+      ]
+    }
+  ],
+  "core::ptr::mut_ptr::write_bytes": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "self",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "self",
+        "T"
+      ]
+    },
+    {
+      "tag": "Typed",
+      "args": [
+        "self",
+        "T"
+      ]
+    }
+  ],
+  "core::ptr::mut_ptr::write_volatile": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "self",
+        "T"
+      ]
+    }
+  ],
+  "core::ptr::mut_ptr::write_unaligned": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "core::ptr::mut_ptr::replace": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "self",
+        "T"
+      ]
+    },
+    {
+      "tag": "Init",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "core::ptr::mut_ptr::swap": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "self",
+        "T"
+      ]
+    },
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "other",
+        "T"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "other",
+        "T"
+      ]
+    }
+  ],
+  "core::ptr::mut_ptr::split_at_mut": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "mid <= len(self)"
+      ]
+    },
+    {
+      "tag": "Allocated",
+      "args": [
+        "self",
+        "T",
+        "mid"
+      ]
+    }
+  ],
+  "core::ptr::mut_ptr::split_at_mut_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "mid <= len(self)"
+      ]
+    },
+    {
+      "tag": "Allocated",
+      "args": [
+        "self",
+        "T",
+        "mid"
+      ]
+    }
+  ],
+  "core::ptr::mut_ptr::as_uninit_slice": [
+    {
+      "tag": "NonNull",
+      "args": [
+        "self"
+      ]
+    },
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Alive",
+      "args": [
+        "self",
+        "'a"
+      ]
+    },
+    {
+      "tag": "Alias",
+      "kind": "hazard",
+      "args": [
+        "self",
+        "ret"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "self",
+        "T"
+      ]
+    }
+  ],
+  "core::ptr::mut_ptr::as_uninit_slice_mut": [
+    {
+      "tag": "NonNull",
+      "args": [
+        "self"
+      ]
+    },
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Alive",
+      "args": [
+        "self",
+        "'a"
+      ]
+    },
+    {
+      "tag": "Alias",
+      "kind": "hazard",
+      "args": [
+        "self",
+        "ret"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "self",
+        "T"
+      ]
+    }
+  ],
+  "core::ptr::mut_ptr::get_unchecked_mut": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "core::ptr::drop_in_place": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "to_drop",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "to_drop",
+        "T"
+      ]
+    },
+    {
+      "tag": "NonNull",
+      "args": [
+        "to_drop"
+      ]
+    }
+  ],
+  "core::ptr::replace": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "dst",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "dst",
+        "T"
+      ]
+    },
+    {
+      "tag": "Init",
+      "args": [
+        "dst",
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "core::ptr::read": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "self",
+        "T"
+      ]
+    },
+    {
+      "tag": "Typed",
+      "args": [
+        "self",
+        "T"
+      ]
+    },
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "src",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "src",
+        "T"
+      ]
+    },
+    {
+      "tag": "Init",
+      "args": [
+        "src",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Trait",
+      "args": [
+        "T",
+        "Copy"
+      ],
+      "kind": "option"
+    }
+  ],
+  "core::ptr::write": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "dst",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "dst",
+        "T"
+      ]
+    }
+  ],
+  "core::ptr::swap": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "x",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "x",
+        "T"
+      ]
+    },
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "y",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "y",
+        "T"
+      ]
+    },
+    {
+      "tag": "NonOverlap",
+      "args": [
+        "x",
+        "y",
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "core::ptr::swap_nonoverlapping": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "x",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "x",
+        "T"
+      ]
+    },
+    {
+      "tag": "NonOverlap",
+      "args": [
+        "x",
+        "y",
+        "T",
+        "count"
+      ]
+    }
+  ],
+  "core::ptr::read_unaligned": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "src",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Init",
+      "args": [
+        "src",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Trait",
+      "args": [
+        "T",
+        "Copy"
+      ],
+      "kind": "option"
+    }
+  ],
+  "core::ptr::write_unaligned": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "dst",
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "core::ptr::read_volatile": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "src",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Init",
+      "args": [
+        "src",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "src",
+        "T"
+      ]
+    },
+    {
+      "tag": "Trait",
+      "args": [
+        "T",
+        "Copy"
+      ],
+      "kind": "option"
+    }
+  ],
+  "core::ptr::write_volatile": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "dst",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "dst",
+        "T"
+      ]
+    }
+  ],
+  "core::ptr::offset": [
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "T",
+        "count"
+      ]
+    }
+  ],
+  "core::clone::clone_to_uninit": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "dst",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "dst",
+        "T"
+      ]
+    }
+  ],
+  "core::result::unwrap_unchecked": [
+    {
+      "tag": "Unwrap",
+      "args": [
+        "self",
+        "Ok"
+      ]
+    }
+  ],
+  "core::option::unwrap_unchecked": [
+    {
+      "tag": "Unwrap",
+      "args": [
+        "self",
+        "Some"
+      ]
+    }
+  ],
+  "core::result::unwrap_err_unchecked": [
+    {
+      "tag": "Unwrap",
+      "args": [
+        "self",
+        "Err"
+      ]
+    }
+  ],
+  "core::slice::get_unchecked": [
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "index"
+      ]
+    }
+  ],
+  "core::slice::index::SliceIndex::get_unchecked": [
+    {
+      "tag": "InBound",
+      "args": [
+        "slice",
+        "self"
+      ]
+    }
+  ],
+  "core::slice::index::SliceIndex::get_unchecked_mut": [
+    {
+      "tag": "InBound",
+      "args": [
+        "slice",
+        "self"
+      ]
+    }
+  ],
+  "core::slice::get_unchecked_mut": [
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "index"
+      ]
+    }
+  ],
+  "core::slice::<impl [T]>::get_unchecked": [
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "index"
+      ]
+    }
+  ],
+  "core::slice::<impl [T]>::get_unchecked_mut": [
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "index"
+      ]
+    }
+  ],
+  "core::slice::swap_unchecked": [
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "a"
+      ]
+    },
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "b"
+      ]
+    }
+  ],
+  "core::slice::as_chunks_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "N != 0"
+      ]
+    },
+    {
+      "tag": "ValidNum",
+      "args": [
+        "len(self) % N == 0"
+      ]
+    }
+  ],
+  "core::slice::as_chunks_unchecked_mut": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "N != 0"
+      ]
+    },
+    {
+      "tag": "ValidNum",
+      "args": [
+        "len(self) % N == 0"
+      ]
+    }
+  ],
+  "core::slice::split_at_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "0 <= mid && mid <= len(self)"
+      ]
+    }
+  ],
+  "core::slice::split_at_mut_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "0 <= mid && mid <= len(self)"
+      ]
+    }
+  ],
+  "core::slice::align_to": [
+    {
+      "tag": "SplitTransmute",
+      "args": [
+        "[T]",
+        "[U]"
+      ]
+    }
+  ],
+  "core::slice::align_to_mut": [
+    {
+      "tag": "SplitTransmute",
+      "args": [
+        "[T]",
+        "[U]"
+      ]
+    }
+  ],
+  "core::slice::get_disjoint_unchecked_mut": [
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "indices"
+      ]
+    },
+    {
+      "tag": "NonOverlap",
+      "args": [
+        "indices"
+      ]
+    }
+  ],
+  "core::slice::rotate::ptr_rotate": [
+    {
+      "tag": "NonNull",
+      "args": [
+        "mid"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "mid",
+        "T"
+      ]
+    },
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "mid",
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "core::slice::ascii::as_ascii_unchecked": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "self.iter()",
+        "[0, 127]"
+      ]
+    }
+  ],
+  "core::slice::raw::from_raw_parts": [
+    {
+      "tag": "NonNull",
+      "args": [
+        "data"
+      ]
+    },
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "data",
+        "T",
+        "len"
+      ]
+    },
+    {
+      "tag": "Init",
+      "args": [
+        "data",
+        "T",
+        "len"
+      ]
+    },
+    {
+      "tag": "Alive",
+      "args": [
+        "data",
+        "'a"
+      ]
+    },
+    {
+      "tag": "Alias",
+      "kind": "hazard",
+      "args": [
+        "data",
+        "ret"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "data",
+        "T"
+      ]
+    },
+    {
+      "tag": "ValidNum",
+      "args": [
+        "size_of(T) * len <= isize::MAX"
+      ]
+    }
+  ],
+  "core::slice::raw::from_raw_parts_mut": [
+    {
+      "tag": "NonNull",
+      "args": [
+        "data"
+      ]
+    },
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "data",
+        "T",
+        "len"
+      ]
+    },
+    {
+      "tag": "Init",
+      "args": [
+        "data",
+        "T",
+        "len"
+      ]
+    },
+    {
+      "tag": "Alive",
+      "args": [
+        "data",
+        "'a"
+      ]
+    },
+    {
+      "tag": "Alias",
+      "kind": "hazard",
+      "args": [
+        "data",
+        "ret"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "data",
+        "T"
+      ]
+    },
+    {
+      "tag": "ValidNum",
+      "args": [
+        "size_of(T) * len <= isize::MAX"
+      ]
+    }
+  ],
+  "core::slice::index::get_unchecked": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "core::slice::index::get_unchecked_mut": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "core::slice::raw::from_ptr_range": [
+    {
+      "tag": "NonNull",
+      "args": [
+        "range"
+      ]
+    },
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "range",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Init",
+      "args": [
+        "range",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Alive",
+      "args": [
+        "range",
+        "'a"
+      ]
+    },
+    {
+      "tag": "Alias",
+      "kind": "hazard",
+      "args": [
+        "range",
+        "ret"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "range",
+        "T"
+      ]
+    },
+    {
+      "tag": "InBound",
+      "args": [
+        "range",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Size",
+      "args": [
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "core::slice::raw::from_mut_ptr_range": [
+    {
+      "tag": "NonNull",
+      "args": [
+        "range"
+      ]
+    },
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "range",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Init",
+      "args": [
+        "range",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Alive",
+      "args": [
+        "range",
+        "'a"
+      ]
+    },
+    {
+      "tag": "Alias",
+      "kind": "hazard",
+      "args": [
+        "range",
+        "ret"
+      ]
+    },
+    {
+      "tag": "ValidNum",
+      "args": [
+        "size_of(T) * count <= isize::MAX"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "range",
+        "T"
+      ]
+    }
+  ],
+  "core::str::get_unchecked": [
+    {
+      "tag": "ValidString",
+      "args": [
+        "self",
+        "u8",
+        "1"
+      ]
+    },
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "u8",
+        "1"
+      ]
+    }
+  ],
+  "core::str::get_unchecked_mut": [
+    {
+      "tag": "ValidString",
+      "args": [
+        "self",
+        "u8",
+        "1"
+      ]
+    },
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "u8",
+        "1"
+      ]
+    }
+  ],
+  "core::str::slice_unchecked": [
+    {
+      "tag": "ValidString",
+      "args": [
+        "self",
+        "u8",
+        "1"
+      ]
+    },
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "u8",
+        "1"
+      ]
+    }
+  ],
+  "core::str::slice_mut_unchecked": [
+    {
+      "tag": "ValidString",
+      "args": [
+        "self",
+        "u8",
+        "1"
+      ]
+    },
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "u8",
+        "1"
+      ]
+    }
+  ],
+  "core::str::as_bytes_mut": [
+    {
+      "tag": "ValidString",
+      "args": [
+        "self",
+        "u8",
+        "1"
+      ]
+    }
+  ],
+  "core::str::converts::from_utf8_unchecked": [
+    {
+      "tag": "ValidString",
+      "args": [
+        "v",
+        "u8",
+        "1"
+      ]
+    }
+  ],
+  "core::str::converts::from_utf8_unchecked_mut": [
+    {
+      "tag": "ValidString",
+      "args": [
+        "v",
+        "u8",
+        "1"
+      ]
+    }
+  ],
+  "core::str::converts::from_raw_parts": [
+    {
+      "tag": "NonNull",
+      "args": [
+        "ptr"
+      ]
+    },
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "ptr",
+        "T",
+        "len"
+      ]
+    },
+    {
+      "tag": "Init",
+      "args": [
+        "ptr",
+        "u8",
+        "len"
+      ]
+    },
+    {
+      "tag": "Alive",
+      "args": [
+        "ptr",
+        "'a"
+      ]
+    },
+    {
+      "tag": "Alias",
+      "kind": "hazard",
+      "args": [
+        "ptr",
+        "ret"
+      ]
+    },
+    {
+      "tag": "ValidNum",
+      "args": [
+        "size_of(u8) * len <= isize::MAX"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "ptr",
+        "T"
+      ]
+    },
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "ptr",
+        "u8",
+        "len"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "ptr",
+        "u8"
+      ]
+    }
+  ],
+  "core::str::converts::from_raw_parts_mut": [
+    {
+      "tag": "NonNull",
+      "args": [
+        "ptr"
+      ]
+    },
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "ptr",
+        "T",
+        "len"
+      ]
+    },
+    {
+      "tag": "Init",
+      "args": [
+        "ptr",
+        "u8",
+        "len"
+      ]
+    },
+    {
+      "tag": "Alive",
+      "args": [
+        "ptr",
+        "'a"
+      ]
+    },
+    {
+      "tag": "Alias",
+      "kind": "hazard",
+      "args": [
+        "ptr",
+        "ret"
+      ]
+    },
+    {
+      "tag": "ValidNum",
+      "args": [
+        "size_of(u8) * len <= isize::MAX"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "ptr",
+        "T"
+      ]
+    },
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "ptr",
+        "u8",
+        "len"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "ptr",
+        "u8"
+      ]
+    }
+  ],
+  "core::str::traits::get_unchecked": [
+    {
+      "tag": "ValidString",
+      "args": [
+        "self",
+        "u8",
+        "1"
+      ]
+    },
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "u8",
+        "1"
+      ]
+    }
+  ],
+  "core::str::traits::get_unchecked_mut": [
+    {
+      "tag": "ValidString",
+      "args": [
+        "self",
+        "u8",
+        "1"
+      ]
+    },
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "u8",
+        "1"
+      ]
+    }
+  ],
+  "core::io::borrowed_buf::set_init": [
+    {
+      "tag": "Init",
+      "args": [
+        "self",
+        "u8",
+        "n"
+      ]
+    }
+  ],
+  "core::io::borrowed_buf::advance_unchecked": [
+    {
+      "tag": "Init",
+      "args": [
+        "self",
+        "u8",
+        "n"
+      ]
+    }
+  ],
+  "core::io::borrowed_buf::as_mut": [
+    {
+      "tag": "Init",
+      "args": [
+        "self",
+        "u8",
+        "1"
+      ]
+    }
+  ],
+  "core::task::wake::from_raw": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "data",
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "alloc::vec::from_raw_parts": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "T",
+        "length"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "ptr",
+        "T"
+      ]
+    },
+    {
+      "tag": "InBound",
+      "args": [
+        "ptr",
+        "T",
+        "length"
+      ]
+    },
+    {
+      "tag": "ValidNum",
+      "args": [
+        "size_of(T) * len <= isize::MAX"
+      ]
+    },
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "T",
+        "capacity"
+      ]
+    },
+    {
+      "tag": "Alias",
+      "kind": "hazard",
+      "args": [
+        "ptr",
+        "ret"
+      ]
+    },
+    {
+      "tag": "Init",
+      "args": [
+        "ptr",
+        "T",
+        "length"
+      ]
+    }
+  ],
+  "alloc::vec::from_parts": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "T",
+        "length"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "ptr",
+        "T"
+      ]
+    },
+    {
+      "tag": "InBound",
+      "args": [
+        "ptr",
+        "T",
+        "length"
+      ]
+    },
+    {
+      "tag": "ValidNum",
+      "args": [
+        "size_of(T) * count <= isize::MAX"
+      ]
+    },
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "T",
+        "capacity"
+      ]
+    },
+    {
+      "tag": "Alias",
+      "kind": "hazard",
+      "args": [
+        "ptr",
+        "ret"
+      ]
+    }
+  ],
+  "alloc::vec::from_raw_parts_in": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "T",
+        "length"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "ptr",
+        "T"
+      ]
+    },
+    {
+      "tag": "InBound",
+      "args": [
+        "ptr",
+        "T",
+        "length"
+      ]
+    },
+    {
+      "tag": "ValidNum",
+      "args": [
+        "size_of(T) * count <= isize::MAX"
+      ]
+    },
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "T",
+        "capacity"
+      ]
+    },
+    {
+      "tag": "Alias",
+      "kind": "hazard",
+      "args": [
+        "ptr",
+        "ret"
+      ]
+    },
+    {
+      "tag": "Init",
+      "args": [
+        "ptr",
+        "T",
+        "length"
+      ]
+    }
+  ],
+  "alloc::vec::from_parts_in": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "T",
+        "length"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "ptr",
+        "T"
+      ]
+    },
+    {
+      "tag": "InBound",
+      "args": [
+        "ptr",
+        "T",
+        "length"
+      ]
+    },
+    {
+      "tag": "ValidNum",
+      "args": [
+        "size_of(T) * count <= isize::MAX"
+      ]
+    },
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "T",
+        "capacity"
+      ]
+    },
+    {
+      "tag": "Alias",
+      "kind": "hazard",
+      "args": [
+        "ptr",
+        "ret"
+      ]
+    }
+  ],
+  "alloc::vec::set_len": [
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "T",
+        "new_len"
+      ]
+    },
+    {
+      "tag": "ValidNum",
+      "args": [
+        "new_len <= self.capacity()"
+      ]
+    }
+  ],
+  "alloc::alloc::alloc": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "layout.size() != 0"
+      ]
+    }
+  ],
+  "alloc::alloc::dealloc": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "u8",
+        "1"
+      ]
+    },
+    {
+      "tag": "Layout",
+      "args": [
+        "ptr",
+        "layout"
+      ]
+    }
+  ],
+  "alloc::alloc::realloc": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "u8",
+        "new_size"
+      ]
+    },
+    {
+      "tag": "Layout",
+      "args": [
+        "ptr",
+        "layout"
+      ]
+    },
+    {
+      "tag": "ValidNum",
+      "args": [
+        "new_size != 0"
+      ]
+    }
+  ],
+  "alloc::alloc::alloc_zeroed": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "layout.size() != 0"
+      ]
+    }
+  ],
+  "alloc::alloc::deallocate": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "u8",
+        "layout.size()"
+      ]
+    },
+    {
+      "tag": "Layout",
+      "args": [
+        "ptr",
+        "layout"
+      ]
+    }
+  ],
+  "alloc::alloc::grow": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "u8",
+        "old_layout.size()"
+      ]
+    },
+    {
+      "tag": "Layout",
+      "args": [
+        "ptr",
+        "old_layout"
+      ]
+    },
+    {
+      "tag": "ValidNum",
+      "args": [
+        "new_layout.size() > old_layout.size()"
+      ]
+    }
+  ],
+  "alloc::alloc::grow_zeroed": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "u8",
+        "old_layout.size()"
+      ]
+    },
+    {
+      "tag": "Layout",
+      "args": [
+        "ptr",
+        "old_layout"
+      ]
+    },
+    {
+      "tag": "ValidNum",
+      "args": [
+        "new_layout.size() > old_layout.size()"
+      ]
+    }
+  ],
+  "alloc::alloc::shrink": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "u8",
+        "old_layout.size()"
+      ]
+    },
+    {
+      "tag": "Layout",
+      "args": [
+        "ptr",
+        "old_layout"
+      ]
+    },
+    {
+      "tag": "ValidNum",
+      "args": [
+        "new_layout.size() <= old_layout.size()"
+      ]
+    }
+  ],
+  "alloc::boxed::assume_init": [
+    {
+      "tag": "Init",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "alloc::boxed::from_raw": [
+    {
+      "tag": "Align",
+      "args": [
+        "raw",
+        "T"
+      ]
+    },
+    {
+      "tag": "Allocated",
+      "args": [
+        "raw",
+        "T",
+        "1",
+        "global"
+      ]
+    },
+    {
+      "tag": "Typed",
+      "args": [
+        "raw",
+        "T"
+      ]
+    },
+    {
+      "tag": "Owning",
+      "args": [
+        "raw"
+      ]
+    },
+    {
+      "tag": "Alias",
+      "kind": "hazard",
+      "args": [
+        "raw",
+        "ret"
+      ]
+    }
+  ],
+  "alloc::boxed::from_non_null": [
+    {
+      "tag": "Align",
+      "args": [
+        "ptr",
+        "T"
+      ]
+    },
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "T",
+        "1",
+        "global"
+      ]
+    },
+    {
+      "tag": "Typed",
+      "args": [
+        "ptr",
+        "T"
+      ]
+    },
+    {
+      "tag": "Owning",
+      "args": [
+        "ptr"
+      ]
+    },
+    {
+      "tag": "Alias",
+      "kind": "hazard",
+      "args": [
+        "ptr",
+        "ret"
+      ]
+    }
+  ],
+  "alloc::boxed::from_raw_in": [
+    {
+      "tag": "Align",
+      "args": [
+        "raw",
+        "T"
+      ]
+    },
+    {
+      "tag": "Allocated",
+      "args": [
+        "raw",
+        "T",
+        "1",
+        "alloc"
+      ]
+    },
+    {
+      "tag": "Typed",
+      "args": [
+        "raw",
+        "T"
+      ]
+    },
+    {
+      "tag": "Owning",
+      "args": [
+        "raw"
+      ]
+    },
+    {
+      "tag": "Alias",
+      "kind": "hazard",
+      "args": [
+        "raw",
+        "ret"
+      ]
+    }
+  ],
+  "alloc::boxed::from_non_null_in": [
+    {
+      "tag": "Align",
+      "args": [
+        "raw",
+        "T"
+      ]
+    },
+    {
+      "tag": "Allocated",
+      "args": [
+        "raw",
+        "T",
+        "1",
+        "alloc"
+      ]
+    },
+    {
+      "tag": "Typed",
+      "args": [
+        "raw",
+        "T"
+      ]
+    },
+    {
+      "tag": "Owning",
+      "args": [
+        "raw"
+      ]
+    },
+    {
+      "tag": "Alias",
+      "kind": "hazard",
+      "args": [
+        "raw",
+        "ret"
+      ]
+    }
+  ],
+  "alloc::boxed::downcast_unchecked": [
+    {
+      "tag": "Typed",
+      "args": [
+        "self",
+        "T"
+      ]
+    }
+  ],
+  "alloc::collections::btree::map::insert_after_unchecked": [
+    {
+      "tag": "TobeSpecified",
+      "args": [
+        "self"
+      ]
+    }
+  ],
+  "alloc::collections::btree::map::insert_before_unchecked": [
+    {
+      "tag": "TobeSpecified",
+      "args": [
+        "self"
+      ]
+    }
+  ],
+  "alloc::collections::btree::set::insert_after_unchecked": [
+    {
+      "tag": "TobeSpecified",
+      "args": [
+        "self"
+      ]
+    }
+  ],
+  "alloc::collections::btree::set::insert_before_unchecked": [
+    {
+      "tag": "TobeSpecified",
+      "args": [
+        "self"
+      ]
+    }
+  ],
+  "alloc::ffi::c_str::from_vec_unchecked": [
+    {
+      "tag": "ValidCStr",
+      "args": [
+        "v",
+        "1"
+      ]
+    }
+  ],
+  "alloc::ffi::c_str::from_raw": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "c_char",
+        "1"
+      ]
+    },
+    {
+      "tag": "Owning",
+      "args": [
+        "ptr"
+      ]
+    },
+    {
+      "tag": "Alias",
+      "kind": "hazard",
+      "args": [
+        "ptr",
+        "ret"
+      ]
+    }
+  ],
+  "alloc::ffi::c_str::from_vec_with_nul_unchecked": [
+    {
+      "tag": "ValidCStr",
+      "args": [
+        "v",
+        "1"
+      ]
+    }
+  ],
+  "alloc::rc::assume_init": [
+    {
+      "tag": "Init",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "alloc::rc::from_raw": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "ptr",
+        "T"
+      ]
+    },
+    {
+      "tag": "Owning",
+      "args": [
+        "ptr"
+      ]
+    },
+    {
+      "tag": "Typed",
+      "args": [
+        "ptr",
+        "T"
+      ]
+    }
+  ],
+  "alloc::rc::increment_strong_count": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Typed",
+      "args": [
+        "ptr",
+        "T"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "ptr",
+        "T"
+      ]
+    }
+  ],
+  "alloc::rc::decrement_strong_count": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Typed",
+      "args": [
+        "ptr",
+        "T"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "ptr",
+        "T"
+      ]
+    }
+  ],
+  "alloc::rc::from_raw_in": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "ptr",
+        "T"
+      ]
+    },
+    {
+      "tag": "Owning",
+      "args": [
+        "ptr"
+      ]
+    },
+    {
+      "tag": "Typed",
+      "args": [
+        "ptr",
+        "T"
+      ]
+    }
+  ],
+  "alloc::rc::increment_strong_count_in": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Typed",
+      "args": [
+        "ptr",
+        "T"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "ptr",
+        "T"
+      ]
+    }
+  ],
+  "alloc::rc::decrement_strong_count_in": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Typed",
+      "args": [
+        "ptr",
+        "T"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "ptr",
+        "T"
+      ]
+    }
+  ],
+  "alloc::rc::downcast_unchecked": [
+    {
+      "tag": "Typed",
+      "args": [
+        "self",
+        "T"
+      ]
+    }
+  ],
+  "alloc::rc::get_mut_unchecked": [
+    {
+      "tag": "Typed",
+      "args": [
+        "self",
+        "T"
+      ]
+    },
+    {
+      "tag": "Alias",
+      "kind": "hazard",
+      "args": [
+        "this",
+        "ret"
+      ]
+    }
+  ],
+  "alloc::collections::btree::map::with_mutable_key": [
+    {
+      "tag": "TobeSpecified",
+      "args": [
+        "self"
+      ]
+    }
+  ],
+  "alloc::collections::btree::set::upper_bound_mut": [
+    {
+      "tag": "TobeSpecified",
+      "args": [
+        "self"
+      ]
+    }
+  ],
+  "alloc::str::from_boxed_utf8_unchecked": [
+    {
+      "tag": "ValidString",
+      "args": [
+        "v",
+        "u8",
+        "1"
+      ]
+    }
+  ],
+  "alloc::string::from_raw_parts": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "T",
+        "1",
+        "global"
+      ]
+    },
+    {
+      "tag": "Typed",
+      "args": [
+        "ptr",
+        "T"
+      ]
+    },
+    {
+      "tag": "ValidNum",
+      "args": [
+        "size_of(u8) * len <= isize::MAX"
+      ]
+    },
+    {
+      "tag": "ValidString",
+      "args": [
+        "buf",
+        "u8",
+        "capacity"
+      ]
+    },
+    {
+      "tag": "Allocated",
+      "args": [
+        "buf",
+        "u8",
+        "capacity"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "buf",
+        "u8"
+      ]
+    }
+  ],
+  "alloc::string::from_utf8_unchecked": [
+    {
+      "tag": "ValidString",
+      "args": [
+        "bytes",
+        "u8",
+        "1"
+      ]
+    }
+  ],
+  "alloc::string::as_mut_vec": [
+    {
+      "tag": "ValidString",
+      "args": [
+        "self",
+        "u8",
+        "1"
+      ]
+    }
+  ],
+  "alloc::sync::get_mut_unchecked": [
+    {
+      "tag": "Typed",
+      "args": [
+        "self",
+        "T"
+      ]
+    },
+    {
+      "tag": "Alias",
+      "kind": "hazard",
+      "args": [
+        "this",
+        "ret"
+      ]
+    }
+  ],
+  "alloc::sync::from_raw": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "ptr",
+        "T"
+      ]
+    },
+    {
+      "tag": "Owning",
+      "args": [
+        "ptr"
+      ]
+    },
+    {
+      "tag": "Typed",
+      "args": [
+        "ptr",
+        "T"
+      ]
+    }
+  ],
+  "alloc::sync::increment_strong_count": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Typed",
+      "args": [
+        "ptr",
+        "T"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "ptr",
+        "T"
+      ]
+    }
+  ],
+  "alloc::sync::decrement_strong_count": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Typed",
+      "args": [
+        "ptr",
+        "T"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "ptr",
+        "T"
+      ]
+    }
+  ],
+  "alloc::sync::from_raw_in": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "ptr",
+        "T"
+      ]
+    },
+    {
+      "tag": "Owning",
+      "args": [
+        "ptr"
+      ]
+    },
+    {
+      "tag": "Typed",
+      "args": [
+        "ptr",
+        "T"
+      ]
+    }
+  ],
+  "alloc::sync::increment_strong_count_in": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Typed",
+      "args": [
+        "ptr",
+        "T"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "ptr",
+        "T"
+      ]
+    }
+  ],
+  "alloc::sync::decrement_strong_count_in": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Typed",
+      "args": [
+        "ptr",
+        "T"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "ptr",
+        "T"
+      ]
+    }
+  ],
+  "alloc::sync::downcast_unchecked": [
+    {
+      "tag": "Typed",
+      "args": [
+        "self",
+        "T"
+      ]
+    }
+  ],
+  "std::thread::from_raw": [
+    {
+      "tag": "Owning",
+      "args": [
+        "ptr"
+      ]
+    },
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "Value",
+        "1"
+      ]
+    }
+  ],
+  "std::collections::hash::map::get_many_unchecked_mut": [
+    {
+      "tag": "NonOverlap",
+      "args": [
+        "indices"
+      ]
+    }
+  ],
+  "std::env::set_var": [
+    {
+      "tag": "TobeSpecified",
+      "args": [
+        "key"
+      ]
+    }
+  ],
+  "std::env::remove_var": [
+    {
+      "tag": "TobeSpecified",
+      "args": [
+        "key"
+      ]
+    }
+  ],
+  "std::ffi::os_str::from_encoded_bytes_unchecked": [
+    {
+      "tag": "ValidString",
+      "args": [
+        "s",
+        "u8",
+        "1"
+      ]
+    }
+  ],
+  "std::ffi::os_str::clone_to_uninit": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "dst",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "dst",
+        "T"
+      ]
+    }
+  ],
+  "std::os::unix::net::datagram::from_raw_fd": [
+    {
+      "tag": "Opened",
+      "args": [
+        "fd"
+      ]
+    }
+  ],
+  "std::os::unix::net::listener::from_raw_fd": [
+    {
+      "tag": "Opened",
+      "args": [
+        "fd"
+      ]
+    }
+  ],
+  "std::os::unix::net::stream::from_raw_fd": [
+    {
+      "tag": "Opened",
+      "args": [
+        "fd"
+      ]
+    }
+  ],
+  "std::os::unix::process::CommandExt::before_exec": [
+    {
+      "tag": "TobeSpecified",
+      "args": [
+        "self"
+      ]
+    }
+  ],
+  "std::os::unix::process::pre_exec": [
+    {
+      "tag": "TobeSpecified",
+      "args": [
+        "self"
+      ]
+    }
+  ],
+  "std::os::unix::process::from_raw_fd": [
+    {
+      "tag": "Opened",
+      "args": [
+        "fd"
+      ]
+    }
+  ],
+  "std::os::linux::process::from_raw_fd": [
+    {
+      "tag": "Opened",
+      "args": [
+        "fd"
+      ]
+    }
+  ],
+  "std::os::fd::raw::from_raw_fd": [
+    {
+      "tag": "Opened",
+      "args": [
+        "fd"
+      ]
+    }
+  ],
+  "std::os::fd::owned::borrow_raw": [
+    {
+      "tag": "Opened",
+      "args": [
+        "fd"
+      ]
+    }
+  ],
+  "std::os::fd::owned::from_raw_fd": [
+    {
+      "tag": "Opened",
+      "args": [
+        "fd"
+      ]
+    }
+  ],
+  "std::os::fd::net::from_raw_fd": [
+    {
+      "tag": "Opened",
+      "args": [
+        "fd"
+      ]
+    }
+  ],
+  "std::os::fd::raw::FromRawFd::from_raw_fd": [
+    {
+      "tag": "Opened",
+      "args": [
+        "fd"
+      ]
+    }
+  ],
+  "std::path::clone_to_uninit": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "dst",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "dst",
+        "T"
+      ]
+    }
+  ],
+  "std::sys::pal::unix::fd::from_raw_fd": [
+    {
+      "tag": "Opened",
+      "args": [
+        "fd"
+      ]
+    }
+  ],
+  "std::sys::pal::unix::fs::from_raw_fd": [
+    {
+      "tag": "Opened",
+      "args": [
+        "raw_fd"
+      ]
+    }
+  ],
+  "std::sys::pal::unix::linux::pidfd::from_raw_fd": [
+    {
+      "tag": "Opened",
+      "args": [
+        "fd"
+      ]
+    }
+  ],
+  "std::sys::pal::unix::net::from_raw_fd": [
+    {
+      "tag": "Opened",
+      "args": [
+        "raw_fd"
+      ]
+    }
+  ],
+  "std::sys::pal::unix::pipe::from_raw_fd": [
+    {
+      "tag": "Opened",
+      "args": [
+        "raw_fd"
+      ]
+    }
+  ],
+  "std::sys::pal::unix::process::process_common::pre_exec": [
+    {
+      "tag": "TobeSpecified",
+      "args": [
+        "self"
+      ]
+    }
+  ],
+  "std::sys::anonymous_pipe::unix::from_raw_fd": [
+    {
+      "tag": "Opened",
+      "args": [
+        "raw_fd"
+      ]
+    }
+  ],
+  "std::sys::os_str::bytes::clone_to_uninit": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "dst",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "dst",
+        "T"
+      ]
+    }
+  ],
+  "std::alloc::deallocate": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "u8",
+        "layout.size()"
+      ]
+    },
+    {
+      "tag": "Layout",
+      "args": [
+        "ptr",
+        "layout"
+      ]
+    }
+  ],
+  "std::alloc::grow": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "u8",
+        "old_layout.size()"
+      ]
+    },
+    {
+      "tag": "Layout",
+      "args": [
+        "ptr",
+        "old_layout"
+      ]
+    },
+    {
+      "tag": "ValidNum",
+      "args": [
+        "new_layout.size() > old_layout.size()"
+      ]
+    }
+  ],
+  "std::alloc::grow_zeroed": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "u8",
+        "old_layout.size()"
+      ]
+    },
+    {
+      "tag": "Layout",
+      "args": [
+        "ptr",
+        "old_layout"
+      ]
+    },
+    {
+      "tag": "ValidNum",
+      "args": [
+        "new_layout.size() > old_layout.size()"
+      ]
+    }
+  ],
+  "std::alloc::shrink": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "u8",
+        "old_layout.size()"
+      ]
+    },
+    {
+      "tag": "Layout",
+      "args": [
+        "ptr",
+        "old_layout"
+      ]
+    },
+    {
+      "tag": "ValidNum",
+      "args": [
+        "new_layout.size() <= old_layout.size()"
+      ]
+    }
+  ],
+  "std::raw_attribute": [
+    {
+      "tag": "Alive",
+      "args": [
+        "self",
+        "'a"
+      ]
+    }
+  ],
+  "std::from_raw_handle": [
+    {
+      "tag": "TobeSpecified",
+      "args": [
+        "handle"
+      ]
+    }
+  ],
+  "std::thread::spawn_unchecked": [
+    {
+      "tag": "Alive",
+      "args": [
+        "name",
+        "'a"
+      ]
+    },
+    {
+      "tag": "Init",
+      "args": [
+        "name",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "TobeSpecified",
+      "args": [
+        "f"
+      ]
+    }
+  ],
+  "core::intrinsics::const_allocate": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "layout.size() != 0"
+      ]
+    }
+  ],
+  "core::intrinsics::assume": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "cond"
+      ]
+    }
+  ],
+  "core::intrinsics::drop_in_place": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "to_drop",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "to_drop",
+        "T"
+      ]
+    },
+    {
+      "tag": "NonNull",
+      "args": [
+        "to_drop"
+      ]
+    }
+  ],
+  "core::intrinsics::const_deallocate": [
+    {
+      "tag": "Allocated",
+      "args": [
+        "ptr",
+        "u8",
+        "layout.size()"
+      ]
+    },
+    {
+      "tag": "Layout",
+      "args": [
+        "ptr",
+        "layout"
+      ]
+    }
+  ],
+  "core::intrinsics::vtable_size": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "ptr",
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "core::intrinsics::vtable_align": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "ptr",
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "core::intrinsics::pref_align_of": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "0 == 0"
+      ]
+    }
+  ],
+  "core::intrinsics::size_of_val": [
+    {
+      "tag": "Size",
+      "args": [
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "ValidTraitObj",
+      "args": [
+        "ptr"
+      ]
+    }
+  ],
+  "core::intrinsics::min_align_of_val": [
+    {
+      "tag": "Size",
+      "args": [
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "ValidTraitObj",
+      "args": [
+        "ptr"
+      ]
+    }
+  ],
+  "core::ffi::va_list::arg": [
+    {
+      "tag": "InBound",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Init",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    },
+    {
+      "tag": "Typed",
+      "args": [
+        "self",
+        "T"
+      ]
+    }
+  ],
+  "core::ffi::va_list::with_copy": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "0 == 0"
+      ]
+    }
+  ],
+  "core::task::wake::new": [
+    {
+      "tag": "TobeSpecified",
+      "args": [
+        "data"
+      ]
+    }
+  ],
+  "alloc::collections::btree::set::with_mutable_key": [
+    {
+      "tag": "TobeSpecified",
+      "args": [
+        "self"
+      ]
+    }
+  ],
+  "alloc::sync::assume_init": [
+    {
+      "tag": "Init",
+      "args": [
+        "self",
+        "T",
+        "1"
+      ]
+    }
+  ],
+  "std::sys::os_str::bytes::from_encoded_bytes_unchecked": [
+    {
+      "tag": "ValidString",
+      "args": [
+        "s",
+        "u8",
+        "1"
+      ]
+    }
+  ],
+  "core::ptr::copy": [
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "src",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "src",
+        "T"
+      ]
+    },
+    {
+      "tag": "NonVolatile",
+      "args": [
+        "src",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "dst",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "dst",
+        "T"
+      ]
+    },
+    {
+      "tag": "NonVolatile",
+      "args": [
+        "dst",
+        "T",
+        "count"
+      ]
+    }
+  ],
+  "core::ptr::copy_nonoverlapping": [
+    {
+      "tag": "Align",
+      "args": [
+        "src",
+        "T"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "dst",
+        "T"
+      ]
+    },
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "src",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "ValidPtr",
+      "args": [
+        "dst",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "NonOverlap",
+      "args": [
+        "dst",
+        "src",
+        "T",
+        "count"
+      ]
+    },
+    {
+      "tag": "ValidNum",
+      "args": [
+        "size_of(T) * count <= isize::MAX"
+      ]
+    }
+  ],
+  "core::num::unchecked_mul": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "0 == 0"
+      ]
+    }
+  ],
+  "core::num::unchecked_add": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "0 == 0"
+      ]
+    }
+  ],
+  "core::num::unchecked_sub": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "0 == 0"
+      ]
+    }
+  ],
+  "core::num::unchecked_shl": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "0 == 0"
+      ]
+    }
+  ],
+  "core::num::unchecked_shr": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "0 == 0"
+      ]
+    }
+  ],
+  "core::num::nonzero::unchecked_add": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "0 == 0"
+      ]
+    }
+  ],
+  "core::num::nonzero::unchecked_mul": [
+    {
+      "tag": "ValidNum",
+      "args": [
+        "0 == 0"
+      ]
+    }
+  ],
+  "core::slice::<impl [T]>::reverse": [
+    {
+      "tag": "NonNull",
+      "args": [
+        "self"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "self",
+        "T"
+      ]
+    }
+  ],
+  "core::slice::<impl [T]>::as_chunks": [
+    {
+      "tag": "NonNull",
+      "args": [
+        "self"
+      ]
+    }
+  ],
+  "core::slice::<impl [T]>::as_chunks_mut": [
+    {
+      "tag": "NonNull",
+      "args": [
+        "self"
+      ]
+    }
+  ],
+  "core::slice::<impl [T]>::as_rchunks": [
+    {
+      "tag": "NonNull",
+      "args": [
+        "self"
+      ]
+    }
+  ],
+  "core::slice::<impl [T]>::split_at_unchecked": [
+    {
+      "tag": "NonNull",
+      "args": [
+        "self"
+      ]
+    }
+  ],
+  "core::slice::<impl [T]>::split_at_mut_unchecked": [
+    {
+      "tag": "NonNull",
+      "args": [
+        "self"
+      ]
+    }
+  ],
+  "core::slice::<impl [T]>::copy_from_slice": [
+    {
+      "tag": "NonNull",
+      "args": [
+        "self"
+      ]
+    }
+  ],
+  "core::slice::<impl [T]>::copy_within": [
+    {
+      "tag": "NonNull",
+      "args": [
+        "self"
+      ]
+    }
+  ],
+  "core::slice::<impl [T]>::align_to": [
+    {
+      "tag": "SplitTransmute",
+      "args": [
+        "[T]",
+        "[U]"
+      ]
+    }
+  ],
+  "core::slice::<impl [T]>::align_to_mut": [
+    {
+      "tag": "SplitTransmute",
+      "args": [
+        "[T]",
+        "[U]"
+      ]
+    }
+  ],
+  "core::slice::<impl [T]>::as_simd": [
+    {
+      "tag": "NonNull",
+      "args": [
+        "self"
+      ]
+    }
+  ],
+  "core::slice::<impl [T]>::as_simd_mut": [
+    {
+      "tag": "NonNull",
+      "args": [
+        "self"
+      ]
+    }
+  ],
+  "core::slice::<impl [T]>::get_disjoint_unchecked_mut": [
+    {
+      "tag": "NonNull",
+      "args": [
+        "self"
+      ]
+    }
+  ],
+  "core::slice::<impl [[T; N]]>::as_flattened": [
+    {
+      "tag": "ValidTransmute",
+      "args": [
+        "[T; N]",
+        "T"
+      ]
+    }
+  ],
+  "core::slice::<impl [[T; N]]>::as_flattened_mut": [
+    {
+      "tag": "ValidTransmute",
+      "args": [
+        "[T; N]",
+        "T"
+      ]
+    }
+  ]
+}

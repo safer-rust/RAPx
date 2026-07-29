@@ -23,11 +23,11 @@ use crate::{
     helpers::mir_scan::check_safety,
     verify::{
         def_use::{PlaceBaseKey, PlaceKey},
-        helpers::Checkpoint,
-        primitive::PrimitiveCall,
+        call_summary::fn_simulator,
         verifier::{AbstractValue, ForwardVisitResult, StateFact},
     },
 };
+use crate::helpers::mir_scan::Checkpoint;
 
 use super::common::{
     SmtCheckResult, SmtChecker, call_destination, failed_smt, operand_place, rvalue_source_place,
@@ -376,8 +376,8 @@ pub(super) fn as_ptr_provenance_origins<'tcx>(
         else {
             continue;
         };
-        let name = crate::verify::call_summary::call_name(tcx, func);
-        if !PrimitiveCall::classify(&name).is_some_and(|primitive| primitive.is_as_ptr_like()) {
+        let name = crate::helpers::mir_utils::call_name(tcx, func);
+        if !fn_simulator::is_as_ptr(&name) {
             continue;
         }
         let destination_key = PlaceKey {
@@ -401,7 +401,7 @@ pub(super) fn as_ptr_provenance_origins<'tcx>(
         }) else {
             continue;
         };
-        let resolved = resolve_mir_place(tcx, caller, place, &aliases);
+        let resolved = resolve_mir_place(place, &aliases);
         if !extra.contains(&resolved) {
             extra.push(resolved);
         }
@@ -469,8 +469,7 @@ pub(super) fn resolve_forward_place<'tcx>(
                 _ => return place,
             },
             AbstractValue::CallResult(call)
-                if PrimitiveCall::classify(&call.func)
-                    .is_some_and(PrimitiveCall::is_as_ptr_like) =>
+                if fn_simulator::is_as_ptr(&call.func) =>
             {
                 let Some(source) = forward.facts.iter().find_map(|fact| match fact {
                     StateFact::PointsTo { pointer, source } if pointer.overlaps(&place) => {
@@ -483,8 +482,7 @@ pub(super) fn resolve_forward_place<'tcx>(
                 place = resolve_forward_place(source, forward);
             }
             AbstractValue::CallResult(call)
-                if PrimitiveCall::classify(&call.func)
-                    .is_some_and(PrimitiveCall::is_pointer_arithmetic) =>
+                if fn_simulator::is_pointer_arithmetic(&call.func) =>
             {
                 // ptr::add/sub/offset create a new pointer from the base;
                 // follow PointsTo (ReturnPointerAdd effect) to the base.
@@ -708,8 +706,8 @@ fn terminator_is_benign_origin_use<'tcx>(
     let TerminatorKind::Call { func, .. } = terminator else {
         return true;
     };
-    let name = crate::verify::call_summary::call_name(tcx, func);
-    PrimitiveCall::classify(&name).is_some_and(|primitive| primitive.is_as_ptr_like())
+    let name = crate::helpers::mir_utils::call_name(tcx, func);
+    fn_simulator::is_as_ptr(&name)
         || name.ends_with("::len")
         || name.ends_with("::is_empty")
         || name.ends_with("::is_null")
@@ -948,8 +946,8 @@ fn places_holding_transferred_pointer<'tcx>(
             if !killed.contains(&call_destination.local)
                 && holders.iter().any(|h| destination_key.overlaps(h))
             {
-                let name = crate::verify::call_summary::call_name(tcx, func);
-                if PrimitiveCall::classify(&name).is_some_and(PrimitiveCall::is_as_ptr_like)
+                let name = crate::helpers::mir_utils::call_name(tcx, func);
+                if fn_simulator::is_as_ptr(&name)
                     && let Some(arg) = args.first()
                     && let Operand::Copy(place) | Operand::Move(place) = &arg.node
                     && !killed.contains(&place.local)
@@ -1541,8 +1539,8 @@ fn collect_place_aliases<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> HashMap<Loca
 }
 
 fn alias_from_rvalue<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    def_id: DefId,
+    _tcx: TyCtxt<'tcx>,
+    _def_id: DefId,
     rvalue: &Rvalue<'tcx>,
     aliases: &HashMap<Local, PlaceKey>,
 ) -> Option<PlaceKey> {
@@ -1556,12 +1554,10 @@ fn alias_from_rvalue<'tcx>(
         | Rvalue::CopyForDeref(place) => Some(place),
         _ => None,
     }?;
-    Some(resolve_mir_place(tcx, def_id, place, aliases))
+    Some(resolve_mir_place(place, aliases))
 }
 
 fn resolve_mir_place<'tcx>(
-    _tcx: TyCtxt<'tcx>,
-    _def_id: DefId,
     place: &Place<'tcx>,
     aliases: &HashMap<Local, PlaceKey>,
 ) -> PlaceKey {
@@ -1636,10 +1632,10 @@ fn rvalue_mentions_origin<'tcx>(
         | Rvalue::Cast(_, Operand::Move(place), _)
         | Rvalue::Ref(_, _, place)
         | Rvalue::RawPtr(_, place)
-        | Rvalue::CopyForDeref(place) => resolve_mir_place_dummy(place, aliases).overlaps(origin),
+        | Rvalue::CopyForDeref(place) => resolve_mir_place(place, aliases).overlaps(origin),
         Rvalue::Aggregate(_, operands) => operands.iter().any(|operand| match operand {
             Operand::Copy(place) | Operand::Move(place) => {
-                resolve_mir_place_dummy(place, aliases).overlaps(origin)
+                resolve_mir_place(place, aliases).overlaps(origin)
             }
             Operand::Constant(_) => false,
             #[cfg(rapx_rustc_ge_196)]
@@ -1649,21 +1645,9 @@ fn rvalue_mentions_origin<'tcx>(
     }
 }
 
-fn resolve_mir_place_dummy<'tcx>(
-    place: &Place<'tcx>,
-    aliases: &HashMap<Local, PlaceKey>,
-) -> PlaceKey {
-    let key = PlaceKey::from_mir_place(place);
-    if !key.fields.is_empty() {
-        key
-    } else {
-        aliases.get(&place.local).cloned().unwrap_or(key)
-    }
-}
-
 fn terminator_writes_origin<'tcx>(
     tcx: TyCtxt<'tcx>,
-    caller: DefId,
+    _caller: DefId,
     terminator: &TerminatorKind<'tcx>,
     origin: &PlaceKey,
     aliases: &HashMap<Local, PlaceKey>,
@@ -1671,8 +1655,8 @@ fn terminator_writes_origin<'tcx>(
     let TerminatorKind::Call { func, args, .. } = terminator else {
         return false;
     };
-    let name = crate::verify::call_summary::call_name(tcx, func);
-    if PrimitiveCall::classify(&name) != Some(PrimitiveCall::PtrWrite) {
+    let name = crate::helpers::mir_utils::call_name(tcx, func);
+    if !fn_simulator::is_ptr_write(&name) {
         return false;
     }
     let Some(arg0) = args.first() else {
@@ -1686,12 +1670,12 @@ fn terminator_writes_origin<'tcx>(
     }) else {
         return false;
     };
-    resolve_mir_place(tcx, caller, place, aliases).overlaps(origin)
+    resolve_mir_place(place, aliases).overlaps(origin)
 }
 
 fn terminator_uses_origin<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    caller: DefId,
+    _tcx: TyCtxt<'tcx>,
+    _caller: DefId,
     terminator: &TerminatorKind<'tcx>,
     origin: &PlaceKey,
     aliases: &HashMap<Local, PlaceKey>,
@@ -1708,7 +1692,7 @@ fn terminator_uses_origin<'tcx>(
         }) else {
             return false;
         };
-        resolve_mir_place(tcx, caller, place, aliases).overlaps(origin)
+        resolve_mir_place(place, aliases).overlaps(origin)
     })
 }
 
@@ -1720,7 +1704,7 @@ fn terminator_returns_ownership<'tcx>(
     let TerminatorKind::Call { func, args, .. } = terminator else {
         return false;
     };
-    let name = crate::verify::call_summary::call_name(tcx, func);
+    let name = crate::helpers::mir_utils::call_name(tcx, func);
     if !is_ownership_return_api(&name) {
         return false;
     }
@@ -1762,8 +1746,8 @@ fn vec_owners_for_origins<'tcx>(
         else {
             continue;
         };
-        let name = crate::verify::call_summary::call_name(tcx, func);
-        if !PrimitiveCall::classify(&name).is_some_and(|primitive| primitive.is_as_ptr_like()) {
+        let name = crate::helpers::mir_utils::call_name(tcx, func);
+        if !fn_simulator::is_as_ptr(&name) {
             continue;
         }
         let destination_key = PlaceKey {
@@ -1789,7 +1773,7 @@ fn vec_owners_for_origins<'tcx>(
         }) else {
             continue;
         };
-        let owner = resolve_mir_place(tcx, caller, owner_place, aliases);
+        let owner = resolve_mir_place(owner_place, aliases);
         if !owners.contains(&owner) {
             owners.push(owner);
         }
@@ -1800,7 +1784,7 @@ fn vec_owners_for_origins<'tcx>(
 
 fn terminator_invalidates_vec_owner<'tcx>(
     tcx: TyCtxt<'tcx>,
-    caller: DefId,
+    _caller: DefId,
     terminator: &TerminatorKind<'tcx>,
     owners: &[PlaceKey],
     aliases: &HashMap<Local, PlaceKey>,
@@ -1808,7 +1792,7 @@ fn terminator_invalidates_vec_owner<'tcx>(
     let TerminatorKind::Call { func, args, .. } = terminator else {
         return false;
     };
-    let name = crate::verify::call_summary::call_name(tcx, func);
+    let name = crate::helpers::mir_utils::call_name(tcx, func);
     if !is_vec_invalidating_method(&name) {
         return false;
     }
@@ -1821,7 +1805,7 @@ fn terminator_invalidates_vec_owner<'tcx>(
         }) else {
             return false;
         };
-        let arg = resolve_mir_place(tcx, caller, place, aliases);
+        let arg = resolve_mir_place(place, aliases);
         owners
             .iter()
             .any(|owner| arg.overlaps(owner) || owner.overlaps(&arg))

@@ -1,42 +1,33 @@
 //! SMT lowering for the `NonNull` safety property.
 //!
-//! This module reduces:
-//!
-//! ```text
-//! NonNull(p)
-//! ```
-//!
-//! to the common SMT obligation:
-//!
-//! ```text
-//! NonZero { place: p }
-//! ```
-//!
-//! The common model asserts path-local facts such as reference-derived pointers
-//! and `as_ptr` results as non-zero assumptions, then asks whether the target can
-//! still be zero.
+//! Reduces `NonNull(p)` to `SmtObligation::NonZero { place: p }`.
 
 use rustc_middle::ty::{TyCtxt, TyKind};
 
 use super::common::{SmtCheckResult, SmtChecker, SmtObligation};
 use crate::verify::{
     contract::{ContractPlace, PlaceBase, Property, PropertyArg},
-    helpers::Checkpoint,
     verifier::ForwardVisitResult,
 };
+
+use crate::helpers::mir_scan::Checkpoint;
 
 fn is_nonnull_param_ty(tcx: TyCtxt<'_>, ty: rustc_middle::ty::Ty<'_>) -> bool {
     let peeled = ty.peel_refs();
     if let TyKind::Adt(def, _) = peeled.kind() {
-        let path = tcx.def_path_str(def.did());
-        if path.contains("ptr::non_null::NonNull") {
-            return true;
-        }
+        return tcx.def_path_str(def.did()).contains("ptr::non_null::NonNull");
     }
     false
 }
 
-/// Check `NonNull` by lowering it to `SmtObligation::NonZero`.
+fn resolve_target<'tcx>(
+    checker: &SmtChecker<'tcx>,
+    opt_checkpoint: Option<&Checkpoint<'tcx>>,
+    property: &Property<'tcx>,
+) -> Option<crate::verify::def_use::PlaceKey> {
+    checker.property_target(opt_checkpoint, property)
+}
+
 pub(crate) fn check<'tcx>(
     checker: &SmtChecker<'tcx>,
     checkpoint: &Checkpoint<'tcx>,
@@ -46,20 +37,13 @@ pub(crate) fn check<'tcx>(
     if checkpoint.is_ref {
         return SmtCheckResult::proved("NonNull trivially holds for ref-derived pointer");
     }
-
-    // If the target maps to a callee parameter whose type is NonNull<T>,
-    // the pointer is guaranteed non-null by construction.
     if let Some(callee) = checkpoint.callee {
-        if let Some(PropertyArg::Place(ContractPlace {
-            base: PlaceBase::Arg(arg_index),
-            ..
-        })) = property.args.first()
+        if let Some(PropertyArg::Place(ContractPlace { base: PlaceBase::Arg(ix), .. })) =
+            property.args.first()
         {
-            let tcx = checker.tcx;
-            let fn_sig = tcx.fn_sig(callee).skip_binder();
-            let input_tys = fn_sig.inputs().skip_binder();
-            if let Some(param_ty) = input_tys.get(*arg_index) {
-                if is_nonnull_param_ty(tcx, *param_ty) {
+            let fn_sig = checker.tcx.fn_sig(callee).skip_binder();
+            if let Some(param_ty) = fn_sig.inputs().skip_binder().get(*ix) {
+                if is_nonnull_param_ty(checker.tcx, *param_ty) {
                     return SmtCheckResult::proved(
                         "NonNull trivially holds: callee parameter type is NonNull<T>",
                     );
@@ -67,36 +51,26 @@ pub(crate) fn check<'tcx>(
             }
         }
     }
-
-    let Some(target) = checker.property_target(Some(checkpoint), property) else {
+    let Some(target) = resolve_target(checker, Some(checkpoint), property) else {
         return SmtCheckResult::unknown("NonNull target could not be resolved");
     };
-
     let obligation = SmtObligation::NonZero { place: target };
-    let result = checker.prove_obligation(
-        checkpoint,
-        forward,
-        obligation,
-        property.null_guard.as_ref(),
-    );
-    if result.result == crate::verify::report::CheckResult::Unknown {
-        if let Some(reason) =
+    checker
+        .prove_obligation(checkpoint, forward, obligation, property.null_guard.as_ref())
+        .or_try(|| {
             super::provenance::pedigree_proof(checker, checkpoint, property, forward, false)
-        {
-            return SmtCheckResult::proved(format!("NonNull proved: {reason}"));
-        }
-    }
-    result
+                .map(|reason| SmtCheckResult::proved(format!("NonNull proved: {reason}")))
+                .unwrap_or(SmtCheckResult::unknown("NonNull: pedigree proof inconclusive"))
+        })
 }
 
-/// Check `NonNull` at a return checkpoint for struct invariant verification.
 pub(crate) fn check_for_checkpoint<'tcx>(
     checker: &SmtChecker<'tcx>,
     caller: rustc_hir::def_id::DefId,
     property: &Property<'tcx>,
     forward: &ForwardVisitResult<'tcx>,
 ) -> SmtCheckResult {
-    let Some(target) = checker.property_target(None, property) else {
+    let Some(target) = resolve_target(checker, None, property) else {
         return SmtCheckResult::unknown("SMT NonNull target could not be resolved");
     };
     let obligation = SmtObligation::NonZero { place: target };

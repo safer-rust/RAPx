@@ -98,10 +98,6 @@ impl<'tcx> PathResolver<'tcx> {
         }
     }
 
-    pub fn path_str(&self, def_id: DefId) -> String {
-        self.path_str_with_args(def_id, ty::GenericArgs::identity_for_item(self.tcx, def_id))
-    }
-
     pub fn path_str_with_args(&self, def_id: DefId, args: ty::GenericArgsRef<'tcx>) -> String {
         // `{assoc_path}::{item_name}`
         if let Some((assoc_id, kind)) = self.tcx.assoc_parent(def_id) {

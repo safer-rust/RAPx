@@ -46,10 +46,9 @@ use rustc_middle::{
 use super::{
     contract::{ContractExpr, NumericPredicate, Property, PropertyArg, PropertyKind, RelOp},
     def_use::{RelevantPlaces, bind_callsite_roots},
-    helpers::{Checkpoint, CheckpointKind, CheckpointLocation},
-    report::CheckResult,
     target::FunctionTarget,
 };
+use crate::helpers::mir_scan::Checkpoint;
 
 /// Upper bound for repeat selected by auto mode.
 pub(crate) const MAX_AUTO_REPEAT: usize = 16;
@@ -93,31 +92,17 @@ pub enum RepeatStrategy {
 }
 
 /// Unified product of the auto loop-sensitivity pass for one function target.
-///
-/// `repeat` is the only field consumed by the current driver.  The two hint
-/// lists keep detector-specific evidence available internally while preserving
-/// one compact scheduling decision for `VerifyRun`.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct RepeatPlan<'tcx> {
+pub(crate) struct RepeatPlan {
     /// Repeat count that should be passed to `VerifyDriver::new_with_repeat`.
     pub repeat: usize,
-    /// Loop-carried dataflow hints, calibrated through `needed_backedges`.
-    #[allow(dead_code)]
-    pub dataflow_hints: Vec<DataflowDistanceHint>,
-    /// Numeric/index hints, calibrated through `witness_iteration`.
-    #[allow(dead_code)]
-    pub numeric_hints: Vec<NumericRangeHint>,
-    /// Future direct findings from loop summaries such as affine range proofs.
-    #[allow(dead_code)]
-    pub summary_findings: Vec<LoopSummaryFinding<'tcx>>,
 }
 
-impl<'tcx> RepeatPlan<'tcx> {
+impl RepeatPlan {
     /// Merge both detector streams into the path-enumerator repeat budget.
     fn from_hints(
         dataflow_hints: Vec<DataflowDistanceHint>,
         numeric_hints: Vec<NumericRangeHint>,
-        summary_findings: Vec<LoopSummaryFinding<'tcx>>,
     ) -> Self {
         let repeat = dataflow_hints
             .iter()
@@ -131,12 +116,7 @@ impl<'tcx> RepeatPlan<'tcx> {
             .unwrap_or(0)
             .min(MAX_AUTO_REPEAT);
 
-        Self {
-            repeat,
-            dataflow_hints,
-            numeric_hints,
-            summary_findings,
-        }
+        Self { repeat }
     }
 }
 
@@ -147,18 +127,9 @@ impl<'tcx> RepeatPlan<'tcx> {
 /// that source can reach the sink.  It is converted to `allow_repeat` by
 /// [`repeat_for_backedges`].
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
 pub(crate) struct DataflowDistanceHint {
     /// Estimated number of loop backedges required for propagation.
     pub needed_backedges: usize,
-    /// Entry block of the loop SCC that affects the sink.
-    pub scc_entry: usize,
-    /// Basic block containing the unsafe checkpoint or synthetic checkpoint.
-    pub checkpoint_block: usize,
-    /// Safety property whose argument depends on loop state.
-    pub property_kind: PropertyKind,
-    /// Short internal explanation for developer-facing diagnostics.
-    pub reason: String,
 }
 
 impl DataflowDistanceHint {
@@ -175,18 +146,9 @@ impl DataflowDistanceHint {
 /// by `ValidNum(value < 100)` yields witness iteration 100 when `value` starts
 /// at zero.
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
 pub(crate) struct NumericRangeHint {
     /// First loop-body execution that can witness a violation.
     pub witness_iteration: usize,
-    /// Entry block of the loop SCC that affects the sink.
-    pub scc_entry: usize,
-    /// Basic block containing the unsafe checkpoint or synthetic checkpoint.
-    pub checkpoint_block: usize,
-    /// Safety property whose argument depends on induction/range state.
-    pub property_kind: PropertyKind,
-    /// Short internal explanation for developer-facing diagnostics.
-    pub reason: String,
 }
 
 impl NumericRangeHint {
@@ -196,33 +158,6 @@ impl NumericRangeHint {
     }
 }
 
-/// Placeholder for future loop-summary results.
-///
-/// Some future detectors can prove that a loop violates a numeric/index
-/// obligation without asking `PathEnumerator` to materialize the exact failing
-/// iteration.  Such findings can be appended to `VerificationReport` through
-/// this structure.  The current implementation only selects repeat depth.
-#[derive(Clone, Debug)]
-#[allow(dead_code)]
-pub(crate) struct LoopSummaryFinding<'tcx> {
-    /// Checkpoint at which the summarized violation should be reported.
-    pub checkpoint: CheckpointLocation,
-    /// Stable checkpoint index used by existing summary grouping.
-    pub checkpoint_index: usize,
-    /// Property index within the checkpoint's property list.
-    pub property_index: usize,
-    /// Property proved unsafe or inconclusive by the summary.
-    pub property: Property<'tcx>,
-    /// Result to surface, usually `Unknown` or `Failed`.
-    pub result: CheckResult,
-    /// Synthetic path label for the summarized loop witness.
-    pub path_description: String,
-    /// Callee/checkpoint name used by the existing report printer.
-    pub callee_name: String,
-    /// Internal diagnostic text for the summarized reason.
-    pub diagnostic: String,
-}
-
 /// One safety obligation whose arguments have been bound to caller MIR locals.
 ///
 /// A sink starts as a `Property` written in the callee's namespace, for example
@@ -230,14 +165,8 @@ pub(crate) struct LoopSummaryFinding<'tcx> {
 /// so they point at the caller locals passed into the unsafe checkpoint.  The
 /// loop planner can then ask whether those caller locals depend on loop state.
 struct SafetySink<'target, 'tcx> {
-    /// Position among checkpoints with properties, kept for future findings.
-    #[allow(dead_code)]
-    checkpoint_index: usize,
     /// Unsafe call, raw pointer dereference, or static mut synthetic checkpoint.
     checkpoint: &'target Checkpoint<'tcx>,
-    /// Position of this property inside the checkpoint's property list.
-    #[allow(dead_code)]
-    property_index: usize,
     /// Safety property checked at this sink.
     property: &'target Property<'tcx>,
     /// Caller-side MIR locals and places relevant to `property`.
@@ -274,7 +203,7 @@ impl<'tcx> LoopSensitivityAnalyzer<'tcx> {
     /// This is a conservative planner: it may choose a deeper repeat for loops
     /// that turn out to be safe, but it avoids adding tag-specific verifier
     /// reruns or new user-visible output.
-    pub(crate) fn analyze(&self, target: &FunctionTarget<'tcx>) -> RepeatPlan<'tcx> {
+    pub(crate) fn analyze(&self, target: &FunctionTarget<'tcx>) -> RepeatPlan {
         if !self.tcx.is_mir_available(target.def_id) {
             return RepeatPlan::default();
         }
@@ -303,7 +232,7 @@ impl<'tcx> LoopSensitivityAnalyzer<'tcx> {
         let numeric_hints =
             self.numeric_range_hints(&sinks, &graph, &dependencies, &component_summaries);
 
-        RepeatPlan::from_hints(dataflow_hints, numeric_hints, Vec::new())
+        RepeatPlan::from_hints(dataflow_hints, numeric_hints)
     }
 
     /// Compute loop-carried dataflow hints for every safety sink.
@@ -355,12 +284,6 @@ impl<'tcx> LoopSensitivityAnalyzer<'tcx> {
                     let needed_backedges = distance_backedges.max(branch_backedges);
                     hints.push(DataflowDistanceHint {
                         needed_backedges,
-                        scc_entry: component.entry,
-                        checkpoint_block: sink.checkpoint.block.as_usize(),
-                        property_kind: sink.property.kind.clone(),
-                        reason: format!(
-                            "safety sink depends on loop-carried state; estimated {needed_backedges} backedge(s)"
-                        ),
                     });
                     break;
                 }
@@ -419,12 +342,6 @@ impl<'tcx> LoopSensitivityAnalyzer<'tcx> {
                 if let Some(witness_iteration) = witness_iteration {
                     hints.push(NumericRangeHint {
                         witness_iteration,
-                        scc_entry: component.entry,
-                        checkpoint_block: sink.checkpoint.block.as_usize(),
-                        property_kind: sink.property.kind.clone(),
-                        reason: format!(
-                            "numeric/index sink depends on induction state; first witness iteration {witness_iteration}"
-                        ),
                     });
                     break;
                 }
@@ -445,99 +362,37 @@ impl<'tcx> LoopSensitivityAnalyzer<'tcx> {
         target: &'target FunctionTarget<'tcx>,
     ) -> Vec<SafetySink<'target, 'tcx>> {
         let mut sinks = Vec::new();
-        let mut checkpoint_index = 0usize;
 
-        for checkpoint in all_checkpoints(target) {
-            let properties = properties_for_checkpoint(target, checkpoint);
+        for checkpoint in target.all_checkpoints() {
+            let properties = target.properties_for_callsite(checkpoint);
             if properties.is_empty() {
                 continue;
             }
 
-            for (property_index, property) in properties.iter().enumerate() {
+            for property in properties.iter() {
                 let mut roots = RelevantPlaces::from_property(property);
                 bind_callsite_roots(self.tcx, &mut roots, checkpoint);
                 if roots.locals.is_empty() {
                     continue;
                 }
                 sinks.push(SafetySink {
-                    checkpoint_index,
                     checkpoint,
-                    property_index,
                     property,
                     roots,
                 });
             }
-
-            checkpoint_index += 1;
         }
 
         sinks
     }
 }
 
-/// Return every checkpoint that can carry safety properties.
-///
-/// Real unsafe calls live in `target.checkpoints`; raw pointer dereferences and
-/// static mut accesses are represented as synthetic checkpoints but participate
-/// in planning exactly the same way.
-fn all_checkpoints<'target, 'tcx>(
-    target: &'target FunctionTarget<'tcx>,
-) -> Vec<&'target Checkpoint<'tcx>> {
-    target
-        .checkpoints
-        .iter()
-        .chain(
-            target
-                .raw_ptr_deref_checks
-                .iter()
-                .map(|(checkpoint, _)| checkpoint),
-        )
-        .chain(
-            target
-                .static_mut_checks
-                .iter()
-                .map(|(checkpoint, _)| checkpoint),
-        )
-        .collect()
-}
-
-/// Look up the properties associated with a checkpoint.
-///
-/// The three checkpoint kinds store their properties in different fields on
-/// `FunctionTarget`, so this helper centralizes the dispatch for the planner.
-fn properties_for_checkpoint<'target, 'tcx>(
-    target: &'target FunctionTarget<'tcx>,
-    checkpoint: &'target Checkpoint<'tcx>,
-) -> &'target [Property<'tcx>] {
-    let loc = checkpoint.location();
-    match checkpoint.kind {
-        CheckpointKind::RawPtrDeref => target
-            .raw_ptr_deref_checks
-            .iter()
-            .find(|(candidate, _)| candidate.location() == loc)
-            .map(|(_, properties)| properties.as_slice())
-            .unwrap_or(&[]),
-        CheckpointKind::StaticMutAccess => target
-            .static_mut_checks
-            .iter()
-            .find(|(candidate, _)| candidate.location() == loc)
-            .map(|(_, properties)| properties.as_slice())
-            .unwrap_or(&[]),
-        CheckpointKind::UnsafeCall => checkpoint
-            .callee
-            .and_then(|callee| target.callee_requires.get(&callee))
-            .map(Vec::as_slice)
-            .unwrap_or(&[]),
-    }
-}
-
 /// A non-trivial SCC in the MIR control-flow graph.
 ///
 /// `PathGraph` records SCC members under the entry/root block.  This wrapper
-/// stores the entry and a complete member set including that entry.
+/// stores a complete member set of the SCC.
 #[derive(Clone, Debug)]
 struct LoopComponent {
-    entry: usize,
     blocks: FxHashSet<usize>,
 }
 
@@ -555,7 +410,6 @@ fn loop_components(graph: &PathGraph<'_>) -> Vec<LoopComponent> {
         let mut blocks = scc.nodes.clone();
         blocks.insert(scc.enter);
         components.push(LoopComponent {
-            entry: scc.enter,
             blocks,
         });
     }

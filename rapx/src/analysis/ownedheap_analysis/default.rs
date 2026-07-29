@@ -23,17 +23,8 @@ pub struct OwnedHeapAnalyzer<'tcx> {
 }
 
 impl<'tcx> Analysis for OwnedHeapAnalyzer<'tcx> {
-    fn name(&self) -> &'static str {
-        "Default heap analysis."
-    }
     fn run(&mut self) {
         self.start();
-    }
-    fn reset(&mut self) {
-        self.adt_heap.clear();
-        self.fn_set.clear();
-        self.ty_map.clear();
-        self.adt_recorder.clear();
     }
 }
 

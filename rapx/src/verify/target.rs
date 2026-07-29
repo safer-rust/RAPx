@@ -16,16 +16,16 @@ use std::collections::{HashMap, HashSet};
 use syn::Expr;
 
 use super::{
-    attribute::assets_parser::*,
-    attribute::attr_parser::parse_rapx_attr,
     contract::{ContractExpr, ContractPlace, PlaceBase, Property, PropertyArg, PropertyKind},
-    helpers::{
-        Checkpoint, collect_return_block_indices, collect_unsafe_callsites,
-        get_owner_struct_def_id, has_rapx_verify_attr, is_std_crate_def_id, is_trait_unsafe,
-        resolve_impl_self_ty_def_id,
-    },
     path_extractor::PathExtractor,
+    source::assets::*,
+    source::attr::parse_rapx_attr,
 };
+use crate::helpers::mir_utils::{
+    collect_return_block_indices, get_owner_struct_def_id, has_rapx_verify_attr,
+    is_std_crate_def_id, is_trait_unsafe, resolve_impl_self_ty_def_id,
+};
+use crate::helpers::mir_scan::{Checkpoint, collect_unsafe_callsites};
 
 /// A list of parsed `requires` contracts.
 pub type FnContracts<'tcx> = Vec<Property<'tcx>>;
@@ -60,7 +60,7 @@ pub type StructInvariants<'tcx> = Vec<Property<'tcx>>;
 /// to route each unsafe operation to the verifier engine along reachability paths
 /// extracted from the MIR CFG.  The target is the primary data carrier between
 /// the *target collection* stage and the *path extraction / verification* stage.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct FunctionTarget<'tcx> {
     /// The function being verified.
     pub def_id: DefId,
@@ -122,6 +122,47 @@ pub struct FunctionTarget<'tcx> {
     pub static_mut_checks: Vec<(Checkpoint<'tcx>, Vec<Property<'tcx>>)>,
 }
 
+impl<'tcx> FunctionTarget<'tcx> {
+    pub fn all_checkpoints(&self) -> Vec<&Checkpoint<'tcx>> {
+        self.checkpoints
+            .iter()
+            .chain(
+                self.raw_ptr_deref_checks
+                    .iter()
+                    .map(|(checkpoint, _)| checkpoint),
+            )
+            .chain(
+                self.static_mut_checks
+                    .iter()
+                    .map(|(checkpoint, _)| checkpoint),
+            )
+            .collect()
+    }
+
+    pub fn properties_for_callsite(&self, checkpoint: &Checkpoint<'tcx>) -> &[Property<'tcx>] {
+        let loc = checkpoint.location();
+        match checkpoint.kind {
+            crate::helpers::mir_scan::CheckpointKind::RawPtrDeref => self
+                .raw_ptr_deref_checks
+                .iter()
+                .find(|(candidate, _)| candidate.location() == loc)
+                .map(|(_, properties)| properties.as_slice())
+                .unwrap_or(&[]),
+            crate::helpers::mir_scan::CheckpointKind::StaticMutAccess => self
+                .static_mut_checks
+                .iter()
+                .find(|(candidate, _)| candidate.location() == loc)
+                .map(|(_, properties)| properties.as_slice())
+                .unwrap_or(&[]),
+            crate::helpers::mir_scan::CheckpointKind::UnsafeCall => checkpoint
+                .callee
+                .and_then(|callee| self.callee_requires.get(&callee))
+                .map(Vec::as_slice)
+                .unwrap_or(&[]),
+        }
+    }
+}
+
 /// Collected verification data for a struct that owns methods marked with `#[rapx::verify]`.
 pub struct StructTarget<'tcx> {
     /// Struct that owns one or more methods selected as targets to verify.
@@ -157,10 +198,7 @@ fn resolve_chain_contracts<'tcx>(
     tcx: TyCtxt<'tcx>,
     callee_def_id: DefId,
     visited: &mut HashSet<DefId>,
-    std_contracts: fn(
-        TyCtxt<'tcx>,
-        DefId,
-    ) -> &'static [super::attribute::assets_parser::PropertyEntry],
+    std_contracts: fn(TyCtxt<'tcx>, DefId) -> &'static [super::source::assets::PropertyEntry],
 ) -> FnContracts<'tcx> {
     if !visited.insert(callee_def_id) {
         return Vec::new();
@@ -220,6 +258,7 @@ fn resolve_chain_contracts<'tcx>(
 pub struct VerifyTargetCollector<'tcx> {
     tcx: TyCtxt<'tcx>,
     mode: VerifyMode,
+    skip_invariant: bool,
     crate_filter: Option<String>,
     crate_filter_matched: bool,
     module_filter: Option<String>,
@@ -239,12 +278,14 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
     pub fn new(
         tcx: TyCtxt<'tcx>,
         mode: VerifyMode,
+        skip_invariant: bool,
         crate_filter: Option<String>,
         module_filter: Option<String>,
     ) -> Self {
         VerifyTargetCollector {
             tcx,
             mode,
+            skip_invariant,
             crate_filter,
             crate_filter_matched: false,
             module_filter,
@@ -275,10 +316,6 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
             .entry(callee_def_id)
             .or_insert_with(|| {
                 let mut requires = get_contract_from_annotation(self.tcx, callee_def_id);
-
-                if requires.is_empty() && !trait_requires.is_empty() {
-                    requires = trait_requires.clone();
-                }
 
                 if requires.is_empty() && !trait_requires.is_empty() {
                     requires = trait_requires.clone();
@@ -558,7 +595,7 @@ impl<'tcx> Visitor<'tcx> for VerifyTargetCollector<'tcx> {
     /// [`TraitEnsurance`] placeholders.
     ///
     /// In `targeted` mode, only `impl` blocks annotated with `#[rapx::verify]`
-    /// are recorded.  In `scan` and `invless` modes, all `unsafe trait` impls
+    /// are recorded.  In `scan` mode, all `unsafe trait` impls
     /// are recorded.
     fn visit_item(&mut self, item: &'tcx rustc_hir::Item<'tcx>) {
         if let ItemKind::Impl(rustc_hir::Impl { of_trait, .. }) = &item.kind
@@ -620,7 +657,7 @@ impl<'tcx> Visitor<'tcx> for VerifyTargetCollector<'tcx> {
     /// Visits each function body and records verification targets.
     ///
     /// In `targeted` mode, only functions annotated with `#[rapx::verify]` are collected.
-    /// In `all` and `invariantless` modes, a HIR-level pre-filter (`contains_unsafe`
+    /// In `scan` mode, a HIR-level pre-filter (`contains_unsafe`
     /// and `function_has_struct_invariant`) avoids expensive MIR scanning for functions
     /// that have no unsafe content and no struct invariants.
     fn visit_fn(
@@ -670,21 +707,18 @@ impl<'tcx> Visitor<'tcx> for VerifyTargetCollector<'tcx> {
                 if function_target.checkpoints.is_empty()
                     && function_target.raw_ptr_deref_checks.is_empty()
                     && function_target.static_mut_checks.is_empty()
-                    && function_target.struct_invariants.is_empty()
                 {
-                    let root =
-                        crate::analysis::safetyflow_analysis::root::scan_mir(self.tcx, def_id);
-                    if root.is_none() {
-                        return;
+                    if !function_target.struct_invariants.is_empty() {
+                        if self.skip_invariant {
+                            return;
+                        }
+                    } else {
+                        let root =
+                            crate::analysis::safetyflow_analysis::root::scan_mir(self.tcx, def_id);
+                        if root.is_none() {
+                            return;
+                        }
                     }
-                }
-            }
-            VerifyMode::Invless => {
-                if function_target.checkpoints.is_empty()
-                    && function_target.raw_ptr_deref_checks.is_empty()
-                    && function_target.static_mut_checks.is_empty()
-                {
-                    return;
                 }
             }
         }
@@ -710,19 +744,17 @@ impl<'tcx> Visitor<'tcx> for VerifyTargetCollector<'tcx> {
 pub struct PrepareTargets<'tcx> {
     tcx: TyCtxt<'tcx>,
     mode: VerifyMode,
+    skip_invariant: bool,
     crate_filter: Option<String>,
     module_filter: Option<String>,
 }
 
 impl<'tcx> Analysis for PrepareTargets<'tcx> {
-    fn name(&self) -> &'static str {
-        "Verify Identify Targets Analysis"
-    }
-
     fn run(&mut self) {
         let mut collector = VerifyTargetCollector::new(
             self.tcx,
             self.mode,
+            self.skip_invariant,
             self.crate_filter.clone(),
             self.module_filter.clone(),
         );
@@ -818,19 +850,20 @@ impl<'tcx> Analysis for PrepareTargets<'tcx> {
         rap_info!("============================================================");
     }
 
-    fn reset(&mut self) {}
 }
 
 impl<'tcx> PrepareTargets<'tcx> {
     pub fn new(
         tcx: TyCtxt<'tcx>,
         mode: VerifyMode,
+        skip_invariant: bool,
         crate_filter: Option<String>,
         module_filter: Option<String>,
     ) -> Self {
         PrepareTargets {
             tcx,
             mode,
+            skip_invariant,
             crate_filter,
             module_filter,
         }
@@ -1069,11 +1102,7 @@ fn get_contract_from_entry<'tcx>(
         }
 
         let mut property = Property::new(tcx, def_id, entry.tag.as_str(), &exprs);
-        if let Some(ref kind_str) = entry.kind {
-            if kind_str == "hazard" {
-                property.contract_kind = crate::verify::contract::ContractKind::Hazard;
-            }
-        }
+        property.apply_kind(entry.kind.as_deref());
         if matches!(property.kind, PropertyKind::Unknown) {
             rap_debug!(
                 "skip unsupported std safety contract tag '{}' for callee {:?}",
@@ -1253,18 +1282,9 @@ fn collect_properties_from_named_attrs<'tcx>(
         };
 
         results.extend(parsed.properties.into_iter().flat_map(|property| {
-            let is_hazard = property
-                .kind
-                .as_deref()
-                .is_some_and(|kind_str| kind_str == "hazard");
             Property::parse_list(tcx, property_def_id, property.tag.as_str(), &property.args)
                 .into_iter()
-                .map(move |mut p| {
-                    if is_hazard {
-                        p.contract_kind = crate::verify::contract::ContractKind::Hazard;
-                    }
-                    p
-                })
+                .map(move |mut p| { p.apply_kind(property.kind.as_deref()); p })
         }));
     }
 
@@ -1417,6 +1437,7 @@ fn build_raw_ptr_deref_checks<'tcx>(
                     Property {
                         null_guard: None,
                         or_alternatives: Vec::new(),
+                        for_each: None,
                         contract_kind: crate::verify::contract::ContractKind::Precond,
                         kind: PropertyKind::NonNull,
                         args: vec![target.clone()],
@@ -1424,6 +1445,7 @@ fn build_raw_ptr_deref_checks<'tcx>(
                     Property {
                         null_guard: None,
                         or_alternatives: Vec::new(),
+                        for_each: None,
                         contract_kind: crate::verify::contract::ContractKind::Precond,
                         kind: PropertyKind::Align,
                         args: vec![target.clone(), ty.clone()],
@@ -1434,6 +1456,7 @@ fn build_raw_ptr_deref_checks<'tcx>(
                     Property {
                         null_guard: None,
                         or_alternatives: Vec::new(),
+                        for_each: None,
                         contract_kind: crate::verify::contract::ContractKind::Precond,
                         kind: PropertyKind::ValidPtr,
                         args: vec![target.clone(), ty.clone(), count.clone()],
@@ -1441,6 +1464,7 @@ fn build_raw_ptr_deref_checks<'tcx>(
                     Property {
                         null_guard: None,
                         or_alternatives: Vec::new(),
+                        for_each: None,
                         contract_kind: crate::verify::contract::ContractKind::Precond,
                         kind: PropertyKind::Align,
                         args: vec![target.clone(), ty.clone()],
@@ -1452,6 +1476,7 @@ fn build_raw_ptr_deref_checks<'tcx>(
                 properties.push(Property {
                     null_guard: None,
                     or_alternatives: Vec::new(),
+                    for_each: None,
                     contract_kind: crate::verify::contract::ContractKind::Precond,
                     kind: PropertyKind::Typed,
                     args: vec![target, ty],
@@ -1499,6 +1524,7 @@ fn build_static_mut_checks<'tcx>(
                 Property {
                     null_guard: None,
                     or_alternatives: Vec::new(),
+                    for_each: None,
                     contract_kind: crate::verify::contract::ContractKind::Precond,
                     kind: PropertyKind::ValidPtr,
                     args: vec![target.clone(), ty.clone(), count.clone()],
@@ -1506,6 +1532,7 @@ fn build_static_mut_checks<'tcx>(
                 Property {
                     null_guard: None,
                     or_alternatives: Vec::new(),
+                    for_each: None,
                     contract_kind: crate::verify::contract::ContractKind::Precond,
                     kind: PropertyKind::Align,
                     args: vec![target.clone(), ty.clone()],
@@ -1513,6 +1540,7 @@ fn build_static_mut_checks<'tcx>(
                 Property {
                     null_guard: None,
                     or_alternatives: Vec::new(),
+                    for_each: None,
                     contract_kind: crate::verify::contract::ContractKind::Precond,
                     kind: PropertyKind::Init,
                     args: vec![target, ty, count],
@@ -1541,7 +1569,7 @@ fn build_type_invariants_from_params<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
 ) -> Vec<Property<'tcx>> {
-    let db = crate::verify::attribute::assets_parser::get_std_type_invariants();
+    let db = crate::verify::source::assets::get_std_type_invariants();
     if db.is_empty() {
         return Vec::new();
     }
@@ -1578,10 +1606,7 @@ fn build_type_invariants_from_params<'tcx>(
 fn collect_type_invariants<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
-    db: &std::collections::HashMap<
-        String,
-        crate::verify::attribute::assets_parser::TypeInvariantEntry,
-    >,
+    db: &std::collections::HashMap<String, crate::verify::source::assets::TypeInvariantEntry>,
     type_path: &str,
     param_name: &str,
     results: &mut Vec<Property<'tcx>>,
@@ -1615,7 +1640,7 @@ fn collect_type_invariants<'tcx>(
 fn instantiate_type_invariant<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
-    entry: &crate::verify::attribute::assets_parser::PropertyEntry,
+    entry: &crate::verify::source::assets::PropertyEntry,
     param_name: &str,
 ) -> Option<Property<'tcx>> {
     let mut exprs: Vec<syn::Expr> = Vec::new();
@@ -1642,11 +1667,7 @@ fn instantiate_type_invariant<'tcx>(
         return None;
     }
     let mut property = Property::new(tcx, def_id, &entry.tag, &exprs);
-    if let Some(ref kind) = entry.kind
-        && kind == "hazard"
-    {
-        property.contract_kind = crate::verify::contract::ContractKind::Hazard;
-    }
+    property.apply_kind(entry.kind.as_deref());
     if !matches!(
         property.kind,
         crate::verify::contract::PropertyKind::Unknown

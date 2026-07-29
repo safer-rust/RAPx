@@ -1,31 +1,19 @@
 use annotate_snippets::{Level, Renderer, Snippet};
 
-use once_cell::sync::OnceCell;
 
 use crate::{
     analysis::dataflow::*,
     check::opt::OptCheck,
-    helpers::def_path::DefPath,
-    utils::log::{relative_pos_range, span_to_filename, span_to_line_number, span_to_source_code},
+    utils::span::{relative_pos_range, span_to_filename, span_to_line_number, span_to_source_code},
 };
 use rustc_middle::ty::TyCtxt;
 use rustc_span::Span;
 
-struct DefPaths {
-    vec_remove: DefPath,
-    vec_insert: DefPath,
+crate::def_paths! {
+    vec_remove: "std::vec::Vec::remove",
+    vec_insert: "std::vec::Vec::insert",
 }
 
-static DEFPATHS: OnceCell<DefPaths> = OnceCell::new();
-
-impl DefPaths {
-    fn new(tcx: &TyCtxt<'_>) -> Self {
-        Self {
-            vec_remove: DefPath::new("std::vec::Vec::remove", tcx),
-            vec_insert: DefPath::new("std::vec::Vec::insert", tcx),
-        }
-    }
-}
 
 pub struct VecRemoveCheck {
     record: Vec<Span>,
