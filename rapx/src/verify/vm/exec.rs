@@ -744,7 +744,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     provenance: src_val.provenance,
                     invariants: ValueInvariants {
                         aligned: src_val.invariants.aligned,
-                        in_bounds: false,
+                        in_bounds: src_val.invariants.in_bounds,
                         align_n: if is_cast || is_ptr_arith { src_val.invariants.align_n } else { None },
                         ..src_val.invariants
                     },
@@ -789,12 +789,15 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     .and_then(|p| self.allocations.iter().find(|a| a.id == p.alloc_id))
                     .map(|a| a.align)
                     .filter(|&a| a > 1);
+                let src_in_bounds = self.locals.get(&place.local)
+                    .map_or(false, |v| v.invariants.in_bounds);
                 self.set_local(dest_local, VmValue {
                     term: addr.term,
                     ty: dest_ty,
                     provenance: addr.provenance,
                     invariants: ValueInvariants {
-                        non_null: true, aligned: true, init: true, in_bounds: false,
+                        non_null: true, aligned: true, init: true,
+                        in_bounds: src_in_bounds,
                         align_n: alloc_align,
                     },
                 });
@@ -810,12 +813,14 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     .and_then(|p| self.allocations.iter().find(|a| a.id == p.alloc_id))
                     .map(|a| a.align)
                     .filter(|&a| a > 1);
+                let src_in_bounds = self.locals.get(&place.local)
+                    .map_or(false, |v| v.invariants.in_bounds);
                 self.set_local(dest_local, VmValue {
                     term: addr.term,
                     ty: dest_ty,
                     provenance: addr.provenance,
                     invariants: ValueInvariants {
-                        non_null: true, in_bounds: false, align_n: alloc_align, ..Default::default()
+                        non_null: true, in_bounds: src_in_bounds, align_n: alloc_align, ..Default::default()
                     },
                 });
             }
@@ -1093,6 +1098,11 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         .and_then(|p| self.allocations.iter().find(|a| a.id == p.alloc_id))
                         .map(|a| a.align)
                         .filter(|&a| a > 1);
+                    // Inherit in_bounds from the source place's local,
+                    // preserving fn_simulator-set invariants through Deref
+                    // chains (e.g. &*fat_ptr from inlined from_raw_parts).
+                    let src_in_bounds = self.locals.get(&place.local)
+                        .map_or(false, |v| v.invariants.in_bounds);
                     let val = VmValue {
                         term: addr.term,
                         ty: dest_ty,
@@ -1101,7 +1111,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                             non_null: true,
                             aligned: self.check_place_alignment(place),
                             init: true,
-                            in_bounds: false,
+                            in_bounds: src_in_bounds,
                             align_n: alloc_align,
                         },
                     };
