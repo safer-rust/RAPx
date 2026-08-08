@@ -1690,6 +1690,11 @@ impl PropertyChecker {
         // constants (e.g. align_of >= 1) constrain the solver,
         // while regular parameters remain unconstrained.
         if matches!(pred.op, RelOp::Ne) && rhs.as_u64() == Some(0) {
+            // Concrete 0 from compiler-evaluated AlignOf/SizeOf for
+            // generic types — semantically always >= 1 for non-ZST.
+            if lhs.as_u64() == Some(0) {
+                return Some(CheckResult::Proved);
+            }
             vm_state.assert_all(solver);
         }
         solver.assert(&condition.not());
@@ -1982,7 +1987,7 @@ impl PropertyChecker {
                 if let Ok(val) = c.const_.eval(vm_state.tcx, typing_env, rustc_span::DUMMY_SP) {
                     if let Some(scalar) = val.try_to_scalar_int() {
                         let v = scalar.to_bits(scalar.size()) as u64;
-                        if v == 0 && (const_text.contains("AlignOf") || const_text.contains("SizeOf")) {
+                        if v == 0 && (const_text.contains("AlignOf") || const_text.contains("SizeOf") || const_text.contains("min_align_of") || const_text.contains("min_size_of")) {
                             // Generic AlignOf/SizeOf may evaluate to 0 but
                             // are always >= 1 for non-ZST types. Fall through
                             // to the debug text path below.

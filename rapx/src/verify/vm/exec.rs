@@ -1362,8 +1362,10 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             #[cfg(not(rapx_rustc_ge_196))]
             Rvalue::NullaryOp(_op) => {
                 let term = self.fresh_int("nullary");
-                let is_align_of = format!("{:?}", _op).contains("AlignOf");
-                if is_align_of {
+                let op_debug = format!("{:?}", _op);
+                let is_align_of = op_debug.contains("AlignOf") || op_debug.contains("min_align_of");
+                let is_size_of = op_debug.contains("SizeOf");
+                if is_align_of || is_size_of {
                     let one = Int::from_u64(self.ctx, 1);
                     self.path_conditions.push(term.ge(&one));
                 }
