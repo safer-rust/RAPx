@@ -1050,6 +1050,20 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         }
     }
 
+    /// Inject layout constraints (>= 1) for generic AlignOf/SizeOf constants.
+    fn inject_layout_constraints(&mut self, operand: &Operand<'tcx>, val: &VmValue<'ctx, 'tcx>) {
+        if let Operand::Constant(constant) = operand {
+            let text = format!("{:?}", constant.const_);
+            if super::state::const_int_from_debug(&text).is_none() {
+                let is_align_or_size = text.starts_with("AlignOf(") || text.starts_with("SizeOf(");
+                if is_align_or_size {
+                    let one = Int::from_u64(self.ctx, 1);
+                    self.path_conditions.push(val.term.ge(&one));
+                }
+            }
+        }
+    }
+
     /// Evaluate an Rvalue into a VmValue.
     fn eval_rvalue(
         &mut self,
@@ -1063,12 +1077,14 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             Rvalue::Use(operand, _retag) => {
                 let mut val = self.value_of_operand(operand);
                 self.try_materialize_const_bytes(&mut val, operand);
+                self.inject_layout_constraints(operand, &val);
                 Ok(val)
             }
             #[cfg(not(rapx_rvalue_use_with_retag))]
             Rvalue::Use(operand) => {
                 let mut val = self.value_of_operand(operand);
                 self.try_materialize_const_bytes(&mut val, operand);
+                self.inject_layout_constraints(operand, &val);
                 Ok(val)
             }
             Rvalue::Ref(_, _borrow_kind, place) => {
@@ -1346,6 +1362,11 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             #[cfg(not(rapx_rustc_ge_196))]
             Rvalue::NullaryOp(_op) => {
                 let term = self.fresh_int("nullary");
+                let is_align_of = format!("{:?}", _op).contains("AlignOf");
+                if is_align_of {
+                    let one = Int::from_u64(self.ctx, 1);
+                    self.path_conditions.push(term.ge(&one));
+                }
                 Ok(VmValue {
                     term,
                     ty: dest_ty,
