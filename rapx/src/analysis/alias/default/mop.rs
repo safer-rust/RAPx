@@ -26,7 +26,9 @@ impl<'tcx> AliasGraph<'tcx> {
         self.init_pts_graph();
 
         let paths = precomputed_paths.unwrap_or_else(|| self.enumerate_paths());
-        let Some(root) = paths.root() else { return; };
+        let Some(root) = paths.root() else {
+            return;
+        };
 
         let mut path = Vec::new();
         let _ = self.dfs_mop(root, &mut path, fn_map, recursion_set);

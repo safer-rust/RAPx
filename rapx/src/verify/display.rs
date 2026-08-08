@@ -1,13 +1,13 @@
 use rustc_hir::def_id::DefId;
-use rustc_middle::ty::{self, TyCtxt};
 use rustc_middle::ty::ClauseKind;
+use rustc_middle::ty::{self, TyCtxt};
 
 use crate::compat::FxHashMap;
 use crate::helpers::fn_info::get_cons;
 use indexmap::IndexMap;
 
-use crate::helpers::mir_scan::CheckpointLocation;
 use super::report::PropertyCheckResult;
+use crate::helpers::mir_scan::CheckpointLocation;
 pub fn fmt_fn_with_params(path: &str, arg_names: &[String], ret_ty: Option<&str>) -> String {
     let args = arg_names.join(", ");
     match ret_ty {
@@ -35,10 +35,7 @@ pub fn fmt_fn_path_with_generics(
     }
 }
 
-pub fn fmt_fn_path_with_bounds(
-    tcx: TyCtxt<'_>,
-    def_id: DefId,
-) -> String {
+pub fn fmt_fn_path_with_bounds(tcx: TyCtxt<'_>, def_id: DefId) -> String {
     let path = tcx.def_path_str(def_id);
     let predicates = crate::compat::predicates_of(tcx, def_id);
 
@@ -451,9 +448,7 @@ pub fn fmt_place_plain(
                 crate::verify::contract::ContractProjection::Downcast { .. } => {
                     "unwrap_some()".to_string()
                 }
-                crate::verify::contract::ContractProjection::IterElements => {
-                    ".iter()".to_string()
-                }
+                crate::verify::contract::ContractProjection::IterElements => ".iter()".to_string(),
             })
             .collect();
         if base.is_empty() {
@@ -708,12 +703,7 @@ pub fn emit_verify_summary<'tcx>(
     rap_info!("");
 }
 
-
-
-pub fn emit_property_rows<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    results: &[&PropertyCheckResult<'tcx>],
-) {
+pub fn emit_property_rows<'tcx>(tcx: TyCtxt<'tcx>, results: &[&PropertyCheckResult<'tcx>]) {
     use crate::verify::contract::PropertyKind;
 
     let mut path_groups: FxHashMap<&str, Vec<_>> = FxHashMap::default();
@@ -781,7 +771,11 @@ pub fn emit_property_rows<'tcx>(
             // Expand OR sub-properties with indented tree
             if *kind == PropertyKind::Or && *count == 1 {
                 if let Some(r) = props.first() {
-                    let pad = if is_last { "            " } else { "          │   " };
+                    let pad = if is_last {
+                        "            "
+                    } else {
+                        "          │   "
+                    };
                     emit_or_subtree(tcx, &r.property, pad, &r.result, &r.path_description);
                 }
             }

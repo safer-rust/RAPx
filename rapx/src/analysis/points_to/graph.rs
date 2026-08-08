@@ -74,12 +74,7 @@ impl PtsGraph {
 
     // ── Slot registration ──────────────────────────────────────────
 
-    pub fn ensure_slot(
-        &mut self,
-        slot: Slot,
-        may_drop: bool,
-        need_drop: bool,
-    ) -> usize {
+    pub fn ensure_slot(&mut self, slot: Slot, may_drop: bool, need_drop: bool) -> usize {
         if let Some(&idx) = self.slot_index.get(&slot) {
             return idx;
         }
@@ -94,7 +89,7 @@ impl PtsGraph {
         self.may_drop.push(may_drop);
         self.need_drop.push(need_drop);
         self.slot_kind.push(ValueKind::Adt);
-        self.alias_parent.push(idx);  // singleton: points to itself
+        self.alias_parent.push(idx); // singleton: points to itself
         idx
     }
 
@@ -319,11 +314,7 @@ impl PtsGraph {
                 if let Some(idx) = self.slot_index.get(&field_slot) {
                     lv = *idx;
                 } else {
-                    let idx = self.ensure_slot(
-                        field_slot,
-                        self.may_drop[lv],
-                        self.need_drop[lv],
-                    );
+                    let idx = self.ensure_slot(field_slot, self.may_drop[lv], self.need_drop[lv]);
                     lv = idx;
                 }
             }
@@ -332,11 +323,7 @@ impl PtsGraph {
                 if let Some(idx) = self.slot_index.get(&field_slot) {
                     rv = *idx;
                 } else {
-                    let idx = self.ensure_slot(
-                        field_slot,
-                        self.may_drop[rv],
-                        self.need_drop[rv],
-                    );
+                    let idx = self.ensure_slot(field_slot, self.may_drop[rv], self.need_drop[rv]);
                     rv = idx;
                 }
             }
@@ -352,10 +339,7 @@ impl PtsGraph {
     /// Compute field-sensitive alias pairs among args (1..=arg_count) + return
     /// value (0).  For each pair, checks `may_alias()` and if true, emits an
     /// `AliasPair` with the truncated single-level field paths.
-    pub fn fn_alias_pairs(
-        &self,
-        arg_count: usize,
-    ) -> crate::analysis::alias::FnAliasPairs {
+    pub fn fn_alias_pairs(&self, arg_count: usize) -> crate::analysis::alias::FnAliasPairs {
         let mut pairs = crate::analysis::alias::FnAliasPairs::new(arg_count);
 
         let local_ids: Vec<usize> = (0..=arg_count).collect();
@@ -373,11 +357,14 @@ impl PtsGraph {
             for j in (i + 1)..local_ids.len() {
                 let li = local_ids[i];
                 let lj = local_ids[j];
-                let Some(&slot_i) = local_to_base_slot.get(&li) else { continue; };
-                let Some(&slot_j) = local_to_base_slot.get(&lj) else { continue; };
+                let Some(&slot_i) = local_to_base_slot.get(&li) else {
+                    continue;
+                };
+                let Some(&slot_j) = local_to_base_slot.get(&lj) else {
+                    continue;
+                };
                 if self.may_alias(slot_i, slot_j) {
-                    let mut pair =
-                        crate::analysis::alias::AliasPair::new(li, lj);
+                    let mut pair = crate::analysis::alias::AliasPair::new(li, lj);
                     pair.lhs_fields = vec![];
                     pair.rhs_fields = vec![];
                     pairs.add_alias(pair);
@@ -403,11 +390,16 @@ impl PtsGraph {
             let slot_a = &self.slots[*idx_a];
             // Field ↔ Field
             for (idx_b, fields_b) in &field_slots {
-                if idx_a == idx_b { continue; }
+                if idx_a == idx_b {
+                    continue;
+                }
                 let slot_b = &self.slots[*idx_b];
-                if slot_a.local == slot_b.local { continue; }
+                if slot_a.local == slot_b.local {
+                    continue;
+                }
                 if self.may_alias(*idx_a, *idx_b) {
-                    let mut pair = crate::analysis::alias::AliasPair::new(slot_a.local, slot_b.local);
+                    let mut pair =
+                        crate::analysis::alias::AliasPair::new(slot_a.local, slot_b.local);
                     pair.lhs_fields = fields_a.clone();
                     pair.rhs_fields = fields_b.clone();
                     pairs.add_alias(pair);
@@ -415,8 +407,12 @@ impl PtsGraph {
             }
             // Field ↔ Base (cross-level)
             for &base_local in &local_ids {
-                if slot_a.local == base_local { continue; }
-                let Some(&base_slot_idx) = local_to_base_slot.get(&base_local) else { continue; };
+                if slot_a.local == base_local {
+                    continue;
+                }
+                let Some(&base_slot_idx) = local_to_base_slot.get(&base_local) else {
+                    continue;
+                };
                 if self.may_alias(*idx_a, base_slot_idx) {
                     let mut pair = crate::analysis::alias::AliasPair::new(slot_a.local, base_local);
                     pair.lhs_fields = fields_a.clone();
@@ -503,8 +499,7 @@ impl PtsGraph {
         let mut slot = Self::place_key_to_slot(place);
         loop {
             if let Some(idx) = self.slot_index.get(&slot) {
-                if let Some(first_loc) =
-                    self.points_to.get(*idx).and_then(|set| set.iter().next())
+                if let Some(first_loc) = self.points_to.get(*idx).and_then(|set| set.iter().next())
                 {
                     if let AbstractLoc::Slot(target) = first_loc {
                         return Some(Self::slot_to_place_key(target));
@@ -540,7 +535,9 @@ impl PtsGraph {
     pub fn place_edges(&self) -> Vec<(PlaceKey, PlaceKey)> {
         let mut edges = Vec::new();
         for (idx, targets) in self.points_to.iter().enumerate() {
-            let Some(slot) = self.slots.get(idx) else { continue };
+            let Some(slot) = self.slots.get(idx) else {
+                continue;
+            };
             let pointer = Self::slot_to_place_key(slot);
             for target in targets {
                 if let AbstractLoc::Slot(target_slot) = target {
@@ -554,7 +551,10 @@ impl PtsGraph {
 
     fn place_key_to_slot(pk: &PlaceKey) -> Slot {
         let local = pk.local().map(|l| l.as_usize()).unwrap_or(0);
-        Slot { local, fields: pk.fields.clone() }
+        Slot {
+            local,
+            fields: pk.fields.clone(),
+        }
     }
 
     fn slot_to_place_key(slot: &Slot) -> PlaceKey {

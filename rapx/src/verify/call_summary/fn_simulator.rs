@@ -18,7 +18,7 @@ use rustc_middle::mir::{Local, Operand};
 use rustc_middle::ty::{GenericArgKind, PseudoCanonicalInput, Ty, TyCtxt, TyKind};
 
 use super::{CallDependencySummary, CallEffect, CallEffectSummary};
-use crate::helpers::mir_utils::{ty_has_param_const, pointee_ty};
+use crate::helpers::mir_utils::{pointee_ty, ty_has_param_const};
 
 // ── Context for effect builders ────────────────────────────────────────
 
@@ -41,13 +41,31 @@ struct Entry {
     effects: fn(&EffCtx<'_, '_>) -> Vec<CallEffect>,
 }
 
-macro_rules! none { () => { &[] } }
-macro_rules! dep0  { () => { &[0usize] } }
-macro_rules! dep01 { () => { &[0usize, 1] } }
+macro_rules! none {
+    () => {
+        &[]
+    };
+}
+macro_rules! dep0 {
+    () => {
+        &[0usize]
+    };
+}
+macro_rules! dep01 {
+    () => {
+        &[0usize, 1]
+    };
+}
 
 macro_rules! E {
     ($m:ident, $d:expr, $all:expr, $w:expr, $e:ident) => {
-        Entry { matches: $m, dep_on: $d, dep_on_all: $all, writes: $w, effects: $e }
+        Entry {
+            matches: $m,
+            dep_on: $d,
+            dep_on_all: $all,
+            writes: $w,
+            effects: $e,
+        }
     };
 }
 
@@ -55,66 +73,116 @@ const ALL: &[usize] = &[];
 
 static REGISTRY: &[Entry] = &[
     // ── Pass-through / no-effect calls ──────────────────────────────
-    E!(mem_forget_capacity,   dep0!(),  false,  none!(),  eff_forget),
-    E!(transmute,             dep0!(),  false,  none!(),  eff_none),
-    E!(is_maybe_uninit_uninit,none!(),  false,  none!(),  eff_none),
-    E!(is_maybe_uninit_assume_init,dep0!(), false, none!(), eff_none),
-    E!(is_numeric_arith,      ALL,      true,   none!(),  eff_none),
-    E!(saturating_sub,        ALL,      true,   none!(),  eff_none),
-    E!(is_option_unwrap,      dep0!(),  false,  none!(),  eff_alias_arg0),
-    E!(from_trait_call,       dep0!(),  false,  none!(),  eff_from_trait),
-
+    E!(mem_forget_capacity, dep0!(), false, none!(), eff_forget),
+    E!(transmute, dep0!(), false, none!(), eff_none),
+    E!(is_maybe_uninit_uninit, none!(), false, none!(), eff_none),
+    E!(
+        is_maybe_uninit_assume_init,
+        dep0!(),
+        false,
+        none!(),
+        eff_none
+    ),
+    E!(is_numeric_arith, ALL, true, none!(), eff_none),
+    E!(saturating_sub, ALL, true, none!(), eff_none),
+    E!(is_option_unwrap, dep0!(), false, none!(), eff_alias_arg0),
+    E!(from_trait_call, dep0!(), false, none!(), eff_from_trait),
     // ── Pointer extraction / cast ───────────────────────────────────
-    E!(nonnull_from,          dep0!(),  false,  none!(),  eff_alias_ptr),
-    E!(nonnull_new_unchecked, dep0!(),  false,  none!(),  eff_none),
-    E!(nonnull_new,           dep0!(),  false,  none!(),  eff_alias_ptr),
-    E!(nonnull_as_ref,        dep0!(),  false,  none!(),  eff_alias_ptr),
-    E!(nonnull_as_mut,        dep0!(),  false,  none!(),  eff_alias_ptr),
-    E!(is_as_ptr,             dep0!(),  false,  none!(),  eff_alias_ptr),
-    E!(is_as_ptr_range,       dep0!(),  false,  none!(),  eff_alias_arg0),
-    E!(is_as_mut_ptr_range,   dep0!(),  false,  none!(),  eff_alias_arg0),
-
+    E!(nonnull_from, dep0!(), false, none!(), eff_alias_ptr),
+    E!(nonnull_new_unchecked, dep0!(), false, none!(), eff_none),
+    E!(nonnull_new, dep0!(), false, none!(), eff_alias_ptr),
+    E!(nonnull_as_ref, dep0!(), false, none!(), eff_alias_ptr),
+    E!(nonnull_as_mut, dep0!(), false, none!(), eff_alias_ptr),
+    E!(is_as_ptr, dep0!(), false, none!(), eff_alias_ptr),
+    E!(is_as_ptr_range, dep0!(), false, none!(), eff_alias_arg0),
+    E!(is_as_mut_ptr_range, dep0!(), false, none!(), eff_alias_arg0),
     // ── Pointer arithmetic ──────────────────────────────────────────
-    E!(ptr_add,               dep01!(), false,  none!(),  eff_ptr_add),
-    E!(ptr_sub,               dep01!(), false,  none!(),  eff_ptr_sub),
-    E!(byte_ptr_add,          dep01!(), false,  none!(),  eff_ptr_add),
-    E!(byte_ptr_sub,          dep01!(), false,  none!(),  eff_ptr_sub),
-
+    E!(ptr_add, dep01!(), false, none!(), eff_ptr_add),
+    E!(ptr_sub, dep01!(), false, none!(), eff_ptr_sub),
+    E!(byte_ptr_add, dep01!(), false, none!(), eff_ptr_add),
+    E!(byte_ptr_sub, dep01!(), false, none!(), eff_ptr_sub),
     // ── Memory read / write ─────────────────────────────────────────
-    E!(ptr_read,              dep0!(),  false,  none!(),  eff_read_mem),
-    E!(is_ptr_write,          none!(),  false,  dep0!(),  eff_write_mem),
-    E!(is_maybe_uninit_write, none!(),  false,  dep0!(),  eff_write_mem),
-
+    E!(ptr_read, dep0!(), false, none!(), eff_read_mem),
+    E!(is_ptr_write, none!(), false, dep0!(), eff_write_mem),
+    E!(
+        is_maybe_uninit_write,
+        none!(),
+        false,
+        dep0!(),
+        eff_write_mem
+    ),
     // ── Slice / collection queries ──────────────────────────────────
-    E!(is_len,                dep0!(),  false,  none!(),  eff_len),
-    E!(is_empty,              dep0!(),  false,  none!(),  eff_is_empty),
-    E!(cmp_min,               ALL,      true,   none!(),  eff_cmp_min),
-
+    E!(is_len, dep0!(), false, none!(), eff_len),
+    E!(is_empty, dep0!(), false, none!(), eff_is_empty),
+    E!(cmp_min, ALL, true, none!(), eff_cmp_min),
     // ── SliceIndex::get_unchecked / get_unchecked_mut ───────────────
-    E!(is_slice_get_unchecked, dep0!(), false,  none!(),  eff_alias_ptr),
-
+    E!(
+        is_slice_get_unchecked,
+        dep0!(),
+        false,
+        none!(),
+        eff_alias_ptr
+    ),
     // ── Ownership reconstruction ────────────────────────────────────
-    E!(is_ownership_reconstruction, dep0!(), false, none!(), eff_ownership_recon),
-
+    E!(
+        is_ownership_reconstruction,
+        dep0!(),
+        false,
+        none!(),
+        eff_ownership_recon
+    ),
     // ── Slice helpers ───────────────────────────────────────────────
-    E!(slice_range,           dep01!(), false,  none!(),  eff_bounded_range),
-    E!(align_to_offsets,      ALL,      true,   none!(),  eff_lcm_split),
-    E!(split_at,              dep01!(), false,  none!(),  eff_split_at),
-    E!(is_from_raw_parts,     dep01!(), false,  none!(),  eff_from_raw_parts),
-
+    E!(slice_range, dep01!(), false, none!(), eff_bounded_range),
+    E!(align_to_offsets, ALL, true, none!(), eff_lcm_split),
+    E!(split_at, dep01!(), false, none!(), eff_split_at),
+    E!(
+        is_from_raw_parts,
+        dep01!(),
+        false,
+        none!(),
+        eff_from_raw_parts
+    ),
     // ── Vec / collection constructors ────────────────────────────────
-    E!(is_vec_alloc_constructor, dep01!(), false, none!(), eff_new_allocation),
-    E!(is_vec_from_box,          dep0!(),  false, none!(), eff_vec_from_box),
-    E!(is_vec_with_capacity,     dep0!(),  false, none!(), eff_new_allocation_from_cap),
-    E!(is_into_boxed_slice,      dep0!(),  false, none!(), eff_box_from_vec),
-
+    E!(
+        is_vec_alloc_constructor,
+        dep01!(),
+        false,
+        none!(),
+        eff_new_allocation
+    ),
+    E!(is_vec_from_box, dep0!(), false, none!(), eff_vec_from_box),
+    E!(
+        is_vec_with_capacity,
+        dep0!(),
+        false,
+        none!(),
+        eff_new_allocation_from_cap
+    ),
+    E!(
+        is_into_boxed_slice,
+        dep0!(),
+        false,
+        none!(),
+        eff_box_from_vec
+    ),
     // ── Layout constants ────────────────────────────────────────────
-    E!(is_layout_constant,    none!(),  false,  none!(),  eff_layout_const),
-
+    E!(
+        is_layout_constant,
+        none!(),
+        false,
+        none!(),
+        eff_layout_const
+    ),
     // ── CStr / CString helpers ──────────────────────────────────────
-    E!(is_cstr_from_ptr,      dep0!(),  false,  none!(),  eff_alias_arg0),
-    E!(is_cstr_from_bytes_with_nul_unchecked, dep0!(), false, none!(), eff_alias_arg0),
-    E!(is_vec_push,           none!(),  false,  dep0!(),  eff_write_mem),
+    E!(is_cstr_from_ptr, dep0!(), false, none!(), eff_alias_arg0),
+    E!(
+        is_cstr_from_bytes_with_nul_unchecked,
+        dep0!(),
+        false,
+        none!(),
+        eff_alias_arg0
+    ),
+    E!(is_vec_push, none!(), false, dep0!(), eff_write_mem),
 ];
 
 pub fn lookup_dependency(
@@ -124,7 +192,11 @@ pub fn lookup_dependency(
 ) -> Option<CallDependencySummary> {
     for e in REGISTRY {
         if (e.matches)(name) {
-            let args = if e.dep_on_all { (0..arg_count).collect() } else { e.dep_on.to_vec() };
+            let args = if e.dep_on_all {
+                (0..arg_count).collect()
+            } else {
+                e.dep_on.to_vec()
+            };
             return Some(CallDependencySummary {
                 callee,
                 name: name.to_string(),
@@ -148,7 +220,14 @@ pub fn lookup_effect<'tcx>(
     let dest = Some(destination);
     for e in REGISTRY {
         if (e.matches)(name) {
-            let ctx = EffCtx { tcx, caller, callee, name, func, dest };
+            let ctx = EffCtx {
+                tcx,
+                caller,
+                callee,
+                name,
+                func,
+                dest,
+            };
             return Some(CallEffectSummary {
                 callee,
                 name: name.to_string(),
@@ -163,7 +242,9 @@ pub fn lookup_effect<'tcx>(
 
 // ── Effect builders — one small function per API semantic ──────────────
 
-fn eff_none(_: &EffCtx<'_, '_>) -> Vec<CallEffect> { Vec::new() }
+fn eff_none(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    Vec::new()
+}
 
 fn eff_alias_ptr(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     let mut eff = vec![
@@ -171,7 +252,10 @@ fn eff_alias_ptr(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
         CallEffect::ReturnNonZero,
     ];
     if let Some((a, n)) = pointee_alignment(ctx.tcx, ctx.caller, ctx.dest) {
-        eff.push(CallEffect::ReturnAligned { align: a, ty_name: n });
+        eff.push(CallEffect::ReturnAligned {
+            align: a,
+            ty_name: n,
+        });
     }
     eff
 }
@@ -182,7 +266,10 @@ fn eff_alias_nonnull(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
         CallEffect::ReturnNonZero,
     ];
     if let Some((a, n)) = nonnull_pointee_alignment(ctx.tcx, ctx.caller, ctx.dest) {
-        eff.push(CallEffect::ReturnAligned { align: a, ty_name: n });
+        eff.push(CallEffect::ReturnAligned {
+            align: a,
+            ty_name: n,
+        });
     }
     eff
 }
@@ -205,7 +292,11 @@ fn eff_ptr_add(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     } else {
         destination_stride(ctx.tcx, ctx.caller, ctx.dest)
     };
-    vec![CallEffect::ReturnPointerAdd { base_arg: 0, offset_arg: 1, stride }]
+    vec![CallEffect::ReturnPointerAdd {
+        base_arg: 0,
+        offset_arg: 1,
+        stride,
+    }]
 }
 
 fn eff_ptr_sub(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
@@ -214,7 +305,11 @@ fn eff_ptr_sub(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     } else {
         destination_stride(ctx.tcx, ctx.caller, ctx.dest)
     };
-    vec![CallEffect::ReturnPointerSub { base_arg: 0, offset_arg: 1, stride }]
+    vec![CallEffect::ReturnPointerSub {
+        base_arg: 0,
+        offset_arg: 1,
+        stride,
+    }]
 }
 
 fn eff_read_mem(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
@@ -234,7 +329,10 @@ fn eff_is_empty(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 }
 
 fn eff_cmp_min(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![CallEffect::ReturnMin { lhs_arg: 0, rhs_arg: 1 }]
+    vec![CallEffect::ReturnMin {
+        lhs_arg: 0,
+        rhs_arg: 1,
+    }]
 }
 
 fn eff_ownership_recon(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
@@ -256,7 +354,10 @@ fn eff_lcm_split(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 fn eff_split_at(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     vec![
         CallEffect::ReturnAliasArg { arg: 0 },
-        CallEffect::ReturnTupleFieldLength { field: 0, from_arg: 1 },
+        CallEffect::ReturnTupleFieldLength {
+            field: 0,
+            from_arg: 1,
+        },
     ]
 }
 
@@ -278,41 +379,36 @@ fn eff_from_raw_parts(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
         CallEffect::ReturnNonZero,
     ];
     if let Some((a, n)) = pointee_alignment(ctx.tcx, ctx.caller, ctx.dest) {
-        eff.push(CallEffect::ReturnAligned { align: a, ty_name: n });
+        eff.push(CallEffect::ReturnAligned {
+            align: a,
+            ty_name: n,
+        });
     }
     eff
 }
 
 fn eff_new_allocation(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     let elem = vec_element_size(ctx.tcx, ctx.caller, ctx.dest);
-    vec![
-        CallEffect::ReturnNewAllocation {
-            size_arg: 1,
-            elem_size: elem,
-        },
-    ]
+    vec![CallEffect::ReturnNewAllocation {
+        size_arg: 1,
+        elem_size: elem,
+    }]
 }
 
 fn eff_new_allocation_from_cap(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     let elem = vec_element_size(ctx.tcx, ctx.caller, ctx.dest);
-    vec![
-        CallEffect::ReturnNewAllocation {
-            size_arg: 0,
-            elem_size: elem,
-        },
-    ]
+    vec![CallEffect::ReturnNewAllocation {
+        size_arg: 0,
+        elem_size: elem,
+    }]
 }
 
 fn eff_vec_from_box(_ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![
-        CallEffect::ReturnNewAllocationFromBox { box_arg: 0 },
-    ]
+    vec![CallEffect::ReturnNewAllocationFromBox { box_arg: 0 }]
 }
 
 fn eff_forget(_ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![
-        CallEffect::CleanSliceDataLinks { arg: 0 },
-    ]
+    vec![CallEffect::CleanSliceDataLinks { arg: 0 }]
 }
 
 fn eff_layout_const(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
@@ -323,39 +419,82 @@ fn eff_layout_const(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 
 // ── Matcher functions (one per API pattern) ────────────────────────────
 
-fn mem_forget_capacity(n: &str) -> bool     { n.ends_with("mem::forget") || n.ends_with("::capacity") }
-fn transmute(n: &str) -> bool               { n.contains("::transmute") || n.contains("intrinsics::transmute") }
-fn slice_range(n: &str) -> bool             { let b = n.split('<').next().unwrap_or(n); b.ends_with("slice::range") || b.contains("slice::index::range") }
-fn align_to_offsets(n: &str) -> bool        { n.contains("::align_to_offsets") }
-fn from_trait_call(n: &str) -> bool         { n == "std::convert::From::from" || n == "core::convert::From::from" }
-fn nonnull_from(n: &str) -> bool            { n.ends_with("::from") && is_nonnull_api(n) }
-fn nonnull_new_unchecked(n: &str) -> bool   { n.ends_with("::new_unchecked") && is_nonnull_api(n) }
-fn nonnull_new(n: &str) -> bool             { n.ends_with("::new") && is_nonnull_api(n) && !n.ends_with("::new_unchecked") }
-fn nonnull_as_ref(n: &str) -> bool          { n.ends_with("::as_ref") && is_nonnull_api(n) }
-fn nonnull_as_mut(n: &str) -> bool          { n.ends_with("::as_mut") && is_nonnull_api(n) }
+fn mem_forget_capacity(n: &str) -> bool {
+    n.ends_with("mem::forget") || n.ends_with("::capacity")
+}
+fn transmute(n: &str) -> bool {
+    n.contains("::transmute") || n.contains("intrinsics::transmute")
+}
+fn slice_range(n: &str) -> bool {
+    let b = n.split('<').next().unwrap_or(n);
+    b.ends_with("slice::range") || b.contains("slice::index::range")
+}
+fn align_to_offsets(n: &str) -> bool {
+    n.contains("::align_to_offsets")
+}
+fn from_trait_call(n: &str) -> bool {
+    n == "std::convert::From::from" || n == "core::convert::From::from"
+}
+fn nonnull_from(n: &str) -> bool {
+    n.ends_with("::from") && is_nonnull_api(n)
+}
+fn nonnull_new_unchecked(n: &str) -> bool {
+    n.ends_with("::new_unchecked") && is_nonnull_api(n)
+}
+fn nonnull_new(n: &str) -> bool {
+    n.ends_with("::new") && is_nonnull_api(n) && !n.ends_with("::new_unchecked")
+}
+fn nonnull_as_ref(n: &str) -> bool {
+    n.ends_with("::as_ref") && is_nonnull_api(n)
+}
+fn nonnull_as_mut(n: &str) -> bool {
+    n.ends_with("::as_mut") && is_nonnull_api(n)
+}
 
 fn is_nonnull_api(n: &str) -> bool {
     n.contains("ptr::non_null") || n.contains("ptr::NonNull")
 }
-fn ptr_add(n: &str) -> bool                 { is_pointer_add(n) && !is_byte_ptr_arith(n) }
-fn ptr_sub(n: &str) -> bool                 { is_pointer_sub(n) && !is_byte_ptr_arith(n) }
-fn byte_ptr_add(n: &str) -> bool            { is_byte_ptr_arith(n) }
-fn byte_ptr_sub(n: &str) -> bool            { is_byte_ptr_arith(n) }
-fn ptr_read(n: &str) -> bool                { n.ends_with("::read") && n.contains("::ptr::") }
-fn is_empty(n: &str) -> bool                { n.ends_with("::is_empty") }
-fn cmp_min(n: &str) -> bool                 { (n.contains("::cmp::min") || n.starts_with("core::cmp::min")) && !n.contains("min_by") }
-fn saturating_sub(n: &str) -> bool          { n.contains("::saturating_sub") }
-fn split_at(n: &str) -> bool                { n.contains("::split_at") }
-fn is_slice_get_unchecked(n: &str) -> bool   { 
-    n.contains("::get_unchecked") && (n.contains("::SliceIndex") || n.contains("::impl [T]>::get_unchecked"))
+fn ptr_add(n: &str) -> bool {
+    is_pointer_add(n) && !is_byte_ptr_arith(n)
+}
+fn ptr_sub(n: &str) -> bool {
+    is_pointer_sub(n) && !is_byte_ptr_arith(n)
+}
+fn byte_ptr_add(n: &str) -> bool {
+    is_byte_ptr_arith(n)
+}
+fn byte_ptr_sub(n: &str) -> bool {
+    is_byte_ptr_arith(n)
+}
+fn ptr_read(n: &str) -> bool {
+    n.ends_with("::read") && n.contains("::ptr::")
+}
+fn is_empty(n: &str) -> bool {
+    n.ends_with("::is_empty")
+}
+fn cmp_min(n: &str) -> bool {
+    (n.contains("::cmp::min") || n.starts_with("core::cmp::min")) && !n.contains("min_by")
+}
+fn saturating_sub(n: &str) -> bool {
+    n.contains("::saturating_sub")
+}
+fn split_at(n: &str) -> bool {
+    n.contains("::split_at")
+}
+fn is_slice_get_unchecked(n: &str) -> bool {
+    n.contains("::get_unchecked")
+        && (n.contains("::SliceIndex") || n.contains("::impl [T]>::get_unchecked"))
 }
 
 // ── is_* helpers (hot path — direct string matching) ─────────────────
 
 pub fn is_ownership_reconstruction(name: &str) -> bool {
-    name.contains("from_raw") && !name.contains("from_raw_parts")
-        && (name.contains("boxed") || name.contains("Box")
-            || name.contains("CString") || name.contains("ffi::c_str"))
+    name.contains("from_raw")
+        && !name.contains("from_raw_parts")
+        && (name.contains("boxed")
+            || name.contains("Box")
+            || name.contains("CString")
+            || name.contains("ffi::c_str"))
         || name.contains("from_vec_with_nul_unchecked")
 }
 
@@ -364,82 +503,120 @@ pub fn is_as_ptr(name: &str) -> bool {
         || name.ends_with("::into_raw")
         || name.contains("::as_mut_ptr") && !name.ends_with("::as_mut_ptr_range")
         || name.ends_with("::into_raw_mut")
-        || name.contains("::cast") || name.contains("cast_array")
-        || name.contains("cast_const") || name.contains("cast_mut")
+        || name.contains("::cast")
+        || name.contains("cast_array")
+        || name.contains("cast_const")
+        || name.contains("cast_mut")
         || name.ends_with("::from") && name.contains("ptr::non_null")
         || name.ends_with("::new_unchecked") && name.contains("ptr::non_null")
         || name.ends_with("::as_ref") && name.contains("ptr::non_null")
         || name.ends_with("::as_mut") && name.contains("ptr::non_null")
 }
 
-pub fn is_pointer_arithmetic(name: &str) -> bool { is_pointer_add(name) || is_pointer_sub(name) }
+pub fn is_pointer_arithmetic(name: &str) -> bool {
+    is_pointer_add(name) || is_pointer_sub(name)
+}
 
 pub fn is_pointer_add(name: &str) -> bool {
-    name.ends_with("::add") || name.ends_with("::wrapping_add")
-        || name.contains("::offset") || name.contains("::wrapping_offset")
-        || name.contains("::byte_add") || name.contains("::wrapping_byte_add")
-        || name.contains("::byte_offset") || name.contains("::wrapping_byte_offset")
+    name.ends_with("::add")
+        || name.ends_with("::wrapping_add")
+        || name.contains("::offset")
+        || name.contains("::wrapping_offset")
+        || name.contains("::byte_add")
+        || name.contains("::wrapping_byte_add")
+        || name.contains("::byte_offset")
+        || name.contains("::wrapping_byte_offset")
 }
 
 pub fn is_pointer_sub(name: &str) -> bool {
-    name.ends_with("::sub") || name.ends_with("::wrapping_sub")
-        || name.contains("::byte_sub") || name.contains("::wrapping_byte_sub")
+    name.ends_with("::sub")
+        || name.ends_with("::wrapping_sub")
+        || name.contains("::byte_sub")
+        || name.contains("::wrapping_byte_sub")
 }
 
 pub fn is_element_ptr_arith(name: &str) -> bool {
-    name.ends_with("::add") || name.ends_with("::wrapping_add")
-        || name.ends_with("::sub") || name.ends_with("::wrapping_sub")
-        || name.contains("::offset") || name.contains("::wrapping_offset")
+    name.ends_with("::add")
+        || name.ends_with("::wrapping_add")
+        || name.ends_with("::sub")
+        || name.ends_with("::wrapping_sub")
+        || name.contains("::offset")
+        || name.contains("::wrapping_offset")
 }
 
 pub fn is_byte_ptr_arith(name: &str) -> bool {
-    name.contains("::byte_add") || name.contains("::wrapping_byte_add")
-        || name.contains("::byte_sub") || name.contains("::wrapping_byte_sub")
-        || name.contains("::byte_offset") || name.contains("::wrapping_byte_offset")
+    name.contains("::byte_add")
+        || name.contains("::wrapping_byte_add")
+        || name.contains("::byte_sub")
+        || name.contains("::wrapping_byte_sub")
+        || name.contains("::byte_offset")
+        || name.contains("::wrapping_byte_offset")
 }
 
 pub fn is_signed_ptr_arith(name: &str) -> bool {
-    name.contains("::offset") || name.contains("::wrapping_offset")
-        || name.contains("::byte_offset") || name.contains("::wrapping_byte_offset")
+    name.contains("::offset")
+        || name.contains("::wrapping_offset")
+        || name.contains("::byte_offset")
+        || name.contains("::wrapping_byte_offset")
 }
 
-pub fn is_layout_constant(name: &str) -> bool { name.contains("align_of") || name.contains("size_of") }
-pub fn is_align_of(name: &str) -> bool { name.contains("align_of") }
-pub fn is_ptr_cast(name: &str) -> bool {
-    name.contains("::cast") || name.contains("cast_array")
-        || name.contains("cast_const") || name.contains("cast_mut")
+pub fn is_layout_constant(name: &str) -> bool {
+    name.contains("align_of") || name.contains("size_of")
 }
-pub fn is_as_ptr_range(name: &str) -> bool { name.ends_with("::as_ptr_range") }
-pub fn is_as_mut_ptr_range(name: &str) -> bool { name.ends_with("::as_mut_ptr_range") }
+pub fn is_align_of(name: &str) -> bool {
+    name.contains("align_of")
+}
+pub fn is_ptr_cast(name: &str) -> bool {
+    name.contains("::cast")
+        || name.contains("cast_array")
+        || name.contains("cast_const")
+        || name.contains("cast_mut")
+}
+pub fn is_as_ptr_range(name: &str) -> bool {
+    name.ends_with("::as_ptr_range")
+}
+pub fn is_as_mut_ptr_range(name: &str) -> bool {
+    name.ends_with("::as_mut_ptr_range")
+}
 pub fn is_ptr_write(name: &str) -> bool {
     (name.contains("::write") || name.ends_with("write"))
-        && !name.contains("write_bytes") && !name.contains("write_unaligned")
+        && !name.contains("write_bytes")
+        && !name.contains("write_unaligned")
         && !name.contains("write_volatile")
 }
 pub fn is_maybe_uninit_write(name: &str) -> bool {
-    name.contains("MaybeUninit") && name.ends_with("::write")
-        && !name.contains("write_bytes")
+    name.contains("MaybeUninit") && name.ends_with("::write") && !name.contains("write_bytes")
 }
-pub fn is_len(name: &str) -> bool { name.contains("::len") }
+pub fn is_len(name: &str) -> bool {
+    name.contains("::len")
+}
 pub fn is_numeric_arith(name: &str) -> bool {
-    name.contains("::unchecked_mul") || name.contains("::unchecked_add")
-        || name.contains("::unchecked_sub") || name.contains("::unchecked_div")
-        || name.contains("::unchecked_rem") || name.contains("::exact_div")
-        || name.contains("::checked_mul") || name.contains("::checked_add")
+    name.contains("::unchecked_mul")
+        || name.contains("::unchecked_add")
+        || name.contains("::unchecked_sub")
+        || name.contains("::unchecked_div")
+        || name.contains("::unchecked_rem")
+        || name.contains("::exact_div")
+        || name.contains("::checked_mul")
+        || name.contains("::checked_add")
         || name.contains("::checked_sub")
 }
 pub fn is_option_unwrap(name: &str) -> bool {
     (name.contains("Option") || name.contains("Result"))
-        && (name.contains("::expect") || name.contains("::unwrap")
+        && (name.contains("::expect")
+            || name.contains("::unwrap")
             || name.contains("::unwrap_unchecked"))
 }
 pub fn is_maybe_uninit_uninit(name: &str) -> bool {
     name.contains("MaybeUninit") && name.ends_with("::uninit")
 }
 pub fn is_maybe_uninit_assume_init(name: &str) -> bool {
-    name.contains("MaybeUninit") && (name.ends_with("::assume_init") || name.ends_with("::assume_init_read"))
+    name.contains("MaybeUninit")
+        && (name.ends_with("::assume_init") || name.ends_with("::assume_init_read"))
 }
-pub fn is_from_raw_parts(name: &str) -> bool { name.contains("::from_raw_parts") }
+pub fn is_from_raw_parts(name: &str) -> bool {
+    name.contains("::from_raw_parts")
+}
 pub fn is_cstr_from_ptr(name: &str) -> bool {
     name.contains("CStr") && name.ends_with("::from_ptr")
 }
@@ -454,19 +631,32 @@ pub fn is_vec_push(name: &str) -> bool {
 // ── Layout helpers (used by effect builders) ─────────────────────────
 
 fn layout_call_ty<'tcx>(func: &Operand<'tcx>) -> Option<Ty<'tcx>> {
-    let Operand::Constant(c) = func else { return None };
-    let TyKind::FnDef(_, args) = c.const_.ty().kind() else { return None };
+    let Operand::Constant(c) = func else {
+        return None;
+    };
+    let TyKind::FnDef(_, args) = c.const_.ty().kind() else {
+        return None;
+    };
     args.iter().find_map(|a| {
-        #[cfg(rapx_rustc_ge_199)] let a = a.skip_binder();
-        match a.kind() { GenericArgKind::Type(t) => Some(t), _ => None }
+        #[cfg(rapx_rustc_ge_199)]
+        let a = a.skip_binder();
+        match a.kind() {
+            GenericArgKind::Type(t) => Some(t),
+            _ => None,
+        }
     })
 }
 
 fn type_layout<'tcx>(tcx: TyCtxt<'tcx>, caller: DefId, ty: Ty<'tcx>) -> Option<(u64, u64)> {
-    if ty_has_param_const(ty) { return None }
+    if ty_has_param_const(ty) {
+        return None;
+    }
     let env = rustc_middle::ty::TypingEnv::post_analysis(tcx, caller);
     let result = crate::helpers::mir_utils::catch_panic(|| {
-        tcx.layout_of(PseudoCanonicalInput { typing_env: env, value: ty })
+        tcx.layout_of(PseudoCanonicalInput {
+            typing_env: env,
+            value: ty,
+        })
     });
     match result {
         Ok(Ok(l)) => Some((l.align.abi.bytes(), l.size.bytes())),
@@ -476,7 +666,9 @@ fn type_layout<'tcx>(tcx: TyCtxt<'tcx>, caller: DefId, ty: Ty<'tcx>) -> Option<(
 }
 
 pub(crate) fn destination_stride<'tcx>(
-    tcx: TyCtxt<'tcx>, caller: DefId, dest: Option<rustc_middle::mir::Local>,
+    tcx: TyCtxt<'tcx>,
+    caller: DefId,
+    dest: Option<rustc_middle::mir::Local>,
 ) -> Option<u64> {
     let d = dest?;
     let pointee = pointee_ty(tcx.optimized_mir(caller).local_decls[d].ty)?;
@@ -484,7 +676,9 @@ pub(crate) fn destination_stride<'tcx>(
 }
 
 fn pointee_alignment<'tcx>(
-    tcx: TyCtxt<'tcx>, caller: DefId, dest: Option<rustc_middle::mir::Local>,
+    tcx: TyCtxt<'tcx>,
+    caller: DefId,
+    dest: Option<rustc_middle::mir::Local>,
 ) -> Option<(u64, String)> {
     let d = dest?;
     let ty = tcx.optimized_mir(caller).local_decls[d].ty;
@@ -501,7 +695,9 @@ fn pointee_alignment<'tcx>(
 }
 
 fn nonnull_pointee_alignment<'tcx>(
-    tcx: TyCtxt<'tcx>, caller: DefId, dest: Option<rustc_middle::mir::Local>,
+    tcx: TyCtxt<'tcx>,
+    caller: DefId,
+    dest: Option<rustc_middle::mir::Local>,
 ) -> Option<(u64, String)> {
     let d = dest?;
     let ty = tcx.optimized_mir(caller).local_decls[d].ty;
@@ -515,13 +711,26 @@ fn is_nonnull_dest(tcx: TyCtxt<'_>, caller: DefId, dest: Option<rustc_middle::mi
 }
 
 fn nonnull_inner_ty<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<Ty<'tcx>> {
-    let TyKind::Adt(def, args) = ty.kind() else { return None };
-    if !tcx.def_path_str(def.did()).contains("ptr::non_null::NonNull") { return None }
-    args.iter().find_map(|a| match a.kind() { GenericArgKind::Type(t) => Some(t), _ => None })
+    let TyKind::Adt(def, args) = ty.kind() else {
+        return None;
+    };
+    if !tcx
+        .def_path_str(def.did())
+        .contains("ptr::non_null::NonNull")
+    {
+        return None;
+    }
+    args.iter().find_map(|a| match a.kind() {
+        GenericArgKind::Type(t) => Some(t),
+        _ => None,
+    })
 }
 
 fn slice_element_size(
-    tcx: TyCtxt<'_>, caller: DefId, _func: &Operand<'_>, dest: Option<Local>,
+    tcx: TyCtxt<'_>,
+    caller: DefId,
+    _func: &Operand<'_>,
+    dest: Option<Local>,
 ) -> u64 {
     let d = match dest {
         Some(d) => d,
@@ -540,20 +749,27 @@ fn slice_element_size(
         },
         _ => return 1,
     };
-    type_layout(tcx, caller, elem)
-        .map(|(_, s)| s)
-        .unwrap_or(1)
+    type_layout(tcx, caller, elem).map(|(_, s)| s).unwrap_or(1)
 }
 
 fn layout_constant_effect<'tcx>(
-    tcx: TyCtxt<'tcx>, caller: DefId, func: &Operand<'tcx>, name: &str,
+    tcx: TyCtxt<'tcx>,
+    caller: DefId,
+    func: &Operand<'tcx>,
+    name: &str,
 ) -> Option<CallEffect> {
     let ty = layout_call_ty(func)?;
     let (align, size) = type_layout(tcx, caller, ty)?;
     if name.contains("align_of") {
-        Some(CallEffect::ReturnConst { value: align, label: format!("align_of::<{ty:?}>()") })
+        Some(CallEffect::ReturnConst {
+            value: align,
+            label: format!("align_of::<{ty:?}>()"),
+        })
     } else if name.contains("size_of") {
-        Some(CallEffect::ReturnConst { value: size, label: format!("size_of::<{ty:?}>()") })
+        Some(CallEffect::ReturnConst {
+            value: size,
+            label: format!("size_of::<{ty:?}>()"),
+        })
     } else {
         None
     }
@@ -577,24 +793,23 @@ fn vec_element_size(tcx: TyCtxt<'_>, caller: DefId, dest: Option<Local>) -> u64 
         _ => None,
     };
     match elem {
-        Some(elem_ty) => type_layout(tcx, caller, elem_ty).map(|(_, s)| s).unwrap_or(1),
+        Some(elem_ty) => type_layout(tcx, caller, elem_ty)
+            .map(|(_, s)| s)
+            .unwrap_or(1),
         None => 1,
     }
 }
 
 pub fn is_vec_alloc_constructor(name: &str) -> bool {
-    name.contains("::vec::from_elem")
-        || name == "from_elem"
+    name.contains("::vec::from_elem") || name == "from_elem"
 }
 
 pub fn is_vec_from_box(name: &str) -> bool {
-    name.contains("::into_vec")
-        || name.contains("box_assume_init_into_vec_unsafe")
+    name.contains("::into_vec") || name.contains("box_assume_init_into_vec_unsafe")
 }
 
 pub fn is_vec_with_capacity(name: &str) -> bool {
-    (name.contains("::Vec") && name.ends_with("::with_capacity"))
-        || name == "with_capacity"
+    (name.contains("::Vec") && name.ends_with("::with_capacity")) || name == "with_capacity"
 }
 
 pub fn is_into_boxed_slice(name: &str) -> bool {

@@ -184,7 +184,15 @@ impl<'tcx> BackwardSlicer<'tcx> {
             }
             // Pass 2: re-visit definitions that became relevant only
             // during pass 1.
-            Self::re_visit_newly_added(visitor, checkpoint_block, block_data, flow, &mut relevant, &mut items, keep_inv);
+            Self::re_visit_newly_added(
+                visitor,
+                checkpoint_block,
+                block_data,
+                flow,
+                &mut relevant,
+                &mut items,
+                keep_inv,
+            );
             (items, relevant)
         } else {
             (Vec::new(), RelevantPlaces::new())
@@ -237,7 +245,15 @@ impl<'tcx> BackwardSlicer<'tcx> {
                 // checkpoint to avoid spurious matches in deep trees.
                 let dist_to_target = child_path.iter().position(|&b| b == target_block);
                 if block_stmt_count > 0 && dist_to_target.map_or(false, |d| d <= 2) {
-                    Self::re_visit_newly_added(visitor, block, block_data, flow, &mut relevant, &mut items, keep_inv);
+                    Self::re_visit_newly_added(
+                        visitor,
+                        block,
+                        block_data,
+                        flow,
+                        &mut relevant,
+                        &mut items,
+                        keep_inv,
+                    );
                 }
                 child_path.insert(0, node.block);
                 results.push((child_path, items, relevant));
@@ -287,19 +303,12 @@ impl<'tcx> BackwardSlicer<'tcx> {
                 }
                 _ => continue,
             };
-            let any_new = defs.places.iter().any(|dp| {
-                newly_added.iter().any(|np| dp.local() == np.local())
-            });
+            let any_new = defs
+                .places
+                .iter()
+                .any(|dp| newly_added.iter().any(|np| dp.local() == np.local()));
             if any_new {
-                visitor.visit_statement(
-                    block,
-                    si,
-                    stmt,
-                    flow,
-                    relevant,
-                    items,
-                    keep_inv,
-                );
+                visitor.visit_statement(block, si, stmt, flow, relevant, items, keep_inv);
             }
         }
     }
@@ -315,7 +324,11 @@ impl<'tcx> BackwardSlicer<'tcx> {
         items: &mut Vec<BackwardItem<'tcx>>,
         keep_invalidations: bool,
     ) {
-        if keep_invalidations && matches!(statement.kind, StatementKind::StorageDead(_) | StatementKind::StorageLive(_))
+        if keep_invalidations
+            && matches!(
+                statement.kind,
+                StatementKind::StorageDead(_) | StatementKind::StorageLive(_)
+            )
         {
             items.push(BackwardItem::Statement {
                 block,

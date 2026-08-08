@@ -4,16 +4,16 @@
 //! the semantics of a MIR construct. The VM walks retained MIR items
 //! in forward path order, calling these executors.
 
-use rustc_middle::{
-    mir::{
-        BasicBlock, BinOp, Local, Operand, Place, Rvalue,
-        Statement, StatementKind, Terminator, TerminatorKind, UnOp,
-    },
-    ty::Ty,
-};
 #[cfg(not(rapx_has_skip_norm_wip))]
 use crate::compat::SkipNormWip;
 use rustc_hir::def_id::DefId;
+use rustc_middle::{
+    mir::{
+        BasicBlock, BinOp, Local, Operand, Place, Rvalue, Statement, StatementKind, Terminator,
+        TerminatorKind, UnOp,
+    },
+    ty::Ty,
+};
 use z3::ast::{Ast, Bool, Int};
 
 use crate::{
@@ -26,7 +26,7 @@ use crate::{
     },
 };
 
-use super::state::{AllocId, Provenance, VmState, VmValue, ValueInvariants};
+use super::state::{AllocId, Provenance, ValueInvariants, VmState, VmValue};
 
 impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     /// Execute all retained MIR items in path order.
@@ -45,8 +45,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     statement_index,
                     kind: _,
                 } => {
-                    let statement =
-                        &self.body.basic_blocks[*block].statements[*statement_index];
+                    let statement = &self.body.basic_blocks[*block].statements[*statement_index];
                     self.current_block = Some(*block);
                     self.current_statement_index = Some(*statement_index);
                     self.exec_statement(*block, *statement_index, statement)?;
@@ -64,10 +63,8 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     self.exec_terminator(*block, terminator, occ)?;
                 }
                 BackwardItem::PathStep { step, kind } => {
-                    self.notes.push(format!(
-                        "path step {:?} kept for {:?}",
-                        step, kind
-                    ));
+                    self.notes
+                        .push(format!("path step {:?} kept for {:?}", step, kind));
                 }
                 BackwardItem::ContractFact { property } => {
                     self.assert_contract_fact(property);
@@ -89,18 +86,15 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     /// Enter a callee's function context during sliced inline execution.
     /// Saves the caller's locals state, pushes the callee body onto the
     /// context stack, and binds caller args to callee parameters.
-    fn handle_callee_entry(
-        &mut self,
-        callee_def_id: DefId,
-        arg_locals: &[Local],
-    ) {
+    fn handle_callee_entry(&mut self, callee_def_id: DefId, arg_locals: &[Local]) {
         let callee_body = self.tcx.optimized_mir(callee_def_id);
 
         // Save caller's locals
         let saved_locals = std::mem::take(&mut self.locals);
 
         // Clone the arg values we need before pushing context
-        let arg_vals: Vec<Option<VmValue<'ctx, 'tcx>>> = arg_locals.iter()
+        let arg_vals: Vec<Option<VmValue<'ctx, 'tcx>>> = arg_locals
+            .iter()
             .map(|&local| saved_locals.get(&local).cloned())
             .collect();
 
@@ -124,10 +118,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     /// Exit a callee's function context. Captures the return value from
     /// callee's local_0, restores the caller's locals and body, and writes
     /// the return value to the caller's dest local.
-    fn handle_callee_exit(
-        &mut self,
-        dest: Local,
-    ) {
+    fn handle_callee_exit(&mut self, dest: Local) {
         let return_val = self.locals.get(&Local::from_usize(0)).cloned();
 
         // Restore caller context
@@ -180,9 +171,11 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 if let rustc_middle::ty::TyKind::Adt(adt_def, _) = ty.kind() {
                     let def_path = self.tcx.def_path_str(adt_def.did());
                     let is_vec = def_path.ends_with("::Vec") || def_path == "Vec";
-                    if def_path.ends_with("::Box") || def_path == "Box"
+                    if def_path.ends_with("::Box")
+                        || def_path == "Box"
                         || is_vec
-                        || def_path.ends_with("::CString") || def_path == "CString"
+                        || def_path.ends_with("::CString")
+                        || def_path == "CString"
                         || def_path.ends_with("::c_str::CString")
                     {
                         let heap_ty = if let rustc_middle::ty::TyKind::Adt(_, substs) = ty.kind() {
@@ -203,7 +196,8 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         // capacity queries.
                         let (heap_alloc_id, heap_base) = if is_vec {
                             let max_size = Int::from_u64(self.ctx, i64::MAX as u64);
-                            let (id, base) = self.allocate_external(max_size, heap_align, Some(heap_ty));
+                            let (id, base) =
+                                self.allocate_external(max_size, heap_align, Some(heap_ty));
                             (id, base)
                         } else {
                             self.allocate(heap_size_term, heap_align, Some(heap_ty))
@@ -212,15 +206,18 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         invariants.init = true;
                         invariants.aligned = true;
                         self.init_allocations.insert(heap_alloc_id);
-                        self.set_local(local, VmValue {
-                            term: heap_base,
-                            ty,
-                            provenance: Some(Provenance {
-                                alloc_id: heap_alloc_id,
-                                offset: Int::from_u64(self.ctx, 0),
-                            }),
-                            invariants,
-                        });
+                        self.set_local(
+                            local,
+                            VmValue {
+                                term: heap_base,
+                                ty,
+                                provenance: Some(Provenance {
+                                    alloc_id: heap_alloc_id,
+                                    offset: Int::from_u64(self.ctx, 0),
+                                }),
+                                invariants,
+                            },
+                        );
                         continue;
                     }
                 }
@@ -229,32 +226,49 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 if let rustc_middle::ty::TyKind::Adt(adt_def, substs) = ty.kind() {
                     if adt_def.is_enum() {
                         let term = self.fresh_int(&format!("param_{}", local_idx));
-                        self.set_local(local, VmValue {
-                            term, ty, provenance: None, invariants,
-                        });
+                        self.set_local(
+                            local,
+                            VmValue {
+                                term,
+                                ty,
+                                provenance: None,
+                                invariants,
+                            },
+                        );
                         continue;
                     }
                     let variant = adt_def.non_enum_variant();
                     for (idx, field_def) in variant.fields.iter().enumerate() {
                         let field_ty: Ty<'tcx> = field_def.ty(self.tcx, substs).skip_norm_wip();
-                        let field_term = self.fresh_int(
-                            &format!("field_{}_{}", local_idx, idx)
+                        let field_term = self.fresh_int(&format!("field_{}_{}", local_idx, idx));
+                        self.set_field_value(
+                            local,
+                            vec![idx],
+                            VmValue {
+                                term: field_term,
+                                ty: field_ty,
+                                provenance: None,
+                                invariants: ValueInvariants {
+                                    init: true,
+                                    ..Default::default()
+                                },
+                            },
                         );
-                        self.set_field_value(local, vec![idx], VmValue {
-                            term: field_term,
-                            ty: field_ty,
-                            provenance: None,
-                            invariants: ValueInvariants { init: true, ..Default::default() },
-                        });
                         self.mark_field_init(local, vec![idx]);
                     }
                     let term = self.fresh_int(&format!("param_{}", local_idx));
-                    self.set_local(local, VmValue {
-                        term,
-                        ty,
-                        provenance: None,
-                        invariants: ValueInvariants { init: true, ..Default::default() },
-                    });
+                    self.set_local(
+                        local,
+                        VmValue {
+                            term,
+                            ty,
+                            provenance: None,
+                            invariants: ValueInvariants {
+                                init: true,
+                                ..Default::default()
+                            },
+                        },
+                    );
                     continue;
                 }
                 // ── Reference parameter (&T, &mut T) ──
@@ -266,11 +280,12 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     invariants.init = true;
                     invariants.aligned = true;
 
-                    let pointee_ty = if let rustc_middle::ty::TyKind::Ref(_, inner_ty, _) = ty.kind() {
-                        *inner_ty
-                    } else {
-                        ty
-                    };
+                    let pointee_ty =
+                        if let rustc_middle::ty::TyKind::Ref(_, inner_ty, _) = ty.kind() {
+                            *inner_ty
+                        } else {
+                            ty
+                        };
 
                     if let rustc_middle::ty::TyKind::Slice(elem_ty) = pointee_ty.kind() {
                         let elem_size = self.size_of_ty(*elem_ty) as u64;
@@ -284,30 +299,31 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                             self.size_of_generic_param(*elem_ty).max(1)
                         };
                         let elem_sz_term = Int::from_u64(self.ctx, elem_sz);
-                        self.path_conditions.push(
-                            Int::mul(self.ctx, &[&len, &elem_sz_term]).le(&isize_max));
-                        let data_size = Int::mul(self.ctx, &[
-                            &len,
-                            &Int::from_u64(self.ctx, elem_size.max(1)),
-                        ]);
-                        let (data_alloc_id, data_base) = self.allocate(
-                            data_size,
-                            self.align_of_ty(*elem_ty),
-                            Some(*elem_ty),
+                        self.path_conditions
+                            .push(Int::mul(self.ctx, &[&len, &elem_sz_term]).le(&isize_max));
+                        let data_size = Int::mul(
+                            self.ctx,
+                            &[&len, &Int::from_u64(self.ctx, elem_size.max(1))],
                         );
+                        let (data_alloc_id, data_base) =
+                            self.allocate(data_size, self.align_of_ty(*elem_ty), Some(*elem_ty));
                         if let Some(ref_alloc_id) = self.alloc_for_local(local) {
-                            self.slice_data_allocations.insert(ref_alloc_id, data_alloc_id);
+                            self.slice_data_allocations
+                                .insert(ref_alloc_id, data_alloc_id);
                         }
                         self.init_allocations.insert(data_alloc_id);
-                        self.set_local(local, VmValue {
-                            term: data_base,
-                            ty,
-                            provenance: Some(Provenance {
-                                alloc_id: data_alloc_id,
-                                offset: Int::from_u64(self.ctx, 0),
-                            }),
-                            invariants,
-                        });
+                        self.set_local(
+                            local,
+                            VmValue {
+                                term: data_base,
+                                ty,
+                                provenance: Some(Provenance {
+                                    alloc_id: data_alloc_id,
+                                    offset: Int::from_u64(self.ctx, 0),
+                                }),
+                                invariants,
+                            },
+                        );
                         continue;
                     }
 
@@ -315,21 +331,21 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     let pointee_size = self.size_of_ty(pointee_ty) as u64;
                     let pointee_align = self.align_of_ty(pointee_ty);
                     let pointee_size_term = Int::from_u64(self.ctx, pointee_size.max(1));
-                    let (pointee_alloc_id, pointee_base) = self.allocate(
-                        pointee_size_term,
-                        pointee_align,
-                        Some(pointee_ty),
-                    );
+                    let (pointee_alloc_id, pointee_base) =
+                        self.allocate(pointee_size_term, pointee_align, Some(pointee_ty));
                     self.init_allocations.insert(pointee_alloc_id);
-                    self.set_local(local, VmValue {
-                        term: pointee_base,
-                        ty,
-                        provenance: Some(Provenance {
-                            alloc_id: pointee_alloc_id,
-                            offset: Int::from_u64(self.ctx, 0),
-                        }),
-                        invariants,
-                    });
+                    self.set_local(
+                        local,
+                        VmValue {
+                            term: pointee_base,
+                            ty,
+                            provenance: Some(Provenance {
+                                alloc_id: pointee_alloc_id,
+                                offset: Int::from_u64(self.ctx, 0),
+                            }),
+                            invariants,
+                        },
+                    );
 
                     // Decompose struct fields for pointer-field access.
                     // E.g. &RawBuf → (*self).ptr should yield a valid raw ptr.
@@ -337,25 +353,32 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         if !adt_def.is_enum() {
                             let variant = adt_def.non_enum_variant();
                             for (idx, field_def) in variant.fields.iter().enumerate() {
-                                let field_ty: Ty<'tcx> = field_def.ty(self.tcx, substs).skip_norm_wip();
-                                if let rustc_middle::ty::TyKind::RawPtr(inner, _) = field_ty.kind() {
+                                let field_ty: Ty<'tcx> =
+                                    field_def.ty(self.tcx, substs).skip_norm_wip();
+                                if let rustc_middle::ty::TyKind::RawPtr(inner, _) = field_ty.kind()
+                                {
                                     let field_align = 1u64.max(self.align_of_ty(*inner));
                                     let max_size = Int::from_u64(self.ctx, i64::MAX as u64);
-                                    let (field_alloc_id, field_base) = self.allocate_external(
-                                        max_size, field_align, Some(*inner),
-                                    );
+                                    let (field_alloc_id, field_base) =
+                                        self.allocate_external(max_size, field_align, Some(*inner));
                                     self.init_allocations.insert(field_alloc_id);
-                                    self.set_field_value(local, vec![idx], VmValue {
-                                        term: field_base,
-                                        ty: field_ty,
-                                        provenance: Some(Provenance {
-                                            alloc_id: field_alloc_id,
-                                            offset: Int::from_u64(self.ctx, 0),
-                                        }),
-                                        invariants: ValueInvariants {
-                                            non_null: true, init: true, ..Default::default()
+                                    self.set_field_value(
+                                        local,
+                                        vec![idx],
+                                        VmValue {
+                                            term: field_base,
+                                            ty: field_ty,
+                                            provenance: Some(Provenance {
+                                                alloc_id: field_alloc_id,
+                                                offset: Int::from_u64(self.ctx, 0),
+                                            }),
+                                            invariants: ValueInvariants {
+                                                non_null: true,
+                                                init: true,
+                                                ..Default::default()
+                                            },
                                         },
-                                    });
+                                    );
                                     self.mark_field_init(local, vec![idx]);
                                 } else if let Some(pointee) = self.find_nn_pointee(field_ty) {
                                     // Field contains NonNull<T> (possibly wrapped in Option):
@@ -365,21 +388,29 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                                     let pointee_align = 1u64.max(self.align_of_ty(pointee));
                                     let max_size = Int::from_u64(self.ctx, i64::MAX as u64);
                                     let (field_alloc_id, _field_base) = self.allocate_external(
-                                        max_size, pointee_align, Some(pointee),
+                                        max_size,
+                                        pointee_align,
+                                        Some(pointee),
                                     );
                                     self.init_allocations.insert(field_alloc_id);
-                                    let field_term = self.fresh_int(
-                                        &format!("ref_field_{}_{}", local_idx, idx)
+                                    let field_term =
+                                        self.fresh_int(&format!("ref_field_{}_{}", local_idx, idx));
+                                    self.set_field_value(
+                                        local,
+                                        vec![idx],
+                                        VmValue {
+                                            term: field_term,
+                                            ty: field_ty,
+                                            provenance: Some(Provenance {
+                                                alloc_id: field_alloc_id,
+                                                offset: Int::from_u64(self.ctx, 0),
+                                            }),
+                                            invariants: ValueInvariants {
+                                                init: true,
+                                                ..Default::default()
+                                            },
+                                        },
                                     );
-                                    self.set_field_value(local, vec![idx], VmValue {
-                                        term: field_term,
-                                        ty: field_ty,
-                                        provenance: Some(Provenance {
-                                            alloc_id: field_alloc_id,
-                                            offset: Int::from_u64(self.ctx, 0),
-                                        }),
-                                        invariants: ValueInvariants { init: true, ..Default::default() },
-                                    });
                                     self.mark_field_init(local, vec![idx]);
                                 }
                             }
@@ -397,12 +428,15 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 );
                 if is_scalar {
                     let val = self.fresh_int(&format!("arg_{}", local_idx));
-                    self.set_local(local, VmValue {
-                        term: val,
-                        ty,
-                        provenance: None,
-                        invariants,
-                    });
+                    self.set_local(
+                        local,
+                        VmValue {
+                            term: val,
+                            ty,
+                            provenance: None,
+                            invariants,
+                        },
+                    );
                     continue;
                 }
                 // ── Raw pointer parameter (*const T, *mut T) ──
@@ -413,16 +447,20 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 if let rustc_middle::ty::TyKind::RawPtr(pointee, _mutbl) = ty.kind() {
                     let max_size = Int::from_u64(self.ctx, i64::MAX as u64);
                     let pointee_align = self.align_of_ty(*pointee);
-                    let (alloc_id, base) = self.allocate_external(max_size, pointee_align, Some(*pointee));
-                    self.set_local(local, VmValue {
-                        term: base,
-                        ty,
-                        provenance: Some(Provenance {
-                            alloc_id,
-                            offset: Int::from_u64(self.ctx, 0),
-                        }),
-                        invariants,
-                    });
+                    let (alloc_id, base) =
+                        self.allocate_external(max_size, pointee_align, Some(*pointee));
+                    self.set_local(
+                        local,
+                        VmValue {
+                            term: base,
+                            ty,
+                            provenance: Some(Provenance {
+                                alloc_id,
+                                offset: Int::from_u64(self.ctx, 0),
+                            }),
+                            invariants,
+                        },
+                    );
                     continue;
                 }
                 // ── Scalar parameter ──
@@ -435,12 +473,15 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 );
                 if is_scalar {
                     let val = self.fresh_int(&format!("arg_{}", local_idx));
-                    self.set_local(local, VmValue {
-                        term: val,
-                        ty,
-                        provenance: None,
-                        invariants,
-                    });
+                    self.set_local(
+                        local,
+                        VmValue {
+                            term: val,
+                            ty,
+                            provenance: None,
+                            invariants,
+                        },
+                    );
                     continue;
                 }
                 // ── Array parameter ([usize; N], etc.) ──
@@ -467,10 +508,8 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     if let Some(n) = n {
                         for i in 0..n {
                             let off = i * step;
-                            let elem_term = self.fresh_int(&format!(
-                                "array_{}_idx_{}",
-                                local_idx, i
-                            ));
+                            let elem_term =
+                                self.fresh_int(&format!("array_{}_idx_{}", local_idx, i));
                             self.record_byte_value(alloc_id, off, elem_term);
                         }
                     } else {
@@ -480,10 +519,8 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         let m = 16usize;
                         for i in 0..m {
                             let off = i * step;
-                            let elem_term = self.fresh_int(&format!(
-                                "array_{}_idx_{}",
-                                local_idx, i
-                            ));
+                            let elem_term =
+                                self.fresh_int(&format!("array_{}_idx_{}", local_idx, i));
                             self.record_byte_value(alloc_id, off, elem_term);
                         }
                     }
@@ -506,23 +543,29 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 }
                 // ── Struct / other parameter ──
                 let term = self.fresh_int(&format!("param_{}", local_idx));
-                self.set_local(local, VmValue {
-                    term,
-                    ty,
-                    provenance: None,
-                    invariants,
-                });
+                self.set_local(
+                    local,
+                    VmValue {
+                        term,
+                        ty,
+                        provenance: None,
+                        invariants,
+                    },
+                );
                 continue;
             }
             // ── Non-parameter local: use stack address with own-allocation
             // provenance as a fallback (overwritten by actual assignments).
             let addr = self.local_address(local);
-            self.set_local(local, VmValue {
-                term: addr,
-                ty,
-                provenance: None,
-                invariants,
-            });
+            self.set_local(
+                local,
+                VmValue {
+                    term: addr,
+                    ty,
+                    provenance: None,
+                    invariants,
+                },
+            );
         }
 
         // Entry-block provenance propagation: scan the first basic block
@@ -542,13 +585,14 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         Rvalue::Use(operand) => Some(operand),
                         Rvalue::Cast(_, operand, _) => Some(operand),
                         _ => None,
-                    }.and_then(|operand| {
-                        match operand {
-                            Operand::Copy(place) | Operand::Move(place) if place.projection.is_empty() => {
-                                Some(place.local)
-                            }
-                            _ => None,
+                    }
+                    .and_then(|operand| match operand {
+                        Operand::Copy(place) | Operand::Move(place)
+                            if place.projection.is_empty() =>
+                        {
+                            Some(place.local)
                         }
+                        _ => None,
                     });
                     if let Some(src_local) = src {
                         if let Some(src_val) = self.locals.get(&src_local) {
@@ -558,12 +602,15 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                                     d.provenance.is_none() || !d.invariants.non_null
                                 });
                             if has_better_prov {
-                                self.set_local(dest_local, VmValue {
-                                    term: src_val.term.clone(),
-                                    ty: dest.ty(self.body, self.tcx).ty,
-                                    provenance: src_val.provenance.clone(),
-                                    invariants: src_val.invariants,
-                                });
+                                self.set_local(
+                                    dest_local,
+                                    VmValue {
+                                        term: src_val.term.clone(),
+                                        ty: dest.ty(self.body, self.tcx).ty,
+                                        provenance: src_val.provenance.clone(),
+                                        invariants: src_val.invariants,
+                                    },
+                                );
                             }
                         }
                     }
@@ -577,9 +624,13 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     /// provenance and invariants through Use/Cast/RawPtr/CopyForDeref chains.
     /// Uses the current path to avoid cross-branch contamination.
     pub(crate) fn propagate_from_checkpoint(&mut self, checkpoint_block: BasicBlock) {
-        let path_blocks: FxHashSet<BasicBlock> = self.path.as_ref()
+        let path_blocks: FxHashSet<BasicBlock> = self
+            .path
+            .as_ref()
             .map(|p| {
-                let mut blocks: FxHashSet<BasicBlock> = p.steps.iter()
+                let mut blocks: FxHashSet<BasicBlock> = p
+                    .steps
+                    .iter()
                     .filter_map(|s| match s {
                         crate::verify::path_extractor::PathStep::Block(b) => Some(*b),
                         _ => None,
@@ -598,13 +649,18 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         // Detect SCC (loop) paths: if any block appears more than once
         // in the block steps, the path is unrolled and path-filtering
         // may exclude needed blocks.
-        let block_steps: Vec<BasicBlock> = self.path.as_ref()
-            .map(|p| p.steps.iter()
-                .filter_map(|s| match s {
-                    crate::verify::path_extractor::PathStep::Block(b) => Some(*b),
-                    _ => None,
-                })
-                .collect())
+        let block_steps: Vec<BasicBlock> = self
+            .path
+            .as_ref()
+            .map(|p| {
+                p.steps
+                    .iter()
+                    .filter_map(|s| match s {
+                        crate::verify::path_extractor::PathStep::Block(b) => Some(*b),
+                        _ => None,
+                    })
+                    .collect()
+            })
             .unwrap_or_default();
         let has_duplicates = {
             let mut seen = FxHashSet::default();
@@ -620,17 +676,25 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         self.propagate_pass(checkpoint_block, Some(&path_blocks), true);
     }
 
-    fn propagate_pass(&mut self, checkpoint_block: BasicBlock,
-        path_blocks: Option<&FxHashSet<BasicBlock>>, use_only: bool) {
+    fn propagate_pass(
+        &mut self,
+        checkpoint_block: BasicBlock,
+        path_blocks: Option<&FxHashSet<BasicBlock>>,
+        use_only: bool,
+    ) {
         // Walk backwards through all reachable predecessors to fill in
         // provenance chains the slicer may have omitted (e.g. `_tmp = self.ptr`).
         let mut visited = FxHashSet::default();
         let mut worklist: Vec<BasicBlock> = vec![checkpoint_block];
         let mut max_depth = 32usize;
         while let Some(block) = worklist.pop() {
-            if max_depth == 0 { break; }
+            if max_depth == 0 {
+                break;
+            }
             max_depth -= 1;
-            if !visited.insert(block) { continue; }
+            if !visited.insert(block) {
+                continue;
+            }
             if let Some(blocks) = path_blocks {
                 if !blocks.contains(&block) {
                     continue;
@@ -660,7 +724,13 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             // (e.g. as_ptr() on a constant byte array). The backward slicer
             // may prune these calls, so we fill them in here.
             let terminator = self.body.basic_blocks[block].terminator();
-            if let TerminatorKind::Call { destination, args, func, .. } = &terminator.kind {
+            if let TerminatorKind::Call {
+                destination,
+                args,
+                func,
+                ..
+            } = &terminator.kind
+            {
                 let dest = destination.local;
                 // Check if the destination needs provenance (as_ptr/as_mut_ptr fallback).
                 let needs_fallback = match self.locals.get(&dest) {
@@ -681,13 +751,23 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     }
                     if !found && needs_fallback {
                         if let Some(first) = args.first() {
-                            fallback_applied = self.try_as_ptr_fallback(dest, func, self.value_of_operand(&first.node), &first.node);
+                            fallback_applied = self.try_as_ptr_fallback(
+                                dest,
+                                func,
+                                self.value_of_operand(&first.node),
+                                &first.node,
+                            );
                         }
                     }
                 }
                 if !fallback_applied && needs_fallback && self.locals.get(&dest).is_none() {
                     if let Some(first) = args.first() {
-                        self.try_as_ptr_fallback(dest, func, self.value_of_operand(&first.node), &first.node);
+                        self.try_as_ptr_fallback(
+                            dest,
+                            func,
+                            self.value_of_operand(&first.node),
+                            &first.node,
+                        );
                     }
                 }
                 // For comparison calls (e.g. <[u8]>::eq), propagate
@@ -706,8 +786,10 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     /// Check if an rvalue kind should be re-propagated in the use-only pass
     /// (Use/Cast/CopyForDeref — forward-propagate existing provenance).
     fn is_propagate_use_kind(rvalue: &Rvalue<'tcx>) -> bool {
-        matches!(rvalue,
-            Rvalue::Use(..) | Rvalue::Cast(..) | Rvalue::CopyForDeref(..))
+        matches!(
+            rvalue,
+            Rvalue::Use(..) | Rvalue::Cast(..) | Rvalue::CopyForDeref(..)
+        )
     }
 
     /// Propagate a single MIR assignment to fill in provenance for previously
@@ -734,21 +816,35 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 let is_cast = matches!(rvalue, Rvalue::Cast(..));
                 let is_ptr_arith = matches!(
                     rvalue,
-                    Rvalue::BinaryOp(BinOp::Add | BinOp::AddWithOverflow | BinOp::AddUnchecked
-                        | BinOp::Sub | BinOp::SubWithOverflow | BinOp::SubUnchecked
-                        | BinOp::Offset, _)
+                    Rvalue::BinaryOp(
+                        BinOp::Add
+                            | BinOp::AddWithOverflow
+                            | BinOp::AddUnchecked
+                            | BinOp::Sub
+                            | BinOp::SubWithOverflow
+                            | BinOp::SubUnchecked
+                            | BinOp::Offset,
+                        _
+                    )
                 );
-                self.set_local(dest_local, VmValue {
-                    term: src_val.term,
-                    ty: dest_ty,
-                    provenance: src_val.provenance,
-                    invariants: ValueInvariants {
-                        aligned: src_val.invariants.aligned,
-                        in_bounds: src_val.invariants.in_bounds,
-                        align_n: if is_cast || is_ptr_arith { src_val.invariants.align_n } else { None },
-                        ..src_val.invariants
+                self.set_local(
+                    dest_local,
+                    VmValue {
+                        term: src_val.term,
+                        ty: dest_ty,
+                        provenance: src_val.provenance,
+                        invariants: ValueInvariants {
+                            aligned: src_val.invariants.aligned,
+                            in_bounds: src_val.invariants.in_bounds,
+                            align_n: if is_cast || is_ptr_arith {
+                                src_val.invariants.align_n
+                            } else {
+                                None
+                            },
+                            ..src_val.invariants
+                        },
                     },
-                });
+                );
             }
             return;
         }
@@ -769,12 +865,15 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 if let Some(val) = self.value_of_place(place) {
                     if val.provenance.is_some() || val.invariants.non_null {
                         let dest_ty = self.body.local_decls[dest_local].ty;
-                        self.set_local(dest_local, VmValue {
-                            term: val.term,
-                            ty: dest_ty,
-                            provenance: val.provenance,
-                            invariants: val.invariants,
-                        });
+                        self.set_local(
+                            dest_local,
+                            VmValue {
+                                term: val.term,
+                                ty: dest_ty,
+                                provenance: val.provenance,
+                                invariants: val.invariants,
+                            },
+                        );
                     }
                 }
             }
@@ -785,22 +884,31 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         if let Rvalue::Ref(_, _, place) = rvalue {
             if let Some(addr) = self.address_of_place(place) {
                 let dest_ty = self.body.local_decls[dest_local].ty;
-                let alloc_align = addr.provenance.as_ref()
+                let alloc_align = addr
+                    .provenance
+                    .as_ref()
                     .and_then(|p| self.allocations.iter().find(|a| a.id == p.alloc_id))
                     .map(|a| a.align)
                     .filter(|&a| a > 1);
-                let src_in_bounds = self.locals.get(&place.local)
+                let src_in_bounds = self
+                    .locals
+                    .get(&place.local)
                     .map_or(false, |v| v.invariants.in_bounds);
-                self.set_local(dest_local, VmValue {
-                    term: addr.term,
-                    ty: dest_ty,
-                    provenance: addr.provenance,
-                    invariants: ValueInvariants {
-                        non_null: true, aligned: true, init: true,
-                        in_bounds: src_in_bounds,
-                        align_n: alloc_align,
+                self.set_local(
+                    dest_local,
+                    VmValue {
+                        term: addr.term,
+                        ty: dest_ty,
+                        provenance: addr.provenance,
+                        invariants: ValueInvariants {
+                            non_null: true,
+                            aligned: true,
+                            init: true,
+                            in_bounds: src_in_bounds,
+                            align_n: alloc_align,
+                        },
                     },
-                });
+                );
             }
             return;
         }
@@ -809,20 +917,30 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         if let Rvalue::RawPtr(_, place) = rvalue {
             if let Some(addr) = self.address_of_place(place) {
                 let dest_ty = self.body.local_decls[dest_local].ty;
-                let alloc_align = addr.provenance.as_ref()
+                let alloc_align = addr
+                    .provenance
+                    .as_ref()
                     .and_then(|p| self.allocations.iter().find(|a| a.id == p.alloc_id))
                     .map(|a| a.align)
                     .filter(|&a| a > 1);
-                let src_in_bounds = self.locals.get(&place.local)
+                let src_in_bounds = self
+                    .locals
+                    .get(&place.local)
                     .map_or(false, |v| v.invariants.in_bounds);
-                self.set_local(dest_local, VmValue {
-                    term: addr.term,
-                    ty: dest_ty,
-                    provenance: addr.provenance,
-                    invariants: ValueInvariants {
-                        non_null: true, in_bounds: src_in_bounds, align_n: alloc_align, ..Default::default()
+                self.set_local(
+                    dest_local,
+                    VmValue {
+                        term: addr.term,
+                        ty: dest_ty,
+                        provenance: addr.provenance,
+                        invariants: ValueInvariants {
+                            non_null: true,
+                            in_bounds: src_in_bounds,
+                            align_n: alloc_align,
+                            ..Default::default()
+                        },
                     },
-                });
+                );
             }
             return;
         }
@@ -830,26 +948,34 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         // BinaryOp Add/Sub/Offset: lhs provenance → dest
         if let Rvalue::BinaryOp(op, pair) = rvalue {
             let (lhs_op, _rhs_op) = &**pair;
-            if matches!(op,
-                BinOp::Add | BinOp::AddWithOverflow | BinOp::AddUnchecked
-                | BinOp::Sub | BinOp::SubWithOverflow | BinOp::SubUnchecked
-                | BinOp::Offset)
-            {
+            if matches!(
+                op,
+                BinOp::Add
+                    | BinOp::AddWithOverflow
+                    | BinOp::AddUnchecked
+                    | BinOp::Sub
+                    | BinOp::SubWithOverflow
+                    | BinOp::SubUnchecked
+                    | BinOp::Offset
+            ) {
                 let lhs = extract_local(lhs_op);
                 if let Some(src) = lhs {
                     if let Some(src_val) = self.locals.get(&src).cloned() {
                         let dest_ty = self.body.local_decls[dest_local].ty;
-                        self.set_local(dest_local, VmValue {
-                            term: src_val.term,
-                            ty: dest_ty,
-                            provenance: src_val.provenance,
-                            invariants: ValueInvariants {
-                                aligned: src_val.invariants.aligned,
-                                in_bounds: false,
-                                align_n: src_val.invariants.align_n,
-                                ..src_val.invariants
+                        self.set_local(
+                            dest_local,
+                            VmValue {
+                                term: src_val.term,
+                                ty: dest_ty,
+                                provenance: src_val.provenance,
+                                invariants: ValueInvariants {
+                                    aligned: src_val.invariants.aligned,
+                                    in_bounds: false,
+                                    align_n: src_val.invariants.align_n,
+                                    ..src_val.invariants
+                                },
                             },
-                        });
+                        );
                     }
                 }
             }
@@ -904,9 +1030,10 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         let value = self.eval_rvalue(place, rvalue)?;
         let place_key = PlaceKey::from_mir_place(place);
 
-        let has_deref = place.projection.iter().any(|p| {
-            matches!(p.kind(), rustc_middle::mir::ProjectionElem::Deref)
-        });
+        let has_deref = place
+            .projection
+            .iter()
+            .any(|p| matches!(p.kind(), rustc_middle::mir::ProjectionElem::Deref));
 
         if !place.projection.is_empty() {
             self.record_projected_store(place, &value);
@@ -921,7 +1048,9 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             self.set_local(place.local, value);
         } else if !has_deref {
             // Field projection (no Deref): update field_values for the base local.
-            let field_indices: Vec<usize> = place.projection.iter()
+            let field_indices: Vec<usize> = place
+                .projection
+                .iter()
                 .filter_map(|p| match p.kind() {
                     rustc_middle::mir::ProjectionElem::Field(idx, _) => Some(idx.as_usize()),
                     _ => None,
@@ -941,14 +1070,12 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
 
     /// Record byte-level values when assigning to a place with projections.
     /// This handles patterns like `buf[i] = 0u8` (nul-store) and `arr[i] = val`.
-    fn record_projected_store(
-        &mut self,
-        place: &Place<'tcx>,
-        value: &VmValue<'ctx, 'tcx>,
-    ) {
+    fn record_projected_store(&mut self, place: &Place<'tcx>, value: &VmValue<'ctx, 'tcx>) {
         // Prefer the value's provenance (pointee alloc) over local_alloc_ids
         // (reference alloc) for ref/ptr parameters.
-        let Some(alloc_id) = self.locals.get(&place.local)
+        let Some(alloc_id) = self
+            .locals
+            .get(&place.local)
             .and_then(|v| v.provenance_alloc_id())
             .or_else(|| self.local_alloc_ids.get(&place.local).copied())
         else {
@@ -988,7 +1115,11 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     concrete = false;
                     break;
                 }
-                rustc_middle::mir::ProjectionElem::Subslice { from, to: _, from_end: _ } => {
+                rustc_middle::mir::ProjectionElem::Subslice {
+                    from,
+                    to: _,
+                    from_end: _,
+                } => {
                     byte_offset += from as usize;
                 }
                 _ => {}
@@ -998,8 +1129,10 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         if concrete && value_size > 0 {
             self.init_allocations.insert(alloc_id);
 
-            let is_u8_write = matches!(value_ty.kind(),
-                rustc_middle::ty::TyKind::Uint(rustc_middle::ty::UintTy::U8));
+            let is_u8_write = matches!(
+                value_ty.kind(),
+                rustc_middle::ty::TyKind::Uint(rustc_middle::ty::UintTy::U8)
+            );
 
             if is_u8_write {
                 self.record_byte_value(alloc_id, byte_offset, value.term.clone());
@@ -1016,19 +1149,18 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
 
     /// Track byte-level values for index-based stores (e.g. `buf[i] = 0u8`)
     /// that `record_projected_store` skips due to Index projections.
-    fn record_indexed_store_for_vm(
-        &mut self,
-        place: &Place<'tcx>,
-        value: &VmValue<'ctx, 'tcx>,
-    ) {
-        let is_u8 = matches!(value.ty.kind(),
-            rustc_middle::ty::TyKind::Uint(rustc_middle::ty::UintTy::U8));
+    fn record_indexed_store_for_vm(&mut self, place: &Place<'tcx>, value: &VmValue<'ctx, 'tcx>) {
+        let is_u8 = matches!(
+            value.ty.kind(),
+            rustc_middle::ty::TyKind::Uint(rustc_middle::ty::UintTy::U8)
+        );
         if !is_u8 {
             return;
         }
         let has_index_with_concrete = place.projection.iter().any(|p| {
             if let rustc_middle::mir::ProjectionElem::Index(local) = p {
-                self.locals.get(&local)
+                self.locals
+                    .get(&local)
                     .and_then(|v| v.term.simplify().as_u64())
                     .is_some()
             } else {
@@ -1094,14 +1226,18 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             }
             Rvalue::Ref(_, _borrow_kind, place) => {
                 if let Some(addr) = self.address_of_place(place) {
-                    let alloc_align = addr.provenance.as_ref()
+                    let alloc_align = addr
+                        .provenance
+                        .as_ref()
                         .and_then(|p| self.allocations.iter().find(|a| a.id == p.alloc_id))
                         .map(|a| a.align)
                         .filter(|&a| a > 1);
                     // Inherit in_bounds from the source place's local,
                     // preserving fn_simulator-set invariants through Deref
                     // chains (e.g. &*fat_ptr from inlined from_raw_parts).
-                    let src_in_bounds = self.locals.get(&place.local)
+                    let src_in_bounds = self
+                        .locals
+                        .get(&place.local)
                         .map_or(false, |v| v.invariants.in_bounds);
                     let val = VmValue {
                         term: addr.term,
@@ -1133,11 +1269,15 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             }
             Rvalue::RawPtr(_, place) => {
                 if let Some(addr) = self.address_of_place(place) {
-                    let alloc_align = addr.provenance.as_ref()
+                    let alloc_align = addr
+                        .provenance
+                        .as_ref()
                         .and_then(|p| self.allocations.iter().find(|a| a.id == p.alloc_id))
                         .map(|a| a.align)
                         .filter(|&a| a > 1);
-                    let source_in_bounds = self.locals.get(&place.local)
+                    let source_in_bounds = self
+                        .locals
+                        .get(&place.local)
                         .map_or(false, |v| v.invariants.in_bounds);
                     let val = VmValue {
                         term: addr.term,
@@ -1236,10 +1376,8 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             Rvalue::Cast(_kind, operand, cast_ty) => {
                 let src_val = self.value_of_operand(operand);
                 let src_ty = src_val.ty;
-                let is_src_ref = matches!(src_ty.kind(),
-                    rustc_middle::ty::TyKind::Ref(..));
-                let dest_is_ptr = matches!(cast_ty.kind(),
-                    rustc_middle::ty::TyKind::RawPtr(..));
+                let is_src_ref = matches!(src_ty.kind(), rustc_middle::ty::TyKind::Ref(..));
+                let dest_is_ptr = matches!(cast_ty.kind(), rustc_middle::ty::TyKind::RawPtr(..));
                 let aligned = if dest_is_ptr && is_src_ref {
                     true
                 } else {
@@ -1267,7 +1405,9 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 let mut byte_offset = 0usize;
                 for (i, operand) in operands.iter().enumerate() {
                     let field_val = self.value_of_operand(operand);
-                    let field_sz = field_types.get(i).copied()
+                    let field_sz = field_types
+                        .get(i)
+                        .copied()
                         .map(|ty| self.size_of_ty(ty) as usize)
                         .unwrap_or(1);
                     let field_term = field_val.term.clone();
@@ -1284,14 +1424,20 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                                 if int_val == 0 {
                                     self.known_nul_offsets.insert((alloc_id, byte_offset));
                                     if !is_byte_array {
-                                        self.record_byte_value(alloc_id, byte_offset,
-                                            Int::from_u64(self.ctx, 0));
+                                        self.record_byte_value(
+                                            alloc_id,
+                                            byte_offset,
+                                            Int::from_u64(self.ctx, 0),
+                                        );
                                     }
                                 } else {
                                     self.known_non_nul_offsets.insert((alloc_id, byte_offset));
                                     if !is_byte_array {
-                                        self.record_byte_value(alloc_id, byte_offset,
-                                            Int::from_u64(self.ctx, int_val));
+                                        self.record_byte_value(
+                                            alloc_id,
+                                            byte_offset,
+                                            Int::from_u64(self.ctx, int_val),
+                                        );
                                     }
                                 }
                             }
@@ -1304,8 +1450,11 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                                 } else {
                                     self.known_non_nul_offsets.insert((alloc_id, byte_off));
                                 }
-                                self.record_byte_value(alloc_id, byte_off,
-                                    Int::from_u64(self.ctx, byte_val));
+                                self.record_byte_value(
+                                    alloc_id,
+                                    byte_off,
+                                    Int::from_u64(self.ctx, byte_val),
+                                );
                             }
                         }
                     }
@@ -1402,7 +1551,10 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     term,
                     ty: dest_ty,
                     provenance: None,
-                    invariants: ValueInvariants { non_null: true, ..Default::default() },
+                    invariants: ValueInvariants {
+                        non_null: true,
+                        ..Default::default()
+                    },
                 })
             }
         }
@@ -1477,8 +1629,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         rhs: &VmValue<'ctx, 'tcx>,
     ) -> Option<Provenance<'ctx>> {
         match op {
-            BinOp::Add | BinOp::AddWithOverflow | BinOp::AddUnchecked
-            | BinOp::Offset => {
+            BinOp::Add | BinOp::AddWithOverflow | BinOp::AddUnchecked | BinOp::Offset => {
                 // ptr + scalar → propagate with adjusted offset
                 if rhs.provenance.is_some() {
                     return None;
@@ -1514,8 +1665,12 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         let non_null = provenance.is_some() && lhs.invariants.non_null;
 
         let align_n = match op {
-            BinOp::Add | BinOp::AddWithOverflow | BinOp::AddUnchecked
-            | BinOp::Sub | BinOp::SubWithOverflow | BinOp::SubUnchecked
+            BinOp::Add
+            | BinOp::AddWithOverflow
+            | BinOp::AddUnchecked
+            | BinOp::Sub
+            | BinOp::SubWithOverflow
+            | BinOp::SubUnchecked
             | BinOp::Offset => {
                 // If both LHS and RHS are known to be n-aligned, sum/diff is n-aligned
                 match (lhs.invariants.align_n, rhs.invariants.align_n) {
@@ -1556,7 +1711,11 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             _ => lhs.invariants.align_n,
         };
 
-        ValueInvariants { non_null, align_n, ..Default::default() }
+        ValueInvariants {
+            non_null,
+            align_n,
+            ..Default::default()
+        }
     }
 
     /// Check if a value is known to be a multiple of `align` (e.g. the result
@@ -1564,11 +1723,15 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     fn rhs_is_aligned_multiple(&self, val: &VmValue<'ctx, 'tcx>, align: u64) -> bool {
         // If the value itself has align_n >= align, it's a multiple
         if let Some(a) = val.invariants.align_n {
-            if a >= align && a % align == 0 { return true; }
+            if a >= align && a % align == 0 {
+                return true;
+            }
         }
         // If the value is a constant, check directly
         if let Some(c) = val.term.as_u64() {
-            if c % align == 0 { return true; }
+            if c % align == 0 {
+                return true;
+            }
         }
         false
     }
@@ -1631,14 +1794,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 ..
             } => {
                 let caller_id = self.caller_def_id;
-                self.exec_call(
-                    func,
-                    args,
-                    destination.local,
-                    *target,
-                    None,
-                    caller_id,
-                );
+                self.exec_call(func, args, destination.local, *target, None, caller_id);
             }
             TerminatorKind::SwitchInt { discr, targets } => {
                 self.exec_switchint(block, discr, targets, occurrence);
@@ -1723,8 +1879,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         let cond_val = self.value_of_operand(cond);
         if expected {
             let zero = Int::from_u64(self.ctx, 0);
-            self.path_conditions
-                .push(cond_val.term._eq(&zero).not());
+            self.path_conditions.push(cond_val.term._eq(&zero).not());
         } else {
             let zero = Int::from_u64(self.ctx, 0);
             self.path_conditions.push(cond_val.term._eq(&zero));
@@ -1738,7 +1893,9 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
 
     /// Infer alignment constraints from guards of the form `(x % n) == 0`.
     pub(crate) fn infer_guard_align(&mut self, cond: &Operand<'tcx>, expected: bool) {
-        if !expected { return; }
+        if !expected {
+            return;
+        }
         let place = match cond {
             Operand::Copy(p) | Operand::Move(p) => p,
             _ => return,
@@ -1775,7 +1932,9 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
 
     /// Infer non_null invariants from branch guards.
     pub(crate) fn infer_guard_non_null(&mut self, cond: &Operand<'tcx>, expected: bool) {
-        if !expected { return; }
+        if !expected {
+            return;
+        }
         let place = match cond {
             Operand::Copy(p) | Operand::Move(p) => p,
             _ => return,
@@ -1881,7 +2040,11 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     }
                     // The alignment from the contract type
                     if let Some(ty) = property.args.get(1).and_then(|a| {
-                        if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None }
+                        if let PropertyArg::Ty(ty) = a {
+                            Some(*ty)
+                        } else {
+                            None
+                        }
                     }) {
                         let mut v = val;
                         v.invariants.aligned = true;
@@ -1915,9 +2078,17 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         // size (count * sizeof(T)). The stack allocation created by
                         // init_parameters is only sizeof(ptr) bytes — too small for
                         // pointer arithmetic like x.add(i).
-                        let elem_ty = property.args.get(1)
-                            .and_then(|a| if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None });
-                        let count_term = property.args.get(2).and_then(|a| self.resolve_contract_count(a));
+                        let elem_ty = property.args.get(1).and_then(|a| {
+                            if let PropertyArg::Ty(ty) = a {
+                                Some(*ty)
+                            } else {
+                                None
+                            }
+                        });
+                        let count_term = property
+                            .args
+                            .get(2)
+                            .and_then(|a| self.resolve_contract_count(a));
                         if let (Some(elem_ty), Some(count_term)) = (elem_ty, count_term) {
                             let elem_sz_raw = self.size_of_ty(elem_ty);
                             let heap_align = self.align_of_ty(elem_ty).max(1);
@@ -1944,7 +2115,11 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                                     init: true,
                                     in_bounds: true,
                                     aligned: true,
-                                    align_n: if heap_align > 1 { Some(heap_align) } else { None },
+                                    align_n: if heap_align > 1 {
+                                        Some(heap_align)
+                                    } else {
+                                        None
+                                    },
                                 },
                             };
                             self.set_local(local, v);
@@ -1955,10 +2130,16 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             PropertyKind::Typed => {
                 if let Some(val) = self.contract_target_value(property) {
                     if let Some(alloc_id) = val.provenance_alloc_id() {
-                        if let Some(expected_ty) = property.args.get(1)
-                            .and_then(|a| if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None })
-                        {
-                            if let Some(alloc) = self.allocations.iter_mut().find(|a| a.id == alloc_id) {
+                        if let Some(expected_ty) = property.args.get(1).and_then(|a| {
+                            if let PropertyArg::Ty(ty) = a {
+                                Some(*ty)
+                            } else {
+                                None
+                            }
+                        }) {
+                            if let Some(alloc) =
+                                self.allocations.iter_mut().find(|a| a.id == alloc_id)
+                            {
                                 alloc.element_ty = Some(expected_ty);
                             }
                         }
@@ -1978,10 +2159,8 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 }
             }
             _ => {
-                self.notes.push(format!(
-                    "contract fact {:?} not directly asserted",
-                    kind
-                ));
+                self.notes
+                    .push(format!("contract fact {:?} not directly asserted", kind));
             }
         }
     }
@@ -1991,19 +2170,15 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         let cp = match property.args.first()? {
             PropertyArg::Place(cp) => cp,
             PropertyArg::Expr(ContractExpr::Place(cp)) => cp,
-            PropertyArg::Expr(ContractExpr::IndexAccess { slice, .. }) => {
-                match slice.as_ref() {
-                    ContractExpr::Place(cp) => cp,
-                    _ => return None,
-                }
-            }
+            PropertyArg::Expr(ContractExpr::IndexAccess { slice, .. }) => match slice.as_ref() {
+                ContractExpr::Place(cp) => cp,
+                _ => return None,
+            },
             _ => return None,
         };
         match cp.base {
             PlaceBase::Local(n) => Some(Local::from_usize(n)),
-            PlaceBase::Arg(n) => {
-                Some(Local::from_usize(n + 1))
-            }
+            PlaceBase::Arg(n) => Some(Local::from_usize(n + 1)),
             PlaceBase::Return => Some(Local::from_usize(0)),
         }
     }
@@ -2018,9 +2193,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     /// the corresponding function parameter in the VM state.
     fn resolve_contract_count(&self, arg: &PropertyArg<'tcx>) -> Option<Int<'ctx>> {
         match arg {
-            PropertyArg::Expr(ContractExpr::Const(n)) => {
-                Some(Int::from_u64(self.ctx, *n as u64))
-            }
+            PropertyArg::Expr(ContractExpr::Const(n)) => Some(Int::from_u64(self.ctx, *n as u64)),
             PropertyArg::Expr(ContractExpr::Place(cp)) | PropertyArg::Place(cp) => {
                 let local = match cp.base {
                     PlaceBase::Local(n) => Local::from_usize(n),
@@ -2034,9 +2207,14 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     }
 
     /// Evaluate a numeric predicate to a Z3 Bool for path-condition assertion.
-    fn eval_predicate_as_bool(&self, pred: &crate::verify::contract::NumericPredicate<'tcx>) -> Option<Bool<'ctx>> {
+    fn eval_predicate_as_bool(
+        &self,
+        pred: &crate::verify::contract::NumericPredicate<'tcx>,
+    ) -> Option<Bool<'ctx>> {
         use crate::verify::contract::{ContractExpr, RelOp};
-        let ContractExpr::Const(rhs_val) = &pred.rhs else { return None };
+        let ContractExpr::Const(rhs_val) = &pred.rhs else {
+            return None;
+        };
         let lhs = self.eval_contract_expr_simple(&pred.lhs)?;
         let rhs = Int::from_u64(self.ctx, *rhs_val as u64);
         Some(match pred.op {
@@ -2048,22 +2226,27 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         })
     }
 
-    fn eval_contract_expr_simple(&self, expr: &crate::verify::contract::ContractExpr<'tcx>) -> Option<Int<'ctx>> {
+    fn eval_contract_expr_simple(
+        &self,
+        expr: &crate::verify::contract::ContractExpr<'tcx>,
+    ) -> Option<Int<'ctx>> {
         use crate::verify::contract::{ContractExpr, NumericOp, PlaceBase};
         match expr {
             ContractExpr::SizeOf(ty) => {
                 let size = self.size_of_ty(*ty).max(1);
                 Some(Int::from_u64(self.ctx, size as u64))
             }
-            ContractExpr::Place(cp) => {
-                match cp.base {
-                    PlaceBase::Local(n) => {
-                        self.local_value(Local::from_usize(n)).map(|v| v.term.clone())
-                    }
-                    _ => None,
-                }
-            }
-            ContractExpr::Binary { op: NumericOp::Mul, lhs, rhs } => {
+            ContractExpr::Place(cp) => match cp.base {
+                PlaceBase::Local(n) => self
+                    .local_value(Local::from_usize(n))
+                    .map(|v| v.term.clone()),
+                _ => None,
+            },
+            ContractExpr::Binary {
+                op: NumericOp::Mul,
+                lhs,
+                rhs,
+            } => {
                 let l = self.eval_contract_expr_simple(lhs)?;
                 let r = self.eval_contract_expr_simple(rhs)?;
                 Some(Int::mul(self.ctx, &[&l, &r]))
@@ -2088,7 +2271,11 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         }
     }
 
-    fn assert_in_bound_for_each(&mut self, property: &Property<'tcx>, fe_place: &crate::verify::contract::ContractPlace<'tcx>) {
+    fn assert_in_bound_for_each(
+        &mut self,
+        property: &Property<'tcx>,
+        fe_place: &crate::verify::contract::ContractPlace<'tcx>,
+    ) {
         let fe_local = match fe_place.base {
             PlaceBase::Arg(n) => Local::from_usize(n + 1),
             PlaceBase::Local(n) => Local::from_usize(n),
@@ -2195,18 +2382,21 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         match ty.kind() {
             TyKind::Adt(adt_def, substs) => {
                 let def_path = self.tcx.def_path_str(adt_def.did());
-                let is_nn = def_path.ends_with("::NonNull") || def_path == "NonNull"
+                let is_nn = def_path.ends_with("::NonNull")
+                    || def_path == "NonNull"
                     || def_path.contains("::NonNull");
                 if is_nn {
                     substs.first().and_then(|s| s.as_type())
-                } else if def_path.ends_with("::Option") || def_path == "Option"
+                } else if def_path.ends_with("::Option")
+                    || def_path == "Option"
                     || def_path.contains("::Option")
                 {
                     if let Some(inner) = substs.first().and_then(|s| s.as_type()) {
                         match inner.kind() {
                             TyKind::Adt(ia, is_) => {
                                 let ip = self.tcx.def_path_str(ia.did());
-                                let is_nn_inner = ip.ends_with("::NonNull") || ip == "NonNull"
+                                let is_nn_inner = ip.ends_with("::NonNull")
+                                    || ip == "NonNull"
                                     || ip.contains("::NonNull");
                                 if is_nn_inner {
                                     is_.first().and_then(|s| s.as_type())
@@ -2231,10 +2421,16 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     fn is_u8_array_or_slice(&self, ty: Ty<'tcx>) -> bool {
         match ty.kind() {
             rustc_middle::ty::TyKind::Array(elem_ty, _) => {
-                matches!(elem_ty.kind(), rustc_middle::ty::TyKind::Uint(rustc_middle::ty::UintTy::U8))
+                matches!(
+                    elem_ty.kind(),
+                    rustc_middle::ty::TyKind::Uint(rustc_middle::ty::UintTy::U8)
+                )
             }
             rustc_middle::ty::TyKind::Slice(elem_ty) => {
-                matches!(elem_ty.kind(), rustc_middle::ty::TyKind::Uint(rustc_middle::ty::UintTy::U8))
+                matches!(
+                    elem_ty.kind(),
+                    rustc_middle::ty::TyKind::Uint(rustc_middle::ty::UintTy::U8)
+                )
             }
             _ => false,
         }
@@ -2260,25 +2456,33 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         let dest_ty = self.body.local_decls[dest].ty;
         let prov = first_arg_val.provenance.clone().or_else(|| {
             if let Operand::Move(place) | Operand::Copy(place) = first_arg_op {
-                self.local_alloc_ids.get(&place.local).map(|&id| {
-                    Provenance { alloc_id: id, offset: Int::from_u64(self.ctx, 0) }
-                })
+                self.local_alloc_ids
+                    .get(&place.local)
+                    .map(|&id| Provenance {
+                        alloc_id: id,
+                        offset: Int::from_u64(self.ctx, 0),
+                    })
             } else {
                 None
             }
         });
         if let Some(ref prov) = prov {
             self.init_allocations.insert(prov.alloc_id);
-            self.set_local(dest, VmValue {
-                term: first_arg_val.term.clone(),
-                ty: dest_ty,
-                provenance: Some(prov.clone()),
-                invariants: ValueInvariants {
-                    non_null: true, aligned: true, init: true,
-                    in_bounds: first_arg_val.invariants.in_bounds,
-                    align_n: first_arg_val.invariants.align_n,
+            self.set_local(
+                dest,
+                VmValue {
+                    term: first_arg_val.term.clone(),
+                    ty: dest_ty,
+                    provenance: Some(prov.clone()),
+                    invariants: ValueInvariants {
+                        non_null: true,
+                        aligned: true,
+                        init: true,
+                        in_bounds: first_arg_val.invariants.in_bounds,
+                        align_n: first_arg_val.invariants.align_n,
+                    },
                 },
-            });
+            );
             return true;
         }
         false
@@ -2317,19 +2521,20 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     _ => false,
                 };
                 if is_byte {
-                    let bytes_opt = super::state::extract_const_bytes_from_operand(self.tcx, operand)
-                        .or_else(|| self.trace_to_const_bytes(operand));
+                    let bytes_opt =
+                        super::state::extract_const_bytes_from_operand(self.tcx, operand)
+                            .or_else(|| self.trace_to_const_bytes(operand));
                     if let Some(bytes) = bytes_opt {
                         let size = z3::ast::Int::from_u64(self.ctx, bytes.len() as u64);
-                        let (alloc_id, base) = self.allocate(
-                            size,
-                            self.align_of_ty(pointee_ty),
-                            Some(pointee_ty),
-                        );
+                        let (alloc_id, base) =
+                            self.allocate(size, self.align_of_ty(pointee_ty), Some(pointee_ty));
                         self.init_allocations.insert(alloc_id);
                         for (i, &b) in bytes.iter().enumerate() {
-                            self.record_byte_value(alloc_id, i,
-                                z3::ast::Int::from_u64(self.ctx, b as u64));
+                            self.record_byte_value(
+                                alloc_id,
+                                i,
+                                z3::ast::Int::from_u64(self.ctx, b as u64),
+                            );
                             if b == 0 {
                                 self.known_nul_offsets.insert((alloc_id, i));
                             } else {
@@ -2342,7 +2547,10 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                             offset: z3::ast::Int::from_u64(self.ctx, 0),
                         });
                         val.invariants = ValueInvariants {
-                            non_null: true, init: true, aligned: true, in_bounds: false,
+                            non_null: true,
+                            init: true,
+                            aligned: true,
+                            in_bounds: false,
                             align_n: None,
                         };
                     }
@@ -2358,9 +2566,10 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             _ => return None,
         };
         let base_local = if place.projection.len() == 1
-            && matches!(place.projection.first().map(|p| p.kind()),
-                Some(rustc_middle::mir::ProjectionElem::Deref))
-        {
+            && matches!(
+                place.projection.first().map(|p| p.kind()),
+                Some(rustc_middle::mir::ProjectionElem::Deref)
+            ) {
             place.local
         } else if place.projection.is_empty() {
             place.local
@@ -2415,7 +2624,9 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             return; // same allocation, bytes already there
         }
         // Copy byte values from source alloc to ref's alloc
-        let byte_pairs: Vec<_> = self.byte_values.iter()
+        let byte_pairs: Vec<_> = self
+            .byte_values
+            .iter()
             .filter(|((aid, _), _)| *aid == src_alloc_id)
             .map(|((_, off), term)| (*off, term.clone()))
             .collect();
@@ -2423,14 +2634,18 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             self.record_byte_value(ref_alloc_id, off, term);
         }
         // Also copy known_nul / known_non_nul
-        let nul_offsets: Vec<_> = self.known_nul_offsets.iter()
+        let nul_offsets: Vec<_> = self
+            .known_nul_offsets
+            .iter()
             .filter(|(aid, _)| *aid == src_alloc_id)
             .map(|(_, off)| *off)
             .collect();
         for off in nul_offsets {
             self.known_nul_offsets.insert((ref_alloc_id, off));
         }
-        let non_nul_offsets: Vec<_> = self.known_non_nul_offsets.iter()
+        let non_nul_offsets: Vec<_> = self
+            .known_non_nul_offsets
+            .iter()
             .filter(|(aid, _)| *aid == src_alloc_id)
             .map(|(_, off)| *off)
             .collect();
@@ -2446,13 +2661,15 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 // We don't need the exact count — just the element type for size
                 vec![*elem_ty]
             }
-            rustc_middle::ty::TyKind::Tuple(elems) => {
-                elems.iter().collect()
-            }
+            rustc_middle::ty::TyKind::Tuple(elems) => elems.iter().collect(),
             rustc_middle::ty::TyKind::Adt(adt_def, substs) => {
-                if adt_def.is_enum() { return vec![]; }
+                if adt_def.is_enum() {
+                    return vec![];
+                }
                 let variant = adt_def.non_enum_variant();
-                variant.fields.iter()
+                variant
+                    .fields
+                    .iter()
                     .map(|f| {
                         let unnorm = f.ty(self.tcx, substs);
                         unnorm.skip_norm_wip()
@@ -2507,8 +2724,9 @@ fn resolve_u64_from_place_key<'ctx, 'tcx>(
 /// Extract the bare local from a Copy/Move operand.
 fn extract_local(operand: &Operand<'_>) -> Option<Local> {
     match operand {
-        Operand::Copy(place) | Operand::Move(place)
-            if place.projection.is_empty() => Some(place.local),
+        Operand::Copy(place) | Operand::Move(place) if place.projection.is_empty() => {
+            Some(place.local)
+        }
         _ => None,
     }
 }

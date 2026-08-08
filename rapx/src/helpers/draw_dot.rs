@@ -3,9 +3,7 @@ use std::io::Write;
 use std::process::Command;
 
 fn render_dot_file(dir_name: &str, name: &str, dot_graph: &str) {
-    let _ = Command::new("mkdir")
-        .args([dir_name])
-        .output();
+    let _ = Command::new("mkdir").args([dir_name]).output();
 
     let file_name = format!("{}.dot", name);
     let mut file = File::create(&file_name).expect("Unable to create file");

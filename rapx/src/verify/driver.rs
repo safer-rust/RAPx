@@ -121,7 +121,10 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
 
         for view in self.iter_callsite_checks() {
             let mut view_results: Vec<PropertyCheckResult<'tcx>> = Vec::new();
-            let has_init_prop = view.properties.iter().any(|p| matches!(p.kind, PropertyKind::Init));
+            let has_init_prop = view
+                .properties
+                .iter()
+                .any(|p| matches!(p.kind, PropertyKind::Init));
 
             for (property_index, property) in view.properties.iter().enumerate() {
                 if property.kind == PropertyKind::Or {
@@ -174,7 +177,8 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
         or_property: &Property<'tcx>,
     ) {
         let _num_groups = or_property.or_alternatives.len();
-        let mut best_per_path: Vec<Option<(usize, super::report::CheckResult, String)>> = Vec::new();
+        let mut best_per_path: Vec<Option<(usize, super::report::CheckResult, String)>> =
+            Vec::new();
 
         for (group_idx, group) in or_property.or_alternatives.iter().enumerate() {
             for sub_prop in group.iter() {
@@ -191,11 +195,13 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
                     let better = match &best_per_path[path_idx] {
                         None => true,
                         Some((_prev_group, prev_result, _)) => {
-                            matches!(result, super::report::CheckResult::Proved) && !matches!(prev_result, super::report::CheckResult::Proved)
+                            matches!(result, super::report::CheckResult::Proved)
+                                && !matches!(prev_result, super::report::CheckResult::Proved)
                         }
                     };
                     if better {
-                        best_per_path[path_idx] = Some((group_idx, result.clone(), path_desc.clone()));
+                        best_per_path[path_idx] =
+                            Some((group_idx, result.clone(), path_desc.clone()));
                     }
                 }
             }
@@ -487,12 +493,7 @@ impl<'tcx> VerifyRun<'tcx> {
                 for &mut_id in &muts {
                     let con_target =
                         self.build_virtual_target(target, read_def_id, con_id, &[mut_id]);
-                    self.verify_and_emit_sequence(
-                        read_def_id,
-                        &con_target,
-                        con_id,
-                        &[mut_id],
-                    );
+                    self.verify_and_emit_sequence(read_def_id, &con_target, con_id, &[mut_id]);
                 }
             }
         }
@@ -563,9 +564,7 @@ impl<'tcx> VerifyRun<'tcx> {
 
         let (_, repeat_rounds) = self.repeat_rounds_for_target(con_target);
         for repeat in repeat_rounds {
-            let driver = VerifyDriver::new_with_repeat(
-                self.tcx, con_target, repeat,
-            );
+            let driver = VerifyDriver::new_with_repeat(self.tcx, con_target, repeat);
             match crate::helpers::mir_utils::catch_panic(|| driver.verify_function()) {
                 Ok(report) => {
                     rap_debug!("{}", report.describe());
@@ -610,8 +609,7 @@ impl<'tcx> VerifyRun<'tcx> {
         let hazard_failed = all_results
             .iter()
             .filter(|r| {
-                r.property.contract_kind
-                    == crate::verify::contract::ContractKind::Hazard
+                r.property.contract_kind == crate::verify::contract::ContractKind::Hazard
                     && !matches!(r.result, super::report::CheckResult::Proved)
             })
             .count();
@@ -683,9 +681,7 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
 
             // Phase 1: unsafe checkpoint verification
             for repeat in repeat_rounds {
-                let driver = VerifyDriver::new_with_repeat(
-                    self.tcx, target, repeat,
-                );
+                let driver = VerifyDriver::new_with_repeat(self.tcx, target, repeat);
                 match crate::helpers::mir_utils::catch_panic(|| driver.verify_function()) {
                     Ok(report) => {
                         rap_debug!("{}", report.describe());
@@ -705,9 +701,7 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
 
             // Phase 2: struct invariant verification
             if !target.struct_invariants.is_empty() && !self.skip_invariant {
-                let driver = VerifyDriver::new_with_repeat(
-                    self.tcx, target, planned_repeat,
-                );
+                let driver = VerifyDriver::new_with_repeat(self.tcx, target, planned_repeat);
                 let struct_report = driver.verify_struct_invariants();
                 rap_debug!("{}", struct_report.describe());
                 all_results.extend(struct_report.results);
@@ -806,7 +800,6 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
             self.run_invless_sequences(&collector.function_targets);
         }
     }
-
 }
 
 impl<'tcx> VerifyRun<'tcx> {

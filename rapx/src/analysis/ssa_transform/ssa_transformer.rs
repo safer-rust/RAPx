@@ -36,7 +36,6 @@ pub struct SSATransformer<'tcx> {
 }
 
 impl<'tcx> SSATransformer<'tcx> {
-
     pub fn new(
         tcx: TyCtxt<'tcx>,
         body: &Body<'tcx>,
@@ -84,8 +83,6 @@ impl<'tcx> SSATransformer<'tcx> {
             ssa_locals_map: HashMap::default(),
         }
     }
-
-
 
     fn map_locals_to_definition_block(body: &Body) -> HashMap<Local, BasicBlock> {
         let mut local_to_block_map: HashMap<Local, BasicBlock> = HashMap::new();
@@ -149,7 +146,6 @@ impl<'tcx> SSATransformer<'tcx> {
         dfs(root, dom_tree, &mut visited, &mut preorder);
         preorder
     }
-
 
     fn map_locals_to_assign_blocks(body: &Body) -> HashMap<Local, HashSet<BasicBlock>> {
         let mut local_to_blocks: HashMap<Local, HashSet<BasicBlock>> = HashMap::new();
@@ -226,7 +222,6 @@ impl<'tcx> SSATransformer<'tcx> {
 
         cfg
     }
-
 
     pub fn is_phi_statement(&self, statement: &Statement<'tcx>) -> bool {
         if let StatementKind::Assign(assign) = &statement.kind {

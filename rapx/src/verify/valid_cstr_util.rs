@@ -1,7 +1,4 @@
-use rustc_middle::mir::{
-    Body, Local, Operand, Rvalue, StatementKind,
-    TerminatorKind,
-};
+use rustc_middle::mir::{Body, Local, Operand, Rvalue, StatementKind, TerminatorKind};
 use rustc_middle::ty::TyCtxt;
 use rustc_span::DUMMY_SP;
 
@@ -34,7 +31,7 @@ pub(crate) fn resolve_through_casts<'tcx>(body: &Body<'tcx>, local: Local) -> Lo
                 }
                 if let Rvalue::Cast(_, operand, _) = rvalue {
                     #[allow(unreachable_patterns)]
-                match operand {
+                    match operand {
                         Operand::Copy(p) | Operand::Move(p) if p.projection.is_empty() => {
                             current = p.local;
                             return true;
@@ -57,7 +54,10 @@ fn scalar_constant(operand: &Operand<'_>) -> Option<u128> {
         Operand::Constant(c) => c,
         _ => return None,
     };
-    constant.const_.try_to_scalar_int().map(|s| s.to_uint(s.size()))
+    constant
+        .const_
+        .try_to_scalar_int()
+        .map(|s| s.to_uint(s.size()))
 }
 
 pub(crate) fn collect_all_const_bytes_worklist<'tcx>(
@@ -93,16 +93,16 @@ pub(crate) fn collect_all_const_bytes_worklist<'tcx>(
 
                 if let Rvalue::Use(operand, ..) = rvalue {
                     #[allow(unreachable_patterns)]
-                match operand {
-                    Operand::Copy(p) | Operand::Move(p) => {
-                        worklist.push(p.local);
-                        if let Some(bytes) = const_bytes_for_local(tcx, body, p.local) {
-                            results.push(bytes);
+                    match operand {
+                        Operand::Copy(p) | Operand::Move(p) => {
+                            worklist.push(p.local);
+                            if let Some(bytes) = const_bytes_for_local(tcx, body, p.local) {
+                                results.push(bytes);
+                            }
+                            continue;
                         }
-                        continue;
-                    }
-                    Operand::Constant(_) => {}
-                    _ => continue,
+                        Operand::Constant(_) => {}
+                        _ => continue,
                     }
                 }
 
@@ -126,7 +126,13 @@ pub(crate) fn collect_all_const_bytes_worklist<'tcx>(
 
         for data in body.basic_blocks.iter() {
             if let Some(terminator) = &data.terminator {
-                if let TerminatorKind::Call { destination, func, args, .. } = &terminator.kind {
+                if let TerminatorKind::Call {
+                    destination,
+                    func,
+                    args,
+                    ..
+                } = &terminator.kind
+                {
                     let dlocal = destination.local;
                     if dlocal != local {
                         continue;
@@ -145,7 +151,8 @@ pub(crate) fn collect_all_const_bytes_worklist<'tcx>(
                     if name.contains("::add") {
                         if let Some(offset) = args.get(1).and_then(|a| scalar_constant(&a.node)) {
                             if let Some(base) = args.first() {
-                                if let Some(bytes) = const_bytes_from_operand(tcx, body, &base.node) {
+                                if let Some(bytes) = const_bytes_from_operand(tcx, body, &base.node)
+                                {
                                     let start = offset as usize;
                                     if start < bytes.len() {
                                         results.push(bytes[start..].to_vec());
@@ -197,10 +204,14 @@ pub(crate) fn collect_all_const_bytes_worklist<'tcx>(
             }
             for data in body.basic_blocks.iter() {
                 if let Some(terminator) = &data.terminator {
-                    if let TerminatorKind::Call { destination, func, args, .. } = &terminator.kind {
-                        if destination.local == local
-                            && destination.projection.is_empty()
-                        {
+                    if let TerminatorKind::Call {
+                        destination,
+                        func,
+                        args,
+                        ..
+                    } = &terminator.kind
+                    {
+                        if destination.local == local && destination.projection.is_empty() {
                             let name = crate::helpers::mir_utils::call_name(tcx, func);
                             if name.contains("box_assume_init_into_vec_unsafe") {
                                 if let Some(box_op) = args.first() {
@@ -304,7 +315,13 @@ fn const_bytes_from_call_dest<'tcx>(
 ) -> Option<Vec<u8>> {
     for data in body.basic_blocks.iter() {
         if let Some(terminator) = &data.terminator {
-            if let TerminatorKind::Call { destination, func, args, .. } = &terminator.kind {
+            if let TerminatorKind::Call {
+                destination,
+                func,
+                args,
+                ..
+            } = &terminator.kind
+            {
                 if destination.local != local || !destination.projection.is_empty() {
                     continue;
                 }
@@ -346,17 +363,17 @@ pub(crate) fn const_bytes_for_local<'tcx>(
             if let Rvalue::Use(operand, ..) = rvalue {
                 #[allow(unreachable_patterns)]
                 match operand {
-                Operand::Copy(p) | Operand::Move(p) => {
-                    if let Some(bytes) = const_bytes_for_local(tcx, body, p.local) {
-                        return Some(bytes);
+                    Operand::Copy(p) | Operand::Move(p) => {
+                        if let Some(bytes) = const_bytes_for_local(tcx, body, p.local) {
+                            return Some(bytes);
+                        }
+                        if let Some(bytes) = const_bytes_from_call_dest(tcx, body, p.local) {
+                            return Some(bytes);
+                        }
+                        continue;
                     }
-                    if let Some(bytes) = const_bytes_from_call_dest(tcx, body, p.local) {
-                        return Some(bytes);
-                    }
-                    continue;
-                }
-                Operand::Constant(_) => {}
-                _ => continue,
+                    Operand::Constant(_) => {}
+                    _ => continue,
                 }
             }
             if let Rvalue::Cast(_, operand, _) = rvalue {
@@ -403,7 +420,10 @@ fn aggregate_op_is_nonzero<'tcx>(
         Operand::Copy(p) | Operand::Move(p) if p.projection.is_empty() => {
             for data in body.basic_blocks.iter() {
                 if let Some(terminator) = &data.terminator {
-                    if let TerminatorKind::Call { destination, func, .. } = &terminator.kind {
+                    if let TerminatorKind::Call {
+                        destination, func, ..
+                    } = &terminator.kind
+                    {
                         if destination.local == p.local && destination.projection.is_empty() {
                             return fn_always_returns_nonzero(tcx, func);
                         }
@@ -412,11 +432,10 @@ fn aggregate_op_is_nonzero<'tcx>(
             }
             false
         }
-        Operand::Constant(c) => {
-            c.const_
-                .try_to_scalar_int()
-                .map_or(false, |s| s.to_uint(s.size()) != 0)
-        }
+        Operand::Constant(c) => c
+            .const_
+            .try_to_scalar_int()
+            .map_or(false, |s| s.to_uint(s.size()) != 0),
         _ => false,
     }
 }
@@ -448,11 +467,10 @@ fn is_constant_zero_u8(operand: &Operand<'_>) -> bool {
         .map_or(false, |s| s.to_uint(s.size()) == 0)
 }
 
-fn fn_always_returns_nonzero<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    func: &Operand<'tcx>,
-) -> bool {
-    let Some(fn_def_id) = crate::helpers::mir_utils::dep_callee_def_id(func) else { return false };
+fn fn_always_returns_nonzero<'tcx>(tcx: TyCtxt<'tcx>, func: &Operand<'tcx>) -> bool {
+    let Some(fn_def_id) = crate::helpers::mir_utils::dep_callee_def_id(func) else {
+        return false;
+    };
     let callee_body = tcx.optimized_mir(fn_def_id);
 
     let mut has_return = false;
@@ -463,7 +481,9 @@ fn fn_always_returns_nonzero<'tcx>(
             }
         }
         for stmt in &bb_data.statements {
-            let StatementKind::Assign(assign) = &stmt.kind else { continue };
+            let StatementKind::Assign(assign) = &stmt.kind else {
+                continue;
+            };
             let (target, rvalue) = assign.as_ref();
             if target.local != Local::from_usize(0) || !target.projection.is_empty() {
                 continue;
@@ -479,20 +499,16 @@ fn fn_always_returns_nonzero<'tcx>(
 
 fn rvalue_is_nonzero<'tcx>(_tcx: TyCtxt<'tcx>, rvalue: &Rvalue<'tcx>, _body: &Body<'tcx>) -> bool {
     match rvalue {
-        Rvalue::Use(Operand::Constant(c), ..) => {
-            c.const_
-                .try_to_scalar_int()
-                .map_or(false, |s| s.to_uint(s.size()) != 0)
-        }
+        Rvalue::Use(Operand::Constant(c), ..) => c
+            .const_
+            .try_to_scalar_int()
+            .map_or(false, |s| s.to_uint(s.size()) != 0),
         Rvalue::Use(Operand::Copy(_), ..) | Rvalue::Use(Operand::Move(_), ..) => true,
         _ => false,
     }
 }
 
-pub(crate) fn body_parents<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    body: &Body<'tcx>,
-) -> FxHashMap<Local, Local> {
+pub(crate) fn body_parents<'tcx>(tcx: TyCtxt<'tcx>, body: &Body<'tcx>) -> FxHashMap<Local, Local> {
     use crate::verify::call_summary::fn_simulator;
 
     let mut parents: FxHashMap<Local, Local> = Default::default();

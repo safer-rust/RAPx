@@ -3,10 +3,7 @@ pub mod string_lowercase;
 pub mod string_push;
 pub mod vec_encoding;
 
-use crate::{
-    analysis::dataflow::*,
-    check::opt::OptCheck,
-};
+use crate::{analysis::dataflow::*, check::opt::OptCheck};
 
 use annotate_snippets::Level;
 
@@ -88,19 +85,21 @@ fn value_is_from_const(graph: &Graph, value_idx: Local) -> bool {
             _ => DFSStatus::Stop,
         }
     };
-    graph.find_first_node(
-        value_idx,
-        Direction::Upside,
-        &mut |graph: &Graph, idx: Local| {
-            let node = &graph.nodes[idx];
-            node.ops.iter().any(|op| {
-                if let NodeOp::Const(_, src_ty) = op {
-                    src_ty.contains("u8")
-                } else {
-                    false
-                }
-            })
-        },
-        &mut edge_validator,
-    ).is_some()
+    graph
+        .find_first_node(
+            value_idx,
+            Direction::Upside,
+            &mut |graph: &Graph, idx: Local| {
+                let node = &graph.nodes[idx];
+                node.ops.iter().any(|op| {
+                    if let NodeOp::Const(_, src_ty) = op {
+                        src_ty.contains("u8")
+                    } else {
+                        false
+                    }
+                })
+            },
+            &mut edge_validator,
+        )
+        .is_some()
 }

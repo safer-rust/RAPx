@@ -6,7 +6,7 @@ use rustc_middle::{
 };
 use z3::ast::{Ast, Int};
 
-use super::state::{AllocId, Allocation, Provenance, VmState, VmValue, ValueInvariants};
+use super::state::{AllocId, Allocation, Provenance, ValueInvariants, VmState, VmValue};
 
 impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     pub fn address_of_place(&mut self, place: &Place<'tcx>) -> Option<VmValue<'ctx, 'tcx>> {
@@ -20,10 +20,19 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             // Prefer the local's value provenance over the stack-allocation
             // provenance. For Box/Vec parameters, the value tracks the heap
             // allocation while local_alloc_ids tracks the stack location.
-            let provenance = self.locals.get(&place.local)
+            let provenance = self
+                .locals
+                .get(&place.local)
                 .and_then(|v| v.provenance.clone())
-                .or_else(|| self.local_alloc_ids.get(&place.local).copied()
-                    .map(|alloc_id| Provenance { alloc_id, offset: zero }));
+                .or_else(|| {
+                    self.local_alloc_ids
+                        .get(&place.local)
+                        .copied()
+                        .map(|alloc_id| Provenance {
+                            alloc_id,
+                            offset: zero,
+                        })
+                });
             return Some(VmValue {
                 term: base_addr,
                 ty,
@@ -87,7 +96,8 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     }
                 }
                 _ => {
-                    self.notes.push(format!("unsupported projection: {:?}", proj.kind()));
+                    self.notes
+                        .push(format!("unsupported projection: {:?}", proj.kind()));
                     return None;
                 }
             }
@@ -133,11 +143,15 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     }
 
     pub(crate) fn field_offset_in_bytes(&self, ty: Ty<'tcx>, field_idx: usize) -> u64 {
-        let Some(layout) = self.compute_layout(ty) else { return 0 };
+        let Some(layout) = self.compute_layout(ty) else {
+            return 0;
+        };
         match layout.fields {
             rustc_abi::FieldsShape::Arbitrary { ref offsets, .. } => {
                 let idx = rustc_abi::FieldIdx::from_usize(field_idx);
-                if idx.as_usize() < offsets.len() { return offsets[idx].bytes(); }
+                if idx.as_usize() < offsets.len() {
+                    return offsets[idx].bytes();
+                }
             }
             _ => {}
         }
@@ -149,12 +163,17 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     }
 
     pub fn align_of_ty(&self, ty: Ty<'tcx>) -> u64 {
-        self.compute_layout(ty).map(|l| l.align.abi.bytes()).unwrap_or(1)
+        self.compute_layout(ty)
+            .map(|l| l.align.abi.bytes())
+            .unwrap_or(1)
     }
 
     fn compute_layout(&self, ty: Ty<'tcx>) -> Option<rustc_abi::TyAndLayout<'tcx, Ty<'tcx>>> {
         let typing_env = TypingEnv::post_analysis(self.tcx, self.caller_def_id);
-        let input = PseudoCanonicalInput { typing_env, value: ty };
+        let input = PseudoCanonicalInput {
+            typing_env,
+            value: ty,
+        };
         crate::helpers::mir_utils::catch_panic(|| self.tcx.layout_of(input))
             .ok()
             .and_then(|r| r.ok())
@@ -165,11 +184,17 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     }
 
     pub fn allocation_size(&self, alloc_id: AllocId) -> Option<&Int<'ctx>> {
-        self.allocations.iter().find(|a| a.id == alloc_id).map(|a| &a.size)
+        self.allocations
+            .iter()
+            .find(|a| a.id == alloc_id)
+            .map(|a| &a.size)
     }
 
     pub fn allocation_base(&self, alloc_id: AllocId) -> Option<&Int<'ctx>> {
-        self.allocations.iter().find(|a| a.id == alloc_id).map(|a| &a.base)
+        self.allocations
+            .iter()
+            .find(|a| a.id == alloc_id)
+            .map(|a| &a.base)
     }
 
     /// Get the element size (in bytes) for a pointer type, peeling

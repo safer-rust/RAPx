@@ -87,5 +87,4 @@ impl<'tcx> Analysis for PathAnalyzer<'tcx> {
     fn run(&mut self) {
         self.analyze_all();
     }
-
 }

@@ -1,8 +1,8 @@
 use rustc_hir::{Safety, def_id::DefId};
 use rustc_middle::{
     mir::{
-        BasicBlock, Body, BorrowKind, Local, Operand, Place, ProjectionElem, Rvalue,
-        StatementKind, TerminatorKind,
+        BasicBlock, Body, BorrowKind, Local, Operand, Place, ProjectionElem, Rvalue, StatementKind,
+        TerminatorKind,
     },
     ty::{self, Ty, TyCtxt, TyKind},
 };

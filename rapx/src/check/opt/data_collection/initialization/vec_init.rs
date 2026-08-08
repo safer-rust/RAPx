@@ -3,10 +3,7 @@ use annotate_snippets::Level;
 use rustc_middle::ty::TyCtxt;
 use rustc_span::Span;
 
-use crate::{
-    analysis::dataflow::*,
-    check::opt::OptCheck,
-};
+use crate::{analysis::dataflow::*, check::opt::OptCheck};
 
 use crate::check::opt::report::OptReport;
 

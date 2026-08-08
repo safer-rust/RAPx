@@ -1,14 +1,11 @@
 use annotate_snippets::Level;
 
-use crate::{
-    analysis::dataflow::*,
-    check::opt::OptCheck,
-};
+use crate::{analysis::dataflow::*, check::opt::OptCheck};
 use rustc_middle::ty::TyCtxt;
 use rustc_span::Span;
 
-use crate::check::opt::report::OptReport;
 use crate::check::opt::check_utils::node_matches_any_call;
+use crate::check::opt::report::OptReport;
 
 crate::def_paths! {
     hashset_new: "std::collections::HashSet::new",

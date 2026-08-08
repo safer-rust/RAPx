@@ -2,7 +2,9 @@ use std::collections::{HashSet, VecDeque};
 
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
-    mir::{BasicBlock, BinOp, Local, Operand, ProjectionElem, Rvalue, StatementKind, TerminatorKind},
+    mir::{
+        BasicBlock, BinOp, Local, Operand, ProjectionElem, Rvalue, StatementKind, TerminatorKind,
+    },
     ty::TyCtxt,
 };
 
@@ -251,12 +253,20 @@ pub(super) fn try_pointer_arith_wrapper_effect<'tcx>(
 
 /// Check whether a callee body contains pointer arithmetic calls.
 pub(super) fn callee_contains_pointer_arithmetic(tcx: TyCtxt<'_>, callee: DefId) -> bool {
-    let Some(_) = callee.as_local() else { return false };
-    if !tcx.is_mir_available(callee) { return false; }
+    let Some(_) = callee.as_local() else {
+        return false;
+    };
+    if !tcx.is_mir_available(callee) {
+        return false;
+    }
     let body = tcx.optimized_mir(callee);
     for bb in body.basic_blocks.iter() {
-        let Some(terminator) = &bb.terminator else { continue };
-        let TerminatorKind::Call { func, .. } = &terminator.kind else { continue };
+        let Some(terminator) = &bb.terminator else {
+            continue;
+        };
+        let TerminatorKind::Call { func, .. } = &terminator.kind else {
+            continue;
+        };
         let name = helpers::call_name(tcx, func);
         if fn_simulator::is_pointer_add(&name) || fn_simulator::is_pointer_sub(&name) {
             return true;
@@ -305,10 +315,18 @@ pub(super) fn try_from_raw_parts_wrapper_effect<'tcx>(
     let ret = Local::from_usize(0);
 
     for bb in body.basic_blocks.iter() {
-        let Some(terminator) = &bb.terminator else { continue };
+        let Some(terminator) = &bb.terminator else {
+            continue;
+        };
         let TerminatorKind::Call {
-            func, args, destination: call_dest, ..
-        } = &terminator.kind else { continue };
+            func,
+            args,
+            destination: call_dest,
+            ..
+        } = &terminator.kind
+        else {
+            continue;
+        };
 
         let name = helpers::call_name(tcx, func);
         if !fn_simulator::is_from_raw_parts(&name) {
@@ -320,11 +338,18 @@ pub(super) fn try_from_raw_parts_wrapper_effect<'tcx>(
         let mut seen = HashSet::from([call_dest.local]);
         let mut reaches_ret = false;
         while let Some(current) = queue.pop_front() {
-            if current == ret { reaches_ret = true; break; }
+            if current == ret {
+                reaches_ret = true;
+                break;
+            }
             for bb2 in body.basic_blocks.iter() {
                 for stmt in &bb2.statements {
-                    let StatementKind::Assign(assign) = &stmt.kind else { continue };
-                    if seen.contains(&assign.0.local) { continue; }
+                    let StatementKind::Assign(assign) = &stmt.kind else {
+                        continue;
+                    };
+                    if seen.contains(&assign.0.local) {
+                        continue;
+                    }
                     match &assign.1 {
                         Rvalue::Use(Operand::Copy(place), ..)
                         | Rvalue::Use(Operand::Move(place), ..)
@@ -340,7 +365,9 @@ pub(super) fn try_from_raw_parts_wrapper_effect<'tcx>(
                 }
             }
         }
-        if !reaches_ret { continue; }
+        if !reaches_ret {
+            continue;
+        }
 
         // Trace from_raw_parts args to callee args
         let pointer_arg = trace_to_callee_arg(tcx, body, &args[0].node)?;
@@ -352,10 +379,13 @@ pub(super) fn try_from_raw_parts_wrapper_effect<'tcx>(
             rustc_middle::ty::TyKind::Ref(_, inner, _) => match inner.kind() {
                 rustc_middle::ty::TyKind::Slice(elem) => {
                     let typing_env = rustc_middle::ty::TypingEnv::post_analysis(tcx, callee);
-                    let input = rustc_middle::ty::PseudoCanonicalInput { typing_env, value: *elem };
-                    crate::helpers::mir_utils::catch_panic(|| {
-                        tcx.layout_of(input)
-                    }).ok().and_then(|r| r.ok())
+                    let input = rustc_middle::ty::PseudoCanonicalInput {
+                        typing_env,
+                        value: *elem,
+                    };
+                    crate::helpers::mir_utils::catch_panic(|| tcx.layout_of(input))
+                        .ok()
+                        .and_then(|r| r.ok())
                         .map(|l| l.size.bytes())
                         .unwrap_or(1)
                 }
@@ -416,8 +446,8 @@ pub(super) fn named_index_disjoint_validator(name: &str) -> Option<(usize, usize
         .next()
         .unwrap_or(name)
         .trim_end_matches("::");
-    if base.ends_with("get_disjoint_check_valid")
-        || base.ends_with("get_disjoint_check_valid_ext") {
+    if base.ends_with("get_disjoint_check_valid") || base.ends_with("get_disjoint_check_valid_ext")
+    {
         Some((0, 1))
     } else {
         None
@@ -428,7 +458,10 @@ pub(super) fn named_index_disjoint_validator(name: &str) -> Option<(usize, usize
 /// from an array argument, and returns early (`Err`) both when an element is
 /// out of range against a scalar argument (`>= len`) and when two elements are
 /// equal (a duplicate).  Returns `(indices_arg, len_arg)`.
-pub(super) fn detect_index_disjoint_validator(tcx: TyCtxt<'_>, callee: DefId) -> Option<(usize, usize)> {
+pub(super) fn detect_index_disjoint_validator(
+    tcx: TyCtxt<'_>,
+    callee: DefId,
+) -> Option<(usize, usize)> {
     callee.as_local()?;
     if !tcx.is_mir_available(callee) {
         return None;

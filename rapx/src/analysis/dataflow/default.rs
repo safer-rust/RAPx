@@ -56,7 +56,6 @@ impl<'tcx> Analysis for DataflowAnalyzer<'tcx> {
     fn run(&mut self) {
         self.start();
     }
-
 }
 
 impl<'tcx> DataflowAnalyzer<'tcx> {

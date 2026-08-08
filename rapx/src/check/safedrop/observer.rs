@@ -16,7 +16,15 @@ pub struct SafeDropObserver<'a> {
 impl AliasObserver for SafeDropObserver<'_> {
     fn on_value_use(&mut self, graph: &AliasGraph, vidx: usize, span: Span, in_call: bool) {
         checks::sync_drop_record(graph, self.drop_record);
-        checks::uaf_check(graph, self.drop_record, self.bug_records, vidx, self.current_bb, span, in_call);
+        checks::uaf_check(
+            graph,
+            self.drop_record,
+            self.bug_records,
+            vidx,
+            self.current_bb,
+            span,
+            in_call,
+        );
     }
 
     fn on_value_assign(&mut self, graph: &AliasGraph, vidx: usize) {

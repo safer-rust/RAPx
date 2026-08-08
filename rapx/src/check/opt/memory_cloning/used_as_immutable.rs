@@ -1,7 +1,4 @@
-use crate::{
-    analysis::dataflow::*,
-    check::opt::OptCheck,
-};
+use crate::{analysis::dataflow::*, check::opt::OptCheck};
 use annotate_snippets::Level;
 
 use crate::check::opt::report::OptReport;
@@ -19,7 +16,6 @@ crate::def_paths! {
     to_owned: "std::borrow::ToOwned::to_owned",
     deref: "std::ops::Deref::deref",
 }
-
 
 fn find_downside_use_as_param(graph: &Graph, clone_node_idx: Local) -> Option<(Local, EdgeIdx)> {
     let mut record = None;

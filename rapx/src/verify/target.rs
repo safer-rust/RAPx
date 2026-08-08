@@ -20,11 +20,11 @@ use super::{
     path_extractor::PathExtractor,
     source::attr::parse_rapx_attr,
 };
+use crate::helpers::mir_scan::{Checkpoint, collect_unsafe_callsites};
 use crate::helpers::mir_utils::{
     collect_return_block_indices, get_owner_struct_def_id, has_rapx_verify_attr,
     is_std_crate_def_id, is_trait_unsafe, resolve_impl_self_ty_def_id,
 };
-use crate::helpers::mir_scan::{Checkpoint, collect_unsafe_callsites};
 
 /// A list of parsed `requires` contracts.
 pub type FnContracts<'tcx> = Vec<Property<'tcx>>;
@@ -393,8 +393,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
         // the full documented safety contract.  Callee-side resolution is
         // unchanged.
         if is_std_crate_def_id(self.tcx, def_id) {
-            let json_contracts =
-                super::contract::query_json_contracts(self.tcx, def_id);
+            let json_contracts = super::contract::query_json_contracts(self.tcx, def_id);
             caller_requires.extend(json_contracts);
         }
 
@@ -708,8 +707,7 @@ impl<'tcx> Visitor<'tcx> for VerifyTargetCollector<'tcx> {
                             return;
                         }
                     } else {
-                        let root =
-                            crate::analysis::safety_flow::root::scan_mir(self.tcx, def_id);
+                        let root = crate::analysis::safety_flow::root::scan_mir(self.tcx, def_id);
                         if root.is_none() {
                             return;
                         }
@@ -844,7 +842,6 @@ impl<'tcx> Analysis for PrepareTargets<'tcx> {
         );
         rap_info!("============================================================");
     }
-
 }
 
 impl<'tcx> PrepareTargets<'tcx> {
@@ -1093,7 +1090,10 @@ fn collect_properties_from_named_attrs<'tcx>(
         results.extend(parsed.properties.into_iter().flat_map(|property| {
             Property::parse_list(tcx, property_def_id, property.tag.as_str(), &property.args)
                 .into_iter()
-                .map(move |mut p| { p.apply_kind(property.kind.as_deref()); p })
+                .map(move |mut p| {
+                    p.apply_kind(property.kind.as_deref());
+                    p
+                })
         }));
     }
 

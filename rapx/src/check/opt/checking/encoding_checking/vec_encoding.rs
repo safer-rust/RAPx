@@ -12,7 +12,6 @@ crate::def_paths! {
     vec_push: "std::vec::Vec::push",
 }
 
-
 use crate::check::opt::OptCheck;
 
 pub struct VecEncodingCheck {

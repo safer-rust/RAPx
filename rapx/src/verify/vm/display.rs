@@ -4,7 +4,7 @@
 
 use std::fmt;
 
-use super::state::{VmState, VmValue, ValueInvariants};
+use super::state::{ValueInvariants, VmState, VmValue};
 
 impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     /// Produce a compact diagnostic summary of the VM state.
@@ -15,11 +15,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         if !self.locals.is_empty() {
             lines.push("-- VM Locals --".to_string());
             for (local, value) in self.locals.iter() {
-                lines.push(format!(
-                    "  _{}: {:?}",
-                    local.as_usize(),
-                    value.describe()
-                ));
+                lines.push(format!("  _{}: {:?}", local.as_usize(), value.describe()));
             }
         }
 

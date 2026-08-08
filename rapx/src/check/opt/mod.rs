@@ -1,5 +1,5 @@
-pub mod checking;
 pub mod check_utils;
+pub mod checking;
 pub mod data_collection;
 pub mod loop_visitors;
 pub mod memory_cloning;

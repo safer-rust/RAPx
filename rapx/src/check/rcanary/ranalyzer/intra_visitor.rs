@@ -22,11 +22,11 @@ use super::{FlowAnalysis, IcxSliceFroBlock, IntraFlowAnalysis};
 use crate::{
     analysis::owned_heap::{default::*, *},
     utils::{
+        source::get_name,
         span::{
             are_spans_in_same_file, relative_pos_range, span_to_filename, span_to_line_number,
             span_to_source_code,
         },
-        source::get_name,
     },
 };
 

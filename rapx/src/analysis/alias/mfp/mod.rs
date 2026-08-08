@@ -235,7 +235,6 @@ impl<'tcx> RapxAnalysis for MfpAliasAnalyzer<'tcx> {
             }
         }
     }
-
 }
 
 impl<'tcx> AliasAnalysis for MfpAliasAnalyzer<'tcx> {
@@ -247,5 +246,3 @@ impl<'tcx> AliasAnalysis for MfpAliasAnalyzer<'tcx> {
         self.fn_map.clone()
     }
 }
-
-

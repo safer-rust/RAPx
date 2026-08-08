@@ -8,9 +8,9 @@
 use crate::helpers::mir_utils::ty_has_param_const;
 use std::collections::{HashMap, HashSet};
 
+use crate::compat::OwnerId;
 use if_chain::if_chain;
 use rustc_hir::{ImplPolarity, ItemId, ItemKind};
-use crate::compat::OwnerId;
 use rustc_middle::ty::{FloatTy, IntTy, ParamEnv, Ty, TyCtxt, TyKind, UintTy};
 
 /// Representative concrete types satisfying generic trait bounds.

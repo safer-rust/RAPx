@@ -11,8 +11,8 @@ use crate::helpers::name::{
     access_ident_recursive, get_struct_self_ty, match_ty_with_ident, parse_signature,
 };
 
-use super::types::*;
 use super::spec;
+use super::types::*;
 
 impl<'tcx> Property<'tcx> {
     /// Parse a property using the fixed-arity declaration table.
@@ -541,7 +541,11 @@ impl<'tcx> Property<'tcx> {
     /// Check if the given expression refers to a function parameter whose
     /// type is an array. If so, return a ContractPlace for that parameter
     /// to be used as the for_each container.
-    fn detect_array_for_each(tcx: TyCtxt<'tcx>, def_id: DefId, expr: &Expr) -> Option<ContractPlace<'tcx>> {
+    fn detect_array_for_each(
+        tcx: TyCtxt<'tcx>,
+        def_id: DefId,
+        expr: &Expr,
+    ) -> Option<ContractPlace<'tcx>> {
         let place = Self::parse_contract_place(tcx, def_id, expr)?;
         let param_idx = match place.base {
             PlaceBase::Arg(n) => n,
@@ -987,8 +991,7 @@ impl<'tcx> Property<'tcx> {
             if (expr_method.method == "iter" || expr_method.method == "each_element")
                 && expr_method.args.is_empty()
             {
-                let mut place =
-                    Self::parse_contract_place(tcx, def_id, &expr_method.receiver)?;
+                let mut place = Self::parse_contract_place(tcx, def_id, &expr_method.receiver)?;
                 place.projections.push(ContractProjection::IterElements);
                 return Some(place);
             }
@@ -1227,10 +1230,18 @@ impl<'tcx> Property<'tcx> {
 /// (without the projection) if `IterElements` was present.
 fn strip_iter_elements<'tcx>(arg: &mut PropertyArg<'tcx>) -> Option<ContractPlace<'tcx>> {
     if let PropertyArg::Place(place) = arg {
-        if place.projections.iter().any(|p| matches!(p, ContractProjection::IterElements)) {
+        if place
+            .projections
+            .iter()
+            .any(|p| matches!(p, ContractProjection::IterElements))
+        {
             let mut container = place.clone();
-            container.projections.retain(|p| !matches!(p, ContractProjection::IterElements));
-            place.projections.retain(|p| !matches!(p, ContractProjection::IterElements));
+            container
+                .projections
+                .retain(|p| !matches!(p, ContractProjection::IterElements));
+            place
+                .projections
+                .retain(|p| !matches!(p, ContractProjection::IterElements));
             return Some(container);
         }
     }

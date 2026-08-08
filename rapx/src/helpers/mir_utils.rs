@@ -3,8 +3,8 @@ use rustc_hir::{
     def_id::{DefId, LocalDefId},
 };
 use rustc_middle::{
-    mir::{BasicBlock, ConstValue, Local, Operand, Place, Rvalue, StatementKind, TerminatorKind},
     mir::interpret::{AllocId, GlobalAlloc},
+    mir::{BasicBlock, ConstValue, Local, Operand, Place, Rvalue, StatementKind, TerminatorKind},
     ty::{ConstKind, GenericArgKind, Ty, TyCtxt, TyKind},
 };
 use rustc_span::Symbol;
@@ -12,7 +12,7 @@ use rustc_span::Symbol;
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    analysis::alias::{collect_local_origins, LocalOriginMap},
+    analysis::alias::{LocalOriginMap, collect_local_origins},
     helpers::mir_scan::Checkpoint,
     verify::def_use::PlaceKey,
 };
@@ -25,8 +25,12 @@ pub(crate) fn pointee_ty<'tcx>(ty: Ty<'tcx>) -> Option<Ty<'tcx>> {
 }
 
 pub(crate) fn dep_callee_def_id(func: &Operand<'_>) -> Option<DefId> {
-    let Operand::Constant(func_constant) = func else { return None };
-    let TyKind::FnDef(def_id, _) = func_constant.const_.ty().kind() else { return None };
+    let Operand::Constant(func_constant) = func else {
+        return None;
+    };
+    let TyKind::FnDef(def_id, _) = func_constant.const_.ty().kind() else {
+        return None;
+    };
     Some(*def_id)
 }
 
@@ -197,14 +201,16 @@ pub fn has_crate(tcx: TyCtxt<'_>, name: &str) -> bool {
 
 /// Extracts the source `Place` from an rvalue for simple forwarding operations
 /// (copy, move, cast, reference, raw-pointer, copy-for-deref).
-pub fn rvalue_source_place<'a, 'tcx>(rvalue: &'a Rvalue<'tcx>) -> Option<&'a rustc_middle::mir::Place<'tcx>> {
+pub fn rvalue_source_place<'a, 'tcx>(
+    rvalue: &'a Rvalue<'tcx>,
+) -> Option<&'a rustc_middle::mir::Place<'tcx>> {
     use rustc_middle::mir::{Operand, Rvalue};
     match rvalue {
         Rvalue::Use(Operand::Copy(place), ..)
         | Rvalue::Use(Operand::Move(place), ..)
         | Rvalue::Cast(_, Operand::Copy(place), _)
         | Rvalue::Cast(_, Operand::Move(place), _)
-        |         Rvalue::Ref(_, _, place)
+        | Rvalue::Ref(_, _, place)
         | Rvalue::RawPtr(_, place)
         | Rvalue::CopyForDeref(place) => Some(place),
         _ => None,
@@ -232,10 +238,7 @@ pub fn operand_mir_place<'a, 'tcx>(operand: &'a Operand<'tcx>) -> Option<&'a Pla
 }
 
 /// Return the destination local for a checkpoint's call or deref.
-pub fn call_destination<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    checkpoint: &Checkpoint<'tcx>,
-) -> Option<Local> {
+pub fn call_destination<'tcx>(tcx: TyCtxt<'tcx>, checkpoint: &Checkpoint<'tcx>) -> Option<Local> {
     if checkpoint.kind == crate::helpers::mir_scan::CheckpointKind::RawPtrDeref {
         return checkpoint.destination;
     }
@@ -251,10 +254,7 @@ pub fn call_destination<'tcx>(
 
 /// Follow local-origin associations transitively to resolve to the
 /// ultimate source (parameter or root local) and accumulated field path.
-pub fn deep_resolve_place(
-    mut local: usize,
-    origins: &LocalOriginMap,
-) -> (usize, Vec<usize>) {
+pub fn deep_resolve_place(mut local: usize, origins: &LocalOriginMap) -> (usize, Vec<usize>) {
     let mut seen = HashSet::new();
     let mut all_fields: Vec<usize> = Vec::new();
     loop {
@@ -364,10 +364,7 @@ pub fn blocks_reachable_after_call(
 // ── MIR place alias mapping ──────────────────────────────────────
 
 /// Build a mapping from MIR locals to their resolved PlaceKey origins.
-pub fn collect_place_aliases(
-    tcx: TyCtxt<'_>,
-    def_id: DefId,
-) -> HashMap<Local, PlaceKey> {
+pub fn collect_place_aliases(tcx: TyCtxt<'_>, def_id: DefId) -> HashMap<Local, PlaceKey> {
     collect_local_origins(tcx, def_id)
         .into_iter()
         .map(|(local, (origin_local, fields))| {
@@ -406,18 +403,14 @@ pub fn rvalue_any_place_matching<'tcx>(
             #[cfg(rapx_rustc_ge_196)]
             Operand::RuntimeChecks(_) => false,
         }),
-        _ => rvalue_source_place(rvalue)
-            .map_or(false, |place| pred(place)),
+        _ => rvalue_source_place(rvalue).map_or(false, |place| pred(place)),
     }
 }
 
 // ── Pointer arithmetic origin tracing ────────────────────────────
 
 /// Trace a place back to its root local via local origin map.
-pub fn trace_place_root(
-    origins: &LocalOriginMap,
-    place: &PlaceKey,
-) -> Option<(usize, Vec<usize>)> {
+pub fn trace_place_root(origins: &LocalOriginMap, place: &PlaceKey) -> Option<(usize, Vec<usize>)> {
     let Some(local) = place.local() else {
         return None;
     };
@@ -447,11 +440,7 @@ pub fn const_value_bytes<'tcx>(
 }
 
 /// Read bytes from a global allocation.
-pub fn alloc_id_bytes<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    alloc_id: AllocId,
-    depth: usize,
-) -> Option<Vec<u8>> {
+pub fn alloc_id_bytes<'tcx>(tcx: TyCtxt<'tcx>, alloc_id: AllocId, depth: usize) -> Option<Vec<u8>> {
     if depth > 4 {
         return None;
     }

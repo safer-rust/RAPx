@@ -1,7 +1,7 @@
 use super::statistic::Statistics;
-use crate::{rap_debug, rap_info, rap_trace};
 #[cfg(not(rapx_has_skip_norm_wip))]
 use crate::compat::SkipNormWip;
+use crate::{rap_debug, rap_info, rap_trace};
 
 use rustc_hir::{
     BodyId, BodyOwnerKind, FnDecl,

@@ -129,7 +129,6 @@ impl<'tcx> Analysis for ApiDependencyAnalyzer<'tcx> {
                 .expect("failed to dump API graph");
         }
     }
-
 }
 impl<'tcx> ApiDependencyAnalyzer<'tcx> {
     pub fn get_api_dependency_graph(&self) -> ApiDependencyGraph<'tcx> {

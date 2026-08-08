@@ -16,7 +16,7 @@ use z3::ast::{Ast, Int};
 use crate::compat::{FxHashSet, Spanned};
 use crate::verify::call_summary::{self, CallEffect};
 
-use super::state::{AllocId, Provenance, VmState, VmValue, ValueInvariants};
+use super::state::{AllocId, Provenance, ValueInvariants, VmState, VmValue};
 
 const MAX_INLINE_DEPTH: usize = 5;
 
@@ -49,8 +49,14 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             if self.tcx.is_mir_available(c) {
                 let name = crate::helpers::mir_utils::call_name(self.tcx, func);
                 let has_fn_sim = crate::verify::call_summary::fn_simulator::lookup_effect(
-                    self.tcx, caller_def_id, Some(c), &name, func, destination,
-                ).is_some();
+                    self.tcx,
+                    caller_def_id,
+                    Some(c),
+                    &name,
+                    func,
+                    destination,
+                )
+                .is_some();
                 if !has_fn_sim {
                     if self.exec_inline_call(c, &arg_values, destination, 0) {
                         self.materialize_const_bytes_after_call(args, destination);
@@ -61,12 +67,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             }
         }
 
-        let summary = call_summary::effect_summary(
-            self.tcx,
-            caller_def_id,
-            func,
-            destination,
-        );
+        let summary = call_summary::effect_summary(self.tcx, caller_def_id, func, destination);
 
         self.last_call_name = summary.name.clone();
 
@@ -91,7 +92,8 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     return;
                 }
             }
-            self.notes.push(format!("unsupported call: {}", summary.name));
+            self.notes
+                .push(format!("unsupported call: {}", summary.name));
             let dest_ty = self.body.local_decls[destination].ty;
             self.set_local(
                 destination,
@@ -117,17 +119,18 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             let dest_ty = dv.ty;
             let pointee_is_byte_like = match dest_ty.kind() {
                 rustc_middle::ty::TyKind::RawPtr(inner, _)
-                | rustc_middle::ty::TyKind::Ref(_, inner, _) => {
-                    match inner.kind() {
-                        rustc_middle::ty::TyKind::Uint(rustc_middle::ty::UintTy::U8)
-                        | rustc_middle::ty::TyKind::Int(rustc_middle::ty::IntTy::I8) => true,
-                        rustc_middle::ty::TyKind::Array(elem_ty, _)
-                        | rustc_middle::ty::TyKind::Slice(elem_ty) => {
-                            matches!(elem_ty.kind(), rustc_middle::ty::TyKind::Uint(rustc_middle::ty::UintTy::U8))
-                        }
-                        _ => false,
+                | rustc_middle::ty::TyKind::Ref(_, inner, _) => match inner.kind() {
+                    rustc_middle::ty::TyKind::Uint(rustc_middle::ty::UintTy::U8)
+                    | rustc_middle::ty::TyKind::Int(rustc_middle::ty::IntTy::I8) => true,
+                    rustc_middle::ty::TyKind::Array(elem_ty, _)
+                    | rustc_middle::ty::TyKind::Slice(elem_ty) => {
+                        matches!(
+                            elem_ty.kind(),
+                            rustc_middle::ty::TyKind::Uint(rustc_middle::ty::UintTy::U8)
+                        )
                     }
-                }
+                    _ => false,
+                },
                 _ => false,
             };
             if pointee_is_byte_like {
@@ -175,9 +178,11 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 return false;
             }
         }
-        
+
         // Count return points — if > 1, the inline is imprecise.
-        let return_count = callee_body.basic_blocks.iter()
+        let return_count = callee_body
+            .basic_blocks
+            .iter()
             .filter(|bb| matches!(bb.terminator().kind, TerminatorKind::Return))
             .count();
         if return_count > 1 {
@@ -268,7 +273,9 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 if let Err(reason) = self.exec_statement(block, si, stmt) {
                     self.notes.push(format!(
                         "inline: unsupported stmt at bb{}#{}: {}",
-                        block.as_usize(), si, reason.message,
+                        block.as_usize(),
+                        si,
+                        reason.message,
                     ));
                 }
             }
@@ -285,7 +292,12 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 TerminatorKind::Return => {
                     // Return value captured in local_0
                 }
-                TerminatorKind::Assert { cond, expected, target, .. } => {
+                TerminatorKind::Assert {
+                    cond,
+                    expected,
+                    target,
+                    ..
+                } => {
                     let cond_val = self.value_of_operand(cond);
                     if *expected {
                         let zero = Int::from_u64(self.ctx, 0);
@@ -368,7 +380,10 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     self.set_local(dest, val);
                 }
             }
-            CallEffect::ReturnTupleFieldLength { field: _field, from_arg: _from_arg } => {
+            CallEffect::ReturnTupleFieldLength {
+                field: _field,
+                from_arg: _from_arg,
+            } => {
                 if args.is_empty() {
                     return;
                 }
@@ -376,8 +391,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 if let TyKind::Tuple(elem_tys) = dest_ty.kind() {
                     for f in 0..elem_tys.len() {
                         let field_ty = elem_tys[f];
-                        let base_prov = self.locals.get(&dest)
-                            .and_then(|v| v.provenance.clone());
+                        let base_prov = self.locals.get(&dest).and_then(|v| v.provenance.clone());
                         let field_val = VmValue {
                             term: args[0].term.clone(),
                             ty: field_ty,
@@ -412,7 +426,9 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         || self.last_call_name.contains("::CString");
                     if is_vec {
                         if let Some(ref prov) = val.provenance {
-                            if let Some(data_alloc) = self.slice_data_allocations.get(&prov.alloc_id).copied() {
+                            if let Some(data_alloc) =
+                                self.slice_data_allocations.get(&prov.alloc_id).copied()
+                            {
                                 if let Some(data_base) = self.allocation_base(data_alloc).cloned() {
                                     val.term = data_base;
                                     val.provenance = Some(Provenance {
@@ -426,7 +442,11 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     self.set_local(dest, val);
                 }
             }
-            CallEffect::ReturnPointerAdd { base_arg, offset_arg, stride } => {
+            CallEffect::ReturnPointerAdd {
+                base_arg,
+                offset_arg,
+                stride,
+            } => {
                 if let (Some(base), Some(offset)) = (args.get(*base_arg), args.get(*offset_arg)) {
                     let stride_bytes = stride.unwrap_or(1);
                     let adjusted_offset = if stride_bytes == 1 {
@@ -436,11 +456,9 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         Int::mul(self.ctx, &[&offset.term, &stride_term])
                     };
                     let new_term = Int::add(self.ctx, &[&base.term, &adjusted_offset]);
-                    let adjusted_provenance = base.provenance.as_ref().map(|prov| {
-                        Provenance {
-                            alloc_id: prov.alloc_id,
-                            offset: Int::add(self.ctx, &[&prov.offset, &adjusted_offset]),
-                        }
+                    let adjusted_provenance = base.provenance.as_ref().map(|prov| Provenance {
+                        alloc_id: prov.alloc_id,
+                        offset: Int::add(self.ctx, &[&prov.offset, &adjusted_offset]),
                     });
                     // Preserve alignment if the added offset is compatible
                     let align_n = self.compute_pointer_add_align(base, offset, stride_bytes);
@@ -459,17 +477,19 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     self.set_local(dest, val);
                 }
             }
-            CallEffect::ReturnPointerSub { base_arg, offset_arg, stride } => {
+            CallEffect::ReturnPointerSub {
+                base_arg,
+                offset_arg,
+                stride,
+            } => {
                 if let (Some(base), Some(offset)) = (args.get(*base_arg), args.get(*offset_arg)) {
                     let stride_bytes = stride.unwrap_or(1);
                     let stride_term = Int::from_u64(self.ctx, stride_bytes);
                     let scaled = Int::mul(self.ctx, &[&offset.term, &stride_term]);
                     let new_term = Int::sub(self.ctx, &[&base.term, &scaled]);
-                    let adjusted_provenance = base.provenance.as_ref().map(|prov| {
-                        Provenance {
-                            alloc_id: prov.alloc_id,
-                            offset: Int::sub(self.ctx, &[&prov.offset, &scaled]),
-                        }
+                    let adjusted_provenance = base.provenance.as_ref().map(|prov| Provenance {
+                        alloc_id: prov.alloc_id,
+                        offset: Int::sub(self.ctx, &[&prov.offset, &scaled]),
                     });
                     let align_n = self.compute_pointer_add_align(base, offset, stride_bytes);
                     let val = VmValue {
@@ -501,13 +521,24 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 } else {
                     let dest_ty = self.body.local_decls[dest].ty;
                     let term = self.fresh_int(&format!("ret_nz_{}", dest.as_usize()));
-                    self.set_local(dest, VmValue {
-                        term, ty: dest_ty, provenance: None,
-                        invariants: ValueInvariants { non_null: true, ..Default::default() },
-                    });
+                    self.set_local(
+                        dest,
+                        VmValue {
+                            term,
+                            ty: dest_ty,
+                            provenance: None,
+                            invariants: ValueInvariants {
+                                non_null: true,
+                                ..Default::default()
+                            },
+                        },
+                    );
                 }
             }
-            CallEffect::ReturnAligned { align: _, ty_name: _ } => {
+            CallEffect::ReturnAligned {
+                align: _,
+                ty_name: _,
+            } => {
                 if let Some(mut existing) = self.locals.get(&dest).cloned() {
                     existing.invariants.aligned = true;
                     existing.invariants.non_null = true;
@@ -515,15 +546,25 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 } else {
                     let dest_ty = self.body.local_decls[dest].ty;
                     let term = self.fresh_int(&format!("ret_align_{}", dest.as_usize()));
-                    self.set_local(dest, VmValue {
-                        term, ty: dest_ty, provenance: None,
-                        invariants: ValueInvariants { aligned: true, non_null: true, ..Default::default() },
-                    });
+                    self.set_local(
+                        dest,
+                        VmValue {
+                            term,
+                            ty: dest_ty,
+                            provenance: None,
+                            invariants: ValueInvariants {
+                                aligned: true,
+                                non_null: true,
+                                ..Default::default()
+                            },
+                        },
+                    );
                 }
             }
             CallEffect::ReturnLengthOfArg { arg } => {
                 if let Some(arg_val) = args.get(*arg) {
-                    let effective_alloc_id = arg_val.provenance_alloc_id()
+                    let effective_alloc_id = arg_val
+                        .provenance_alloc_id()
                         .and_then(|pid| self.slice_data_allocations.get(&pid).copied())
                         .or_else(|| arg_val.provenance_alloc_id());
 
@@ -532,7 +573,12 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         // If the allocation has an element type, divide the
                         // byte-aligned size by the element size to return the
                         // number of elements (e.g. slice length).
-                        if let Some(elem_ty) = self.allocations.iter().find(|a| a.id == alloc_id).and_then(|a| a.element_ty) {
+                        if let Some(elem_ty) = self
+                            .allocations
+                            .iter()
+                            .find(|a| a.id == alloc_id)
+                            .and_then(|a| a.element_ty)
+                        {
                             let elem_size = self.size_of_ty(elem_ty) as u64;
                             if elem_size > 1 {
                                 if let Some(size) = self.allocation_size(alloc_id) {
@@ -614,42 +660,63 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         // For locally-created Vec-like types: create a heap data
                         // allocation on first mutation. (Param Vecs already have
                         // an external allocation set by init_parameters.)
-                        let is_vec = crate::verify::call_summary::fn_simulator::is_vec_push(&self.last_call_name);
-                        let is_external = self.allocations.iter()
+                        let is_vec = crate::verify::call_summary::fn_simulator::is_vec_push(
+                            &self.last_call_name,
+                        );
+                        let is_external = self
+                            .allocations
+                            .iter()
                             .any(|a| a.id == prov.alloc_id && a.is_external);
                         if is_vec && !is_external {
                             let elem_ty = match arg_val.ty.kind() {
-                                TyKind::Ref(_, inner, _) | TyKind::RawPtr(inner, _) => self.vec_elem_ty(*inner),
+                                TyKind::Ref(_, inner, _) | TyKind::RawPtr(inner, _) => {
+                                    self.vec_elem_ty(*inner)
+                                }
                                 _ => self.vec_elem_ty(arg_val.ty),
                             };
-                            let heap_align = elem_ty.map(|ty| self.align_of_ty(ty)).unwrap_or(1).max(1);
-                            if let Some(old_data) = self.slice_data_allocations.get(&prov.alloc_id).copied() {
+                            let heap_align =
+                                elem_ty.map(|ty| self.align_of_ty(ty)).unwrap_or(1).max(1);
+                            if let Some(old_data) =
+                                self.slice_data_allocations.get(&prov.alloc_id).copied()
+                            {
                                 // Subsequent mutation: invalidate old heap data.
                                 self.dead_allocations.insert(old_data);
                                 let max_size = Int::from_u64(self.ctx, i64::MAX as u64);
-                                let (data_alloc, _) = self.allocate_external(max_size, heap_align, elem_ty);
-                                self.slice_data_allocations.insert(prov.alloc_id, data_alloc);
+                                let (data_alloc, _) =
+                                    self.allocate_external(max_size, heap_align, elem_ty);
+                                self.slice_data_allocations
+                                    .insert(prov.alloc_id, data_alloc);
                             } else {
                                 // First mutation: create heap data allocation.
                                 let max_size = Int::from_u64(self.ctx, i64::MAX as u64);
-                                let (data_alloc, _) = self.allocate_external(max_size, heap_align, elem_ty);
-                                self.slice_data_allocations.insert(prov.alloc_id, data_alloc);
+                                let (data_alloc, _) =
+                                    self.allocate_external(max_size, heap_align, elem_ty);
+                                self.slice_data_allocations
+                                    .insert(prov.alloc_id, data_alloc);
                             }
                         }
                         // When offset is concrete, only mark the bytes actually
                         // written. For symbolic offsets, mark entire allocation.
-                        let off_u64 = prov.offset.as_u64()
+                        let off_u64 = prov
+                            .offset
+                            .as_u64()
                             .or_else(|| prov.offset.simplify().as_u64());
                         if let Some(off) = off_u64 {
                             if off == 0 {
                                 self.init_allocations.insert(prov.alloc_id);
                             }
                             let elem_size = match arg_val.ty.kind() {
-                                rustc_middle::ty::TyKind::Ref(_, inner, _) => self.size_of_ty(*inner) as usize,
+                                rustc_middle::ty::TyKind::Ref(_, inner, _) => {
+                                    self.size_of_ty(*inner) as usize
+                                }
                                 _ => 0,
                             };
-                            let write_size = if elem_size > 0 { elem_size } else {
-                                self.allocation_size(prov.alloc_id).and_then(|s| s.as_u64()).unwrap_or(0) as usize
+                            let write_size = if elem_size > 0 {
+                                elem_size
+                            } else {
+                                self.allocation_size(prov.alloc_id)
+                                    .and_then(|s| s.as_u64())
+                                    .unwrap_or(0) as usize
                             };
                             let end = (off as usize + write_size).min(4096);
                             for byte_off in (off as usize)..end {
@@ -681,8 +748,14 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 };
                 self.set_local(dest, val);
             }
-            CallEffect::ReturnFreshAllocation { pointer_arg, size_arg, elem_size } => {
-                if let (Some(ptr_val), Some(size_val)) = (args.get(*pointer_arg), args.get(*size_arg)) {
+            CallEffect::ReturnFreshAllocation {
+                pointer_arg,
+                size_arg,
+                elem_size,
+            } => {
+                if let (Some(ptr_val), Some(size_val)) =
+                    (args.get(*pointer_arg), args.get(*size_arg))
+                {
                     let elem_sz = Int::from_u64(self.ctx, *elem_size);
                     let total = Int::mul(self.ctx, &[&size_val.term, &elem_sz]);
                     let dest_ty = self.body.local_decls[dest].ty;
@@ -696,17 +769,22 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     };
                     let prov = Provenance {
                         alloc_id,
-                        offset: ptr_val.provenance.as_ref()
+                        offset: ptr_val
+                            .provenance
+                            .as_ref()
                             .map(|p| p.offset.clone())
                             .unwrap_or_else(|| Int::from_u64(self.ctx, 0)),
                     };
                     // If return is a reference, register slice/pointee data
                     if let Some(ref dest_alloc_id) = self.local_alloc_ids.get(&dest).copied() {
-                        self.slice_data_allocations.insert(dest_alloc_id.clone(), alloc_id);
+                        self.slice_data_allocations
+                            .insert(dest_alloc_id.clone(), alloc_id);
                     }
                     // Propagate init status and byte-level tracking from the source pointer
                     // For fresh allocations, the init status is inherited from the source.
-                    let is_external = self.allocations.iter()
+                    let is_external = self
+                        .allocations
+                        .iter()
                         .any(|a| a.id == alloc_id && a.is_external);
                     if is_external {
                         self.init_allocations.insert(alloc_id);
@@ -719,28 +797,36 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                             self.init_allocations.insert(alloc_id);
                         }
                         // Copy byte-level tracking
-                        let byte_pairs: Vec<_> = self.byte_values.iter()
+                        let byte_pairs: Vec<_> = self
+                            .byte_values
+                            .iter()
                             .filter(|((aid, _), _)| *aid == source_prov.alloc_id)
                             .map(|((_, off), term)| (*off, term.clone()))
                             .collect();
                         for (off, term) in byte_pairs {
                             self.record_byte_value(alloc_id, off, term);
                         }
-                        let init_bytes: Vec<_> = self.byte_init.iter()
+                        let init_bytes: Vec<_> = self
+                            .byte_init
+                            .iter()
                             .filter(|(aid, _)| *aid == source_prov.alloc_id)
                             .map(|(_, off)| *off)
                             .collect();
                         for off in init_bytes {
                             self.byte_init.insert((alloc_id, off));
                         }
-                        let nul_offs: Vec<_> = self.known_nul_offsets.iter()
+                        let nul_offs: Vec<_> = self
+                            .known_nul_offsets
+                            .iter()
                             .filter(|(aid, _)| *aid == source_prov.alloc_id)
                             .map(|(_, off)| *off)
                             .collect();
                         for off in nul_offs {
                             self.known_nul_offsets.insert((alloc_id, off));
                         }
-                        let non_nul_offs: Vec<_> = self.known_non_nul_offsets.iter()
+                        let non_nul_offs: Vec<_> = self
+                            .known_non_nul_offsets
+                            .iter()
                             .filter(|(aid, _)| *aid == source_prov.alloc_id)
                             .map(|(_, off)| *off)
                             .collect();
@@ -748,18 +834,27 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                             self.known_non_nul_offsets.insert((alloc_id, off));
                         }
                     }
-                    self.set_local(dest, VmValue {
-                        term: ptr_val.term.clone(),
-                        ty: dest_ty,
-                        provenance: Some(prov),
-                        invariants: ValueInvariants {
-                            non_null: true, init: true, in_bounds: true, aligned: true,
-                            ..ValueInvariants::default()
+                    self.set_local(
+                        dest,
+                        VmValue {
+                            term: ptr_val.term.clone(),
+                            ty: dest_ty,
+                            provenance: Some(prov),
+                            invariants: ValueInvariants {
+                                non_null: true,
+                                init: true,
+                                in_bounds: true,
+                                aligned: true,
+                                ..ValueInvariants::default()
+                            },
                         },
-                    });
+                    );
                 }
             }
-            CallEffect::ReturnNewAllocation { size_arg, elem_size } => {
+            CallEffect::ReturnNewAllocation {
+                size_arg,
+                elem_size,
+            } => {
                 if let Some(size_val) = args.get(*size_arg) {
                     let elem_sz = Int::from_u64(self.ctx, *elem_size);
                     let total = Int::mul(self.ctx, &[&size_val.term, &elem_sz]);
@@ -772,21 +867,24 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         self.slice_data_allocations.insert(dest_alloc_id, alloc_id);
                     }
                     self.init_allocations.insert(alloc_id);
-                    self.set_local(dest, VmValue {
-                        term: base,
-                        ty: dest_ty,
-                        provenance: dest_alloc_id.map(|stack_id| Provenance {
-                            alloc_id: stack_id,
-                            offset: Int::from_u64(self.ctx, 0),
-                        }),
-                        invariants: ValueInvariants {
-                            non_null: true,
-                            init: true,
-                            in_bounds: true,
-                            aligned: true,
-                            ..ValueInvariants::default()
+                    self.set_local(
+                        dest,
+                        VmValue {
+                            term: base,
+                            ty: dest_ty,
+                            provenance: dest_alloc_id.map(|stack_id| Provenance {
+                                alloc_id: stack_id,
+                                offset: Int::from_u64(self.ctx, 0),
+                            }),
+                            invariants: ValueInvariants {
+                                non_null: true,
+                                init: true,
+                                in_bounds: true,
+                                aligned: true,
+                                ..ValueInvariants::default()
+                            },
                         },
-                    });
+                    );
                 }
             }
             CallEffect::ReturnNewAllocationFromBox { box_arg: _ } => {
@@ -802,43 +900,51 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     self.slice_data_allocations.insert(*dest_alloc_id, alloc_id);
                 }
                 self.init_allocations.insert(alloc_id);
-                self.set_local(dest, VmValue {
-                    term: base,
-                    ty: dest_ty,
-                    provenance: dest_alloc_id.map(|stack_id| Provenance {
-                        alloc_id: stack_id,
-                        offset: Int::from_u64(self.ctx, 0),
-                    }),
-                    invariants: ValueInvariants {
-                        non_null: true,
-                        init: true,
-                        in_bounds: true,
-                        aligned: true,
-                        ..ValueInvariants::default()
+                self.set_local(
+                    dest,
+                    VmValue {
+                        term: base,
+                        ty: dest_ty,
+                        provenance: dest_alloc_id.map(|stack_id| Provenance {
+                            alloc_id: stack_id,
+                            offset: Int::from_u64(self.ctx, 0),
+                        }),
+                        invariants: ValueInvariants {
+                            non_null: true,
+                            init: true,
+                            in_bounds: true,
+                            aligned: true,
+                            ..ValueInvariants::default()
+                        },
                     },
-                });
+                );
             }
             CallEffect::ReturnBoxFromVec { arg } => {
                 if let Some(vec_val) = args.get(*arg) {
                     if let Some(ref prov) = vec_val.provenance {
-                        if let Some(heap_alloc_id) = self.slice_data_allocations.get(&prov.alloc_id).copied() {
+                        if let Some(heap_alloc_id) =
+                            self.slice_data_allocations.get(&prov.alloc_id).copied()
+                        {
                             if let Some(heap_base) = self.allocation_base(heap_alloc_id).cloned() {
                                 let dest_ty = self.body.local_decls[dest].ty;
-                                self.set_local(dest, VmValue {
-                                    term: heap_base,
-                                    ty: dest_ty,
-                                    provenance: Some(Provenance {
-                                        alloc_id: heap_alloc_id,
-                                        offset: Int::from_u64(self.ctx, 0),
-                                    }),
-                                    invariants: ValueInvariants {
-                                        non_null: true,
-                                        init: true,
-                                        in_bounds: true,
-                                        aligned: true,
-                                        ..ValueInvariants::default()
+                                self.set_local(
+                                    dest,
+                                    VmValue {
+                                        term: heap_base,
+                                        ty: dest_ty,
+                                        provenance: Some(Provenance {
+                                            alloc_id: heap_alloc_id,
+                                            offset: Int::from_u64(self.ctx, 0),
+                                        }),
+                                        invariants: ValueInvariants {
+                                            non_null: true,
+                                            init: true,
+                                            in_bounds: true,
+                                            aligned: true,
+                                            ..ValueInvariants::default()
+                                        },
                                     },
-                                });
+                                );
                             }
                         }
                     }
@@ -856,7 +962,10 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     self.set_local(dest, val);
                 }
             }
-            CallEffect::ChecksIndexBoundsDisjoint { indices_arg, len_arg } => {
+            CallEffect::ChecksIndexBoundsDisjoint {
+                indices_arg,
+                len_arg,
+            } => {
                 let indices = args.get(*indices_arg);
                 let len_val = args.get(*len_arg);
                 if let (Some(indices_val), Some(len_val)) = (indices, len_val) {
@@ -865,16 +974,18 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         _ => indices_val.ty,
                     };
                     if let rustc_middle::ty::TyKind::Array(_elem_ty, _const_len) = arr_ty.kind() {
-                        let alloc_id = indices_val.provenance_alloc_id()
-                            .or_else(|| {
-                                // Slicer may have dropped the &indices
-                                // assignment, losing provenance.  Fall back
-                                 let fallback = self.locals.values().find_map(|v| {
-                                    if v.ty == arr_ty { v.provenance_alloc_id() }
-                                    else { None }
-                                });
-                                fallback
+                        let alloc_id = indices_val.provenance_alloc_id().or_else(|| {
+                            // Slicer may have dropped the &indices
+                            // assignment, losing provenance.  Fall back
+                            let fallback = self.locals.values().find_map(|v| {
+                                if v.ty == arr_ty {
+                                    v.provenance_alloc_id()
+                                } else {
+                                    None
+                                }
                             });
+                            fallback
+                        });
                         if let Some(alloc_id) = alloc_id {
                             self.checked_bounds_disjoint
                                 .push((alloc_id, len_val.term.clone()));
@@ -903,10 +1014,19 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 }
                 let dest_ty = self.body.local_decls[dest].ty;
                 let term = self.fresh_int(&format!("ck_ok_{}", dest.as_usize()));
-                self.set_local( dest, VmValue { term, ty: dest_ty, provenance: None, invariants: ValueInvariants::default() });
+                self.set_local(
+                    dest,
+                    VmValue {
+                        term,
+                        ty: dest_ty,
+                        provenance: None,
+                        invariants: ValueInvariants::default(),
+                    },
+                );
             }
             _ => {
-                self.notes.push(format!("unhandled call effect: {:?}", effect));
+                self.notes
+                    .push(format!("unhandled call effect: {:?}", effect));
                 let dest_ty = self.body.local_decls[dest].ty;
                 let term = self.fresh_int(&format!("unk_{}", dest.as_usize()));
                 self.set_local(
@@ -945,10 +1065,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         None
     }
 
-    pub(crate) fn propagate_const_bytes_to_tracked(
-        &mut self,
-        args: &[Spanned<Operand<'tcx>>],
-    ) {
+    pub(crate) fn propagate_const_bytes_to_tracked(&mut self, args: &[Spanned<Operand<'tcx>>]) {
         let mut const_bytes: Option<(Vec<u8>, usize)> = None;
         let mut tracked_alloc: Option<AllocId> = None;
         let mut tracked_offset: usize = 0;
@@ -956,10 +1073,8 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         for (i, arg) in args.iter().enumerate() {
             let arg_val = self.value_of_operand(&arg.node);
             if const_bytes.is_none() {
-                let bytes_opt = super::state::extract_const_bytes_from_operand(
-                    self.tcx,
-                    &arg.node,
-                ).or_else(|| self.trace_to_const_bytes(&arg.node));
+                let bytes_opt = super::state::extract_const_bytes_from_operand(self.tcx, &arg.node)
+                    .or_else(|| self.trace_to_const_bytes(&arg.node));
                 if let Some(bytes) = bytes_opt {
                     const_bytes = Some((bytes, i));
                 }
@@ -977,11 +1092,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         if let (Some((bytes, _)), Some(alloc_id)) = (const_bytes, tracked_alloc) {
             for (j, &b) in bytes.iter().enumerate() {
                 let off = tracked_offset + j;
-                self.record_byte_value(
-                    alloc_id,
-                    off,
-                    Int::from_u64(self.ctx, b as u64),
-                );
+                self.record_byte_value(alloc_id, off, Int::from_u64(self.ctx, b as u64));
                 if b == 0 {
                     self.known_nul_offsets.insert((alloc_id, off));
                 } else {

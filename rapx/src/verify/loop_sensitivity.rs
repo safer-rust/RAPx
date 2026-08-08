@@ -282,9 +282,7 @@ impl<'tcx> LoopSensitivityAnalyzer<'tcx> {
                     )
                     .unwrap_or(0);
                     let needed_backedges = distance_backedges.max(branch_backedges);
-                    hints.push(DataflowDistanceHint {
-                        needed_backedges,
-                    });
+                    hints.push(DataflowDistanceHint { needed_backedges });
                     break;
                 }
             }
@@ -340,9 +338,7 @@ impl<'tcx> LoopSensitivityAnalyzer<'tcx> {
                 };
 
                 if let Some(witness_iteration) = witness_iteration {
-                    hints.push(NumericRangeHint {
-                        witness_iteration,
-                    });
+                    hints.push(NumericRangeHint { witness_iteration });
                     break;
                 }
             }
@@ -409,9 +405,7 @@ fn loop_components(graph: &PathGraph<'_>) -> Vec<LoopComponent> {
         }
         let mut blocks = scc.nodes.clone();
         blocks.insert(scc.enter);
-        components.push(LoopComponent {
-            blocks,
-        });
+        components.push(LoopComponent { blocks });
     }
     components
 }

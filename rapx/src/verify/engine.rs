@@ -19,7 +19,7 @@ use super::{
 };
 use crate::helpers::mir_scan::{Checkpoint, CheckpointLocation};
 
-use super::{vm::SymbolicVm, property_checker::PropertyChecker};
+use super::{property_checker::PropertyChecker, vm::SymbolicVm};
 
 const ENGINE_INLINE_DEPTH: usize = 3;
 
@@ -73,24 +73,31 @@ impl<'tcx> VerifyEngine<'tcx> {
                     caller_contracts
                         .iter()
                         .filter(|c| !matches!(c.kind, super::contract::PropertyKind::Unknown))
-                        .map(|c| BackwardItem::ContractFact { property: c.clone() }),
+                        .map(|c| BackwardItem::ContractFact {
+                            property: c.clone(),
+                        }),
                 );
             }
             items.extend(backward.items);
 
             // Inject inline callees for unsupported calls.
-            let items = self.inject_inline_callees(
-                items,
-                checkpoint.caller,
-                ENGINE_INLINE_DEPTH,
-            );
+            let items = self.inject_inline_callees(items, checkpoint.caller, ENGINE_INLINE_DEPTH);
 
-            let wrapped = Self::wrap_items(backward.checkpoint, backward.path, backward.property.clone(), backward.roots, items);
+            let wrapped = Self::wrap_items(
+                backward.checkpoint,
+                backward.path,
+                backward.property.clone(),
+                backward.roots,
+                items,
+            );
 
             let vm_state = match self.vm.execute(&ctx, &wrapped) {
                 Ok(state) => state,
                 Err(reason) => {
-                    results.push((CheckResult::Unknown, format!("{} (vm error: {})", path_desc, reason.message)));
+                    results.push((
+                        CheckResult::Unknown,
+                        format!("{} (vm error: {})", path_desc, reason.message),
+                    ));
                     continue;
                 }
             };
@@ -146,37 +153,57 @@ impl<'tcx> VerifyEngine<'tcx> {
             match &item {
                 BackwardItem::Terminator { block, .. } => {
                     let terminator = body.basic_blocks[*block].terminator();
-                    if let TerminatorKind::Call { func, args, destination, .. } = &terminator.kind {
+                    if let TerminatorKind::Call {
+                        func,
+                        args,
+                        destination,
+                        ..
+                    } = &terminator.kind
+                    {
                         if let Some(callee) = crate::helpers::mir_utils::dep_callee_def_id(func) {
                             if tcx.is_mir_available(callee) {
                                 let summary = crate::verify::call_summary::effect_summary(
-                                    tcx, caller_def_id, func, destination.local,
+                                    tcx,
+                                    caller_def_id,
+                                    func,
+                                    destination.local,
                                 );
                                 let callee_body = tcx.optimized_mir(callee);
                                 let is_simple = callee_body.basic_blocks.len() <= 3
                                     && !callee_body.basic_blocks.iter().any(|bb| {
-                                        matches!(bb.terminator().kind, TerminatorKind::SwitchInt { .. })
+                                        matches!(
+                                            bb.terminator().kind,
+                                            TerminatorKind::SwitchInt { .. }
+                                        )
                                     })
-                                    && callee_body.basic_blocks.iter()
-                                        .filter(|bb| matches!(bb.terminator().kind, TerminatorKind::Return))
-                                        .count() <= 1;
+                                    && callee_body
+                                        .basic_blocks
+                                        .iter()
+                                        .filter(|bb| {
+                                            matches!(bb.terminator().kind, TerminatorKind::Return)
+                                        })
+                                        .count()
+                                        <= 1;
 
                                 if summary.unsupported && is_simple {
                                     // Extract caller arg locals
-                                    let arg_locals: Vec<rustc_middle::mir::Local> = args.iter()
-                                        .filter_map(|arg| {
-                                            match &arg.node {
-                                                rustc_middle::mir::Operand::Copy(p)
-                                                | rustc_middle::mir::Operand::Move(p)
-                                                    if p.projection.is_empty() => Some(p.local),
-                                                _ => None,
+                                    let arg_locals: Vec<rustc_middle::mir::Local> = args
+                                        .iter()
+                                        .filter_map(|arg| match &arg.node {
+                                            rustc_middle::mir::Operand::Copy(p)
+                                            | rustc_middle::mir::Operand::Move(p)
+                                                if p.projection.is_empty() =>
+                                            {
+                                                Some(p.local)
                                             }
+                                            _ => None,
                                         })
                                         .collect();
 
                                     if arg_locals.len() == args.len() {
                                         // Build callee items recursively
-                                        let callee_items = self.build_callee_items(callee, depth - 1);
+                                        let callee_items =
+                                            self.build_callee_items(callee, depth - 1);
                                         result.push(BackwardItem::CalleeEntry {
                                             callee,
                                             args: arg_locals,
@@ -202,11 +229,7 @@ impl<'tcx> VerifyEngine<'tcx> {
 
     /// Build a linear sequence of backward items for a callee's MIR body.
     /// Walks BFS from the entry block, collecting statements and terminators.
-    fn build_callee_items(
-        &self,
-        callee_def_id: DefId,
-        depth: usize,
-    ) -> Vec<BackwardItem<'tcx>> {
+    fn build_callee_items(&self, callee_def_id: DefId, depth: usize) -> Vec<BackwardItem<'tcx>> {
         let mut items: Vec<BackwardItem<'tcx>> = Vec::new();
         let tcx = self.slicer.tcx();
         let body = tcx.optimized_mir(callee_def_id);
@@ -234,35 +257,52 @@ impl<'tcx> VerifyEngine<'tcx> {
 
             // Recursively inline calls in the callee's terminators
             match &terminator.kind {
-                TerminatorKind::Call { func, args, destination, target, .. } => {
+                TerminatorKind::Call {
+                    func,
+                    args,
+                    destination,
+                    target,
+                    ..
+                } => {
                     if let Some(inner_callee) = crate::helpers::mir_utils::dep_callee_def_id(func) {
                         if tcx.is_mir_available(inner_callee) {
                             let summary = crate::verify::call_summary::effect_summary(
-                                tcx, callee_def_id, func, destination.local,
+                                tcx,
+                                callee_def_id,
+                                func,
+                                destination.local,
                             );
                             let inner_body = tcx.optimized_mir(inner_callee);
                             let is_simple = inner_body.basic_blocks.len() <= 3
                                 && !inner_body.basic_blocks.iter().any(|bb| {
                                     matches!(bb.terminator().kind, TerminatorKind::SwitchInt { .. })
                                 })
-                                && inner_body.basic_blocks.iter()
-                                    .filter(|bb| matches!(bb.terminator().kind, TerminatorKind::Return))
-                                    .count() <= 1;
+                                && inner_body
+                                    .basic_blocks
+                                    .iter()
+                                    .filter(|bb| {
+                                        matches!(bb.terminator().kind, TerminatorKind::Return)
+                                    })
+                                    .count()
+                                    <= 1;
 
                             if summary.unsupported && is_simple && depth > 0 {
-                                let arg_locals: Vec<rustc_middle::mir::Local> = args.iter()
-                                    .filter_map(|arg| {
-                                        match &arg.node {
-                                            rustc_middle::mir::Operand::Copy(p)
-                                            | rustc_middle::mir::Operand::Move(p)
-                                                if p.projection.is_empty() => Some(p.local),
-                                            _ => None,
+                                let arg_locals: Vec<rustc_middle::mir::Local> = args
+                                    .iter()
+                                    .filter_map(|arg| match &arg.node {
+                                        rustc_middle::mir::Operand::Copy(p)
+                                        | rustc_middle::mir::Operand::Move(p)
+                                            if p.projection.is_empty() =>
+                                        {
+                                            Some(p.local)
                                         }
+                                        _ => None,
                                     })
                                     .collect();
 
                                 if arg_locals.len() == args.len() {
-                                    let inner_items = self.build_callee_items(inner_callee, depth - 1);
+                                    let inner_items =
+                                        self.build_callee_items(inner_callee, depth - 1);
                                     items.push(BackwardItem::CalleeEntry {
                                         callee: inner_callee,
                                         args: arg_locals,
@@ -340,38 +380,46 @@ impl<'tcx> VerifyEngine<'tcx> {
         property: &Property<'tcx>,
         checkpoint: &Checkpoint<'tcx>,
     ) -> Property<'tcx> {
-        let new_args: Vec<super::contract::PropertyArg<'tcx>> = property.args.iter()
-            .map(|a| {
-                match a {
-                    super::contract::PropertyArg::Place(place) => {
-                        super::contract::PropertyArg::Place(Self::rebind_place(place, checkpoint))
-                    }
-                    super::contract::PropertyArg::Expr(super::contract::ContractExpr::Place(place)) => {
-                        super::contract::PropertyArg::Expr(super::contract::ContractExpr::Place(
-                            Self::rebind_place(place, checkpoint),
-                        ))
-                    }
-                    super::contract::PropertyArg::Expr(expr) => {
-                        super::contract::PropertyArg::Expr(Self::rebind_contract_expr(expr, checkpoint))
-                    }
-                    super::contract::PropertyArg::Predicates(predicates) => {
-                        let rebound: Vec<_> = predicates.iter().map(|p| {
+        let new_args: Vec<super::contract::PropertyArg<'tcx>> = property
+            .args
+            .iter()
+            .map(|a| match a {
+                super::contract::PropertyArg::Place(place) => {
+                    super::contract::PropertyArg::Place(Self::rebind_place(place, checkpoint))
+                }
+                super::contract::PropertyArg::Expr(super::contract::ContractExpr::Place(place)) => {
+                    super::contract::PropertyArg::Expr(super::contract::ContractExpr::Place(
+                        Self::rebind_place(place, checkpoint),
+                    ))
+                }
+                super::contract::PropertyArg::Expr(expr) => {
+                    super::contract::PropertyArg::Expr(Self::rebind_contract_expr(expr, checkpoint))
+                }
+                super::contract::PropertyArg::Predicates(predicates) => {
+                    let rebound: Vec<_> = predicates
+                        .iter()
+                        .map(|p| {
                             let lhs = Self::rebind_contract_expr(&p.lhs, checkpoint);
                             let rhs = Self::rebind_contract_expr(&p.rhs, checkpoint);
                             super::contract::NumericPredicate::new(lhs, p.op, rhs)
-                        }).collect();
-                        super::contract::PropertyArg::Predicates(rebound)
-                    }
-                    _ => a.clone(),
+                        })
+                        .collect();
+                    super::contract::PropertyArg::Predicates(rebound)
                 }
+                _ => a.clone(),
             })
             .collect();
 
-        let new_alternatives: Vec<Vec<Box<Property<'tcx>>>> = property.or_alternatives.iter().map(|group| {
-            group.iter().map(|p| {
-                Box::new(Self::bind_property_to_checkpoint(p, checkpoint))
-            }).collect()
-        }).collect();
+        let new_alternatives: Vec<Vec<Box<Property<'tcx>>>> = property
+            .or_alternatives
+            .iter()
+            .map(|group| {
+                group
+                    .iter()
+                    .map(|p| Box::new(Self::bind_property_to_checkpoint(p, checkpoint)))
+                    .collect()
+            })
+            .collect();
 
         Property {
             kind: property.kind.clone(),
@@ -412,11 +460,13 @@ impl<'tcx> VerifyEngine<'tcx> {
             super::contract::ContractExpr::Place(place) => {
                 super::contract::ContractExpr::Place(Self::rebind_place(place, checkpoint))
             }
-            super::contract::ContractExpr::Len(inner) => {
-                super::contract::ContractExpr::Len(Box::new(Self::rebind_contract_expr(inner, checkpoint)))
-            }
-            super::contract::ContractExpr::SizeOf(_) | super::contract::ContractExpr::AlignOf(_)
-            | super::contract::ContractExpr::Const(_) | super::contract::ContractExpr::ConstParam { .. }
+            super::contract::ContractExpr::Len(inner) => super::contract::ContractExpr::Len(
+                Box::new(Self::rebind_contract_expr(inner, checkpoint)),
+            ),
+            super::contract::ContractExpr::SizeOf(_)
+            | super::contract::ContractExpr::AlignOf(_)
+            | super::contract::ContractExpr::Const(_)
+            | super::contract::ContractExpr::ConstParam { .. }
             | super::contract::ContractExpr::Unknown => expr.clone(),
             super::contract::ContractExpr::IndexAccess { slice, index } => {
                 super::contract::ContractExpr::IndexAccess {
@@ -437,18 +487,14 @@ impl<'tcx> VerifyEngine<'tcx> {
                     expr: Box::new(Self::rebind_contract_expr(inner, checkpoint)),
                 }
             }
-            super::contract::ContractExpr::Min { a, b } => {
-                super::contract::ContractExpr::Min {
-                    a: Box::new(Self::rebind_contract_expr(a, checkpoint)),
-                    b: Box::new(Self::rebind_contract_expr(b, checkpoint)),
-                }
-            }
-            super::contract::ContractExpr::Max { a, b } => {
-                super::contract::ContractExpr::Max {
-                    a: Box::new(Self::rebind_contract_expr(a, checkpoint)),
-                    b: Box::new(Self::rebind_contract_expr(b, checkpoint)),
-                }
-            }
+            super::contract::ContractExpr::Min { a, b } => super::contract::ContractExpr::Min {
+                a: Box::new(Self::rebind_contract_expr(a, checkpoint)),
+                b: Box::new(Self::rebind_contract_expr(b, checkpoint)),
+            },
+            super::contract::ContractExpr::Max { a, b } => super::contract::ContractExpr::Max {
+                a: Box::new(Self::rebind_contract_expr(a, checkpoint)),
+                b: Box::new(Self::rebind_contract_expr(b, checkpoint)),
+            },
         }
     }
 
@@ -485,7 +531,10 @@ impl<'tcx> VerifyEngine<'tcx> {
             let vm_state = match self.vm.execute(&ctx, &backward) {
                 Ok(state) => state,
                 Err(reason) => {
-                    results.push((CheckResult::Unknown, format!("{} (vm error: {})", path_desc, reason.message)));
+                    results.push((
+                        CheckResult::Unknown,
+                        format!("{} (vm error: {})", path_desc, reason.message),
+                    ));
                     continue;
                 }
             };

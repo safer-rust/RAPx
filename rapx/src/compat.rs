@@ -28,36 +28,28 @@ use rustc_middle::ty::TyCtxt;
 
 /// Type alias for the return type of `predicates_of`.
 #[cfg(not(rapx_rustc_ge_199))]
-pub type GenericPredicatesC<'tcx> =
-    rustc_middle::ty::GenericPredicates<'tcx>;
+pub type GenericPredicatesC<'tcx> = rustc_middle::ty::GenericPredicates<'tcx>;
 #[cfg(rapx_rustc_ge_199)]
-pub type GenericPredicatesC<'tcx> =
-    rustc_middle::ty::GenericClauses<'tcx>;
+pub type GenericPredicatesC<'tcx> = rustc_middle::ty::GenericClauses<'tcx>;
 
 /// Fetch generic predicates/clauses for a definition.
 #[cfg(not(rapx_rustc_ge_199))]
 #[inline]
-pub fn predicates_of<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    def_id: DefId,
-) -> GenericPredicatesC<'tcx> {
+pub fn predicates_of<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> GenericPredicatesC<'tcx> {
     tcx.predicates_of(def_id)
 }
 #[cfg(rapx_rustc_ge_199)]
 #[inline]
-pub fn predicates_of<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    def_id: DefId,
-) -> GenericPredicatesC<'tcx> {
+pub fn predicates_of<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> GenericPredicatesC<'tcx> {
     tcx.clauses_of(def_id)
 }
 
 // ── OwnerId (rustc ≥ 1.99) ────────────────────────────────────────────
 
-#[cfg(not(rapx_rustc_ge_199))]
-pub use rustc_hir::hir_id::OwnerId;
 #[cfg(rapx_rustc_ge_199)]
 pub use rustc_hir::OwnerId;
+#[cfg(not(rapx_rustc_ge_199))]
+pub use rustc_hir::hir_id::OwnerId;
 
 // ── GenericArgsRef::get (Binder wrapping in rustc ≥ 1.99) ─────────────
 
@@ -70,10 +62,7 @@ pub fn args_get<'tcx>(
 }
 #[cfg(rapx_rustc_ge_199)]
 pub fn args_get<'tcx>(
-    args: &rustc_middle::ty::Binder<
-        'tcx,
-        &'tcx rustc_middle::ty::GenericArgs<'tcx>,
-    >,
+    args: &rustc_middle::ty::Binder<'tcx, &'tcx rustc_middle::ty::GenericArgs<'tcx>>,
     index: usize,
 ) -> Option<rustc_middle::ty::GenericArg<'tcx>> {
     args.skip_binder().get(index).copied()

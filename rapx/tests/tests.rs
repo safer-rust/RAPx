@@ -6,7 +6,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn project_path(dir: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join(dir)
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join(dir)
 }
 
 /// Count `  Path [` lines inside a function's output block.
@@ -211,7 +213,8 @@ const CMD_VERIFY_TARGETED_VM: &[&str] = &["verify", "--mode", "targeted"];
 const CMD_VERIFY_REPEAT_1_VM: &[&str] = &["verify", "--mode", "targeted", "--postfix-repeat", "1"];
 const CMD_VERIFY_REPEAT_2_VM: &[&str] = &["verify", "--mode", "targeted", "--postfix-repeat", "2"];
 const CMD_VERIFY_SKIP_INVARIANT_VM: &[&str] = &["verify", "--skip-invariant"];
-const CMD_VERIFY_TARGETED_SKIP_INVARIANT_VM: &[&str] = &["verify", "--mode", "targeted", "--skip-invariant"];
+const CMD_VERIFY_TARGETED_SKIP_INVARIANT_VM: &[&str] =
+    &["verify", "--mode", "targeted", "--skip-invariant"];
 
 macro_rules! verify_sound_vm {
     ($dir:literal, $func:literal) => {{
@@ -347,7 +350,10 @@ fn std_contracts_valid() {
         for entry in entries {
             assert!(entry["tag"].is_string(), "{key}: missing or invalid tag");
             if entry["tag"].as_str() == Some("any") {
-                assert!(entry["any"].is_array(), "{key}: any entry missing 'any' array");
+                assert!(
+                    entry["any"].is_array(),
+                    "{key}: any entry missing 'any' array"
+                );
             } else {
                 assert!(entry["args"].is_array(), "{key}: missing or invalid args");
             }

@@ -15,10 +15,7 @@ use z3::{
 };
 
 use crate::compat::{FxHashMap, FxHashSet};
-use crate::verify::{
-    def_use::PlaceKey,
-    path_extractor::Path,
-};
+use crate::verify::{def_use::PlaceKey, path_extractor::Path};
 
 /// Unique identifier for a heap or stack allocation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -365,11 +362,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     }
 
     /// Record a value definition for diagnostics.
-    pub fn record_definition(
-        &mut self,
-        place: PlaceKey,
-        value: &VmValue<'ctx, 'tcx>,
-    ) {
+    pub fn record_definition(&mut self, place: PlaceKey, value: &VmValue<'ctx, 'tcx>) {
         self.definitions.push(ValueDefinition {
             place,
             value: value.clone(),
@@ -380,7 +373,10 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
 
     /// Find the most recent value definition for a place key.
     pub fn find_definition(&self, pk: &PlaceKey) -> Option<&ValueDefinition<'ctx, 'tcx>> {
-        self.definitions.iter().rev().find(|d| d.place.base == pk.base && d.place.fields == pk.fields)
+        self.definitions
+            .iter()
+            .rev()
+            .find(|d| d.place.base == pk.base && d.place.fields == pk.fields)
     }
 
     /// Get the value of a specific field within an aggregate local.
@@ -439,7 +435,13 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         let mut pairs: Vec<_> = self
             .byte_values
             .iter()
-            .filter_map(|((aid, off), term)| if *aid == alloc_id { Some((*off, term)) } else { None })
+            .filter_map(|((aid, off), term)| {
+                if *aid == alloc_id {
+                    Some((*off, term))
+                } else {
+                    None
+                }
+            })
             .collect();
         pairs.sort_by_key(|(off, _)| *off);
         pairs
@@ -465,7 +467,9 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         let param_env = self.tcx.param_env(self.caller_def_id);
         let typing_env = rustc_middle::ty::TypingEnv::post_analysis(self.tcx, self.caller_def_id);
         for clause in param_env.caller_bounds() {
-            let Some(trait_clause) = clause.as_trait_clause() else { continue };
+            let Some(trait_clause) = clause.as_trait_clause() else {
+                continue;
+            };
             let self_ty = trait_clause.self_ty().skip_binder();
             if self_ty != ty {
                 continue;
@@ -478,12 +482,10 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     continue;
                 }
                 let layout = match crate::helpers::mir_utils::catch_panic(|| {
-                    self.tcx.layout_of(
-                        rustc_middle::ty::PseudoCanonicalInput {
-                            typing_env,
-                            value: impl_ty,
-                        }
-                    )
+                    self.tcx.layout_of(rustc_middle::ty::PseudoCanonicalInput {
+                        typing_env,
+                        value: impl_ty,
+                    })
                 }) {
                     Ok(Ok(l)) => l,
                     _ => continue,
@@ -505,7 +507,9 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         let param_env = self.tcx.param_env(self.caller_def_id);
         let typing_env = rustc_middle::ty::TypingEnv::post_analysis(self.tcx, self.caller_def_id);
         for clause in param_env.caller_bounds() {
-            let Some(trait_clause) = clause.as_trait_clause() else { continue };
+            let Some(trait_clause) = clause.as_trait_clause() else {
+                continue;
+            };
             let self_ty = trait_clause.self_ty().skip_binder();
             if self_ty != ty {
                 continue;
@@ -518,12 +522,10 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     continue;
                 }
                 let layout = match crate::helpers::mir_utils::catch_panic(|| {
-                    self.tcx.layout_of(
-                        rustc_middle::ty::PseudoCanonicalInput {
-                            typing_env,
-                            value: impl_ty,
-                        }
-                    )
+                    self.tcx.layout_of(rustc_middle::ty::PseudoCanonicalInput {
+                        typing_env,
+                        value: impl_ty,
+                    })
                 }) {
                     Ok(Ok(l)) => l,
                     _ => continue,
@@ -564,10 +566,11 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 }
             }
             if local.as_usize() >= 1 && local.as_usize() <= arg_count {
-                if matches!(value.ty.kind(),
+                if matches!(
+                    value.ty.kind(),
                     rustc_middle::ty::TyKind::Uint(_)
-                    | rustc_middle::ty::TyKind::Bool
-                    | rustc_middle::ty::TyKind::Char
+                        | rustc_middle::ty::TyKind::Bool
+                        | rustc_middle::ty::TyKind::Char
                 ) {
                     solver.assert(&value.term.ge(&zero));
                 }
@@ -594,10 +597,9 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     /// Extract a VmValue from a MIR operand.
     pub(crate) fn value_of_operand(&self, operand: &Operand<'tcx>) -> VmValue<'ctx, 'tcx> {
         match operand {
-            Operand::Copy(place) | Operand::Move(place) => {
-                self.value_of_place(place)
-                    .unwrap_or_else(|| self.unknown_value_for_place(place))
-            }
+            Operand::Copy(place) | Operand::Move(place) => self
+                .value_of_place(place)
+                .unwrap_or_else(|| self.unknown_value_for_place(place)),
             Operand::Constant(constant) => {
                 let text = format!("{:?}", constant.const_);
                 let int_val = const_int_from_debug(&text);
@@ -618,14 +620,12 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 }
             }
             #[cfg(rapx_rustc_ge_196)]
-            Operand::RuntimeChecks(_) => {
-                VmValue {
-                    term: self.fresh_int("runtime_checks"),
-                    ty: self.body.local_decls[Local::from_usize(0)].ty,
-                    provenance: None,
-                    invariants: ValueInvariants::default(),
-                }
-            }
+            Operand::RuntimeChecks(_) => VmValue {
+                term: self.fresh_int("runtime_checks"),
+                ty: self.body.local_decls[Local::from_usize(0)].ty,
+                provenance: None,
+                invariants: ValueInvariants::default(),
+            },
         }
     }
 
@@ -636,7 +636,9 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         }
 
         // Collect field indices from projections
-        let field_path: Vec<usize> = place.projection.iter()
+        let field_path: Vec<usize> = place
+            .projection
+            .iter()
             .filter_map(|proj| match proj.kind() {
                 ProjectionElem::Field(field_idx, _) => Some(field_idx.as_usize()),
                 _ => None,
@@ -668,15 +670,23 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
 
         // For Deref+Field chains (e.g. (*self).ptr), strip the leading Deref
         // projection(s) and look up field_values with the remaining field path.
-        if !field_path.is_empty() && field_path.len() < place.projection.len()
-            && place.projection.iter().any(|p| matches!(p.kind(), ProjectionElem::Deref))
+        if !field_path.is_empty()
+            && field_path.len() < place.projection.len()
+            && place
+                .projection
+                .iter()
+                .any(|p| matches!(p.kind(), ProjectionElem::Deref))
         {
             // Only Deref and Field projections — all non-Field must be Deref.
-            let non_field_deref = place.projection.iter()
+            let non_field_deref = place
+                .projection
+                .iter()
                 .all(|p| matches!(p.kind(), ProjectionElem::Field(..) | ProjectionElem::Deref));
             if non_field_deref {
                 // Recompute field_path since the original was moved.
-                let fp: Vec<usize> = place.projection.iter()
+                let fp: Vec<usize> = place
+                    .projection
+                    .iter()
                     .filter_map(|proj| match proj.kind() {
                         ProjectionElem::Field(field_idx, _) => Some(field_idx.as_usize()),
                         _ => None,
@@ -700,14 +710,20 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 }
                 ProjectionElem::Field(_field_idx, _) => {
                     // Try to get the field value from the VM's field tracking
-                    let field_indices: Vec<usize> = place.projection.iter()
+                    let field_indices: Vec<usize> = place
+                        .projection
+                        .iter()
                         .filter_map(|p| match p.kind() {
                             ProjectionElem::Field(fi, _) => Some(fi.as_usize()),
                             _ => None,
                         })
                         .collect();
                     if !field_indices.is_empty() {
-                        if let Some(val) = self.field_values.get(&(place.local, field_indices)).cloned() {
+                        if let Some(val) = self
+                            .field_values
+                            .get(&(place.local, field_indices))
+                            .cloned()
+                        {
                             return Some(val);
                         }
                     }
@@ -778,13 +794,13 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         let val = base.clone();
                         return Some(val);
                     }
-                _ => {
-                    // Downcast or other unsupported projection: still return
-                    // the base with updated type so provenance propagates.
-                    let mut val = base.clone();
-                    val.ty = place.ty(self.body, self.tcx).ty;
-                    return Some(val);
-                }
+                    _ => {
+                        // Downcast or other unsupported projection: still return
+                        // the base with updated type so provenance propagates.
+                        let mut val = base.clone();
+                        val.ty = place.ty(self.body, self.tcx).ty;
+                        return Some(val);
+                    }
                 }
             }
         }
@@ -792,9 +808,12 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         // For multi-element projections with Deref+Field or Downcast, return
         // the base value since we already traced through Deref above.
         if place.projection.len() > 1
-            && place.projection.iter().any(|p| matches!(
-                p.kind(), ProjectionElem::Deref | ProjectionElem::Downcast(..)
-            ))
+            && place.projection.iter().any(|p| {
+                matches!(
+                    p.kind(),
+                    ProjectionElem::Deref | ProjectionElem::Downcast(..)
+                )
+            })
         {
             let mut val = base;
             val.ty = place.ty(self.body, self.tcx).ty;

@@ -319,7 +319,14 @@ impl DataflowGraph {
             }
         };
         let mut seen = HashSet::new();
-        self.dfs(start, direction, &mut node_op, edge_validator, false, &mut seen);
+        self.dfs(
+            start,
+            direction,
+            &mut node_op,
+            edge_validator,
+            false,
+            &mut seen,
+        );
         result
     }
 
@@ -342,7 +349,14 @@ impl DataflowGraph {
             DFSStatus::Continue
         };
         let mut seen = HashSet::new();
-        self.dfs(start, direction, &mut node_op, edge_validator, true, &mut seen);
+        self.dfs(
+            start,
+            direction,
+            &mut node_op,
+            edge_validator,
+            true,
+            &mut seen,
+        );
         results
     }
 
@@ -515,19 +529,14 @@ impl DataflowGraph {
             if !seen.insert(current) {
                 break;
             }
-            let next = self.nodes[current]
-                .in_edges
-                .iter()
-                .find_map(|&ei| {
-                    let e = &self.edges[ei];
-                    if matches!(e.op, EdgeOp::Copy | EdgeOp::Move)
-                        && !self.is_marker(e.src)
-                    {
-                        Some(e.src)
-                    } else {
-                        None
-                    }
-                });
+            let next = self.nodes[current].in_edges.iter().find_map(|&ei| {
+                let e = &self.edges[ei];
+                if matches!(e.op, EdgeOp::Copy | EdgeOp::Move) && !self.is_marker(e.src) {
+                    Some(e.src)
+                } else {
+                    None
+                }
+            });
             match next {
                 Some(src) if src != current => current = src,
                 _ => break,

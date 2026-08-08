@@ -3,12 +3,12 @@
 use super::graph::TyWrapper;
 use super::utils::{self, fn_sig_with_generic_args};
 use crate::compat;
+#[cfg(not(rapx_has_skip_norm_wip))]
+use crate::compat::SkipNormWip;
 use crate::helpers::def_path::path_str_def_id;
 use crate::{rap_debug, rap_trace};
 use rand::Rng;
 use rand::seq::SliceRandom;
-#[cfg(not(rapx_has_skip_norm_wip))]
-use crate::compat::SkipNormWip;
 
 use rustc_hir::LangItem;
 use rustc_hir::def_id::DefId;
@@ -159,8 +159,6 @@ impl<'tcx> MonoSet<'tcx> {
         res
     }
 
-
-
     // if the unbound generic type is still exist (this could happen
     // if `T` has no trait bounds at all)
     // we substitute the unbound generic type with predefined type candidates
@@ -292,15 +290,10 @@ fn is_args_fit_trait_bound<'tcx>(
 fn is_fn_solvable<'tcx>(fn_did: DefId, tcx: TyCtxt<'tcx>) -> bool {
     let predicates = crate::compat::predicates_of(tcx, fn_did);
     #[cfg(not(rapx_rustc_ge_199))]
-    let iter = predicates
-        .instantiate_identity(tcx)
-        .predicates;
+    let iter = predicates.instantiate_identity(tcx).predicates;
     #[cfg(rapx_rustc_ge_199)]
-    let iter = predicates
-        .instantiate_identity(tcx)
-        .clauses;
-    for pred in iter
-    {
+    let iter = predicates.instantiate_identity(tcx).clauses;
+    for pred in iter {
         #[cfg(rapx_rustc_ge_198)]
         let pred = pred.skip_norm_wip();
         if let Some(pred) = pred.as_trait_clause() {
@@ -566,10 +559,6 @@ pub fn resolve_mono_apis<'tcx>(
 
     ret
 }
-
-
-
-
 
 /// if type parameter is unbound, e.g., `T` in `fn foo<T>()`,
 /// we use some predefined types to substitute it

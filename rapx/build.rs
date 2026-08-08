@@ -31,7 +31,10 @@ fn main() {
     );
     emit_cfg(
         "rapx_has_skip_norm_wip",
-        rustc_src_contains_path("compiler/rustc_type_ir/src/unnormalized.rs", "fn skip_norm_wip"),
+        rustc_src_contains_path(
+            "compiler/rustc_type_ir/src/unnormalized.rs",
+            "fn skip_norm_wip",
+        ),
     );
     emit_cfg(
         "rapx_rvalue_use_with_retag",
@@ -88,10 +91,7 @@ fn rustc_src_contains(needle: &str) -> bool {
 /// Check whether a specific file in the rustc source tree contains a string.
 fn rustc_src_contains_path(relative_path: &str, needle: &str) -> bool {
     let sysroot = get_sysroot();
-    let path = format!(
-        "{}/lib/rustlib/rustc-src/rust/{}",
-        sysroot, relative_path
-    );
+    let path = format!("{}/lib/rustlib/rustc-src/rust/{}", sysroot, relative_path);
     std::fs::read_to_string(path)
         .map(|s| s.contains(needle))
         .unwrap_or(false)

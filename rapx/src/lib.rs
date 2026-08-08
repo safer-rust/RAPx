@@ -51,9 +51,7 @@ use analysis::{
     dataflow::{Arg2RetMapWrapper, DataflowAnalysis, default::DataflowAnalyzer},
     owned_heap::{OHAResultMapWrapper, OwnedHeapAnalysis, default::OwnedHeapAnalyzer},
     path::{PathMapWrapper, default::PathAnalyzer},
-    range::{
-        PathConstraintMapWrapper, RAResultMapWrapper, RangeAnalysis, default::RangeAnalyzer,
-    },
+    range::{PathConstraintMapWrapper, RAResultMapWrapper, RangeAnalysis, default::RangeAnalyzer},
     safety_flow::{SafetyFlowAnalysis, TargetCrate},
     ssa_transform::SSATrans,
 };

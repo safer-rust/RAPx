@@ -112,13 +112,10 @@ pub(crate) fn visit<'tcx>(
                 };
                 if let Some(arg_key) = arg_place {
                     let matches = relevant.need_len.contains(&arg_key)
-                        || relevant
-                            .need_len
-                            .iter()
-                            .any(|nl| {
-                                crate::verify::def_use::trace_place_origin(flow, nl)
-                                    == crate::verify::def_use::trace_place_origin(flow, &arg_key)
-                            });
+                        || relevant.need_len.iter().any(|nl| {
+                            crate::verify::def_use::trace_place_origin(flow, nl)
+                                == crate::verify::def_use::trace_place_origin(flow, &arg_key)
+                        });
                     if matches {
                         let dest_key = PlaceKey::from_mir_place(destination);
                         if relevant.places.insert(dest_key.clone()) {

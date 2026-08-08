@@ -1,6 +1,5 @@
 use annotate_snippets::Level;
 
-
 use rustc_hir::intravisit;
 use rustc_middle::ty::TyCtxt;
 use rustc_span::Span;
@@ -14,7 +13,6 @@ use crate::check::opt::report::OptReport;
 crate::def_paths! {
     string_to_lowercase: "str::to_lowercase",
 }
-
 
 pub struct StringLowercaseCheck {
     record: Vec<Span>,

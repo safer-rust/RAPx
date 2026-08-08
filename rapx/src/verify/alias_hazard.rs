@@ -21,15 +21,15 @@ use rustc_middle::{
     ty::{self, AssocKind, TyCtxt, TyKind},
 };
 
+use crate::analysis::alias::{
+    LocalOriginMap, collect_local_origins, resolve_place, resolve_self_field_origin,
+};
 use crate::{
     helpers::mir_scan::check_safety,
     verify::{
         call_summary::fn_simulator,
         def_use::{PlaceBaseKey, PlaceKey},
     },
-};
-use crate::analysis::alias::{
-    collect_local_origins, resolve_place, resolve_self_field_origin, LocalOriginMap,
 };
 
 // Re-export utility functions moved to helpers/mir_utils for
@@ -204,11 +204,9 @@ pub fn alias_proved_for_param_local_from_origin(
         ty::Ref(_, _, ty::Mutability::Not) if kind == HazardKind::SharedView => {
             HazardCheck::Safe("shared raw-ptr-deref view through shared reference".into())
         }
-        ty::Ref(_, _, ty::Mutability::Not) => {
-            HazardCheck::Violation(
-                "shared reference origin cannot safely produce a unique mut view".into(),
-            )
-        }
+        ty::Ref(_, _, ty::Mutability::Not) => HazardCheck::Violation(
+            "shared reference origin cannot safely produce a unique mut view".into(),
+        ),
         _ => HazardCheck::Inconclusive,
     }
 }
@@ -247,11 +245,7 @@ pub fn resolve_param_origin(tcx: TyCtxt<'_>, caller: DefId, origin: &PlaceKey) -
     None
 }
 
-pub fn param_index_of_origin(
-    tcx: TyCtxt<'_>,
-    caller: DefId,
-    origin: &PlaceKey,
-) -> Option<usize> {
+pub fn param_index_of_origin(tcx: TyCtxt<'_>, caller: DefId, origin: &PlaceKey) -> Option<usize> {
     let PlaceBaseKey::Local(local) = origin.base else {
         return None;
     };
@@ -644,7 +638,11 @@ fn self_field_key(field_index: usize) -> PlaceKey {
     }
 }
 
-fn rvalue_mentions_local(rvalue: &Rvalue<'_>, local: Local, aliases: &HashMap<Local, PlaceKey>) -> bool {
+fn rvalue_mentions_local(
+    rvalue: &Rvalue<'_>,
+    local: Local,
+    aliases: &HashMap<Local, PlaceKey>,
+) -> bool {
     crate::helpers::mir_utils::rvalue_any_place_matching(rvalue, &mut |place| {
         place.local == local || aliases.contains_key(&place.local)
     })
@@ -699,7 +697,9 @@ pub fn local_hazard_violation_with(
     for data in body.basic_blocks.iter() {
         if let Some(terminator) = &data.terminator {
             if let TerminatorKind::Call {
-                func, destination: call_dest, ..
+                func,
+                destination: call_dest,
+                ..
             } = &terminator.kind
             {
                 let name = crate::helpers::mir_utils::call_name(tcx, func);
@@ -709,11 +709,7 @@ pub fn local_hazard_violation_with(
             }
         }
     }
-    origins.retain(|origin| {
-        !origin
-            .local()
-            .is_some_and(|l| hazard_locals.contains(&l))
-    });
+    origins.retain(|origin| !origin.local().is_some_and(|l| hazard_locals.contains(&l)));
     let vec_owners = vec_owners_for_origins(tcx, caller, &origins, &aliases);
     let reachable = blocks_reachable_after_call(tcx, caller, call_block);
 
@@ -812,8 +808,7 @@ pub fn local_hazard_violation_with(
                 && hazard_used_after_block(tcx, caller, block_index, &hazard_locals)
             {
                 return Some(
-                    "Vec may reallocate while a raw-derived mutable view is still live"
-                        .to_string(),
+                    "Vec may reallocate while a raw-derived mutable view is still live".to_string(),
                 );
             }
             if strict_call_escape
@@ -955,10 +950,7 @@ fn hazard_used_after_block(
 ) -> bool {
     let body = tcx.optimized_mir(caller);
     let mut seen = HashSet::new();
-    let mut stack: Vec<_> = body.basic_blocks[start]
-        .terminator()
-        .successors()
-        .collect();
+    let mut stack: Vec<_> = body.basic_blocks[start].terminator().successors().collect();
 
     while let Some(block) = stack.pop() {
         if !seen.insert(block) {
@@ -991,10 +983,7 @@ fn statement_uses_any_local(
     locals.contains(&target.local) || rvalue_mentions_any_local(rvalue, locals)
 }
 
-fn terminator_uses_any_local(
-    terminator: &TerminatorKind<'_>,
-    locals: &HashSet<Local>,
-) -> bool {
+fn terminator_uses_any_local(terminator: &TerminatorKind<'_>, locals: &HashSet<Local>) -> bool {
     match terminator {
         TerminatorKind::Call { args, .. } => args.iter().any(|arg| match &arg.node {
             Operand::Copy(place) | Operand::Move(place) => locals.contains(&place.local),
@@ -1163,7 +1152,10 @@ fn terminator_uses_origin<'tcx>(
     })
 }
 
-fn terminator_is_benign_origin_use<'tcx>(tcx: TyCtxt<'tcx>, terminator: &TerminatorKind<'tcx>) -> bool {
+fn terminator_is_benign_origin_use<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    terminator: &TerminatorKind<'tcx>,
+) -> bool {
     let TerminatorKind::Call { func, .. } = terminator else {
         return true;
     };
@@ -1262,9 +1254,9 @@ fn find_as_ptr_receivers(
                 .iter()
                 .any(|origin| destination_key.overlaps(origin))
                 || (check_alias_dest
-                    && aliases.get(&destination.local).is_some_and(|alias| {
-                        origins.iter().any(|o| alias.overlaps(o))
-                    }))
+                    && aliases
+                        .get(&destination.local)
+                        .is_some_and(|alias| origins.iter().any(|o| alias.overlaps(o))))
         };
         if !dest_overlaps() {
             continue;
@@ -1321,9 +1313,7 @@ fn is_ptr_from_ptr_add(tcx: TyCtxt<'_>, caller: DefId, ptr_place: &PlaceKey) -> 
     let body = tcx.optimized_mir(caller);
     for (_bb, data) in body.basic_blocks.iter_enumerated() {
         if let TerminatorKind::Call {
-            func,
-            destination,
-            ..
+            func, destination, ..
         } = &data.terminator().kind
         {
             let ptr_key = PlaceKey::from_mir_place(destination);
@@ -1361,8 +1351,7 @@ pub fn ownership_transfer_violation(
 
     let origins = places_holding_transferred_pointer(tcx, caller, call_block, origin_place);
 
-    if let Some(reason) =
-        pre_existing_view_on_origin(tcx, caller, call_block, &reachable, &origins)
+    if let Some(reason) = pre_existing_view_on_origin(tcx, caller, call_block, &reachable, &origins)
     {
         return Some(reason);
     }
@@ -1494,8 +1483,8 @@ fn places_holding_transferred_pointer(
                 continue;
             }
             let target_key = PlaceKey::from_mir_place(target);
-            let target_defines_holder = !killed.contains(&target.local)
-                && holders.iter().any(|h| target_key.overlaps(h));
+            let target_defines_holder =
+                !killed.contains(&target.local) && holders.iter().any(|h| target_key.overlaps(h));
 
             let source_place = crate::helpers::mir_utils::rvalue_source_place(rvalue);
 
@@ -1521,8 +1510,7 @@ fn places_holding_transferred_pointer(
                     .any(|projection| matches!(projection, ProjectionElem::Deref))
             {
                 let source_key = PlaceKey::from_mir_place(source);
-                if holders.iter().any(|h| source_key.overlaps(h))
-                    && !holders.contains(&target_key)
+                if holders.iter().any(|h| source_key.overlaps(h)) && !holders.contains(&target_key)
                 {
                     holders.push(target_key.clone());
                 }
@@ -1566,7 +1554,11 @@ fn places_holding_transferred_pointer(
     holders
 }
 
-fn splice_holder_fields(target: &PlaceKey, holder: &PlaceKey, source: &PlaceKey) -> Option<PlaceKey> {
+fn splice_holder_fields(
+    target: &PlaceKey,
+    holder: &PlaceKey,
+    source: &PlaceKey,
+) -> Option<PlaceKey> {
     if !place_key_is_prefix_of(target, holder) {
         return None;
     }
@@ -1593,9 +1585,7 @@ fn kill_strongly_updated_origins(
         live.retain(|origin| !place_key_is_prefix_of(&target_key, origin));
         return;
     }
-    if deref_count == 1
-        && matches!(target.projection[0], ProjectionElem::Deref)
-    {
+    if deref_count == 1 && matches!(target.projection[0], ProjectionElem::Deref) {
         let ty = local_decls[target.local].ty;
         if matches!(ty.kind(), ty::Ref(_, _, ty::Mutability::Mut)) {
             let target_key = PlaceKey::from_mir_place(target);
@@ -1623,7 +1613,9 @@ fn place_is_raw_access_to_live_origin(place: &Place<'_>, live: &[PlaceKey]) -> b
 }
 
 fn rvalue_reads_live_origin(rvalue: &Rvalue<'_>, live: &[PlaceKey]) -> bool {
-    rvalue_any_place_matching(rvalue, &mut |place| place_is_raw_access_to_live_origin(place, live))
+    rvalue_any_place_matching(rvalue, &mut |place| {
+        place_is_raw_access_to_live_origin(place, live)
+    })
 }
 
 fn rvalue_copies_live_origin_value(rvalue: &Rvalue<'_>, live: &[PlaceKey]) -> bool {
@@ -1782,8 +1774,7 @@ fn pre_existing_view_on_origin(
                     .any(|(h, hf)| *h == resolved.0 && *hf == resolved.1)
             {
                 return Some(
-                    "pre-existing &*raw_ptr view aliases the ownership-transferred pointer"
-                        .into(),
+                    "pre-existing &*raw_ptr view aliases the ownership-transferred pointer".into(),
                 );
             }
         }
@@ -1976,11 +1967,7 @@ pub fn escaped_nonnull_as_mut_violation(
     None
 }
 
-fn method_uses_nonnull_on_self_field(
-    tcx: TyCtxt<'_>,
-    method: DefId,
-    field_index: usize,
-) -> bool {
+fn method_uses_nonnull_on_self_field(tcx: TyCtxt<'_>, method: DefId, field_index: usize) -> bool {
     let body = tcx.optimized_mir(method);
     let origins = collect_local_origins(tcx, method);
 

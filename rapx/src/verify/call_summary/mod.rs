@@ -226,7 +226,9 @@ pub fn effect_summary<'tcx>(
     let callee = mir_utils::dep_callee_def_id(func);
     let name = mir_utils::call_name(tcx, func);
 
-    if let Some(summary) = fn_simulator::lookup_effect(tcx, caller, callee, &name, func, destination) {
+    if let Some(summary) =
+        fn_simulator::lookup_effect(tcx, caller, callee, &name, func, destination)
+    {
         return summary;
     }
 
@@ -253,7 +255,9 @@ pub fn effect_summary<'tcx>(
                 };
             }
         }
-        if let Some(effect) = interprocedural::try_pointer_arith_wrapper_effect(tcx, callee, Some(destination)) {
+        if let Some(effect) =
+            interprocedural::try_pointer_arith_wrapper_effect(tcx, callee, Some(destination))
+        {
             return CallEffectSummary {
                 callee: Some(callee),
                 name,
@@ -262,7 +266,9 @@ pub fn effect_summary<'tcx>(
                 unsupported: false,
             };
         }
-        if let Some(effect) = interprocedural::try_from_raw_parts_wrapper_effect(tcx, callee, Some(destination)) {
+        if let Some(effect) =
+            interprocedural::try_from_raw_parts_wrapper_effect(tcx, callee, Some(destination))
+        {
             return CallEffectSummary {
                 callee: Some(callee),
                 name,
@@ -271,8 +277,9 @@ pub fn effect_summary<'tcx>(
                 unsupported: false,
             };
         }
-        if let Some((indices_arg, len_arg)) = interprocedural::detect_index_disjoint_validator(tcx, callee)
-            .or_else(|| interprocedural::named_index_disjoint_validator(&name))
+        if let Some((indices_arg, len_arg)) =
+            interprocedural::detect_index_disjoint_validator(tcx, callee)
+                .or_else(|| interprocedural::named_index_disjoint_validator(&name))
         {
             return CallEffectSummary {
                 callee: Some(callee),
@@ -313,7 +320,9 @@ pub fn effect_summary<'tcx>(
 /// tuples of these are layout-safe; raw pointers and concrete owning
 /// containers (`Vec`, `Box`, `String`, collections, other ADTs) are not.
 pub fn call_args_preserve_layout<'tcx>(arg_tys: impl Iterator<Item = Ty<'tcx>>) -> bool {
-    arg_tys.map(|ty| ty_is_layout_safe_inner(ty, 0)).all(|safe| safe)
+    arg_tys
+        .map(|ty| ty_is_layout_safe_inner(ty, 0))
+        .all(|safe| safe)
 }
 
 fn ty_is_layout_safe_inner(ty: Ty<'_>, depth: usize) -> bool {
@@ -348,4 +357,3 @@ fn ty_is_layout_safe_inner(ty: Ty<'_>, depth: usize) -> bool {
         _ => false,
     }
 }
-

@@ -1,5 +1,5 @@
-use super::{bug_records::*, checks, corner_case::*, drop::*, graph::*};
 use super::observer::SafeDropObserver;
+use super::{bug_records::*, checks, corner_case::*, drop::*, graph::*};
 use crate::{
     analysis::alias::default::MopFnAliasMap,
     analysis::path::{PathNode, PathTree},
@@ -204,7 +204,9 @@ impl<'tcx> SafeDropGraph<'tcx> {
             value_idx,
             bb_idx,
         );
-        let Some(confidence) = checks::check_drop_status(&self.alias_graph, &mut self.drop_record, value_idx) else {
+        let Some(confidence) =
+            checks::check_drop_status(&self.alias_graph, &mut self.drop_record, value_idx)
+        else {
             return false;
         };
 
@@ -255,7 +257,9 @@ impl<'tcx> SafeDropGraph<'tcx> {
         } else if self.alias_graph.value_may_drop(0)
             && (self.drop_record[0].is_dropped || self.drop_record[0].has_dropped_field)
         {
-            let Some(confidence) = checks::check_drop_status(&self.alias_graph, &mut self.drop_record, 0) else {
+            let Some(confidence) =
+                checks::check_drop_status(&self.alias_graph, &mut self.drop_record, 0)
+            else {
                 return;
             };
             if !self.bug_records.dp_bugs.contains_key(&0) {
@@ -280,7 +284,9 @@ impl<'tcx> SafeDropGraph<'tcx> {
         if !self.alias_graph.value_is_ptr(arg_idx) {
             return;
         }
-        let Some(confidence) = checks::check_drop_status(&self.alias_graph, &mut self.drop_record, arg_idx) else {
+        let Some(confidence) =
+            checks::check_drop_status(&self.alias_graph, &mut self.drop_record, arg_idx)
+        else {
             return;
         };
         let bug = checks::make_bug(

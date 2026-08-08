@@ -1,7 +1,6 @@
 use super::{bug_records::*, drop::*};
 use crate::analysis::{
-    alias::default::graph::AliasGraph, owned_heap::OHAResultMap,
-    path::graph::PathGraph,
+    alias::default::graph::AliasGraph, owned_heap::OHAResultMap, path::graph::PathGraph,
 };
 use rustc_middle::ty::TyCtxt;
 use rustc_span::def_id::DefId;
@@ -24,7 +23,10 @@ impl<'tcx> SafeDropGraph<'tcx> {
         path_graph: PathGraph<'tcx>,
         adt_owner: OHAResultMap,
     ) -> Self {
-        Self::from_alias_graph(AliasGraph::from_path_graph(tcx, def_id, path_graph), adt_owner)
+        Self::from_alias_graph(
+            AliasGraph::from_path_graph(tcx, def_id, path_graph),
+            adt_owner,
+        )
     }
 
     fn from_alias_graph(alias_graph: AliasGraph<'tcx>, adt_owner: OHAResultMap) -> Self {
