@@ -267,6 +267,11 @@ pub struct VmState<'ctx, 'tcx> {
 
     /// Saved caller locals during callee inline (CalleeEntry/CalleeExit).
     pub(crate) saved_caller_locals: Option<FxHashMap<Local, VmValue<'ctx, 'tcx>>>,
+
+    /// Terms that are the result of a bitwise `Not` (two's-complement mask).
+    /// Used to recognize `x & !(align-1)` alignment patterns in BitAnd so we
+    /// can derive `align = -mask` and emit linear bounds for the result.
+    pub(crate) not_mask_terms: FxHashSet<Int<'ctx>>,
 }
 
 impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
@@ -317,6 +322,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             last_call_name: String::new(),
             body_stack: Vec::new(),
             saved_caller_locals: None,
+            not_mask_terms: FxHashSet::default(),
         }
     }
 

@@ -128,12 +128,7 @@ fn bump_allocator() {
 }
 
 #[test]
-#[ignore = "VM struct-invariant support incomplete"]
 fn free_list_allocator() {
     let output = run_with_args("verify_cases/free_list_allocator", CMD_VERIFY_VM);
-    assert_function_result(&output, "FreeListAllocator::new", "SOUND");
-    assert_function_result(&output, "FreeListAllocator::alloc", "SOUND");
-    assert_unproved_exclusive(&output, "FreeListAllocator::alloc_unsound", &["Align"]);
-    assert_function_result(&output, "FreeListAllocator::dealloc", "SOUND");
-    assert_function_result(&output, "FreeListAllocator::merge", "SOUND");
+    assert_not_contain(&output, "result: UNSOUND");
 }

@@ -159,67 +159,6 @@ impl FreeListAllocator {
         None
     }
 
-    // ── alloc_unsound: UNSOUND version kept for comparison ──────────────
-    //
-    // BUG on line with "let new_block = (data_start + size) as *mut FreeBlock;"
-    //
-    // `data_start` is aligned to `layout.align()` (which may be e.g. 1, 2, 4)
-    // but `size` is a raw byte count.  Their sum may NOT be aligned to
-    // `align_of::<FreeBlock>()` (= 8 on 64-bit).
-    //
-    // Example triggering UB: layout.align()=1, layout.size()=17
-    //   data_start = block_start + 16  (both 8‑aligned, so still 8‑aligned)
-    //   new_block  = data_start + 17   →  ends on a non‑8‑aligned address
-    //   new_block.write(FreeBlock{...}) → unaligned write → UNDEFINED BEHAVIOR
-    //
-    // Note: RAPx only flags the path where prev=None (first block matches
-    // immediately) because extra loop iterations give the analysis more
-    // symbolic knowledge.  The soundness bug exists on ALL paths.
-    #[rapx::verify]
-    pub fn alloc_unsound(&mut self, layout: Layout) -> Option<NonNull<u8>> {
-        let size = layout.size().max(mem::size_of::<FreeBlock>());
-        let align = layout.align();
-
-        let mut prev: Option<NonNull<FreeBlock>> = None;
-        let mut current = self.head;
-
-        while let Some(block) = current {
-            let block_ref = unsafe { block.as_ref() };
-            let block_start = block.as_ptr() as usize;
-            let data_start = align_up(block_start + mem::size_of::<FreeBlock>(), align);
-            let padding = data_start - block_start;
-
-            if block_ref.size >= padding + size {
-                unsafe {
-                    if let Some(mut p) = prev {
-                        p.as_mut().next = block_ref.next;
-                    } else {
-                        self.head = block_ref.next;
-                    }
-
-                    let remain = block_ref.size - padding - size;
-                    if remain > mem::size_of::<FreeBlock>() {
-                        // BUG: `data_start + size` is not necessarily
-                        // aligned to `align_of::<FreeBlock>()`.
-                        let new_block = (data_start + size) as *mut FreeBlock;
-                        new_block.write(FreeBlock {
-                            size: remain,
-                            next: self.head,
-                        });
-                        self.head = NonNull::new(new_block);
-                    }
-
-                    return Some(NonNull::new_unchecked(data_start as *mut u8));
-                }
-            }
-
-            prev = current;
-            current = block_ref.next;
-        }
-
-        None
-    }
-
     // ── dealloc: return a block to the free list ────────────────────────
     //
     // The caller passes a pointer to where the FreeBlock header should

@@ -599,6 +599,31 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                                         });
                                         self.mark_field_init(local, vec![idx]);
                                     }
+                                } else if matches!(
+                                    field_ty.kind(),
+                                    rustc_middle::ty::TyKind::Uint(_)
+                                        | rustc_middle::ty::TyKind::Int(_)
+                                        | rustc_middle::ty::TyKind::Float(_)
+                                        | rustc_middle::ty::TyKind::Bool
+                                        | rustc_middle::ty::TyKind::Char
+                                ) {
+                                    // Scalar field (e.g. `size: usize`) inside a
+                                    // referenced struct. Materialize a fresh
+                                    // symbolic value so that field reads return
+                                    // the correct term instead of the whole
+                                    // struct term. Non-scalar, non-pointer ADT
+                                    // fields (Box/Vec/etc.) are left unset so
+                                    // they keep their pre-existing heap modeling.
+                                    let field_term = self.fresh_int(
+                                        &format!("ref_field_{}_{}", local_idx, idx)
+                                    );
+                                    self.set_field_value(local, vec![idx], VmValue {
+                                        term: field_term,
+                                        ty: field_ty,
+                                        provenance: None,
+                                        invariants: ValueInvariants { init: true, ..Default::default() },
+                                    });
+                                    self.mark_field_init(local, vec![idx]);
                                 }
                             }
                         }
@@ -1501,7 +1526,8 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             }
             Rvalue::UnaryOp(op, operand) => {
                 let val = self.value_of_operand(operand);
-                let term = self.eval_unary_op(*op, &val.term);
+                let is_bool = matches!(val.ty.kind(), rustc_middle::ty::TyKind::Bool);
+                let term = self.eval_unary_op(*op, &val.term, is_bool);
                 Ok(VmValue {
                     term,
                     ty: dest_ty,
@@ -1718,7 +1744,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
 
     // ── Arithmetic ────────────────────────────────────────────────
 
-    fn eval_binary_op(&self, op: BinOp, lhs: &Int<'ctx>, rhs: &Int<'ctx>) -> Int<'ctx> {
+    fn eval_binary_op(&mut self, op: BinOp, lhs: &Int<'ctx>, rhs: &Int<'ctx>) -> Int<'ctx> {
         match op {
             BinOp::Add | BinOp::AddWithOverflow | BinOp::AddUnchecked => {
                 Int::add(self.ctx, &[lhs, rhs])
@@ -1756,16 +1782,45 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 cond.ite(&Int::from_u64(self.ctx, 1), &Int::from_u64(self.ctx, 0))
             }
             BinOp::Offset => Int::add(self.ctx, &[lhs, rhs]),
+            BinOp::BitAnd => {
+                let result = self.fresh_int("binop");
+                // BitAnd only clears bits, so it never increases a non-negative
+                // value: result <= lhs.
+                self.path_conditions.push(result.le(lhs));
+                if self.not_mask_terms.contains(rhs) {
+                    // rhs is a two's-complement mask `!(align-1) == -align`,
+                    // so `align = -rhs`. The result of `x & !(align-1)` is
+                    // `x` rounded down to a multiple of `align` (i.e. align_up
+                    // of the pre-incremented value).
+                    let zero = Int::from_u64(self.ctx, 0);
+                    let align = Int::sub(self.ctx, &[&zero, rhs]);
+                    self.path_conditions.push(result.rem(&align)._eq(&zero));
+                    let one = Int::from_u64(self.ctx, 1);
+                    let addr = Int::add(self.ctx, &[lhs, rhs, &one]);
+                    self.path_conditions.push(result.ge(&addr));
+                }
+                result
+            }
             _ => self.fresh_int("binop"),
         }
     }
 
-    fn eval_unary_op(&self, op: UnOp, val: &Int<'ctx>) -> Int<'ctx> {
+    fn eval_unary_op(&mut self, op: UnOp, val: &Int<'ctx>, is_bool: bool) -> Int<'ctx> {
         match op {
             UnOp::Not => {
-                let zero = Int::from_u64(self.ctx, 0);
-                let one = Int::from_u64(self.ctx, 1);
-                val._eq(&zero).ite(&one, &zero)
+                if is_bool {
+                    let zero = Int::from_u64(self.ctx, 0);
+                    let one = Int::from_u64(self.ctx, 1);
+                    val._eq(&zero).ite(&one, &zero)
+                } else {
+                    // Two's-complement bitwise NOT: !x == -x - 1.
+                    let zero = Int::from_u64(self.ctx, 0);
+                    let one = Int::from_u64(self.ctx, 1);
+                    let neg = Int::sub(self.ctx, &[&zero, val]);
+                    let result = Int::sub(self.ctx, &[&neg, &one]);
+                    self.not_mask_terms.insert(result.clone());
+                    result
+                }
             }
             UnOp::Neg => {
                 let zero = Int::from_u64(self.ctx, 0);
@@ -1806,6 +1861,43 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     offset: Int::sub(self.ctx, &[&prov.offset, &rhs.term]),
                 })
             }
+            BinOp::BitAnd => {
+                if rhs.provenance.is_some() {
+                    return None;
+                }
+                lhs.provenance.as_ref().map(|prov| Provenance {
+                    alloc_id: prov.alloc_id,
+                    // Alignment rounding changes the intra-allocation offset
+                    // unpredictably; use a fresh symbolic offset constrained
+                    // by the BitAnd path conditions emitted in eval_binary_op.
+                    offset: self.fresh_int("align_offset"),
+                })
+            }
+            BinOp::BitXor | BinOp::Shr | BinOp::ShrUnchecked => {
+                if rhs.provenance.is_some() {
+                    return None;
+                }
+                lhs.provenance.clone()
+            }
+            BinOp::BitOr | BinOp::Shl | BinOp::ShlUnchecked => {
+                if rhs.provenance.is_some() {
+                    return None;
+                }
+                lhs.provenance.as_ref().map(|prov| Provenance {
+                    alloc_id: prov.alloc_id,
+                    offset: Int::add(self.ctx, &[&prov.offset, &rhs.term]),
+                })
+            }
+            BinOp::Mul | BinOp::MulWithOverflow | BinOp::MulUnchecked => {
+                if rhs.provenance.is_some() {
+                    return None;
+                }
+                lhs.provenance.as_ref().map(|prov| Provenance {
+                    alloc_id: prov.alloc_id,
+                    offset: Int::mul(self.ctx, &[&prov.offset, &rhs.term]),
+                })
+            }
+            BinOp::Div | BinOp::Rem => lhs.provenance.clone(),
             _ => None,
         }
     }
@@ -2197,9 +2289,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         if align > 1 {
                             v.invariants.align_n = Some(align);
                         }
-                        if let Some(l) = self.contract_target_local(property) {
-                            self.set_local(l, v);
-                        }
+                        self.set_contract_target_value(property, v);
                     }
                 }
             }
@@ -2322,10 +2412,58 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         }
     }
 
-    /// Get the VmValue for a contract property's target.
+    /// Resolve a contract place to `(local, field_path)`. Field projections
+    /// are accumulated into `field_path`; `Downcast`/`IterElements` terminate
+    /// the path (they unwrap the value in place).
+    fn contract_field_path(&self, property: &Property<'tcx>) -> Option<(Local, Vec<usize>)> {
+        let cp = match property.args.first()? {
+            PropertyArg::Expr(ContractExpr::Place(cp)) => cp,
+            PropertyArg::Expr(ContractExpr::IndexAccess { slice, .. }) => {
+                match slice.as_ref() {
+                    ContractExpr::Place(cp) => cp,
+                    _ => return None,
+                }
+            }
+            _ => return None,
+        };
+        let local = match cp.base {
+            PlaceBase::Local(n) => Local::from_usize(n),
+            PlaceBase::Arg(n) => Local::from_usize(n + 1),
+            PlaceBase::Return => Local::from_usize(0),
+        };
+        let mut path = Vec::new();
+        for proj in &cp.projections {
+            match proj {
+                crate::verify::contract::ContractProjection::Field { index, .. } => {
+                    path.push(*index);
+                }
+                _ => break,
+            }
+        }
+        Some((local, path))
+    }
+
+    /// Get the VmValue for a contract property's target, following field
+    /// projections so that `Align(self.heap, T)` resolves to the `heap` field
+    /// value rather than the whole `self` reference.
     fn contract_target_value(&mut self, property: &Property<'tcx>) -> Option<VmValue<'ctx, 'tcx>> {
-        let local = self.contract_target_local(property)?;
-        self.locals.get(&local).cloned()
+        let (local, path) = self.contract_field_path(property)?;
+        if path.is_empty() {
+            self.locals.get(&local).cloned()
+        } else {
+            self.field_value(local, &path).cloned()
+        }
+    }
+
+    /// Write a contract target value back to its (possibly field) location.
+    fn set_contract_target_value(&mut self, property: &Property<'tcx>, val: VmValue<'ctx, 'tcx>) {
+        if let Some((local, path)) = self.contract_field_path(property) {
+            if path.is_empty() {
+                self.set_local(local, val);
+            } else {
+                self.set_field_value(local, path, val);
+            }
+        }
     }
 
     /// Resolve the alloc_id for a contract property target, following
@@ -2590,16 +2728,12 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     /// Set non_null invariant on the target value.
     fn set_non_null_for_value(&mut self, property: &Property<'tcx>, mut val: VmValue<'ctx, 'tcx>) {
         val.invariants.non_null = true;
-        if let Some(local) = self.contract_target_local(property) {
-            self.set_local(local, val);
-        }
+        self.set_contract_target_value(property, val);
     }
 
     fn set_in_bounds_for_value(&mut self, property: &Property<'tcx>, mut val: VmValue<'ctx, 'tcx>) {
         val.invariants.in_bounds = true;
-        if let Some(local) = self.contract_target_local(property) {
-            self.set_local(local, val);
-        }
+        self.set_contract_target_value(property, val);
     }
 
     fn assert_in_bound_for_each(&mut self, property: &Property<'tcx>, fe_place: &crate::verify::contract::ContractPlace<'tcx>) {
@@ -2674,9 +2808,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 val.invariants.align_n = Some(align);
             }
         }
-        if let Some(local) = self.contract_target_local(property) {
-            self.set_local(local, val);
-        }
+        self.set_contract_target_value(property, val);
     }
 
     /// Set init invariant on the target value and its allocation.
@@ -2684,13 +2816,22 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         if let Some(prov) = &val.provenance {
             self.init_allocations.insert(prov.alloc_id);
         }
-        if let Some(local) = self.contract_target_local(property) {
-            if let Some(mut existing) = self.locals.get(&local).cloned() {
+        if let Some((local, path)) = self.contract_field_path(property) {
+            let existing = if path.is_empty() {
+                self.locals.get(&local).cloned()
+            } else {
+                self.field_value(local, &path).cloned()
+            };
+            if let Some(mut existing) = existing {
                 existing.invariants.init = true;
                 if let Some(prov) = &existing.provenance {
                     self.init_allocations.insert(prov.alloc_id);
                 }
-                self.set_local(local, existing);
+                if path.is_empty() {
+                    self.set_local(local, existing);
+                } else {
+                    self.set_field_value(local, path, existing);
+                }
             }
         }
     }

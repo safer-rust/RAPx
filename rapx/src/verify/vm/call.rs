@@ -361,7 +361,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         // Only inline small, linear functions. Branching functions
         // require state forking which we don't do yet; the summary
         // system provides better precision for those cases.
-        if callee_body.basic_blocks.len() > 3 || arg_values.len() > 4 {
+        if callee_body.basic_blocks.len() > 5 || arg_values.len() > 4 {
             return false;
         }
 
