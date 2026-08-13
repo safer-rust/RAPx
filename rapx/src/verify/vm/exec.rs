@@ -2297,16 +2297,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     self.alive_assumed.insert(id);
                 }
             }
-            PropertyKind::ValidPtr => {
-                // ValidPtr = Size(T,0) || (!Size(T,0) && Deref(p,T,len));
-                // Deref = Allocated && InBound.
-                if let Some(val) = self.contract_target_value(property) {
-                    if let Some(alloc_id) = val.provenance_alloc_id() {
-                        self.dead_allocations.remove(&alloc_id);
-                    }
-                    self.set_in_bounds_for_value(property, val);
-                }
-            }
             PropertyKind::InBound => {
                 if let Some(val) = self.contract_target_value(property) {
                     self.set_in_bounds_for_value(property, val);

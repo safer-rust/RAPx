@@ -367,6 +367,7 @@ impl<'tcx> VerifyEngine<'tcx> {
             null_guard: property.null_guard.clone(),
             or_alternatives: new_alternatives,
             for_each: property.for_each.clone(),
+            origin_name: None,
         }
     }
 

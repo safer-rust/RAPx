@@ -57,38 +57,6 @@ impl PropertyChecker {
             return CheckResult::Proved;
         }
         match &property.kind {
-            PropertyKind::Deref => self.check_decomposed(vm_state, solver, checkpoint, property,
-                &[PropertyKind::Allocated, PropertyKind::InBound]),
-            PropertyKind::Ptr2Ref => {
-                // NonNull::as_mut / NonNull::as_ref fast-path:
-                // NonNull guarantees Init+Align by construction.
-                if let Some(callee) = checkpoint.callee {
-                    let callee_path = vm_state.tcx.def_path_str(callee);
-                    if callee_path.contains("::NonNull::")
-                        && (callee_path.ends_with("::as_ref") || callee_path.ends_with("::as_mut"))
-                    {
-                        // When the enclosing function returns a reference, the
-                        // NonNull::as_ref/as_mut result may escape, creating a
-                        // hazard for struct-field Owning invariants.
-                        let ret_ty = vm_state.body.local_decls[rustc_middle::mir::RETURN_PLACE].ty;
-                        if Self::type_contains_reference(ret_ty) {
-                            return CheckResult::Unknown;
-                        }
-                        return CheckResult::Proved;
-                    }
-                }
-                self.check_decomposed(vm_state, solver, checkpoint, property,
-                    &[PropertyKind::Init, PropertyKind::Align, PropertyKind::Alias])
-            }
-            PropertyKind::Layout => self.check_decomposed(vm_state, solver, checkpoint, property,
-                &[PropertyKind::Allocated]),
-            PropertyKind::ValidPtr => {
-                if self.valid_ptr_array_decomp_fast_path(vm_state, checkpoint, property) {
-                    return CheckResult::Proved;
-                }
-                self.check_decomposed(vm_state, solver, checkpoint, property,
-                    &[PropertyKind::Allocated, PropertyKind::InBound])
-            }
             PropertyKind::Or => self.check_or(vm_state, solver, checkpoint, property),
 
             PropertyKind::Align => self.check_align(vm_state, solver, checkpoint, property),
@@ -107,39 +75,45 @@ impl PropertyChecker {
             PropertyKind::ValidTransmute => self.check_valid_transmute(vm_state, solver, checkpoint, property),
             PropertyKind::SplitTransmute => self.check_split_transmute(vm_state, solver, checkpoint, property),
             PropertyKind::Trait => self.check_trait(vm_state, solver, checkpoint, property),
+            PropertyKind::Size => self.check_size(vm_state, property),
 
             _ => CheckResult::Unknown,
         }
     }
 
-    fn check_decomposed<'ctx, 'tcx>(&self, vm_state: &VmState<'ctx, 'tcx>, solver: &Solver<'ctx>,
-        checkpoint: &Checkpoint<'tcx>, property: &Property<'tcx>, primitives: &[PropertyKind]) -> CheckResult
-    {
-        let mut all_proved = true;
-        for kind in primitives {
-            let sub = crate::verify::contract::Property {
-                kind: *kind, args: property.args.clone(),
-                contract_kind: property.contract_kind, null_guard: property.null_guard.clone(),
-                or_alternatives: vec![], for_each: property.for_each.clone(),
-            };
-            match self.check_inner(vm_state, solver, checkpoint, &sub) {
-                CheckResult::Proved => {}
-                CheckResult::Failed => return CheckResult::Failed,
-                CheckResult::Unknown => all_proved = false,
-            }
-        }
-        if all_proved { CheckResult::Proved } else { CheckResult::Unknown }
-    }
-
     fn check_or<'ctx, 'tcx>(&self, vm_state: &VmState<'ctx, 'tcx>, solver: &Solver<'ctx>,
         checkpoint: &Checkpoint<'tcx>, property: &Property<'tcx>) -> CheckResult
     {
+        // OR semantics: proved if any group is fully proved; failed only if
+        // *every* group is definitely violated; unknown otherwise.
+        let mut all_failed = true;
         for group in &property.or_alternatives {
-            if group.iter().all(|p| matches!(self.check_inner(vm_state, solver, checkpoint, p), CheckResult::Proved)) {
+            let mut group_proved = true;
+            let mut group_failed = false;
+            for p in group {
+                match self.check_inner(vm_state, solver, checkpoint, p) {
+                    CheckResult::Proved => {}
+                    CheckResult::Failed => {
+                        group_failed = true;
+                        group_proved = false;
+                    }
+                    CheckResult::Unknown => {
+                        group_proved = false;
+                    }
+                }
+            }
+            if group_proved {
                 return CheckResult::Proved;
             }
+            if !group_failed {
+                all_failed = false;
+            }
         }
-        CheckResult::Unknown
+        if all_failed {
+            CheckResult::Failed
+        } else {
+            CheckResult::Unknown
+        }
     }
 
     // ── Resolve target place through checkpoint args ────────────
@@ -310,17 +284,6 @@ impl PropertyChecker {
         match self.target_value(vm_state, checkpoint, property) {
             Some(val) => val.provenance.is_none(),
             None => true,
-        }
-    }
-
-    fn type_contains_reference(ty: Ty<'_>) -> bool {
-        use rustc_middle::ty::TyKind;
-        match ty.kind() {
-            TyKind::Ref(..) => true,
-            TyKind::Adt(_, substs) => {
-                substs.types().any(|t| Self::type_contains_reference(t))
-            }
-            _ => false,
         }
     }
 
@@ -706,45 +669,6 @@ impl PropertyChecker {
         let required_ty = property.args.get(1)
             .and_then(|a| if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None });
         self.is_zst_type(vm_state, checkpoint, required_ty)
-    }
-
-    /// Fast-path for `ValidPtr`: when the pointer's provenance allocation stores
-    /// `[T; N]` arrays and the contract requires `T` elements, Rust's layout
-    /// guarantee `sizeof([T; N]) = N * sizeof(T)` ensures the allocation always
-    /// has enough room regardless of concrete sizes.
-    fn valid_ptr_array_decomp_fast_path<'ctx, 'tcx>(
-        &self,
-        vm_state: &VmState<'ctx, 'tcx>,
-        checkpoint: &Checkpoint<'tcx>,
-        property: &Property<'tcx>,
-    ) -> bool {
-        // Step 1: required_ty
-        let required_ty = match property.args.get(1)
-            .and_then(|a| if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None })
-        {
-            Some(t) => t,
-            None => return false,
-        };
-        // Step 2: value
-        let value = match self.target_value(vm_state, checkpoint, property) {
-            Some(v) => v,
-            None => return false,
-        };
-        // Step 3: alloc_id
-        let alloc_id = match value.provenance_alloc_id() {
-            Some(id) => id,
-            None => return false,
-        };
-        // Step 4: alloc
-        let alloc = match vm_state.allocations.iter().find(|a| a.id == alloc_id) {
-            Some(a) => a,
-            None => return false,
-        };
-        // Step 5: check inner type matches required type
-        match alloc.element_ty {
-            Some(ty) => self.alloc_elem_is_array_of(ty, required_ty),
-            None => false,
-        }
     }
 
     /// Returns true when the allocation's element type is `[T; N]` and the
@@ -2337,6 +2261,62 @@ impl PropertyChecker {
         match ty.kind() {
             TyKind::Param(_) | TyKind::Alias(..) | TyKind::Error(_) => false,
             _ => vm_state.size_of_ty(ty) == 0,
+        }
+    }
+
+    /// Whether a type's layout is not statically known (generic/alias/error).
+    fn is_generic_ty<'tcx>(&self, ty: Ty<'tcx>) -> bool {
+        matches!(ty.kind(), TyKind::Param(_) | TyKind::Alias(..) | TyKind::Error(_))
+    }
+
+    // ── check_size ─────────────────────────────────────────────
+
+    /// `Size(T, c)` / `Size(T, sized)` / `Size(T, unsized)`.
+    ///
+    /// - `Size(T, c)`: `sizeof(T) == c` (e.g. `Size(T, 0)` for ZST).
+    /// - `Size(T, sized)`: `T: Sized` and non-ZST.
+    /// - `Size(T, unsized)`: `!Sized`.
+    fn check_size<'ctx, 'tcx>(
+        &self,
+        vm_state: &VmState<'ctx, 'tcx>,
+        property: &Property<'tcx>,
+    ) -> CheckResult {
+        let ty = match property.args.iter().find_map(|a| match a {
+            PropertyArg::Ty(t) => Some(*t),
+            _ => None,
+        }) {
+            Some(t) => t,
+            None => return CheckResult::Unknown,
+        };
+
+        match property.args.last() {
+            Some(PropertyArg::Ident(id)) if id == "sized" => {
+                if self.is_generic_ty(ty) {
+                    return CheckResult::Unknown;
+                }
+                if vm_state.size_of_ty(ty) == 0 {
+                    CheckResult::Failed
+                } else {
+                    CheckResult::Proved
+                }
+            }
+            Some(PropertyArg::Ident(id)) if id == "unsized" => {
+                match ty.kind() {
+                    TyKind::Slice(_) | TyKind::Str | TyKind::Dynamic(..) => CheckResult::Proved,
+                    _ => CheckResult::Unknown,
+                }
+            }
+            Some(PropertyArg::Expr(ContractExpr::Const(c))) => {
+                if self.is_generic_ty(ty) {
+                    return CheckResult::Unknown;
+                }
+                if vm_state.size_of_ty(ty) as u128 == *c {
+                    CheckResult::Proved
+                } else {
+                    CheckResult::Failed
+                }
+            }
+            _ => CheckResult::Unknown,
         }
     }
 

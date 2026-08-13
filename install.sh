@@ -1,11 +1,11 @@
 #!/bin/bash
 
-cd rapx
-cargo fmt -q
-cd ..
-
 set -e
 
-cargo install  --path rapx
+# Format the whole workspace (rapx + rapx/macros).
+cargo fmt -q
+
+# Install the rapx and cargo-rapx binaries.
+cargo install --path rapx
 
 cargo rapx -help

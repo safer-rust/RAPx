@@ -4,7 +4,7 @@ target/
 target-1.92/
 UPG/
 **/*.txt
-tests/**/Cargo.lock
+**/tests/**/Cargo.lock
 **/*.dot
 **/*.png
 .rapx-test.lock

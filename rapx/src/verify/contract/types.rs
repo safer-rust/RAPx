@@ -330,10 +330,6 @@ pub enum PropertyKind {
     Opened,
     Trait,
     Unreachable,
-    ValidPtr,
-    Deref,
-    Ptr2Ref,
-    Layout,
     ValidTransmute,
     SplitTransmute,
     Unknown,
@@ -470,52 +466,10 @@ pub struct Property<'tcx> {
     /// in `args` is already stripped of the `IterElements` projection
     /// and refers to a single element slot.
     pub for_each: Option<ContractPlace<'tcx>>,
-}
-
-impl PropertyKind {
-    /// True when this property is a primitive — directly SMT-checkable without
-    /// prior decomposition into sub-properties.
-    pub fn is_primitive(&self) -> bool {
-        !matches!(self, Self::Deref | Self::Ptr2Ref | Self::Layout)
-    }
-
-    /// Primitive sub-properties a compound property decomposes into, or `None`
-    /// when this is already a primitive.
-    pub fn primitive_components(&self) -> Option<&'static [PropertyKind]> {
-        match self {
-            Self::Deref => Some(&[PropertyKind::Allocated, PropertyKind::InBound]),
-            Self::Ptr2Ref => Some(&[PropertyKind::Init, PropertyKind::Align, PropertyKind::Alias]),
-            Self::Layout => Some(&[PropertyKind::Allocated]),
-            _ => None,
-        }
-    }
-
-    /// Whether `self` implies `required` — used for struct-invariant
-    /// resolution to avoid re-checking a property already guaranteed by
-    /// a stronger declared invariant.
-    ///
-    /// - Init ⇒ Typed
-    /// - InBound ⇒ Allocated
-    /// - ValidPtr ⇒ Allocated, InBound
-    /// - Compound SPs ⇒ each of their primitive components
-    pub fn kind_implies(&self, required: &PropertyKind) -> bool {
-        if self == required {
-            return true;
-        }
-        if matches!(self, PropertyKind::Init) && matches!(required, PropertyKind::Typed) {
-            return true;
-        }
-        if matches!(self, PropertyKind::InBound) && matches!(required, PropertyKind::Allocated) {
-            return true;
-        }
-        if matches!(self, PropertyKind::ValidPtr)
-            && matches!(required, PropertyKind::Allocated | PropertyKind::InBound)
-        {
-            return true;
-        }
-        self.primitive_components()
-            .is_some_and(|primitives| primitives.contains(required))
-    }
+    /// When set, the display name of the compound `def` this property expanded
+    /// from (e.g. `"Deref"`, `"ValidPtr"`), used for user-facing reports so a
+    /// macro-expanded contract keeps its original name.
+    pub origin_name: Option<String>,
 }
 
 impl<'tcx> Property<'tcx> {

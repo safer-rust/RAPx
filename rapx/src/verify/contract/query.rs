@@ -26,33 +26,34 @@ use crate::verify::source::assets::{AnyItem, PropertyEntry, get_std_contracts_fr
 
 use super::types::{ContractKind, Property, PropertyKind};
 
-/// Convert a single [`PropertyEntry`] from JSON into a [`Property`].
+/// Convert a single [`PropertyEntry`] from JSON into the properties it denotes.
 ///
 /// Resolves named parameter references (e.g. `"src"` → `"Arg_0"`), normalizes
 /// explicit JSON tokens (`arg:`, `const:`, `ty:`), and delegates to
-/// [`Property::new`] for tag-based parsing.
+/// [`Property::parse_list`] for tag-based parsing.  A single entry may expand to
+/// several properties (via a compound `def` or `any`), hence the `Vec` return.
 pub fn entry_to_property<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
     entry: &PropertyEntry,
     param_names: &[String],
     has_names: bool,
-) -> Option<Property<'tcx>> {
+) -> Vec<Property<'tcx>> {
     if entry.tag == "any" {
         if let Some(disjuncts) = &entry.any {
             if disjuncts.len() >= 2 {
                 let mut prop = any_entry_to_property(tcx, def_id, disjuncts, param_names, has_names);
                 prop.apply_kind(entry.kind.as_deref());
-                return Some(prop);
+                return vec![prop];
             }
             rap_error!(
                 "JSON any entry requires at least 2 disjuncts, got {}",
                 disjuncts.len()
             );
-            return None;
+            return Vec::new();
         }
         rap_error!("JSON any entry missing 'any' field");
-        return None;
+        return Vec::new();
     }
 
     let exprs = resolve_json_args(&entry.args, param_names, has_names, &entry.tag);
@@ -61,19 +62,23 @@ pub fn entry_to_property<'tcx>(
             "Parse JSON API args error: Failed to parse arg '{:?}' for tag {}",
             entry.args, entry.tag
         );
-        return None;
+        return Vec::new();
     }
 
-    let mut property = Property::new(tcx, def_id, entry.tag.as_str(), &exprs);
-    property.apply_kind(entry.kind.as_deref());
-    if matches!(property.kind, PropertyKind::Unknown) {
-        rap_debug!(
-            "skip unsupported std safety contract tag '{}' for callee {:?}",
-            entry.tag, def_id
-        );
-        return None;
+    let properties = Property::parse_list(tcx, def_id, entry.tag.as_str(), &exprs);
+    let mut result = Vec::new();
+    for mut property in properties {
+        property.apply_kind(entry.kind.as_deref());
+        if matches!(property.kind, PropertyKind::Unknown) {
+            rap_debug!(
+                "skip unsupported std safety contract tag '{}' for callee {:?}",
+                entry.tag, def_id
+            );
+            continue;
+        }
+        result.push(property);
     }
-    Some(property)
+    result
 }
 
 /// Parse an `any` disjunction entry from JSON into a `PropertyKind::Or` property.
@@ -105,9 +110,15 @@ fn any_entry_to_property<'tcx>(
                     );
                     continue;
                 }
-                let mut prop = Property::new(tcx, def_id, entry.tag.as_str(), &exprs);
-                prop.apply_kind(entry.kind.as_deref());
-                groups.push(vec![Box::new(prop)]);
+                let props = Property::parse_list(tcx, def_id, entry.tag.as_str(), &exprs);
+                let mut group: Vec<Box<Property<'tcx>>> = Vec::new();
+                for mut prop in props {
+                    prop.apply_kind(entry.kind.as_deref());
+                    group.push(Box::new(prop));
+                }
+                if !group.is_empty() {
+                    groups.push(group);
+                }
             }
             AnyItem::Group(entries) => {
                 let mut group: Vec<Box<Property<'tcx>>> = Vec::new();
@@ -125,10 +136,12 @@ fn any_entry_to_property<'tcx>(
                         );
                         continue;
                     }
-                    let mut prop =
-                        Property::new(tcx, def_id, entry.tag.as_str(), &exprs);
-                    prop.apply_kind(entry.kind.as_deref());
-                    group.push(Box::new(prop));
+                    let props =
+                        Property::parse_list(tcx, def_id, entry.tag.as_str(), &exprs);
+                    for mut prop in props {
+                        prop.apply_kind(entry.kind.as_deref());
+                        group.push(Box::new(prop));
+                    }
                 }
                 if !group.is_empty() {
                     groups.push(group);
@@ -143,6 +156,7 @@ fn any_entry_to_property<'tcx>(
         null_guard: None,
         or_alternatives: groups,
         for_each: None,
+        origin_name: None,
     }
 }
 
@@ -310,9 +324,7 @@ pub fn query_json_contracts<'tcx>(
 
     let mut results = Vec::new();
     for entry in entries {
-        if let Some(prop) = entry_to_property(tcx, def_id, entry, &param_names, has_names) {
-            results.push(prop);
-        }
+        results.extend(entry_to_property(tcx, def_id, entry, &param_names, has_names));
     }
     results
 }

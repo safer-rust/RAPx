@@ -192,7 +192,10 @@ pub fn fmt_contract_expanded(
         .iter()
         .map(|a| fmt_arg_plain(tcx, local_names, a, struct_def_id))
         .collect();
-    let tag = format!("{:?}", property.kind);
+    let tag = property
+        .origin_name
+        .clone()
+        .unwrap_or_else(|| format!("{:?}", property.kind));
     let tag = if property.contract_kind == crate::verify::contract::ContractKind::Hazard {
         format!("[hazard] {tag}")
     } else if property.contract_kind == crate::verify::contract::ContractKind::Option_ {
@@ -278,28 +281,6 @@ pub fn fmt_contract_expanded(
                 _ => placeholder,
             }
         }
-        PropertyKind::ValidPtr => {
-            use crate::verify::contract::PropertyArg;
-            let ptr = property
-                .args
-                .first()
-                .map(|a| fmt_arg_plain(tcx, local_names, a, struct_def_id))
-                .unwrap_or_else(|| "?".to_string());
-            let ty = property
-                .args
-                .get(1)
-                .and_then(|a| match a {
-                    PropertyArg::Ty(ty) => Some(ty.to_string()),
-                    _ => None,
-                })
-                .unwrap_or_else(|| "?".to_string());
-            let cnt = property
-                .args
-                .get(2)
-                .map(|a| fmt_arg_plain(tcx, local_names, a, struct_def_id))
-                .unwrap_or_else(|| "?".to_string());
-            format!("same_alloc([{ptr}, {ptr} + sizeof({ty})*{cnt}])")
-        }
         PropertyKind::Init => {
             let p = args.first().map(|s| s.as_str()).unwrap_or("ptr");
             let ty = args.get(1).map(|s| s.as_str()).unwrap_or("T");
@@ -356,21 +337,9 @@ pub fn fmt_contract_expanded(
             );
             format!("{line1}\n{line2}")
         }
-        PropertyKind::Deref => {
-            let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
-            format!("same_alloc({ptr}) and 0 <= byte_offset({ptr}) < alloc_len({ptr})")
-        }
-        PropertyKind::Ptr2Ref => {
-            let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
-            format!("can soundly convert {ptr} to &/&mut reference")
-        }
         PropertyKind::Owning => {
             let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
             format!("ownership(*{ptr}) = none: no live owner aliases the pointee")
-        }
-        PropertyKind::Layout => {
-            let l = args.first().map(|s| s.as_str()).unwrap_or("layout");
-            format!("{l} matches prior allocation size and alignment")
         }
         PropertyKind::Size => {
             let ty = args.first().map(|s| s.as_str()).unwrap_or("T");
@@ -759,11 +728,9 @@ pub fn emit_results_and_verdict<'tcx>(
 
 
 pub fn emit_property_rows<'tcx>(
-    tcx: TyCtxt<'tcx>,
+    _tcx: TyCtxt<'tcx>,
     results: &[&PropertyCheckResult<'tcx>],
 ) {
-    use crate::verify::contract::PropertyKind;
-
     let path_groups: Vec<(&str, Vec<_>)> = {
         let mut map: FxHashMap<&str, Vec<_>> = FxHashMap::default();
         for r in results.iter() {
@@ -777,9 +744,10 @@ pub fn emit_property_rows<'tcx>(
     };
     for (path_desc, props) in &path_groups {
         rap_info!("        path {path_desc}:");
-        // Count identical (kind, hazard, result) groups for dedup.
+        // Count identical (kind, origin, hazard, result) groups for dedup.
         let mut counts: Vec<(
             crate::verify::contract::PropertyKind,
+            Option<String>,
             bool,
             bool,
             super::report::CheckResult,
@@ -790,14 +758,20 @@ pub fn emit_property_rows<'tcx>(
                 r.property.contract_kind == crate::verify::contract::ContractKind::Hazard;
             let is_option =
                 r.property.contract_kind == crate::verify::contract::ContractKind::Option_;
+            let origin = r.property.origin_name.clone();
             let result = r.result.clone();
-            if let Some(entry) = counts.iter_mut().find(|(k, h, o, res, _)| {
-                *k == r.property.kind && *h == is_hazard && *o == is_option && *res == result
+            if let Some(entry) = counts.iter_mut().find(|(k, on, h, o, res, _)| {
+                *k == r.property.kind
+                    && *on == origin
+                    && *h == is_hazard
+                    && *o == is_option
+                    && *res == result
             }) {
-                entry.4 += 1;
+                entry.5 += 1;
             } else {
                 counts.push((
                     r.property.kind.clone(),
+                    origin,
                     is_hazard,
                     is_option,
                     result,
@@ -806,19 +780,20 @@ pub fn emit_property_rows<'tcx>(
             }
         }
         let n = counts.len();
-        for (i, (kind, is_hazard, is_option, result, count)) in counts.iter().enumerate() {
+        for (i, (kind, origin, is_hazard, is_option, result, count)) in counts.iter().enumerate() {
             let is_last = i + 1 == n;
             let conn = if n > 1 {
                 if is_last { "└── " } else { "├── " }
             } else {
                 ""
             };
+            let name = origin.clone().unwrap_or_else(|| format!("{:?}", kind));
             let tag = if *is_hazard {
-                format!("[hazard] {:?}", kind)
+                format!("[hazard] {name}")
             } else if *is_option {
-                format!("[option] {:?}", kind)
+                format!("[option] {name}")
             } else {
-                format!("{:?}", kind)
+                name
             };
             let mut line = format!("          {conn}{tag} | {:?}", result);
             if *count > 1 {
@@ -828,70 +803,6 @@ pub fn emit_property_rows<'tcx>(
                 rap_info!(green, "{line}");
             } else {
                 rap_warn!("{line}");
-            }
-
-            // Expand OR sub-properties with indented tree
-            if *kind == PropertyKind::Or && *count == 1 {
-                if let Some(r) = props.first() {
-                    let pad = if is_last { "            " } else { "          │   " };
-                    emit_or_subtree(tcx, &r.property, pad, &r.result, &r.path_description);
-                }
-            }
-        }
-    }
-}
-
-/// Render sub-properties of an `Or` with indented tree connectors.
-/// Annotates each sub-property group with `| Proved` when the group index
-/// matches the proved group from the path description.
-fn emit_or_subtree<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    property: &crate::verify::contract::Property<'tcx>,
-    pad: &str,
-    or_result: &super::report::CheckResult,
-    or_path_desc: &str,
-) {
-    let proved_group: Option<usize> = if matches!(or_result, super::report::CheckResult::Proved) {
-        or_path_desc
-            .split('/')
-            .next()
-            .and_then(|s| {
-                s.trim_start_matches("group-")
-                    .trim_start_matches("OR group ")
-                    .parse::<usize>()
-                    .ok()
-            })
-            .map(|idx| idx.saturating_sub(1))
-    } else {
-        None
-    };
-
-    let num_groups = property.or_alternatives.len();
-    for (gi, group) in property.or_alternatives.iter().enumerate() {
-        let g_last = gi + 1 == num_groups;
-        let gconn = if g_last { "└── " } else { "├── " };
-        let is_proved = proved_group == Some(gi);
-        let status = if is_proved { " | Proved" } else { "" };
-        let glen = group.len();
-        if glen == 1 {
-            let (stag, _) = fmt_contract_expanded(tcx, &[], &group[0], None);
-            let gline = format!("{pad}{gconn}{stag}{status}");
-            if is_proved {
-                rap_info!(green, "{gline}");
-            } else {
-                rap_info!("{gline}");
-            }
-        } else {
-            for (si, sub) in group.iter().enumerate() {
-                let s_last = si + 1 == glen;
-                let sconn = if s_last { "└── " } else { "├── " };
-                let (stag, _) = fmt_contract_expanded(tcx, &[], sub, None);
-                let gline = format!("{pad}{gconn}{sconn}{stag}{status}");
-                if is_proved {
-                    rap_info!(green, "{gline}");
-                } else {
-                    rap_info!("{gline}");
-                }
             }
         }
     }

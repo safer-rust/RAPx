@@ -16,7 +16,7 @@ jobs:
           CARGO_TERM_COLOR: always
         run: |
           cd rapx
-          # rapx/target/doc/rapx/index.html
+          # target/doc/rapx/index.html (workspace root target)
           cargo doc --document-private-items --no-deps
 
       - name: Install rustc internal docs
@@ -28,7 +28,7 @@ jobs:
           rustup component add rustc-docs
           DOC_SRC="$TOOLCHAIN/share/doc/rust/html/rustc"
           if [ -d "$DOC_SRC" ]; then
-            cp -r "$DOC_SRC" rapx/target/doc/rustc
+            cp -r "$DOC_SRC" target/doc/rustc
           else
             echo "rustc docs not found at $DOC_SRC, searching..."
             find "$TOOLCHAIN/share/doc" -name rustc -type d | head -5
@@ -38,15 +38,15 @@ jobs:
       - name: Prepare index.html
         run: |
           # Find toolchain name
-          export toolchain=$(rustc --print sysroot | grep -oP "nightly-\d{4}-\d{2}-\d{2}")
+          export toolchain=$(basename "$(rustc --print sysroot)")
           echo "toolchain=\"$toolchain\""
           # Fill in toolchain placeholder in index.html
-          sed "s/nightly-xxxx-xx-xx/$toolchain/" .github/index.html > rapx/target/doc/index.html
+          sed "s/nightly-xxxx-xx-xx/$toolchain/" .github/index.html > target/doc/index.html
 
       - name: Upload static files as artifact
         uses: actions/upload-pages-artifact@v3 # or specific "vX.X.X" version tag for this action
         with:
-          path: rapx/target/doc/
+          path: target/doc/
 
   # Deployment job
   deploy:

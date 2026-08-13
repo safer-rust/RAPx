@@ -166,10 +166,12 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
         property_index: usize,
         or_property: &Property<'tcx>,
     ) {
-        let _num_groups = or_property.or_alternatives.len();
-        let mut best_per_path: Vec<Option<(usize, super::report::CheckResult, String)>> = Vec::new();
+        // Per-path final OR result, aggregating the AND of each group.
+        let mut per_path: Vec<Option<(super::report::CheckResult, String)>> = Vec::new();
 
-        for (group_idx, group) in or_property.or_alternatives.iter().enumerate() {
+        for group in or_property.or_alternatives.iter() {
+            // Per-path AND result of this group.
+            let mut group_per_path: Vec<Option<(super::report::CheckResult, String)>> = Vec::new();
             for sub_prop in group.iter() {
                 let bulk = self.engine.check_callsite_from_tree(
                     view.tree,
@@ -177,25 +179,37 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
                     sub_prop,
                     &self.target.caller_requires,
                 );
-                if best_per_path.is_empty() {
-                    best_per_path.resize(bulk.len(), None);
+                if group_per_path.is_empty() {
+                    group_per_path.resize(bulk.len(), None);
                 }
                 for (path_idx, (result, path_desc)) in bulk.iter().enumerate() {
-                    let better = match &best_per_path[path_idx] {
-                        None => true,
-                        Some((_prev_group, prev_result, _)) => {
-                            matches!(result, super::report::CheckResult::Proved) && !matches!(prev_result, super::report::CheckResult::Proved)
-                        }
-                    };
-                    if better {
-                        best_per_path[path_idx] = Some((group_idx, result.clone(), path_desc.clone()));
+                    let slot = group_per_path[path_idx]
+                        .get_or_insert_with(|| (result.clone(), path_desc.clone()));
+                    slot.0 = combine_and(slot.0.clone(), result.clone());
+                    if matches!(result, super::report::CheckResult::Failed | super::report::CheckResult::Unknown) {
+                        slot.1 = path_desc.clone();
+                    }
+                }
+            }
+
+            // Fold this group's per-path AND result into the OR.
+            if per_path.is_empty() {
+                per_path.resize(group_per_path.len(), None);
+            }
+            for (path_idx, g) in group_per_path.iter().enumerate() {
+                if let Some((g_result, g_desc)) = g {
+                    let slot = per_path[path_idx]
+                        .get_or_insert_with(|| (g_result.clone(), g_desc.clone()));
+                    slot.0 = combine_or(slot.0.clone(), g_result.clone());
+                    if matches!(g_result, super::report::CheckResult::Proved) {
+                        slot.1 = g_desc.clone();
                     }
                 }
             }
         }
 
-        for (path_index, best) in best_per_path.iter().enumerate() {
-            if let Some((_group_idx, result, path_desc)) = best {
+        for (path_index, best) in per_path.iter().enumerate() {
+            if let Some((result, path_desc)) = best {
                 report.push(PropertyCheckResult {
                     checkpoint: view.checkpoint.location(),
                     checkpoint_index: view.checkpoint_index,
@@ -617,6 +631,9 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
     /// level. Earlier rounds use fewer loop unrollings; later rounds incrementally
     /// add deeper paths.
     fn run(&mut self) {
+        // Register `#[rapx::def_contract]` proc-macro definitions from the crate.
+        crate::verify::contract::def::register_contract_defs(self.tcx);
+
         let collector = VerifyTargetCollector::collect_all(
             self.tcx,
             self.mode,
@@ -1119,5 +1136,25 @@ fn remap_constructor_contract<'tcx>(
     crate::verify::contract::Property {
         args: new_args,
         ..property
+    }
+}
+
+/// AND-combine two check results: any Failed → Failed; any Unknown → Unknown;
+/// only all-Proved → Proved.
+fn combine_and(a: CheckResult, b: CheckResult) -> CheckResult {
+    match (a, b) {
+        (CheckResult::Failed, _) | (_, CheckResult::Failed) => CheckResult::Failed,
+        (CheckResult::Unknown, _) | (_, CheckResult::Unknown) => CheckResult::Unknown,
+        _ => CheckResult::Proved,
+    }
+}
+
+/// OR-combine two check results: any Proved → Proved; all Failed → Failed;
+/// otherwise Unknown.
+fn combine_or(a: CheckResult, b: CheckResult) -> CheckResult {
+    match (a, b) {
+        (CheckResult::Proved, _) | (_, CheckResult::Proved) => CheckResult::Proved,
+        (CheckResult::Failed, CheckResult::Failed) => CheckResult::Failed,
+        _ => CheckResult::Unknown,
     }
 }

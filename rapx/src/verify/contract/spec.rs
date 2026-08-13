@@ -4,7 +4,7 @@
 
 use super::types::*;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) enum ArgKind { Target, Ty, Expr, Ident }
 
 pub(crate) struct PropertySpec {
@@ -25,15 +25,10 @@ static SPECS: &[PropertySpec] = &[
     // [Target, Ty]
     ps("Align",        PropertyKind::Align,        &[ArgKind::Target, ArgKind::Ty], ContractKind::Precond),
     ps("Typed",        PropertyKind::Typed,        &[ArgKind::Target, ArgKind::Ty], ContractKind::Precond),
-    ps("Ptr2Ref",      PropertyKind::Ptr2Ref,      &[ArgKind::Target, ArgKind::Ty], ContractKind::Precond),
     // [Target, Ty, Expr]
     ps("Init",         PropertyKind::Init,         &[ArgKind::Target, ArgKind::Ty, ArgKind::Expr], ContractKind::Precond),
-    ps("ValidPtr",     PropertyKind::ValidPtr,     &[ArgKind::Target, ArgKind::Ty, ArgKind::Expr], ContractKind::Precond),
-    ps("Deref",        PropertyKind::Deref,        &[ArgKind::Target, ArgKind::Ty, ArgKind::Expr], ContractKind::Precond),
     ps("ValidString",  PropertyKind::ValidString,  &[ArgKind::Target, ArgKind::Ty, ArgKind::Expr], ContractKind::Precond),
     ps("NonVolatile",  PropertyKind::NonVolatile,  &[ArgKind::Target, ArgKind::Ty, ArgKind::Expr], ContractKind::Precond),
-    // [Target, Target]
-    ps("Layout",       PropertyKind::Layout,       &[ArgKind::Target, ArgKind::Target], ContractKind::Precond),
     // [Ty, Ty]
     ps("ValidTransmute", PropertyKind::ValidTransmute, &[ArgKind::Ty, ArgKind::Ty], ContractKind::Precond),
     // [Ty, Ident]

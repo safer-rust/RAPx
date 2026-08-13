@@ -50,6 +50,7 @@ impl<'tcx> Property<'tcx> {
             null_guard: None,
             or_alternatives: Vec::new(),
             for_each: None,
+            origin_name: None,
         }
     }
 
@@ -165,6 +166,7 @@ impl<'tcx> Property<'tcx> {
                         null_guard: None,
                         or_alternatives: vec![],
                         for_each,
+                        origin_name: None,
                     }
                 }
                 _ => {
@@ -312,6 +314,7 @@ impl<'tcx> Property<'tcx> {
             null_guard: None,
             or_alternatives: Vec::new(),
             for_each: None,
+            origin_name: None,
         }
     }
 
@@ -320,6 +323,11 @@ impl<'tcx> Property<'tcx> {
     /// Plain entries (`Align(p, T)`, `Owning(p)`, ...) yield one property.
     /// The `any(...)` combinator may expand to several: see [`Self::parse_any`].
     pub fn parse_list(tcx: TyCtxt<'tcx>, def_id: DefId, name: &str, exprs: &[Expr]) -> Vec<Self> {
+        // User-defined / compound `def` macro expansion takes precedence, so
+        // `#[rapx::requires(MyTag(...))]` can reference DSL-defined contracts.
+        if let Some(props) = super::def::expand_def(tcx, def_id, name, exprs) {
+            return props;
+        }
         let mut props = if name == "any" {
             Self::parse_any(tcx, def_id, exprs)
         } else {
@@ -389,7 +397,9 @@ impl<'tcx> Property<'tcx> {
             for parts in [first, second] {
                 let mut group: Vec<Box<Self>> = Vec::new();
                 for (name, args) in parts {
-                    group.push(Box::new(Self::new(tcx, def_id, &name, &args)));
+                    for prop in Self::parse_list(tcx, def_id, &name, &args) {
+                        group.push(Box::new(prop));
+                    }
                 }
                 groups.push(group);
             }
@@ -425,25 +435,47 @@ impl<'tcx> Property<'tcx> {
 
         let mut properties = Vec::new();
         for (inner_name, inner_args) in conjuncts {
-            let mut property = Self::new(tcx, def_id, inner_name, inner_args);
-            let inner_place = property.args.first().and_then(|arg| match arg {
-                PropertyArg::Expr(ContractExpr::Place(place)) => Some(place),
-                _ => None,
-            });
-            let places_match = inner_place.is_some_and(|place| {
-                crate::verify::def_use::PlaceKey::from_contract_place(place) == guard_key
-            });
-            if !places_match {
-                rap_error!(
-                    "any(Null(p), ...) requires every conjunct ({inner_name}) to \
-                     constrain the guarded place"
-                );
-                return vec![Self::new_simple(PropertyKind::Unknown)];
+            // Use `parse_list` so a compound `def` conjunct (e.g. `ValidPtr`)
+            // expands to its primitive components, each guarded by `Null(p)`.
+            let expanded = Self::parse_list(tcx, def_id, inner_name, inner_args);
+            for mut property in expanded {
+                if !Self::apply_null_guard(&mut property, &guard_key) {
+                    rap_error!(
+                        "any(Null(p), ...) requires every conjunct ({inner_name}) to \
+                         constrain the guarded place"
+                    );
+                    return vec![Self::new_simple(PropertyKind::Unknown)];
+                }
+                properties.push(property);
             }
-            property.null_guard = Some(guard_key.clone());
-            properties.push(property);
         }
         properties
+    }
+
+    /// Recursively propagate a null-guard to a property and every member of its
+    /// `Or` groups.  Returns `false` if a place-bearing member constrains a
+    /// place other than the guard.
+    fn apply_null_guard(
+        property: &mut Property<'tcx>,
+        guard_key: &crate::verify::def_use::PlaceKey,
+    ) -> bool {
+        if property.kind == PropertyKind::Or {
+            for group in &mut property.or_alternatives {
+                for sub in group.iter_mut() {
+                    if !Self::apply_null_guard(sub, guard_key) {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+        if let Some(PropertyArg::Expr(ContractExpr::Place(place))) = property.args.first() {
+            if crate::verify::def_use::PlaceKey::from_contract_place(place) != *guard_key {
+                return false;
+            }
+        }
+        property.null_guard = Some(guard_key.clone());
+        true
     }
 
     /// Split one disjunct into its conjunct calls: a `(P1, P2, ...)` tuple, a
@@ -476,6 +508,7 @@ impl<'tcx> Property<'tcx> {
             null_guard: None,
             or_alternatives: Vec::new(),
             for_each: None,
+            origin_name: None,
         }
     }
 
@@ -493,6 +526,7 @@ impl<'tcx> Property<'tcx> {
             null_guard: None,
             or_alternatives: Vec::new(),
             for_each,
+            origin_name: None,
         }
     }
 

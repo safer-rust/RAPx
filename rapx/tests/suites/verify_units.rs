@@ -260,6 +260,12 @@ sound_tests_vm! {
     nonoverlap_sound_02: "verify_units/nonoverlap_sound_02" => "sound_copy_nonoverlapping_disjoint",
 }
 
+// ================ User-Defined DSL Contract (def) Cases =============
+sound_tests_vm! {
+    dsl_custom_def_sound: "verify_units/dsl_custom_def" => "sound_read",
+}
+
+
 // ================ Align Repeat Threshold Cases =============
 #[test]
 fn align_repeat_threshold_repeat1() {

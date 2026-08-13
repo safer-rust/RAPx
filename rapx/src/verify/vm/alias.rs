@@ -228,6 +228,21 @@ pub fn check_alias_vm<'ctx, 'tcx>(
     };
     let callee_name = vm_state.tcx.def_path_str(callee);
 
+    // NonNull::as_ref / as_mut fast-path (formerly part of Ptr2Ref checking):
+    // NonNull guarantees non-null + aligned + initialized by construction, so
+    // the only remaining question is whether the produced reference escapes.
+    // When the enclosing function returns a reference, the result may escape
+    // (hazard for struct-field Owning invariants) → Unknown; otherwise safe.
+    if callee_name.contains("::NonNull::")
+        && (callee_name.ends_with("::as_ref") || callee_name.ends_with("::as_mut"))
+    {
+        let ret_ty = vm_state.body.local_decls[rustc_middle::mir::RETURN_PLACE].ty;
+        if type_contains_reference(ret_ty) {
+            return VmAliasResult::Unknown;
+        }
+        return VmAliasResult::Proved;
+    }
+
     // Step 1: Determine the producer
     let Some(producer) = alias_hazard::alias_producer(&callee_name) else {
         return VmAliasResult::Unknown;
@@ -731,4 +746,15 @@ fn check_read_memory_alias<'ctx, 'tcx>(
         "read API value escapes while the source pointer persists — structural alias hazard"
             .into(),
     )
+}
+
+/// Whether a type transitively contains a reference (used by the
+/// NonNull::as_ref/as_mut escape fast-path).
+fn type_contains_reference(ty: rustc_middle::ty::Ty<'_>) -> bool {
+    use rustc_middle::ty::TyKind;
+    match ty.kind() {
+        TyKind::Ref(..) => true,
+        TyKind::Adt(_, substs) => substs.types().any(type_contains_reference),
+        _ => false,
+    }
 }

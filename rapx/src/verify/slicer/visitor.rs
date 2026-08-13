@@ -475,12 +475,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
 // ── property helpers ──────────────────────────────────────────────────
 
 fn needs_invalidation_tracking(kind: &contract::PropertyKind) -> bool {
-    matches!(
-        kind,
-        contract::PropertyKind::Allocated
-            | contract::PropertyKind::Deref
-            | contract::PropertyKind::ValidPtr
-    )
+    matches!(kind, contract::PropertyKind::Allocated)
 }
 
 // ── classification helpers ──────────────────────────────────────────────

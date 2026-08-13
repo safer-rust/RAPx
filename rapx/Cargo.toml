@@ -1,10 +1,10 @@
 [package]
 name = "rapx"
-version = "0.7.33"
-edition = "2024"
-authors = ["safer-rust <xuh@fudan.edu.cn>"]
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
 default-run = "rapx"
-license = "MPL-2.0"
+license.workspace = true
 description = "A static analysis platform for Rust program analysis and verification"
 documentation = "https://safer-rust.github.io/RAPx-Book/"
 repository = "https://github.com/safer-rust/RAPx"
@@ -46,6 +46,8 @@ toml = "0.8.23"
 itertools = "0.14.0"
 safety-parser = "0.4.3"
 syn = { version = "2", features = ["extra-traits", "full"] }
+quote = "1"
+proc-macro2 = "1"
 bit-set = "0.8.0"
 rust_intervals = "0.3.0"
 clap = { version = "4.5.60" }

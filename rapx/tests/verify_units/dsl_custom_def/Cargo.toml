@@ -1,0 +1,9 @@
+[package]
+name = "dsl_custom_def"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rapx-macros = { path = "../../../macros" }
+
+[workspace]

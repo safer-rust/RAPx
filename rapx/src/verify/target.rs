@@ -110,17 +110,18 @@ pub struct FunctionTarget<'tcx> {
     /// Each entry is a `(Checkpoint, Vec<Property>)` pair where the `Checkpoint`
     /// carries a synthetic dummy `DefId` (so the path extractor can treat
     /// dereferences uniformly with checkpoints) and the properties encode the
-    /// pointer-validity requirements: always [`ValidPtr`](PropertyKind::ValidPtr)
-    /// and [`Align`](PropertyKind::Align); additionally [`Typed`](PropertyKind::Typed)
-    /// when the dereference is a read.
+    /// pointer-validity requirements: always [`Allocated`](PropertyKind::Allocated),
+    /// [`InBound`](PropertyKind::InBound), and [`Align`](PropertyKind::Align);
+    /// additionally [`Typed`](PropertyKind::Typed) when the dereference is a read.
     pub raw_ptr_deref_checks: Vec<(Checkpoint<'tcx>, Vec<Property<'tcx>>)>,
 
     /// Static mut access checks with their required safety properties.
     ///
     /// Each entry is a `(Checkpoint, Vec<Property>)` pair following the same
     /// pattern as [`raw_ptr_deref_checks`](Self::raw_ptr_deref_checks).  The
-    /// properties are [`ValidPtr`](PropertyKind::ValidPtr),
-    /// [`Align`](PropertyKind::Align), and [`Init`](PropertyKind::Init)
+    /// properties are [`Allocated`](PropertyKind::Allocated),
+    /// [`InBound`](PropertyKind::InBound), [`Align`](PropertyKind::Align),
+    /// and [`Init`](PropertyKind::Init)
     /// (conservatively checked for both reads and writes).
     pub static_mut_checks: Vec<(Checkpoint<'tcx>, Vec<Property<'tcx>>)>,
 }
@@ -1216,6 +1217,7 @@ fn build_raw_ptr_deref_checks<'tcx>(
                         null_guard: None,
                         or_alternatives: Vec::new(),
                         for_each: None,
+                        origin_name: None,
                         contract_kind: crate::verify::contract::ContractKind::Precond,
                         kind: PropertyKind::NonNull,
                         args: vec![target.clone()],
@@ -1224,6 +1226,7 @@ fn build_raw_ptr_deref_checks<'tcx>(
                         null_guard: None,
                         or_alternatives: Vec::new(),
                         for_each: None,
+                        origin_name: None,
                         contract_kind: crate::verify::contract::ContractKind::Precond,
                         kind: PropertyKind::Align,
                         args: vec![target.clone(), ty.clone()],
@@ -1232,6 +1235,7 @@ fn build_raw_ptr_deref_checks<'tcx>(
                         null_guard: None,
                         or_alternatives: Vec::new(),
                         for_each: None,
+                        origin_name: None,
                         contract_kind: crate::verify::contract::ContractKind::Hazard,
                         kind: PropertyKind::Alias,
                         args: vec![target.clone()],
@@ -1243,14 +1247,25 @@ fn build_raw_ptr_deref_checks<'tcx>(
                         null_guard: None,
                         or_alternatives: Vec::new(),
                         for_each: None,
+                        origin_name: None,
                         contract_kind: crate::verify::contract::ContractKind::Precond,
-                        kind: PropertyKind::ValidPtr,
+                        kind: PropertyKind::Allocated,
                         args: vec![target.clone(), ty.clone(), count.clone()],
                     },
                     Property {
                         null_guard: None,
                         or_alternatives: Vec::new(),
                         for_each: None,
+                        origin_name: None,
+                        contract_kind: crate::verify::contract::ContractKind::Precond,
+                        kind: PropertyKind::InBound,
+                        args: vec![target.clone(), ty.clone(), count.clone()],
+                    },
+                    Property {
+                        null_guard: None,
+                        or_alternatives: Vec::new(),
+                        for_each: None,
+                        origin_name: None,
                         contract_kind: crate::verify::contract::ContractKind::Precond,
                         kind: PropertyKind::Align,
                         args: vec![target.clone(), ty.clone()],
@@ -1263,6 +1278,7 @@ fn build_raw_ptr_deref_checks<'tcx>(
                     null_guard: None,
                     or_alternatives: Vec::new(),
                     for_each: None,
+                    origin_name: None,
                     contract_kind: crate::verify::contract::ContractKind::Precond,
                     kind: PropertyKind::Typed,
                     args: vec![target, ty],
@@ -1313,14 +1329,25 @@ fn build_static_mut_checks<'tcx>(
                     null_guard: None,
                     or_alternatives: Vec::new(),
                     for_each: None,
+                    origin_name: None,
                     contract_kind: crate::verify::contract::ContractKind::Precond,
-                    kind: PropertyKind::ValidPtr,
+                    kind: PropertyKind::Allocated,
                     args: vec![target.clone(), ty.clone(), count.clone()],
                 },
                 Property {
                     null_guard: None,
                     or_alternatives: Vec::new(),
                     for_each: None,
+                    origin_name: None,
+                    contract_kind: crate::verify::contract::ContractKind::Precond,
+                    kind: PropertyKind::InBound,
+                    args: vec![target.clone(), ty.clone(), count.clone()],
+                },
+                Property {
+                    null_guard: None,
+                    or_alternatives: Vec::new(),
+                    for_each: None,
+                    origin_name: None,
                     contract_kind: crate::verify::contract::ContractKind::Precond,
                     kind: PropertyKind::Align,
                     args: vec![target.clone(), ty.clone()],
@@ -1329,6 +1356,7 @@ fn build_static_mut_checks<'tcx>(
                     null_guard: None,
                     or_alternatives: Vec::new(),
                     for_each: None,
+                    origin_name: None,
                     contract_kind: crate::verify::contract::ContractKind::Precond,
                     kind: PropertyKind::Init,
                     args: vec![target, ty, count],
