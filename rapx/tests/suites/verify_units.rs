@@ -189,6 +189,7 @@ sound_tests_vm! {
     validnum_sound_08: "verify_units/validnum_sound_8" => "sound_trait_bound_align_order",
     validnum_std_sound_01: "verify_units/validnum_std_sound_1" => "sound_std_from_raw_parts_validnum",
     validnum_std_sound_02: "verify_units/validnum_std_sound_2" => "sound_std_copy_nonoverlapping_validnum",
+    nonzero_type_invariant: "verify_units/nonzero_type_invariant" => "sound_nonzero_type_invariant",
 }
 
 // ================ ValidNum Unsound Cases =============

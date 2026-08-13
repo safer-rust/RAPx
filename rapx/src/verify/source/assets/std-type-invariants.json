@@ -1,97 +1,39 @@
 {
-  "&[T]": {
-    "comment": "Slice reference — the internal pointer is ValidPtr for len(self) elements",
-    "invariants": [
-      {
-        "tag": "ValidPtr",
-        "args": [
-          "$ptr",
-          "$elem_ty",
-          "$len"
-        ]
-      },
-      {
-        "tag": "NonNull",
-        "args": [
-          "$ptr"
-        ]
-      },
-      {
-        "tag": "ValidNum",
-        "args": [
-          "$len * size_of($elem_ty) <= isize::MAX"
-        ]
-      }
-    ]
-  },
-  "&mut [T]": {
-    "comment": "Mutable slice reference",
-    "invariants": [
-      {
-        "tag": "ValidPtr",
-        "args": [
-          "$ptr",
-          "$elem_ty",
-          "$len"
-        ]
-      },
-      {
-        "tag": "NonNull",
-        "args": [
-          "$ptr"
-        ]
-      },
-      {
-        "tag": "Init",
-        "args": [
-          "$ptr",
-          "$elem_ty",
-          "$len"
-        ]
-      },
-      {
-        "tag": "ValidNum",
-        "args": [
-          "$len * size_of($elem_ty) <= isize::MAX"
-        ]
-      }
-    ]
-  },
-  "core::num::NonZero<T>": {
+  "core::num::NonZero": {
     "comment": "NonZero integer \u2014 inner value must be non-zero",
     "invariants": [
       {
         "tag": "ValidNum",
         "args": [
-          "$self != 0"
+          "$self.0 != 0"
         ]
       }
     ]
   },
-  "core::num::nonzero::NonZero<T>": {
+  "core::num::nonzero::NonZero": {
     "comment": "NonZero integer (full path) \u2014 inner value must be non-zero",
     "invariants": [
       {
         "tag": "ValidNum",
         "args": [
-          "$self != 0"
+          "$self.0 != 0"
         ]
       }
     ]
   },
-  "std::num::NonZero<T>": {
+  "std::num::NonZero": {
     "comment": "NonZero integer (std path) \u2014 inner value must be non-zero",
     "invariants": [
       {
         "tag": "ValidNum",
         "args": [
-          "$self != 0"
+          "$self.0 != 0"
         ]
       }
     ]
   },
-  "alloc::boxed::Box<T>": {
-    "comment": "Box<T> \u2014 the internal pointer is non-null and aligned for one element",
+  "alloc::boxed::Box": {
+    "comment": "Box \u2014 the internal pointer is non-null and aligned for one element",
     "invariants": [
       {
         "tag": "NonNull",
@@ -114,8 +56,8 @@
       }
     ]
   },
-  "std::boxed::Box<T>": {
-    "comment": "Box<T> (std path)",
+  "std::boxed::Box": {
+    "comment": "Box (std path)",
     "invariants": [
       {
         "tag": "NonNull",
@@ -138,8 +80,8 @@
       }
     ]
   },
-  "alloc::vec::Vec<T>": {
-    "comment": "Vec<T> \u2014 pointer field is non-null and aligned for T",
+  "alloc::vec::Vec": {
+    "comment": "Vec \u2014 pointer field is non-null and aligned for T",
     "invariants": [
       {
         "tag": "NonNull",
@@ -162,8 +104,8 @@
       }
     ]
   },
-  "std::vec::Vec<T>": {
-    "comment": "Vec<T> (std path)",
+  "std::vec::Vec": {
+    "comment": "Vec (std path)",
     "invariants": [
       {
         "tag": "NonNull",
@@ -186,8 +128,8 @@
       }
     ]
   },
-  "core::ptr::non_null::NonNull<T>": {
-    "comment": "NonNull<T> \u2014 the inner raw pointer is always non-null",
+  "core::ptr::non_null::NonNull": {
+    "comment": "NonNull \u2014 the inner raw pointer is always non-null",
     "invariants": [
       {
         "tag": "NonNull",
@@ -197,8 +139,8 @@
       }
     ]
   },
-  "std::ptr::non_null::NonNull<T>": {
-    "comment": "NonNull<T> (std path) \u2014 the inner raw pointer is always non-null",
+  "std::ptr::non_null::NonNull": {
+    "comment": "NonNull (std path) \u2014 the inner raw pointer is always non-null",
     "invariants": [
       {
         "tag": "NonNull",

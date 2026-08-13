@@ -87,7 +87,7 @@ impl PropertyChecker {
                     return CheckResult::Proved;
                 }
                 self.check_decomposed(vm_state, solver, checkpoint, property,
-                    &[PropertyKind::Allocated, PropertyKind::InBound, PropertyKind::Init, PropertyKind::Align])
+                    &[PropertyKind::Allocated, PropertyKind::InBound])
             }
             PropertyKind::Or => self.check_or(vm_state, solver, checkpoint, property),
 

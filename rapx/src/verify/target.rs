@@ -1435,11 +1435,14 @@ fn instantiate_type_invariant<'tcx>(
 ) -> Option<Property<'tcx>> {
     let mut exprs: Vec<syn::Expr> = Vec::new();
     for arg_str in &entry.args {
+        // Substitute the `$self` placeholder with the actual parameter name
+        // (or "return"), so e.g. "$self.0 != 0" becomes "param.0 != 0".
+        let substituted = arg_str.replace("$self", param_name);
         // Substitute struct field references like "0" → "param_name.0"
-        let resolved = if is_numeric_field_access(arg_str) {
-            format!("{}.{}", param_name, arg_str)
+        let resolved = if is_numeric_field_access(&substituted) {
+            format!("{}.{}", param_name, substituted)
         } else {
-            arg_str.clone()
+            substituted
         };
         match syn::parse_str::<syn::Expr>(&resolved) {
             Ok(expr) => exprs.push(expr),

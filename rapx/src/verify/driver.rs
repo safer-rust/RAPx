@@ -120,7 +120,6 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
 
         for view in self.iter_callsite_checks() {
             let mut view_results: Vec<PropertyCheckResult<'tcx>> = Vec::new();
-            let has_init_prop = view.properties.iter().any(|p| matches!(p.kind, PropertyKind::Init));
 
             for (property_index, property) in view.properties.iter().enumerate() {
                 if property.kind == PropertyKind::Or {
@@ -153,12 +152,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
             }
 
             for item in view_results {
-                let is_redundant = has_init_prop
-                    && matches!(item.property.kind, PropertyKind::ValidPtr)
-                    && matches!(item.result, super::report::CheckResult::Unknown);
-                if !is_redundant {
-                    report.push(item);
-                }
+                report.push(item);
             }
         }
 

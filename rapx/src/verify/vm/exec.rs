@@ -1010,15 +1010,13 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         if let Some(place) = src_place {
             if !place.projection.is_empty() {
                 if let Some(val) = self.value_of_place(place) {
-                    if val.provenance.is_some() || val.invariants.non_null {
-                        let dest_ty = self.body.local_decls[dest_local].ty;
-                        self.set_local(dest_local, VmValue {
-                            term: val.term,
-                            ty: dest_ty,
-                            provenance: val.provenance,
-                            invariants: val.invariants,
-                        });
-                    }
+                    let dest_ty = self.body.local_decls[dest_local].ty;
+                    self.set_local(dest_local, VmValue {
+                        term: val.term,
+                        ty: dest_ty,
+                        provenance: val.provenance,
+                        invariants: val.invariants,
+                    });
                 }
             }
             return;
@@ -1182,6 +1180,28 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             let mut value = value;
             value.invariants.init = true;
             self.set_local(place.local, value);
+            // Propagate field values for aggregate copies (e.g. `_4 = copy _1`)
+            // so downstream field accesses (NonZero::get -> self.0) resolve to
+            // the same symbolic field terms.
+            let src = match rvalue {
+                #[cfg(rapx_rvalue_use_with_retag)]
+                Rvalue::Use(operand, _) => extract_local(operand),
+                #[cfg(not(rapx_rvalue_use_with_retag))]
+                Rvalue::Use(operand) => extract_local(operand),
+                Rvalue::CopyForDeref(p) if p.projection.is_empty() => Some(p.local),
+                _ => None,
+            };
+            if let Some(src) = src {
+                let keys: Vec<Vec<usize>> = self.field_values.keys()
+                    .filter(|(l, _)| *l == src)
+                    .map(|(_, f)| f.clone())
+                    .collect();
+                for k in keys {
+                    if let Some(fv) = self.field_value(src, &k).cloned() {
+                        self.set_field_value(place.local, k, fv);
+                    }
+                }
+            }
         } else if !has_deref {
             // Field projection (no Deref): update field_values for the base local.
             let field_indices: Vec<usize> = place.projection.iter()
@@ -1547,8 +1567,14 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 } else {
                     src_val.invariants.aligned
                 };
+                // Transmute-like casts of single-field newtypes (e.g.
+                // NonZero::get's `_0 = copy _1 as T`) yield the underlying
+                // field value, not the wrapper's own term.
+                let term = extract_local(operand)
+                    .and_then(|l| self.field_value(l, &[0]).map(|v| v.term.clone()))
+                    .unwrap_or(src_val.term);
                 Ok(VmValue {
-                    term: src_val.term,
+                    term,
                     ty: *cast_ty,
                     provenance: src_val.provenance,
                     invariants: ValueInvariants {
@@ -2272,25 +2298,13 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 }
             }
             PropertyKind::ValidPtr => {
-                // ValidPtr is composed of Allocated+InBound+Init+Align.
+                // ValidPtr = Size(T,0) || (!Size(T,0) && Deref(p,T,len));
+                // Deref = Allocated && InBound.
                 if let Some(val) = self.contract_target_value(property) {
-                    self.set_init_for_value(property, val.clone());
-                    self.set_in_bounds_for_value(property, val.clone());
                     if let Some(alloc_id) = val.provenance_alloc_id() {
                         self.dead_allocations.remove(&alloc_id);
                     }
-                    // The alignment from the contract type
-                    if let Some(ty) = property.args.get(1).and_then(|a| {
-                        if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None }
-                    }) {
-                        let mut v = val;
-                        v.invariants.aligned = true;
-                        let align = self.align_of_ty(ty);
-                        if align > 1 {
-                            v.invariants.align_n = Some(align);
-                        }
-                        self.set_contract_target_value(property, v);
-                    }
+                    self.set_in_bounds_for_value(property, val);
                 }
             }
             PropertyKind::InBound => {
@@ -2522,11 +2536,12 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             _ => self.eval_contract_expr_simple(&pred.rhs)?,
         };
         Some(match pred.op {
+            RelOp::Eq => lhs._eq(&rhs),
+            RelOp::Ne => lhs._eq(&rhs).not(),
             RelOp::Le => lhs.le(&rhs),
             RelOp::Lt => lhs.lt(&rhs),
             RelOp::Ge => lhs.ge(&rhs),
             RelOp::Gt => lhs.gt(&rhs),
-            _ => return None,
         })
     }
 
@@ -2540,7 +2555,22 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             ContractExpr::Place(cp) => {
                 match cp.base {
                     PlaceBase::Local(n) => {
-                        self.local_value(Local::from_usize(n)).map(|v| v.term.clone())
+                        let local = Local::from_usize(n);
+                        let mut path: Vec<usize> = Vec::new();
+                        for proj in &cp.projections {
+                            match proj {
+                                crate::verify::contract::ContractProjection::Field { index, .. } => {
+                                    path.push(*index);
+                                }
+                                // Downcast / IterElements are not scalar numeric values.
+                                _ => return None,
+                            }
+                        }
+                        if path.is_empty() {
+                            self.local_value(local).map(|v| v.term.clone())
+                        } else {
+                            self.field_value(local, &path).map(|v| v.term.clone())
+                        }
                     }
                     _ => None,
                 }
