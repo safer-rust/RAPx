@@ -21,7 +21,7 @@ static SPECS: &[PropertySpec] = &[
     ps("NonNull",      PropertyKind::NonNull,      &[ArgKind::Target], ContractKind::Precond),
     ps("Owning",       PropertyKind::Owning,       &[ArgKind::Target], ContractKind::Precond),
     ps("Opened",       PropertyKind::Opened,       &[ArgKind::Target], ContractKind::Precond),
-    ps("Unreachable",  PropertyKind::Unreachable,  &[ArgKind::Target], ContractKind::Precond),
+    ps("Unreachable",  PropertyKind::Unreachable,  &[], ContractKind::Precond),
     // [Target, Ty]
     ps("Align",        PropertyKind::Align,        &[ArgKind::Target, ArgKind::Ty], ContractKind::Precond),
     ps("Typed",        PropertyKind::Typed,        &[ArgKind::Target, ArgKind::Ty], ContractKind::Precond),

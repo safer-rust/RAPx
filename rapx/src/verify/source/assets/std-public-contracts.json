@@ -261,8 +261,7 @@
       "tag": "Typed",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     }
   ],
@@ -271,8 +270,7 @@
       "tag": "Typed",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     }
   ],
@@ -688,10 +686,16 @@
   ],
   "core::mem::transmute_copy": [
     {
-      "tag": "DoubleAligned",
+      "tag": "Align",
       "args": [
         "src",
-        "Src",
+        "Src"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "src",
         "Dst"
       ]
     },
@@ -705,7 +709,7 @@
     {
       "tag": "ValidPtr",
       "args": [
-        "dst",
+        "src",
         "Dst",
         "1"
       ]
@@ -713,10 +717,16 @@
   ],
   "core::mem::transmutability::TransmuteFrom::transmute": [
     {
-      "tag": "DoubleAligned",
+      "tag": "Align",
       "args": [
         "self",
-        "Src",
+        "Src"
+      ]
+    },
+    {
+      "tag": "Align",
+      "args": [
+        "self",
         "Dst"
       ]
     },
@@ -1906,7 +1916,8 @@
       "tag": "ValidPtr",
       "args": [
         "other",
-        "T"
+        "T",
+        "1"
       ]
     },
     {
@@ -3275,7 +3286,8 @@
       "tag": "ValidPtr",
       "args": [
         "other",
-        "T"
+        "T",
+        "1"
       ]
     },
     {
