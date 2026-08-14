@@ -12,7 +12,6 @@ pub mod path_extractor;
 pub mod property_checker;
 pub mod report;
 pub mod slicer;
-pub mod source;
 pub mod target;
 pub mod valid_cstr_util;
 

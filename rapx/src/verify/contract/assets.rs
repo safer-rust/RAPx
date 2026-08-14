@@ -134,41 +134,9 @@ fn resolve_trait_method(tcx: TyCtxt<'_>, def_id: DefId) -> DefId {
 fn get_std_contracts_from_json() -> &'static HashMap<String, Vec<PropertyEntry>> {
     static STD_CONTRACTS: OnceLock<HashMap<String, Vec<PropertyEntry>>> = OnceLock::new();
     STD_CONTRACTS.get_or_init(|| {
-        let raw = include_str!("assets/std-public-contracts.json");
-        let normalized = normalize_json_trailing_commas(raw);
-        serde_json::from_str(normalized.as_str())
+        serde_json::from_str(include_str!("assets/std-public-contracts.json"))
             .unwrap_or_else(|err| panic!("failed to parse verify std contracts backup: {err}"))
     })
-}
-
-/// Removes trailing commas that appear immediately before `}` or `]` in JSON text.
-///
-/// This allows the embedded backup JSON file to remain slightly permissive while
-/// still being parsed by `serde_json`.
-fn normalize_json_trailing_commas(input: &str) -> String {
-    let mut normalized = String::with_capacity(input.len());
-    let mut iter = input.char_indices().peekable();
-
-    while let Some((_, ch)) = iter.next() {
-        if ch == ',' {
-            let mut lookahead = iter.clone();
-            while let Some((_, next_ch)) = lookahead.peek() {
-                if next_ch.is_whitespace() {
-                    lookahead.next();
-                } else {
-                    break;
-                }
-            }
-            if let Some((_, next_ch)) = lookahead.peek()
-                && (*next_ch == '}' || *next_ch == ']')
-            {
-                continue;
-            }
-        }
-        normalized.push(ch);
-    }
-
-    normalized
 }
 
 /// Serialisation-friendly struct for the type-invariants JSON.
@@ -184,9 +152,7 @@ pub struct TypeInvariantEntry {
 pub fn get_std_type_invariants() -> &'static HashMap<String, TypeInvariantEntry> {
     static TYPE_INVARIANTS: OnceLock<HashMap<String, TypeInvariantEntry>> = OnceLock::new();
     TYPE_INVARIANTS.get_or_init(|| {
-        let raw = include_str!("assets/std-type-invariants.json");
-        let normalized = normalize_json_trailing_commas(raw);
-        serde_json::from_str(normalized.as_str())
+        serde_json::from_str(include_str!("assets/std-type-invariants.json"))
             .unwrap_or_else(|err| panic!("failed to parse std type invariants: {err}"))
     })
 }

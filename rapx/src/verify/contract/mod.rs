@@ -1,3 +1,5 @@
+pub(crate) mod assets;
+pub(crate) mod attr;
 pub mod builder;
 pub mod def;
 pub mod pest_conv;

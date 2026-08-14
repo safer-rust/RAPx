@@ -20,9 +20,11 @@ use std::collections::{HashMap, HashSet};
 use crate::compat::FxHashMap;
 
 use super::{
-    contract::{ContractExpr, ContractPlace, PlaceBase, Property, PropertyArg, PropertyKind},
+    contract::{
+        ContractExpr, ContractPlace, PlaceBase, Property, PropertyArg, PropertyKind,
+        attr::parse_rapx_attr,
+    },
     path_extractor::PathExtractor,
-    source::attr::parse_rapx_attr,
 };
 use crate::helpers::mir_utils::{
     collect_return_block_indices, get_owner_struct_def_id, has_rapx_verify_attr,
@@ -1086,11 +1088,15 @@ fn collect_properties_from_named_attrs<'tcx>(
             }
         };
 
-        results.extend(parsed.properties.into_iter().flat_map(|property| {
+        let Some(property) = parsed else { continue };
+        results.extend(
             Property::parse_list(tcx, property_def_id, property.tag.as_str(), &property.args)
                 .into_iter()
-                .map(move |mut p| { p.apply_kind(property.kind.as_deref()); p })
-        }));
+                .map(move |mut p| {
+                    p.apply_kind(property.kind.as_deref());
+                    p
+                }),
+        );
     }
 
     results
@@ -1304,7 +1310,7 @@ fn build_type_invariants_from_params<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
 ) -> Vec<Property<'tcx>> {
-    let db = crate::verify::source::assets::get_std_type_invariants();
+    let db = crate::verify::contract::assets::get_std_type_invariants();
     if db.is_empty() {
         return Vec::new();
     }
@@ -1341,7 +1347,7 @@ fn build_type_invariants_from_params<'tcx>(
 fn collect_type_invariants<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
-    db: &std::collections::HashMap<String, crate::verify::source::assets::TypeInvariantEntry>,
+    db: &std::collections::HashMap<String, crate::verify::contract::assets::TypeInvariantEntry>,
     type_path: &str,
     param_name: &str,
     results: &mut Vec<Property<'tcx>>,
@@ -1375,7 +1381,7 @@ fn collect_type_invariants<'tcx>(
 fn instantiate_type_invariant<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
-    entry: &crate::verify::source::assets::PropertyEntry,
+    entry: &crate::verify::contract::assets::PropertyEntry,
     param_name: &str,
 ) -> Option<Property<'tcx>> {
     let mut exprs: Vec<syn::Expr> = Vec::new();

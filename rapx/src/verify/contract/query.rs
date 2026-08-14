@@ -22,7 +22,7 @@ use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 use safety_parser::syn::Expr;
 
-use crate::verify::source::assets::{AnyItem, PropertyEntry, get_std_contracts_from_assets};
+use super::assets::{AnyItem, PropertyEntry, get_std_contracts_from_assets};
 
 use super::types::{Property, PropertyKind};
 

@@ -31,13 +31,6 @@ pub struct ParsedProperty {
     pub kind: Option<String>,
 }
 
-/// The parsed result of a `#[rapx::requires(...)]` attribute.
-#[derive(Debug, Clone, Default)]
-pub struct ParsedRapxAttr {
-    /// All parsed properties in source order.
-    pub properties: Vec<ParsedProperty>,
-}
-
 impl Parse for ParsedProperty {
     /// Parse a single property item from a `requires` attribute argument list.
     ///
@@ -99,27 +92,28 @@ impl Parse for RequireOuterAttribute {
     }
 }
 
-/// Parse a raw attribute string into a structured `requires` representation.
+/// Parse a raw attribute string into a structured `requires` property.
 ///
-/// Returns an empty default value when the attribute does not match
-/// `rapx::requires` or when it is not a list attribute.
-pub fn parse_rapx_attr(attr_str: &str, expected_name: &str) -> SynResult<ParsedRapxAttr> {
+/// Returns `Ok(None)` when the attribute does not match `rapx::<expected_name>`
+/// or when it is not a list attribute.
+pub fn parse_rapx_attr(
+    attr_str: &str,
+    expected_name: &str,
+) -> SynResult<Option<ParsedProperty>> {
     let attr_str = strip_lifetime_ticks(attr_str);
     // Parse the raw string into a single outer attribute node.
     let attr = syn::parse_str::<RequireOuterAttribute>(&attr_str)?.attr;
     if !is_expected_syn_rapx_attr(&attr, expected_name) {
-        return Ok(ParsedRapxAttr::default());
+        return Ok(None);
     }
 
     // Only list-style attributes carry an argument list.
     let syn::Meta::List(meta_list) = &attr.meta else {
-        return Ok(ParsedRapxAttr::default());
+        return Ok(None);
     };
 
     let property = meta_list.parse_args::<ParsedProperty>()?;
-    Ok(ParsedRapxAttr {
-        properties: vec![property],
-    })
+    Ok(Some(property))
 }
 
 /// Check whether an attribute path is exactly `rapx::<expected_name>`.

@@ -391,10 +391,10 @@ fn user_defs_map() -> &'static RwLock<HashMap<CrateNum, HashMap<String, DefSpec>
 /// (`std-contracts.rs`) plus user extensions (`user-contracts.rs`).
 fn builtin_defs() -> HashMap<String, DefSpec> {
     let mut map = HashMap::new();
-    for def in parse_defs(include_str!("../source/assets/std-contracts.rs")) {
+    for def in parse_defs(include_str!("assets/std-contracts.rs")) {
         map.insert(def.name.clone(), def);
     }
-    for def in parse_defs(include_str!("../source/assets/user-contracts.rs")) {
+    for def in parse_defs(include_str!("assets/user-contracts.rs")) {
         map.insert(def.name.clone(), def);
     }
     map
