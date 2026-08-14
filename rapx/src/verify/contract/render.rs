@@ -245,6 +245,13 @@ impl<'tcx> Property<'tcx> {
         struct_def_id: Option<DefId>,
         fn_def_id: Option<DefId>,
     ) -> String {
+        // Compound `def` (e.g. `Ptr2Ref`, `Deref`, user `#[def_contract]`): show
+        // it as a single `name(args)` entry instead of its underlying primitives.
+        if let Some(name) = self.origin_name() {
+            let args = self.origin_args().map(|a| a.join(", ")).unwrap_or_default();
+            return format!("{name}({args})");
+        }
+
         let kind_str = match self.kind() {
             Some(k) => format!("{k:?}"),
             None => "Or".to_string(),

@@ -889,7 +889,7 @@ impl<'tcx> PrepareTargets<'tcx> {
             rap_info!("  struct invariants: <none>");
         } else {
             rap_info!("  struct invariants:");
-            for property in &struct_target.invariants {
+            for property in crate::verify::display::dedup_compound_props(struct_target.invariants.iter()) {
                 rap_info!(
                     "    - {}",
                     property.display_for_report(self.tcx, Some(struct_target.def_id), None,)
@@ -908,7 +908,7 @@ impl<'tcx> PrepareTargets<'tcx> {
             rap_info!("  ensures (implementor must satisfy):");
             for (method_name, contracts) in &trait_target.ensures {
                 rap_info!("    fn {}:", method_name);
-                for property in contracts {
+                for property in crate::verify::display::dedup_compound_props(contracts.iter()) {
                     rap_info!(
                         "      - {}",
                         property.display_for_report(self.tcx, trait_target.self_ty_def_id, None,)
@@ -977,7 +977,7 @@ impl<'tcx> PrepareTargets<'tcx> {
                     rap_info!("        safety contracts: <none>");
                 } else {
                     rap_info!("        safety contracts:");
-                    for property in requires {
+                    for property in crate::verify::display::dedup_compound_props(requires.iter()) {
                         rap_info!(
                             "          - {}",
                             property.display_for_report(

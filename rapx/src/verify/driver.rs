@@ -23,8 +23,9 @@ use rustc_middle::ty::TyCtxt;
 use super::{
     contract::Property,
     display::{
-        emit_results_and_verdict, emit_verify_summary, fmt_contract_expanded,
-        fmt_fn_path_with_bounds, fmt_fn_path_with_generics, fmt_fn_with_params,
+        dedup_compound_props, emit_results_and_verdict, emit_verify_summary,
+        fmt_contract_expanded, fmt_fn_path_with_bounds, fmt_fn_path_with_generics,
+        fmt_fn_with_params,
     },
     engine::VerifyEngine,
     loop_sensitivity::{LoopSensitivityAnalyzer, RepeatStrategy},
@@ -750,7 +751,7 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                     rap_info!("  ensures (implementor must satisfy):");
                     for (method_name, contracts) in &trait_target.ensures {
                         rap_info!("    fn {}:", method_name);
-                        for property in contracts {
+                        for property in dedup_compound_props(contracts.iter()) {
                             rap_info!(
                                 "      - {}",
                                 property.display_for_report(
@@ -1045,29 +1046,6 @@ impl<'tcx> VerifyRun<'tcx> {
 }
 
 use crate::helpers::name::short_fn_name;
-
-/// Drop consecutive duplicate compound-`def` entries: a `def` expands to several
-/// primitives sharing the same origin name and arguments, which should render as
-/// a single `name(args)` line in `--debug-contracts`.
-fn dedup_compound_props<'a, 'tcx>(
-    props: impl Iterator<Item = &'a crate::verify::contract::Property<'tcx>>,
-) -> Vec<&'a crate::verify::contract::Property<'tcx>> {
-    let mut out = Vec::new();
-    let mut prev: Option<(String, Vec<String>)> = None;
-    for p in props {
-        if let (Some(name), Some(args)) = (p.origin_name(), p.origin_args()) {
-            let key = (name.to_string(), args.to_vec());
-            if prev.as_ref() == Some(&key) {
-                continue;
-            }
-            prev = Some(key);
-        } else {
-            prev = None;
-        }
-        out.push(p);
-    }
-    out
-}
 
 /// Return true when two properties have the same kind.
 /// Collect struct field indices referenced by a property's contract places.

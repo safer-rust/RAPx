@@ -319,6 +319,29 @@ fn fmt_meaning_template(template: &str, args: &[String]) -> String {
     out
 }
 
+/// Drop consecutive duplicate compound-`def` entries: a `def` expands to several
+/// primitives sharing the same origin name and arguments, which should render as
+/// a single `name(args)` line.
+pub(crate) fn dedup_compound_props<'a, 'tcx>(
+    props: impl Iterator<Item = &'a crate::verify::contract::Property<'tcx>>,
+) -> Vec<&'a crate::verify::contract::Property<'tcx>> {
+    let mut out = Vec::new();
+    let mut prev: Option<(String, Vec<String>)> = None;
+    for p in props {
+        if let (Some(name), Some(args)) = (p.origin_name(), p.origin_args()) {
+            let key = (name.to_string(), args.to_vec());
+            if prev.as_ref() == Some(&key) {
+                continue;
+            }
+            prev = Some(key);
+        } else {
+            prev = None;
+        }
+        out.push(p);
+    }
+    out
+}
+
 pub fn emit_results_counts_and_checkpoints<'tcx>(
     tcx: TyCtxt<'tcx>,
     all_results: &[PropertyCheckResult<'tcx>],
@@ -447,29 +470,40 @@ pub fn emit_property_rows<'tcx>(
             usize,
         )> = Vec::new();
         for r in props.iter() {
-            let is_hazard =
-                r.property.contract_kind() == crate::verify::contract::ContractKind::Hazard;
-            let is_option =
-                r.property.contract_kind() == crate::verify::contract::ContractKind::Option_;
-            let origin = r.property.origin_name().map(String::from);
             let result = r.result.clone();
-            if let Some(entry) = counts.iter_mut().find(|(k, on, h, o, res, _)| {
-                *k == r.property.kind()
-                    && *on == origin
-                    && *h == is_hazard
-                    && *o == is_option
-                    && *res == result
-            }) {
-                entry.5 += 1;
+            if let Some(on) = r.property.origin_name() {
+                // Compound `def`: one entry per origin name, its primitives
+                // AND-combined into a single verdict (no hazard/option prefix).
+                if let Some(entry) =
+                    counts.iter_mut().find(|(_, o, _, _, _, _)| o.as_deref() == Some(on))
+                {
+                    entry.4 = entry.4.clone().and(result);
+                } else {
+                    counts.push((None, Some(on.to_string()), false, false, result, 1usize));
+                }
             } else {
-                counts.push((
-                    r.property.kind(),
-                    origin,
-                    is_hazard,
-                    is_option,
-                    result,
-                    1usize,
-                ));
+                let is_hazard =
+                    r.property.contract_kind() == crate::verify::contract::ContractKind::Hazard;
+                let is_option =
+                    r.property.contract_kind() == crate::verify::contract::ContractKind::Option_;
+                if let Some(entry) = counts.iter_mut().find(|(k, o, h, opt, res, _)| {
+                    *k == r.property.kind()
+                        && o.is_none()
+                        && *h == is_hazard
+                        && *opt == is_option
+                        && *res == result
+                }) {
+                    entry.5 += 1;
+                } else {
+                    counts.push((
+                        r.property.kind(),
+                        None,
+                        is_hazard,
+                        is_option,
+                        result,
+                        1usize,
+                    ));
+                }
             }
         }
         let n = counts.len();
