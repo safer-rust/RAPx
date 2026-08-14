@@ -1,5 +1,4 @@
 mod call_visit;
-mod display;
 pub mod types;
 mod visitor;
 

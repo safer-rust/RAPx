@@ -52,13 +52,6 @@ pub fn predicates_of<'tcx>(
     tcx.clauses_of(def_id)
 }
 
-// ── OwnerId (rustc ≥ 1.99) ────────────────────────────────────────────
-
-#[cfg(not(rapx_rustc_ge_199))]
-pub use rustc_hir::hir_id::OwnerId;
-#[cfg(rapx_rustc_ge_199)]
-pub use rustc_hir::OwnerId;
-
 // ── GenericArgsRef::get (Binder wrapping in rustc ≥ 1.99) ─────────────
 
 #[cfg(not(rapx_rustc_ge_199))]

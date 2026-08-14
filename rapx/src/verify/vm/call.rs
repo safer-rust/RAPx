@@ -92,13 +92,8 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         if pp.alloc_id == ep.alloc_id {
                             let dest_ty = self.body.local_decls[destination].ty;
                             if name.ends_with("::len") {
-                                let elem_ty = match ptr.ty.kind() {
-                                    TyKind::Adt(_, substs) => substs.first().and_then(|s| s.as_type()),
-                                    _ => None,
-                                };
-                                let elem_size = elem_ty.map(|t| self.size_of_ty(t).max(1)).unwrap_or(1) as u64;
                                 let diff = Int::sub(self.ctx, &[&ep.offset, &pp.offset]);
-                                let sz = Int::from_u64(self.ctx, elem_size);
+                                let sz = Int::from_u64(self.ctx, self.iter_elem_size(ptr));
                                 let val = VmValue::new(diff.div(&sz), dest_ty);
                                 self.set_local(destination, val);
                                 return;
@@ -140,12 +135,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         if pp.alloc_id == ep.alloc_id {
                             let dest_ty = self.body.local_decls[destination].ty;
                             // Compute is_empty from fields/tracked offset (same as is_empty()).
-                            let elem_ty = match ptr.ty.kind() {
-                                TyKind::Adt(_, substs) => substs.first().and_then(|s| s.as_type()),
-                                _ => None,
-                            };
-                            let elem_size = elem_ty.map(|t| self.size_of_ty(t).max(1)).unwrap_or(1) as u64;
-                            let sz = Int::from_u64(self.ctx, elem_size);
+                            let sz = Int::from_u64(self.ctx, self.iter_elem_size(ptr));
                             let ep_offset = ep.offset.clone();
                             let remaining = if let Some(off) = self.iter_ptr_offset.get(&local) {
                                 let base_len = ep_offset.div(&sz);
@@ -361,22 +351,9 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         // Only inline small, linear functions. Branching functions
         // require state forking which we don't do yet; the summary
         // system provides better precision for those cases.
-        if callee_body.basic_blocks.len() > 5 || arg_values.len() > 4 {
-            return false;
-        }
-
-        // Check that the callee has no SwitchInt terminators (linear CFG).
-        for bb_data in callee_body.basic_blocks.iter() {
-            if matches!(bb_data.terminator().kind, TerminatorKind::SwitchInt { .. }) {
-                return false;
-            }
-        }
-        
-        // Count return points — if > 1, the inline is imprecise.
-        let return_count = callee_body.basic_blocks.iter()
-            .filter(|bb| matches!(bb.terminator().kind, TerminatorKind::Return))
-            .count();
-        if return_count > 1 {
+        if arg_values.len() > 4
+            || !crate::helpers::mir_utils::callee_is_linear(self.tcx, callee_def_id, 5)
+        {
             return false;
         }
 
@@ -855,7 +832,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             }
             CallEffect::ReturnIsEmptyOfArg { arg } => {
                 if let Some(arg_val) = args.get(*arg) {
-                    if self.iterpreter_iter_is_empty(arg_val, dest) {
+                    if self.interpreter_iter_is_empty(arg_val, dest) {
                         return;
                     }
                     let effective_alloc_id = arg_val.provenance_alloc_id()
@@ -1355,88 +1332,74 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         None
     }
 
+    /// Element size (bytes) of the type iterated by an Iter/IterMut pointer.
+    pub(crate) fn iter_elem_size(&self, ptr: &VmValue<'ctx, 'tcx>) -> u64 {
+        let elem_ty = match ptr.ty.kind() {
+            TyKind::Adt(_, substs) => substs.first().and_then(|s| s.as_type()),
+            _ => None,
+        };
+        elem_ty.map(|t| self.size_of_ty(t).max(1)).unwrap_or(1) as u64
+    }
+
+    /// Remaining element count of the Iter/IterMut backed by `local`
+    /// (fields `[0]` = ptr, `[1]` = end_or_len).  When a tracked pointer
+    /// offset exists (`iter_ptr_offset`), prefers the compact
+    /// `base_len - offset` form; otherwise falls back to
+    /// `(end.offset - ptr.offset) / elem_size`.
+    fn iter_remaining_len(&self, local: Local) -> Option<Int<'ctx>> {
+        let ptr = self.field_value(local, &[0])?;
+        let end = self.field_value(local, &[1])?;
+        let pp = ptr.provenance.as_ref()?;
+        let ep = end.provenance.as_ref()?;
+        if pp.alloc_id != ep.alloc_id {
+            return None;
+        }
+        let sz = Int::from_u64(self.ctx, self.iter_elem_size(&ptr));
+        if let Some(offset) = self.iter_ptr_offset.get(&local) {
+            let base_len = ep.offset.div(&sz);
+            let zero = Int::from_u64(self.ctx, 0);
+            Some(offset.gt(&base_len).ite(&zero, &Int::sub(self.ctx, &[&base_len, offset])))
+        } else {
+            Some(Int::sub(self.ctx, &[&ep.offset, &pp.offset]).div(&sz))
+        }
+    }
+
     /// For Iter/IterMut types, compute len from struct fields directly
     /// instead of the generic allocation-size heuristic. Returns true
     /// if handled (value set to dest).
     fn interpreter_iter_len(&mut self, arg_val: &VmValue<'ctx, 'tcx>, dest: Local) -> bool {
-        let local = self.find_iter_self_local(arg_val);
-        if let Some(l) = local {
-            if let (Some(ptr), Some(end)) = (self.field_value(l, &[0]), self.field_value(l, &[1])) {
-                if let (Some(pp), Some(ep)) = (&ptr.provenance, &end.provenance) {
-                    if pp.alloc_id == ep.alloc_id {
-                        let dest_ty = self.body.local_decls[dest].ty;
-                        let elem_ty = match ptr.ty.kind() {
-                            TyKind::Adt(_, substs) => substs.first().and_then(|s| s.as_type()),
-                            _ => None,
-                        };
-                        let elem_size = elem_ty.map(|t| self.size_of_ty(t).max(1)).unwrap_or(1) as u64;
-                        let sz = Int::from_u64(self.ctx, elem_size);
-                        // Use tracked offset to produce compact `base_len - offset`.
-                        let len_term = if let Some(offset) = self.iter_ptr_offset.get(&l) {
-                            let base_len = ep.offset.div(&sz);
-                            let zero = Int::from_u64(self.ctx, 0);
-                            offset.gt(&base_len).ite(
-                                &zero,
-                                &Int::sub(self.ctx, &[&base_len, offset]),
-                            )
-                        } else {
-                            let diff = Int::sub(self.ctx, &[&ep.offset, &pp.offset]);
-                            diff.div(&sz)
-                        };
-                        let val = VmValue::new(len_term, dest_ty);
-                        self.set_local(dest, val);
-                        return true;
-                    }
-                }
-            }
-        }
-        false
+        let Some(l) = self.find_iter_self_local(arg_val) else {
+            return false;
+        };
+        let Some(len_term) = self.iter_remaining_len(l) else {
+            return false;
+        };
+        let dest_ty = self.body.local_decls[dest].ty;
+        self.set_local(dest, VmValue::new(len_term, dest_ty));
+        true
     }
 
-    fn iterpreter_iter_is_empty(&mut self, arg_val: &VmValue<'ctx, 'tcx>, dest: Local) -> bool {
-        let local = self.find_iter_self_local(arg_val);
-        if let Some(l) = local {
-            if let (Some(ptr), Some(end)) = (self.field_value(l, &[0]), self.field_value(l, &[1])) {
-                if let (Some(pp), Some(ep)) = (&ptr.provenance, &end.provenance) {
-                    if pp.alloc_id == ep.alloc_id {
-                        let dest_ty = self.body.local_decls[dest].ty;
-                        let elem_size = match ptr.ty.kind() {
-                            TyKind::Adt(_, substs) => substs.first()
-                                .and_then(|s| s.as_type())
-                                .map(|t| self.size_of_ty(t).max(1)),
-                            _ => None,
-                        }.unwrap_or(1) as u64;
-                        let sz = Int::from_u64(self.ctx, elem_size);
-                        // Compute remaining len for is_empty check.
-                        // Use tracked offset for compact Z3 terms.
-                        let remaining = if let Some(offset) = self.iter_ptr_offset.get(&l) {
-                            let base_len = ep.offset.div(&sz);
-                            let zero = Int::from_u64(self.ctx, 0);
-                            offset.gt(&base_len).ite(
-                                &zero,
-                                &Int::sub(self.ctx, &[&base_len, offset]),
-                            )
-                        } else {
-                            let diff = Int::sub(self.ctx, &[&ep.offset, &pp.offset]);
-                            diff.div(&sz)
-                        };
-                        let is_empty = remaining._eq(&Int::from_u64(self.ctx, 0));
-                        let zero = Int::from_u64(self.ctx, 0);
-                        let one = Int::from_u64(self.ctx, 1);
-                        let val = VmValue {
-                            term: is_empty.ite(&one, &zero),
-                            ty: dest_ty,
-                            provenance: None,
-                            invariants: ValueInvariants::default(),
-                        };
-                        self.is_empty_len.insert(dest, remaining.clone());
-                        self.set_local(dest, val);
-                        return true;
-                    }
-                }
-            }
-        }
-        false
+    /// For Iter/IterMut types, compute is_empty from struct fields. Returns
+    /// true if handled (value set to dest).
+    fn interpreter_iter_is_empty(&mut self, arg_val: &VmValue<'ctx, 'tcx>, dest: Local) -> bool {
+        let Some(l) = self.find_iter_self_local(arg_val) else {
+            return false;
+        };
+        let Some(remaining) = self.iter_remaining_len(l) else {
+            return false;
+        };
+        let dest_ty = self.body.local_decls[dest].ty;
+        let zero = Int::from_u64(self.ctx, 0);
+        let one = Int::from_u64(self.ctx, 1);
+        let val = VmValue {
+            term: remaining._eq(&zero).ite(&one, &zero),
+            ty: dest_ty,
+            provenance: None,
+            invariants: ValueInvariants::default(),
+        };
+        self.is_empty_len.insert(dest, remaining);
+        self.set_local(dest, val);
+        true
     }
 
     /// Apply the side effect of post_inc_start / pre_dec_end on Iter/IterMut.

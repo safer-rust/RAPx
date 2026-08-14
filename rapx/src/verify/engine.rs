@@ -131,17 +131,7 @@ impl<'tcx> VerifyEngine<'tcx> {
     }
 
     fn callee_is_simple(tcx: TyCtxt<'_>, callee_def_id: DefId) -> bool {
-        if !tcx.is_mir_available(callee_def_id) {
-            return false;
-        }
-        let body = tcx.optimized_mir(callee_def_id);
-        body.basic_blocks.len() <= 3
-            && !body.basic_blocks.iter().any(|bb| {
-                matches!(bb.terminator().kind, TerminatorKind::SwitchInt { .. })
-            })
-            && body.basic_blocks.iter()
-                .filter(|bb| matches!(bb.terminator().kind, TerminatorKind::Return))
-                .count() <= 1
+        crate::helpers::mir_utils::callee_is_linear(tcx, callee_def_id, 3)
     }
 
     /// Scan the backward items for unsupported Call terminators whose callee

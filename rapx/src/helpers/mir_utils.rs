@@ -45,6 +45,27 @@ pub fn collect_return_block_indices(tcx: TyCtxt<'_>, def_id: DefId) -> Vec<Basic
     blocks
 }
 
+/// Return true when `def_id`'s MIR body is "linear" enough for lightweight
+/// inlining: no `SwitchInt` terminators, at most one return, and at most
+/// `max_blocks` basic blocks.
+pub fn callee_is_linear(tcx: TyCtxt<'_>, def_id: DefId, max_blocks: usize) -> bool {
+    if !tcx.is_mir_available(def_id) {
+        return false;
+    }
+    let body = tcx.optimized_mir(def_id);
+    body.basic_blocks.len() <= max_blocks
+        && !body
+            .basic_blocks
+            .iter()
+            .any(|bb| matches!(bb.terminator().kind, TerminatorKind::SwitchInt { .. }))
+        && body
+            .basic_blocks
+            .iter()
+            .filter(|bb| matches!(bb.terminator().kind, TerminatorKind::Return))
+            .count()
+            <= 1
+}
+
 /// Return the callee argument index represented by a MIR local.
 ///
 /// Contract annotations written with parameter names are parsed in the callee's

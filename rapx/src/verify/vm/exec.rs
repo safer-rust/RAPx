@@ -2649,13 +2649,8 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         let pp = ptr.provenance.as_ref()?;
         let ep = end.provenance.as_ref()?;
         if pp.alloc_id != ep.alloc_id { return None; }
-        let elem_ty = match ptr.ty.kind() {
-            TyKind::Adt(_, substs) => substs.first().and_then(|s| s.as_type()),
-            _ => None,
-        };
-        let elem_size = elem_ty.map(|t| self.size_of_ty(t).max(1)).unwrap_or(1) as u64;
         let diff = Int::sub(self.ctx, &[&ep.offset, &pp.offset]);
-        let sz = Int::from_u64(self.ctx, elem_size);
+        let sz = Int::from_u64(self.ctx, self.iter_elem_size(ptr));
         Some(diff.div(&sz))
     }
 

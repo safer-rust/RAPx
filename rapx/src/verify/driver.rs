@@ -29,7 +29,7 @@ use super::{
     engine::VerifyEngine,
     loop_sensitivity::{LoopSensitivityAnalyzer, RepeatStrategy},
     path_extractor::{CallGroup, PATH_LIMIT, PathExtractor},
-    report::{CheckResult, PropertyCheckResult, VerificationReport, VisitDiagnostics},
+    report::{CheckResult, PropertyCheckResult, VerificationReport},
     slicer::BackwardItem,
     target::{FunctionTarget, VerifyTargetCollector},
 };
@@ -140,10 +140,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
                         property_index,
                         property: property.clone(),
                         result: result.clone(),
-                        diagnostics: Some(VisitDiagnostics::new(
-                            String::new(),
-                            format!("vm-check: {:?}", result),
-                        )),
+                        diagnostics: Some(format!("vm-check: {:?}", result)),
                         path_description: path_desc.clone(),
                         callee_name: view.checkpoint.callee_name(self.tcx),
                     };
@@ -185,7 +182,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
                 for (path_idx, (result, path_desc)) in bulk.iter().enumerate() {
                     let slot = group_per_path[path_idx]
                         .get_or_insert_with(|| (result.clone(), path_desc.clone()));
-                    slot.0 = combine_and(slot.0.clone(), result.clone());
+                    slot.0 = slot.0.clone().and(result.clone());
                     if matches!(result, super::report::CheckResult::Failed | super::report::CheckResult::Unknown) {
                         slot.1 = path_desc.clone();
                     }
@@ -200,7 +197,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
                 if let Some((g_result, g_desc)) = g {
                     let slot = per_path[path_idx]
                         .get_or_insert_with(|| (g_result.clone(), g_desc.clone()));
-                    slot.0 = combine_or(slot.0.clone(), g_result.clone());
+                    slot.0 = slot.0.clone().or(g_result.clone());
                     if matches!(g_result, super::report::CheckResult::Proved) {
                         slot.1 = g_desc.clone();
                     }
@@ -217,7 +214,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
                     property_index,
                     property: or_property.clone(),
                     result: result.clone(),
-                    diagnostics: Some(VisitDiagnostics::new(String::new(), path_desc.clone())),
+                    diagnostics: Some(path_desc.clone()),
                     path_description: path_desc.clone(),
                     callee_name: view.checkpoint.callee_name(self.tcx),
                 });
@@ -333,10 +330,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
                         property_index,
                         property: invariant.clone(),
                         result: result.clone(),
-                        diagnostics: Some(VisitDiagnostics::new(
-                            String::new(),
-                            format!("vm-invariant: {:?}", result),
-                        )),
+                        diagnostics: Some(format!("vm-invariant: {:?}", result)),
                         path_description,
                         callee_name: format!("struct-invariant(bb{})", checkpoint.block.as_usize()),
                     });
@@ -824,13 +818,16 @@ impl<'tcx> VerifyRun<'tcx> {
             }
 
             if let Some(tgt) = inv_target {
-                let local_names = self.resolve_local_names(tgt.def_id);
                 rap_info!("  [Struct Invariants]:");
                 let inv_count = tgt.struct_invariants.len();
                 for (ii, property) in tgt.struct_invariants.iter().enumerate() {
                     let ibranch = if ii + 1 == inv_count { "`-" } else { "|-" };
-                    let (call, meaning) =
-                        fmt_contract_expanded(self.tcx, &local_names, property, tgt.owner_struct_def_id);
+                    let (call, meaning) = fmt_contract_expanded(
+                        self.tcx,
+                        property,
+                        tgt.owner_struct_def_id,
+                        Some(tgt.def_id),
+                    );
                     self.print_contract_lines("  ", &ibranch, &call, &meaning);
                 }
                 rap_info!("");
@@ -895,7 +892,6 @@ impl<'tcx> VerifyRun<'tcx> {
     ) -> bool {
         use crate::verify::contract::PropertyKind;
 
-        let local_names = self.resolve_local_names(target.def_id);
         let (arg_names_typed, ret_ty) = self.resolve_arg_names_with_types(target.def_id);
         let is_unsafe_fn = self
             .tcx
@@ -946,9 +942,9 @@ impl<'tcx> VerifyRun<'tcx> {
                 let pbranch = if is_last { "`-" } else { "|-" };
                 let (call, meaning) = fmt_contract_expanded(
                     self.tcx,
-                    &local_names,
                     property,
                     target.owner_struct_def_id,
+                    Some(target.def_id),
                 );
                 self.print_contract_lines(
                     &format!("{cont}  "),
@@ -970,7 +966,6 @@ impl<'tcx> VerifyRun<'tcx> {
                 let cbranch = if is_last_callee { "`-" } else { "|-" };
                 let ccont = if is_last_callee { "  " } else { "| " };
                 let contracts = target.callee_requires.get(&callee_id).unwrap();
-                let callee_names = self.resolve_local_names(callee_id);
                 let (callee_typed, callee_ret) =
                     self.resolve_arg_names_with_types(callee_id);
                 let callee_path = fmt_fn_path_with_generics(self.tcx, callee_id);
@@ -991,9 +986,9 @@ impl<'tcx> VerifyRun<'tcx> {
                     let pbranch = if is_last_prop { "`-" } else { "|-" };
                     let (call, meaning) = fmt_contract_expanded(
                         self.tcx,
-                        &callee_names,
                         property,
                         None,
+                        Some(callee_id),
                     );
                     self.print_contract_lines(
                         &format!("{cont}  {ccont}"),
@@ -1007,25 +1002,6 @@ impl<'tcx> VerifyRun<'tcx> {
 
         rap_info!("");
         true
-    }
-
-    fn resolve_local_names(&self, def_id: rustc_hir::def_id::DefId) -> Vec<String> {
-        if !self.tcx.is_mir_available(def_id) {
-            return Vec::new();
-        }
-        let body = self.tcx.optimized_mir(def_id);
-        body.local_decls
-            .iter()
-            .enumerate()
-            .map(|(i, decl)| {
-                let span = decl.source_info.span;
-                self.tcx
-                    .sess
-                    .source_map()
-                    .span_to_snippet(span)
-                    .unwrap_or_else(|_| format!("_{}", i))
-            })
-            .collect()
     }
 
     fn resolve_arg_names_with_types(
@@ -1139,25 +1115,5 @@ fn remap_constructor_contract<'tcx>(
             crate::verify::contract::Property::Leaf(leaf)
         }
         crate::verify::contract::Property::Or(or) => crate::verify::contract::Property::Or(or),
-    }
-}
-
-/// AND-combine two check results: any Failed → Failed; any Unknown → Unknown;
-/// only all-Proved → Proved.
-fn combine_and(a: CheckResult, b: CheckResult) -> CheckResult {
-    match (a, b) {
-        (CheckResult::Failed, _) | (_, CheckResult::Failed) => CheckResult::Failed,
-        (CheckResult::Unknown, _) | (_, CheckResult::Unknown) => CheckResult::Unknown,
-        _ => CheckResult::Proved,
-    }
-}
-
-/// OR-combine two check results: any Proved → Proved; all Failed → Failed;
-/// otherwise Unknown.
-fn combine_or(a: CheckResult, b: CheckResult) -> CheckResult {
-    match (a, b) {
-        (CheckResult::Proved, _) | (_, CheckResult::Proved) => CheckResult::Proved,
-        (CheckResult::Failed, CheckResult::Failed) => CheckResult::Failed,
-        _ => CheckResult::Unknown,
     }
 }
