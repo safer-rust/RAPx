@@ -927,9 +927,7 @@ dependencies = [
 name = "rapx-macros"
 version = "0.7.34"
 dependencies = [
- "proc-macro2",
  "quote",
- "syn 2.0.119",
 ]
 
 [[package]]

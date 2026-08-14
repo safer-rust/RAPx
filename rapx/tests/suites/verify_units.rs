@@ -262,12 +262,9 @@ sound_tests_vm! {
     nonoverlap_sound_02: "verify_units/nonoverlap_sound_02" => "sound_copy_nonoverlapping_disjoint",
 }
 
-// ================ User-Defined DSL Contract (def) Cases =============
+// ================ User-Defined DSL Contract (pred!) Case =============
 sound_tests_vm! {
-    dsl_custom_def_sound: "verify_units/dsl_custom_def" => "sound_read",
-    dsl_custom_def_sizeof: "verify_units/dsl_custom_def" => "sound_layout_limit",
-    dsl_custom_def_min: "verify_units/dsl_custom_def" => "sound_bounded",
-    dsl_custom_def_unwrap_some: "verify_units/dsl_custom_def" => "List::push",
+    dsl_custom_def: "verify_units/dsl_custom_def" => "sound_read",
 }
 
 

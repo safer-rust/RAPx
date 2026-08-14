@@ -58,111 +58,145 @@ pub struct DefSpec {
     pub doc: Vec<String>,
 }
 
-/// Parse a source fragment containing `fn`-shaped contract definitions into a
-/// list of `DefSpec`s.
+/// Parse a source fragment containing block-shaped contract definitions
+/// (`Name(params) { body }`) into a list of `DefSpec`s.
 ///
-/// Each contract is a Rust function signature whose body is a boolean
-/// combination of primitive property calls:
+/// This is the format produced by the `pred!` macro and used by the bundled
+/// `assets/*-contracts.rs` files:
 ///
 /// ```text
-/// fn MySafeRead(p: Target, T: Ty, n: Expr) -> bool {
-///     NonNull(p) && Align(p, T) && Allocated(p, T, n)
-/// }
+/// MySafeRead(p: Ptr, T: Ty, n: Expr) { NonNull(p) && Align(p, T) && Allocated(p, T, n) }
 /// ```
 ///
-/// `//` comments and non-`fn` items are skipped.  The body supports `&&`
-/// (conjunction) and `||` (disjunction) of `Tag(arg, ...)` calls, plus `( ... )`
-/// grouping for a conjunction used as a single disjunct.
+/// Each def may be preceded by `///` doc lines (shown as the human-readable
+/// meaning in reports); `//` comments and blank lines are skipped.  The body
+/// supports `&&` (conjunction) and `||` (disjunction) of `Tag(arg, ...)` calls,
+/// plus `( ... )` grouping for a conjunction used as a single disjunct.
 pub fn parse_defs(source: &str) -> Vec<DefSpec> {
-    let file: ::syn::File = match ::syn::parse_str(source) {
-        Ok(f) => f,
-        Err(_) => return Vec::new(),
-    };
-
     let mut defs = Vec::new();
-    for item in file.items {
-        let ::syn::Item::Fn(f) = item else { continue };
-        let Some(def) = parse_one_def(&f) else { continue };
+    let mut doc: Vec<String> = Vec::new();
+
+    let mut s = source.trim_start();
+    loop {
+        // Skip blank lines and `//` comments; collect `///` doc lines.
+        loop {
+            if let Some(r) = s.strip_prefix("///") {
+                let end = r.find('\n').unwrap_or(r.len());
+                doc.push(r[..end].trim().to_string());
+                s = r[end..].trim_start();
+            } else if let Some(r) = s.strip_prefix("//") {
+                let end = r.find('\n').unwrap_or(r.len());
+                s = r[end..].trim_start();
+            } else {
+                break;
+            }
+        }
+        if s.is_empty() {
+            break;
+        }
+
+        let (Some(mut def), consumed) = parse_one_def_block(s) else {
+            break;
+        };
+        def.doc = std::mem::take(&mut doc);
         defs.push(def);
+        s = s[consumed..].trim_start();
     }
+
     defs
 }
 
-fn parse_one_def(f: &::syn::ItemFn) -> Option<DefSpec> {
-    use quote::ToTokens;
+/// Parse a single leading `Name(p: Ptr, T: Ty, ...) { body }` block from `s`.
+/// Returns the `DefSpec` (without doc) and the number of bytes consumed through
+/// the closing `}`.
+///
+/// The block is emitted by the `pred!` proc-macro as a single line of
+/// space-separated tokens, so parameter names and role annotations (`Ptr`,
+/// `Ty`, `Expr`, `Ident`) are split on `:` and `,` after trimming whitespace.
+/// The braces delimit the body, so nested `==`/`<=` inside a `ValidNum`
+/// predicate cannot be confused with a definition separator.
+fn parse_one_def_block(s: &str) -> (Option<DefSpec>, usize) {
+    let Some(open) = s.find('(') else {
+        return (None, 0);
+    };
+    let name = s[..open].trim().to_string();
+    if name.is_empty() {
+        return (None, 0);
+    }
 
-    let name = f.sig.ident.to_string();
+    // Params: match the first `)` — parameter annotations are `ident: ident`,
+    // so they never contain nested parens.
+    let Some(rel_close) = s[open + 1..].find(')') else {
+        return (None, 0);
+    };
+    let close = open + 1 + rel_close;
+    let params_str = &s[open + 1..close];
 
-    let mut params = Vec::new();
-    let mut param_tys = Vec::new();
-    for arg in &f.sig.inputs {
-        let ::syn::FnArg::Typed(pt) = arg else { continue };
-        // A def parameter is conventionally a bare identifier (`p`, `T`, `n`).
-        // Extract it structurally instead of stripping spaces from token text,
-        // so a `mut`/`&` pattern can never be misread as a parameter name.
-        let pname = match pt.pat.as_ref() {
-            ::syn::Pat::Ident(pi) => pi.ident.to_string(),
-            other => other.to_token_stream().to_string(),
-        };
-        // The annotation is a single identifier (`Ptr`, `Ty`, `Expr`, `Ident`),
-        // consumed by `def_ty_matches_arg_kind`.  Extract it directly; anything
-        // more complex keeps its token text and simply never matches a role.
-        let pty = match pt.ty.as_ref() {
-            ::syn::Type::Path(tp) if tp.qself.is_none() && tp.path.segments.len() == 1 => {
-                tp.path.segments[0].ident.to_string()
+    // Expect a `{` after the parameter list.
+    let after = s[close + 1..].trim_start();
+    if !after.starts_with('{') {
+        return (None, 0);
+    }
+    let brace_open = s.len() - after.len();
+    let body_start = brace_open + 1;
+
+    // Match braces to the closing `}` (the body may contain `if { } else { }`).
+    let bytes = s.as_bytes();
+    let mut depth = 1usize;
+    let mut j = body_start;
+    while j < bytes.len() {
+        match bytes[j] {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
             }
-            other => other.to_token_stream().to_string(),
-        };
-        params.push(pname);
-        param_tys.push(pty);
-    }
-
-    // Serialize the body expression(s), stripping trailing `;` so the result
-    // is a plain boolean expression.
-    let mut body_parts = Vec::new();
-    for stmt in &f.block.stmts {
-        let mut s = stmt.to_token_stream().to_string();
-        if let Some(stripped) = s.strip_suffix(';') {
-            s = stripped.to_string();
+            _ => {}
         }
-        let s = s.trim().to_string();
-        if !s.is_empty() {
-            body_parts.push(s);
-        }
+        j += 1;
     }
-    let body_str = body_parts.join(" ");
+    if depth != 0 {
+        return (None, 0);
+    }
+    let body = s[body_start..j].trim();
 
-    let body = parse_body(&body_str, &params)?;
+    let (params, param_tys) = parse_equation_params(params_str);
+    let Some(body_ast) = parse_body(body, &params) else {
+        return (None, 0);
+    };
 
-    let doc = extract_doc_comment(&f.attrs);
-
-    Some(DefSpec {
+    let def = DefSpec {
         name,
         params,
         param_tys,
-        body,
-        doc,
-    })
+        body: body_ast,
+        doc: Vec::new(),
+    };
+    (Some(def), j + 1)
 }
 
-/// Extract `///` doc-comment lines from a function's attributes.
-fn extract_doc_comment(attrs: &[::syn::Attribute]) -> Vec<String> {    let mut doc = Vec::new();
-    for attr in attrs {
-        if !attr.path().is_ident("doc") {
+fn parse_equation_params(params_str: &str) -> (Vec<String>, Vec<String>) {
+    let mut params = Vec::new();
+    let mut param_tys = Vec::new();
+    for seg in params_str.split(',') {
+        let seg = seg.trim();
+        if seg.is_empty() {
             continue;
         }
-        let ::syn::Meta::NameValue(nv) = &attr.meta else {
-            continue;
-        };
-        let ::syn::Expr::Lit(el) = &nv.value else {
-            continue;
-        };
-        let ::syn::Lit::Str(s) = &el.lit else {
-            continue;
-        };
-        doc.push(s.value().trim().to_string());
+        match seg.split_once(':') {
+            Some((p, ty)) => {
+                params.push(p.trim().to_string());
+                param_tys.push(ty.trim().to_string());
+            }
+            None => {
+                params.push(seg.to_string());
+                param_tys.push(String::new());
+            }
+        }
     }
-    doc
+    (params, param_tys)
 }
 
 /// Render a `syn::Expr` back to source-like text.  `proc_macro2` stringifies
@@ -602,8 +636,8 @@ pub fn register_defs_from_source(krate: CrateNum, source: &str) -> usize {
 // ── Procedural-macro contract definitions ─────────────────────
 
 /// Scan the local crate for `#[rapx::def_contract("...")]` tool attributes
-/// (emitted by the `rapx_macros::def_contract` proc-macro) and register each
-/// embedded `def` string.  Returns the number of defs registered.
+/// (emitted by the `rapx_macros::pred` proc-macro) and register each embedded
+/// `def` string.  Returns the number of defs registered.
 pub fn register_contract_defs(tcx: rustc_middle::ty::TyCtxt<'_>) -> usize {
     struct Visitor<'tcx> {
         tcx: rustc_middle::ty::TyCtxt<'tcx>,

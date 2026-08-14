@@ -230,13 +230,23 @@ This checklist maps RAPx's contract verification to the [Primitive Safety Proper
 | `Ptr2Ref` \*   | Ptr2Ref(p, T)               |     ✅    |
 | `Layout` \*    | Layout(p, layout)           |     ✅    |
 
-> \* Compound safety properties are composed from primitive SPs: `ValidPtr(p, T, len) = Size(T, 0) || (!Size(T, 0) && Deref(p, T, len))`, `Deref(p, T, len) = Allocated(p, T, len) && InBound(p, T, len)`, and `Ptr2Ref(p, T) = Init(p, T, 1) && Align(p, T) && Alias(p, 0)`.
+> \* Compound safety properties are composed from primitive SPs: `Deref(p, T, len) = Allocated(p, T, len) && InBound(p, T, len)`, `ValidPtr(p, T, len) = Size(T, 0) || Deref(p, T, len)`, `Ptr2Ref(p, T) = Init(p, T, 1) && Align(p, T) && Alias(p)`, and `Layout(p, l) = Allocated(p)`.
 >
 > \*† `ValidTransmute` and `SplitTransmute` are specializations of `Typed` for transmute operations: `ValidTransmute(T, U)` checks that a `T`-typed value is a valid bit-pattern of `U`, while `SplitTransmute` checks that every `size_of(U)`-byte contiguous chunk of a `T`-typed value is a valid `U` bit-pattern.
 
 RAPx ships with a curated set of `std` library safety contracts (`std-contracts.json`) that annotate standard library functions with property tags. This enables contract-based verification for common `std`/`core` APIs without requiring user annotations.
 
-Beyond the built-in tags, users can define their own named contracts inside their crate with the `#[def_contract]` attribute (from `rapx_macros`) — a boolean combination of the primitive safety properties — and reference them from `#[rapx::requires(MyTag(...))]` without rebuilding `rapx`.
+Beyond the built-in tags, users can define their own named contracts inside their crate with the `pred!` macro (from `rapx_macros`) — a boolean combination of the primitive safety properties — and reference them from `#[rapx::requires(MyTag(...))]` without rebuilding `rapx`:
+
+```rust
+use rapx_macros::pred;
+
+// Name(params) { body } — params carry a role: Ptr | Ty | Expr | Ident.
+pred!(Readable(p: Ptr, T: Ty, n: Expr) { NonNull(p) && Align(p, T) && Allocated(p, T, n) && Init(p, T, n) });
+
+#[rapx::requires(Readable(ptr, u8, len))]
+unsafe fn read_byte(ptr: *const u8, len: usize) -> u8 { unsafe { *ptr } }
+```
 
 The verifier is exercised against real-world safe abstractions built on top of unsafe code — for example `core::slice`-style methods such as `split_at`, `as_chunks`/`as_rchunks`, `as_flattened`, `binary_search`, `partition_dedup`, and `get_disjoint_mut` — where RAPx proves that the internal unsafe operations cannot cause undefined behavior. Each SMT query is bounded by a per-query timeout so that undecidable nonlinear goals return `unknown` instead of hanging.
 

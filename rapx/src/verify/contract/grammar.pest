@@ -6,7 +6,7 @@
 // in `contract/def.rs`.
 //
 // Scope: the *contents* of a `#[rapx::requires(...)]` / `#[rapx::invariant(...)]`
-// / `#[rapx::ensures(...)]` attribute, and the *body* of a `#[def_contract]`.
+// / `#[rapx::ensures(...)]` attribute, and the *body* of a `pred!` definition.
 // The Rust attribute wrapper itself is still extracted by `syn` (`source/attr.rs`),
 // because attribute token streams are Rust syntax.
 //
@@ -77,7 +77,7 @@ member     = { ident ~ "()"? | int }
 
 const_path = { ident ~ "::" ~ ("MAX" | "MIN") }
 
-// ── `#[def_contract]` body ──────────────────────────────────────────────────
+// ── `pred!` body ────────────────────────────────────────────────────────
 
 def_body = { SOI ~ or_expr ~ EOI }
 or_expr  = { and_expr ~ ("||" ~ and_expr)* }

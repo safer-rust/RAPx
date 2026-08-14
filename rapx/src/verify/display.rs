@@ -133,7 +133,7 @@ pub fn fmt_contract_expanded<'tcx>(
     fn_def_id: Option<rustc_hir::def_id::DefId>,
 ) -> (String, String) {
     use crate::verify::contract::PropertyKind;
-    // Compound `def` (e.g. `Ptr2Ref`, `Deref`, user `#[def_contract]`): show it
+    // Compound `def` (e.g. `Ptr2Ref`, `Deref`, user `pred!`): show it
     // as a single `name(args)` entry with its doc-derived meaning, instead of
     // the underlying primitives it expanded into.
     if let Some(name) = property.origin_name() {

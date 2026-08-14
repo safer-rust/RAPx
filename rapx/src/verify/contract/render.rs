@@ -245,7 +245,7 @@ impl<'tcx> Property<'tcx> {
         struct_def_id: Option<DefId>,
         fn_def_id: Option<DefId>,
     ) -> String {
-        // Compound `def` (e.g. `Ptr2Ref`, `Deref`, user `#[def_contract]`): show
+        // Compound `def` (e.g. `Ptr2Ref`, `Deref`, user `pred!`): show
         // it as a single `name(args)` entry instead of its underlying primitives.
         if let Some(name) = self.origin_name() {
             let args = self.origin_args().map(|a| a.join(", ")).unwrap_or_default();

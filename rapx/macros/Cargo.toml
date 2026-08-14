@@ -1,15 +1,14 @@
 [package]
 name = "rapx-macros"
-version.workspace = true
-edition.workspace = true
+version = "0.7.34"
+edition = "2024"
 description = "Procedural macros for RAPx contract definitions"
-license.workspace = true
+license = "MPL-2.0"
+authors = ["safer-rust <xuh@fudan.edu.cn>"]
 repository = "https://github.com/safer-rust/RAPx"
 
 [lib]
 proc-macro = true
 
 [dependencies]
-syn = { version = "2", features = ["full", "extra-traits"] }
 quote = "1"
-proc-macro2 = "1"
