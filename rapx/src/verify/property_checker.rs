@@ -1932,6 +1932,35 @@ impl PropertyChecker {
                     .and_then(|v| u64::try_from(v).ok())
                     .map(|v| Int::from_u64(vm_state.ctx, v))
             }
+            ContractExpr::If {
+                cond,
+                then_expr,
+                else_expr,
+            } => {
+                let l = self.eval_contract_expr(vm_state, checkpoint, &cond.lhs)?;
+                let r = self.eval_contract_expr(vm_state, checkpoint, &cond.rhs)?;
+                let cond_bool = match cond.op {
+                    RelOp::Eq => l._eq(&r),
+                    RelOp::Ne => l._eq(&r).not(),
+                    RelOp::Le => l.le(&r),
+                    RelOp::Lt => l.lt(&r),
+                    RelOp::Ge => l.ge(&r),
+                    RelOp::Gt => l.gt(&r),
+                };
+                // When the condition is concretely true/false, short-circuit to
+                // the taken branch so the result is a concrete term (otherwise an
+                // `ite(true, a, b)` stays symbolic and downstream `as_u64()`
+                // checks fail, e.g. the `count == 0` fast-path in check_in_bound).
+                match cond_bool.simplify().as_bool() {
+                    Some(true) => self.eval_contract_expr(vm_state, checkpoint, then_expr),
+                    Some(false) => self.eval_contract_expr(vm_state, checkpoint, else_expr),
+                    _ => {
+                        let t = self.eval_contract_expr(vm_state, checkpoint, then_expr)?;
+                        let e = self.eval_contract_expr(vm_state, checkpoint, else_expr)?;
+                        Some(cond_bool.ite(&t, &e))
+                    }
+                }
+            }
             _ => None,
         }
     }

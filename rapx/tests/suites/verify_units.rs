@@ -190,6 +190,7 @@ sound_tests_vm! {
     validnum_std_sound_01: "verify_units/validnum_std_sound_1" => "sound_std_from_raw_parts_validnum",
     validnum_std_sound_02: "verify_units/validnum_std_sound_2" => "sound_std_copy_nonoverlapping_validnum",
     nonzero_type_invariant: "verify_units/nonzero_type_invariant" => "sound_nonzero_type_invariant",
+    validnum_ifelse_sound_01: "verify_units/validnum_ifelse_sound_1" => "sound_zst_ifelse",
 }
 
 // ================ ValidNum Unsound Cases =============
@@ -199,6 +200,7 @@ unsound_tests_vm! {
     validnum_unsound_03: "verify_units/validnum_unsound_3" => "unsound_partial_sum_guard" => "ValidNum",
     validnum_unsound_04: "verify_units/validnum_unsound_4" => "unsound_trait_bound_missing_size_limit" => "ValidNum",
     validnum_unsound_05: "verify_units/validnum_unsound_5" => "unsound_interval_inclusive_guard" => "ValidNum",
+    validnum_ifelse_unsound_01: "verify_units/validnum_ifelse_unsound_1" => "unsound_sized_ifelse" => "ValidNum",
 }
 
 // ================ ValidPtr Sound Cases =============
@@ -263,6 +265,9 @@ sound_tests_vm! {
 // ================ User-Defined DSL Contract (def) Cases =============
 sound_tests_vm! {
     dsl_custom_def_sound: "verify_units/dsl_custom_def" => "sound_read",
+    dsl_custom_def_sizeof: "verify_units/dsl_custom_def" => "sound_layout_limit",
+    dsl_custom_def_min: "verify_units/dsl_custom_def" => "sound_bounded",
+    dsl_custom_def_unwrap_some: "verify_units/dsl_custom_def" => "List::push",
 }
 
 

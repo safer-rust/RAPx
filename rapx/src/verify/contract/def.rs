@@ -23,8 +23,12 @@
 use std::collections::HashMap;
 use std::sync::{OnceLock, RwLock};
 
+use pest::iterators::Pair;
+use pest::Parser;
+use safety_parser::syn::visit_mut::{self, VisitMut};
 use safety_parser::syn::Expr;
 
+use super::pest_grammar::{ContractParser, Rule};
 use super::types::{ContractKind, Property, PropertyKind};
 
 /// A single argument in a `def` body: a reference to a formal parameter, or a
@@ -126,122 +130,104 @@ fn parse_one_def(f: &::syn::ItemFn) -> Option<DefSpec> {
 
 /// Parse the body into a DNF tree.  `||` binds looser than `&&`.
 fn parse_body(body: &str, params: &[String]) -> Option<DefBody> {
-    let body = body.trim();
-    let or_parts = split_top_level(body, "||");
-    if or_parts.len() > 1 {
-        let mut children = Vec::new();
-        for part in or_parts {
-            children.push(parse_body(&part, params)?);
-        }
-        return Some(DefBody::Or(children));
-    }
-
-    let and_parts = split_top_level(body, "&&");
-    if and_parts.len() > 1 {
-        let mut children = Vec::new();
-        for part in and_parts {
-            children.push(parse_body(&part, params)?);
-        }
-        return Some(DefBody::And(children));
-    }
-
-    parse_call(body, params)
+    let mut pairs = ContractParser::parse(Rule::def_body, body).ok()?;
+    let def_body = pairs.next()?;
+    let or_expr = def_body.into_inner().next()?;
+    Some(conv_def_or(or_expr, params))
 }
 
-/// Split on `sep` at the top level (ignoring occurrences inside parentheses).
-fn split_top_level(s: &str, sep: &str) -> Vec<String> {
-    let mut parts = Vec::new();
-    let mut depth = 0usize;
-    let mut start = 0usize;
-    let bytes = s.as_bytes();
-    let mut i = 0usize;
-    while i < bytes.len() {
-        let ch = bytes[i] as char;
-        match ch {
-            '(' => depth += 1,
-            ')' => depth = depth.saturating_sub(1),
-            _ => {}
-        }
-        if depth == 0 && s[i..].starts_with(sep) {
-            parts.push(s[start..i].trim().to_string());
-            i += sep.len();
-            start = i;
-            continue;
-        }
-        i += 1;
-    }
-    parts.push(s[start..].trim().to_string());
-    parts.retain(|p| !p.is_empty());
-    parts
-}
-
-/// Parse a single `Tag(arg, ...)` call, or a parenthesised conjunction.
-fn parse_call(s: &str, params: &[String]) -> Option<DefBody> {
-    let s = s.trim();
-
-    // Strip one level of surrounding parentheses (used for `(A && B)` disjuncts).
-    if let Some(inner) = strip_outer_parens(s) {
-        return parse_body(inner, params);
-    }
-
-    let open = s.find('(')?;
-    let tag = s[..open].trim().to_string();
-    let close = s.rfind(')')?;
-    if open >= close {
-        return None;
-    }
-    let args_raw = &s[open + 1..close];
-
-    let args = if args_raw.trim().is_empty() {
-        Vec::new()
+fn conv_def_or(pair: Pair<Rule>, params: &[String]) -> DefBody {
+    let parts: Vec<DefBody> = pair.into_inner().map(|p| conv_def_and(p, params)).collect();
+    if parts.len() == 1 {
+        parts.into_iter().next().unwrap()
     } else {
-        args_raw
-            .split(',')
-            .map(|a| a.trim().to_string())
-            .filter(|a| !a.is_empty())
-            .map(|tok| resolve_arg(&tok, params))
-            .collect()
+        DefBody::Or(parts)
+    }
+}
+
+fn conv_def_and(pair: Pair<Rule>, params: &[String]) -> DefBody {
+    let parts: Vec<DefBody> = pair.into_inner().map(|p| conv_def_leaf(p, params)).collect();
+    if parts.len() == 1 {
+        parts.into_iter().next().unwrap()
+    } else {
+        DefBody::And(parts)
+    }
+}
+
+fn conv_def_leaf(pair: Pair<Rule>, params: &[String]) -> DefBody {
+    match pair.into_inner().next() {
+        Some(inner) => match inner.as_rule() {
+            Rule::tag_call => conv_def_call(inner, params),
+            Rule::or_expr => conv_def_or(inner, params),
+            _ => DefBody::Call {
+                tag: String::new(),
+                args: Vec::new(),
+            },
+        },
+        None => DefBody::Call {
+            tag: String::new(),
+            args: Vec::new(),
+        },
+    }
+}
+
+fn conv_def_call(pair: Pair<Rule>, params: &[String]) -> DefBody {
+    let mut inner = pair.into_inner();
+    let Some(tag) = inner.next() else {
+        return DefBody::Call {
+            tag: String::new(),
+            args: Vec::new(),
+        };
     };
-
-    Some(DefBody::Call { tag, args })
+    let tag = tag.as_str().to_string();
+    let args = match inner.next() {
+        Some(arg_list) => arg_list
+            .into_inner()
+            .map(|arg| {
+                let text = arg.as_str().trim().to_string();
+                match params.iter().position(|n| n == &text) {
+                    Some(i) => DefArg::Param(i),
+                    None => DefArg::Lit(text),
+                }
+            })
+            .collect(),
+        None => Vec::new(),
+    };
+    DefBody::Call { tag, args }
 }
 
-/// Classify a body argument token as a formal-parameter reference or a literal.
-fn resolve_arg(token: &str, params: &[String]) -> DefArg {
-    if let Some(i) = params.iter().position(|n| n == token) {
-        DefArg::Param(i)
-    } else {
-        DefArg::Lit(token.to_string())
-    }
+/// Substitute def formal parameters with the concrete call-site arguments inside
+/// a literal expression (e.g. turn `size_of(T) * n` into `size_of(u32) * len`,
+/// or `p.unwrap_some()` into `head.unwrap_some()`).
+///
+/// Only a bare single-segment path that exactly matches a formal parameter name
+/// is replaced, so builtin function names (`size_of`), method names
+/// (`unwrap_some`) and field names are never rewritten.
+struct Subst<'a> {
+    params: &'a [String],
+    args: &'a [Expr],
 }
 
-/// Strip outer parentheses only when they enclose the whole expression.
-fn strip_outer_parens(s: &str) -> Option<&str> {
-    let t = s.trim();
-    if t.starts_with('(') && t.ends_with(')') {
-        let inner = &t[1..t.len() - 1];
-        if parens_balanced(inner) {
-            return Some(inner.trim());
-        }
-    }
-    None
-}
-
-fn parens_balanced(s: &str) -> bool {
-    let mut depth = 0isize;
-    for ch in s.chars() {
-        match ch {
-            '(' => depth += 1,
-            ')' => {
-                depth -= 1;
-                if depth < 0 {
-                    return false;
+impl VisitMut for Subst<'_> {
+    fn visit_expr_mut(&mut self, node: &mut Expr) {
+        if let Expr::Path(path) = node {
+            if path.qself.is_none()
+                && path.path.leading_colon.is_none()
+                && path.path.segments.len() == 1
+            {
+                let ident = path.path.segments[0].ident.to_string();
+                if let Some(i) = self.params.iter().position(|n| *n == ident) {
+                    if let Some(arg) = self.args.get(i) {
+                        // The substituted argument comes from the call site and
+                        // never refers to this def's formals, so stop recursing.
+                        *node = arg.clone();
+                        return;
+                    }
                 }
             }
-            _ => {}
         }
+        visit_mut::visit_expr_mut(self, node);
     }
-    depth == 0
 }
 
 /// Whether a def parameter annotation matches a primitive argument role.
@@ -325,10 +311,13 @@ fn expand_body<'tcx>(
                         };
                         resolved.push(e.clone());
                     }
-                    DefArg::Lit(s) => match syn::parse_str::<Expr>(s) {
-                        Ok(e) => resolved.push(e),
-                        Err(_) => return vec![unknown_property()],
-                    },
+                    DefArg::Lit(s) => {
+                        let Ok(mut e) = syn::parse_str::<Expr>(s) else {
+                            return vec![unknown_property()];
+                        };
+                        Subst { params, args: exprs }.visit_expr_mut(&mut e);
+                        resolved.push(e);
+                    }
                 }
             }
             // Recurse through the normal property parser so nested defs and

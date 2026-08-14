@@ -17,7 +17,7 @@ use std::slice::{from_raw_parts, from_raw_parts_mut};
 // ========================================================================
 
 #[rapx::invariant(Align(ptr, T))]
-#[rapx::invariant(InBound(ptr, T, (end_or_len - ptr) / size_of::<T>()))]
+#[rapx::invariant(InBound(ptr, T, if size_of(T) == 0 { 0 } else { (end_or_len - ptr) / size_of(T) }))]
 #[rapx::invariant(InBound(end_or_len, T, 0))]
 #[rapx::invariant(Alive(ptr, 'a))]
 pub struct Iter<'a, T: 'a> {
@@ -27,7 +27,7 @@ pub struct Iter<'a, T: 'a> {
 }
 
 #[rapx::invariant(Align(ptr, T))]
-#[rapx::invariant(InBound(ptr, T, (end_or_len - ptr) / size_of::<T>()))]
+#[rapx::invariant(InBound(ptr, T, if size_of(T) == 0 { 0 } else { (end_or_len - ptr) / size_of(T) }))]
 #[rapx::invariant(InBound(end_or_len, T, 0))]
 #[rapx::invariant(Alive(ptr, 'a))]
 pub struct IterMut<'a, T: 'a> {

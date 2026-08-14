@@ -125,6 +125,15 @@ impl RelevantPlaces {
                 self.collect_contract_expr(a);
                 self.collect_contract_expr(b);
             }
+            ContractExpr::If {
+                cond,
+                then_expr,
+                else_expr,
+            } => {
+                self.collect_numeric_predicate(cond);
+                self.collect_contract_expr(then_expr);
+                self.collect_contract_expr(else_expr);
+            }
             ContractExpr::Const(_)
             | ContractExpr::ConstParam { .. }
             | ContractExpr::SizeOf(_)

@@ -437,6 +437,21 @@ impl<'tcx> VerifyEngine<'tcx> {
                     b: Box::new(Self::rebind_contract_expr(b, checkpoint)),
                 }
             }
+            super::contract::ContractExpr::If {
+                cond,
+                then_expr,
+                else_expr,
+            } => {
+                super::contract::ContractExpr::If {
+                    cond: Box::new(super::contract::NumericPredicate::new(
+                        Self::rebind_contract_expr(&cond.lhs, checkpoint),
+                        cond.op,
+                        Self::rebind_contract_expr(&cond.rhs, checkpoint),
+                    )),
+                    then_expr: Box::new(Self::rebind_contract_expr(then_expr, checkpoint)),
+                    else_expr: Box::new(Self::rebind_contract_expr(else_expr, checkpoint)),
+                }
+            }
         }
     }
 

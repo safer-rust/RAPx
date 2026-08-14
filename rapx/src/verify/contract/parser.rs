@@ -1,7 +1,8 @@
 use rustc_abi::FieldIdx;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::{GenericParamDefKind, Ty, TyCtxt, TyKind};
-use safety_parser::syn::{Expr, GenericArgument, Lit, PathArguments, Type};
+use quote::ToTokens;
+use safety_parser::syn::{Expr, Lit};
 
 use crate::helpers::fn_info::{FnKind, get_type, parse_expr_into_number};
 use crate::helpers::name::{
@@ -33,7 +34,8 @@ impl<'tcx> Property<'tcx> {
                     PropertyArg::Ty(ty)
                 }
                 spec::ArgKind::Expr => {
-                    PropertyArg::Expr(Self::parse_contract_expr(tcx, def_id, expr, spec.tag))
+                    let text = expr.to_token_stream().to_string();
+                    PropertyArg::Expr(super::pest_conv::parse_expr_pest(tcx, def_id, &text))
                 }
                 spec::ArgKind::Ident => {
                     let s = access_ident_recursive(expr)
@@ -71,7 +73,7 @@ impl<'tcx> Property<'tcx> {
                             return Self::new_with_args(PropertyKind::Size, args);
                         }
                     }
-                    let c = Self::parse_contract_expr(tcx, def_id, const_expr, "Size");
+                    let c = Self::expr_to_pest(tcx, def_id, const_expr);
                     args.push(PropertyArg::Expr(c));
                     Self::new_with_args(PropertyKind::Size, args)
                 }
@@ -93,7 +95,7 @@ impl<'tcx> Property<'tcx> {
                     let Some(ty) = Self::parse_type(tcx, def_id, ty_expr, "Allocated") else {
                         return Self::new_simple(PropertyKind::Unknown);
                     };
-                    let length = Self::parse_contract_expr(tcx, def_id, len_expr, "Allocated");
+                    let length = Self::expr_to_pest(tcx, def_id, len_expr);
                     Self::new_with_args(
                         PropertyKind::Allocated,
                         vec![target, PropertyArg::Ty(ty), PropertyArg::Expr(length)],
@@ -104,7 +106,7 @@ impl<'tcx> Property<'tcx> {
                     let Some(ty) = Self::parse_type(tcx, def_id, ty_expr, "Allocated") else {
                         return Self::new_simple(PropertyKind::Unknown);
                     };
-                    let length = Self::parse_contract_expr(tcx, def_id, len_expr, "Allocated");
+                    let length = Self::expr_to_pest(tcx, def_id, len_expr);
                     let allocator = access_ident_recursive(allocator_expr)
                         .map(|(name, _)| name)
                         .unwrap_or_else(|| "global".to_string());
@@ -128,7 +130,7 @@ impl<'tcx> Property<'tcx> {
             },
             "InBound" | "InBounded" => match exprs {
                 [expr] => {
-                    let expr = Self::parse_contract_expr(tcx, def_id, expr, "InBound");
+                    let expr = Self::expr_to_pest(tcx, def_id, expr);
                     if matches!(expr, ContractExpr::IndexAccess { .. }) {
                         Self::new_with_args(PropertyKind::InBound, vec![PropertyArg::Expr(expr)])
                     } else {
@@ -140,15 +142,15 @@ impl<'tcx> Property<'tcx> {
                     let Some(ty) = Self::parse_type(tcx, def_id, ty_expr, "InBound") else {
                         return Self::new_simple(PropertyKind::Unknown);
                     };
-                    let length = Self::parse_contract_expr(tcx, def_id, len_expr, "InBound");
+                    let length = Self::expr_to_pest(tcx, def_id, len_expr);
                     Self::new_with_args(
                         PropertyKind::InBound,
                         vec![target, PropertyArg::Ty(ty), PropertyArg::Expr(length)],
                     )
                 }
                 [target, index_expr] => {
-                    let slice = Self::parse_contract_expr(tcx, def_id, target, "InBound");
-                    let index = Self::parse_contract_expr(tcx, def_id, index_expr, "InBound");
+                    let slice = Self::expr_to_pest(tcx, def_id, target);
+                    let index = Self::expr_to_pest(tcx, def_id, index_expr);
                     if matches!(slice, ContractExpr::Unknown)
                         || matches!(index, ContractExpr::Unknown)
                     {
@@ -182,7 +184,7 @@ impl<'tcx> Property<'tcx> {
                 [a, b, ty_expr, count_expr] => {
                     let left = Self::parse_target_arg(tcx, def_id, a);
                     let right = Self::parse_target_arg(tcx, def_id, b);
-                    let count = Self::parse_contract_expr(tcx, def_id, count_expr, "NonOverlap");
+                    let count = Self::expr_to_pest(tcx, def_id, count_expr);
                     let mut args = vec![left, right];
                     if let Some(ty) = Self::parse_type(tcx, def_id, ty_expr, "NonOverlap") {
                         args.push(PropertyArg::Ty(ty));
@@ -639,137 +641,57 @@ impl<'tcx> Property<'tcx> {
             })
     }
 
-    fn parse_contract_expr(
+    pub(crate) fn parse_contract_expr(
         tcx: TyCtxt<'tcx>,
         def_id: DefId,
         expr: &Expr,
         sp: &str,
     ) -> ContractExpr<'tcx> {
-        match expr {
-            Expr::Paren(paren) => Self::parse_contract_expr(tcx, def_id, &paren.expr, sp),
-            Expr::Group(group) => Self::parse_contract_expr(tcx, def_id, &group.expr, sp),
-            Expr::Lit(expr_lit) => match &expr_lit.lit {
-                Lit::Int(lit_int) => lit_int
-                    .base10_parse::<u128>()
-                    .map(ContractExpr::Const)
-                    .unwrap_or(ContractExpr::Unknown),
-                _ => ContractExpr::Unknown,
-            },
-            Expr::Call(expr_call) => {
-                if let Some(expr) = Self::parse_index_access_expr(tcx, def_id, expr_call) {
-                    return expr;
-                }
-                if let Some(expr) = Self::parse_len_expr(tcx, def_id, expr_call) {
-                    return expr;
-                }
-                if let Some(expr) = Self::parse_layout_expr(tcx, def_id, expr_call) {
-                    return expr;
-                }
-                if let Some(expr) = Self::parse_builtin_fn_expr(tcx, def_id, expr_call) {
-                    return expr;
-                }
-                ContractExpr::Unknown
-            }
-            // Treat `x.len` (field-access sugar) as the slice length `len(x)`.
-            Expr::Field(expr_field) if matches!(&expr_field.member, safety_parser::syn::Member::Named(ident) if ident == "len") => {
-                ContractExpr::Len(Box::new(Self::parse_contract_expr(
-                    tcx,
-                    def_id,
-                    &expr_field.base,
-                    sp,
-                )))
-            }
-            // Treat `self.len()` (method-call sugar) as the slice length `len(self)`.
-            Expr::MethodCall(expr_method)
-                if expr_method.method == "len" && expr_method.args.is_empty() =>
-            {
-                ContractExpr::Len(Box::new(Self::parse_contract_expr(
-                    tcx,
-                    def_id,
-                    &expr_method.receiver,
-                    sp,
-                )))
-            }
-            Expr::Unary(expr_unary) => {
-                let Some(op) = NumericUnaryOp::from_syn(&expr_unary.op) else {
-                    return ContractExpr::Unknown;
-                };
-                ContractExpr::Unary {
-                    op,
-                    expr: Box::new(Self::parse_contract_expr(tcx, def_id, &expr_unary.expr, sp)),
-                }
-            }
-            Expr::Binary(expr_binary) => {
-                let Some(op) = NumericOp::from_syn(&expr_binary.op) else {
-                    return ContractExpr::Unknown;
-                };
-                ContractExpr::Binary {
-                    op,
-                    lhs: Box::new(Self::parse_contract_expr(
-                        tcx,
-                        def_id,
-                        &expr_binary.left,
-                        sp,
-                    )),
-                    rhs: Box::new(Self::parse_contract_expr(
-                        tcx,
-                        def_id,
-                        &expr_binary.right,
-                        sp,
-                    )),
-                }
-            }
-            Expr::Path(expr_path) => Self::parse_path_constant(tcx, def_id, expr_path)
-                .unwrap_or_else(|| Self::fallback_contract_expr(tcx, def_id, expr, sp)),
-            _ => Self::fallback_contract_expr(tcx, def_id, expr, sp),
-        }
-    }
-
-    fn fallback_contract_expr(
-        tcx: TyCtxt<'tcx>,
-        def_id: DefId,
-        expr: &Expr,
-        sp: &str,
-    ) -> ContractExpr<'tcx> {
-        if let Some(place) = Self::parse_contract_place(tcx, def_id, expr) {
-            ContractExpr::Place(place)
-        } else if let Some(expr) = Self::parse_const_param(tcx, def_id, expr) {
-            expr
-        } else if let Some(value) = Self::parse_builtin_const(tcx, expr) {
-            ContractExpr::Const(value)
-        } else if let Some(value) = parse_expr_into_number(expr) {
-            ContractExpr::new_value(value)
-        } else {
-            rap_debug!(
-                "Numeric expression in {:?} could not be resolved: {:?}",
+        // `x.len` / `x.len()` sugar -> len(x).
+        if let Expr::Field(expr_field) = expr
+            && matches!(&expr_field.member, safety_parser::syn::Member::Named(ident) if ident == "len")
+        {
+            return ContractExpr::Len(Box::new(Self::parse_contract_expr(
+                tcx,
+                def_id,
+                &expr_field.base,
                 sp,
-                expr
-            );
-            ContractExpr::Unknown
+            )));
         }
+        if let Expr::MethodCall(expr_method) = expr
+            && expr_method.method == "len"
+            && expr_method.args.is_empty()
+        {
+            return ContractExpr::Len(Box::new(Self::parse_contract_expr(
+                tcx,
+                def_id,
+                &expr_method.receiver,
+                sp,
+            )));
+        }
+
+        // A place (fields, projections), a const generic, or a builtin constant.
+        if let Some(place) = Self::parse_contract_place(tcx, def_id, expr) {
+            return ContractExpr::Place(place);
+        }
+        if let Some(e) = Self::parse_const_param(tcx, def_id, expr) {
+            return e;
+        }
+        if let Some(value) = Self::parse_builtin_const(tcx, expr) {
+            return ContractExpr::Const(value);
+        }
+        if let Some(value) = parse_expr_into_number(expr) {
+            return ContractExpr::new_value(value);
+        }
+        rap_debug!(
+            "Numeric expression in {:?} could not be resolved: {:?}",
+            sp,
+            expr
+        );
+        ContractExpr::Unknown
     }
 
-    fn parse_path_constant(
-        tcx: TyCtxt<'tcx>,
-        def_id: DefId,
-        expr_path: &safety_parser::syn::ExprPath,
-    ) -> Option<ContractExpr<'tcx>> {
-        let segments = &expr_path.path.segments;
-        if segments.len() != 2 {
-            return None;
-        }
-        let type_name = segments[0].ident.to_string();
-        let const_name = segments[1].ident.to_string();
-        if !matches!(const_name.as_str(), "MIN" | "MAX") {
-            return None;
-        }
-        let ty = Self::resolve_type_name(tcx, def_id, &type_name)?;
-        let (min, max) = Self::int_type_min_max(tcx, ty)?;
-        let value = if const_name == "MIN" { min } else { max };
-        Some(ContractExpr::Const(value))
-    }
-
-    fn resolve_type_name(tcx: TyCtxt<'tcx>, def_id: DefId, name: &str) -> Option<Ty<'tcx>> {
+    pub(crate) fn resolve_type_name(tcx: TyCtxt<'tcx>, def_id: DefId, name: &str) -> Option<Ty<'tcx>> {
         if name == "Self" {
             let sig = tcx.fn_sig(def_id).skip_binder();
             return sig.inputs().skip_binder().first().copied();
@@ -777,7 +699,7 @@ impl<'tcx> Property<'tcx> {
         match_ty_with_ident(tcx, def_id, name.to_string())
     }
 
-    fn int_type_min_max(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<(u128, u128)> {
+    pub(crate) fn int_type_min_max(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<(u128, u128)> {
         use rustc_middle::ty::IntTy;
         use rustc_middle::ty::UintTy;
         let bits: u32 = match ty.kind() {
@@ -818,149 +740,6 @@ impl<'tcx> Property<'tcx> {
             }
             _ => None,
         }
-    }
-
-    fn parse_index_access_expr(
-        tcx: TyCtxt<'tcx>,
-        def_id: DefId,
-        expr_call: &safety_parser::syn::ExprCall,
-    ) -> Option<ContractExpr<'tcx>> {
-        let Expr::Path(func_path) = expr_call.func.as_ref() else {
-            return None;
-        };
-        let name = func_path.path.segments.last()?.ident.to_string();
-        if name != "index_access" || expr_call.args.len() != 2 {
-            return None;
-        }
-
-        let mut args = expr_call.args.iter();
-        let slice = args.next()?;
-        let index = args.next()?;
-        Some(ContractExpr::IndexAccess {
-            slice: Box::new(Self::parse_contract_expr(
-                tcx,
-                def_id,
-                slice,
-                "index_access",
-            )),
-            index: Box::new(Self::parse_contract_expr(
-                tcx,
-                def_id,
-                index,
-                "index_access",
-            )),
-        })
-    }
-
-    fn parse_len_expr(
-        tcx: TyCtxt<'tcx>,
-        def_id: DefId,
-        expr_call: &safety_parser::syn::ExprCall,
-    ) -> Option<ContractExpr<'tcx>> {
-        let Expr::Path(func_path) = expr_call.func.as_ref() else {
-            return None;
-        };
-        let name = func_path.path.segments.last()?.ident.to_string();
-        if name != "len" || expr_call.args.len() != 1 {
-            return None;
-        }
-        let target = expr_call.args.first()?;
-        Some(ContractExpr::Len(Box::new(Self::parse_contract_expr(
-            tcx, def_id, target, "len",
-        ))))
-    }
-
-    fn parse_layout_expr(
-        tcx: TyCtxt<'tcx>,
-        def_id: DefId,
-        expr_call: &safety_parser::syn::ExprCall,
-    ) -> Option<ContractExpr<'tcx>> {
-        let Expr::Path(func_path) = expr_call.func.as_ref() else {
-            return None;
-        };
-        let last = func_path.path.segments.last()?;
-        let name = last.ident.to_string();
-        if name != "size_of" && name != "align_of" {
-            return None;
-        }
-
-        let ty = if let Some(arg) = expr_call.args.first() {
-            Self::parse_type_opt(tcx, def_id, arg)
-        } else {
-            Self::parse_turbofish_type(tcx, def_id, &last.arguments, "ValidNum")
-        }?;
-
-        Some(match name.as_str() {
-            "size_of" => ContractExpr::SizeOf(ty),
-            "align_of" => ContractExpr::AlignOf(ty),
-            _ => return None,
-        })
-    }
-
-    fn parse_builtin_fn_expr(
-        tcx: TyCtxt<'tcx>,
-        def_id: DefId,
-        expr_call: &safety_parser::syn::ExprCall,
-    ) -> Option<ContractExpr<'tcx>> {
-        let Expr::Path(func_path) = expr_call.func.as_ref() else {
-            return None;
-        };
-        let name = func_path.path.segments.last()?.ident.to_string();
-        match name.as_str() {
-            "min" if expr_call.args.len() == 2 => {
-                let a = Self::parse_contract_expr(tcx, def_id, &expr_call.args[0], "min");
-                let b = Self::parse_contract_expr(tcx, def_id, &expr_call.args[1], "min");
-                Some(ContractExpr::Min {
-                    a: Box::new(a),
-                    b: Box::new(b),
-                })
-            }
-            "max" if expr_call.args.len() == 2 => {
-                let a = Self::parse_contract_expr(tcx, def_id, &expr_call.args[0], "max");
-                let b = Self::parse_contract_expr(tcx, def_id, &expr_call.args[1], "max");
-                Some(ContractExpr::Max {
-                    a: Box::new(a),
-                    b: Box::new(b),
-                })
-            }
-            _ => None,
-        }
-    }
-
-    fn parse_turbofish_type(
-        tcx: TyCtxt<'tcx>,
-        def_id: DefId,
-        arguments: &PathArguments,
-        sp: &str,
-    ) -> Option<Ty<'tcx>> {
-        let PathArguments::AngleBracketed(args) = arguments else {
-            return None;
-        };
-        args.args.iter().find_map(|arg| match arg {
-            GenericArgument::Type(ty) => Self::parse_syn_type(tcx, def_id, ty, sp),
-            _ => None,
-        })
-    }
-
-    fn parse_type_opt(tcx: TyCtxt<'tcx>, def_id: DefId, expr: &Expr) -> Option<Ty<'tcx>> {
-        if let Expr::Path(expr_path) = expr
-            && let Some(segment) = expr_path.path.segments.last()
-        {
-            return match_ty_with_ident(tcx, def_id, segment.ident.to_string());
-        }
-        let ty_ident = access_ident_recursive(expr)?.0;
-        match_ty_with_ident(tcx, def_id, ty_ident)
-    }
-
-    fn parse_syn_type(tcx: TyCtxt<'tcx>, def_id: DefId, ty: &Type, sp: &str) -> Option<Ty<'tcx>> {
-        let Type::Path(type_path) = ty else {
-            return None;
-        };
-        let ident = type_path.path.segments.last()?.ident.to_string();
-        match_ty_with_ident(tcx, def_id, ident).or_else(|| {
-            rap_debug!("Cannot get type in {:?} Tag from {:?}", sp, type_path);
-            None
-        })
     }
 
     fn parse_builtin_const(tcx: TyCtxt<'tcx>, expr: &Expr) -> Option<u128> {
@@ -1007,7 +786,7 @@ impl<'tcx> Property<'tcx> {
         None
     }
 
-    fn parse_contract_place(
+    pub(crate) fn parse_contract_place(
         tcx: TyCtxt<'tcx>,
         def_id: DefId,
         expr: &Expr,
@@ -1120,42 +899,17 @@ impl<'tcx> Property<'tcx> {
         def_id: DefId,
         expr: &Expr,
     ) -> Option<NumericPredicate<'tcx>> {
-        if let Expr::Binary(expr_binary) = expr {
-            if let Some(op) = RelOp::from_syn(&expr_binary.op) {
-                return Some(NumericPredicate::new(
-                    Self::parse_contract_expr(tcx, def_id, &expr_binary.left, "ValidNum"),
-                    op,
-                    Self::parse_contract_expr(tcx, def_id, &expr_binary.right, "ValidNum"),
-                ));
-            }
-        }
+        let text = expr.to_token_stream().to_string();
+        super::pest_conv::parse_predicate_pest(tcx, def_id, &text)
+    }
 
-        // Simplify `!self.is_empty()` to `self.len() != 0`.
-        if let Expr::Unary(expr_unary) = expr
-            && matches!(expr_unary.op, syn::UnOp::Not(..))
-        {
-            if let Expr::MethodCall(expr_method) = expr_unary.expr.as_ref()
-                && expr_method.method == "is_empty"
-                && expr_method.args.is_empty()
-            {
-                return Some(NumericPredicate::new(
-                    ContractExpr::Len(Box::new(Self::parse_contract_expr(
-                        tcx,
-                        def_id,
-                        &expr_method.receiver,
-                        "ValidNum",
-                    ))),
-                    RelOp::Ne,
-                    ContractExpr::Const(0),
-                ));
-            }
-        }
-
-        Some(NumericPredicate::new(
-            Self::parse_contract_expr(tcx, def_id, expr, "ValidNum"),
-            RelOp::Ne,
-            ContractExpr::Const(0),
-        ))
+    fn expr_to_pest(
+        tcx: TyCtxt<'tcx>,
+        def_id: DefId,
+        expr: &Expr,
+    ) -> ContractExpr<'tcx> {
+        let text = expr.to_token_stream().to_string();
+        super::pest_conv::parse_expr_pest(tcx, def_id, &text)
     }
 
     fn parse_interval_predicates(
@@ -1227,9 +981,9 @@ impl<'tcx> Property<'tcx> {
         upper: &Expr,
         upper_inclusive: bool,
     ) -> Vec<NumericPredicate<'tcx>> {
-        let value_expr = Self::parse_contract_expr(tcx, def_id, value, "ValidNum");
-        let lower_expr = Self::parse_contract_expr(tcx, def_id, lower, "ValidNum");
-        let upper_expr = Self::parse_contract_expr(tcx, def_id, upper, "ValidNum");
+        let value_expr = Self::expr_to_pest(tcx, def_id, value);
+        let lower_expr = Self::expr_to_pest(tcx, def_id, lower);
+        let upper_expr = Self::expr_to_pest(tcx, def_id, upper);
         vec![
             NumericPredicate::new(
                 lower_expr,
@@ -1285,24 +1039,40 @@ pub(crate) fn parse_expr_into_local_and_ty<'tcx>(
     expr: &Expr,
 ) -> Option<(usize, Vec<(usize, Ty<'tcx>)>, Ty<'tcx>)> {
     if let Some((base_ident, fields)) = access_ident_recursive(expr) {
-        let (param_names, param_tys) = parse_signature(tcx, def_id);
-        if param_names[0] != "0" {
-            if let Some(param_index) = param_names.iter().position(|name| name == &base_ident) {
-                return resolve_projection_from_base_ident(
-                    tcx,
-                    base_ident,
-                    fields,
-                    param_index + 1,
-                    param_tys[param_index],
-                );
-            }
-        }
+        return resolve_place_from_ident(tcx, def_id, &base_ident, &fields);
+    }
+    None
+}
 
-        if let Some(struct_ty) = get_struct_self_ty(tcx, def_id) {
-            return resolve_projection_from_struct_ident(
-                tcx, def_id, base_ident, fields, struct_ty,
+/// Resolve a place given its base identifier and field-name list directly,
+/// without going through a `syn` expression.  Used by the pest converter.
+pub(crate) fn resolve_place_from_ident<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def_id: DefId,
+    base_ident: &str,
+    fields: &[String],
+) -> Option<(usize, Vec<(usize, Ty<'tcx>)>, Ty<'tcx>)> {
+    let (param_names, param_tys) = parse_signature(tcx, def_id);
+    if param_names[0] != "0" {
+        if let Some(param_index) = param_names.iter().position(|name| name == base_ident) {
+            return resolve_projection_from_base_ident(
+                tcx,
+                base_ident.to_string(),
+                fields.to_vec(),
+                param_index + 1,
+                param_tys[param_index],
             );
         }
+    }
+
+    if let Some(struct_ty) = get_struct_self_ty(tcx, def_id) {
+        return resolve_projection_from_struct_ident(
+            tcx,
+            def_id,
+            base_ident.to_string(),
+            fields.to_vec(),
+            struct_ty,
+        );
     }
     None
 }

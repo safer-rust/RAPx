@@ -1,7 +1,6 @@
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::BinOp as MirBinOp;
 use rustc_middle::ty::{Ty, TyCtxt};
-use safety_parser::syn::{BinOp as SynBinOp, UnOp};
 
 use crate::verify::def_use::PlaceKey;
 
@@ -161,36 +160,10 @@ pub enum NumericOp {
     BitXor,
 }
 
-impl NumericOp {
-    pub(crate) fn from_syn(op: &SynBinOp) -> Option<Self> {
-        match op {
-            SynBinOp::Add(_) => Some(Self::Add),
-            SynBinOp::Sub(_) => Some(Self::Sub),
-            SynBinOp::Mul(_) => Some(Self::Mul),
-            SynBinOp::Div(_) => Some(Self::Div),
-            SynBinOp::Rem(_) => Some(Self::Rem),
-            SynBinOp::BitAnd(_) => Some(Self::BitAnd),
-            SynBinOp::BitOr(_) => Some(Self::BitOr),
-            SynBinOp::BitXor(_) => Some(Self::BitXor),
-            _ => None,
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug)]
 pub enum NumericUnaryOp {
     Not,
     Neg,
-}
-
-impl NumericUnaryOp {
-    pub(crate) fn from_syn(op: &UnOp) -> Option<Self> {
-        match op {
-            UnOp::Not(_) => Some(Self::Not),
-            UnOp::Neg(_) => Some(Self::Neg),
-            _ => None,
-        }
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -225,6 +198,11 @@ pub enum ContractExpr<'tcx> {
         a: Box<ContractExpr<'tcx>>,
         b: Box<ContractExpr<'tcx>>,
     },
+    If {
+        cond: Box<NumericPredicate<'tcx>>,
+        then_expr: Box<ContractExpr<'tcx>>,
+        else_expr: Box<ContractExpr<'tcx>>,
+    },
     Unknown,
 }
 
@@ -253,18 +231,6 @@ impl RelOp {
             MirBinOp::Le => Some(Self::Le),
             MirBinOp::Gt => Some(Self::Gt),
             MirBinOp::Ge => Some(Self::Ge),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn from_syn(op: &SynBinOp) -> Option<Self> {
-        match op {
-            SynBinOp::Eq(_) => Some(Self::Eq),
-            SynBinOp::Ne(_) => Some(Self::Ne),
-            SynBinOp::Lt(_) => Some(Self::Lt),
-            SynBinOp::Le(_) => Some(Self::Le),
-            SynBinOp::Gt(_) => Some(Self::Gt),
-            SynBinOp::Ge(_) => Some(Self::Ge),
             _ => None,
         }
     }
@@ -412,6 +378,18 @@ pub fn display_expr_user_friendly<'tcx>(
                 "max({}, {})",
                 display_expr_user_friendly(a, tcx, struct_def_id, fn_def_id),
                 display_expr_user_friendly(b, tcx, struct_def_id, fn_def_id),
+            )
+        }
+        ContractExpr::If {
+            cond,
+            then_expr,
+            else_expr,
+        } => {
+            format!(
+                "if {} {{ {} }} else {{ {} }}",
+                cond.display_user_friendly(tcx, struct_def_id, fn_def_id),
+                display_expr_user_friendly(then_expr, tcx, struct_def_id, fn_def_id),
+                display_expr_user_friendly(else_expr, tcx, struct_def_id, fn_def_id),
             )
         }
         _ => format!("{:?}", expr),

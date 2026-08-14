@@ -529,6 +529,18 @@ pub fn fmt_expr_plain(
                 fmt_expr_plain(tcx, local_names, struct_def_id, b),
             )
         }
+        ContractExpr::If {
+            cond,
+            then_expr,
+            else_expr,
+        } => {
+            format!(
+                "if {} {{ {} }} else {{ {} }}",
+                fmt_pred_plain(tcx, local_names, struct_def_id, cond),
+                fmt_expr_plain(tcx, local_names, struct_def_id, then_expr),
+                fmt_expr_plain(tcx, local_names, struct_def_id, else_expr),
+            )
+        }
         ContractExpr::Unknown => "<?>".to_string(),
     }
 }

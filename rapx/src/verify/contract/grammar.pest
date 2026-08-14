@@ -1,0 +1,93 @@
+// RAPx contract DSL grammar.
+//
+// This is the single source of truth for the contract-DSL surface. The pest
+// parser generated from this file replaces the hand-written `match`-based
+// expression parsing in `contract/parser.rs` and the hand-written body parsing
+// in `contract/def.rs`.
+//
+// Scope: the *contents* of a `#[rapx::requires(...)]` / `#[rapx::invariant(...)]`
+// / `#[rapx::ensures(...)]` attribute, and the *body* of a `#[def_contract]`.
+// The Rust attribute wrapper itself is still extracted by `syn` (`source/attr.rs`),
+// because attribute token streams are Rust syntax.
+//
+// `size_of::<T>()` (turbofish) is intentionally not supported; use `size_of(T)`.
+
+// ── Tokens / trivia ────────────────────────────────────────────────────────
+
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+
+int    = @{ ASCII_DIGIT+ }
+string = @{ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
+ident  = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+
+relop  = { "==" | "!=" | "<=" | ">=" | "<" | ">" }
+addop  = { "+" | "-" }
+mulop  = { "*" | "/" | "%" }
+bor    = { "|" }
+bxor   = { "^" }
+band   = { "&" }
+unop   = { "!" | "-" }
+
+// ── Attribute contents (one property + optional `kind`) ─────────────────────
+
+contract   = { SOI ~ property ~ EOI }
+property   = { (any | tag_call) ~ kind? }
+kind       = { "," ~ "kind" ~ "=" ~ string }
+
+// ── Property / combinator layer ─────────────────────────────────────────────
+
+tag_call = { ident ~ "(" ~ arg_list? ~ ")" }
+any      = { "any" ~ "(" ~ disjunct ~ "," ~ disjunct ~ ")" }
+disjunct = { "(" ~ tag_call ~ ("," ~ tag_call)* ~ ")" | tag_call }
+
+arg_list = { arg ~ ("," ~ arg)* }
+
+// ── Arguments: expression, ValidNum interval, or SplitTransmute slice type ──
+
+arg = { expr | interval | slice_ty }
+
+// ── Expression layer ────────────────────────────────────────────────────────
+
+expr        = { if_expr | not_is_empty | cmp }
+if_expr     = { "if" ~ cond ~ "{" ~ expr ~ "}" ~ "else" ~ "{" ~ expr ~ "}" }
+cond        = { not_is_empty | cmp }
+not_is_empty = { "!" ~ base ~ ".is_empty" ~ "()" }
+cmp         = { bit_or ~ (relop ~ bit_or)? }
+bit_or      = { bit_xor ~ (bor ~ bit_xor)* }
+bit_xor     = { bit_and ~ (bxor ~ bit_and)* }
+bit_and     = { additive ~ (band ~ additive)* }
+additive    = { multiplicative ~ (addop ~ multiplicative)* }
+multiplicative = { unary ~ (mulop ~ unary)* }
+unary       = { unop ~ unary | primary }
+primary     = { int | call | const_path | place | "(" ~ expr ~ ")" }
+
+// ── Builtin functions ───────────────────────────────────────────────────────
+
+call    = { builtin ~ "(" ~ arg_list? ~ ")" }
+builtin = { "size_of" | "align_of" | "len" | "min" | "max" | "index_access" }
+
+// ── Places and projections ──────────────────────────────────────────────────
+
+place      = { base ~ projection* }
+base       = { "self" | "return" | "Arg_" ~ int | ident }
+projection = { "." ~ member }
+member     = { ident ~ "()"? | int }
+
+// ── Type-level constants (T::MAX, isize::MAX, ...) ──────────────────────────
+
+const_path = { ident ~ "::" ~ ("MAX" | "MIN") }
+
+// ── ValidNum interval (array form or bracket-string form) ───────────────────
+
+interval = { "[" ~ expr ~ "," ~ expr ~ "]" | string }
+
+// ── SplitTransmute slice type ([T], [u8], ...) ──────────────────────────────
+
+slice_ty = { "[" ~ ident ~ "]" }
+
+// ── `#[def_contract]` body ──────────────────────────────────────────────────
+
+def_body = { SOI ~ or_expr ~ EOI }
+or_expr  = { and_expr ~ ("||" ~ and_expr)* }
+and_expr = { def_leaf ~ ("&&" ~ def_leaf)* }
+def_leaf = { tag_call | "(" ~ or_expr ~ ")" }
