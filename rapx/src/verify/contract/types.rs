@@ -236,6 +236,12 @@ pub struct LeafProperty<'tcx> {
     /// from (e.g. `"Deref"`, `"ValidPtr"`), used for user-facing reports so a
     /// macro-expanded contract keeps its original name.
     pub origin_name: Option<String>,
+    /// The full call-site arguments of the compound `def` (rendered as source
+    /// text), used to display `name(args)` as a single entry.
+    pub origin_args: Option<Vec<String>>,
+    /// The human-readable meaning of the compound `def`, sourced from its `///`
+    /// doc comment.
+    pub origin_meaning: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -246,6 +252,10 @@ pub struct OrProperty<'tcx> {
     pub contract_kind: ContractKind,
     /// Display name of the compound `def` this property expanded from.
     pub origin_name: Option<String>,
+    /// The full call-site arguments of the compound `def` (rendered source).
+    pub origin_args: Option<Vec<String>>,
+    /// The human-readable meaning of the compound `def`.
+    pub origin_meaning: Option<String>,
 }
 
 impl<'tcx> Property<'tcx> {
@@ -258,6 +268,8 @@ impl<'tcx> Property<'tcx> {
             null_guard: None,
             for_each: None,
             origin_name: None,
+            origin_args: None,
+            origin_meaning: None,
         })
     }
 
@@ -273,6 +285,8 @@ impl<'tcx> Property<'tcx> {
             groups,
             contract_kind: ContractKind::Precond,
             origin_name: None,
+            origin_args: None,
+            origin_meaning: None,
         })
     }
 
@@ -329,6 +343,23 @@ impl<'tcx> Property<'tcx> {
         }
     }
 
+    /// The full call-site arguments of the compound `def` this property
+    /// expanded from (`None` for plain primitives).
+    pub fn origin_args(&self) -> Option<&[String]> {
+        match self {
+            Property::Leaf(l) => l.origin_args.as_deref(),
+            Property::Or(o) => o.origin_args.as_deref(),
+        }
+    }
+
+    /// The human-readable meaning of the compound `def`.
+    pub fn origin_meaning(&self) -> Option<&str> {
+        match self {
+            Property::Leaf(l) => l.origin_meaning.as_deref(),
+            Property::Or(o) => o.origin_meaning.as_deref(),
+        }
+    }
+
     pub fn is_or(&self) -> bool {
         matches!(self, Property::Or(_))
     }
@@ -367,12 +398,20 @@ impl<'tcx> Property<'tcx> {
         }
     }
 
-    /// Tag a property (leaf or `Or`) with the display name of the compound
-    /// `def` it expanded from.
-    pub(crate) fn set_origin_name(&mut self, name: String) {
+    /// Tag a property (leaf or `Or`) with the display name, full call-site
+    /// arguments, and meaning of the compound `def` it expanded from.
+    pub(crate) fn set_origin(&mut self, name: String, args: Vec<String>, meaning: Option<String>) {
         match self {
-            Property::Leaf(l) => l.origin_name = Some(name),
-            Property::Or(o) => o.origin_name = Some(name),
+            Property::Leaf(l) => {
+                l.origin_name = Some(name);
+                l.origin_args = Some(args);
+                l.origin_meaning = meaning;
+            }
+            Property::Or(o) => {
+                o.origin_name = Some(name);
+                o.origin_args = Some(args);
+                o.origin_meaning = meaning;
+            }
         }
     }
 

@@ -134,13 +134,70 @@ fn parse_one_def(f: &::syn::ItemFn) -> Option<DefSpec> {
 
     let body = parse_body(&body_str, &params)?;
 
+    let doc = extract_doc_comment(&f.attrs);
+
     Some(DefSpec {
         name,
         params,
         param_tys,
         body,
-        doc: Vec::new(),
+        doc,
     })
+}
+
+/// Extract `///` doc-comment lines from a function's attributes.
+fn extract_doc_comment(attrs: &[::syn::Attribute]) -> Vec<String> {    let mut doc = Vec::new();
+    for attr in attrs {
+        if !attr.path().is_ident("doc") {
+            continue;
+        }
+        let ::syn::Meta::NameValue(nv) = &attr.meta else {
+            continue;
+        };
+        let ::syn::Expr::Lit(el) = &nv.value else {
+            continue;
+        };
+        let ::syn::Lit::Str(s) = &el.lit else {
+            continue;
+        };
+        doc.push(s.value().trim().to_string());
+    }
+    doc
+}
+
+/// Render a `syn::Expr` back to source-like text.  `proc_macro2` stringifies
+/// tokens space-separated (`self . 0`, `size_of (T)`), so collapse the spaces
+/// around punctuation for a readable form.
+fn render_expr_src(e: &Expr) -> String {
+    quote::ToTokens::to_token_stream(e)
+        .to_string()
+        .replace(" . ", ".")
+        .replace(" ,", ",")
+        .replace(" (", "(")
+        .replace(" :: ", "::")
+}
+
+/// Resolve a call-site argument expression to its display form, following the
+/// def parameter's declared role so internal placeholders (e.g. `Arg_0` from a
+/// JSON contract) render as the actual parameter name.
+fn resolve_arg_string<'tcx>(
+    tcx: rustc_middle::ty::TyCtxt<'tcx>,
+    def_id: rustc_hir::def_id::DefId,
+    param_ty: &str,
+    expr: &Expr,
+) -> String {
+    match param_ty {
+        "Ptr" => super::resolve::parse_target_arg(tcx, def_id, expr)
+            .display_for_report(tcx, None, Some(def_id)),
+        "Ty" => super::resolve::parse_type(tcx, def_id, expr, "def")
+            .map(|ty| ty.to_string())
+            .unwrap_or_else(|| render_expr_src(expr)),
+        "Expr" => {
+            let ce = super::resolve::expr_to_pest(tcx, def_id, expr);
+            super::render::display_expr_user_friendly(&ce, tcx, None, Some(def_id))
+        }
+        _ => render_expr_src(expr),
+    }
 }
 
 /// Parse the body into a DNF tree.  `||` binds looser than `&&`.
@@ -432,10 +489,24 @@ pub fn expand_def<'tcx>(
         return None;
     }
     let mut props = expand_body(tcx, def_id, &def.body, exprs, &def.params, &def.param_tys);
-    // Tag expanded properties with the def name so reports show the original
-    // compound contract (e.g. "Deref") instead of the underlying primitives.
+    // Tag expanded properties with the def name, its full call-site arguments,
+    // and its doc-derived meaning so reports can show the compound as a single
+    // entry instead of the underlying primitives.
+    let arg_strings: Vec<String> = exprs
+        .iter()
+        .enumerate()
+        .map(|(i, e)| {
+            let param_ty = def.param_tys.get(i).map(|s| s.as_str()).unwrap_or("");
+            resolve_arg_string(tcx, def_id, param_ty, e)
+        })
+        .collect();
+    let meaning = if def.doc.is_empty() {
+        None
+    } else {
+        Some(def.doc.join(" "))
+    };
     for p in &mut props {
-        p.set_origin_name(name.to_string());
+        p.set_origin(name.to_string(), arg_strings.clone(), meaning.clone());
     }
     Some(props)
 }

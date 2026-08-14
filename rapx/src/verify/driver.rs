@@ -819,8 +819,9 @@ impl<'tcx> VerifyRun<'tcx> {
 
             if let Some(tgt) = inv_target {
                 rap_info!("  [Struct Invariants]:");
-                let inv_count = tgt.struct_invariants.len();
-                for (ii, property) in tgt.struct_invariants.iter().enumerate() {
+                let invariants = dedup_compound_props(tgt.struct_invariants.iter());
+                let inv_count = invariants.len();
+                for (ii, property) in invariants.iter().enumerate() {
                     let ibranch = if ii + 1 == inv_count { "`-" } else { "|-" };
                     let (call, meaning) = fmt_contract_expanded(
                         self.tcx,
@@ -932,11 +933,12 @@ impl<'tcx> VerifyRun<'tcx> {
         // Caller Contracts (only for unsafe functions)
         if has_caller {
             rap_info!("{cont}  [Caller Contracts]:");
-            let caller_props: Vec<_> = target
-                .caller_requires
-                .iter()
-                .filter(|p| p.kind() != Some(PropertyKind::Unknown))
-                .collect();
+            let caller_props = dedup_compound_props(
+                target
+                    .caller_requires
+                    .iter()
+                    .filter(|p| p.kind() != Some(PropertyKind::Unknown)),
+            );
             for (pi, property) in caller_props.iter().enumerate() {
                 let is_last = pi + 1 == caller_props.len();
                 let pbranch = if is_last { "`-" } else { "|-" };
@@ -977,10 +979,11 @@ impl<'tcx> VerifyRun<'tcx> {
                         callee_ret.as_deref()
                     )
                 );
-                let props: Vec<_> = contracts
-                    .iter()
-                    .filter(|p| p.kind() != Some(PropertyKind::Unknown))
-                    .collect();
+                let props = dedup_compound_props(
+                    contracts
+                        .iter()
+                        .filter(|p| p.kind() != Some(PropertyKind::Unknown)),
+                );
                 for (pi, property) in props.iter().enumerate() {
                     let is_last_prop = pi + 1 == props.len();
                     let pbranch = if is_last_prop { "`-" } else { "|-" };
@@ -1042,6 +1045,29 @@ impl<'tcx> VerifyRun<'tcx> {
 }
 
 use crate::helpers::name::short_fn_name;
+
+/// Drop consecutive duplicate compound-`def` entries: a `def` expands to several
+/// primitives sharing the same origin name and arguments, which should render as
+/// a single `name(args)` line in `--debug-contracts`.
+fn dedup_compound_props<'a, 'tcx>(
+    props: impl Iterator<Item = &'a crate::verify::contract::Property<'tcx>>,
+) -> Vec<&'a crate::verify::contract::Property<'tcx>> {
+    let mut out = Vec::new();
+    let mut prev: Option<(String, Vec<String>)> = None;
+    for p in props {
+        if let (Some(name), Some(args)) = (p.origin_name(), p.origin_args()) {
+            let key = (name.to_string(), args.to_vec());
+            if prev.as_ref() == Some(&key) {
+                continue;
+            }
+            prev = Some(key);
+        } else {
+            prev = None;
+        }
+        out.push(p);
+    }
+    out
+}
 
 /// Return true when two properties have the same kind.
 /// Collect struct field indices referenced by a property's contract places.

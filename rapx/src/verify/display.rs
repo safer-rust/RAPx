@@ -133,6 +133,14 @@ pub fn fmt_contract_expanded<'tcx>(
     fn_def_id: Option<rustc_hir::def_id::DefId>,
 ) -> (String, String) {
     use crate::verify::contract::PropertyKind;
+    // Compound `def` (e.g. `Ptr2Ref`, `Deref`, user `#[def_contract]`): show it
+    // as a single `name(args)` entry with its doc-derived meaning, instead of
+    // the underlying primitives it expanded into.
+    if let Some(name) = property.origin_name() {
+        let args = property.origin_args().map(|a| a.join(", ")).unwrap_or_default();
+        let meaning = property.origin_meaning().unwrap_or("");
+        return (format!("{name}({args})"), meaning.to_string());
+    }
     if property.is_or() {
         let group_count = property.groups().len();
         let mut call_parts = Vec::new();
@@ -224,15 +232,6 @@ pub fn fmt_contract_expanded<'tcx>(
         call
     };
     let meaning = match kind {
-        PropertyKind::NonNull => format!(
-            "{} as usize != 0",
-            args.first().map(|s| s.as_str()).unwrap_or("_")
-        ),
-        PropertyKind::Align => {
-            let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
-            let ty = args.get(1).map(|s| s.as_str()).unwrap_or("T");
-            format!("({ptr} as usize) % align_of::<{ty}>() == 0")
-        }
         PropertyKind::InBound => {
             use crate::verify::contract::{ContractExpr, PropertyArg};
             let placeholder = format!("InBound({})", args.join(", "));
@@ -264,66 +263,6 @@ pub fn fmt_contract_expanded<'tcx>(
                 _ => placeholder,
             }
         }
-        PropertyKind::Init => {
-            let p = args.first().map(|s| s.as_str()).unwrap_or("ptr");
-            let ty = args.get(1).map(|s| s.as_str()).unwrap_or("T");
-            let cnt = args.get(2).map(|s| s.as_str()).unwrap_or("count");
-            format!(
-                "forall i in 0..{cnt}: *({p} + i*sizeof({ty})) |= type_invariant({ty}), and the {cnt} value(s) are initialized"
-            )
-        }
-        PropertyKind::Typed => {
-            let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
-            let ty = args.get(1).map(|s| s.as_str()).unwrap_or("T");
-            format!("*{ptr} holds TypeInvariant({ty})")
-        }
-        PropertyKind::Alive => {
-            let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
-            if let Some(lt) = args.get(1) {
-                format!("*{ptr} outlives '{lt}")
-            } else {
-                format!("*{ptr} outlives return")
-            }
-        }
-        PropertyKind::Alias => {
-            let p1 = args.first().map(|s| s.as_str()).unwrap_or("p1");
-            let p2 = args.get(1).map(|s| s.as_str()).unwrap_or("p2");
-            format!("{p1} and {p2} alias each other (hazard)")
-        }
-        PropertyKind::Allocated => {
-            let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
-            let suffix = if args.len() >= 3 {
-                format!(", {}, {}", args[1], args[2])
-            } else {
-                String::new()
-            };
-            format!("{ptr} points to live heap/stack allocation{suffix}")
-        }
-        PropertyKind::NonOverlap => {
-            let joined = args.join(", ");
-            format!("[{joined}] are pairwise disjoint memory ranges")
-        }
-        PropertyKind::ValidNum => args.join(" && "),
-        PropertyKind::ValidTransmute => {
-            let src = args.first().map(|s| s.as_str()).unwrap_or("Src");
-            let dst = args.get(1).map(|s| s.as_str()).unwrap_or("Dst");
-            format!("bytes_of({dst}) within bytes_of({src})")
-        }
-        PropertyKind::SplitTransmute => {
-            let src = args.first().map(|s| s.as_str()).unwrap_or("T");
-            let dst = args.get(1).map(|s| s.as_str()).unwrap_or("U");
-            let line1 = format!(
-                "[{src}] as [{dst}]: every size_of({dst})-byte contiguous chunk of [{src}] is a valid bit-pattern of {dst} (type_invariant satisfied, alignment not required)"
-            );
-            let line2 = format!(
-                "forall w subset bytes([{src}]), |w| == |{dst}|: reinterpret_as_{dst}(w) |= type_invariant({dst}) \\ align_of({dst})",
-            );
-            format!("{line1}\n{line2}")
-        }
-        PropertyKind::Owning => {
-            let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
-            format!("ownership(*{ptr}) = none: no live owner aliases the pointee")
-        }
         PropertyKind::Size => {
             let ty = args.first().map(|s| s.as_str()).unwrap_or("T");
             let sz = args.get(1).map(|s| s.as_str()).unwrap_or("1");
@@ -333,44 +272,51 @@ pub fn fmt_contract_expanded<'tcx>(
                 n => format!("sizeof({ty}) = {n}"),
             }
         }
-        PropertyKind::NoPadding => {
-            let t = args.first().map(|s| s.as_str()).unwrap_or("T");
-            format!("{t} has no padding bytes between fields")
+        PropertyKind::ValidNum => args.join(" && "),
+        PropertyKind::Alive => {
+            let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
+            if let Some(lt) = args.get(1) {
+                format!("*{ptr} outlives '{lt}")
+            } else {
+                format!("*{ptr} outlives return")
+            }
         }
-        PropertyKind::Unwrap => {
-            let x = args.first().map(|s| s.as_str()).unwrap_or("x");
-            let v = args.get(1).map(|s| s.as_str()).unwrap_or("T");
-            format!("unwrap({x}) = {v}")
+        PropertyKind::Allocated => {
+            let ptr = args.first().map(|s| s.as_str()).unwrap_or("ptr");
+            if args.len() >= 3 {
+                format!(
+                    "{ptr} points to a live allocation of size: size_of({}) * {}",
+                    args[1], args[2]
+                )
+            } else {
+                format!("{ptr} points to a live allocation")
+            }
         }
-        PropertyKind::ValidString => {
-            let v = args.first().map(|s| s.as_str()).unwrap_or("v");
-            format!("{v} is valid UTF-8")
+        PropertyKind::NonOverlap => {
+            format!("[{}] are pairwise disjoint memory ranges", args.join(", "))
         }
-        PropertyKind::ValidCStr => {
-            let p = args.first().map(|s| s.as_str()).unwrap_or("ptr");
-            format!("{p} is a null-terminated valid UTF-8 byte sequence")
+        PropertyKind::Alias => {
+            let p1 = args.first().map(|s| s.as_str()).unwrap_or("p1");
+            let p2 = args.get(1).map(|s| s.as_str()).unwrap_or("p2");
+            format!("{p1} and {p2} alias each other (hazard)")
         }
-        PropertyKind::Pinned => {
-            let p = args.first().map(|s| s.as_str()).unwrap_or("ptr");
-            format!("{p} will not be moved")
-        }
-        PropertyKind::NonVolatile => {
-            let p = args.first().map(|s| s.as_str()).unwrap_or("ptr");
-            format!("{p} does not reference volatile memory")
-        }
-        PropertyKind::Opened => {
-            let f = args.first().map(|s| s.as_str()).unwrap_or("fd");
-            format!("{f} is a valid open file descriptor")
-        }
-        PropertyKind::Trait => {
-            let t = args.first().map(|s| s.as_str()).unwrap_or("T");
-            let tr = args.get(1).map(|s| s.as_str()).unwrap_or("Trait");
-            format!("{t} satisfies the trait bound {tr}")
-        }
-        PropertyKind::Unreachable => "not Reachable()".to_string(),
-        PropertyKind::Unknown => "(unresolved contract)".to_string(),
+        _ => fmt_meaning_template(
+            crate::verify::contract::spec::kind_meaning(kind),
+            &args,
+        ),
     };
     (call, meaning)
+}
+
+/// Substitute `{0}`, `{1}`, `{2}` placeholders in a meaning template with the
+/// rendered positional arguments.  Missing arguments fall back to `"_"`.
+fn fmt_meaning_template(template: &str, args: &[String]) -> String {
+    let mut out = template.to_string();
+    for i in 0..3 {
+        let value = args.get(i).map(|s| s.as_str()).unwrap_or("_");
+        out = out.replace(&format!("{{{i}}}"), value);
+    }
+    out
 }
 
 pub fn emit_results_counts_and_checkpoints<'tcx>(
