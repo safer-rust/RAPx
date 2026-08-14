@@ -1,6 +1,5 @@
-use rustc_hir::def_id::DefId;
 use rustc_middle::mir::BinOp as MirBinOp;
-use rustc_middle::ty::{Ty, TyCtxt};
+use rustc_middle::ty::Ty;
 
 use crate::verify::def_use::PlaceKey;
 
@@ -25,96 +24,6 @@ pub struct ContractPlace<'tcx> {
 }
 
 impl<'tcx> ContractPlace<'tcx> {
-    pub fn display_user_friendly(
-        &self,
-        tcx: TyCtxt<'tcx>,
-        struct_def_id: Option<DefId>,
-        fn_def_id: Option<DefId>,
-    ) -> String {
-        let has_projections = !self.projections.is_empty();
-
-        let base_str = match self.base {
-            PlaceBase::Return => {
-                if has_projections {
-                    String::new()
-                } else {
-                    "return".to_string()
-                }
-            }
-            PlaceBase::Arg(idx) => {
-                if let Some(fn_def_id) = fn_def_id
-                    && tcx.is_mir_available(fn_def_id)
-                {
-                    let mir_local = idx + 1;
-                    let body = tcx.optimized_mir(fn_def_id);
-                    if mir_local < body.local_decls.len() {
-                        let local = rustc_middle::mir::Local::from_usize(mir_local);
-                        let span = body.local_decls[local].source_info.span;
-                        if let Ok(snippet) = tcx.sess.source_map().span_to_snippet(span)
-                            && !snippet.is_empty()
-                        {
-                            return snippet;
-                        }
-                    }
-                }
-                format!("arg{}", idx)
-            }
-            PlaceBase::Local(n) => {
-                if n == 0 {
-                    "return".to_string()
-                } else if let Some(fn_def_id) = fn_def_id
-                    && tcx.is_mir_available(fn_def_id)
-                {
-                    let body = tcx.optimized_mir(fn_def_id);
-                    if n < body.local_decls.len() {
-                        let local = rustc_middle::mir::Local::from_usize(n);
-                        let span = body.local_decls[local].source_info.span;
-                        if let Ok(snippet) = tcx.sess.source_map().span_to_snippet(span) {
-                            snippet
-                        } else {
-                            format!("arg{}", n)
-                        }
-                    } else {
-                        format!("arg{}", n)
-                    }
-                } else {
-                    format!("arg{}", n)
-                }
-            }
-        };
-
-        let base_str = base_str
-            .strip_prefix("&mut ")
-            .unwrap_or(&base_str)
-            .to_string();
-        let base_str = base_str.strip_prefix("&").unwrap_or(&base_str).to_string();
-
-        if self.projections.is_empty() {
-            return base_str;
-        }
-
-        let mut result = base_str;
-        for projection in &self.projections {
-            match projection {
-                ContractProjection::Field { index, ty: _ } => {
-                    let field_name = crate::helpers::name::resolve_field_name(tcx, index, struct_def_id);
-                    if result.is_empty() {
-                        result = field_name;
-                    } else {
-                        result.push_str(&format!(".{}", field_name));
-                    }
-                }
-                ContractProjection::Downcast { .. } => {
-                    result.push_str(".unwrap_some()");
-                }
-                ContractProjection::IterElements => {
-                    result.push_str(".iter()");
-                }
-            }
-        }
-        result
-    }
-
     pub fn local(base: usize, fields: Vec<(usize, Ty<'tcx>)>) -> Self {
         Self {
             base: if base == 0 {
@@ -247,28 +156,6 @@ impl<'tcx> NumericPredicate<'tcx> {
     pub fn new(lhs: ContractExpr<'tcx>, op: RelOp, rhs: ContractExpr<'tcx>) -> Self {
         Self { lhs, op, rhs }
     }
-
-    pub fn display_user_friendly(
-        &self,
-        tcx: TyCtxt<'tcx>,
-        struct_def_id: Option<DefId>,
-        fn_def_id: Option<DefId>,
-    ) -> String {
-        let op_str = match self.op {
-            RelOp::Eq => "==",
-            RelOp::Ne => "!=",
-            RelOp::Lt => "<",
-            RelOp::Le => "<=",
-            RelOp::Gt => ">",
-            RelOp::Ge => ">=",
-        };
-        format!(
-            "{} {} {}",
-            display_expr_user_friendly(&self.lhs, tcx, struct_def_id, fn_def_id),
-            op_str,
-            display_expr_user_friendly(&self.rhs, tcx, struct_def_id, fn_def_id),
-        )
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -299,9 +186,6 @@ pub enum PropertyKind {
     ValidTransmute,
     SplitTransmute,
     Unknown,
-    /// Logical OR over alternative property groups.
-    /// Each inner group is a conjunction (AND); at least one group must hold.
-    Or,
 }
 
 #[derive(Clone, Debug)]
@@ -312,114 +196,6 @@ pub enum PropertyArg<'tcx> {
     Ident(String),
 }
 
-pub fn display_expr_user_friendly<'tcx>(
-    expr: &ContractExpr<'tcx>,
-    tcx: TyCtxt<'tcx>,
-    struct_def_id: Option<DefId>,
-    fn_def_id: Option<DefId>,
-) -> String {
-    match expr {
-        ContractExpr::Const(n) => format!("{n}"),
-        ContractExpr::ConstParam { name, .. } => name.clone(),
-        ContractExpr::Place(p) => p.display_user_friendly(tcx, struct_def_id, fn_def_id),
-        ContractExpr::SizeOf(ty) => format!("size_of({ty})"),
-        ContractExpr::AlignOf(ty) => format!("align_of({ty})"),
-        ContractExpr::Len(e) => {
-            format!(
-                "len({})",
-                display_expr_user_friendly(e, tcx, struct_def_id, fn_def_id)
-            )
-        }
-        ContractExpr::IndexAccess { slice, index } => {
-            format!(
-                "index_access({}, {})",
-                display_expr_user_friendly(slice, tcx, struct_def_id, fn_def_id),
-                display_expr_user_friendly(index, tcx, struct_def_id, fn_def_id),
-            )
-        }
-        ContractExpr::Binary { op, lhs, rhs } => {
-            let op_str = match op {
-                NumericOp::Add => "+",
-                NumericOp::Sub => "-",
-                NumericOp::Mul => "*",
-                NumericOp::Div => "/",
-                NumericOp::Rem => "%",
-                NumericOp::BitAnd => "&",
-                NumericOp::BitOr => "|",
-                NumericOp::BitXor => "^",
-            };
-            format!(
-                "{} {} {}",
-                display_expr_user_friendly(lhs, tcx, struct_def_id, fn_def_id),
-                op_str,
-                display_expr_user_friendly(rhs, tcx, struct_def_id, fn_def_id),
-            )
-        }
-        ContractExpr::Unary { op, expr } => {
-            let op_str = match op {
-                NumericUnaryOp::Not => "!",
-                NumericUnaryOp::Neg => "-",
-            };
-            format!(
-                "{}{}",
-                op_str,
-                display_expr_user_friendly(expr, tcx, struct_def_id, fn_def_id),
-            )
-        }
-        ContractExpr::Min { a, b } => {
-            format!(
-                "min({}, {})",
-                display_expr_user_friendly(a, tcx, struct_def_id, fn_def_id),
-                display_expr_user_friendly(b, tcx, struct_def_id, fn_def_id),
-            )
-        }
-        ContractExpr::Max { a, b } => {
-            format!(
-                "max({}, {})",
-                display_expr_user_friendly(a, tcx, struct_def_id, fn_def_id),
-                display_expr_user_friendly(b, tcx, struct_def_id, fn_def_id),
-            )
-        }
-        ContractExpr::If {
-            cond,
-            then_expr,
-            else_expr,
-        } => {
-            format!(
-                "if {} {{ {} }} else {{ {} }}",
-                cond.display_user_friendly(tcx, struct_def_id, fn_def_id),
-                display_expr_user_friendly(then_expr, tcx, struct_def_id, fn_def_id),
-                display_expr_user_friendly(else_expr, tcx, struct_def_id, fn_def_id),
-            )
-        }
-        _ => format!("{:?}", expr),
-    }
-}
-
-impl<'tcx> PropertyArg<'tcx> {
-    pub fn display_for_report(
-        &self,
-        tcx: TyCtxt<'tcx>,
-        struct_def_id: Option<DefId>,
-        fn_def_id: Option<DefId>,
-    ) -> String {
-        match self {
-            PropertyArg::Ty(ty) => format!("{}", ty),
-            PropertyArg::Expr(expr) => {
-                display_expr_user_friendly(expr, tcx, struct_def_id, fn_def_id)
-            }
-            PropertyArg::Predicates(preds) => {
-                let p: Vec<_> = preds
-                    .iter()
-                    .map(|pred| pred.display_user_friendly(tcx, struct_def_id, fn_def_id))
-                    .collect();
-                p.join(" && ")
-            }
-            PropertyArg::Ident(s) => s.clone(),
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ContractKind {
     Precond,
@@ -427,18 +203,30 @@ pub enum ContractKind {
     Option_,
 }
 
+/// A safety property: either a single predicate (`Leaf`) or a disjunction of
+/// alternative predicate groups (`Or`).
+///
+/// Conjunction (`And`) is deliberately *not* a variant: it is expressed by the
+/// surrounding collection — the caller's `requires` list is already a
+/// conjunction, and each `Or` group is a conjunction of its members (DNF).
+///
+/// Splitting `Leaf` from `Or` makes the mutually-exclusive payloads (`args`
+/// vs. `groups`) explicit in the type, so a leaf can never carry alternatives
+/// and an `Or` can never carry arguments.
 #[derive(Clone, Debug)]
-pub struct Property<'tcx> {
+pub enum Property<'tcx> {
+    Leaf(LeafProperty<'tcx>),
+    Or(OrProperty<'tcx>),
+}
+
+#[derive(Clone, Debug)]
+pub struct LeafProperty<'tcx> {
     pub kind: PropertyKind,
     pub args: Vec<PropertyArg<'tcx>>,
     pub contract_kind: ContractKind,
     /// When set, this property came from an `any(Null(guard), ...)` expansion
     /// and is vacuously true when `guard` is null.
     pub null_guard: Option<PlaceKey>,
-    /// For `PropertyKind::Or`: alternative property groups.
-    /// Each inner `Vec` is a conjunction (all must hold); at least one group
-    /// must hold in a disjunction.
-    pub or_alternatives: Vec<Vec<Box<Property<'tcx>>>>,
     /// When set, this property must hold for every element of this
     /// container (e.g. `Owning(buckets.iter())`).  The target place
     /// in `args` is already stripped of the `IterElements` projection
@@ -450,15 +238,109 @@ pub struct Property<'tcx> {
     pub origin_name: Option<String>,
 }
 
+#[derive(Clone, Debug)]
+pub struct OrProperty<'tcx> {
+    /// Alternative property groups.  Each inner `Vec` is a conjunction (all
+    /// must hold); at least one group must hold in a disjunction.
+    pub groups: Vec<Vec<Box<Property<'tcx>>>>,
+    pub contract_kind: ContractKind,
+    /// Display name of the compound `def` this property expanded from.
+    pub origin_name: Option<String>,
+}
+
 impl<'tcx> Property<'tcx> {
+    /// Build a single predicate leaf.
+    pub(crate) fn new_leaf(kind: PropertyKind, args: Vec<PropertyArg<'tcx>>) -> Self {
+        Self::Leaf(LeafProperty {
+            kind,
+            args,
+            contract_kind: ContractKind::Precond,
+            null_guard: None,
+            for_each: None,
+            origin_name: None,
+        })
+    }
+
+    /// Build a `Property::Or` disjunction from already-expanded DNF groups.
+    ///
+    /// Each inner `Vec` is one AND-group (all its members must hold); at least
+    /// one group must hold for the disjunction to be satisfied.  This is the
+    /// single place an `Or` property is constructed so that callers in the
+    /// `def`, JSON (`query`), and `any(...)` (`parser`) layers share identical
+    /// semantics.
+    pub(crate) fn new_or(groups: Vec<Vec<Box<Property<'tcx>>>>) -> Self {
+        Self::Or(OrProperty {
+            groups,
+            contract_kind: ContractKind::Precond,
+            origin_name: None,
+        })
+    }
+
+    /// The predicate kind of a leaf property (`None` for an `Or`, which has no
+    /// single kind).
+    pub fn kind(&self) -> Option<PropertyKind> {
+        match self {
+            Property::Leaf(l) => Some(l.kind),
+            Property::Or(_) => None,
+        }
+    }
+
+    /// The positional arguments of a leaf property (`Or` has none).
+    pub fn args(&self) -> &[PropertyArg<'tcx>] {
+        match self {
+            Property::Leaf(l) => &l.args,
+            Property::Or(_) => &[],
+        }
+    }
+
+    /// The alternative groups of an `Or` property (`Leaf` has none).
+    pub fn groups(&self) -> &[Vec<Box<Property<'tcx>>>] {
+        match self {
+            Property::Leaf(_) => &[],
+            Property::Or(o) => &o.groups,
+        }
+    }
+
+    pub fn contract_kind(&self) -> ContractKind {
+        match self {
+            Property::Leaf(l) => l.contract_kind,
+            Property::Or(o) => o.contract_kind,
+        }
+    }
+
+    pub fn null_guard(&self) -> Option<&PlaceKey> {
+        match self {
+            Property::Leaf(l) => l.null_guard.as_ref(),
+            Property::Or(_) => None,
+        }
+    }
+
+    pub fn for_each(&self) -> Option<&ContractPlace<'tcx>> {
+        match self {
+            Property::Leaf(l) => l.for_each.as_ref(),
+            Property::Or(_) => None,
+        }
+    }
+
+    pub fn origin_name(&self) -> Option<&str> {
+        match self {
+            Property::Leaf(l) => l.origin_name.as_deref(),
+            Property::Or(o) => o.origin_name.as_deref(),
+        }
+    }
+
+    pub fn is_or(&self) -> bool {
+        matches!(self, Property::Or(_))
+    }
+
     /// The first argument, which is conventionally the target place.
     pub fn target_arg(&self) -> Option<&PropertyArg<'tcx>> {
-        self.args.first()
+        self.args().first()
     }
 
     /// The first `Ty` argument.
     pub fn ty_arg(&self) -> Option<Ty<'tcx>> {
-        self.args.iter().find_map(|a| match a {
+        self.args().iter().find_map(|a| match a {
             PropertyArg::Ty(ty) => Some(*ty),
             _ => None,
         })
@@ -466,7 +348,7 @@ impl<'tcx> Property<'tcx> {
 
     /// The first `Expr` argument, typically a count/length expression.
     pub fn count_expr(&self) -> Option<&ContractExpr<'tcx>> {
-        self.args.iter().find_map(|a| match a {
+        self.args().iter().find_map(|a| match a {
             PropertyArg::Expr(e) => Some(e),
             _ => None,
         })
@@ -474,10 +356,38 @@ impl<'tcx> Property<'tcx> {
 
     /// Apply contract kind metadata from a JSON entry or attribute.
     pub fn apply_kind(&mut self, kind: Option<&str>) {
+        let target = match self {
+            Property::Leaf(l) => &mut l.contract_kind,
+            Property::Or(o) => &mut o.contract_kind,
+        };
         match kind {
-            Some("hazard") => self.contract_kind = ContractKind::Hazard,
-            Some("option") => self.contract_kind = ContractKind::Option_,
+            Some("hazard") => *target = ContractKind::Hazard,
+            Some("option") => *target = ContractKind::Option_,
             _ => {}
+        }
+    }
+
+    /// Tag a property (leaf or `Or`) with the display name of the compound
+    /// `def` it expanded from.
+    pub(crate) fn set_origin_name(&mut self, name: String) {
+        match self {
+            Property::Leaf(l) => l.origin_name = Some(name),
+            Property::Or(o) => o.origin_name = Some(name),
+        }
+    }
+
+    /// Attach a `for_each` container to a leaf property.
+    pub(crate) fn set_for_each(&mut self, place: Option<ContractPlace<'tcx>>) {
+        if let Property::Leaf(l) = self {
+            l.for_each = place;
+        }
+    }
+
+    /// Override the contract kind (e.g. `Alias` → `Hazard`).
+    pub(crate) fn set_contract_kind(&mut self, k: ContractKind) {
+        match self {
+            Property::Leaf(l) => l.contract_kind = k,
+            Property::Or(o) => o.contract_kind = k,
         }
     }
 }

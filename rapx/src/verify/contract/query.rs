@@ -24,7 +24,7 @@ use safety_parser::syn::Expr;
 
 use crate::verify::source::assets::{AnyItem, PropertyEntry, get_std_contracts_from_assets};
 
-use super::types::{ContractKind, Property, PropertyKind};
+use super::types::{Property, PropertyKind};
 
 /// Convert a single [`PropertyEntry`] from JSON into the properties it denotes.
 ///
@@ -69,7 +69,7 @@ pub fn entry_to_property<'tcx>(
     let mut result = Vec::new();
     for mut property in properties {
         property.apply_kind(entry.kind.as_deref());
-        if matches!(property.kind, PropertyKind::Unknown) {
+        if matches!(property.kind(), Some(PropertyKind::Unknown)) {
             rap_debug!(
                 "skip unsupported std safety contract tag '{}' for callee {:?}",
                 entry.tag, def_id
@@ -81,7 +81,7 @@ pub fn entry_to_property<'tcx>(
     result
 }
 
-/// Parse an `any` disjunction entry from JSON into a `PropertyKind::Or` property.
+/// Parse an `any` disjunction entry from JSON into a `Property::Or` property.
 ///
 /// Each element of `disjuncts` is an [`AnyItem`]:
 /// - `Single(entry)` → one-property disjunct
@@ -149,15 +149,7 @@ fn any_entry_to_property<'tcx>(
             }
         }
     }
-    Property {
-        kind: PropertyKind::Or,
-        args: Vec::new(),
-        contract_kind: ContractKind::Precond,
-        null_guard: None,
-        or_alternatives: groups,
-        for_each: None,
-        origin_name: None,
-    }
+    Property::new_or(groups)
 }
 
 /// Resolve JSON contract argument strings to parsed [`syn::Expr`] values.

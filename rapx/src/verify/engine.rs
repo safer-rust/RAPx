@@ -13,7 +13,7 @@ use crate::analysis::path::PathTree;
 use crate::compat::FxHashSet;
 
 use super::{
-    contract::Property,
+    contract::{LeafProperty, OrProperty, Property},
     report::CheckResult,
     slicer::{BackwardItem, BackwardSlicer, KeepReason},
 };
@@ -77,7 +77,7 @@ impl<'tcx> VerifyEngine<'tcx> {
                 items.extend(
                     caller_contracts
                         .iter()
-                        .filter(|c| !matches!(c.kind, super::contract::PropertyKind::Unknown))
+                        .filter(|c| !matches!(c.kind(), Some(super::contract::PropertyKind::Unknown)))
                         .map(|c| BackwardItem::ContractFact { property: c.clone() }),
                 );
             }
@@ -335,39 +335,58 @@ impl<'tcx> VerifyEngine<'tcx> {
         property: &Property<'tcx>,
         checkpoint: &Checkpoint<'tcx>,
     ) -> Property<'tcx> {
-        let new_args: Vec<super::contract::PropertyArg<'tcx>> = property.args.iter()
-            .map(|a| {
-                match a {
-                    super::contract::PropertyArg::Expr(expr) => {
-                        super::contract::PropertyArg::Expr(Self::rebind_contract_expr(expr, checkpoint))
-                    }
-                    super::contract::PropertyArg::Predicates(predicates) => {
-                        let rebound: Vec<_> = predicates.iter().map(|p| {
-                            let lhs = Self::rebind_contract_expr(&p.lhs, checkpoint);
-                            let rhs = Self::rebind_contract_expr(&p.rhs, checkpoint);
-                            super::contract::NumericPredicate::new(lhs, p.op, rhs)
-                        }).collect();
-                        super::contract::PropertyArg::Predicates(rebound)
-                    }
-                    _ => a.clone(),
-                }
-            })
-            .collect();
-
-        let new_alternatives: Vec<Vec<Box<Property<'tcx>>>> = property.or_alternatives.iter().map(|group| {
-            group.iter().map(|p| {
-                Box::new(Self::bind_property_to_checkpoint(p, checkpoint))
-            }).collect()
-        }).collect();
-
-        Property {
-            kind: property.kind.clone(),
-            args: new_args,
-            contract_kind: property.contract_kind,
-            null_guard: property.null_guard.clone(),
-            or_alternatives: new_alternatives,
-            for_each: property.for_each.clone(),
-            origin_name: None,
+        match property {
+            Property::Leaf(leaf) => {
+                let new_args: Vec<super::contract::PropertyArg<'tcx>> = leaf
+                    .args
+                    .iter()
+                    .map(|a| match a {
+                        super::contract::PropertyArg::Expr(expr) => {
+                            super::contract::PropertyArg::Expr(Self::rebind_contract_expr(
+                                expr,
+                                checkpoint,
+                            ))
+                        }
+                        super::contract::PropertyArg::Predicates(predicates) => {
+                            let rebound: Vec<_> = predicates
+                                .iter()
+                                .map(|p| {
+                                    let lhs = Self::rebind_contract_expr(&p.lhs, checkpoint);
+                                    let rhs = Self::rebind_contract_expr(&p.rhs, checkpoint);
+                                    super::contract::NumericPredicate::new(lhs, p.op, rhs)
+                                })
+                                .collect();
+                            super::contract::PropertyArg::Predicates(rebound)
+                        }
+                        _ => a.clone(),
+                    })
+                    .collect();
+                Property::Leaf(LeafProperty {
+                    kind: leaf.kind,
+                    args: new_args,
+                    contract_kind: leaf.contract_kind,
+                    null_guard: leaf.null_guard.clone(),
+                    for_each: leaf.for_each.clone(),
+                    origin_name: None,
+                })
+            }
+            Property::Or(or) => {
+                let new_groups: Vec<Vec<Box<Property<'tcx>>>> = or
+                    .groups
+                    .iter()
+                    .map(|group| {
+                        group
+                            .iter()
+                            .map(|p| Box::new(Self::bind_property_to_checkpoint(p, checkpoint)))
+                            .collect()
+                    })
+                    .collect();
+                Property::Or(OrProperty {
+                    groups: new_groups,
+                    contract_kind: or.contract_kind,
+                    origin_name: None,
+                })
+            }
         }
     }
 

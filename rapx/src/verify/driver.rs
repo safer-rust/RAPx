@@ -122,7 +122,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
             let mut view_results: Vec<PropertyCheckResult<'tcx>> = Vec::new();
 
             for (property_index, property) in view.properties.iter().enumerate() {
-                if property.kind == PropertyKind::Or {
+                if property.is_or() {
                     self.check_or_property(&mut report, &view, property_index, property);
                     continue;
                 }
@@ -169,7 +169,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
         // Per-path final OR result, aggregating the AND of each group.
         let mut per_path: Vec<Option<(super::report::CheckResult, String)>> = Vec::new();
 
-        for group in or_property.or_alternatives.iter() {
+        for group in or_property.groups().iter() {
             // Per-path AND result of this group.
             let mut group_per_path: Vec<Option<(super::report::CheckResult, String)>> = Vec::new();
             for sub_prop in group.iter() {
@@ -284,7 +284,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
         let entry_facts: Vec<BackwardItem<'tcx>> = if is_constructor {
             caller_contracts
                 .iter()
-                .filter(|c| !matches!(c.kind, PropertyKind::Unknown))
+                .filter(|c| !matches!(c.kind(), Some(PropertyKind::Unknown)))
                 .map(|c| BackwardItem::ContractFact {
                     property: c.clone(),
                 })
@@ -870,12 +870,12 @@ impl<'tcx> VerifyRun<'tcx> {
             && target
                 .caller_requires
                 .iter()
-                .any(|p| p.kind != PropertyKind::Unknown);
+                .any(|p| p.kind() != Some(PropertyKind::Unknown));
         if has_caller {
             return true;
         }
         target.callee_requires.values().any(|c| {
-            c.iter().any(|p| p.kind != PropertyKind::Unknown)
+            c.iter().any(|p| p.kind() != Some(PropertyKind::Unknown))
         })
     }
 
@@ -912,13 +912,13 @@ impl<'tcx> VerifyRun<'tcx> {
             && target
                 .caller_requires
                 .iter()
-                .any(|p| p.kind != PropertyKind::Unknown);
+                .any(|p| p.kind() != Some(PropertyKind::Unknown));
         let mut callee_ids: Vec<_> = target.callee_requires.keys().copied().collect();
         callee_ids.retain(|did| {
             target
                 .callee_requires
                 .get(did)
-                .is_some_and(|c| c.iter().any(|p| p.kind != PropertyKind::Unknown))
+                .is_some_and(|c| c.iter().any(|p| p.kind() != Some(PropertyKind::Unknown)))
         });
         callee_ids.sort_by_key(|did| self.tcx.def_path_str(*did));
         let has_callees = !callee_ids.is_empty();
@@ -939,7 +939,7 @@ impl<'tcx> VerifyRun<'tcx> {
             let caller_props: Vec<_> = target
                 .caller_requires
                 .iter()
-                .filter(|p| p.kind != PropertyKind::Unknown)
+                .filter(|p| p.kind() != Some(PropertyKind::Unknown))
                 .collect();
             for (pi, property) in caller_props.iter().enumerate() {
                 let is_last = pi + 1 == caller_props.len();
@@ -984,7 +984,7 @@ impl<'tcx> VerifyRun<'tcx> {
                 );
                 let props: Vec<_> = contracts
                     .iter()
-                    .filter(|p| p.kind != PropertyKind::Unknown)
+                    .filter(|p| p.kind() != Some(PropertyKind::Unknown))
                     .collect();
                 for (pi, property) in props.iter().enumerate() {
                     let is_last_prop = pi + 1 == props.len();
@@ -1075,7 +1075,7 @@ use crate::helpers::name::short_fn_name;
 fn property_field_indices(property: &crate::verify::contract::Property<'_>) -> Vec<usize> {
     use crate::verify::contract::{ContractExpr, PropertyArg};
     let mut indices = Vec::new();
-    for arg in &property.args {
+    for arg in property.args() {
         let place = match arg {
             PropertyArg::Expr(ContractExpr::Place(p)) => Some(p),
             _ => None,
@@ -1128,14 +1128,17 @@ fn remap_constructor_contract<'tcx>(
     }
 
     let new_args: Vec<PropertyArg<'tcx>> = property
-        .args
+        .args()
         .iter()
         .map(|arg| remap_place_arg(arg))
         .collect();
 
-    crate::verify::contract::Property {
-        args: new_args,
-        ..property
+    match property {
+        crate::verify::contract::Property::Leaf(mut leaf) => {
+            leaf.args = new_args;
+            crate::verify::contract::Property::Leaf(leaf)
+        }
+        crate::verify::contract::Property::Or(or) => crate::verify::contract::Property::Or(or),
     }
 }
 

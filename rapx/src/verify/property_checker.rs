@@ -45,7 +45,7 @@ impl PropertyChecker {
         property: &Property<'tcx>,
     ) -> CheckResult {
         // Null guard: property is vacuously true when the guarded place is null.
-        if let Some(ref guard_key) = property.null_guard {
+        if let Some(guard_key) = property.null_guard() {
             if self.is_guard_null(vm_state, checkpoint, guard_key) {
                 return CheckResult::Proved;
             }
@@ -56,28 +56,33 @@ impl PropertyChecker {
         if self.is_vacuously_true_for_nullable(vm_state, checkpoint, property) {
             return CheckResult::Proved;
         }
-        match &property.kind {
-            PropertyKind::Or => self.check_or(vm_state, solver, checkpoint, property),
+        match property {
+            Property::Or(_) => self.check_or(vm_state, solver, checkpoint, property),
+            Property::Leaf(leaf) => match leaf.kind {
+                PropertyKind::Align => self.check_align(vm_state, solver, checkpoint, property),
+                PropertyKind::NonNull => self.check_non_null(vm_state, solver, checkpoint, property),
+                PropertyKind::Allocated => self.check_allocated(vm_state, solver, checkpoint, property),
+                PropertyKind::InBound => self.check_in_bound(vm_state, solver, checkpoint, property),
+                PropertyKind::Init => self.check_init(vm_state, solver, checkpoint, property),
+                PropertyKind::Typed => self.check_typed(vm_state, solver, checkpoint, property),
+                PropertyKind::Alias => self.check_alias(vm_state, solver, checkpoint, property),
+                PropertyKind::Owning => self.check_owning(vm_state, solver, checkpoint, property),
+                PropertyKind::Alive => self.check_alive(vm_state, solver, checkpoint, property),
+                PropertyKind::NonOverlap => self.check_non_overlap(vm_state, solver, checkpoint, property),
+                PropertyKind::NonVolatile => CheckResult::Proved,
+                PropertyKind::ValidNum => self.check_valid_num(vm_state, solver, checkpoint, property),
+                PropertyKind::ValidCStr => self.check_valid_cstr(vm_state, solver, checkpoint, property),
+                PropertyKind::ValidTransmute => {
+                    self.check_valid_transmute(vm_state, solver, checkpoint, property)
+                }
+                PropertyKind::SplitTransmute => {
+                    self.check_split_transmute(vm_state, solver, checkpoint, property)
+                }
+                PropertyKind::Trait => self.check_trait(vm_state, solver, checkpoint, property),
+                PropertyKind::Size => self.check_size(vm_state, property),
 
-            PropertyKind::Align => self.check_align(vm_state, solver, checkpoint, property),
-            PropertyKind::NonNull => self.check_non_null(vm_state, solver, checkpoint, property),
-            PropertyKind::Allocated => self.check_allocated(vm_state, solver, checkpoint, property),
-            PropertyKind::InBound => self.check_in_bound(vm_state, solver, checkpoint, property),
-            PropertyKind::Init => self.check_init(vm_state, solver, checkpoint, property),
-            PropertyKind::Typed => self.check_typed(vm_state, solver, checkpoint, property),
-            PropertyKind::Alias => self.check_alias(vm_state, solver, checkpoint, property),
-            PropertyKind::Owning => self.check_owning(vm_state, solver, checkpoint, property),
-            PropertyKind::Alive => self.check_alive(vm_state, solver, checkpoint, property),
-            PropertyKind::NonOverlap => self.check_non_overlap(vm_state, solver, checkpoint, property),
-            PropertyKind::NonVolatile => CheckResult::Proved,
-            PropertyKind::ValidNum => self.check_valid_num(vm_state, solver, checkpoint, property),
-            PropertyKind::ValidCStr => self.check_valid_cstr(vm_state, solver, checkpoint, property),
-            PropertyKind::ValidTransmute => self.check_valid_transmute(vm_state, solver, checkpoint, property),
-            PropertyKind::SplitTransmute => self.check_split_transmute(vm_state, solver, checkpoint, property),
-            PropertyKind::Trait => self.check_trait(vm_state, solver, checkpoint, property),
-            PropertyKind::Size => self.check_size(vm_state, property),
-
-            _ => CheckResult::Unknown,
+                _ => CheckResult::Unknown,
+            },
         }
     }
 
@@ -87,7 +92,7 @@ impl PropertyChecker {
         // OR semantics: proved if any group is fully proved; failed only if
         // *every* group is definitely violated; unknown otherwise.
         let mut all_failed = true;
-        for group in &property.or_alternatives {
+        for group in property.groups() {
             let mut group_proved = true;
             let mut group_failed = false;
             for p in group {
@@ -121,7 +126,7 @@ impl PropertyChecker {
     fn target_value<'ctx, 'tcx>(&self, vm_state: &VmState<'ctx, 'tcx>,
         checkpoint: &Checkpoint<'tcx>, property: &Property<'tcx>) -> Option<VmValue<'ctx, 'tcx>>
     {
-        let cp = match property.args.first()? {
+        let cp = match property.args().first()? {
             PropertyArg::Expr(ContractExpr::Const(n)) => {
                 let idx = usize::try_from(*n).ok()?;
                 crate::verify::contract::ContractPlace {
@@ -271,7 +276,7 @@ impl PropertyChecker {
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> bool {
-        let cp = match property.args.first() {
+        let cp = match property.args().first() {
             Some(PropertyArg::Expr(crate::verify::contract::ContractExpr::Place(cp))) => cp,
             _ => return false,
         };
@@ -382,7 +387,7 @@ impl PropertyChecker {
         property: &Property<'tcx>, ty_arg: usize, count_arg: usize,
         checkpoint: &Checkpoint<'tcx>, _value: &VmValue<'ctx, 'tcx>) -> Int<'ctx>
     {
-        let elem_size = property.args.get(ty_arg)
+        let elem_size = property.args().get(ty_arg)
             .and_then(|a| if let PropertyArg::Ty(ty) = a { Some(vm_state.size_of_ty(*ty)) } else { None })
             .unwrap_or(0);
         // When the contract uses a generic T (size_of returns 0), infer the
@@ -399,7 +404,7 @@ impl PropertyChecker {
         };
         let elem_size_term = Int::from_u64(vm_state.ctx, (elem_size as u64).max(1));
 
-        let count_term = property.args.get(count_arg)
+        let count_term = property.args().get(count_arg)
             .and_then(|a| self.resolve_arg_term(vm_state, checkpoint, a))
             .unwrap_or_else(|| Int::from_u64(vm_state.ctx, 1));
         // Simplify the multiplication for concrete count and elem_size
@@ -418,7 +423,7 @@ impl PropertyChecker {
 
         if self.zst_guard(vm_state, checkpoint, property) { return CheckResult::Proved; }
         if self.is_concrete_zst(vm_state, value.ty) { return CheckResult::Proved; }
-        let ty_arg = property.args.get(1).and_then(|a| if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None });
+        let ty_arg = property.args().get(1).and_then(|a| if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None });
         let align = ty_arg.map(|ty| vm_state.align_of_ty(ty)).unwrap_or(1);
         let align = if align <= 1 {
             ty_arg.and_then(|ty| {
@@ -568,7 +573,7 @@ impl PropertyChecker {
             }
         }
 
-        let required_ty = property.args.get(1)
+        let required_ty = property.args().get(1)
             .and_then(|a| if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None });
 
         if let Some(alloc) = vm_state.allocations.iter().find(|a| a.id == alloc_id) {
@@ -666,7 +671,7 @@ impl PropertyChecker {
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> bool {
-        let required_ty = property.args.get(1)
+        let required_ty = property.args().get(1)
             .and_then(|a| if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None });
         self.is_zst_type(vm_state, checkpoint, required_ty)
     }
@@ -687,7 +692,7 @@ impl PropertyChecker {
     }
 
     fn has_iter_elements<'tcx>(&self, property: &Property<'tcx>) -> bool {
-        property.for_each.is_some()
+        property.for_each().is_some()
     }
 
     // ── check_in_bound ─────────────────────────────────────────
@@ -702,17 +707,17 @@ impl PropertyChecker {
         }
         // Fast-path: contract with for_each guarantees all elements
         // of the index array are in bounds.
-        if property.for_each.is_some() {
+        if property.for_each().is_some() {
             return CheckResult::Proved;
         }
 
         if let Some(PropertyArg::Expr(ContractExpr::IndexAccess { index: _, .. }))
-            = property.args.first()
+            = property.args().first()
         {
             return self.check_in_bound_slice(vm_state, solver, checkpoint, property);
         }
 
-        let required_ty = property.args.get(1)
+        let required_ty = property.args().get(1)
             .and_then(|a| if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None });
         if self.zst_guard(vm_state, checkpoint, property) {
             return CheckResult::Proved;
@@ -738,7 +743,7 @@ impl PropertyChecker {
         // When the contract expression for the element count evaluates to
         // zero (e.g. div-by-sizeof for ZST generic params), the byte-level
         // access is zero and limits checking is trivial.
-        let count_term = property.args.get(2)
+        let count_term = property.args().get(2)
             .and_then(|a| self.resolve_arg_term(vm_state, checkpoint, a));
         if let Some(ref ct) = count_term {
             if ct.as_u64() == Some(0) {
@@ -792,7 +797,7 @@ impl PropertyChecker {
     fn resolve_index_access_args(
         property: &Property<'_>,
     ) -> (Option<usize>, Option<usize>) {
-        if let Some(PropertyArg::Expr(ContractExpr::IndexAccess { slice, index })) = property.args.first() {
+        if let Some(PropertyArg::Expr(ContractExpr::IndexAccess { slice, index })) = property.args().first() {
             let slice_idx = Self::extract_place_arg_index(slice);
             let index_idx = Self::extract_place_arg_index(index);
             (slice_idx, index_idx)
@@ -944,7 +949,7 @@ impl PropertyChecker {
         if self.is_concrete_zst(vm_state, value.ty) { return CheckResult::Proved; }
 
         // Compute the required init range: count * sizeof(T) bytes
-        let access = if property.args.len() >= 3 {
+        let access = if property.args().len() >= 3 {
             Some(self.access_bytes(vm_state, property, 1, 2, checkpoint, &value))
         } else {
             None
@@ -1102,7 +1107,7 @@ impl PropertyChecker {
         checkpoint: &Checkpoint<'tcx>, property: &Property<'tcx>) -> CheckResult
     {
         let Some(value) = self.target_value(vm_state, checkpoint, property) else { return CheckResult::Unknown };
-        let expected = property.args.get(1).and_then(|a| if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None });
+        let expected = property.args().get(1).and_then(|a| if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None });
         if let Some(expected_ty) = expected {
             let resolved = self.instantiate_callsite_ty(vm_state, checkpoint, expected_ty);
             let expected_ty = if resolved != expected_ty { resolved } else { expected_ty };
@@ -1393,7 +1398,7 @@ impl PropertyChecker {
         let Some(v1) = self.target_value(vm_state, checkpoint, property) else { return CheckResult::Unknown };
         // Get the second pointer from the property args (not from checkpoint directly).
         // The property may reference the two pointers in any order (e.g. dst at args[0]).
-        let v2 = property.args.get(1)
+        let v2 = property.args().get(1)
             .and_then(|a| {
                 let cp = match a {
                     PropertyArg::Expr(ContractExpr::Place(cp)) => cp.clone(),
@@ -1563,7 +1568,7 @@ impl PropertyChecker {
     fn check_valid_num<'ctx, 'tcx>(&self, vm_state: &VmState<'ctx, 'tcx>, solver: &Solver<'ctx>,
         checkpoint: &Checkpoint<'tcx>, property: &Property<'tcx>) -> CheckResult
     {
-        if let Some(PropertyArg::Predicates(predicates)) = property.args.first() {
+        if let Some(PropertyArg::Predicates(predicates)) = property.args().first() {
             if self.all_predicates_are_slice_size_invariant(vm_state, checkpoint, predicates) {
                 return CheckResult::Proved;
             }
@@ -1577,7 +1582,7 @@ impl PropertyChecker {
             return CheckResult::Proved;
         }
         let Some(value) = self.target_value(vm_state, checkpoint, property) else { return CheckResult::Unknown };
-        let ty = property.args.get(1).and_then(|a| if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None });
+        let ty = property.args().get(1).and_then(|a| if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None });
         if let Some(ty) = ty {
             let size_bits = vm_state.size_of_ty(ty) * 8;
             if size_bits > 0 && size_bits < 128 {
@@ -2310,7 +2315,7 @@ impl PropertyChecker {
         vm_state: &VmState<'ctx, 'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
-        let ty = match property.args.iter().find_map(|a| match a {
+        let ty = match property.args().iter().find_map(|a| match a {
             PropertyArg::Ty(t) => Some(*t),
             _ => None,
         }) {
@@ -2318,7 +2323,7 @@ impl PropertyChecker {
             None => return CheckResult::Unknown,
         };
 
-        match property.args.last() {
+        match property.args().last() {
             Some(PropertyArg::Ident(id)) if id == "sized" => {
                 if self.is_generic_ty(ty) {
                     return CheckResult::Unknown;
@@ -2696,8 +2701,8 @@ impl PropertyChecker {
     fn check_valid_transmute<'ctx, 'tcx>(&self, vm_state: &VmState<'ctx, 'tcx>, _solver: &Solver<'ctx>,
         _checkpoint: &Checkpoint<'tcx>, property: &Property<'tcx>) -> CheckResult
     {
-        let src = property.args.get(1).and_then(|a| if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None });
-        let dst = property.args.get(2).and_then(|a| if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None });
+        let src = property.args().get(1).and_then(|a| if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None });
+        let dst = property.args().get(2).and_then(|a| if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None });
         match (src, dst) {
             (Some(s), Some(d)) if vm_state.size_of_ty(s) == vm_state.size_of_ty(d) => CheckResult::Proved,
             (Some(s), Some(d)) => {
@@ -2723,11 +2728,11 @@ impl PropertyChecker {
     fn check_trait<'ctx, 'tcx>(&self, vm_state: &VmState<'ctx, 'tcx>, _solver: &Solver<'ctx>,
         checkpoint: &Checkpoint<'tcx>, property: &Property<'tcx>) -> CheckResult
     {
-        let ty = match property.args.first() {
+        let ty = match property.args().first() {
             Some(PropertyArg::Ty(ty)) => *ty,
             _ => return CheckResult::Unknown,
         };
-        let trait_name = match property.args.get(1) {
+        let trait_name = match property.args().get(1) {
             Some(PropertyArg::Ident(name)) => name.as_str(),
             _ => return CheckResult::Unknown,
         };
@@ -2781,8 +2786,8 @@ impl PropertyChecker {
         if vm_state.split_transmute_asserted {
             return CheckResult::Proved;
         }
-        let src = property.args.get(0).and_then(|a| if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None });
-        let dst = property.args.get(1).and_then(|a| if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None });
+        let src = property.args().get(0).and_then(|a| if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None });
+        let dst = property.args().get(1).and_then(|a| if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None });
         let src = src.map(|ty| self.instantiate_callsite_ty(vm_state, checkpoint, ty));
         let dst = dst.map(|ty| self.instantiate_callsite_ty(vm_state, checkpoint, ty));
         match (src, dst) {

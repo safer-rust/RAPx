@@ -2270,7 +2270,11 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
 
     /// Assert a contract fact as VM state invariants.
     fn assert_contract_fact(&mut self, property: &Property<'tcx>) {
-        let kind = &property.kind;
+        let Property::Leaf(leaf) = property else {
+            self.notes.push("contract fact Or not directly asserted".to_string());
+            return;
+        };
+        let kind = leaf.kind;
         match kind {
             PropertyKind::NonNull => {
                 if let Some(val) = self.contract_target_value(property) {
@@ -2301,7 +2305,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 if let Some(val) = self.contract_target_value(property) {
                     self.set_in_bounds_for_value(property, val);
                 }
-                if let Some(ref fe_place) = property.for_each {
+                if let Some(fe_place) = property.for_each() {
                     self.assert_in_bound_for_each(property, fe_place);
                     self.has_checked_bounds = true;
                 }
@@ -2317,9 +2321,9 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         // size (count * sizeof(T)). The stack allocation created by
                         // init_parameters is only sizeof(ptr) bytes — too small for
                         // pointer arithmetic like x.add(i).
-                        let elem_ty = property.args.get(1)
+                        let elem_ty = property.args().get(1)
                             .and_then(|a| if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None });
-                        let count_term = property.args.get(2).and_then(|a| self.resolve_contract_count(a));
+                        let count_term = property.args().get(2).and_then(|a| self.resolve_contract_count(a));
                         if let (Some(elem_ty), Some(count_term)) = (elem_ty, count_term) {
                             let elem_sz_raw = self.size_of_ty(elem_ty);
                             let heap_align = self.align_of_ty(elem_ty).max(1);
@@ -2357,7 +2361,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             PropertyKind::Typed => {
                 if let Some(val) = self.contract_target_value(property) {
                     if let Some(alloc_id) = val.provenance_alloc_id() {
-                        if let Some(expected_ty) = property.args.get(1)
+                        if let Some(expected_ty) = property.args().get(1)
                             .and_then(|a| if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None })
                         {
                             if let Some(alloc) = self.allocations.iter_mut().find(|a| a.id == alloc_id) {
@@ -2371,7 +2375,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 self.split_transmute_asserted = true;
             }
             PropertyKind::ValidNum => {
-                if let Some(PropertyArg::Predicates(predicates)) = property.args.first() {
+                if let Some(PropertyArg::Predicates(predicates)) = property.args().first() {
                     for pred in predicates {
                         if let Some(condition) = self.eval_predicate_as_bool(pred) {
                             self.path_conditions.push(condition);
@@ -2397,7 +2401,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
 
     /// Get the local referenced by a contract property's target.
     fn contract_target_local(&self, property: &Property<'tcx>) -> Option<Local> {
-        let cp = match property.args.first()? {
+        let cp = match property.args().first()? {
             PropertyArg::Expr(ContractExpr::Place(cp)) => cp,
             PropertyArg::Expr(ContractExpr::IndexAccess { slice, .. }) => {
                 match slice.as_ref() {
@@ -2420,7 +2424,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     /// are accumulated into `field_path`; `Downcast`/`IterElements` terminate
     /// the path (they unwrap the value in place).
     fn contract_field_path(&self, property: &Property<'tcx>) -> Option<(Local, Vec<usize>)> {
-        let cp = match property.args.first()? {
+        let cp = match property.args().first()? {
             PropertyArg::Expr(ContractExpr::Place(cp)) => cp,
             PropertyArg::Expr(ContractExpr::IndexAccess { slice, .. }) => {
                 match slice.as_ref() {
@@ -2473,7 +2477,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     /// Resolve the alloc_id for a contract property target, following
     /// field projections to locate the actual field value's provenance.
     fn contract_alloc_id_field_aware(&mut self, property: &Property<'tcx>) -> Option<AllocId> {
-        let cp = match property.args.first()? {
+        let cp = match property.args().first()? {
             PropertyArg::Expr(ContractExpr::Place(cp)) => cp.clone(),
             _ => return None,
         };
@@ -2778,7 +2782,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         if byte_vals.is_empty() {
             return;
         }
-        let slice_local = match property.args.first() {
+        let slice_local = match property.args().first() {
             Some(PropertyArg::Expr(ContractExpr::IndexAccess { slice, .. })) => {
                 match slice.as_ref() {
                     ContractExpr::Place(cp) => match cp.base {
@@ -2822,7 +2826,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     /// Set align invariant on the target value.
     fn set_align_for_value(&mut self, property: &Property<'tcx>, mut val: VmValue<'ctx, 'tcx>) {
         val.invariants.aligned = true;
-        if let Some(PropertyArg::Ty(ty)) = property.args.get(1) {
+        if let Some(PropertyArg::Ty(ty)) = property.args().get(1) {
             let align = self.align_of_ty(*ty);
             if align > 1 {
                 val.invariants.align_n = Some(align);

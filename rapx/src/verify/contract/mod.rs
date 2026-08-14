@@ -1,8 +1,11 @@
+pub mod builder;
 pub mod def;
-pub mod parser;
 pub mod pest_conv;
 pub mod pest_grammar;
+pub(crate) mod place;
 pub mod query;
+pub(crate) mod render;
+pub(crate) mod resolve;
 pub(crate) mod spec;
 pub mod types;
 

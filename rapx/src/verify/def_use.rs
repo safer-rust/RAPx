@@ -52,8 +52,11 @@ impl RelevantPlaces {
 
     /// Collect all roots mentioned by a property.
     fn collect_property(&mut self, property: &Property<'_>) {
-        for (arg_index, arg) in property.args.iter().enumerate() {
-            if self.collect_target_argument_root(&property.kind, arg_index, arg) {
+        let kind = property.kind();
+        for (arg_index, arg) in property.args().iter().enumerate() {
+            if let Some(k) = kind
+                && self.collect_target_argument_root(&k, arg_index, arg)
+            {
                 continue;
             }
             self.collect_property_arg(arg);

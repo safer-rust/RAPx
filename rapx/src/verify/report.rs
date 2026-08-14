@@ -108,7 +108,7 @@ impl<'tcx> VerificationReport<'tcx> {
                 result.checkpoint.block.as_usize(),
                 result.path_index,
                 result.property_index,
-                result.property.kind,
+                result.property.kind(),
                 result.result
             ));
 

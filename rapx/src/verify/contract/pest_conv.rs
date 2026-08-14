@@ -1,14 +1,12 @@
 //! Semantic converter: pest `Pairs<Rule>` → `ContractExpr` / `NumericPredicate`.
 //!
-//! This is the phase-2 counterpart to `pest_grammar.rs`.  It turns the
-//! structured parse tree produced by the pest grammar into the same AST the
-//! hand-written `parser.rs` produces, so the two can be cross-checked for
-//! equivalence.
+//! This is the phase-2 counterpart to `pest_grammar.rs`: it turns the parse
+//! tree produced by the pest grammar into the contract AST (`types.rs`).
 //!
-//! Places (fields, projections) are bridged through the existing
-//! `parser::Property` helpers via a `syn` round-trip, since resolving a field
-//! name to a `Ty` still needs the rustc type context.  The arithmetic / call /
-//! if / constant layers are converted directly from the pest tree.
+//! Places (fields, projections) are bridged through the `place.rs` / `resolve.rs`
+//! helpers via a `syn` round-trip, since resolving a field name to a `Ty` still
+//! needs the rustc type context.  The arithmetic / call / if / constant layers
+//! are converted directly from the pest tree.
 
 use pest::iterators::Pair;
 use pest::Parser;
@@ -16,10 +14,9 @@ use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 
 use super::pest_grammar::{ContractParser, Rule};
-use super::parser::resolve_place_from_ident;
+use super::place::resolve_place_from_ident;
 use super::types::{
-    ContractExpr, ContractPlace, NumericOp, NumericPredicate, NumericUnaryOp, PlaceBase, Property,
-    RelOp,
+    ContractExpr, ContractPlace, NumericOp, NumericPredicate, NumericUnaryOp, PlaceBase, RelOp,
 };
 use crate::helpers::name::match_ty_with_ident;
 
@@ -330,10 +327,10 @@ fn conv_const_path<'tcx>(
     };
     let ty_name = ty_name.trim();
     let which = which.trim();
-    let Some(ty) = Property::resolve_type_name(tcx, def_id, ty_name) else {
+    let Some(ty) = super::resolve::resolve_type_name(tcx, def_id, ty_name) else {
         return ContractExpr::Unknown;
     };
-    let Some((min, max)) = Property::int_type_min_max(tcx, ty) else {
+    let Some((min, max)) = super::resolve::int_type_min_max(tcx, ty) else {
         return ContractExpr::Unknown;
     };
     ContractExpr::Const(if which == "MIN" { min } else { max })
@@ -350,7 +347,7 @@ fn conv_place_bridge<'tcx>(
     let Ok(expr) = safety_parser::syn::parse_str::<safety_parser::syn::Expr>(text) else {
         return ContractExpr::Unknown;
     };
-    Property::parse_contract_expr(tcx, def_id, &expr, "pest")
+    super::resolve::parse_contract_expr(tcx, def_id, &expr, "pest")
 }
 
 /// Convert a `not_is_empty` base (`self` / `return` / `Arg_N` / ident) into a

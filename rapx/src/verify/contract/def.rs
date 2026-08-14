@@ -20,16 +20,17 @@
 //! front-end that produces ordinary `Property` values consumed by the existing
 //! checker.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{OnceLock, RwLock};
 
 use pest::iterators::Pair;
 use pest::Parser;
+use rustc_hir::def_id::{CrateNum, LOCAL_CRATE};
 use safety_parser::syn::visit_mut::{self, VisitMut};
 use safety_parser::syn::Expr;
 
 use super::pest_grammar::{ContractParser, Rule};
-use super::types::{ContractKind, Property, PropertyKind};
+use super::types::{Property, PropertyKind};
 
 /// A single argument in a `def` body: a reference to a formal parameter, or a
 /// literal (kept as source text, re-parsed as `syn::Expr` at expansion time).
@@ -96,8 +97,22 @@ fn parse_one_def(f: &::syn::ItemFn) -> Option<DefSpec> {
     let mut param_tys = Vec::new();
     for arg in &f.sig.inputs {
         let ::syn::FnArg::Typed(pt) = arg else { continue };
-        let pname = pt.pat.to_token_stream().to_string().replace(' ', "");
-        let pty = pt.ty.to_token_stream().to_string().replace(' ', "");
+        // A def parameter is conventionally a bare identifier (`p`, `T`, `n`).
+        // Extract it structurally instead of stripping spaces from token text,
+        // so a `mut`/`&` pattern can never be misread as a parameter name.
+        let pname = match pt.pat.as_ref() {
+            ::syn::Pat::Ident(pi) => pi.ident.to_string(),
+            other => other.to_token_stream().to_string(),
+        };
+        // The annotation is a single identifier (`Ptr`, `Ty`, `Expr`, `Ident`),
+        // consumed by `def_ty_matches_arg_kind`.  Extract it directly; anything
+        // more complex keeps its token text and simply never matches a role.
+        let pty = match pt.ty.as_ref() {
+            ::syn::Type::Path(tp) if tp.qself.is_none() && tp.path.segments.len() == 1 => {
+                tp.path.segments[0].ident.to_string()
+            }
+            other => other.to_token_stream().to_string(),
+        };
         params.push(pname);
         param_tys.push(pty);
     }
@@ -245,8 +260,8 @@ fn def_ty_matches_arg_kind(def_ty: &str, kind: super::spec::ArgKind) -> bool {
 /// Expand a `DefBody` into the property list it denotes.
 ///
 /// `and` produces multiple `Property` values (the caller's `requires` list is
-/// already a conjunction); `or` produces a single `PropertyKind::Or` property
-/// whose `or_alternatives` encode the DNF groups.
+/// already a conjunction); `or` produces a single `Property::Or` property
+/// whose `groups` encode the DNF groups.
 fn expand_body<'tcx>(
     tcx: rustc_middle::ty::TyCtxt<'tcx>,
     def_id: rustc_hir::def_id::DefId,
@@ -272,32 +287,53 @@ fn expand_body<'tcx>(
                     groups.push(group);
                 }
             }
-            vec![Property {
-                kind: PropertyKind::Or,
-                args: Vec::new(),
-                contract_kind: ContractKind::Precond,
-                null_guard: None,
-                or_alternatives: groups,
-                for_each: None,
-                origin_name: None,
-            }]
+            vec![Property::new_or(groups)]
         }
         DefBody::Call { tag, args } => {
             // Validate the def's parameter annotations against the primitive's
             // declared argument roles (e.g. a `Ptr` param used in a `Ty` slot).
             if let Some(spec) = super::spec::find_spec(tag) {
-                for (pos, a) in args.iter().enumerate() {
-                    if let DefArg::Param(i) = a
-                        && let (Some(def_ty), Some(&arg_kind)) =
-                            (param_tys.get(*i), spec.args.get(pos))
-                        && !def_ty_matches_arg_kind(def_ty, arg_kind)
-                    {
-                        let pname = params.get(*i).map(String::as_str).unwrap_or("?");
-                        rap_warn!(
-                            "contract def type mismatch: `{tag}` arg {pos} expects \
-                             {:?}, but param `{pname}` is annotated `{def_ty}`",
-                            arg_kind
-                        );
+                match spec.build {
+                    // Variadic target list (Alias/Alive): every param must be Ptr.
+                    super::spec::BuildKind::Targets => {
+                        for (pos, a) in args.iter().enumerate() {
+                            if let DefArg::Param(i) = a
+                                && let Some(def_ty) = param_tys.get(*i)
+                                && !def_ty_matches_arg_kind(
+                                    def_ty,
+                                    super::spec::ArgKind::Target,
+                                )
+                            {
+                                let pname = params.get(*i).map(String::as_str).unwrap_or("?");
+                                rap_warn!(
+                                    "contract def type mismatch: `{tag}` arg {pos} expects \
+                                     {:?}, but param `{pname}` is annotated `{def_ty}`",
+                                    super::spec::ArgKind::Target
+                                );
+                            }
+                        }
+                    }
+                    // Accepts-anything placeholder: no constraints.
+                    super::spec::BuildKind::TobeSpecified => {}
+                    // Fixed-arity tag: match a form by call arity, then check each
+                    // positional parameter annotation against the declared role.
+                    _ => {
+                        if let Some(form) = spec.forms.iter().find(|f| f.len() == args.len()) {
+                            for (pos, a) in args.iter().enumerate() {
+                                if let DefArg::Param(i) = a
+                                    && let (Some(def_ty), Some(&arg_kind)) =
+                                        (param_tys.get(*i), form.get(pos))
+                                    && !def_ty_matches_arg_kind(def_ty, arg_kind)
+                                {
+                                    let pname = params.get(*i).map(String::as_str).unwrap_or("?");
+                                    rap_warn!(
+                                        "contract def type mismatch: `{tag}` arg {pos} expects \
+                                         {:?}, but param `{pname}` is annotated `{def_ty}`",
+                                        arg_kind
+                                    );
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -328,54 +364,27 @@ fn expand_body<'tcx>(
 }
 
 fn unknown_property<'tcx>() -> Property<'tcx> {
-    Property {
-        kind: PropertyKind::Unknown,
-        args: Vec::new(),
-        contract_kind: ContractKind::Precond,
-        null_guard: None,
-        or_alternatives: Vec::new(),
-        for_each: None,
-        origin_name: None,
-    }
+    Property::new_leaf(PropertyKind::Unknown, Vec::new())
 }
 
-/// Expand a body into plain DNF `(tag, args)` structure, with parameters
-/// substituted by their string representations.  Used for tests and for the
-/// `contract show` expansion display.
-pub fn expand_body_plain(body: &DefBody, exprs: &[String]) -> Vec<Vec<(String, Vec<String>)>> {
-    match body {
-        DefBody::And(parts) => {
-            let mut group: Vec<(String, Vec<String>)> = Vec::new();
-            for part in parts {
-                for g in expand_body_plain(part, exprs) {
-                    group.extend(g);
-                }
-            }
-            vec![group]
-        }
-        DefBody::Or(parts) => parts
-            .iter()
-            .flat_map(|p| expand_body_plain(p, exprs))
-            .collect(),
-        DefBody::Call { tag, args } => {
-            let resolved: Vec<String> = args
-                .iter()
-                .map(|a| match a {
-                    DefArg::Param(i) => exprs.get(*i).cloned().unwrap_or_default(),
-                    DefArg::Lit(s) => s.clone(),
-                })
-                .collect();
-            vec![vec![(tag.clone(), resolved)]]
-        }
-    }
+// ── Registry ───────────────────────────────────────────────────
+
+/// Builtin defs shipped with `rapx`: the standard compound safety properties
+/// (`std-contracts.rs`) plus user extensions (`user-contracts.rs`).  Immutable
+/// and shared across every crate.
+fn builtin_defs_map() -> &'static HashMap<String, DefSpec> {
+    static BUILTIN: OnceLock<HashMap<String, DefSpec>> = OnceLock::new();
+    BUILTIN.get_or_init(builtin_defs)
 }
 
-// ── Global registry ────────────────────────────────────────────
-
-/// The combined builtin + user-loaded def table, keyed by name.
-fn def_table() -> &'static RwLock<HashMap<String, DefSpec>> {
-    static TABLE: OnceLock<RwLock<HashMap<String, DefSpec>>> = OnceLock::new();
-    TABLE.get_or_init(|| RwLock::new(builtin_defs()))
+/// Per-crate user defs, registered from `#[rapx::def_contract]` attributes.
+///
+/// Keyed by `CrateNum` so that defs defined in one crate cannot leak into (or
+/// collide with) another crate analyzed in the same process.  A crate's own
+/// defs shadow builtin defs of the same name.
+fn user_defs_map() -> &'static RwLock<HashMap<CrateNum, HashMap<String, DefSpec>>> {
+    static USER: OnceLock<RwLock<HashMap<CrateNum, HashMap<String, DefSpec>>>> = OnceLock::new();
+    USER.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
 /// Builtin defs shipped with `rapx`: the standard compound safety properties
@@ -391,12 +400,17 @@ fn builtin_defs() -> HashMap<String, DefSpec> {
     map
 }
 
-/// Look up a `def` by name.
-pub fn find_def(name: &str) -> Option<DefSpec> {
-    def_table()
+/// Look up a `def` by name, in the given crate's namespace first, then the
+/// builtin namespace.
+pub fn find_def(krate: CrateNum, name: &str) -> Option<DefSpec> {
+    if let Some(d) = user_defs_map()
         .read()
         .ok()
-        .and_then(|t| t.get(name).cloned())
+        .and_then(|t| t.get(&krate).and_then(|m| m.get(name).cloned()))
+    {
+        return Some(d);
+    }
+    builtin_defs_map().get(name).cloned()
 }
 
 /// Expand a named def against concrete argument expressions.
@@ -406,32 +420,110 @@ pub fn expand_def<'tcx>(
     name: &str,
     exprs: &[Expr],
 ) -> Option<Vec<Property<'tcx>>> {
-    let def = find_def(name)?;
+    let def = find_def(def_id.krate, name)?;
     if def.params.len() != exprs.len() {
+        return None;
+    }
+    // Guard against self-referential defs (direct or mutual) before recursing;
+    // otherwise `expand_body` → `Property::parse_list` → `expand_def` would
+    // recurse forever and overflow the stack.
+    if let Some(cycle) = find_def_cycle(def_id.krate, name) {
+        rap_error!("contract def cycle detected: {}", cycle.join(" -> "));
         return None;
     }
     let mut props = expand_body(tcx, def_id, &def.body, exprs, &def.params, &def.param_tys);
     // Tag expanded properties with the def name so reports show the original
     // compound contract (e.g. "Deref") instead of the underlying primitives.
     for p in &mut props {
-        p.origin_name = Some(name.to_string());
+        p.set_origin_name(name.to_string());
     }
     Some(props)
 }
 
+/// Return a cycle path (e.g. `["A", "B", "A"]`) if expanding `start` can reach
+/// itself again through def-to-def references, `None` otherwise.
+///
+/// Only edges that resolve to another registered def are followed; calls to
+/// primitives (`Allocated`, `Align`, ...) terminate the walk.  The crate's own
+/// defs are overlaid on the builtin namespace.
+pub fn find_def_cycle(krate: CrateNum, start: &str) -> Option<Vec<String>> {
+    let mut combined = builtin_defs_map().clone();
+    if let Ok(user) = user_defs_map().read()
+        && let Some(crate_defs) = user.get(&krate)
+    {
+        for (name, def) in crate_defs {
+            combined.insert(name.clone(), def.clone());
+        }
+    }
+    find_cycle_in(start, &combined)
+}
+
+fn find_cycle_in(start: &str, table: &HashMap<String, DefSpec>) -> Option<Vec<String>> {
+    fn dfs(
+        name: &str,
+        table: &HashMap<String, DefSpec>,
+        path: &mut Vec<String>,
+        done: &mut HashSet<String>,
+    ) -> Option<Vec<String>> {
+        if let Some(pos) = path.iter().position(|n| n == name) {
+            let mut cycle: Vec<String> = path[pos..].to_vec();
+            cycle.push(name.to_string());
+            return Some(cycle);
+        }
+        if done.contains(name) {
+            return None;
+        }
+        let Some(def) = table.get(name) else {
+            return None;
+        };
+        path.push(name.to_string());
+        for tag in def_refs(&def.body) {
+            if let Some(cycle) = dfs(&tag, table, path, done) {
+                return Some(cycle);
+            }
+        }
+        path.pop();
+        done.insert(name.to_string());
+        None
+    }
+
+    let mut path = Vec::new();
+    let mut done = HashSet::new();
+    dfs(start, table, &mut path, &mut done)
+}
+
+/// Collect the tag names referenced by a `DefBody`, in left-to-right order.
+fn def_refs(body: &DefBody) -> Vec<String> {
+    let mut out = Vec::new();
+    collect_def_refs(body, &mut out);
+    out
+}
+
+fn collect_def_refs(body: &DefBody, out: &mut Vec<String>) {
+    match body {
+        DefBody::And(parts) | DefBody::Or(parts) => {
+            for part in parts {
+                collect_def_refs(part, out);
+            }
+        }
+        DefBody::Call { tag, .. } => out.push(tag.clone()),
+    }
+}
+
 // ── Registration of user-defined defs ─────────────────────────
 
-/// Parse `def` declarations from `source` and insert them into the global def
-/// table.  Returns the number of defs registered.
-pub fn register_defs_from_source(source: &str) -> usize {
+/// Parse `def` declarations from `source` and insert them into the given
+/// crate's namespace.  Returns the number of defs registered.
+pub fn register_defs_from_source(krate: CrateNum, source: &str) -> usize {
     let defs = parse_defs(source);
     let n = defs.len();
     if n == 0 {
         return 0;
     }
-    let mut table = def_table().write().expect("def table poisoned");
+    let mut table = user_defs_map().write().expect("def table poisoned");
+    let entry = table.entry(krate).or_default();
     for def in defs {
-        table.insert(def.name.clone(), def);
+        entry.insert(def.name.clone(), def);
     }
     n
 }
@@ -456,7 +548,7 @@ pub fn register_contract_defs(tcx: rustc_middle::ty::TyCtxt<'_>) -> usize {
                 }
                 let attr_str = crate::compat::attribute_to_string(self.tcx, attr);
                 if let Some(def_str) = extract_contract_def_string(&attr_str) {
-                    let n = register_defs_from_source(&def_str);
+                    let n = register_defs_from_source(LOCAL_CRATE, &def_str);
                     if n > 0 {
                         rap_info!("rapx: registered {n} contract def(s) from #[rapx::def_contract]");
                     }
@@ -509,3 +601,4 @@ fn extract_contract_def_string(attr_str: &str) -> Option<String> {
     let lit: syn::LitStr = syn::parse2(list.tokens).ok()?;
     Some(lit.value())
 }
+

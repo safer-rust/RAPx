@@ -156,11 +156,11 @@ pub fn fmt_contract_expanded(
     struct_def_id: Option<rustc_hir::def_id::DefId>,
 ) -> (String, String) {
     use crate::verify::contract::PropertyKind;
-    if matches!(property.kind, PropertyKind::Or) {
-        let group_count = property.or_alternatives.len();
+    if property.is_or() {
+        let group_count = property.groups().len();
         let mut call_parts = Vec::new();
         let mut meaning = format!("any of {group_count} alternative group(s):\n");
-        for (gi, group) in property.or_alternatives.iter().enumerate() {
+        for (gi, group) in property.groups().iter().enumerate() {
             let is_last = gi + 1 == group_count;
             let branch = if is_last { "`-" } else { "|-" };
             let group_calls: Vec<String> = group
@@ -187,28 +187,29 @@ pub fn fmt_contract_expanded(
             meaning.trim_end().to_string(),
         );
     }
+    let kind = property.kind().expect("leaf property");
     let args: Vec<String> = property
-        .args
+        .args()
         .iter()
         .map(|a| fmt_arg_plain(tcx, local_names, a, struct_def_id))
         .collect();
     let tag = property
-        .origin_name
-        .clone()
-        .unwrap_or_else(|| format!("{:?}", property.kind));
-    let tag = if property.contract_kind == crate::verify::contract::ContractKind::Hazard {
+        .origin_name()
+        .map(String::from)
+        .unwrap_or_else(|| format!("{:?}", kind));
+    let tag = if property.contract_kind() == crate::verify::contract::ContractKind::Hazard {
         format!("[hazard] {tag}")
-    } else if property.contract_kind == crate::verify::contract::ContractKind::Option_ {
+    } else if property.contract_kind() == crate::verify::contract::ContractKind::Option_ {
         format!("[option] {tag}")
     } else {
         tag
     };
-    let call = if matches!(property.kind, PropertyKind::SplitTransmute) {
+    let call = if matches!(kind, PropertyKind::SplitTransmute) {
         let wrapped: Vec<String> = args.iter().map(|a| format!("[{a}]")).collect();
         format!("{tag}({})", wrapped.join(", "))
-    } else if matches!(property.kind, PropertyKind::InBound)
+    } else if matches!(kind, PropertyKind::InBound)
         && matches!(
-            property.args.first(),
+            property.args().first(),
             Some(crate::verify::contract::PropertyArg::Expr(
                 crate::verify::contract::ContractExpr::IndexAccess { .. }
             ))
@@ -216,7 +217,7 @@ pub fn fmt_contract_expanded(
     {
         use crate::verify::contract::{ContractExpr, PropertyArg};
         if let Some(PropertyArg::Expr(ContractExpr::IndexAccess { slice, index })) =
-            property.args.first()
+            property.args().first()
         {
             let mut s = fmt_expr_plain(tcx, local_names, struct_def_id, slice);
             s = s.strip_prefix("&mut ").unwrap_or(&s).to_string();
@@ -227,20 +228,20 @@ pub fn fmt_contract_expanded(
             unreachable!()
         }
     } else {
-        if matches!(property.kind, PropertyKind::Alive) && args.len() >= 2 {
+        if matches!(kind, PropertyKind::Alive) && args.len() >= 2 {
             format!("{tag}({}, '{})", args[0], args[1])
         } else {
             format!("{tag}({})", args.join(", "))
         }
     };
-    let call = if matches!(property.kind, PropertyKind::ValidNum)
-        && let Some(crate::verify::contract::PropertyArg::Predicates(preds)) = property.args.first()
+    let call = if matches!(kind, PropertyKind::ValidNum)
+        && let Some(crate::verify::contract::PropertyArg::Predicates(preds)) = property.args().first()
     {
         format!("{tag}({})", fmt_valid_num_call(tcx, local_names, struct_def_id, preds))
     } else {
         call
     };
-    let meaning = match property.kind {
+    let meaning = match kind {
         PropertyKind::NonNull => format!(
             "{} as usize != 0",
             args.first().map(|s| s.as_str()).unwrap_or("_")
@@ -253,7 +254,7 @@ pub fn fmt_contract_expanded(
         PropertyKind::InBound => {
             use crate::verify::contract::{ContractExpr, PropertyArg};
             let placeholder = format!("InBound({})", args.join(", "));
-            match property.args.first() {
+            match property.args().first() {
                 Some(PropertyArg::Expr(ContractExpr::IndexAccess { slice, index })) => {
                     let mut s = fmt_expr_plain(tcx, local_names, struct_def_id, slice);
                     s = s.strip_prefix("&mut ").unwrap_or(&s).to_string();
@@ -264,7 +265,7 @@ pub fn fmt_contract_expanded(
                 Some(PropertyArg::Expr(ContractExpr::Place(place))) => {
                     let ptr = fmt_place_plain(tcx, place, local_names, struct_def_id);
                     let ty = property
-                        .args
+                        .args()
                         .get(1)
                         .and_then(|a| match a {
                             PropertyArg::Ty(ty) => Some(ty.to_string()),
@@ -272,7 +273,7 @@ pub fn fmt_contract_expanded(
                         })
                         .unwrap_or_else(|| "?".to_string());
                     let cnt = property
-                        .args
+                        .args()
                         .get(2)
                         .map(|a| fmt_arg_plain(tcx, local_names, a, struct_def_id))
                         .unwrap_or_else(|| "?".to_string());
@@ -386,7 +387,6 @@ pub fn fmt_contract_expanded(
         }
         PropertyKind::Unreachable => "not Reachable()".to_string(),
         PropertyKind::Unknown => "(unresolved contract)".to_string(),
-        PropertyKind::Or => unreachable!(),
     };
     (call, meaning)
 }
@@ -649,15 +649,15 @@ pub fn emit_results_counts_and_checkpoints<'tcx>(
     let unproved = all_results
         .iter()
         .filter(|r| {
-            r.property.contract_kind != ContractKind::Hazard
-                && r.property.contract_kind != ContractKind::Option_
+            r.property.contract_kind() != ContractKind::Hazard
+                && r.property.contract_kind() != ContractKind::Option_
                 && !matches!(r.result, CheckResult::Proved)
         })
         .count();
     let hazard_failed = all_results
         .iter()
         .filter(|r| {
-            r.property.contract_kind == ContractKind::Hazard
+            r.property.contract_kind() == ContractKind::Hazard
                 && !matches!(r.result, CheckResult::Proved)
         })
         .count();
@@ -758,7 +758,7 @@ pub fn emit_property_rows<'tcx>(
         rap_info!("        path {path_desc}:");
         // Count identical (kind, origin, hazard, result) groups for dedup.
         let mut counts: Vec<(
-            crate::verify::contract::PropertyKind,
+            Option<crate::verify::contract::PropertyKind>,
             Option<String>,
             bool,
             bool,
@@ -767,13 +767,13 @@ pub fn emit_property_rows<'tcx>(
         )> = Vec::new();
         for r in props.iter() {
             let is_hazard =
-                r.property.contract_kind == crate::verify::contract::ContractKind::Hazard;
+                r.property.contract_kind() == crate::verify::contract::ContractKind::Hazard;
             let is_option =
-                r.property.contract_kind == crate::verify::contract::ContractKind::Option_;
-            let origin = r.property.origin_name.clone();
+                r.property.contract_kind() == crate::verify::contract::ContractKind::Option_;
+            let origin = r.property.origin_name().map(String::from);
             let result = r.result.clone();
             if let Some(entry) = counts.iter_mut().find(|(k, on, h, o, res, _)| {
-                *k == r.property.kind
+                *k == r.property.kind()
                     && *on == origin
                     && *h == is_hazard
                     && *o == is_option
@@ -782,7 +782,7 @@ pub fn emit_property_rows<'tcx>(
                 entry.5 += 1;
             } else {
                 counts.push((
-                    r.property.kind.clone(),
+                    r.property.kind(),
                     origin,
                     is_hazard,
                     is_option,
@@ -799,7 +799,10 @@ pub fn emit_property_rows<'tcx>(
             } else {
                 ""
             };
-            let name = origin.clone().unwrap_or_else(|| format!("{:?}", kind));
+            let name = origin.clone().unwrap_or_else(|| match kind {
+                Some(k) => format!("{k:?}"),
+                None => "Or".to_string(),
+            });
             let tag = if *is_hazard {
                 format!("[hazard] {name}")
             } else if *is_option {

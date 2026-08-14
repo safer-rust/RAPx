@@ -155,7 +155,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
         flow: &DataflowGraph,
     ) -> Vec<(Vec<usize>, Vec<BackwardItem<'tcx>>, RelevantPlaces)> {
         let block = BasicBlock::from(node.block);
-        let keep_inv = needs_invalidation_tracking(&property.kind);
+        let keep_inv = property.kind().is_some_and(|k| needs_invalidation_tracking(&k));
         let block_data = &body.basic_blocks[block];
         let mut results = Vec::new();
 

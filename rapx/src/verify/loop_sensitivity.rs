@@ -251,7 +251,9 @@ impl<'tcx> LoopSensitivityAnalyzer<'tcx> {
         let mut hints = Vec::new();
 
         for sink in sinks {
-            if matches!(sink.property.kind, PropertyKind::Unknown | PropertyKind::Or) {
+            if sink.property.is_or()
+                || matches!(sink.property.kind(), Some(PropertyKind::Unknown))
+            {
                 continue;
             }
             let root_closure = dependencies.closure_from(&sink.roots.locals);
@@ -310,7 +312,10 @@ impl<'tcx> LoopSensitivityAnalyzer<'tcx> {
         let mut hints = Vec::new();
 
         for sink in sinks {
-            if !is_numeric_range_property(&sink.property.kind) {
+            if !matches!(
+                sink.property.kind(),
+                Some(PropertyKind::ValidNum | PropertyKind::InBound)
+            ) {
                 continue;
             }
             let root_closure = dependencies.closure_from(&sink.roots.locals);
@@ -329,11 +334,11 @@ impl<'tcx> LoopSensitivityAnalyzer<'tcx> {
                     continue;
                 }
 
-                let witness_iteration = match sink.property.kind {
-                    PropertyKind::ValidNum => {
+                let witness_iteration = match sink.property.kind() {
+                    Some(PropertyKind::ValidNum) => {
                         estimate_valid_num_witness(sink.property, &root_closure, numeric_summary)
                     }
-                    PropertyKind::InBound => {
+                    Some(PropertyKind::InBound) => {
                         estimate_inbound_witness(&root_closure, numeric_summary)
                     }
                     _ => None,
@@ -399,8 +404,8 @@ fn flatten_or_property<'a, 'tcx>(
     property: &'a Property<'tcx>,
     out: &mut Vec<&'a Property<'tcx>>,
 ) {
-    if property.kind == PropertyKind::Or {
-        for group in &property.or_alternatives {
+    if property.is_or() {
+        for group in property.groups() {
             for sub in group.iter() {
                 flatten_or_property(sub, out);
             }
@@ -946,12 +951,6 @@ fn max_state_distance_from(
     best
 }
 
-/// Return true for properties whose proof obligation is fundamentally numeric
-/// or index-range based.
-fn is_numeric_range_property(kind: &PropertyKind) -> bool {
-    matches!(kind, PropertyKind::ValidNum | PropertyKind::InBound)
-}
-
 /// Estimate the first violating iteration for a simple `ValidNum` sink.
 fn estimate_valid_num_witness(
     property: &Property<'_>,
@@ -1011,10 +1010,10 @@ fn estimate_inbound_witness(
 
 /// Extract the lowest value that violates a simple upper-bound `ValidNum`.
 fn valid_num_violation_value(property: &Property<'_>) -> Option<i128> {
-    if !matches!(property.kind, PropertyKind::ValidNum) {
+    if !matches!(property.kind(), Some(PropertyKind::ValidNum)) {
         return None;
     }
-    let Some(PropertyArg::Predicates(predicates)) = property.args.first() else {
+    let Some(PropertyArg::Predicates(predicates)) = property.args().first() else {
         return None;
     };
     predicates

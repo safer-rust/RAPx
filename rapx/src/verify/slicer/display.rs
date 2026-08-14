@@ -45,7 +45,7 @@ impl<'tcx> RelevantMirItems<'tcx> {
         let _ = writeln!(
             out,
             "      property: kind={:?}, args={:?}",
-            self.property.kind, self.property.args
+            self.property.kind(), self.property.args()
         );
         let _ = writeln!(out, "      path {path_index}:");
         let _ = writeln!(out, "        |_ kind: entry",);
@@ -153,7 +153,7 @@ fn describe_backward_item(item: &BackwardItem<'_>, body: &rustc_middle::mir::Bod
         BackwardItem::ContractFact { property } => {
             format!(
                 "contract kind={:?}, args={:?}",
-                property.kind, property.args
+                property.kind(), property.args()
             )
         }
         BackwardItem::Forget { reason } => format!("forget {:?}", reason),

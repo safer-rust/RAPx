@@ -42,9 +42,9 @@ disjunct = { "(" ~ tag_call ~ ("," ~ tag_call)* ~ ")" | tag_call }
 
 arg_list = { arg ~ ("," ~ arg)* }
 
-// ── Arguments: expression, ValidNum interval, or SplitTransmute slice type ──
+// ── Arguments ────────────────────────────────────────────────────────────────
 
-arg = { expr | interval | slice_ty }
+arg = { expr }
 
 // ── Expression layer ────────────────────────────────────────────────────────
 
@@ -76,14 +76,6 @@ member     = { ident ~ "()"? | int }
 // ── Type-level constants (T::MAX, isize::MAX, ...) ──────────────────────────
 
 const_path = { ident ~ "::" ~ ("MAX" | "MIN") }
-
-// ── ValidNum interval (array form or bracket-string form) ───────────────────
-
-interval = { "[" ~ expr ~ "," ~ expr ~ "]" | string }
-
-// ── SplitTransmute slice type ([T], [u8], ...) ──────────────────────────────
-
-slice_ty = { "[" ~ ident ~ "]" }
 
 // ── `#[def_contract]` body ──────────────────────────────────────────────────
 

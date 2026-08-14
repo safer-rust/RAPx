@@ -404,7 +404,12 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
             .map(|callee_def_id| {
                 let mut contracts = self.get_fn_contracts(*callee_def_id);
                 contracts
-                    .retain(|p| !matches!(p.kind, crate::verify::contract::PropertyKind::Unknown));
+                    .retain(|p| {
+                        !matches!(
+                            p.kind(),
+                            Some(crate::verify::contract::PropertyKind::Unknown)
+                        )
+                    });
                 (*callee_def_id, contracts)
             })
             .collect();
@@ -1213,76 +1218,20 @@ fn build_raw_ptr_deref_checks<'tcx>(
 
             let mut properties = if info.is_ref {
                 vec![
-                    Property {
-                        null_guard: None,
-                        or_alternatives: Vec::new(),
-                        for_each: None,
-                        origin_name: None,
-                        contract_kind: crate::verify::contract::ContractKind::Precond,
-                        kind: PropertyKind::NonNull,
-                        args: vec![target.clone()],
-                    },
-                    Property {
-                        null_guard: None,
-                        or_alternatives: Vec::new(),
-                        for_each: None,
-                        origin_name: None,
-                        contract_kind: crate::verify::contract::ContractKind::Precond,
-                        kind: PropertyKind::Align,
-                        args: vec![target.clone(), ty.clone()],
-                    },
-                    Property {
-                        null_guard: None,
-                        or_alternatives: Vec::new(),
-                        for_each: None,
-                        origin_name: None,
-                        contract_kind: crate::verify::contract::ContractKind::Hazard,
-                        kind: PropertyKind::Alias,
-                        args: vec![target.clone()],
-                    },
+                    Property::new_leaf(PropertyKind::NonNull, vec![target.clone()]),
+                    Property::new_leaf(PropertyKind::Align, vec![target.clone(), ty.clone()]),
+                    { let mut p = Property::new_leaf(PropertyKind::Alias, vec![target.clone()]); p.set_contract_kind(crate::verify::contract::ContractKind::Hazard); p },
                 ]
             } else {
                 vec![
-                    Property {
-                        null_guard: None,
-                        or_alternatives: Vec::new(),
-                        for_each: None,
-                        origin_name: None,
-                        contract_kind: crate::verify::contract::ContractKind::Precond,
-                        kind: PropertyKind::Allocated,
-                        args: vec![target.clone(), ty.clone(), count.clone()],
-                    },
-                    Property {
-                        null_guard: None,
-                        or_alternatives: Vec::new(),
-                        for_each: None,
-                        origin_name: None,
-                        contract_kind: crate::verify::contract::ContractKind::Precond,
-                        kind: PropertyKind::InBound,
-                        args: vec![target.clone(), ty.clone(), count.clone()],
-                    },
-                    Property {
-                        null_guard: None,
-                        or_alternatives: Vec::new(),
-                        for_each: None,
-                        origin_name: None,
-                        contract_kind: crate::verify::contract::ContractKind::Precond,
-                        kind: PropertyKind::Align,
-                        args: vec![target.clone(), ty.clone()],
-                    },
+                    Property::new_leaf(PropertyKind::Allocated, vec![target.clone(), ty.clone(), count.clone()]),
+                    Property::new_leaf(PropertyKind::InBound, vec![target.clone(), ty.clone(), count.clone()]),
+                    Property::new_leaf(PropertyKind::Align, vec![target.clone(), ty.clone()]),
                 ]
             };
 
             if info.is_read && !info.is_ref {
-                properties.push(Property {
-                    null_guard: None,
-                    or_alternatives: Vec::new(),
-                    for_each: None,
-                    origin_name: None,
-                    contract_kind: crate::verify::contract::ContractKind::Precond,
-                    kind: PropertyKind::Typed,
-                    args: vec![target, ty],
-                });
+                properties.push(Property::new_leaf(PropertyKind::Typed, vec![target, ty]));
             }
 
             (
@@ -1325,42 +1274,10 @@ fn build_static_mut_checks<'tcx>(
             let count = PropertyArg::Expr(ContractExpr::Const(1));
 
             let properties = vec![
-                Property {
-                    null_guard: None,
-                    or_alternatives: Vec::new(),
-                    for_each: None,
-                    origin_name: None,
-                    contract_kind: crate::verify::contract::ContractKind::Precond,
-                    kind: PropertyKind::Allocated,
-                    args: vec![target.clone(), ty.clone(), count.clone()],
-                },
-                Property {
-                    null_guard: None,
-                    or_alternatives: Vec::new(),
-                    for_each: None,
-                    origin_name: None,
-                    contract_kind: crate::verify::contract::ContractKind::Precond,
-                    kind: PropertyKind::InBound,
-                    args: vec![target.clone(), ty.clone(), count.clone()],
-                },
-                Property {
-                    null_guard: None,
-                    or_alternatives: Vec::new(),
-                    for_each: None,
-                    origin_name: None,
-                    contract_kind: crate::verify::contract::ContractKind::Precond,
-                    kind: PropertyKind::Align,
-                    args: vec![target.clone(), ty.clone()],
-                },
-                Property {
-                    null_guard: None,
-                    or_alternatives: Vec::new(),
-                    for_each: None,
-                    origin_name: None,
-                    contract_kind: crate::verify::contract::ContractKind::Precond,
-                    kind: PropertyKind::Init,
-                    args: vec![target, ty, count],
-                },
+                Property::new_leaf(PropertyKind::Allocated, vec![target.clone(), ty.clone(), count.clone()]),
+                Property::new_leaf(PropertyKind::InBound, vec![target.clone(), ty.clone(), count.clone()]),
+                Property::new_leaf(PropertyKind::Align, vec![target.clone(), ty.clone()]),
+                Property::new_leaf(PropertyKind::Init, vec![target, ty, count]),
             ];
 
             (
@@ -1490,8 +1407,8 @@ fn instantiate_type_invariant<'tcx>(
     let mut property = Property::new(tcx, def_id, &entry.tag, &exprs);
     property.apply_kind(entry.kind.as_deref());
     if !matches!(
-        property.kind,
-        crate::verify::contract::PropertyKind::Unknown
+        property.kind(),
+        Some(crate::verify::contract::PropertyKind::Unknown)
     ) {
         Some(property)
     } else {
