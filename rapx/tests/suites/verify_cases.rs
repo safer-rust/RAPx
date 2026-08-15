@@ -103,6 +103,15 @@ fn std_challenge_02() {
     );
 }
 
+#[test]
+fn std_challenge_03() {
+    let output = run_with_args("verify_cases/std-challenge-03", CMD_VERIFY_TARGETED_VM);
+    assert!(
+        !output.contains("UNSOUND"),
+        "unexpected UNSOUND in std-challenge-03"
+    );
+}
+
 // ================ HashMap Tests ================
 #[test]
 fn hashmap() {

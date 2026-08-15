@@ -542,6 +542,17 @@ impl PropertyChecker {
         if self.zst_guard(vm_state, checkpoint, property) { return CheckResult::Proved; }
         if self.is_concrete_zst(vm_state, value.ty) { return CheckResult::Proved; }
 
+        // Zero-element access (`Allocated(p, T, 0)`) is trivially satisfied:
+        // any pointer is valid for its 0-byte prefix, so this holds even when
+        // provenance has been lost through a cast.  Mirrors the `count == 0`
+        // fast-path in `check_in_bound` and covers `from_raw_parts(ptr, 0)`
+        // (e.g. `Option::as_slice` on `None`).
+        let count_term = property.args().get(2)
+            .and_then(|a| self.resolve_arg_term(vm_state, checkpoint, a));
+        if count_term.as_ref().is_some_and(|ct| ct.as_u64() == Some(0)) {
+            return CheckResult::Proved;
+        }
+
         let Some(alloc_id) = value.provenance_alloc_id() else { return CheckResult::Unknown };
 
         if vm_state.dead_allocations.contains(&alloc_id) {
@@ -733,6 +744,13 @@ impl PropertyChecker {
         if value.invariants.in_bounds {
             return CheckResult::Proved;
         }
+        // `byte_add(offset_of!(Container, field))` always keeps the pointer
+        // within the container allocation, because the byte offset of a field
+        // never exceeds `size_of::<Container>()`.  This covers patterns such
+        // as `Option::as_slice`.
+        if self.count_is_offset_of(vm_state, checkpoint, property, &value) {
+            return CheckResult::Proved;
+        }
         // When the contract expression for the element count evaluates to
         // zero (e.g. div-by-sizeof for ZST generic params), the byte-level
         // access is zero and limits checking is trivial.
@@ -771,6 +789,16 @@ impl PropertyChecker {
         solver.push();
         let bound = Int::add(vm_state.ctx, &[&base, &size]);
         let covered = Int::add(vm_state.ctx, &[&value.term, &access]);
+        // A field-offset provenance (`offset_of!`) is always within the
+        // container together with the accessed range: the field plus its own
+        // size fits inside the container.  Assert this layout fact so the
+        // in-bounds check below can be discharged.
+        if value.provenance.as_ref().is_some_and(|prov| prov.is_field_offset) {
+            let prov = value.provenance.as_ref().unwrap();
+            let zero = Int::from_u64(vm_state.ctx, 0);
+            solver.assert(&prov.offset.ge(&zero));
+            solver.assert(&Int::add(vm_state.ctx, &[&prov.offset, &access]).le(&size));
+        }
         // Upper bound: value + access > base + size
         let above_negated = covered.le(&bound).not();
         // Lower bound: value < base (pointer below allocation start)
@@ -785,6 +813,53 @@ impl PropertyChecker {
         };
         solver.pop(1);
         r
+    }
+
+    /// Whether the `InBound` count argument is an `offset_of!(Container, field)`
+    /// constant applied to the base of the container allocation.
+    ///
+    /// A field's byte offset never exceeds `size_of::<Container>()`, so adding
+    /// it to a pointer at the container base stays in bounds.  This discharges
+    /// `byte_add(offset_of!(..))` patterns (e.g. `Option::as_slice`) that would
+    /// otherwise degrade to a symbolic `offset_of` constant for generic types.
+    fn count_is_offset_of<'ctx, 'tcx>(
+        &self,
+        vm_state: &VmState<'ctx, 'tcx>,
+        checkpoint: &Checkpoint<'tcx>,
+        property: &Property<'tcx>,
+        value: &VmValue<'ctx, 'tcx>,
+    ) -> bool {
+        let Some(count_arg) = property.args().get(2) else {
+            return false;
+        };
+        let PropertyArg::Expr(ContractExpr::Place(cp)) = count_arg else {
+            return false;
+        };
+        let PlaceBase::Arg(n) = cp.base else {
+            return false;
+        };
+        let Some(operand) = checkpoint.args.get(n) else {
+            return false;
+        };
+        let Operand::Constant(c) = operand else {
+            return false;
+        };
+        let Some(container) = crate::helpers::mir_utils::offset_of_container(vm_state.tcx, &c.const_)
+        else {
+            return false;
+        };
+        // The pointer must be the base of its allocation (offset 0), otherwise
+        // adding the field offset could overflow the container end.
+        let at_base = value
+            .provenance
+            .as_ref()
+            .is_some_and(|p| p.offset.as_u64() == Some(0));
+        if !at_base {
+            return false;
+        }
+        // The allocation must be the same container the offset was computed on.
+        crate::helpers::mir_utils::pointee_ty(value.ty)
+            .is_some_and(|pointee| pointee == container)
     }
 
     fn resolve_index_access_args(

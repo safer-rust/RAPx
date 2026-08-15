@@ -2,6 +2,10 @@ use rustc_hir::{
     ItemKind,
     def_id::{DefId, LocalDefId},
 };
+#[cfg(not(rapx_rustc_ge_199))]
+use rustc_hir::LangItem;
+#[cfg(rapx_rustc_ge_199)]
+use rustc_hir::attrs::lang_items::LangItem;
 use rustc_middle::{
     mir::{BasicBlock, ConstValue, Local, Operand, Place, Rvalue, StatementKind, TerminatorKind},
     mir::interpret::{AllocId, GlobalAlloc},
@@ -494,6 +498,81 @@ pub fn alloc_id_bytes<'tcx>(
 }
 
 // ── Type layout helpers ───────────────────────────────────────────
+
+/// If `constant` is a promoted `offset_of!(Container, field)` constant (an
+/// unevaluated `Const` whose body is a call to the `offset_of` intrinsic),
+/// return the container type.
+///
+/// Used by the verifier to recognise `byte_add(offset_of!(Container, ..))` and
+/// prove the resulting pointer stays within the container allocation.
+pub(crate) fn offset_of_container<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    constant: &rustc_middle::mir::Const<'tcx>,
+) -> Option<Ty<'tcx>> {
+    let rustc_middle::mir::Const::Unevaluated(uneval, _) = constant else {
+        return None;
+    };
+    // `mir_for_ctfe` only accepts const-like defs; unevaluated consts may also
+    // reference plain functions, so gate on the def kind first.
+    if !is_const_def_kind(tcx, uneval.def) {
+        return None;
+    }
+    let body = tcx.mir_for_ctfe(uneval.def);
+    for bb in body.basic_blocks.iter() {
+        if let Some(term) = &bb.terminator
+            && let TerminatorKind::Call { func, .. } = &term.kind
+            && let Some(ty) = offset_of_ty_from_func(tcx, func)
+        {
+            return Some(ty);
+        }
+    }
+    None
+}
+
+/// Whether a `DefId` is a const-like item that `mir_for_ctfe` accepts.
+fn is_const_def_kind(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
+    use rustc_hir::def::DefKind;
+    #[cfg(rapx_rustc_ge_196)]
+    let base = matches!(
+        tcx.def_kind(def_id),
+        DefKind::Const { .. }
+            | DefKind::Static { .. }
+            | DefKind::AssocConst { .. }
+            | DefKind::AnonConst
+    );
+    #[cfg(not(rapx_rustc_ge_196))]
+    let base = matches!(
+        tcx.def_kind(def_id),
+        DefKind::Const | DefKind::Static { .. } | DefKind::AssocConst | DefKind::AnonConst
+    );
+    #[cfg(rapx_rustc_ge_199)]
+    {
+        base
+    }
+    #[cfg(not(rapx_rustc_ge_199))]
+    {
+        base || matches!(tcx.def_kind(def_id), DefKind::InlineConst)
+    }
+}
+
+fn offset_of_ty_from_func<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    func: &Operand<'tcx>,
+) -> Option<Ty<'tcx>> {
+    let Operand::Constant(c) = func else { return None };
+    let TyKind::FnDef(def_id, args) = c.const_.ty().kind() else { return None };
+    if !tcx.is_lang_item(*def_id, LangItem::OffsetOf) {
+        return None;
+    }
+    args.iter().find_map(|a| {
+        #[cfg(rapx_rustc_ge_199)]
+        let a = a.skip_binder();
+        match a.kind() {
+            GenericArgKind::Type(t) => Some(t),
+            _ => None,
+        }
+    })
+}
 
 pub fn type_layout<'tcx>(tcx: TyCtxt<'tcx>, caller: DefId, ty: Ty<'tcx>) -> Option<(u64, u64)> {
     if ty_has_param_const(ty) { return None }

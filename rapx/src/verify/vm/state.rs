@@ -32,6 +32,11 @@ pub struct Provenance<'ctx> {
     /// Byte offset from the allocation base. A freshly created
     /// pointer to the base of an allocation has `offset = 0`.
     pub offset: Int<'ctx>,
+    /// Whether `offset` is a compile-time field offset (`offset_of!`).  Such an
+    /// offset always satisfies `0 <= offset` and `offset + size_of(field) <=
+    /// size_of(container)`, which the verifier uses to discharge in-bounds
+    /// checks for patterns like `Option::as_slice`.
+    pub is_field_offset: bool,
 }
 
 /// Known invariants about a symbolic value.
@@ -44,6 +49,10 @@ pub struct ValueInvariants {
     /// If Some(n), the value's term is known to satisfy `term % n == 0`.
     /// Set by alignment guards, Mul by power-of-two, and type alignment.
     pub align_n: Option<u64>,
+    /// Whether this scalar value is a compile-time field offset (`offset_of!`).
+    /// Propagated to a pointer's provenance when used as an `add`/`byte_add`
+    /// offset.
+    pub is_field_offset: bool,
 }
 
 /// A symbolic value tracked by the VM.
@@ -671,7 +680,10 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             }
             Operand::Constant(constant) => {
                 let text = format!("{:?}", constant.const_);
-                let int_val = const_int_from_debug(&text);
+                let int_val = const_scalar_int(self.tcx, &constant.const_, &text);
+                let is_field_offset = int_val.is_none()
+                    && crate::helpers::mir_utils::offset_of_container(self.tcx, &constant.const_)
+                        .is_some();
                 let term = if let Some(v) = int_val {
                     Int::from_u64(self.ctx, v)
                 } else {
@@ -685,7 +697,10 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     term,
                     ty,
                     provenance: None,
-                    invariants: ValueInvariants::default(),
+                    invariants: ValueInvariants {
+                        is_field_offset,
+                        ..ValueInvariants::default()
+                    },
                 }
             }
             #[cfg(rapx_rustc_ge_196)]
@@ -907,6 +922,30 @@ pub(crate) fn const_int_from_debug(text: &str) -> Option<u64> {
     } else {
         None
     }
+}
+
+/// Resolve a MIR constant to a concrete `u64`, falling back from the cheap
+/// debug-text parse to full const evaluation.
+///
+/// Only layout constants such as `offset_of!(Container, field)` are evaluated
+/// here — they produce a plain integer only once `Const::eval` runs, and are
+/// always small, non-negative offsets.  Arbitrary unevaluated consts (e.g.
+/// `usize::MAX`) are deliberately left symbolic: forcing them to a concrete
+/// `u64` would overflow downstream size arithmetic.
+pub(crate) fn const_scalar_int<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    constant: &rustc_middle::mir::Const<'tcx>,
+    text: &str,
+) -> Option<u64> {
+    if let Some(v) = const_int_from_debug(text) {
+        return Some(v);
+    }
+    if crate::helpers::mir_utils::offset_of_container(tcx, constant).is_none() {
+        return None;
+    }
+    let typing_env = TypingEnv::fully_monomorphized();
+    let val = constant.eval(tcx, typing_env, rustc_span::DUMMY_SP).ok()?;
+    val.try_to_scalar_int().map(|scalar| scalar.to_bits(scalar.size()) as u64)
 }
 
 // ── Constant byte-string extraction ───────────────────────────

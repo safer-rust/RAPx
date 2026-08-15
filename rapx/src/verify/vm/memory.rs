@@ -23,7 +23,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             let provenance = self.locals.get(&place.local)
                 .and_then(|v| v.provenance.clone())
                 .or_else(|| self.local_alloc_ids.get(&place.local).copied()
-                    .map(|alloc_id| Provenance { alloc_id, offset: zero }));
+                    .map(|alloc_id| Provenance { alloc_id, offset: zero, is_field_offset: false }));
             return Some(VmValue {
                 term: base_addr,
                 ty,
@@ -40,6 +40,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             .map(|alloc_id| Provenance {
                 alloc_id,
                 offset: zero.clone(),
+                is_field_offset: false,
             });
         let mut current_ty = self.body.local_decls[place.local].ty;
 
