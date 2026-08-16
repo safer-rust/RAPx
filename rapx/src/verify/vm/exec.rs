@@ -42,6 +42,9 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
 
         for item in items {
             match item {
+                BackwardItem::CalleeEntry { callee, args } => {
+                    self.handle_callee_entry(*callee, args);
+                }
                 BackwardItem::Statement {
                     block,
                     statement_index,
@@ -76,9 +79,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 }
                 BackwardItem::Forget { reason } => {
                     self.notes.push(format!("forget: {:?}", reason));
-                }
-                BackwardItem::CalleeEntry { callee, args } => {
-                    self.handle_callee_entry(*callee, args);
                 }
                 BackwardItem::CalleeExit { dest } => {
                     self.handle_callee_exit(*dest);
@@ -262,6 +262,26 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         invariants.init = true;
                         invariants.aligned = true;
                         self.init_allocations.insert(heap_alloc_id);
+                        // Also expose the box's inner `Unique<T>.pointer` field
+                        // (a `NonNull<T>` at path [0, 0]) so that inlined bodies
+                        // like `Box::into_non_null_with_allocator` — which reads
+                        // `(_1.0).0` and transmutes it to `NonNull<T>` — inherit
+                        // the heap pointer's non-null/aligned/allocated facts.
+                        self.set_field_value(local, vec![0, 0], VmValue {
+                            term: heap_base.clone(),
+                            ty,
+                            provenance: Some(Provenance {
+                                alloc_id: heap_alloc_id,
+                                offset: Int::from_u64(self.ctx, 0),
+                                is_field_offset: false,
+                            }),
+                            invariants: ValueInvariants {
+                                non_null: true,
+                                init: true,
+                                aligned: true,
+                                ..Default::default()
+                            },
+                        });
                         self.set_local(local, VmValue {
                             term: heap_base,
                             ty,
@@ -379,6 +399,17 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                                         offset: prost_offset,
                                         is_field_offset: false,
                                     }),
+                                    invariants: ValueInvariants { init: true, ..Default::default() },
+                                });
+                                self.mark_field_init(local, vec![idx]);
+                            }
+                        } else if let rustc_middle::ty::TyKind::Adt(inner_adt, _) = field_ty.kind() {
+                            if !inner_adt.is_enum() {
+                                self.decompose_adt_fields(local, vec![idx], field_ty, local_idx, &mut elem_alloc, 1);
+                            } else {
+                                let field_term = self.fresh_int(&format!("field_{}_{}", local_idx, idx));
+                                self.set_field_value(local, vec![idx], VmValue {
+                                    term: field_term, ty: field_ty, provenance: None,
                                     invariants: ValueInvariants { init: true, ..Default::default() },
                                 });
                                 self.mark_field_init(local, vec![idx]);
@@ -863,6 +894,133 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         }
     }
 
+    /// Recursively decompose a (possibly nested) struct parameter into per-field
+    /// symbolic values.  Nested ADT fields (e.g. `Handle { node: NodeRef { node:
+    /// NonNull<LeafNode>, .. }, .. }`) are descended into so their `NonNull` /
+    /// raw-pointer leaves get external-allocation provenance — otherwise a
+    /// `NonNull` buried two levels deep loses its provenance and downstream
+    /// `Allocated`/`Init` checks (e.g. `descend`'s `edges.get_unchecked`) fail.
+    fn decompose_adt_fields(
+        &mut self,
+        local: Local,
+        prefix: Vec<usize>,
+        ty: Ty<'tcx>,
+        local_idx: usize,
+        elem_alloc: &mut FxHashMap<Ty<'tcx>, (AllocId, Int<'ctx>)>,
+        depth: usize,
+    ) {
+        if depth > 4 {
+            return;
+        }
+        let rustc_middle::ty::TyKind::Adt(adt_def, substs) = ty.kind() else { return };
+        if adt_def.is_enum() {
+            return;
+        }
+        let variant = adt_def.non_enum_variant();
+        for (idx, field_def) in variant.fields.iter().enumerate() {
+            let field_ty: Ty<'tcx> = field_def.ty(self.tcx, substs).skip_norm_wip();
+            let mut path = prefix.clone();
+            path.push(idx);
+            if let rustc_middle::ty::TyKind::RawPtr(inner, _) = field_ty.kind() {
+                let prost_offset;
+                if let Some(&(existing_alloc, ref base)) = elem_alloc.get(inner) {
+                    let elem_size = self.size_of_ty(*inner).max(1) as u64;
+                    let len_term = self.fresh_int(&format!("field_len_{}_{}", local_idx, idx));
+                    self.path_conditions.push(len_term.ge(&Int::from_u64(self.ctx, 0)));
+                    prost_offset = Int::mul(self.ctx, &[&len_term, &Int::from_u64(self.ctx, elem_size)]);
+                    let field_term = Int::add(self.ctx, &[base, &prost_offset]);
+                    self.set_field_value(local, path.clone(), VmValue {
+                        term: field_term,
+                        ty: field_ty,
+                        provenance: Some(Provenance {
+                            alloc_id: existing_alloc,
+                            offset: prost_offset.clone(),
+                            is_field_offset: false,
+                        }),
+                        invariants: ValueInvariants {
+                            non_null: true, init: true, ..Default::default()
+                        },
+                    });
+                    self.mark_field_init(local, path);
+                } else {
+                    let field_align = 1u64.max(self.align_of_ty(*inner));
+                    let max_size = Int::from_u64(self.ctx, i64::MAX as u64);
+                    let (field_alloc_id, field_base) = self.allocate_external(
+                        max_size, field_align, Some(*inner),
+                    );
+                    self.init_allocations.insert(field_alloc_id);
+                    prost_offset = Int::from_u64(self.ctx, 0);
+                    elem_alloc.insert(*inner, (field_alloc_id, field_base.clone()));
+                    self.set_field_value(local, path.clone(), VmValue {
+                        term: field_base,
+                        ty: field_ty,
+                        provenance: Some(Provenance {
+                            alloc_id: field_alloc_id,
+                            offset: prost_offset,
+                            is_field_offset: false,
+                        }),
+                        invariants: ValueInvariants {
+                            non_null: true, init: true, ..Default::default()
+                        },
+                    });
+                    self.mark_field_init(local, path);
+                }
+            } else if let Some(pointee) = self.find_nn_pointee(field_ty) {
+                let prost_offset;
+                if let Some(&(existing_alloc, ref base)) = elem_alloc.get(&pointee) {
+                    let elem_size = self.size_of_ty(pointee).max(1) as u64;
+                    let len_term = self.fresh_int(&format!("field_len_{}_{}", local_idx, idx));
+                    self.path_conditions.push(len_term.ge(&Int::from_u64(self.ctx, 0)));
+                    prost_offset = Int::mul(self.ctx, &[&len_term, &Int::from_u64(self.ctx, elem_size)]);
+                    let field_term = Int::add(self.ctx, &[base, &prost_offset]);
+                    self.set_field_value(local, path.clone(), VmValue {
+                        term: field_term,
+                        ty: field_ty,
+                        provenance: Some(Provenance {
+                            alloc_id: existing_alloc,
+                            offset: prost_offset.clone(),
+                            is_field_offset: false,
+                        }),
+                        invariants: ValueInvariants { init: true, ..Default::default() },
+                    });
+                    self.mark_field_init(local, path);
+                } else {
+                    let pointee_align = 1u64.max(self.align_of_ty(pointee));
+                    let max_size = Int::from_u64(self.ctx, i64::MAX as u64);
+                    let (field_alloc_id, field_base_term) = self.allocate_external(
+                        max_size, pointee_align, Some(pointee),
+                    );
+                    self.init_allocations.insert(field_alloc_id);
+                    prost_offset = Int::from_u64(self.ctx, 0);
+                    elem_alloc.insert(pointee, (field_alloc_id, field_base_term));
+                    let field_term = self.fresh_int(&format!("field_nn_{}_{}", local_idx, idx));
+                    self.set_field_value(local, path.clone(), VmValue {
+                        term: field_term,
+                        ty: field_ty,
+                        provenance: Some(Provenance {
+                            alloc_id: field_alloc_id,
+                            offset: prost_offset,
+                            is_field_offset: false,
+                        }),
+                        invariants: ValueInvariants { init: true, ..Default::default() },
+                    });
+                    self.mark_field_init(local, path);
+                }
+            } else if matches!(field_ty.kind(), rustc_middle::ty::TyKind::Adt(_, _)) {
+                self.decompose_adt_fields(local, path, field_ty, local_idx, elem_alloc, depth + 1);
+            } else {
+                let field_term = self.fresh_int(&format!("field_{}_{}", local_idx, idx));
+                self.set_field_value(local, path.clone(), VmValue {
+                    term: field_term,
+                    ty: field_ty,
+                    provenance: None,
+                    invariants: ValueInvariants { init: true, ..Default::default() },
+                });
+                self.mark_field_init(local, path);
+            }
+        }
+    }
+
     /// Replay same-block assignment chains that the backward slicer may omit.
     /// Walks backwards through the CFG from the checkpoint block, propagating
     /// provenance and invariants through Use/Cast/RawPtr/CopyForDeref chains.
@@ -1231,23 +1389,54 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             self.set_local(place.local, value);
             // Propagate field values for aggregate copies (e.g. `_4 = copy _1`)
             // so downstream field accesses (NonZero::get -> self.0) resolve to
-            // the same symbolic field terms.
-            let src = match rvalue {
+            // the same symbolic field terms.  A projected source (`_11 = move
+            // (_1.2)`) shifts the field path by its `Field` projection prefix,
+            // so `(_1.2).1` becomes `_11.1` — this keeps the `NonNull` node
+            // field's provenance alive across `NodeRef` moves.
+            let src_place: Option<&Place<'tcx>> = match rvalue {
                 #[cfg(rapx_rvalue_use_with_retag)]
-                Rvalue::Use(operand, _) => extract_local(operand),
+                Rvalue::Use(operand, _) => match operand {
+                    Operand::Copy(p) | Operand::Move(p) => Some(p),
+                    _ => None,
+                },
                 #[cfg(not(rapx_rvalue_use_with_retag))]
-                Rvalue::Use(operand) => extract_local(operand),
-                Rvalue::CopyForDeref(p) if p.projection.is_empty() => Some(p.local),
+                Rvalue::Use(operand) => match operand {
+                    Operand::Copy(p) | Operand::Move(p) => Some(p),
+                    _ => None,
+                },
+                Rvalue::CopyForDeref(p) => Some(p),
                 _ => None,
             };
-            if let Some(src) = src {
-                let keys: Vec<Vec<usize>> = self.field_values.keys()
-                    .filter(|(l, _)| *l == src)
-                    .map(|(_, f)| f.clone())
+            if let Some(sp) = src_place {
+                let field_prefix: Vec<usize> = sp.projection.iter()
+                    .filter_map(|p| match p.kind() {
+                        rustc_middle::mir::ProjectionElem::Field(fi, _) => Some(fi.as_usize()),
+                        _ => None,
+                    })
                     .collect();
-                for k in keys {
-                    if let Some(fv) = self.field_value(src, &k).cloned() {
-                        self.set_field_value(place.local, k, fv);
+                let only_field = sp.projection.iter().all(|p| {
+                    matches!(p.kind(), rustc_middle::mir::ProjectionElem::Field(..))
+                });
+                if only_field {
+                    let keys: Vec<Vec<usize>> = self.field_values.keys()
+                        .filter(|(l, _)| *l == sp.local)
+                        .map(|(_, f)| f.clone())
+                        .collect();
+                    for k in keys {
+                        let rest = if field_prefix.is_empty() {
+                            Some(k.clone())
+                        } else if k.len() > field_prefix.len()
+                            && k[..field_prefix.len()] == field_prefix[..]
+                        {
+                            Some(k[field_prefix.len()..].to_vec())
+                        } else {
+                            None
+                        };
+                        if let Some(rest) = rest {
+                            if let Some(fv) = self.field_value(sp.local, &k).cloned() {
+                                self.set_field_value(place.local, rest, fv);
+                            }
+                        }
                     }
                 }
             }
@@ -1469,6 +1658,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         },
                     };
                     self.propagate_byte_values_to_ref(place, &val);
+                    self.propagate_field_values_to_ref(place, dest_place.local);
                     Ok(val)
                 } else {
                     let term = self.fresh_int("ref_addr");
@@ -1664,6 +1854,28 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 })
             }
             Rvalue::Aggregate(_kind, operands) => {
+                // `NonNull::new_unchecked(ptr)` / `NonNull::from(&T)` construct a
+                // repr(transparent) single-field newtype whose value *is* the
+                // underlying pointer.  Model the wrapper as the pointer field
+                // itself (term + provenance + invariants) so downstream checks
+                // like `NonNull(node)` / `Align(node, T)` / `Allocated(node, ..)`
+                // can discharge against the real pointer instead of a fresh
+                // unconstrained `aggregate` symbol.
+                if operands.len() == 1 && self.find_nn_pointee(dest_ty).is_some() {
+                    let field_val = self.value_of_operand(operands.iter().next().unwrap());
+                    let dest_local = dest_place.local;
+                    self.set_field_value(dest_local, vec![0], field_val.clone());
+                    self.mark_field_init(dest_local, vec![0]);
+                    if let Some(alloc_id) = self.local_alloc_ids.get(&dest_local).copied() {
+                        self.init_allocations.insert(alloc_id);
+                    }
+                    return Ok(VmValue {
+                        term: field_val.term,
+                        ty: dest_ty,
+                        provenance: field_val.provenance,
+                        invariants: field_val.invariants,
+                    });
+                }
                 let term = self.fresh_int("aggregate");
                 let dest_local = dest_place.local;
                 let dest_alloc_id = self.local_alloc_ids.get(&dest_local).copied();
@@ -3202,6 +3414,55 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     /// Propagate byte values from a source place's allocation to the
     /// provenance allocation of a reference. This ensures that when we
     /// create `&bytes` from an aggregate, the byte-level tracking follows.
+    /// Propagate a source place's per-field values to a reference destination,
+    /// shifting the field path by the source place's `Field` projection prefix.
+    /// E.g. for `_3 = &(_1.0)` where `_1` is a `Handle { node: NodeRef { node:
+    /// NonNull<..>, .. }, .. }`, the nested `NonNull`'s field value stored at
+    /// path `[0, 1]` becomes available at `_3`'s path `[1]`, so an inlined
+    /// callee that dereferences `_3` and reads its `node` field sees the
+    /// provenance of the underlying allocation.
+    fn propagate_field_values_to_ref(&mut self, source_place: &Place<'tcx>, dest: Local) {
+        // Support both `&(local.field...)` (Field projection prefix) and
+        // `&(*local)` (reborrow of a reference, pure Deref).  In the latter
+        // case the reference's own per-field values already describe the
+        // pointee, so they are copied unchanged.
+        let only_field_deref = source_place.projection.iter().all(|p| {
+            matches!(p.kind(), rustc_middle::mir::ProjectionElem::Field(..)
+                | rustc_middle::mir::ProjectionElem::Deref)
+        });
+        if !only_field_deref || source_place.projection.is_empty() {
+            return;
+        }
+        let field_prefix: Vec<usize> = source_place
+            .projection
+            .iter()
+            .filter_map(|p| match p.kind() {
+                rustc_middle::mir::ProjectionElem::Field(fi, _) => Some(fi.as_usize()),
+                _ => None,
+            })
+            .collect();
+        let keys: Vec<Vec<usize>> = self
+            .field_values
+            .keys()
+            .filter(|(l, _)| *l == source_place.local)
+            .map(|(_, p)| p.clone())
+            .collect();
+        for path in keys {
+            let matches_prefix = field_prefix.is_empty()
+                || (path.len() > field_prefix.len() && path[..field_prefix.len()] == field_prefix[..]);
+            if matches_prefix {
+                let rest = if field_prefix.is_empty() {
+                    path.clone()
+                } else {
+                    path[field_prefix.len()..].to_vec()
+                };
+                if let Some(v) = self.field_values.get(&(source_place.local, path.clone())).cloned() {
+                    self.set_field_value(dest, rest, v);
+                }
+            }
+        }
+    }
+
     fn propagate_byte_values_to_ref(
         &mut self,
         source_place: &Place<'tcx>,

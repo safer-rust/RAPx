@@ -169,6 +169,19 @@ fn std_challenge_03() {
     );
 }
 
+// ================ Std Challenge 04 (BTree node) ================
+#[test]
+fn std_challenge_04() {
+    let output = run_with_args("verify_cases/std-challenge-04", CMD_VERIFY_TARGETED_VM);
+
+    // Challenge 4 (`alloc::collections::btree::node`): a faithful, self-contained
+    // port of `library/alloc/src/collections/btree/node.rs`. The helper slice
+    // primitives / constructors / getters keep their `#[rapx::requires]`
+    // contracts and are inlined at the call sites of the `#[rapx::verify]`
+    // functions, which must all verify SOUND.
+    assert_not_contain(&output, "result: UNSOUND");
+}
+
 // ================ HashMap Tests ================
 #[test]
 fn hashmap() {

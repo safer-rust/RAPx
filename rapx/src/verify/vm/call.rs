@@ -432,14 +432,35 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         }
         self.inline_depth += 1;
 
+        // Only inline small, branch-free functions. `inline_execute_body`
+        // follows every `SwitchInt` target without forking state, so a real
+        // branch (e.g. a `match` that returns different pointers per arm)
+        // would have its arms merged and lose precision — which silently marks
+        // unsound callers sound. Keep rejecting `SwitchInt` bodies; branch-free
+        // bodies that merely exceed a small block count are still safe to
+        // inline, so the cap must cover the Box construction helpers used by
+        // constructors (`from_new_internal` is 9 blocks) so the fresh heap
+        // allocation's provenance reaches the returned `NonNull`.
         let callee_body = self.tcx.optimized_mir(callee_def_id);
-
-        // Only inline small, linear functions. Branching functions
-        // require state forking which we don't do yet; the summary
-        // system provides better precision for those cases.
-        if arg_values.len() > 4
-            || !crate::helpers::mir_utils::callee_is_linear(self.tcx, callee_def_id, 5)
-        {
+        let n_return = callee_body
+            .basic_blocks
+            .iter()
+            .filter(|bb| matches!(bb.terminator().kind, rustc_middle::mir::TerminatorKind::Return))
+            .count();
+        // Reject a *semantic* branch (a `SwitchInt` reachable on the normal
+        // path): `inline_execute_body` merges its arms and loses precision.
+        // A `SwitchInt` that only appears in a cleanup block (the drop-flag
+        // dispatch) is dead on the normal path and is safe to ignore.
+        // Likewise, a `debug_assert!`/`assert!`-style `SwitchInt` whose every
+        // non-otherwise target leads to `panic`/`unreachable` is dead on the
+        // normal path — inlining it and taking only the `otherwise` edge keeps
+        // the field-level provenance of wrapper casts (`cast_to_internal_unchecked`).
+        let has_switch = callee_body.basic_blocks.iter_enumerated().any(|(idx, bb)| {
+            !bb.is_cleanup
+                && matches!(bb.terminator().kind, rustc_middle::mir::TerminatorKind::SwitchInt { .. })
+                && !Self::switch_is_debug_assert(self.tcx, &callee_body, idx)
+        });
+        if arg_values.len() > 4 || callee_body.basic_blocks.len() > 16 || n_return > 1 || has_switch {
             self.inline_depth -= 1;
             return false;
         }
@@ -489,8 +510,14 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         // ── BFS execution of callee MIR ──
         self.inline_execute_body();
 
-        // ── Capture return value ──
+        // ── Capture return value and its per-field values ──
         let return_val = self.locals.get(&Local::from_usize(0)).cloned();
+        let return_fields: Vec<(Vec<usize>, VmValue<'ctx, 'tcx>)> = self
+            .field_values
+            .iter()
+            .filter(|((l, _), _)| *l == Local::from_usize(0))
+            .map(|((_, path), val)| (path.clone(), val.clone()))
+            .collect();
 
         // ── Restore caller context ──
         self.body = saved_body;
@@ -520,6 +547,12 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     }
                 }
                 self.set_local(dest, val);
+                // Propagate the callee's per-field return values (e.g. a
+                // tuple `(NonNull<T>, A)`'s field 0) to the caller's
+                // destination so subsequent field projections resolve.
+                for (path, fv) in return_fields {
+                    self.set_field_value(dest, path, fv);
+                }
             }
             None => {
                 self.inline_depth -= 1;
@@ -529,6 +562,88 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
 
         self.inline_depth -= 1;
         true
+    }
+
+    /// Whether a `SwitchInt`'s non-`otherwise` targets all lead straight to
+    /// `panic`/`unreachable` (a `debug_assert!`/`assert!` dispatch).  Such a
+    /// switch is dead on the normal path and can be inlined by following only
+    /// the `otherwise` edge.
+    fn switch_targets_unreachable(
+        tcx: rustc_middle::ty::TyCtxt<'tcx>,
+        body: &rustc_middle::mir::Body<'tcx>,
+        targets: &rustc_middle::mir::SwitchTargets,
+    ) -> bool {
+        targets.iter().all(|(_, target)| {
+            let mut cur = target;
+            let mut seen = FxHashSet::default();
+            loop {
+                if !seen.insert(cur) {
+                    return false;
+                }
+                let bb = &body.basic_blocks[cur];
+                let term = bb.terminator();
+                match &term.kind {
+                    rustc_middle::mir::TerminatorKind::Unreachable => return true,
+                    rustc_middle::mir::TerminatorKind::Call { func, .. } => {
+                        let name = crate::helpers::mir_utils::call_name(tcx, func);
+                        return name.contains("panic") || name.contains("unreachable") || name.contains("abort");
+                    }
+                    rustc_middle::mir::TerminatorKind::Goto { target: next } => {
+                        cur = *next;
+                    }
+                    // A bare `return` with no statements is a drop-flag skip
+                    // (dead on the normal path); a `return` preceded by real
+                    // statements computes a different value, so it is a semantic
+                    // branch and must not be ignored.
+                    rustc_middle::mir::TerminatorKind::Return => return bb.statements.is_empty(),
+                    _ => return false,
+                }
+            }
+        })
+    }
+
+    /// Whether a block's `SwitchInt` is a `debug_assert!`-style dispatch (all
+    /// non-`otherwise` targets are `panic`/`unreachable`).
+    fn switch_is_debug_assert(
+        tcx: rustc_middle::ty::TyCtxt<'tcx>,
+        body: &rustc_middle::mir::Body<'tcx>,
+        bb: BasicBlock,
+    ) -> bool {
+        let rustc_middle::mir::TerminatorKind::SwitchInt { discr, targets } =
+            &body.basic_blocks[bb].terminator().kind
+        else {
+            return false;
+        };
+        // A constant discriminant (e.g. `_3 = const true` for a no-drop flag)
+        // folds to a single live edge; the other edges are dead and can be
+        // ignored when inlining.  This includes a `move _3` whose `_3` is
+        // assigned a constant earlier in the body.
+        let discr_is_const = match discr {
+            rustc_middle::mir::Operand::Constant(_) => true,
+            rustc_middle::mir::Operand::Copy(p) | rustc_middle::mir::Operand::Move(p) => {
+                body.basic_blocks.iter().any(|bbd| {
+                    bbd.statements.iter().any(|stmt| {
+                        let rustc_middle::mir::StatementKind::Assign(assign) = &stmt.kind else {
+                            return false;
+                        };
+                        let (dest, rvalue) = &**assign;
+                        let is_const = match rvalue {
+                            #[cfg(rapx_rvalue_use_with_retag)]
+                            rustc_middle::mir::Rvalue::Use(rustc_middle::mir::Operand::Constant(_), _) => true,
+                            #[cfg(not(rapx_rvalue_use_with_retag))]
+                            rustc_middle::mir::Rvalue::Use(rustc_middle::mir::Operand::Constant(_)) => true,
+                            _ => false,
+                        };
+                        dest == p && is_const
+                    })
+                })
+            }
+            _ => false,
+        };
+        if discr_is_const {
+            return true;
+        }
+        Self::switch_targets_unreachable(tcx, body, targets)
     }
 
     /// BFS-execute the callee's MIR body.
@@ -583,6 +698,25 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     queue.push(*target);
                 }
                 TerminatorKind::SwitchInt { discr, targets } => {
+                    // A constant discriminant folds to a single live edge.
+                    if let rustc_middle::mir::Operand::Constant(c) = discr {
+                        let text = format!("{:?}", c.const_);
+                        if let Some(v) = crate::verify::vm::state::const_int_from_debug(&text) {
+                            let t = targets.iter().find(|(val, _)| *val == v as u128)
+                                .map(|(_, t)| t)
+                                .unwrap_or_else(|| targets.otherwise());
+                            queue.push(t);
+                            continue;
+                        }
+                    }
+                    // A `debug_assert!`/`assert!` switch or a drop-flag dispatch
+                    // has its non-otherwise edges dead on the normal path, so
+                    // follow only `otherwise`.
+                    let trivial = Self::switch_targets_unreachable(self.tcx, &self.body, targets);
+                    if trivial {
+                        queue.push(targets.otherwise());
+                        continue;
+                    }
                     // Conservative: add path conditions for all branches,
                     // but since we don't fork state, we follow all targets.
                     // This loses precision for overwritten locals but is sound.
