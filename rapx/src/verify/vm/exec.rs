@@ -106,7 +106,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             .map(|&local| saved_locals.get(&local).cloned())
             .collect();
 
-        self.saved_caller_locals = Some(saved_locals);
+        self.saved_caller_locals.push(saved_locals);
 
         // Push callee context
         self.body_stack.push((self.body, self.caller_def_id));
@@ -147,6 +147,26 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     ) {
         let return_val = self.locals.get(&Local::from_usize(0)).cloned();
 
+        // Capture the callee's return-place field values (e.g. a tuple return
+        // `(prefix, mid, suffix)` whose slice fields carry provenance). They
+        // live in the shared `field_values` map keyed by local `_0`, so they
+        // must be re-keyed onto the caller's destination local, otherwise the
+        // caller's `(tuple.0)` / `(tuple.2)` projections lose provenance and
+        // the downstream `.len()` / alignment reasoning collapses.
+        let return_fields: Vec<(Vec<usize>, VmValue<'ctx, 'tcx>)> = self
+            .field_values
+            .keys()
+            .filter(|(l, _)| *l == Local::from_usize(0))
+            .cloned()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .filter_map(|(_, fields)| {
+                self.field_value(Local::from_usize(0), &fields)
+                    .cloned()
+                    .map(|v| (fields, v))
+            })
+            .collect();
+
         // Check if the callee was post_inc_start / pre_dec_end
         // on an Iter/IterMut. If so, track the ptr offset change.
         if let Some((_, saved_callee)) = self.body_stack.last() {
@@ -163,7 +183,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         }
 
         // Restore caller's locals
-        if let Some(saved) = self.saved_caller_locals.take() {
+        if let Some(saved) = self.saved_caller_locals.pop() {
             self.locals = saved;
         }
 
@@ -180,6 +200,11 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 }
             }
             self.set_local(dest, val);
+        }
+
+        // Re-key the callee's return field values onto the caller's dest local.
+        for (fields, field_val) in return_fields {
+            self.set_field_value(dest, fields, field_val);
         }
     }
 
@@ -705,9 +730,9 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 // that downstream call effects (e.g. ChecksIndexBoundsDisjoint)
                 // can record the alloc_id and property checker can match it later.
                 if let rustc_middle::ty::TyKind::Array(elem_ty, const_len) = ty.kind() {
-                    let n: Option<usize> =
-                        super::state::const_int_from_debug(&format!("{:?}", const_len))
-                            .map(|v| v as usize);
+                    let n: Option<usize> = const_len
+                        .try_to_target_usize(self.tcx)
+                        .map(|v| v as usize);
                     let elem_size = self.size_of_ty(*elem_ty) as u64;
                     let step = (elem_size.max(1)) as usize;
                     let align = self.align_of_ty(*elem_ty);
@@ -772,11 +797,19 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 });
                 continue;
             }
-            // ── Non-parameter local: use stack address with own-allocation
-            // provenance as a fallback (overwritten by actual assignments).
-            let addr = self.local_address(local);
+            // ── Non-parameter local: fallback value (overwritten by actual
+            // assignments). For reference/raw-pointer locals the value *is* the
+            // stack address; for scalar locals use a fresh symbolic value so a
+            // stale stack address never leaks into scalar arithmetic (e.g. the
+            // `offset <= len` bound check in memchr-style loops).
+            let term = match ty.kind() {
+                rustc_middle::ty::TyKind::Ref(..) | rustc_middle::ty::TyKind::RawPtr(..) => {
+                    self.local_address(local)
+                }
+                _ => self.fresh_int(&format!("local_{}", local_idx)),
+            };
             self.set_local(local, VmValue {
-                term: addr,
+                term,
                 ty,
                 provenance: None,
                 invariants,
@@ -1494,7 +1527,23 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 let dest_pk = PlaceKey::from_mir_place(dest_place);
                 let lhs_pk = operand_to_place_key(lhs_op);
                 let rhs_pk = operand_to_place_key(rhs_op);
-                self.binary_op_sources.insert(dest_pk, (lhs_pk, rhs_pk));
+                self.binary_op_sources.insert(dest_pk.clone(), (lhs_pk, rhs_pk));
+                // Store the direct boolean condition for comparison results so
+                // exec_switchint can record a precise path condition (e.g.
+                // `offset <= len - 16`) instead of `ite(cond, 1, 0) != 0`, which
+                // the SMT solver often fails to unfold.
+                let cmp_cond = match *op {
+                    BinOp::Le => Some(lhs.term.le(&rhs.term)),
+                    BinOp::Lt => Some(lhs.term.lt(&rhs.term)),
+                    BinOp::Ge => Some(lhs.term.ge(&rhs.term)),
+                    BinOp::Gt => Some(lhs.term.gt(&rhs.term)),
+                    BinOp::Eq => Some(lhs.term._eq(&rhs.term)),
+                    BinOp::Ne => Some(lhs.term._eq(&rhs.term).not()),
+                    _ => None,
+                };
+                if let Some(cond) = cmp_cond {
+                    self.comparison_conds.insert(dest_pk.clone(), cond);
+                }
                 // Add Euclidean division identity for Div and Rem:
                 //   lhs == (lhs/rhs)*rhs + lhs%rhs  ∧  lhs%rhs >= 0
                 // Also add (lhs/rhs)*rhs <= lhs directly for Div for robustness.
@@ -1564,7 +1613,17 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             Rvalue::UnaryOp(op, operand) => {
                 let val = self.value_of_operand(operand);
                 let is_bool = matches!(val.ty.kind(), rustc_middle::ty::TyKind::Bool);
-                let term = self.eval_unary_op(*op, &val.term, is_bool);
+                let term = if matches!(op, UnOp::PtrMetadata) {
+                    // `PtrMetadata` on a `&[T]` gives the slice length, which is
+                    // the allocation size divided by the element size. Reuse the
+                    // same symbolic term as the allocation size so downstream
+                    // InBound checks (`offset <= len`) agree with the `len` used
+                    // in loop guards (`offset <= len - 16`).
+                    self.slice_len_from_value(&val)
+                        .unwrap_or_else(|| self.fresh_int("ptr_metadata"))
+                } else {
+                    self.eval_unary_op(*op, &val.term, is_bool)
+                };
                 Ok(VmValue {
                     term,
                     ty: dest_ty,
@@ -1676,7 +1735,16 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 })
             }
             Rvalue::Discriminant(place) => {
-                let term = self.fresh_int("discriminant");
+                // If the ADT's variant is known symbolically (e.g. `Iterator::next`
+                // returns `Some` iff the iterator was non-empty), reuse that term
+                // so `switchInt(discriminant)` branches stay tied to the real
+                // condition instead of a fresh unconstrained symbol.
+                let term = self.discriminant_terms.get(&place.local)
+                    .cloned()
+                    .unwrap_or_else(|| self.fresh_int("discriminant"));
+                if self.discriminant_terms.contains_key(&place.local) {
+                    self.saw_next_discriminant = true;
+                }
                 // For Ordering (repr i8, values: Less=-1 Equal=0 Greater=1),
                 // the discriminant index equals the repr value + 1.
                 // Connect the fresh discriminant term to the ADT value so
@@ -1872,6 +1940,21 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             }
             UnOp::PtrMetadata => self.fresh_int("ptr_metadata"),
         }
+    }
+
+    /// Compute the slice length for a `&[T]` / `&mut [T]` value: the allocation
+    /// size divided by the element size. Reuses the allocation's size term so
+    /// it agrees with InBound/`alloc.size` checks.
+    fn slice_len_from_value(&self, val: &VmValue<'ctx, 'tcx>) -> Option<Int<'ctx>> {
+        let alloc_id = val.provenance_alloc_id()?;
+        let alloc = self.allocations.iter().find(|a| a.id == alloc_id)?;
+        let elem_ty = alloc.element_ty?;
+        let elem_size = self.size_of_ty(elem_ty).max(1) as u64;
+        if elem_size == 1 {
+            return Some(alloc.size.clone());
+        }
+        let elem_term = Int::from_u64(self.ctx, elem_size);
+        Some(alloc.size.div(&elem_term))
     }
 
     /// Compute provenance for a binary operation on pointer values.
@@ -2126,6 +2209,14 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     ) {
         let discr_val = self.value_of_operand(discr);
 
+        // If the discriminator is a comparison result, record the direct
+        // boolean condition alongside the ite-encoded `discr == value` fact,
+        // so the SMT solver can reason about `offset <= len` directly.
+        let cmp_cond = discr.place().and_then(|p| {
+            let pk = PlaceKey::from_mir_place(&p);
+            self.comparison_conds.get(&pk).cloned()
+        });
+
         // Determine which target block is taken along the path.
         if let Some(ref path) = self.path {
             if let Some(chosen) = chosen_successor(path, block, occurrence) {
@@ -2133,6 +2224,13 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     if target == chosen {
                         let val_term = Int::from_u64(self.ctx, value as u64);
                         self.path_conditions.push(discr_val.term._eq(&val_term));
+                        if let Some(ref cond) = cmp_cond {
+                            if value != 0 {
+                                self.path_conditions.push(cond.clone());
+                            } else {
+                                self.path_conditions.push(cond.not());
+                            }
+                        }
                         if value != 0 {
                             self.infer_switch_guard(discr);
                         } else {
@@ -2149,6 +2247,13 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     for (value, _) in targets.iter() {
                         let val_term = Int::from_u64(self.ctx, value as u64);
                         self.path_conditions.push(discr_val.term._eq(&val_term).not());
+                    }
+                    if let Some(ref cond) = cmp_cond {
+                        // For a boolean discriminator, `otherwise` means
+                        // `discr != 0`, i.e. the comparison is true.
+                        if targets.iter().any(|(v, _)| v == 0) {
+                            self.path_conditions.push(cond.clone());
+                        }
                     }
                     return;
                 }

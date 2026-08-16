@@ -118,17 +118,43 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             return;
         }
         let ty = self.body.local_decls[local].ty;
-        let size = self.size_of_ty(ty) as u64;
         let align = self.align_of_ty(ty);
-        let size_term = Int::from_u64(self.ctx, size.max(1));
         let base = self.local_address(local);
         let id = AllocId(self.next_alloc_id);
         self.next_alloc_id += 1;
         // For arrays, track the element type (not the array type) so that
-        // len() computes `size / elem_size` correctly.
-        let element_ty = match ty.kind() {
-            TyKind::Array(elem, _) => Some(*elem),
-            _ => Some(ty),
+        // len() computes `size / elem_size` correctly.  When the element size
+        // is unknown (a generic `T`), `size_of::<[T; N]>()` collapses to 0, so
+        // instead record the element count `N` as a symbolic term — this keeps
+        // `len() = size / elem_size` equal to `N`, letting downstream
+        // InBound checks (e.g. `get_unchecked_mut(idx)` where `idx < N`) be
+        // discharged against the loop's `idx < N` path condition.
+        let (size_term, element_ty, is_external) = match ty.kind() {
+            TyKind::Array(elem, const_len) => {
+                let elem_size = self.size_of_ty(*elem).max(1) as u64;
+                // Mirror the const-generic symbolic name used by
+                // `value_of_operand` (which formats `mir::Const::Ty`), so the
+                // element-count term is *identical* to the `const N` term
+                // appearing in path conditions (`idx < N`).  This lets the
+                // later InBound SMT query discharge `idx + 1 <= len`.
+                let const_text = format!("Ty({:?}, {:?})", self.tcx.types.usize, const_len);
+                let n_term = match const_len.try_to_target_usize(self.tcx) {
+                    Some(v) => Int::from_u64(self.ctx, v),
+                    None => {
+                        let name = format!("const_{}", const_text.replace([':', '#', ' '], "_"));
+                        Int::new_const(self.ctx, name.as_str())
+                    }
+                };
+                let size = match n_term.as_u64() {
+                    Some(n) => Int::from_u64(self.ctx, n.saturating_mul(elem_size)),
+                    None => Int::mul(self.ctx, &[&n_term, &Int::from_u64(self.ctx, elem_size)]),
+                };
+                (size, Some(*elem), false)
+            }
+            _ => {
+                let size = self.size_of_ty(ty).max(1) as u64;
+                (Int::from_u64(self.ctx, size), Some(ty), false)
+            }
         };
         let alloc = Allocation {
             id,
@@ -136,7 +162,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             size: size_term,
             align,
             element_ty,
-            is_external: false,
+            is_external,
         };
         self.allocations.push(alloc);
         self.local_alloc_ids.insert(local, id);

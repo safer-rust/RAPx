@@ -45,6 +45,9 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
 
         let name = crate::helpers::mir_utils::call_name(self.tcx, func);
 
+
+        // ── select_unpredictable: result ∈ {x, y} ─────────────────────
+
         // ── select_unpredictable: result ∈ {x, y} ─────────────────────
         if api_classify::is_select_unpredictable(&name) && arg_values.len() >= 3 {
             let term = self.fresh_int(&format!("selunpred_{}", destination.as_usize()));
@@ -68,6 +71,69 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 invariants: ValueInvariants::default(),
             });
             return;
+        }
+
+        // Slice range indexing: `<[T]>::index(range)` / `::index_mut(range)`
+        // returns a sub-slice whose length is the range's extent. Model it as a
+        // sub-allocation of the array so downstream `into_iter`/`next()` see the
+        // correct element count (empty for `..0`). Single-element indexing
+        // (`index(usize)`) has a non-slice destination and keeps the plain
+        // alias behaviour from the summary table.
+        let is_index = name.ends_with("::Index::index") || name.ends_with("::IndexMut::index_mut");
+        if is_index && arg_values.len() >= 2 {
+            let dest_ty = self.body.local_decls[destination].ty;
+            let is_slice = matches!(dest_ty.kind(), TyKind::Ref(_, inner, _)
+                if matches!(inner.kind(), TyKind::Slice(_)));
+            if is_slice {
+                if let Some(prov) = arg_values[0].provenance.clone() {
+                    let array_term = arg_values[0].term.clone();
+                    let (elem_ty, elem_size) = match arg_values[0].ty.kind() {
+                        TyKind::Ref(_, inner, _) => match inner.kind() {
+                            TyKind::Array(e, _) | TyKind::Slice(e) => {
+                                (*e, self.size_of_ty(*e).max(1) as u64)
+                            }
+                            _ => (arg_values[0].ty, 1),
+                        },
+                        _ => (arg_values[0].ty, 1),
+                    };
+                    let elem_align = self.align_of_ty(elem_ty).max(1);
+                    // The range argument (RangeTo/RangeFrom/Range) is an
+                    // aggregate; its field 0 is the end bound (for RangeTo this
+                    // is the slice length directly).
+                    let range_local = args.get(1).and_then(|a| match &a.node {
+                        Operand::Copy(p) | Operand::Move(p) => Some(p.local),
+                        _ => None,
+                    });
+                    let range_len = match range_local.and_then(|l| self.field_value(l, &[0]).map(|v| v.term.clone())) {
+                        Some(end) => end,
+                        None => {
+                            // RangeFull or unknown: fall back to the array's
+                            // full length in elements.
+                            self.allocations.iter().find(|a| a.id == prov.alloc_id)
+                                .map(|a| a.size.clone())
+                                .unwrap_or_else(|| Int::from_u64(self.ctx, 1))
+                                .div(&Int::from_u64(self.ctx, elem_size))
+                        }
+                    };
+                    let size_bytes = Int::mul(self.ctx, &[&range_len, &Int::from_u64(self.ctx, elem_size)]);
+                    let (alloc_id, _) = self.allocate(size_bytes, elem_align, Some(elem_ty));
+                    self.sub_alloc_parent.insert(alloc_id, prov.alloc_id);
+                    self.set_local(destination, VmValue {
+                        term: array_term,
+                        ty: dest_ty,
+                        provenance: Some(Provenance {
+                            alloc_id,
+                            offset: Int::from_u64(self.ctx, 0),
+                            is_field_offset: false,
+                        }),
+                        invariants: ValueInvariants {
+                            non_null: true, aligned: true, init: true, in_bounds: true,
+                            ..Default::default()
+                        },
+                    });
+                    return;
+                }
+            }
         }
 
         // Iter::len() / Iter::is_empty(): compute from struct fields
@@ -119,12 +185,14 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         }
 
         // Iter::next() / IterMut::next(): advance ptr by 1 and return old.
+        // The MIR calls the `Iterator::next` trait method, so also match the
+        // trait path (`std::iter::Iterator::next`) in addition to the
+        // concrete `Iter`/`IterMut` method names.
         let is_next = name.contains("::next")
             && (name.starts_with("Iter::") || name.starts_with("IterMut::")
                 || name.contains("::Iter::") || name.contains("::IterMut::")
-                || name.contains("::Iter<") || name.contains("::IterMut<"));
-        // NOTE: to see if this handler fires
-        // eprintln!("[next_handler] name={name} is_next={is_next}");
+                || name.contains("::Iter<") || name.contains("::IterMut<")
+                || name.contains("::Iterator::next"));
         if is_next
             && arg_values.len() >= 1
         {
@@ -146,13 +214,21 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                                 diff.div(&sz)
                             };
                             let is_empty = remaining._eq(&Int::from_u64(self.ctx, 0));
-                            // If empty, return None (null ptr). Else advance and return old ptr.
+                            // The returned element is the *current* position: the
+                            // tracked element index (iter_ptr_offset) scaled by
+                            // the element stride, or the base ptr offset on the
+                            // first call.
+                            let zero = Int::from_u64(self.ctx, 0);
+                            let cur_off = match self.iter_ptr_offset.get(&local) {
+                                Some(prev) => Int::mul(self.ctx, &[prev, &sz]),
+                                None => pp.offset.clone(),
+                            };
                             let old_ptr_val = VmValue {
-                                term: pp.offset.clone(),
+                                term: cur_off.clone(),
                                 ty: ptr.ty,
                                 provenance: Some(Provenance {
                                     alloc_id: pp.alloc_id,
-                                    offset: pp.offset.clone(),
+                                    offset: cur_off,
                                     is_field_offset: false,
                                 }),
                                 invariants: ValueInvariants { non_null: true, init: true, ..Default::default() },
@@ -164,7 +240,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                                 None => one_term.clone(),
                             };
                             // Assert !is_empty as path condition (remaining > 0)
-                            let zero = Int::from_u64(self.ctx, 0);
                             self.path_conditions.push(remaining.gt(&zero));
                             // Push: base_len >= tracked_offset
                             let base_len = ep_offset.div(&sz);
@@ -178,6 +253,12 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                                 invariants: ValueInvariants::default(),
                             };
                             self.set_local(destination, result_val);
+                            // Tie the Option's discriminant to the emptiness
+                            // condition so `switchInt(discriminant(_n))` only
+                            // takes the `Some` branch when the iterator was
+                            // non-empty (and the `None` branch when empty).
+                            let discr_term = is_empty.ite(&zero, &one_term);
+                            self.discriminant_terms.insert(destination, discr_term);
                             return;
                         }
                     }
@@ -341,11 +422,15 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         arg_values: &[VmValue<'ctx, 'tcx>],
         caller_arg_locals: &[Local],
         dest: Local,
-        depth: usize,
+        _depth: usize,
     ) -> bool {
-        if depth >= MAX_INLINE_DEPTH {
+        // The `depth` argument is always 0 at the call sites; use the stateful
+        // counter to actually bound nested inlining (otherwise a callee that
+        // itself inlines another callee recurses without limit).
+        if self.inline_depth >= MAX_INLINE_DEPTH {
             return false;
         }
+        self.inline_depth += 1;
 
         let callee_body = self.tcx.optimized_mir(callee_def_id);
 
@@ -355,6 +440,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         if arg_values.len() > 4
             || !crate::helpers::mir_utils::callee_is_linear(self.tcx, callee_def_id, 5)
         {
+            self.inline_depth -= 1;
             return false;
         }
 
@@ -436,10 +522,12 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 self.set_local(dest, val);
             }
             None => {
+                self.inline_depth -= 1;
                 return false;
             }
         }
 
+        self.inline_depth -= 1;
         true
     }
 
@@ -657,6 +745,160 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         };
                         self.set_field_value(dest, vec![f], field_val);
                     }
+                }
+            }
+            CallEffect::ReturnIter { receiver_arg } => {
+                let Some(self_val) = args.get(*receiver_arg).cloned() else { return };
+                let Some(src_prov) = self_val.provenance.clone() else { return };
+                // `array[..i]` may be a `from_raw_parts` sub-allocation of the
+                // array's backing storage. Follow the sub-allocation chain to the
+                // root so the iterator's `ptr`/`end_or_len` fields point at live,
+                // init-tracked storage (the array itself), not the transient
+                // slice allocation.
+                let root_alloc_id = {
+                    let mut id = src_prov.alloc_id;
+                    while let Some(parent) = self.sub_alloc_parent.get(&id) {
+                        id = *parent;
+                    }
+                    id
+                };
+                let slice_len = self.allocations.iter()
+                    .find(|a| a.id == src_prov.alloc_id)
+                    .map(|a| a.size.clone())
+                    .unwrap_or_else(|| Int::from_u64(self.ctx, 1));
+
+                // The Iter/IterMut struct has `ptr` (field 0) and `end_or_len`
+                // (field 1), both raw pointers into the source slice allocation.
+                // Derive the pointee type so `next()` can compute the stride.
+                let field_ty = match self_val.ty.kind() {
+                    TyKind::Ref(_, inner, _) => match inner.kind() {
+                        TyKind::Slice(t) => *t,
+                        _ => self_val.ty,
+                    },
+                    _ => self_val.ty,
+                };
+
+                let start_off = Int::from_u64(self.ctx, 0);
+                let end_term = Int::add(self.ctx, &[&self_val.term, &slice_len]);
+
+                let start_val = VmValue {
+                    term: self_val.term.clone(),
+                    ty: field_ty,
+                    provenance: Some(Provenance {
+                        alloc_id: root_alloc_id,
+                        offset: start_off,
+                        is_field_offset: false,
+                    }),
+                    invariants: ValueInvariants { init: true, non_null: true, ..Default::default() },
+                };
+                let end_val = VmValue {
+                    term: end_term,
+                    ty: field_ty,
+                    provenance: Some(Provenance {
+                        alloc_id: root_alloc_id,
+                        offset: slice_len,
+                        is_field_offset: false,
+                    }),
+                    invariants: ValueInvariants { init: true, non_null: true, ..Default::default() },
+                };
+                self.set_field_value(dest, vec![0], start_val);
+                self.set_field_value(dest, vec![1], end_val);
+            }
+            CallEffect::ReturnAlignTo { receiver_arg } => {
+                let Some(self_val) = args.get(*receiver_arg).cloned() else { return };
+                let dest_ty = self.body.local_decls[dest].ty;
+                let TyKind::Tuple(elem_tys) = dest_ty.kind() else { return };
+                if elem_tys.len() < 3 { return; }
+
+                // Body element type U is the pointee of field 1 (`&[U]`).
+                let body_elem_ty = match elem_tys[1].kind() {
+                    TyKind::Ref(_, inner, _) => match inner.kind() {
+                        TyKind::Slice(u) => *u,
+                        _ => return,
+                    },
+                    _ => return,
+                };
+                let size_u = self.size_of_ty(body_elem_ty).max(1) as u64;
+                let align_u = self.align_of_ty(body_elem_ty).max(1);
+
+                let Some(src_prov) = self_val.provenance.clone() else { return };
+                let (elem_ty, elem_sz, len_bytes) = self.allocations.iter()
+                    .find(|a| a.id == src_prov.alloc_id)
+                    .map(|a| {
+                        let ty = a.element_ty;
+                        let sz = self.size_of_ty(ty.unwrap_or(self_val.ty)).max(1) as u64;
+                        (ty, sz, a.size.clone())
+                    })
+                    .unwrap_or((None, 1, Int::from_u64(self.ctx, 1)));
+
+                let elem_sz_term = Int::from_u64(self.ctx, elem_sz);
+                let size_u_term = Int::from_u64(self.ctx, size_u);
+                let align_u_term = Int::from_u64(self.ctx, align_u);
+
+                // Fresh aligned offset: (ptr + offset) % align_u == 0 and
+                // 0 <= offset < align_u.
+                let offset = self.fresh_int(&format!("align_to_offset_{}", dest.as_usize()));
+                let zero = Int::from_u64(self.ctx, 0);
+                let ptr_plus_offset = Int::add(self.ctx, &[&self_val.term, &offset]);
+                self.path_conditions.push(ptr_plus_offset.rem(&align_u_term)._eq(&zero));
+                self.path_conditions.push(offset.ge(&zero));
+                self.path_conditions.push(offset.lt(&align_u_term));
+
+                // body = len_bytes - offset bytes split into size_u chunks; the
+                // remainder is the suffix. Record the Euclidean identity so that
+                // `len - offset - suffix = body_len * size_u` (a multiple of
+                // align_u) is derivable downstream.
+                let body_bytes = Int::sub(self.ctx, &[&len_bytes, &offset]);
+                let body_len = body_bytes.div(&size_u_term);
+                let suffix_bytes = body_bytes.rem(&size_u_term);
+                let mul_term = Int::mul(self.ctx, &[&body_len, &size_u_term]);
+                let sum_term = Int::add(self.ctx, &[&mul_term, &suffix_bytes]);
+                self.path_conditions.push(body_bytes._eq(&sum_term));
+                self.path_conditions.push(suffix_bytes.ge(&zero));
+                self.path_conditions.push(suffix_bytes.lt(&size_u_term));
+
+                // Field lengths in elements.
+                let prefix_len = offset.div(&elem_sz_term);
+                let suffix_len = suffix_bytes.div(&elem_sz_term);
+
+                let body_byte_len = Int::mul(self.ctx, &[&body_len, &size_u_term]);
+                let suffix_ptr = Int::add(self.ctx, &[&ptr_plus_offset, &body_byte_len]);
+
+                let base_align = self.allocations.iter()
+                    .find(|a| a.id == src_prov.alloc_id)
+                    .map(|a| a.align)
+                    .unwrap_or(1);
+
+                let fields: Vec<(Int<'ctx>, Int<'ctx>, Ty<'tcx>, u64, u64)> = vec![
+                    (prefix_len, self_val.term.clone(), elem_tys[0], elem_sz, base_align),
+                    (body_len, ptr_plus_offset, elem_tys[1], size_u, align_u),
+                    (suffix_len, suffix_ptr, elem_tys[2], elem_sz, base_align),
+                ];
+
+                for (f, (f_len, f_ptr, f_ty, f_elem_sz, f_align)) in fields.into_iter().enumerate() {
+                    let f_size = Int::mul(self.ctx, &[&f_len, &Int::from_u64(self.ctx, f_elem_sz)]);
+                    let f_elem_ty = if f == 1 { Some(body_elem_ty) } else { elem_ty };
+                    let (alloc_id, _) = self.allocate(f_size.clone(), f_align, f_elem_ty);
+                    self.init_allocations.insert(alloc_id);
+                    self.sub_alloc_parent.insert(alloc_id, src_prov.alloc_id);
+                    if let Some(ref_dest_alloc_id) = self.local_alloc_ids.get(&dest).copied() {
+                        self.slice_data_allocations.insert(ref_dest_alloc_id, alloc_id);
+                    }
+                    let field_val = VmValue {
+                        term: f_ptr,
+                        ty: f_ty,
+                        provenance: Some(Provenance {
+                            alloc_id,
+                            offset: Int::from_u64(self.ctx, 0),
+                            is_field_offset: false,
+                        }),
+                        invariants: ValueInvariants {
+                            init: true, non_null: true, aligned: true, in_bounds: true,
+                            align_n: if f_align > 1 { Some(f_align) } else { None },
+                            is_field_offset: false,
+                        },
+                    };
+                    self.set_field_value(dest, vec![f], field_val);
                 }
             }
             CallEffect::ReturnPointerFromArg { arg } => {
@@ -931,16 +1173,42 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 };
                 self.set_local(dest, val);
             }
+            CallEffect::ReturnAlignOffset { ptr_arg, align_arg } => {
+                let dest_ty = self.body.local_decls[dest].ty;
+                let offset = self.fresh_int(&format!("align_offset_{}", dest.as_usize()));
+                if let (Some(ptr_val), Some(align_val)) = (args.get(*ptr_arg), args.get(*align_arg)) {
+                    // `ptr.align_offset(align)` guarantees `(ptr + offset) % align == 0`
+                    // with `0 <= offset < align` on the success path. Record both so a
+                    // downstream `*(ptr.add(offset) as *const U)` can discharge `Align`.
+                    let zero = Int::from_u64(self.ctx, 0);
+                    let ptr_plus_off = Int::add(self.ctx, &[&ptr_val.term, &offset]);
+                    self.path_conditions
+                        .push(ptr_plus_off.rem(&align_val.term)._eq(&zero));
+                    self.path_conditions.push(offset.ge(&zero));
+                    self.path_conditions.push(offset.lt(&align_val.term));
+                }
+                let val = VmValue {
+                    term: offset,
+                    ty: dest_ty,
+                    provenance: None,
+                    invariants: ValueInvariants::default(),
+                };
+                self.set_local(dest, val);
+            }
             CallEffect::ReturnMin { lhs_arg, rhs_arg } => {
                 if let (Some(lhs), Some(rhs)) = (args.get(*lhs_arg), args.get(*rhs_arg)) {
                     let dest_ty = self.body.local_decls[dest].ty;
-                    let term = self.fresh_int(&format!("min_{}", dest.as_usize()));
-                    self.path_conditions.push(term.le(&lhs.term));
-                    self.path_conditions.push(term.le(&rhs.term));
-                    let eq_lhs = term._eq(&lhs.term);
-                    let eq_rhs = term._eq(&rhs.term);
-                    self.path_conditions
-                        .push(z3::ast::Bool::or(self.ctx, &[&eq_lhs, &eq_rhs]));
+                    // Build the min as a first-class `ite(lhs <= rhs, lhs, rhs)`
+                    // term rather than a fresh variable plus disjunction facts.
+                    // A fresh variable breaks downstream alignment/bounds
+                    // reasoning: e.g. `ptr.align_offset(8)` guarantees
+                    // `(ptr + offset) % 8 == 0`, but `offset.min(len)` would
+                    // then become an unrelated symbol and the `Align`/`InBound`
+                    // checks on `*(ptr.add(offset) as *const usize)` could no
+                    // longer discharge.  With an `ite`, the path conditions
+                    // (`offset < 8`, `len >= 16`) let the solver reduce
+                    // `ite(offset <= len, offset, len)` back to `offset`.
+                    let term = lhs.term.le(&rhs.term).ite(&lhs.term, &rhs.term);
                     let val = VmValue {
                         term,
                         ty: dest_ty,
@@ -998,14 +1266,24 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                                 self.byte_init.insert((prov.alloc_id, byte_off));
                             }
                         } else {
-                            if prov.offset.as_u64() == Some(0) {
-                                self.init_allocations.insert(prov.alloc_id);
-                            }
-                            if let Some(size) = self.allocation_size(prov.alloc_id).cloned() {
-                                if let Some(size_val) = size.as_u64() {
-                                    for off in 0..(size_val as usize).min(1024) {
+                            // Symbolic write offset: the exact written element
+                            // can't be tracked per-byte. For concrete allocation
+                            // sizes, mark every byte (as before). For unknown /
+                            // zero sizes — generic element types such as
+                            // `MaybeUninit<T>` inside `[MaybeUninit<T>; N]` —
+                            // mark the whole allocation initialized so a later
+                            // `assume_init_read`/`assume_init_drop` can discharge
+                            // `Init` on those (fully initialized) elements.
+                            let size_val = self.allocation_size(prov.alloc_id)
+                                .and_then(|s| s.as_u64());
+                            match size_val {
+                                Some(sz) if sz > 0 => {
+                                    for off in 0..(sz as usize).min(1024) {
                                         self.byte_init.insert((prov.alloc_id, off));
                                     }
+                                }
+                                _ => {
+                                    self.init_allocations.insert(prov.alloc_id);
                                 }
                             }
                         }
@@ -1271,7 +1549,10 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     }
 
     /// Compute the preserved alignment when doing `base + offset * stride`.
-    /// If stride is a multiple of known alignment, the result has that alignment.
+    /// Pointer arithmetic only ever *preserves* the base's alignment; it never
+    /// creates it. When the base's alignment is unknown, we cannot conclude
+    /// anything about the result (a `wrapping_add` over misaligned storage does
+    /// not become aligned just because the stride is a power of two).
     fn compute_pointer_add_align(
         &self,
         base: &VmValue<'ctx, 'tcx>,
@@ -1279,16 +1560,9 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         stride_bytes: u64,
     ) -> Option<u64> {
         let base_align = base.invariants.align_n;
-        if let Some(n) = base_align {
-            if stride_bytes > 0 && stride_bytes % n == 0 {
-                return Some(n);
-            }
-        }
-        // If stride itself is a power of two, the step preserves that alignment
-        if stride_bytes > 1 && stride_bytes.is_power_of_two() {
-            if base_align.map_or(true, |a| stride_bytes >= a && stride_bytes % a == 0) {
-                return Some(stride_bytes.min(base_align.unwrap_or(stride_bytes)));
-            }
+        let Some(n) = base_align else { return None };
+        if stride_bytes > 0 && stride_bytes % n == 0 {
+            return Some(n);
         }
         None
     }
@@ -1456,6 +1730,19 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 TyKind::Adt(adt_def, _) => {
                     let name = self.tcx.def_path_str(adt_def.did());
                     if api_classify::is_std_iter_or_itermut(&name) {
+                        // Find the local holding the iterator by matching the
+                        // reference's address term against known local addresses
+                        // (`&mut _iter` has term `addr__iter`).  A hardcoded
+                        // `Local(1)` only holds for inlined `next` bodies where
+                        // the iterator is the first argument; direct trait
+                        // `Iterator::next` calls keep the iterator at an
+                        // arbitrary local.
+                        for (local, addr) in &self.local_addresses {
+                            if addr == &arg_val.term {
+                                return Some(*local);
+                            }
+                        }
+                        // Fallback for inlined `next` bodies (iter bound to arg 1).
                         return Some(Local::from_usize(1));
                     }
                     None

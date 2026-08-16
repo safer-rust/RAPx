@@ -18,8 +18,8 @@ impl PropertyChecker {
     pub(super) fn check_valid_transmute<'ctx, 'tcx>(&self, vm_state: &VmState<'ctx, 'tcx>, _solver: &Solver<'ctx>,
         _checkpoint: &Checkpoint<'tcx>, property: &Property<'tcx>) -> CheckResult
     {
-        let src = property.args().get(1).and_then(|a| if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None });
-        let dst = property.args().get(2).and_then(|a| if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None });
+        let src = property.args().get(0).and_then(|a| if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None });
+        let dst = property.args().get(1).and_then(|a| if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None });
         match (src, dst) {
             (Some(s), Some(d)) if vm_state.size_of_ty(s) == vm_state.size_of_ty(d) => CheckResult::Proved,
             (Some(s), Some(d)) => {
@@ -139,7 +139,13 @@ impl PropertyChecker {
                 let src_sz = Self::ty_size(vm_state, s);
                 let dst_sz = Self::ty_size(vm_state, d);
                 if src_sz == 0 || dst_sz == 0 { return CheckResult::Failed; }
-                if src_sz >= dst_sz && Self::all_bit_patterns_valid(d) {
+                // A split transmute is sound whenever the destination element
+                // type accepts all bit patterns (integers, floats, raw pointers):
+                // any contiguous `size_of::<U>()`-byte chunk of the source is
+                // then a valid destination value. This holds for both narrowing
+                // (`[usize]` -> `[u8]`, src_sz >= dst_sz) and widening
+                // (`[u8]` -> `[usize]`, src_sz < dst_sz) transmutes.
+                if Self::all_bit_patterns_valid(d) {
                     return CheckResult::Proved;
                 }
                 CheckResult::Failed
@@ -181,12 +187,19 @@ impl PropertyChecker {
 
     /// Returns true for integer and float types that accept all possible bit patterns
     /// as valid values.  Types like bool, char, and enums have restricted validity.
-    fn all_bit_patterns_valid(ty: Ty<'_>) -> bool {
+    /// Tuples and arrays are all-bit-patterns-valid iff every component is, so a
+    /// widening `SplitTransmute` such as `[u8] -> [(usize, usize)]` (used by
+    /// `memrchr`) is recognised.
+    pub(super) fn all_bit_patterns_valid(ty: Ty<'_>) -> bool {
         match ty.kind() {
             rustc_middle::ty::TyKind::Uint(_) => true,
             rustc_middle::ty::TyKind::Int(_) => true,
             rustc_middle::ty::TyKind::Float(_) => true,
             rustc_middle::ty::TyKind::RawPtr(..) => true,
+            rustc_middle::ty::TyKind::Tuple(elems) => {
+                elems.iter().all(|e| Self::all_bit_patterns_valid(e))
+            }
+            rustc_middle::ty::TyKind::Array(elem, _) => Self::all_bit_patterns_valid(*elem),
             _ => false,
         }
     }

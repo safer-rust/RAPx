@@ -517,6 +517,13 @@ pub(crate) fn offset_of_container<'tcx>(
     if !is_const_def_kind(tcx, uneval.def) {
         return None;
     }
+    // `mir_for_ctfe` panics for cross-crate constants (e.g. `char::MAX` from
+    // `core`), since it only serves local, CTFE-able definitions. `offset_of!`
+    // always expands to a local `AnonConst`, so rejecting external defs loses
+    // nothing but avoids the ICE.
+    if !uneval.def.is_local() {
+        return None;
+    }
     let body = tcx.mir_for_ctfe(uneval.def);
     for bb in body.basic_blocks.iter() {
         if let Some(term) = &bb.terminator

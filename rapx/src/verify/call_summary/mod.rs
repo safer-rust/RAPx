@@ -166,6 +166,25 @@ pub enum CallEffect {
     /// provenance: `(self_arg.addr() - origin_arg.addr()) / sizeof(T)`.
     /// Models `NonNull::offset_from_unsigned` / `offset_from`.
     ReturnOffsetFromUnsigned { self_arg: usize, origin_arg: usize },
+    /// `ptr.align_offset(align)` returns an offset such that
+    /// `(ptr + offset) % align == 0` and `0 <= offset < align` (or `usize::MAX`
+    /// when no such offset exists). Models `*const T::align_offset` /
+    /// `*mut T::align_offset` by recording the alignment path-condition so
+    /// downstream `ptr.add(offset)` dereferences can discharge `Align`.
+    ReturnAlignOffset { ptr_arg: usize, align_arg: usize },
+    /// A local `align_to`-style wrapper (`align_to_ext`/`align_to_mut_ext`)
+    /// returns `(prefix, body, suffix)` where `body` is `align_of::<U>()`-aligned.
+    /// Models the tuple by creating three sub-slices whose lengths/offsets obey
+    /// `prefix.len() = offset` and `len - suffix.len() = offset + k*size_of::<U>()`,
+    /// and records `(ptr + offset) % align_of::<U>() == 0` so downstream
+    /// `ptr.add(offset - k)` dereferences can discharge `Align`.
+    ReturnAlignTo { receiver_arg: usize },
+    /// `IntoIterator::into_iter` on `&[T]` / `&mut [T]` returns an
+    /// `Iter`/`IterMut` whose `ptr` (field 0) and `end_or_len` (field 1) share
+    /// the source slice's allocation. Models the constructor by materializing
+    /// those two pointer fields so downstream `Iterator::next` / `len` /
+    /// `is_empty` can resolve the iterator's provenance and element type.
+    ReturnIter { receiver_arg: usize },
 }
 
 /// Return dependency information for a MIR call terminator.

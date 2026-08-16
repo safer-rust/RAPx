@@ -514,6 +514,47 @@ impl PropertyChecker {
 
     // ── check_non_null ─────────────────────────────────────────
 
+    /// Whether pointer `value` is provably aligned to `align` bytes (a power
+    /// of two). Consults the value's known alignment invariant first, then
+    /// falls back to an SMT query using allocation base alignment and the
+    /// accumulated path conditions (e.g. `align_offset` guarantees
+    /// `(ptr + offset) % align == 0`).
+    fn value_aligned_to<'ctx, 'tcx>(
+        vm_state: &VmState<'ctx, 'tcx>,
+        value: &VmValue<'ctx, 'tcx>,
+        align: u64,
+    ) -> bool {
+        if align <= 1 {
+            return true;
+        }
+        if let Some(n) = value.invariants.align_n {
+            if n >= align && n % align == 0 {
+                return true;
+            }
+        }
+        let solver = Solver::new(vm_state.ctx);
+        solver.push();
+        let zero = Int::from_u64(vm_state.ctx, 0);
+        if let Some(ref prov) = value.provenance {
+            if let Some(alloc) = vm_state.allocations.iter().find(|a| a.id == prov.alloc_id) {
+                solver.assert(&value.term._eq(&Int::add(vm_state.ctx, &[&alloc.base, &prov.offset])));
+                solver.assert(&alloc.base.ge(&zero));
+                if alloc.align > 1 {
+                    let a = Int::from_u64(vm_state.ctx, alloc.align);
+                    solver.assert(&alloc.base.rem(&a)._eq(&zero));
+                }
+            }
+        }
+        for cond in &vm_state.path_conditions {
+            solver.assert(cond);
+        }
+        let align_term = Int::from_u64(vm_state.ctx, align);
+        solver.assert(&value.term.rem(&align_term)._eq(&zero).not());
+        let r = solver.check() == SatResult::Unsat;
+        solver.pop(1);
+        r
+    }
+
     fn check_non_null<'ctx, 'tcx>(&self, vm_state: &VmState<'ctx, 'tcx>, solver: &Solver<'ctx>,
         checkpoint: &Checkpoint<'tcx>, property: &Property<'tcx>) -> CheckResult
     {
@@ -557,7 +598,10 @@ impl PropertyChecker {
 
         if vm_state.dead_allocations.contains(&alloc_id) {
             let is_maybe_uninit_ptr = value.invariants.init && value.invariants.non_null
-                && value.invariants.aligned && matches!(value.ty.kind(), TyKind::RawPtr(..))
+                && value.invariants.aligned
+                && (matches!(value.ty.kind(), TyKind::RawPtr(..))
+                    || matches!(value.ty.kind(), TyKind::Ref(_, inner, _) if matches!(inner.kind(), TyKind::Adt(adt, _)
+                        if vm_state.tcx.def_path_str(adt.did()).contains("::MaybeUninit"))))
                 && vm_state.allocations.iter().any(|a| {
                     a.id == alloc_id && !a.is_external && a.element_ty.map_or(false, |ty| {
                         if let TyKind::Adt(adt, _) = ty.kind() {
@@ -924,6 +968,12 @@ impl PropertyChecker {
         let len = size.div(&elem_sz);
 
         solver.push();
+        // Assert accumulated path conditions (e.g. the loop-carried
+        // `initialized < N` guard that makes `idx < N` hold at this call site)
+        // so the bound check below can be discharged symbolically.
+        for cond in &vm_state.path_conditions {
+            solver.assert(cond);
+        }
         let negated = if is_range {
             // For range-based InBound (start..end), check end <= len
             index_val.term.le(&len).not()
@@ -1027,7 +1077,28 @@ impl PropertyChecker {
             rap_debug!("check_init: alloc={} init_set={} access={:?}",
                 id.0, vm_state.init_allocations.contains(&id),
                 access.as_ref().and_then(|a| a.as_u64()));
-            if vm_state.dead_allocations.contains(&id) { return CheckResult::Failed; }
+            if vm_state.dead_allocations.contains(&id) {
+                // `assume_init_drop` (and other MaybeUninit drop/read ops)
+                // legitimately consume an initialized element from storage that
+                // may be going out of scope; the `Init` requirement concerns
+                // whether the element was written, not whether the allocation is
+                // still live. Mirror the `check_allocated` exception.
+                let is_maybe_uninit_ptr = value.invariants.init && value.invariants.non_null
+                    && value.invariants.aligned
+                    && (matches!(value.ty.kind(), TyKind::RawPtr(..))
+                        || matches!(value.ty.kind(), TyKind::Ref(_, inner, _) if matches!(inner.kind(), TyKind::Adt(adt, _)
+                            if vm_state.tcx.def_path_str(adt.did()).contains("::MaybeUninit"))))
+                    && vm_state.allocations.iter().any(|a| {
+                        a.id == id && !a.is_external && a.element_ty.map_or(false, |ty| {
+                            if let TyKind::Adt(adt, _) = ty.kind() {
+                                vm_state.tcx.def_path_str(adt.did()).contains("::MaybeUninit")
+                            } else { false }
+                        })
+                    });
+                if !is_maybe_uninit_ptr {
+                    return CheckResult::Failed;
+                }
+            }
             // Verify the entire access range is covered
             if let Some(ref access_term) = access {
                 if let (Some(access_val), Some(prov)) = (access_term.as_u64(), &value.provenance) {
@@ -1043,7 +1114,10 @@ impl PropertyChecker {
             if vm_state.init_allocations.contains(&id) {
                 if let (Some(ref access_term), Some(ref size)) = (access, vm_state.allocation_size(id)) {
                     if let (Some(access_val), Some(size_val)) = (access_term.as_u64(), size.as_u64()) {
-                        if access_val > size_val {
+                        // `size_val == 0` means the element type is generic
+                        // (size unknown), so the required access can't exceed a
+                        // meaningful allocation size; skip the bound check.
+                        if size_val > 0 && access_val > size_val {
                             return CheckResult::Failed;
                         }
                     }
@@ -1115,10 +1189,27 @@ impl PropertyChecker {
                             } else {
                                 return CheckResult::Proved;
                             }
-                        }
+                         }
                     }
                 }
             }
+        }
+        // A path that evaluated an `Iterator::next` discriminant may be
+        // infeasible when the iterator was empty (e.g. `assume_init_drop` on the
+        // `Some` branch of `next()` that returned `None`). Check feasibility
+        // only for such paths so unrelated over-constrained paths aren't
+        // spuriously marked sound.
+        if vm_state.saw_next_discriminant {
+            let local = Solver::new(vm_state.ctx);
+            local.push();
+            for cond in &vm_state.path_conditions {
+                local.assert(cond);
+            }
+            if local.check() == SatResult::Unsat {
+                local.pop(1);
+                return CheckResult::Proved;
+            }
+            local.pop(1);
         }
         CheckResult::Unknown
     }
@@ -1267,6 +1358,20 @@ impl PropertyChecker {
                                 if *inner == expected_ty {
                                     return CheckResult::Proved;
                                 }
+                            }
+                        }
+                        // Transmute to an all-bit-valid destination type
+                        // (integers, floats, raw pointers): any byte pattern is
+                        // a valid value, so a reinterpretation from a
+                        // differently-typed allocation is sound (e.g. memchr
+                        // reads `[u8]` as `usize`).  This is only sound when the
+                        // pointer is also correctly aligned to the destination
+                        // type: a raw `*const u8 as *const u32` cast over
+                        // align-1 storage is misaligned and must stay UNSOUND.
+                        if Self::all_bit_patterns_valid(expected_ty) {
+                            let expected_align = vm_state.align_of_ty(expected_ty).max(1);
+                            if Self::value_aligned_to(vm_state, &value, expected_align) {
+                                return CheckResult::Proved;
                             }
                         }
                         // Non-ADT element type that doesn't match → Failed.

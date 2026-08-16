@@ -58,6 +58,7 @@ pub(crate) fn is_signed_ptr_arith(name: &str) -> bool {
 
 pub fn is_layout_constant(name: &str) -> bool { name.contains("align_of") || name.contains("size_of") }
 pub(crate) fn is_align_of(name: &str) -> bool { name.contains("align_of") }
+pub fn is_align_offset(name: &str) -> bool { name.contains("::align_offset") }
 pub(crate) fn is_ptr_cast(name: &str) -> bool {
     name.contains("::cast") || name.contains("cast_array")
         || name.contains("cast_const") || name.contains("cast_mut")

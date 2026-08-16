@@ -10,7 +10,9 @@
 // The Rust attribute wrapper itself is still extracted by `syn` (`source/attr.rs`),
 // because attribute token streams are Rust syntax.
 //
-// `size_of::<T>()` (turbofish) is intentionally not supported; use `size_of(T)`.
+// `size_of::<T>()` / `align_of::<T>()` (turbofish, optionally with a
+// `std::mem::` / `core::mem::` path prefix) are also supported; `size_of(T)`
+// remains the preferred shorthand.
 
 // ── Tokens / trivia ────────────────────────────────────────────────────────
 
@@ -59,12 +61,16 @@ bit_and     = { additive ~ (band ~ additive)* }
 additive    = { multiplicative ~ (addop ~ multiplicative)* }
 multiplicative = { unary ~ (mulop ~ unary)* }
 unary       = { unop ~ unary | primary }
-primary     = { int | call | const_path | place | "(" ~ expr ~ ")" }
+primary     = { int | call | size_of_call | const_path | place | "(" ~ expr ~ ")" }
 
 // ── Builtin functions ───────────────────────────────────────────────────────
 
 call    = { builtin ~ "(" ~ arg_list? ~ ")" }
 builtin = { "size_of" | "align_of" | "len" | "min" | "max" | "index_access" }
+
+// size_of::<T>() / align_of::<T>() with optional `std::mem::` / `core::mem::`
+// path prefix (turbofish form).
+size_of_call = { ("std" ~ "::" ~ "mem" ~ "::" | "core" ~ "::" ~ "mem" ~ "::")? ~ ("size_of" | "align_of") ~ "::" ~ "<" ~ ident ~ ">" ~ "(" ~ ")" }
 
 // ── Places and projections ──────────────────────────────────────────────────
 

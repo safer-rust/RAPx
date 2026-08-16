@@ -237,10 +237,42 @@ fn conv_primary<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, pair: Pair<Rule>) -> Con
     match inner.as_rule() {
         Rule::int => ContractExpr::Const(inner.as_str().parse::<u128>().unwrap_or(0)),
         Rule::call => conv_call(tcx, def_id, inner),
+        Rule::size_of_call => conv_size_of_call(tcx, def_id, inner),
         Rule::const_path => conv_const_path(tcx, def_id, inner),
         Rule::place => conv_place_bridge(tcx, def_id, inner),
         Rule::expr => conv_expr(tcx, def_id, inner),
         _ => ContractExpr::Unknown,
+    }
+}
+
+/// Convert `size_of::<T>()` / `align_of::<T>()` (optionally `std::mem::` /
+/// `core::mem::` prefixed) into `SizeOf` / `AlignOf`.
+fn conv_size_of_call<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def_id: DefId,
+    pair: Pair<Rule>,
+) -> ContractExpr<'tcx> {
+    let text = pair.as_str();
+    let (kind, rest) = if text.contains("align_of") {
+        ("align_of", text.split("align_of").nth(1).unwrap_or(""))
+    } else {
+        ("size_of", text.split("size_of").nth(1).unwrap_or(""))
+    };
+    // rest looks like " :: < usize > ()" — extract the ident between `<` and `>`.
+    let ty_name = rest
+        .find('<')
+        .and_then(|lt| {
+            rest[lt + 1..]
+                .find('>')
+                .map(|gt| rest[lt + 1..lt + 1 + gt].trim().to_string())
+        })
+        .unwrap_or_default();
+    let Some(ty) = match_ty_with_ident(tcx, def_id, ty_name) else {
+        return ContractExpr::Unknown;
+    };
+    match kind {
+        "size_of" => ContractExpr::SizeOf(ty),
+        _ => ContractExpr::AlignOf(ty),
     }
 }
 

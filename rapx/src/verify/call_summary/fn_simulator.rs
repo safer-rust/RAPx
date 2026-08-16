@@ -103,9 +103,13 @@ static REGISTRY: &[Entry] = &[
 
     // ── Slice helpers ───────────────────────────────────────────────
     E!(slice_range,           dep01!(), false,  none!(),  eff_bounded_range),
+    E!(slice_index,           dep01!(), false,  none!(),  eff_alias_arg0),
     E!(align_to_offsets,      ALL,      true,   none!(),  eff_lcm_split),
+    E!(align_to_local,        dep0!(),  false,  none!(),  eff_align_to),
+    E!(into_iter_local,       dep0!(),  false,  none!(),  eff_return_iter),
     E!(split_at,              dep01!(), false,  none!(),  eff_split_at),
     E!(api_classify::is_from_raw_parts, dep01!(), false, none!(), eff_from_raw_parts),
+    E!(api_classify::is_align_offset, dep01!(), false, none!(), eff_align_offset),
 
     // ── Vec / collection constructors ────────────────────────────────
     E!(api_classify::is_vec_alloc_constructor, dep01!(), false, none!(), eff_new_allocation),
@@ -262,6 +266,18 @@ fn eff_lcm_split(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     vec![CallEffect::ReturnLcmSplit { receiver_arg: 0 }]
 }
 
+fn eff_align_to(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnAlignTo { receiver_arg: 0 }]
+}
+
+fn eff_return_iter(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnIter { receiver_arg: 0 }]
+}
+
+fn eff_align_offset(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnAlignOffset { ptr_arg: 0, align_arg: 1 }]
+}
+
 fn eff_split_at(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     vec![
         CallEffect::ReturnAliasArg { arg: 0 },
@@ -335,7 +351,14 @@ fn eff_layout_const(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 fn mem_forget_capacity(n: &str) -> bool     { n.ends_with("mem::forget") || n.ends_with("::capacity") }
 fn transmute(n: &str) -> bool               { n.contains("::transmute") || n.contains("intrinsics::transmute") }
 fn slice_range(n: &str) -> bool             { let b = n.split('<').next().unwrap_or(n); b.ends_with("slice::range") || b.contains("slice::index::range") }
+fn slice_index(n: &str) -> bool             { n.ends_with("::Index::index") || n.ends_with("::IndexMut::index_mut") }
 fn align_to_offsets(n: &str) -> bool        { n.contains("::align_to_offsets") }
+fn align_to_local(n: &str) -> bool           {
+    n.ends_with("align_to_ext") || n.ends_with("align_to_mut_ext")
+}
+fn into_iter_local(n: &str) -> bool          {
+    n.contains("into_iter") && (n.contains("IntoIterator") || n.contains("slice::into_iter"))
+}
 fn from_trait_call(n: &str) -> bool         { n == "std::convert::From::from" || n == "core::convert::From::from" }
 fn nonnull_from(n: &str) -> bool            { n.ends_with("::from") && api_classify::is_nonnull_api(n) }
 fn nonnull_new_unchecked(n: &str) -> bool   { n.ends_with("::new_unchecked") && api_classify::is_nonnull_api(n) }
@@ -344,12 +367,13 @@ fn nonnull_as_ref(n: &str) -> bool          { n.ends_with("::as_ref") && api_cla
 fn nonnull_as_mut(n: &str) -> bool          { n.ends_with("::as_mut") && api_classify::is_nonnull_api(n) }
 fn ptr_read(n: &str) -> bool                { n.ends_with("::read") && n.contains("::ptr::") }
 fn is_empty(n: &str) -> bool                { n.ends_with("::is_empty") }
-fn cmp_min(n: &str) -> bool                 { (n.contains("::cmp::min") || n.starts_with("core::cmp::min")) && !n.contains("min_by") }
+fn cmp_min(n: &str) -> bool                 { (n.contains("::cmp::min") || n.contains("::Ord::min") || n.starts_with("core::cmp::min")) && !n.contains("min_by") }
 fn saturating_sub(n: &str) -> bool          { n.contains("::saturating_sub") }
 fn split_at(n: &str) -> bool                { n.contains("::split_at") }
 fn is_slice_get_unchecked(n: &str) -> bool   { 
     (n.contains("::get_unchecked") || n.contains("::get_unchecked_mut"))
         && (n.contains("::SliceIndex")
+            || n.contains("::<impl [T]>::get_unchecked")
             || n.contains("::impl [T]>::get_unchecked")
             || n.contains("::mut_ptr::get_unchecked")
             || n.contains("::const_ptr::get_unchecked"))

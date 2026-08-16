@@ -200,6 +200,23 @@ pub struct VmState<'ctx, 'tcx> {
     /// Binary op sources for guard inference: destination → (lhs, rhs) place keys.
     pub(crate) binary_op_sources: FxHashMap<PlaceKey, (Option<PlaceKey>, Option<PlaceKey>)>,
 
+    /// Direct boolean condition for a comparison result place (Le/Lt/Ge/Gt/Eq/Ne),
+    /// used to record precise switch-guard path conditions.
+    pub(crate) comparison_conds: FxHashMap<PlaceKey, Bool<'ctx>>,
+
+    /// Enum discriminant term for a local holding an `Option`-like value whose
+    /// variant is known symbolically (e.g. `Iterator::next` returns
+    /// `Some(x) iff !is_empty`). Used by `Rvalue::Discriminant` so `switchInt`
+    /// branches stay tied to the actual emptiness condition.
+    pub(crate) discriminant_terms: FxHashMap<Local, Int<'ctx>>,
+
+    /// Set once the path has evaluated an `Iterator::next` discriminant whose
+    /// variant was known symbolically. Lets `check_init` run a targeted
+    /// path-feasibility check (a `next()` that returned `None` never reaches the
+    /// `Some` branch) without affecting paths that are infeasible for unrelated
+    /// modeling reasons.
+    pub(crate) saw_next_discriminant: bool,
+
     /// Non-binary-op sources (select_unpredictable, etc.): destination → (lhs, rhs)
     /// place keys.  Kept separately from `binary_op_sources` so guard inference
     /// (infer_guard_non_null) does not treat these as pointer comparisons.
@@ -269,13 +286,22 @@ pub struct VmState<'ctx, 'tcx> {
     /// Name of the most recent call (for context-aware effects like Vec push).
     pub(crate) last_call_name: String,
 
+    /// Current depth of the recursive `exec_inline_call` stack.  `exec_call`
+    /// re-enters inline execution with `depth = 0` on every nested call, so a
+    /// separate counter (instead of the `depth` argument) is needed to actually
+    /// bound nested inlining and avoid unbounded recursion / stack overflow.
+    pub(crate) inline_depth: usize,
+
     /// Stack of nested function contexts for cross-function inline.
     /// Top of stack is the currently executing function.
     /// Each entry is (body, def_id).
     pub(crate) body_stack: Vec<(&'ctx Body<'tcx>, DefId)>,
 
     /// Saved caller locals during callee inline (CalleeEntry/CalleeExit).
-    pub(crate) saved_caller_locals: Option<FxHashMap<Local, VmValue<'ctx, 'tcx>>>,
+    /// Must be a stack mirroring `body_stack`: nested inlining (a callee that
+    /// itself inlines another callee) pushes multiple frames, and a single
+    /// `Option` slot would clobber the outer caller's locals on the inner exit.
+    pub(crate) saved_caller_locals: Vec<FxHashMap<Local, VmValue<'ctx, 'tcx>>>,
 
     /// Terms that are the result of a bitwise `Not` (two's-complement mask).
     /// Used to recognize `x & !(align-1)` alignment patterns in BitAnd so we
@@ -311,6 +337,9 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             sub_alloc_parent: FxHashMap::default(),
             dropped_locals: FxHashSet::default(),
             binary_op_sources: FxHashMap::default(),
+            comparison_conds: FxHashMap::default(),
+            discriminant_terms: FxHashMap::default(),
+            saw_next_discriminant: false,
             other_op_sources: FxHashMap::default(),
             init_allocations: FxHashSet::default(),
             alive_assumed: FxHashSet::default(),
@@ -329,8 +358,9 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             notes: Vec::new(),
             path: None,
             last_call_name: String::new(),
+            inline_depth: 0,
             body_stack: Vec::new(),
-            saved_caller_locals: None,
+            saved_caller_locals: Vec::new(),
             not_mask_terms: FxHashSet::default(),
         }
     }
