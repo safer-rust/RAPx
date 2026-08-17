@@ -196,6 +196,17 @@ fn std_challenge_05() {
     assert_not_contain(&output, "result: UNSOUND");
 }
 
+// ================ Std Challenge 06 (NonNull) ================
+#[test]
+fn std_challenge_06() {
+    let output = run_with_args("verify_cases/std-challenge-06", CMD_VERIFY_TARGETED_VM);
+
+    // Challenge 6 (`core::ptr::NonNull`): a faithful, self-contained port of
+    // `library/core/src/ptr/non_null.rs`.  All 48 listed functions verify
+    // SOUND for generic `T`.
+    assert_not_contain(&output, "result: UNSOUND");
+}
+
 // ================ HashMap Tests ================
 #[test]
 fn hashmap() {

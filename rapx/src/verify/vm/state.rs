@@ -231,6 +231,13 @@ pub struct VmState<'ctx, 'tcx> {
     /// Whether a SplitTransmute contract was asserted by the caller.
     pub(crate) split_transmute_asserted: bool,
 
+    /// Whether an `Alias` hazard was accepted via the caller's contract
+    /// (e.g. `#[rapx::requires(any(Trait(T, Copy), Alias(self, return)))]`
+    /// on `NonNull::read`).  Lets inlined read/copy intrinsics whose result
+    /// aliases the source be treated as the accepted structural-alias hazard
+    /// rather than a hard failure.
+    pub(crate) alias_hazard_accepted: bool,
+
     /// Slice data allocations: maps a &[T] reference's stack AllocId to the
     /// symbolic data allocation created for the slice contents.
     pub(crate) slice_data_allocations: FxHashMap<AllocId, AllocId>,
@@ -344,6 +351,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             init_allocations: FxHashSet::default(),
             alive_assumed: FxHashSet::default(),
             split_transmute_asserted: false,
+            alias_hazard_accepted: false,
             slice_data_allocations: FxHashMap::default(),
             field_values: FxHashMap::default(),
             is_empty_len: FxHashMap::default(),

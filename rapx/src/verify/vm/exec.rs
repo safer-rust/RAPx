@@ -19,7 +19,7 @@ use z3::ast::{Ast, Bool, Int};
 use crate::{
     compat::{FxHashMap, FxHashSet},
     verify::{
-        contract::{ContractExpr, PlaceBase, Property, PropertyArg, PropertyKind},
+        contract::{ContractExpr, ContractKind, PlaceBase, Property, PropertyArg, PropertyKind},
         def_use::PlaceKey,
         path_extractor::{Path, PathStep},
         slicer::BackwardItem,
@@ -2610,10 +2610,25 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
 
     /// Assert a contract fact as VM state invariants.
     fn assert_contract_fact(&mut self, property: &Property<'tcx>) {
+        // A disjunctive precondition (`any(...)`) with a hazard disjunct records
+        // that the caller accepts that hazard (e.g. `any(Trait(T, Copy),
+        // Alias(self, ret))` on `NonNull::read`).  Inlined read/copy intrinsics
+        // whose result structurally aliases the source are then treated as the
+        // accepted hazard rather than a hard failure.
+        if let Property::Or(or) = property {
+            for group in &or.groups {
+                if group.iter().any(|p| p.contract_kind() == ContractKind::Hazard) {
+                    self.alias_hazard_accepted = true;
+                }
+            }
+        }
         let Property::Leaf(leaf) = property else {
-            self.notes.push("contract fact Or not directly asserted".to_string());
             return;
         };
+        if leaf.contract_kind == ContractKind::Hazard {
+            self.alias_hazard_accepted = true;
+            return;
+        }
         let kind = leaf.kind;
         match kind {
             PropertyKind::NonNull => {

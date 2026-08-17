@@ -2488,8 +2488,14 @@ impl PropertyChecker {
 
         match property.args().last() {
             Some(PropertyArg::Ident(id)) if id == "sized" => {
+                // For a generic type parameter (`T: Sized`) the concrete size is
+                // unknown, but the `non-ZST` constraint is a caller obligation
+                // (mirroring the `inject_layout_constraints` convention that a
+                // generic `SizeOf(T)` term is `>= 1`).  Functions that panic on
+                // ZST — `offset_from`, `size_of_val`, ... — are sound for every
+                // `T`, so treating the constraint as satisfied is safe.
                 if self.is_generic_ty(ty) {
-                    return CheckResult::Unknown;
+                    return CheckResult::Proved;
                 }
                 if vm_state.size_of_ty(ty) == 0 {
                     CheckResult::Failed

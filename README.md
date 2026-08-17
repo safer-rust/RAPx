@@ -203,7 +203,7 @@ This checklist maps RAPx's contract verification to the [Primitive Safety Proper
 | safety-tag     | Example                     | Supported |
 |----------------|-----------------------------|:---------:|
 | `Align`        | Align(p, T)                 |     ✅    |
-| `Size`         | Size(T, c)                  |     —     |
+| `Size`         | Size(T, c)                  |     ✅    |
 | `NoPadding`    | !Padding(T)                 |     —     |
 | `NonNull`      | !Null(p)                    |     ✅    |
 | `Allocated`    | Allocated(p, T, len, A)     |     ✅    |
@@ -223,7 +223,7 @@ This checklist maps RAPx's contract verification to the [Primitive Safety Proper
 | `Pinned`       | Pinned(p, l)                |     —     |
 | `NonVolatile`  | !Volatile(p, T, len)        |     —     |
 | `Opened`       | Opened(fd)                  |     —     |
-| `Trait`        | Trait(T, trait)             |     —     |
+| `Trait`        | Trait(T, trait)             |     ✅    |
 | `Unreachable`  | !Reachable()                |     —     |
 | `ValidPtr` \*  | ValidPtr(p, T, len)         |     ✅    |
 | `Deref` \*     | Deref(p, T, len)            |     ✅    |

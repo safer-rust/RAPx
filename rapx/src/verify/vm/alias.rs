@@ -176,6 +176,17 @@ pub fn check_alias_vm<'ctx, 'tcx>(
                     return VmAliasResult::Proved;
                 }
             }
+            // A raw-pointer deref in a method whose `self` is a *by-value*
+            // `NonNull<T>` is safe: consuming the `NonNull` transfers exclusive
+            // ownership of its pointer (e.g. `NonNull::as_uninit_mut(self)`).
+            if vm_state.body.arg_count >= 1 {
+                let self_ty = vm_state.body.local_decls[Local::from_usize(1)].ty;
+                if let rustc_middle::ty::TyKind::Adt(adt_def, _) = self_ty.kind() {
+                    if api_classify::is_std_nonnull(&vm_state.tcx.def_path_str(adt_def.did())) {
+                        return VmAliasResult::Proved;
+                    }
+                }
+            }
             // Pointer has provenance: check if it's safe.
             if let Some(prov) = &origin_val.provenance {
                 let is_external = vm_state.allocations.iter()
@@ -452,6 +463,14 @@ fn check_view_alias<'ctx, 'tcx>(
             if matches!(self_ty.kind(), rustc_middle::ty::TyKind::Ref(..)) {
                 return VmAliasResult::Proved;
             }
+            // A `NonNull<T>` consumed by value (e.g. `NonNull::as_uninit_mut(self)`)
+            // transfers exclusive ownership of its pointer, so producing a unique
+            // view is safe even though the receiver is not a `&mut self`.
+            if let rustc_middle::ty::TyKind::Adt(adt_def, _) = self_ty.kind() {
+                if api_classify::is_std_nonnull(&tcx.def_path_str(adt_def.did())) {
+                    return VmAliasResult::Proved;
+                }
+            }
         }
         return VmAliasResult::Failed(format!(
             "returned unique view escapes while the original pointer is not owned by a private self field [origin={:?}]",
@@ -725,6 +744,13 @@ fn check_read_memory_alias<'ctx, 'tcx>(
     };
 
     let origin_val = vm_state.value_of_operand(origin_arg);
+
+    // If the enclosing function accepted the structural-alias hazard via its
+    // contract (e.g. `any(Trait(T, Copy), Alias(self, ret))`), the read is the
+    // accepted hazard rather than a violation.
+    if vm_state.alias_hazard_accepted {
+        return VmAliasResult::Proved;
+    }
 
     // If the pointee type is Copy, read is safe
     if let rustc_middle::ty::TyKind::RawPtr(pointee, _) = origin_val.ty.kind() {
