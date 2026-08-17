@@ -182,6 +182,20 @@ fn std_challenge_04() {
     assert_not_contain(&output, "result: UNSOUND");
 }
 
+// ================ Std Challenge 05 (LinkedList) ================
+#[test]
+fn std_challenge_05() {
+    let output = run_with_args("verify_cases/std-challenge-05", CMD_VERIFY_TARGETED_VM);
+
+    // Challenge 5 (`alloc::collections::linked_list`): a faithful, self-contained
+    // port of the doubly-linked list. The challenge functions that iterate over
+    // the inductive node structure (`clear`, `contains`, `split_off`, `remove`,
+    // `retain`, `extract_if`) must all verify SOUND for linked lists of arbitrary
+    // shape, together with the `Iter`/`IterMut`/`CursorMut`/`ExtractIf` machinery
+    // they are built from.
+    assert_not_contain(&output, "result: UNSOUND");
+}
+
 // ================ HashMap Tests ================
 #[test]
 fn hashmap() {
