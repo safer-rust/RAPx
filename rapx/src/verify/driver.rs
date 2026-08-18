@@ -12,7 +12,7 @@ use crate::analysis::path::{
     graph::{PathEnumerator, PathGraph},
 };
 use crate::cli::VerifyMode;
-use crate::helpers::fn_info::{FnKind, get_cons, get_mutated_fields, get_muts, get_type};
+use crate::helpers::fn_info::{FnKind, get_cons, get_mutated_fields, get_muts, get_type, returns_wrapped_self};
 use crate::verify::contract::PropertyKind;
 use crate::verify::target::get_contract_from_annotation;
 
@@ -339,7 +339,13 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
             }
         }
 
-        if !returns_self && !is_constructor {
+        // For plain methods, and for "wrapped" constructors (`Result<Self>`,
+        // `Option<Self>`, `Box<Self>`), `Unknown` results are benign: methods
+        // don't construct the struct, and the `Err`/`None` paths of a wrapped
+        // constructor don't produce a `Self` to check. Keep `Unknown` only when
+        // some path actually `Failed`, so a genuine soundness gap still surfaces.
+        let wrapped_self = returns_wrapped_self(self.tcx, self.target.def_id);
+        if (!returns_self && !is_constructor) || (is_constructor && wrapped_self) {
             let has_failed = report.results.iter().any(|r| matches!(r.result, CheckResult::Failed));
             if !has_failed {
                 report.results.retain(|r| !matches!(r.result, CheckResult::Unknown));

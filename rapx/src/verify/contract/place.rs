@@ -193,6 +193,16 @@ fn resolve_projection_from_struct_ident<'tcx>(
         1
     };
 
+    // For a "wrapped" constructor (`Result<Self>` / `Option<Self>`), the struct
+    // lives inside the `Ok`/`Some` variant (field 0 of the enum). Prepend that
+    // field access so the invariant's place resolves through the variant's data
+    // (e.g. `ptr` -> `Return.Field(0).Field(0)`).
+    if base_local == 0
+        && crate::helpers::fn_info::returns_wrapped_self(tcx, def_id)
+    {
+        field_indices.insert(0, (0, struct_ty));
+    }
+
     Some((base_local, field_indices, current_ty))
 }
 

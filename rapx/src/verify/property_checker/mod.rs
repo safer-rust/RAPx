@@ -1276,6 +1276,16 @@ impl PropertyChecker {
                 _ => value.ty,
             };
 
+            // `MaybeUninit<T>` (and slices/arrays of it) carries no validity
+            // invariant: any byte pattern is a valid `MaybeUninit<T>`.  A byte
+            // buffer reinterpreted as `[MaybeUninit<T>]` (e.g. the slice handed
+            // to `Box::from_raw_in` by `RawVec::into_box`) is therefore always
+            // "typed" — alignment/size are discharged by the separate
+            // `Align`/`Allocated` facts.
+            if Self::ty_is_maybe_uninit(vm_state.tcx, expected_ty) {
+                return CheckResult::Proved;
+            }
+
             // Check provenance: does the allocation's element type match the expected type?
             if let Some(alloc_id) = value.provenance_alloc_id() {
                 if let Some(alloc) = vm_state.allocations.iter().find(|a| a.id == alloc_id) {
@@ -1429,6 +1439,23 @@ impl PropertyChecker {
             }
         }
         CheckResult::Unknown
+    }
+
+    /// Whether a type is `MaybeUninit<U>` (peeling `Slice`/`Array`/raw-pointer
+    /// layers).  `MaybeUninit` has no validity invariant, so `Typed(p, _)`
+    /// holds for any such type regardless of the underlying byte pattern.
+    fn ty_is_maybe_uninit(tcx: rustc_middle::ty::TyCtxt<'_>, ty: Ty<'_>) -> bool {
+        let mut t = ty;
+        loop {
+            match t.kind() {
+                TyKind::Slice(e) | TyKind::Array(e, _) => t = *e,
+                TyKind::RawPtr(e, _) | TyKind::Ref(_, e, _) => t = *e,
+                TyKind::Adt(adt, _) => {
+                    return tcx.def_path_str(adt.did()).contains("::MaybeUninit");
+                }
+                _ => return false,
+            }
+        }
     }
 
     // ── check_alias ────────────────────────────────────────────

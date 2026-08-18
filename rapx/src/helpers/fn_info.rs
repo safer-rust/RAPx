@@ -121,6 +121,47 @@ pub fn get_type(tcx: TyCtxt<'_>, def_id: DefId) -> FnKind {
     }
     return FnKind::Fn;
 }
+
+/// Returns true when the function is a "wrapped" constructor that returns
+/// `Option<Self>` / `Result<Self, _>` rather than a bare `Self`.
+///
+/// `get_type` classifies these as [`FnKind::Constructor`], but for the wrapped
+/// forms the `None`/`Err` paths do not produce a `Self`, so a struct invariant
+/// can only be meaningfully discharged on the `Some`/`Ok` paths. This helper
+/// lets `verify_struct_invariants` skip the benign `Unknown` results on the
+/// non-`Self` paths. (`Box<Self>` is intentionally *not* included: every path
+/// still produces a `Self` behind the pointer.)
+pub fn returns_wrapped_self(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
+    let Some(assoc_item) = tcx.opt_associated_item(def_id) else {
+        return false;
+    };
+    if !matches!(assoc_item.kind, AssocKind::Fn { has_self: false, .. }) {
+        return false;
+    }
+    let fn_sig = tcx.fn_sig(def_id).skip_binder();
+    let output = fn_sig.output().skip_binder();
+    let TyKind::Adt(adt_def, substs) = output.kind() else {
+        return false;
+    };
+    if !(adt_def.is_enum()
+        && (tcx.is_diagnostic_item(sym::Option, adt_def.did())
+            || tcx.is_diagnostic_item(sym::Result, adt_def.did())))
+    {
+        return false;
+    }
+    let inner_ty = substs.type_at(0);
+    if inner_ty.is_param(0) {
+        return true;
+    }
+    if let Some(impl_id) = assoc_item.impl_container(tcx) {
+        let ty_impl = tcx.type_of(impl_id).skip_binder();
+        if inner_ty == ty_impl {
+            return true;
+        }
+    }
+    false
+}
+
 // result: adt_def_id, is_literal
 pub fn get_adt_via_method(tcx: TyCtxt<'_>, method_def_id: DefId) -> Option<AdtInfo> {
     let assoc_item = tcx.opt_associated_item(method_def_id)?;

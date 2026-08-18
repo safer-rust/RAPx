@@ -1,6 +1,4 @@
 use super::statistic::Statistics;
-#[cfg(not(rapx_has_skip_norm_wip))]
-use crate::compat::SkipNormWip;
 
 use rustc_hir::{
     BodyId, FnDecl,

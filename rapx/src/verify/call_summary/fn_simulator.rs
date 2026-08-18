@@ -117,6 +117,12 @@ static REGISTRY: &[Entry] = &[
     E!(api_classify::is_vec_with_capacity,     dep0!(),  false, none!(), eff_new_allocation_from_cap),
     E!(api_classify::is_into_boxed_slice,      dep0!(),  false, none!(), eff_box_from_vec),
 
+    // ── Allocator::allocate / allocate_zeroed / grow / shrink ────────
+    E!(allocator_allocate,    dep01!(), false,  none!(),  eff_allocator_allocate),
+
+    // ── Layout accessors ────────────────────────────────────────────
+    E!(layout_align,          none!(),  false,  none!(),  eff_layout_align),
+
     // ── Layout constants ────────────────────────────────────────────
     E!(api_classify::is_layout_constant, none!(), false,  none!(),  eff_layout_const),
 
@@ -334,6 +340,14 @@ fn eff_vec_from_box(_ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     ]
 }
 
+fn eff_allocator_allocate(_ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnAllocBuffer]
+}
+
+fn eff_layout_align(_ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnPowerOfTwo]
+}
+
 fn eff_forget(_ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     vec![
         CallEffect::CleanSliceDataLinks { arg: 0 },
@@ -368,6 +382,13 @@ fn nonnull_as_mut(n: &str) -> bool          { n.ends_with("::as_mut") && api_cla
 fn ptr_read(n: &str) -> bool                { n.ends_with("::read") && n.contains("::ptr::") }
 fn is_empty(n: &str) -> bool                { n.ends_with("::is_empty") }
 fn cmp_min(n: &str) -> bool                 { (n.contains("::cmp::min") || n.contains("::Ord::min") || n.starts_with("core::cmp::min")) && !n.contains("min_by") }
+fn allocator_allocate(n: &str) -> bool      {
+    n.ends_with("::Allocator::allocate")
+        || n.ends_with("::Allocator::allocate_zeroed")
+        || n.ends_with("::Allocator::grow")
+        || n.ends_with("::Allocator::shrink")
+}
+fn layout_align(n: &str) -> bool            { n.ends_with("Layout::align") && !n.ends_with("Layout::alignment") }
 fn saturating_sub(n: &str) -> bool          { n.contains("::saturating_sub") }
 fn split_at(n: &str) -> bool                { n.contains("::split_at") }
 fn is_slice_get_unchecked(n: &str) -> bool   { 

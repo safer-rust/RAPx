@@ -14,7 +14,7 @@ pub mod interprocedural;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{Local, Operand},
-    ty::{Ty, TyCtxt, TyKind},
+    ty::{GenericArgKind, Ty, TyCtxt, TyKind},
 };
 
 use super::slicer::ForgetReason;
@@ -132,6 +132,14 @@ pub enum CallEffect {
     /// itself (a Box fat pointer) rather than a separate count argument.
     /// Used for `into_vec` / `box_assume_init_into_vec_unsafe`.
     ReturnNewAllocationFromBox { box_arg: usize },
+    /// `Allocator::allocate(self, layout)` / `allocate_zeroed` returns a
+    /// `Result<NonNull<[u8]>, AllocError>`. Model the `Ok` variant as a fresh
+    /// *external* (unbounded) allocation so downstream `NonNull`/`Allocated`
+    /// checks auto-pass regardless of the symbolic `layout.size()`. The
+    /// `Result` downcast (`((result as Ok).0)`) then propagates the provenance.
+    ReturnAllocBuffer,
+    /// The return value is a non-zero power of two (models `Layout::align`).
+    ReturnPowerOfTwo,
     /// The call transfers a Vec's backing allocation into a Box (e.g.
     /// `Vec::into_boxed_slice`). Looks up the current heap allocation from
     /// `slice_data_allocations` via the argument's stack provenance.
@@ -185,6 +193,12 @@ pub enum CallEffect {
     /// those two pointer fields so downstream `Iterator::next` / `len` /
     /// `is_empty` can resolve the iterator's provenance and element type.
     ReturnIter { receiver_arg: usize },
+    /// `<ManuallyDrop<T> as Deref>::deref` / `MaybeDangling::as_ref` return a
+    /// reference to the inner value at the *same* address (transparent
+    /// wrappers).  The return aliases `arg` (a `&T` pointing at `arg`'s
+    /// pointee) and its pointee field values are the argument's field values
+    /// with the leading `peel` transparent field-0 hops stripped.
+    ReturnTransparentDeref { arg: usize, peel: usize },
 }
 
 /// Return dependency information for a MIR call terminator.
@@ -251,6 +265,20 @@ pub fn effect_summary<'tcx>(
 
     if let Some(summary) = fn_simulator::lookup_effect(tcx, caller, callee, &name, func, destination) {
         return summary;
+    }
+
+    // Transparent-wrapper deref: `<ManuallyDrop<T> as Deref>::deref` /
+    // `deref_mut` (and `MaybeDangling::as_ref`/`as_mut`) return a reference to
+    // the inner value at the same address.  The std MIR for these is
+    // unavailable cross-crate, so model them with field-value peeling.
+    if let Some(peel) = transparent_deref_peel(tcx, func) {
+        return CallEffectSummary {
+            callee,
+            name,
+            destination: Some(destination),
+            effects: vec![CallEffect::ReturnTransparentDeref { arg: 0, peel }],
+            unsupported: false,
+        };
     }
 
     // Interprocedural fallback for local callees.
@@ -332,6 +360,29 @@ pub fn effect_summary<'tcx>(
     }
 
     CallEffectSummary::unknown(callee, name, Some(destination))
+}
+
+/// Detect a transparent-wrapper deref whose receiver is `ManuallyDrop<T>` or
+/// `MaybeDangling<T>`, and return how many leading field-0 hops must be peeled
+/// to reach the inner `T`:
+///   * `ManuallyDrop<T> { value: MaybeDangling<T> }` → 2 (`value` → `MaybeDangling.0`)
+///   * `MaybeDangling<P>(P)` → 1.
+fn transparent_deref_peel<'tcx>(tcx: TyCtxt<'tcx>, func: &Operand<'tcx>) -> Option<usize> {
+    let Operand::Constant(c) = func else { return None };
+    let TyKind::FnDef(_, args) = c.const_.ty().kind() else { return None };
+    let self_ty = args.iter().find_map(|a| {
+        #[cfg(rapx_rustc_ge_199)] let a = a.skip_binder();
+        if let GenericArgKind::Type(t) = a.kind() { Some(t) } else { None }
+    })?;
+    let TyKind::Adt(adt_def, _) = self_ty.kind() else { return None };
+    let path = tcx.def_path_str(adt_def.did());
+    if path.contains("ManuallyDrop") {
+        Some(2)
+    } else if path.contains("MaybeDangling") {
+        Some(1)
+    } else {
+        None
+    }
 }
 
 /// Return true when every argument type is *layout-safe*: passing such a value

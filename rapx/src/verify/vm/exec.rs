@@ -202,6 +202,15 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             self.set_local(dest, val);
         }
 
+        // The callee returned a fully-constructed value, so the caller's
+        // destination stack slot is initialized.  Matters for ADT returns
+        // (struct/enum) whose aggregate value carries no provenance: a later
+        // `&raw const (*&field)` + `ptr::read` must discharge `Init` against
+        // the field.
+        if let Some(dest_alloc_id) = self.local_alloc_ids.get(&dest).copied() {
+            self.init_allocations.insert(dest_alloc_id);
+        }
+
         // Re-key the callee's return field values onto the caller's dest local.
         for (fields, field_val) in return_fields {
             self.set_field_value(dest, fields, field_val);
@@ -1854,6 +1863,22 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 })
             }
             Rvalue::Aggregate(_kind, operands) => {
+                // For an enum aggregate, remember whether this is the
+                // data-carrying variant of `Option`/`Result` (`Some`/`Ok`), so
+                // the nested-field flattening below only fires on paths that
+                // actually carry a `Self` value.
+                let data_variant = match &**_kind {
+                    rustc_middle::mir::AggregateKind::Adt(did, variant_idx, ..) => {
+                        if self.tcx.is_diagnostic_item(rustc_span::sym::Result, *did) {
+                            Some(variant_idx.as_usize() == 0)
+                        } else if self.tcx.is_diagnostic_item(rustc_span::sym::Option, *did) {
+                            Some(variant_idx.as_usize() == 1)
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                };
                 // `NonNull::new_unchecked(ptr)` / `NonNull::from(&T)` construct a
                 // repr(transparent) single-field newtype whose value *is* the
                 // underlying pointer.  Model the wrapper as the pointer field
@@ -1901,6 +1926,32 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     let field_term = field_val.term.clone();
                     self.set_field_value(dest_local, vec![i], field_val);
                     self.mark_field_init(dest_local, vec![i]);
+                    // Flatten a nested aggregate: if the operand is a local whose
+                    // own fields are tracked (e.g. `_0 = Result::Ok(_24)` where
+                    // `_24 = RawVecInner { ptr: _25, .. }`), expose the nested
+                    // fields under the destination's field path so a contract
+                    // place like `Return.Field(0).Field(0)` (the `Ok` variant's
+                    // data, then the struct field) can resolve to `_25`.
+                    // Only flatten the data-carrying variant (`Ok`/`Some`); on
+                    // `Err`/`None` paths there is no `Self` and the nested place
+                    // should resolve to `Unknown` instead.
+                    if data_variant != Some(false) {
+                        if let Some(op_place) = operand.place() {
+                            if op_place.projection.is_empty() {
+                                let nested: Vec<(Vec<usize>, VmValue<'ctx, 'tcx>)> = self
+                                    .field_values
+                                    .iter()
+                                    .filter(|((l, _), _)| *l == op_place.local)
+                                    .map(|((_, p), v)| (p.clone(), v.clone()))
+                                    .collect();
+                                for (nested_path, nested_val) in nested {
+                                    let mut full = vec![i];
+                                    full.extend_from_slice(&nested_path);
+                                    self.set_field_value(dest_local, full, nested_val);
+                                }
+                            }
+                        }
+                    }
                     if let Some(alloc_id) = dest_alloc_id {
                         self.init_allocations.insert(alloc_id);
                         if is_byte_array && field_sz == 1 {
@@ -1939,10 +1990,26 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     }
                     byte_offset += field_sz;
                 }
+                // Fat-pointer construction (inlined `from_raw_parts` /
+                // `slice_from_raw_parts_mut`): the result's address and
+                // provenance are those of the data pointer (field 0), so
+                // downstream `Allocated`/`Owning` checks on the slice resolve
+                // against the real buffer instead of a fresh `aggregate` symbol.
+                let is_slice_ptr = matches!(dest_ty.kind(),
+                    rustc_middle::ty::TyKind::RawPtr(inner, _) | rustc_middle::ty::TyKind::Ref(_, inner, _)
+                        if matches!(inner.kind(), rustc_middle::ty::TyKind::Slice(_)));
+                let (result_term, result_prov) = if is_slice_ptr {
+                    match self.field_value(dest_local, &[0]).cloned() {
+                        Some(data) => (data.term.clone(), data.provenance.clone()),
+                        None => (term.clone(), None),
+                    }
+                } else {
+                    (term.clone(), None)
+                };
                 Ok(VmValue {
-                    term,
+                    term: result_term,
                     ty: dest_ty,
-                    provenance: None,
+                    provenance: result_prov,
                     invariants: ValueInvariants::default(),
                 })
             }
@@ -2666,54 +2733,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 }
             }
             PropertyKind::Allocated => {
-                if let Some(local) = self.contract_target_local(property) {
-                    if let Some(val) = self.locals.get(&local).cloned() {
-                        if let Some(alloc_id) = val.provenance_alloc_id() {
-                            self.dead_allocations.remove(&alloc_id);
-                        }
-                        // For raw-pointer parameters with Allocated contracts,
-                        // create a proper external allocation matching the contract
-                        // size (count * sizeof(T)). The stack allocation created by
-                        // init_parameters is only sizeof(ptr) bytes — too small for
-                        // pointer arithmetic like x.add(i).
-                        let elem_ty = property.args().get(1)
-                            .and_then(|a| if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None });
-                        let count_term = property.args().get(2).and_then(|a| self.resolve_contract_count(a));
-                        if let (Some(elem_ty), Some(count_term)) = (elem_ty, count_term) {
-                            let elem_sz_raw = self.size_of_ty(elem_ty);
-                            let heap_align = self.align_of_ty(elem_ty).max(1);
-                            let (heap_id, heap_base) = if elem_sz_raw == 0 {
-                                // Generic type param: size unknown. Use a large external
-                                // alloc so bounds checks auto-pass.
-                                let max_size = Int::from_u64(self.ctx, i64::MAX as u64);
-                                self.allocate_external(max_size, heap_align, Some(elem_ty))
-                            } else {
-                                let elem_sz = Int::from_u64(self.ctx, elem_sz_raw as u64);
-                                let total = Int::mul(self.ctx, &[&count_term, &elem_sz]);
-                                self.allocate_external(total, heap_align, Some(elem_ty))
-                            };
-                            self.init_allocations.insert(heap_id);
-                            let v = VmValue {
-                                term: heap_base,
-                                ty: val.ty,
-                                provenance: Some(Provenance {
-                                    alloc_id: heap_id,
-                                    offset: Int::from_u64(self.ctx, 0),
-                                    is_field_offset: false,
-                                }),
-                                invariants: ValueInvariants {
-                                    non_null: true,
-                                    init: true,
-                                    in_bounds: true,
-                                    aligned: true,
-                                    align_n: if heap_align > 1 { Some(heap_align) } else { None },
-                                    is_field_offset: false,
-                                },
-                            };
-                            self.set_local(local, v);
-                        }
-                    }
-                }
+                self.assert_allocated_fact(property);
             }
             PropertyKind::Typed => {
                 if let Some(val) = self.contract_target_value(property) {
@@ -2774,6 +2794,139 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 Some(Local::from_usize(n + 1))
             }
             PlaceBase::Return => Some(Local::from_usize(0)),
+        }
+    }
+
+    /// Materialize a fresh external allocation for an `Allocated` contract
+    /// fact, returning a value carrying the allocation's provenance.
+    fn materialize_external_alloc(
+        &mut self,
+        elem_ty: Ty<'tcx>,
+        count_term: Option<Int<'ctx>>,
+        val_ty: Ty<'tcx>,
+        huge: bool,
+    ) -> VmValue<'ctx, 'tcx> {
+        let elem_sz_raw = self.size_of_ty(elem_ty);
+        let heap_align = self.align_of_ty(elem_ty).max(1);
+        let (heap_id, heap_base) = if huge || elem_sz_raw == 0 {
+            // Struct-field targets (and generic element types): use an
+            // unbounded external allocation so `Allocated`/`InBound` checks
+            // auto-pass regardless of the symbolic element size.
+            let max_size = Int::from_u64(self.ctx, i64::MAX as u64);
+            self.allocate_external(max_size, heap_align, Some(elem_ty))
+        } else {
+            let elem_sz = Int::from_u64(self.ctx, elem_sz_raw as u64);
+            let count = count_term.unwrap_or_else(|| Int::from_u64(self.ctx, 1));
+            let total = Int::mul(self.ctx, &[&count, &elem_sz]);
+            self.allocate_external(total, heap_align, Some(elem_ty))
+        };
+        self.init_allocations.insert(heap_id);
+        VmValue {
+            term: heap_base,
+            ty: val_ty,
+            provenance: Some(Provenance {
+                alloc_id: heap_id,
+                offset: Int::from_u64(self.ctx, 0),
+                is_field_offset: false,
+            }),
+            invariants: ValueInvariants {
+                non_null: true,
+                init: true,
+                in_bounds: true,
+                aligned: true,
+                align_n: if heap_align > 1 { Some(heap_align) } else { None },
+                is_field_offset: false,
+            },
+        }
+    }
+
+    /// Assert an `Allocated(p, T, n)` contract fact by materializing a fresh
+    /// external allocation for the pointer-typed target.
+    ///
+    /// - For a whole pointer parameter (`src`), the allocation is sized
+    ///   `n * sizeof(T)` so downstream pointer arithmetic stays in bounds.
+    /// - For a plain pointer *field* (e.g. `RawVecInner::ptr`), the allocation
+    ///   is written back to the field via `set_contract_target_value`, and is
+    ///   unbounded so field-subrange `InBound` checks auto-pass.
+    /// - For `IterElements`/`Downcast` targets (e.g. `buckets.iter()`), the
+    ///   container itself is not a pointer — keep the legacy whole-local
+    ///   behaviour.
+    fn assert_allocated_fact(&mut self, property: &Property<'tcx>) {
+        let elem_ty = property.args().get(1)
+            .and_then(|a| if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None });
+        let count_term = property.args().get(2).and_then(|a| self.resolve_contract_count(a));
+        let Some(elem_ty) = elem_ty else { return };
+
+        let has_nonfield = property.args().first()
+            .and_then(|a| match a {
+                PropertyArg::Expr(ContractExpr::Place(cp)) => Some(cp),
+                PropertyArg::Expr(ContractExpr::IndexAccess { slice, .. }) => {
+                    match slice.as_ref() {
+                        ContractExpr::Place(cp) => Some(cp),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            })
+            .map(|cp| {
+                cp.projections.iter().any(|p| {
+                    !matches!(p, crate::verify::contract::ContractProjection::Field { .. })
+                })
+            })
+            .unwrap_or(false);
+
+        if has_nonfield {
+            // IterElements/Downcast target: legacy whole-local, exact size.
+            let Some(local) = self.contract_target_local(property) else { return };
+            let Some(val) = self.locals.get(&local).cloned() else { return };
+            if let Some(alloc_id) = val.provenance_alloc_id() {
+                self.dead_allocations.remove(&alloc_id);
+            }
+            let v = self.materialize_external_alloc(elem_ty, count_term, val.ty, false);
+            self.set_local(local, v);
+        } else {
+            let Some((local, field_path)) = self.contract_field_path(property) else { return };
+            if field_path.is_empty() {
+                // Whole pointer parameter: exact size.
+                let Some(val) = self.locals.get(&local).cloned() else { return };
+                if let Some(alloc_id) = val.provenance_alloc_id() {
+                    self.dead_allocations.remove(&alloc_id);
+                }
+                let v = self.materialize_external_alloc(elem_ty, count_term, val.ty, false);
+                self.set_local(local, v);
+            } else {
+                // Field target. Only a *direct* pointer field (`NonNull<T>` /
+                // `*mut T` / `*const T`) to a *simple* element type (primitive or
+                // generic param, e.g. `NonNull<u8>`) carries the allocation
+                // itself without a nested field decomposition; a wrapped field
+                // (`Option<NonNull>`, `Box`) or a pointer-to-ADT (`NonNull<LeafNode>`,
+                // whose fields were decomposed by param init) is handled via the
+                // legacy whole-local path to avoid losing those relationships.
+                let is_direct_simple_ptr = self.field_value(local, &field_path)
+                    .map(|val| {
+                        (matches!(val.ty.kind(), rustc_middle::ty::TyKind::RawPtr(..))
+                            || matches!(val.ty.kind(), rustc_middle::ty::TyKind::Adt(adt, _)
+                                if api_classify::is_std_nonnull(&self.tcx.def_path_str(adt.did()))))
+                            && (elem_ty.is_primitive()
+                                || matches!(elem_ty.kind(), rustc_middle::ty::TyKind::Param(_)))
+                    })
+                    .unwrap_or(false);
+                if is_direct_simple_ptr {
+                    let Some(val) = self.field_value(local, &field_path).cloned() else { return };
+                    if let Some(alloc_id) = val.provenance_alloc_id() {
+                        self.dead_allocations.remove(&alloc_id);
+                    }
+                    let v = self.materialize_external_alloc(elem_ty, count_term, val.ty, true);
+                    self.set_field_value(local, field_path, v);
+                } else {
+                    let Some(val) = self.locals.get(&local).cloned() else { return };
+                    if let Some(alloc_id) = val.provenance_alloc_id() {
+                        self.dead_allocations.remove(&alloc_id);
+                    }
+                    let v = self.materialize_external_alloc(elem_ty, count_term, val.ty, false);
+                    self.set_local(local, v);
+                }
+            }
         }
     }
 
@@ -2866,14 +3019,9 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             PropertyArg::Expr(ContractExpr::Const(n)) => {
                 Some(Int::from_u64(self.ctx, *n as u64))
             }
-            PropertyArg::Expr(ContractExpr::Place(cp)) => {
-                let local = match cp.base {
-                    PlaceBase::Local(n) => Local::from_usize(n),
-                    PlaceBase::Arg(n) => Local::from_usize(n + 1),
-                    PlaceBase::Return => return None,
-                };
-                self.locals.get(&local).map(|v| v.term.clone())
-            }
+            // Delegate field-projected places and arithmetic (e.g. `cap * elem_size`)
+            // to the general simple evaluator.
+            PropertyArg::Expr(expr) => self.eval_contract_expr_simple(expr),
             _ => None,
         }
     }
@@ -2904,26 +3052,25 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 Some(Int::from_u64(self.ctx, size as u64))
             }
             ContractExpr::Place(cp) => {
-                match cp.base {
-                    PlaceBase::Local(n) => {
-                        let local = Local::from_usize(n);
-                        let mut path: Vec<usize> = Vec::new();
-                        for proj in &cp.projections {
-                            match proj {
-                                crate::verify::contract::ContractProjection::Field { index, .. } => {
-                                    path.push(*index);
-                                }
-                                // Downcast / IterElements are not scalar numeric values.
-                                _ => return None,
-                            }
+                let local = match cp.base {
+                    PlaceBase::Local(n) => Local::from_usize(n),
+                    PlaceBase::Arg(n) => Local::from_usize(n + 1),
+                    PlaceBase::Return => Local::from_usize(0),
+                };
+                let mut path: Vec<usize> = Vec::new();
+                for proj in &cp.projections {
+                    match proj {
+                        crate::verify::contract::ContractProjection::Field { index, .. } => {
+                            path.push(*index);
                         }
-                        if path.is_empty() {
-                            self.local_value(local).map(|v| v.term.clone())
-                        } else {
-                            self.field_value(local, &path).map(|v| v.term.clone())
-                        }
+                        // Downcast / IterElements are not scalar numeric values.
+                        _ => return None,
                     }
-                    _ => None,
+                }
+                if path.is_empty() {
+                    self.local_value(local).map(|v| v.term.clone())
+                } else {
+                    self.field_value(local, &path).map(|v| v.term.clone())
                 }
             }
             ContractExpr::Len(inner) => {

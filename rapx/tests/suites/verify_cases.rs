@@ -207,6 +207,16 @@ fn std_challenge_06() {
     assert_not_contain(&output, "result: UNSOUND");
 }
 
+// ================ Std Challenge 19 (RawVec) ================
+#[test]
+fn std_challenge_19() {
+    let output = run_with_args("verify_cases/std-challenge-19", CMD_VERIFY_TARGETED_VM);
+
+    // Challenge 19 (`alloc::raw_vec::mod`): a faithful, self-contained port of
+    // `RawVec`. All 19 challenge-listed functions verify SOUND.
+    assert_not_contain(&output, "result: UNSOUND");
+}
+
 // ================ HashMap Tests ================
 #[test]
 fn hashmap() {

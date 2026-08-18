@@ -45,7 +45,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
 
         let name = crate::helpers::mir_utils::call_name(self.tcx, func);
 
-
         // ── select_unpredictable: result ∈ {x, y} ─────────────────────
 
         // ── select_unpredictable: result ∈ {x, y} ─────────────────────
@@ -322,7 +321,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
 
         if !summary.unsupported {
             for effect in &summary.effects {
-                self.apply_call_effect(effect, &arg_values, destination);
+                self.apply_call_effect(effect, &arg_values, &caller_arg_locals, destination);
             }
         } else {
             if !tried_inline {
@@ -553,6 +552,14 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 for (path, fv) in return_fields {
                     self.set_field_value(dest, path, fv);
                 }
+                // The callee returned a fully-constructed value, so the
+                // caller's destination stack slot is initialized.  This matters
+                // for ADT returns (struct/enum) whose aggregate value carries
+                // no provenance: a later `&raw const (*&field)` + `ptr::read`
+                // must be able to discharge `Init` against the field.
+                if let Some(dest_alloc_id) = self.local_alloc_ids.get(&dest).copied() {
+                    self.init_allocations.insert(dest_alloc_id);
+                }
             }
             None => {
                 self.inline_depth -= 1;
@@ -638,6 +645,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     })
                 })
             }
+            #[allow(unreachable_patterns)]
             _ => false,
         };
         if discr_is_const {
@@ -772,6 +780,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         &mut self,
         effect: &CallEffect,
         args: &[VmValue<'ctx, 'tcx>],
+        caller_arg_locals: &[Local],
         dest: Local,
     ) {
         match effect {
@@ -783,6 +792,38 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     val.invariants.aligned = true;
                     val.invariants.init = true;
                     self.set_local(dest, val);
+                }
+            }
+            CallEffect::ReturnTransparentDeref { arg, peel } => {
+                if let Some(arg_val) = args.get(*arg) {
+                    let mut val = arg_val.clone();
+                    val.ty = self.body.local_decls[dest].ty;
+                    val.invariants.non_null = true;
+                    val.invariants.aligned = true;
+                    val.invariants.init = true;
+                    self.set_local(dest, val);
+                    // Peel `peel` leading field-0 hops off the argument's
+                    // pointee field values (ManuallyDrop.value → MaybeDangling.0)
+                    // and expose them as the deref result's pointee fields.
+                    if let Some(arg_local) = caller_arg_locals.get(*arg).copied() {
+                        let keys: Vec<Vec<usize>> = self
+                            .field_values
+                            .keys()
+                            .filter(|(l, _)| *l == arg_local)
+                            .map(|(_, p)| p.clone())
+                            .collect();
+                        for path in keys {
+                            if path.len() > *peel
+                                && path[..*peel].iter().all(|&f| f == 0)
+                            {
+                                if let Some(v) =
+                                    self.field_values.get(&(arg_local, path.clone())).cloned()
+                                {
+                                    self.set_field_value(dest, path[*peel..].to_vec(), v);
+                                }
+                            }
+                        }
+                    }
                 }
             }
             CallEffect::ReturnTupleFieldLength { field: _field, from_arg: _from_arg } => {
@@ -1615,6 +1656,54 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     val.invariants.non_null = true;
                     self.set_local(dest, val);
                 }
+            }
+            CallEffect::ReturnAllocBuffer => {
+                // Model `Allocator::allocate(self, layout)`'s `Ok` variant as a
+                // fresh *external* allocation: the exact byte count is
+                // `layout.size()`, a symbolic value, so mark the allocation
+                // unbounded (`is_external`) so `NonNull`/`Allocated` checks
+                // auto-pass. The `Result` downcast `((_res as Ok).0)` copies
+                // this provenance into the extracted `NonNull<[u8]>`.
+                let dest_ty = self.body.local_decls[dest].ty;
+                let max = Int::from_u64(self.ctx, i64::MAX as u64);
+                let (alloc_id, base) = self.allocate_external(max, 1, None);
+                self.init_allocations.insert(alloc_id);
+                self.set_local(dest, VmValue {
+                    term: base,
+                    ty: dest_ty,
+                    provenance: Some(Provenance {
+                        alloc_id,
+                        offset: Int::from_u64(self.ctx, 0),
+                        is_field_offset: false,
+                    }),
+                    invariants: ValueInvariants {
+                        non_null: true,
+                        init: true,
+                        in_bounds: true,
+                        aligned: true,
+                        ..ValueInvariants::default()
+                    },
+                });
+            }
+            CallEffect::ReturnPowerOfTwo => {
+                // `Layout::align()` returns the layout's alignment, which is a
+                // non-zero power of two. `Layout::align` inlines to
+                // `self.align.as_usize()`, whose transmute-based body drops the
+                // `NonZero` provenance; re-establish the non-zero fact (and the
+                // power-of-two fact) with a fresh symbol so downstream
+                // `from_size_align_unchecked` can discharge `align != 0` (its
+                // `(align & (align - 1)) == 0` check is otherwise vacuously
+                // proved, since contract-level `BitAnd` is unsupported).
+                let dest_ty = self.body.local_decls[dest].ty;
+                let term = self.fresh_int(&format!("layout_align_{}", dest.as_usize()));
+                let zero = Int::from_u64(self.ctx, 0);
+                self.path_conditions.push(term.gt(&zero));
+                self.set_local(dest, VmValue {
+                    term,
+                    ty: dest_ty,
+                    provenance: None,
+                    invariants: ValueInvariants::default(),
+                });
             }
             CallEffect::ChecksIndexBoundsDisjoint { indices_arg, len_arg } => {
                 let indices = args.get(*indices_arg);
