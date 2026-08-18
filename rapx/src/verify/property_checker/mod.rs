@@ -74,6 +74,7 @@ impl PropertyChecker {
                 PropertyKind::NonOverlap => self.check_non_overlap(vm_state, solver, checkpoint, property),
                 PropertyKind::NonVolatile => CheckResult::Proved,
                 PropertyKind::ValidNum => self.check_valid_num(vm_state, solver, checkpoint, property),
+                PropertyKind::ValidString => self.check_valid_string(vm_state, solver, checkpoint, property),
                 PropertyKind::ValidCStr => self.check_valid_cstr(vm_state, solver, checkpoint, property),
                 PropertyKind::ValidTransmute => {
                     self.check_valid_transmute(vm_state, solver, checkpoint, property)
@@ -405,6 +406,66 @@ impl PropertyChecker {
             return Int::from_u64(vm_state.ctx, (elem as u64).max(1) * count.max(1));
         }
         Int::mul(vm_state.ctx, &[&elem_size_term, &count_term])
+    }
+
+    // ── check_valid_string ─────────────────────────────────────
+
+    /// `ValidString(ptr, u8, len)` check: the byte range holds a valid UTF-8
+    /// sequence.
+    ///
+    /// RAPx does not *prove* UTF-8 validity (it is assumed, per the
+    /// verify-rust-std challenge rules: "assume the functional correctness of
+    /// `str::validations.rs` and that the string is valid UTF-8").  It does,
+    /// however, *disprove* it at the byte level: when the buffer bytes are
+    /// tracked, they are checked against the UTF-8 DFA and a provably-invalid
+    /// sequence is reported as `Failed` (as is a use-after-free).  Everything
+    /// else — valid bytes, or bytes RAPx cannot see — is trusted as `Proved`.
+    fn check_valid_string<'ctx, 'tcx>(
+        &self,
+        vm_state: &VmState<'ctx, 'tcx>,
+        solver: &Solver<'ctx>,
+        checkpoint: &Checkpoint<'tcx>,
+        property: &Property<'tcx>,
+    ) -> CheckResult {
+        // Empty byte range: trivially valid UTF-8.
+        if let Some(count) = property
+            .args()
+            .get(2)
+            .and_then(|a| self.resolve_arg_term(vm_state, checkpoint, a))
+        {
+            if count.as_u64() == Some(0) {
+                return CheckResult::Proved;
+            }
+        }
+
+        let Some(value) = self.target_value(vm_state, checkpoint, property) else {
+            return CheckResult::Proved;
+        };
+        let Some(alloc_id) = value.provenance_alloc_id() else {
+            return CheckResult::Proved;
+        };
+
+        // A dead allocation cannot back a live string (use-after-free).
+        if vm_state.dead_allocations.contains(&alloc_id) {
+            return CheckResult::Failed;
+        }
+
+        // Byte-level check: prove the tracked buffer bytes are *not* valid UTF-8.
+        let byte_pairs = vm_state.alloc_byte_values(alloc_id);
+        if byte_pairs.is_empty() {
+            return CheckResult::Proved; // no byte-level info → trust
+        }
+        let bytes: Vec<Int<'ctx>> = byte_pairs.iter().map(|(_, t)| (*t).clone()).collect();
+        let valid = utf8_validity(vm_state.ctx, &bytes);
+
+        solver.push();
+        solver.assert(&valid);
+        let r = solver.check();
+        solver.pop(1);
+        match r {
+            SatResult::Unsat => CheckResult::Failed,
+            _ => CheckResult::Proved,
+        }
     }
 
     // ── check_align ────────────────────────────────────────────
@@ -2591,4 +2652,84 @@ fn signature_return_has_lifetime(tcx: rustc_middle::ty::TyCtxt<'_>, def_id: rust
     let ret = sig.split("->").nth(1)?;
     let ret = ret.split("where").next()?.trim();
     Some((sig.to_string(), ret.to_string()))
+}
+
+/// Build the boolean expression "`bytes` form a valid UTF-8 sequence".
+///
+/// Encodes the UTF-8 DFA over the per-byte Z3 terms: every byte is ASCII, a
+/// continuation byte, or a valid lead byte, and a `k`-byte lead must be
+/// followed by exactly `k-1` continuation bytes.  Value-range refinements
+/// reject overlong encodings, surrogates (U+D800..=U+DFFF), and code points
+/// above U+10FFFF.
+fn utf8_validity<'ctx>(ctx: &'ctx z3::Context, bytes: &[Int<'ctx>]) -> Bool<'ctx> {
+    let zero = Int::from_u64(ctx, 0);
+    let one = Int::from_u64(ctx, 1);
+    let two = Int::from_u64(ctx, 2);
+    let three = Int::from_u64(ctx, 3);
+
+    let c_0x80 = Int::from_u64(ctx, 0x80);
+    let c_0xc0 = Int::from_u64(ctx, 0xC0);
+    let c_0xc2 = Int::from_u64(ctx, 0xC2);
+    let c_0xe0 = Int::from_u64(ctx, 0xE0);
+    let c_0xf0 = Int::from_u64(ctx, 0xF0);
+    let c_0xf5 = Int::from_u64(ctx, 0xF5);
+    let c_0xa0 = Int::from_u64(ctx, 0xA0);
+    let c_0x90 = Int::from_u64(ctx, 0x90);
+    let c_0xed = Int::from_u64(ctx, 0xED);
+    let c_0xf4 = Int::from_u64(ctx, 0xF4);
+
+    let mut valid = Bool::from_bool(ctx, true);
+    // Number of continuation bytes still pending for the current multi-byte
+    // sequence (0..=3).  `lead` holds the lead byte (only meaningful while a
+    // multi-byte sequence is open).
+    let mut state = zero.clone();
+    let mut lead = zero.clone();
+
+    for b in bytes {
+        let is_ascii = b.lt(&c_0x80);
+        let is_cont = b.ge(&c_0x80) & b.lt(&c_0xc0);
+        let is_2lead = b.ge(&c_0xc2) & b.lt(&c_0xe0);
+        let is_3lead = b.ge(&c_0xe0) & b.lt(&c_0xf0);
+        let is_4lead = b.ge(&c_0xf0) & b.lt(&c_0xf5);
+
+        // Overlong / surrogate / >U+10FFFF refinements on the first
+        // continuation byte.  Each disjunct is vacuous unless `lead` equals the
+        // constrained lead byte.
+        let refine_3 = (lead._eq(&c_0xe0).not() | b.ge(&c_0xa0))
+            & (lead._eq(&c_0xed).not() | b.lt(&c_0xa0));
+        let refine_4 = (lead._eq(&c_0xf0).not() | b.ge(&c_0x90))
+            & (lead._eq(&c_0xf4).not() | b.lt(&c_0x90));
+
+        let valid_s0 = is_ascii.clone() | is_2lead.clone() | is_3lead.clone() | is_4lead.clone();
+        let valid_s1 = is_cont.clone();
+        let valid_s2 = is_cont.clone() & refine_3;
+        let valid_s3 = is_cont.clone() & refine_4;
+
+        let state0 = state._eq(&zero);
+        let state1 = state._eq(&one);
+        let state2 = state._eq(&two);
+
+        let byte_valid = Bool::ite(
+            &state0,
+            &valid_s0,
+            &Bool::ite(&state1, &valid_s1, &Bool::ite(&state2, &valid_s2, &valid_s3)),
+        );
+
+        let new_state_s0 = Bool::ite(
+            &is_ascii,
+            &zero,
+            &Bool::ite(&is_2lead, &one, &Bool::ite(&is_3lead, &two, &three)),
+        );
+        let new_state_cont = Bool::ite(&state1, &zero, &Bool::ite(&state2, &one, &two));
+        let new_state = Bool::ite(&state0, &new_state_s0, &new_state_cont);
+
+        valid = valid & byte_valid;
+        // Remember a 3-/4-byte lead so its first continuation is refined.
+        let is_lead34 = is_3lead | is_4lead;
+        lead = Bool::ite(&(state0 & is_lead34), b, &lead);
+        state = new_state;
+    }
+
+    valid = valid & state._eq(&zero);
+    valid
 }

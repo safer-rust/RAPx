@@ -46,6 +46,16 @@ unsound_tests_vm! {
     validcstring_std_unsound_08: "verify_units/validcstring_std_unsound_08" => "unsound_nested_scc_switches_to_invalid" => "ValidCStr",
 }
 
+// ================ ValidString Sound Cases =============
+sound_tests_vm! {
+    validstring_std_sound_01: "verify_units/validstring_std_sound_01" => "sound_valid_utf8_literal",
+}
+
+// ================ ValidString Unsound Cases =============
+unsound_tests_vm! {
+    validstring_std_unsound_01: "verify_units/validstring_std_unsound_01" => "unsound_invalid_utf8_literal" => "ValidString",
+}
+
 // ================ Align Sound Cases =============
 sound_tests_vm! {
     align_sound_01: "verify_units/align_sound_1"  => "sound_named_contract_binds_callsite_arg",

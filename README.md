@@ -210,7 +210,7 @@ This checklist maps RAPx's contract verification to the [Primitive Safety Proper
 | `InBound`      | InBound(p, T, len)          |     ✅    |
 | `NonOverlap`   | !Overlap(dst, src, T, len)  |     ✅    |
 | `ValidNum`     | ValidNum(exp, vrange)       |     ✅    |
-| `ValidString`  | ValidString(arange)         |     —     |
+| `ValidString`  | ValidString(arange)         |     ✅    |
 | `ValidCStr`    | ValidCStr(p, len)           |     ✅    |
 | `Init`         | Init(p, T, len)             |     ✅    |
 | `Unwrap`       | Unwrap(x, T)                |     —     |

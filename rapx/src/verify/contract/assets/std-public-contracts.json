@@ -4199,7 +4199,7 @@
       "args": [
         "self",
         "u8",
-        "1"
+        "len(self)"
       ]
     },
     {
@@ -4217,7 +4217,7 @@
       "args": [
         "self",
         "u8",
-        "1"
+        "len(self)"
       ]
     },
     {
@@ -4235,7 +4235,7 @@
       "args": [
         "self",
         "u8",
-        "1"
+        "len(self)"
       ]
     },
     {
@@ -4253,7 +4253,7 @@
       "args": [
         "self",
         "u8",
-        "1"
+        "len(self)"
       ]
     },
     {
@@ -4271,7 +4271,7 @@
       "args": [
         "self",
         "u8",
-        "1"
+        "len(self)"
       ]
     }
   ],
@@ -4281,7 +4281,7 @@
       "args": [
         "v",
         "u8",
-        "1"
+        "len(v)"
       ]
     }
   ],
@@ -4291,7 +4291,7 @@
       "args": [
         "v",
         "u8",
-        "1"
+        "len(v)"
       ]
     }
   ],
@@ -4435,7 +4435,7 @@
       "args": [
         "self",
         "u8",
-        "1"
+        "len(self)"
       ]
     },
     {
@@ -4453,7 +4453,7 @@
       "args": [
         "self",
         "u8",
-        "1"
+        "len(self)"
       ]
     },
     {
@@ -4532,7 +4532,7 @@
     {
       "tag": "ValidNum",
       "args": [
-        "size_of(T) * len <= isize::MAX"
+        "size_of(T) * length <= isize::MAX"
       ]
     },
     {
@@ -5330,41 +5330,11 @@
       "args": [
         "v",
         "u8",
-        "1"
+        "len(v)"
       ]
     }
   ],
   "alloc::string::from_raw_parts": [
-    {
-      "tag": "Allocated",
-      "args": [
-        "ptr",
-        "T",
-        "1",
-        "global"
-      ]
-    },
-    {
-      "tag": "Typed",
-      "args": [
-        "ptr",
-        "T"
-      ]
-    },
-    {
-      "tag": "ValidNum",
-      "args": [
-        "size_of(u8) * len <= isize::MAX"
-      ]
-    },
-    {
-      "tag": "ValidString",
-      "args": [
-        "buf",
-        "u8",
-        "capacity"
-      ]
-    },
     {
       "tag": "Allocated",
       "args": [
@@ -5379,6 +5349,36 @@
         "buf",
         "u8"
       ]
+    },
+    {
+      "tag": "InBound",
+      "args": [
+        "buf",
+        "u8",
+        "length"
+      ]
+    },
+    {
+      "tag": "ValidNum",
+      "args": [
+        "size_of(u8) * length <= isize::MAX"
+      ]
+    },
+    {
+      "tag": "Init",
+      "args": [
+        "buf",
+        "u8",
+        "length"
+      ]
+    },
+    {
+      "tag": "ValidString",
+      "args": [
+        "buf",
+        "u8",
+        "length"
+      ]
     }
   ],
   "alloc::string::from_utf8_unchecked": [
@@ -5387,7 +5387,7 @@
       "args": [
         "bytes",
         "u8",
-        "1"
+        "len(bytes)"
       ]
     }
   ],
@@ -5397,7 +5397,7 @@
       "args": [
         "self",
         "u8",
-        "1"
+        "len(self)"
       ]
     }
   ],
@@ -5629,7 +5629,7 @@
       "args": [
         "s",
         "u8",
-        "1"
+        "len(s)"
       ]
     }
   ],
@@ -6141,7 +6141,7 @@
       "args": [
         "s",
         "u8",
-        "1"
+        "len(s)"
       ]
     }
   ],

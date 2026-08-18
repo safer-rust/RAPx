@@ -232,6 +232,17 @@ fn std_challenge_20() {
     assert_not_contain(&output, "result: UNSOUND");
 }
 
+// ================ Std Challenge 10 (String) ================
+#[test]
+fn std_challenge_10() {
+    let output = run_with_args("verify_cases/std-challenge-10", CMD_VERIFY_TARGETED_VM);
+
+    // Challenge 10 (`alloc::string::String`): a faithful, self-contained port
+    // of `library/alloc/src/string.rs` over a byte-level `Vec<u8>` buffer. The
+    // 15 challenge-listed safe abstractions must all verify SOUND.
+    assert_not_contain(&output, "result: UNSOUND");
+}
+
 // ================ HashMap Tests ================
 #[test]
 fn hashmap() {

@@ -45,6 +45,7 @@ pub struct FreeBlock {
 #[rapx::invariant(Align(heap, FreeBlock))]
 #[rapx::invariant(Owning(heap))]
 #[rapx::invariant(InBound(heap, u8, size))]
+#[rapx::invariant(ValidNum(size <= isize::MAX))]
 #[rapx::invariant(Align(head.unwrap_some(), FreeBlock))]
 #[rapx::invariant(Allocated(head.unwrap_some(), FreeBlock, 1))]
 #[rapx::invariant(Typed(head.unwrap_some(), FreeBlock))]
@@ -63,6 +64,7 @@ impl FreeListAllocator {
     #[rapx::verify]
     pub fn new(size: usize) -> Self {
         assert!(size >= mem::size_of::<FreeBlock>());
+        assert!(size <= isize::MAX);
 
         let mut buf = vec![0u8; size];
         let heap = NonNull::new(buf.as_mut_ptr()).expect("non-null after vec alloc");
