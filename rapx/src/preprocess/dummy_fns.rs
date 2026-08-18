@@ -15,6 +15,9 @@ fn make_dummy_fn_sig() -> FnSig {
             safety: Safety::Default,
             constness: Const::No,
             ext: Extern::None,
+            #[cfg(rapx_rustc_ge_200)]
+            coroutine_marker: None,
+            #[cfg(not(rapx_rustc_ge_200))]
             coroutine_kind: None,
         },
         span: DUMMY_SP,
