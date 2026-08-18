@@ -217,6 +217,21 @@ fn std_challenge_19() {
     assert_not_contain(&output, "result: UNSOUND");
 }
 
+// ================ Std Challenge 20 (str::pattern char searchers) ================
+#[test]
+fn std_challenge_20() {
+    let output = run_with_args("verify_cases/std-challenge-20", CMD_VERIFY_TARGETED_VM);
+
+    // Challenge 20 (`core::str::pattern` char searchers): a faithful,
+    // self-contained port of the six `Searcher` types (`CharSearcher`,
+    // `MultiCharEqSearcher`, `CharArraySearcher`, `CharArrayRefSearcher`,
+    // `CharSliceSearcher`, `CharPredicateSearcher`). The six methods
+    // (`next`, `next_match`, `next_reject`, `next_back`, `next_match_back`,
+    // `next_back_reject`) plus the two `into_searcher` constructors — 38
+    // functions in total — all verify SOUND.
+    assert_not_contain(&output, "result: UNSOUND");
+}
+
 // ================ HashMap Tests ================
 #[test]
 fn hashmap() {

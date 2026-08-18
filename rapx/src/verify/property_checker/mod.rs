@@ -2320,33 +2320,59 @@ impl PropertyChecker {
         checkpoint: Option<&Checkpoint<'tcx>>,
         cp: &crate::verify::contract::ContractPlace<'tcx>) -> Option<Int<'ctx>>
     {
-        match cp.base {
-            PlaceBase::Return => {
-                vm_state.local_value(Local::from_usize(0)).map(|v| v.term.clone())
+        // Collect numeric field projections.  Any non-field projection (e.g. a
+        // `Downcast` or `IterElements`) cannot be resolved to a scalar, so the
+        // place does not evaluate.
+        let mut field_path: Vec<usize> = Vec::new();
+        for proj in &cp.projections {
+            match proj {
+                ContractProjection::Field { index, .. } => field_path.push(*index),
+                _ => return None,
             }
+        }
+
+        let base_local: Option<Local> = match cp.base {
+            PlaceBase::Return => Some(Local::from_usize(0)),
             PlaceBase::Arg(n) => {
-                checkpoint.and_then(|ck| {
-                    let op = ck.args.get(n)?;
-                    self.eval_contract_operand(vm_state, op)
+                if field_path.is_empty() {
+                    return checkpoint.and_then(|ck| {
+                        let op = ck.args.get(n)?;
+                        self.eval_contract_operand(vm_state, op)
+                    });
+                }
+                // A field projection of an argument: resolve the argument
+                // operand to its underlying local so the field can be read.
+                checkpoint.and_then(|ck| ck.args.get(n)).and_then(|op| match op {
+                    Operand::Copy(p) | Operand::Move(p) => Some(p.local),
+                    _ => None,
                 })
             }
             PlaceBase::Local(n) => {
-                if let Some(ck) = checkpoint {
-                    if let Some(callee) = ck.callee {
-                        if let Some(idx) = crate::helpers::mir_utils::callee_param_index_for_local(
-                            vm_state.tcx, callee, n)
-                        {
-                            if let Some(op) = ck.args.get(idx) {
-                                if let Some(v) = self.eval_contract_operand(vm_state, op) {
-                                    return Some(v);
+                if field_path.is_empty() {
+                    if let Some(ck) = checkpoint {
+                        if let Some(callee) = ck.callee {
+                            if let Some(idx) =
+                                crate::helpers::mir_utils::callee_param_index_for_local(
+                                    vm_state.tcx, callee, n)
+                            {
+                                if let Some(op) = ck.args.get(idx) {
+                                    if let Some(v) = self.eval_contract_operand(vm_state, op) {
+                                        return Some(v);
+                                    }
                                 }
                             }
                         }
                     }
                 }
-                let local = Local::from_usize(n);
-                vm_state.local_value(local).map(|v| v.term.clone())
+                Some(Local::from_usize(n))
             }
+        };
+
+        let local = base_local?;
+        if field_path.is_empty() {
+            vm_state.local_value(local).map(|v| v.term.clone())
+        } else {
+            vm_state.field_value(local, &field_path).map(|v| v.term.clone())
         }
     }
 
