@@ -1,6 +1,10 @@
 #![feature(register_tool)]
 #![register_tool(rapx)]
-#![feature(core_intrinsics)]
+// `unchecked_shl`/`unchecked_shr` are `unchecked_shifts`-gated on the
+// verify-std toolchain (nightly-2025-11-25) but stable since 1.93; the
+// feature gate + `stable_features` allow keeps all three CI toolchains happy.
+#![feature(unchecked_shifts)]
+#![allow(stable_features)]
 #![allow(unsafe_op_in_unsafe_fn)]
 #![allow(dead_code)]
 #![allow(unused_comparisons)]
@@ -31,11 +35,12 @@
 // The port stays faithful to `std`, with the following mechanical adaptations
 // required for RAPx:
 //
-//   * Each unsafe method lowers to the same compiler intrinsic that `std`
-//     calls (`intrinsics::unchecked_add`, `unchecked_sub`, `unchecked_shl`,
-//     `unchecked_shr`, and `unchecked_sub(0, x)` for `unchecked_neg`), so the
-//     `ValidNum` pre-condition is the *only* trust boundary and the intrinsic
-//     call itself is transparent to the verifier.
+//   * Each unsafe method lowers to the same `std` primitive method it mirrors
+//     (`u32::unchecked_add`, `unchecked_sub`, `unchecked_mul`,
+//     `unchecked_shl`, `unchecked_shr`, and `0i32.unchecked_sub(x)` for
+//     `unchecked_neg`), whose RAPx contract is a `ValidNum(0 == 0)` trust
+//     boundary; only the `#[rapx::requires(ValidNum(..))]` pre-condition is
+//     the real proof obligation, discharged by the safe wrappers in Part 2.
 //
 //   * `u32` / `i32` stand in for the full integer matrix of the challenge
 //     (`u8`..`u128` for the unsigned methods, `i8`..`i128` for the signed
@@ -71,7 +76,7 @@
 #[rapx::requires(ValidNum(lhs <= u32::MAX - rhs), kind = "precond")]
 pub unsafe fn unchecked_add_ext(lhs: u32, rhs: u32) -> u32 {
     // SAFETY: the caller guarantees `lhs + rhs` does not overflow.
-    unsafe { std::intrinsics::unchecked_add(lhs, rhs) }
+    unsafe { lhs.unchecked_add(rhs) }
 }
 
 /// `u32::unchecked_sub`: `lhs - rhs`, no underflow.
@@ -82,7 +87,7 @@ pub unsafe fn unchecked_add_ext(lhs: u32, rhs: u32) -> u32 {
 #[rapx::requires(ValidNum(lhs >= rhs), kind = "precond")]
 pub unsafe fn unchecked_sub_ext(lhs: u32, rhs: u32) -> u32 {
     // SAFETY: the caller guarantees `lhs - rhs` does not underflow.
-    unsafe { std::intrinsics::unchecked_sub(lhs, rhs) }
+    unsafe { lhs.unchecked_sub(rhs) }
 }
 
 /// `u32::unchecked_mul`: `lhs * rhs`, no overflow.
@@ -94,7 +99,7 @@ pub unsafe fn unchecked_sub_ext(lhs: u32, rhs: u32) -> u32 {
 #[rapx::requires(ValidNum(0 == 0), kind = "precond")]
 pub unsafe fn unchecked_mul_ext(lhs: u32, rhs: u32) -> u32 {
     // SAFETY: the caller guarantees `lhs * rhs` does not overflow.
-    unsafe { std::intrinsics::unchecked_mul(lhs, rhs) }
+    unsafe { lhs.unchecked_mul(rhs) }
 }
 
 /// `u32::unchecked_shl`: `lhs << rhs`, no overflow.
@@ -104,7 +109,7 @@ pub unsafe fn unchecked_mul_ext(lhs: u32, rhs: u32) -> u32 {
 #[rapx::requires(ValidNum(rhs < u32::BITS), kind = "precond")]
 pub unsafe fn unchecked_shl_ext(lhs: u32, rhs: u32) -> u32 {
     // SAFETY: the caller guarantees `rhs < u32::BITS`.
-    unsafe { std::intrinsics::unchecked_shl(lhs, rhs) }
+    unsafe { lhs.unchecked_shl(rhs) }
 }
 
 /// `u32::unchecked_shr`: `lhs >> rhs`, no overflow.
@@ -114,7 +119,7 @@ pub unsafe fn unchecked_shl_ext(lhs: u32, rhs: u32) -> u32 {
 #[rapx::requires(ValidNum(rhs < u32::BITS), kind = "precond")]
 pub unsafe fn unchecked_shr_ext(lhs: u32, rhs: u32) -> u32 {
     // SAFETY: the caller guarantees `rhs < u32::BITS`.
-    unsafe { std::intrinsics::unchecked_shr(lhs, rhs) }
+    unsafe { lhs.unchecked_shr(rhs) }
 }
 
 /// `i32::unchecked_neg`: `-x`, no overflow.
@@ -124,9 +129,9 @@ pub unsafe fn unchecked_shr_ext(lhs: u32, rhs: u32) -> u32 {
 #[rapx::verify]
 #[rapx::requires(ValidNum(x != i32::MIN), kind = "precond")]
 pub unsafe fn unchecked_neg_ext(x: i32) -> i32 {
-    // SAFETY: `x != MIN` guarantees `0 - x` does not overflow;
-    // this is exactly `intrinsics::unchecked_sub(0, x)` as in `std`.
-    unsafe { std::intrinsics::unchecked_sub(0, x) }
+    // SAFETY: `x != MIN` guarantees `0 - x` does not overflow; this is
+    // `unchecked_neg` spelled as `0i32.unchecked_sub(x)`, as in `std`.
+    unsafe { 0i32.unchecked_sub(x) }
 }
 
 // ========================================================================
@@ -246,12 +251,12 @@ pub fn carrying_mul_ext(lhs: u32, rhs: u32, carry: u32) -> (u32, u32) {
 }
 
 /// `u32::carrying_mul_add`: `lhs * rhs + carry + add`, returning the
-/// low-order and high-order bits. Lowered to the compiler intrinsic, which
+/// low-order and high-order bits. Lowered to `u32::carrying_mul_add`, which
 /// cannot overflow (this is how `std` implements it).
 fn carrying_mul_add_ext(lhs: u32, rhs: u32, carry: u32, add: u32) -> (u32, u32) {
-    // SAFETY: `intrinsics::carrying_mul_add` cannot overflow; the result is
-    // split into low and high halves.
-    unsafe { std::intrinsics::carrying_mul_add(lhs, rhs, carry, add) }
+    // `carrying_mul_add` cannot overflow; the result is split into low and
+    // high halves (this is how `std` implements it).
+    lhs.carrying_mul_add(rhs, carry, add)
 }
 
 // ========================================================================

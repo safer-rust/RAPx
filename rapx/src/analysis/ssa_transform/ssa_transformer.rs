@@ -277,9 +277,8 @@ impl<'tcx> SSATransformer<'tcx> {
     fn try_const_to_usize(&self, c: &Const<'tcx>) -> Option<u64> {
         if let Some(scalar_int) = c.try_to_scalar_int() {
             let size = scalar_int.size();
-            if let Ok(bits) = scalar_int.try_to_bits(size) {
-                return Some(bits as u64);
-            }
+            let bits = scalar_int.to_bits(size);
+            return Some(bits as u64);
         }
         None
     }

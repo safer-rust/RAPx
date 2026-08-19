@@ -462,7 +462,10 @@ pub fn const_value_bytes<'tcx>(
     match value {
         ConstValue::Slice { alloc_id, .. } => alloc_id_bytes(tcx, alloc_id, depth),
         ConstValue::Scalar(scalar) => {
+            #[cfg(rapx_scalar_to_pointer_interp_result)]
             let ptr = scalar.to_pointer(&tcx).discard_err()?;
+            #[cfg(not(rapx_scalar_to_pointer_interp_result))]
+            let ptr = scalar.to_pointer(&tcx);
             let alloc_id = ptr.provenance?.alloc_id();
             alloc_id_bytes(tcx, alloc_id, depth)
         }
