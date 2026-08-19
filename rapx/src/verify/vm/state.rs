@@ -723,7 +723,11 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     && crate::helpers::mir_utils::offset_of_container(self.tcx, &constant.const_)
                         .is_some();
                 let term = if let Some(v) = int_val {
-                    Int::from_u64(self.ctx, v)
+                    if v < 0 {
+                        Int::from_i64(self.ctx, v as i64)
+                    } else {
+                        Int::from_u64(self.ctx, v as u64)
+                    }
                 } else {
                     // Create a deterministic name for const generics so
                     // multiple uses of the same parameter share one term.
@@ -962,28 +966,51 @@ pub(crate) fn const_int_from_debug(text: &str) -> Option<u64> {
     }
 }
 
-/// Resolve a MIR constant to a concrete `u64`, falling back from the cheap
+/// Resolve a MIR constant to a concrete integer, falling back from the cheap
 /// debug-text parse to full const evaluation.
 ///
-/// Only layout constants such as `offset_of!(Container, field)` are evaluated
-/// here — they produce a plain integer only once `Const::eval` runs, and are
-/// always small, non-negative offsets.  Arbitrary unevaluated consts (e.g.
-/// `usize::MAX`) are deliberately left symbolic: forcing them to a concrete
-/// `u64` would overflow downstream size arithmetic.
+/// Layout constants (`offset_of!(Container, field)`) and the `T::{BITS,MAX,MIN}`
+/// associated constants of *small* integer types (`u8`..`u32`, `i8`..`i32`) are
+/// evaluated here.  Arbitrary unevaluated consts — and the wide bounds
+/// `usize::MAX` / `u64::MAX` / `u128::MAX` — are deliberately left symbolic:
+/// forcing them to a concrete `u64` would overflow downstream size arithmetic.
 pub(crate) fn const_scalar_int<'tcx>(
     tcx: TyCtxt<'tcx>,
     constant: &rustc_middle::mir::Const<'tcx>,
     text: &str,
-) -> Option<u64> {
+) -> Option<i128> {
     if let Some(v) = const_int_from_debug(text) {
-        return Some(v);
+        return Some(v as i128);
     }
-    if crate::helpers::mir_utils::offset_of_container(tcx, constant).is_none() {
+    // Resolve `T::{BITS,MAX,MIN}` associated constants of small integer types,
+    // used in numeric bounds (`u32::MAX`) and shift-width masks (`u32::BITS`).
+    let is_num_bound =
+        text.contains("::BITS") || text.contains("::MAX") || text.contains("::MIN");
+    if !is_num_bound && crate::helpers::mir_utils::offset_of_container(tcx, constant).is_none() {
         return None;
     }
     let typing_env = TypingEnv::fully_monomorphized();
     let val = constant.eval(tcx, typing_env, rustc_span::DUMMY_SP).ok()?;
-    val.try_to_scalar_int().map(|scalar| scalar.to_bits(scalar.size()) as u64)
+    let scalar = val.try_to_scalar_int()?;
+    let bits = scalar.size().bits() as u32;
+    let raw = scalar.to_bits(scalar.size()) as i128;
+    // Keep wide bounds (`u64::MAX`, `usize::MAX`, `u128::MAX`) symbolic so
+    // they don't overflow downstream size arithmetic.
+    if raw > u32::MAX as i128 {
+        return None;
+    }
+    // Sign-extend signed integer constants (e.g. `i32::MIN` == -2147483648).
+    let ty = constant.ty();
+    if let rustc_middle::ty::TyKind::Int(_) = ty.kind() {
+        let sign = 1i128 << (bits - 1);
+        if raw >= sign {
+            Some(raw - (1i128 << bits))
+        } else {
+            Some(raw)
+        }
+    } else {
+        Some(raw)
+    }
 }
 
 // ── Constant byte-string extraction ───────────────────────────

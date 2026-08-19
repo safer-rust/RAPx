@@ -243,6 +243,26 @@ fn std_challenge_10() {
     assert_not_contain(&output, "result: UNSOUND");
 }
 
+// ================ Std Challenge 11 (Numeric Primitive Methods) ================
+#[test]
+fn std_challenge_11() {
+    let output = run_with_args("verify_cases/std-challenge-11", CMD_VERIFY_TARGETED_VM);
+
+    // Challenge 11 (`core::num` numeric primitive methods): a faithful,
+    // self-contained port of `library/core/src/num/{int,uint}_macros.rs`. The
+    // unsafe methods (`unchecked_{add,sub,mul,shl,shr,neg}`) declare their
+    // overflow pre-conditions as `ValidNum` contracts; the safe wrappers —
+    // `wrapping_{shl,shr}` (bit mask), `checked_{shl,add,sub,neg}` and
+    // `unbounded_shl` (branch guards), `widening_mul`/`carrying_mul` — plus the
+    // two `to_int_unchecked` instantiations must all verify SOUND.
+    let sound = output.matches("result: SOUND").count();
+    assert_eq!(
+        sound, 17,
+        "expected 17 SOUND functions, got {sound}\n{output}"
+    );
+    assert_not_contain(&output, "result: UNSOUND");
+}
+
 // ================ HashMap Tests ================
 #[test]
 fn hashmap() {

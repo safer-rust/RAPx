@@ -362,10 +362,35 @@ fn conv_const_path<'tcx>(
     let Some(ty) = super::resolve::resolve_type_name(tcx, def_id, ty_name) else {
         return ContractExpr::Unknown;
     };
+    // `T::BITS` is the bit width, i.e. `size_of::<T>() * 8`.
+    if which == "BITS" {
+        return ContractExpr::Binary {
+            op: NumericOp::Mul,
+            lhs: Box::new(ContractExpr::SizeOf(ty)),
+            rhs: Box::new(ContractExpr::Const(8)),
+        };
+    }
     let Some((min, max)) = super::resolve::int_type_min_max(tcx, ty) else {
         return ContractExpr::Unknown;
     };
-    ContractExpr::Const(if which == "MIN" { min } else { max })
+    match which {
+        "MAX" => ContractExpr::Const(max),
+        "MIN" => {
+            // Signed integers: `int_type_min_max` returns the negated magnitude
+            // (`-(MIN) == 2^(bits-1)`) as a `u128` because it cannot represent
+            // the negative `MIN`. Emit an explicit negation so `i32::MIN`
+            // resolves to `-2147483648` rather than `+2147483648`.
+            if let rustc_middle::ty::TyKind::Int(_) = ty.kind() {
+                ContractExpr::Unary {
+                    op: NumericUnaryOp::Neg,
+                    expr: Box::new(ContractExpr::Const(min)),
+                }
+            } else {
+                ContractExpr::Const(min)
+            }
+        }
+        _ => ContractExpr::Unknown,
+    }
 }
 
 /// Bridge a place through the existing syn-based parser (handles field

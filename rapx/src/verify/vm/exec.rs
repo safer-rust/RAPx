@@ -2178,6 +2178,14 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 // BitAnd only clears bits, so it never increases a non-negative
                 // value: result <= lhs.
                 self.path_conditions.push(result.le(lhs));
+                // When the mask (rhs) is a non-negative constant, the result is
+                // also bounded by it: `x & c <= c` (e.g. `rhs & 31 <= 31`).
+                // This lets `(rhs & (BITS - 1)) < BITS` be discharged. The
+                // mask may be a folded expression (`SubWithOverflow(BITS, 1)`),
+                // so `simplify()` is used to recover its constant value.
+                if rhs.simplify().as_u64().is_some() {
+                    self.path_conditions.push(result.le(rhs));
+                }
                 if self.not_mask_terms.contains(rhs) {
                     // rhs is a two's-complement mask `!(align-1) == -align`,
                     // so `align = -rhs`. The result of `x & !(align-1)` is

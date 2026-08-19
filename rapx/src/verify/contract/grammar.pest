@@ -81,7 +81,7 @@ member     = { ident ~ "()"? | int }
 
 // ── Type-level constants (T::MAX, isize::MAX, ...) ──────────────────────────
 
-const_path = { ident ~ "::" ~ ("MAX" | "MIN") }
+const_path = { ident ~ "::" ~ ("MAX" | "MIN" | "BITS") }
 
 // ── `pred!` body ────────────────────────────────────────────────────────
 
