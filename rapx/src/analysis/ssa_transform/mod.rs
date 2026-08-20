@@ -130,9 +130,9 @@ pub fn print_diff<'tcx>(tcx: TyCtxt<'tcx>, body: &Body<'tcx>, def_id: DefId) {
     let phi_mir_file_path = format!("{}/{}_after_rename_mir.txt", dir_path, name);
     let mut file = File::create(&mir_file_path).unwrap();
     let mut w = io::BufWriter::new(&mut file);
-    #[cfg(not(rapx_rustc_ge_198))]
+    #[cfg(not(rapx_ge_99))]
     write_mir_pretty(tcx, None, &mut w).unwrap();
-    #[cfg(rapx_rustc_ge_198)]
+    #[cfg(rapx_ge_99)]
     write_mir_pretty(tcx, &mut w).unwrap();
     let mut file2 = File::create(&phi_mir_file_path).unwrap();
     let mut w2 = io::BufWriter::new(&mut file2);

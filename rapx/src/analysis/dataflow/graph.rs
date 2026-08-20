@@ -54,7 +54,7 @@ impl DataflowGraph {
                 };
                 self.add_const_edge(src_desc, src_ty, dst, EdgeOp::Const, block, stmt_idx);
             }
-            #[cfg(rapx_rustc_ge_196)]
+            #[cfg(rapx_ge_99)]
             Operand::RuntimeChecks(_) => {}
         }
     }
@@ -174,12 +174,8 @@ impl DataflowGraph {
                     self.add_operand(operand, dst, block, stmt_idx);
                     self.nodes[dst].ops[seq] = NodeOp::UnaryOp;
                 }
-                #[cfg(all(rapx_rustc_ge_193, not(rapx_rustc_ge_196)))]
+                #[cfg(not(rapx_ge_99))]
                 Rvalue::NullaryOp(_) => {
-                    self.nodes[dst].ops[seq] = NodeOp::NullaryOp;
-                }
-                #[cfg(all(not(rapx_rustc_ge_193), not(rapx_rustc_ge_196)))]
-                Rvalue::NullaryOp(_, _) => {
                     self.nodes[dst].ops[seq] = NodeOp::NullaryOp;
                 }
                 Rvalue::ThreadLocalRef(_) => {}
@@ -188,7 +184,7 @@ impl DataflowGraph {
                     self.add_node_edge(src, dst, EdgeOp::Nop, block, stmt_idx);
                     self.nodes[dst].ops[seq] = NodeOp::Discriminant;
                 }
-                #[cfg(not(rapx_rustc_ge_196))]
+                #[cfg(not(rapx_ge_99))]
                 Rvalue::ShallowInitBox(operand, _) => {
                     self.add_operand(operand, dst, block, stmt_idx);
                     self.nodes[dst].ops[seq] = NodeOp::ShallowInitBox;

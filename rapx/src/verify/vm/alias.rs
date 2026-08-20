@@ -609,9 +609,9 @@ fn infer_self_field_from_type<'tcx>(
     let mut raw_ptr_fields: Vec<(usize, String)> = Vec::new();
     let variant = adt.non_enum_variant();
     for (idx, field) in variant.fields.iter().enumerate() {
-        #[cfg(not(rapx_rustc_ge_198))]
+        #[cfg(not(rapx_ge_99))]
         let field_ty = field.ty(tcx, rustc_middle::ty::GenericArgs::identity_for_item(tcx, adt_def));
-        #[cfg(rapx_rustc_ge_198)]
+        #[cfg(rapx_ge_99)]
         let field_ty = field.ty(tcx, rustc_middle::ty::GenericArgs::identity_for_item(tcx, adt_def)).skip_norm_wip();
         if matches!(field_ty.kind(), rustc_middle::ty::TyKind::RawPtr(..)) {
             raw_ptr_fields.push((idx, field.name.to_string()));
@@ -675,9 +675,9 @@ fn is_self_field_shared_ref(
     }
     let adt = tcx.adt_def(adt_def);
     let field = adt.all_fields().nth(origin.field_index)?;
-    #[cfg(not(rapx_rustc_ge_198))]
+    #[cfg(not(rapx_ge_99))]
     let field_ty = field.ty(tcx, args);
-    #[cfg(rapx_rustc_ge_198)]
+    #[cfg(rapx_ge_99)]
     let field_ty = field.ty(tcx, args).skip_norm_wip();
     Some(matches!(
         field_ty.kind(),

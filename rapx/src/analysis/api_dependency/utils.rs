@@ -3,9 +3,9 @@ use super::fuzzable;
 #[cfg(not(rapx_has_skip_norm_wip))]
 use crate::compat::SkipNormWip;
 
-#[cfg(not(rapx_rustc_ge_199))]
+#[cfg(not(rapx_ge_100))]
 use rustc_hir::LangItem;
-#[cfg(rapx_rustc_ge_199)]
+#[cfg(rapx_ge_100)]
 use rustc_hir::attrs::lang_items::LangItem;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::{self, FnSig, GenericArgKind, GenericArgsRef, Ty, TyCtxt, TyKind};
@@ -48,7 +48,7 @@ pub fn fn_sig_with_generic_args<'tcx>(
 ) -> FnSig<'tcx> {
     let early_fn_sig = tcx.fn_sig(fn_did);
     let binder_fn_sig = early_fn_sig.instantiate(tcx, args);
-    #[cfg(rapx_rustc_ge_198)]
+    #[cfg(rapx_ge_99)]
     let binder_fn_sig = binder_fn_sig.skip_norm_wip();
     let result = tcx.liberate_late_bound_regions(fn_did, binder_fn_sig);
     result

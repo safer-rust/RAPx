@@ -257,9 +257,9 @@ impl<'tcx> PlaceInfo<'tcx> {
             // For ADTs (structs/enums), create fields
             ty::Adt(adt_def, substs) => {
                 for (field_idx, field) in adt_def.all_fields().enumerate() {
-                    #[cfg(not(rapx_rustc_ge_198))]
+                    #[cfg(not(rapx_ge_99))]
                     let field_ty = field.ty(tcx, substs);
-                    #[cfg(rapx_rustc_ge_198)]
+                    #[cfg(rapx_ge_99)]
                     let field_ty = field.ty(tcx, substs).skip_norm_wip();
                     let field_place = base_place.project_field(field_idx);
 
@@ -563,46 +563,7 @@ impl<'tcx> FnAliasAnalyzer<'tcx> {
 // Implement Analysis for FnAliasAnalyzer
 // rustc >= 1.93 changed trait methods from &mut self to &self.
 // We provide two impl blocks conditionally compiled for the correct rustc version.
-#[cfg(not(rapx_rustc_ge_193))]
-impl<'tcx> Analysis<'tcx> for FnAliasAnalyzer<'tcx> {
-    type Domain = AliasDomain;
-
-    const NAME: &'static str = "FnAliasAnalyzer";
-
-    fn bottom_value(&self, _body: &Body<'tcx>) -> Self::Domain {
-        AliasDomain::new(self.place_info.num_places())
-    }
-
-    fn initialize_start_block(&self, _body: &Body<'tcx>, _state: &mut Self::Domain) {}
-
-    fn apply_primary_statement_effect(
-        &mut self,
-        state: &mut Self::Domain,
-        statement: &Statement<'tcx>,
-        _location: Location,
-    ) {
-        apply_statement_effect(self, state, statement)
-    }
-
-    fn apply_primary_terminator_effect<'mir>(
-        &mut self,
-        state: &mut Self::Domain,
-        terminator: &'mir Terminator<'tcx>,
-        _location: Location,
-    ) -> TerminatorEdges<'mir, 'tcx> {
-        apply_terminator_effect(self, state, terminator)
-    }
-
-    fn apply_call_return_effect(
-        &mut self,
-        _state: &mut Self::Domain,
-        _block: rustc_middle::mir::BasicBlock,
-        _return_places: CallReturnPlaces<'_, 'tcx>,
-    ) {
-    }
-}
-
-#[cfg(all(rapx_rustc_ge_193, not(rapx_rustc_ge_199)))]
+#[cfg(not(rapx_ge_100))]
 impl<'tcx> Analysis<'tcx> for FnAliasAnalyzer<'tcx> {
     type Domain = AliasDomain;
 
@@ -641,7 +602,7 @@ impl<'tcx> Analysis<'tcx> for FnAliasAnalyzer<'tcx> {
     }
 }
 
-#[cfg(rapx_rustc_ge_199)]
+#[cfg(rapx_ge_100)]
 impl<'tcx> Analysis<'tcx> for FnAliasAnalyzer<'tcx> {
     type Domain = AliasDomain;
 
@@ -705,7 +666,7 @@ fn apply_statement_effect<'tcx>(
                     let operand_slice: Vec<_> = operands.iter().map(|op| op.clone()).collect();
                     transfer::transfer_aggregate(state, *lv, &operand_slice, &analyzer.place_info);
                 }
-                #[cfg(not(rapx_rustc_ge_196))]
+                #[cfg(not(rapx_ge_99))]
                 Rvalue::ShallowInitBox(operand, _) => {
                     transfer::transfer_assign(state, *lv, operand, &analyzer.place_info);
                 }

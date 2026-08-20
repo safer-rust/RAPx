@@ -40,7 +40,7 @@ impl<'tcx> Visitor<'tcx> for FnCollector<'tcx> {
                         .map(|body| (body.id(), self.tcx.hir_impl_item(*impl_item_id).span))
                 }));
             }
-            #[cfg(not(rapx_rustc_ge_198))]
+            #[cfg(not(rapx_ge_99))]
             ItemKind::Trait(
                 _,
                 _is_auto,
@@ -63,7 +63,7 @@ impl<'tcx> Visitor<'tcx> for FnCollector<'tcx> {
                     }
                 }));
             }
-            #[cfg(rapx_rustc_ge_198)]
+            #[cfg(rapx_ge_99)]
             ItemKind::Trait {
                 is_auto: _is_auto,
                 safety: _safety,

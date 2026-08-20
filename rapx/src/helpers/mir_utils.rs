@@ -2,9 +2,9 @@ use rustc_hir::{
     ItemKind,
     def_id::{DefId, LocalDefId},
 };
-#[cfg(not(rapx_rustc_ge_199))]
+#[cfg(not(rapx_ge_100))]
 use rustc_hir::LangItem;
-#[cfg(rapx_rustc_ge_199)]
+#[cfg(rapx_ge_100)]
 use rustc_hir::attrs::lang_items::LangItem;
 use rustc_middle::{
     mir::{BasicBlock, ConstValue, Local, Operand, Place, Rvalue, StatementKind, TerminatorKind},
@@ -101,11 +101,11 @@ pub fn is_trait_unsafe(tcx: TyCtxt<'_>, trait_def_id: DefId) -> bool {
     };
     let item = tcx.hir_expect_item(local_id);
 
-    #[cfg(not(rapx_rustc_ge_198))]
+    #[cfg(not(rapx_ge_99))]
     if let ItemKind::Trait(_, _, unsafety, _, _, _, _) = &item.kind {
         return matches!(unsafety, rustc_hir::Safety::Unsafe);
     }
-    #[cfg(rapx_rustc_ge_198)]
+    #[cfg(rapx_ge_99)]
     if let ItemKind::Trait { safety, .. } = &item.kind {
         return matches!(safety, rustc_hir::Safety::Unsafe);
     }
@@ -140,12 +140,7 @@ pub fn has_rapx_verify_attr(tcx: TyCtxt<'_>, def_id: LocalDefId) -> bool {
     let attrs = tcx.hir_attrs(hir_id);
 
     attrs.iter().any(|attr| {
-        #[cfg(rapx_rustc_ge_193)]
         if attr.is_doc_comment().is_some() {
-            return false;
-        }
-        #[cfg(not(rapx_rustc_ge_193))]
-        if attr.is_doc_comment() {
             return false;
         }
 
@@ -243,7 +238,7 @@ pub fn operand_place(operand: &Operand<'_>) -> Option<PlaceKey> {
     match operand {
         Operand::Copy(place) | Operand::Move(place) => Some(PlaceKey::from_mir_place(place)),
         Operand::Constant(_) => None,
-        #[cfg(rapx_rustc_ge_196)]
+        #[cfg(rapx_ge_99)]
         Operand::RuntimeChecks(_) => None,
     }
 }
@@ -428,7 +423,7 @@ pub fn rvalue_any_place_matching<'tcx>(
         Rvalue::Aggregate(_, operands) => operands.iter().any(|operand| match operand {
             Operand::Copy(place) | Operand::Move(place) => pred(place),
             Operand::Constant(_) => false,
-            #[cfg(rapx_rustc_ge_196)]
+            #[cfg(rapx_ge_99)]
             Operand::RuntimeChecks(_) => false,
         }),
         _ => rvalue_source_place(rvalue)
@@ -542,7 +537,7 @@ pub(crate) fn offset_of_container<'tcx>(
 /// Whether a `DefId` is a const-like item that `mir_for_ctfe` accepts.
 fn is_const_def_kind(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
     use rustc_hir::def::DefKind;
-    #[cfg(rapx_rustc_ge_196)]
+    #[cfg(rapx_ge_99)]
     let base = matches!(
         tcx.def_kind(def_id),
         DefKind::Const { .. }
@@ -550,16 +545,16 @@ fn is_const_def_kind(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
             | DefKind::AssocConst { .. }
             | DefKind::AnonConst
     );
-    #[cfg(not(rapx_rustc_ge_196))]
+    #[cfg(not(rapx_ge_99))]
     let base = matches!(
         tcx.def_kind(def_id),
         DefKind::Const | DefKind::Static { .. } | DefKind::AssocConst | DefKind::AnonConst
     );
-    #[cfg(rapx_rustc_ge_199)]
+    #[cfg(rapx_ge_99)]
     {
         base
     }
-    #[cfg(not(rapx_rustc_ge_199))]
+    #[cfg(not(rapx_ge_99))]
     {
         base || matches!(tcx.def_kind(def_id), DefKind::InlineConst)
     }
@@ -575,7 +570,7 @@ fn offset_of_ty_from_func<'tcx>(
         return None;
     }
     args.iter().find_map(|a| {
-        #[cfg(rapx_rustc_ge_199)]
+        #[cfg(rapx_ge_99)]
         let a = a.skip_binder();
         match a.kind() {
             GenericArgKind::Type(t) => Some(t),

@@ -49,12 +49,7 @@ pub fn has_struct_invariant(tcx: TyCtxt<'_>, struct_def_id: DefId) -> bool {
     let invariant = Symbol::intern("invariant");
     let attrs = tcx.hir_attrs(tcx.local_def_id_to_hir_id(local_def_id));
     attrs.iter().any(|attr| {
-        #[cfg(rapx_rustc_ge_193)]
         if attr.is_doc_comment().is_some() {
-            return false;
-        }
-        #[cfg(not(rapx_rustc_ge_193))]
-        if attr.is_doc_comment() {
             return false;
         }
         let path = attr.path();
@@ -89,14 +84,7 @@ pub fn function_has_trait_ensurance(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
     };
 
     let trait_def_id = {
-        #[cfg(rapx_rustc_ge_193)]
-        {
-            tcx.impl_opt_trait_ref(impl_id)
-        }
-        #[cfg(not(rapx_rustc_ge_193))]
-        {
-            tcx.impl_trait_ref(impl_id)
-        }
+        tcx.impl_opt_trait_ref(impl_id)
     };
     let Some(trait_ref) = trait_def_id else {
         return false;
@@ -109,11 +97,11 @@ pub fn function_has_trait_ensurance(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
 
     // Check if the trait is declared `unsafe trait`
     let item = tcx.hir_expect_item(local_id);
-    #[cfg(not(rapx_rustc_ge_198))]
+    #[cfg(not(rapx_ge_99))]
     if let ItemKind::Trait(_, _, unsafety, _, _, _, _) = &item.kind {
         return matches!(unsafety, rustc_hir::Safety::Unsafe);
     }
-    #[cfg(rapx_rustc_ge_198)]
+    #[cfg(rapx_ge_99)]
     if let ItemKind::Trait { safety, .. } = &item.kind {
         return matches!(safety, rustc_hir::Safety::Unsafe);
     }

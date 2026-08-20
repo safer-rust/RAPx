@@ -219,9 +219,9 @@ fn resolve_next_field<'tcx>(
         let variant = adt_def.non_enum_variant();
         if let Ok(field_idx) = field_name.parse::<usize>() {
             if field_idx < variant.fields.len() {
-                #[cfg(not(rapx_rustc_ge_198))]
+                #[cfg(not(rapx_ge_99))]
                 let field_ty = variant.fields[FieldIdx::from_usize(field_idx)].ty(tcx, arg_list);
-                #[cfg(rapx_rustc_ge_198)]
+                #[cfg(rapx_ge_99)]
                 let field_ty = variant.fields[FieldIdx::from_usize(field_idx)]
                     .ty(tcx, arg_list)
                     .skip_norm_wip();
@@ -234,9 +234,9 @@ fn resolve_next_field<'tcx>(
             .enumerate()
             .find(|(_, f)| f.ident(tcx).name.to_string() == field_name)
         {
-            #[cfg(not(rapx_rustc_ge_198))]
+            #[cfg(not(rapx_ge_99))]
             let field_ty = variant.fields[FieldIdx::from_usize(idx)].ty(tcx, arg_list);
-            #[cfg(rapx_rustc_ge_198)]
+            #[cfg(rapx_ge_99)]
             let field_ty = variant.fields[FieldIdx::from_usize(idx)]
                 .ty(tcx, arg_list)
                 .skip_norm_wip();

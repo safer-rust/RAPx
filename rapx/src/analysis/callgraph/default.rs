@@ -58,7 +58,7 @@ impl<'tcx> CallGraphAnalyzer<'tcx> {
                     DefKind::Fn | DefKind::AssocFn | DefKind::Closure => {
                         &self.tcx.optimized_mir(def_id)
                     }
-                    #[cfg(rapx_rustc_ge_196)]
+                    #[cfg(rapx_ge_99)]
                     DefKind::Const { .. }
                     | DefKind::Static { .. }
                     | DefKind::AssocConst { .. }
@@ -66,9 +66,7 @@ impl<'tcx> CallGraphAnalyzer<'tcx> {
                         // NOTE: safer fallback for constants
                         &self.tcx.mir_for_ctfe(def_id)
                     }
-                    #[cfg(all(rapx_rustc_ge_196, not(rapx_rustc_ge_199)))]
-                    DefKind::InlineConst => &self.tcx.mir_for_ctfe(def_id),
-                    #[cfg(not(rapx_rustc_ge_196))]
+                    #[cfg(not(rapx_ge_99))]
                     DefKind::Const
                     | DefKind::Static { .. }
                     | DefKind::AssocConst
@@ -76,7 +74,7 @@ impl<'tcx> CallGraphAnalyzer<'tcx> {
                         // NOTE: safer fallback for constants
                         &self.tcx.mir_for_ctfe(def_id)
                     }
-                    #[cfg(all(not(rapx_rustc_ge_196), not(rapx_rustc_ge_199)))]
+                    #[cfg(not(rapx_ge_99))]
                     DefKind::InlineConst => &self.tcx.mir_for_ctfe(def_id),
                     // These don't have MIR or shouldn't be visited
                     _ => {

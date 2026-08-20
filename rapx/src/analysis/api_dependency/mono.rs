@@ -10,9 +10,9 @@ use rand::seq::SliceRandom;
 #[cfg(not(rapx_has_skip_norm_wip))]
 use crate::compat::SkipNormWip;
 
-#[cfg(not(rapx_rustc_ge_199))]
+#[cfg(not(rapx_ge_100))]
 use rustc_hir::LangItem;
-#[cfg(rapx_rustc_ge_199)]
+#[cfg(rapx_ge_100)]
 use rustc_hir::attrs::lang_items::LangItem;
 use rustc_hir::def_id::DefId;
 use rustc_infer::infer::DefineOpaqueTypes;
@@ -259,12 +259,12 @@ fn is_args_fit_trait_bound<'tcx>(
         tcx.def_path_str_with_args(fn_did, args)
     );
 
-    #[cfg(not(rapx_rustc_ge_199))]
+    #[cfg(not(rapx_ge_100))]
     let iter = inst_pred.predicates.iter();
-    #[cfg(rapx_rustc_ge_199)]
+    #[cfg(rapx_ge_100)]
     let iter = inst_pred.clauses.iter();
     for pred in iter {
-        #[cfg(rapx_rustc_ge_198)]
+        #[cfg(rapx_ge_99)]
         let pred = pred.skip_norm_wip();
         let obligation = Obligation::new(
             tcx,
@@ -294,17 +294,17 @@ fn is_args_fit_trait_bound<'tcx>(
 
 fn is_fn_solvable<'tcx>(fn_did: DefId, tcx: TyCtxt<'tcx>) -> bool {
     let predicates = crate::compat::predicates_of(tcx, fn_did);
-    #[cfg(not(rapx_rustc_ge_199))]
+    #[cfg(not(rapx_ge_100))]
     let iter = predicates
         .instantiate_identity(tcx)
         .predicates;
-    #[cfg(rapx_rustc_ge_199)]
+    #[cfg(rapx_ge_100)]
     let iter = predicates
         .instantiate_identity(tcx)
         .clauses;
     for pred in iter
     {
-        #[cfg(rapx_rustc_ge_198)]
+        #[cfg(rapx_ge_99)]
         let pred = pred.skip_norm_wip();
         if let Some(pred) = pred.as_trait_clause() {
             let trait_did = pred.skip_binder().trait_ref.def_id;
@@ -437,13 +437,13 @@ fn solve_unbound_type_generics<'tcx>(
     let preds = preds.instantiate(tcx, args);
     let mut mset = MonoSet::all(args);
     rap_debug!("[solve_unbound] did = {did:?}, mset={mset:?}");
-    #[cfg(not(rapx_rustc_ge_199))]
+    #[cfg(not(rapx_ge_100))]
     let pred_iter = preds.predicates.iter();
-    #[cfg(rapx_rustc_ge_199)]
+    #[cfg(rapx_ge_100)]
     let pred_iter = preds.clauses.iter();
     for pred in pred_iter {
         rap_debug!("[solve_unbound] pred = {:?}", pred);
-        #[cfg(rapx_rustc_ge_198)]
+        #[cfg(rapx_ge_99)]
         let pred = pred.skip_norm_wip();
         if let Some(trait_pred) = pred.as_trait_clause() {
             let trait_pred = trait_pred.skip_binder();
@@ -464,13 +464,7 @@ fn solve_unbound_type_generics<'tcx>(
             // .chain(tcx.inherent_impls(trait_def_id).iter().map(|did| *did))
             {
                 // format: <arg0 as Trait<arg1, arg2>>
-                #[cfg(rapx_rustc_ge_193)]
                 let impl_trait_ref = tcx.impl_trait_ref(impl_did).skip_binder();
-                #[cfg(not(rapx_rustc_ge_193))]
-                let impl_trait_ref = tcx
-                    .impl_trait_ref(impl_did)
-                    .expect("impl must have trait ref")
-                    .skip_binder();
 
                 // filter irrelevant implementation. We only consider implementation that:
                 // 1. it is local
@@ -627,7 +621,7 @@ pub fn get_impls<'tcx>(
     let preds = crate::compat::predicates_of(tcx, fn_did);
     let preds = preds.instantiate(tcx, args);
     for (pred, _) in preds {
-        #[cfg(rapx_rustc_ge_198)]
+        #[cfg(rapx_ge_99)]
         let pred = pred.skip_norm_wip();
         if let Some(trait_pred) = pred.as_trait_clause() {
             let trait_ref: rustc_type_ir::TraitRef<TyCtxt<'tcx>> = tcx

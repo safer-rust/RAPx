@@ -77,7 +77,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
                     unwind: _,
                     replace: _,
                     drop: _,
-                    #[cfg(not(rapx_rustc_ge_198))]
+                    #[cfg(not(rapx_ge_99))]
                         async_fut: _,
                 } => {
                     if !self.drop_heap_item_check(place) {

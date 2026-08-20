@@ -29,9 +29,9 @@ jobs:
     - uses: actions/checkout@v4
     - name: Setup toolchain
       run: |
-        rustup toolchain install nightly-2026-04-03 --profile minimal
-        rustup component add rustc-dev rust-src llvm-tools-preview rustfmt --toolchain nightly-2026-04-03
-        rustup override set nightly-2026-04-03
+        rustup toolchain install nightly-2026-07-21 --profile minimal
+        rustup component add rustc-dev rust-src llvm-tools-preview rustfmt --toolchain nightly-2026-07-21
+        rustup override set nightly-2026-07-21
         rustc --version
     - name: Build
       run: ./install.sh

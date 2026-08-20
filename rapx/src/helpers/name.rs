@@ -418,9 +418,9 @@ fn find_generic_in_ty<'tcx>(
                 return Some(ty);
             }
             for field in adt_def.all_fields() {
-                #[cfg(not(rapx_rustc_ge_198))]
+                #[cfg(not(rapx_ge_99))]
                 let field_ty = field.ty(tcx, substs);
-                #[cfg(rapx_rustc_ge_198)]
+                #[cfg(rapx_ge_99)]
                 let field_ty = field.ty(tcx, substs).skip_norm_wip();
                 if let Some(found) = find_generic_in_ty(tcx, field_ty, type_ident) {
                     return Some(found);

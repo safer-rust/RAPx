@@ -62,7 +62,7 @@ use rustc_ast::ast;
 use rustc_driver::{Callbacks, Compilation};
 use rustc_interface::interface::{self, Compiler};
 use rustc_middle::{ty::TyCtxt, util::Providers};
-#[cfg(not(rapx_rustc_ge_196))]
+#[cfg(not(rapx_ge_99))]
 use rustc_session::search_paths::PathKind;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -110,11 +110,11 @@ impl Callbacks for RapCallback {
                 // HACK: rustc will emit "crate ... required to be available in rlib format, but
                 // was not found in this form" errors once we use `tcx.dependency_formats()` if
                 // there's no rlib provided, so setting a dummy path here to workaround those errors.
-                #[cfg(rapx_rustc_ge_196)]
+                #[cfg(rapx_ge_99)]
                 {
                     Arc::make_mut(&mut crate_source).rlib = Some(PathBuf::new());
                 }
-                #[cfg(not(rapx_rustc_ge_196))]
+                #[cfg(not(rapx_ge_99))]
                 {
                     Arc::make_mut(&mut crate_source).rlib = Some((PathBuf::new(), PathKind::All));
                 }

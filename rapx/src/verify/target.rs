@@ -10,9 +10,9 @@ use rustc_hir::{
     def_id::{DefId, LocalDefId},
     intravisit::{FnKind, Visitor},
 };
-#[cfg(not(rapx_rustc_ge_199))]
+#[cfg(not(rapx_ge_100))]
 use rustc_hir::LangItem;
-#[cfg(rapx_rustc_ge_199)]
+#[cfg(rapx_ge_100)]
 use rustc_hir::attrs::lang_items::LangItem;
 use rustc_middle::{hir::nested_filter, ty::TyCtxt};
 use rustc_span::Span;
@@ -645,14 +645,7 @@ impl<'tcx> Visitor<'tcx> for VerifyTargetCollector<'tcx> {
             self.module_filter_matched = true;
 
             let trait_ref = {
-                #[cfg(rapx_rustc_ge_193)]
-                {
-                    self.tcx.impl_opt_trait_ref(impl_def_id)
-                }
-                #[cfg(not(rapx_rustc_ge_193))]
-                {
-                    self.tcx.impl_trait_ref(impl_def_id)
-                }
+                self.tcx.impl_opt_trait_ref(impl_def_id)
             };
 
             if let Some(trait_ref) = trait_ref {
@@ -1169,13 +1162,13 @@ fn get_trait_contracts_from_annotation<'tcx>(
     let item = tcx.hir_expect_item(local_id);
 
     let trait_items = {
-        #[cfg(not(rapx_rustc_ge_198))]
+        #[cfg(not(rapx_ge_99))]
         if let ItemKind::Trait(.., items) = &item.kind {
             items
         } else {
             return Vec::new();
         }
-        #[cfg(rapx_rustc_ge_198)]
+        #[cfg(rapx_ge_99)]
         if let ItemKind::Trait { items, .. } = &item.kind {
             items
         } else {
@@ -1446,13 +1439,6 @@ fn is_drop_impl(tcx: TyCtxt<'_>, fn_did: DefId) -> bool {
     let Some(impl_id) = tcx.trait_impl_of_assoc(fn_did) else {
         return false;
     };
-    #[cfg(rapx_rustc_ge_193)]
     let trait_did = tcx.impl_trait_id(impl_id);
-    #[cfg(not(rapx_rustc_ge_193))]
-    let trait_did = tcx
-        .impl_trait_ref(impl_id)
-        .expect("impl must have trait ref")
-        .skip_binder()
-        .def_id;
     tcx.is_lang_item(trait_did, LangItem::Drop)
 }

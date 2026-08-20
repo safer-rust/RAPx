@@ -190,14 +190,14 @@ fn ownedheap_collections() {
     ] {
         assert_contain(&output, pattern);
     }
-    #[cfg(rapx_rustc_ge_196)]
+    #[cfg(rapx_ge_99)]
     {
         assert_contain(&output, "HashMap\": True, <0,0,1,1>");
         assert_contain(&output, "HashSet\": True, <0,1,1>");
         assert_contain(&output, "BTreeMap\": True, <0,0,1>");
         assert_contain(&output, "BTreeSet\": True, <0,1>");
     }
-    #[cfg(not(rapx_rustc_ge_196))]
+    #[cfg(not(rapx_ge_99))]
     {
         assert_contain(&output, "HashMap\": True, <0,0,1>");
         assert_contain(&output, "HashSet\": True, <0,1>");

@@ -611,7 +611,7 @@ impl<'tcx> Replacer<'tcx> {
                             self.replace_place(place, &bb);
                         }
                         Operand::Constant(const_operand) => {}
-                        #[cfg(rapx_rustc_ge_196)]
+                        #[cfg(rapx_ge_99)]
                         Operand::RuntimeChecks(_) => {}
                     }
                 }
@@ -638,7 +638,7 @@ impl<'tcx> Replacer<'tcx> {
             | Rvalue::Cast(_, operand, _) => {
                 self.replace_operand(operand, &bb);
             }
-            #[cfg(not(rapx_rustc_ge_196))]
+            #[cfg(not(rapx_ge_99))]
             Rvalue::ShallowInitBox(operand, _) => {
                 self.replace_operand(operand, &bb);
             }

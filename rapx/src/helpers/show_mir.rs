@@ -80,7 +80,7 @@ impl<'tcx> MirDisplay for StatementKind<'tcx> {
             StatementKind::SetDiscriminant { .. } => s += "SetDiscriminant",
             StatementKind::StorageLive(..) => s += "StorageLive",
             StatementKind::StorageDead(..) => s += "StorageDead",
-            #[cfg(not(rapx_rustc_ge_198))]
+            #[cfg(not(rapx_ge_99))]
             StatementKind::Retag(..) => s += "Retag",
             StatementKind::AscribeUserType(..) => s += "AscribeUserType",
             StatementKind::Coverage(..) => s += "Coverage",
@@ -105,12 +105,12 @@ impl<'tcx> MirDisplay for Rvalue<'tcx> {
             Rvalue::ThreadLocalRef(..) => s += "ThreadLocalRef",
             Rvalue::Cast(..) => s += "Cast",
             Rvalue::BinaryOp(..) => s += "BinaryOp",
-            #[cfg(not(rapx_rustc_ge_196))]
+            #[cfg(not(rapx_ge_99))]
             Rvalue::NullaryOp(..) => s += "NullaryOp",
             Rvalue::UnaryOp(..) => s += "UnaryOp",
             Rvalue::Discriminant(..) => s += "Discriminant",
             Rvalue::Aggregate(..) => s += "Aggregate",
-            #[cfg(not(rapx_rustc_ge_196))]
+            #[cfg(not(rapx_ge_99))]
             Rvalue::ShallowInitBox(..) => s += "ShallowInitBox",
             Rvalue::CopyForDeref(..) => s += "CopyForDeref",
             Rvalue::RawPtr(_, _) => s += "RawPtr",

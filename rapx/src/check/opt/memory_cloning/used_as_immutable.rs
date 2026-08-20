@@ -88,12 +88,12 @@ impl OptCheck for UsedAsImmutableCheck {
                         let index = filtered_in_edges.binary_search(&&edge_idx).unwrap();
                         if let NodeOp::Call(callee_def_id) = use_node.ops[seq] {
                             let callee_fn_sig = tcx.fn_sig(callee_def_id).skip_binder();
-                            #[cfg(not(rapx_rustc_ge_198))]
+                            #[cfg(not(rapx_ge_99))]
                             let fn_sig = tcx.try_normalize_erasing_regions(
                                 rustc_middle::ty::TypingEnv::post_analysis(*tcx, def_id),
                                 callee_fn_sig,
                             );
-                            #[cfg(rapx_rustc_ge_198)]
+                            #[cfg(rapx_ge_99)]
                             let fn_sig = tcx.try_normalize_erasing_regions(
                                 rustc_middle::ty::TypingEnv::post_analysis(*tcx, def_id),
                                 rustc_type_ir::Unnormalized::dummy(callee_fn_sig),

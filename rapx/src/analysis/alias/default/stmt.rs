@@ -71,7 +71,7 @@ impl<'tcx> AliasGraph<'tcx> {
                     }
                 }
                 Operand::Constant(_) => {}
-                #[cfg(rapx_rustc_ge_196)]
+                #[cfg(rapx_ge_99)]
                 Operand::RuntimeChecks(_) => {}
             },
             Rvalue::Ref(_, _, rv_place)
@@ -134,7 +134,7 @@ impl<'tcx> AliasGraph<'tcx> {
                     }
                 }
             }
-            #[cfg(not(rapx_rustc_ge_196))]
+            #[cfg(not(rapx_ge_99))]
             Rvalue::ShallowInitBox(operand, _) => match operand {
                 Operand::Copy(rv_place) | Operand::Move(rv_place) => {
                     if let Some((rv_val, rv_pts)) = self.resolve_operand(rv_place) {
@@ -312,7 +312,7 @@ impl<'tcx> AliasGraph<'tcx> {
                     result.push((arg_val, arg_pts));
                 }
                 Operand::Constant(_) => { result.push((0, 0)); }
-                #[cfg(rapx_rustc_ge_196)]
+                #[cfg(rapx_ge_99)]
                 Operand::RuntimeChecks(_) => {}
             }
         }

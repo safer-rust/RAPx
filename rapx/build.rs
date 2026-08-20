@@ -3,12 +3,8 @@ use std::process::Command;
 fn main() {
     let (_major, minor, _patch) = detect_rustc_version();
 
-    emit_check_cfg("rustc_spanned_at_root");
-    emit_check_cfg("rapx_rustc_ge_193");
-    emit_check_cfg("rapx_rustc_ge_196");
-    emit_check_cfg("rapx_rustc_ge_198");
-    emit_check_cfg("rapx_rustc_ge_199");
-    emit_check_cfg("rapx_rustc_ge_200");
+    emit_check_cfg("rapx_ge_99");
+    emit_check_cfg("rapx_ge_100");
     emit_check_cfg("rapx_has_attr_item_kind");
     emit_check_cfg("rapx_has_fielddef_extras");
     emit_check_cfg("rapx_has_skip_norm_wip");
@@ -17,12 +13,8 @@ fn main() {
     emit_check_cfg("rapx_scalar_to_pointer_interp_result");
     emit_check_cfg("rapx_has_fnptr_asptr");
 
-    emit_cfg("rustc_spanned_at_root", minor >= 96);
-    emit_cfg("rapx_rustc_ge_193", minor >= 93);
-    emit_cfg("rapx_rustc_ge_196", minor >= 96);
-    emit_cfg("rapx_rustc_ge_198", minor >= 98);
-    emit_cfg("rapx_rustc_ge_199", minor >= 99);
-    emit_cfg("rapx_rustc_ge_200", minor >= 100);
+    emit_cfg("rapx_ge_99", minor >= 99);
+    emit_cfg("rapx_ge_100", minor >= 100);
     emit_cfg(
         "rapx_has_attr_item_kind",
         rustc_src_contains("pub enum AttrItemKind"),

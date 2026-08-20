@@ -57,9 +57,9 @@ fn register_field_slots<'tcx>(
         ty::Adt(adt_def, substs) => {
             for (field_idx, field) in adt_def.all_fields().enumerate() {
                 let field_slot = base_slot.project(field_idx);
-                #[cfg(not(rapx_rustc_ge_198))]
+                #[cfg(not(rapx_ge_99))]
                 let field_ty = field.ty(tcx, substs);
-                #[cfg(rapx_rustc_ge_198)]
+                #[cfg(rapx_ge_99)]
                 let field_ty = field.ty(tcx, substs).skip_norm_wip();
                 let need_drop = field_ty.needs_drop(tcx, ty_env);
                 let may_drop = if deref_depth > 0 {

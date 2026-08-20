@@ -15,9 +15,9 @@ fn make_dummy_fn_sig() -> FnSig {
             safety: Safety::Default,
             constness: Const::No,
             ext: Extern::None,
-            #[cfg(rapx_rustc_ge_200)]
+            #[cfg(rapx_ge_100)]
             coroutine_marker: None,
-            #[cfg(not(rapx_rustc_ge_200))]
+            #[cfg(not(rapx_ge_100))]
             coroutine_kind: None,
         },
         span: DUMMY_SP,
@@ -30,7 +30,7 @@ fn make_dummy_block() -> Block {
         id: DUMMY_NODE_ID,
         rules: BlockCheckMode::Default,
         span: DUMMY_SP,
-        #[cfg(not(rapx_rustc_ge_199))]
+        #[cfg(not(rapx_ge_99))]
         tokens: None,
     }
 }
@@ -39,18 +39,18 @@ fn make_dummy_fn(ident_name: &str, build_std: bool) -> Box<Item> {
     let ident = Ident::from_str(ident_name);
 
     let fn_ast = Fn {
-        #[cfg(rapx_rustc_ge_196)]
+        #[cfg(rapx_ge_99)]
         defaultness: Defaultness::Implicit,
-        #[cfg(not(rapx_rustc_ge_196))]
+        #[cfg(not(rapx_ge_99))]
         defaultness: Defaultness::Final,
         ident,
         generics: Generics::default(),
         sig: make_dummy_fn_sig(),
         contract: None,
         define_opaque: None,
-        #[cfg(rapx_rustc_ge_199)]
+        #[cfg(rapx_ge_100)]
         eii_impl: Default::default(),
-        #[cfg(all(rapx_rustc_ge_196, not(rapx_rustc_ge_199)))]
+        #[cfg(all(rapx_ge_99, not(rapx_ge_100)))]
         eii_impls: Default::default(),
         body: Some(Box::new(make_dummy_block())),
     };
@@ -62,7 +62,7 @@ fn make_dummy_fn(ident_name: &str, build_std: bool) -> Box<Item> {
         vis: Visibility {
             span: DUMMY_SP,
             kind: VisibilityKind::Public,
-            #[cfg(not(rapx_rustc_ge_199))]
+            #[cfg(not(rapx_ge_99))]
             tokens: None,
         },
         span: DUMMY_SP,

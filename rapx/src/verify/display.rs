@@ -63,7 +63,7 @@ pub fn fmt_fn_path_with_bounds(
         };
     }
 
-    #[cfg(not(rapx_rustc_ge_199))]
+    #[cfg(not(rapx_ge_100))]
     {
         collect_bounds!(predicates.predicates.iter());
         if let Some(parent_def_id) = predicates.parent {
@@ -71,7 +71,7 @@ pub fn fmt_fn_path_with_bounds(
             collect_bounds!(parent_preds.predicates.iter());
         }
     }
-    #[cfg(rapx_rustc_ge_199)]
+    #[cfg(rapx_ge_100)]
     {
         collect_bounds!(predicates.clauses.iter());
         if let Some(parent_def_id) = predicates.parent {

@@ -49,13 +49,13 @@ impl<'tcx> FnVisitor<'tcx> {
     ) {
         let fn_did = id.to_def_id();
         rap_debug!("API path: {}", self.tcx.def_path_str(fn_did));
-        #[cfg(not(rapx_rustc_ge_198))]
-        #[cfg(not(rapx_rustc_ge_198))]
+        #[cfg(not(rapx_ge_99))]
+        #[cfg(not(rapx_ge_99))]
         rap_debug!(
             "fn_sig: {}",
             self.tcx.type_of(fn_did).instantiate_identity()
         );
-        #[cfg(rapx_rustc_ge_198)]
+        #[cfg(rapx_ge_99)]
         rap_debug!(
             "fn_sig: {}",
             self.tcx
@@ -81,12 +81,12 @@ impl<'tcx> FnVisitor<'tcx> {
             .generics_of(fn_did)
             .requires_monomorphization(self.tcx);
         let fn_sig = self.tcx.fn_sig(fn_did);
-        #[cfg(not(rapx_rustc_ge_198))]
+        #[cfg(not(rapx_ge_99))]
         rap_debug!("fn_sig: {}", fn_sig.instantiate_identity());
-        #[cfg(rapx_rustc_ge_198)]
+        #[cfg(rapx_ge_99)]
         rap_debug!("fn_sig: {:?}", fn_sig);
         let inst_fn_sig = fn_sig.instantiate_identity();
-        #[cfg(rapx_rustc_ge_198)]
+        #[cfg(rapx_ge_99)]
         let inst_fn_sig = inst_fn_sig.skip_norm_wip();
         let inputs = inst_fn_sig.inputs_and_output();
         for input in inputs.iter() {
@@ -105,9 +105,9 @@ impl<'tcx> FnVisitor<'tcx> {
             }
         }
 
-        #[cfg(not(rapx_rustc_ge_198))]
+        #[cfg(not(rapx_ge_99))]
         rap_debug!("type(debug): {:?}", self.tcx.type_of(fn_did));
-        #[cfg(rapx_rustc_ge_198)]
+        #[cfg(rapx_ge_99)]
         rap_debug!(
             "type(debug): {:?}",
             self.tcx

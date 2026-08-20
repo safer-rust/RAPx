@@ -3,9 +3,9 @@ use super::graph::{DepEdge, DepNode};
 use super::is_def_id_public;
 use crate::analysis::api_dependency::mono;
 use crate::{rap_debug, rap_trace};
-#[cfg(not(rapx_rustc_ge_199))]
+#[cfg(not(rapx_ge_100))]
 use rustc_hir::LangItem;
-#[cfg(rapx_rustc_ge_199)]
+#[cfg(rapx_ge_100)]
 use rustc_hir::attrs::lang_items::LangItem;
 use rustc_hir::{
     BodyId, BodyOwnerKind, FnDecl,
@@ -96,14 +96,7 @@ pub fn has_const_generics(generics: &ty::Generics, tcx: TyCtxt<'_>) -> bool {
 
 fn is_drop_impl(tcx: TyCtxt<'_>, fn_did: DefId) -> bool {
     if let Some(impl_id) = tcx.trait_impl_of_assoc(fn_did) {
-        #[cfg(rapx_rustc_ge_193)]
         let trait_did = tcx.impl_trait_id(impl_id);
-        #[cfg(not(rapx_rustc_ge_193))]
-        let trait_did = tcx
-            .impl_trait_ref(impl_id)
-            .expect("impl must have trait ref")
-            .skip_binder()
-            .def_id;
         if tcx.is_lang_item(trait_did, LangItem::Drop) {
             return true;
         }

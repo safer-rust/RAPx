@@ -1360,7 +1360,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             | StatementKind::Intrinsic(..)
             | StatementKind::ConstEvalCounter
             | StatementKind::Nop => {}
-            #[cfg(not(rapx_rustc_ge_198))]
+            #[cfg(not(rapx_ge_99))]
             StatementKind::Retag(..) => {}
             _ => {
                 self.notes.push(format!(
@@ -2052,7 +2052,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     invariants: ValueInvariants::default(),
                 })
             }
-            #[cfg(not(rapx_rustc_ge_196))]
+            #[cfg(not(rapx_ge_99))]
             Rvalue::ShallowInitBox(operand, _ty) => {
                 let val = self.value_of_operand(operand);
                 Ok(VmValue {
@@ -2094,7 +2094,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     invariants: ValueInvariants::default(),
                 })
             }
-            #[cfg(not(rapx_rustc_ge_196))]
+            #[cfg(not(rapx_ge_99))]
             Rvalue::NullaryOp(_op) => {
                 let term = self.fresh_int("nullary");
                 let op_debug = format!("{:?}", _op);

@@ -1,7 +1,7 @@
 use super::default::CallGraph;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir;
-#[cfg(rapx_rustc_ge_198)]
+#[cfg(rapx_ge_99)]
 use rustc_middle::ty::ShimKind;
 use rustc_middle::ty::{FnDef, Instance, InstanceKind, TyCtxt, TypingEnv};
 use std::collections::HashSet;
@@ -106,14 +106,14 @@ impl<'b, 'tcx> CallGraphVisitor<'b, 'tcx> {
             if let mir::Operand::Constant(constant) = func {
                 if let FnDef(callee_def_id, callee_substs) = constant.const_.ty().kind() {
                     let ty_env = TypingEnv::post_analysis(self.tcx, self.def_id);
-                    #[cfg(rapx_rustc_ge_199)]
+                    #[cfg(rapx_ge_99)]
                     let callee_substs = callee_substs.skip_binder();
                     if let Ok(Some(instance)) =
                         Instance::try_resolve(self.tcx, ty_env, *callee_def_id, callee_substs)
                     {
                         let mut is_virtual = false;
                         // Try to analysis the specific type of callee.
-                        #[cfg(rapx_rustc_ge_198)]
+                        #[cfg(rapx_ge_99)]
                         let instance_def_id = match instance.def {
                             InstanceKind::Item(def_id) => Some(def_id),
                             InstanceKind::Intrinsic(def_id) => Some(def_id),
@@ -150,7 +150,7 @@ impl<'b, 'tcx> CallGraphVisitor<'b, 'tcx> {
                             _ => None,
                         };
 
-                        #[cfg(not(rapx_rustc_ge_198))]
+                        #[cfg(not(rapx_ge_99))]
                         let instance_def_id = match instance.def {
                             InstanceKind::Item(def_id) => Some(def_id),
                             InstanceKind::Intrinsic(def_id) => Some(def_id),

@@ -79,7 +79,7 @@ impl<'tcx> SymbExpr<'tcx> {
                 }
             }
             Operand::Constant(c) => SymbExpr::Constant(c.const_),
-            #[cfg(rapx_rustc_ge_196)]
+            #[cfg(rapx_ge_99)]
             Operand::RuntimeChecks(_) => SymbExpr::Unknown,
         }
     }
@@ -118,9 +118,9 @@ impl<'tcx> SymbExpr<'tcx> {
             | Rvalue::Repeat(..)
             | Rvalue::Discriminant(..)
             | Rvalue::CopyForDeref(..) => SymbExpr::Unknown,
-            #[cfg(not(rapx_rustc_ge_196))]
+            #[cfg(not(rapx_ge_99))]
             Rvalue::ShallowInitBox(..) | Rvalue::NullaryOp(..) => SymbExpr::Unknown,
-            #[cfg(rapx_rustc_ge_198)]
+            #[cfg(rapx_ge_99)]
             Rvalue::Reborrow(..) => SymbExpr::Unknown,
             Rvalue::RawPtr(raw_ptr_kind, place) => todo!(),
             Rvalue::WrapUnsafeBinder(operand, ty) => todo!(),

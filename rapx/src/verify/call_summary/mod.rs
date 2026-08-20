@@ -404,7 +404,7 @@ fn transparent_deref_peel<'tcx>(tcx: TyCtxt<'tcx>, func: &Operand<'tcx>) -> Opti
     let Operand::Constant(c) = func else { return None };
     let TyKind::FnDef(_, args) = c.const_.ty().kind() else { return None };
     let self_ty = args.iter().find_map(|a| {
-        #[cfg(rapx_rustc_ge_199)] let a = a.skip_binder();
+        #[cfg(rapx_ge_99)] let a = a.skip_binder();
         if let GenericArgKind::Type(t) = a.kind() { Some(t) } else { None }
     })?;
     let TyKind::Adt(adt_def, _) = self_ty.kind() else { return None };

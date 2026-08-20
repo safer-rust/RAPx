@@ -602,9 +602,9 @@ fn type_contains_ref_or_ptr<'tcx>(tcx: TyCtxt<'tcx>, ty: ty::Ty<'tcx>) -> bool {
             }
             let adt = tcx.adt_def(def.did());
             adt.all_fields().any(|field| {
-                #[cfg(not(rapx_rustc_ge_198))]
+                #[cfg(not(rapx_ge_99))]
                 let field_ty = field.ty(tcx, args);
-                #[cfg(rapx_rustc_ge_198)]
+                #[cfg(rapx_ge_99)]
                 let field_ty = field.ty(tcx, args).skip_norm_wip();
                 type_contains_ref_or_ptr(tcx, field_ty)
             })
@@ -991,14 +991,14 @@ fn terminator_uses_any_local(
         TerminatorKind::Call { args, .. } => args.iter().any(|arg| match &arg.node {
             Operand::Copy(place) | Operand::Move(place) => locals.contains(&place.local),
             Operand::Constant(_) => false,
-            #[cfg(rapx_rustc_ge_196)]
+            #[cfg(rapx_ge_99)]
             Operand::RuntimeChecks(_) => false,
         }),
         TerminatorKind::SwitchInt { discr, .. } | TerminatorKind::Assert { cond: discr, .. } => {
             match discr {
                 Operand::Copy(place) | Operand::Move(place) => locals.contains(&place.local),
                 Operand::Constant(_) => false,
-                #[cfg(rapx_rustc_ge_196)]
+                #[cfg(rapx_ge_99)]
                 Operand::RuntimeChecks(_) => false,
             }
         }
@@ -1641,7 +1641,7 @@ fn terminator_uses_live_origin(kind: &TerminatorKind<'_>, live: &[PlaceKey]) -> 
         let Some(place) = (match &arg.node {
             Operand::Copy(place) | Operand::Move(place) => Some(place),
             Operand::Constant(_) => None,
-            #[cfg(rapx_rustc_ge_196)]
+            #[cfg(rapx_ge_99)]
             Operand::RuntimeChecks(_) => None,
         }) else {
             return false;

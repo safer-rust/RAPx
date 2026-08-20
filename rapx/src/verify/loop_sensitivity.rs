@@ -1199,7 +1199,7 @@ fn operand_plain_local(operand: &Operand<'_>) -> Option<Local> {
             Some(place.local)
         }
         Operand::Copy(_) | Operand::Move(_) | Operand::Constant(_) => None,
-        #[cfg(rapx_rustc_ge_196)]
+        #[cfg(rapx_ge_99)]
         Operand::RuntimeChecks(_) => None,
     }
 }
@@ -1353,10 +1353,10 @@ fn collect_rvalue_sources(rvalue: &Rvalue<'_>, out: &mut FxHashSet<Local>) {
         Rvalue::CopyForDeref(place) => {
             out.insert(place.local);
         }
-        #[cfg(not(rapx_rustc_ge_196))]
+        #[cfg(not(rapx_ge_99))]
         Rvalue::ShallowInitBox(operand, _) => collect_operand_sources(operand, out),
         Rvalue::ThreadLocalRef(_) => {}
-        #[cfg(not(rapx_rustc_ge_196))]
+        #[cfg(not(rapx_ge_99))]
         Rvalue::NullaryOp(..) => {}
         _ => {}
     }
@@ -1369,7 +1369,7 @@ fn collect_operand_sources(operand: &Operand<'_>, out: &mut FxHashSet<Local>) {
             out.insert(place.local);
         }
         Operand::Constant(_) => {}
-        #[cfg(rapx_rustc_ge_196)]
+        #[cfg(rapx_ge_99)]
         Operand::RuntimeChecks(_) => {}
     }
 }

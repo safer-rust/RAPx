@@ -780,7 +780,7 @@ where
                     arg_operands.push(op.node.clone());
                     constant_count += 1;
                 }
-                #[cfg(rapx_rustc_ge_196)]
+                #[cfg(rapx_ge_99)]
                 Operand::RuntimeChecks(_) => {}
             }
         }
@@ -917,7 +917,7 @@ where
                     sink_node.set_range(Range::bottom());
                 };
             }
-            #[cfg(rapx_rustc_ge_196)]
+            #[cfg(rapx_ge_99)]
             Operand::RuntimeChecks(_) => {}
         }
     }
@@ -1049,7 +1049,7 @@ where
                         sink_node.set_range(Range::bottom());
                     }
                 }
-                #[cfg(rapx_rustc_ge_196)]
+                #[cfg(rapx_ge_99)]
                 Operand::RuntimeChecks(_) => {}
             }
         }
@@ -1173,7 +1173,7 @@ where
                 // Usually keeping one is sufficient for the struct signature.
                 (None, None, Some(c1.const_))
             }
-            #[cfg(rapx_rustc_ge_196)]
+            #[cfg(rapx_ge_99)]
             _ => (None, None, None),
         };
 

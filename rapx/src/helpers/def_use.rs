@@ -271,7 +271,7 @@ pub fn operand_uses<'tcx>(operand: &Operand<'tcx>) -> RelevantPlaces {
             uses.extend(place_uses(place));
         }
         Operand::Constant(_) => {}
-        #[cfg(rapx_rustc_ge_196)]
+        #[cfg(rapx_ge_99)]
         Operand::RuntimeChecks(_) => {}
     }
     uses
@@ -310,7 +310,7 @@ pub fn rvalue_operands<'tcx>(rvalue: &'tcx Rvalue<'tcx>) -> Vec<&'tcx Operand<'t
             operands.push(rhs);
         }
         Rvalue::Ref(_, _, _) | Rvalue::RawPtr(_, _) => {}
-        #[cfg(not(rapx_rustc_ge_196))]
+        #[cfg(not(rapx_ge_99))]
         Rvalue::ShallowInitBox(_, _) => {}
         Rvalue::Aggregate(_, aggregate_operands) => {
             operands.extend(aggregate_operands.iter());
