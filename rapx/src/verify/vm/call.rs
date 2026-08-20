@@ -1188,16 +1188,40 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 }
             }
             CallEffect::ReturnNonZero => {
+                let zero = Int::from_u64(self.ctx, 0);
                 if let Some(mut existing) = self.locals.get(&dest).cloned() {
                     existing.invariants.non_null = true;
+                    // Record the non-zero fact as a path condition so that a
+                    // downstream `ValidNum(result != 0)` obligation (e.g.
+                    // `NonZero::new_unchecked` after a bit-preserving operation)
+                    // discharges against it.
+                    self.path_conditions.push(existing.term._eq(&zero).not());
                     self.set_local(dest, existing);
                 } else {
                     let dest_ty = self.body.local_decls[dest].ty;
                     let term = self.fresh_int(&format!("ret_nz_{}", dest.as_usize()));
+                    self.path_conditions.push(term._eq(&zero).not());
                     self.set_local(dest, VmValue {
                         term, ty: dest_ty, provenance: None,
                         invariants: ValueInvariants { non_null: true, ..Default::default() },
                     });
+                }
+            }
+            CallEffect::ReturnTupleFieldNonZero { field } => {
+                let dest_ty = self.body.local_decls[dest].ty;
+                if let TyKind::Tuple(elem_tys) = dest_ty.kind() {
+                    if let Some(field_ty) = elem_tys.get(*field) {
+                        let zero = Int::from_u64(self.ctx, 0);
+                        let term = self
+                            .fresh_int(&format!("ret_tup_nz_{}_{}", dest.as_usize(), field));
+                        self.path_conditions.push(term._eq(&zero).not());
+                        self.set_field_value(dest, vec![*field], VmValue {
+                            term,
+                            ty: *field_ty,
+                            provenance: None,
+                            invariants: ValueInvariants { non_null: true, init: true, ..Default::default() },
+                        });
+                    }
                 }
             }
             CallEffect::ReturnAligned { align: _, ty_name: _ } => {
@@ -1391,6 +1415,149 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         invariants: ValueInvariants::default(),
                     };
                     self.set_local(dest, val);
+                }
+            }
+            CallEffect::ReturnMax { lhs_arg, rhs_arg } => {
+                if let (Some(lhs), Some(rhs)) = (args.get(*lhs_arg), args.get(*rhs_arg)) {
+                    let dest_ty = self.body.local_decls[dest].ty;
+                    let term = lhs.term.ge(&rhs.term).ite(&lhs.term, &rhs.term);
+                    let val = VmValue {
+                        term,
+                        ty: dest_ty,
+                        provenance: None,
+                        invariants: ValueInvariants::default(),
+                    };
+                    self.set_local(dest, val);
+                }
+            }
+            CallEffect::ReturnClamp { value_arg, min_arg, max_arg } => {
+                if let (Some(v), Some(mn), Some(mx)) =
+                    (args.get(*value_arg), args.get(*min_arg), args.get(*max_arg))
+                {
+                    let dest_ty = self.body.local_decls[dest].ty;
+                    // clamp(v, mn, mx) = max(mn, min(v, mx))
+                    let upper = v.term.gt(&mx.term).ite(&mx.term, &v.term);
+                    let term = v.term.lt(&mn.term).ite(&mn.term, &upper);
+                    let val = VmValue {
+                        term,
+                        ty: dest_ty,
+                        provenance: None,
+                        invariants: ValueInvariants::default(),
+                    };
+                    self.set_local(dest, val);
+                }
+            }
+            CallEffect::ReturnAbs { arg } => {
+                if let Some(a) = args.get(*arg) {
+                    let dest_ty = self.body.local_decls[dest].ty;
+                    let zero = Int::from_u64(self.ctx, 0);
+                    let neg = Int::sub(self.ctx, &[&zero, &a.term]);
+                    let term = a.term.ge(&zero).ite(&a.term, &neg);
+                    let val = VmValue {
+                        term,
+                        ty: dest_ty,
+                        provenance: None,
+                        invariants: ValueInvariants::default(),
+                    };
+                    self.set_local(dest, val);
+                }
+            }
+            CallEffect::ReturnNeg { arg } => {
+                if let Some(a) = args.get(*arg) {
+                    let dest_ty = self.body.local_decls[dest].ty;
+                    let zero = Int::from_u64(self.ctx, 0);
+                    let term = Int::sub(self.ctx, &[&zero, &a.term]);
+                    let val = VmValue {
+                        term,
+                        ty: dest_ty,
+                        provenance: None,
+                        invariants: ValueInvariants::default(),
+                    };
+                    self.set_local(dest, val);
+                }
+            }
+            CallEffect::ReturnAdd { lhs_arg, rhs_arg } => {
+                if let (Some(lhs), Some(rhs)) = (args.get(*lhs_arg), args.get(*rhs_arg)) {
+                    let dest_ty = self.body.local_decls[dest].ty;
+                    let term = Int::add(self.ctx, &[&lhs.term, &rhs.term]);
+                    let val = VmValue {
+                        term,
+                        ty: dest_ty,
+                        provenance: None,
+                        invariants: ValueInvariants::default(),
+                    };
+                    self.set_local(dest, val);
+                }
+            }
+            CallEffect::ReturnMul { lhs_arg, rhs_arg } => {
+                if let (Some(lhs), Some(rhs)) = (args.get(*lhs_arg), args.get(*rhs_arg)) {
+                    let dest_ty = self.body.local_decls[dest].ty;
+                    let term = Int::mul(self.ctx, &[&lhs.term, &rhs.term]);
+                    let val = VmValue {
+                        term,
+                        ty: dest_ty,
+                        provenance: None,
+                        invariants: ValueInvariants::default(),
+                    };
+                    self.set_local(dest, val);
+                }
+            }
+            CallEffect::ReturnOptionSomeAdd { lhs_arg, rhs_arg } => {
+                if let (Some(lhs), Some(rhs)) = (args.get(*lhs_arg), args.get(*rhs_arg)) {
+                    // `checked_add` returns `Option<T>`; its `Some` payload is
+                    // `lhs + rhs`. Store the payload term under field 0 so the
+                    // `if let Some(payload)` projection resolves to it. The
+                    // discriminant is left unconstrained, so both `Some`/`None`
+                    // branches remain reachable.
+                    let term = Int::add(self.ctx, &[&lhs.term, &rhs.term]);
+                    self.set_field_value(dest, vec![0], VmValue {
+                        term,
+                        ty: lhs.ty,
+                        provenance: None,
+                        invariants: ValueInvariants::default(),
+                    });
+                }
+            }
+            CallEffect::ReturnOptionSomeMul { lhs_arg, rhs_arg } => {
+                if let (Some(lhs), Some(rhs)) = (args.get(*lhs_arg), args.get(*rhs_arg)) {
+                    let term = Int::mul(self.ctx, &[&lhs.term, &rhs.term]);
+                    self.set_field_value(dest, vec![0], VmValue {
+                        term,
+                        ty: lhs.ty,
+                        provenance: None,
+                        invariants: ValueInvariants::default(),
+                    });
+                }
+            }
+            CallEffect::ReturnNonZeroIff { arg } => {
+                if let Some(a) = args.get(*arg) {
+                    let dest_ty = self.body.local_decls[dest].ty;
+                    let zero = Int::from_u64(self.ctx, 0);
+                    let term = self.fresh_int(&format!("ret_nz_iff_{}", dest.as_usize()));
+                    // `result == 0` iff `arg == 0`, i.e. non-zero is preserved
+                    // exactly (bit-preserving ops map 0 -> 0, non-zero -> non-zero).
+                    self.path_conditions
+                        .push(term._eq(&zero)._eq(&a.term._eq(&zero)));
+                    self.set_local(dest, VmValue {
+                        term,
+                        ty: dest_ty,
+                        provenance: None,
+                        invariants: ValueInvariants::default(),
+                    });
+                }
+            }
+            CallEffect::ReturnOptionSomeNonZeroIff { arg } => {
+                if let Some(a) = args.get(*arg) {
+                    let zero = Int::from_u64(self.ctx, 0);
+                    let term = self.fresh_int(&format!("ret_opt_nz_iff_{}", dest.as_usize()));
+                    self.path_conditions
+                        .push(term._eq(&zero)._eq(&a.term._eq(&zero)));
+                    self.set_field_value(dest, vec![0], VmValue {
+                        term,
+                        ty: a.ty,
+                        provenance: None,
+                        invariants: ValueInvariants::default(),
+                    });
                 }
             }
             CallEffect::WriteMemory { pointer_arg } => {

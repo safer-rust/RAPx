@@ -2200,6 +2200,20 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 }
                 result
             }
+            BinOp::BitOr => {
+                let result = self.fresh_int("binop");
+                let zero = Int::from_u64(self.ctx, 0);
+                // Bitwise OR only sets bits, so the result is non-zero whenever
+                // either operand is non-zero.  Emit an implication (rather than
+                // `result >= lhs`, which is only valid for non-negative values)
+                // so `NonZero` bit-or methods discharge their `!= 0` obligation
+                // for both signed and unsigned instantiations.
+                self.path_conditions
+                    .push(lhs._eq(&zero).not().implies(&result._eq(&zero).not()));
+                self.path_conditions
+                    .push(rhs._eq(&zero).not().implies(&result._eq(&zero).not()));
+                result
+            }
             _ => self.fresh_int("binop"),
         }
     }

@@ -15,6 +15,7 @@ fn main() {
     emit_check_cfg("rapx_rvalue_use_with_retag");
     emit_check_cfg("rapx_rvalue_has_reborrow");
     emit_check_cfg("rapx_scalar_to_pointer_interp_result");
+    emit_check_cfg("rapx_has_fnptr_asptr");
 
     emit_cfg("rustc_spanned_at_root", minor >= 96);
     emit_cfg("rapx_rustc_ge_193", minor >= 93);
@@ -47,6 +48,13 @@ fn main() {
         rustc_src_contains_path(
             "compiler/rustc_middle/src/mir/interpret/value.rs",
             "to_pointer(self, cx: &impl HasDataLayout) -> InterpResult",
+        ),
+    );
+    emit_cfg(
+        "rapx_has_fnptr_asptr",
+        rustc_src_contains_path(
+            "compiler/rustc_middle/src/ty/instance.rs",
+            "FnPtrAsPtr",
         ),
     );
 }

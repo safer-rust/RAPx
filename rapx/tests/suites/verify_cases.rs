@@ -263,6 +263,13 @@ fn std_challenge_11() {
     assert_not_contain(&output, "result: UNSOUND");
 }
 
+// ================ Std Challenge 12 (NonZero) ================
+#[test]
+fn std_challenge_12() {
+    let output = run_with_args("verify_cases/std-challenge-12", CMD_VERIFY_TARGETED_VM);
+    assert_not_contain(&output, "result: UNSOUND");
+}
+
 // ================ HashMap Tests ================
 #[test]
 fn hashmap() {

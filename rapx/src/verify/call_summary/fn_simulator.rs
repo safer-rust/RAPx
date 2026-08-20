@@ -63,6 +63,21 @@ static REGISTRY: &[Entry] = &[
     E!(transmute,             dep0!(),  false,  none!(),  eff_none),
     E!(api_classify::is_maybe_uninit_uninit,none!(), false, none!(), eff_none),
     E!(api_classify::is_maybe_uninit_assume_init,dep0!(), false, none!(), eff_none),
+    // Non-zero-preserving integer operations must be matched *before* the
+    // generic `is_numeric_arith` pass-through below. Each is modelled with a
+    // precise expression over its operands (ite / arithmetic) so the solver
+    // can discharge a downstream `!= 0` obligation *conditionally* — only
+    // when the operands are actually non-zero — rather than asserting the
+    // result is unconditionally non-zero.
+    E!(int_max,               ALL,      true,   none!(),  eff_return_max),
+    E!(int_clamp,             ALL,      true,   none!(),  eff_return_clamp),
+    E!(int_abs,               ALL,      true,   none!(),  eff_return_abs),
+    E!(int_neg,               ALL,      true,   none!(),  eff_return_neg),
+    E!(int_add,               ALL,      true,   none!(),  eff_return_add),
+    E!(int_mul,               ALL,      true,   none!(),  eff_return_mul),
+    E!(int_checked_add,       ALL,      true,   none!(),  eff_return_option_some_add),
+    E!(int_checked_mul,       ALL,      true,   none!(),  eff_return_option_some_mul),
+    E!(overflowing_nz,        ALL,      true,   none!(),  eff_overflowing_nz),
     E!(api_classify::is_numeric_arith, ALL,      true,   none!(),  eff_none),
     E!(saturating_sub,        ALL,      true,   none!(),  eff_none),
     E!(api_classify::is_offset_from_unsigned, dep01!(), false, none!(), eff_offset_from_unsigned),
@@ -94,6 +109,8 @@ static REGISTRY: &[Entry] = &[
     E!(api_classify::is_len,  dep0!(),  false,  none!(),  eff_len),
     E!(is_empty,              dep0!(),  false,  none!(),  eff_is_empty),
     E!(cmp_min,               ALL,      true,   none!(),  eff_cmp_min),
+    E!(bit_preserving_nz,     ALL,      true,   none!(),  eff_return_nonzero_iff),
+    E!(checked_pow_nz,        ALL,      true,   none!(),  eff_return_option_some_nonzero_iff),
 
     // ── SliceIndex::get_unchecked / get_unchecked_mut ───────────────
     E!(is_slice_get_unchecked, dep0!(), false,  none!(),  eff_alias_ptr),
@@ -256,6 +273,50 @@ fn eff_cmp_min(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     vec![CallEffect::ReturnMin { lhs_arg: 0, rhs_arg: 1 }]
 }
 
+fn eff_return_nonzero_iff(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnNonZeroIff { arg: 0 }]
+}
+
+fn eff_return_option_some_nonzero_iff(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnOptionSomeNonZeroIff { arg: 0 }]
+}
+
+fn eff_return_max(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnMax { lhs_arg: 0, rhs_arg: 1 }]
+}
+
+fn eff_return_clamp(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnClamp { value_arg: 0, min_arg: 1, max_arg: 2 }]
+}
+
+fn eff_return_abs(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnAbs { arg: 0 }]
+}
+
+fn eff_return_neg(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnNeg { arg: 0 }]
+}
+
+fn eff_return_add(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnAdd { lhs_arg: 0, rhs_arg: 1 }]
+}
+
+fn eff_return_mul(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnMul { lhs_arg: 0, rhs_arg: 1 }]
+}
+
+fn eff_return_option_some_add(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnOptionSomeAdd { lhs_arg: 0, rhs_arg: 1 }]
+}
+
+fn eff_return_option_some_mul(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnOptionSomeMul { lhs_arg: 0, rhs_arg: 1 }]
+}
+
+fn eff_overflowing_nz(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnTupleFieldNonZero { field: 0 }]
+}
+
 fn eff_ownership_recon(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     vec![
         CallEffect::ReturnAliasArg { arg: 0 },
@@ -382,6 +443,63 @@ fn nonnull_as_mut(n: &str) -> bool          { n.ends_with("::as_mut") && api_cla
 fn ptr_read(n: &str) -> bool                { n.ends_with("::read") && n.contains("::ptr::") }
 fn is_empty(n: &str) -> bool                { n.ends_with("::is_empty") }
 fn cmp_min(n: &str) -> bool                 { (n.contains("::cmp::min") || n.contains("::Ord::min") || n.starts_with("core::cmp::min")) && !n.contains("min_by") }
+
+/// Bit-preserving integer operations: rotations, byte/bit reversals,
+/// endianness conversions, popcount, integer square root and saturating power
+/// all map `0` to `0` and non-zero to non-zero, so the result is non-zero
+/// *iff* the operand is (`ReturnNonZeroIff`).
+fn bit_preserving_nz(n: &str) -> bool {
+    n.contains("::rotate_left")
+        || n.contains("::rotate_right")
+        || n.contains("::swap_bytes")
+        || n.contains("::reverse_bits")
+        || n.contains("::from_be")
+        || n.contains("::from_le")
+        || n.contains("::to_be")
+        || n.contains("::to_le")
+        || n.contains("::count_ones")
+        || n.contains("::isqrt")
+        || n.contains("::saturating_pow")
+}
+
+/// `checked_pow` returns `Option<T>` whose `Some` payload is non-zero iff the
+/// base is non-zero (`ReturnOptionSomeNonZeroIff`).
+fn checked_pow_nz(n: &str) -> bool {
+    n.ends_with("::checked_pow")
+}
+
+/// Comparison / absolute-value / negation / saturating & unchecked arithmetic
+/// operations. Each is modelled with a precise expression over its operands
+/// (see the `eff_return_*` builders) so non-zero-ness is discharged
+/// *conditionally* — only when the operands are actually non-zero.
+fn int_max(n: &str) -> bool { n.ends_with("::max") }
+fn int_clamp(n: &str) -> bool { n.ends_with("::clamp") }
+fn int_abs(n: &str) -> bool {
+    n.ends_with("::abs")
+        || n.ends_with("::saturating_abs")
+        || n.ends_with("::wrapping_abs")
+        || n.ends_with("::unsigned_abs")
+}
+fn int_neg(n: &str) -> bool {
+    n.ends_with("::neg")
+        || n.ends_with("::wrapping_neg")
+        || n.ends_with("::saturating_neg")
+}
+fn int_add(n: &str) -> bool {
+    n.ends_with("::saturating_add") || n.ends_with("::unchecked_add")
+}
+fn int_mul(n: &str) -> bool {
+    n.ends_with("::saturating_mul") || n.ends_with("::unchecked_mul")
+}
+fn int_checked_add(n: &str) -> bool { n.ends_with("::checked_add") }
+fn int_checked_mul(n: &str) -> bool { n.ends_with("::checked_mul") }
+
+/// `overflowing_abs` / `overflowing_neg` return `(result, overflow)` where the
+/// `result` field (0) is non-zero whenever the operand is non-zero.  Model the
+/// field 0 as non-zero (`ReturnTupleFieldNonZero { field: 0 }`).
+fn overflowing_nz(n: &str) -> bool {
+    n.ends_with("::overflowing_abs") || n.ends_with("::overflowing_neg")
+}
 fn allocator_allocate(n: &str) -> bool      {
     n.ends_with("::Allocator::allocate")
         || n.ends_with("::Allocator::allocate_zeroed")

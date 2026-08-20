@@ -120,6 +120,39 @@ pub enum CallEffect {
     /// The return value is `min(lhs_arg, rhs_arg)`, satisfying
     /// `return <= lhs_arg` and `return <= rhs_arg`.
     ReturnMin { lhs_arg: usize, rhs_arg: usize },
+    /// The return value is `max(lhs_arg, rhs_arg)`.
+    ReturnMax { lhs_arg: usize, rhs_arg: usize },
+    /// The return value is `clamp(value_arg, min_arg, max_arg)`.
+    ReturnClamp {
+        value_arg: usize,
+        min_arg: usize,
+        max_arg: usize,
+    },
+    /// The return value is the absolute value of `arg` (`ite(arg >= 0, arg, -arg)`).
+    ReturnAbs { arg: usize },
+    /// The return value is the negation of `arg` (`-arg`).
+    ReturnNeg { arg: usize },
+    /// The return value is `lhs_arg + rhs_arg`.
+    ReturnAdd { lhs_arg: usize, rhs_arg: usize },
+    /// The return value is `lhs_arg * rhs_arg`.
+    ReturnMul { lhs_arg: usize, rhs_arg: usize },
+    /// The call returns `Option<T>` whose `Some` payload is `lhs_arg + rhs_arg`
+    /// (models `checked_add`; the payload is non-zero whenever `lhs_arg` is).
+    ReturnOptionSomeAdd { lhs_arg: usize, rhs_arg: usize },
+    /// The call returns `Option<T>` whose `Some` payload is `lhs_arg * rhs_arg`
+    /// (models `checked_mul`; the payload is non-zero whenever both args are).
+    ReturnOptionSomeMul { lhs_arg: usize, rhs_arg: usize },
+    /// The return value is non-zero *iff* `arg` is non-zero (models bit-preserving
+    /// operations like `rotate_left`/`swap_bytes`/`count_ones`/`isqrt`, which map
+    /// `0` to `0` and non-zero to non-zero).
+    ReturnNonZeroIff { arg: usize },
+    /// The call returns `Option<T>` whose `Some` payload is non-zero *iff* `arg`
+    /// is non-zero (models `checked_pow`).
+    ReturnOptionSomeNonZeroIff { arg: usize },
+    /// A specific field of the returned tuple is known to be non-zero (e.g.
+    /// `overflowing_abs`/`overflowing_neg` return `(result, overflow)` where
+    /// `result != 0`). Used to discharge a downstream `ValidNum(result != 0)`.
+    ReturnTupleFieldNonZero { field: usize },
     /// A specific field of the returned tuple carries the length of a given
     /// argument (e.g. split_at(mid) returns (left, right) where left.len() == mid).
     ReturnTupleFieldLength { field: usize, from_arg: usize },
