@@ -32,6 +32,16 @@ or by setting up default toolchain to the required version.
 rustup default nightly
 ```
 
+Everything after `--` is forwarded verbatim to `cargo check`, so `--target` and other
+cargo flags work for cross-compiled or bare-metal (`#![no_std]`) crates:
+
+```shell
+# verify a no_std kernel crate for a bare-metal target
+cargo rapx verify --crate ostd -- -p ostd --target x86_64-unknown-none
+```
+
+Make sure the target is installed first (`rustup target add x86_64-unknown-none`).
+
 Check out supported options with `-help`:
 
 ```shell
