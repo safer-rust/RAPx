@@ -24,7 +24,7 @@ use crate::analysis::path::{PathNode, PathTree};
 
 use super::{
     call_visit,
-    types::{RelevantItem, ForgetReason, KeepReason, ProofGoal},
+    types::{RelevantItem, KeepReason, ProofGoal},
 };
 
 /// Entry point for backward path visiting.
@@ -445,9 +445,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
 
         if use_def.defs.intersects(relevant) {
             if terminator_may_havoc(terminator) {
-                items.push(RelevantItem::Forget {
-                    reason: ForgetReason::UnknownCall,
-                });
+                items.push(RelevantItem::Forget);
             }
             items.push(RelevantItem::Terminator {
                 block,
@@ -460,9 +458,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
 
         if use_def.uses.intersects(relevant) {
             if terminator_may_havoc(terminator) {
-                items.push(RelevantItem::Forget {
-                    reason: ForgetReason::UnknownCall,
-                });
+                items.push(RelevantItem::Forget);
             }
             items.push(RelevantItem::Terminator {
                 block,

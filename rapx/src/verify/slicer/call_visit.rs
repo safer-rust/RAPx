@@ -16,7 +16,7 @@ use super::super::{
     def_use::{PlaceKey, RelevantPlaces, call_args_uses_at, operand_uses},
 };
 
-use super::types::{RelevantItem, ForgetReason, KeepReason};
+use super::types::{RelevantItem, KeepReason};
 
 /// Visit a call terminator using an interprocedural dependency summary.
 pub(crate) fn visit<'tcx>(
@@ -44,21 +44,9 @@ pub(crate) fn visit<'tcx>(
 
     let summary = call_summary::dependency_summary(tcx, func, args.len());
 
-    let forget_reason = || {
-        if call_summary::call_args_preserve_layout(
-            args.iter().map(|arg| arg.node.ty(&body.local_decls, tcx)),
-        ) {
-            ForgetReason::OpaqueContentCall
-        } else {
-            ForgetReason::UnknownCall
-        }
-    };
-
     if defs.intersects(relevant) {
         if summary.unsupported {
-            items.push(RelevantItem::Forget {
-                reason: forget_reason(),
-            });
+            items.push(RelevantItem::Forget);
         }
         items.push(RelevantItem::Terminator {
             block,
@@ -83,9 +71,7 @@ pub(crate) fn visit<'tcx>(
         || (summary.unsupported && arg_uses.intersects(relevant))
     {
         if summary.unsupported {
-            items.push(RelevantItem::Forget {
-                reason: forget_reason(),
-            });
+            items.push(RelevantItem::Forget);
         }
         items.push(RelevantItem::Terminator {
             block,

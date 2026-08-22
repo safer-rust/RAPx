@@ -14,10 +14,9 @@ pub mod interprocedural;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{Local, Operand},
-    ty::{GenericArgKind, Ty, TyCtxt, TyKind},
+    ty::{GenericArgKind, TyCtxt, TyKind},
 };
 
-use super::slicer::ForgetReason;
 use crate::helpers::mir_utils;
 
 /// Dependency summary consumed by the backward visitor.
@@ -208,8 +207,6 @@ pub enum CallEffect {
     /// `receiver.len()` / ts and field 1 < ts, ensuring the remaining
     /// pointer arithmetic stays in bounds on the tail.
     ReturnLcmSplit { receiver_arg: usize },
-    /// Facts about an argument must be forgotten conservatively.
-    ForgetArgFacts { arg: usize, reason: ForgetReason },
     /// Remove `slice_data_allocations` links for the argument's stack
     /// alloc_id — used for `mem::forget` which prevents a drop cascade.
     CleanSliceDataLinks { arg: usize },
@@ -425,49 +422,6 @@ fn transparent_deref_peel<'tcx>(tcx: TyCtxt<'tcx>, func: &Operand<'tcx>) -> Opti
         Some(1)
     } else {
         None
-    }
-}
-
-/// Return true when every argument type is *layout-safe*: passing such a value
-/// to an unsupported call cannot let that call change any slice's length or
-/// base address, reallocate, or free memory.  Scalars, `str`, slices, arrays,
-/// generic type parameters (elements, closures), closures, and references or
-/// tuples of these are layout-safe; raw pointers and concrete owning
-/// containers (`Vec`, `Box`, `String`, collections, other ADTs) are not.
-pub fn call_args_preserve_layout<'tcx>(arg_tys: impl Iterator<Item = Ty<'tcx>>) -> bool {
-    arg_tys.map(|ty| ty_is_layout_safe_inner(ty, 0)).all(|safe| safe)
-}
-
-fn ty_is_layout_safe_inner(ty: Ty<'_>, depth: usize) -> bool {
-    if depth > 6 {
-        return false;
-    }
-    match ty.kind() {
-        TyKind::Bool
-        | TyKind::Char
-        | TyKind::Int(_)
-        | TyKind::Uint(_)
-        | TyKind::Float(_)
-        | TyKind::Str
-        | TyKind::Param(_)
-        | TyKind::Closure(..)
-        | TyKind::Never => true,
-        TyKind::Slice(inner) | TyKind::Array(inner, _) => {
-            ty_is_layout_safe_inner(*inner, depth + 1)
-        }
-        // A shared reference can never reallocate, free, or reassign the
-        // callee's length-carrying storage (the callee holds a copy of the
-        // fat pointer; interior mutability can change contents but not the
-        // length/base of a slice we track).  A mutable reference can only do
-        // so if it points at an owning container, so recurse into the pointee.
-        TyKind::Ref(_, _, rustc_middle::ty::Mutability::Not) => true,
-        TyKind::Ref(_, inner, rustc_middle::ty::Mutability::Mut) => {
-            ty_is_layout_safe_inner(*inner, depth + 1)
-        }
-        TyKind::Tuple(elems) => elems.iter().all(|e| ty_is_layout_safe_inner(e, depth + 1)),
-        // Raw pointers, FnDef, and concrete ADTs (Vec/Box/String/collections/…)
-        // may reallocate, free, or reassign length-carrying storage.
-        _ => false,
     }
 }
 

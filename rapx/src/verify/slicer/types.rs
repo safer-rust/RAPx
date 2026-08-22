@@ -58,8 +58,9 @@ pub enum RelevantItem<'tcx> {
     /// A contract fact injected by the engine before the forward visit.
     /// Never produced by the backward visitor itself.
     ContractFact { property: contract::Property<'tcx> },
-    /// A conservative loss of precision for relevant state.
-    Forget { reason: ForgetReason },
+    /// A conservative loss of precision for relevant state (an unsupported
+    /// call whose effects are not modeled).
+    Forget,
     /// Enter a callee's MIR body. Subsequent Statement/Terminator items
     /// are interpreted in the callee's context until `CalleeExit`.
     /// `args` holds the caller's Local indices for each callee parameter
@@ -94,23 +95,4 @@ pub enum KeepReason {
     Invalidation,
     /// The item may affect relevant state but is not modeled precisely yet.
     UnknownEffect,
-}
-
-/// Reason for conservatively forgetting relevant state.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ForgetReason {
-    /// A call may modify relevant state but has no summary yet.
-    UnknownCall,
-    /// An unsupported call that can only mutate *contents* reachable through
-    /// its reference arguments — it takes no raw pointers and no concrete
-    /// owning containers, so it cannot change any slice's length or base
-    /// address, reallocate, or free memory.  Such a call invalidates
-    /// content facts (Init) but leaves address/length/layout facts intact.
-    OpaqueContentCall,
-    /// An SCC region may modify relevant state but has no summary yet.
-    SccWithoutSummary,
-    /// A write may alias relevant state.
-    MayAliasWrite,
-    /// A relevant statement or terminator is not supported yet.
-    UnsupportedEffect,
 }

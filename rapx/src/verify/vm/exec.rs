@@ -77,8 +77,8 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 RelevantItem::ContractFact { property } => {
                     self.assert_contract_fact(property);
                 }
-                RelevantItem::Forget { reason } => {
-                    self.notes.push(format!("forget: {:?}", reason));
+                RelevantItem::Forget => {
+                    self.notes.push("forget: unsupported call".to_string());
                 }
                 RelevantItem::CalleeExit { dest } => {
                     self.handle_callee_exit(*dest);
