@@ -3,7 +3,7 @@ members = ["rapx", "rapx/macros"]
 resolver = "3"
 
 [workspace.package]
-version = "0.7.35"
+version = "0.7.36"
 edition = "2024"
 license = "MPL-2.0"
 authors = ["safer-rust <xuh@fudan.edu.cn>"]
