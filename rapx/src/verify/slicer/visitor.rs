@@ -24,7 +24,7 @@ use crate::analysis::path::{PathNode, PathTree};
 
 use super::{
     call_visit,
-    types::{BackwardItem, ForgetReason, KeepReason, RelevantMirItems},
+    types::{RelevantItem, ForgetReason, KeepReason, ProofGoal},
 };
 
 /// Entry point for backward path visiting.
@@ -54,7 +54,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
         target_block: usize,
         checkpoint: &Checkpoint<'tcx>,
         property: &contract::Property<'tcx>,
-    ) -> Vec<RelevantMirItems<'tcx>> {
+    ) -> Vec<ProofGoal<'tcx>> {
         self.visit_path_tree_impl(
             tree,
             target_block,
@@ -75,7 +75,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
         caller: DefId,
         checkpoint_loc: CheckpointLocation,
         property: &contract::Property<'tcx>,
-    ) -> Vec<RelevantMirItems<'tcx>> {
+    ) -> Vec<ProofGoal<'tcx>> {
         self.visit_path_tree_impl(
             tree,
             target_block,
@@ -96,7 +96,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
         checkpoint_block: BasicBlock,
         bind_checkpoint: Option<&Checkpoint<'tcx>>,
         property: &contract::Property<'tcx>,
-    ) -> Vec<RelevantMirItems<'tcx>> {
+    ) -> Vec<ProofGoal<'tcx>> {
         let Some(root) = tree.root() else {
             return Vec::new();
         };
@@ -127,7 +127,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
                 .map(|&b| PathStep::Block(BasicBlock::from(b)))
                 .chain(std::iter::once(PathStep::Checkpoint(checkpoint_loc)))
                 .collect();
-            results.push(RelevantMirItems {
+            results.push(ProofGoal {
                 checkpoint: checkpoint_loc,
                 property: property.clone(),
                 path: Path {
@@ -153,7 +153,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
         property: &contract::Property<'tcx>,
         body: &'tcx rustc_middle::mir::Body<'tcx>,
         flow: &DataflowGraph,
-    ) -> Vec<(Vec<usize>, Vec<BackwardItem<'tcx>>, RelevantPlaces)> {
+    ) -> Vec<(Vec<usize>, Vec<RelevantItem<'tcx>>, RelevantPlaces)> {
         let block = BasicBlock::from(node.block);
         let keep_inv = property.kind().is_some_and(|k| needs_invalidation_tracking(&k));
         let block_data = &body.basic_blocks[block];
@@ -166,7 +166,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
                 bind_callsite_roots(visitor.tcx, &mut relevant, cs);
             }
             let mut items = Vec::new();
-            items.push(BackwardItem::Terminator {
+            items.push(RelevantItem::Terminator {
                 block: checkpoint_block,
                 kind: KeepReason::Checkpoint,
             });
@@ -266,7 +266,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
         block_data: &'tcx rustc_middle::mir::BasicBlockData<'tcx>,
         flow: &DataflowGraph,
         relevant: &mut RelevantPlaces,
-        items: &mut Vec<BackwardItem<'tcx>>,
+        items: &mut Vec<RelevantItem<'tcx>>,
         keep_inv: bool,
     ) {
         let newly_added = std::mem::take(&mut relevant.just_added);
@@ -307,12 +307,12 @@ impl<'tcx> BackwardSlicer<'tcx> {
         statement: &'tcx rustc_middle::mir::Statement<'tcx>,
         flow: &DataflowGraph,
         relevant: &mut RelevantPlaces,
-        items: &mut Vec<BackwardItem<'tcx>>,
+        items: &mut Vec<RelevantItem<'tcx>>,
         keep_invalidations: bool,
     ) {
         if keep_invalidations && matches!(statement.kind, StatementKind::StorageDead(_) | StatementKind::StorageLive(_))
         {
-            items.push(BackwardItem::Statement {
+            items.push(RelevantItem::Statement {
                 block,
                 statement_index,
                 kind: KeepReason::Invalidation,
@@ -334,7 +334,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
 
         if defs.intersects(relevant) {
             let mut uses = collect_statement_uses(statement, block, statement_index, flow);
-            items.push(BackwardItem::Statement {
+            items.push(RelevantItem::Statement {
                 block,
                 statement_index,
                 kind: statement_keep_reason(statement),
@@ -368,7 +368,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
         }
 
         if statement_invalidates_relevant(statement, relevant) {
-            items.push(BackwardItem::Statement {
+            items.push(RelevantItem::Statement {
                 block,
                 statement_index,
                 kind: KeepReason::Invalidation,
@@ -384,7 +384,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
                 }
             }
             if uses.intersects(relevant) {
-                items.push(BackwardItem::Statement {
+                items.push(RelevantItem::Statement {
                     block,
                     statement_index,
                     kind: KeepReason::RuntimeCheck,
@@ -401,11 +401,11 @@ impl<'tcx> BackwardSlicer<'tcx> {
         flow: &DataflowGraph,
         body: &Body<'tcx>,
         relevant: &mut RelevantPlaces,
-        items: &mut Vec<BackwardItem<'tcx>>,
+        items: &mut Vec<RelevantItem<'tcx>>,
         keep_invalidations: bool,
     ) {
         if keep_invalidations && matches!(terminator.kind, TerminatorKind::Drop { .. }) {
-            items.push(BackwardItem::Terminator {
+            items.push(RelevantItem::Terminator {
                 block,
                 kind: KeepReason::Invalidation,
             });
@@ -435,7 +435,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
 
         let use_def = terminator_use_def(terminator);
         if terminator_is_path_condition(terminator) {
-            items.push(BackwardItem::Terminator {
+            items.push(RelevantItem::Terminator {
                 block,
                 kind: KeepReason::PathCondition,
             });
@@ -445,11 +445,11 @@ impl<'tcx> BackwardSlicer<'tcx> {
 
         if use_def.defs.intersects(relevant) {
             if terminator_may_havoc(terminator) {
-                items.push(BackwardItem::Forget {
+                items.push(RelevantItem::Forget {
                     reason: ForgetReason::UnknownCall,
                 });
             }
-            items.push(BackwardItem::Terminator {
+            items.push(RelevantItem::Terminator {
                 block,
                 kind: terminator_definition_reason(terminator),
             });
@@ -460,11 +460,11 @@ impl<'tcx> BackwardSlicer<'tcx> {
 
         if use_def.uses.intersects(relevant) {
             if terminator_may_havoc(terminator) {
-                items.push(BackwardItem::Forget {
+                items.push(RelevantItem::Forget {
                     reason: ForgetReason::UnknownCall,
                 });
             }
-            items.push(BackwardItem::Terminator {
+            items.push(RelevantItem::Terminator {
                 block,
                 kind: terminator_use_reason(terminator),
             });

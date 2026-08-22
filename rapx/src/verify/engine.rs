@@ -15,7 +15,7 @@ use crate::compat::FxHashSet;
 use super::{
     contract::{LeafProperty, OrProperty, Property},
     report::CheckResult,
-    slicer::{BackwardItem, BackwardSlicer, KeepReason},
+    slicer::{RelevantItem, BackwardSlicer, KeepReason},
 };
 use crate::helpers::mir_scan::{Checkpoint, CheckpointLocation};
 
@@ -78,7 +78,7 @@ impl<'tcx> VerifyEngine<'tcx> {
                     caller_contracts
                         .iter()
                         .filter(|c| !matches!(c.kind(), Some(super::contract::PropertyKind::Unknown)))
-                        .map(|c| BackwardItem::ContractFact { property: c.clone() }),
+                        .map(|c| RelevantItem::ContractFact { property: c.clone() }),
                 );
             }
             items.extend(backward.items);
@@ -119,9 +119,9 @@ impl<'tcx> VerifyEngine<'tcx> {
         path: crate::verify::path_extractor::Path,
         property: crate::verify::contract::Property<'tcx>,
         roots: crate::verify::def_use::RelevantPlaces,
-        items: Vec<BackwardItem<'tcx>>,
-    ) -> crate::verify::slicer::RelevantMirItems<'tcx> {
-        crate::verify::slicer::RelevantMirItems {
+        items: Vec<RelevantItem<'tcx>>,
+    ) -> crate::verify::slicer::ProofGoal<'tcx> {
+        crate::verify::slicer::ProofGoal {
             checkpoint,
             property,
             path,
@@ -134,26 +134,26 @@ impl<'tcx> VerifyEngine<'tcx> {
         crate::helpers::mir_utils::callee_is_linear(tcx, callee_def_id, 3)
     }
 
-    /// Scan the backward items for unsupported Call terminators whose callee
+    /// Scan the relevant items for unsupported Call terminators whose callee
     /// has available MIR. For each such call, inject `CalleeEntry` + callee
     /// MIR items + `CalleeExit`, replacing the original terminator.
     fn inject_inline_callees(
         &self,
-        mut items: Vec<BackwardItem<'tcx>>,
+        mut items: Vec<RelevantItem<'tcx>>,
         caller_def_id: DefId,
         depth: usize,
-    ) -> Vec<BackwardItem<'tcx>> {
+    ) -> Vec<RelevantItem<'tcx>> {
         if depth == 0 {
             return items;
         }
 
         let tcx = self.slicer.tcx();
         let body = tcx.optimized_mir(caller_def_id);
-        let mut result: Vec<BackwardItem<'tcx>> = Vec::new();
+        let mut result: Vec<RelevantItem<'tcx>> = Vec::new();
 
         for item in items.drain(..) {
             match &item {
-                BackwardItem::Terminator { block, .. } => {
+                RelevantItem::Terminator { block, .. } => {
                     let terminator = body.basic_blocks[*block].terminator();
                     if let TerminatorKind::Call { func, args, destination, .. } = &terminator.kind {
                         if let Some(callee) = crate::helpers::mir_utils::dep_callee_def_id(func) {
@@ -173,12 +173,12 @@ impl<'tcx> VerifyEngine<'tcx> {
                                         .collect();
                                     if arg_locals.len() == args.len() {
                                         let callee_items = self.build_callee_items(callee, depth - 1);
-                                        result.push(BackwardItem::CalleeEntry {
+                                        result.push(RelevantItem::CalleeEntry {
                                             callee,
                                             args: arg_locals,
                                         });
                                         result.extend(callee_items);
-                                        result.push(BackwardItem::CalleeExit {
+                                        result.push(RelevantItem::CalleeExit {
                                             dest: destination.local,
                                         });
                                         continue; // Skip original Terminator item
@@ -196,14 +196,14 @@ impl<'tcx> VerifyEngine<'tcx> {
         result
     }
 
-    /// Build a linear sequence of backward items for a callee's MIR body.
+    /// Build a linear sequence of relevant items for a callee's MIR body.
     /// Walks BFS from the entry block, collecting statements and terminators.
     fn build_callee_items(
         &self,
         callee_def_id: DefId,
         depth: usize,
-    ) -> Vec<BackwardItem<'tcx>> {
-        let mut items: Vec<BackwardItem<'tcx>> = Vec::new();
+    ) -> Vec<RelevantItem<'tcx>> {
+        let mut items: Vec<RelevantItem<'tcx>> = Vec::new();
         let tcx = self.slicer.tcx();
         let body = tcx.optimized_mir(callee_def_id);
 
@@ -219,7 +219,7 @@ impl<'tcx> VerifyEngine<'tcx> {
             let bb_data = &body.basic_blocks[block];
 
             for (si, _) in bb_data.statements.iter().enumerate() {
-                items.push(BackwardItem::Statement {
+                items.push(RelevantItem::Statement {
                     block,
                     statement_index: si,
                     kind: KeepReason::Definition,
@@ -248,12 +248,12 @@ impl<'tcx> VerifyEngine<'tcx> {
                                     .collect();
                                 if arg_locals.len() == args.len() {
                                     let inner_items = self.build_callee_items(inner_callee, depth - 1);
-                                    items.push(BackwardItem::CalleeEntry {
+                                    items.push(RelevantItem::CalleeEntry {
                                         callee: inner_callee,
                                         args: arg_locals,
                                     });
                                     items.extend(inner_items);
-                                    items.push(BackwardItem::CalleeExit {
+                                    items.push(RelevantItem::CalleeExit {
                                         dest: destination.local,
                                     });
                                     if let Some(t) = target {
@@ -264,7 +264,7 @@ impl<'tcx> VerifyEngine<'tcx> {
                             }
                         }
                     }
-                    items.push(BackwardItem::Terminator {
+                    items.push(RelevantItem::Terminator {
                         block,
                         kind: KeepReason::UnknownEffect,
                     });
@@ -274,20 +274,20 @@ impl<'tcx> VerifyEngine<'tcx> {
                 }
                 TerminatorKind::Goto { target } => {
                     queue.push(*target);
-                    items.push(BackwardItem::Terminator {
+                    items.push(RelevantItem::Terminator {
                         block,
                         kind: KeepReason::Definition,
                     });
                 }
                 TerminatorKind::Return => {
-                    items.push(BackwardItem::Terminator {
+                    items.push(RelevantItem::Terminator {
                         block,
                         kind: KeepReason::Definition,
                     });
                 }
                 TerminatorKind::Assert { target, .. } => {
                     queue.push(*target);
-                    items.push(BackwardItem::Terminator {
+                    items.push(RelevantItem::Terminator {
                         block,
                         kind: KeepReason::PathCondition,
                     });
@@ -297,20 +297,20 @@ impl<'tcx> VerifyEngine<'tcx> {
                         queue.push(t);
                     }
                     queue.push(targets.otherwise());
-                    items.push(BackwardItem::Terminator {
+                    items.push(RelevantItem::Terminator {
                         block,
                         kind: KeepReason::PathCondition,
                     });
                 }
                 TerminatorKind::Drop { target, .. } => {
                     queue.push(*target);
-                    items.push(BackwardItem::Terminator {
+                    items.push(RelevantItem::Terminator {
                         block,
                         kind: KeepReason::Invalidation,
                     });
                 }
                 _ => {
-                    items.push(BackwardItem::Terminator {
+                    items.push(RelevantItem::Terminator {
                         block,
                         kind: KeepReason::Definition,
                     });
@@ -474,7 +474,7 @@ impl<'tcx> VerifyEngine<'tcx> {
         tree: &PathTree,
         checkpoint: CheckpointLocation,
         invariant: &Property<'tcx>,
-        entry_facts: &[BackwardItem<'tcx>],
+        entry_facts: &[RelevantItem<'tcx>],
     ) -> Vec<(CheckResult, String)> {
         let target_block = checkpoint.block.as_usize();
         let mut results = Vec::new();
@@ -492,7 +492,7 @@ impl<'tcx> VerifyEngine<'tcx> {
             let path_desc = backward.path.describe_indices();
 
             if !entry_facts.is_empty() {
-                let mut items: Vec<BackwardItem<'tcx>> = entry_facts.to_vec();
+                let mut items: Vec<RelevantItem<'tcx>> = entry_facts.to_vec();
                 items.extend(backward.items.drain(..));
                 backward.items = items;
             }

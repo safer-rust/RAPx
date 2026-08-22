@@ -14,9 +14,10 @@ use crate::helpers::mir_scan::CheckpointLocation;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{BasicBlock, Local};
 
-/// MIR items relevant to one `(checkpoint, path, property)` item.
+/// A proof goal for one `(checkpoint, path, property)` item: the set of
+/// relevant items plus the context needed to verify that property.
 #[derive(Clone, Debug)]
-pub struct RelevantMirItems<'tcx> {
+pub struct ProofGoal<'tcx> {
     /// Unsafe checkpoint whose obligation is being checked.
     pub checkpoint: CheckpointLocation,
     /// Required property that determines the relevance roots.
@@ -24,14 +25,14 @@ pub struct RelevantMirItems<'tcx> {
     /// Path being visited.
     pub path: Path,
     /// Items kept from the path.
-    pub items: Vec<BackwardItem<'tcx>>,
+    pub items: Vec<RelevantItem<'tcx>>,
     /// Initial roots extracted from the property.
     pub roots: RelevantPlaces,
 }
 
-impl<'tcx> RelevantMirItems<'tcx> {
+impl<'tcx> ProofGoal<'tcx> {
     /// Append one kept item to the visited path.
-    pub fn push(&mut self, item: BackwardItem<'tcx>) {
+    pub fn push(&mut self, item: RelevantItem<'tcx>) {
         self.items.push(item);
     }
 
@@ -41,9 +42,9 @@ impl<'tcx> RelevantMirItems<'tcx> {
     }
 }
 
-/// One item kept while walking a path backward.
+/// One relevant item kept from the backward slice.
 #[derive(Clone, Debug)]
-pub enum BackwardItem<'tcx> {
+pub enum RelevantItem<'tcx> {
     /// A MIR statement retained from a basic block.
     Statement {
         block: BasicBlock,

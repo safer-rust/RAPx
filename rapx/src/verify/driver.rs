@@ -31,7 +31,7 @@ use super::{
     loop_sensitivity::{LoopSensitivityAnalyzer, RepeatStrategy},
     path_extractor::{CallGroup, PATH_LIMIT, PathExtractor},
     report::{CheckResult, PropertyCheckResult, VerificationReport},
-    slicer::BackwardItem,
+    slicer::RelevantItem,
     target::{FunctionTarget, VerifyTargetCollector},
 };
 
@@ -279,18 +279,18 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
         let output = fn_sig.output().skip_binder();
         let returns_self = is_constructor || output.is_param(0);
 
-        let entry_facts: Vec<BackwardItem<'tcx>> = if is_constructor {
+        let entry_facts: Vec<RelevantItem<'tcx>> = if is_constructor {
             caller_contracts
                 .iter()
                 .filter(|c| !matches!(c.kind(), Some(PropertyKind::Unknown)))
-                .map(|c| BackwardItem::ContractFact {
+                .map(|c| RelevantItem::ContractFact {
                     property: c.clone(),
                 })
                 .collect()
         } else {
             invariants
                 .iter()
-                .map(|inv| BackwardItem::ContractFact {
+                .map(|inv| RelevantItem::ContractFact {
                     property: inv.clone(),
                 })
                 .collect()

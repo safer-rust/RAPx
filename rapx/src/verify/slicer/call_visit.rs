@@ -16,7 +16,7 @@ use super::super::{
     def_use::{PlaceKey, RelevantPlaces, call_args_uses_at, operand_uses},
 };
 
-use super::types::{BackwardItem, ForgetReason, KeepReason};
+use super::types::{RelevantItem, ForgetReason, KeepReason};
 
 /// Visit a call terminator using an interprocedural dependency summary.
 pub(crate) fn visit<'tcx>(
@@ -28,7 +28,7 @@ pub(crate) fn visit<'tcx>(
     flow: &DataflowGraph,
     body: &Body<'tcx>,
     relevant: &mut RelevantPlaces,
-    items: &mut Vec<BackwardItem<'tcx>>,
+    items: &mut Vec<RelevantItem<'tcx>>,
 ) {
     let mut defs = RelevantPlaces::new();
     defs.insert_mir_place(destination);
@@ -56,11 +56,11 @@ pub(crate) fn visit<'tcx>(
 
     if defs.intersects(relevant) {
         if summary.unsupported {
-            items.push(BackwardItem::Forget {
+            items.push(RelevantItem::Forget {
                 reason: forget_reason(),
             });
         }
-        items.push(BackwardItem::Terminator {
+        items.push(RelevantItem::Terminator {
             block,
             kind: if summary.unsupported {
                 KeepReason::UnknownEffect
@@ -83,11 +83,11 @@ pub(crate) fn visit<'tcx>(
         || (summary.unsupported && arg_uses.intersects(relevant))
     {
         if summary.unsupported {
-            items.push(BackwardItem::Forget {
+            items.push(RelevantItem::Forget {
                 reason: forget_reason(),
             });
         }
-        items.push(BackwardItem::Terminator {
+        items.push(RelevantItem::Terminator {
             block,
             kind: if summary.unsupported {
                 KeepReason::UnknownEffect
@@ -127,7 +127,7 @@ pub(crate) fn visit<'tcx>(
                         if let Some(local) = dest_key.local() {
                             relevant.locals.insert(local);
                         }
-                        items.push(BackwardItem::Terminator {
+                        items.push(RelevantItem::Terminator {
                             block,
                             kind: KeepReason::PointerFlow,
                         });

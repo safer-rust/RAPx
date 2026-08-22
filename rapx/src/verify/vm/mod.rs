@@ -15,7 +15,7 @@ pub mod state;
 use rustc_middle::ty::TyCtxt;
 use z3::Context;
 
-use crate::verify::slicer::RelevantMirItems;
+use crate::verify::slicer::ProofGoal;
 
 use self::state::{UnsupportedReason, VmState};
 
@@ -41,7 +41,7 @@ impl<'tcx> SymbolicVm<'tcx> {
     pub fn execute<'ctx>(
         &self,
         ctx: &'ctx Context,
-        items: &RelevantMirItems<'tcx>,
+        items: &ProofGoal<'tcx>,
     ) -> Result<VmState<'ctx, 'tcx>, UnsupportedReason> {
         let body = self.tcx.optimized_mir(items.checkpoint.caller);
         let mut state = VmState::new(ctx, self.tcx, body, items.checkpoint.caller);

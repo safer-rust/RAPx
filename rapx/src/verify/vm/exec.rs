@@ -22,7 +22,7 @@ use crate::{
         contract::{ContractExpr, ContractKind, PlaceBase, Property, PropertyArg, PropertyKind},
         def_use::PlaceKey,
         path_extractor::{Path, PathStep},
-        slicer::BackwardItem,
+        slicer::RelevantItem,
     },
 };
 
@@ -34,7 +34,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     /// Execute all retained MIR items in path order.
     pub fn execute_items(
         &mut self,
-        items: &[BackwardItem<'tcx>],
+        items: &[RelevantItem<'tcx>],
     ) -> Result<(), super::state::UnsupportedReason> {
         // Initialize function parameters as fresh symbolic values.
         // Parameters are _1.._N (excluding _0 return value).
@@ -42,10 +42,10 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
 
         for item in items {
             match item {
-                BackwardItem::CalleeEntry { callee, args } => {
+                RelevantItem::CalleeEntry { callee, args } => {
                     self.handle_callee_entry(*callee, args);
                 }
-                BackwardItem::Statement {
+                RelevantItem::Statement {
                     block,
                     statement_index,
                     kind: _,
@@ -56,7 +56,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     self.current_statement_index = Some(*statement_index);
                     self.exec_statement(*block, *statement_index, statement)?;
                 }
-                BackwardItem::Terminator { block, kind: _ } => {
+                RelevantItem::Terminator { block, kind: _ } => {
                     let occ = self
                         .block_occurrences
                         .get(block)
@@ -68,19 +68,19 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     self.current_statement_index = None;
                     self.exec_terminator(*block, terminator, occ)?;
                 }
-                BackwardItem::PathStep { step, kind } => {
+                RelevantItem::PathStep { step, kind } => {
                     self.notes.push(format!(
                         "path step {:?} kept for {:?}",
                         step, kind
                     ));
                 }
-                BackwardItem::ContractFact { property } => {
+                RelevantItem::ContractFact { property } => {
                     self.assert_contract_fact(property);
                 }
-                BackwardItem::Forget { reason } => {
+                RelevantItem::Forget { reason } => {
                     self.notes.push(format!("forget: {:?}", reason));
                 }
-                BackwardItem::CalleeExit { dest } => {
+                RelevantItem::CalleeExit { dest } => {
                     self.handle_callee_exit(*dest);
                 }
             }
