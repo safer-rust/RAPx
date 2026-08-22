@@ -1195,9 +1195,7 @@ impl PropertyChecker {
             {
                 if let Some(callee) = checkpoint.callee {
                     let p = vm_state.tcx.def_path_str(callee);
-                    if p.contains("copy_nonoverlapping") || p == "copy" || p.ends_with("::copy")
-                        || p.contains("ptr::copy") || p.contains("write_bytes") || p.contains("ptr::write")
-                    {
+                    if crate::helpers::api_classify::is_mem_copy_or_write_api(&p) {
                         return CheckResult::Proved;
                     }
                 }
@@ -1373,9 +1371,7 @@ impl PropertyChecker {
                                     if inner == expected_ty {
                                         if let Some(c) = checkpoint.callee {
                                             let cp = vm_state.tcx.def_path_str(c);
-                                            if cp.contains("write_bytes") || cp.contains("ptr::write")
-                                                || cp.contains("copy_nonoverlapping") || cp == "copy"
-                                                || cp.contains("ptr::copy")
+                                            if crate::helpers::api_classify::is_mem_copy_or_write_api(&cp)
                                             { return CheckResult::Proved; }
                                         }
                                     }
@@ -1898,7 +1894,6 @@ impl PropertyChecker {
         for (_, off) in vm_state.iter_ptr_offset.iter() {
             let one = Int::from_u64(vm_state.ctx, 1);
             solver.assert(&off._eq(&Int::add(vm_state.ctx, &[&lhs, &one])));
-            eprintln!("[bridge] off={} lhs={}", off.to_string(), lhs.to_string());
         }
         // For Iter/IterMut Le predicates with rhs computed from fields,
         // inject a lower-bound: the field-based len is >= 1 when the

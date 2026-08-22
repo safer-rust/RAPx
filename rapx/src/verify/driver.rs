@@ -579,6 +579,7 @@ impl<'tcx> VerifyRun<'tcx> {
         mut_ids: &[rustc_hir::def_id::DefId],
     ) {
         let mut all_results: Vec<PropertyCheckResult<'_>> = Vec::new();
+        let mut crashed: Option<String> = None;
 
         let (_, repeat_rounds) = self.repeat_rounds_for_target(con_target);
         for repeat in repeat_rounds {
@@ -597,6 +598,7 @@ impl<'tcx> VerifyRun<'tcx> {
                         repeat,
                     );
                     all_results.clear();
+                    crashed = Some(format!("repeat {repeat}: {msg}"));
                     break;
                 }
             }
@@ -615,7 +617,9 @@ impl<'tcx> VerifyRun<'tcx> {
         rap_info!("[rapx::verify] sequence: {chain_label}");
         rap_info!("============================================================");
 
-        if all_results.is_empty() {
+        if let Some(msg) = &crashed {
+            rap_warn!("  result: UNKNOWN (verifier crashed: {msg})");
+        } else if all_results.is_empty() {
             rap_info!("  result: SOUND (no unsafe checkpoints)");
         } else {
             emit_results_and_verdict(self.tcx, &all_results);
@@ -651,6 +655,7 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
         for target in &collector.function_targets {
             let target_path = fmt_fn_path_with_bounds(self.tcx, target.def_id);
             let mut all_results: Vec<PropertyCheckResult<'_>> = Vec::new();
+            let mut fn_crashed: Option<String> = None;
 
             let (planned_repeat, repeat_rounds) = self.repeat_rounds_for_target(target);
 
@@ -671,6 +676,7 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                             repeat,
                         );
                         all_results.clear();
+                        fn_crashed = Some(format!("repeat {repeat}: {msg}"));
                         break;
                     }
                 }
@@ -681,9 +687,26 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                 let driver = VerifyDriver::new_with_repeat(
                     self.tcx, target, planned_repeat,
                 );
-                let struct_report = driver.verify_struct_invariants();
-                rap_debug!("{}", struct_report.describe());
-                all_results.extend(struct_report.results);
+                match crate::helpers::mir_utils::catch_panic(|| driver.verify_struct_invariants()) {
+                    Ok(struct_report) => {
+                        rap_debug!("{}", struct_report.describe());
+                        all_results.extend(struct_report.results);
+                    }
+                    Err(msg) => {
+                        rap_warn!("Skipping struct invariants for {} : {msg}", target_path);
+                        all_results.clear();
+                        fn_crashed = Some(format!("struct-invariant: {msg}"));
+                    }
+                }
+            }
+
+            if let Some(msg) = &fn_crashed {
+                rap_info!("============================================================");
+                rap_info!("[rapx::verify] function: {target_path}");
+                rap_info!("============================================================");
+                rap_warn!("  result: UNKNOWN (verifier crashed: {msg})");
+                rap_info!("");
+                continue;
             }
 
             if all_results.is_empty() {

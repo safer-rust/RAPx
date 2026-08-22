@@ -46,223 +46,24 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         let name = crate::helpers::mir_utils::call_name(self.tcx, func);
 
         // ── select_unpredictable: result ∈ {x, y} ─────────────────────
-
-        // ── select_unpredictable: result ∈ {x, y} ─────────────────────
-        if api_classify::is_select_unpredictable(&name) && arg_values.len() >= 3 {
-            let term = self.fresh_int(&format!("selunpred_{}", destination.as_usize()));
-            let dest_ty = self.body.local_decls[destination].ty;
-            let eq1 = term._eq(&arg_values[1].term);
-            let eq2 = term._eq(&arg_values[2].term);
-            self.path_conditions.push(Bool::or(self.ctx, &[&eq1, &eq2]));
-            let prov = arg_values[1].provenance.clone()
-                .or_else(|| arg_values[2].provenance.clone());
-            // Track operand chain for inject_div_axioms_for_term so that
-            // division axioms reachable through select_unpredictable
-            // can be found even across Use / Cast chains.
-            let dest_pk = PlaceKey { base: PlaceBaseKey::Local(destination.as_usize()), fields: vec![] };
-            let lhs_pk = args.get(1).and_then(|a| operand_place(&a.node));
-            let rhs_pk = args.get(2).and_then(|a| operand_place(&a.node));
-            self.other_op_sources.insert(dest_pk, (lhs_pk, rhs_pk));
-            self.set_local(destination, VmValue {
-                term,
-                ty: dest_ty,
-                provenance: prov,
-                invariants: ValueInvariants::default(),
-            });
+        if self.try_select_unpredictable(&name, &arg_values, args, destination) {
             return;
         }
 
         // Slice range indexing: `<[T]>::index(range)` / `::index_mut(range)`
-        // returns a sub-slice whose length is the range's extent. Model it as a
-        // sub-allocation of the array so downstream `into_iter`/`next()` see the
-        // correct element count (empty for `..0`). Single-element indexing
-        // (`index(usize)`) has a non-slice destination and keeps the plain
-        // alias behaviour from the summary table.
-        let is_index = name.ends_with("::Index::index") || name.ends_with("::IndexMut::index_mut");
-        if is_index && arg_values.len() >= 2 {
-            let dest_ty = self.body.local_decls[destination].ty;
-            let is_slice = matches!(dest_ty.kind(), TyKind::Ref(_, inner, _)
-                if matches!(inner.kind(), TyKind::Slice(_)));
-            if is_slice {
-                if let Some(prov) = arg_values[0].provenance.clone() {
-                    let array_term = arg_values[0].term.clone();
-                    let (elem_ty, elem_size) = match arg_values[0].ty.kind() {
-                        TyKind::Ref(_, inner, _) => match inner.kind() {
-                            TyKind::Array(e, _) | TyKind::Slice(e) => {
-                                (*e, self.size_of_ty(*e).max(1) as u64)
-                            }
-                            _ => (arg_values[0].ty, 1),
-                        },
-                        _ => (arg_values[0].ty, 1),
-                    };
-                    let elem_align = self.align_of_ty(elem_ty).max(1);
-                    // The range argument (RangeTo/RangeFrom/Range) is an
-                    // aggregate; its field 0 is the end bound (for RangeTo this
-                    // is the slice length directly).
-                    let range_local = args.get(1).and_then(|a| match &a.node {
-                        Operand::Copy(p) | Operand::Move(p) => Some(p.local),
-                        _ => None,
-                    });
-                    let range_len = match range_local.and_then(|l| self.field_value(l, &[0]).map(|v| v.term.clone())) {
-                        Some(end) => end,
-                        None => {
-                            // RangeFull or unknown: fall back to the array's
-                            // full length in elements.
-                            self.allocations.iter().find(|a| a.id == prov.alloc_id)
-                                .map(|a| a.size.clone())
-                                .unwrap_or_else(|| Int::from_u64(self.ctx, 1))
-                                .div(&Int::from_u64(self.ctx, elem_size))
-                        }
-                    };
-                    let size_bytes = Int::mul(self.ctx, &[&range_len, &Int::from_u64(self.ctx, elem_size)]);
-                    let (alloc_id, _) = self.allocate(size_bytes, elem_align, Some(elem_ty));
-                    self.sub_alloc_parent.insert(alloc_id, prov.alloc_id);
-                    self.set_local(destination, VmValue {
-                        term: array_term,
-                        ty: dest_ty,
-                        provenance: Some(Provenance {
-                            alloc_id,
-                            offset: Int::from_u64(self.ctx, 0),
-                            is_field_offset: false,
-                        }),
-                        invariants: ValueInvariants {
-                            non_null: true, aligned: true, init: true, in_bounds: true,
-                            ..Default::default()
-                        },
-                    });
-                    return;
-                }
-            }
+        // returns a sub-slice whose length is the range's extent.
+        if self.try_slice_index(&name, &arg_values, args, destination) {
+            return;
         }
 
-        // Iter::len() / Iter::is_empty(): compute from struct fields
-        // (ptr + end_or_len share the same allocation with per-field
-        // offsets).  The generic fn_simulator would return
-        // sizeof(Iter)/sizeof(T) which is wrong for generic T.
-        if (name.contains("::Iter<") || name.contains("::IterMut<")
-            || name.ends_with("::Iter::len") || name.ends_with("::IterMut::len")
-            || name.ends_with("::Iter::is_empty") || name.ends_with("::IterMut::is_empty"))
-            && (name.ends_with("::len") || name.ends_with("::is_empty"))
-            && arg_values.len() >= 1
-        {
-            let receiver_local = args.first().and_then(|a| a.node.place())
-                .map(|p| p.local);
-            if let Some(local) = receiver_local {
-                // len() = (end_or_len - ptr) / sizeof(T)   (non-ZST)
-                // is_empty() = ptr == end_or_len           (non-ZST)
-                let ptr_val = self.field_value(local, &[0]);
-                let end_val = self.field_value(local, &[1]);
-                if let (Some(ptr), Some(end)) = (ptr_val, end_val) {
-                    if let (Some(pp), Some(ep)) = (&ptr.provenance, &end.provenance) {
-                        if pp.alloc_id == ep.alloc_id {
-                            let dest_ty = self.body.local_decls[destination].ty;
-                            if name.ends_with("::len") {
-                                let diff = Int::sub(self.ctx, &[&ep.offset, &pp.offset]);
-                                let sz = Int::from_u64(self.ctx, self.iter_elem_size(ptr));
-                                let val = VmValue::new(diff.div(&sz), dest_ty);
-                                self.set_local(destination, val);
-                                return;
-                            } else {
-                                // is_empty(): ptr == end_or_len  (non-ZST branch)
-                                let eq = pp.offset._eq(&ep.offset);
-                                let zero = Int::from_u64(self.ctx, 0);
-                                let one = Int::from_u64(self.ctx, 1);
-                                let val = VmValue {
-                                    term: eq.ite(&one, &zero),
-                                    ty: dest_ty,
-                                    provenance: None,
-                                    invariants: ValueInvariants::default(),
-                                };
-                                self.set_local(destination, val);
-                                return;
-                            }
-                        }
-                    }
-                }
-            }
-            // Fall through to fn_simulator if field access failed
+        // Iter::len() / Iter::is_empty(): compute from struct fields.
+        if self.try_iter_len_is_empty(&name, &arg_values, args, destination) {
+            return;
         }
 
         // Iter::next() / IterMut::next(): advance ptr by 1 and return old.
-        // The MIR calls the `Iterator::next` trait method, so also match the
-        // trait path (`std::iter::Iterator::next`) in addition to the
-        // concrete `Iter`/`IterMut` method names.
-        let is_next = name.contains("::next")
-            && (name.starts_with("Iter::") || name.starts_with("IterMut::")
-                || name.contains("::Iter::") || name.contains("::IterMut::")
-                || name.contains("::Iter<") || name.contains("::IterMut<")
-                || name.contains("::Iterator::next"));
-        if is_next
-            && arg_values.len() >= 1
-        {
-            let self_val = &arg_values[0];
-            if let Some(local) = self.find_iter_self_local(self_val) {
-                if let (Some(ptr), Some(end)) = (self.field_value(local, &[0]), self.field_value(local, &[1])) {
-                    if let (Some(pp), Some(ep)) = (&ptr.provenance, &end.provenance) {
-                        if pp.alloc_id == ep.alloc_id {
-                            let dest_ty = self.body.local_decls[destination].ty;
-                            // Compute is_empty from fields/tracked offset (same as is_empty()).
-                            let sz = Int::from_u64(self.ctx, self.iter_elem_size(ptr));
-                            let ep_offset = ep.offset.clone();
-                            let remaining = if let Some(off) = self.iter_ptr_offset.get(&local) {
-                                let base_len = ep_offset.div(&sz);
-                                let zero = Int::from_u64(self.ctx, 0);
-                                off.gt(&base_len).ite(&zero, &Int::sub(self.ctx, &[&base_len, off]))
-                            } else {
-                                let diff = Int::sub(self.ctx, &[&ep_offset, &pp.offset]);
-                                diff.div(&sz)
-                            };
-                            let is_empty = remaining._eq(&Int::from_u64(self.ctx, 0));
-                            // The returned element is the *current* position: the
-                            // tracked element index (iter_ptr_offset) scaled by
-                            // the element stride, or the base ptr offset on the
-                            // first call.
-                            let zero = Int::from_u64(self.ctx, 0);
-                            let cur_off = match self.iter_ptr_offset.get(&local) {
-                                Some(prev) => Int::mul(self.ctx, &[prev, &sz]),
-                                None => pp.offset.clone(),
-                            };
-                            let old_ptr_val = VmValue {
-                                term: cur_off.clone(),
-                                ty: ptr.ty,
-                                provenance: Some(Provenance {
-                                    alloc_id: pp.alloc_id,
-                                    offset: cur_off,
-                                    is_field_offset: false,
-                                }),
-                                invariants: ValueInvariants { non_null: true, init: true, ..Default::default() },
-                            };
-                            // Advance ptr when not empty
-                            let one_term = Int::from_u64(self.ctx, 1);
-                            let new_offset = match self.iter_ptr_offset.get(&local) {
-                                Some(prev) => Int::add(self.ctx, &[prev, &one_term]),
-                                None => one_term.clone(),
-                            };
-                            // Assert !is_empty as path condition (remaining > 0)
-                            self.path_conditions.push(remaining.gt(&zero));
-                            // Push: base_len >= tracked_offset
-                            let base_len = ep_offset.div(&sz);
-                            self.path_conditions.push(new_offset.le(&base_len));
-                            self.iter_ptr_offset.insert(local, new_offset);
-                            // Return None or old ptr
-                            let result_val = VmValue {
-                                term: is_empty.ite(&zero, &old_ptr_val.term),
-                                ty: dest_ty,
-                                provenance: if is_empty.as_bool().unwrap_or(false) { None } else { old_ptr_val.provenance.clone() },
-                                invariants: ValueInvariants::default(),
-                            };
-                            self.set_local(destination, result_val);
-                            // Tie the Option's discriminant to the emptiness
-                            // condition so `switchInt(discriminant(_n))` only
-                            // takes the `Some` branch when the iterator was
-                            // non-empty (and the `None` branch when empty).
-                            let discr_term = is_empty.ite(&zero, &one_term);
-                            self.discriminant_terms.insert(destination, discr_term);
-                            return;
-                        }
-                    }
-                }
-            }
+        if self.try_iter_next(&name, &arg_values, args, destination) {
+            return;
         }
 
         // post_inc_start / pre_dec_end on Iter/IterMut: apply the ptr/end
@@ -372,6 +173,257 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         }
 
         self.materialize_const_bytes_after_call(args, destination);
+    }
+
+    /// `select_unpredictable`: result ∈ {x, y}.
+    fn try_select_unpredictable(
+        &mut self,
+        name: &str,
+        arg_values: &[VmValue<'ctx, 'tcx>],
+        args: &[Spanned<Operand<'tcx>>],
+        destination: Local,
+    ) -> bool {
+        if !api_classify::is_select_unpredictable(name) || arg_values.len() < 3 {
+            return false;
+        }
+        let term = self.fresh_int(&format!("selunpred_{}", destination.as_usize()));
+        let dest_ty = self.body.local_decls[destination].ty;
+        let eq1 = term._eq(&arg_values[1].term);
+        let eq2 = term._eq(&arg_values[2].term);
+        self.path_conditions.push(Bool::or(self.ctx, &[&eq1, &eq2]));
+        let prov = arg_values[1].provenance.clone()
+            .or_else(|| arg_values[2].provenance.clone());
+        // Track operand chain for inject_div_axioms_for_term so that
+        // division axioms reachable through select_unpredictable
+        // can be found even across Use / Cast chains.
+        let dest_pk = PlaceKey { base: PlaceBaseKey::Local(destination.as_usize()), fields: vec![] };
+        let lhs_pk = args.get(1).and_then(|a| operand_place(&a.node));
+        let rhs_pk = args.get(2).and_then(|a| operand_place(&a.node));
+        self.other_op_sources.insert(dest_pk, (lhs_pk, rhs_pk));
+        self.set_local(destination, VmValue {
+            term,
+            ty: dest_ty,
+            provenance: prov,
+            invariants: ValueInvariants::default(),
+        });
+        true
+    }
+
+    /// Slice range indexing `<[T]>::index(range)` / `::index_mut(range)`:
+    /// returns a sub-slice whose length is the range's extent. Model it as a
+    /// sub-allocation of the array so downstream `into_iter`/`next()` see the
+    /// correct element count (empty for `..0`). Single-element indexing
+    /// (`index(usize)`) has a non-slice destination and keeps the plain
+    /// alias behaviour from the summary table.
+    fn try_slice_index(
+        &mut self,
+        name: &str,
+        arg_values: &[VmValue<'ctx, 'tcx>],
+        args: &[Spanned<Operand<'tcx>>],
+        destination: Local,
+    ) -> bool {
+        let is_index = name.ends_with("::Index::index") || name.ends_with("::IndexMut::index_mut");
+        if !is_index || arg_values.len() < 2 {
+            return false;
+        }
+        let dest_ty = self.body.local_decls[destination].ty;
+        let is_slice = matches!(dest_ty.kind(), TyKind::Ref(_, inner, _)
+            if matches!(inner.kind(), TyKind::Slice(_)));
+        if !is_slice {
+            return false;
+        }
+        let Some(prov) = arg_values[0].provenance.clone() else {
+            return false;
+        };
+        let array_term = arg_values[0].term.clone();
+        let (elem_ty, elem_size) = match arg_values[0].ty.kind() {
+            TyKind::Ref(_, inner, _) => match inner.kind() {
+                TyKind::Array(e, _) | TyKind::Slice(e) => {
+                    (*e, self.size_of_ty(*e).max(1) as u64)
+                }
+                _ => (arg_values[0].ty, 1),
+            },
+            _ => (arg_values[0].ty, 1),
+        };
+        let elem_align = self.align_of_ty(elem_ty).max(1);
+        // The range argument (RangeTo/RangeFrom/Range) is an aggregate; its
+        // field 0 is the end bound (for RangeTo this is the slice length).
+        let range_local = args.get(1).and_then(|a| match &a.node {
+            Operand::Copy(p) | Operand::Move(p) => Some(p.local),
+            _ => None,
+        });
+        let range_len = match range_local.and_then(|l| self.field_value(l, &[0]).map(|v| v.term.clone())) {
+            Some(end) => end,
+            None => {
+                // RangeFull or unknown: fall back to the array's full length.
+                self.allocations.iter().find(|a| a.id == prov.alloc_id)
+                    .map(|a| a.size.clone())
+                    .unwrap_or_else(|| Int::from_u64(self.ctx, 1))
+                    .div(&Int::from_u64(self.ctx, elem_size))
+            }
+        };
+        let size_bytes = Int::mul(self.ctx, &[&range_len, &Int::from_u64(self.ctx, elem_size)]);
+        let (alloc_id, _) = self.allocate(size_bytes, elem_align, Some(elem_ty));
+        self.sub_alloc_parent.insert(alloc_id, prov.alloc_id);
+        self.set_local(destination, VmValue {
+            term: array_term,
+            ty: dest_ty,
+            provenance: Some(Provenance {
+                alloc_id,
+                offset: Int::from_u64(self.ctx, 0),
+                is_field_offset: false,
+            }),
+            invariants: ValueInvariants {
+                non_null: true, aligned: true, init: true, in_bounds: true,
+                ..Default::default()
+            },
+        });
+        true
+    }
+
+    /// `Iter::len()` / `Iter::is_empty()`: compute from struct fields
+    /// (ptr + end_or_len share the same allocation with per-field offsets).
+    /// The generic fn_simulator would return sizeof(Iter)/sizeof(T), which is
+    /// wrong for generic T.
+    fn try_iter_len_is_empty(
+        &mut self,
+        name: &str,
+        arg_values: &[VmValue<'ctx, 'tcx>],
+        args: &[Spanned<Operand<'tcx>>],
+        destination: Local,
+    ) -> bool {
+        if !((name.contains("::Iter<") || name.contains("::IterMut<")
+            || name.ends_with("::Iter::len") || name.ends_with("::IterMut::len")
+            || name.ends_with("::Iter::is_empty") || name.ends_with("::IterMut::is_empty"))
+            && (name.ends_with("::len") || name.ends_with("::is_empty"))
+            && arg_values.len() >= 1)
+        {
+            return false;
+        }
+        let receiver_local = args.first().and_then(|a| a.node.place()).map(|p| p.local);
+        let Some(local) = receiver_local else { return false; };
+        // len() = (end_or_len - ptr) / sizeof(T)   (non-ZST)
+        // is_empty() = ptr == end_or_len           (non-ZST)
+        let (Some(ptr), Some(end)) = (self.field_value(local, &[0]), self.field_value(local, &[1])) else {
+            return false;
+        };
+        let (Some(pp), Some(ep)) = (&ptr.provenance, &end.provenance) else {
+            return false;
+        };
+        if pp.alloc_id != ep.alloc_id {
+            return false;
+        }
+        let dest_ty = self.body.local_decls[destination].ty;
+        if name.ends_with("::len") {
+            let diff = Int::sub(self.ctx, &[&ep.offset, &pp.offset]);
+            let sz = Int::from_u64(self.ctx, self.iter_elem_size(ptr));
+            let val = VmValue::new(diff.div(&sz), dest_ty);
+            self.set_local(destination, val);
+        } else {
+            // is_empty(): ptr == end_or_len  (non-ZST branch)
+            let eq = pp.offset._eq(&ep.offset);
+            let zero = Int::from_u64(self.ctx, 0);
+            let one = Int::from_u64(self.ctx, 1);
+            let val = VmValue {
+                term: eq.ite(&one, &zero),
+                ty: dest_ty,
+                provenance: None,
+                invariants: ValueInvariants::default(),
+            };
+            self.set_local(destination, val);
+        }
+        true
+    }
+
+    /// `Iter::next()` / `IterMut::next()`: advance ptr by 1 and return old.
+    /// The MIR calls the `Iterator::next` trait method, so also match the
+    /// trait path (`std::iter::Iterator::next`) in addition to the concrete
+    /// `Iter`/`IterMut` method names.
+    fn try_iter_next(
+        &mut self,
+        name: &str,
+        arg_values: &[VmValue<'ctx, 'tcx>],
+        _args: &[Spanned<Operand<'tcx>>],
+        destination: Local,
+    ) -> bool {
+        let is_next = name.contains("::next")
+            && (name.starts_with("Iter::") || name.starts_with("IterMut::")
+                || name.contains("::Iter::") || name.contains("::IterMut::")
+                || name.contains("::Iter<") || name.contains("::IterMut<")
+                || name.contains("::Iterator::next"));
+        if !is_next || arg_values.len() < 1 {
+            return false;
+        }
+        let self_val = &arg_values[0];
+        let Some(local) = self.find_iter_self_local(self_val) else {
+            return false;
+        };
+        let (Some(ptr), Some(end)) = (self.field_value(local, &[0]), self.field_value(local, &[1])) else {
+            return false;
+        };
+        let (Some(pp), Some(ep)) = (&ptr.provenance, &end.provenance) else {
+            return false;
+        };
+        if pp.alloc_id != ep.alloc_id {
+            return false;
+        }
+        let dest_ty = self.body.local_decls[destination].ty;
+        // Compute is_empty from fields/tracked offset (same as is_empty()).
+        let sz = Int::from_u64(self.ctx, self.iter_elem_size(ptr));
+        let ep_offset = ep.offset.clone();
+        let remaining = if let Some(off) = self.iter_ptr_offset.get(&local) {
+            let base_len = ep_offset.div(&sz);
+            let zero = Int::from_u64(self.ctx, 0);
+            off.gt(&base_len).ite(&zero, &Int::sub(self.ctx, &[&base_len, off]))
+        } else {
+            let diff = Int::sub(self.ctx, &[&ep_offset, &pp.offset]);
+            diff.div(&sz)
+        };
+        let is_empty = remaining._eq(&Int::from_u64(self.ctx, 0));
+        // The returned element is the *current* position: the tracked element
+        // index (iter_ptr_offset) scaled by the element stride, or the base
+        // ptr offset on the first call.
+        let zero = Int::from_u64(self.ctx, 0);
+        let cur_off = match self.iter_ptr_offset.get(&local) {
+            Some(prev) => Int::mul(self.ctx, &[prev, &sz]),
+            None => pp.offset.clone(),
+        };
+        let old_ptr_val = VmValue {
+            term: cur_off.clone(),
+            ty: ptr.ty,
+            provenance: Some(Provenance {
+                alloc_id: pp.alloc_id,
+                offset: cur_off,
+                is_field_offset: false,
+            }),
+            invariants: ValueInvariants { non_null: true, init: true, ..Default::default() },
+        };
+        // Advance ptr when not empty
+        let one_term = Int::from_u64(self.ctx, 1);
+        let new_offset = match self.iter_ptr_offset.get(&local) {
+            Some(prev) => Int::add(self.ctx, &[prev, &one_term]),
+            None => one_term.clone(),
+        };
+        // Assert !is_empty as path condition (remaining > 0)
+        self.path_conditions.push(remaining.gt(&zero));
+        // Push: base_len >= tracked_offset
+        let base_len = ep_offset.div(&sz);
+        self.path_conditions.push(new_offset.le(&base_len));
+        self.iter_ptr_offset.insert(local, new_offset);
+        // Return None or old ptr
+        let result_val = VmValue {
+            term: is_empty.ite(&zero, &old_ptr_val.term),
+            ty: dest_ty,
+            provenance: if is_empty.as_bool().unwrap_or(false) { None } else { old_ptr_val.provenance.clone() },
+            invariants: ValueInvariants::default(),
+        };
+        self.set_local(destination, result_val);
+        // Tie the Option's discriminant to the emptiness condition so
+        // `switchInt(discriminant(_n))` only takes the `Some` branch when the
+        // iterator was non-empty (and the `None` branch when empty).
+        let discr_term = is_empty.ite(&zero, &one_term);
+        self.discriminant_terms.insert(destination, discr_term);
+        true
     }
 
     fn materialize_const_bytes_after_call(

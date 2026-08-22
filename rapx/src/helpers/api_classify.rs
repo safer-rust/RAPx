@@ -75,6 +75,19 @@ pub fn is_maybe_uninit_write(name: &str) -> bool {
     name.contains("MaybeUninit") && name.ends_with("::write")
         && !name.contains("write_bytes")
 }
+
+/// Memory copy/write intrinsics that legitimately write through a raw pointer
+/// without requiring the target bytes to be pre-initialized (e.g. `ptr::write`,
+/// `write_bytes`, `copy_nonoverlapping`, `ptr::copy`). Used by the checker to
+/// discharge `Init`/`Typed` obligations on `MaybeUninit` targets.
+pub fn is_mem_copy_or_write_api(name: &str) -> bool {
+    name.contains("copy_nonoverlapping")
+        || name == "copy"
+        || name.ends_with("::copy")
+        || name.contains("ptr::copy")
+        || name.contains("write_bytes")
+        || name.contains("ptr::write")
+}
 pub fn is_len(name: &str) -> bool { name.contains("::len") }
 pub fn is_offset_from_unsigned(name: &str) -> bool {
     name.contains("::offset_from_unsigned") || name.contains("::offset_from")
@@ -104,6 +117,12 @@ pub fn is_cstr_from_ptr(name: &str) -> bool {
 pub fn is_cstr_from_bytes_with_nul_unchecked(name: &str) -> bool {
     name.contains("CStr") && name.ends_with("::from_bytes_with_nul_unchecked")
 }
+
+/// Strict C-string constructors whose caller must guarantee NUL termination
+/// (`CStr::from_bytes_with_nul_unchecked`, `CString::from_vec_with_nul_unchecked`).
+pub fn is_cstr_strict_constructor(name: &str) -> bool {
+    is_cstr_from_bytes_with_nul_unchecked(name) || name.contains("from_vec_with_nul_unchecked")
+}
 pub fn is_vec_push(name: &str) -> bool {
     (name.ends_with("::push") || name.ends_with("::reserve") || name.ends_with("::reserve_exact"))
         && name.contains("Vec")
@@ -122,6 +141,54 @@ pub fn is_vec_with_capacity(name: &str) -> bool {
 }
 pub fn is_into_boxed_slice(name: &str) -> bool {
     name.ends_with("::into_boxed_slice")
+}
+
+// ── Alias-hazard classification (moved from verify/alias_hazard.rs) ──────
+// These are the single home for "what does this raw-pointer API do" used by the
+// alias/hazard scanner. Note: `is_ownership_transfer_api` is *not* the same as
+// [`is_ownership_reconstruction`]: it also matches `Vec::from_raw_parts` /
+// `from_parts` (ownership transfer), but not `from_vec_with_nul_unchecked`.
+
+pub fn is_read_api(name: &str) -> bool {
+    if name.contains("::ptr::") {
+        if name.ends_with("::read")
+            || name.ends_with("::read_unaligned")
+            || name.ends_with("::read_volatile")
+            || name.ends_with("::copy_to")
+            || name.ends_with("::copy_to_nonoverlapping")
+            || name.ends_with("::copy_from")
+            || name.ends_with("::copy_from_nonoverlapping")
+        {
+            return true;
+        }
+    }
+    if name.ends_with("::assume_init_read") {
+        return true;
+    }
+    if name.contains("::intrinsics::")
+        && (name.ends_with("::copy") || name.ends_with("::copy_nonoverlapping"))
+    {
+        return true;
+    }
+    false
+}
+
+pub fn is_ownership_transfer_api(name: &str) -> bool {
+    if is_vec_ownership_transfer_api(name) {
+        return true;
+    }
+    let is_from_raw = name.contains("from_raw");
+    is_from_raw
+        && (name.contains("boxed")
+            || name.contains("Box")
+            || name.contains("ffi::c_str")
+            || name.contains("CString")
+            || is_vec_ownership_transfer_api(name))
+}
+
+pub fn is_vec_ownership_transfer_api(name: &str) -> bool {
+    (name.contains("from_raw_parts") || name.contains("from_parts"))
+        && (name.contains("Vec") || name.contains("vec::"))
 }
 
 pub(crate) fn is_nonnull_api(name: &str) -> bool {

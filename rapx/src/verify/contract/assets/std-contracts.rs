@@ -22,6 +22,12 @@ Ptr2Ref(p: Ptr, T: Ty) { Init(p, T, 1) && Align(p, T) && Alias(p) }
 /// The pointer matches the layout's size/alignment from a prior allocation.
 Layout(p: Ptr, l: Ptr) { Allocated(p) }
 
+/// A pointer to an unsized value whose metadata is read (`size_of_val`,
+/// `align_of_val`, `for_value_raw`, `min_align_of_val`). Enforces non-null;
+/// the pointee's alignment/validity is not checked because the single-argument
+/// form carries no element type.
+ValidTraitObj(p: Ptr) { NonNull(p) }
+
 /// `InBound` with ZST-aware element counting: `0` elements when `T` is a
 /// zero-sized type (so the bounds check is vacuous and never divides by
 /// `size_of(T)`), otherwise `(end_or_len - ptr) / size_of(T)` elements.

@@ -85,60 +85,18 @@ pub fn alias_producer(name: &str) -> Option<AliasProducer> {
         return Some(AliasProducer::View(HazardKind::UniqueView));
     }
     if name.contains("from_raw_parts") || name.contains("from_parts") || name.contains("from_ptr") {
-        if is_vec_ownership_transfer_api(name) {
+        if crate::helpers::api_classify::is_vec_ownership_transfer_api(name) {
             return Some(AliasProducer::OwnershipTransfer);
         }
         return Some(AliasProducer::View(HazardKind::SharedView));
     }
-    if is_ownership_transfer_api(name) {
+    if crate::helpers::api_classify::is_ownership_transfer_api(name) {
         return Some(AliasProducer::OwnershipTransfer);
     }
-    if is_read_api(name) {
+    if crate::helpers::api_classify::is_read_api(name) {
         return Some(AliasProducer::ReadMemory);
     }
     None
-}
-
-pub fn is_read_api(name: &str) -> bool {
-    if name.contains("::ptr::") {
-        if name.ends_with("::read")
-            || name.ends_with("::read_unaligned")
-            || name.ends_with("::read_volatile")
-            || name.ends_with("::copy_to")
-            || name.ends_with("::copy_to_nonoverlapping")
-            || name.ends_with("::copy_from")
-            || name.ends_with("::copy_from_nonoverlapping")
-        {
-            return true;
-        }
-    }
-    if name.ends_with("::assume_init_read") {
-        return true;
-    }
-    if name.contains("::intrinsics::")
-        && (name.ends_with("::copy") || name.ends_with("::copy_nonoverlapping"))
-    {
-        return true;
-    }
-    false
-}
-
-pub fn is_ownership_transfer_api(name: &str) -> bool {
-    if is_vec_ownership_transfer_api(name) {
-        return true;
-    }
-    let is_from_raw = name.contains("from_raw");
-    is_from_raw
-        && (name.contains("boxed")
-            || name.contains("Box")
-            || name.contains("ffi::c_str")
-            || name.contains("CString")
-            || is_vec_ownership_transfer_api(name))
-}
-
-pub fn is_vec_ownership_transfer_api(name: &str) -> bool {
-    (name.contains("from_raw_parts") || name.contains("from_parts"))
-        && (name.contains("Vec") || name.contains("vec::"))
 }
 
 // ── Origin-based parameter safety ────────────────────────────────

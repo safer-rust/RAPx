@@ -90,8 +90,7 @@ impl PropertyChecker {
         //    and we can't verify all bytes, return Unknown.
         let is_strict = checkpoint.callee.as_ref().map_or(false, |callee| {
             let name = vm_state.tcx.def_path_str(*callee);
-            name.contains("from_bytes_with_nul_unchecked")
-                || name.contains("from_vec_with_nul_unchecked")
+            crate::helpers::api_classify::is_cstr_strict_constructor(&name)
         });
         if is_strict {
             CheckResult::Unknown
