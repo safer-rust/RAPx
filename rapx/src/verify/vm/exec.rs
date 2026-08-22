@@ -52,7 +52,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     let statement =
                         &self.body.basic_blocks[*block].statements[*statement_index];
                     self.current_block = Some(*block);
-                    self.current_statement_index = Some(*statement_index);
                     self.exec_statement(*block, *statement_index, statement)?;
                 }
                 RelevantItem::Terminator { block } => {
@@ -64,7 +63,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     self.block_occurrences.insert(*block, occ);
                     let terminator = self.body.basic_blocks[*block].terminator();
                     self.current_block = Some(*block);
-                    self.current_statement_index = None;
                     self.exec_terminator(*block, terminator, occ)?;
                 }
                 RelevantItem::ContractFact { property } => {
@@ -325,7 +323,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                                     term: field_term, ty: field_ty, provenance: None,
                                     invariants: ValueInvariants { init: true, ..Default::default() },
                                 });
-                                self.mark_field_init(local, vec![idx]);
                             }
                         } else {
                             let field_term = self.fresh_int(
@@ -337,7 +334,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                                 provenance: None,
                                 invariants: ValueInvariants { init: true, ..Default::default() },
                             });
-                            self.mark_field_init(local, vec![idx]);
                         }
                     }
                     let term = self.fresh_int(&format!("param_{}", local_idx));
@@ -469,7 +465,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                                                 non_null: true, init: true, ..Default::default()
                                             },
                                         });
-                                        self.mark_field_init(local, vec![idx]);
                                     } else {
                                         let pointee_align = 1u64.max(self.align_of_ty(*pointee));
                                         let max_size = Int::from_u64(self.ctx, i64::MAX as u64);
@@ -490,7 +485,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                                                 non_null: true, init: true, ..Default::default()
                                             },
                                         });
-                                        self.mark_field_init(local, vec![idx]);
                                     }
                                 } else if matches!(
                                     field_ty.kind(),
@@ -516,7 +510,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                                         provenance: None,
                                         invariants: ValueInvariants { init: true, ..Default::default() },
                                     });
-                                    self.mark_field_init(local, vec![idx]);
                                 }
                             }
                         }
@@ -739,7 +732,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 }),
                 invariants,
             });
-            self.mark_field_init(local, path);
         } else {
             let field_align = 1u64.max(self.align_of_ty(pointee));
             let max_size = Int::from_u64(self.ctx, i64::MAX as u64);
@@ -762,7 +754,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 }),
                 invariants,
             });
-            self.mark_field_init(local, path);
         }
     }
 
@@ -807,7 +798,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     provenance: None,
                     invariants: ValueInvariants { init: true, ..Default::default() },
                 });
-                self.mark_field_init(local, path);
             }
         }
     }
@@ -1161,7 +1151,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         rvalue: &Rvalue<'tcx>,
     ) -> Result<(), super::state::UnsupportedReason> {
         let value = self.eval_rvalue(place, rvalue)?;
-        let place_key = PlaceKey::from_mir_place(place);
 
         let has_deref = place.projection.iter().any(|p| {
             matches!(p.kind(), rustc_middle::mir::ProjectionElem::Deref)
@@ -1172,7 +1161,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             self.record_indexed_store_for_vm(place, &value);
         }
 
-        self.record_definition(place_key, &value);
+        self.record_definition();
 
         if place.projection.is_empty() {
             let mut value = value;
@@ -1580,8 +1569,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         let overflow_term = self.fresh_int("overflow_flag");
                         let overflow_val = VmValue::new(overflow_term, fields[1]);
                         self.set_field_value(dest_place.local, vec![1], overflow_val);
-                        self.mark_field_init(dest_place.local, vec![0]);
-                        self.mark_field_init(dest_place.local, vec![1]);
                     }
                 }
                 Ok(VmValue {
@@ -1672,7 +1659,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     let field_val = self.value_of_operand(operands.iter().next().unwrap());
                     let dest_local = dest_place.local;
                     self.set_field_value(dest_local, vec![0], field_val.clone());
-                    self.mark_field_init(dest_local, vec![0]);
                     if let Some(alloc_id) = self.local_alloc_ids.get(&dest_local).copied() {
                         self.init_allocations.insert(alloc_id);
                     }
@@ -1707,7 +1693,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         .unwrap_or(1);
                     let field_term = field_val.term.clone();
                     self.set_field_value(dest_local, vec![i], field_val);
-                    self.mark_field_init(dest_local, vec![i]);
                     // Flatten a nested aggregate: if the operand is a local whose
                     // own fields are tracked (e.g. `_0 = Result::Ok(_24)` where
                     // `_24 = RawVecInner { ptr: _25, .. }`), expose the nested

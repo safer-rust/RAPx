@@ -521,7 +521,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         let saved_caller = self.caller_def_id;
         let saved_locals = std::mem::take(&mut self.locals);
         let saved_field_values = std::mem::take(&mut self.field_values);
-        let saved_field_init = std::mem::take(&mut self.field_init);
         let saved_local_addresses = std::mem::take(&mut self.local_addresses);
         let saved_local_alloc_ids = std::mem::take(&mut self.local_alloc_ids);
         let saved_binary_op_sources = std::mem::take(&mut self.binary_op_sources);
@@ -575,7 +574,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         self.caller_def_id = saved_caller;
         self.locals = saved_locals;
         self.field_values = saved_field_values;
-        self.field_init = saved_field_init;
         self.local_addresses = saved_local_addresses;
         self.local_alloc_ids = saved_local_alloc_ids;
         self.binary_op_sources = saved_binary_op_sources;
@@ -722,7 +720,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             // Execute statements
             for (si, stmt) in bb_data.statements.iter().enumerate() {
                 self.current_block = Some(block);
-                self.current_statement_index = Some(si);
                 if let Err(reason) = self.exec_statement(block, si, stmt) {
                     self.notes.push(format!(
                         "inline: unsupported stmt at bb{}#{}: {}",
@@ -734,7 +731,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             // Process terminator
             let terminator = bb_data.terminator();
             self.current_block = Some(block);
-            self.current_statement_index = None;
 
             match &terminator.kind {
                 TerminatorKind::Goto { target } => {

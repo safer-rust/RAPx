@@ -122,15 +122,6 @@ pub struct UnsupportedReason {
     pub statement_index: Option<usize>,
 }
 
-/// A value definition at a specific program point.
-#[derive(Clone, Debug)]
-pub struct ValueDefinition<'ctx, 'tcx> {
-    pub place: PlaceKey,
-    pub value: VmValue<'ctx, 'tcx>,
-    pub block: BasicBlock,
-    pub statement_index: Option<usize>,
-}
-
 /// The full symbolic execution state at a program point.
 ///
 /// Accumulates locals, allocations, path conditions, and definitions
@@ -164,17 +155,14 @@ pub struct VmState<'ctx, 'tcx> {
     /// Accumulated path conditions (SwitchInt branches, Assert).
     pub(crate) path_conditions: Vec<Bool<'ctx>>,
 
-    /// Value definition history (for diagnostic replay).
-    pub(crate) definitions: Vec<ValueDefinition<'ctx, 'tcx>>,
+    /// Monotonic counter used to uniquify fresh symbolic constant names.
+    pub(crate) definition_count: usize,
 
     /// The next allocation ID.
     pub(crate) next_alloc_id: usize,
 
     /// The current basic block (for diagnostics).
     pub(crate) current_block: Option<BasicBlock>,
-
-    /// The current statement index (for diagnostics).
-    pub(crate) current_statement_index: Option<usize>,
 
     /// Track block occurrence counts for loop-carried value indexing.
     pub(crate) block_occurrences: FxHashMap<BasicBlock, usize>,
@@ -259,9 +247,6 @@ pub struct VmState<'ctx, 'tcx> {
     /// symbolic additions. This keeps Z3 expressions compact.
     pub(crate) iter_ptr_offset: FxHashMap<Local, Int<'ctx>>,
 
-    /// Fields that have been explicitly initialized (written to).
-    pub(crate) field_init: FxHashSet<(Local, Vec<usize>)>,
-
     /// Byte offsets within an allocation that are known to be NUL (0x00).
     pub(crate) known_nul_offsets: FxHashSet<(AllocId, usize)>,
 
@@ -335,10 +320,9 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             local_alloc_ids: FxHashMap::default(),
             allocations: Vec::new(),
             path_conditions: Vec::new(),
-            definitions: Vec::new(),
+            definition_count: 0,
             next_alloc_id: 0,
             current_block: None,
-            current_statement_index: None,
             block_occurrences: FxHashMap::default(),
             dead_allocations: FxHashSet::default(),
             dead_alloc_blocks: FxHashMap::default(),
@@ -358,7 +342,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             field_values: FxHashMap::default(),
             is_empty_len: FxHashMap::default(),
             iter_ptr_offset: FxHashMap::default(),
-            field_init: FxHashSet::default(),
             known_nul_offsets: FxHashSet::default(),
             known_non_nul_offsets: FxHashSet::default(),
             byte_values: FxHashMap::default(),
@@ -449,22 +432,13 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
 
     /// Create a symbolic Z3 int constant.
     pub fn fresh_int(&self, prefix: &str) -> Int<'ctx> {
-        let name = format!("{}_{}", prefix, self.definitions.len());
+        let name = format!("{}_{}", prefix, self.definition_count);
         Int::new_const(self.ctx, name.as_str())
     }
 
-    /// Record a value definition for diagnostics.
-    pub fn record_definition(
-        &mut self,
-        place: PlaceKey,
-        value: &VmValue<'ctx, 'tcx>,
-    ) {
-        self.definitions.push(ValueDefinition {
-            place,
-            value: value.clone(),
-            block: self.current_block.unwrap_or(BasicBlock::from_usize(0)),
-            statement_index: self.current_statement_index,
-        });
+    /// Bump the symbolic-name uniquifier (called once per executed assignment).
+    pub fn record_definition(&mut self) {
+        self.definition_count += 1;
     }
 
     /// Get the value of a specific field within an aggregate local.
@@ -475,11 +449,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     /// Set the value of a specific field within an aggregate local.
     pub fn set_field_value(&mut self, local: Local, path: Vec<usize>, value: VmValue<'ctx, 'tcx>) {
         self.field_values.insert((local, path), value);
-    }
-
-    /// Mark a field path as initialized.
-    pub fn mark_field_init(&mut self, local: Local, path: Vec<usize>) {
-        self.field_init.insert((local, path));
     }
 
     /// Record a per-byte symbolic value at a concrete offset in an allocation.
@@ -667,7 +636,7 @@ impl std::fmt::Debug for VmState<'_, '_> {
             .field("locals_count", &self.locals.len())
             .field("allocations_count", &self.allocations.len())
             .field("path_conditions", &self.path_conditions.len())
-            .field("definitions", &self.definitions.len())
+            .field("definitions", &self.definition_count)
             .field("notes", &self.notes)
             .finish()
     }
