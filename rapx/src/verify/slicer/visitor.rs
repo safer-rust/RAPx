@@ -24,7 +24,7 @@ use crate::analysis::path::{PathNode, PathTree};
 
 use super::{
     call_visit,
-    types::{RelevantItem, KeepReason, ProofGoal},
+    types::{RelevantItem, ProofGoal},
 };
 
 /// Entry point for backward path visiting.
@@ -129,13 +129,11 @@ impl<'tcx> BackwardSlicer<'tcx> {
                 .collect();
             results.push(ProofGoal {
                 checkpoint: checkpoint_loc,
-                property: property.clone(),
                 path: Path {
                     target: checkpoint_loc,
                     steps,
                 },
                 items,
-                roots: RelevantPlaces::from_property(property),
             });
         }
         results
@@ -168,7 +166,6 @@ impl<'tcx> BackwardSlicer<'tcx> {
             let mut items = Vec::new();
             items.push(RelevantItem::Terminator {
                 block: checkpoint_block,
-                kind: KeepReason::Checkpoint,
             });
             // Pass 1: normal processing.
             for (si, stmt) in block_data.statements.iter().enumerate().rev() {
@@ -315,7 +312,6 @@ impl<'tcx> BackwardSlicer<'tcx> {
             items.push(RelevantItem::Statement {
                 block,
                 statement_index,
-                kind: KeepReason::Invalidation,
             });
             return;
         }
@@ -337,7 +333,6 @@ impl<'tcx> BackwardSlicer<'tcx> {
             items.push(RelevantItem::Statement {
                 block,
                 statement_index,
-                kind: statement_keep_reason(statement),
             });
             // Save places already in the relevance set before removing
             // the current definition.  When the uses of this statement
@@ -371,7 +366,6 @@ impl<'tcx> BackwardSlicer<'tcx> {
             items.push(RelevantItem::Statement {
                 block,
                 statement_index,
-                kind: KeepReason::Invalidation,
             });
         } else if statement_can_refine(statement) {
             let mut uses = RelevantPlaces::new();
@@ -387,7 +381,6 @@ impl<'tcx> BackwardSlicer<'tcx> {
                 items.push(RelevantItem::Statement {
                     block,
                     statement_index,
-                    kind: KeepReason::RuntimeCheck,
                 });
             }
         }
@@ -405,10 +398,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
         keep_invalidations: bool,
     ) {
         if keep_invalidations && matches!(terminator.kind, TerminatorKind::Drop { .. }) {
-            items.push(RelevantItem::Terminator {
-                block,
-                kind: KeepReason::Invalidation,
-            });
+            items.push(RelevantItem::Terminator { block });
             return;
         }
 
@@ -435,10 +425,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
 
         let use_def = terminator_use_def(terminator);
         if terminator_is_path_condition(terminator) {
-            items.push(RelevantItem::Terminator {
-                block,
-                kind: KeepReason::PathCondition,
-            });
+            items.push(RelevantItem::Terminator { block });
             relevant.extend(use_def.uses.clone());
             return;
         }
@@ -447,10 +434,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
             if terminator_may_havoc(terminator) {
                 items.push(RelevantItem::Forget);
             }
-            items.push(RelevantItem::Terminator {
-                block,
-                kind: terminator_definition_reason(terminator),
-            });
+            items.push(RelevantItem::Terminator { block });
             relevant.remove_all(&use_def.defs);
             relevant.extend(use_def.uses);
             return;
@@ -460,10 +444,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
             if terminator_may_havoc(terminator) {
                 items.push(RelevantItem::Forget);
             }
-            items.push(RelevantItem::Terminator {
-                block,
-                kind: terminator_use_reason(terminator),
-            });
+            items.push(RelevantItem::Terminator { block });
         }
     }
 }
@@ -475,24 +456,6 @@ fn needs_invalidation_tracking(kind: &contract::PropertyKind) -> bool {
 }
 
 // ── classification helpers ──────────────────────────────────────────────
-
-fn statement_keep_reason(statement: &rustc_middle::mir::Statement<'_>) -> KeepReason {
-    match &statement.kind {
-        StatementKind::Assign(assign) => {
-            let (_, rvalue) = &**assign;
-            match rvalue {
-                rustc_middle::mir::Rvalue::Ref(_, _, _)
-                | rustc_middle::mir::Rvalue::RawPtr(_, _)
-                | rustc_middle::mir::Rvalue::Cast(_, _, _)
-                | rustc_middle::mir::Rvalue::CopyForDeref(_)
-                | rustc_middle::mir::Rvalue::BinaryOp(_, _) => KeepReason::PointerFlow,
-                _ => KeepReason::Definition,
-            }
-        }
-        StatementKind::StorageDead(_) => KeepReason::Invalidation,
-        _ => KeepReason::Definition,
-    }
-}
 
 fn statement_can_refine(statement: &rustc_middle::mir::Statement<'_>) -> bool {
     matches!(&statement.kind, StatementKind::Assign(assign) if matches!(
@@ -521,24 +484,6 @@ fn terminator_is_path_condition(terminator: &rustc_middle::mir::Terminator<'_>) 
         terminator.kind,
         TerminatorKind::SwitchInt { .. } | TerminatorKind::Assert { .. }
     )
-}
-
-fn terminator_definition_reason(terminator: &rustc_middle::mir::Terminator<'_>) -> KeepReason {
-    match terminator.kind {
-        TerminatorKind::Call { .. } => KeepReason::UnknownEffect,
-        _ => KeepReason::Definition,
-    }
-}
-
-fn terminator_use_reason(terminator: &rustc_middle::mir::Terminator<'_>) -> KeepReason {
-    match terminator.kind {
-        TerminatorKind::SwitchInt { .. } | TerminatorKind::Assert { .. } => {
-            KeepReason::PathCondition
-        }
-        TerminatorKind::Drop { .. } => KeepReason::Invalidation,
-        TerminatorKind::Call { .. } => KeepReason::UnknownEffect,
-        _ => KeepReason::UnknownEffect,
-    }
 }
 
 fn terminator_may_havoc(terminator: &rustc_middle::mir::Terminator<'_>) -> bool {

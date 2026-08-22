@@ -15,7 +15,7 @@ use crate::compat::FxHashSet;
 use super::{
     contract::{LeafProperty, OrProperty, Property},
     report::CheckResult,
-    slicer::{RelevantItem, BackwardSlicer, KeepReason},
+    slicer::{RelevantItem, BackwardSlicer},
 };
 use crate::helpers::mir_scan::{Checkpoint, CheckpointLocation};
 
@@ -90,7 +90,7 @@ impl<'tcx> VerifyEngine<'tcx> {
                 ENGINE_INLINE_DEPTH,
             );
 
-            let wrapped = Self::wrap_items(backward.checkpoint, backward.path, backward.property.clone(), backward.roots, items);
+            let wrapped = Self::wrap_items(backward.checkpoint, backward.path, items);
 
             let vm_state = match self.vm.execute(&ctx, &wrapped) {
                 Ok(state) => state,
@@ -114,19 +114,15 @@ impl<'tcx> VerifyEngine<'tcx> {
         results
     }
 
-    fn wrap_items<'a>(
+    fn wrap_items(
         checkpoint: CheckpointLocation,
         path: crate::verify::path_extractor::Path,
-        property: crate::verify::contract::Property<'tcx>,
-        roots: crate::verify::def_use::RelevantPlaces,
         items: Vec<RelevantItem<'tcx>>,
     ) -> crate::verify::slicer::ProofGoal<'tcx> {
         crate::verify::slicer::ProofGoal {
             checkpoint,
-            property,
             path,
             items,
-            roots,
         }
     }
 
@@ -222,7 +218,6 @@ impl<'tcx> VerifyEngine<'tcx> {
                 items.push(RelevantItem::Statement {
                     block,
                     statement_index: si,
-                    kind: KeepReason::Definition,
                 });
             }
 
@@ -266,7 +261,6 @@ impl<'tcx> VerifyEngine<'tcx> {
                     }
                     items.push(RelevantItem::Terminator {
                         block,
-                        kind: KeepReason::UnknownEffect,
                     });
                     if let Some(t) = target {
                         queue.push(*t);
@@ -276,20 +270,17 @@ impl<'tcx> VerifyEngine<'tcx> {
                     queue.push(*target);
                     items.push(RelevantItem::Terminator {
                         block,
-                        kind: KeepReason::Definition,
                     });
                 }
                 TerminatorKind::Return => {
                     items.push(RelevantItem::Terminator {
                         block,
-                        kind: KeepReason::Definition,
                     });
                 }
                 TerminatorKind::Assert { target, .. } => {
                     queue.push(*target);
                     items.push(RelevantItem::Terminator {
                         block,
-                        kind: KeepReason::PathCondition,
                     });
                 }
                 TerminatorKind::SwitchInt { targets, .. } => {
@@ -299,20 +290,17 @@ impl<'tcx> VerifyEngine<'tcx> {
                     queue.push(targets.otherwise());
                     items.push(RelevantItem::Terminator {
                         block,
-                        kind: KeepReason::PathCondition,
                     });
                 }
                 TerminatorKind::Drop { target, .. } => {
                     queue.push(*target);
                     items.push(RelevantItem::Terminator {
                         block,
-                        kind: KeepReason::Invalidation,
                     });
                 }
                 _ => {
                     items.push(RelevantItem::Terminator {
                         block,
-                        kind: KeepReason::Definition,
                     });
                 }
             }

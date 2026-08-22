@@ -7,27 +7,22 @@
 
 use crate::verify::{
     contract,
-    def_use::RelevantPlaces,
-    path_extractor::{Path, PathStep},
+    path_extractor::Path,
 };
 use crate::helpers::mir_scan::CheckpointLocation;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{BasicBlock, Local};
 
-/// A proof goal for one `(checkpoint, path, property)` item: the set of
-/// relevant items plus the context needed to verify that property.
+/// A proof goal for one `(checkpoint, path)` item: the set of relevant items
+/// plus the context needed to verify the target property.
 #[derive(Clone, Debug)]
 pub struct ProofGoal<'tcx> {
     /// Unsafe checkpoint whose obligation is being checked.
     pub checkpoint: CheckpointLocation,
-    /// Required property that determines the relevance roots.
-    pub property: contract::Property<'tcx>,
     /// Path being visited.
     pub path: Path,
     /// Items kept from the path.
     pub items: Vec<RelevantItem<'tcx>>,
-    /// Initial roots extracted from the property.
-    pub roots: RelevantPlaces,
 }
 
 impl<'tcx> ProofGoal<'tcx> {
@@ -49,12 +44,9 @@ pub enum RelevantItem<'tcx> {
     Statement {
         block: BasicBlock,
         statement_index: usize,
-        kind: KeepReason,
     },
     /// A MIR terminator retained from a basic block.
-    Terminator { block: BasicBlock, kind: KeepReason },
-    /// A path-level step retained as structural context.
-    PathStep { step: PathStep, kind: KeepReason },
+    Terminator { block: BasicBlock },
     /// A contract fact injected by the engine before the forward visit.
     /// Never produced by the backward visitor itself.
     ContractFact { property: contract::Property<'tcx> },
@@ -74,25 +66,4 @@ pub enum RelevantItem<'tcx> {
     CalleeExit {
         dest: Local,
     },
-}
-
-/// Why a retained item is relevant.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum KeepReason {
-    /// The item defines a relevant place.
-    Definition,
-    /// The item contributes a branch/path condition.
-    PathCondition,
-    /// The item contributes pointer provenance or pointer arithmetic.
-    PointerFlow,
-    /// The item refines state through a runtime check.
-    RuntimeCheck,
-    /// The item is the unsafe checkpoint being checked.
-    Checkpoint,
-    /// The item represents a loop summary or loop exit.
-    LoopExit,
-    /// The item may invalidate a relevant fact.
-    Invalidation,
-    /// The item may affect relevant state but is not modeled precisely yet.
-    UnknownEffect,
 }

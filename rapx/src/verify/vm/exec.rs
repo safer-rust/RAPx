@@ -48,7 +48,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 RelevantItem::Statement {
                     block,
                     statement_index,
-                    kind: _,
                 } => {
                     let statement =
                         &self.body.basic_blocks[*block].statements[*statement_index];
@@ -56,7 +55,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     self.current_statement_index = Some(*statement_index);
                     self.exec_statement(*block, *statement_index, statement)?;
                 }
-                RelevantItem::Terminator { block, kind: _ } => {
+                RelevantItem::Terminator { block } => {
                     let occ = self
                         .block_occurrences
                         .get(block)
@@ -67,12 +66,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     self.current_block = Some(*block);
                     self.current_statement_index = None;
                     self.exec_terminator(*block, terminator, occ)?;
-                }
-                RelevantItem::PathStep { step, kind } => {
-                    self.notes.push(format!(
-                        "path step {:?} kept for {:?}",
-                        step, kind
-                    ));
                 }
                 RelevantItem::ContractFact { property } => {
                     self.assert_contract_fact(property);

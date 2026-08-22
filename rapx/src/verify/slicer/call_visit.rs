@@ -16,7 +16,7 @@ use super::super::{
     def_use::{PlaceKey, RelevantPlaces, call_args_uses_at, operand_uses},
 };
 
-use super::types::{RelevantItem, KeepReason};
+use super::types::RelevantItem;
 
 /// Visit a call terminator using an interprocedural dependency summary.
 pub(crate) fn visit<'tcx>(
@@ -48,14 +48,7 @@ pub(crate) fn visit<'tcx>(
         if summary.unsupported {
             items.push(RelevantItem::Forget);
         }
-        items.push(RelevantItem::Terminator {
-            block,
-            kind: if summary.unsupported {
-                KeepReason::UnknownEffect
-            } else {
-                KeepReason::PointerFlow
-            },
-        });
+        items.push(RelevantItem::Terminator { block });
         relevant.remove_all(&defs);
         relevant.extend(call_args_uses_at(args, &summary.return_depends_on_args));
         return;
@@ -73,14 +66,7 @@ pub(crate) fn visit<'tcx>(
         if summary.unsupported {
             items.push(RelevantItem::Forget);
         }
-        items.push(RelevantItem::Terminator {
-            block,
-            kind: if summary.unsupported {
-                KeepReason::UnknownEffect
-            } else {
-                KeepReason::PointerFlow
-            },
-        });
+        items.push(RelevantItem::Terminator { block });
         relevant.extend(call_args_uses_at(args, &summary.may_write_args));
     }
 
@@ -113,10 +99,7 @@ pub(crate) fn visit<'tcx>(
                         if let Some(local) = dest_key.local() {
                             relevant.locals.insert(local);
                         }
-                        items.push(RelevantItem::Terminator {
-                            block,
-                            kind: KeepReason::PointerFlow,
-                        });
+                        items.push(RelevantItem::Terminator { block });
                     }
                 }
             }
