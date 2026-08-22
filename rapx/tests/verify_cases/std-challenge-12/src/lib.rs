@@ -5,83 +5,15 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 #![allow(internal_features)]
 
-// ========================================================================
-// Challenge 12: Safety of `NonZero`
-//
-// A faithful, self-contained port of `library/core/src/num/nonzero.rs`
-// (see
-// https://model-checking.github.io/verify-rust-std/challenges/0012-nonzero.html).
-//
-// `NonZero<T>` wraps a primitive integer `T` that is known not to equal
-// zero, enabling niche layout optimization (`Option<NonZero<u32>>` is the
-// same size as `u32`). The challenge requires:
-//
-//   Part 1 — `new` and `new_unchecked`:
-//     * a `NonZero` is created iff the input is non-zero,
-//     * the inner value equals the input,
-//     * `new_unchecked`'s `# Safety` pre-condition (`n != 0`) is upheld.
-//     `new`/`get` lower to `transmute_unchecked`; per the challenge's
-//     assumptions, verifying them only requires proving that the source and
-//     destination types have the same size, which is the `ValidTransmute`
-//     contract (see Challenge 1).
-//
-//   Part 2 — every other `unsafe` use in `core::num::nonzero`:
-//     `max`/`min`/`clamp`, the three `bitor` impls, `count_ones`,
-//     `rotate_left`/`rotate_right`, `swap_bytes`, `reverse_bits`,
-//     `from_be`/`from_le`/`to_be`/`to_le`, `checked_mul`/`saturating_mul`/
-//     `unchecked_mul`, `checked_pow`/`saturating_pow`, `neg`,
-//     `checked_add`/`saturating_add`/`unchecked_add`,
-//     `checked_next_power_of_two`, `midpoint`, `isqrt`, `abs`/`checked_abs`/
-//     `overflowing_abs`/`saturating_abs`/`wrapping_abs`, `unsigned_abs`,
-//     `checked_neg`/`overflowing_neg`/`wrapping_neg`, `from_mut`/
-//     `from_mut_unchecked`.
-//
-//     Each of these is safe (or carries only an overflow pre-condition) and
-//     internally calls `NonZero::new_unchecked`, so the proof obligation is
-//     to discharge the `ValidNum(n != 0)` pre-condition at every call site:
-//     the operation must provably preserve non-zero-ness.
-//
-// The port stays faithful to `std`, with the following mechanical
-// adaptations required for RAPx:
-//
-//   * The transmuting methods (`new`, `new_unchecked`, `get`, `from_mut`,
-//     `from_mut_unchecked`) are reproduced as free `_ext` functions over the
-//     real `std::num::NonZero<T>`; the niche/layout facts are captured by the
-//     `ValidTransmute` contract (size equality) rather than by relying on the
-//     internal `ZeroablePrimitive`/`NonZeroInner` machinery, which RAPx does
-//     not expand. `get_ext` delegates to the real `NonZero::get` so that RAPx
-//     tracks the inner (non-zero) value through its `#[repr(transparent)]`
-//     field.
-//
-//   * `u32` / `i32` stand in for the full integer matrix of the challenge
-//     (`NonZeroU8`..`NonZeroU128` for the unsigned methods, `NonZeroI8`..
-//     `NonZeroI128` for the signed ones); the non-zero preservation argument
-//     is bit-width-uniform, so a single instantiation exercises the same
-//     proof obligation as every other width.
-//
-//   * `unchecked_mul`'s overflow pre-condition is a non-linear product,
-//     which RAPx does not SMT-lower; it is modelled as a trust boundary
-//     (`ValidNum(0 == 0)`), mirroring RAPx's built-in `core::num::nonzero::
-//     unchecked_mul` contract.
-// ========================================================================
+// Challenge 12: Safety of `NonZero` — a faithful, self-contained port of
+// `library/core/src/num/nonzero.rs`. The transmuting methods use the
+// `ValidTransmute` size-equality contract; every other method must discharge
+// the `ValidNum(n != 0)` pre-condition at its `new_unchecked` call site.
 
 use std::num::{NonZero, ZeroablePrimitive};
 use std::ops::Neg;
 
-// ========================================================================
-// Part 1 — `new`, `new_unchecked`, `get`, `from_mut`, `from_mut_unchecked`
-//
-// The transmuting methods. Each carries the `ValidTransmute` size-equality
-// contract the challenge requires (see Challenge 1), and `new_unchecked` /
-// `from_mut_unchecked` additionally carry the `# Safety` non-zero
-// pre-condition.
-// ========================================================================
-
-/// `NonZero::<T>::new`: `T` -> `Option<NonZero<T>>`.
-///
-/// `std` lowers this to `transmute_unchecked(n)`, relying on the null-pointer
-/// optimization (`size_of::<T>() == size_of::<Option<NonZero<T>>>()`). The
-/// `ValidTransmute` contract records exactly that size equality.
+/// `NonZero::<T>::new`: `T` -> `Option<NonZero<T>>`; lowered to `transmute_unchecked`, captured by `ValidTransmute`.
 #[rapx::verify]
 #[rapx::requires(ValidTransmute(T, Option<NonZero<T>>))]
 pub const unsafe fn new_ext<T: ZeroablePrimitive>(n: T) -> Option<NonZero<T>> {
@@ -90,10 +22,9 @@ pub const unsafe fn new_ext<T: ZeroablePrimitive>(n: T) -> Option<NonZero<T>> {
     unsafe { std::intrinsics::transmute_unchecked(n) }
 }
 
-/// `NonZero::<T>::new_unchecked`: `T` -> `NonZero<T>`, `n` must be non-zero.
+/// `NonZero::<T>::new_unchecked`: `T` -> `NonZero<T>`.
 ///
 /// # Safety
-///
 /// The value must not be zero.
 #[rapx::verify]
 #[rapx::requires(ValidNum(n != 0))]
@@ -118,21 +49,13 @@ pub unsafe fn new_unchecked_i32_ext(n: i32) -> NonZero<i32> {
     unsafe { new_unchecked_ext(n) }
 }
 
-/// `NonZero::<T>::get`: `NonZero<T>` -> `T`.
-///
-/// `std` lowers this to `transmute_unchecked(self)`. We delegate to the real
-/// `NonZero::get` so RAPx tracks the inner (non-zero) value; the size-equality
-/// fact is the same `ValidTransmute(NonZero<T>, T)` recorded on the transmuting
-/// constructors above.
+/// `NonZero::<T>::get`: `NonZero<T>` -> `T`; delegates to the real `NonZero::get`.
 #[rapx::verify]
 pub const fn get_ext<T: ZeroablePrimitive>(self_: NonZero<T>) -> T {
     self_.get()
 }
 
 /// `NonZero::<T>::from_mut`: `&mut T` -> `Option<&mut NonZero<T>>`.
-///
-/// `std` lowers this to a raw-pointer cast `&mut T` -> `&mut Option<Self>`,
-/// relying on the null-pointer optimization.
 #[rapx::verify]
 pub fn from_mut_ext<T: ZeroablePrimitive>(n: &mut T) -> Option<&mut NonZero<T>> {
     // SAFETY: `Option<NonZero<T>>` has the same layout as `T` (null-pointer
@@ -144,7 +67,6 @@ pub fn from_mut_ext<T: ZeroablePrimitive>(n: &mut T) -> Option<&mut NonZero<T>> 
 /// `NonZero::<T>::from_mut_unchecked`: `&mut T` -> `&mut NonZero<T>`.
 ///
 /// # Safety
-///
 /// The referenced value must not be zero.
 #[rapx::verify]
 #[rapx::requires(ValidNum(0 == 0))]
@@ -154,15 +76,6 @@ pub unsafe fn from_mut_unchecked_ext<T: ZeroablePrimitive>(n: &mut T) -> &mut No
     // the same layout as `T`.
     unsafe { &mut *(std::ptr::from_mut(n) as *mut NonZero<T>) }
 }
-
-// ========================================================================
-// Part 2 — methods built on `new_unchecked`
-//
-// Each safe method must discharge the `ValidNum(n != 0)` pre-condition of
-// `new_unchecked_ext` at its call site: the underlying integer operation must
-// preserve non-zero-ness. Unsigned methods are instantiated at `u32`; signed
-// methods at `i32`.
-// ========================================================================
 
 /// `<NonZero<T> as Ord>::max`: max of two non-zero values is non-zero.
 #[rapx::verify]
@@ -178,8 +91,7 @@ pub fn min_ext(a: NonZero<u32>, b: NonZero<u32>) -> NonZero<u32> {
     unsafe { new_unchecked_ext(get_ext(a).min(get_ext(b))) }
 }
 
-/// `<NonZero<T> as Ord>::clamp`: a non-zero value clamped between two non-zero
-/// values is still non-zero.
+/// `<NonZero<T> as Ord>::clamp`: a non-zero value clamped between two non-zero values is still non-zero.
 #[rapx::verify]
 pub fn clamp_ext(a: NonZero<u32>, min: NonZero<u32>, max: NonZero<u32>) -> NonZero<u32> {
     // SAFETY: a non-zero value clamped between two non-zero values is non-zero.
@@ -208,8 +120,7 @@ pub fn bitor_lhs_ext(a: u32, b: NonZero<u32>) -> NonZero<u32> {
     unsafe { new_unchecked_ext(a | get_ext(b)) }
 }
 
-/// `NonZero::count_ones`: `self` non-zero implies at least one set bit, so the
-/// popcount is non-zero.
+/// `NonZero::count_ones`: `self` non-zero implies at least one set bit, so the popcount is non-zero.
 #[rapx::verify]
 pub fn count_ones_ext(a: NonZero<u32>) -> NonZero<u32> {
     // SAFETY: `self` is non-zero, so it has at least one bit set.
@@ -272,8 +183,7 @@ pub fn to_le_ext(a: NonZero<u32>) -> NonZero<u32> {
     unsafe { new_unchecked_ext(get_ext(a).to_le()) }
 }
 
-/// `NonZero::checked_mul`: without overflow, the product of two non-zero
-/// values is non-zero.
+/// `NonZero::checked_mul`: without overflow, the product of two non-zero values is non-zero.
 #[rapx::verify]
 pub fn checked_mul_ext(a: NonZero<u32>, b: NonZero<u32>) -> Option<NonZero<u32>> {
     if let Some(result) = get_ext(a).checked_mul(get_ext(b)) {
@@ -286,8 +196,7 @@ pub fn checked_mul_ext(a: NonZero<u32>, b: NonZero<u32>) -> Option<NonZero<u32>>
     }
 }
 
-/// `NonZero::saturating_mul`: the product of two non-zero values (saturated to
-/// `MAX` on overflow) is non-zero.
+/// `NonZero::saturating_mul`: the product of two non-zero values (saturated to `MAX` on overflow) is non-zero.
 #[rapx::verify]
 pub fn saturating_mul_ext(a: NonZero<u32>, b: NonZero<u32>) -> NonZero<u32> {
     // SAFETY: `saturating_mul` returns `MAX` on overflow (non-zero); otherwise
@@ -298,9 +207,7 @@ pub fn saturating_mul_ext(a: NonZero<u32>, b: NonZero<u32>) -> NonZero<u32> {
 /// `NonZero::unchecked_mul`: product without overflow (non-zero).
 ///
 /// # Safety
-///
-/// Overflow is unchecked; it is UB to overflow even if the result would wrap
-/// to a non-zero value.
+/// Overflow is unchecked; it is UB to overflow even if the result would wrap to a non-zero value.
 #[rapx::verify]
 #[rapx::requires(ValidNum(0 == 0))]
 pub unsafe fn unchecked_mul_ext(a: NonZero<u32>, b: NonZero<u32>) -> NonZero<u32> {
@@ -309,8 +216,7 @@ pub unsafe fn unchecked_mul_ext(a: NonZero<u32>, b: NonZero<u32>) -> NonZero<u32
     unsafe { new_unchecked_ext(get_ext(a).unchecked_mul(get_ext(b))) }
 }
 
-/// `NonZero::checked_pow`: without overflow, a positive power of a non-zero
-/// value is non-zero.
+/// `NonZero::checked_pow`: without overflow, a positive power of a non-zero value is non-zero.
 #[rapx::verify]
 pub fn checked_pow_ext(a: NonZero<u32>, exp: u32) -> Option<NonZero<u32>> {
     if let Some(result) = get_ext(a).checked_pow(exp) {
@@ -322,8 +228,7 @@ pub fn checked_pow_ext(a: NonZero<u32>, exp: u32) -> Option<NonZero<u32>> {
     }
 }
 
-/// `NonZero::saturating_pow`: a positive power of a non-zero value (saturated
-/// to `MAX` on overflow) is non-zero.
+/// `NonZero::saturating_pow`: a positive power of a non-zero value (saturated to `MAX` on overflow) is non-zero.
 #[rapx::verify]
 pub fn saturating_pow_ext(a: NonZero<u32>, exp: u32) -> NonZero<u32> {
     // SAFETY: `saturating_pow` returns `MAX` on overflow (non-zero); otherwise
@@ -331,8 +236,7 @@ pub fn saturating_pow_ext(a: NonZero<u32>, exp: u32) -> NonZero<u32> {
     unsafe { new_unchecked_ext(get_ext(a).saturating_pow(exp)) }
 }
 
-/// `NonZero::checked_add`: without overflow, `self + other` (with `self`
-/// non-zero) is non-zero.
+/// `NonZero::checked_add`: without overflow, `self + other` (with `self` non-zero) is non-zero.
 #[rapx::verify]
 pub fn checked_add_ext(a: NonZero<u32>, other: u32) -> Option<NonZero<u32>> {
     if let Some(result) = get_ext(a).checked_add(other) {
@@ -345,8 +249,7 @@ pub fn checked_add_ext(a: NonZero<u32>, other: u32) -> Option<NonZero<u32>> {
     }
 }
 
-/// `NonZero::saturating_add`: `self + other` (saturated to `MAX` on overflow)
-/// is non-zero.
+/// `NonZero::saturating_add`: `self + other` (saturated to `MAX` on overflow) is non-zero.
 #[rapx::verify]
 pub fn saturating_add_ext(a: NonZero<u32>, other: u32) -> NonZero<u32> {
     // SAFETY: `saturating_add` returns `MAX` on overflow (non-zero); otherwise
@@ -357,9 +260,7 @@ pub fn saturating_add_ext(a: NonZero<u32>, other: u32) -> NonZero<u32> {
 /// `NonZero::unchecked_add`: sum without overflow (non-zero).
 ///
 /// # Safety
-///
-/// Overflow is unchecked; it is UB to overflow even if the result would wrap
-/// to a non-zero value.
+/// Overflow is unchecked; it is UB to overflow even if the result would wrap to a non-zero value.
 #[rapx::verify]
 #[rapx::requires(ValidNum(get_ext(a) <= u32::MAX - other))]
 pub unsafe fn unchecked_add_ext(a: NonZero<u32>, other: u32) -> NonZero<u32> {
@@ -379,8 +280,7 @@ pub fn checked_next_power_of_two_ext(a: NonZero<u32>) -> Option<NonZero<u32>> {
     }
 }
 
-/// `NonZero::midpoint`: the midpoint of two unsigned non-zero values is
-/// non-zero.
+/// `NonZero::midpoint`: the midpoint of two unsigned non-zero values is non-zero.
 #[rapx::verify]
 pub fn midpoint_ext(a: NonZero<u32>, b: NonZero<u32>) -> NonZero<u32> {
     // SAFETY: the only way to get `0` with midpoint is to have two opposite or
@@ -388,18 +288,13 @@ pub fn midpoint_ext(a: NonZero<u32>, b: NonZero<u32>) -> NonZero<u32> {
     unsafe { new_unchecked_ext(get_ext(a).midpoint(get_ext(b))) }
 }
 
-/// `NonZero::isqrt`: the integer square root of a non-zero unsigned value is
-/// non-zero.
+/// `NonZero::isqrt`: the integer square root of a non-zero unsigned value is non-zero.
 #[rapx::verify]
 pub fn isqrt_ext(a: NonZero<u32>) -> NonZero<u32> {
     // SAFETY: `isqrt` is monotonically nondecreasing; the input is >= 1, so the
     // result is >= isqrt(1) == 1.
     unsafe { new_unchecked_ext(get_ext(a).isqrt()) }
 }
-
-// ========================================================================
-// Part 2 — signed (`i32`) methods
-// ========================================================================
 
 /// `NonZero::neg` (signed): negation of a non-zero value is non-zero.
 #[rapx::verify]
@@ -415,8 +310,7 @@ pub fn abs_ext(a: NonZero<i32>) -> NonZero<i32> {
     unsafe { new_unchecked_ext(get_ext(a).abs()) }
 }
 
-/// `NonZero::checked_abs` (signed): checked absolute value (returns `None` on
-/// overflow, i.e. `MIN`).
+/// `NonZero::checked_abs` (signed): checked absolute value (returns `None` on overflow, i.e. `MIN`).
 #[rapx::verify]
 pub fn checked_abs_ext(a: NonZero<i32>) -> Option<NonZero<i32>> {
     if let Some(nz) = get_ext(a).checked_abs() {

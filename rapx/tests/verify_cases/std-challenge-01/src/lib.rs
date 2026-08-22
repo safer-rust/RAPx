@@ -10,25 +10,13 @@
 #![allow(unnecessary_transmutes)]
 #![allow(internal_features)]
 
-// ========================================================================
-// Challenge 1: Verify `core` transmuting methods
-//
-// Each function below mirrors a method/intrinsic listed in the challenge
-// (see https://model-checking.github.io/verify-rust-std/challenges/0001-core-transmutation.html).
-// Unsafe transmutation primitives carry a `#[rapx::requires(ValidTransmute(..))]`
-// contract; safe wrappers have no requires, and RAPx must prove their internal
-// transmutes cannot cause UB.
-// ========================================================================
+// Challenge 1: Verify `core` transmuting methods.
+// A faithful, self-contained port of the corresponding `core` transmutation methods.
 
 use std::mem::MaybeUninit;
 use std::ptr;
 
-// ========================================================================
-// Part I — The two transmutation intrinsics
-// ========================================================================
-
-/// `transmute<T, U>`: reinterprets `T` as `U`, statically requiring equal size.
-/// The safety contract captures that requirement explicitly.
+/// `transmute<T, U>`: reinterprets `T` as `U`, requiring equal size.
 #[rapx::verify]
 #[rapx::requires(ValidTransmute(T, U))]
 pub unsafe fn transmute_ext<T, U>(src: T) -> U {
@@ -38,17 +26,12 @@ pub unsafe fn transmute_ext<T, U>(src: T) -> U {
     unsafe { std::intrinsics::transmute_unchecked::<T, U>(src) }
 }
 
-/// `transmute_unchecked<T, U>`: same as `transmute` but without the static
-/// size restriction; the caller must guarantee `size_of::<T>() == size_of::<U>()`.
+/// `transmute_unchecked<T, U>`: `transmute` without the static size check.
 #[rapx::verify]
 #[rapx::requires(ValidTransmute(T, U))]
 pub unsafe fn transmute_unchecked_ext<T, U>(src: T) -> U {
     std::intrinsics::transmute_unchecked::<T, U>(src)
 }
-
-// ========================================================================
-// Part II — unsafe APIs with validity constraints (core::mem)
-// ========================================================================
 
 /// `MaybeUninit<T>::array_assume_init`: `[MaybeUninit<T>; N]` -> `[T; N]`.
 #[rapx::verify]
@@ -76,18 +59,13 @@ pub unsafe fn transpose_array_ext<T, const N: usize>(
     unsafe { std::intrinsics::transmute_unchecked(self_) }
 }
 
-/// `MaybeUninit<T>::copy_from_slice`-supporting transmute:
-/// `&[T]` -> `&[MaybeUninit<T>]` (same layout, used by `write_copy_of_slice`).
+/// `MaybeUninit<T>::copy_from_slice` transmute: `&[T]` -> `&[MaybeUninit<T>]`.
 #[rapx::verify]
 #[rapx::requires(ValidTransmute(T, MaybeUninit<T>))]
 pub unsafe fn as_maybe_uninit_slice_ext<T>(src: &[T]) -> &[MaybeUninit<T>] {
     // SAFETY: `&[T]` and `&[MaybeUninit<T>]` have the same layout.
     unsafe { std::mem::transmute::<&[T], &[MaybeUninit<T>]>(src) }
 }
-
-// ========================================================================
-// Part II — core::net (Ipv6Addr)
-// ========================================================================
 
 pub struct Ipv6Addr {
     octets: [u8; 16],
@@ -141,10 +119,6 @@ impl Ipv6Addr {
         ]
     }
 }
-
-// ========================================================================
-// Part III — core::char conversions
-// ========================================================================
 
 /// `char::from_u32_unchecked`: `u32` -> `char`, caller guarantees valid scalar.
 #[rapx::verify]
@@ -202,10 +176,6 @@ const fn len_utf16_ext(code: u32) -> usize {
     if (code & 0xFFFF) == code { 1 } else { 2 }
 }
 
-// ========================================================================
-// Part III — core::ascii (AsciiChar)
-// ========================================================================
-
 /// `AsciiChar::from_u8_unchecked`: `u8` -> `ascii::Char`, caller guarantees <= 0x7F.
 #[rapx::verify]
 #[rapx::requires(ValidTransmute(u8, std::ascii::Char))]
@@ -225,10 +195,6 @@ pub const fn ascii_char_from_u8_ext(b: u8) -> Option<std::ascii::Char> {
     }
 }
 
-// ========================================================================
-// Part II — core::str (as_bytes / as_bytes_mut)
-// ========================================================================
-
 /// `str::as_bytes`: `&str` -> `&[u8]` (same layout, fat-pointer transmute).
 #[rapx::verify]
 pub const fn str_as_bytes_ext(s: &str) -> &[u8] {
@@ -239,8 +205,7 @@ pub const fn str_as_bytes_ext(s: &str) -> &[u8] {
 /// `str::as_bytes_mut`: `&mut str` -> `&mut [u8]` via raw-pointer cast.
 #[rapx::verify]
 pub const unsafe fn str_as_bytes_mut_ext(s: &mut str) -> &mut [u8] {
-    // SAFETY: `str` has the same layout as `[u8]`; the pointer comes from a
-    // mutable reference valid for writes.
+    // SAFETY: `str` has the same layout as `[u8]`; the pointer comes from a mutable reference.
     unsafe { &mut *(s as *mut str as *mut [u8]) }
 }
 
@@ -278,10 +243,6 @@ const fn bytes_make_ascii_lowercase_ext(bytes: &mut [u8]) {
     }
 }
 
-// ========================================================================
-// Part II/III — core::ptr::alignment (Alignment)
-// ========================================================================
-
 /// Newtype over `usize` mirroring `core::ptr::alignment::Alignment`.
 #[derive(Copy, Clone)]
 pub struct Alignment(usize);
@@ -296,8 +257,7 @@ impl Alignment {
     #[rapx::requires(ValidNum(align > 0))]
     #[rapx::requires(ValidNum((align & (align - 1)) == 0))]
     pub const unsafe fn new_unchecked_ext(align: usize) -> Alignment {
-        // SAFETY: by precondition, `align` is a power of two; all such values
-        // are representable as an `Alignment`.
+        // SAFETY: by precondition, `align` is a power of two, hence a valid `Alignment`.
         unsafe { std::mem::transmute::<usize, Alignment>(align) }
     }
 
@@ -312,10 +272,6 @@ impl Alignment {
         }
     }
 }
-
-// ========================================================================
-// Part IV — core::alloc::layout (Layout)
-// ========================================================================
 
 pub struct Layout {
     size: usize,
@@ -343,10 +299,6 @@ impl Layout {
         unsafe { Layout { size, align: std::mem::transmute::<usize, Alignment>(align) } }
     }
 }
-
-// ========================================================================
-// Part II — core::ptr (align_offset / is_aligned_to)
-// ========================================================================
 
 /// `*const T::align_offset`: forwards to the checked std method.
 #[rapx::verify]
@@ -377,10 +329,6 @@ pub fn mut_is_aligned_to_ext<T>(p: *mut T, align: usize) -> bool {
     }
     p.addr() & (align - 1) == 0
 }
-
-// ========================================================================
-// Part IV — core::slice (align_to / align_to_mut / as_simd)
-// ========================================================================
 
 /// `<[T]>::align_to`: split a slice into (prefix, aligned U-slice, suffix).
 #[rapx::verify]
@@ -505,10 +453,6 @@ where
     unsafe { align_to_mut_ext::<T, std::simd::Simd<T, LANES>>(slice) }
 }
 
-// ========================================================================
-// Part IV — core::slice::memchr (memchr_aligned / memrchr)
-// ========================================================================
-
 const LO_USIZE_EXT: usize = 0x0101_0101_0101_0101;
 const HI_USIZE_EXT: usize = 0x8080_8080_8080_8080;
 
@@ -520,10 +464,7 @@ const fn contains_zero_byte_ext(x: usize) -> bool {
     x.wrapping_sub(LO_USIZE_EXT) & !x & HI_USIZE_EXT != 0
 }
 
-/// `memchr_aligned`: find a byte in a slice using word-at-a-time scans.
-///
-/// Mirrors `core::slice::memchr::memchr_aligned`, which is only reached from
-/// `memchr` after the `text.len() >= 2 * size_of::<usize>()` check.
+/// `memchr_aligned`: find a byte using word-at-a-time scans.
 #[rapx::verify]
 #[rapx::requires(ValidNum(text.len() >= 2 * std::mem::size_of::<usize>()))]
 pub fn memchr_aligned_ext(x: u8, text: &[u8]) -> Option<usize> {
@@ -571,8 +512,7 @@ pub fn memrchr_ext(x: u8, text: &[u8]) -> Option<usize> {
     type Chunk = usize;
 
     let (min_aligned_offset, max_aligned_offset) = {
-        // SAFETY: transmuting `[u8]` to `[usize]` is safe except for size
-        // differences which are handled by `align_to`.
+        // SAFETY: transmuting `[u8]` to `[usize]` is safe except for size differences handled by `align_to`.
         let (prefix, _, suffix) = unsafe { align_to_ext::<u8, (Chunk, Chunk)>(text) };
         (prefix.len(), len - suffix.len())
     };
@@ -602,12 +542,7 @@ pub fn memrchr_ext(x: u8, text: &[u8]) -> Option<usize> {
     text[..offset].iter().rposition(|elt| *elt == x)
 }
 
-// ========================================================================
-// Part II — core::array (into_iter / try_from_fn / iter_next_chunk)
-// ========================================================================
-
-/// `<[T; N] as IntoIterator>::into_iter`: `[T; N]` -> `[MaybeUninit<T>; N]`
-/// (the transmute underlying `array::IntoIter::new`).
+/// `<[T; N] as IntoIterator>::into_iter`: `[T; N]` -> `[MaybeUninit<T>; N]`.
 #[rapx::verify]
 #[rapx::requires(ValidTransmute([T; N], [MaybeUninit<T>; N]))]
 pub unsafe fn array_into_iter_transmute_ext<T, const N: usize>(
@@ -617,8 +552,7 @@ pub unsafe fn array_into_iter_transmute_ext<T, const N: usize>(
     unsafe { std::intrinsics::transmute_unchecked(arr) }
 }
 
-/// `array::try_from_fn`: build an array from a fallible closure, using
-/// `MaybeUninit::array_assume_init` to finalize the result.
+/// `array::try_from_fn`: build an array from a fallible closure.
 #[rapx::verify]
 pub fn array_try_from_fn_ext<T, E, const N: usize, F>(mut cb: F) -> Result<[T; N], E>
 where
@@ -673,10 +607,6 @@ pub fn iter_next_chunk_ext<T, const N: usize>(
     // SAFETY: all elements of `array` were populated.
     Ok(unsafe { array_assume_init_ext(array) })
 }
-
-// ========================================================================
-// Part IV — core::iter::adapters (Filter / FilterMap next_chunk)
-// ========================================================================
 
 /// `<Filter<I, P> as Iterator>::next_chunk` (dropless path).
 #[rapx::verify]
@@ -755,10 +685,6 @@ where
     Err(remaining)
 }
 
-// ========================================================================
-// Part IV — core::iter::range (<char as Step>)
-// ========================================================================
-
 /// `<char as Step>::forward_checked`.
 #[rapx::verify]
 pub fn char_forward_checked_ext(start: char, count: usize) -> Option<char> {
@@ -804,10 +730,6 @@ pub unsafe fn char_backward_unchecked_ext(start: char, count: usize) -> char {
     // SAFETY: the caller guarantees `res` is a valid char.
     unsafe { from_u32_unchecked_ext(res) }
 }
-
-// ========================================================================
-// Part IV — core::str::iter (Chars) / str::count (do_count_chars)
-// ========================================================================
 
 /// `<Chars as Iterator>::next`: decode the next UTF-8 code point.
 #[rapx::verify]
@@ -900,8 +822,7 @@ pub fn do_count_chars_ext(s: &str) -> usize {
     const CHUNK_SIZE: usize = 192;
     const UNROLL_INNER: usize = 4;
 
-    // SAFETY: transmuting `[u8]` to `[usize]` is safe except for size
-    // differences handled by `align_to`.
+    // SAFETY: transmuting `[u8]` to `[usize]` is safe except for size differences handled by `align_to`.
     let (head, body, tail) = unsafe { align_to_ext::<u8, usize>(s.as_bytes()) };
 
     if body.is_empty() || head.len() > std::mem::size_of::<usize>() || tail.len() > std::mem::size_of::<usize>() {
@@ -933,10 +854,6 @@ fn char_count_general_case_ext(s: &[u8]) -> usize {
     s.iter().filter(|&&byte| !utf8_is_cont_byte_ext(byte)).count()
 }
 
-// ========================================================================
-// Part II — core::io (BorrowedBuf / BorrowedCursor)
-// ========================================================================
-
 pub struct BorrowedBuf<'data> {
     pub buf: &'data mut [u8],
     pub filled: usize,
@@ -951,8 +868,7 @@ impl<'data> BorrowedBuf<'data> {
     #[rapx::verify]
     pub fn unfilled_ext<'this>(&'this mut self) -> BorrowedCursor<'this> {
         BorrowedCursor {
-            // SAFETY: we never assign into `BorrowedCursor::buf`, so treating
-            // its lifetime covariantly is safe.
+            // SAFETY: we never assign into `BorrowedCursor::buf`, so treating its lifetime covariantly is safe.
             buf: unsafe {
                 std::mem::transmute::<&'this mut BorrowedBuf<'data>, &'this mut BorrowedBuf<'this>>(
                     self,
@@ -967,8 +883,7 @@ impl<'a> BorrowedCursor<'a> {
     #[rapx::verify]
     pub fn reborrow_ext<'this>(&'this mut self) -> BorrowedCursor<'this> {
         BorrowedCursor {
-            // SAFETY: we never assign into `BorrowedCursor::buf`, so treating
-            // its lifetime covariantly is safe.
+            // SAFETY: we never assign into `BorrowedCursor::buf`, so treating its lifetime covariantly is safe.
             buf: unsafe {
                 std::mem::transmute::<&'this mut BorrowedBuf<'a>, &'this mut BorrowedBuf<'this>>(
                     self.buf,

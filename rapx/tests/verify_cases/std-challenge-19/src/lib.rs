@@ -5,68 +5,16 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 #![allow(dead_code)]
 
-// ========================================================================
-// Challenge 19: Verify the safety of `RawVec` functions
-//
-// A faithful, self-contained port of
-// `library/alloc/src/raw_vec/mod.rs` (see
-// https://model-checking.github.io/verify-rust-std/challenges/0019-rawvec.html).
-//
-// `RawVec` is the buffer that both `Vec` and `VecDeque` are built on: it owns
-// a heap allocation and hides all the corner cases (ZST elements, zero-capacity
-// buffers, arithmetic overflow, allocator overallocation). The challenge
-// requires *unbounded* verification for a generic element type `T` (no
-// monomorphization) and a generic allocator `A: Allocator`.
-//
-// The port stays faithful to `std`, with the following mechanical adaptations
-// required for RAPx:
-//   * `core::num::niche_types::UsizeNoHighBit` (`Cap`) -> plain `usize`; the
-//     "high bit must be 0" (`cap <= isize::MAX`) niche invariant is dropped —
-//     it is an optimization, not a memory-safety property (the real bound
-//     `cap * elem_size <= isize::MAX` is established by the allocator and
-//     carried by pointer provenance, not by `cap` alone).
-//   * `core::ptr::Unique<u8>` -> `std::ptr::NonNull<u8>` (RAPx already tracks
-//     the non-null invariant of `NonNull`); `Unique::from_non_null`/`into`/
-//     `as_non_null_ptr` become the identity.
-//   * `T::IS_ZST` -> `size_of::<T>() == 0`, `T::LAYOUT` -> `Layout::new::<T>()`.
-//   * The unstable `TryReserveError`/`TryReserveErrorKind`/`CapacityOverflow`
-//     -> a local `TryReserveErrorExt` enum.
-//   * The `std::hint::assert_unchecked` optimizer hints are removed; they are
-//     not memory-safety obligations.
-//   * `RawVecInner` carries an `#[rapx::invariant(Allocated(ptr, u8, cap))]`
-//     so that, when a method is verified in isolation, `self.ptr` carries the
-//     allocation provenance that `Allocator::{grow, shrink, deallocate}` demand.
-//     This is a *byte-count* under-approximation: the real buffer is
-//     `cap * elem_size` bytes, but `elem_size` is a per-call parameter (not a
-//     stored field), so only `cap` bytes can be claimed; the invariant still
-//     holds because `cap * elem_size >= cap` for non-ZSTs (and `cap == 0` for
-//     ZSTs, where the count-0 claim is vacuous).
-//   * `finish_grow_ext` / `shrink_unchecked_ext` / `deallocate_ext` inline
-//     `current_memory_ext` instead of calling it.  As a `#[rapx::verify]`
-//     callee it would be a black box whose return value strips `self.ptr`'s
-//     provenance, so the allocator's `Allocated` requirement becomes unprovable.
-//
-// Unsafe functions keep their `#[rapx::requires(...)]` contracts (mirroring
-// their `# Safety` docs) and are inlined at the call sites of the verified
-// safe abstractions. All 18 challenge-listed functions carry `#[rapx::verify]`.
-//
-// `into_box_ext` additionally relies on RAPx modelling of transparent
-// wrappers (`ManuallyDrop`/`MaybeDangling` deref), of fat-pointer construction
-// (`slice_from_raw_parts_mut` provenance), of `MaybeUninit` typing, and of
-// initialization for inline-callee ADT returns (`ManuallyDrop::new`); see the
-// corresponding `CallEffect::ReturnTransparentDeref` / fat-pointer provenance /
-// `check_typed` / inline-return-init handling in the verifier.
-// ========================================================================
+// Challenge 19: Verify the safety of `RawVec` functions.
+// A faithful, self-contained port of `library/alloc/src/raw_vec/mod.rs`.
+// Adaptations: `Cap` -> `usize`, `Unique<u8>` -> `NonNull<u8>`, plus an
+// `Allocated(ptr, u8, cap)` invariant so allocator provenance stays provable.
 
 use std::alloc::{Allocator, Global, Layout};
 use std::boxed::Box;
 use std::marker::PhantomData;
 use std::mem::{Alignment, ManuallyDrop, MaybeUninit};
 use std::ptr::{self, NonNull};
-
-// ========================================================================
-// Error plumbing
-// ========================================================================
 
 /// The niche-optimized capacity type is `usize`; see the module doc.
 type Cap = usize;
@@ -110,47 +58,23 @@ const fn min_non_zero_cap(size: usize) -> usize {
     }
 }
 
-// ========================================================================
-// The two underlying representations
-// ========================================================================
-
 /// `RawVec<T, A>`: the element-typed wrapper around a type-erased buffer.
 pub struct RawVec<T, A: Allocator = Global> {
     inner: RawVecInner<A>,
     _marker: PhantomData<T>,
 }
 
-/// `RawVecInner<A>`: like `RawVec`, but only generic over the allocator.
-///
-/// All methods take the element layout as a parameter, which reduces the
-/// amount of code that must be monomorphized. The buffer pointer `ptr` is a
-/// non-null `NonNull<u8>` (non-nullness is tracked by the `NonNull` type).
-///
-/// The original `Cap = UsizeNoHighBit` niche type carries the invariant
-/// `cap <= isize::MAX`; here `Cap` is adapted to plain `usize`, and that
-/// (optimization-only) invariant is dropped. It is not needed for memory
-/// safety: the real requirement is `cap * elem_size <= isize::MAX`, which is
-/// established by the allocator when the buffer is allocated, and is carried
-/// by the pointer's provenance rather than by a `cap` bound.
-///
-/// The `Allocated(ptr, u8, cap)` invariant gives `self.ptr` allocation
-/// provenance when a method is verified in isolation (see the module doc).
+/// `RawVecInner<A>`: like `RawVec`, but only generic over the allocator; `Cap` is plain `usize`.
 #[rapx::invariant(Allocated(ptr, u8, cap))]
 pub struct RawVecInner<A: Allocator = Global> {
     ptr: NonNull<u8>,
-    /// Never used for ZSTs; it's `capacity()`'s responsibility to return
-    /// `usize::MAX` in that case.
+    /// Never used for ZSTs; `capacity()` returns `usize::MAX` in that case.
     cap: Cap,
     alloc: A,
 }
 
-// ========================================================================
-// RawVec<T, A>
-// ========================================================================
-
 impl<T, A: Allocator> RawVec<T, A> {
-    /// Like `new`, but parameterized over the choice of allocator for the
-    /// returned `RawVec`.
+    /// Like `new`, but parameterized over the choice of allocator for the returned `RawVec`.
     #[rapx::verify]
     pub fn new_in_ext(alloc: A) -> Self {
         // Check the assumption made in `current_memory`.
@@ -158,8 +82,7 @@ impl<T, A: Allocator> RawVec<T, A> {
         Self { inner: RawVecInner::new_in_ext(alloc, Alignment::of::<T>()), _marker: PhantomData }
     }
 
-    /// Like `with_capacity`, but parameterized over the choice of allocator
-    /// for the returned `RawVec`.
+    /// Like `with_capacity`, but parameterized over the choice of allocator for the returned `RawVec`.
     #[rapx::verify]
     pub fn with_capacity_in_ext(capacity: usize, alloc: A) -> Self {
         Self {
@@ -168,14 +91,10 @@ impl<T, A: Allocator> RawVec<T, A> {
         }
     }
 
-    /// Converts the entire buffer into `Box<[MaybeUninit<T>]>` with the
-    /// specified `len`.
+    /// Converts the buffer into `Box<[MaybeUninit<T>]>` with the specified `len`.
     ///
     /// # Safety
-    ///
-    /// * `len` must be greater than or equal to the most recently requested
-    ///   capacity, and
-    /// * `len` must be less than or equal to `self.capacity()`.
+    /// `len` must be between the last requested capacity and `self.capacity()`.
     #[rapx::verify]
     #[rapx::requires(ValidNum(len <= self.capacity_ext()))]
     pub unsafe fn into_box_ext(self, len: usize) -> Box<[MaybeUninit<T>], A> {
@@ -193,10 +112,7 @@ impl<T, A: Allocator> RawVec<T, A> {
     /// Reconstitutes a `RawVec` from a pointer, capacity, and allocator.
     ///
     /// # Safety
-    ///
-    /// The `ptr` must be allocated (via the given allocator `alloc`), and with
-    /// the given `capacity`. The `capacity` cannot exceed `isize::MAX` for
-    /// sized types. For ZSTs capacity is ignored.
+    /// `ptr` must be allocated via `alloc` with `capacity` (<= `isize::MAX`).
     #[rapx::verify]
     #[rapx::requires(ValidNum(capacity <= isize::MAX))]
     #[rapx::requires(Allocated(ptr, T, capacity))]
@@ -213,11 +129,9 @@ impl<T, A: Allocator> RawVec<T, A> {
         }
     }
 
-    /// A convenience method for hoisting the non-null precondition out of
-    /// `from_raw_parts_in`.
+    /// Convenience method for hoisting the non-null precondition out of `from_raw_parts_in`.
     ///
     /// # Safety
-    ///
     /// See `from_raw_parts_in`.
     #[rapx::verify]
     #[rapx::requires(ValidNum(capacity <= isize::MAX))]
@@ -244,9 +158,7 @@ impl<T, A: Allocator> RawVec<T, A> {
         self.inner.non_null_ext()
     }
 
-    /// Gets the capacity of the allocation.
-    ///
-    /// This will always be `usize::MAX` if `T` is zero-sized.
+    /// Gets the capacity of the allocation (`usize::MAX` if `T` is zero-sized).
     pub fn capacity_ext(&self) -> usize {
         self.inner.capacity_ext(std::mem::size_of::<T>())
     }
@@ -257,22 +169,13 @@ impl<T, A: Allocator> RawVec<T, A> {
     }
 }
 
-// ========================================================================
-// Drop
-// ========================================================================
-
 impl<T, A: Allocator> Drop for RawVec<T, A> {
-    /// Frees the memory owned by the `RawVec` *without* trying to drop its
-    /// contents.
+    /// Frees the memory owned by the `RawVec` without dropping its contents.
     fn drop(&mut self) {
         // SAFETY: we are in a Drop impl; `self.inner` will not be used again.
         unsafe { self.inner.deallocate_ext(Layout::new::<T>()) }
     }
 }
-
-// ========================================================================
-// RawVecInner<A>
-// ========================================================================
 
 impl<A: Allocator> RawVecInner<A> {
     fn new_in_ext(alloc: A, align: Alignment) -> Self {
@@ -349,9 +252,7 @@ impl<A: Allocator> RawVecInner<A> {
     }
 
     /// # Safety
-    /// - `elem_layout` must be valid for `self`, i.e. it must be the same
-    ///   `elem_layout` used to initially construct `self`.
-    /// - `elem_layout`'s size must be a multiple of its alignment.
+    /// `elem_layout` must be the layout used to construct `self`; its size must be a multiple of its alignment.
     #[rapx::verify]
     #[rapx::requires(ValidNum(elem_layout.size() % elem_layout.align() == 0))]
     unsafe fn current_memory_ext(&self, elem_layout: Layout) -> Option<(NonNull<u8>, Layout)> {
@@ -370,8 +271,7 @@ impl<A: Allocator> RawVecInner<A> {
     }
 
     /// # Safety
-    /// - `elem_layout` must be valid for `self`.
-    /// - `elem_layout`'s size must be a multiple of its alignment.
+    /// `elem_layout` must be valid for `self`; its size a multiple of its alignment.
     #[rapx::verify]
     #[rapx::requires(ValidNum(elem_layout.size() % elem_layout.align() == 0))]
     unsafe fn try_reserve_ext(
@@ -390,8 +290,7 @@ impl<A: Allocator> RawVecInner<A> {
     }
 
     /// # Safety
-    /// - `elem_layout` must be valid for `self`.
-    /// - `elem_layout`'s size must be a multiple of its alignment.
+    /// `elem_layout` must be valid for `self`; its size a multiple of its alignment.
     #[rapx::verify]
     #[rapx::requires(ValidNum(elem_layout.size() % elem_layout.align() == 0))]
     unsafe fn try_reserve_exact_ext(
@@ -414,8 +313,7 @@ impl<A: Allocator> RawVecInner<A> {
     }
 
     /// # Safety
-    /// `ptr` must be the buffer returned by a prior allocation for the given
-    /// `cap`.
+    /// `ptr` must be the buffer from a prior allocation for the given `cap`.
     #[rapx::verify]
     unsafe fn set_ptr_and_cap_ext(&mut self, ptr: NonNull<[u8]>, cap: usize) {
         // Allocators currently return a `NonNull<[u8]>` whose length matches
@@ -425,10 +323,7 @@ impl<A: Allocator> RawVecInner<A> {
     }
 
     /// # Safety
-    /// - `elem_layout` must be valid for `self`.
-    /// - `elem_layout`'s size must be a multiple of its alignment.
-    /// - The sum of `len` and `additional` must be greater than the current
-    ///   capacity.
+    /// `elem_layout` must be valid for `self` (size a multiple of its alignment); `len + additional` must exceed the current capacity.
     #[rapx::verify]
     #[rapx::requires(ValidNum(elem_layout.size() % elem_layout.align() == 0))]
     unsafe fn grow_amortized_ext(
@@ -454,9 +349,7 @@ impl<A: Allocator> RawVecInner<A> {
         let cap = cmp_max(self.cap * 2, required_cap);
         let cap = cmp_max(min_non_zero_cap(elem_layout.size()), cap);
 
-        // SAFETY:
-        // - cap >= len + additional
-        // - other preconditions passed to caller
+        // SAFETY: `cap >= len + additional` and the other preconditions passed to the caller.
         let ptr = unsafe { self.finish_grow_ext(cap, elem_layout)? };
 
         // SAFETY: `finish_grow` would have failed if `cap > isize::MAX`.
@@ -465,10 +358,7 @@ impl<A: Allocator> RawVecInner<A> {
     }
 
     /// # Safety
-    /// - `elem_layout` must be valid for `self`.
-    /// - `elem_layout`'s size must be a multiple of its alignment.
-    /// - The sum of `len` and `additional` must be greater than the current
-    ///   capacity.
+    /// `elem_layout` must be valid for `self` (size a multiple of its alignment); `len + additional` must exceed the current capacity.
     #[rapx::verify]
     #[rapx::requires(ValidNum(elem_layout.size() % elem_layout.align() == 0))]
     unsafe fn grow_exact_ext(
@@ -494,9 +384,7 @@ impl<A: Allocator> RawVecInner<A> {
     }
 
     /// # Safety
-    /// - `elem_layout` must be valid for `self`.
-    /// - `elem_layout`'s size must be a multiple of its alignment.
-    /// - `cap` must be greater than the current capacity.
+    /// `elem_layout` must be valid for `self` (size a multiple of its alignment); `cap` must exceed the current capacity.
     #[rapx::verify]
     #[rapx::requires(ValidNum(elem_layout.size() % elem_layout.align() == 0))]
     unsafe fn finish_grow_ext(
@@ -525,9 +413,7 @@ impl<A: Allocator> RawVecInner<A> {
     }
 
     /// # Safety
-    /// - `elem_layout` must be valid for `self`.
-    /// - `elem_layout`'s size must be a multiple of its alignment.
-    /// - `cap` must be less than or equal to `self.capacity(elem_layout.size())`.
+    /// `elem_layout` must be valid for `self` (size a multiple of its alignment); `cap` must be <= `self.capacity(...)`.
     #[rapx::verify]
     #[rapx::requires(ValidNum(elem_layout.size() % elem_layout.align() == 0))]
     unsafe fn shrink_ext(&mut self, cap: usize, elem_layout: Layout) -> Result<(), TryReserveErrorExt> {
@@ -590,10 +476,7 @@ impl<A: Allocator> RawVecInner<A> {
     }
 
     /// # Safety
-    ///
-    /// This function deallocates the owned allocation, but does not update
-    /// `ptr` or `cap` to prevent double-free or use-after-free. Essentially,
-    /// do not do anything with the caller after this function returns.
+    /// Deallocates without updating `ptr`/`cap`; do not use the buffer after this returns.
     #[rapx::verify]
     #[rapx::requires(ValidNum(elem_layout.size() % elem_layout.align() == 0))]
     unsafe fn deallocate_ext(&mut self, elem_layout: Layout) {
@@ -607,10 +490,6 @@ impl<A: Allocator> RawVecInner<A> {
         }
     }
 }
-
-// ========================================================================
-// Free functions
-// ========================================================================
 
 /// `Cap(cap)`, except if `T` is a ZST then `ZERO_CAP`.
 ///

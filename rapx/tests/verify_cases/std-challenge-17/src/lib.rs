@@ -211,14 +211,7 @@ impl<T> SliceExt<T> for [T] {
     }
 }
 
-/// Safe abstractions from `core::slice` (challenge 0017).
-///
-/// Each method mirrors the corresponding `[T]` method in
-/// `library/core/src/slice/mod.rs`. They are safe to call, so they carry no
-/// `#[rapx::requires]` contract; RAPx must prove that the internal unsafe
-/// operations cannot cause UB. Unsafe primitives are routed through the
-/// contract-annotated `SliceExt` `_ext` methods so the whole obligation chain
-/// is self-contained within this crate.
+/// Safe slice abstractions from `core::slice` (challenge 0017).
 pub trait SliceSafeExt<T> {
     fn first_chunk_ext<const N: usize>(&self) -> Option<&[T; N]>;
     fn first_chunk_mut_ext<const N: usize>(&mut self) -> Option<&mut [T; N]>;
@@ -381,8 +374,7 @@ impl<T> SliceSafeExt<T> for [T] {
         let len = self.len();
         let ptr = self.as_mut_ptr();
 
-        // SAFETY: Both are subparts of the original slice: the memory range is
-        // valid, and they don't overlap because each is only half of the slice.
+        // SAFETY: Both are valid, non-overlapping halves of the original slice.
         let (front_half, back_half) = unsafe {
             (
                 from_raw_parts_mut(ptr, half_len),
@@ -403,9 +395,7 @@ impl<T> SliceSafeExt<T> for [T] {
         let k = self.len() - mid;
         let p = self.as_mut_ptr();
 
-        // SAFETY: Models `rotate::ptr_rotate(mid, p.add(mid), k)`, whose safety
-        // requires the whole range `[p, p.add(mid + k))` to be valid for reads
-        // and writes. `p.add(mid)` is in bounds because `mid <= len`.
+        // SAFETY: The whole range `[p, p.add(mid + k))` is valid; `p.add(mid)` is in bounds because `mid <= len`.
         unsafe {
             let _mid_ptr = p.add(mid);
             let _all = from_raw_parts_mut(p, mid + k);
@@ -418,8 +408,7 @@ impl<T> SliceSafeExt<T> for [T] {
         let mid = self.len() - k;
         let p = self.as_mut_ptr();
 
-        // SAFETY: See `rotate_left_ext`. `p.add(mid)` is in bounds because
-        // `mid = len - k <= len`.
+        // SAFETY: See `rotate_left_ext`; `p.add(mid)` is in bounds because `mid = len - k <= len`.
         unsafe {
             let _mid_ptr = p.add(mid);
             let _all = from_raw_parts_mut(p, mid + k);
@@ -460,8 +449,7 @@ impl<T> SliceSafeExt<T> for [T] {
             self.len() == other.len(),
             "destination and source slices have different lengths"
         );
-        // SAFETY: `self` and `other` have the same length and cannot overlap
-        // because mutable references are exclusive.
+        // SAFETY: `self` and `other` have the same length and cannot overlap (exclusive mutable refs).
         unsafe {
             ptr::swap_nonoverlapping(self.as_mut_ptr(), other.as_mut_ptr(), self.len());
         }
@@ -515,9 +503,7 @@ impl<T> SliceSafeExt<T> for [T] {
         let mut next_read: usize = 1;
         let mut next_write: usize = 1;
 
-        // SAFETY: `next_read` and `next_write` stay within `[0, len)` inside the
-        // loop, and `next_read >= next_write`, so `ptr_read` and `prev_ptr_write`
-        // never alias, keeping the `&mut *` reborrows sound.
+        // SAFETY: `next_read`/`next_write` stay in `[0, len)` with `next_read >= next_write`, so the reborrows never alias.
         unsafe {
             while next_read < len {
                 let ptr_read = ptr.add(next_read);
@@ -542,14 +528,12 @@ impl<T> SliceSafeExt<T> for [T] {
         indices: [usize; N],
     ) -> Result<[&mut T; N], ()> {
         get_disjoint_check_valid_ext(&indices, self.len())?;
-        // SAFETY: `get_disjoint_check_valid_ext` checked that all indices are
-        // in bounds and pairwise disjoint.
+        // SAFETY: `get_disjoint_check_valid_ext` checked all indices are in bounds and pairwise disjoint.
         unsafe { Ok(self.get_disjoint_unchecked_mut_ext(indices)) }
     }
 }
 
-/// `as_simd` / `as_simd_mut` need the `SimdElement` bound on `T`, so they
-/// live in their own trait.
+/// `as_simd` / `as_simd_mut` need the `SimdElement` bound on `T`, so they live in their own trait.
 #[cfg(not(rapx_rustc_ge_196))]
 pub trait SliceSimdExt<T: std::simd::SimdElement> {
     fn as_simd_ext<const LANES: usize>(&self) -> (&[T], &[Simd<T, LANES>], &[T])
@@ -644,15 +628,13 @@ unsafe fn copy_from_slice_impl<T: Clone>(dest: &mut [T], src: &[T]) {
         dest.len() == src.len(),
         "source slice length does not match destination slice length"
     );
-    // SAFETY: `self` and `src` have the same length and cannot overlap
-    // because mutable references are exclusive.
+    // SAFETY: `self` and `src` have the same length and cannot overlap (exclusive mutable refs).
     unsafe {
         ptr::copy_nonoverlapping(src.as_ptr(), dest.as_mut_ptr(), dest.len());
     }
 }
 
-/// `as_flattened` / `as_flattened_mut` live on `[[T; N]]`, so they need their
-/// own extension trait.
+/// `as_flattened` / `as_flattened_mut` live on `[[T; N]]`, so they need their own extension trait.
 pub trait SliceArrayExt<T, const N: usize> {
     fn as_flattened_ext(&self) -> &[T];
     fn as_flattened_mut_ext(&mut self) -> &mut [T];

@@ -8,25 +8,9 @@
 #![allow(unused_mut)]
 #![allow(unused_comparisons)]
 
-// ========================================================================
 // Challenge 4: Memory safety of BTreeMap's `btree::node` module.
-//
-// A faithful, self-contained port of
-// `library/alloc/src/collections/btree/node.rs` (see
-// https://github.com/rust-lang/rust/blob/master/library/alloc/src/collections/btree/node.rs).
-//
-// Only the module-level structure is adapted to be verifiable by RAPx:
-//   * `crate::alloc::{Allocator, Layout}` -> `std::alloc::{Allocator, Layout}`
-//   * `crate::boxed::Box`                  -> `std::boxed::Box`
-//   * `super::marker`                      -> a local `marker` module
-//   * `super::mem::take_mut`               -> a local `take_mut`
-//   * `pub(super)` visibility              -> `pub`
-//
-// Only the 34 challenge-listed functions (35 with both `NodeRef::push` impls)
-// carry `#[rapx::verify]`. Unsafe helper functions keep their
-// `#[rapx::requires(...)]` contracts (mirroring their `# Safety` docs) and are
-// inlined at the call sites of the verified functions.
-// ========================================================================
+// A faithful, self-contained port of `library/alloc/src/collections/btree/node.rs`.
+// Adapted to RAPx by mapping `crate::alloc`/`crate::boxed` to `std` and inlining helper contracts.
 
 use std::alloc::{Allocator, Layout};
 use std::boxed::Box;
@@ -42,10 +26,6 @@ pub const MIN_LEN_AFTER_SPLIT: usize = B - 1;
 const KV_IDX_CENTER: usize = B - 1;
 const EDGE_IDX_LEFT_OF_CENTER: usize = B - 1;
 const EDGE_IDX_RIGHT_OF_CENTER: usize = B;
-
-// ========================================================================
-// The underlying node representations
-// ========================================================================
 
 pub struct LeafNode<K, V> {
     pub parent: Option<NonNull<InternalNode<K, V>>>,
@@ -93,10 +73,6 @@ impl<K, V> InternalNode<K, V> {
 
 /// A managed, non-null pointer to a node.
 pub type BoxedNode<K, V> = NonNull<LeafNode<K, V>>;
-
-// ========================================================================
-// NodeRef
-// ========================================================================
 
 #[rapx::invariant(NonNull(node))]
 #[rapx::invariant(Align(node, LeafNode))]
@@ -528,10 +504,6 @@ impl<'a, K, V> NodeRef<marker::Mut<'a>, K, V, marker::LeafOrInternal> {
         NodeRef { height: self.height, node: self.node, _marker: PhantomData }
     }
 }
-
-// ========================================================================
-// Handle
-// ========================================================================
 
 pub struct Handle<Node, Type> {
     pub node: Node,
@@ -981,10 +953,6 @@ impl<'a, K: 'a, V: 'a> Handle<NodeRef<marker::Mut<'a>, K, V, marker::Internal>, 
     }
 }
 
-// ========================================================================
-// BalancingContext
-// ========================================================================
-
 pub struct BalancingContext<'a, K, V> {
     parent: Handle<NodeRef<marker::Mut<'a>, K, V, marker::Internal>, marker::KV>,
     left_child: NodeRef<marker::Mut<'a>, K, V, marker::LeafOrInternal>,
@@ -1370,10 +1338,6 @@ impl<'a, K, V> Handle<NodeRef<marker::Mut<'a>, K, V, marker::LeafOrInternal>, ma
     }
 }
 
-// ========================================================================
-// Supporting types and helpers
-// ========================================================================
-
 pub enum ForceResult<Leaf, Internal> {
     Leaf(Leaf),
     Internal(Internal),
@@ -1434,10 +1398,6 @@ pub mod marker {
     pub enum KV {}
     pub enum Edge {}
 }
-
-// ========================================================================
-// Slice helper primitives
-// ========================================================================
 
 #[rapx::requires(ValidNum(len > idx))]
 unsafe fn slice_insert<T>(slice: &mut [MaybeUninit<T>], idx: usize, val: T) {

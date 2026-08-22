@@ -5,74 +5,15 @@
 #![allow(dead_code)]
 #![allow(unused_mut)]
 
-// ========================================================================
-// Challenge 10: Memory safety of String
-//
-// A faithful, self-contained port of `library/alloc/src/string.rs` (see
-// https://model-checking.github.io/verify-rust-std/challenges/0010-string.html).
-//
-// `String` is a UTF-8 byte buffer (`Vec<u8>`) with a safe API layered over a
-// handful of unsafe buffer primitives (`reserve`, `ptr::copy`,
-// `ptr::copy_nonoverlapping`, `set_len`).  The challenge requires proving that
-// the 15 listed safe abstractions never trigger UB (dangling/misaligned
-// access, reading uninitialized memory, mutating immutable bytes, or
-// producing invalid values), for *any* string / slice length where marked
-// "unbounded".
-//
-// RAPx models `&str` at the byte level and does not lower the `ValidString`
-// property (UTF-8 validity is "parsed but not SMT-lowered").  The port
-// therefore makes the following mechanical adaptations, all of which preserve
-// the memory-safety obligations of the original:
-//
-//   * `char` is represented by its `u32` code point (`pop`/`remove` return
-//     `u32`/`Option<u32>`, `retain` takes `FnMut(u32) -> bool`, `insert`
-//     takes `u32`), so RAPx never has to discharge `char`'s Unicode-scalar
-//     validity invariant (same adaptation as challenge 20).
-//   * `String` carries a `ValidString(vec.ptr, u8, vec.1)` struct invariant —
-//     the UTF-8 validity of its byte buffer.  RAPx does not SMT-lower the UTF-8
-//     DFA, so this is a *trust* invariant (the check only flags a use-after-free
-//     and otherwise assumes UTF-8, exactly as the challenge permits).  The
-//     length field is spelled `vec.1` (not `vec.len`) because the DSL's `x.len`
-//     sugar would read `vec.len` as `Len(vec)` instead of the field.
-//   * The char-boundary / UTF-8 validity requirement (`is_char_boundary`) is
-//     *assumed*, exactly as the challenge permits ("you can assume the
-//     functional correctness of `str::validations.rs` and that the string is
-//     valid UTF-8").  Only its memory-safety-relevant consequence — that the
-//     asserted index is `<= self.len()` — is retained, as `idx <= len`.
-//   * `Vec<u8>` is a self-contained byte buffer (`ptr`, `len`, `cap`) with an
-//     `Allocated(ptr, u8, cap)` invariant, mirroring the `RawVec` port in
-//     challenge 19; the growth / shrink paths go through the `Global` allocator
-//     (`Allocator::{allocate, grow, shrink, deallocate}`), which RAPx models
-//     with fresh-allocation provenance.
-//   * The encoded length of a `u32` code point (`ch_len` in `insert`/`remove`)
-//     is not bounded by RAPx on its own; the byte-level bounds it needs are
-//     made explicit with `assert!(ch_len <= 4)` / `assert!(next <= len)`.
-//   * `String::remove_matches`'s `Pattern`/`Searcher` machinery is abstracted
-//     to a char predicate `P: FnMut(u32) -> bool` (as challenge 20's
-//     `CharPredicateSearcher`); the copy-down + `set_len` structure is kept.
-//   * `String::drain` / `String::replace_range` take a concrete
-//     `Range<usize>` (instead of `R: RangeBounds`) and inline the removal /
-//     splice logic, keeping the `ptr::copy` + `set_len` structure.
-//
-// Unsafe functions keep their `#[rapx::requires(...)]` contracts (mirroring
-// their `# Safety` docs) and are inlined at the call sites of the verified
-// safe abstractions.  The 15 challenge-listed functions carry `#[rapx::verify]`;
-// the buffer primitives `Vec::set_len` and `Vec::into_boxed_slice` carry
-// `#[rapx::verify]` as well, while the branch-y buffer helpers (`reserve`,
-// `grow`, `split_off`, `leak`, …) are plain inlinable methods whose unsafe
-// operations mirror the same `copy` / `from_raw_parts` / grow patterns that are
-// discharged in the verified functions above.
-// ========================================================================
+// Challenge 10: Memory safety of `String` — a faithful, self-contained port of
+// `library/alloc/src/string.rs`. `char` is modelled as a `u32` code point and
+// UTF-8 validity is assumed as a trust invariant, exactly as the challenge permits.
 
 use std::alloc::{Allocator, Global, Layout};
 use std::mem::ManuallyDrop;
 use std::ops::Range;
 use std::ptr::{self, NonNull};
 use std::slice::{from_raw_parts, from_raw_parts_mut};
-
-// ========================================================================
-// Error plumbing (local replacements for the std error types)
-// ========================================================================
 
 /// Error returned by `String::from_utf16*` on invalid input.
 #[derive(Clone, Copy, Debug)]
@@ -81,16 +22,6 @@ pub struct FromUtf16Error(());
 fn capacity_overflow() -> ! {
     panic!("capacity overflow");
 }
-
-// ========================================================================
-// UTF-8 byte-level helpers (mirror core::char / core::str::validations).
-//
-// These are *safe* functions: they read/write bytes through bounds-checked
-// indexing (`[i]` / `.get`) or the caller-validated raw buffer, and only
-// perform an unsafe operation where the caller has established the bound.
-// They are inlined at the call sites of the verified functions so the
-// byte-count / code-point relationships are tracked by the verifier.
-// ========================================================================
 
 /// Number of bytes `code` takes up when encoded in UTF-8 (1..=4).
 fn char_len_utf8(code: u32) -> usize {
@@ -105,8 +36,7 @@ fn char_len_utf8(code: u32) -> usize {
     }
 }
 
-/// Encode `code` into `dst` (at least 4 writable bytes) and return the number
-/// of bytes written.  Only the caller-established `dst` bound is relied upon.
+/// Encode `code` into `dst` (at least 4 writable bytes) and return the number of bytes written.
 unsafe fn encode_char(code: u32, dst: *mut u8) -> usize {
     if code < 0x80 {
         unsafe { *dst = code as u8 };
@@ -135,8 +65,7 @@ unsafe fn encode_char(code: u32, dst: *mut u8) -> usize {
     }
 }
 
-/// Decode the first UTF-8 code point of `slice`, returning `(code_point, len)`.
-/// The `Some` branch guarantees `len <= slice.len()`.
+/// Decode the first UTF-8 code point of `slice`, returning `(code_point, len)`; `Some` guarantees `len <= slice.len()`.
 fn decode_first_char(slice: &[u8]) -> Option<(u32, usize)> {
     let lead = *slice.first()?;
     if lead < 0x80 {
@@ -160,8 +89,7 @@ fn decode_first_char(slice: &[u8]) -> Option<(u32, usize)> {
     Some((code, 4))
 }
 
-/// Decode the last UTF-8 code point of `slice`, returning `(code_point, len)`.
-/// The `Some` branch guarantees `len <= slice.len()`.
+/// Decode the last UTF-8 code point of `slice`, returning `(code_point, len)`; `Some` guarantees `len <= slice.len()`.
 fn decode_last_char(slice: &[u8]) -> Option<(u32, usize)> {
     let n = slice.len();
     let last = *slice.get(n.wrapping_sub(1))?;
@@ -187,22 +115,12 @@ fn decode_last_char(slice: &[u8]) -> Option<(u32, usize)> {
     Some((code, len))
 }
 
-/// Memory-safety-relevant part of `is_char_boundary`: `idx <= len`.  The UTF-8
-/// boundary condition itself is assumed (see module doc).
+/// Memory-safety-relevant part of `is_char_boundary`: `idx <= len` (UTF-8 boundary is assumed).
 fn is_char_boundary(len: usize, idx: usize) -> bool {
     idx <= len
 }
 
-// ========================================================================
-// Vec<u8>: the byte buffer behind String
-// ========================================================================
-
 /// A byte buffer (`Vec<u8>`): a non-null pointer, a length, and a capacity.
-///
-/// The `Allocated(ptr, u8, cap)` invariant gives `self.ptr` allocation
-/// provenance when a method is verified in isolation; `len <= cap` is the
-/// structural length invariant.  `ptr` is `NonNull::dangling()` when `cap == 0`
-/// (the `Allocated` count-0 claim is vacuous).
 #[rapx::invariant(Allocated(ptr, u8, cap))]
 #[rapx::invariant(ValidNum(len <= cap))]
 #[rapx::invariant(ValidNum(cap <= isize::MAX))]
@@ -309,8 +227,7 @@ impl Vec {
     /// Sets the length of the vector.
     ///
     /// # Safety
-    /// - `new_len` must be less than or equal to `self.capacity()`.
-    /// - The elements at `old_len..new_len` must be initialized.
+    /// `new_len` must be `<= self.cap` and elements `old_len..new_len` must be initialized.
     #[rapx::verify]
     #[rapx::requires(ValidNum(new_len <= self.cap))]
     pub unsafe fn set_len(&mut self, new_len: usize) {
@@ -367,16 +284,7 @@ impl Vec {
     }
 }
 
-// ========================================================================
-// String
-// ========================================================================
-
 /// A UTF-8 encoded, growable string.
-///
-/// The `ValidString` invariant records the type's UTF-8 validity at the tag
-/// level (the byte buffer holds a valid UTF-8 sequence).  `vec.ptr` / `vec.1`
-/// are the byte-buffer pointer and length fields (`vec.len` would be caught by
-/// the DSL's `x.len` sugar and read as `Len(vec)`).
 #[rapx::invariant(ValidString(vec.ptr, u8, vec.1))]
 pub struct String {
     vec: Vec,
@@ -385,7 +293,7 @@ pub struct String {
 /// Reinterpret a `Box<[u8]>` as `Box<str>` without re-checking UTF-8.
 ///
 /// # Safety
-/// The byte slice must contain valid UTF-8 (assumed, see module doc).
+/// The byte slice must contain valid UTF-8 (assumed).
 unsafe fn from_boxed_utf8_unchecked(b: Box<[u8]>) -> Box<str> {
     unsafe { Box::from_raw(Box::into_raw(b) as *mut str) }
 }
@@ -393,7 +301,7 @@ unsafe fn from_boxed_utf8_unchecked(b: Box<[u8]>) -> Box<str> {
 /// Reinterpret a `&mut [u8]` as `&mut str` without re-checking UTF-8.
 ///
 /// # Safety
-/// The byte slice must contain valid UTF-8 (assumed, see module doc).
+/// The byte slice must contain valid UTF-8 (assumed).
 unsafe fn from_utf8_unchecked_mut(b: &mut [u8]) -> &mut str {
     unsafe { &mut *(b as *mut [u8] as *mut str) }
 }
@@ -412,7 +320,7 @@ impl String {
     /// Converts a byte buffer to a `String` without checking UTF-8 validity.
     ///
     /// # Safety
-    /// `bytes` must contain valid UTF-8 (assumed, see module doc).
+    /// `bytes` must contain valid UTF-8 (assumed).
     #[rapx::verify]
     #[rapx::requires(ValidString(bytes.ptr, u8, bytes.1))]
     pub unsafe fn from_utf8_unchecked(bytes: Vec) -> String {
@@ -438,8 +346,6 @@ impl String {
     pub fn as_mut_vec(&mut self) -> &mut Vec {
         &mut self.vec
     }
-
-    // -- challenge functions ------------------------------------------------
 
     /// `String::pop`: remove and return the last code point.
     #[rapx::verify]
@@ -714,8 +620,7 @@ impl String {
         ret
     }
 
-    /// `String::push`: append a code point (helper for the `from_utf16*`
-    /// functions; not a challenge function itself).
+    /// `String::push`: append a code point (helper for the `from_utf16*` functions).
     #[rapx::verify]
     pub fn push(&mut self, ch: u32) {
         let len = self.len();
@@ -728,11 +633,7 @@ impl String {
         }
     }
 
-    /// `String::remove_matches`: remove every code point matching `pat`.
-    ///
-    /// The `Pattern`/`Searcher` machinery is abstracted to a char predicate
-    /// `P: FnMut(u32) -> bool` (see module doc); the copy-down structure
-    /// mirrors std's `remove_matches`.
+    /// `String::remove_matches`: remove every code point matching `pat` (a `P: FnMut(u32) -> bool` predicate).
     #[rapx::verify]
     pub fn remove_matches<P>(&mut self, mut pat: P)
     where
@@ -769,8 +670,7 @@ impl String {
         unsafe { self.vec.set_len(write) };
     }
 
-    /// `String::drain`: remove the byte range `range` and return the code
-    /// points as a `Drain` iterator.  The range removal happens on `Drop`.
+    /// `String::drain`: remove the byte range `range` and return it as a `Drain` iterator (removal happens on `Drop`).
     #[rapx::verify]
     pub fn drain(&mut self, range: Range<usize>) -> Drain<'_> {
         let len = self.len();
@@ -825,8 +725,7 @@ impl String {
     }
 }
 
-/// Decode a single UTF-16 code unit, consuming `1` or `2` units.
-/// `next` is the following unit, needed for surrogate pairs.
+/// Decode a single UTF-16 code unit, consuming `1` or `2` units; `next` is the following unit (for surrogate pairs).
 fn decode_utf16_unit(unit: u16, next: Option<u16>) -> Result<(u32, usize), ()> {
     if (0xD800..0xDC00).contains(&unit) {
         let low = next.ok_or(())?;
@@ -843,15 +742,7 @@ fn decode_utf16_unit(unit: u16, next: Option<u16>) -> Result<(u32, usize), ()> {
     }
 }
 
-// ========================================================================
-// Drain
-// ========================================================================
-
 /// The draining iterator returned by `String::drain`.
-///
-/// On `Drop` the byte range is removed from the string (copying the trailing
-/// bytes down).  The `iter`-based code-point iteration is elided: for the
-/// memory-safety proof only the range removal on `Drop` matters.
 pub struct Drain<'a> {
     start: usize,
     end: usize,

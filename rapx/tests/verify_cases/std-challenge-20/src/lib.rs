@@ -3,60 +3,10 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 #![allow(dead_code)]
 
-// ========================================================================
-// Challenge 20: Verify the safety of char-related functions in str::pattern
-//
-// A faithful, self-contained port of the char-related `Searcher` machinery in
-// `library/core/src/str/pattern.rs` (see
-// https://model-checking.github.io/verify-rust-std/challenges/0020-str-pattern-pt1.html).
-//
-// The challenge requires proving, for the six `Searcher` types
-// (`CharSearcher`, `MultiCharEqSearcher`, `CharArraySearcher`,
-// `CharArrayRefSearcher`, `CharSliceSearcher`, `CharPredicateSearcher`), that
-// the six methods `next` / `next_match` / `next_reject` / `next_back` /
-// `next_match_back` / `next_back_reject` do not cause UB, and that the unsafe
-// `Searcher`/`ReverseSearcher` trait condition holds: every returned index
-// range lies on a UTF-8 boundary so callers may `get_unchecked`-slice the
-// haystack.
-//
-// RAPx models `&str` at the byte level and does not lower the `ValidString`
-// property (UTF-8 validity is "parsed but not SMT-lowered").  The port
-// therefore makes the following mechanical adaptations, all of which preserve
-// the memory-safety obligations of the original:
-//
-//   * `self.haystack.get_unchecked(a..b)` (a `str` operation requiring the
-//     `ValidString` + char-boundary invariant) -> `from_raw_parts` over
-//     `self.haystack.as_bytes()`; only the byte-level `InBound` obligation is
-//     tracked.  The char-boundary requirement itself is assumed, as the
-//     challenge permits ("you can assume the functional correctness of
-//     `str::validations.rs` and that the haystack is a valid UTF-8 string").
-//   * `char` is represented by its `u32` code point (`needle: char` ->
-//     `needle: u32`, `MultiCharEq::matches(char)` -> `matches(u32)`), so RAPx
-//     never has to discharge `char`'s Unicode-scalar validity invariant.
-//   * The `Searcher`/`ReverseSearcher`/`Pattern` traits (nightly `pattern`
-//     feature) are dropped; each method is an inherent method carrying
-//     `#[rapx::verify]`.
-//   * `CharSearcher`'s `finger`/`finger_back` "valid UTF-8 index" invariant is
-//     split into the byte-level part RAPx can prove — `finger <= finger_back`,
-//     `finger_back <= len`, `len <= isize::MAX` (the cached byte length of the
-//     haystack; RAPx does not resolve `haystack.len()` for a `&str` struct
-//     field, and `from_raw_parts` requires the byte length to fit in
-//     `isize::MAX`) — plus the `utf8_size in 1..=4` invariant.
-//   * `next_match`/`next_match_back` read `utf8_encoded[utf8_size - 1]` via a
-//     raw-pointer deref (`*self.utf8_encoded.as_ptr().add(self.utf8_size - 1)`)
-//     instead of `self.utf8_encoded.get_unchecked(..)`.  RAPx models an inline
-//     `[u8; 4]` field with the *parent struct's* allocation, so `get_unchecked`
-//     resolves the slice length to `1` instead of `4`; the raw-pointer form
-//     carries the field offset, yielding the correct `utf8_size <= 4` bound.
-//   * `next_match_back` is guarded so that it never sets `finger_back` below
-//     `finger`.  `std` may transiently do so for a match that overlaps the
-//     forward `finger`, but such a match is unreachable in `std` (a `Searcher`
-//     is used exclusively forward *or* reverse; `rfind`/`rmatches` keep
-//     `finger == 0`, where the `index >= shift` guard already forces
-//     `found_char >= finger`).
-//   * `memchr`/`memrchr` are local naive loops (instead of `core::slice::memchr`)
-//     so the verifier can track the `index < bytes.len()` loop invariant.
-// ========================================================================
+// Challenge 20: Verify the safety of char-related functions in str::pattern.
+// A faithful, self-contained port of `library/core/src/str/pattern.rs`.
+// Adaptations: `&str` modeled at byte level (`get_unchecked` -> `from_raw_parts`),
+// `char` -> `u32` code point, and `memchr` -> local naive loops.
 
 use std::slice::from_raw_parts;
 
@@ -68,17 +18,9 @@ pub enum SearchStep {
     Done,
 }
 
-// ========================================================================
-// UTF-8 byte-level helpers (mirror core::str::iter / validations).
-//
-// These are *safe* functions: they read bytes through bounds-checked indexing
-// (`[i]` / `.get`) and may panic on invalid input, but never perform an unsafe
-// operation.  They are inlined at the call sites of the verified searchers so
-// that the `Some((_, len))` result carries the path condition `pos + len <= end`.
-// ========================================================================
+// UTF-8 byte-level helpers (safe, inlined so `Some((_, len))` carries `pos + len <= end`).
 
-/// Decode the first UTF-8 code point of `slice`, returning `(code_point, len)`.
-/// The `Some` branch guarantees `len <= slice.len()`.
+/// Decode the first UTF-8 code point of `slice`, returning `(code_point, len)` (guarantees `len <= slice.len()`).
 fn decode_first_char(slice: &[u8]) -> Option<(u32, usize)> {
     let lead = *slice.first()?;
     if lead < 0x80 {
@@ -102,8 +44,7 @@ fn decode_first_char(slice: &[u8]) -> Option<(u32, usize)> {
     Some((code, 4))
 }
 
-/// Decode the last UTF-8 code point of `slice`, returning `(code_point, len)`.
-/// The `Some` branch guarantees `len <= slice.len()`.
+/// Decode the last UTF-8 code point of `slice`, returning `(code_point, len)` (guarantees `len <= slice.len()`).
 fn decode_last_char(slice: &[u8]) -> Option<(u32, usize)> {
     let n = slice.len();
     let last = *slice.get(n.wrapping_sub(1))?;
@@ -154,10 +95,6 @@ fn memrchr_ext(x: u8, bytes: &[u8]) -> Option<usize> {
     None
 }
 
-// ========================================================================
-// CharSearcher
-// ========================================================================
-
 /// Searches for a single `char` (represented by its `u32` code point).
 #[rapx::invariant(ValidNum(finger <= finger_back))]
 #[rapx::invariant(ValidNum(finger_back <= len))]
@@ -166,8 +103,7 @@ fn memrchr_ext(x: u8, bytes: &[u8]) -> Option<usize> {
 #[rapx::invariant(ValidNum(utf8_size <= 4))]
 pub struct CharSearcher<'a> {
     haystack: &'a str,
-    /// Byte length of `haystack` (cached so the invariant can reference it;
-    /// RAPx does not resolve `haystack.len()` for a `&str` struct field).
+    /// Byte length of `haystack` (cached; RAPx does not resolve `haystack.len()` for a `&str` field).
     len: usize,
     /// Number of bytes `needle` takes up when encoded in UTF-8 (1..=4).
     utf8_size: usize,
@@ -217,8 +153,7 @@ impl<'a> CharSearcher<'a> {
     pub fn next(&mut self) -> SearchStep {
         let old_finger = self.finger;
         let bytes = self.haystack.as_bytes();
-        // SAFETY: invariant `finger <= finger_back <= haystack.len()`; the
-        // char-boundary requirement is assumed (valid UTF-8 haystack).
+        // SAFETY: invariant `finger <= finger_back <= haystack.len()`; char-boundary is assumed (valid UTF-8).
         let slice = unsafe { from_raw_parts(bytes.as_ptr().add(old_finger), self.finger_back - old_finger) };
         if let Some((code, len)) = decode_first_char(slice) {
             self.finger += len;
@@ -237,8 +172,7 @@ impl<'a> CharSearcher<'a> {
     pub fn next_match(&mut self) -> Option<(usize, usize)> {
         loop {
             let bytes = self.haystack.as_bytes().get(self.finger..self.finger_back)?;
-            // SAFETY: invariant `utf8_size in 1..=4` bounds the index into the
-            // 4-byte `utf8_encoded` array.
+            // SAFETY: invariant `utf8_size in 1..=4` bounds the index into the 4-byte `utf8_encoded` array.
             let last_byte = unsafe { *self.utf8_encoded.as_ptr().add(self.utf8_size - 1) };
             if let Some(index) = memchr_ext(last_byte, bytes) {
                 self.finger += index + 1;
@@ -294,8 +228,7 @@ impl<'a> CharSearcher<'a> {
         let haystack = self.haystack.as_bytes();
         loop {
             let bytes = haystack.get(self.finger..self.finger_back)?;
-            // SAFETY: invariant `utf8_size in 1..=4` bounds the index into the
-            // 4-byte `utf8_encoded` array.
+            // SAFETY: invariant `utf8_size in 1..=4` bounds the index into the 4-byte `utf8_encoded` array.
             let last_byte = unsafe { *self.utf8_encoded.as_ptr().add(self.utf8_size - 1) };
             if let Some(index) = memrchr_ext(last_byte, bytes) {
                 let index = self.finger + index;
@@ -333,10 +266,6 @@ impl<'a> CharSearcher<'a> {
         }
     }
 }
-
-// ========================================================================
-// MultiCharEq / MultiCharEqSearcher
-// ========================================================================
 
 /// A matcher over code points (`char` values, represented as `u32`).
 pub trait MultiCharEq {
@@ -478,11 +407,6 @@ impl<'a, C: MultiCharEq> MultiCharEqSearcher<'a, C> {
     }
 }
 
-// ========================================================================
-// The four concrete wrapper searchers.  Each forwards the six methods to the
-// inner `MultiCharEqSearcher` (mirrors `searcher_methods!` in `std`).
-// ========================================================================
-
 macro_rules! forward_methods {
     ($name:ident, [$($gen:tt)*], [$($arg:tt)*]) => {
         impl<$($gen)*> $name<$($arg)*> {
@@ -533,8 +457,7 @@ forward_methods!(CharArrayRefSearcher, ['a, 'b, const N: usize], ['a, 'b, N]);
 pub struct CharSliceSearcher<'a, 'b>(pub MultiCharEqSearcher<'a, &'b [char]>);
 forward_methods!(CharSliceSearcher, ['a, 'b], ['a, 'b]);
 
-/// Associated type for `<F as Pattern>::Searcher<'a>` where `F: FnMut(char) -> bool`
-/// (`char` is represented by its `u32` code point).
+/// Associated type for `<F as Pattern>::Searcher<'a>` where `F: FnMut(char) -> bool` (char as `u32`).
 pub struct CharPredicateSearcher<'a, F>(pub MultiCharEqSearcher<'a, F>)
 where
     F: FnMut(u32) -> bool;

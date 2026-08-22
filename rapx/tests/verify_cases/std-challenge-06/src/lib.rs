@@ -5,47 +5,16 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 #![allow(dead_code)]
 
-// ========================================================================
-// Challenge 6: Safety of `NonNull`
-//
-// A faithful, self-contained port of `library/core/src/ptr/non_null.rs`
-// (see
-// https://model-checking.github.io/verify-rust-std/challenges/0006-nonnull.html).
-//
-// `NonNull<T>` is `#[repr(transparent)]` over a `*const T` and is used in 62
-// other modules of the standard library, so proving the memory safety of its
-// 48 public functions is a high-leverage verification goal.  The challenge
-// requires proving absence of UB for every listed function, by attaching the
-// same pre-/post-conditions that `std` documents in its `# Safety` comments.
-//
-// The port stays faithful to `std`, with the following mechanical adaptations
-// required for RAPx (the underlying raw-pointer operations — `add`, `offset`,
-// `read`, `write`, `copy`, ... — are all delegated to `*const T` / `*mut T`,
-// for which RAPx already ships verified contracts):
-//
-//   * `as_ptr` uses `self.pointer as *mut T` instead of `mem::transmute`.
-//   * `add` / `offset` use `self.pointer.add(..)` / `self.pointer.offset(..)`
-//     instead of `intrinsics::offset` + `transmute`.
-//   * `dangling` / `addr` / `with_addr` / `map_addr` use exposed addresses
-//     (`as *mut T` / `as usize`) instead of the strict-provenance
-//     `ptr::Alignment` / `without_provenance` machinery.
-//   * `from_raw_parts` / `to_raw_parts` are specialized to `NonNull<[T]>`
-//     (data pointer + `usize` length), the common concrete instantiation.
-// ========================================================================
+// Challenge 6: Safety of `NonNull` — a faithful, self-contained port of
+// `library/core/src/ptr/non_null.rs`. Raw-pointer operations are delegated to
+// `*const T` / `*mut T`, for which RAPx already ships verified contracts.
 
 use std::mem::MaybeUninit;
 use std::num::NonZero;
 use std::ptr;
 use std::slice;
 
-// ========================================================================
-// NonNull
-// ========================================================================
-
-/// `*mut T` but non-zero and hence covariant.
-///
-/// Faithful to `std`: `#[repr(transparent)]` over a `*const T`; the type name
-/// `NonNull` lets RAPx track the non-null invariant of `pointer`.
+/// `*mut T` but non-zero and hence covariant; `#[repr(transparent)]` over a `*const T`.
 struct NonNull<T: ?Sized> {
     pointer: *const T,
 }
@@ -56,10 +25,6 @@ impl<T: ?Sized> Clone for NonNull<T> {
         *self
     }
 }
-
-// ========================================================================
-// Methods available for all `T: ?Sized`
-// ========================================================================
 
 impl<T: ?Sized> NonNull<T> {
     /// Creates a new `NonNull` without checking for null.
@@ -115,13 +80,8 @@ impl<T: ?Sized> NonNull<T> {
     }
 }
 
-// ========================================================================
-// Methods available for `T: Sized`
-// ========================================================================
-
 impl<T: Sized> NonNull<T> {
-    /// Returns a shared reference to the value, without requiring it to be
-    /// initialized.
+    /// Returns a shared reference to the value, without requiring it to be initialized.
     #[rapx::verify]
     #[rapx::requires(Ptr2Ref(self.pointer, T))]
     pub const unsafe fn as_uninit_ref<'a>(self) -> &'a MaybeUninit<T> {
@@ -130,8 +90,7 @@ impl<T: Sized> NonNull<T> {
         unsafe { &*(self.pointer as *const MaybeUninit<T>) }
     }
 
-    /// Returns a unique reference to the value, without requiring it to be
-    /// initialized.
+    /// Returns a unique reference to the value, without requiring it to be initialized.
     #[rapx::verify]
     #[rapx::requires(Ptr2Ref(self.pointer, T))]
     pub const unsafe fn as_uninit_mut<'a>(self) -> &'a mut MaybeUninit<T> {
@@ -409,10 +368,6 @@ impl<T: Sized> NonNull<T> {
         self.pointer.is_aligned_to(align)
     }
 }
-
-// ========================================================================
-// Methods available for `NonNull<[T]>`
-// ========================================================================
 
 impl<T> NonNull<[T]> {
     /// Creates a non-null raw slice from a thin pointer and a length.

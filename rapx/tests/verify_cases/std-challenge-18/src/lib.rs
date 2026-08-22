@@ -12,10 +12,6 @@ use std::num::NonZero;
 use std::ptr::NonNull;
 use std::slice::{from_raw_parts, from_raw_parts_mut};
 
-// ========================================================================
-// Part 1 – Iter / IterMut  (mirrors `iterator!{struct Iter}`)
-// ========================================================================
-
 #[rapx::invariant(Align(ptr, T))]
 #[rapx::invariant(ZstAwareInBound(ptr, T, end_or_len))]
 #[rapx::invariant(InBound(end_or_len, T, 0))]
@@ -35,8 +31,6 @@ pub struct IterMut<'a, T: 'a> {
     end_or_len: *mut T,
     _marker: std::marker::PhantomData<&'a mut T>,
 }
-
-// -- Iter internal helpers ---------------------------------------------------
 
 impl<'a, T> Iter<'a, T> {
     #[rapx::verify]
@@ -138,8 +132,6 @@ impl<'a, T> Iter<'a, T> {
         }
     }
 }
-
-// -- Iter safe methods (Part 1 success criteria) -----------------------------
 
 impl<'a, T> Iter<'a, T> {
     #[rapx::verify]
@@ -301,8 +293,6 @@ impl<'a, T> Iter<'a, T> {
         NonZero::new(n - advance).map_or(Ok(()), Err)
     }
 }
-
-// -- IterMut: repeat the pattern with mutable counterparts --------------------
 
 impl<'a, T> IterMut<'a, T> {
     #[rapx::verify]
@@ -574,14 +564,6 @@ impl<'a, T> IterMut<'a, T> {
     }
 }
 
-// ========================================================================
-// Part 2 – Windows / Chunks / ChunksMut / ChunksExact / ChunksExactMut /
-//          RChunks / RChunksMut / RChunksExact / RChunksExactMut /
-//          ArrayWindows / Split
-// ========================================================================
-
-// --- Windows ----------------------------------------------------------------
-
 #[rapx::invariant(InBound(v, T, v.len()))]
 pub struct Windows<'a, T: 'a> {
     v: &'a [T],
@@ -622,8 +604,6 @@ impl<'a, T> Windows<'a, T> {
         unsafe { from_raw_parts(self.v.as_ptr().add(idx), self.size.get()) }
     }
 }
-
-// --- Chunks -----------------------------------------------------------------
 
 #[rapx::invariant(InBound(v, T, v.len()))]
 pub struct Chunks<'a, T: 'a> {
@@ -666,8 +646,6 @@ impl<'a, T> Chunks<'a, T> {
         unsafe { from_raw_parts(self.v.as_ptr().add(start), len) }
     }
 }
-
-// --- ChunksMut --------------------------------------------------------------
 
 #[rapx::invariant(InBound(v, T, v.len()))]
 #[rapx::invariant(Alive(v, 'a))]
@@ -767,8 +745,6 @@ impl<'a, T> ChunksMut<'a, T> {
     }
 }
 
-// --- ChunksExact ------------------------------------------------------------
-
 #[rapx::invariant(InBound(v, T, v.len()))]
 pub struct ChunksExact<'a, T: 'a> {
     v: &'a [T],
@@ -818,8 +794,6 @@ impl<'a, T> ChunksExact<'a, T> {
         unsafe { from_raw_parts(self.v.as_ptr().add(start), self.chunk_size) }
     }
 }
-
-// --- ChunksExactMut ---------------------------------------------------------
 
 #[rapx::invariant(InBound(v, T, v.len()))]
 #[rapx::invariant(Alive(v, 'a))]
@@ -901,8 +875,6 @@ impl<'a, T> ChunksExactMut<'a, T> {
     }
 }
 
-// --- RChunks ----------------------------------------------------------------
-
 #[rapx::invariant(InBound(v, T, v.len()))]
 pub struct RChunks<'a, T: 'a> {
     v: &'a [T],
@@ -956,8 +928,6 @@ impl<'a, T> RChunks<'a, T> {
         unsafe { from_raw_parts(self.v.as_ptr().add(start), end - start) }
     }
 }
-
-// --- RChunksMut -------------------------------------------------------------
 
 #[rapx::invariant(InBound(v, T, v.len()))]
 #[rapx::invariant(Alive(v, 'a))]
@@ -1064,8 +1034,6 @@ impl<'a, T> RChunksMut<'a, T> {
     }
 }
 
-// --- RChunksExact -----------------------------------------------------------
-
 #[rapx::invariant(InBound(v, T, v.len()))]
 pub struct RChunksExact<'a, T: 'a> {
     v: &'a [T],
@@ -1115,8 +1083,6 @@ impl<'a, T> RChunksExact<'a, T> {
         unsafe { from_raw_parts(self.v.as_ptr().add(start), self.chunk_size) }
     }
 }
-
-// --- RChunksExactMut --------------------------------------------------------
 
 #[rapx::invariant(InBound(v, T, v.len()))]
 #[rapx::invariant(Alive(v, 'a))]
@@ -1199,8 +1165,6 @@ impl<'a, T> RChunksExactMut<'a, T> {
     }
 }
 
-// --- ArrayWindows -----------------------------------------------------------
-
 #[rapx::invariant(InBound(v, T, v.len()))]
 pub struct ArrayWindows<'a, T: 'a, const N: usize> {
     v: &'a [T],
@@ -1235,8 +1199,6 @@ impl<'a, T, const N: usize> ArrayWindows<'a, T, N> {
         }
     }
 }
-
-// --- Split ------------------------------------------------------------------
 
 #[rapx::invariant(InBound(v, T, v.len()))]
 pub struct Split<'a, T: 'a, P>

@@ -3,40 +3,13 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 #![allow(dead_code)]
 
-// ========================================================================
-// Challenge 5: Verify functions iterating over inductive data type:
-//               `alloc::collections::linked_list`
-//
-// A faithful, self-contained port of
-// `library/alloc/src/collections/linked_list.rs` (see
-// https://model-checking.github.io/verify-rust-std/challenges/0005-linked-list.html).
-//
-// The internal representation is a doubly-linked list of `Node`s, an
-// inductive (recursive) data type.  The challenge requires *unbounded*
-// verification: every function must be memory-safe for linked lists of
-// arbitrary shape.  RAPx discharges this obligation through the pointer
-// invariants declared on `Node::prev` / `Node::next` and on `LinkedList`
-// `head` / `tail`: any node reachable by following `next` (or `prev`)
-// from a well-formed list is again a well-formed node.
-//
-// The port stays faithful to `std`, with two mechanical adaptations required
-// for RAPx:
-//   * the generic allocator `A: Allocator` is dropped in favor of the
-//     global allocator (`Box` / `Box::from_raw` instead of `Box::new_in` /
-//     `Box::from_raw_in`);
-//   * the challenge lists `retain_mut` as a success criterion, but `std` only
-//     exposes `retain` (which already takes `FnMut(&mut T) -> bool`); only the
-//     functions that actually exist in `std` are ported here.
-// ========================================================================
-// ========================================================================
+// Challenge 5: Verify functions iterating over the inductive `alloc::collections::linked_list`.
+// A faithful, self-contained port of `library/alloc/src/collections/linked_list.rs`.
+// Adapted to RAPx by using the global allocator (`Box`) instead of a generic `A: Allocator`.
 
 use std::marker::PhantomData;
 use std::mem;
 use std::ptr::NonNull;
-
-// ========================================================================
-// Node
-// ========================================================================
 
 #[rapx::invariant(Align(prev.unwrap_some(), Node))]
 #[rapx::invariant(Allocated(prev.unwrap_some(), Node, 1))]
@@ -61,10 +34,6 @@ impl<T> Node<T> {
         self.element
     }
 }
-
-// ========================================================================
-// Iter / IterMut
-// ========================================================================
 
 pub struct Iter<'a, T: 'a> {
     head: Option<NonNull<Node<T>>>,
@@ -162,10 +131,6 @@ impl<'a, T> DoubleEndedIterator for IterMut<'a, T> {
     }
 }
 
-// ========================================================================
-// CursorMut
-// ========================================================================
-
 pub struct CursorMut<'a, T: 'a> {
     index: usize,
     current: Option<NonNull<Node<T>>>,
@@ -174,10 +139,6 @@ pub struct CursorMut<'a, T: 'a> {
 
 impl<'a, T> CursorMut<'a, T> {
     /// Moves the cursor to the next element of the `LinkedList`.
-    ///
-    /// If the cursor is pointing to the "ghost" non-element then this will move it to
-    /// the first element of the `LinkedList`. If it is pointing to the last
-    /// element of the `LinkedList` then this will move it to the "ghost" non-element.
     pub fn move_next(&mut self) {
         match self.current.take() {
             // We had no current element; the cursor was sitting at the start position
@@ -195,10 +156,6 @@ impl<'a, T> CursorMut<'a, T> {
     }
 
     /// Moves the cursor to the previous element of the `LinkedList`.
-    ///
-    /// If the cursor is pointing to the "ghost" non-element then this will move it to
-    /// the last element of the `LinkedList`. If it is pointing to the first
-    /// element of the `LinkedList` then this will move it to the "ghost" non-element.
     pub fn move_prev(&mut self) {
         match self.current.take() {
             // No current. We're at the start of the list. Yield None and jump to the end.
@@ -214,22 +171,12 @@ impl<'a, T> CursorMut<'a, T> {
         }
     }
 
-    /// Returns a reference to the element that the cursor is currently
-    /// pointing to.
-    ///
-    /// This returns `None` if the cursor is currently pointing to the
-    /// "ghost" non-element.
+    /// Returns a reference to the element the cursor is currently pointing to.
     pub fn current(&mut self) -> Option<&mut T> {
         unsafe { self.current.map(|current| &mut (*current.as_ptr()).element) }
     }
 
-    /// Removes the current element from the `LinkedList`.
-    ///
-    /// The element that was removed is returned, and the cursor is
-    /// moved to point to the next element in the `LinkedList`.
-    ///
-    /// If the cursor is currently pointing to the "ghost" non-element then no element
-    /// is removed and `None` is returned.
+    /// Removes the current element from the `LinkedList` and returns it.
     pub fn remove_current(&mut self) -> Option<T> {
         let unlinked_node = self.current?;
         unsafe {
@@ -240,10 +187,6 @@ impl<'a, T> CursorMut<'a, T> {
         }
     }
 }
-
-// ========================================================================
-// ExtractIf
-// ========================================================================
 
 pub struct ExtractIf<'a, T: 'a, F: 'a> {
     list: &'a mut LinkedList<T>,
@@ -281,10 +224,6 @@ where
     }
 }
 
-// ========================================================================
-// LinkedList
-// ========================================================================
-
 #[rapx::invariant(Align(head.unwrap_some(), Node))]
 #[rapx::invariant(Allocated(head.unwrap_some(), Node, 1))]
 #[rapx::invariant(Typed(head.unwrap_some(), Node))]
@@ -305,8 +244,7 @@ impl<T> LinkedList<T> {
     /// Adds the given node to the front of the list.
     ///
     /// # Safety
-    /// `node` must point to a valid node that was boxed and leaked using the list's allocator.
-    /// This method takes ownership of the node, so the pointer should not be used again.
+    /// `node` must point to a valid, boxed-and-leaked node that the caller must not use again.
     #[inline]
     #[rapx::requires(Align(node, Node))]
     #[rapx::requires(Allocated(node, Node, 1))]
@@ -354,8 +292,7 @@ impl<T> LinkedList<T> {
     /// Adds the given node to the back of the list.
     ///
     /// # Safety
-    /// `node` must point to a valid node that was boxed and leaked using the list's allocator.
-    /// This method takes ownership of the node, so the pointer should not be used again.
+    /// `node` must point to a valid, boxed-and-leaked node that the caller must not use again.
     #[inline]
     #[rapx::requires(Align(node, Node))]
     #[rapx::requires(Allocated(node, Node, 1))]
@@ -401,11 +338,6 @@ impl<T> LinkedList<T> {
     }
 
     /// Unlinks the specified node from the current list.
-    ///
-    /// Warning: this will not check that the provided node belongs to the current list.
-    ///
-    /// This method takes care not to create mutable references to `element`, to
-    /// maintain validity of aliasing pointers.
     #[inline]
     #[rapx::requires(Align(node, Node))]
     #[rapx::requires(Allocated(node, Node, 1))]
@@ -512,9 +444,6 @@ impl<T> LinkedList<T> {
     }
 
     /// Adds an element to the front of the list.
-    ///
-    /// Safe wrapper over `push_front_node` (not part of the challenge's success
-    /// criteria, so it is not `#[rapx::verify]`-annotated).
     pub fn push_front(&mut self, elt: T) {
         let node = NonNull::from(Box::leak(Box::new(Node::new(elt))));
         // SAFETY: node is a unique pointer to a node we boxed and leaked.
@@ -522,32 +451,25 @@ impl<T> LinkedList<T> {
     }
 
     /// Adds an element to the back of the list.
-    ///
-    /// Safe wrapper over `push_back_node` (not part of the challenge's success
-    /// criteria, so it is not `#[rapx::verify]`-annotated).
     pub fn push_back(&mut self, elt: T) {
         let node = NonNull::from(Box::leak(Box::new(Node::new(elt))));
         // SAFETY: node is a unique pointer to a node we boxed and leaked.
         unsafe { self.push_back_node(node) }
     }
 
-    /// Removes the first element and returns it, or `None` if the list is
-    /// empty.
+    /// Removes the first element and returns it, or `None` if the list is empty.
     #[rapx::verify]
     pub fn pop_front(&mut self) -> Option<T> {
         self.pop_front_node().map(Node::into_element)
     }
 
-    /// Removes the last element from a list and returns it, or `None` if
-    /// it is empty.
+    /// Removes the last element and returns it, or `None` if the list is empty.
     #[rapx::verify]
     pub fn pop_back(&mut self) -> Option<T> {
         self.pop_back_node().map(Node::into_element)
     }
 
-    // ====================================================================
-    // Challenge function: `clear`
-    // ====================================================================
+    
     #[rapx::verify]
     pub fn clear(&mut self) {
         // We need to drop the nodes while keeping the list's allocator (here the
@@ -561,9 +483,7 @@ impl<T> LinkedList<T> {
         });
     }
 
-    // ====================================================================
-    // Challenge function: `contains`
-    // ====================================================================
+    
     #[rapx::verify]
     pub fn contains(&self, x: &T) -> bool
     where
@@ -572,9 +492,7 @@ impl<T> LinkedList<T> {
         self.iter().any(|e| e == x)
     }
 
-    // ====================================================================
-    // Challenge function: `split_off`
-    // ====================================================================
+    
     #[rapx::verify]
     pub fn split_off(&mut self, at: usize) -> LinkedList<T> {
         let len = self.len();
@@ -607,9 +525,7 @@ impl<T> LinkedList<T> {
         unsafe { self.split_off_after_node(split_node, at) }
     }
 
-    // ====================================================================
-    // Challenge function: `remove`
-    // ====================================================================
+    
     #[rapx::verify]
     pub fn remove(&mut self, at: usize) -> T {
         let len = self.len();
@@ -633,9 +549,7 @@ impl<T> LinkedList<T> {
         }
     }
 
-    // ====================================================================
-    // Challenge function: `retain`
-    // ====================================================================
+    
     #[rapx::verify]
     pub fn retain<F>(&mut self, mut f: F)
     where
@@ -651,9 +565,7 @@ impl<T> LinkedList<T> {
         }
     }
 
-    // ====================================================================
-    // Challenge function: `extract_if`
-    // ====================================================================
+    
     #[rapx::verify]
     pub fn extract_if<F>(&mut self, filter: F) -> ExtractIf<'_, T, F>
     where
@@ -666,10 +578,6 @@ impl<T> LinkedList<T> {
         ExtractIf { list: self, it, pred: filter, idx: 0, old_len }
     }
 }
-
-// ========================================================================
-// Drop
-// ========================================================================
 
 impl<T> Drop for LinkedList<T> {
     fn drop(&mut self) {

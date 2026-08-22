@@ -8,8 +8,6 @@ use std::mem::{self, MaybeUninit};
 use std::ptr;
 
 /// ptr::copy_nonoverlapping — copies `count` elements from `src` to `dst`.
-///
-/// ZST or count == 0 → no-op (skip the intrinsic call).
 #[rapx::verify]
 #[rapx::requires(Align(src, T))]
 #[rapx::requires(Align(dst, T))]
@@ -24,8 +22,6 @@ unsafe fn copy_nonoverlapping<T>(src: *const T, dst: *mut T, count: usize) {
 }
 
 /// ptr::copy — copies `count` elements from `src` to `dst`, may overlap.
-///
-/// ZST or count == 0 → no-op.
 #[rapx::verify]
 #[rapx::requires(Align(src, T))]
 #[rapx::requires(Align(dst, T))]
@@ -39,11 +35,6 @@ unsafe fn copy<T>(src: *const T, dst: *mut T, count: usize) {
 }
 
 /// ptr::swap — swaps two elements via a stack-local temporary.
-///
-/// ZST → no-op. Otherwise allocates a `MaybeUninit<T>` on the stack,
-/// then performs 3 intrinsic calls: copy_nonoverlapping(x→tmp), copy(y→x),
-/// copy_nonoverlapping(tmp→y). RAPx must prove the temp is valid, aligned,
-/// and non-overlapping with x and y.
 #[rapx::verify]
 #[rapx::requires(Align(x, T))]
 #[rapx::requires(Align(y, T))]
@@ -62,9 +53,6 @@ pub unsafe fn swap<T>(x: *mut T, y: *mut T) {
 }
 
 /// ptr::swap_nonoverlapping — swaps `count` elements, no overlap.
-///
-/// Each iteration swaps two elements via copy_nonoverlapping.
-/// ZST or count == 0 → no-op.
 #[rapx::verify]
 #[rapx::requires(Align(x, T))]
 #[rapx::requires(Align(y, T))]
@@ -88,18 +76,12 @@ pub unsafe fn swap_nonoverlapping<T>(x: *mut T, y: *mut T, count: usize) {
 }
 
 /// mem::swap — safe wrapper, mirrors `core::mem::swap`.
-///
-/// Proves `&mut T` guarantees satisfy ptr preconditions:
-/// aligned, valid, non-overlapping (by exclusivity).
 #[rapx::verify]
 pub fn mem_swap<T>(x: &mut T, y: &mut T) {
     unsafe { swap(x as *mut T, y as *mut T) };
 }
 
 /// MaybeUninit::zeroed — mirrors `core::mem::MaybeUninit::zeroed`.
-///
-/// Allocates `MaybeUninit::<T>::uninit()`, then zero-fills with
-/// `ptr::write_bytes`. For ZST, skip the write.
 #[rapx::verify]
 pub fn zeroed<T>() -> MaybeUninit<T> {
     let mut u = MaybeUninit::<T>::uninit();
@@ -110,9 +92,6 @@ pub fn zeroed<T>() -> MaybeUninit<T> {
 }
 
 /// copy_from_slice — mirrors `[T]::copy_from_slice`.
-///
-/// Proves slice references satisfy `ptr::copy_nonoverlapping` preconditions.
-/// ZST or empty slice → no-op.
 #[rapx::verify]
 pub fn copy_from_slice<T: Copy>(dest: &mut [T], src: &[T]) {
     assert!(dest.len() == src.len());
