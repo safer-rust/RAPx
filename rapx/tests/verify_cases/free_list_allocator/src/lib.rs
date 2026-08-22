@@ -64,7 +64,7 @@ impl FreeListAllocator {
     #[rapx::verify]
     pub fn new(size: usize) -> Self {
         assert!(size >= mem::size_of::<FreeBlock>());
-        assert!(size <= isize::MAX);
+        assert!(size <= isize::MAX as usize);
 
         let mut buf = vec![0u8; size];
         let heap = NonNull::new(buf.as_mut_ptr()).expect("non-null after vec alloc");

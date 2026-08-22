@@ -447,7 +447,7 @@
       "tag": "ValidCStr",
       "args": [
         "bytes",
-        "1"
+        "bytes.len()"
       ]
     }
   ],
@@ -5079,7 +5079,7 @@
       "tag": "ValidCStr",
       "args": [
         "v",
-        "1"
+        "v.len()"
       ]
     }
   ],
@@ -5112,7 +5112,7 @@
       "tag": "ValidCStr",
       "args": [
         "v",
-        "1"
+        "v.len()"
       ]
     }
   ],

@@ -228,6 +228,11 @@ pub struct VmState<'ctx, 'tcx> {
     /// Allocations assumed alive via contract (e.g. #[rapx::requires(Alive(ptr))]).
     pub(crate) alive_assumed: FxHashSet<AllocId>,
 
+    /// Allocations known to be a null-terminated byte buffer (a valid C
+    /// string), asserted via a `ValidCStr` contract fact or struct invariant.
+    /// The checker treats any sub-slice of such an allocation as nul-terminated.
+    pub(crate) nul_terminated: FxHashSet<AllocId>,
+
     /// Whether a SplitTransmute contract was asserted by the caller.
     pub(crate) split_transmute_asserted: bool,
 
@@ -350,6 +355,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             other_op_sources: FxHashMap::default(),
             init_allocations: FxHashSet::default(),
             alive_assumed: FxHashSet::default(),
+            nul_terminated: FxHashSet::default(),
             split_transmute_asserted: false,
             alias_hazard_accepted: false,
             slice_data_allocations: FxHashMap::default(),

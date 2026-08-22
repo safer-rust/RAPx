@@ -2773,6 +2773,44 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             PropertyKind::SplitTransmute => {
                 self.split_transmute_asserted = true;
             }
+            PropertyKind::ValidCStr => {
+                // A `ValidCStr(p, n)` fact guarantees `p` points to a live,
+                // initialized, null-terminated byte buffer. Mark the target
+                // allocation so the checker can treat it (and any of its
+                // sub-slices) as a valid C string, and so pointer reads /
+                // `from_raw_parts` over it see a live, initialized allocation.
+                //
+                // For a `&CStr`-style target the field projection (`inner`)
+                // may not be materialised for a DST, so fall back to the base
+                // local's own provenance (a `&CStr` reference points directly
+                // at the byte buffer it owns).
+                let id = self
+                    .contract_alloc_id_field_aware(property)
+                    .or_else(|| {
+                        let local = self.contract_target_local(property)?;
+                        self.locals.get(&local)?.provenance_alloc_id()
+                    });
+                if let Some(id) = id {
+                    self.dead_allocations.remove(&id);
+                    self.alive_assumed.insert(id);
+                    self.init_allocations.insert(id);
+                    self.nul_terminated.insert(id);
+                    // `ValidCStr(p, n)` carries the byte length of the
+                    // nul-terminated buffer.  Assert the allocation covers `n`
+                    // bytes so downstream `from_raw_parts(p, n)` / InBound
+                    // obligations can be discharged from the exact length
+                    // (rather than a conservative `1` placeholder).
+                    if let Some(n) = property
+                        .args()
+                        .get(1)
+                        .and_then(|a| self.resolve_contract_count(a))
+                    {
+                        if let Some(alloc) = self.allocations.iter().find(|a| a.id == id) {
+                            self.path_conditions.push(alloc.size.ge(&n));
+                        }
+                    }
+                }
+            }
             PropertyKind::ValidNum => {
                 if let Some(PropertyArg::Predicates(predicates)) = property.args().first() {
                     for pred in predicates {

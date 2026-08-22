@@ -4,7 +4,7 @@ use rustc_middle::mir::{Local, Operand, Rvalue, StatementKind};
 use z3::{Solver, ast::{Ast, Int}};
 
 use crate::verify::{
-    contract::Property,
+    contract::{ContractExpr, Property, PropertyArg},
     report::CheckResult,
 };
 use crate::helpers::mir_scan::Checkpoint;
@@ -30,7 +30,35 @@ impl PropertyChecker {
                 return CheckResult::Failed;
             }
 
+            // The allocation was asserted to be a null-terminated C string via
+            // a `ValidCStr` contract fact / struct invariant. Any sub-slice of
+            // it is therefore nul-terminated (it ends at the same nul byte),
+            // so the property holds without further byte-level reasoning.
+            // Follow `sub_alloc_parent` so a `from_raw_parts` / slice-index
+            // sub-allocation rooted in a nul-terminated buffer also passes.
+            let mut root_id = alloc_id;
+            while let Some(parent_id) = vm_state.sub_alloc_parent.get(&root_id) {
+                root_id = *parent_id;
+            }
+            if vm_state.nul_terminated.contains(&alloc_id)
+                || vm_state.nul_terminated.contains(&root_id)
+            {
+                return CheckResult::Proved;
+            }
+
             let alloc_size = vm_state.allocation_size(alloc_id).cloned();
+
+            // The `ValidCStr(p, n)` length argument is the exact byte length of
+            // the nul-terminated buffer.  Prefer it over the allocation size
+            // (which may be larger, e.g. a `Vec` with spare capacity).  A
+            // `Const` length is the `1` placeholder used for raw pointers
+            // (`from_ptr`), whose true length is `strlen(ptr) + 1` and is not
+            // expressible in the contract, so it is ignored.
+            let n_term = property.args().get(1).and_then(|a| match a {
+                PropertyArg::Expr(ContractExpr::Const(_)) => None,
+                a => self.resolve_arg_term(vm_state, checkpoint, a),
+            });
+            let buffer_size = n_term.or(alloc_size);
 
             // Starting offset within the allocation (for pointer arithmetic like .add(2))
             let start_offset = value.provenance.as_ref()
@@ -44,7 +72,7 @@ impl PropertyChecker {
             }
 
             // 2. Try byte_value-based symbolic check via SMT
-            if let Some(size) = alloc_size {
+            if let Some(size) = buffer_size {
                 if let Some(r) = self.check_valid_cstr_from_byte_values(vm_state, solver, alloc_id, &size) {
                     return r;
                 }

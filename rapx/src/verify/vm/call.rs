@@ -1529,6 +1529,67 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     });
                 }
             }
+            CallEffect::ReturnOptionSomeScanIndex { self_arg } => {
+                // `Iterator::position`/`find` return `Option<usize>` whose `Some`
+                // payload is a scan index into the iterator, so `0 <= i < self.len()`.
+                // The receiver is `&mut iter` (a reference to the Iter/IterMut
+                // struct), so resolve the reference to the iterator local it
+                // points at (via its provenance = the iterator's stack alloc).
+                // The iterator carries `ptr` (field 0) and `end_or_len`
+                // (field 1); `len = end_or_len - ptr`.
+                if let Some(&iter_ref) = caller_arg_locals.get(*self_arg) {
+                    let iter_local = self
+                        .locals
+                        .get(&iter_ref)
+                        .and_then(|v| v.provenance_alloc_id())
+                        .and_then(|alloc| {
+                            self.local_alloc_ids
+                                .iter()
+                                .find(|(_, a)| **a == alloc)
+                                .map(|(l, _)| *l)
+                        });
+                    let ptr_term = iter_local.and_then(|l| {
+                        self.field_value(l, &[0]).map(|v| v.term.clone())
+                    });
+                    let end_term = iter_local.and_then(|l| {
+                        self.field_value(l, &[1]).map(|v| v.term.clone())
+                    });
+                    if let (Some(ptr), Some(end)) = (ptr_term, end_term) {
+                        let len = Int::sub(self.ctx, &[&end, &ptr]);
+                        let payload = self.fresh_int(&format!("scan_idx_{}", dest.as_usize()));
+                        self.path_conditions.push(payload.lt(&len));
+                        let dest_ty = self.body.local_decls[dest].ty;
+                        let payload_ty = match dest_ty.kind() {
+                            TyKind::Adt(adt, substs) if adt.is_enum() => substs.type_at(0),
+                            _ => dest_ty,
+                        };
+                        self.set_field_value(dest, vec![0], VmValue {
+                            term: payload,
+                            ty: payload_ty,
+                            provenance: None,
+                            invariants: ValueInvariants::default(),
+                        });
+                    }
+                }
+            }
+            CallEffect::ReturnScanLength { ptr_arg: _ } => {
+                // `strlen(ptr)` returns the byte length before the NUL
+                // terminator. The `ValidCStr` invariant guarantees the NUL is
+                // within `isize::MAX` bytes, so `len < isize::MAX`, and
+                // `len + 1` (the length with the terminator) fits in
+                // `isize::MAX` — discharging `from_raw_parts`'s
+                // `ValidNum(size_of(T)*(len+1) <= isize::MAX)`.
+                let len = self.fresh_int(&format!("strlen_{}", dest.as_usize()));
+                let max = Int::from_i64(self.ctx, i64::MAX);
+                self.path_conditions.push(len.lt(&max));
+                let dest_ty = self.body.local_decls[dest].ty;
+                self.set_local(dest, VmValue {
+                    term: len,
+                    ty: dest_ty,
+                    provenance: None,
+                    invariants: ValueInvariants::default(),
+                });
+            }
             CallEffect::ReturnNonZeroIff { arg } => {
                 if let Some(a) = args.get(*arg) {
                     let dest_ty = self.body.local_decls[dest].ty;

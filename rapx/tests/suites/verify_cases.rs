@@ -270,6 +270,21 @@ fn std_challenge_12() {
     assert_not_contain(&output, "result: UNSOUND");
 }
 
+// ================ Std Challenge 13 (CStr) ================
+#[test]
+fn std_challenge_13() {
+    let output = run_with_args("verify_cases/std-challenge-13", CMD_VERIFY_TARGETED_VM);
+
+    // Challenge 13 (`core::ffi::CStr`): a faithful, self-contained port of
+    // `library/core/src/ffi/c_str.rs` over a local `#[repr(transparent)]`
+    // `CStr { inner: [u8] }` DST. The `ValidCStr` invariant is carried by the
+    // unsafe constructors (`from_ptr`, `from_bytes_with_nul_unchecked`,
+    // `strlen`); the nine safe accessors plus `Index<RangeFrom<usize>>` and the
+    // `CloneToUninit` impl must all verify SOUND (no UB in their internal
+    // reborrows / raw byte copies).
+    assert_not_contain(&output, "result: UNSOUND");
+}
+
 // ================ HashMap Tests ================
 #[test]
 fn hashmap() {

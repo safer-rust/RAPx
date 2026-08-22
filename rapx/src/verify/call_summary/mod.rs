@@ -194,6 +194,16 @@ pub enum CallEffect {
     /// whose result feeds subslice pointer arithmetic in callers such as
     /// `slice::copy_within`.
     ReturnBoundedRange { bounds_arg: usize },
+    /// The call returns `Option<usize>` whose `Some` payload is a scan index
+    /// into the iterator argument `self_arg` (models `Iterator::position` /
+    /// `Iterator::find`): `Some(i)` satisfies `0 <= i < self.len()` where
+    /// `self` is the Iter/IterMut struct produced by `into_iter`/`iter`.
+    ReturnOptionSomeScanIndex { self_arg: usize },
+    /// The call returns the length of a nul-terminated string (models
+    /// `strlen`): `0 <= len < isize::MAX`, so `len + 1` (the byte length with
+    /// the terminator) fits in `isize::MAX` — discharging the
+    /// `from_raw_parts` `ValidNum(size_of(T)*(len+1) <= isize::MAX)` bound.
+    ReturnScanLength { ptr_arg: usize },
     /// `align_to_offsets` returns `(us_len, ts_len)` where field 0 <=
     /// `receiver.len()` / ts and field 1 < ts, ensuring the remaining
     /// pointer arithmetic stays in bounds on the tail.

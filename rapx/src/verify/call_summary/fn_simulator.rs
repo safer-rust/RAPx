@@ -124,6 +124,8 @@ static REGISTRY: &[Entry] = &[
     E!(align_to_offsets,      ALL,      true,   none!(),  eff_lcm_split),
     E!(align_to_local,        dep0!(),  false,  none!(),  eff_align_to),
     E!(into_iter_local,       dep0!(),  false,  none!(),  eff_return_iter),
+    E!(iter_position,         dep0!(),  false,  none!(),  eff_option_scan_index),
+    E!(is_strlen,             dep0!(),  false,  none!(),  eff_scan_length),
     E!(split_at,              dep01!(), false,  none!(),  eff_split_at),
     E!(api_classify::is_from_raw_parts, dep01!(), false, none!(), eff_from_raw_parts),
     E!(api_classify::is_align_offset, dep01!(), false, none!(), eff_align_offset),
@@ -341,6 +343,14 @@ fn eff_return_iter(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     vec![CallEffect::ReturnIter { receiver_arg: 0 }]
 }
 
+fn eff_option_scan_index(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnOptionSomeScanIndex { self_arg: 0 }]
+}
+
+fn eff_scan_length(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnScanLength { ptr_arg: 0 }]
+}
+
 fn eff_align_offset(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     vec![CallEffect::ReturnAlignOffset { ptr_arg: 0, align_arg: 1 }]
 }
@@ -432,8 +442,11 @@ fn align_to_local(n: &str) -> bool           {
     n.ends_with("align_to_ext") || n.ends_with("align_to_mut_ext")
 }
 fn into_iter_local(n: &str) -> bool          {
-    n.contains("into_iter") && (n.contains("IntoIterator") || n.contains("slice::into_iter"))
+    (n.contains("into_iter") && (n.contains("IntoIterator") || n.contains("slice::into_iter")))
+        || n.contains("slice::<impl [T]>::iter")
 }
+fn iter_position(n: &str) -> bool            { n.contains("Iterator::position") || n.contains("Iterator::find") }
+fn is_strlen(n: &str) -> bool                { n == "strlen" || n.ends_with("::strlen") }
 fn from_trait_call(n: &str) -> bool         { n == "std::convert::From::from" || n == "core::convert::From::from" }
 fn nonnull_from(n: &str) -> bool            { n.ends_with("::from") && api_classify::is_nonnull_api(n) }
 fn nonnull_new_unchecked(n: &str) -> bool   { n.ends_with("::new_unchecked") && api_classify::is_nonnull_api(n) }
