@@ -9,32 +9,17 @@ use crate::verify::{
     contract,
     path_extractor::Path,
 };
-use crate::helpers::mir_scan::CheckpointLocation;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{BasicBlock, Local};
 
 /// A proof goal for one `(checkpoint, path)` item: the set of relevant items
-/// plus the context needed to verify the target property.
+/// plus the path context needed to verify the target property.
 #[derive(Clone, Debug)]
 pub struct ProofGoal<'tcx> {
-    /// Unsafe checkpoint whose obligation is being checked.
-    pub checkpoint: CheckpointLocation,
-    /// Path being visited.
+    /// Path being visited; `path.target` identifies the checkpoint.
     pub path: Path,
     /// Items kept from the path.
     pub items: Vec<RelevantItem<'tcx>>,
-}
-
-impl<'tcx> ProofGoal<'tcx> {
-    /// Append one kept item to the visited path.
-    pub fn push(&mut self, item: RelevantItem<'tcx>) {
-        self.items.push(item);
-    }
-
-    /// Return true when no MIR/path item has been kept yet.
-    pub fn is_empty(&self) -> bool {
-        self.items.is_empty()
-    }
 }
 
 /// One relevant item kept from the backward slice.

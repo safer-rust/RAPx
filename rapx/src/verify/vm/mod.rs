@@ -43,11 +43,11 @@ impl<'tcx> SymbolicVm<'tcx> {
         ctx: &'ctx Context,
         items: &ProofGoal<'tcx>,
     ) -> Result<VmState<'ctx, 'tcx>, UnsupportedReason> {
-        let body = self.tcx.optimized_mir(items.checkpoint.caller);
-        let mut state = VmState::new(ctx, self.tcx, body, items.checkpoint.caller);
+        let body = self.tcx.optimized_mir(items.path.target.caller);
+        let mut state = VmState::new(ctx, self.tcx, body, items.path.target.caller);
         state.path = Some(items.path.clone());
         state.execute_items(&items.items)?;
-        state.propagate_from_checkpoint(items.checkpoint.block);
+        state.propagate_from_checkpoint(items.path.target.block);
         Ok(state)
     }
 }

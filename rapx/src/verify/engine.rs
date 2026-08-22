@@ -90,7 +90,10 @@ impl<'tcx> VerifyEngine<'tcx> {
                 ENGINE_INLINE_DEPTH,
             );
 
-            let wrapped = Self::wrap_items(backward.checkpoint, backward.path, items);
+            let wrapped = crate::verify::slicer::ProofGoal {
+                path: backward.path,
+                items,
+            };
 
             let vm_state = match self.vm.execute(&ctx, &wrapped) {
                 Ok(state) => state,
@@ -112,18 +115,6 @@ impl<'tcx> VerifyEngine<'tcx> {
         }
 
         results
-    }
-
-    fn wrap_items(
-        checkpoint: CheckpointLocation,
-        path: crate::verify::path_extractor::Path,
-        items: Vec<RelevantItem<'tcx>>,
-    ) -> crate::verify::slicer::ProofGoal<'tcx> {
-        crate::verify::slicer::ProofGoal {
-            checkpoint,
-            path,
-            items,
-        }
     }
 
     fn callee_is_simple(tcx: TyCtxt<'_>, callee_def_id: DefId) -> bool {

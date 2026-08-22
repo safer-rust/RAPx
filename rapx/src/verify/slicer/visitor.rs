@@ -128,7 +128,6 @@ impl<'tcx> BackwardSlicer<'tcx> {
                 .chain(std::iter::once(PathStep::Checkpoint(checkpoint_loc)))
                 .collect();
             results.push(ProofGoal {
-                checkpoint: checkpoint_loc,
                 path: Path {
                     target: checkpoint_loc,
                     steps,
