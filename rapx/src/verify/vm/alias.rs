@@ -50,11 +50,6 @@ impl VmOrigin {
         matches!(self.kind, VmOriginKind::SharedRef)
     }
 
-    /// Whether this origin is `*const T` — shared, cannot safely create a unique view.
-    pub fn is_const_ptr(&self) -> bool {
-        matches!(self.kind, VmOriginKind::RawConstPtr)
-    }
-
     /// Whether this origin is an owned type (Box, Vec) whose allocation was
     /// transferred to this function.
     pub fn is_owned(&self) -> bool {

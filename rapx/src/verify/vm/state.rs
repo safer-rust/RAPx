@@ -85,10 +85,6 @@ impl<'ctx, 'tcx> VmValue<'ctx, 'tcx> {
         VmValue { term, ty, provenance: None, invariants: ValueInvariants::default() }
     }
 
-    pub fn new_prov(term: Int<'ctx>, ty: Ty<'tcx>, provenance: Provenance<'ctx>) -> Self {
-        VmValue { term, ty, provenance: Some(provenance), invariants: ValueInvariants::default() }
-    }
-
     /// Convenience: extract the `AllocId` from provenance, if any.
     pub fn provenance_alloc_id(&self) -> Option<AllocId> {
         self.provenance.as_ref().map(|p| p.alloc_id)
@@ -471,11 +467,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         });
     }
 
-    /// Find the most recent value definition for a place key.
-    pub fn find_definition(&self, pk: &PlaceKey) -> Option<&ValueDefinition<'ctx, 'tcx>> {
-        self.definitions.iter().rev().find(|d| d.place.base == pk.base && d.place.fields == pk.fields)
-    }
-
     /// Get the value of a specific field within an aggregate local.
     pub fn field_value(&self, local: Local, path: &[usize]) -> Option<&VmValue<'ctx, 'tcx>> {
         self.field_values.get(&(local, path.to_vec()))
@@ -491,30 +482,10 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         self.field_init.insert((local, path));
     }
 
-    /// Check if a field path is initialized.
-    pub fn is_field_init(&self, local: Local, path: &[usize]) -> bool {
-        self.field_init.contains(&(local, path.to_vec()))
-    }
-
     /// Record a per-byte symbolic value at a concrete offset in an allocation.
     pub fn record_byte_value(&mut self, alloc_id: AllocId, offset: usize, term: Int<'ctx>) {
         self.byte_values.insert((alloc_id, offset), term);
         self.byte_init.insert((alloc_id, offset));
-    }
-
-    /// Record a range of byte values from a `[u8; N]` array literal or byte slice.
-    /// `start_offset` is the byte offset within the allocation where the range begins.
-    pub fn record_byte_range(
-        &mut self,
-        alloc_id: AllocId,
-        start_offset: usize,
-        values: &[Int<'ctx>],
-    ) {
-        for (i, term) in values.iter().enumerate() {
-            let off = start_offset + i;
-            self.byte_values.insert((alloc_id, off), term.clone());
-            self.byte_init.insert((alloc_id, off));
-        }
     }
 
     /// Look up a per-byte Z3 term for a concrete offset in an allocation.
@@ -536,16 +507,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             .collect();
         pairs.sort_by_key(|(off, _)| *off);
         pairs
-    }
-
-    /// Check if a concrete byte offset within an allocation is explicitly known NUL.
-    pub fn is_known_nul(&self, alloc_id: AllocId, offset: usize) -> bool {
-        self.known_nul_offsets.contains(&(alloc_id, offset))
-    }
-
-    /// Check if a concrete byte offset within an allocation is explicitly known non-NUL.
-    pub fn is_known_non_nul(&self, alloc_id: AllocId, offset: usize) -> bool {
-        self.known_non_nul_offsets.contains(&(alloc_id, offset))
     }
 
     /// Get the maximum `size_of` for a generic type parameter by

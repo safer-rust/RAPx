@@ -1,4 +1,3 @@
-use rustc_middle::mir::BinOp as MirBinOp;
 use rustc_middle::ty::Ty;
 
 use crate::verify::def_use::PlaceKey;
@@ -129,20 +128,6 @@ pub enum RelOp {
     Le,
     Gt,
     Ge,
-}
-
-impl RelOp {
-    pub fn from_mir(op: MirBinOp) -> Option<Self> {
-        match op {
-            MirBinOp::Eq => Some(Self::Eq),
-            MirBinOp::Ne => Some(Self::Ne),
-            MirBinOp::Lt => Some(Self::Lt),
-            MirBinOp::Le => Some(Self::Le),
-            MirBinOp::Gt => Some(Self::Gt),
-            MirBinOp::Ge => Some(Self::Ge),
-            _ => None,
-        }
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -362,11 +347,6 @@ impl<'tcx> Property<'tcx> {
 
     pub fn is_or(&self) -> bool {
         matches!(self, Property::Or(_))
-    }
-
-    /// The first argument, which is conventionally the target place.
-    pub fn target_arg(&self) -> Option<&PropertyArg<'tcx>> {
-        self.args().first()
     }
 
     /// The first `Ty` argument.

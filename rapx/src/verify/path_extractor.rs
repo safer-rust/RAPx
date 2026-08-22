@@ -181,23 +181,6 @@ pub struct Path {
 }
 
 impl Path {
-    /// Render this path as a compact string for diagnostics.
-    pub fn describe(&self) -> String {
-        self.describe_body()
-    }
-
-    /// Render only the path body from the start point to the checkpoint.
-    pub fn describe_body(&self) -> String {
-        self.steps
-            .iter()
-            .filter_map(|step| match step {
-                PathStep::Block(bb) => Some(format!("{}", bb.as_usize())),
-                PathStep::Checkpoint(_) => None,
-            })
-            .collect::<Vec<_>>()
-            .join(" -> ")
-    }
-
     /// Render this path as a compact array of block indices.
     pub fn describe_indices(&self) -> String {
         let mut indices: Vec<usize> = Vec::new();

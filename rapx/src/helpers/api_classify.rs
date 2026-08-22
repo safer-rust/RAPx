@@ -26,8 +26,6 @@ pub fn is_as_ptr(name: &str) -> bool {
         || name.ends_with("::as_mut") && name.contains("ptr::non_null")
 }
 
-pub(crate) fn is_pointer_arithmetic(name: &str) -> bool { is_pointer_add(name) || is_pointer_sub(name) }
-
 pub fn is_pointer_add(name: &str) -> bool {
     name.ends_with("::add") || name.ends_with("::wrapping_add")
         || name.contains("::offset") || name.contains("::wrapping_offset")
@@ -40,30 +38,15 @@ pub fn is_pointer_sub(name: &str) -> bool {
         || name.contains("::byte_sub") || name.contains("::wrapping_byte_sub")
 }
 
-pub(crate) fn is_element_ptr_arith(name: &str) -> bool {
-    name.ends_with("::add") || name.ends_with("::wrapping_add")
-        || name.ends_with("::sub") || name.ends_with("::wrapping_sub")
-        || name.contains("::offset") || name.contains("::wrapping_offset")
-}
-
 pub fn is_byte_ptr_arith(name: &str) -> bool {
     name.contains("::byte_add") || name.contains("::wrapping_byte_add")
         || name.contains("::byte_sub") || name.contains("::wrapping_byte_sub")
         || name.contains("::byte_offset") || name.contains("::wrapping_byte_offset")
 }
 
-pub(crate) fn is_signed_ptr_arith(name: &str) -> bool {
-    name.contains("::offset") || name.contains("::wrapping_offset")
-        || name.contains("::byte_offset") || name.contains("::wrapping_byte_offset")
-}
-
 pub fn is_layout_constant(name: &str) -> bool { name.contains("align_of") || name.contains("size_of") }
 pub(crate) fn is_align_of(name: &str) -> bool { name.contains("align_of") }
 pub fn is_align_offset(name: &str) -> bool { name.contains("::align_offset") }
-pub(crate) fn is_ptr_cast(name: &str) -> bool {
-    name.contains("::cast") || name.contains("cast_array")
-        || name.contains("cast_const") || name.contains("cast_mut")
-}
 pub fn is_as_ptr_range(name: &str) -> bool { name.ends_with("::as_ptr_range") }
 pub fn is_as_mut_ptr_range(name: &str) -> bool { name.ends_with("::as_mut_ptr_range") }
 pub fn is_ptr_write(name: &str) -> bool {

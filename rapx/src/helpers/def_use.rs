@@ -121,16 +121,6 @@ impl RelevantPlaces {
         self.places.is_empty() && self.locals.is_empty()
     }
 
-    /// Return the number of contract-level places in this set.
-    pub fn place_count(&self) -> usize {
-        self.places.len()
-    }
-
-    /// Return the number of MIR locals in this set.
-    pub fn local_count(&self) -> usize {
-        self.locals.len()
-    }
-
     /// Insert a MIR local as a relevance root, tracking the addition.
     pub fn insert_local(&mut self, local: Local) {
         let pk = PlaceKey {
