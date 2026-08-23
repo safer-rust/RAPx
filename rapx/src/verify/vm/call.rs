@@ -746,7 +746,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     // A constant discriminant folds to a single live edge.
                     if let rustc_middle::mir::Operand::Constant(c) = discr {
                         let text = format!("{:?}", c.const_);
-                        if let Some(v) = crate::verify::vm::state::const_int_from_debug(&text) {
+                        if let Some(v) = crate::helpers::mir_utils::const_int_from_debug(&text) {
                             let t = targets.iter().find(|(val, _)| *val == v as u128)
                                 .map(|(_, t)| t)
                                 .unwrap_or_else(|| targets.otherwise());
@@ -1659,8 +1659,8 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         let is_external = self.alloc(prov.alloc_id).is_external;
                         if is_vec && !is_external {
                             let elem_ty = match arg_val.ty.kind() {
-                                TyKind::Ref(_, inner, _) | TyKind::RawPtr(inner, _) => self.vec_elem_ty(*inner),
-                                _ => self.vec_elem_ty(arg_val.ty),
+                                TyKind::Ref(_, inner, _) | TyKind::RawPtr(inner, _) => crate::helpers::mir_utils::vec_elem_ty(self.tcx, *inner),
+                                _ => crate::helpers::mir_utils::vec_elem_ty(self.tcx, arg_val.ty),
                             };
                             let heap_align = elem_ty.map(|ty| self.align_of_ty(ty)).unwrap_or(1).max(1);
                             if let Some(old_data) = self.alloc(prov.alloc_id).slice_data {
@@ -1788,7 +1788,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     let elem_sz = Int::from_u64(self.ctx, *elem_size);
                     let total = Int::mul(self.ctx, &[&size_val.term, &elem_sz]);
                     let dest_ty = self.body.local_decls[dest].ty;
-                    let elem_ty = self.vec_elem_ty(dest_ty);
+                    let elem_ty = crate::helpers::mir_utils::vec_elem_ty(self.tcx, dest_ty);
                     let heap_align = elem_ty.map(|ty| self.align_of_ty(ty)).unwrap_or(1).max(1);
                     let (alloc_id, base) = self.allocate_external(total, heap_align, elem_ty);
                     let dest_alloc_id = self.local_alloc_ids.get(&dest).copied();
@@ -1818,7 +1818,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 // Box→Vec conversion (into_vec, box_assume_init_into_vec_unsafe).
                 self.ensure_local_allocation(dest);
                 let dest_ty = self.body.local_decls[dest].ty;
-                let elem_ty = self.vec_elem_ty(dest_ty);
+                let elem_ty = crate::helpers::mir_utils::vec_elem_ty(self.tcx, dest_ty);
                 let heap_align = elem_ty.map(|ty| self.align_of_ty(ty)).unwrap_or(1).max(1);
                 let max = Int::from_u64(self.ctx, i64::MAX as u64);
                 let (alloc_id, base) = self.allocate_external(max, heap_align, elem_ty);
@@ -2024,7 +2024,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         for (i, arg) in args.iter().enumerate() {
             let arg_val = self.value_of_operand(&arg.node);
             if const_bytes.is_none() {
-                let bytes_opt = super::state::extract_const_bytes_from_operand(
+                let bytes_opt = crate::helpers::mir_utils::extract_const_bytes_from_operand(
                     self.tcx,
                     &arg.node,
                 ).or_else(|| self.trace_to_const_bytes(&arg.node));
@@ -2058,17 +2058,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             }
             self.alloc_mut(alloc_id).initialized = true;
         }
-    }
-
-    /// Extract the element type from a Vec<T>'s type, e.g. Vec<*mut Entry> → *mut Entry.
-    fn vec_elem_ty(&self, ty: Ty<'tcx>) -> Option<Ty<'tcx>> {
-        if let TyKind::Adt(adt_def, substs) = ty.kind() {
-            let name = self.tcx.def_path_str(adt_def.did());
-            if api_classify::is_std_vec(&name) {
-                return substs.first().and_then(|s| s.as_type());
-            }
-        }
-        None
     }
 
     /// Element size (bytes) of the type iterated by an Iter/IterMut pointer.

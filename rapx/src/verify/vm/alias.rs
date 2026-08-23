@@ -242,7 +242,7 @@ pub fn check_alias_vm<'ctx, 'tcx>(
         && (callee_name.ends_with("::as_ref") || callee_name.ends_with("::as_mut"))
     {
         let ret_ty = vm_state.body.local_decls[rustc_middle::mir::RETURN_PLACE].ty;
-        if type_contains_reference(ret_ty) {
+        if crate::helpers::mir_utils::type_contains_reference(ret_ty) {
             return VmAliasResult::Unknown;
         }
         return VmAliasResult::Proved;
@@ -289,7 +289,7 @@ fn check_view_alias<'ctx, 'tcx>(
         .unwrap_or_else(|| {
             // Fallback: extract from the origin value's type
             PlaceKey::from_origin(
-                adjust_operand_local(origin_arg).unwrap_or(1),
+                crate::helpers::mir_utils::extract_local(origin_arg).map(|l| l.as_usize()).unwrap_or(1),
                 vec![],
             )
         });
@@ -567,17 +567,6 @@ fn find_struct_field_origin_for_param<'tcx>(
     None
 }
 
-fn adjust_operand_local<'tcx>(op: &rustc_middle::mir::Operand<'tcx>) -> Option<usize> {
-    match op {
-        rustc_middle::mir::Operand::Copy(p) | rustc_middle::mir::Operand::Move(p)
-            if p.projection.is_empty() =>
-        {
-            Some(p.local.as_usize())
-        }
-        _ => None,
-    }
-}
-
 /// When origin tracing fails to resolve the exact struct field, try to infer
 /// it from the function's self type. Looks for a raw pointer field in the struct
 /// — for simple wrappers with a single raw pointer field, this works reliably.
@@ -766,15 +755,4 @@ fn check_read_memory_alias<'ctx, 'tcx>(
         "read API value escapes while the source pointer persists — structural alias hazard"
             .into(),
     )
-}
-
-/// Whether a type transitively contains a reference (used by the
-/// NonNull::as_ref/as_mut escape fast-path).
-fn type_contains_reference(ty: rustc_middle::ty::Ty<'_>) -> bool {
-    use rustc_middle::ty::TyKind;
-    match ty.kind() {
-        TyKind::Ref(..) => true,
-        TyKind::Adt(_, substs) => substs.types().any(type_contains_reference),
-        _ => false,
-    }
 }

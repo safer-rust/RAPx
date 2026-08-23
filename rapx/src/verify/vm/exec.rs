@@ -364,7 +364,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         let elem_sz = if elem_size > 0 {
                             elem_size
                         } else {
-                            self.size_of_generic_param(*elem_ty).max(1)
+                            crate::helpers::mir_utils::size_of_generic_param(self.tcx, self.caller_def_id, *elem_ty).max(1)
                         };
                         let elem_sz_term = Int::from_u64(self.ctx, elem_sz);
                         self.path_conditions.push(
@@ -945,10 +945,10 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
 
         let src_local = match rvalue {
             #[cfg(rapx_rvalue_use_with_retag)]
-            Rvalue::Use(operand, _) => extract_local(operand),
+            Rvalue::Use(operand, _) => crate::helpers::mir_utils::extract_local(operand),
             #[cfg(not(rapx_rvalue_use_with_retag))]
-            Rvalue::Use(operand) => extract_local(operand),
-            Rvalue::Cast(_, operand, _) => extract_local(operand),
+            Rvalue::Use(operand) => crate::helpers::mir_utils::extract_local(operand),
+            Rvalue::Cast(_, operand, _) => crate::helpers::mir_utils::extract_local(operand),
             Rvalue::CopyForDeref(place) if place.projection.is_empty() => Some(place.local),
             _ => None,
         };
@@ -1072,8 +1072,8 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 | BinOp::Sub | BinOp::SubWithOverflow | BinOp::SubUnchecked
                 | BinOp::Offset)
             {
-            let lhs = extract_local(lhs_op);
-            let rhs = extract_local(rhs_op);
+            let lhs = crate::helpers::mir_utils::extract_local(lhs_op);
+            let rhs = crate::helpers::mir_utils::extract_local(rhs_op);
             if let Some(src) = lhs {
                 if let Some(src_val) = self.locals.get(&src).cloned() {
                     let rhs_val = rhs.and_then(|r| self.locals.get(&r))
@@ -1356,7 +1356,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     fn inject_layout_constraints(&mut self, operand: &Operand<'tcx>, val: &VmValue<'ctx, 'tcx>) {
         if let Operand::Constant(constant) = operand {
             let text = format!("{:?}", constant.const_);
-            if super::state::const_int_from_debug(&text).is_none() {
+            if crate::helpers::mir_utils::const_int_from_debug(&text).is_none() {
                 let is_align_or_size = text.starts_with("AlignOf(") || text.starts_with("SizeOf(");
                 if is_align_or_size {
                     let one = Int::from_u64(self.ctx, 1);
@@ -1484,8 +1484,8 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 let provenance = self.provenance_for_binary_op(*op, &lhs, &rhs);
                 let invariants = self.invariants_for_binary_op(*op, &lhs, &rhs, &provenance);
                 let dest_pk = PlaceKey::from_mir_place(dest_place);
-                let lhs_pk = operand_to_place_key(lhs_op);
-                let rhs_pk = operand_to_place_key(rhs_op);
+                let lhs_pk = crate::helpers::mir_utils::operand_place(lhs_op);
+                let rhs_pk = crate::helpers::mir_utils::operand_place(rhs_op);
                 self.binary_op_sources.insert(dest_pk.clone(), (lhs_pk, rhs_pk));
                 // Store the direct boolean condition for comparison results so
                 // exec_switchint can record a precise path condition (e.g.
@@ -1603,7 +1603,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 // Transmute-like casts of single-field newtypes (e.g.
                 // NonZero::get's `_0 = copy _1 as T`) yield the underlying
                 // field value, not the wrapper's own term.
-                let term = extract_local(operand)
+                let term = crate::helpers::mir_utils::extract_local(operand)
                     .and_then(|l| self.field_value(l, &[0]).map(|v| v.term.clone()))
                     .unwrap_or(src_val.term);
                 VmValue {
@@ -1661,7 +1661,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 let term = self.fresh_int("aggregate");
                 let dest_local = dest_place.local;
                 let dest_alloc_id = self.local_alloc_ids.get(&dest_local).copied();
-                let is_byte_array = self.is_u8_array_or_slice(dest_ty);
+                let is_byte_array = crate::helpers::mir_utils::is_u8_array_or_slice(dest_ty);
                 let field_types: Vec<_> = self.aggregate_field_tys(dest_ty);
                 let mut byte_offset = 0usize;
                 for (i, operand) in operands.iter().enumerate() {
@@ -1714,7 +1714,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                             self.record_byte_value(alloc_id, byte_offset, field_term.clone());
                         }
                         // Record known_nul / known_non_nul from constant operands
-                        if let Some(int_val) = extract_operand_const(operand) {
+                        if let Some(int_val) = crate::helpers::mir_utils::extract_operand_const(operand) {
                             if field_sz == 1 {
                                 if int_val == 0 {
                                     self.mark_byte_nul(alloc_id, byte_offset);
@@ -3200,19 +3200,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         }
     }
 
-    /// Check whether a type is a `u8` array (`[u8; N]`) or `u8` slice (`[u8]`).
-    fn is_u8_array_or_slice(&self, ty: Ty<'tcx>) -> bool {
-        match ty.kind() {
-            rustc_middle::ty::TyKind::Array(elem_ty, _) => {
-                matches!(elem_ty.kind(), rustc_middle::ty::TyKind::Uint(rustc_middle::ty::UintTy::U8))
-            }
-            rustc_middle::ty::TyKind::Slice(elem_ty) => {
-                matches!(elem_ty.kind(), rustc_middle::ty::TyKind::Uint(rustc_middle::ty::UintTy::U8))
-            }
-            _ => false,
-        }
-    }
-
     /// Try to propagate provenance from pointer-extracting calls
     /// (e.g. as_ptr, as_mut_ptr). Returns true if applied.
     /// Try to propagate provenance from pointer-extracting calls
@@ -3289,7 +3276,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     _ => false,
                 };
                 if is_byte {
-                    let bytes_opt = super::state::extract_const_bytes_from_operand(self.tcx, operand)
+                    let bytes_opt = crate::helpers::mir_utils::extract_const_bytes_from_operand(self.tcx, operand)
                         .or_else(|| self.trace_to_const_bytes(operand));
                     if let Some(bytes) = bytes_opt {
                         let size = z3::ast::Int::from_u64(self.ctx, bytes.len() as u64);
@@ -3351,12 +3338,12 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     match rvalue {
                         #[cfg(rapx_rvalue_use_with_retag)]
                         Rvalue::Use(op, _) => {
-                            return super::state::extract_const_bytes_from_operand(self.tcx, op)
+                            return crate::helpers::mir_utils::extract_const_bytes_from_operand(self.tcx, op)
                                 .or_else(|| self.trace_to_const_bytes(op));
                         }
                         #[cfg(not(rapx_rvalue_use_with_retag))]
                         Rvalue::Use(op) => {
-                            return super::state::extract_const_bytes_from_operand(self.tcx, op)
+                            return crate::helpers::mir_utils::extract_const_bytes_from_operand(self.tcx, op)
                                 .or_else(|| self.trace_to_const_bytes(op));
                         }
                         Rvalue::Ref(_, _, p) => {
@@ -3487,14 +3474,6 @@ fn chosen_successor(path: &Path, block: BasicBlock, occurrence: usize) -> Option
     None
 }
 
-/// Convert an operand to a PlaceKey (if it's a place operand).
-fn operand_to_place_key(operand: &Operand<'_>) -> Option<PlaceKey> {
-    match operand {
-        Operand::Copy(place) | Operand::Move(place) => Some(PlaceKey::from_mir_place(place)),
-        _ => None,
-    }
-}
-
 /// Try to resolve a u64 constant from a PlaceKey's source in the VM state.
 fn resolve_u64_from_place_key<'ctx, 'tcx>(
     pk: &Option<PlaceKey>,
@@ -3504,24 +3483,4 @@ fn resolve_u64_from_place_key<'ctx, 'tcx>(
     let local = pk.local()?;
     let val = state.local_value(local)?;
     val.term.as_u64()
-}
-
-/// Extract the bare local from a Copy/Move operand.
-fn extract_local(operand: &Operand<'_>) -> Option<Local> {
-    match operand {
-        Operand::Copy(place) | Operand::Move(place)
-            if place.projection.is_empty() => Some(place.local),
-        _ => None,
-    }
-}
-
-/// Extract a constant u64 value from an operand, if it's a known constant.
-fn extract_operand_const(operand: &Operand<'_>) -> Option<u64> {
-    match operand {
-        Operand::Constant(constant) => {
-            let text = format!("{:?}", constant.const_);
-            super::state::const_int_from_debug(&text)
-        }
-        _ => None,
-    }
 }

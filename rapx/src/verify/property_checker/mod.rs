@@ -486,7 +486,7 @@ impl PropertyChecker {
                 if resolved_align > 1 {
                     Some(resolved_align)
                 } else {
-                    let min_a = vm_state.min_align_of_generic_param(resolved);
+                    let min_a = crate::helpers::mir_utils::min_align_of_generic_param(vm_state.tcx, vm_state.caller_def_id, resolved);
                     if min_a > 1 { Some(min_a) } else { None }
                 }
             }).unwrap_or(align)
@@ -2086,7 +2086,7 @@ impl PropertyChecker {
             ContractExpr::SizeOf(ty) => {
                 let mut size = vm_state.size_of_ty(*ty);
                 if size == 0 && matches!(ty.kind(), rustc_middle::ty::TyKind::Param(_)) {
-                    size = vm_state.size_of_generic_param(*ty);
+                    size = crate::helpers::mir_utils::size_of_generic_param(vm_state.tcx, vm_state.caller_def_id, *ty);
                     if size == 0 {
                         if let Some(ck) = checkpoint {
                             if let Some(_callee) = ck.callee {
@@ -2444,7 +2444,7 @@ impl PropertyChecker {
                         }
                     }
                 }
-                super::vm::state::const_int_from_debug(&const_text)
+                crate::helpers::mir_utils::const_int_from_debug(&const_text)
                     .map(|v| Int::from_u64(vm_state.ctx, v))
             }
             Operand::Copy(p) | Operand::Move(p)
@@ -2547,7 +2547,7 @@ impl PropertyChecker {
             GenericArgKind::Const(actual_const) => actual_const
                 .try_to_target_usize(vm_state.tcx)
                 .map(|value| value as u128)
-                .or_else(|| crate::verify::vm::state::const_int_from_debug(
+                .or_else(|| crate::helpers::mir_utils::const_int_from_debug(
                     &format!("{actual_const:?}")
                 ).map(|v| v as u128)),
             _ => None,

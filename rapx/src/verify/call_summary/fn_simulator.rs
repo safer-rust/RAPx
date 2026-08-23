@@ -363,7 +363,7 @@ fn eff_split_at(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 }
 
 fn eff_from_raw_parts(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    let elem = slice_element_size(ctx.tcx, ctx.caller, ctx.func, ctx.dest);
+    let elem = slice_element_size(ctx.tcx, ctx.caller, ctx.dest);
     let mut eff = vec![
         // ReturnAliasArg keeps the legacy PointsTo chain intact so the
         // legacy SMT Align checker can trace through as_ptr() → reference

@@ -581,15 +581,43 @@ fn offset_of_ty_from_func<'tcx>(
 
 pub fn type_layout<'tcx>(tcx: TyCtxt<'tcx>, caller: DefId, ty: Ty<'tcx>) -> Option<(u64, u64)> {
     if ty_has_param_const(ty) { return None }
-    let env = TypingEnv::post_analysis(tcx, caller);
-    let result = catch_panic(|| {
-        tcx.layout_of(PseudoCanonicalInput { typing_env: env, value: ty })
-    });
-    match result {
-        Ok(Ok(l)) => Some((l.align.abi.bytes(), l.size.bytes())),
-        Ok(Err(_)) if matches!(ty.kind(), TyKind::Param(_)) => Some((0, 0)),
-        _ => None,
+    match layout_of_ty(tcx, caller, ty) {
+        Some(l) => Some((l.align.abi.bytes(), l.size.bytes())),
+        None if matches!(ty.kind(), TyKind::Param(_)) => Some((0, 0)),
+        None => None,
     }
+}
+
+/// Compute the full type layout, catching rustc panics and layout errors.
+/// Shared by `type_layout` and the symbolic VM's size/align/field-offset
+/// queries so the `layout_of` call and its panic-guard live in one place.
+pub fn layout_of_ty<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    caller: DefId,
+    ty: Ty<'tcx>,
+) -> Option<rustc_abi::TyAndLayout<'tcx, Ty<'tcx>>> {
+    let env = TypingEnv::post_analysis(tcx, caller);
+    catch_panic(|| tcx.layout_of(PseudoCanonicalInput { typing_env: env, value: ty }))
+        .ok()
+        .and_then(|r| r.ok())
+}
+
+/// Byte offset of a struct field within its container type (0 on failure).
+pub fn field_offset_in_bytes<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    caller: DefId,
+    ty: Ty<'tcx>,
+    field_idx: usize,
+) -> u64 {
+    let Some(layout) = layout_of_ty(tcx, caller, ty) else { return 0 };
+    match layout.fields {
+        rustc_abi::FieldsShape::Arbitrary { ref offsets, .. } => {
+            let idx = rustc_abi::FieldIdx::from_usize(field_idx);
+            if idx.as_usize() < offsets.len() { return offsets[idx].bytes(); }
+        }
+        _ => {}
+    }
+    0
 }
 
 pub fn destination_stride<'tcx>(
@@ -624,7 +652,7 @@ pub fn nonnull_inner_ty<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<Ty<'tcx
 }
 
 pub fn slice_element_size(
-    tcx: TyCtxt<'_>, caller: DefId, _func: &Operand<'_>, dest: Option<Local>,
+    tcx: TyCtxt<'_>, caller: DefId, dest: Option<Local>,
 ) -> u64 {
     let d = match dest {
         Some(d) => d,
@@ -653,19 +681,240 @@ pub fn vec_element_size(tcx: TyCtxt<'_>, caller: DefId, dest: Option<Local>) -> 
         None => return 1,
     };
     let ty = tcx.optimized_mir(caller).local_decls[d].ty;
-    let elem = match ty.kind() {
-        TyKind::Adt(adt_def, substs) => {
-            let name = tcx.def_path_str(adt_def.did());
-            if name.ends_with("::Vec") || name == "Vec" {
-                substs.first().map(|s| s.as_type()).flatten()
-            } else {
-                None
-            }
+    vec_elem_ty(tcx, ty)
+        .and_then(|elem_ty| type_layout(tcx, caller, elem_ty).map(|(_, s)| s))
+        .unwrap_or(1)
+}
+
+// ── Constant scalar / byte-string extraction ───────────────────
+
+/// Parse an integer from a MIR constant's `Debug` text. Handles decimal,
+/// `0x` hex, and `Value(...)` forms.
+pub fn const_int_from_debug(text: &str) -> Option<u64> {
+    if let Ok(v) = text.parse::<u64>() {
+        return Some(v);
+    }
+    if let Some(start) = text.find("0x") {
+        let hex_part = &text[start..];
+        let end = hex_part
+            .find(|c: char| !c.is_ascii_hexdigit() && c != 'x')
+            .unwrap_or(hex_part.len());
+        u64::from_str_radix(&hex_part[2..end], 16).ok()
+    } else if let Some(start) = text.find("Value(") {
+        let inner = &text[start + 6..];
+        if let Some(end) = inner.find(')') {
+            inner[..end].parse::<u64>().ok()
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
+
+/// Resolve a MIR constant to a concrete integer, falling back from the cheap
+/// debug-text parse to full const evaluation.
+///
+/// Layout constants (`offset_of!(Container, field)`) and the `T::{BITS,MAX,MIN}`
+/// associated constants of *small* integer types (`u8`..`u32`, `i8`..`i32`) are
+/// evaluated here.  Arbitrary unevaluated consts — and the wide bounds
+/// `usize::MAX` / `u64::MAX` / `u128::MAX` — are deliberately left symbolic:
+/// forcing them to a concrete `u64` would overflow downstream size arithmetic.
+pub fn const_scalar_int<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    constant: &rustc_middle::mir::Const<'tcx>,
+    text: &str,
+) -> Option<i128> {
+    if let Some(v) = const_int_from_debug(text) {
+        return Some(v as i128);
+    }
+    // Resolve `T::{BITS,MAX,MIN}` associated constants of small integer types,
+    // used in numeric bounds (`u32::MAX`) and shift-width masks (`u32::BITS`).
+    let is_num_bound =
+        text.contains("::BITS") || text.contains("::MAX") || text.contains("::MIN");
+    if !is_num_bound && offset_of_container(tcx, constant).is_none() {
+        return None;
+    }
+    let typing_env = TypingEnv::fully_monomorphized();
+    let val = constant.eval(tcx, typing_env, rustc_span::DUMMY_SP).ok()?;
+    let scalar = val.try_to_scalar_int()?;
+    let bits = scalar.size().bits() as u32;
+    let raw = scalar.to_bits(scalar.size()) as i128;
+    // Keep wide bounds (`u64::MAX`, `usize::MAX`, `u128::MAX`) symbolic so
+    // they don't overflow downstream size arithmetic.
+    if raw > u32::MAX as i128 {
+        return None;
+    }
+    // Sign-extend signed integer constants (e.g. `i32::MIN` == -2147483648).
+    let ty = constant.ty();
+    if let TyKind::Int(_) = ty.kind() {
+        let sign = 1i128 << (bits - 1);
+        if raw >= sign {
+            Some(raw - (1i128 << bits))
+        } else {
+            Some(raw)
+        }
+    } else {
+        Some(raw)
+    }
+}
+
+/// Try to extract raw bytes from a MIR constant operand that is a reference
+/// to a byte array/slice (e.g. `b"hello\0"`). Returns the byte values.
+/// Used by the VM to populate byte-level tracking for constant C strings.
+pub fn extract_const_bytes_from_operand<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    operand: &Operand<'tcx>,
+) -> Option<Vec<u8>> {
+    let constant = match operand {
+        Operand::Constant(c) => c,
+        _ => return None,
+    };
+    let ty = constant.const_.ty();
+    let (inner_ty, _is_ref) = match ty.kind() {
+        TyKind::Ref(_, inner, _) => (*inner, true),
+        _ => return None,
+    };
+    // Peel through nested references (e.g. &&[u8])
+    let inner_ty = if let TyKind::Ref(_, innermost, _) = inner_ty.kind() {
+        *innermost
+    } else {
+        inner_ty
+    };
+    let _elem_ty = match inner_ty.kind() {
+        TyKind::Array(elem, _) | TyKind::Slice(elem) => *elem,
+        _ => return None,
+    };
+
+    // Evaluate the MIR constant to get a ConstValue
+    let typing_env = TypingEnv::fully_monomorphized();
+    let value = constant
+        .const_
+        .eval(tcx, typing_env, rustc_span::DUMMY_SP)
+        .ok()?;
+
+    const_value_bytes(tcx, value, 0)
+}
+
+/// Extract the bare local from a Copy/Move operand with no projection.
+pub fn extract_local(operand: &Operand<'_>) -> Option<Local> {
+    match operand {
+        Operand::Copy(place) | Operand::Move(place)
+            if place.projection.is_empty() => Some(place.local),
+        _ => None,
+    }
+}
+
+/// Extract a constant u64 value from an operand, if it's a known constant.
+pub fn extract_operand_const(operand: &Operand<'_>) -> Option<u64> {
+    match operand {
+        Operand::Constant(constant) => {
+            let text = format!("{:?}", constant.const_);
+            const_int_from_debug(&text)
         }
         _ => None,
-    };
-    match elem {
-        Some(elem_ty) => type_layout(tcx, caller, elem_ty).map(|(_, s)| s).unwrap_or(1),
-        None => 1,
     }
+}
+
+/// Whether a type is a `u8` array (`[u8; N]`) or `u8` slice (`[u8]`).
+pub fn is_u8_array_or_slice(ty: Ty<'_>) -> bool {
+    match ty.kind() {
+        TyKind::Array(elem_ty, _) => {
+            matches!(elem_ty.kind(), TyKind::Uint(rustc_middle::ty::UintTy::U8))
+        }
+        TyKind::Slice(elem_ty) => {
+            matches!(elem_ty.kind(), TyKind::Uint(rustc_middle::ty::UintTy::U8))
+        }
+        _ => false,
+    }
+}
+
+/// Whether a type transitively contains a reference.
+pub fn type_contains_reference(ty: Ty<'_>) -> bool {
+    match ty.kind() {
+        TyKind::Ref(..) => true,
+        TyKind::Adt(_, substs) => substs.types().any(type_contains_reference),
+        _ => false,
+    }
+}
+
+/// Element type of a `Vec<T>`, if `ty` is a `Vec`.
+pub fn vec_elem_ty<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<Ty<'tcx>> {
+    if let TyKind::Adt(adt_def, substs) = ty.kind() {
+        let name = tcx.def_path_str(adt_def.did());
+        if crate::helpers::api_classify::is_std_vec(&name) {
+            return substs.first().and_then(|s| s.as_type());
+        }
+    }
+    None
+}
+
+/// Max `size_of` over all implementors of a generic type parameter's trait
+/// bounds (0 for non-param types).
+pub fn size_of_generic_param<'tcx>(tcx: TyCtxt<'tcx>, caller: DefId, ty: Ty<'tcx>) -> u64 {
+    match ty.kind() {
+        TyKind::Param(_) => {}
+        _ => return 0,
+    };
+    let param_env = tcx.param_env(caller);
+    let typing_env = TypingEnv::post_analysis(tcx, caller);
+    for clause in param_env.caller_bounds() {
+        let Some(trait_clause) = clause.as_trait_clause() else { continue };
+        let self_ty = trait_clause.self_ty().skip_binder();
+        if self_ty != ty {
+            continue;
+        }
+        let trait_def_id = trait_clause.def_id();
+        let mut max_size: u64 = 0;
+        for impl_def_id in tcx.all_impls(trait_def_id) {
+            let impl_ty = tcx.type_of(impl_def_id).skip_binder();
+            if ty_has_param_const(impl_ty) {
+                continue;
+            }
+            let layout = match catch_panic(|| {
+                tcx.layout_of(PseudoCanonicalInput { typing_env, value: impl_ty })
+            }) {
+                Ok(Ok(l)) => l,
+                _ => continue,
+            };
+            max_size = max_size.max(layout.size.bytes());
+        }
+        return max_size;
+    }
+    0
+}
+
+/// Min `align_of` over all implementors of a generic type parameter's trait
+/// bounds (0 for non-param types).
+pub fn min_align_of_generic_param<'tcx>(tcx: TyCtxt<'tcx>, caller: DefId, ty: Ty<'tcx>) -> u64 {
+    match ty.kind() {
+        TyKind::Param(_) => {}
+        _ => return 0,
+    };
+    let param_env = tcx.param_env(caller);
+    let typing_env = TypingEnv::post_analysis(tcx, caller);
+    for clause in param_env.caller_bounds() {
+        let Some(trait_clause) = clause.as_trait_clause() else { continue };
+        let self_ty = trait_clause.self_ty().skip_binder();
+        if self_ty != ty {
+            continue;
+        }
+        let trait_def_id = trait_clause.def_id();
+        let mut min_align: u64 = u64::MAX;
+        for impl_def_id in tcx.all_impls(trait_def_id) {
+            let impl_ty = tcx.type_of(impl_def_id).skip_binder();
+            if ty_has_param_const(impl_ty) {
+                continue;
+            }
+            let layout = match catch_panic(|| {
+                tcx.layout_of(PseudoCanonicalInput { typing_env, value: impl_ty })
+            }) {
+                Ok(Ok(l)) => l,
+                _ => continue,
+            };
+            min_align = min_align.min(layout.align.abi.bytes());
+        }
+        return if min_align == u64::MAX { 0 } else { min_align };
+    }
+    0
 }

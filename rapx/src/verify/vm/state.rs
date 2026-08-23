@@ -7,7 +7,7 @@
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{BasicBlock, Body, Local, Operand, Place, ProjectionElem},
-    ty::{Ty, TyCtxt, TypingEnv},
+    ty::{Ty, TyCtxt},
 };
 use z3::{
     Context,
@@ -518,86 +518,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         }
     }
 
-    /// Get the maximum `size_of` for a generic type parameter by
-    /// enumerating all implementors of its trait bounds.
-    pub fn size_of_generic_param(&self, ty: Ty<'tcx>) -> u64 {
-        match ty.kind() {
-            rustc_middle::ty::TyKind::Param(_) => {}
-            _ => return 0,
-        };
-        let param_env = self.tcx.param_env(self.caller_def_id);
-        let typing_env = rustc_middle::ty::TypingEnv::post_analysis(self.tcx, self.caller_def_id);
-        for clause in param_env.caller_bounds() {
-            let Some(trait_clause) = clause.as_trait_clause() else { continue };
-            let self_ty = trait_clause.self_ty().skip_binder();
-            if self_ty != ty {
-                continue;
-            }
-            let trait_def_id = trait_clause.def_id();
-            let mut max_size: u64 = 0;
-            for impl_def_id in self.tcx.all_impls(trait_def_id) {
-                let impl_ty = self.tcx.type_of(impl_def_id).skip_binder();
-                if crate::helpers::mir_utils::ty_has_param_const(impl_ty) {
-                    continue;
-                }
-                let layout = match crate::helpers::mir_utils::catch_panic(|| {
-                    self.tcx.layout_of(
-                        rustc_middle::ty::PseudoCanonicalInput {
-                            typing_env,
-                            value: impl_ty,
-                        }
-                    )
-                }) {
-                    Ok(Ok(l)) => l,
-                    _ => continue,
-                };
-                max_size = max_size.max(layout.size.bytes());
-            }
-            return max_size;
-        }
-        0
-    }
-
-    /// Get the minimum `align_of` for a generic type parameter by
-    /// enumerating all implementors of its trait bounds.
-    pub fn min_align_of_generic_param(&self, ty: Ty<'tcx>) -> u64 {
-        match ty.kind() {
-            rustc_middle::ty::TyKind::Param(_) => {}
-            _ => return 0,
-        };
-        let param_env = self.tcx.param_env(self.caller_def_id);
-        let typing_env = rustc_middle::ty::TypingEnv::post_analysis(self.tcx, self.caller_def_id);
-        for clause in param_env.caller_bounds() {
-            let Some(trait_clause) = clause.as_trait_clause() else { continue };
-            let self_ty = trait_clause.self_ty().skip_binder();
-            if self_ty != ty {
-                continue;
-            }
-            let trait_def_id = trait_clause.def_id();
-            let mut min_align: u64 = u64::MAX;
-            for impl_def_id in self.tcx.all_impls(trait_def_id) {
-                let impl_ty = self.tcx.type_of(impl_def_id).skip_binder();
-                if crate::helpers::mir_utils::ty_has_param_const(impl_ty) {
-                    continue;
-                }
-                let layout = match crate::helpers::mir_utils::catch_panic(|| {
-                    self.tcx.layout_of(
-                        rustc_middle::ty::PseudoCanonicalInput {
-                            typing_env,
-                            value: impl_ty,
-                        }
-                    )
-                }) {
-                    Ok(Ok(l)) => l,
-                    _ => continue,
-                };
-                min_align = min_align.min(layout.align.abi.bytes());
-            }
-            return if min_align == u64::MAX { 0 } else { min_align };
-        }
-        0
-    }
-
     /// Assert path conditions and invariant constraints into a solver.
     pub fn assert_all(&self, solver: &z3::Solver<'ctx>) {
         for cond in &self.path_conditions {
@@ -692,7 +612,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             }
             Operand::Constant(constant) => {
                 let text = format!("{:?}", constant.const_);
-                let int_val = const_scalar_int(self.tcx, &constant.const_, &text);
+                let int_val = crate::helpers::mir_utils::const_scalar_int(self.tcx, &constant.const_, &text);
                 let is_field_offset = int_val.is_none()
                     && crate::helpers::mir_utils::offset_of_container(self.tcx, &constant.const_)
                         .is_some();
@@ -917,111 +837,3 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     }
 }
 
-/// Parse a const integer from debug output.
-pub(crate) fn const_int_from_debug(text: &str) -> Option<u64> {
-    if let Ok(v) = text.parse::<u64>() {
-        return Some(v);
-    }
-    if let Some(start) = text.find("0x") {
-        let hex_part = &text[start..];
-        let end = hex_part
-            .find(|c: char| !c.is_ascii_hexdigit() && c != 'x')
-            .unwrap_or(hex_part.len());
-        u64::from_str_radix(&hex_part[2..end], 16).ok()
-    } else if let Some(start) = text.find("Value(") {
-        let inner = &text[start + 6..];
-        if let Some(end) = inner.find(')') {
-            inner[..end].parse::<u64>().ok()
-        } else {
-            None
-        }
-    } else {
-        None
-    }
-}
-
-/// Resolve a MIR constant to a concrete integer, falling back from the cheap
-/// debug-text parse to full const evaluation.
-///
-/// Layout constants (`offset_of!(Container, field)`) and the `T::{BITS,MAX,MIN}`
-/// associated constants of *small* integer types (`u8`..`u32`, `i8`..`i32`) are
-/// evaluated here.  Arbitrary unevaluated consts — and the wide bounds
-/// `usize::MAX` / `u64::MAX` / `u128::MAX` — are deliberately left symbolic:
-/// forcing them to a concrete `u64` would overflow downstream size arithmetic.
-pub(crate) fn const_scalar_int<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    constant: &rustc_middle::mir::Const<'tcx>,
-    text: &str,
-) -> Option<i128> {
-    if let Some(v) = const_int_from_debug(text) {
-        return Some(v as i128);
-    }
-    // Resolve `T::{BITS,MAX,MIN}` associated constants of small integer types,
-    // used in numeric bounds (`u32::MAX`) and shift-width masks (`u32::BITS`).
-    let is_num_bound =
-        text.contains("::BITS") || text.contains("::MAX") || text.contains("::MIN");
-    if !is_num_bound && crate::helpers::mir_utils::offset_of_container(tcx, constant).is_none() {
-        return None;
-    }
-    let typing_env = TypingEnv::fully_monomorphized();
-    let val = constant.eval(tcx, typing_env, rustc_span::DUMMY_SP).ok()?;
-    let scalar = val.try_to_scalar_int()?;
-    let bits = scalar.size().bits() as u32;
-    let raw = scalar.to_bits(scalar.size()) as i128;
-    // Keep wide bounds (`u64::MAX`, `usize::MAX`, `u128::MAX`) symbolic so
-    // they don't overflow downstream size arithmetic.
-    if raw > u32::MAX as i128 {
-        return None;
-    }
-    // Sign-extend signed integer constants (e.g. `i32::MIN` == -2147483648).
-    let ty = constant.ty();
-    if let rustc_middle::ty::TyKind::Int(_) = ty.kind() {
-        let sign = 1i128 << (bits - 1);
-        if raw >= sign {
-            Some(raw - (1i128 << bits))
-        } else {
-            Some(raw)
-        }
-    } else {
-        Some(raw)
-    }
-}
-
-// ── Constant byte-string extraction ───────────────────────────
-
-/// Try to extract raw bytes from a MIR constant operand that is a reference
-/// to a byte array/slice (e.g. `b"hello\0"`). Returns the byte values.
-/// Used by the VM to populate byte-level tracking for constant C strings.
-pub(crate) fn extract_const_bytes_from_operand<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    operand: &Operand<'tcx>,
-) -> Option<Vec<u8>> {
-    let constant = match operand {
-        Operand::Constant(c) => c,
-        _ => return None,
-    };
-    let ty = constant.const_.ty();
-    let (inner_ty, _is_ref) = match ty.kind() {
-        rustc_middle::ty::TyKind::Ref(_, inner, _) => (*inner, true),
-        _ => return None,
-    };
-    // Peel through nested references (e.g. &&[u8])
-    let inner_ty = if let rustc_middle::ty::TyKind::Ref(_, innermost, _) = inner_ty.kind() {
-        *innermost
-    } else {
-        inner_ty
-    };
-    let _elem_ty = match inner_ty.kind() {
-        rustc_middle::ty::TyKind::Array(elem, _) | rustc_middle::ty::TyKind::Slice(elem) => *elem,
-        _ => return None,
-    };
-
-    // Evaluate the MIR constant to get a ConstValue
-    let typing_env = TypingEnv::fully_monomorphized();
-    let value = constant
-        .const_
-        .eval(tcx, typing_env, rustc_span::DUMMY_SP)
-        .ok()?;
-
-    crate::helpers::mir_utils::const_value_bytes(tcx, value, 0)
-}

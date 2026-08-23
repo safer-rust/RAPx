@@ -722,7 +722,7 @@ fn collect_entry_lower_bounds(
         let TerminatorKind::SwitchInt { discr, targets } = &terminator.kind else {
             continue;
         };
-        let Some(discr_local) = operand_plain_local(discr) else {
+        let Some(discr_local) = crate::helpers::mir_utils::extract_local(discr) else {
             continue;
         };
         let discr_local = resolve_local_copy(discr_local, copy_sources);
@@ -1130,7 +1130,7 @@ fn numeric_term_from_operand<'tcx>(
     def_id: DefId,
     operand: &Operand<'tcx>,
 ) -> Option<NumericTerm> {
-    operand_plain_local(operand)
+    crate::helpers::mir_utils::extract_local(operand)
         .map(NumericTerm::Local)
         .or_else(|| operand_const_i128(tcx, def_id, operand).map(NumericTerm::Const))
 }
@@ -1165,8 +1165,8 @@ fn increment_source_and_step<'tcx>(
     let Rvalue::BinaryOp(op, operands) = rvalue else {
         return None;
     };
-    let lhs_local = operand_plain_local(&operands.0);
-    let rhs_local = operand_plain_local(&operands.1);
+    let lhs_local = crate::helpers::mir_utils::extract_local(&operands.0);
+    let rhs_local = crate::helpers::mir_utils::extract_local(&operands.1);
     let lhs_const = operand_const_i128(tcx, def_id, &operands.0);
     let rhs_const = operand_const_i128(tcx, def_id, &operands.1);
 
@@ -1193,17 +1193,6 @@ fn rvalue_projection_source(rvalue: &Rvalue<'_>, field_index: usize) -> Option<L
 }
 
 /// Return the local used by an operand when the operand is a plain local place.
-fn operand_plain_local(operand: &Operand<'_>) -> Option<Local> {
-    match operand {
-        Operand::Copy(place) | Operand::Move(place) if place.projection.is_empty() => {
-            Some(place.local)
-        }
-        Operand::Copy(_) | Operand::Move(_) | Operand::Constant(_) => None,
-        #[cfg(rapx_ge_99)]
-        Operand::RuntimeChecks(_) => None,
-    }
-}
-
 /// Extract an integer constant from an operand.
 fn operand_const_i128<'tcx>(
     tcx: TyCtxt<'tcx>,

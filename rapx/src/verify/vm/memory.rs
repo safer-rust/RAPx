@@ -2,7 +2,7 @@
 
 use rustc_middle::{
     mir::{Local, Place, ProjectionElem},
-    ty::{PseudoCanonicalInput, Ty, TyKind, TypingEnv},
+    ty::{Ty, TyKind},
 };
 use z3::ast::{Ast, Int};
 
@@ -174,31 +174,19 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     }
 
     pub(crate) fn field_offset_in_bytes(&self, ty: Ty<'tcx>, field_idx: usize) -> u64 {
-        let Some(layout) = self.compute_layout(ty) else { return 0 };
-        match layout.fields {
-            rustc_abi::FieldsShape::Arbitrary { ref offsets, .. } => {
-                let idx = rustc_abi::FieldIdx::from_usize(field_idx);
-                if idx.as_usize() < offsets.len() { return offsets[idx].bytes(); }
-            }
-            _ => {}
-        }
-        0
+        crate::helpers::mir_utils::field_offset_in_bytes(self.tcx, self.caller_def_id, ty, field_idx)
     }
 
     pub fn size_of_ty(&self, ty: Ty<'tcx>) -> u64 {
-        self.compute_layout(ty).map(|l| l.size.bytes()).unwrap_or(0)
+        crate::helpers::mir_utils::layout_of_ty(self.tcx, self.caller_def_id, ty)
+            .map(|l| l.size.bytes())
+            .unwrap_or(0)
     }
 
     pub fn align_of_ty(&self, ty: Ty<'tcx>) -> u64 {
-        self.compute_layout(ty).map(|l| l.align.abi.bytes()).unwrap_or(1)
-    }
-
-    fn compute_layout(&self, ty: Ty<'tcx>) -> Option<rustc_abi::TyAndLayout<'tcx, Ty<'tcx>>> {
-        let typing_env = TypingEnv::post_analysis(self.tcx, self.caller_def_id);
-        let input = PseudoCanonicalInput { typing_env, value: ty };
-        crate::helpers::mir_utils::catch_panic(|| self.tcx.layout_of(input))
-            .ok()
-            .and_then(|r| r.ok())
+        crate::helpers::mir_utils::layout_of_ty(self.tcx, self.caller_def_id, ty)
+            .map(|l| l.align.abi.bytes())
+            .unwrap_or(1)
     }
 
     pub fn alloc_for_local(&self, local: Local) -> Option<AllocId> {

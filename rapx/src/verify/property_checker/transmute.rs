@@ -180,7 +180,7 @@ impl PropertyChecker {
         }).ok().and_then(|r| r.ok()).map(|l| l.size.bytes()).unwrap_or(0);
         if sz > 0 { return sz; }
         // Fallback 2: for generic type params, enumerate impl sizes.
-        let generic_sz = vm_state.size_of_generic_param(ty);
+        let generic_sz = crate::helpers::mir_utils::size_of_generic_param(vm_state.tcx, vm_state.caller_def_id, ty);
         if generic_sz > 0 { return generic_sz; }
         0
     }
