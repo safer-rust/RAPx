@@ -119,9 +119,7 @@ static REGISTRY: &[Entry] = &[
     E!(api_classify::is_ownership_reconstruction, dep0!(), false, none!(), eff_ownership_recon),
 
     // ── Slice helpers ───────────────────────────────────────────────
-    E!(slice_range,           dep01!(), false,  none!(),  eff_bounded_range),
     E!(slice_index,           dep01!(), false,  none!(),  eff_alias_arg0),
-    E!(align_to_offsets,      ALL,      true,   none!(),  eff_lcm_split),
     E!(align_to_local,        dep0!(),  false,  none!(),  eff_align_to),
     E!(into_iter_local,       dep0!(),  false,  none!(),  eff_return_iter),
     E!(iter_position,         dep0!(),  false,  none!(),  eff_option_scan_index),
@@ -327,14 +325,6 @@ fn eff_ownership_recon(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     ]
 }
 
-fn eff_bounded_range(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![CallEffect::ReturnBoundedRange { bounds_arg: 1 }]
-}
-
-fn eff_lcm_split(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![CallEffect::ReturnLcmSplit { receiver_arg: 0 }]
-}
-
 fn eff_align_to(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     vec![CallEffect::ReturnAlignTo { receiver_arg: 0 }]
 }
@@ -435,9 +425,7 @@ fn eff_layout_const(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 
 fn mem_forget_capacity(n: &str) -> bool     { n.ends_with("mem::forget") || n.ends_with("::capacity") }
 fn transmute(n: &str) -> bool               { n.contains("::transmute") || n.contains("intrinsics::transmute") }
-fn slice_range(n: &str) -> bool             { let b = n.split('<').next().unwrap_or(n); b.ends_with("slice::range") || b.contains("slice::index::range") }
 fn slice_index(n: &str) -> bool             { n.ends_with("::Index::index") || n.ends_with("::IndexMut::index_mut") }
-fn align_to_offsets(n: &str) -> bool        { n.contains("::align_to_offsets") }
 fn align_to_local(n: &str) -> bool           {
     n.ends_with("align_to_ext") || n.ends_with("align_to_mut_ext")
 }

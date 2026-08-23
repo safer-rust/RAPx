@@ -187,12 +187,6 @@ pub enum CallEffect {
     /// `NonOverlap(indices_arg)`.  (A trusted interprocedural summary, like the
     /// std-primitive summaries — the validator's body is not re-proved here.)
     ChecksIndexBoundsDisjoint { indices_arg: usize, len_arg: usize },
-    /// The call returns a `Range { start, end }` guaranteed to satisfy
-    /// `0 <= start <= end <= bounds`, where `bounds` is the `end` field (field 0)
-    /// of the `RangeTo` argument at `bounds_arg`.  Models `core::slice::range`,
-    /// whose result feeds subslice pointer arithmetic in callers such as
-    /// `slice::copy_within`.
-    ReturnBoundedRange { bounds_arg: usize },
     /// The call returns `Option<usize>` whose `Some` payload is a scan index
     /// into the iterator argument `self_arg` (models `Iterator::position` /
     /// `Iterator::find`): `Some(i)` satisfies `0 <= i < self.len()` where
@@ -203,10 +197,6 @@ pub enum CallEffect {
     /// the terminator) fits in `isize::MAX` — discharging the
     /// `from_raw_parts` `ValidNum(size_of(T)*(len+1) <= isize::MAX)` bound.
     ReturnScanLength { ptr_arg: usize },
-    /// `align_to_offsets` returns `(us_len, ts_len)` where field 0 <=
-    /// `receiver.len()` / ts and field 1 < ts, ensuring the remaining
-    /// pointer arithmetic stays in bounds on the tail.
-    ReturnLcmSplit { receiver_arg: usize },
     /// Remove the allocation's `slice_data` link for the argument's stack
     /// alloc_id — used for `mem::forget` which prevents a drop cascade.
     CleanSliceDataLinks { arg: usize },

@@ -1987,20 +1987,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 let term = self.fresh_int(&format!("ck_ok_{}", dest.as_usize()));
                 self.set_local( dest, VmValue { term, ty: dest_ty, provenance: None, invariants: ValueInvariants::default() });
             }
-            _ => {
-                self.notes.push(format!("unhandled call effect: {:?}", effect));
-                let dest_ty = self.body.local_decls[dest].ty;
-                let term = self.fresh_int(&format!("unk_{}", dest.as_usize()));
-                self.set_local(
-                    dest,
-                    VmValue {
-                        term,
-                        ty: dest_ty,
-                        provenance: None,
-                        invariants: ValueInvariants::default(),
-                    },
-                );
-            }
         }
     }
 
