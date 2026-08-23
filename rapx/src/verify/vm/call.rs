@@ -5,8 +5,9 @@
 //! from `exec.rs` when a `Call` terminator is encountered.
 //!
 //! When the callee has MIR available, the VM recursively inlines the
-//! callee's body to achieve context-sensitive precision. Otherwise it
-//! falls back to the summary-based approach.
+//! callee's body to achieve context-sensitive precision, unless a
+//! fn_simulator summary provides more precise hand-crafted invariants.
+//! Otherwise it falls back to the summary-based approach.
 
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{BasicBlock, Local, Operand, TerminatorKind};
@@ -25,10 +26,13 @@ use super::state::{AllocId, Provenance, VmState, VmValue, ValueInvariants};
 const MAX_INLINE_DEPTH: usize = 5;
 
 impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
-    /// Execute a call terminator. Summary takes priority (fn_simulator →
-    /// interprocedural) for their hand-crafted invariants. Inline execution
-    /// is tried as a fallback when the summary is unsupported and the callee
-    /// has available MIR (including dependency crates).
+    /// Execute a call terminator.
+    ///
+    /// Dispatch priority: hand-specialized handlers first, then fn_simulator
+    /// summaries (whose hand-crafted invariants are more precise than inline),
+    /// then inline execution of the callee's MIR (including dependency
+    /// crates), then interprocedural/effect summaries, and finally an
+    /// unconstrained "unsupported call" result.
     pub fn exec_call(
         &mut self,
         func: &Operand<'tcx>,
@@ -44,6 +48,10 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             .collect();
 
         let name = crate::helpers::mir_utils::call_name(self.tcx, func);
+        let callee = crate::helpers::mir_utils::dep_callee_def_id(func);
+        let caller_arg_locals: Vec<Option<Local>> = args.iter()
+            .map(|a| a.node.place().map(|p| p.local))
+            .collect();
 
         // ── select_unpredictable: result ∈ {x, y} ─────────────────────
         if self.try_select_unpredictable(&name, &arg_values, args, destination) {
@@ -70,10 +78,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         // update as a side effect, then fall through to normal handling.
         // These callees have SwitchInt (ZST branch) exceeding inline limits,
         // so the ptr update would otherwise be lost.
-        let callee = crate::helpers::mir_utils::dep_callee_def_id(func);
-        let caller_arg_locals: Vec<Local> = args.iter()
-            .filter_map(|a| a.node.place().map(|p| p.local))
-            .collect();
         if let Some(c) = callee {
             if self.tcx.is_mir_available(c) {
                 let cname = self.tcx.def_path_str(c);
@@ -90,23 +94,16 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         // has a precise summary (memory allocation, intrinsics, known ptr
         // arithmetic, etc.). The summary path handles these with
         // hand-crafted invariants that are more precise than BFS inline.
-        let callee = crate::helpers::mir_utils::dep_callee_def_id(func);
-        let mut tried_inline = false;
-        // Extract caller arg locals for field_value propagation into inline.
-        let caller_arg_locals: Vec<Local> = args.iter()
-            .filter_map(|a| a.node.place().map(|p| p.local))
-            .collect();
         if let Some(c) = callee {
             if self.tcx.is_mir_available(c) {
                 let has_fn_sim = crate::verify::call_summary::fn_simulator::lookup_effect(
                     self.tcx, caller_def_id, Some(c), &name, func, destination,
                 ).is_some();
                 if !has_fn_sim {
-                    if self.exec_inline_call(c, &arg_values, &caller_arg_locals, destination, 0) {
+                    if self.exec_inline_call(c, &arg_values, &caller_arg_locals, destination) {
                         self.materialize_const_bytes_after_call(args, destination);
                         return;
                     }
-                    tried_inline = true;
                 }
             }
         }
@@ -125,22 +122,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 self.apply_call_effect(effect, &arg_values, &caller_arg_locals, destination);
             }
         } else {
-            if !tried_inline {
-                let callee = crate::helpers::mir_utils::dep_callee_def_id(func);
-                let inlined = callee
-                    .and_then(|c| {
-                        if self.tcx.is_mir_available(c) {
-                            Some(self.exec_inline_call(c, &arg_values, &caller_arg_locals, destination, 0))
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or(false);
-                if inlined {
-                    self.materialize_const_bytes_after_call(args, destination);
-                    return;
-                }
-            }
             self.notes.push(format!("unsupported call: {}", summary.name));
             let dest_ty = self.body.local_decls[destination].ty;
             let term = self.fresh_int(&format!("callret_{}", destination.as_usize()));
@@ -469,13 +450,9 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         &mut self,
         callee_def_id: DefId,
         arg_values: &[VmValue<'ctx, 'tcx>],
-        caller_arg_locals: &[Local],
+        caller_arg_locals: &[Option<Local>],
         dest: Local,
-        _depth: usize,
     ) -> bool {
-        // The `depth` argument is always 0 at the call sites; use the stateful
-        // counter to actually bound nested inlining (otherwise a callee that
-        // itself inlines another callee recurses without limit).
         if self.inline_depth >= MAX_INLINE_DEPTH {
             return false;
         }
@@ -523,6 +500,8 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         let saved_local_alloc_ids = std::mem::take(&mut self.local_alloc_ids);
         let saved_binary_op_sources = std::mem::take(&mut self.binary_op_sources);
         let saved_other_op_sources = std::mem::take(&mut self.other_op_sources);
+        let saved_iter_ptr_offset = std::mem::take(&mut self.iter_ptr_offset);
+        let saved_discriminant_terms = std::mem::take(&mut self.discriminant_terms);
 
         // ── Switch to callee context ──
         self.body = callee_body;
@@ -538,8 +517,9 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         // Propagate field_values from caller arg locals into the callee
         // context so that inline body can access struct fields (e.g.
         // Iter::ptr / end_or_len for len/is_empty computations).
-        for (i, caller_arg) in caller_arg_locals.iter().enumerate() {
+        for (i, caller_arg_opt) in caller_arg_locals.iter().enumerate() {
             let callee_param = Local::from_usize(i + 1);
+            let Some(caller_arg) = caller_arg_opt else { continue; };
             if *caller_arg == callee_param {
                 continue; // same local; field_values already present
             }
@@ -575,6 +555,8 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         self.local_alloc_ids = saved_local_alloc_ids;
         self.binary_op_sources = saved_binary_op_sources;
         self.other_op_sources = saved_other_op_sources;
+        self.iter_ptr_offset = saved_iter_ptr_offset;
+        self.discriminant_terms = saved_discriminant_terms;
 
         // ── Write return value to caller destination ──
         let dest_ty = self.body.local_decls[dest].ty;
@@ -817,7 +799,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         &mut self,
         effect: &CallEffect,
         args: &[VmValue<'ctx, 'tcx>],
-        caller_arg_locals: &[Local],
+        caller_arg_locals: &[Option<Local>],
         dest: Local,
     ) {
         match effect {
@@ -842,7 +824,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     // Peel `peel` leading field-0 hops off the argument's
                     // pointee field values (ManuallyDrop.value → MaybeDangling.0)
                     // and expose them as the deref result's pointee fields.
-                    if let Some(arg_local) = caller_arg_locals.get(*arg).copied() {
+                    if let Some(arg_local) = caller_arg_locals.get(*arg).copied().flatten() {
                         let keys: Vec<Vec<usize>> = self
                             .field_values
                             .keys()
@@ -1565,7 +1547,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 // points at (via its provenance = the iterator's stack alloc).
                 // The iterator carries `ptr` (field 0) and `end_or_len`
                 // (field 1); `len = end_or_len - ptr`.
-                if let Some(&iter_ref) = caller_arg_locals.get(*self_arg) {
+                if let Some(iter_ref) = caller_arg_locals.get(*self_arg).copied().flatten() {
                     let iter_local = self
                         .locals
                         .get(&iter_ref)
@@ -2140,7 +2122,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         _callee: DefId,
         cname: &str,
         arg_values: &[VmValue<'ctx, 'tcx>],
-        _caller_arg_locals: &[Local],
+        _caller_arg_locals: &[Option<Local>],
     ) {
         let is_inc = api_classify::is_post_inc_start(&cname);
         if !is_inc { return; }  // pre_dec_end not yet supported
