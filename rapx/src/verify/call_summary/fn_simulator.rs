@@ -20,7 +20,7 @@ use rustc_middle::ty::{GenericArgKind, Ty, TyCtxt, TyKind};
 use super::{CallDependencySummary, CallEffect, CallEffectSummary};
 use crate::helpers::api_classify;
 use crate::helpers::mir_utils::{
-    type_layout, destination_stride, pointee_alignment,
+    type_layout, destination_stride, pointee_ty, pointee_alignment,
     nonnull_inner_ty, slice_element_size, vec_element_size,
 };
 
@@ -45,9 +45,9 @@ struct Entry {
     effects: fn(&EffCtx<'_, '_>) -> Vec<CallEffect>,
 }
 
-macro_rules! none { () => { &[] } }
-macro_rules! dep0  { () => { &[0usize] } }
-macro_rules! dep01 { () => { &[0usize, 1] } }
+macro_rules! no_args { () => { &[] } }
+macro_rules! arg0    { () => { &[0usize] } }
+macro_rules! arg01   { () => { &[0usize, 1] } }
 
 macro_rules! E {
     ($m:expr, $d:expr, $all:expr, $w:expr, $e:ident) => {
@@ -55,98 +55,108 @@ macro_rules! E {
     };
 }
 
+/// Placeholder for `dep_on` when `dep_on_all` is true: in that case
+/// `lookup_dependency` ignores `dep_on` and collects `0..arg_count`, so the
+/// field is only present to satisfy the `E!` macro shape.
 const ALL: &[usize] = &[];
 
 static REGISTRY: &[Entry] = &[
+    // ── Drop / forget ──────────────────────────────────────────────
+    E!(mem_forget,           arg0!(),  false,  no_args!(),  eff_forget),
+
     // ── Pass-through / no-effect calls ──────────────────────────────
-    E!(mem_forget_capacity,   dep0!(),  false,  none!(),  eff_forget),
-    E!(transmute,             dep0!(),  false,  none!(),  eff_none),
-    E!(api_classify::is_maybe_uninit_uninit,none!(), false, none!(), eff_none),
-    E!(api_classify::is_maybe_uninit_assume_init,dep0!(), false, none!(), eff_none),
+    E!(transmute,             arg0!(),  false,  no_args!(),  eff_none),
+    E!(api_classify::is_maybe_uninit_uninit,no_args!(), false, no_args!(), eff_none),
+    E!(api_classify::is_maybe_uninit_assume_init,arg0!(), false, no_args!(), eff_none),
     // Non-zero-preserving integer operations must be matched *before* the
     // generic `is_numeric_arith` pass-through below. Each is modelled with a
     // precise expression over its operands (ite / arithmetic) so the solver
     // can discharge a downstream `!= 0` obligation *conditionally* — only
     // when the operands are actually non-zero — rather than asserting the
     // result is unconditionally non-zero.
-    E!(int_max,               ALL,      true,   none!(),  eff_return_max),
-    E!(int_clamp,             ALL,      true,   none!(),  eff_return_clamp),
-    E!(int_abs,               ALL,      true,   none!(),  eff_return_abs),
-    E!(int_neg,               ALL,      true,   none!(),  eff_return_neg),
-    E!(int_add,               ALL,      true,   none!(),  eff_return_add),
-    E!(int_mul,               ALL,      true,   none!(),  eff_return_mul),
-    E!(int_checked_add,       ALL,      true,   none!(),  eff_return_option_some_add),
-    E!(int_checked_mul,       ALL,      true,   none!(),  eff_return_option_some_mul),
-    E!(overflowing_nz,        ALL,      true,   none!(),  eff_overflowing_nz),
-    E!(api_classify::is_numeric_arith, ALL,      true,   none!(),  eff_none),
-    E!(saturating_sub,        ALL,      true,   none!(),  eff_none),
-    E!(api_classify::is_offset_from_unsigned, dep01!(), false, none!(), eff_offset_from_unsigned),
-    E!(api_classify::is_option_unwrap, dep0!(),  false,  none!(),  eff_alias_arg0),
-    E!(from_trait_call,       dep0!(),  false,  none!(),  eff_from_trait),
+    E!(int_max,               ALL,      true,   no_args!(),  eff_return_max),
+    E!(int_clamp,             ALL,      true,   no_args!(),  eff_return_clamp),
+    E!(int_abs,               ALL,      true,   no_args!(),  eff_return_abs),
+    E!(int_neg,               ALL,      true,   no_args!(),  eff_return_neg),
+    E!(int_add,               ALL,      true,   no_args!(),  eff_return_add),
+    E!(int_mul,               ALL,      true,   no_args!(),  eff_return_mul),
+    E!(int_checked_add,       ALL,      true,   no_args!(),  eff_return_option_some_add),
+    E!(int_checked_mul,       ALL,      true,   no_args!(),  eff_return_option_some_mul),
+    E!(overflowing_nz,        ALL,      true,   no_args!(),  eff_overflowing_nz),
+    E!(api_classify::is_numeric_arith, ALL,      true,   no_args!(),  eff_none),
+    E!(saturating_sub,        ALL,      true,   no_args!(),  eff_return_sub),
+    E!(api_classify::is_offset_from_unsigned, arg01!(), false, no_args!(), eff_offset_from_unsigned),
+    E!(api_classify::is_option_unwrap, arg0!(),  false,  no_args!(),  eff_alias_arg0),
+    E!(from_trait_call,       arg0!(),  false,  no_args!(),  eff_from_trait),
 
     // ── Pointer extraction / cast ───────────────────────────────────
-    E!(nonnull_from,          dep0!(),  false,  none!(),  eff_alias_ptr),
-    E!(nonnull_new_unchecked, dep0!(),  false,  none!(),  eff_none),
-    E!(nonnull_new,           dep0!(),  false,  none!(),  eff_alias_ptr),
-    E!(nonnull_as_ref,        dep0!(),  false,  none!(),  eff_alias_ptr),
-    E!(nonnull_as_mut,        dep0!(),  false,  none!(),  eff_alias_ptr),
-    E!(api_classify::is_as_ptr, dep0!(), false,  none!(),  eff_alias_ptr),
-    E!(api_classify::is_as_ptr_range, dep0!(), false, none!(), eff_alias_arg0),
-    E!(api_classify::is_as_mut_ptr_range, dep0!(), false, none!(), eff_alias_arg0),
+    // `new_unchecked` is deliberately `eff_none` (not `eff_alias_nonnull`):
+    // its argument is *unchecked*, so the caller's `NonNull` obligation must
+    // flow back to the argument via the `arg0!()` dependency rather than being
+    // discharged by an unconditional `ReturnNonZero` on the result. Modelling
+    // the return as unconditionally non-zero would hide a null argument.
+    E!(nonnull_from,          arg0!(),  false,  no_args!(),  eff_alias_nonnull),
+    E!(nonnull_new_unchecked, arg0!(),  false,  no_args!(),  eff_none),
+    E!(nonnull_new,           arg0!(),  false,  no_args!(),  eff_alias_ptr),
+    E!(nonnull_as_ref,        arg0!(),  false,  no_args!(),  eff_alias_ptr),
+    E!(nonnull_as_mut,        arg0!(),  false,  no_args!(),  eff_alias_ptr),
+    E!(api_classify::is_as_ptr, arg0!(), false,  no_args!(),  eff_alias_ptr),
+    E!(api_classify::is_as_ptr_range, arg0!(), false, no_args!(), eff_alias_arg0),
+    E!(api_classify::is_as_mut_ptr_range, arg0!(), false, no_args!(), eff_alias_arg0),
 
     // ── Pointer arithmetic ──────────────────────────────────────────
-    E!(|n| api_classify::is_pointer_add(n) && !api_classify::is_byte_ptr_arith(n), dep01!(), false, none!(), eff_ptr_add),
-    E!(|n| api_classify::is_pointer_sub(n) && !api_classify::is_byte_ptr_arith(n), dep01!(), false, none!(), eff_ptr_sub),
-    E!(api_classify::is_byte_ptr_arith,    dep01!(), false,  none!(),  eff_ptr_add),
-    E!(api_classify::is_byte_ptr_arith,    dep01!(), false,  none!(),  eff_ptr_sub),
+    E!(|n| api_classify::is_pointer_add(n) && !api_classify::is_byte_ptr_arith(n), arg01!(), false, no_args!(), eff_ptr_add),
+    E!(|n| api_classify::is_pointer_sub(n) && !api_classify::is_byte_ptr_arith(n), arg01!(), false, no_args!(), eff_ptr_sub),
+    E!(|n| api_classify::is_pointer_add(n) && api_classify::is_byte_ptr_arith(n), arg01!(), false, no_args!(), eff_ptr_add),
+    E!(|n| api_classify::is_pointer_sub(n) && api_classify::is_byte_ptr_arith(n), arg01!(), false, no_args!(), eff_ptr_sub),
 
     // ── Memory read / write ─────────────────────────────────────────
-    E!(ptr_read,              dep0!(),  false,  none!(),  eff_read_mem),
-    E!(api_classify::is_ptr_write, none!(), false,  dep0!(),  eff_write_mem),
-    E!(api_classify::is_maybe_uninit_write, none!(), false, dep0!(), eff_write_mem),
+    E!(ptr_read,              arg0!(),  false,  no_args!(),  eff_read_mem),
+    E!(api_classify::is_ptr_write, no_args!(), false,  arg0!(),  eff_write_mem),
+    E!(api_classify::is_maybe_uninit_write, no_args!(), false, arg0!(), eff_write_mem),
 
     // ── Slice / collection queries ──────────────────────────────────
-    E!(api_classify::is_len,  dep0!(),  false,  none!(),  eff_len),
-    E!(is_empty,              dep0!(),  false,  none!(),  eff_is_empty),
-    E!(cmp_min,               ALL,      true,   none!(),  eff_cmp_min),
-    E!(bit_preserving_nz,     ALL,      true,   none!(),  eff_return_nonzero_iff),
-    E!(checked_pow_nz,        ALL,      true,   none!(),  eff_return_option_some_nonzero_iff),
+    E!(api_classify::is_len,  arg0!(),  false,  no_args!(),  eff_len),
+    E!(is_empty,              arg0!(),  false,  no_args!(),  eff_is_empty),
+    E!(cmp_min,               ALL,      true,   no_args!(),  eff_cmp_min),
+    E!(bit_preserving_nz,     ALL,      true,   no_args!(),  eff_return_nonzero_iff),
+    E!(checked_pow_nz,        ALL,      true,   no_args!(),  eff_return_option_some_nonzero_iff),
 
     // ── SliceIndex::get_unchecked / get_unchecked_mut ───────────────
-    E!(is_slice_get_unchecked, dep0!(), false,  none!(),  eff_alias_ptr),
+    E!(is_slice_get_unchecked, arg0!(), false,  no_args!(),  eff_alias_ptr),
 
     // ── Ownership reconstruction ────────────────────────────────────
-    E!(api_classify::is_ownership_reconstruction, dep0!(), false, none!(), eff_ownership_recon),
+    E!(api_classify::is_ownership_reconstruction, arg0!(), false, no_args!(), eff_ownership_recon),
 
     // ── Slice helpers ───────────────────────────────────────────────
-    E!(slice_index,           dep01!(), false,  none!(),  eff_alias_arg0),
-    E!(align_to_local,        dep0!(),  false,  none!(),  eff_align_to),
-    E!(into_iter_local,       dep0!(),  false,  none!(),  eff_return_iter),
-    E!(iter_position,         dep0!(),  false,  none!(),  eff_option_scan_index),
-    E!(is_strlen,             dep0!(),  false,  none!(),  eff_scan_length),
-    E!(split_at,              dep01!(), false,  none!(),  eff_split_at),
-    E!(api_classify::is_from_raw_parts, dep01!(), false, none!(), eff_from_raw_parts),
-    E!(api_classify::is_align_offset, dep01!(), false, none!(), eff_align_offset),
+    E!(slice_index,           arg01!(), false,  no_args!(),  eff_alias_arg0),
+    E!(align_to_local,        arg0!(),  false,  no_args!(),  eff_align_to),
+    E!(into_iter_local,       arg0!(),  false,  no_args!(),  eff_return_iter),
+    E!(iter_position,         arg0!(),  false,  no_args!(),  eff_option_scan_index),
+    E!(is_strlen,             arg0!(),  false,  no_args!(),  eff_scan_length),
+    E!(split_at,              arg01!(), false,  no_args!(),  eff_split_at),
+    E!(api_classify::is_from_raw_parts, arg01!(), false, no_args!(), eff_from_raw_parts),
+    E!(api_classify::is_align_offset, arg01!(), false, no_args!(), eff_align_offset),
 
     // ── Vec / collection constructors ────────────────────────────────
-    E!(api_classify::is_vec_alloc_constructor, dep01!(), false, none!(), eff_new_allocation),
-    E!(api_classify::is_vec_from_box,          dep0!(),  false, none!(), eff_vec_from_box),
-    E!(api_classify::is_vec_with_capacity,     dep0!(),  false, none!(), eff_new_allocation_from_cap),
-    E!(api_classify::is_into_boxed_slice,      dep0!(),  false, none!(), eff_box_from_vec),
+    E!(api_classify::is_vec_alloc_constructor, arg01!(), false, no_args!(), eff_new_allocation),
+    E!(api_classify::is_vec_from_box,          arg0!(),  false, no_args!(), eff_vec_from_box),
+    E!(api_classify::is_vec_with_capacity,     arg0!(),  false, no_args!(), eff_new_allocation_from_cap),
+    E!(api_classify::is_into_boxed_slice,      arg0!(),  false, no_args!(), eff_box_from_vec),
 
     // ── Allocator::allocate / allocate_zeroed / grow / shrink ────────
-    E!(allocator_allocate,    dep01!(), false,  none!(),  eff_allocator_allocate),
+    E!(allocator_allocate,    arg01!(), false,  no_args!(),  eff_allocator_allocate),
 
     // ── Layout accessors ────────────────────────────────────────────
-    E!(layout_align,          none!(),  false,  none!(),  eff_layout_align),
+    E!(layout_align,          no_args!(),  false,  no_args!(),  eff_layout_align),
 
     // ── Layout constants ────────────────────────────────────────────
-    E!(api_classify::is_layout_constant, none!(), false,  none!(),  eff_layout_const),
+    E!(api_classify::is_layout_constant, no_args!(), false,  no_args!(),  eff_layout_const),
 
     // ── CStr / CString helpers ──────────────────────────────────────
-    E!(api_classify::is_cstr_from_ptr, dep0!(), false,  none!(),  eff_alias_arg0),
-    E!(api_classify::is_cstr_from_bytes_with_nul_unchecked, dep0!(), false, none!(), eff_alias_arg0),
-    E!(api_classify::is_vec_push, none!(), false,  dep0!(),  eff_write_mem),
+    E!(api_classify::is_cstr_from_ptr, arg0!(), false,  no_args!(),  eff_alias_arg0),
+    E!(api_classify::is_cstr_from_bytes_with_nul_unchecked, arg0!(), false, no_args!(), eff_alias_arg0),
+    E!(api_classify::is_vec_push, no_args!(), false,  arg0!(),  eff_write_mem),
 ];
 
 pub fn lookup_dependency(
@@ -232,6 +242,13 @@ fn eff_alias_arg0(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 }
 
 fn eff_ptr_add(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    // `wrapping_add`/`wrapping_sub` are shared between integers and raw
+    // pointers. When the destination is not a pointer type the call is an
+    // integer `wrapping_add`, whose result may wrap to zero, so it is left
+    // unconstrained rather than modelled as pointer arithmetic.
+    if !dest_is_pointer(ctx.tcx, ctx.caller, ctx.dest) {
+        return Vec::new();
+    }
     let stride = if api_classify::is_byte_ptr_arith(ctx.name) {
         Some(1)
     } else {
@@ -241,6 +258,9 @@ fn eff_ptr_add(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 }
 
 fn eff_ptr_sub(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    if !dest_is_pointer(ctx.tcx, ctx.caller, ctx.dest) {
+        return Vec::new();
+    }
     let stride = if api_classify::is_byte_ptr_arith(ctx.name) {
         Some(1)
     } else {
@@ -299,6 +319,10 @@ fn eff_return_neg(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 
 fn eff_return_add(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     vec![CallEffect::ReturnAdd { lhs_arg: 0, rhs_arg: 1 }]
+}
+
+fn eff_return_sub(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnSub { lhs_arg: 0, rhs_arg: 1 }]
 }
 
 fn eff_return_mul(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
@@ -423,7 +447,7 @@ fn eff_layout_const(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 
 // ── Matcher functions (one per API pattern) ────────────────────────────
 
-fn mem_forget_capacity(n: &str) -> bool     { n.ends_with("mem::forget") || n.ends_with("::capacity") }
+fn mem_forget(n: &str) -> bool             { n.ends_with("mem::forget") }
 fn transmute(n: &str) -> bool               { n.contains("::transmute") || n.contains("intrinsics::transmute") }
 fn slice_index(n: &str) -> bool             { n.ends_with("::Index::index") || n.ends_with("::IndexMut::index_mut") }
 fn align_to_local(n: &str) -> bool           {
@@ -446,9 +470,13 @@ fn is_empty(n: &str) -> bool                { n.ends_with("::is_empty") }
 fn cmp_min(n: &str) -> bool                 { (n.contains("::cmp::min") || n.contains("::Ord::min") || n.starts_with("core::cmp::min")) && !n.contains("min_by") }
 
 /// Bit-preserving integer operations: rotations, byte/bit reversals,
-/// endianness conversions, popcount, integer square root and saturating power
-/// all map `0` to `0` and non-zero to non-zero, so the result is non-zero
-/// *iff* the operand is (`ReturnNonZeroIff`).
+/// endianness conversions, popcount and integer square root all map `0` to
+/// `0` and non-zero to non-zero, so the result is non-zero *iff* the operand
+/// is (`ReturnNonZeroIff`). `saturating_pow` is grouped here too: a non-zero
+/// base yields a non-zero result for any exponent, so the `base != 0 =>
+/// result != 0` direction holds. The converse is only approximate — `x.pow(0)`
+/// is `1` even when `x == 0` — so a zero base is not modelled as forcing a
+/// zero result.
 fn bit_preserving_nz(n: &str) -> bool {
     n.contains("::rotate_left")
         || n.contains("::rotate_right")
@@ -463,8 +491,9 @@ fn bit_preserving_nz(n: &str) -> bool {
         || n.contains("::saturating_pow")
 }
 
-/// `checked_pow` returns `Option<T>` whose `Some` payload is non-zero iff the
-/// base is non-zero (`ReturnOptionSomeNonZeroIff`).
+/// `checked_pow` returns `Option<T>` whose `Some` payload is non-zero when the
+/// base is non-zero (`ReturnOptionSomeNonZeroIff`). As with `saturating_pow`,
+/// the converse is approximate: `x.checked_pow(0) == Some(1)` even for `x == 0`.
 fn checked_pow_nz(n: &str) -> bool {
     n.ends_with("::checked_pow")
 }
@@ -473,7 +502,10 @@ fn checked_pow_nz(n: &str) -> bool {
 /// operations. Each is modelled with a precise expression over its operands
 /// (see the `eff_return_*` builders) so non-zero-ness is discharged
 /// *conditionally* — only when the operands are actually non-zero.
-fn int_max(n: &str) -> bool { n.ends_with("::max") }
+fn int_max(n: &str) -> bool {
+    (n.contains("::cmp::max") || n.contains("::Ord::max") || n.starts_with("core::cmp::max"))
+        && !n.contains("max_by")
+}
 fn int_clamp(n: &str) -> bool { n.ends_with("::clamp") }
 fn int_abs(n: &str) -> bool {
     n.ends_with("::abs")
@@ -507,14 +539,13 @@ fn allocator_allocate(n: &str) -> bool      {
         || n.ends_with("::Allocator::grow")
         || n.ends_with("::Allocator::shrink")
 }
-fn layout_align(n: &str) -> bool            { n.ends_with("Layout::align") && !n.ends_with("Layout::alignment") }
+fn layout_align(n: &str) -> bool            { n.ends_with("Layout::align") }
 fn saturating_sub(n: &str) -> bool          { n.contains("::saturating_sub") }
 fn split_at(n: &str) -> bool                { n.contains("::split_at") }
 fn is_slice_get_unchecked(n: &str) -> bool   { 
     (n.contains("::get_unchecked") || n.contains("::get_unchecked_mut"))
         && (n.contains("::SliceIndex")
             || n.contains("::<impl [T]>::get_unchecked")
-            || n.contains("::impl [T]>::get_unchecked")
             || n.contains("::mut_ptr::get_unchecked")
             || n.contains("::const_ptr::get_unchecked"))
 }
@@ -533,6 +564,11 @@ fn nonnull_pointee_alignment<'tcx>(
 fn is_nonnull_dest(tcx: TyCtxt<'_>, caller: DefId, dest: Option<rustc_middle::mir::Local>) -> bool {
     let Some(d) = dest else { return false };
     nonnull_inner_ty(tcx, tcx.optimized_mir(caller).local_decls[d].ty).is_some()
+}
+
+fn dest_is_pointer(tcx: TyCtxt<'_>, caller: DefId, dest: Option<rustc_middle::mir::Local>) -> bool {
+    let Some(d) = dest else { return false };
+    pointee_ty(tcx.optimized_mir(caller).local_decls[d].ty).is_some()
 }
 
 fn layout_call_ty<'tcx>(func: &Operand<'tcx>) -> Option<Ty<'tcx>> {

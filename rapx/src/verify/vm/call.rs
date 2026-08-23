@@ -1527,6 +1527,19 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     self.set_local(dest, val);
                 }
             }
+            CallEffect::ReturnSub { lhs_arg, rhs_arg } => {
+                if let (Some(lhs), Some(rhs)) = (args.get(*lhs_arg), args.get(*rhs_arg)) {
+                    let dest_ty = self.body.local_decls[dest].ty;
+                    let term = Int::sub(self.ctx, &[&lhs.term, &rhs.term]);
+                    let val = VmValue {
+                        term,
+                        ty: dest_ty,
+                        provenance: None,
+                        invariants: ValueInvariants::default(),
+                    };
+                    self.set_local(dest, val);
+                }
+            }
             CallEffect::ReturnMul { lhs_arg, rhs_arg } => {
                 if let (Some(lhs), Some(rhs)) = (args.get(*lhs_arg), args.get(*rhs_arg)) {
                     let dest_ty = self.body.local_decls[dest].ty;

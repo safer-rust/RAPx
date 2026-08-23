@@ -75,11 +75,13 @@ pub fn is_len(name: &str) -> bool { name.contains("::len") }
 pub fn is_offset_from_unsigned(name: &str) -> bool {
     name.contains("::offset_from_unsigned") || name.contains("::offset_from")
 }
+/// Numeric operations with no precise effect model — these fall back to an
+/// unconstrained result (`eff_none`). `unchecked_add/mul` and `checked_add/mul`
+/// are deliberately absent: `REGISTRY` matches them earlier with the more
+/// precise `int_add`/`int_mul`/`int_checked_*` rows.
 pub fn is_numeric_arith(name: &str) -> bool {
-    name.contains("::unchecked_mul") || name.contains("::unchecked_add")
-        || name.contains("::unchecked_sub") || name.contains("::unchecked_div")
+    name.contains("::unchecked_sub") || name.contains("::unchecked_div")
         || name.contains("::unchecked_rem") || name.contains("::exact_div")
-        || name.contains("::checked_mul") || name.contains("::checked_add")
         || name.contains("::checked_sub")
 }
 pub fn is_option_unwrap(name: &str) -> bool {

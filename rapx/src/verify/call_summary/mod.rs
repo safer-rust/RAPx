@@ -133,6 +133,8 @@ pub enum CallEffect {
     ReturnNeg { arg: usize },
     /// The return value is `lhs_arg + rhs_arg`.
     ReturnAdd { lhs_arg: usize, rhs_arg: usize },
+    /// The return value is `lhs_arg - rhs_arg`.
+    ReturnSub { lhs_arg: usize, rhs_arg: usize },
     /// The return value is `lhs_arg * rhs_arg`.
     ReturnMul { lhs_arg: usize, rhs_arg: usize },
     /// The call returns `Option<T>` whose `Some` payload is `lhs_arg + rhs_arg`
