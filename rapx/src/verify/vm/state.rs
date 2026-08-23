@@ -92,11 +92,11 @@ impl<'ctx, 'tcx> VmValue<'ctx, 'tcx> {
 }
 
 /// A memory allocation (stack or heap).
+///
+/// The allocation is stored in `VmState::allocations` at index `AllocId.0`
+/// (an `AllocId` is a monotonic counter that doubles as the vector index).
 #[derive(Clone, Debug)]
 pub struct Allocation<'ctx, 'tcx> {
-    /// Unique identifier.
-    pub id: AllocId,
-
     /// Base address (fresh Z3 constant).
     pub base: Int<'ctx>,
 
@@ -112,6 +112,26 @@ pub struct Allocation<'ctx, 'tcx> {
     /// True if this allocation models an external raw-pointer parameter
     /// whose exact size and nullability are unknown.
     pub is_external: bool,
+
+    /// Allocations that have been freed (StorageDead, Drop).
+    pub dead: bool,
+
+    /// Allocations that have been written to (initialized via write/MaybeUninit).
+    pub initialized: bool,
+
+    /// Allocations assumed alive via contract (e.g. `#[rapx::requires(Alive(ptr))]`).
+    pub alive_assumed: bool,
+
+    /// Allocations known to be a null-terminated byte buffer (a valid C
+    /// string), asserted via a `ValidCStr` contract fact or struct invariant.
+    pub nul_terminated: bool,
+
+    /// Parent allocation for sub-allocations created by split_at / from_raw_parts.
+    pub parent: Option<AllocId>,
+
+    /// Slice data allocation: for a `&[T]` reference's stack allocation, the
+    /// symbolic data allocation created for the slice contents.
+    pub slice_data: Option<AllocId>,
 }
 
 /// Reason an MIR construct could not be executed symbolically.
@@ -120,6 +140,42 @@ pub struct UnsupportedReason {
     pub message: String,
     pub block: Option<BasicBlock>,
     pub statement_index: Option<usize>,
+}
+
+/// One-shot execution/contract flags accumulated while stepping a path.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct ContractFlags {
+    /// Whether a SplitTransmute contract was asserted by the caller.
+    pub split_transmute_asserted: bool,
+    /// Whether an `Alias` hazard was accepted via the caller's contract.
+    pub alias_hazard_accepted: bool,
+    /// Whether a ChecksIndexBoundsDisjoint call was processed in any
+    /// checkpoint of this function (accumulated across checkpoints).
+    pub has_checked_bounds: bool,
+    /// Set once the path evaluated an `Iterator::next` discriminant whose
+    /// variant was known symbolically.
+    pub saw_next_discriminant: bool,
+}
+
+/// Per-byte symbolic state at a concrete offset in an allocation.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ByteInfo<'ctx> {
+    /// Symbolic value, if tracked.
+    pub value: Option<Int<'ctx>>,
+    /// Whether the byte has been explicitly written.
+    pub init: bool,
+    /// NUL knowledge: `Some(true)` known NUL, `Some(false)` known non-NUL.
+    pub nul: Option<bool>,
+}
+
+/// A saved caller context pushed during cross-function inline.  Nested
+/// inlining (a callee that itself inlines another callee) pushes multiple
+/// frames; a single `Option` slot would clobber the outer caller's context on
+/// the inner exit, so a stack is required.
+pub(crate) struct InlineFrame<'ctx, 'tcx> {
+    pub body: &'ctx Body<'tcx>,
+    pub def_id: DefId,
+    pub saved_locals: FxHashMap<Local, VmValue<'ctx, 'tcx>>,
 }
 
 /// The full symbolic execution state at a program point.
@@ -161,25 +217,8 @@ pub struct VmState<'ctx, 'tcx> {
     /// The next allocation ID.
     pub(crate) next_alloc_id: usize,
 
-    /// The current basic block (for diagnostics).
-    pub(crate) current_block: Option<BasicBlock>,
-
     /// Track block occurrence counts for loop-carried value indexing.
     pub(crate) block_occurrences: FxHashMap<BasicBlock, usize>,
-
-    /// Allocations that have been freed (StorageDead, Drop).
-    pub(crate) dead_allocations: FxHashSet<AllocId>,
-
-    /// Parent allocation for sub-allocations created by split_at / from_raw_parts.
-    /// When resolve_origin cannot find a matching local for a sub-allocation,
-    /// the chain is followed to the root allocation for provenance tracing.
-    pub(crate) sub_alloc_parent: FxHashMap<AllocId, AllocId>,
-
-    /// Block where each dead allocation was killed (for per-block liveness tracking).
-    pub(crate) dead_alloc_blocks: FxHashMap<AllocId, BasicBlock>,
-
-    /// Locals that have been dropped (for Alive checks).
-    pub(crate) dropped_locals: FxHashSet<Local>,
 
     /// Binary op sources for guard inference: destination → (lhs, rhs) place keys.
     pub(crate) binary_op_sources: FxHashMap<PlaceKey, (Option<PlaceKey>, Option<PlaceKey>)>,
@@ -194,42 +233,13 @@ pub struct VmState<'ctx, 'tcx> {
     /// branches stay tied to the actual emptiness condition.
     pub(crate) discriminant_terms: FxHashMap<Local, Int<'ctx>>,
 
-    /// Set once the path has evaluated an `Iterator::next` discriminant whose
-    /// variant was known symbolically. Lets `check_init` run a targeted
-    /// path-feasibility check (a `next()` that returned `None` never reaches the
-    /// `Some` branch) without affecting paths that are infeasible for unrelated
-    /// modeling reasons.
-    pub(crate) saw_next_discriminant: bool,
-
     /// Non-binary-op sources (select_unpredictable, etc.): destination → (lhs, rhs)
     /// place keys.  Kept separately from `binary_op_sources` so guard inference
     /// (infer_guard_non_null) does not treat these as pointer comparisons.
     pub(crate) other_op_sources: FxHashMap<PlaceKey, (Option<PlaceKey>, Option<PlaceKey>)>,
 
-    /// Allocations that have been written to (initialized via write/MaybeUninit).
-    pub(crate) init_allocations: FxHashSet<AllocId>,
-
-    /// Allocations assumed alive via contract (e.g. #[rapx::requires(Alive(ptr))]).
-    pub(crate) alive_assumed: FxHashSet<AllocId>,
-
-    /// Allocations known to be a null-terminated byte buffer (a valid C
-    /// string), asserted via a `ValidCStr` contract fact or struct invariant.
-    /// The checker treats any sub-slice of such an allocation as nul-terminated.
-    pub(crate) nul_terminated: FxHashSet<AllocId>,
-
-    /// Whether a SplitTransmute contract was asserted by the caller.
-    pub(crate) split_transmute_asserted: bool,
-
-    /// Whether an `Alias` hazard was accepted via the caller's contract
-    /// (e.g. `#[rapx::requires(any(Trait(T, Copy), Alias(self, return)))]`
-    /// on `NonNull::read`).  Lets inlined read/copy intrinsics whose result
-    /// aliases the source be treated as the accepted structural-alias hazard
-    /// rather than a hard failure.
-    pub(crate) alias_hazard_accepted: bool,
-
-    /// Slice data allocations: maps a &[T] reference's stack AllocId to the
-    /// symbolic data allocation created for the slice contents.
-    pub(crate) slice_data_allocations: FxHashMap<AllocId, AllocId>,
+    /// One-shot execution/contract flags accumulated while stepping a path.
+    pub(crate) contract_flags: ContractFlags,
 
     /// Field-level value tracking for aggregates: (local, field_indices) → value.
     /// Example: `(local_3, [0])` is `local_3.0`, `(local_3, [0, 1])` is `local_3.0.1`.
@@ -247,28 +257,10 @@ pub struct VmState<'ctx, 'tcx> {
     /// symbolic additions. This keeps Z3 expressions compact.
     pub(crate) iter_ptr_offset: FxHashMap<Local, Int<'ctx>>,
 
-    /// Byte offsets within an allocation that are known to be NUL (0x00).
-    pub(crate) known_nul_offsets: FxHashSet<(AllocId, usize)>,
-
-    /// Byte offsets within an allocation that are known to be non-NUL (!= 0x00).
-    pub(crate) known_non_nul_offsets: FxHashSet<(AllocId, usize)>,
-
-    /// Per-byte symbolic values: (alloc_id, concrete_byte_offset) → Z3 term.
-    /// Populated by Aggregate initialisation, pointer stores, and write call effects.
-    /// Enables byte-level reasoning for properties like ValidCStr.
-    pub(crate) byte_values: FxHashMap<(AllocId, usize), Int<'ctx>>,
-
-    /// Bytes known to have been explicitly written (initialized at byte level).
-    pub(crate) byte_init: FxHashSet<(AllocId, usize)>,
-
-    /// Records calls that performed index bounds & disjointness validation.
-    /// Each entry is (indices_array_alloc_id, len_value_term).
-    /// The property checker uses this to automatically pass InBound checks
-    /// that were already validated by a prior call.
-    pub(crate) checked_bounds_disjoint: Vec<(AllocId, Int<'ctx>)>,
-    /// Whether a ChecksIndexBoundsDisjoint call was processed in any
-    /// checkpoint of this function (accumulated across checkpoints).
-    pub(crate) has_checked_bounds: bool,
+    /// Per-byte symbolic state: (alloc_id, concrete_byte_offset) → ByteInfo.
+    /// Populated by aggregate initialisation, pointer stores, and write call
+    /// effects. Enables byte-level reasoning for properties like ValidCStr.
+    pub(crate) bytes: FxHashMap<(AllocId, usize), ByteInfo<'ctx>>,
 
     /// Notes from unsupported operations.
     pub(crate) notes: Vec<String>,
@@ -285,16 +277,11 @@ pub struct VmState<'ctx, 'tcx> {
     /// bound nested inlining and avoid unbounded recursion / stack overflow.
     pub(crate) inline_depth: usize,
 
-    /// Stack of nested function contexts for cross-function inline.
-    /// Top of stack is the currently executing function.
-    /// Each entry is (body, def_id).
-    pub(crate) body_stack: Vec<(&'ctx Body<'tcx>, DefId)>,
-
-    /// Saved caller locals during callee inline (CalleeEntry/CalleeExit).
-    /// Must be a stack mirroring `body_stack`: nested inlining (a callee that
-    /// itself inlines another callee) pushes multiple frames, and a single
-    /// `Option` slot would clobber the outer caller's locals on the inner exit.
-    pub(crate) saved_caller_locals: Vec<FxHashMap<Local, VmValue<'ctx, 'tcx>>>,
+    /// Stack of saved caller contexts for cross-function inline.
+    /// The top of the stack is the frame of the function currently being
+    /// inlined; each entry carries the caller's body, def-id, and locals so
+    /// the caller can be restored on exit.
+    pub(crate) inline_frames: Vec<InlineFrame<'ctx, 'tcx>>,
 
     /// Terms that are the result of a bitwise `Not` (two's-complement mask).
     /// Used to recognize `x & !(align-1)` alignment patterns in BitAnd so we
@@ -322,38 +309,21 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             path_conditions: Vec::new(),
             definition_count: 0,
             next_alloc_id: 0,
-            current_block: None,
             block_occurrences: FxHashMap::default(),
-            dead_allocations: FxHashSet::default(),
-            dead_alloc_blocks: FxHashMap::default(),
-            sub_alloc_parent: FxHashMap::default(),
-            dropped_locals: FxHashSet::default(),
             binary_op_sources: FxHashMap::default(),
             comparison_conds: FxHashMap::default(),
             discriminant_terms: FxHashMap::default(),
-            saw_next_discriminant: false,
             other_op_sources: FxHashMap::default(),
-            init_allocations: FxHashSet::default(),
-            alive_assumed: FxHashSet::default(),
-            nul_terminated: FxHashSet::default(),
-            split_transmute_asserted: false,
-            alias_hazard_accepted: false,
-            slice_data_allocations: FxHashMap::default(),
+            contract_flags: ContractFlags::default(),
             field_values: FxHashMap::default(),
             is_empty_len: FxHashMap::default(),
             iter_ptr_offset: FxHashMap::default(),
-            known_nul_offsets: FxHashSet::default(),
-            known_non_nul_offsets: FxHashSet::default(),
-            byte_values: FxHashMap::default(),
-            byte_init: FxHashSet::default(),
-            checked_bounds_disjoint: Vec::new(),
-            has_checked_bounds: false,
+            bytes: FxHashMap::default(),
             notes: Vec::new(),
             path: None,
             last_call_name: String::new(),
             inline_depth: 0,
-            body_stack: Vec::new(),
-            saved_caller_locals: Vec::new(),
+            inline_frames: Vec::new(),
             not_mask_terms: FxHashSet::default(),
         }
     }
@@ -393,12 +363,17 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             Int::new_const(self.ctx, name.as_str())
         };
         let alloc = Allocation {
-            id,
             base: base.clone(),
             size,
             align,
             element_ty,
             is_external: false,
+            dead: false,
+            initialized: false,
+            alive_assumed: false,
+            nul_terminated: false,
+            parent: None,
+            slice_data: None,
         };
         self.allocations.push(alloc);
         (id, base)
@@ -419,15 +394,30 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             Int::new_const(self.ctx, name.as_str())
         };
         let alloc = Allocation {
-            id,
             base: base.clone(),
             size,
             align,
             element_ty,
             is_external: true,
+            dead: false,
+            initialized: false,
+            alive_assumed: false,
+            nul_terminated: false,
+            parent: None,
+            slice_data: None,
         };
         self.allocations.push(alloc);
         (id, base)
+    }
+
+    /// Indexed access to an allocation by its `AllocId` (the id is the index).
+    pub(crate) fn alloc(&self, id: AllocId) -> &Allocation<'ctx, 'tcx> {
+        &self.allocations[id.0]
+    }
+
+    /// Mutable indexed access to an allocation by its `AllocId`.
+    pub(crate) fn alloc_mut(&mut self, id: AllocId) -> &mut Allocation<'ctx, 'tcx> {
+        &mut self.allocations[id.0]
     }
 
     /// Create a symbolic Z3 int constant.
@@ -453,29 +443,87 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
 
     /// Record a per-byte symbolic value at a concrete offset in an allocation.
     pub fn record_byte_value(&mut self, alloc_id: AllocId, offset: usize, term: Int<'ctx>) {
-        self.byte_values.insert((alloc_id, offset), term);
-        self.byte_init.insert((alloc_id, offset));
+        let byte = self.bytes.entry((alloc_id, offset)).or_default();
+        byte.value = Some(term);
+        byte.init = true;
+    }
+
+    /// Mark a byte as initialized without changing its value.
+    pub fn mark_byte_init(&mut self, alloc_id: AllocId, offset: usize) {
+        self.bytes.entry((alloc_id, offset)).or_default().init = true;
+    }
+
+    /// Mark a byte as known NUL (0x00).
+    pub fn mark_byte_nul(&mut self, alloc_id: AllocId, offset: usize) {
+        self.bytes.entry((alloc_id, offset)).or_default().nul = Some(true);
+    }
+
+    /// Mark a byte as known non-NUL (!= 0x00).
+    pub fn mark_byte_non_nul(&mut self, alloc_id: AllocId, offset: usize) {
+        self.bytes.entry((alloc_id, offset)).or_default().nul = Some(false);
     }
 
     /// Look up a per-byte Z3 term for a concrete offset in an allocation.
     pub fn get_byte_value(&self, alloc_id: AllocId, offset: usize) -> Option<&Int<'ctx>> {
-        self.byte_values.get(&(alloc_id, offset))
+        self.bytes.get(&(alloc_id, offset)).and_then(|b| b.value.as_ref())
     }
 
     /// Check whether a byte at a concrete offset is known to be initialized.
     pub fn is_byte_init(&self, alloc_id: AllocId, offset: usize) -> bool {
-        self.byte_init.contains(&(alloc_id, offset))
+        self.bytes.get(&(alloc_id, offset)).is_some_and(|b| b.init)
+    }
+
+    /// Check whether a byte at a concrete offset is known to be NUL.
+    pub fn is_byte_nul(&self, alloc_id: AllocId, offset: usize) -> bool {
+        self.bytes.get(&(alloc_id, offset)).is_some_and(|b| b.nul == Some(true))
+    }
+
+    /// Check whether a byte at a concrete offset is known to be non-NUL.
+    pub fn is_byte_non_nul(&self, alloc_id: AllocId, offset: usize) -> bool {
+        self.bytes.get(&(alloc_id, offset)).is_some_and(|b| b.nul == Some(false))
     }
 
     /// Return all known (offset, term) pairs for an allocation, sorted by offset.
     pub fn alloc_byte_values(&self, alloc_id: AllocId) -> Vec<(usize, &Int<'ctx>)> {
         let mut pairs: Vec<_> = self
-            .byte_values
+            .bytes
             .iter()
-            .filter_map(|((aid, off), term)| if *aid == alloc_id { Some((*off, term)) } else { None })
+            .filter_map(|((aid, off), byte)| {
+                if *aid == alloc_id { byte.value.as_ref().map(|term| (*off, term)) } else { None }
+            })
             .collect();
         pairs.sort_by_key(|(off, _)| *off);
         pairs
+    }
+
+    /// Collect all offsets known to be NUL in an allocation.
+    pub fn alloc_nul_offsets(&self, alloc_id: AllocId) -> Vec<usize> {
+        self.bytes.iter()
+            .filter_map(|((aid, off), byte)| {
+                if *aid == alloc_id && byte.nul == Some(true) { Some(*off) } else { None }
+            })
+            .collect()
+    }
+
+    /// Collect all offsets known to be non-NUL in an allocation.
+    pub fn alloc_non_nul_offsets(&self, alloc_id: AllocId) -> Vec<usize> {
+        self.bytes.iter()
+            .filter_map(|((aid, off), byte)| {
+                if *aid == alloc_id && byte.nul == Some(false) { Some(*off) } else { None }
+            })
+            .collect()
+    }
+
+    /// Copy all per-byte tracking (value, init, NUL knowledge) from one
+    /// allocation to another.
+    pub(crate) fn copy_byte_tracking(&mut self, src: AllocId, dst: AllocId) {
+        let infos: Vec<(usize, ByteInfo<'ctx>)> = self.bytes.iter()
+            .filter(|((aid, _), _)| *aid == src)
+            .map(|((_, off), byte)| (*off, byte.clone()))
+            .collect();
+        for (off, byte) in infos {
+            self.bytes.insert((dst, off), byte);
+        }
     }
 
     /// Get the maximum `size_of` for a generic type parameter by
@@ -580,10 +628,9 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 solver.assert(&value.term._eq(&zero).not());
             }
             if let Some(ref prov) = value.provenance {
-                if let Some(alloc) = self.allocations.iter().find(|a| a.id == prov.alloc_id) {
-                    let expected = Int::add(self.ctx, &[&alloc.base, &prov.offset]);
-                    solver.assert(&value.term._eq(&expected));
-                }
+                let alloc = self.alloc(prov.alloc_id);
+                let expected = Int::add(self.ctx, &[&alloc.base, &prov.offset]);
+                solver.assert(&value.term._eq(&expected));
             }
             if matches!(value.ty.kind(),
                 rustc_middle::ty::TyKind::Uint(_)
@@ -606,10 +653,9 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 solver.assert(&value.term._eq(&zero).not());
             }
             if let Some(ref prov) = value.provenance {
-                if let Some(alloc) = self.allocations.iter().find(|a| a.id == prov.alloc_id) {
-                    let expected = Int::add(self.ctx, &[&alloc.base, &prov.offset]);
-                    solver.assert(&value.term._eq(&expected));
-                }
+                let alloc = self.alloc(prov.alloc_id);
+                let expected = Int::add(self.ctx, &[&alloc.base, &prov.offset]);
+                solver.assert(&value.term._eq(&expected));
             }
             if matches!(value.ty.kind(),
                 rustc_middle::ty::TyKind::Uint(_)

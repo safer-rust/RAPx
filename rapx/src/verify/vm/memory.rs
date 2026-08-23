@@ -157,12 +157,17 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             }
         };
         let alloc = Allocation {
-            id,
             base,
             size: size_term,
             align,
             element_ty,
             is_external,
+            dead: false,
+            initialized: false,
+            alive_assumed: false,
+            nul_terminated: false,
+            parent: None,
+            slice_data: None,
         };
         self.allocations.push(alloc);
         self.local_alloc_ids.insert(local, id);
@@ -201,11 +206,11 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     }
 
     pub fn allocation_size(&self, alloc_id: AllocId) -> Option<&Int<'ctx>> {
-        self.allocations.iter().find(|a| a.id == alloc_id).map(|a| &a.size)
+        Some(&self.alloc(alloc_id).size)
     }
 
     pub fn allocation_base(&self, alloc_id: AllocId) -> Option<&Int<'ctx>> {
-        self.allocations.iter().find(|a| a.id == alloc_id).map(|a| &a.base)
+        Some(&self.alloc(alloc_id).base)
     }
 
     /// Get the element size (in bytes) for a pointer type, peeling

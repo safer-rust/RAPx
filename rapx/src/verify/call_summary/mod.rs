@@ -174,7 +174,7 @@ pub enum CallEffect {
     ReturnPowerOfTwo,
     /// The call transfers a Vec's backing allocation into a Box (e.g.
     /// `Vec::into_boxed_slice`). Looks up the current heap allocation from
-    /// `slice_data_allocations` via the argument's stack provenance.
+    /// the allocation's `slice_data` via the argument's stack provenance.
     ReturnBoxFromVec { arg: usize },
     /// The return value is known to own initialized memory of the type pointed
     /// to by the indicated argument (e.g. `Box::from_raw(p)` owns one initialized
@@ -207,7 +207,7 @@ pub enum CallEffect {
     /// `receiver.len()` / ts and field 1 < ts, ensuring the remaining
     /// pointer arithmetic stays in bounds on the tail.
     ReturnLcmSplit { receiver_arg: usize },
-    /// Remove `slice_data_allocations` links for the argument's stack
+    /// Remove the allocation's `slice_data` link for the argument's stack
     /// alloc_id — used for `mem::forget` which prevents a drop cascade.
     CleanSliceDataLinks { arg: usize },
     /// Returns the element-count distance between two pointers with common

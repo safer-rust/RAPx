@@ -184,8 +184,7 @@ pub fn check_alias_vm<'ctx, 'tcx>(
             }
             // Pointer has provenance: check if it's safe.
             if let Some(prov) = &origin_val.provenance {
-                let is_external = vm_state.allocations.iter()
-                    .any(|a| a.id == prov.alloc_id && a.is_external);
+                let is_external = vm_state.alloc(prov.alloc_id).is_external;
                 if !is_external {
                     return VmAliasResult::Proved;
                 }
@@ -743,7 +742,7 @@ fn check_read_memory_alias<'ctx, 'tcx>(
     // If the enclosing function accepted the structural-alias hazard via its
     // contract (e.g. `any(Trait(T, Copy), Alias(self, ret))`), the read is the
     // accepted hazard rather than a violation.
-    if vm_state.alias_hazard_accepted {
+    if vm_state.contract_flags.alias_hazard_accepted {
         return VmAliasResult::Proved;
     }
 

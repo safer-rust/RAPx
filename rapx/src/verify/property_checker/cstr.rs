@@ -26,7 +26,7 @@ impl PropertyChecker {
 
         // If we have provenace, check liveness and byte-level tracking
         if let Some(alloc_id) = value.provenance_alloc_id() {
-            if vm_state.dead_allocations.contains(&alloc_id) {
+            if vm_state.alloc(alloc_id).dead {
                 return CheckResult::Failed;
             }
 
@@ -34,14 +34,14 @@ impl PropertyChecker {
             // a `ValidCStr` contract fact / struct invariant. Any sub-slice of
             // it is therefore nul-terminated (it ends at the same nul byte),
             // so the property holds without further byte-level reasoning.
-            // Follow `sub_alloc_parent` so a `from_raw_parts` / slice-index
+            // Follow `parent` so a `from_raw_parts` / slice-index
             // sub-allocation rooted in a nul-terminated buffer also passes.
             let mut root_id = alloc_id;
-            while let Some(parent_id) = vm_state.sub_alloc_parent.get(&root_id) {
-                root_id = *parent_id;
+            while let Some(parent_id) = vm_state.alloc(root_id).parent {
+                root_id = parent_id;
             }
-            if vm_state.nul_terminated.contains(&alloc_id)
-                || vm_state.nul_terminated.contains(&root_id)
+            if vm_state.alloc(alloc_id).nul_terminated
+                || vm_state.alloc(root_id).nul_terminated
             {
                 return CheckResult::Proved;
             }
@@ -99,7 +99,7 @@ impl PropertyChecker {
         }
     }
 
-    /// Fast-path: check NUL termination using known_nul_offsets / known_non_nul_offsets.
+    /// Fast-path: check NUL termination using per-byte NUL/non-NUL knowledge.
     /// This handles constant byte strings like `b"hello\0"` and aggregate initializers
     /// where all element operands are constants.
     /// `start_offset` is the byte offset within the allocation where the C string begins
@@ -111,14 +111,9 @@ impl PropertyChecker {
         start_offset: usize,
     ) -> Option<CheckResult> {
         // Collect all concrete offsets where we know what the byte is
-        let known_offsets: Vec<usize> = vm_state.known_nul_offsets.iter()
-            .filter(|(aid, _)| *aid == alloc_id)
-            .map(|(_, off)| *off)
-            .chain(
-                vm_state.known_non_nul_offsets.iter()
-                    .filter(|(aid, _)| *aid == alloc_id)
-                    .map(|(_, off)| *off)
-            )
+        let known_offsets: Vec<usize> = vm_state.alloc_nul_offsets(alloc_id)
+            .into_iter()
+            .chain(vm_state.alloc_non_nul_offsets(alloc_id))
             .collect();
 
         if known_offsets.is_empty() {
@@ -128,9 +123,8 @@ impl PropertyChecker {
         let max_known = known_offsets.iter().max().copied().unwrap_or(0);
 
         // Find the NUL byte at or after start_offset
-        let nul_offsets: Vec<usize> = vm_state.known_nul_offsets.iter()
-            .filter(|(aid, _)| *aid == alloc_id)
-            .map(|(_, off)| *off)
+        let nul_offsets: Vec<usize> = vm_state.alloc_nul_offsets(alloc_id)
+            .into_iter()
             .filter(|off| *off >= start_offset && *off <= max_known)
             .collect();
 
@@ -151,11 +145,11 @@ impl PropertyChecker {
 
         // All offsets between start_offset and min_nul must be known non-NUL
         for off in start_offset..min_nul {
-            if vm_state.known_nul_offsets.contains(&(alloc_id, off)) {
+            if vm_state.is_byte_nul(alloc_id, off) {
                 // Interior NUL found before the first NUL after start_offset
                 return Some(CheckResult::Failed);
             }
-            if !vm_state.known_non_nul_offsets.contains(&(alloc_id, off)) {
+            if !vm_state.is_byte_non_nul(alloc_id, off) {
                 // Unknown byte — can't prove valid
                 return None;
             }
@@ -172,7 +166,7 @@ impl PropertyChecker {
         Some(CheckResult::Proved)
     }
 
-    /// Check NUL termination using per-byte symbolic values tracked in `byte_values`.
+    /// Check NUL termination using per-byte symbolic values tracked in `bytes`.
     /// Uses the SMT solver to verify that a NUL-terminated byte sequence is possible.
     fn check_valid_cstr_from_byte_values<'ctx, 'tcx>(
         &self,

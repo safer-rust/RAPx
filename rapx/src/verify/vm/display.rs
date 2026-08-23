@@ -26,10 +26,10 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         // Allocations
         if !self.allocations.is_empty() {
             lines.push("-- Allocations --".to_string());
-            for alloc in &self.allocations {
+            for (idx, alloc) in self.allocations.iter().enumerate() {
                 lines.push(format!(
                     "  alloc_{}: base={}, size={}, align={}",
-                    alloc.id.0,
+                    idx,
                     alloc.base.to_string(),
                     alloc.size.to_string(),
                     alloc.align,

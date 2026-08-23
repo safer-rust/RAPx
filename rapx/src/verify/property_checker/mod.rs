@@ -446,7 +446,7 @@ impl PropertyChecker {
         };
 
         // A dead allocation cannot back a live string (use-after-free).
-        if vm_state.dead_allocations.contains(&alloc_id) {
+        if vm_state.alloc(alloc_id).dead {
             return CheckResult::Failed;
         }
 
@@ -496,17 +496,16 @@ impl PropertyChecker {
         if align <= 1 { return CheckResult::Proved; }
         // Check allocation base alignment with concrete offset
         if let Some(ref prov) = value.provenance {
-            if let Some(alloc) = vm_state.allocations.iter().find(|a| a.id == prov.alloc_id) {
-                let off_u64 = prov.offset.as_u64()
-                    .or_else(|| prov.offset.simplify().as_u64());
-                if let Some(off) = off_u64 {
-                    if alloc.align >= align {
-                        if off % align == 0 {
-                            return CheckResult::Proved;
-                        }
-                        if off % align != 0 {
-                            return CheckResult::Failed;
-                        }
+            let alloc = vm_state.alloc(prov.alloc_id);
+            let off_u64 = prov.offset.as_u64()
+                .or_else(|| prov.offset.simplify().as_u64());
+            if let Some(off) = off_u64 {
+                if alloc.align >= align {
+                    if off % align == 0 {
+                        return CheckResult::Proved;
+                    }
+                    if off % align != 0 {
+                        return CheckResult::Failed;
                     }
                 }
             }
@@ -525,12 +524,11 @@ impl PropertyChecker {
         // Packed-struct fast-path: if the allocation is less aligned than
         // required, the concrete offset alone determines alignment.
         if let Some(ref prov) = value.provenance {
-            if let Some(alloc) = vm_state.allocations.iter().find(|a| a.id == prov.alloc_id) {
-                if alloc.align < align {
-                    if let Some(off) = prov.offset.as_u64() {
-                        if off % align != 0 {
-                            return CheckResult::Failed;
-                        }
+            let alloc = vm_state.alloc(prov.alloc_id);
+            if alloc.align < align {
+                if let Some(off) = prov.offset.as_u64() {
+                    if off % align != 0 {
+                        return CheckResult::Failed;
                     }
                 }
             }
@@ -540,14 +538,13 @@ impl PropertyChecker {
         let local = Solver::new(vm_state.ctx);
         local.push();
         if let Some(ref prov) = value.provenance {
-            if let Some(alloc) = vm_state.allocations.iter().find(|a| a.id == prov.alloc_id) {
-                local.assert(&value.term._eq(&Int::add(vm_state.ctx, &[&alloc.base, &prov.offset])));
-                local.assert(&alloc.base._eq(&zero).not());
-                local.assert(&alloc.base.ge(&zero));
-                if alloc.align > 1 {
-                    let a = Int::from_u64(vm_state.ctx, alloc.align);
-                    local.assert(&alloc.base.rem(&a)._eq(&zero));
-                }
+            let alloc = vm_state.alloc(prov.alloc_id);
+            local.assert(&value.term._eq(&Int::add(vm_state.ctx, &[&alloc.base, &prov.offset])));
+            local.assert(&alloc.base._eq(&zero).not());
+            local.assert(&alloc.base.ge(&zero));
+            if alloc.align > 1 {
+                let a = Int::from_u64(vm_state.ctx, alloc.align);
+                local.assert(&alloc.base.rem(&a)._eq(&zero));
             }
         }
         if let Some(known_align) = value.invariants.align_n {
@@ -597,13 +594,12 @@ impl PropertyChecker {
         solver.push();
         let zero = Int::from_u64(vm_state.ctx, 0);
         if let Some(ref prov) = value.provenance {
-            if let Some(alloc) = vm_state.allocations.iter().find(|a| a.id == prov.alloc_id) {
-                solver.assert(&value.term._eq(&Int::add(vm_state.ctx, &[&alloc.base, &prov.offset])));
-                solver.assert(&alloc.base.ge(&zero));
-                if alloc.align > 1 {
-                    let a = Int::from_u64(vm_state.ctx, alloc.align);
-                    solver.assert(&alloc.base.rem(&a)._eq(&zero));
-                }
+            let alloc = vm_state.alloc(prov.alloc_id);
+            solver.assert(&value.term._eq(&Int::add(vm_state.ctx, &[&alloc.base, &prov.offset])));
+            solver.assert(&alloc.base.ge(&zero));
+            if alloc.align > 1 {
+                let a = Int::from_u64(vm_state.ctx, alloc.align);
+                solver.assert(&alloc.base.rem(&a)._eq(&zero));
             }
         }
         for cond in &vm_state.path_conditions {
@@ -626,7 +622,7 @@ impl PropertyChecker {
         // allocations whose base addresses are never zero.  Raw-pointer
         // parameters get external provenance which may be null.
         if let Some(ref prov) = value.provenance {
-            if !vm_state.allocations.iter().any(|a| a.id == prov.alloc_id && a.is_external) {
+            if !vm_state.alloc(prov.alloc_id).is_external {
                 return CheckResult::Proved;
             }
         }
@@ -657,19 +653,20 @@ impl PropertyChecker {
 
         let Some(alloc_id) = value.provenance_alloc_id() else { return CheckResult::Unknown };
 
-        if vm_state.dead_allocations.contains(&alloc_id) {
+        if vm_state.alloc(alloc_id).dead {
             let is_maybe_uninit_ptr = value.invariants.init && value.invariants.non_null
                 && value.invariants.aligned
                 && (matches!(value.ty.kind(), TyKind::RawPtr(..))
                     || matches!(value.ty.kind(), TyKind::Ref(_, inner, _) if matches!(inner.kind(), TyKind::Adt(adt, _)
                         if vm_state.tcx.def_path_str(adt.did()).contains("::MaybeUninit"))))
-                && vm_state.allocations.iter().any(|a| {
-                    a.id == alloc_id && !a.is_external && a.element_ty.map_or(false, |ty| {
+                && {
+                    let a = vm_state.alloc(alloc_id);
+                    !a.is_external && a.element_ty.map_or(false, |ty| {
                         if let TyKind::Adt(adt, _) = ty.kind() {
                             vm_state.tcx.def_path_str(adt.did()).contains("::MaybeUninit")
                         } else { false }
                     })
-                });
+                };
             if !is_maybe_uninit_ptr {
                 let is_param_ref = vm_state.resolve_origin(&value)
                     .map_or(false, |origin| {
@@ -685,20 +682,19 @@ impl PropertyChecker {
         let required_ty = property.args().get(1)
             .and_then(|a| if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None });
 
-        if let Some(alloc) = vm_state.allocations.iter().find(|a| a.id == alloc_id) {
-            if let (Some(alloc_elem_ty), Some(req_ty)) = (alloc.element_ty, required_ty) {
-                if self.alloc_elem_is_array_of(alloc_elem_ty, req_ty) {
-                    return CheckResult::Proved;
-                }
-                // Cross-type generic fast-path: when allocation element type
-                // and required type are both generic params (e.g. T vs U),
-                // sizes are opaque. If the pointer is derived from the same
-                // function's slice parameter, the byte-level layout is
-                // compatible by Rust's type system.
-                if matches!((alloc_elem_ty.kind(), req_ty.kind()),
-                    (TyKind::Param(_), TyKind::Param(_))) {
-                    return CheckResult::Proved;
-                }
+        let alloc = vm_state.alloc(alloc_id);
+        if let (Some(alloc_elem_ty), Some(req_ty)) = (alloc.element_ty, required_ty) {
+            if self.alloc_elem_is_array_of(alloc_elem_ty, req_ty) {
+                return CheckResult::Proved;
+            }
+            // Cross-type generic fast-path: when allocation element type
+            // and required type are both generic params (e.g. T vs U),
+            // sizes are opaque. If the pointer is derived from the same
+            // function's slice parameter, the byte-level layout is
+            // compatible by Rust's type system.
+            if matches!((alloc_elem_ty.kind(), req_ty.kind()),
+                (TyKind::Param(_), TyKind::Param(_))) {
+                return CheckResult::Proved;
             }
         }
 
@@ -706,7 +702,7 @@ impl PropertyChecker {
             return CheckResult::Unknown;
         };
 
-        if vm_state.allocations.iter().any(|a| a.id == alloc_id && a.is_external) {
+        if vm_state.alloc(alloc_id).is_external {
             return CheckResult::Proved;
         }
 
@@ -726,8 +722,8 @@ impl PropertyChecker {
         // "offset + count <= total_len" relies on facts (split_at, etc.)
         // that may not be in path conditions. Fall back to Unknown rather
         // than Failed for generic-element allocations.
-        let alloc_elem_is_generic = vm_state.allocations.iter()
-            .any(|a| a.id == alloc_id && a.element_ty.map_or(false, |ty| matches!(ty.kind(), TyKind::Param(_))));
+        let alloc_elem_is_generic = vm_state.alloc(alloc_id)
+            .element_ty.map_or(false, |ty| matches!(ty.kind(), TyKind::Param(_)));
         if alloc_elem_is_generic && !size.as_u64().is_some() && !access.as_u64().is_some() {
             let solver = Solver::new(vm_state.ctx);
             solver.push();
@@ -811,7 +807,7 @@ impl PropertyChecker {
     {
         // Fast-path: if a prior ChecksIndexBoundsDisjoint call already
         // validated bounds for this function, the InBound holds.
-        if vm_state.has_checked_bounds {
+        if vm_state.contract_flags.has_checked_bounds {
             return CheckResult::Proved;
         }
         // Fast-path: contract with for_each guarantees all elements
@@ -874,21 +870,20 @@ impl PropertyChecker {
             return CheckResult::Unknown;
         };
 
-        if let Some(alloc) = vm_state.allocations.iter().find(|a| a.id == alloc_id) {
-            if let (Some(alloc_elem_ty), Some(req_ty)) = (alloc.element_ty, required_ty) {
-                if self.alloc_elem_is_array_of(alloc_elem_ty, req_ty) {
-                    return CheckResult::Proved;
-                }
+        let alloc = vm_state.alloc(alloc_id);
+        if let (Some(alloc_elem_ty), Some(req_ty)) = (alloc.element_ty, required_ty) {
+            if self.alloc_elem_is_array_of(alloc_elem_ty, req_ty) {
+                return CheckResult::Proved;
             }
         }
 
         // External allocations have unbounded size.
-        if vm_state.allocations.iter().any(|a| a.id == alloc_id && a.is_external) {
+        if vm_state.alloc(alloc_id).is_external {
             return CheckResult::Proved;
         }
 
-        let alloc_elem_is_generic = vm_state.allocations.iter()
-            .any(|a| a.id == alloc_id && a.element_ty.map_or(false, |ty| matches!(ty.kind(), TyKind::Param(_))));
+        let alloc_elem_is_generic = vm_state.alloc(alloc_id)
+            .element_ty.map_or(false, |ty| matches!(ty.kind(), TyKind::Param(_)));
         let fallback_for_generic = alloc_elem_is_generic && !size.as_u64().is_some() && !access.as_u64().is_some();
 
         solver.push();
@@ -1018,9 +1013,8 @@ impl PropertyChecker {
 
         let Some(size) = vm_state.allocation_size(data_alloc_id).cloned() else { return CheckResult::Unknown };
 
-        let elem_size = vm_state.allocations.iter()
-            .find(|a| a.id == data_alloc_id)
-            .and_then(|a| a.element_ty)
+        let elem_size = vm_state.alloc(data_alloc_id)
+            .element_ty
             .map(|ty| vm_state.size_of_ty(ty) as u64)
             .unwrap_or(1)
             .max(1);
@@ -1136,9 +1130,9 @@ impl PropertyChecker {
 
         if let Some(id) = value.provenance_alloc_id() {
             rap_debug!("check_init: alloc={} init_set={} access={:?}",
-                id.0, vm_state.init_allocations.contains(&id),
+                id.0, vm_state.alloc(id).initialized,
                 access.as_ref().and_then(|a| a.as_u64()));
-            if vm_state.dead_allocations.contains(&id) {
+            if vm_state.alloc(id).dead {
                 // `assume_init_drop` (and other MaybeUninit drop/read ops)
                 // legitimately consume an initialized element from storage that
                 // may be going out of scope; the `Init` requirement concerns
@@ -1149,13 +1143,14 @@ impl PropertyChecker {
                     && (matches!(value.ty.kind(), TyKind::RawPtr(..))
                         || matches!(value.ty.kind(), TyKind::Ref(_, inner, _) if matches!(inner.kind(), TyKind::Adt(adt, _)
                             if vm_state.tcx.def_path_str(adt.did()).contains("::MaybeUninit"))))
-                    && vm_state.allocations.iter().any(|a| {
-                        a.id == id && !a.is_external && a.element_ty.map_or(false, |ty| {
+                    && {
+                        let a = vm_state.alloc(id);
+                        !a.is_external && a.element_ty.map_or(false, |ty| {
                             if let TyKind::Adt(adt, _) = ty.kind() {
                                 vm_state.tcx.def_path_str(adt.did()).contains("::MaybeUninit")
                             } else { false }
                         })
-                    });
+                    };
                 if !is_maybe_uninit_ptr {
                     return CheckResult::Failed;
                 }
@@ -1172,7 +1167,7 @@ impl PropertyChecker {
                     }
                 }
             }
-            if vm_state.init_allocations.contains(&id) {
+            if vm_state.alloc(id).initialized {
                 if let (Some(ref access_term), Some(ref size)) = (access, vm_state.allocation_size(id)) {
                     if let (Some(access_val), Some(size_val)) = (access_term.as_u64(), size.as_u64()) {
                         // `size_val == 0` means the element type is generic
@@ -1191,7 +1186,7 @@ impl PropertyChecker {
             // as_ptr/as_mut_ptr on MaybeUninit → write operations don't need pre-init.
             if value.invariants.init && value.invariants.non_null && value.invariants.aligned
                 && matches!(value.ty.kind(), TyKind::RawPtr(..))
-                && !vm_state.dead_allocations.contains(&id)
+                && !vm_state.alloc(id).dead
             {
                 if let Some(callee) = checkpoint.callee {
                     let p = vm_state.tcx.def_path_str(callee);
@@ -1215,7 +1210,7 @@ impl PropertyChecker {
         if let Some(origin_op) = checkpoint.args.first() {
             let origin_val = vm_state.value_of_operand(origin_op);
             if let Some(prov) = &origin_val.provenance {
-                if vm_state.init_allocations.contains(&prov.alloc_id) {
+                if vm_state.alloc(prov.alloc_id).initialized {
                     if let Some(ref access_term) = access {
                         if let Some(size) = vm_state.allocation_size(prov.alloc_id) {
                             if let (Some(access_val), Some(size_val)) = (access_term.as_u64(), size.as_u64()) {
@@ -1235,7 +1230,7 @@ impl PropertyChecker {
             }
             if let Operand::Copy(place) | Operand::Move(place) = origin_op {
                 for alloc_id in self.trace_alloc_ids(vm_state, place.local) {
-                    if vm_state.init_allocations.contains(&alloc_id) {
+                    if vm_state.alloc(alloc_id).initialized {
                         if let Some(ref access_term) = access {
                             if let Some(size) = vm_state.allocation_size(alloc_id) {
                                 if let (Some(access_val), Some(size_val)) = (access_term.as_u64(), size.as_u64()) {
@@ -1258,7 +1253,7 @@ impl PropertyChecker {
         // `Some` branch of `next()` that returned `None`). Check feasibility
         // only for such paths so unrelated over-constrained paths aren't
         // spuriously marked sound.
-        if vm_state.saw_next_discriminant {
+        if vm_state.contract_flags.saw_next_discriminant {
             let local = Solver::new(vm_state.ctx);
             local.push();
             for cond in &vm_state.path_conditions {
@@ -1347,8 +1342,8 @@ impl PropertyChecker {
 
             // Check provenance: does the allocation's element type match the expected type?
             if let Some(alloc_id) = value.provenance_alloc_id() {
-                if let Some(alloc) = vm_state.allocations.iter().find(|a| a.id == alloc_id) {
-                    if let Some(mut elem_ty) = alloc.element_ty {
+                let alloc = vm_state.alloc(alloc_id);
+                if let Some(mut elem_ty) = alloc.element_ty {
                         // Resolve generic type param to concrete callsite type.
                         elem_ty = self.resolve_ty_params(vm_state, checkpoint, elem_ty);
                         if matches!(elem_ty.kind(), TyKind::Param(_)) {
@@ -1406,7 +1401,7 @@ impl PropertyChecker {
                                                 if (did.contains("ManuallyDrop") || did.contains("UnsafeCell"))
                                                     && wrap_substs.first().and_then(|s| s.as_type()) == Some(expected_ty)
                                                 {
-                                                    if vm_state.init_allocations.contains(&alloc_id) {
+                                                    if vm_state.alloc(alloc_id).initialized {
                                                         return CheckResult::Proved;
                                                     }
                                                     return CheckResult::Failed;
@@ -1450,7 +1445,6 @@ impl PropertyChecker {
                             return CheckResult::Failed;
                         }
                     }
-                }
             }
 
             // No provenance: fall back to init and size checks.
@@ -1484,8 +1478,7 @@ impl PropertyChecker {
             if let Some(alloc_id) = value.provenance_alloc_id()
                 && vs == es
             {
-                if let Some(alloc) = vm_state.allocations.iter().find(|a| a.id == alloc_id)
-                    && alloc.element_ty.is_some()
+                if vm_state.alloc(alloc_id).element_ty.is_some()
                 {
                     return CheckResult::Proved;
                 }
@@ -1534,7 +1527,7 @@ impl PropertyChecker {
     {
         let Some(value) = self.target_value(vm_state, checkpoint, property) else { return CheckResult::Unknown };
         if let Some(id) = value.provenance_alloc_id() {
-            if vm_state.dead_allocations.contains(&id) { return CheckResult::Failed; }
+            if vm_state.alloc(id).dead { return CheckResult::Failed; }
             return CheckResult::Proved;
         }
         CheckResult::Unknown
@@ -1547,7 +1540,7 @@ impl PropertyChecker {
     {
         let Some(value) = self.target_value(vm_state, checkpoint, property) else { return CheckResult::Unknown };
         if let Some(id) = value.provenance_alloc_id() {
-            if vm_state.dead_allocations.contains(&id) {
+            if vm_state.alloc(id).dead {
                 if let Some(origin) = vm_state.resolve_origin(&value) {
                     let is_param = origin.local.as_usize() <= vm_state.body.arg_count
                         && origin.local != Local::from_usize(0);
@@ -1565,18 +1558,17 @@ impl PropertyChecker {
                     let is_field = origin.local.as_usize() > vm_state.body.arg_count;
                     if is_field {
                         let mut root_id = id;
-                        while let Some(parent_id) = vm_state.sub_alloc_parent.get(&root_id) {
-                            root_id = *parent_id;
+                        while let Some(parent_id) = vm_state.alloc(root_id).parent {
+                            root_id = parent_id;
                         }
                         if root_id != id
-                            && vm_state.alive_assumed.contains(&root_id)
-                            && !vm_state.dead_allocations.contains(&root_id)
+                            && vm_state.alloc(root_id).alive_assumed
+                            && !vm_state.alloc(root_id).dead
                         {
                             return CheckResult::Proved;
                         }
-                        if !vm_state.alive_assumed.is_empty() {
-                            let root_is_external = vm_state.allocations.iter()
-                                .any(|a| a.id == root_id && a.is_external);
+                        if vm_state.allocations.iter().any(|a| a.alive_assumed) {
+                            let root_is_external = vm_state.alloc(root_id).is_external;
                             if root_is_external {
                                 return CheckResult::Proved;
                             }
@@ -1635,7 +1627,7 @@ impl PropertyChecker {
                             .and_then(|v| v.provenance_alloc_id())
                             .is_some_and(|pid| pid == id)
                     });
-                    if !matches_ref_param && !vm_state.alive_assumed.contains(&id) {
+                    if !matches_ref_param && !vm_state.alloc(id).alive_assumed {
                         return CheckResult::Failed;
                     }
                 }
@@ -2179,7 +2171,7 @@ impl PropertyChecker {
                 }
                 let val = self.eval_contract_expr_to_value(vm_state, checkpoint, inner)?;
                 let alloc_id = val.provenance_alloc_id()?;
-                let alloc = vm_state.allocations.iter().find(|a| a.id == alloc_id)?;
+                let alloc = vm_state.alloc(alloc_id);
                 let elem_ty = alloc.element_ty?;
                 let elem_size = vm_state.size_of_ty(elem_ty).max(1) as u64;
                 if elem_size == 1 {

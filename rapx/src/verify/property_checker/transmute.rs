@@ -100,7 +100,7 @@ impl PropertyChecker {
     pub(super) fn check_split_transmute<'ctx, 'tcx>(&self, vm_state: &VmState<'ctx, 'tcx>, _solver: &Solver<'ctx>,
         checkpoint: &Checkpoint<'tcx>, property: &Property<'tcx>) -> CheckResult
     {
-        if vm_state.split_transmute_asserted {
+        if vm_state.contract_flags.split_transmute_asserted {
             return CheckResult::Proved;
         }
         let src = property.args().get(0).and_then(|a| if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None });
