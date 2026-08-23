@@ -715,12 +715,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
 
             // Execute statements
             for (si, stmt) in bb_data.statements.iter().enumerate() {
-                if let Err(reason) = self.exec_statement(block, si, stmt) {
-                    self.notes.push(format!(
-                        "inline: unsupported stmt at bb{}#{}: {}",
-                        block.as_usize(), si, reason.message,
-                    ));
-                }
+                self.exec_statement(block, si, stmt);
             }
 
             // Process terminator

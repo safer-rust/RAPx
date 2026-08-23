@@ -95,13 +95,7 @@ impl<'tcx> VerifyEngine<'tcx> {
                 items,
             };
 
-            let vm_state = match self.vm.execute(&ctx, &wrapped) {
-                Ok(state) => state,
-                Err(reason) => {
-                    results.push((CheckResult::Unknown, format!("{} (vm error: {})", path_desc, reason.message)));
-                    continue;
-                }
-            };
+            let vm_state = self.vm.execute(&ctx, &wrapped);
 
             // Accumulate checked bounds/disjointness facts across
             // checkpoints so that a validator called in one checkpoint
@@ -476,13 +470,7 @@ impl<'tcx> VerifyEngine<'tcx> {
                 backward.items = items;
             }
 
-            let vm_state = match self.vm.execute(&ctx, &backward) {
-                Ok(state) => state,
-                Err(reason) => {
-                    results.push((CheckResult::Unknown, format!("{} (vm error: {})", path_desc, reason.message)));
-                    continue;
-                }
-            };
+            let vm_state = self.vm.execute(&ctx, &backward);
 
             let fake_checkpoint = Checkpoint {
                 caller: def_id,

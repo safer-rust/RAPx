@@ -17,7 +17,7 @@ use z3::Context;
 
 use crate::verify::slicer::ProofGoal;
 
-use self::state::{UnsupportedReason, VmState};
+use self::state::VmState;
 
 /// Entry point for symbolic MIR execution.
 ///
@@ -42,12 +42,12 @@ impl<'tcx> SymbolicVm<'tcx> {
         &self,
         ctx: &'ctx Context,
         items: &ProofGoal<'tcx>,
-    ) -> Result<VmState<'ctx, 'tcx>, UnsupportedReason> {
+    ) -> VmState<'ctx, 'tcx> {
         let body = self.tcx.optimized_mir(items.path.target.caller);
         let mut state = VmState::new(ctx, self.tcx, body, items.path.target.caller);
         state.path = Some(items.path.clone());
-        state.execute_items(&items.items)?;
+        state.execute_items(&items.items);
         state.propagate_from_checkpoint(items.path.target.block);
-        Ok(state)
+        state
     }
 }

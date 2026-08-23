@@ -35,7 +35,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     pub fn execute_items(
         &mut self,
         items: &[RelevantItem<'tcx>],
-    ) -> Result<(), super::state::UnsupportedReason> {
+    ) {
         // Initialize function parameters as fresh symbolic values.
         // Parameters are _1.._N (excluding _0 return value).
         self.init_parameters();
@@ -51,7 +51,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 } => {
                     let statement =
                         &self.body.basic_blocks[*block].statements[*statement_index];
-                    self.exec_statement(*block, *statement_index, statement)?;
+                    self.exec_statement(*block, *statement_index, statement);
                 }
                 RelevantItem::Terminator { block } => {
                     let occ = self
@@ -61,7 +61,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         .unwrap_or(1);
                     self.block_occurrences.insert(*block, occ);
                     let terminator = self.body.basic_blocks[*block].terminator();
-                    self.exec_terminator(*block, terminator, occ)?;
+                    self.exec_terminator(*block, terminator, occ);
                 }
                 RelevantItem::ContractFact { property } => {
                     self.assert_contract_fact(property);
@@ -74,7 +74,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 }
             }
         }
-        Ok(())
     }
 
     /// Enter a callee's function context during sliced inline execution.
@@ -1106,11 +1105,11 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         block: BasicBlock,
         statement_index: usize,
         statement: &Statement<'tcx>,
-    ) -> Result<(), super::state::UnsupportedReason> {
+    ) {
         match &statement.kind {
             StatementKind::Assign(assign) => {
                 let (place, rvalue) = &**assign;
-                self.exec_assign(place, rvalue)?;
+                self.exec_assign(place, rvalue);
             }
             StatementKind::StorageLive(local) => {
                 self.exec_storage_live(*local);
@@ -1136,15 +1135,14 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 ));
             }
         }
-        Ok(())
     }
 
     fn exec_assign(
         &mut self,
         place: &Place<'tcx>,
         rvalue: &Rvalue<'tcx>,
-    ) -> Result<(), super::state::UnsupportedReason> {
-        let value = self.eval_rvalue(place, rvalue)?;
+    ) {
+        let value = self.eval_rvalue(place, rvalue);
 
         let has_deref = place.projection.iter().any(|p| {
             matches!(p.kind(), rustc_middle::mir::ProjectionElem::Deref)
@@ -1236,7 +1234,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         // For deref projections (`*ptr = val`): do NOT overwrite the base local.
         // Writing through a pointer should not reassign the pointer variable.
 
-        Ok(())
     }
 
     /// Record byte-level values when assigning to a place with projections.
@@ -1374,7 +1371,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         &mut self,
         dest_place: &Place<'tcx>,
         rvalue: &Rvalue<'tcx>,
-    ) -> Result<VmValue<'ctx, 'tcx>, super::state::UnsupportedReason> {
+    ) -> VmValue<'ctx, 'tcx> {
         let dest_ty = dest_place.ty(self.body, self.tcx).ty;
 
         match rvalue {
@@ -1383,14 +1380,14 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 let mut val = self.value_of_operand(operand);
                 self.try_materialize_const_bytes(&mut val, operand);
                 self.inject_layout_constraints(operand, &val);
-                Ok(val)
+                val
             }
             #[cfg(not(rapx_rvalue_use_with_retag))]
             Rvalue::Use(operand) => {
                 let mut val = self.value_of_operand(operand);
                 self.try_materialize_const_bytes(&mut val, operand);
                 self.inject_layout_constraints(operand, &val);
-                Ok(val)
+                val
             }
             Rvalue::Ref(_, _borrow_kind, place) => {
                 if let Some(addr) = self.address_of_place(place) {
@@ -1432,10 +1429,10 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     };
                     self.propagate_byte_values_to_ref(place, &val);
                     self.propagate_field_values_to_ref(place, dest_place.local);
-                    Ok(val)
+                    val
                 } else {
                     let term = self.fresh_int("ref_addr");
-                    Ok(VmValue {
+                    VmValue {
                         term,
                         ty: dest_ty,
                         provenance: None,
@@ -1444,7 +1441,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                             init: true,
                             ..Default::default()
                         },
-                    })
+                    }
                 }
             }
             Rvalue::RawPtr(_, place) => {
@@ -1465,10 +1462,10 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                             ..Default::default()
                         },
                     };
-                    Ok(val)
+                    val
                 } else {
                     let term = self.fresh_int("rawptr_addr");
-                    Ok(VmValue {
+                    VmValue {
                         term,
                         ty: dest_ty,
                         provenance: None,
@@ -1476,7 +1473,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                             non_null: true,
                             ..Default::default()
                         },
-                    })
+                    }
                 }
             }
             Rvalue::BinaryOp(op, pair) => {
@@ -1563,12 +1560,12 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         self.set_field_value(dest_place.local, vec![1], overflow_val);
                     }
                 }
-                Ok(VmValue {
+                VmValue {
                     term,
                     ty: dest_ty,
                     provenance,
                     invariants,
-                })
+                }
             }
             Rvalue::UnaryOp(op, operand) => {
                 let val = self.value_of_operand(operand);
@@ -1584,12 +1581,12 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 } else {
                     self.eval_unary_op(*op, &val.term, is_bool)
                 };
-                Ok(VmValue {
+                VmValue {
                     term,
                     ty: dest_ty,
                     provenance: val.provenance,
                     invariants: val.invariants,
-                })
+                }
             }
             Rvalue::Cast(_kind, operand, cast_ty) => {
                 let src_val = self.value_of_operand(operand);
@@ -1609,7 +1606,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 let term = extract_local(operand)
                     .and_then(|l| self.field_value(l, &[0]).map(|v| v.term.clone()))
                     .unwrap_or(src_val.term);
-                Ok(VmValue {
+                VmValue {
                     term,
                     ty: *cast_ty,
                     provenance: src_val.provenance,
@@ -1621,7 +1618,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         align_n: src_val.invariants.align_n,
                         is_field_offset: false,
                     },
-                })
+                }
             }
             Rvalue::Aggregate(_kind, operands) => {
                 // For an enum aggregate, remember whether this is the
@@ -1654,12 +1651,12 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     if let Some(alloc_id) = self.local_alloc_ids.get(&dest_local).copied() {
                         self.alloc_mut(alloc_id).initialized = true;
                     }
-                    return Ok(VmValue {
+                    return VmValue {
                         term: field_val.term,
                         ty: dest_ty,
                         provenance: field_val.provenance,
                         invariants: field_val.invariants,
-                    });
+                    };
                 }
                 let term = self.fresh_int("aggregate");
                 let dest_local = dest_place.local;
@@ -1765,12 +1762,12 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 } else {
                     (term.clone(), None)
                 };
-                Ok(VmValue {
+                VmValue {
                     term: result_term,
                     ty: dest_ty,
                     provenance: result_prov,
                     invariants: ValueInvariants::default(),
-                })
+                }
             }
             Rvalue::Discriminant(place) => {
                 // If the ADT's variant is known symbolically (e.g. `Iterator::next`
@@ -1804,54 +1801,54 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         }
                     }
                 }
-                Ok(VmValue {
+                VmValue {
                     term,
                     ty: dest_ty,
                     provenance: None,
                     invariants: ValueInvariants::default(),
-                })
+                }
             }
             #[cfg(not(rapx_ge_99))]
             Rvalue::ShallowInitBox(operand, _ty) => {
                 let val = self.value_of_operand(operand);
-                Ok(VmValue {
+                VmValue {
                     term: val.term,
                     ty: dest_ty,
                     provenance: val.provenance,
                     invariants: val.invariants,
-                })
+                }
             }
             Rvalue::CopyForDeref(place) => {
                 if let Some(val) = self.value_of_place(place) {
-                    Ok(val)
+                    val
                 } else {
                     let term = self.fresh_int("copy_for_deref");
-                    Ok(VmValue {
+                    VmValue {
                         term,
                         ty: dest_ty,
                         provenance: None,
                         invariants: ValueInvariants::default(),
-                    })
+                    }
                 }
             }
             Rvalue::Repeat(operand, _count) => {
                 let _val = self.value_of_operand(operand);
                 let term = self.fresh_int("repeat");
-                Ok(VmValue {
+                VmValue {
                     term,
                     ty: dest_ty,
                     provenance: None,
                     invariants: ValueInvariants::default(),
-                })
+                }
             }
             Rvalue::ThreadLocalRef(_) => {
                 let term = self.fresh_int("thread_local");
-                Ok(VmValue {
+                VmValue {
                     term,
                     ty: dest_ty,
                     provenance: None,
                     invariants: ValueInvariants::default(),
-                })
+                }
             }
             #[cfg(not(rapx_ge_99))]
             Rvalue::NullaryOp(_op) => {
@@ -1863,31 +1860,31 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     let one = Int::from_u64(self.ctx, 1);
                     self.path_conditions.push(term.ge(&one));
                 }
-                Ok(VmValue {
+                VmValue {
                     term,
                     ty: dest_ty,
                     provenance: None,
                     invariants: ValueInvariants::default(),
-                })
+                }
             }
             Rvalue::WrapUnsafeBinder(_operand, _ty) => {
                 let term = self.fresh_int("wrap_unsafe_binder");
-                Ok(VmValue {
+                VmValue {
                     term,
                     ty: dest_ty,
                     provenance: None,
                     invariants: ValueInvariants::default(),
-                })
+                }
             }
             #[cfg(rapx_rvalue_has_reborrow)]
             Rvalue::Reborrow(_ty, _mutability, _place) => {
                 let term = self.fresh_int("reborrow");
-                Ok(VmValue {
+                VmValue {
                     term,
                     ty: dest_ty,
                     provenance: None,
                     invariants: ValueInvariants { non_null: true, ..Default::default() },
-                })
+                }
             }
         }
     }
@@ -2202,7 +2199,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         block: BasicBlock,
         terminator: &Terminator<'tcx>,
         occurrence: usize,
-    ) -> Result<(), super::state::UnsupportedReason> {
+    ) {
         match &terminator.kind {
             TerminatorKind::Call {
                 func,
@@ -2242,7 +2239,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 self.exec_drop(place);
             }
         }
-        Ok(())
     }
 
     /// Execute a SwitchInt terminator.

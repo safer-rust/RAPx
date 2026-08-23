@@ -134,14 +134,6 @@ pub struct Allocation<'ctx, 'tcx> {
     pub slice_data: Option<AllocId>,
 }
 
-/// Reason an MIR construct could not be executed symbolically.
-#[derive(Clone, Debug)]
-pub struct UnsupportedReason {
-    pub message: String,
-    pub block: Option<BasicBlock>,
-    pub statement_index: Option<usize>,
-}
-
 /// One-shot execution/contract flags accumulated while stepping a path.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct ContractFlags {
