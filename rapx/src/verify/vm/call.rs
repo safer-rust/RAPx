@@ -227,25 +227,53 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             _ => (arg_values[0].ty, 1),
         };
         let elem_align = self.align_of_ty(elem_ty).max(1);
-        // The range argument (RangeTo/RangeFrom/Range) is an aggregate; its
-        // field 0 is the end bound (for RangeTo this is the slice length).
+        // The range argument is an aggregate whose field layout determines the
+        // slice extent (start element offset and element count):
+        //   RangeTo { end }        -> start = 0, len = end
+        //   RangeFrom { start }    -> start,     len = total - start
+        //   Range { start, end }   -> start,     len = end - start
+        //   RangeInclusive { .. }  -> start,     len = end - start + 1
+        //   otherwise              -> start = 0, len = total
         let range_local = args.get(1).and_then(|a| match &a.node {
             Operand::Copy(p) | Operand::Move(p) => Some(p.local),
             _ => None,
         });
-        let range_len = match range_local.and_then(|l| self.field_value(l, &[0]).map(|v| v.term.clone())) {
-            Some(end) => end,
-            None => {
-                // RangeFull or unknown: fall back to the array's full length.
-                self.alloc(prov.alloc_id).size.clone()
-                    .div(&Int::from_u64(self.ctx, elem_size))
-            }
+        let range_field = |idx: usize| -> Option<Int<'ctx>> {
+            range_local.and_then(|l| self.field_value(l, &[idx]).map(|v| v.term.clone()))
         };
-        let size_bytes = Int::mul(self.ctx, &[&range_len, &Int::from_u64(self.ctx, elem_size)]);
+        let zero = Int::from_u64(self.ctx, 0);
+        let one = Int::from_u64(self.ctx, 1);
+        let total_len = self.alloc(prov.alloc_id).size.clone()
+            .div(&Int::from_u64(self.ctx, elem_size));
+        let range_ty_path = arg_values.get(1).and_then(|v| match v.ty.kind() {
+            TyKind::Adt(adt_def, _) => Some(self.tcx.def_path_str(adt_def.did())),
+            _ => None,
+        });
+        let (start, len) = match range_ty_path.as_deref() {
+            Some(p) if p.ends_with("::RangeTo") => {
+                (zero.clone(), range_field(0).unwrap_or_else(|| total_len.clone()))
+            }
+            Some(p) if p.ends_with("::RangeFrom") => {
+                let s = range_field(0).unwrap_or_else(|| zero.clone());
+                (s.clone(), Int::sub(self.ctx, &[&total_len, &s]))
+            }
+            Some(p) if p.ends_with("::Range") || p.ends_with("::RangeInclusive") => {
+                let inclusive = p.ends_with("::RangeInclusive");
+                let s = range_field(0).unwrap_or_else(|| zero.clone());
+                let e = range_field(1).unwrap_or_else(|| total_len.clone());
+                let l = Int::sub(self.ctx, &[&e, &s]);
+                (s.clone(), if inclusive { Int::add(self.ctx, &[&l, &one]) } else { l })
+            }
+            _ => (zero.clone(), total_len.clone()),
+        };
+        let elem_size_term = Int::from_u64(self.ctx, elem_size);
+        let start_bytes = Int::mul(self.ctx, &[&start, &elem_size_term]);
+        let size_bytes = Int::mul(self.ctx, &[&len, &elem_size_term]);
+        let dest_term = Int::add(self.ctx, &[&array_term, &start_bytes]);
         let (alloc_id, _) = self.allocate(size_bytes, elem_align, Some(elem_ty));
         self.alloc_mut(alloc_id).parent = Some(prov.alloc_id);
         self.set_local(destination, VmValue {
-            term: array_term,
+            term: dest_term,
             ty: dest_ty,
             provenance: Some(Provenance {
                 alloc_id,
