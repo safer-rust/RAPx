@@ -29,7 +29,6 @@ use crate::helpers::mir_utils::{
 pub struct EffCtx<'a, 'tcx> {
     pub tcx: TyCtxt<'tcx>,
     pub caller: DefId,
-    pub callee: Option<DefId>,
     pub name: &'a str,
     pub func: &'a Operand<'tcx>,
     pub dest: Option<rustc_middle::mir::Local>,
@@ -65,7 +64,6 @@ static REGISTRY: &[Entry] = &[
     E!(mem_forget,           arg0!(),  false,  no_args!(),  eff_forget),
 
     // ── Pass-through / no-effect calls ──────────────────────────────
-    E!(transmute,             arg0!(),  false,  no_args!(),  eff_none),
     E!(api_classify::is_maybe_uninit_uninit,no_args!(), false, no_args!(), eff_none),
     E!(api_classify::is_maybe_uninit_assume_init,arg0!(), false, no_args!(), eff_none),
     // Non-zero-preserving integer operations must be matched *before* the
@@ -83,7 +81,6 @@ static REGISTRY: &[Entry] = &[
     E!(int_checked_add,       ALL,      true,   no_args!(),  eff_return_option_some_add),
     E!(int_checked_mul,       ALL,      true,   no_args!(),  eff_return_option_some_mul),
     E!(overflowing_nz,        ALL,      true,   no_args!(),  eff_overflowing_nz),
-    E!(api_classify::is_numeric_arith, ALL,      true,   no_args!(),  eff_none),
     E!(saturating_sub,        ALL,      true,   no_args!(),  eff_return_sub),
     E!(api_classify::is_offset_from_unsigned, arg01!(), false, no_args!(), eff_offset_from_unsigned),
     E!(api_classify::is_option_unwrap, arg0!(),  false,  no_args!(),  eff_alias_arg0),
@@ -195,7 +192,7 @@ pub fn lookup_effect<'tcx>(
     let dest = Some(destination);
     for e in REGISTRY {
         if (e.matches)(name) {
-            let ctx = EffCtx { tcx, caller, callee, name, func, dest };
+            let ctx = EffCtx { tcx, caller, name, func, dest };
             return Some(CallEffectSummary {
                 callee,
                 name: name.to_string(),
@@ -457,7 +454,6 @@ fn eff_layout_const(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 // ── Matcher functions (one per API pattern) ────────────────────────────
 
 fn mem_forget(n: &str) -> bool             { n.ends_with("mem::forget") }
-fn transmute(n: &str) -> bool               { n.contains("::transmute") || n.contains("intrinsics::transmute") }
 fn slice_index(n: &str) -> bool             { n.ends_with("::Index::index") || n.ends_with("::IndexMut::index_mut") }
 fn align_to_local(n: &str) -> bool           {
     n.ends_with("align_to_ext") || n.ends_with("align_to_mut_ext")
