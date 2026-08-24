@@ -94,8 +94,6 @@ static REGISTRY: &[Entry] = &[
     E!(nonnull_from,          arg0!(),  false,  no_args!(),  eff_alias_nonnull),
     E!(nonnull_new_unchecked, arg0!(),  false,  no_args!(),  eff_none),
     E!(nonnull_new,           arg0!(),  false,  no_args!(),  eff_alias_ptr),
-    E!(nonnull_as_ref,        arg0!(),  false,  no_args!(),  eff_alias_ptr),
-    E!(nonnull_as_mut,        arg0!(),  false,  no_args!(),  eff_alias_ptr),
     E!(api_classify::is_as_ptr, arg0!(), false,  no_args!(),  eff_alias_ptr),
     E!(api_classify::is_as_ptr_range, arg0!(), false, no_args!(), eff_alias_arg0),
     E!(api_classify::is_as_mut_ptr_range, arg0!(), false, no_args!(), eff_alias_arg0),
@@ -467,8 +465,6 @@ fn from_trait_call(n: &str) -> bool         { n == "std::convert::From::from" ||
 fn nonnull_from(n: &str) -> bool            { n.ends_with("::from") && api_classify::is_nonnull_api(n) }
 fn nonnull_new_unchecked(n: &str) -> bool   { n.ends_with("::new_unchecked") && api_classify::is_nonnull_api(n) }
 fn nonnull_new(n: &str) -> bool             { n.ends_with("::new") && api_classify::is_nonnull_api(n) && !n.ends_with("::new_unchecked") }
-fn nonnull_as_ref(n: &str) -> bool          { n.ends_with("::as_ref") && api_classify::is_nonnull_api(n) }
-fn nonnull_as_mut(n: &str) -> bool          { n.ends_with("::as_mut") && api_classify::is_nonnull_api(n) }
 fn ptr_read(n: &str) -> bool                { n.ends_with("::read") && n.contains("::ptr::") }
 fn is_empty(n: &str) -> bool                { n.ends_with("::is_empty") }
 fn cmp_min(n: &str) -> bool                 { (n.contains("::cmp::min") || n.contains("::Ord::min") || n.starts_with("core::cmp::min")) && !n.contains("min_by") }
