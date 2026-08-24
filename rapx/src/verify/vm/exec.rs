@@ -13,7 +13,6 @@ use rustc_middle::{
 };
 #[cfg(not(rapx_has_skip_norm_wip))]
 use crate::compat::SkipNormWip;
-use rustc_hir::def_id::DefId;
 use z3::ast::{Ast, Bool, Int};
 
 use crate::{
@@ -26,7 +25,7 @@ use crate::{
     },
 };
 
-use super::state::{AllocId, InlineFrame, Provenance, VmState, VmValue, ValueInvariants};
+use super::state::{AllocId, Provenance, VmState, VmValue, ValueInvariants};
 
 use crate::helpers::api_classify;
 
@@ -42,9 +41,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
 
         for item in items {
             match item {
-                RelevantItem::CalleeEntry { callee, args } => {
-                    self.handle_callee_entry(*callee, args);
-                }
                 RelevantItem::Statement {
                     block,
                     statement_index,
@@ -69,137 +65,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 RelevantItem::Forget => {
                     self.notes.push("forget: unsupported call".to_string());
                 }
-                RelevantItem::CalleeExit { dest } => {
-                    self.handle_callee_exit(*dest);
-                }
             }
-        }
-    }
-
-    /// Enter a callee's function context during sliced inline execution.
-    /// Saves the caller's locals state, pushes the callee body onto the
-    /// context stack, and binds caller args to callee parameters.
-    fn handle_callee_entry(
-        &mut self,
-        callee_def_id: DefId,
-        arg_locals: &[Local],
-    ) {
-        let callee_body = self.tcx.optimized_mir(callee_def_id);
-
-        // Save caller's locals
-        let saved_locals = std::mem::take(&mut self.locals);
-
-        // Clone the arg values we need before pushing context
-        let arg_vals: Vec<Option<VmValue<'ctx, 'tcx>>> = arg_locals.iter()
-            .map(|&local| saved_locals.get(&local).cloned())
-            .collect();
-
-        // Push callee context
-        self.inline_frames.push(InlineFrame {
-            body: self.body,
-            def_id: self.caller_def_id,
-            saved_locals,
-        });
-        self.body = callee_body;
-        self.caller_def_id = callee_def_id;
-
-        // Bind args from saved caller state
-        for (i, arg_val) in arg_vals.into_iter().enumerate() {
-            let callee_local = Local::from_usize(i + 1);
-            if let Some(val) = arg_val {
-                self.ensure_local_allocation(callee_local);
-                self.set_local(callee_local, val);
-            }
-        }
-        // Propagate field_values from caller arg locals to callee param
-        // locals, so that inlined callee body can access struct fields
-        // (e.g. Iter::ptr / end_or_len for len/is_empty computations).
-        for (i, caller_arg) in arg_locals.iter().enumerate() {
-            let callee_param = Local::from_usize(i + 1);
-            let caller_field_keys: Vec<Vec<usize>> = self.field_values.keys()
-                .filter(|(l, _)| *l == *caller_arg)
-                .map(|(_, f)| f.clone())
-                .collect();
-            for fields in caller_field_keys {
-                if let Some(fv) = self.field_value(*caller_arg, &fields).cloned() {
-                    self.set_field_value(callee_param, fields, fv);
-                }
-            }
-        }
-    }
-
-    /// Exit a callee's function context. Captures the return value from
-    /// callee's local_0, restores the caller's locals and body, and writes
-    /// the return value to the caller's dest local.
-    fn handle_callee_exit(
-        &mut self,
-        dest: Local,
-    ) {
-        let return_val = self.locals.get(&Local::from_usize(0)).cloned();
-
-        // Capture the callee's return-place field values (e.g. a tuple return
-        // `(prefix, mid, suffix)` whose slice fields carry provenance). They
-        // live in the shared `field_values` map keyed by local `_0`, so they
-        // must be re-keyed onto the caller's destination local, otherwise the
-        // caller's `(tuple.0)` / `(tuple.2)` projections lose provenance and
-        // the downstream `.len()` / alignment reasoning collapses.
-        let return_fields: Vec<(Vec<usize>, VmValue<'ctx, 'tcx>)> = self
-            .field_values
-            .keys()
-            .filter(|(l, _)| *l == Local::from_usize(0))
-            .cloned()
-            .collect::<Vec<_>>()
-            .into_iter()
-            .filter_map(|(_, fields)| {
-                self.field_value(Local::from_usize(0), &fields)
-                    .cloned()
-                    .map(|v| (fields, v))
-            })
-            .collect();
-
-        // Check if the callee was post_inc_start / pre_dec_end
-        // on an Iter/IterMut. If so, track the ptr offset change.
-        if let Some(frame) = self.inline_frames.last() {
-            let name = self.tcx.def_path_str(frame.def_id);
-            if api_classify::is_iter_ptr_adj(&name) {
-                self.track_iter_ptr_after_inline();
-            }
-        }
-
-        // Restore caller context
-        if let Some(frame) = self.inline_frames.pop() {
-            self.body = frame.body;
-            self.caller_def_id = frame.def_id;
-            self.locals = frame.saved_locals;
-        }
-
-        // Write return value
-        if let Some(mut val) = return_val {
-            let dest_ty = self.body.local_decls[dest].ty;
-            val.ty = dest_ty;
-            if let Some(ref prov) = val.provenance {
-                if prov.offset.as_u64() == Some(0) {
-                    val.invariants.non_null = true;
-                    val.invariants.init = true;
-                    val.invariants.aligned = true;
-                    self.alloc_mut(prov.alloc_id).initialized = true;
-                }
-            }
-            self.set_local(dest, val);
-        }
-
-        // The callee returned a fully-constructed value, so the caller's
-        // destination stack slot is initialized.  Matters for ADT returns
-        // (struct/enum) whose aggregate value carries no provenance: a later
-        // `&raw const (*&field)` + `ptr::read` must discharge `Init` against
-        // the field.
-        if let Some(dest_alloc_id) = self.local_alloc_ids.get(&dest).copied() {
-            self.alloc_mut(dest_alloc_id).initialized = true;
-        }
-
-        // Re-key the callee's return field values onto the caller's dest local.
-        for (fields, field_val) in return_fields {
-            self.set_field_value(dest, fields, field_val);
         }
     }
 
@@ -3015,37 +2881,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             None => one,
         };
         self.iter_ptr_offset.insert(local, new_offset);
-    }
-
-    /// After inlining post_inc_start/pre_dec_end for Iter/IterMut,
-    /// increment the tracked ptr offset so that `interpreter_iter_len`
-    /// can compute `base_len - offset` compactly.
-    fn track_iter_ptr_after_inline(&mut self) {
-        let mut to_update: Vec<Local> = Vec::new();
-        for (&local, val) in self.locals.iter() {
-            let is_iter = match val.ty.kind() {
-                rustc_middle::ty::TyKind::Ref(_, pointee, _) => match pointee.kind() {
-                    rustc_middle::ty::TyKind::Adt(adt_def, _) => {
-                        let name = self.tcx.def_path_str(adt_def.did());
-                        name.ends_with("::Iter") || name == "Iter"
-                            || name.ends_with("::IterMut") || name == "IterMut"
-                    }
-                    _ => false,
-                },
-                _ => false,
-            };
-            if is_iter {
-                to_update.push(local);
-            }
-        }
-        let one = Int::from_u64(self.ctx, 1);
-        for local in to_update {
-            let new_offset = match self.iter_ptr_offset.get(&local) {
-                Some(prev) => Int::add(self.ctx, &[prev, &one]),
-                None => one.clone(),
-            };
-            self.iter_ptr_offset.insert(local, new_offset);
-        }
     }
 
     /// Set non_null invariant on the target value.

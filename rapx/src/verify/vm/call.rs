@@ -1672,6 +1672,20 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     });
                 }
             }
+            CallEffect::ReturnOptionSomeNonZero => {
+                // `Some` payload is unconditionally non-zero (e.g.
+                // `checked_next_power_of_two`).
+                let zero = Int::from_u64(self.ctx, 0);
+                let term = self.fresh_int(&format!("ret_opt_nz_{}", dest.as_usize()));
+                self.path_conditions.push(term._eq(&zero).not());
+                let payload_ty = args.first().map(|a| a.ty).unwrap_or(self.body.local_decls[dest].ty);
+                self.set_field_value(dest, vec![0], VmValue {
+                    term,
+                    ty: payload_ty,
+                    provenance: None,
+                    invariants: ValueInvariants::default(),
+                });
+            }
             CallEffect::WriteMemory { pointer_arg } => {
                 if let Some(arg_val) = args.get(*pointer_arg) {
                     if let Some(prov) = &arg_val.provenance {

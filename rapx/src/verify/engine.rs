@@ -6,11 +6,9 @@
 use z3::Config;
 
 use rustc_hir::def_id::DefId;
-use rustc_middle::mir::{BasicBlock, TerminatorKind};
 use rustc_middle::ty::TyCtxt;
 
 use crate::analysis::path::PathTree;
-use crate::compat::FxHashSet;
 
 use super::{
     contract::{LeafProperty, OrProperty, Property},
@@ -20,8 +18,6 @@ use super::{
 use crate::helpers::mir_scan::{Checkpoint, CheckpointLocation};
 
 use super::{vm::SymbolicVm, property_checker::PropertyChecker};
-
-const ENGINE_INLINE_DEPTH: usize = 3;
 
 pub struct VerifyEngine<'tcx> {
     slicer: BackwardSlicer<'tcx>,
@@ -83,13 +79,6 @@ impl<'tcx> VerifyEngine<'tcx> {
             }
             items.extend(backward.items);
 
-            // Inject inline callees for unsupported calls.
-            let items = self.inject_inline_callees(
-                items,
-                checkpoint.caller,
-                ENGINE_INLINE_DEPTH,
-            );
-
             let wrapped = crate::verify::slicer::ProofGoal {
                 path: backward.path,
                 items,
@@ -109,189 +98,6 @@ impl<'tcx> VerifyEngine<'tcx> {
         }
 
         results
-    }
-
-    fn callee_is_simple(tcx: TyCtxt<'_>, callee_def_id: DefId) -> bool {
-        crate::helpers::mir_utils::callee_is_linear(tcx, callee_def_id, 3)
-    }
-
-    /// Scan the relevant items for unsupported Call terminators whose callee
-    /// has available MIR. For each such call, inject `CalleeEntry` + callee
-    /// MIR items + `CalleeExit`, replacing the original terminator.
-    fn inject_inline_callees(
-        &self,
-        mut items: Vec<RelevantItem<'tcx>>,
-        caller_def_id: DefId,
-        depth: usize,
-    ) -> Vec<RelevantItem<'tcx>> {
-        if depth == 0 {
-            return items;
-        }
-
-        let tcx = self.slicer.tcx();
-        let body = tcx.optimized_mir(caller_def_id);
-        let mut result: Vec<RelevantItem<'tcx>> = Vec::new();
-
-        for item in items.drain(..) {
-            match &item {
-                RelevantItem::Terminator { block, .. } => {
-                    let terminator = body.basic_blocks[*block].terminator();
-                    if let TerminatorKind::Call { func, args, destination, .. } = &terminator.kind {
-                        if let Some(callee) = crate::helpers::mir_utils::dep_callee_def_id(func) {
-                            if tcx.is_mir_available(callee) {
-                                let summary = crate::verify::call_summary::effect_summary(
-                                    tcx, caller_def_id, func, destination.local,
-                                );
-
-                                if summary.unsupported && Self::callee_is_simple(tcx, callee) {
-                                    let arg_locals: Vec<rustc_middle::mir::Local> = args.iter()
-                                        .filter_map(|arg| match &arg.node {
-                                            rustc_middle::mir::Operand::Copy(p)
-                                            | rustc_middle::mir::Operand::Move(p)
-                                                if p.projection.is_empty() => Some(p.local),
-                                            _ => None,
-                                        })
-                                        .collect();
-                                    if arg_locals.len() == args.len() {
-                                        let callee_items = self.build_callee_items(callee, depth - 1);
-                                        result.push(RelevantItem::CalleeEntry {
-                                            callee,
-                                            args: arg_locals,
-                                        });
-                                        result.extend(callee_items);
-                                        result.push(RelevantItem::CalleeExit {
-                                            dest: destination.local,
-                                        });
-                                        continue; // Skip original Terminator item
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                _ => {}
-            }
-            result.push(item);
-        }
-
-        result
-    }
-
-    /// Build a linear sequence of relevant items for a callee's MIR body.
-    /// Walks BFS from the entry block, collecting statements and terminators.
-    fn build_callee_items(
-        &self,
-        callee_def_id: DefId,
-        depth: usize,
-    ) -> Vec<RelevantItem<'tcx>> {
-        let mut items: Vec<RelevantItem<'tcx>> = Vec::new();
-        let tcx = self.slicer.tcx();
-        let body = tcx.optimized_mir(callee_def_id);
-
-        let mut visited = FxHashSet::default();
-        let mut queue: Vec<BasicBlock> = Vec::new();
-        queue.push(BasicBlock::from_usize(0));
-
-        while let Some(block) = queue.pop() {
-            if !visited.insert(block) {
-                continue;
-            }
-
-            let bb_data = &body.basic_blocks[block];
-
-            for (si, _) in bb_data.statements.iter().enumerate() {
-                items.push(RelevantItem::Statement {
-                    block,
-                    statement_index: si,
-                });
-            }
-
-            let terminator = bb_data.terminator();
-
-            // Recursively inline calls in the callee's terminators
-            match &terminator.kind {
-                TerminatorKind::Call { func, args, destination, target, .. } => {
-                    if let Some(inner_callee) = crate::helpers::mir_utils::dep_callee_def_id(func) {
-                        if tcx.is_mir_available(inner_callee) {
-                            let summary = crate::verify::call_summary::effect_summary(
-                                tcx, callee_def_id, func, destination.local,
-                            );
-
-                            if summary.unsupported && Self::callee_is_simple(tcx, inner_callee) && depth > 0 {
-                                let arg_locals: Vec<rustc_middle::mir::Local> = args.iter()
-                                    .filter_map(|arg| match &arg.node {
-                                        rustc_middle::mir::Operand::Copy(p)
-                                        | rustc_middle::mir::Operand::Move(p)
-                                            if p.projection.is_empty() => Some(p.local),
-                                        _ => None,
-                                    })
-                                    .collect();
-                                if arg_locals.len() == args.len() {
-                                    let inner_items = self.build_callee_items(inner_callee, depth - 1);
-                                    items.push(RelevantItem::CalleeEntry {
-                                        callee: inner_callee,
-                                        args: arg_locals,
-                                    });
-                                    items.extend(inner_items);
-                                    items.push(RelevantItem::CalleeExit {
-                                        dest: destination.local,
-                                    });
-                                    if let Some(t) = target {
-                                        queue.push(*t);
-                                    }
-                                    continue;
-                                }
-                            }
-                        }
-                    }
-                    items.push(RelevantItem::Terminator {
-                        block,
-                    });
-                    if let Some(t) = target {
-                        queue.push(*t);
-                    }
-                }
-                TerminatorKind::Goto { target } => {
-                    queue.push(*target);
-                    items.push(RelevantItem::Terminator {
-                        block,
-                    });
-                }
-                TerminatorKind::Return => {
-                    items.push(RelevantItem::Terminator {
-                        block,
-                    });
-                }
-                TerminatorKind::Assert { target, .. } => {
-                    queue.push(*target);
-                    items.push(RelevantItem::Terminator {
-                        block,
-                    });
-                }
-                TerminatorKind::SwitchInt { targets, .. } => {
-                    for (_, t) in targets.iter() {
-                        queue.push(t);
-                    }
-                    queue.push(targets.otherwise());
-                    items.push(RelevantItem::Terminator {
-                        block,
-                    });
-                }
-                TerminatorKind::Drop { target, .. } => {
-                    queue.push(*target);
-                    items.push(RelevantItem::Terminator {
-                        block,
-                    });
-                }
-                _ => {
-                    items.push(RelevantItem::Terminator {
-                        block,
-                    });
-                }
-            }
-        }
-
-        items
     }
 
     fn bind_property_to_checkpoint(

@@ -121,6 +121,9 @@ static REGISTRY: &[Entry] = &[
     E!(cmp_min,               ALL,      true,   no_args!(),  eff_cmp_min),
     E!(bit_preserving_nz,     ALL,      true,   no_args!(),  eff_return_nonzero_iff),
     E!(checked_pow_nz,        ALL,      true,   no_args!(),  eff_return_option_some_nonzero_iff),
+    E!(checked_abs_nz,        ALL,      true,   no_args!(),  eff_return_option_some_nonzero_iff),
+    E!(checked_neg_nz,        ALL,      true,   no_args!(),  eff_return_option_some_nonzero_iff),
+    E!(checked_next_pow2_nz,  ALL,      true,   no_args!(),  eff_return_option_some_nonzero),
 
     // ── SliceIndex::get_unchecked / get_unchecked_mut ───────────────
     E!(is_slice_get_unchecked, arg0!(), false,  no_args!(),  eff_alias_ptr),
@@ -299,6 +302,10 @@ fn eff_return_nonzero_iff(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 
 fn eff_return_option_some_nonzero_iff(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     vec![CallEffect::ReturnOptionSomeNonZeroIff { arg: 0 }]
+}
+
+fn eff_return_option_some_nonzero(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnOptionSomeNonZero]
 }
 
 fn eff_return_max(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
@@ -496,6 +503,25 @@ fn bit_preserving_nz(n: &str) -> bool {
 /// the converse is approximate: `x.checked_pow(0) == Some(1)` even for `x == 0`.
 fn checked_pow_nz(n: &str) -> bool {
     n.ends_with("::checked_pow")
+}
+
+/// `checked_abs`/`checked_neg` return `Option<T>`; `Some(x)` is `|x|` / `-x`,
+/// which is non-zero iff the operand is non-zero (`MIN` yields `None`, not a
+/// zero payload). Modelled with `ReturnOptionSomeNonZeroIff`.
+fn checked_abs_nz(n: &str) -> bool {
+    n.ends_with("::checked_abs")
+}
+
+fn checked_neg_nz(n: &str) -> bool {
+    n.ends_with("::checked_neg")
+}
+
+/// `checked_next_power_of_two` returns `Option<T>` whose `Some` payload is the
+/// next power of two, which is always positive regardless of the argument
+/// (`0.next_power_of_two() == 1`). Modelled with the unconditional
+/// `ReturnOptionSomeNonZero`.
+fn checked_next_pow2_nz(n: &str) -> bool {
+    n.ends_with("::checked_next_power_of_two")
 }
 
 /// Comparison / absolute-value / negation / saturating & unchecked arithmetic

@@ -12,8 +12,11 @@ use crate::helpers::mir_utils as helpers;
 
 use super::CallEffect;
 
-/// Trace backward from an operand (inner call arg) through Copy/Move/Cast
-/// assignments to the outer callee's argument local, returning its index.
+/// Trace backward from an operand (inner call arg) through Copy/Move/Cast/
+/// Ref/RawPtr assignments to the outer callee's argument local, returning its
+/// index. `Ref`/`RawPtr` are treated as data-flow too, which is an
+/// approximation (taking a reference is not a pure copy) but is adequate for
+/// wrapper recognition.
 fn trace_to_callee_arg<'tcx>(
     tcx: TyCtxt<'tcx>,
     body: &rustc_middle::mir::Body<'tcx>,
@@ -109,7 +112,6 @@ pub(super) fn try_pointer_arith_wrapper_effect<'tcx>(
     if body.basic_blocks.len() > 16 {
         return None;
     }
-    let ret = Local::from_usize(0);
 
     for bb in body.basic_blocks.iter() {
         let Some(terminator) = &bb.terminator else {
@@ -148,44 +150,7 @@ pub(super) fn try_pointer_arith_wrapper_effect<'tcx>(
             continue;
         }
 
-        let mut queue = VecDeque::from([call_dest.local]);
-        let mut seen = HashSet::from([call_dest.local]);
-        let mut reaches_ret = false;
-        while let Some(current) = queue.pop_front() {
-            if current == ret {
-                reaches_ret = true;
-                break;
-            }
-            for bb2 in body.basic_blocks.iter() {
-                for stmt in &bb2.statements {
-                    let StatementKind::Assign(assign) = &stmt.kind else {
-                        continue;
-                    };
-                    let dest = assign.0.local;
-                    if seen.contains(&dest) {
-                        continue;
-                    }
-                    match &assign.1 {
-                        Rvalue::Use(Operand::Copy(place), ..)
-                        | Rvalue::Use(Operand::Move(place), ..) => {
-                            if place.local == current {
-                                queue.push_back(dest);
-                                seen.insert(dest);
-                            }
-                        }
-                        Rvalue::Cast(_, Operand::Copy(place), _)
-                        | Rvalue::Cast(_, Operand::Move(place), _) => {
-                            if place.local == current {
-                                queue.push_back(dest);
-                                seen.insert(dest);
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-        if !reaches_ret {
+        if !call_result_reaches_return(body, call_dest.local) {
             continue;
         }
 
@@ -221,8 +186,8 @@ pub(super) fn try_pointer_arith_wrapper_effect<'tcx>(
             continue;
         }
 
-        let base_arg = trace_to_callee_arg(tcx, body, &args[0].node)?;
-        let offset_arg = trace_to_callee_arg(tcx, body, &args[1].node)?;
+        let base_arg = trace_to_callee_arg(tcx, body, &args.get(0)?.node)?;
+        let offset_arg = trace_to_callee_arg(tcx, body, &args.get(1)?.node)?;
         let stride = if crate::helpers::api_classify::is_byte_ptr_arith(&name) {
             Some(1)
         } else {
@@ -314,35 +279,13 @@ pub(super) fn try_from_raw_parts_wrapper_effect<'tcx>(
         }
 
         // Verify the call result reaches return
-        let mut queue = VecDeque::from([call_dest.local]);
-        let mut seen = HashSet::from([call_dest.local]);
-        let mut reaches_ret = false;
-        while let Some(current) = queue.pop_front() {
-            if current == ret { reaches_ret = true; break; }
-            for bb2 in body.basic_blocks.iter() {
-                for stmt in &bb2.statements {
-                    let StatementKind::Assign(assign) = &stmt.kind else { continue };
-                    if seen.contains(&assign.0.local) { continue; }
-                    match &assign.1 {
-                        Rvalue::Use(Operand::Copy(place), ..)
-                        | Rvalue::Use(Operand::Move(place), ..)
-                        | Rvalue::Cast(_, Operand::Copy(place), _)
-                        | Rvalue::Cast(_, Operand::Move(place), _) => {
-                            if place.local == current {
-                                queue.push_back(assign.0.local);
-                                seen.insert(assign.0.local);
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
+        if !call_result_reaches_return(body, call_dest.local) {
+            continue;
         }
-        if !reaches_ret { continue; }
 
         // Trace from_raw_parts args to callee args
-        let pointer_arg = trace_to_callee_arg(tcx, body, &args[0].node)?;
-        let size_arg = trace_to_callee_arg(tcx, body, &args[1].node)?;
+        let pointer_arg = trace_to_callee_arg(tcx, body, &args.get(0)?.node)?;
+        let size_arg = trace_to_callee_arg(tcx, body, &args.get(1)?.node)?;
 
         // Determine element size from return type
         let ret_ty = body.local_decls[ret].ty;
@@ -569,8 +512,49 @@ fn write_args_on_path<'tcx>(
     writes
 }
 
-/// Return true if the callee body contains any Call terminator (to local functions
-/// that may have side effects), meaning the callee is not self-contained.
+/// Return true when `call_dest`'s value flows (via Copy/Move/Cast) to the
+/// function's return place `_0`.
+fn call_result_reaches_return<'tcx>(
+    body: &rustc_middle::mir::Body<'tcx>,
+    call_dest: Local,
+) -> bool {
+    let ret = Local::from_usize(0);
+    let mut queue = VecDeque::from([call_dest]);
+    let mut seen = HashSet::from([call_dest]);
+    while let Some(current) = queue.pop_front() {
+        if current == ret {
+            return true;
+        }
+        for bb in body.basic_blocks.iter() {
+            for stmt in &bb.statements {
+                let StatementKind::Assign(assign) = &stmt.kind else {
+                    continue;
+                };
+                let dest = assign.0.local;
+                if seen.contains(&dest) {
+                    continue;
+                }
+                match &assign.1 {
+                    Rvalue::Use(Operand::Copy(place), ..)
+                    | Rvalue::Use(Operand::Move(place), ..)
+                    | Rvalue::Cast(_, Operand::Copy(place), _)
+                    | Rvalue::Cast(_, Operand::Move(place), _) => {
+                        if place.local == current {
+                            queue.push_back(dest);
+                            seen.insert(dest);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Return true if the callee body contains any Call terminator, meaning the
+/// callee is not self-contained (a nested call may have side effects that a
+/// shallow summary cannot capture).
 pub(super) fn callee_calls_other_local(tcx: TyCtxt<'_>, callee: DefId) -> bool {
     let body = tcx.optimized_mir(callee);
     for bb in body.basic_blocks.iter() {

@@ -160,16 +160,6 @@ pub(crate) struct ByteInfo<'ctx> {
     pub nul: Option<bool>,
 }
 
-/// A saved caller context pushed during cross-function inline.  Nested
-/// inlining (a callee that itself inlines another callee) pushes multiple
-/// frames; a single `Option` slot would clobber the outer caller's context on
-/// the inner exit, so a stack is required.
-pub(crate) struct InlineFrame<'ctx, 'tcx> {
-    pub body: &'ctx Body<'tcx>,
-    pub def_id: DefId,
-    pub saved_locals: FxHashMap<Local, VmValue<'ctx, 'tcx>>,
-}
-
 /// The full symbolic execution state at a program point.
 ///
 /// Accumulates locals, allocations, path conditions, and definitions
@@ -269,12 +259,6 @@ pub struct VmState<'ctx, 'tcx> {
     /// bound nested inlining and avoid unbounded recursion / stack overflow.
     pub(crate) inline_depth: usize,
 
-    /// Stack of saved caller contexts for cross-function inline.
-    /// The top of the stack is the frame of the function currently being
-    /// inlined; each entry carries the caller's body, def-id, and locals so
-    /// the caller can be restored on exit.
-    pub(crate) inline_frames: Vec<InlineFrame<'ctx, 'tcx>>,
-
     /// Terms that are the result of a bitwise `Not` (two's-complement mask).
     /// Used to recognize `x & !(align-1)` alignment patterns in BitAnd so we
     /// can derive `align = -mask` and emit linear bounds for the result.
@@ -315,7 +299,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             path: None,
             last_call_name: String::new(),
             inline_depth: 0,
-            inline_frames: Vec::new(),
             not_mask_terms: FxHashSet::default(),
         }
     }

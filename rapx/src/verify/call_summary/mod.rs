@@ -150,6 +150,10 @@ pub enum CallEffect {
     /// The call returns `Option<T>` whose `Some` payload is non-zero *iff* `arg`
     /// is non-zero (models `checked_pow`).
     ReturnOptionSomeNonZeroIff { arg: usize },
+    /// The call returns `Option<T>` whose `Some` payload is unconditionally
+    /// non-zero (models `checked_next_power_of_two`, where the next power of
+    /// two is always positive regardless of the argument).
+    ReturnOptionSomeNonZero,
     /// A specific field of the returned tuple is known to be non-zero (e.g.
     /// `overflowing_abs`/`overflowing_neg` return `(result, overflow)` where
     /// `result != 0`). Used to discharge a downstream `ValidNum(result != 0)`.
@@ -374,8 +378,8 @@ pub fn effect_summary<'tcx>(
             if !interprocedural::callee_contains_pointer_arithmetic(tcx, callee) {
                 // If the callee transitively calls functions that may write
                 // through &mut args, ReturnAliasArg alone is insufficient —
-                // the writes are lost. Mark as unsupported so CalleeEntry
-                // DFS can inline the full body.
+                // the writes are lost. Mark as unsupported so the VM falls
+                // back to `exec_inline_call`, which inlines the full body.
                 let has_nested_calls = interprocedural::callee_calls_other_local(tcx, callee);
                 return CallEffectSummary {
                     callee: Some(callee),

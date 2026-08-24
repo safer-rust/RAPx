@@ -9,8 +9,7 @@ use crate::verify::{
     contract,
     path_extractor::Path,
 };
-use rustc_hir::def_id::DefId;
-use rustc_middle::mir::{BasicBlock, Local};
+use rustc_middle::mir::BasicBlock;
 
 /// A proof goal for one `(checkpoint, path)` item: the set of relevant items
 /// plus the path context needed to verify the target property.
@@ -38,17 +37,4 @@ pub enum RelevantItem<'tcx> {
     /// A conservative loss of precision for relevant state (an unsupported
     /// call whose effects are not modeled).
     Forget,
-    /// Enter a callee's MIR body. Subsequent Statement/Terminator items
-    /// are interpreted in the callee's context until `CalleeExit`.
-    /// `args` holds the caller's Local indices for each callee parameter
-    /// (arg 0 → callee local_1, arg 1 → callee local_2, ...).
-    CalleeEntry {
-        callee: DefId,
-        args: Vec<Local>,
-    },
-    /// Return from a callee's MIR body. Writes `local_0` (callee return)
-    /// to the caller's `dest` local. Restores the caller's function context.
-    CalleeExit {
-        dest: Local,
-    },
 }
