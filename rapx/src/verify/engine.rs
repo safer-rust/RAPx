@@ -5,6 +5,8 @@
 
 use z3::Config;
 
+use std::collections::HashMap;
+
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 
@@ -78,10 +80,14 @@ impl<'tcx> VerifyEngine<'tcx> {
                 );
             }
             items.extend(backward.items);
+            // Insert inlined-callee boundary markers (argument binding / return
+            // write-back) based on def_id transitions across the path.
+            items = Self::inject_inline_boundaries(items, tree, checkpoint.caller);
 
             let wrapped = crate::verify::slicer::ProofGoal {
                 path: backward.path,
                 items,
+                block_fn: backward.block_fn,
             };
 
             let vm_state = self.vm.execute(&ctx, &wrapped);
@@ -98,6 +104,71 @@ impl<'tcx> VerifyEngine<'tcx> {
         }
 
         results
+    }
+
+    /// Insert `CalleeEntry`/`CalleeExit` markers into a forward item stream by
+    /// detecting `def_id` transitions (caller → callee → caller). Each inlined
+    /// callee entry carries its argument binding; each exit writes the callee's
+    /// return value back to the caller's destination.
+    fn inject_inline_boundaries(
+        items: Vec<RelevantItem<'tcx>>,
+        tree: &PathTree,
+        caller: DefId,
+    ) -> Vec<RelevantItem<'tcx>> {
+        let mut local_to_global: HashMap<(DefId, usize), usize> = HashMap::new();
+        for (global, (def_id, local)) in tree.block_fns().iter().enumerate() {
+            local_to_global.insert((*def_id, *local), global);
+        }
+
+        let mut out: Vec<RelevantItem<'tcx>> = Vec::new();
+        // Start in the caller so a path that begins inside an inlined callee
+        // still emits its CalleeEntry on the first item.
+        let mut prev_def_id: Option<DefId> = Some(caller);
+        let mut active: Option<(DefId, usize)> = None;
+
+        for item in items {
+            let cur_def_id = match &item {
+                RelevantItem::Statement { def_id, .. }
+                | RelevantItem::Terminator { def_id, .. } => Some(*def_id),
+                _ => None,
+            };
+
+            if let Some(cur) = cur_def_id {
+                if let Some(prev) = prev_def_id {
+                    if prev != cur {
+                        if cur == caller {
+                            if let Some((_, dest)) = active.take() {
+                                out.push(RelevantItem::CalleeExit { dest });
+                            }
+                        } else {
+                            let local = match &item {
+                                RelevantItem::Statement { block, .. }
+                                | RelevantItem::Terminator { block, .. } => block.as_usize(),
+                                _ => unreachable!(),
+                            };
+                            if let Some(global) = local_to_global.get(&(cur, local)).copied() {
+                                if let Some(binding) = tree.inline_binding(global) {
+                                    out.push(RelevantItem::CalleeEntry {
+                                        callee: cur,
+                                        args: binding.arg_locals.clone(),
+                                    });
+                                    active = Some((cur, binding.dest_local));
+                                }
+                            }
+                        }
+                    }
+                }
+                prev_def_id = Some(cur);
+            }
+
+            out.push(item);
+        }
+
+        if let Some((_, dest)) = active.take() {
+            out.push(RelevantItem::CalleeExit { dest });
+        }
+
+        out
     }
 
     fn bind_property_to_checkpoint(

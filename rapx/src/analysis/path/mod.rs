@@ -5,8 +5,8 @@ use crate::utils::source::get_fn_name_byid;
 use rustc_hir::def_id::DefId;
 use std::fmt::{self, Display};
 
-use crate::compat::FxHashMap;
-use graph::PathGraph;
+use crate::compat::{FxHashMap, FxHashSet};
+use graph::{InlineBinding, PathGraph};
 
 /// Format a path slice with cleanup-block annotations.
 ///
@@ -45,6 +45,14 @@ pub fn format_path_annotated(path: &[usize], graph: &PathGraph<'_>) -> String {
 pub struct PathTree {
     root: Option<PathNode>,
     len: usize,
+    /// Per-global-block function ownership: `(def_id, local_index)`. Empty for
+    /// single-function trees; populated after CFG inlining so consumers can
+    /// resolve each block's owning function and its MIR block index.
+    block_fn: Vec<(DefId, usize)>,
+    /// Argument/return bindings for inlined callee entry blocks.
+    inline_bindings: FxHashMap<usize, InlineBinding>,
+    /// Caller blocks whose `Call` terminator was inlined.
+    inlined_call_blocks: FxHashSet<usize>,
 }
 
 /// A node in a [`PathTree`] trie.
@@ -76,7 +84,13 @@ impl PathNode {
 
 impl PathTree {
     pub fn new() -> Self {
-        PathTree { root: None, len: 0 }
+        PathTree {
+            root: None,
+            len: 0,
+            block_fn: Vec::new(),
+            inline_bindings: FxHashMap::default(),
+            inlined_call_blocks: FxHashSet::default(),
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -89,6 +103,40 @@ impl PathTree {
 
     pub fn root(&self) -> Option<&PathNode> {
         self.root.as_ref()
+    }
+
+    /// Set the per-global-block function ownership map `(def_id, local_index)`
+    /// and the inlined callee argument bindings.
+    pub fn set_block_fn(
+        &mut self,
+        map: Vec<(DefId, usize)>,
+        bindings: FxHashMap<usize, InlineBinding>,
+        inlined_calls: FxHashSet<usize>,
+    ) {
+        self.block_fn = map;
+        self.inline_bindings = bindings;
+        self.inlined_call_blocks = inlined_calls;
+    }
+
+    /// Resolve `block` to `(def_id, local_index)`, or `None` for single-function
+    /// trees (where `block` is already a local index of the single function).
+    pub fn block_fn_of(&self, block: usize) -> Option<(DefId, usize)> {
+        self.block_fn.get(block).copied()
+    }
+
+    /// All `(def_id, local_index)` entries, indexed by global block number.
+    pub fn block_fns(&self) -> &[(DefId, usize)] {
+        &self.block_fn
+    }
+
+    /// Argument/return binding for an inlined callee entry block.
+    pub fn inline_binding(&self, block: usize) -> Option<&InlineBinding> {
+        self.inline_bindings.get(&block)
+    }
+
+    /// Whether `block` (a caller block) had its `Call` terminator inlined.
+    pub fn is_inlined_call(&self, block: usize) -> bool {
+        self.inlined_call_blocks.contains(&block)
     }
 
     /// Insert a path into the tree. Returns `true` if the path was

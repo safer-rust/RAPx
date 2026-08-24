@@ -9,6 +9,7 @@ use crate::verify::{
     contract,
     path_extractor::Path,
 };
+use rustc_hir::def_id::DefId;
 use rustc_middle::mir::BasicBlock;
 
 /// A proof goal for one `(checkpoint, path)` item: the set of relevant items
@@ -19,18 +20,29 @@ pub struct ProofGoal<'tcx> {
     pub path: Path,
     /// Items kept from the path.
     pub items: Vec<RelevantItem<'tcx>>,
+    /// Per-global-block function ownership `(def_id, local_index)`, populated
+    /// for inlined multi-function paths. Empty for single-function goals.
+    pub block_fn: Vec<(DefId, usize)>,
 }
 
 /// One relevant item kept from the backward slice.
 #[derive(Clone, Debug)]
 pub enum RelevantItem<'tcx> {
-    /// A MIR statement retained from a basic block.
+    /// A MIR statement retained from a basic block. `def_id` identifies the
+    /// function owning `block` (differs from the caller for inlined callees).
     Statement {
+        def_id: DefId,
         block: BasicBlock,
         statement_index: usize,
     },
     /// A MIR terminator retained from a basic block.
-    Terminator { block: BasicBlock },
+    Terminator { def_id: DefId, block: BasicBlock },
+    /// Enter an inlined callee: bind the caller's argument locals to the callee
+    /// parameters. `args` holds the caller's argument local indices.
+    CalleeEntry { callee: DefId, args: Vec<usize> },
+    /// Return from an inlined callee: write the callee's `_0` to the caller's
+    /// destination local.
+    CalleeExit { dest: usize },
     /// A contract fact injected by the engine before the forward visit.
     /// Never produced by the backward visitor itself.
     ContractFact { property: contract::Property<'tcx> },

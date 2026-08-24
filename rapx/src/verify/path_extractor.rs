@@ -100,11 +100,17 @@ impl<'tcx> PathExtractor<'tcx> {
     /// avoiding redundant subtree construction.
     pub fn run(self) -> Vec<CallGroup<'tcx>> {
         let mut graph = PathGraph::new(self.tcx, self.def_id);
+        graph.inline_callees();
         graph.find_scc();
-        let tree = {
+        let mut tree = {
             let mut enumerator = PathEnumerator::new(&graph);
             enumerator.enumerate_paths_repeat(self.allow_repeat)
         };
+        tree.set_block_fn(
+            graph.cfg.blocks.iter().map(|b| (b.def_id, b.local_index)).collect(),
+            graph.inline_bindings.clone(),
+            graph.inlined_call_blocks.clone(),
+        );
         group_by_callee(self.checkpoints, &tree)
     }
 }

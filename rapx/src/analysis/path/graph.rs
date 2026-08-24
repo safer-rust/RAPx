@@ -157,6 +157,21 @@ pub struct PathGraph<'tcx> {
     pub cast_chains: FxHashMap<usize, usize>,
     /// Global store: maps `_dest` to encoded `(base, field_idx)` from field-projection copies.
     pub field_projection_source: FxHashMap<usize, usize>,
+    /// Per-inlined-callee argument binding: maps the callee's entry block
+    /// (global index) to the caller's argument locals and destination local.
+    pub inline_bindings: FxHashMap<usize, InlineBinding>,
+    /// Caller blocks whose `Call` terminator was inlined (their successor edge
+    /// now leads into a callee). The slicer skips these calls.
+    pub inlined_call_blocks: FxHashSet<usize>,
+}
+
+/// Argument/return binding recorded when a callee CFG is inlined.
+#[derive(Clone, Debug)]
+pub struct InlineBinding {
+    /// Caller argument locals (callee param `_i+1` ← `arg_locals[i]`).
+    pub arg_locals: Vec<usize>,
+    /// Caller destination local (receives the callee's `_0`).
+    pub dest_local: usize,
 }
 
 impl<'tcx> PathGraph<'tcx> {
@@ -172,7 +187,7 @@ impl<'tcx> PathGraph<'tcx> {
 
         for i in 0..basicblocks.len() {
             let bb = &basicblocks[BasicBlock::from(i)];
-            let mut cfg_block = CfgBlock::new(i, bb.is_cleanup);
+            let mut cfg_block = CfgBlock::new(def_id, i, bb.is_cleanup);
             let mut info = BlockConstantInfo::default();
 
             for stmt in &bb.statements {
@@ -525,7 +540,152 @@ impl<'tcx> PathGraph<'tcx> {
             aggregate_field_sources,
             field_projection_source,
             cast_chains,
+            inline_bindings: FxHashMap::default(),
+            inlined_call_blocks: FxHashSet::default(),
         }
+    }
+
+    /// Inline the CFG of callees with available MIR into this graph so that
+    /// path enumeration covers the callee's branches. Single-level
+    /// (non-recursive): a callee's own calls are left as ordinary call edges.
+    ///
+    /// Opt-in — callers that assume a single-function block space (e.g. alias
+    /// analysis) must not call this.
+    pub fn inline_callees(&mut self) {
+        let tcx = self.tcx();
+        let caller_def_id = self.def_id();
+        let caller_count = self.cfg.blocks.len();
+
+        let mut pending: Vec<(usize, DefId)> = Vec::new();
+        for i in 0..caller_count {
+            let Some(term) = self.terminator(i) else {
+                continue;
+            };
+            let TerminatorKind::Call { func, .. } = &term.kind else {
+                continue;
+            };
+            let Some(callee) = crate::helpers::mir_utils::dep_callee_def_id(func) else {
+                continue;
+            };
+            let name = tcx.def_path_str(callee);
+            let is_intrinsic = name.contains("::intrinsics::")
+                || name.starts_with("intrinsics::")
+                || name.ends_with("::drop_in_place");
+            // If fn_simulator has a hand-written summary, use it directly (it is
+            // more accurate than inline execution). Otherwise fall back to CFG
+            // inlining for cross-crate callees with available MIR.
+            let has_fn_sim = crate::verify::call_summary::fn_simulator::lookup_dependency(
+                Some(callee),
+                &name,
+                0,
+            )
+            .is_some();
+            if callee != caller_def_id
+                && tcx.is_mir_available(callee)
+                && !is_intrinsic
+                && !has_fn_sim
+                && callee.as_local().is_none()
+            {
+                pending.push((i, callee));
+            }
+        }
+
+        for (caller_idx, callee) in pending {
+            self.inline_one(caller_idx, callee);
+        }
+    }
+
+    /// Inline a single callee into `caller_idx`, reconnecting the caller's
+    /// normal successor edge through the callee body.
+    fn inline_one(&mut self, caller_idx: usize, callee: DefId) {
+        let tcx = self.tcx();
+        let (caller_target, arg_locals, dest_local) = match self.terminator(caller_idx) {
+            Some(term) => match &term.kind {
+                TerminatorKind::Call {
+                    target,
+                    args,
+                    destination,
+                    ..
+                } => {
+                    let target = target.map(|t| t.as_usize());
+                    let arg_locals: Vec<usize> = args
+                        .iter()
+                        .filter_map(|a| a.node.place().map(|p| p.local.as_usize()))
+                        .collect();
+                    (target, arg_locals, destination.local.as_usize())
+                }
+                _ => (None, Vec::new(), 0),
+            },
+            None => (None, Vec::new(), 0),
+        };
+        let Some(target) = caller_target else {
+            return;
+        };
+
+        let body = tcx.optimized_mir(callee);
+        let base = self.cfg.blocks.len();
+        let block_count = body.basic_blocks.len();
+
+        for i in 0..block_count {
+            let bb = &body.basic_blocks[BasicBlock::from(i)];
+            let mut cb = CfgBlock {
+                index: base + i,
+                def_id: callee,
+                local_index: i,
+                is_cleanup: bb.is_cleanup,
+                next: FxHashSet::default(),
+                scc: SccInfo::new(base + i),
+            };
+            if let Some(term) = &bb.terminator {
+                match &term.kind {
+                    TerminatorKind::Goto { target: t } => {
+                        cb.add_next(base + t.as_usize());
+                    }
+                    TerminatorKind::SwitchInt { targets, .. } => {
+                        for (_, t) in targets.iter() {
+                            cb.add_next(base + t.as_usize());
+                        }
+                        cb.add_next(base + targets.otherwise().as_usize());
+                    }
+                    TerminatorKind::Return => {
+                        cb.add_next(target);
+                    }
+                    TerminatorKind::Call { target: t, .. } => {
+                        if let Some(t) = t {
+                            cb.add_next(base + t.as_usize());
+                        }
+                    }
+                    TerminatorKind::Drop { target: t, .. } => {
+                        cb.add_next(base + t.as_usize());
+                    }
+                    TerminatorKind::Assert { target: t, .. } => {
+                        cb.add_next(base + t.as_usize());
+                    }
+                    TerminatorKind::FalseEdge { real_target, .. }
+                    | TerminatorKind::FalseUnwind { real_target, .. } => {
+                        cb.add_next(base + real_target.as_usize());
+                    }
+                    _ => {}
+                }
+            }
+            self.cfg.blocks.push(cb);
+            self.block_info.push(BlockConstantInfo::default());
+        }
+
+        // Record the argument binding for the callee entry.
+        self.inline_bindings.insert(
+            base,
+            InlineBinding {
+                arg_locals,
+                dest_local,
+            },
+        );
+        self.inlined_call_blocks.insert(caller_idx);
+
+        // Reconnect the caller's normal successor edge through the callee entry.
+        let caller_block = self.cfg.block_mut(caller_idx);
+        caller_block.next.remove(&target);
+        caller_block.next.insert(base);
     }
 
     pub fn find_scc(&mut self) {
@@ -675,7 +835,8 @@ impl<'tcx> PathGraph<'tcx> {
         let TerminatorKind::Assert { cond, target, .. } = &terminator.kind else {
             return true;
         };
-        if next != target.as_usize() {
+        let base = cur - self.cfg.block(cur).local_index;
+        if next != base + target.as_usize() {
             return true;
         }
         let cond_local = match cond {
@@ -799,6 +960,10 @@ impl<'tcx> PathGraph<'tcx> {
         let Some(terminator) = self.cfg.terminator(cur) else {
             return true;
         };
+        // Base offset of the function owning `cur` (0 for the caller, the
+        // callee's global start for inlined blocks). Switch targets are local
+        // MIR block indices, so they must be shifted into the global space.
+        let base = cur - self.cfg.block(cur).local_index;
 
         match &terminator.kind {
             TerminatorKind::SwitchInt { discr, targets } => {
@@ -810,8 +975,8 @@ impl<'tcx> PathGraph<'tcx> {
                 // Collect all possible successor blocks for this switch.
                 let all_targets: FxHashSet<usize> = targets
                     .iter()
-                    .map(|(_, bb)| bb.as_usize())
-                    .chain(std::iter::once(targets.otherwise().as_usize()))
+                    .map(|(_, bb)| base + bb.as_usize())
+                    .chain(std::iter::once(base + targets.otherwise().as_usize()))
                     .collect();
 
                 if !all_targets.contains(&next) {
@@ -834,7 +999,7 @@ impl<'tcx> PathGraph<'tcx> {
                     // Discriminant is a literal constant — only one target is
                     // reachable.
                     let expected = resolve_switch_target(targets, val as u128);
-                    if next != expected {
+                    if next != base + expected {
                         return false;
                     }
                     if let Some(local) = constraint_local {
@@ -846,7 +1011,7 @@ impl<'tcx> PathGraph<'tcx> {
                 if let Some(local) = constraint_local {
                     if let Some(&known_val) = constraints.get(&local) {
                         let expected = resolve_switch_target(targets, known_val as u128);
-                        if next != expected {
+                        if next != base + expected {
                             return false;
                         }
                         return true;
@@ -872,7 +1037,7 @@ impl<'tcx> PathGraph<'tcx> {
                         if let Some(local) = constraint_local {
                             constraints.insert(local, val);
                         }
-                        if next != expected {
+                        if next != base + expected {
                             return false;
                         }
                         return true;
@@ -885,7 +1050,7 @@ impl<'tcx> PathGraph<'tcx> {
                         if let Some(local) = constraint_local {
                             constraints.insert(local, val);
                         }
-                        if next != expected {
+                        if next != base + expected {
                             return false;
                         }
                         return true;
@@ -910,7 +1075,7 @@ impl<'tcx> PathGraph<'tcx> {
                         if let Some(local) = constraint_local {
                             constraints.insert(local, val);
                         }
-                        if next != expected {
+                        if next != base + expected {
                             return false;
                         }
                         return true;
@@ -947,7 +1112,7 @@ impl<'tcx> PathGraph<'tcx> {
                         if let Some(local) = constraint_local {
                             constraints.insert(local, val);
                         }
-                        if next != expected {
+                        if next != base + expected {
                             return false;
                         }
                         return true;
@@ -998,7 +1163,7 @@ impl<'tcx> PathGraph<'tcx> {
             return;
         };
         let Some((val, _)) = targets.iter().find(|(_, bb)| bb.as_usize() == next) else {
-            if let Some(inferred) = self.infer_otherwise_value(targets, local) {
+            if let Some(inferred) = self.infer_otherwise_value(cur, targets, local) {
                 constraints.insert(local, inferred);
                 self.backprop_constraint(cur, local, inferred, constraints);
             }
@@ -1137,8 +1302,13 @@ impl<'tcx> PathGraph<'tcx> {
     /// For the "otherwise" branch of a `SwitchInt`, try to infer the single
     /// concrete value that the discriminant must have (because all other
     /// possible values are covered by explicit targets).
-    fn infer_otherwise_value(&self, targets: &SwitchTargets, discr_local: usize) -> Option<usize> {
-        let body = self.cfg.tcx.optimized_mir(self.cfg.def_id);
+    fn infer_otherwise_value(
+        &self,
+        cur: usize,
+        targets: &SwitchTargets,
+        discr_local: usize,
+    ) -> Option<usize> {
+        let body = self.cfg.tcx.optimized_mir(self.cfg.block(cur).def_id);
         let mut discr_ty = body.local_decls[Local::from_usize(discr_local)].ty;
         while let TyKind::Ref(_, inner, _) | TyKind::RawPtr(inner, _) = discr_ty.kind() {
             discr_ty = *inner;
@@ -1178,7 +1348,8 @@ impl<'tcx> PathGraph<'tcx> {
         };
 
         if let UnwindAction::Cleanup(target) = unwind {
-            return target.as_usize() == next;
+            let base = cur - self.cfg.block(cur).local_index;
+            return base + target.as_usize() == next;
         }
         false
     }

@@ -7,8 +7,10 @@
 
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::Body;
-use rustc_middle::mir::{BasicBlock, StatementKind, TerminatorKind};
+use rustc_middle::mir::{BasicBlock, Local, StatementKind, TerminatorKind};
 use rustc_middle::ty::TyCtxt;
+
+use std::collections::{HashMap, HashSet};
 
 use crate::analysis::dataflow::graph::build_dataflow_graph;
 use crate::analysis::dataflow::types::DataflowGraph;
@@ -104,18 +106,30 @@ impl<'tcx> BackwardSlicer<'tcx> {
             caller,
             block: checkpoint_block,
         };
-        let body = self.tcx.optimized_mir(caller);
-        let flow = build_dataflow_graph(self.tcx, caller);
+
+        // Pre-build the MIR body and dataflow graph for every function reachable
+        // through this tree (caller + inlined callees), so inlined blocks resolve
+        // to the correct body/flow.
+        let mut bodies: HashMap<DefId, &'tcx Body<'tcx>> = HashMap::new();
+        let mut flows: HashMap<DefId, DataflowGraph> = HashMap::new();
+        let mut def_ids: HashSet<DefId> = tree.block_fns().iter().map(|(d, _)| *d).collect();
+        def_ids.insert(caller);
+        for d in def_ids {
+            bodies.insert(d, self.tcx.optimized_mir(d));
+            flows.insert(d, build_dataflow_graph(self.tcx, d));
+        }
 
         let leaf_results = Self::build_leaf_items(
             self,
+            tree,
             root,
             target_block,
             checkpoint_block,
             bind_checkpoint,
             property,
-            &body,
-            &flow,
+            caller,
+            &bodies,
+            &flows,
         );
 
         let mut results = Vec::new();
@@ -133,6 +147,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
                     steps,
                 },
                 items,
+                block_fn: tree.block_fns().to_vec(),
             });
         }
         results
@@ -143,15 +158,20 @@ impl<'tcx> BackwardSlicer<'tcx> {
     /// — no merging, no HashMap collision.
     fn build_leaf_items(
         visitor: &Self,
+        tree: &PathTree,
         node: &PathNode,
         target_block: usize,
         checkpoint_block: BasicBlock,
         bind_checkpoint: Option<&Checkpoint<'tcx>>,
         property: &contract::Property<'tcx>,
-        body: &'tcx rustc_middle::mir::Body<'tcx>,
-        flow: &DataflowGraph,
+        caller: DefId,
+        bodies: &HashMap<DefId, &'tcx Body<'tcx>>,
+        flows: &HashMap<DefId, DataflowGraph>,
     ) -> Vec<(Vec<usize>, Vec<RelevantItem<'tcx>>, RelevantPlaces)> {
-        let block = BasicBlock::from(node.block);
+        let (def_id, local_index) = tree.block_fn_of(node.block).unwrap_or((caller, node.block));
+        let body = &bodies[&def_id];
+        let flow = &flows[&def_id];
+        let block = BasicBlock::from(local_index);
         let keep_inv = property.kind().is_some_and(|k| needs_invalidation_tracking(&k));
         let block_data = &body.basic_blocks[block];
         let mut results = Vec::new();
@@ -164,11 +184,13 @@ impl<'tcx> BackwardSlicer<'tcx> {
             }
             let mut items = Vec::new();
             items.push(RelevantItem::Terminator {
+                def_id: caller,
                 block: checkpoint_block,
             });
             // Pass 1: normal processing.
             for (si, stmt) in block_data.statements.iter().enumerate().rev() {
                 visitor.visit_statement(
+                    def_id,
                     checkpoint_block,
                     si,
                     stmt,
@@ -180,7 +202,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
             }
             // Pass 2: re-visit definitions that became relevant only
             // during pass 1.
-            Self::re_visit_newly_added(visitor, checkpoint_block, block_data, flow, &mut relevant, &mut items, keep_inv);
+            Self::re_visit_newly_added(visitor, def_id, checkpoint_block, block_data, flow, &mut relevant, &mut items, keep_inv);
             (items, relevant)
         } else {
             (Vec::new(), RelevantPlaces::new())
@@ -191,31 +213,50 @@ impl<'tcx> BackwardSlicer<'tcx> {
         for child in &node.children {
             let child_results = Self::build_leaf_items(
                 visitor,
+                tree,
                 child,
                 target_block,
                 checkpoint_block,
                 bind_checkpoint,
                 property,
-                body,
-                flow,
+                caller,
+                bodies,
+                flows,
             );
             for (mut child_path, child_items, child_relevant) in child_results {
                 let mut relevant = child_relevant;
                 let mut items = child_items;
-                // function entry even for child (deeper SCC) paths,
-                // otherwise allocation/initialization facts are missing.
-                visitor.visit_terminator(
-                    block,
-                    block_data.terminator(),
-                    flow,
-                    body,
-                    &mut relevant,
-                    &mut items,
-                    keep_inv,
-                );
+                // When this node is an inlined callee entry, the child's
+                // relevance may carry the caller's destination local (the value
+                // returned by this callee). Remap it to the callee's return
+                // local `_0` so the callee body is sliced.
+                if let Some(binding) = tree.inline_binding(node.block) {
+                    let dest = Local::from_usize(binding.dest_local);
+                    if relevant.locals.contains(&dest) {
+                        relevant.locals.remove(&dest);
+                        relevant.places.retain(|p| p.local() != Some(dest));
+                        relevant.insert_local(Local::from_usize(0));
+                    }
+                }
+                // Skip the `Call` terminator when this block's call was inlined:
+                // the callee's statements are already sliced via the path, so
+                // treating the call as atomic would double-count it.
+                if !tree.is_inlined_call(node.block) {
+                    visitor.visit_terminator(
+                        def_id,
+                        block,
+                        block_data.terminator(),
+                        flow,
+                        body,
+                        &mut relevant,
+                        &mut items,
+                        keep_inv,
+                    );
+                }
                 let block_stmt_count = block_data.statements.len();
                 for (si, stmt) in block_data.statements.iter().enumerate().rev() {
                     visitor.visit_statement(
+                        def_id,
                         block,
                         si,
                         stmt,
@@ -225,15 +266,22 @@ impl<'tcx> BackwardSlicer<'tcx> {
                         keep_inv,
                     );
                 }
-                // For ancestors of the checkpoint block, do a second
-                // pass limited to statements whose defs became relevant
-                // only during pass 1.  This catches the case where a
-                // copy adds a place to relevance, enabling an earlier
-                // definition to match.  Limited to 3 levels above the
-                // checkpoint to avoid spurious matches in deep trees.
+                // Leaving an inlined callee entry: remap the callee's parameter
+                // locals back to the caller's argument locals so the caller's
+                // argument-producing statements stay relevant.
+                if let Some(binding) = tree.inline_binding(node.block) {
+                    for (i, arg_local) in binding.arg_locals.iter().enumerate() {
+                        let param = Local::from_usize(i + 1);
+                        if relevant.locals.contains(&param) {
+                            relevant.locals.remove(&param);
+                            relevant.places.retain(|p| p.local() != Some(param));
+                            relevant.insert_local(Local::from_usize(*arg_local));
+                        }
+                    }
+                }
                 let dist_to_target = child_path.iter().position(|&b| b == target_block);
                 if block_stmt_count > 0 && dist_to_target.map_or(false, |d| d <= 2) {
-                    Self::re_visit_newly_added(visitor, block, block_data, flow, &mut relevant, &mut items, keep_inv);
+                    Self::re_visit_newly_added(visitor, def_id, block, block_data, flow, &mut relevant, &mut items, keep_inv);
                 }
                 child_path.insert(0, node.block);
                 results.push((child_path, items, relevant));
@@ -258,6 +306,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
     /// (tracked in `RelevantPlaces::just_added`).
     fn re_visit_newly_added(
         visitor: &Self,
+        def_id: DefId,
         block: BasicBlock,
         block_data: &'tcx rustc_middle::mir::BasicBlockData<'tcx>,
         flow: &DataflowGraph,
@@ -283,6 +332,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
             });
             if any_new {
                 visitor.visit_statement(
+                    def_id,
                     block,
                     si,
                     stmt,
@@ -298,6 +348,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
     /// Visit one MIR statement against the current relevance frontier.
     fn visit_statement(
         &self,
+        def_id: DefId,
         block: BasicBlock,
         statement_index: usize,
         statement: &'tcx rustc_middle::mir::Statement<'tcx>,
@@ -309,6 +360,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
         if keep_invalidations && matches!(statement.kind, StatementKind::StorageDead(_) | StatementKind::StorageLive(_))
         {
             items.push(RelevantItem::Statement {
+                def_id,
                 block,
                 statement_index,
             });
@@ -330,6 +382,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
         if defs.intersects(relevant) {
             let mut uses = collect_statement_uses(statement, block, statement_index, flow);
             items.push(RelevantItem::Statement {
+                def_id,
                 block,
                 statement_index,
             });
@@ -363,6 +416,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
 
         if statement_invalidates_relevant(statement, relevant) {
             items.push(RelevantItem::Statement {
+                def_id,
                 block,
                 statement_index,
             });
@@ -378,6 +432,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
             }
             if uses.intersects(relevant) {
                 items.push(RelevantItem::Statement {
+                    def_id,
                     block,
                     statement_index,
                 });
@@ -388,6 +443,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
     /// Visit one MIR terminator against the current relevance frontier.
     fn visit_terminator(
         &self,
+        def_id: DefId,
         block: BasicBlock,
         terminator: &rustc_middle::mir::Terminator<'tcx>,
         flow: &DataflowGraph,
@@ -397,7 +453,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
         keep_invalidations: bool,
     ) {
         if keep_invalidations && matches!(terminator.kind, TerminatorKind::Drop { .. }) {
-            items.push(RelevantItem::Terminator { block });
+            items.push(RelevantItem::Terminator { def_id, block });
             return;
         }
 
@@ -410,6 +466,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
         {
             call_visit::visit(
                 self.tcx,
+                def_id,
                 block,
                 func,
                 args,
@@ -424,7 +481,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
 
         let use_def = terminator_use_def(terminator);
         if terminator_is_path_condition(terminator) {
-            items.push(RelevantItem::Terminator { block });
+            items.push(RelevantItem::Terminator { def_id, block });
             relevant.extend(use_def.uses.clone());
             return;
         }
@@ -433,7 +490,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
             if terminator_may_havoc(terminator) {
                 items.push(RelevantItem::Forget);
             }
-            items.push(RelevantItem::Terminator { block });
+            items.push(RelevantItem::Terminator { def_id, block });
             relevant.remove_all(&use_def.defs);
             relevant.extend(use_def.uses);
             return;
@@ -443,7 +500,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
             if terminator_may_havoc(terminator) {
                 items.push(RelevantItem::Forget);
             }
-            items.push(RelevantItem::Terminator { block });
+            items.push(RelevantItem::Terminator { def_id, block });
         }
     }
 }

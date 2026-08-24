@@ -18,8 +18,13 @@ use rustc_span::def_id::DefId;
 /// [`ControlFlowGraph::terminator`] to retrieve it on demand from MIR.
 #[derive(Debug, Clone)]
 pub struct CfgBlock {
-    /// Index of this block in the CFG block list.
+    /// Index of this block in the CFG block list (global, unique across an
+    /// inlined multi-function CFG).
     pub index: usize,
+    /// The function whose MIR contains this block.
+    pub def_id: DefId,
+    /// This block's index within `def_id`'s MIR basic blocks.
+    pub local_index: usize,
     /// Whether this block belongs to MIR cleanup/unwind control flow.
     pub is_cleanup: bool,
     /// Outgoing successor block indices.
@@ -32,10 +37,12 @@ pub struct CfgBlock {
 }
 
 impl CfgBlock {
-    /// Create a new CFG block with default analysis metadata.
-    pub fn new(index: usize, is_cleanup: bool) -> Self {
+    /// Create a new CFG block for `def_id` at MIR basic block `index`.
+    pub fn new(def_id: DefId, index: usize, is_cleanup: bool) -> Self {
         Self {
             index,
+            def_id,
+            local_index: index,
             is_cleanup,
             next: FxHashSet::default(),
             scc: SccInfo::new(index),
@@ -86,9 +93,10 @@ impl<'tcx> ControlFlowGraph<'tcx> {
     /// Returns `None` only for blocks whose terminator has not yet been
     /// elaborated (which is unusual for optimized MIR).
     pub fn terminator(&self, index: usize) -> Option<&Terminator<'tcx>> {
-        let body = self.tcx.optimized_mir(self.def_id);
+        let block = self.blocks.get(index)?;
+        let body = self.tcx.optimized_mir(block.def_id);
         body.basic_blocks
-            .get(BasicBlock::from(index))
+            .get(BasicBlock::from(block.local_index))
             .and_then(|bb| bb.terminator.as_ref())
     }
 }

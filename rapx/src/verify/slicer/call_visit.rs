@@ -6,6 +6,7 @@
 //! modify relevant state.
 
 use crate::compat::Spanned;
+use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{BasicBlock, Body, Operand, Place};
 use rustc_middle::ty::TyCtxt;
 
@@ -21,6 +22,7 @@ use super::types::RelevantItem;
 /// Visit a call terminator using an interprocedural dependency summary.
 pub(crate) fn visit<'tcx>(
     tcx: TyCtxt<'tcx>,
+    def_id: DefId,
     block: BasicBlock,
     func: &Operand<'tcx>,
     args: &[Spanned<Operand<'tcx>>],
@@ -48,7 +50,7 @@ pub(crate) fn visit<'tcx>(
         if summary.unsupported {
             items.push(RelevantItem::Forget);
         }
-        items.push(RelevantItem::Terminator { block });
+        items.push(RelevantItem::Terminator { def_id, block });
         relevant.remove_all(&defs);
         relevant.extend(call_args_uses_at(args, &summary.return_depends_on_args));
         return;
@@ -66,7 +68,7 @@ pub(crate) fn visit<'tcx>(
         if summary.unsupported {
             items.push(RelevantItem::Forget);
         }
-        items.push(RelevantItem::Terminator { block });
+        items.push(RelevantItem::Terminator { def_id, block });
         relevant.extend(call_args_uses_at(args, &summary.may_write_args));
     }
 
@@ -99,7 +101,7 @@ pub(crate) fn visit<'tcx>(
                         if let Some(local) = dest_key.local() {
                             relevant.locals.insert(local);
                         }
-                        items.push(RelevantItem::Terminator { block });
+                        items.push(RelevantItem::Terminator { def_id, block });
                     }
                 }
             }

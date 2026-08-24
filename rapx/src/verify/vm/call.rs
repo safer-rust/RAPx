@@ -567,6 +567,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
 
         // ── Capture return value and its per-field values ──
         let return_val = self.locals.get(&Local::from_usize(0)).cloned();
+        crate::rap_info!("exec_inline_call: callee={:?} return_val={:?}", callee_def_id, return_val.as_ref().map(|v| (v.term.to_string(), v.invariants.non_null)));
         let return_fields: Vec<(Vec<usize>, VmValue<'ctx, 'tcx>)> = self
             .field_values
             .iter()

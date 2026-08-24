@@ -117,8 +117,10 @@ static REGISTRY: &[Entry] = &[
 
     // ── Slice / collection queries ──────────────────────────────────
     E!(api_classify::is_len,  arg0!(),  false,  no_args!(),  eff_len),
+    E!(api_classify::is_capacity, arg0!(), false, no_args!(), eff_len),
     E!(is_empty,              arg0!(),  false,  no_args!(),  eff_is_empty),
     E!(cmp_min,               ALL,      true,   no_args!(),  eff_cmp_min),
+    E!(midpoint,              ALL,      true,   no_args!(),  eff_cmp_min),
     E!(bit_preserving_nz,     ALL,      true,   no_args!(),  eff_return_nonzero_iff),
     E!(checked_pow_nz,        ALL,      true,   no_args!(),  eff_return_option_some_nonzero_iff),
     E!(checked_abs_nz,        ALL,      true,   no_args!(),  eff_return_option_some_nonzero_iff),
@@ -464,7 +466,7 @@ fn into_iter_local(n: &str) -> bool          {
     (n.contains("into_iter") && (n.contains("IntoIterator") || n.contains("slice::into_iter")))
         || n.contains("slice::<impl [T]>::iter")
 }
-fn iter_position(n: &str) -> bool            { n.contains("Iterator::position") || n.contains("Iterator::find") }
+fn iter_position(n: &str) -> bool            { n.contains("Iterator::position") || n.contains("Iterator::find") || n.contains("Iterator::rposition") }
 fn is_strlen(n: &str) -> bool                { n == "strlen" || n.ends_with("::strlen") }
 fn from_trait_call(n: &str) -> bool         { n == "std::convert::From::from" || n == "core::convert::From::from" }
 fn nonnull_from(n: &str) -> bool            { n.ends_with("::from") && api_classify::is_nonnull_api(n) }
@@ -475,6 +477,11 @@ fn nonnull_as_mut(n: &str) -> bool          { n.ends_with("::as_mut") && api_cla
 fn ptr_read(n: &str) -> bool                { n.ends_with("::read") && n.contains("::ptr::") }
 fn is_empty(n: &str) -> bool                { n.ends_with("::is_empty") }
 fn cmp_min(n: &str) -> bool                 { (n.contains("::cmp::min") || n.contains("::Ord::min") || n.starts_with("core::cmp::min")) && !n.contains("min_by") }
+
+/// `u32::midpoint`/`usize::midpoint`: `midpoint(a, b) >= min(a, b)`, so it is
+/// non-zero whenever both arguments are non-zero. Modelled with `ReturnMin`
+/// (a conservative lower bound that still discharges `ValidNum` obligations).
+fn midpoint(n: &str) -> bool { n.ends_with("::midpoint") }
 
 /// Bit-preserving integer operations: rotations, byte/bit reversals,
 /// endianness conversions, popcount and integer square root all map `0` to

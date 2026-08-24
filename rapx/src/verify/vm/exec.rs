@@ -13,6 +13,7 @@ use rustc_middle::{
 };
 #[cfg(not(rapx_has_skip_norm_wip))]
 use crate::compat::SkipNormWip;
+use rustc_hir::def_id::DefId;
 use z3::ast::{Ast, Bool, Int};
 
 use crate::{
@@ -25,7 +26,7 @@ use crate::{
     },
 };
 
-use super::state::{AllocId, Provenance, VmState, VmValue, ValueInvariants};
+use super::state::{AllocId, InlineFrame, Provenance, VmState, VmValue, ValueInvariants};
 
 use crate::helpers::api_classify;
 
@@ -42,22 +43,37 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         for item in items {
             match item {
                 RelevantItem::Statement {
+                    def_id,
                     block,
                     statement_index,
                 } => {
+                    let body = self.tcx.optimized_mir(*def_id);
                     let statement =
-                        &self.body.basic_blocks[*block].statements[*statement_index];
+                        &body.basic_blocks[*block].statements[*statement_index];
+                    let saved = self.body;
+                    self.body = body;
                     self.exec_statement(*block, *statement_index, statement);
+                    self.body = saved;
                 }
-                RelevantItem::Terminator { block } => {
+                RelevantItem::Terminator { def_id, block } => {
+                    let body = self.tcx.optimized_mir(*def_id);
                     let occ = self
                         .block_occurrences
                         .get(block)
                         .map(|c| c + 1)
                         .unwrap_or(1);
                     self.block_occurrences.insert(*block, occ);
-                    let terminator = self.body.basic_blocks[*block].terminator();
+                    let terminator = body.basic_blocks[*block].terminator();
+                    let saved = self.body;
+                    self.body = body;
                     self.exec_terminator(*block, terminator, occ);
+                    self.body = saved;
+                }
+                RelevantItem::CalleeEntry { callee, args } => {
+                    self.handle_callee_entry(*callee, args);
+                }
+                RelevantItem::CalleeExit { dest } => {
+                    self.handle_callee_exit(*dest);
                 }
                 RelevantItem::ContractFact { property } => {
                     self.assert_contract_fact(property);
@@ -66,6 +82,100 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     self.notes.push("forget: unsupported call".to_string());
                 }
             }
+        }
+    }
+
+    /// Enter an inlined callee during path execution: save the caller context,
+    /// switch to the callee body, and bind the caller's argument locals to the
+    /// callee's parameters.
+    fn handle_callee_entry(
+        &mut self,
+        callee: DefId,
+        arg_locals: &[usize],
+    ) {
+        let saved_body = self.body;
+        let saved_def_id = self.caller_def_id;
+        let saved_locals = std::mem::take(&mut self.locals);
+        let saved_field_values = std::mem::take(&mut self.field_values);
+
+        // Collect the caller argument fields from the saved map, so the callee's
+        // parameters inherit them (e.g. NonZero's non-zero inner value).
+        let mut arg_fields: Vec<(usize, Vec<usize>, VmValue<'ctx, 'tcx>)> = Vec::new();
+        for (i, arg) in arg_locals.iter().enumerate() {
+            let caller_local = Local::from_usize(*arg);
+            let keys: Vec<Vec<usize>> = saved_field_values
+                .keys()
+                .filter(|(l, _)| *l == caller_local)
+                .map(|(_, f)| f.clone())
+                .collect();
+            for fields in keys {
+                if let Some(fv) = saved_field_values.get(&(caller_local, fields.clone())).cloned() {
+                    arg_fields.push((i + 1, fields, fv));
+                }
+            }
+        }
+
+        self.body = self.tcx.optimized_mir(callee);
+        self.caller_def_id = callee;
+
+        for (i, arg) in arg_locals.iter().enumerate() {
+            if let Some(v) = saved_locals.get(&Local::from_usize(*arg)).cloned() {
+                self.set_local(Local::from_usize(i + 1), v);
+            }
+        }
+        for (callee_param, fields, fv) in arg_fields {
+            self.set_field_value(Local::from_usize(callee_param), fields, fv);
+        }
+
+        self.inline_frames.push(InlineFrame {
+            body: saved_body,
+            def_id: saved_def_id,
+            saved_locals,
+            saved_field_values,
+        });
+    }
+
+    /// Exit an inlined callee: capture the callee's return value, restore the
+    /// caller context, and write the return value to the caller's destination.
+    fn handle_callee_exit(
+        &mut self,
+        dest: usize,
+    ) {
+        let ret = self.locals.get(&Local::from_usize(0)).cloned();
+        let ret_fields: Vec<(Vec<usize>, VmValue<'ctx, 'tcx>)> = self
+            .field_values
+            .iter()
+            .filter(|((l, _), _)| *l == Local::from_usize(0))
+            .map(|((_, f), v)| (f.clone(), v.clone()))
+            .collect();
+        if let Some(frame) = self.inline_frames.pop() {
+            self.body = frame.body;
+            self.caller_def_id = frame.def_id;
+            self.locals = frame.saved_locals;
+            self.field_values = frame.saved_field_values;
+        }
+        if let Some(mut v) = ret {
+            let dest_ty = self.body.local_decls[Local::from_usize(dest)].ty;
+            v.ty = dest_ty;
+            // Infer invariants: a non-null provenance with offset 0 means the
+            // return value is valid and initialized.
+            if let Some(ref prov) = v.provenance {
+                if prov.offset.as_u64() == Some(0) {
+                    v.invariants.non_null = true;
+                    v.invariants.init = true;
+                    v.invariants.aligned = true;
+                    self.alloc_mut(prov.alloc_id).initialized = true;
+                }
+            }
+            self.set_local(Local::from_usize(dest), v);
+            // The callee returned a fully-constructed value, so the caller's
+            // destination stack slot is initialized.
+            if let Some(dest_alloc_id) = self.local_alloc_ids.get(&Local::from_usize(dest)).copied() {
+                self.alloc_mut(dest_alloc_id).initialized = true;
+            }
+        }
+        for (fields, fv) in ret_fields {
+            self.set_field_value(Local::from_usize(dest), fields, fv);
         }
     }
 

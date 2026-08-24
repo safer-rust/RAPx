@@ -160,6 +160,15 @@ pub(crate) struct ByteInfo<'ctx> {
     pub nul: Option<bool>,
 }
 
+/// A saved caller context pushed when entering an inlined callee during path
+/// execution.
+pub(crate) struct InlineFrame<'ctx, 'tcx> {
+    pub body: &'ctx Body<'tcx>,
+    pub def_id: DefId,
+    pub saved_locals: FxHashMap<Local, VmValue<'ctx, 'tcx>>,
+    pub saved_field_values: FxHashMap<(Local, Vec<usize>), VmValue<'ctx, 'tcx>>,
+}
+
 /// The full symbolic execution state at a program point.
 ///
 /// Accumulates locals, allocations, path conditions, and definitions
@@ -259,6 +268,9 @@ pub struct VmState<'ctx, 'tcx> {
     /// bound nested inlining and avoid unbounded recursion / stack overflow.
     pub(crate) inline_depth: usize,
 
+    /// Stack of saved caller contexts for inlined-callee path execution.
+    pub(crate) inline_frames: Vec<InlineFrame<'ctx, 'tcx>>,
+
     /// Terms that are the result of a bitwise `Not` (two's-complement mask).
     /// Used to recognize `x & !(align-1)` alignment patterns in BitAnd so we
     /// can derive `align = -mask` and emit linear bounds for the result.
@@ -299,6 +311,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             path: None,
             last_call_name: String::new(),
             inline_depth: 0,
+            inline_frames: Vec::new(),
             not_mask_terms: FxHashSet::default(),
         }
     }
