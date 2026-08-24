@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 //! Standard-library API name classification helpers.
 //!
 //! Each function matches a specific pattern in a MIR callee's
@@ -45,7 +44,6 @@ pub fn is_byte_ptr_arith(name: &str) -> bool {
 }
 
 pub fn is_layout_constant(name: &str) -> bool { name.contains("align_of") || name.contains("size_of") }
-pub(crate) fn is_align_of(name: &str) -> bool { name.contains("align_of") }
 pub fn is_align_offset(name: &str) -> bool { name.contains("::align_offset") }
 pub fn is_as_ptr_range(name: &str) -> bool { name.ends_with("::as_ptr_range") }
 pub fn is_as_mut_ptr_range(name: &str) -> bool { name.ends_with("::as_mut_ptr_range") }
@@ -75,15 +73,6 @@ pub fn is_len(name: &str) -> bool { name.contains("::len") }
 pub fn is_capacity(name: &str) -> bool { name.contains("::capacity") }
 pub fn is_offset_from_unsigned(name: &str) -> bool {
     name.contains("::offset_from_unsigned") || name.contains("::offset_from")
-}
-/// Numeric operations with no precise effect model — these fall back to an
-/// unconstrained result (`eff_none`). `unchecked_add/mul` and `checked_add/mul`
-/// are deliberately absent: `REGISTRY` matches them earlier with the more
-/// precise `int_add`/`int_mul`/`int_checked_*` rows.
-pub fn is_numeric_arith(name: &str) -> bool {
-    name.contains("::unchecked_sub") || name.contains("::unchecked_div")
-        || name.contains("::unchecked_rem") || name.contains("::exact_div")
-        || name.contains("::checked_sub")
 }
 pub fn is_option_unwrap(name: &str) -> bool {
     (name.contains("Option") || name.contains("Result"))

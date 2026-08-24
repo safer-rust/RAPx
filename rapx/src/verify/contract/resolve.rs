@@ -167,6 +167,24 @@ pub(crate) fn parse_type<'tcx>(
     expr: &Expr,
     sp: &str,
 ) -> Option<Ty<'tcx>> {
+    // A generic type argument (`Option<NonZero<T>>`, `NonZero<T>`) is wrapped as
+    // `Expr::Verbatim` by the attribute parser. Extract the outermost type name
+    // and resolve it like a plain identifier.
+    if let Expr::Verbatim(ts) = expr {
+        let name = safety_parser::syn::parse2::<safety_parser::syn::Type>(ts.clone())
+            .ok()
+            .and_then(|ty| outermost_type_ident(&ty));
+        let Some(name) = name else {
+            rap_debug!("Incorrect expression for the type of {:?} Tag!", sp);
+            return None;
+        };
+        let ty = match_ty_with_ident(tcx, def_id, name);
+        if ty.is_none() {
+            rap_debug!("Cannot get type in {:?} Tag!", sp);
+        }
+        return ty;
+    }
+
     let ty_ident_full = access_ident_recursive(expr);
     if ty_ident_full.is_none() {
         rap_debug!("Incorrect expression for the type of {:?} Tag!", sp);
@@ -178,6 +196,17 @@ pub(crate) fn parse_type<'tcx>(
         rap_debug!("Cannot get type in {:?} Tag!", sp);
     }
     ty
+}
+
+/// Extract the outermost path segment name from a `syn::Type`, e.g. `Option`
+/// from `Option<NonZero<T>>` or `NonZero` from `NonZero<T>`.
+fn outermost_type_ident(ty: &safety_parser::syn::Type) -> Option<String> {
+    match ty {
+        safety_parser::syn::Type::Path(tp) if tp.qself.is_none() => {
+            tp.path.segments.last().map(|s| s.ident.to_string())
+        }
+        _ => None,
+    }
 }
 
 pub(crate) fn parse_target_arg<'tcx>(

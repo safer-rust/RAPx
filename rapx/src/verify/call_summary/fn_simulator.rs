@@ -66,12 +66,11 @@ static REGISTRY: &[Entry] = &[
     // ── Pass-through / no-effect calls ──────────────────────────────
     E!(api_classify::is_maybe_uninit_uninit,no_args!(), false, no_args!(), eff_none),
     E!(api_classify::is_maybe_uninit_assume_init,arg0!(), false, no_args!(), eff_none),
-    // Non-zero-preserving integer operations must be matched *before* the
-    // generic `is_numeric_arith` pass-through below. Each is modelled with a
-    // precise expression over its operands (ite / arithmetic) so the solver
-    // can discharge a downstream `!= 0` obligation *conditionally* — only
-    // when the operands are actually non-zero — rather than asserting the
-    // result is unconditionally non-zero.
+    // Non-zero-preserving integer operations are each modelled with a precise
+    // expression over its operands (ite / arithmetic) so the solver can
+    // discharge a downstream `!= 0` obligation *conditionally* — only when the
+    // operands are actually non-zero — rather than asserting the result is
+    // unconditionally non-zero.
     E!(int_max,               ALL,      true,   no_args!(),  eff_return_max),
     E!(int_clamp,             ALL,      true,   no_args!(),  eff_return_clamp),
     E!(int_abs,               ALL,      true,   no_args!(),  eff_return_abs),

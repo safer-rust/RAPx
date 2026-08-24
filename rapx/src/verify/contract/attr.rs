@@ -13,9 +13,11 @@
 //! where `kind = "..."` applies to the property in the same attribute.
 
 use syn::{
-    Expr, ExprCall, ExprPath, Lit, Result as SynResult, Token,
+    Expr, Lit, Result as SynResult, Token,
     parse::{Parse, ParseStream},
 };
+
+use quote::ToTokens;
 
 use regex::Regex;
 use std::sync::LazyLock;
@@ -38,8 +40,7 @@ impl Parse for ParsedProperty {
     /// - `nonzero(x)`
     /// - `nonzero(x), kind = "ptr"`
     fn parse(input: ParseStream<'_>) -> SynResult<Self> {
-        let expr: Expr = input.parse()?;
-        let mut property = parse_property_expr(expr)?;
+        let mut property = parse_property_head(input)?;
 
         if input.peek(Token![,]) {
             let fork = input.fork();
@@ -126,36 +127,52 @@ fn is_expected_syn_rapx_attr(attr: &syn::Attribute, expected_name: &str) -> bool
     )
 }
 
-/// Parse a property call expression into a [`ParsedProperty`].
-fn parse_property_expr(expr: Expr) -> SynResult<ParsedProperty> {
-    match expr {
-        Expr::Call(ExprCall { func, args, .. }) => {
-            // Use the final segment of the callee path as the property tag.
-            let tag = match *func {
-                Expr::Path(ExprPath { path, .. }) => path
-                    .segments
-                    .last()
-                    .map(|seg| seg.ident.to_string())
-                    .ok_or_else(|| syn::Error::new_spanned(path, "missing property name"))?,
-                other => {
-                    return Err(syn::Error::new_spanned(
-                        other,
-                        "unsupported RAPx property callee expression",
-                    ));
-                }
-            };
+/// Parse a property call head `tag(arg0, arg1, ...)`.
+///
+/// The argument list is parsed position-by-position rather than as a single
+/// `Expr::Call`, because property arguments may be generic *types* (e.g.
+/// `ValidTransmute(T, Option<NonZero<T>>)`) that `syn` cannot parse as value
+/// expressions.
+fn parse_property_head(input: ParseStream<'_>) -> SynResult<ParsedProperty> {
+    let path: syn::Path = input.parse()?;
+    let tag = path
+        .segments
+        .last()
+        .map(|seg| seg.ident.to_string())
+        .ok_or_else(|| syn::Error::new_spanned(&path, "missing property name"))?;
 
-            Ok(ParsedProperty {
-                tag,
-                args: args.into_iter().collect(),
-                kind: None,
-            })
+    let content;
+    syn::parenthesized!(content in input);
+
+    let mut args: Vec<Expr> = Vec::new();
+    while !content.is_empty() {
+        args.push(parse_property_arg(&content)?);
+        if content.is_empty() {
+            break;
         }
-        other => Err(syn::Error::new_spanned(
-            other,
-            "unsupported RAPx property expression",
-        )),
+        content.parse::<Token![,]>()?;
     }
+
+    Ok(ParsedProperty {
+        tag,
+        args,
+        kind: None,
+    })
+}
+
+/// Parse a single property argument as an `Expr`.
+///
+/// Generic type arguments (`Option<NonZero<T>>`, `NonZero<T>`) cannot be parsed
+/// as an expression — `syn` would read `<`/`>` as comparison operators — so on
+/// failure we fall back to parsing the argument as a `syn::Type` and wrap its
+/// token stream as `Expr::Verbatim`.
+fn parse_property_arg(input: ParseStream<'_>) -> SynResult<Expr> {
+    let fork = input.fork();
+    if fork.parse::<Expr>().is_ok() {
+        return input.parse::<Expr>();
+    }
+    let ty: syn::Type = input.parse()?;
+    Ok(Expr::Verbatim(ty.to_token_stream()))
 }
 
 /// Strips the leading `'` from Rust lifetime tokens so that `syn` can

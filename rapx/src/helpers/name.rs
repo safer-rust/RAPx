@@ -378,6 +378,14 @@ fn find_generic_param<'tcx>(
         }
     }
 
+    // Search the return type as well, so generic types that only appear there
+    // (e.g. `NonZero<T>` / `Option<NonZero<T>>` in a generic fn) resolve to the
+    // concrete ADT instead of falling back to `never`.
+    let ret_ty = tcx.fn_sig(def_id).skip_binder().output().skip_binder();
+    if let Some(found) = find_generic_in_ty(tcx, ret_ty, &type_ident) {
+        return Some(found);
+    }
+
     None
 }
 
