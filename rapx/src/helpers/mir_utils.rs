@@ -624,12 +624,6 @@ pub fn pointee_alignment<'tcx>(
     Some((0, format!("{pointee:?}")))
 }
 
-pub fn nonnull_inner_ty<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<Ty<'tcx>> {
-    let TyKind::Adt(def, args) = ty.kind() else { return None };
-    if !tcx.def_path_str(def.did()).contains("ptr::non_null::NonNull") { return None }
-    args.iter().find_map(|a| match a.kind() { GenericArgKind::Type(t) => Some(t), _ => None })
-}
-
 pub fn slice_element_size(
     tcx: TyCtxt<'_>, caller: DefId, dest: Option<Local>,
 ) -> u64 {

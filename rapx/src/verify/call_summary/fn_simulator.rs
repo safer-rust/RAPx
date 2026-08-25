@@ -21,7 +21,7 @@ use super::{CallDependencySummary, CallEffect, CallEffectSummary};
 use crate::helpers::api_classify;
 use crate::helpers::mir_utils::{
     type_layout, destination_stride, pointee_ty, pointee_alignment,
-    nonnull_inner_ty, slice_element_size, vec_element_size,
+    slice_element_size, vec_element_size,
 };
 
 // ── Context for effect builders ────────────────────────────────────────
@@ -83,16 +83,12 @@ static REGISTRY: &[Entry] = &[
     E!(saturating_sub,        ALL,      true,   no_args!(),  eff_return_sub),
     E!(api_classify::is_offset_from_unsigned, arg01!(), false, no_args!(), eff_offset_from_unsigned),
     E!(api_classify::is_option_unwrap, arg0!(),  false,  no_args!(),  eff_alias_arg0),
-    E!(from_trait_call,       arg0!(),  false,  no_args!(),  eff_from_trait),
 
     // ── Pointer extraction / cast ───────────────────────────────────
-    // `new_unchecked` is deliberately `eff_none` (not `eff_alias_nonnull`):
-    // its argument is *unchecked*, so the caller's `NonNull` obligation must
-    // flow back to the argument via the `arg0!()` dependency rather than being
-    // discharged by an unconditional `ReturnNonZero` on the result. Modelling
-    // the return as unconditionally non-zero would hide a null argument.
-    E!(nonnull_from,          arg0!(),  false,  no_args!(),  eff_alias_nonnull),
-    E!(nonnull_new_unchecked, arg0!(),  false,  no_args!(),  eff_none),
+    // `NonNull::new` returns `Option<NonNull<T>>`; its `ReturnNonZero` +
+    // `ReturnPointerFromArg` summary is more precise than inlining the
+    // `is_null` branch, which the solver cannot discharge for a symbolic
+    // buffer pointer (breaks the allocator cases).
     E!(nonnull_new,           arg0!(),  false,  no_args!(),  eff_alias_ptr),
     E!(api_classify::is_as_ptr, arg0!(), false,  no_args!(),  eff_alias_ptr),
     E!(api_classify::is_as_ptr_range, arg0!(), false, no_args!(), eff_alias_arg0),
@@ -215,25 +211,6 @@ fn eff_alias_ptr(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
         eff.push(CallEffect::ReturnAligned { align: a, ty_name: n });
     }
     eff
-}
-
-fn eff_alias_nonnull(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    let mut eff = vec![
-        CallEffect::ReturnPointerFromArg { arg: 0 },
-        CallEffect::ReturnNonZero,
-    ];
-    if let Some((a, n)) = nonnull_pointee_alignment(ctx.tcx, ctx.caller, ctx.dest) {
-        eff.push(CallEffect::ReturnAligned { align: a, ty_name: n });
-    }
-    eff
-}
-
-fn eff_from_trait(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    if is_nonnull_dest(ctx.tcx, ctx.caller, ctx.dest) {
-        eff_alias_nonnull(ctx)
-    } else {
-        Vec::new()
-    }
 }
 
 fn eff_alias_arg0(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
@@ -461,9 +438,6 @@ fn into_iter_local(n: &str) -> bool          {
 }
 fn iter_position(n: &str) -> bool            { n.contains("Iterator::position") || n.contains("Iterator::find") || n.contains("Iterator::rposition") }
 fn is_strlen(n: &str) -> bool                { n == "strlen" || n.ends_with("::strlen") }
-fn from_trait_call(n: &str) -> bool         { n == "std::convert::From::from" || n == "core::convert::From::from" }
-fn nonnull_from(n: &str) -> bool            { n.ends_with("::from") && api_classify::is_nonnull_api(n) }
-fn nonnull_new_unchecked(n: &str) -> bool   { n.ends_with("::new_unchecked") && api_classify::is_nonnull_api(n) }
 fn nonnull_new(n: &str) -> bool             { n.ends_with("::new") && api_classify::is_nonnull_api(n) && !n.ends_with("::new_unchecked") }
 fn ptr_read(n: &str) -> bool                { n.ends_with("::read") && n.contains("::ptr::") }
 fn is_empty(n: &str) -> bool                { n.ends_with("::is_empty") }
@@ -575,20 +549,6 @@ fn is_slice_get_unchecked(n: &str) -> bool   {
 }
 
 // ── Layout helpers (used by effect builders) ─────────────────────────
-
-fn nonnull_pointee_alignment<'tcx>(
-    tcx: TyCtxt<'tcx>, caller: DefId, dest: Option<rustc_middle::mir::Local>,
-) -> Option<(u64, String)> {
-    let d = dest?;
-    let ty = tcx.optimized_mir(caller).local_decls[d].ty;
-    let pointee = nonnull_inner_ty(tcx, ty)?;
-    type_layout(tcx, caller, pointee).map(|(a, _)| (a, format!("{pointee:?}")))
-}
-
-fn is_nonnull_dest(tcx: TyCtxt<'_>, caller: DefId, dest: Option<rustc_middle::mir::Local>) -> bool {
-    let Some(d) = dest else { return false };
-    nonnull_inner_ty(tcx, tcx.optimized_mir(caller).local_decls[d].ty).is_some()
-}
 
 fn dest_is_pointer(tcx: TyCtxt<'_>, caller: DefId, dest: Option<rustc_middle::mir::Local>) -> bool {
     let Some(d) = dest else { return false };
