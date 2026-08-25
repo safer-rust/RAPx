@@ -5,6 +5,7 @@
 //! from the crate's MIR/HIR metadata.
 //!
 //! ```rust
+//! #![feature(register_tool)]
 //! #![register_tool(rapx)]
 //! use rapx_macros::pred;
 //!

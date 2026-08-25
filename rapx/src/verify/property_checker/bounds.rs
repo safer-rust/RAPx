@@ -296,10 +296,18 @@ impl PropertyChecker {
             })
             .or_else(|| checkpoint.args.get(1).map(|op| vm_state.value_of_operand(op)));
         let Some(v2) = v2 else {
-            if v1.provenance.is_some() { return CheckResult::Proved; }
+            // Without a second pointer we cannot prove non-overlap.
             return CheckResult::Unknown;
         };
-        if v1.provenance_alloc_id() != v2.provenance_alloc_id() { return CheckResult::Proved; }
+        // Only discharge non-overlap when both pointers carry provenance into
+        // distinct allocations. `Option` comparison here is unsound: a `None`
+        // (unknown) provenance would compare unequal to any concrete `AllocId`
+        // and spuriously report the pointers as non-overlapping.
+        if let (Some(a), Some(b)) = (v1.provenance_alloc_id(), v2.provenance_alloc_id()) {
+            if a != b {
+                return CheckResult::Proved;
+            }
+        }
 
         // Try range-based overlap detection when count and element size are available.
         if let Some(count_term) = checkpoint.args.get(2).map(|op| vm_state.value_of_operand(op).term) {

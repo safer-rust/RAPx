@@ -811,17 +811,17 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     }
 
     /// Create an unknown value for a place.
+    ///
+    /// The value carries no `non_null` (or any other) assumption: a raw pointer
+    /// whose provenance was lost may still be null, so assuming non-null here
+    /// would let `NonNull`/null-guard checks pass unsoundly.
     pub(crate) fn unknown_value_for_place(&self, place: &Place<'tcx>) -> VmValue<'ctx, 'tcx> {
         let ty = place.ty(self.body, self.tcx).ty;
-        let is_raw_ptr = matches!(ty.kind(), rustc_middle::ty::TyKind::RawPtr(..));
         VmValue {
             term: self.fresh_int("unknown"),
             ty,
             provenance: None,
-            invariants: ValueInvariants {
-                non_null: is_raw_ptr,
-                ..Default::default()
-            },
+            invariants: ValueInvariants::default(),
         }
     }
 }

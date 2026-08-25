@@ -373,7 +373,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
                             callee_def_id,
                         );
                         rap_debug!(
-                            "resolved {} safety contract(s) for std callee \"{path}\" via call chain",
+                            "resolved {} safety contract(s) for callee \"{path}\" via call chain",
                             requires.len()
                         );
                     }

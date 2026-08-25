@@ -52,13 +52,7 @@ impl PropertyChecker {
                 }
             }
         }
-        if value.invariants.aligned {
-            if let Some(known_align) = value.invariants.align_n {
-                if known_align >= align && known_align % align == 0 {
-                    return CheckResult::Proved;
-                }
-            }
-        } else if let Some(known_align) = value.invariants.align_n {
+        if let Some(known_align) = value.invariants.align_n {
             if known_align >= align && known_align % align == 0 {
                 return CheckResult::Proved;
             }
