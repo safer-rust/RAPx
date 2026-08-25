@@ -71,9 +71,6 @@ pub fn is_mem_copy_or_write_api(name: &str) -> bool {
 }
 pub fn is_len(name: &str) -> bool { name.contains("::len") }
 pub fn is_capacity(name: &str) -> bool { name.contains("::capacity") }
-pub fn is_offset_from_unsigned(name: &str) -> bool {
-    name.contains("::offset_from_unsigned") || name.contains("::offset_from")
-}
 pub fn is_option_unwrap(name: &str) -> bool {
     (name.contains("Option") || name.contains("Result"))
         && (name.contains("::expect") || name.contains("::unwrap")

@@ -206,10 +206,6 @@ pub enum CallEffect {
     /// Remove the allocation's `slice_data` link for the argument's stack
     /// alloc_id — used for `mem::forget` which prevents a drop cascade.
     CleanSliceDataLinks { arg: usize },
-    /// Returns the element-count distance between two pointers with common
-    /// provenance: `(self_arg.addr() - origin_arg.addr()) / sizeof(T)`.
-    /// Models `NonNull::offset_from_unsigned` / `offset_from`.
-    ReturnOffsetFromUnsigned { self_arg: usize, origin_arg: usize },
     /// `ptr.align_offset(align)` returns an offset such that
     /// `(ptr + offset) % align == 0` and `0 <= offset < align` (or `usize::MAX`
     /// when no such offset exists). Models `*const T::align_offset` /

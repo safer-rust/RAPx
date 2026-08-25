@@ -81,7 +81,6 @@ static REGISTRY: &[Entry] = &[
     E!(int_checked_mul,       ALL,      true,   no_args!(),  eff_return_option_some_mul),
     E!(overflowing_nz,        ALL,      true,   no_args!(),  eff_overflowing_nz),
     E!(saturating_sub,        ALL,      true,   no_args!(),  eff_return_sub),
-    E!(api_classify::is_offset_from_unsigned, arg01!(), false, no_args!(), eff_offset_from_unsigned),
     E!(api_classify::is_option_unwrap, arg0!(),  false,  no_args!(),  eff_alias_arg0),
 
     // ── Pointer extraction / cast ───────────────────────────────────
@@ -243,10 +242,6 @@ fn eff_ptr_sub(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
         destination_stride(ctx.tcx, ctx.caller, ctx.dest)
     };
     vec![CallEffect::ReturnPointerSub { base_arg: 0, offset_arg: 1, stride }]
-}
-
-fn eff_offset_from_unsigned(_ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![CallEffect::ReturnOffsetFromUnsigned { self_arg: 0, origin_arg: 1 }]
 }
 
 fn eff_read_mem(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {

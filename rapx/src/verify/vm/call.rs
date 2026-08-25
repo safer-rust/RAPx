@@ -1362,44 +1362,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 };
                 self.set_local(dest, val);
             }
-            CallEffect::ReturnOffsetFromUnsigned { self_arg, origin_arg } => {
-                if let (Some(self_val), Some(origin_val)) = (args.get(*self_arg), args.get(*origin_arg)) {
-                    let dest_ty = self.body.local_decls[dest].ty;
-                    if let (Some(self_prov), Some(origin_prov)) = (&self_val.provenance, &origin_val.provenance) {
-                        // Both pointers share provenance: the element-distance
-                        // is (self_offset - origin_offset) / elem_size.
-                        let elem_ty = match self_val.ty.kind() {
-                            TyKind::Adt(_, substs) => substs.first().and_then(|s| s.as_type()),
-                            _ => None,
-                        };
-                        let elem_size = elem_ty.map(|t| self.size_of_ty(t).max(1)).unwrap_or(1) as u64;
-                        let diff = Int::sub(self.ctx, &[&self_prov.offset, &origin_prov.offset]);
-                        let sz = Int::from_u64(self.ctx, elem_size);
-                        let val = VmValue::new(diff.div(&sz), dest_ty);
-                        self.set_local(dest, val);
-                        return;
-                    }
-                    // Fallback: fresh symbolic length.
-                    let term = self.fresh_int(&format!("offset_{}", dest.as_usize()));
-                    let val = VmValue {
-                        term,
-                        ty: dest_ty,
-                        provenance: None,
-                        invariants: ValueInvariants::default(),
-                    };
-                    self.set_local(dest, val);
-                    return;
-                }
-                let dest_ty = self.body.local_decls[dest].ty;
-                let term = self.fresh_int(&format!("offset_{}", dest.as_usize()));
-                let val = VmValue {
-                    term,
-                    ty: dest_ty,
-                    provenance: None,
-                    invariants: ValueInvariants::default(),
-                };
-                self.set_local(dest, val);
-            }
             CallEffect::ReturnConst { value, label: _ } => {
                 let dest_ty = self.body.local_decls[dest].ty;
                 let term = Int::from_u64(self.ctx, *value);
