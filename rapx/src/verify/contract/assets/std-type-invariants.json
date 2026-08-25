@@ -31,5 +31,17 @@
         ]
       }
     ]
+  },
+  "core::ptr::non_null::NonNull": {
+    "comment": "NonNull pointer \u2014 inner raw pointer must be non-null",
+    "invariants": [
+      {
+        "tag": "NonNull",
+        "args": [
+          "$self.0"
+        ]
+      }
+    ]
   }
 }
+

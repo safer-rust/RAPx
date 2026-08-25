@@ -74,6 +74,13 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             return;
         }
 
+        // NonNull::new(ptr): the safe constructor returns Some(ptr) iff ptr is
+        // non-null. Its body branches on `ptr.is_null()`, so the branch-free
+        // inline path rejects it; model the null-check directly.
+        if self.try_nonnull_new(&name, &arg_values, destination) {
+            return;
+        }
+
         // post_inc_start / pre_dec_end on Iter/IterMut: apply the ptr/end
         // update as a side effect, then fall through to normal handling.
         // These callees have SwitchInt (ZST branch) exceeding inline limits,
@@ -338,6 +345,52 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 invariants: ValueInvariants::default(),
             };
             self.set_local(destination, val);
+        }
+        true
+    }
+
+    /// `NonNull::<T>::new(ptr) -> Option<NonNull<T>>`: the safe constructor
+    /// returns `Some` iff `ptr` is non-null. Its body branches on
+    /// `ptr.is_null()`, so `exec_inline_call` (branch-free only) cannot inline
+    /// it. Model the null-check directly from provenance, mirroring
+    /// `check_non_null`: internal provenance or a set `non_null`/`in_bounds`
+    /// invariant means the pointer is definitely non-null (`Some(ptr)`), and
+    /// otherwise the `Option` is left symbolic (it may be `None`).
+    fn try_nonnull_new(
+        &mut self,
+        name: &str,
+        arg_values: &[VmValue<'ctx, 'tcx>],
+        destination: Local,
+    ) -> bool {
+        if !(api_classify::is_nonnull_api(name)
+            && name.ends_with("::new")
+            && !name.ends_with("::new_unchecked"))
+        {
+            return false;
+        }
+        let Some(ptr) = arg_values.first() else { return false; };
+        let dest_ty = self.body.local_decls[destination].ty;
+        let definitely_non_null = ptr.invariants.non_null
+            || ptr.invariants.in_bounds
+            || ptr.provenance.as_ref().is_some_and(|p| !self.alloc(p.alloc_id).is_external);
+        if definitely_non_null {
+            // Some(NonNull(ptr)): the Option data payload is the non-null pointer.
+            let mut val = ptr.clone();
+            val.ty = dest_ty;
+            val.invariants.non_null = true;
+            val.invariants.aligned = true;
+            let zero = Int::from_u64(self.ctx, 0);
+            self.path_conditions.push(ptr.term._eq(&zero).not());
+            self.set_local(destination, val);
+        } else {
+            // ptr may be null, so the Option may be None — keep it symbolic.
+            let term = self.fresh_int(&format!("nn_new_{}", destination.as_usize()));
+            self.set_local(destination, VmValue {
+                term,
+                ty: dest_ty,
+                provenance: None,
+                invariants: ValueInvariants::default(),
+            });
         }
         true
     }
@@ -1219,13 +1272,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     self.set_local(dest, val);
                 }
             }
-            CallEffect::CleanSliceDataLinks { arg } => {
-                if let Some(arg_val) = args.get(*arg) {
-                    if let Some(ref prov) = arg_val.provenance {
-                        self.alloc_mut(prov.alloc_id).slice_data = None;
-                    }
-                }
-            }
             CallEffect::ReturnNonZero => {
                 let zero = Int::from_u64(self.ctx, 0);
                 if let Some(mut existing) = self.locals.get(&dest).cloned() {
@@ -1453,19 +1499,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     self.set_local(dest, val);
                 }
             }
-            CallEffect::ReturnSub { lhs_arg, rhs_arg } => {
-                if let (Some(lhs), Some(rhs)) = (args.get(*lhs_arg), args.get(*rhs_arg)) {
-                    let dest_ty = self.body.local_decls[dest].ty;
-                    let term = Int::sub(self.ctx, &[&lhs.term, &rhs.term]);
-                    let val = VmValue {
-                        term,
-                        ty: dest_ty,
-                        provenance: None,
-                        invariants: ValueInvariants::default(),
-                    };
-                    self.set_local(dest, val);
-                }
-            }
             CallEffect::ReturnMul { lhs_arg, rhs_arg } => {
                 if let (Some(lhs), Some(rhs)) = (args.get(*lhs_arg), args.get(*rhs_arg)) {
                     let dest_ty = self.body.local_decls[dest].ty;
@@ -1683,17 +1716,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     }
                 }
             }
-            CallEffect::ReadMemory { arg: _ } => {
-                let dest_ty = self.body.local_decls[dest].ty;
-                let term = self.fresh_int(&format!("read_{}", dest.as_usize()));
-                let val = VmValue {
-                    term,
-                    ty: dest_ty,
-                    provenance: None,
-                    invariants: ValueInvariants::default(),
-                };
-                self.set_local(dest, val);
-            }
             CallEffect::ReturnFreshAllocation { pointer_arg, size_arg, elem_size } => {
                 if let (Some(ptr_val), Some(size_val)) = (args.get(*pointer_arg), args.get(*size_arg)) {
                     let elem_sz = Int::from_u64(self.ctx, *elem_size);
@@ -1845,34 +1867,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     val.invariants.non_null = true;
                     self.set_local(dest, val);
                 }
-            }
-            CallEffect::ReturnAllocBuffer => {
-                // Model `Allocator::allocate(self, layout)`'s `Ok` variant as a
-                // fresh *external* allocation: the exact byte count is
-                // `layout.size()`, a symbolic value, so mark the allocation
-                // unbounded (`is_external`) so `NonNull`/`Allocated` checks
-                // auto-pass. The `Result` downcast `((_res as Ok).0)` copies
-                // this provenance into the extracted `NonNull<[u8]>`.
-                let dest_ty = self.body.local_decls[dest].ty;
-                let max = Int::from_u64(self.ctx, i64::MAX as u64);
-                let (alloc_id, base) = self.allocate_external(max, 1, None);
-                self.alloc_mut(alloc_id).initialized = true;
-                self.set_local(dest, VmValue {
-                    term: base,
-                    ty: dest_ty,
-                    provenance: Some(Provenance {
-                        alloc_id,
-                        offset: Int::from_u64(self.ctx, 0),
-                        is_field_offset: false,
-                    }),
-                    invariants: ValueInvariants {
-                        non_null: true,
-                        init: true,
-                        in_bounds: true,
-                        aligned: true,
-                        ..ValueInvariants::default()
-                    },
-                });
             }
             CallEffect::ReturnPowerOfTwo => {
                 // `Layout::align()` returns the layout's alignment, which is a

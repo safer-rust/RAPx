@@ -574,12 +574,7 @@ impl<'tcx> PathGraph<'tcx> {
             // If fn_simulator has a hand-written summary, use it directly (it is
             // more accurate than inline execution). Otherwise fall back to CFG
             // inlining for cross-crate callees with available MIR.
-            let has_fn_sim = crate::verify::call_summary::fn_simulator::lookup_dependency(
-                Some(callee),
-                &name,
-                0,
-            )
-            .is_some();
+            let has_fn_sim = crate::verify::call_summary::fn_simulator::is_modeled(&name);
             if callee != caller_def_id
                 && tcx.is_mir_available(callee)
                 && !is_intrinsic

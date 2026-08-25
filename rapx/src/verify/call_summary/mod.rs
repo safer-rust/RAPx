@@ -100,8 +100,6 @@ pub enum CallEffect {
     ReturnAligned { align: u64, ty_name: String },
     /// The return value is a concrete layout/numeric constant.
     ReturnConst { value: u64, label: String },
-    /// The call reads memory through an argument.
-    ReadMemory { arg: usize },
     /// The call writes one initialized element through a pointer argument.
     WriteMemory { pointer_arg: usize },
     /// The return value is a pointer backed by a fresh allocation of
@@ -131,8 +129,6 @@ pub enum CallEffect {
     ReturnNeg { arg: usize },
     /// The return value is `lhs_arg + rhs_arg`.
     ReturnAdd { lhs_arg: usize, rhs_arg: usize },
-    /// The return value is `lhs_arg - rhs_arg`.
-    ReturnSub { lhs_arg: usize, rhs_arg: usize },
     /// The return value is `lhs_arg * rhs_arg`.
     ReturnMul { lhs_arg: usize, rhs_arg: usize },
     /// The call returns `Option<T>` whose `Some` payload is `lhs_arg + rhs_arg`
@@ -168,12 +164,6 @@ pub enum CallEffect {
     /// itself (a Box fat pointer) rather than a separate count argument.
     /// Used for `into_vec` / `box_assume_init_into_vec_unsafe`.
     ReturnNewAllocationFromBox { box_arg: usize },
-    /// `Allocator::allocate(self, layout)` / `allocate_zeroed` returns a
-    /// `Result<NonNull<[u8]>, AllocError>`. Model the `Ok` variant as a fresh
-    /// *external* (unbounded) allocation so downstream `NonNull`/`Allocated`
-    /// checks auto-pass regardless of the symbolic `layout.size()`. The
-    /// `Result` downcast (`((result as Ok).0)`) then propagates the provenance.
-    ReturnAllocBuffer,
     /// The return value is a non-zero power of two (models `Layout::align`).
     ReturnPowerOfTwo,
     /// The call transfers a Vec's backing allocation into a Box (e.g.
@@ -201,9 +191,6 @@ pub enum CallEffect {
     /// the terminator) fits in `isize::MAX` — discharging the
     /// `from_raw_parts` `ValidNum(size_of(T)*(len+1) <= isize::MAX)` bound.
     ReturnScanLength { ptr_arg: usize },
-    /// Remove the allocation's `slice_data` link for the argument's stack
-    /// alloc_id — used for `mem::forget` which prevents a drop cascade.
-    CleanSliceDataLinks { arg: usize },
     /// `ptr.align_offset(align)` returns an offset such that
     /// `(ptr + offset) % align == 0` and `0 <= offset < align` (or `usize::MAX`
     /// when no such offset exists). Models `*const T::align_offset` /
@@ -240,11 +227,8 @@ pub fn dependency_summary<'tcx>(
     let callee = mir_utils::dep_callee_def_id(func);
     let name = mir_utils::call_name(tcx, func);
 
-    if let Some(summary) = fn_simulator::lookup_dependency(callee, &name, arg_count) {
-        return summary;
-    }
-
-    // Interprocedural fallback for local callees.
+    // MIR dataflow first: works for local and cross-crate (`#[inline]`)
+    // callees alike, no hand-written table needed.
     if let Some(callee) = callee {
         if name.contains("::intrinsics::")
             || name.starts_with("intrinsics::")

@@ -1,11 +1,11 @@
 //! Function simulation: API behaviour modelling when MIR is unavailable.
 //!
 //! Each recognised standard-library API is described by a single table
-//! row: a **name matcher**, **argument dependency**, and **effect
-//! builder**.  The public entry points [`lookup_dependency`] and
-//! [`lookup_effect`] scan the table linearly (first match wins) and
-//! convert the matched row into the concrete summaries consumed by the
-//! backward/forward visitors.
+//! row: a **name matcher** and an **effect builder**.  [`lookup_effect`]
+//! scans the table linearly (first match wins) and converts the matched row
+//! into the effect summary consumed by the VM; [`is_modeled`] reports whether
+//! a name is in the table (used by the path graph to keep modelled calls
+//! opaque instead of inlining their branchy CFG).
 //!
 //! Two layers, both visible in one place:
 //! 1. **Matcher functions** — cheap name-pattern checks (hot-path `is_*`
@@ -17,7 +17,7 @@ use rustc_hir::def_id::DefId;
 use rustc_middle::mir::Operand;
 use rustc_middle::ty::{GenericArgKind, Ty, TyCtxt, TyKind};
 
-use super::{CallDependencySummary, CallEffect, CallEffectSummary};
+use super::{CallEffect, CallEffectSummary};
 use crate::helpers::api_classify;
 use crate::helpers::mir_utils::{
     type_layout, destination_stride, pointee_ty, pointee_alignment,
@@ -38,138 +38,105 @@ pub struct EffCtx<'a, 'tcx> {
 
 struct Entry {
     matches: fn(&str) -> bool,
-    dep_on: &'static [usize],
-    dep_on_all: bool,
-    writes: &'static [usize],
     effects: fn(&EffCtx<'_, '_>) -> Vec<CallEffect>,
 }
 
-macro_rules! no_args { () => { &[] } }
-macro_rules! arg0    { () => { &[0usize] } }
-macro_rules! arg01   { () => { &[0usize, 1] } }
-
 macro_rules! E {
-    ($m:expr, $d:expr, $all:expr, $w:expr, $e:ident) => {
-        Entry { matches: $m, dep_on: $d, dep_on_all: $all, writes: $w, effects: $e }
+    ($m:expr, $e:ident) => {
+        Entry { matches: $m, effects: $e }
     };
 }
 
-/// Placeholder for `dep_on` when `dep_on_all` is true: in that case
-/// `lookup_dependency` ignores `dep_on` and collects `0..arg_count`, so the
-/// field is only present to satisfy the `E!` macro shape.
-const ALL: &[usize] = &[];
-
 static REGISTRY: &[Entry] = &[
-    // ── Drop / forget ──────────────────────────────────────────────
-    E!(mem_forget,           arg0!(),  false,  no_args!(),  eff_forget),
-
     // ── Pass-through / no-effect calls ──────────────────────────────
-    E!(api_classify::is_maybe_uninit_uninit,no_args!(), false, no_args!(), eff_none),
-    E!(api_classify::is_maybe_uninit_assume_init,arg0!(), false, no_args!(), eff_none),
     // Non-zero-preserving integer operations are each modelled with a precise
     // expression over its operands (ite / arithmetic) so the solver can
     // discharge a downstream `!= 0` obligation *conditionally* — only when the
     // operands are actually non-zero — rather than asserting the result is
     // unconditionally non-zero.
-    E!(int_max,               ALL,      true,   no_args!(),  eff_return_max),
-    E!(int_clamp,             ALL,      true,   no_args!(),  eff_return_clamp),
-    E!(int_abs,               ALL,      true,   no_args!(),  eff_return_abs),
-    E!(int_neg,               ALL,      true,   no_args!(),  eff_return_neg),
-    E!(int_add,               ALL,      true,   no_args!(),  eff_return_add),
-    E!(int_mul,               ALL,      true,   no_args!(),  eff_return_mul),
-    E!(int_checked_add,       ALL,      true,   no_args!(),  eff_return_option_some_add),
-    E!(int_checked_mul,       ALL,      true,   no_args!(),  eff_return_option_some_mul),
-    E!(overflowing_nz,        ALL,      true,   no_args!(),  eff_overflowing_nz),
-    E!(saturating_sub,        ALL,      true,   no_args!(),  eff_return_sub),
-    E!(api_classify::is_option_unwrap, arg0!(),  false,  no_args!(),  eff_alias_arg0),
+    E!(int_max, eff_return_max),
+    E!(int_clamp, eff_return_clamp),
+    E!(int_abs, eff_return_abs),
+    E!(int_neg, eff_return_neg),
+    E!(int_add, eff_return_add),
+    E!(int_mul, eff_return_mul),
+    E!(int_checked_add, eff_return_option_some_add),
+    E!(int_checked_mul, eff_return_option_some_mul),
+    E!(overflowing_nz, eff_overflowing_nz),
+    E!(api_classify::is_option_unwrap, eff_alias_arg0),
 
     // ── Pointer extraction / cast ───────────────────────────────────
-    // `NonNull::new` returns `Option<NonNull<T>>`; its `ReturnNonZero` +
-    // `ReturnPointerFromArg` summary is more precise than inlining the
-    // `is_null` branch, which the solver cannot discharge for a symbolic
-    // buffer pointer (breaks the allocator cases).
-    E!(nonnull_new,           arg0!(),  false,  no_args!(),  eff_alias_ptr),
-    E!(api_classify::is_as_ptr, arg0!(), false,  no_args!(),  eff_alias_ptr),
-    E!(api_classify::is_as_ptr_range, arg0!(), false, no_args!(), eff_alias_arg0),
-    E!(api_classify::is_as_mut_ptr_range, arg0!(), false, no_args!(), eff_alias_arg0),
+    // `NonNull::new`'s effect is modelled in the VM (`try_nonnull_new`); the
+    // `eff_none` stub keeps it in the registry so `is_modeled` reports it as
+    // opaque (the path graph must not inline its branchy `is_null` body).
+    E!(nonnull_new, eff_none),
+    E!(api_classify::is_as_ptr, eff_alias_ptr),
 
     // ── Pointer arithmetic ──────────────────────────────────────────
-    E!(|n| api_classify::is_pointer_add(n) && !api_classify::is_byte_ptr_arith(n), arg01!(), false, no_args!(), eff_ptr_add),
-    E!(|n| api_classify::is_pointer_sub(n) && !api_classify::is_byte_ptr_arith(n), arg01!(), false, no_args!(), eff_ptr_sub),
-    E!(|n| api_classify::is_pointer_add(n) && api_classify::is_byte_ptr_arith(n), arg01!(), false, no_args!(), eff_ptr_add),
-    E!(|n| api_classify::is_pointer_sub(n) && api_classify::is_byte_ptr_arith(n), arg01!(), false, no_args!(), eff_ptr_sub),
+    E!(|n| api_classify::is_pointer_add(n) && !api_classify::is_byte_ptr_arith(n), eff_ptr_add),
+    E!(|n| api_classify::is_pointer_sub(n) && !api_classify::is_byte_ptr_arith(n), eff_ptr_sub),
+    E!(|n| api_classify::is_pointer_add(n) && api_classify::is_byte_ptr_arith(n), eff_ptr_add),
 
-    // ── Memory read / write ─────────────────────────────────────────
-    E!(ptr_read,              arg0!(),  false,  no_args!(),  eff_read_mem),
-    E!(api_classify::is_ptr_write, no_args!(), false,  arg0!(),  eff_write_mem),
-    E!(api_classify::is_maybe_uninit_write, no_args!(), false, arg0!(), eff_write_mem),
+    // ── MaybeUninit ────────────────────────────────────────────────
+    // `uninit`/`assume_init` are `eff_none` stubs: they have no symbolic
+    // effect, but staying registered keeps `is_modeled` true so the path graph
+    // does not inline their branchy bodies. `write` marks the slot initialized;
+    // its `WriteMemory` effect lets a later `assume_init`/`assume_init_read`
+    // discharge `Init` (raw `ptr::write` is handled by the VM inline path).
+    E!(api_classify::is_maybe_uninit_uninit, eff_none),
+    E!(api_classify::is_maybe_uninit_assume_init, eff_none),
+    E!(api_classify::is_maybe_uninit_write, eff_write_mem),
 
     // ── Slice / collection queries ──────────────────────────────────
-    E!(api_classify::is_len,  arg0!(),  false,  no_args!(),  eff_len),
-    E!(api_classify::is_capacity, arg0!(), false, no_args!(), eff_len),
-    E!(cmp_min,               ALL,      true,   no_args!(),  eff_cmp_min),
-    E!(midpoint,              ALL,      true,   no_args!(),  eff_cmp_min),
-    E!(bit_preserving_nz,     ALL,      true,   no_args!(),  eff_return_nonzero_iff),
-    E!(checked_pow_nz,        ALL,      true,   no_args!(),  eff_return_option_some_nonzero_iff),
-    E!(checked_abs_nz,        ALL,      true,   no_args!(),  eff_return_option_some_nonzero_iff),
-    E!(checked_neg_nz,        ALL,      true,   no_args!(),  eff_return_option_some_nonzero_iff),
-    E!(checked_next_pow2_nz,  ALL,      true,   no_args!(),  eff_return_option_some_nonzero),
+    E!(api_classify::is_len, eff_len),
+    E!(api_classify::is_capacity, eff_len),
+    E!(cmp_min, eff_cmp_min),
+    E!(midpoint, eff_cmp_min),
+    E!(bit_preserving_nz, eff_return_nonzero_iff),
+    E!(checked_pow_nz, eff_return_option_some_nonzero_iff),
+    E!(checked_abs_nz, eff_return_option_some_nonzero_iff),
+    E!(checked_neg_nz, eff_return_option_some_nonzero_iff),
+    E!(checked_next_pow2_nz, eff_return_option_some_nonzero),
 
     // ── SliceIndex::get_unchecked / get_unchecked_mut ───────────────
-    E!(is_slice_get_unchecked, arg0!(), false,  no_args!(),  eff_alias_ptr),
+    E!(is_slice_get_unchecked, eff_alias_ptr),
 
     // ── Ownership reconstruction ────────────────────────────────────
-    E!(api_classify::is_ownership_reconstruction, arg0!(), false, no_args!(), eff_ownership_recon),
+    E!(api_classify::is_ownership_reconstruction, eff_ownership_recon),
 
     // ── Slice helpers ───────────────────────────────────────────────
-    E!(slice_index,           arg01!(), false,  no_args!(),  eff_alias_arg0),
-    E!(align_to_local,        arg0!(),  false,  no_args!(),  eff_align_to),
-    E!(into_iter_local,       arg0!(),  false,  no_args!(),  eff_return_iter),
-    E!(iter_position,         arg0!(),  false,  no_args!(),  eff_option_scan_index),
-    E!(is_strlen,             arg0!(),  false,  no_args!(),  eff_scan_length),
-    E!(split_at,              arg01!(), false,  no_args!(),  eff_split_at),
-    E!(api_classify::is_from_raw_parts, arg01!(), false, no_args!(), eff_from_raw_parts),
-    E!(api_classify::is_align_offset, arg01!(), false, no_args!(), eff_align_offset),
+    E!(align_to_local, eff_align_to),
+    E!(into_iter_local, eff_return_iter),
+    E!(iter_position, eff_option_scan_index),
+    E!(is_strlen, eff_scan_length),
+    E!(split_at, eff_split_at),
+    E!(api_classify::is_from_raw_parts, eff_from_raw_parts),
+    E!(api_classify::is_align_offset, eff_align_offset),
 
     // ── Vec / collection constructors ────────────────────────────────
-    E!(api_classify::is_vec_alloc_constructor, arg01!(), false, no_args!(), eff_new_allocation),
-    E!(api_classify::is_vec_from_box,          arg0!(),  false, no_args!(), eff_vec_from_box),
-    E!(api_classify::is_vec_with_capacity,     arg0!(),  false, no_args!(), eff_new_allocation_from_cap),
-    E!(api_classify::is_into_boxed_slice,      arg0!(),  false, no_args!(), eff_box_from_vec),
-
-    // ── Allocator::allocate / allocate_zeroed / grow / shrink ────────
-    E!(allocator_allocate,    arg01!(), false,  no_args!(),  eff_allocator_allocate),
+    E!(api_classify::is_vec_alloc_constructor, eff_new_allocation),
+    // `into_vec` / `box_assume_init_into_vec_unsafe`: needed on older
+    // toolchains where `vec![…]` literals lower to `into_vec` (not `from_elem`).
+    E!(api_classify::is_vec_from_box, eff_vec_from_box),
+    E!(api_classify::is_vec_with_capacity, eff_new_allocation_from_cap),
+    E!(api_classify::is_into_boxed_slice, eff_box_from_vec),
 
     // ── Layout accessors ────────────────────────────────────────────
-    E!(layout_align,          no_args!(),  false,  no_args!(),  eff_layout_align),
+    E!(layout_align, eff_layout_align),
 
     // ── Layout constants ────────────────────────────────────────────
-    E!(api_classify::is_layout_constant, no_args!(), false,  no_args!(),  eff_layout_const),
+    E!(api_classify::is_layout_constant, eff_layout_const),
 
     // ── CStr / CString helpers ──────────────────────────────────────
-    E!(api_classify::is_cstr_from_ptr, arg0!(), false,  no_args!(),  eff_alias_arg0),
-    E!(api_classify::is_cstr_from_bytes_with_nul_unchecked, arg0!(), false, no_args!(), eff_alias_arg0),
-    E!(api_classify::is_vec_push, no_args!(), false,  arg0!(),  eff_write_mem),
+    E!(api_classify::is_cstr_from_ptr, eff_alias_arg0),
+    E!(api_classify::is_vec_push, eff_write_mem),
 ];
 
-pub fn lookup_dependency(
-    callee: Option<DefId>,
-    name: &str,
-    arg_count: usize,
-) -> Option<CallDependencySummary> {
-    for e in REGISTRY {
-        if (e.matches)(name) {
-            let args = if e.dep_on_all { (0..arg_count).collect() } else { e.dep_on.to_vec() };
-            return Some(CallDependencySummary {
-                callee,
-                name: name.to_string(),
-                return_depends_on_args: args,
-                may_write_args: e.writes.to_vec(),
-                unsupported: false,
-            });
-        }
-    }
-    None
+/// True when `name` matches a hand-modelled API in the registry. The path
+/// graph uses this to keep such calls opaque (it must not inline their branchy
+/// CFG when the VM models their semantics more precisely).
+pub fn is_modeled(name: &str) -> bool {
+    REGISTRY.iter().any(|e| (e.matches)(name))
 }
 
 pub fn lookup_effect<'tcx>(
@@ -243,10 +210,6 @@ fn eff_ptr_sub(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     vec![CallEffect::ReturnPointerSub { base_arg: 0, offset_arg: 1, stride }]
 }
 
-fn eff_read_mem(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![CallEffect::ReadMemory { arg: 0 }]
-}
-
 fn eff_write_mem(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     vec![CallEffect::WriteMemory { pointer_arg: 0 }]
 }
@@ -289,10 +252,6 @@ fn eff_return_neg(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 
 fn eff_return_add(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     vec![CallEffect::ReturnAdd { lhs_arg: 0, rhs_arg: 1 }]
-}
-
-fn eff_return_sub(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![CallEffect::ReturnSub { lhs_arg: 0, rhs_arg: 1 }]
 }
 
 fn eff_return_mul(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
@@ -395,18 +354,8 @@ fn eff_vec_from_box(_ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     ]
 }
 
-fn eff_allocator_allocate(_ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![CallEffect::ReturnAllocBuffer]
-}
-
 fn eff_layout_align(_ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     vec![CallEffect::ReturnPowerOfTwo]
-}
-
-fn eff_forget(_ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![
-        CallEffect::CleanSliceDataLinks { arg: 0 },
-    ]
 }
 
 fn eff_layout_const(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
@@ -417,8 +366,6 @@ fn eff_layout_const(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 
 // ── Matcher functions (one per API pattern) ────────────────────────────
 
-fn mem_forget(n: &str) -> bool             { n.ends_with("mem::forget") }
-fn slice_index(n: &str) -> bool             { n.ends_with("::Index::index") || n.ends_with("::IndexMut::index_mut") }
 fn align_to_local(n: &str) -> bool           {
     n.ends_with("align_to_ext") || n.ends_with("align_to_mut_ext")
 }
@@ -429,7 +376,6 @@ fn into_iter_local(n: &str) -> bool          {
 fn iter_position(n: &str) -> bool            { n.contains("Iterator::position") || n.contains("Iterator::find") || n.contains("Iterator::rposition") }
 fn is_strlen(n: &str) -> bool                { n == "strlen" || n.ends_with("::strlen") }
 fn nonnull_new(n: &str) -> bool             { n.ends_with("::new") && api_classify::is_nonnull_api(n) && !n.ends_with("::new_unchecked") }
-fn ptr_read(n: &str) -> bool                { n.ends_with("::read") && n.contains("::ptr::") }
 fn cmp_min(n: &str) -> bool                 { (n.contains("::cmp::min") || n.contains("::Ord::min") || n.starts_with("core::cmp::min")) && !n.contains("min_by") }
 
 /// `u32::midpoint`/`usize::midpoint`: `midpoint(a, b) >= min(a, b)`, so it is
@@ -520,14 +466,7 @@ fn int_checked_mul(n: &str) -> bool { n.ends_with("::checked_mul") }
 fn overflowing_nz(n: &str) -> bool {
     n.ends_with("::overflowing_abs") || n.ends_with("::overflowing_neg")
 }
-fn allocator_allocate(n: &str) -> bool      {
-    n.ends_with("::Allocator::allocate")
-        || n.ends_with("::Allocator::allocate_zeroed")
-        || n.ends_with("::Allocator::grow")
-        || n.ends_with("::Allocator::shrink")
-}
 fn layout_align(n: &str) -> bool            { n.ends_with("Layout::align") }
-fn saturating_sub(n: &str) -> bool          { n.contains("::saturating_sub") }
 fn split_at(n: &str) -> bool                { n.contains("::split_at") }
 fn is_slice_get_unchecked(n: &str) -> bool   { 
     (n.contains("::get_unchecked") || n.contains("::get_unchecked_mut"))

@@ -77,7 +77,15 @@ fn trace_to_callee_arg<'tcx>(
                 continue;
             }
             let name = helpers::call_name(tcx, func);
-            if !crate::helpers::api_classify::is_as_ptr(&name) {
+            // Trace through pointer-preserving calls: `as_ptr`/`as_mut_ptr`
+            // (and friends) return the pointee address, while `add`/`sub`/
+            // `offset` return the base pointer shifted by an offset — the
+            // provenance (and thus the written-through arg) is carried by
+            // their first (base/receiver) argument.
+            let traces_base = crate::helpers::api_classify::is_as_ptr(&name)
+                || crate::helpers::api_classify::is_pointer_add(&name)
+                || crate::helpers::api_classify::is_pointer_sub(&name);
+            if !traces_base {
                 continue;
             }
             let Some(source) = args.first().and_then(|arg| match &arg.node {
@@ -228,9 +236,9 @@ pub(super) fn callee_contains_pointer_arithmetic(tcx: TyCtxt<'_>, callee: DefId)
     false
 }
 
-/// Use the existing dataflow graph to approximate local callee return deps.
+/// Use the existing dataflow graph to approximate callee return deps.
+/// Works for any callee with available MIR (local or cross-crate `#[inline]`).
 pub(super) fn local_return_dependencies(tcx: TyCtxt<'_>, callee: DefId) -> Option<Vec<usize>> {
-    callee.as_local()?;
     if !tcx.is_mir_available(callee) {
         return None;
     }
@@ -315,10 +323,24 @@ pub(super) fn try_from_raw_parts_wrapper_effect<'tcx>(
 }
 
 /// Return callee argument indices that are definitely written on every
-/// reachable return path.
+/// reachable return path. Works for any callee with available MIR, and follows
+/// wrapper calls (`Vec::push` → `push_mut`) with bounded depth.
 pub(super) fn local_must_write_args(tcx: TyCtxt<'_>, callee: DefId) -> Option<Vec<usize>> {
-    callee.as_local()?;
+    must_write_args_rec(tcx, callee, 0).map(|set| set.into_iter().collect())
+}
+
+fn must_write_args_rec(tcx: TyCtxt<'_>, callee: DefId, depth: usize) -> Option<HashSet<usize>> {
+    if depth > 4 {
+        return None;
+    }
     if !tcx.is_mir_available(callee) {
+        return None;
+    }
+    let name = tcx.def_path_str(callee);
+    if name.contains("::intrinsics::")
+        || name.starts_with("intrinsics::")
+        || name.ends_with("::drop_in_place")
+    {
         return None;
     }
 
@@ -334,17 +356,14 @@ pub(super) fn local_must_write_args(tcx: TyCtxt<'_>, callee: DefId) -> Option<Ve
             if !path_ends_in_return(body, &path) {
                 continue;
             }
-            let writes = write_args_on_path(tcx, body, &path);
+            let writes = write_args_on_path(tcx, body, &path, depth);
             must_write = Some(match must_write {
                 Some(current) => current.intersection(&writes).copied().collect(),
                 None => writes,
             });
         }
 
-        must_write
-            .unwrap_or_default()
-            .into_iter()
-            .collect::<Vec<_>>()
+        must_write.unwrap_or_default()
     })
     .ok()
 }
@@ -486,12 +505,27 @@ fn write_args_on_path<'tcx>(
     tcx: TyCtxt<'tcx>,
     body: &rustc_middle::mir::Body<'tcx>,
     path: &[usize],
+    depth: usize,
 ) -> HashSet<usize> {
     let mut writes = HashSet::new();
     for block in path {
         let Some(data) = body.basic_blocks.get(BasicBlock::from_usize(*block)) else {
             continue;
         };
+
+        // Direct writes through `&mut` args: `*self = ...`, `(*self).0 = ...`.
+        for stmt in &data.statements {
+            let StatementKind::Assign(assign) = &stmt.kind else {
+                continue;
+            };
+            let dest = &assign.0;
+            if dest.projection.first() == Some(&ProjectionElem::Deref) {
+                if let Some(arg) = helpers::arg_of_local(dest.local, body.arg_count) {
+                    writes.insert(arg);
+                }
+            }
+        }
+
         let Some(terminator) = data.terminator.as_ref() else {
             continue;
         };
@@ -499,14 +533,30 @@ fn write_args_on_path<'tcx>(
             continue;
         };
         let name = helpers::call_name(tcx, func);
-        if !crate::helpers::api_classify::is_ptr_write(&name) {
+
+        // `ptr::write`-style writes: trace the pointer arg to a callee arg.
+        if crate::helpers::api_classify::is_ptr_write(&name) {
+            if let Some(pointer_arg) = args
+                .first()
+                .and_then(|arg| trace_to_callee_arg(tcx, body, &arg.node))
+            {
+                writes.insert(pointer_arg);
+            }
             continue;
         }
-        if let Some(pointer_arg) = args
-            .first()
-            .and_then(|arg| trace_to_callee_arg(tcx, body, &arg.node))
-        {
-            writes.insert(pointer_arg);
+
+        // Wrapper calls: a nested callee that writes its own args maps those
+        // writes back onto this callee's args.
+        if let Some(nested) = helpers::dep_callee_def_id(func) {
+            if let Some(nested_writes) = must_write_args_rec(tcx, nested, depth + 1) {
+                for (i, arg) in args.iter().enumerate() {
+                    if nested_writes.contains(&i) {
+                        if let Some(outer) = trace_to_callee_arg(tcx, body, &arg.node) {
+                            writes.insert(outer);
+                        }
+                    }
+                }
+            }
         }
     }
     writes

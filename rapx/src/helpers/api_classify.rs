@@ -45,8 +45,6 @@ pub fn is_byte_ptr_arith(name: &str) -> bool {
 
 pub fn is_layout_constant(name: &str) -> bool { name.contains("align_of") || name.contains("size_of") }
 pub fn is_align_offset(name: &str) -> bool { name.contains("::align_offset") }
-pub fn is_as_ptr_range(name: &str) -> bool { name.ends_with("::as_ptr_range") }
-pub fn is_as_mut_ptr_range(name: &str) -> bool { name.ends_with("::as_mut_ptr_range") }
 pub fn is_ptr_write(name: &str) -> bool {
     (name.contains("::write") || name.ends_with("write"))
         && !name.contains("write_bytes") && !name.contains("write_unaligned")
