@@ -2254,10 +2254,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         }
                         if value != 0 {
                             self.infer_switch_guard(discr);
-                        } else {
-                            // For !is_empty() on Iter/IterMut (false branch),
-                            // also assert self.len() >= 1 to help Z3.
-                            self.inject_is_empty_len(discr);
                         }
                         return;
                     }
@@ -2947,19 +2943,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         let ContractExpr::Len(inner) = &pred.lhs else { return None; };
         let val = self.eval_contract_expr_simple_value(inner)?;
         self.try_simple_iter_len(&val)
-    }
-
-    /// If `discr` is a local that was set by `iterpreter_iter_is_empty`
-    /// for an Iter/IterMut struct, push `len >= 1` as a path condition.
-    fn inject_is_empty_len(&mut self, discr: &Operand<'tcx>) {
-        let place = match discr {
-            Operand::Copy(p) | Operand::Move(p) => p,
-            _ => return,
-        };
-        if let Some(len_expr) = self.is_empty_len.get(&place.local) {
-            let one = Int::from_u64(self.ctx, 1);
-            self.path_conditions.push(len_expr.ge(&one));
-        }
     }
 
     /// If `local` is a reference to Iter/IterMut and field 0 (ptr)

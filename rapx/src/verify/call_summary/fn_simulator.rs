@@ -107,7 +107,6 @@ static REGISTRY: &[Entry] = &[
     // ── Slice / collection queries ──────────────────────────────────
     E!(api_classify::is_len,  arg0!(),  false,  no_args!(),  eff_len),
     E!(api_classify::is_capacity, arg0!(), false, no_args!(), eff_len),
-    E!(is_empty,              arg0!(),  false,  no_args!(),  eff_is_empty),
     E!(cmp_min,               ALL,      true,   no_args!(),  eff_cmp_min),
     E!(midpoint,              ALL,      true,   no_args!(),  eff_cmp_min),
     E!(bit_preserving_nz,     ALL,      true,   no_args!(),  eff_return_nonzero_iff),
@@ -254,10 +253,6 @@ fn eff_write_mem(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 
 fn eff_len(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     vec![CallEffect::ReturnLengthOfArg { arg: 0 }]
-}
-
-fn eff_is_empty(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![CallEffect::ReturnIsEmptyOfArg { arg: 0 }]
 }
 
 fn eff_cmp_min(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
@@ -435,7 +430,6 @@ fn iter_position(n: &str) -> bool            { n.contains("Iterator::position") 
 fn is_strlen(n: &str) -> bool                { n == "strlen" || n.ends_with("::strlen") }
 fn nonnull_new(n: &str) -> bool             { n.ends_with("::new") && api_classify::is_nonnull_api(n) && !n.ends_with("::new_unchecked") }
 fn ptr_read(n: &str) -> bool                { n.ends_with("::read") && n.contains("::ptr::") }
-fn is_empty(n: &str) -> bool                { n.ends_with("::is_empty") }
 fn cmp_min(n: &str) -> bool                 { (n.contains("::cmp::min") || n.contains("::Ord::min") || n.starts_with("core::cmp::min")) && !n.contains("min_by") }
 
 /// `u32::midpoint`/`usize::midpoint`: `midpoint(a, b) >= min(a, b)`, so it is

@@ -1325,43 +1325,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 };
                 self.set_local(dest, val);
             }
-            CallEffect::ReturnIsEmptyOfArg { arg } => {
-                if let Some(arg_val) = args.get(*arg) {
-                    if self.interpreter_iter_is_empty(arg_val, dest) {
-                        return;
-                    }
-                    let effective_alloc_id = arg_val.provenance_alloc_id()
-                        .and_then(|pid| self.alloc(pid).slice_data)
-                        .or_else(|| arg_val.provenance_alloc_id());
-                    if let Some(alloc_id) = effective_alloc_id {
-                        if let Some(len_term) = self.allocation_size(alloc_id).cloned() {
-                            let zero = Int::from_u64(self.ctx, 0);
-                            let one = Int::from_u64(self.ctx, 1);
-                            let dest_ty = self.body.local_decls[dest].ty;
-                            let cond = len_term._eq(&zero);
-                            let val = VmValue {
-                                term: cond.ite(&one, &zero),
-                                ty: dest_ty,
-                                provenance: None,
-                                invariants: ValueInvariants::default(),
-                            };
-                            self.set_local(dest, val);
-                            return;
-                        }
-                    }
-                }
-                let dest_ty = self.body.local_decls[dest].ty;
-                let one = Int::from_u64(self.ctx, 1);
-                let zero = Int::from_u64(self.ctx, 0);
-                let fresh = self.fresh_int(&format!("empty_{}", dest.as_usize()));
-                let val = VmValue {
-                    term: fresh.le(&zero).ite(&one, &zero),
-                    ty: dest_ty,
-                    provenance: None,
-                    invariants: ValueInvariants::default(),
-                };
-                self.set_local(dest, val);
-            }
             CallEffect::ReturnConst { value, label: _ } => {
                 let dest_ty = self.body.local_decls[dest].ty;
                 let term = Int::from_u64(self.ctx, *value);
@@ -2090,29 +2053,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         };
         let dest_ty = self.body.local_decls[dest].ty;
         self.set_local(dest, VmValue::new(len_term, dest_ty));
-        true
-    }
-
-    /// For Iter/IterMut types, compute is_empty from struct fields. Returns
-    /// true if handled (value set to dest).
-    fn interpreter_iter_is_empty(&mut self, arg_val: &VmValue<'ctx, 'tcx>, dest: Local) -> bool {
-        let Some(l) = self.find_iter_self_local(arg_val) else {
-            return false;
-        };
-        let Some(remaining) = self.iter_remaining_len(l) else {
-            return false;
-        };
-        let dest_ty = self.body.local_decls[dest].ty;
-        let zero = Int::from_u64(self.ctx, 0);
-        let one = Int::from_u64(self.ctx, 1);
-        let val = VmValue {
-            term: remaining._eq(&zero).ite(&one, &zero),
-            ty: dest_ty,
-            provenance: None,
-            invariants: ValueInvariants::default(),
-        };
-        self.is_empty_len.insert(dest, remaining);
-        self.set_local(dest, val);
         true
     }
 

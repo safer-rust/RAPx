@@ -236,12 +236,6 @@ pub struct VmState<'ctx, 'tcx> {
     /// Example: `(local_3, [0])` is `local_3.0`, `(local_3, [0, 1])` is `local_3.0.1`.
     pub(crate) field_values: FxHashMap<(Local, Vec<usize>), VmValue<'ctx, 'tcx>>,
 
-    /// Locals set by `iterpreter_iter_is_empty` for Iter/IterMut,
-    /// along with the field-based len expression. When a switchint
-    /// on such local takes the false (!is_empty) branch, we inject
-    /// `len >= 1` as a path condition to help Z3.
-    pub(crate) is_empty_len: FxHashMap<Local, Int<'ctx>>,
-
     /// Cumulative ptr offset for Iter/IterMut field [0] (ptr).
     /// Key: (struct_local). When post_inc_start advances the ptr by
     /// `n` elements, we increment this offset instead of nesting
@@ -304,7 +298,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             other_op_sources: FxHashMap::default(),
             contract_flags: ContractFlags::default(),
             field_values: FxHashMap::default(),
-            is_empty_len: FxHashMap::default(),
             iter_ptr_offset: FxHashMap::default(),
             bytes: FxHashMap::default(),
             notes: Vec::new(),

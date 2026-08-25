@@ -114,8 +114,6 @@ pub enum CallEffect {
     },
     /// The return value is the length of an aggregate argument.
     ReturnLengthOfArg { arg: usize },
-    /// The return value is `1` iff the length of the aggregate argument is 0.
-    ReturnIsEmptyOfArg { arg: usize },
     /// The return value is `min(lhs_arg, rhs_arg)`, satisfying
     /// `return <= lhs_arg` and `return <= rhs_arg`.
     ReturnMin { lhs_arg: usize, rhs_arg: usize },
