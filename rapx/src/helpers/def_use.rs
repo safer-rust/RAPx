@@ -210,21 +210,13 @@ impl RelevantPlaces {
 // ── def-use extraction from MIR ────────────────────────────────────────
 
 /// Collect definitions and uses for one MIR terminator.
+///
+/// Call terminators are handled separately by the slicer's `call_visit` module
+/// (which consults interprocedural summaries), so the `Call` arm is
+/// deliberately absent here.
 pub fn terminator_use_def<'tcx>(terminator: &Terminator<'tcx>) -> DefUse {
     let mut use_def = DefUse::new();
     match &terminator.kind {
-        TerminatorKind::Call {
-            func,
-            args,
-            destination,
-            ..
-        } => {
-            use_def.defs.insert_mir_place(destination);
-            use_def.uses.extend(operand_uses(func));
-            for arg in args {
-                use_def.uses.extend(operand_uses(&arg.node));
-            }
-        }
         TerminatorKind::SwitchInt { discr, .. } => {
             use_def.uses.extend(operand_uses(discr));
         }
