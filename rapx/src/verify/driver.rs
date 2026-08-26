@@ -123,16 +123,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
             let mut view_results: Vec<PropertyCheckResult<'tcx>> = Vec::new();
 
             for (property_index, property) in view.properties.iter().enumerate() {
-                if property.is_or() {
-                    self.check_or_property(&mut report, &view, property_index, property);
-                    continue;
-                }
-                let bulk = self.engine.check_callsite_from_tree(
-                    view.tree,
-                    view.checkpoint,
-                    property,
-                    &self.target.caller_requires,
-                );
+                let bulk = self.check_property_paths(&view, property);
                 for (path_index, (result, path_desc)) in bulk.iter().enumerate() {
                     let item = PropertyCheckResult {
                         checkpoint: view.checkpoint.location(),
@@ -157,68 +148,56 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
         report
     }
 
-    fn check_or_property(
+    /// Check one property (atom / `And` / `Or`) across all paths, returning
+    /// per-path `(result, path_desc)` pairs.  `And`/`Or` are folded per path,
+    /// preserving per-leaf slicing for precision.
+    fn check_property_paths(
         &self,
-        report: &mut VerificationReport<'tcx>,
         view: &CheckpointCheckView<'_, '_, 'tcx>,
-        property_index: usize,
-        or_property: &Property<'tcx>,
-    ) {
-        // Per-path final OR result, aggregating the AND of each group.
-        let mut per_path: Vec<Option<(super::report::CheckResult, String)>> = Vec::new();
-
-        for group in or_property.groups().iter() {
-            // Per-path AND result of this group.
-            let mut group_per_path: Vec<Option<(super::report::CheckResult, String)>> = Vec::new();
-            for sub_prop in group.iter() {
-                let bulk = self.engine.check_callsite_from_tree(
-                    view.tree,
-                    view.checkpoint,
-                    sub_prop,
-                    &self.target.caller_requires,
-                );
-                if group_per_path.is_empty() {
-                    group_per_path.resize(bulk.len(), None);
-                }
-                for (path_idx, (result, path_desc)) in bulk.iter().enumerate() {
-                    let slot = group_per_path[path_idx]
-                        .get_or_insert_with(|| (result.clone(), path_desc.clone()));
-                    slot.0 = slot.0.clone().and(result.clone());
-                    if matches!(result, super::report::CheckResult::Failed | super::report::CheckResult::Unknown) {
-                        slot.1 = path_desc.clone();
+        property: &Property<'tcx>,
+    ) -> Vec<(CheckResult, String)> {
+        match property {
+            Property::Atom(_) => self.engine.check_callsite_from_tree(
+                view.tree,
+                view.checkpoint,
+                property,
+                &self.target.caller_requires,
+            ),
+            Property::And(and) => {
+                let mut per_path: Vec<Option<(CheckResult, String)>> = Vec::new();
+                for conjunct in and.conjuncts.iter() {
+                    let bulk = self.check_property_paths(view, conjunct);
+                    if per_path.is_empty() {
+                        per_path.resize(bulk.len(), None);
+                    }
+                    for (i, (result, desc)) in bulk.iter().enumerate() {
+                        let slot = per_path[i]
+                            .get_or_insert_with(|| (result.clone(), desc.clone()));
+                        slot.0 = slot.0.clone().and(result.clone());
+                        if matches!(result, CheckResult::Failed | CheckResult::Unknown) {
+                            slot.1 = desc.clone();
+                        }
                     }
                 }
+                per_path.into_iter().map(|x| x.unwrap()).collect()
             }
-
-            // Fold this group's per-path AND result into the OR.
-            if per_path.is_empty() {
-                per_path.resize(group_per_path.len(), None);
-            }
-            for (path_idx, g) in group_per_path.iter().enumerate() {
-                if let Some((g_result, g_desc)) = g {
-                    let slot = per_path[path_idx]
-                        .get_or_insert_with(|| (g_result.clone(), g_desc.clone()));
-                    slot.0 = slot.0.clone().or(g_result.clone());
-                    if matches!(g_result, super::report::CheckResult::Proved) {
-                        slot.1 = g_desc.clone();
+            Property::Or(or) => {
+                let mut per_path: Vec<Option<(CheckResult, String)>> = Vec::new();
+                for disjunct in or.disjuncts.iter() {
+                    let bulk = self.check_property_paths(view, disjunct);
+                    if per_path.is_empty() {
+                        per_path.resize(bulk.len(), None);
+                    }
+                    for (i, (result, desc)) in bulk.iter().enumerate() {
+                        let slot = per_path[i]
+                            .get_or_insert_with(|| (result.clone(), desc.clone()));
+                        slot.0 = slot.0.clone().or(result.clone());
+                        if matches!(result, CheckResult::Proved) {
+                            slot.1 = desc.clone();
+                        }
                     }
                 }
-            }
-        }
-
-        for (path_index, best) in per_path.iter().enumerate() {
-            if let Some((result, path_desc)) = best {
-                report.push(PropertyCheckResult {
-                    checkpoint: view.checkpoint.location(),
-                    checkpoint_index: view.checkpoint_index,
-                    path_index,
-                    property_index,
-                    property: or_property.clone(),
-                    result: result.clone(),
-                    diagnostics: Some(path_desc.clone()),
-                    path_description: path_desc.clone(),
-                    callee_name: view.checkpoint.callee_name(self.tcx),
-                });
+                per_path.into_iter().map(|x| x.unwrap()).collect()
             }
         }
     }
@@ -1147,6 +1126,7 @@ fn remap_constructor_contract<'tcx>(
             atom.args = new_args;
             crate::verify::contract::Property::Atom(atom)
         }
+        crate::verify::contract::Property::And(and) => crate::verify::contract::Property::And(and),
         crate::verify::contract::Property::Or(or) => crate::verify::contract::Property::Or(or),
     }
 }

@@ -30,9 +30,13 @@ pub enum ContractProjection<'tcx> {
     ForEach,
 }
 
+/// A place a contract refers to: a [`PlaceBase`] root plus a sequence of
+/// [`ContractProjection`] steps into it (e.g. `self.next.value`, `head.iter()`).
 #[derive(Clone, Debug)]
 pub struct ContractPlace<'tcx> {
+    /// The root: return value, an argument, or a MIR local.
     pub base: PlaceBase,
+    /// Field / `Some`-unwrap / element steps from the base down.
     pub projections: Vec<ContractProjection<'tcx>>,
 }
 
@@ -71,12 +75,14 @@ impl<'tcx> ContractPlace<'tcx> {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub enum NumericOp {
+pub enum NumericBinOp {
     Add,
     Sub,
     Mul,
     Div,
     Rem,
+    Min,
+    Max,
     BitAnd,
     BitOr,
     BitXor,
@@ -104,21 +110,13 @@ pub enum ContractExpr<'tcx> {
         index: Box<ContractExpr<'tcx>>,
     },
     Binary {
-        op: NumericOp,
+        op: NumericBinOp,
         lhs: Box<ContractExpr<'tcx>>,
         rhs: Box<ContractExpr<'tcx>>,
     },
     Unary {
         op: NumericUnaryOp,
         expr: Box<ContractExpr<'tcx>>,
-    },
-    Min {
-        a: Box<ContractExpr<'tcx>>,
-        b: Box<ContractExpr<'tcx>>,
-    },
-    Max {
-        a: Box<ContractExpr<'tcx>>,
-        b: Box<ContractExpr<'tcx>>,
     },
     If {
         cond: Box<NumericPredicate<'tcx>>,
@@ -193,11 +191,16 @@ pub enum PropertyKind {
     Unknown,
 }
 
+/// One argument of a predicate call — what the property is applied to.
 #[derive(Clone, Debug)]
 pub enum PropertyArg<'tcx> {
+    /// A type (e.g. `T` in `Align(ptr, T)`).
     Ty(Ty<'tcx>),
+    /// A value expression (e.g. `buf`, `n`).
     Expr(ContractExpr<'tcx>),
+    /// An interval of comparisons, used by `ValidNum`.
     Predicates(Vec<NumericPredicate<'tcx>>),
+    /// A name: lifetime, allocator, trait (e.g. `Copy`), or `sized`/`unsized`.
     Ident(String),
 }
 
@@ -219,19 +222,16 @@ pub struct ContractOrigin {
     pub meaning: Option<String>,
 }
 
-/// A safety property: either a single atomic predicate (`Atom`) or a
-/// disjunction of alternative predicate groups (`Or`).
+/// A safety property: a boolean formula over atomic predicates.
 ///
-/// Conjunction (`And`) is deliberately *not* a variant: it is expressed by the
-/// surrounding collection — the caller's `requires` list is already a
-/// conjunction, and each `Or` group is a conjunction of its members (DNF).
-///
-/// Splitting `Atom` from `Or` makes the mutually-exclusive payloads (`args`
-/// vs. `groups`) explicit in the type, so an atom can never carry alternatives
-/// and an `Or` can never carry arguments.
+/// The formula is a tree of three node kinds — `Atom` (a single predicate),
+/// `And` (conjunction: all members hold), and `Or` (disjunction: at least one
+/// member holds).  `Box` breaks the recursion; the top level of a contract is
+/// simply a `Vec<Property>` (an implicit conjunction of requirements).
 #[derive(Clone, Debug)]
 pub enum Property<'tcx> {
     Atom(AtomProperty<'tcx>),
+    And(AndProperty<'tcx>),
     Or(OrProperty<'tcx>),
 }
 
@@ -249,11 +249,19 @@ pub struct AtomProperty<'tcx> {
     pub origin: Option<ContractOrigin>,
 }
 
+/// A conjunction: every [`conjuncts`](Self::conjuncts) member must hold.
+#[derive(Clone, Debug)]
+pub struct AndProperty<'tcx> {
+    pub conjuncts: Vec<Box<Property<'tcx>>>,
+    pub contract_kind: ContractKind,
+    /// Display metadata when this property was expanded from a compound `def`.
+    pub origin: Option<ContractOrigin>,
+}
+
+/// A disjunction: at least one [`disjuncts`](Self::disjuncts) member must hold.
 #[derive(Clone, Debug)]
 pub struct OrProperty<'tcx> {
-    /// Alternative property groups.  Each inner `Vec` is a conjunction (all
-    /// must hold); at least one group must hold in a disjunction.
-    pub groups: Vec<Vec<Box<Property<'tcx>>>>,
+    pub disjuncts: Vec<Box<Property<'tcx>>>,
     pub contract_kind: ContractKind,
     /// Display metadata when this property was expanded from a compound `def`.
     pub origin: Option<ContractOrigin>,
@@ -271,49 +279,71 @@ impl<'tcx> Property<'tcx> {
         })
     }
 
-    /// Build a `Property::Or` disjunction from already-expanded DNF groups.
-    ///
-    /// Each inner `Vec` is one AND-group (all its members must hold); at least
-    /// one group must hold for the disjunction to be satisfied.  This is the
-    /// single place an `Or` property is constructed so that callers in the
-    /// `def`, JSON (`query`), and `any(...)` (`parser`) layers share identical
-    /// semantics.
-    pub(crate) fn new_or(groups: Vec<Vec<Box<Property<'tcx>>>>) -> Self {
-        Self::Or(OrProperty {
-            groups,
+    /// Build a conjunction (`And`) of already-expanded conjuncts.
+    pub(crate) fn new_and(conjuncts: Vec<Property<'tcx>>) -> Self {
+        Self::And(AndProperty {
+            conjuncts: conjuncts.into_iter().map(Box::new).collect(),
             contract_kind: ContractKind::Precond,
             origin: None,
         })
     }
 
-    /// The predicate kind of an atom (`None` for an `Or`, which has no single
-    /// kind).
+    /// Build a disjunction (`Or`) of already-expanded disjuncts.
+    pub(crate) fn new_or(disjuncts: Vec<Property<'tcx>>) -> Self {
+        Self::Or(OrProperty {
+            disjuncts: disjuncts.into_iter().map(Box::new).collect(),
+            contract_kind: ContractKind::Precond,
+            origin: None,
+        })
+    }
+
+    /// Normalize a list of conjuncts into a single `Property`: a singleton is
+    /// returned as-is, otherwise the list is wrapped in an `And` node.
+    pub(crate) fn conjunction(conjuncts: Vec<Property<'tcx>>) -> Self {
+        if conjuncts.len() == 1 {
+            conjuncts.into_iter().next().unwrap()
+        } else {
+            Self::new_and(conjuncts)
+        }
+    }
+
+    /// The predicate kind of an atom (`None` for `And`/`Or`, which have no
+    /// single kind).
     pub fn kind(&self) -> Option<PropertyKind> {
         match self {
             Property::Atom(a) => Some(a.kind),
-            Property::Or(_) => None,
+            Property::And(_) | Property::Or(_) => None,
         }
     }
 
-    /// The positional arguments of an atom (`Or` has none).
+    /// The positional arguments of an atom (`And`/`Or` have none).
     pub fn args(&self) -> &[PropertyArg<'tcx>] {
         match self {
             Property::Atom(a) => &a.args,
-            Property::Or(_) => &[],
+            Property::And(_) | Property::Or(_) => &[],
         }
     }
 
-    /// The alternative groups of an `Or` property (`Atom` has none).
-    pub fn groups(&self) -> &[Vec<Box<Property<'tcx>>>] {
+    /// The conjuncts of an `And` property (`Atom`/`Or` have none).
+    pub fn conjuncts(&self) -> &[Box<Property<'tcx>>] {
         match self {
-            Property::Atom(_) => &[],
-            Property::Or(o) => &o.groups,
+            Property::And(a) => &a.conjuncts,
+            Property::Atom(_) | Property::Or(_) => &[],
+        }
+    }
+
+    /// The disjuncts of an `Or` property (`Atom`/`And` have none).
+    pub fn disjuncts(&self) -> &[Box<Property<'tcx>>] {
+        match self {
+            Property::Or(o) => &o.disjuncts,
+            Property::Atom(_) | Property::And(_) => &[],
         }
     }
 
     pub fn contract_kind(&self) -> ContractKind {
         match self {
             Property::Atom(a) => a.contract_kind,
+            Property::And(a) => a.contract_kind,
             Property::Or(o) => o.contract_kind,
         }
     }
@@ -321,7 +351,7 @@ impl<'tcx> Property<'tcx> {
     pub fn for_each(&self) -> Option<&ContractPlace<'tcx>> {
         match self {
             Property::Atom(a) => a.for_each.as_ref(),
-            Property::Or(_) => None,
+            Property::And(_) | Property::Or(_) => None,
         }
     }
 
@@ -329,12 +359,17 @@ impl<'tcx> Property<'tcx> {
     pub fn origin(&self) -> Option<&ContractOrigin> {
         match self {
             Property::Atom(a) => a.origin.as_ref(),
+            Property::And(a) => a.origin.as_ref(),
             Property::Or(o) => o.origin.as_ref(),
         }
     }
 
     pub fn is_or(&self) -> bool {
         matches!(self, Property::Or(_))
+    }
+
+    pub fn is_and(&self) -> bool {
+        matches!(self, Property::And(_))
     }
 
     /// The first `Ty` argument.
@@ -357,6 +392,7 @@ impl<'tcx> Property<'tcx> {
     pub fn apply_kind(&mut self, kind: Option<&str>) {
         let target = match self {
             Property::Atom(a) => &mut a.contract_kind,
+            Property::And(a) => &mut a.contract_kind,
             Property::Or(o) => &mut o.contract_kind,
         };
         match kind {
@@ -366,12 +402,13 @@ impl<'tcx> Property<'tcx> {
         }
     }
 
-    /// Tag a property (atom or `Or`) with the display name, full call-site
-    /// arguments, and meaning of the compound `def` it expanded from.
+    /// Tag a property (atom, `And`, or `Or`) with the display name, full
+    /// call-site arguments, and meaning of the compound `def` it expanded from.
     pub(crate) fn set_origin(&mut self, name: String, args: Vec<String>, meaning: Option<String>) {
         let origin = ContractOrigin { name, args, meaning };
         match self {
             Property::Atom(a) => a.origin = Some(origin),
+            Property::And(a) => a.origin = Some(origin),
             Property::Or(o) => o.origin = Some(origin),
         }
     }
@@ -387,6 +424,7 @@ impl<'tcx> Property<'tcx> {
     pub(crate) fn set_contract_kind(&mut self, k: ContractKind) {
         match self {
             Property::Atom(a) => a.contract_kind = k,
+            Property::And(a) => a.contract_kind = k,
             Property::Or(o) => o.contract_kind = k,
         }
     }

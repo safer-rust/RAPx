@@ -60,6 +60,7 @@ impl PropertyChecker {
         }
         match property {
             Property::Or(_) => self.check_or(vm_state, solver, checkpoint, property),
+            Property::And(_) => self.check_and(vm_state, solver, checkpoint, property),
             Property::Atom(atom) => match atom.kind {
                 PropertyKind::Align => self.check_align(vm_state, solver, checkpoint, property),
                 PropertyKind::NonNull => self.check_non_null(vm_state, solver, checkpoint, property),
@@ -98,26 +99,29 @@ impl PropertyChecker {
     fn check_or<'ctx, 'tcx>(&self, vm_state: &VmState<'ctx, 'tcx>, solver: &Solver<'ctx>,
         checkpoint: &Checkpoint<'tcx>, property: &Property<'tcx>) -> CheckResult
     {
-        // OR semantics: proved if any group is fully proved; failed only if
-        // *every* group is definitely violated; unknown otherwise.
-        let mut overall: Option<CheckResult> = None;
-        for group in property.groups() {
-            let mut group_acc: Option<CheckResult> = None;
-            for p in group {
-                let result = self.check_inner(vm_state, solver, checkpoint, p);
-                group_acc = Some(match group_acc {
-                    Some(prev) => prev.and(result),
-                    None => result,
-                });
-            }
-            // An empty group is vacuously proved.
-            let group_result = group_acc.unwrap_or(CheckResult::Proved);
-            overall = Some(match overall {
-                Some(prev) => prev.or(group_result),
-                None => group_result,
-            });
+        // OR semantics: proved if any disjunct is proved; failed only if every
+        // disjunct is definitely violated; otherwise unknown.  An empty
+        // disjunction is unsatisfiable, hence Failed.
+        let mut overall = CheckResult::Failed;
+        for disjunct in property.disjuncts() {
+            let result = self.check_inner(vm_state, solver, checkpoint, disjunct);
+            overall = overall.or(result);
         }
-        overall.unwrap_or(CheckResult::Failed)
+        overall
+    }
+
+    fn check_and<'ctx, 'tcx>(&self, vm_state: &VmState<'ctx, 'tcx>, solver: &Solver<'ctx>,
+        checkpoint: &Checkpoint<'tcx>, property: &Property<'tcx>) -> CheckResult
+    {
+        // AND semantics: proved if every conjunct is proved; failed if any is
+        // definitely violated; otherwise unknown.  An empty conjunction is
+        // vacuously proved.
+        let mut overall = CheckResult::Proved;
+        for conjunct in property.conjuncts() {
+            let result = self.check_inner(vm_state, solver, checkpoint, conjunct);
+            overall = overall.and(result);
+        }
+        overall
     }
 }
 

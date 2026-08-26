@@ -93,7 +93,7 @@ fn any_entry_to_property<'tcx>(
     param_names: &[String],
     has_names: bool,
 ) -> Property<'tcx> {
-    let mut groups: Vec<Vec<Box<Property<'tcx>>>> = Vec::new();
+    let mut or_disjuncts: Vec<Property<'tcx>> = Vec::new();
     for item in disjuncts {
         match item {
             AnyItem::Single(entry) => {
@@ -111,17 +111,17 @@ fn any_entry_to_property<'tcx>(
                     continue;
                 }
                 let props = Property::parse_list(tcx, def_id, entry.tag.as_str(), &exprs);
-                let mut group: Vec<Box<Property<'tcx>>> = Vec::new();
+                let mut group: Vec<Property<'tcx>> = Vec::new();
                 for mut prop in props {
                     prop.apply_kind(entry.kind.as_deref());
-                    group.push(Box::new(prop));
+                    group.push(prop);
                 }
                 if !group.is_empty() {
-                    groups.push(group);
+                    or_disjuncts.push(Property::conjunction(group));
                 }
             }
             AnyItem::Group(entries) => {
-                let mut group: Vec<Box<Property<'tcx>>> = Vec::new();
+                let mut group: Vec<Property<'tcx>> = Vec::new();
                 for entry in entries {
                     if entry.tag == "any" {
                         rap_error!("Nested 'any' inside 'any' group is not supported");
@@ -140,16 +140,16 @@ fn any_entry_to_property<'tcx>(
                         Property::parse_list(tcx, def_id, entry.tag.as_str(), &exprs);
                     for mut prop in props {
                         prop.apply_kind(entry.kind.as_deref());
-                        group.push(Box::new(prop));
+                        group.push(prop);
                     }
                 }
                 if !group.is_empty() {
-                    groups.push(group);
+                    or_disjuncts.push(Property::conjunction(group));
                 }
             }
         }
     }
-    Property::new_or(groups)
+    Property::new_or(or_disjuncts)
 }
 
 /// Resolve JSON contract argument strings to parsed [`syn::Expr`] values.

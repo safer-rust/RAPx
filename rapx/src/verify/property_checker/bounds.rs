@@ -9,7 +9,7 @@ use rustc_middle::ty::{Ty, TyKind};
 #[cfg(not(rapx_has_skip_norm_wip))]
 use crate::compat::SkipNormWip;
 use z3::{SatResult, Solver, ast::{Ast, Bool, Int}};
-use crate::verify::contract::{ContractExpr, NumericOp, PlaceBase, Property, PropertyArg, RelOp};
+use crate::verify::contract::{ContractExpr, NumericBinOp, PlaceBase, Property, PropertyArg, RelOp};
 use crate::verify::report::CheckResult;
 use crate::helpers::mir_scan::Checkpoint;
 use crate::verify::vm::state::{VmState, VmValue};
@@ -373,7 +373,7 @@ impl PropertyChecker {
             return false;
         }
         // lhs must be size_of(T) * count
-        let ContractExpr::Binary { op: NumericOp::Mul, lhs, rhs } = &pred.lhs else {
+        let ContractExpr::Binary { op: NumericBinOp::Mul, lhs, rhs } = &pred.lhs else {
             return false;
         };
         let (size_ty, count_expr) = match (lhs.as_ref(), rhs.as_ref()) {

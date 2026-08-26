@@ -52,11 +52,15 @@ impl RelevantPlaces {
 
     /// Collect all roots mentioned by a property.
     fn collect_property(&mut self, property: &Property<'_>) {
+        if let Property::And(and) = property {
+            for conjunct in &and.conjuncts {
+                self.collect_property(conjunct);
+            }
+            return;
+        }
         if let Property::Or(or) = property {
-            for group in &or.groups {
-                for sub in group.iter() {
-                    self.collect_property(sub);
-                }
+            for disjunct in &or.disjuncts {
+                self.collect_property(disjunct);
             }
             return;
         }
@@ -131,10 +135,6 @@ impl RelevantPlaces {
             ContractExpr::IndexAccess { slice, index } => {
                 self.collect_contract_expr(slice);
                 self.collect_contract_expr(index);
-            }
-            ContractExpr::Min { a, b } | ContractExpr::Max { a, b } => {
-                self.collect_contract_expr(a);
-                self.collect_contract_expr(b);
             }
             ContractExpr::If {
                 cond,

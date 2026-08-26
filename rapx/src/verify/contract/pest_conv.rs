@@ -16,7 +16,7 @@ use rustc_middle::ty::TyCtxt;
 use super::pest_grammar::{ContractParser, Rule};
 use super::place::resolve_place_from_ident;
 use super::types::{
-    ContractExpr, ContractPlace, NumericOp, NumericPredicate, NumericUnaryOp, PlaceBase, RelOp,
+    ContractExpr, ContractPlace, NumericBinOp, NumericPredicate, NumericUnaryOp, PlaceBase, RelOp,
 };
 use crate::helpers::name::match_ty_with_ident;
 
@@ -137,16 +137,16 @@ fn conv_if<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, pair: Pair<Rule>) -> Contract
     }
 }
 
-fn op_from_str(op: &str) -> Option<NumericOp> {
+fn op_from_str(op: &str) -> Option<NumericBinOp> {
     match op {
-        "+" => Some(NumericOp::Add),
-        "-" => Some(NumericOp::Sub),
-        "*" => Some(NumericOp::Mul),
-        "/" => Some(NumericOp::Div),
-        "%" => Some(NumericOp::Rem),
-        "&" => Some(NumericOp::BitAnd),
-        "|" => Some(NumericOp::BitOr),
-        "^" => Some(NumericOp::BitXor),
+        "+" => Some(NumericBinOp::Add),
+        "-" => Some(NumericBinOp::Sub),
+        "*" => Some(NumericBinOp::Mul),
+        "/" => Some(NumericBinOp::Div),
+        "%" => Some(NumericBinOp::Rem),
+        "&" => Some(NumericBinOp::BitAnd),
+        "|" => Some(NumericBinOp::BitOr),
+        "^" => Some(NumericBinOp::BitXor),
         _ => None,
     }
 }
@@ -310,15 +310,15 @@ fn conv_call<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, pair: Pair<Rule>) -> Contra
             }
             let a = conv_arg_expr(tcx, def_id, args[0].clone());
             let b = conv_arg_expr(tcx, def_id, args[1].clone());
-            match builtin.as_str() {
-                "min" => ContractExpr::Min {
-                    a: Box::new(a),
-                    b: Box::new(b),
-                },
-                _ => ContractExpr::Max {
-                    a: Box::new(a),
-                    b: Box::new(b),
-                },
+            let op = if builtin == "min" {
+                NumericBinOp::Min
+            } else {
+                NumericBinOp::Max
+            };
+            ContractExpr::Binary {
+                op,
+                lhs: Box::new(a),
+                rhs: Box::new(b),
             }
         }
         "index_access" => {
@@ -365,7 +365,7 @@ fn conv_const_path<'tcx>(
     // `T::BITS` is the bit width, i.e. `size_of::<T>() * 8`.
     if which == "BITS" {
         return ContractExpr::Binary {
-            op: NumericOp::Mul,
+            op: NumericBinOp::Mul,
             lhs: Box::new(ContractExpr::SizeOf(ty)),
             rhs: Box::new(ContractExpr::Const(8)),
         };

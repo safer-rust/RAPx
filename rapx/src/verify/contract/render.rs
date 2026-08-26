@@ -9,7 +9,7 @@ use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 
 use super::types::{
-    ContractExpr, ContractPlace, ContractProjection, NumericOp, NumericPredicate,
+    ContractExpr, ContractPlace, ContractProjection, NumericBinOp, NumericPredicate,
     NumericUnaryOp, PlaceBase, Property, PropertyArg, PropertyKind, RelOp,
 };
 
@@ -156,22 +156,21 @@ pub fn display_expr_user_friendly<'tcx>(
             )
         }
         ContractExpr::Binary { op, lhs, rhs } => {
+            let lhs_str = display_expr_user_friendly(lhs, tcx, struct_def_id, fn_def_id);
+            let rhs_str = display_expr_user_friendly(rhs, tcx, struct_def_id, fn_def_id);
             let op_str = match op {
-                NumericOp::Add => "+",
-                NumericOp::Sub => "-",
-                NumericOp::Mul => "*",
-                NumericOp::Div => "/",
-                NumericOp::Rem => "%",
-                NumericOp::BitAnd => "&",
-                NumericOp::BitOr => "|",
-                NumericOp::BitXor => "^",
+                NumericBinOp::Min => return format!("min({lhs_str}, {rhs_str})"),
+                NumericBinOp::Max => return format!("max({lhs_str}, {rhs_str})"),
+                NumericBinOp::Add => "+",
+                NumericBinOp::Sub => "-",
+                NumericBinOp::Mul => "*",
+                NumericBinOp::Div => "/",
+                NumericBinOp::Rem => "%",
+                NumericBinOp::BitAnd => "&",
+                NumericBinOp::BitOr => "|",
+                NumericBinOp::BitXor => "^",
             };
-            format!(
-                "{} {} {}",
-                display_expr_user_friendly(lhs, tcx, struct_def_id, fn_def_id),
-                op_str,
-                display_expr_user_friendly(rhs, tcx, struct_def_id, fn_def_id),
-            )
+            format!("{lhs_str} {op_str} {rhs_str}")
         }
         ContractExpr::Unary { op, expr } => {
             let op_str = match op {
@@ -182,20 +181,6 @@ pub fn display_expr_user_friendly<'tcx>(
                 "{}{}",
                 op_str,
                 display_expr_user_friendly(expr, tcx, struct_def_id, fn_def_id),
-            )
-        }
-        ContractExpr::Min { a, b } => {
-            format!(
-                "min({}, {})",
-                display_expr_user_friendly(a, tcx, struct_def_id, fn_def_id),
-                display_expr_user_friendly(b, tcx, struct_def_id, fn_def_id),
-            )
-        }
-        ContractExpr::Max { a, b } => {
-            format!(
-                "max({}, {})",
-                display_expr_user_friendly(a, tcx, struct_def_id, fn_def_id),
-                display_expr_user_friendly(b, tcx, struct_def_id, fn_def_id),
             )
         }
         ContractExpr::If {
@@ -253,7 +238,13 @@ impl<'tcx> Property<'tcx> {
 
         let kind_str = match self.kind() {
             Some(k) => format!("{k:?}"),
-            None => "Or".to_string(),
+            None => {
+                if self.is_and() {
+                    "And".to_string()
+                } else {
+                    "Or".to_string()
+                }
+            }
         };
 
         if matches!(self.kind(), Some(PropertyKind::InBound))

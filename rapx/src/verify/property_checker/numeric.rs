@@ -10,7 +10,7 @@ use rustc_middle::ty::TyKind;
 use crate::compat::SkipNormWip;
 use rustc_hash::FxHashSet;
 use z3::{SatResult, Solver, ast::{Ast, Bool, Int}};
-use crate::verify::contract::{ContractExpr, NumericOp, PlaceBase, Property, PropertyArg, RelOp};
+use crate::verify::contract::{ContractExpr, NumericBinOp, PlaceBase, Property, PropertyArg, RelOp};
 use crate::verify::def_use::PlaceKey;
 use crate::verify::report::CheckResult;
 use crate::helpers::mir_scan::Checkpoint;
@@ -150,7 +150,7 @@ impl PropertyChecker {
         expr: &ContractExpr<'tcx>)
     {
         match expr {
-            ContractExpr::Binary { op: NumericOp::Div, lhs, rhs } => {
+            ContractExpr::Binary { op: NumericBinOp::Div, lhs, rhs } => {
                 if let (Some(l), Some(r)) = (
                     self.eval_contract_expr(vm_state, checkpoint, lhs),
                     self.eval_contract_expr(vm_state, checkpoint, rhs),
@@ -163,7 +163,7 @@ impl PropertyChecker {
                     solver.assert(&rem_term.ge(&zero));
                 }
             }
-            ContractExpr::Binary { op: NumericOp::Mul, lhs, rhs } => {
+            ContractExpr::Binary { op: NumericBinOp::Mul, lhs, rhs } => {
                 // Recurse into mul operands in case one is a div
                 self.inject_nia_axioms(vm_state, solver, checkpoint, lhs);
                 self.inject_nia_axioms(vm_state, solver, checkpoint, rhs);

@@ -13,7 +13,7 @@ use rustc_middle::ty::TyCtxt;
 use crate::analysis::path::PathTree;
 
 use super::{
-    contract::{AtomProperty, OrProperty, Property},
+    contract::{AndProperty, AtomProperty, OrProperty, Property},
     report::CheckResult,
     slicer::{RelevantItem, BackwardSlicer},
 };
@@ -209,19 +209,26 @@ impl<'tcx> VerifyEngine<'tcx> {
                     origin: None,
                 })
             }
-            Property::Or(or) => {
-                let new_groups: Vec<Vec<Box<Property<'tcx>>>> = or
-                    .groups
+            Property::And(and) => {
+                let conjuncts: Vec<Property<'tcx>> = and
+                    .conjuncts
                     .iter()
-                    .map(|group| {
-                        group
-                            .iter()
-                            .map(|p| Box::new(Self::bind_property_to_checkpoint(p, checkpoint)))
-                            .collect()
-                    })
+                    .map(|p| Self::bind_property_to_checkpoint(p, checkpoint))
+                    .collect();
+                Property::And(AndProperty {
+                    conjuncts: conjuncts.into_iter().map(Box::new).collect(),
+                    contract_kind: and.contract_kind,
+                    origin: None,
+                })
+            }
+            Property::Or(or) => {
+                let disjuncts: Vec<Property<'tcx>> = or
+                    .disjuncts
+                    .iter()
+                    .map(|p| Self::bind_property_to_checkpoint(p, checkpoint))
                     .collect();
                 Property::Or(OrProperty {
-                    groups: new_groups,
+                    disjuncts: disjuncts.into_iter().map(Box::new).collect(),
                     contract_kind: or.contract_kind,
                     origin: None,
                 })
@@ -281,18 +288,6 @@ impl<'tcx> VerifyEngine<'tcx> {
                 super::contract::ContractExpr::Unary {
                     op: *op,
                     expr: Box::new(Self::rebind_contract_expr(inner, checkpoint)),
-                }
-            }
-            super::contract::ContractExpr::Min { a, b } => {
-                super::contract::ContractExpr::Min {
-                    a: Box::new(Self::rebind_contract_expr(a, checkpoint)),
-                    b: Box::new(Self::rebind_contract_expr(b, checkpoint)),
-                }
-            }
-            super::contract::ContractExpr::Max { a, b } => {
-                super::contract::ContractExpr::Max {
-                    a: Box::new(Self::rebind_contract_expr(a, checkpoint)),
-                    b: Box::new(Self::rebind_contract_expr(b, checkpoint)),
                 }
             }
             super::contract::ContractExpr::If {

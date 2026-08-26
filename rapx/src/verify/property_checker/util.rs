@@ -9,7 +9,7 @@ use rustc_middle::ty::{GenericArg, GenericArgKind, Ty, TyKind};
 #[cfg(not(rapx_has_skip_norm_wip))]
 use crate::compat::SkipNormWip;
 use z3::{SatResult, Solver, ast::{Ast, Bool, Int}};
-use crate::verify::contract::{ContractExpr, ContractPlace, ContractProjection, NumericOp, PlaceBase, Property, PropertyArg, RelOp};
+use crate::verify::contract::{ContractExpr, ContractPlace, ContractProjection, NumericBinOp, PlaceBase, Property, PropertyArg, RelOp};
 use crate::verify::report::CheckResult;
 use crate::helpers::mir_scan::Checkpoint;
 use crate::verify::vm::state::{VmState, VmValue};
@@ -484,10 +484,10 @@ impl PropertyChecker {
                 let l = self.eval_contract_expr(vm_state, checkpoint, lhs)?;
                 let r = self.eval_contract_expr(vm_state, checkpoint, rhs)?;
                 match op {
-                    NumericOp::Add => Some(Int::add(vm_state.ctx, &[&l, &r])),
-                    NumericOp::Sub => Some(Int::sub(vm_state.ctx, &[&l, &r])),
-                    NumericOp::Mul => Some(Int::mul(vm_state.ctx, &[&l, &r])),
-                    NumericOp::Div | NumericOp::Rem => {
+                    NumericBinOp::Add => Some(Int::add(vm_state.ctx, &[&l, &r])),
+                    NumericBinOp::Sub => Some(Int::sub(vm_state.ctx, &[&l, &r])),
+                    NumericBinOp::Mul => Some(Int::mul(vm_state.ctx, &[&l, &r])),
+                    NumericBinOp::Div | NumericBinOp::Rem => {
                         // Z3 division by zero yields unconstrained results,
                         // leading to unsound proofs downstream. When the
                         // divisor is zero (e.g. size_of::<T>() for generic
@@ -495,13 +495,15 @@ impl PropertyChecker {
                         // access_bytes computes 0 * elem_size == 0.
                         if r.as_u64() == Some(0) {
                             Some(Int::from_u64(vm_state.ctx, 0))
-                        } else if matches!(op, NumericOp::Div) {
+                        } else if matches!(op, NumericBinOp::Div) {
                             Some(l.div(&r))
                         } else {
                             let q = l.div(&r);
                             Some(Int::sub(vm_state.ctx, &[&l, &Int::mul(vm_state.ctx, &[&q, &r])]))
                         }
                     }
+                    NumericBinOp::Min => Some(l.le(&r).ite(&l, &r)),
+                    NumericBinOp::Max => Some(l.ge(&r).ite(&l, &r)),
                     _ => None,
                 }
             }
@@ -517,16 +519,6 @@ impl PropertyChecker {
                         Some(Int::sub(vm_state.ctx, &[&zero, &v]))
                     }
                 }
-            }
-            ContractExpr::Min { a, b } => {
-                let a_val = self.eval_contract_expr(vm_state, checkpoint, a)?;
-                let b_val = self.eval_contract_expr(vm_state, checkpoint, b)?;
-                Some(a_val.le(&b_val).ite(&a_val, &b_val))
-            }
-            ContractExpr::Max { a, b } => {
-                let a_val = self.eval_contract_expr(vm_state, checkpoint, a)?;
-                let b_val = self.eval_contract_expr(vm_state, checkpoint, b)?;
-                Some(a_val.ge(&b_val).ite(&a_val, &b_val))
             }
             ContractExpr::Len(inner) => {
                 if let Some(ck) = checkpoint {

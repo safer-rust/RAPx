@@ -355,14 +355,13 @@ impl<'tcx> Property<'tcx> {
     ///
     /// 1. **Null guard**: exactly two disjuncts, one being `Null(p)` alone,
     ///    the other a conjunction of properties over the same place `p`.  The
-    ///    disjunction expands to a single `Property::Or` whose first group is
-    ///    `Null(p)` (vacuously proved when `p` is null) and whose second group
-    ///    is the expanded conjuncts.
+    ///    disjunction expands to an `Or` whose disjuncts are `Null(p)` and an
+    ///    `And` of the conjuncts.
     ///
     /// 2. **General disjunction**: each disjunct is standalone or a
     ///    conjunction, e.g., `any(Trait(T, Copy), Trait(T, TrivialClone))`.
-    ///    Produces a single `Property::Or` whose `groups`
-    ///    encode the DNF structure: each inner `Vec` is one AND-group.
+    ///    Produces a single `Property::Or` whose `disjuncts` are atoms or
+    ///    `And` nodes.
     fn parse_any(tcx: TyCtxt<'tcx>, def_id: DefId, exprs: &[Expr]) -> Vec<Self> {
         if !Self::check_arg_length(exprs.len(), 2, "any") {
             return vec![Self::new_simple(PropertyKind::Unknown)];
@@ -389,17 +388,15 @@ impl<'tcx> Property<'tcx> {
         // --- general disjunction: build a single Or property ---
         let all_standalone = [&first, &second].iter().all(|d| d.len() == 1);
         if all_standalone {
-            let mut groups: Vec<Vec<Box<Self>>> = Vec::new();
+            let mut disjuncts: Vec<Self> = Vec::new();
             for parts in [first, second] {
-                let mut group: Vec<Box<Self>> = Vec::new();
+                let mut conjuncts: Vec<Self> = Vec::new();
                 for (name, args) in parts {
-                    for prop in Self::parse_list(tcx, def_id, &name, &args) {
-                        group.push(Box::new(prop));
-                    }
+                    conjuncts.extend(Self::parse_list(tcx, def_id, &name, &args));
                 }
-                groups.push(group);
+                disjuncts.push(Self::conjunction(conjuncts));
             }
-            return vec![Self::new_or(groups)];
+            return vec![Self::new_or(disjuncts)];
         }
 
         rap_error!(
@@ -411,9 +408,8 @@ impl<'tcx> Property<'tcx> {
 
     /// Build the null-guard disjunction: `Null(p) OR (P1 & P2 & ...)`.
     ///
-    /// Produces a single `Property::Or` with two groups: `[Null(p)]` and the
-    /// expanded conjuncts.  `Null` is a first-class `PropertyKind`, so the
-    /// whole thing is checked by the normal `Or` machinery.
+    /// Produces an `Or` whose disjuncts are `Null(p)` and an `And` of the
+    /// expanded conjuncts.
     fn build_null_guard(
         tcx: TyCtxt<'tcx>,
         def_id: DefId,
@@ -435,7 +431,7 @@ impl<'tcx> Property<'tcx> {
             vec![PropertyArg::Expr(ContractExpr::Place(guard_place.clone()))],
         );
 
-        let mut conjunct_group: Vec<Box<Self>> = Vec::new();
+        let mut expanded: Vec<Self> = Vec::new();
         for (inner_name, inner_args) in conjuncts {
             // Use `parse_list` so a compound `def` conjunct (e.g. `ValidPtr`)
             // expands to its primitive components, each over the guarded place.
@@ -447,11 +443,11 @@ impl<'tcx> Property<'tcx> {
                     );
                     return vec![Self::new_simple(PropertyKind::Unknown)];
                 }
-                conjunct_group.push(Box::new(property));
+                expanded.push(property);
             }
         }
 
-        vec![Self::new_or(vec![vec![Box::new(null_atom)], conjunct_group])]
+        vec![Self::new_or(vec![null_atom, Self::conjunction(expanded)])]
     }
 
     /// Returns true when every place-bearing atom of `property` constrains the
@@ -463,9 +459,12 @@ impl<'tcx> Property<'tcx> {
     ) -> bool {
         match property {
             Property::Or(or) => or
-                .groups
+                .disjuncts
                 .iter()
-                .flat_map(|group| group.iter())
+                .all(|sub| Self::conjuncts_guard_place(sub, guard_place)),
+            Property::And(and) => and
+                .conjuncts
+                .iter()
                 .all(|sub| Self::conjuncts_guard_place(sub, guard_place)),
             Property::Atom(atom) => {
                 if let Some(PropertyArg::Expr(ContractExpr::Place(place))) = atom.args.first() {

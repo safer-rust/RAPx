@@ -148,35 +148,33 @@ pub fn fmt_contract_expanded<'tcx>(
             meaning.to_string(),
         );
     }
-    if property.is_or() {
-        let group_count = property.groups().len();
+    if let crate::verify::contract::Property::Or(or) = property {
+        let disjunct_count = or.disjuncts.len();
         let mut call_parts = Vec::new();
-        let mut meaning = format!("any of {group_count} alternative group(s):\n");
-        for (gi, group) in property.groups().iter().enumerate() {
-            let is_last = gi + 1 == group_count;
+        let mut meaning = format!("any of {disjunct_count} alternative(s):\n");
+        for (gi, disjunct) in or.disjuncts.iter().enumerate() {
+            let is_last = gi + 1 == disjunct_count;
             let branch = if is_last { "`-" } else { "|-" };
-            let group_calls: Vec<String> = group
-                .iter()
-                .map(|prop| {
-                    let (call, _) =
-                        fmt_contract_expanded(tcx, prop, struct_def_id, fn_def_id);
-                    call
-                })
-                .collect();
-            call_parts.push(group_calls.join(" && "));
-            let meanings: Vec<String> = group
-                .iter()
-                .map(|prop| {
-                    let (_, m) =
-                        fmt_contract_expanded(tcx, prop, struct_def_id, fn_def_id);
-                    m
-                })
-                .collect();
-            meaning.push_str(&format!("{branch} {}\n", meanings.join(" && ")));
+            let (call, m) = fmt_contract_expanded(tcx, disjunct, struct_def_id, fn_def_id);
+            call_parts.push(call);
+            meaning.push_str(&format!("{branch} {}\n", m));
         }
         return (
             format!("Or({})", call_parts.join(", ")),
             meaning.trim_end().to_string(),
+        );
+    }
+    if let crate::verify::contract::Property::And(and) = property {
+        let mut call_parts = Vec::new();
+        let mut meanings = Vec::new();
+        for conjunct in and.conjuncts.iter() {
+            let (call, m) = fmt_contract_expanded(tcx, conjunct, struct_def_id, fn_def_id);
+            call_parts.push(call);
+            meanings.push(m);
+        }
+        return (
+            format!("And({})", call_parts.join(", ")),
+            meanings.join(" && "),
         );
     }
     let kind = property.kind().expect("atom property");

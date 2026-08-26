@@ -2415,23 +2415,18 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
 
     /// Assert a contract fact as VM state invariants.
     fn assert_contract_fact(&mut self, property: &Property<'tcx>) {
-        // A disjunctive precondition (`any(...)`) with a hazard disjunct records
-        // that the caller accepts that hazard (e.g. `any(Trait(T, Copy),
-        // Alias(self, ret))` on `NonNull::read`).  Inlined read/copy intrinsics
-        // whose result structurally aliases the source are then treated as the
-        // accepted hazard rather than a hard failure.
-        if let Property::Or(or) = property {
-            for group in &or.groups {
-                if group.iter().any(|p| p.contract_kind() == ContractKind::Hazard) {
-                    self.contract_flags.alias_hazard_accepted = true;
-                }
-            }
+        // A precondition with a hazard component records that the caller
+        // accepts that hazard (e.g. `any(Trait(T, Copy), Alias(self, ret))` on
+        // `NonNull::read`).  Inlined read/copy intrinsics whose result
+        // structurally aliases the source are then treated as the accepted
+        // hazard rather than a hard failure.
+        if contains_hazard(property) {
+            self.contract_flags.alias_hazard_accepted = true;
         }
         let Property::Atom(atom) = property else {
             return;
         };
         if atom.contract_kind == ContractKind::Hazard {
-            self.contract_flags.alias_hazard_accepted = true;
             return;
         }
         let kind = atom.kind;
@@ -2817,7 +2812,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     }
 
     fn eval_contract_expr_simple(&self, expr: &crate::verify::contract::ContractExpr<'tcx>) -> Option<Int<'ctx>> {
-        use crate::verify::contract::{ContractExpr, NumericOp, PlaceBase};
+        use crate::verify::contract::{ContractExpr, NumericBinOp, PlaceBase};
         match expr {
             ContractExpr::SizeOf(ty) => {
                 let size = self.size_of_ty(*ty).max(1);
@@ -2863,22 +2858,22 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 let elem_term = Int::from_u64(self.ctx, elem_size);
                 Some(alloc.size.div(&elem_term))
             }
-            ContractExpr::Binary { op: NumericOp::Mul, lhs, rhs } => {
+            ContractExpr::Binary { op: NumericBinOp::Mul, lhs, rhs } => {
                 let l = self.eval_contract_expr_simple(lhs)?;
                 let r = self.eval_contract_expr_simple(rhs)?;
                 Some(Int::mul(self.ctx, &[&l, &r]))
             }
-            ContractExpr::Binary { op: NumericOp::Add, lhs, rhs } => {
+            ContractExpr::Binary { op: NumericBinOp::Add, lhs, rhs } => {
                 let l = self.eval_contract_expr_simple(lhs)?;
                 let r = self.eval_contract_expr_simple(rhs)?;
                 Some(Int::add(self.ctx, &[&l, &r]))
             }
-            ContractExpr::Binary { op: NumericOp::Sub, lhs, rhs } => {
+            ContractExpr::Binary { op: NumericBinOp::Sub, lhs, rhs } => {
                 let l = self.eval_contract_expr_simple(lhs)?;
                 let r = self.eval_contract_expr_simple(rhs)?;
                 Some(Int::sub(self.ctx, &[&l, &r]))
             }
-            ContractExpr::Binary { op: NumericOp::Div, lhs, rhs } => {
+            ContractExpr::Binary { op: NumericBinOp::Div, lhs, rhs } => {
                 let l = self.eval_contract_expr_simple(lhs)?;
                 let r = self.eval_contract_expr_simple(rhs)?;
                 Some(l.div(&r))
@@ -3378,6 +3373,19 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             }
             _ => vec![],
         }
+    }
+}
+
+/// Whether any atom in this (possibly compound) property is a hazard
+/// (`ContractKind::Hazard`), which the caller explicitly opts into.
+fn contains_hazard<'tcx>(property: &Property<'tcx>) -> bool {
+    if property.contract_kind() == ContractKind::Hazard {
+        return true;
+    }
+    match property {
+        Property::And(and) => and.conjuncts.iter().any(|p| contains_hazard(p)),
+        Property::Or(or) => or.disjuncts.iter().any(|p| contains_hazard(p)),
+        Property::Atom(_) => false,
     }
 }
 

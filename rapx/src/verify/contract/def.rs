@@ -367,18 +367,14 @@ fn expand_body<'tcx>(
             .flat_map(|p| expand_body(tcx, def_id, p, exprs, params, param_tys))
             .collect(),
         DefBody::Or(parts) => {
-            let mut groups: Vec<Vec<Box<Property<'tcx>>>> = Vec::new();
+            let mut disjuncts: Vec<Property<'tcx>> = Vec::new();
             for part in parts {
-                let group: Vec<Box<Property<'tcx>>> =
-                    expand_body(tcx, def_id, part, exprs, params, param_tys)
-                        .into_iter()
-                        .map(Box::new)
-                        .collect();
-                if !group.is_empty() {
-                    groups.push(group);
+                let conjuncts = expand_body(tcx, def_id, part, exprs, params, param_tys);
+                if !conjuncts.is_empty() {
+                    disjuncts.push(Property::conjunction(conjuncts));
                 }
             }
-            vec![Property::new_or(groups)]
+            vec![Property::new_or(disjuncts)]
         }
         DefBody::Call { tag, args } => {
             // Validate the def's parameter annotations against the primitive's
