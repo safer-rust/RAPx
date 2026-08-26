@@ -2,7 +2,7 @@
 // ================ LinkedList NonNull Sound ================
 #[test]
 fn linked_list_nonnull() {
-    let output = run_with_args("verify_cases/linked_list_nonnull", CMD_VERIFY_VM);
+    let output = run_with_args("verify_cases/linked_list_nonnull", CMD_VERIFY_TARGETED);
     for &func in &[
         "LinkedList::<T>::new",
         "LinkedList::<T>::len",
@@ -25,7 +25,7 @@ fn linked_list_nonnull() {
 // ================ LinkedList RawPtr Sound ================
 #[test]
 fn linked_list_rawptr() {
-    let output = run_with_args("verify_cases/linked_list_rawptr", CMD_VERIFY_VM);
+    let output = run_with_args("verify_cases/linked_list_rawptr", CMD_VERIFY_TARGETED);
     for &func in &[
         "LinkedList::<T>::new",
         "LinkedList::<T>::len",
@@ -48,7 +48,7 @@ fn linked_list_rawptr() {
 // ================ LinkedList NonNull Unsound ================
 #[test]
 fn linked_list_nonnull_unsound() {
-    let output = run_with_args("verify_cases/linked_list_nonnull_unsound", CMD_VERIFY_TARGETED_VM);
+    let output = run_with_args("verify_cases/linked_list_nonnull_unsound", CMD_VERIFY_TARGETED);
     for &func in &[
         "LinkedList::<T>::pop_front",
         "LinkedList::<T>::pop_back",
@@ -64,7 +64,7 @@ fn linked_list_nonnull_unsound() {
 // ================ LinkedList RawPtr Unsound ================
 #[test]
 fn linked_list_rawptr_unsound() {
-    let output = run_with_args("verify_cases/linked_list_rawptr_unsound", CMD_VERIFY_TARGETED_VM);
+    let output = run_with_args("verify_cases/linked_list_rawptr_unsound", CMD_VERIFY_TARGETED);
     for &func in &["LinkedList::<T>::front", "LinkedList::<T>::back"] {
         assert_function_result(&output, func, "UNSOUND");
     }
@@ -81,7 +81,7 @@ fn linked_list_rawptr_unsound() {
 // ================ Std Challenge Cases ================
 #[test]
 fn std_challenge_01() {
-    let output = run_with_args("verify_cases/std-challenge-01", CMD_VERIFY_TARGETED_VM);
+    let output = run_with_args("verify_cases/std-challenge-01", CMD_VERIFY_TARGETED);
     // Challenge 1 (core transmuting methods): 44 functions are verified.
     // 43 are SOUND; the single UNSOUND one — `filter_map_next_chunk_ext` — is
     // asserted precisely below and correctly reports std's real soundness bug
@@ -138,7 +138,7 @@ fn std_challenge_01() {
 
 #[test]
 fn std_challenge_17() {
-    let output = run_with_args("verify_cases/std-challenge-17", CMD_VERIFY_TARGETED_VM);
+    let output = run_with_args("verify_cases/std-challenge-17", CMD_VERIFY_TARGETED);
     assert!(
         !output.contains("UNSOUND"),
         "unexpected UNSOUND in std-challenge-17"
@@ -147,13 +147,13 @@ fn std_challenge_17() {
 
 #[test]
 fn std_challenge_18() {
-    let output = run_with_args("verify_cases/std-challenge-18", CMD_VERIFY_TARGETED_VM);
+    let output = run_with_args("verify_cases/std-challenge-18", CMD_VERIFY_TARGETED);
     assert!(!output.contains("UNSOUND"), "unexpected UNSOUND in std-challenge-18");
 }
 
 #[test]
 fn std_challenge_02() {
-    let output = run_with_args("verify_cases/std-challenge-02", CMD_VERIFY_TARGETED_VM);
+    let output = run_with_args("verify_cases/std-challenge-02", CMD_VERIFY_TARGETED);
     assert!(
         !output.contains("UNSOUND"),
         "unexpected UNSOUND in std-challenge-02"
@@ -162,7 +162,7 @@ fn std_challenge_02() {
 
 #[test]
 fn std_challenge_03() {
-    let output = run_with_args("verify_cases/std-challenge-03", CMD_VERIFY_TARGETED_VM);
+    let output = run_with_args("verify_cases/std-challenge-03", CMD_VERIFY_TARGETED);
     assert!(
         !output.contains("UNSOUND"),
         "unexpected UNSOUND in std-challenge-03"
@@ -172,7 +172,7 @@ fn std_challenge_03() {
 // ================ Std Challenge 04 (BTree node) ================
 #[test]
 fn std_challenge_04() {
-    let output = run_with_args("verify_cases/std-challenge-04", CMD_VERIFY_TARGETED_VM);
+    let output = run_with_args("verify_cases/std-challenge-04", CMD_VERIFY_TARGETED);
 
     // Challenge 4 (`alloc::collections::btree::node`): a faithful, self-contained
     // port of `library/alloc/src/collections/btree/node.rs`. The helper slice
@@ -185,7 +185,7 @@ fn std_challenge_04() {
 // ================ Std Challenge 05 (LinkedList) ================
 #[test]
 fn std_challenge_05() {
-    let output = run_with_args("verify_cases/std-challenge-05", CMD_VERIFY_TARGETED_VM);
+    let output = run_with_args("verify_cases/std-challenge-05", CMD_VERIFY_TARGETED);
 
     // Challenge 5 (`alloc::collections::linked_list`): a faithful, self-contained
     // port of the doubly-linked list. The challenge functions that iterate over
@@ -199,7 +199,7 @@ fn std_challenge_05() {
 // ================ Std Challenge 06 (NonNull) ================
 #[test]
 fn std_challenge_06() {
-    let output = run_with_args("verify_cases/std-challenge-06", CMD_VERIFY_TARGETED_VM);
+    let output = run_with_args("verify_cases/std-challenge-06", CMD_VERIFY_TARGETED);
 
     // Challenge 6 (`core::ptr::NonNull`): a faithful, self-contained port of
     // `library/core/src/ptr/non_null.rs`.  All 48 listed functions verify
@@ -210,7 +210,7 @@ fn std_challenge_06() {
 // ================ Std Challenge 19 (RawVec) ================
 #[test]
 fn std_challenge_19() {
-    let output = run_with_args("verify_cases/std-challenge-19", CMD_VERIFY_TARGETED_VM);
+    let output = run_with_args("verify_cases/std-challenge-19", CMD_VERIFY_TARGETED);
 
     // Challenge 19 (`alloc::raw_vec::mod`): a faithful, self-contained port of
     // `RawVec`. All 19 challenge-listed functions verify SOUND.
@@ -220,7 +220,7 @@ fn std_challenge_19() {
 // ================ Std Challenge 20 (str::pattern char searchers) ================
 #[test]
 fn std_challenge_20() {
-    let output = run_with_args("verify_cases/std-challenge-20", CMD_VERIFY_TARGETED_VM);
+    let output = run_with_args("verify_cases/std-challenge-20", CMD_VERIFY_TARGETED);
 
     // Challenge 20 (`core::str::pattern` char searchers): a faithful,
     // self-contained port of the six `Searcher` types (`CharSearcher`,
@@ -235,7 +235,7 @@ fn std_challenge_20() {
 // ================ Std Challenge 10 (String) ================
 #[test]
 fn std_challenge_10() {
-    let output = run_with_args("verify_cases/std-challenge-10", CMD_VERIFY_TARGETED_VM);
+    let output = run_with_args("verify_cases/std-challenge-10", CMD_VERIFY_TARGETED);
 
     // Challenge 10 (`alloc::string::String`): a faithful, self-contained port
     // of `library/alloc/src/string.rs` over a byte-level `Vec<u8>` buffer. The
@@ -246,7 +246,7 @@ fn std_challenge_10() {
 // ================ Std Challenge 11 (Numeric Primitive Methods) ================
 #[test]
 fn std_challenge_11() {
-    let output = run_with_args("verify_cases/std-challenge-11", CMD_VERIFY_TARGETED_VM);
+    let output = run_with_args("verify_cases/std-challenge-11", CMD_VERIFY_TARGETED);
 
     // Challenge 11 (`core::num` numeric primitive methods): a faithful,
     // self-contained port of `library/core/src/num/{int,uint}_macros.rs`. The
@@ -266,14 +266,14 @@ fn std_challenge_11() {
 // ================ Std Challenge 12 (NonZero) ================
 #[test]
 fn std_challenge_12() {
-    let output = run_with_args("verify_cases/std-challenge-12", CMD_VERIFY_TARGETED_VM);
+    let output = run_with_args("verify_cases/std-challenge-12", CMD_VERIFY_TARGETED);
     assert_not_contain(&output, "result: UNSOUND");
 }
 
 // ================ Std Challenge 13 (CStr) ================
 #[test]
 fn std_challenge_13() {
-    let output = run_with_args("verify_cases/std-challenge-13", CMD_VERIFY_TARGETED_VM);
+    let output = run_with_args("verify_cases/std-challenge-13", CMD_VERIFY_TARGETED);
 
     // Challenge 13 (`core::ffi::CStr`): a faithful, self-contained port of
     // `library/core/src/ffi/c_str.rs` over a local `#[repr(transparent)]`
@@ -288,14 +288,14 @@ fn std_challenge_13() {
 // ================ HashMap Tests ================
 #[test]
 fn hashmap() {
-    let output = run_with_args("verify_cases/hashmap", CMD_VERIFY_TARGETED_VM);
+    let output = run_with_args("verify_cases/hashmap", CMD_VERIFY_TARGETED);
     assert_contain(&output, "result: SOUND");
     assert_not_contain(&output, "result: UNSOUND");
 }
 
 #[test]
 fn hashmap_skip_invariant() {
-    let output = run_with_args("verify_cases/hashmap", CMD_VERIFY_TARGETED_SKIP_INVARIANT_VM);
+    let output = run_with_args("verify_cases/hashmap", CMD_VERIFY_TARGETED_SKIP_INVARIANT);
     assert_contain(&output, "result: SOUND");
     assert_not_contain(&output, "result: UNSOUND");
 }
@@ -303,7 +303,7 @@ fn hashmap_skip_invariant() {
 // ================ Allocator Tests ================
 #[test]
 fn bump_allocator() {
-    let output = run_with_args("verify_cases/bump_allocator", CMD_VERIFY_VM);
+    let output = run_with_args("verify_cases/bump_allocator", CMD_VERIFY_TARGETED);
     assert_function_result(&output, "BumpAllocator::new", "SOUND");
     assert_function_result(&output, "BumpAllocator::alloc", "SOUND");
     assert_function_result(&output, "BumpAllocator::reset", "SOUND");
@@ -311,6 +311,6 @@ fn bump_allocator() {
 
 #[test]
 fn free_list_allocator() {
-    let output = run_with_args("verify_cases/free_list_allocator", CMD_VERIFY_VM);
+    let output = run_with_args("verify_cases/free_list_allocator", CMD_VERIFY_TARGETED);
     assert_not_contain(&output, "result: UNSOUND");
 }

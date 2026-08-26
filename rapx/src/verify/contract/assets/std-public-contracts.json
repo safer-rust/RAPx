@@ -1207,6 +1207,14 @@
       ]
     }
   ],
+  "core::intrinsics::raw_eq": [
+    {
+      "tag": "NoPadding",
+      "args": [
+        "T"
+      ]
+    }
+  ],
   "core::ptr::alignment::new_unchecked": [
     {
       "tag": "ValidNum",

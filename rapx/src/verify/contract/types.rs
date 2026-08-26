@@ -159,9 +159,12 @@ impl<'tcx> NumericPredicate<'tcx> {
 ///
 /// Each kind's meaning, accepted argument shapes, and assembly strategy are
 /// declared in `spec::SPECS` (the single source of truth); this enum only
-/// names the kinds.  Two kinds carry extra semantics worth noting: `Null` is
-/// the guard branch of `any(Null(p), …)` (proved when `p` is null), and
-/// `Owning` asserts `ownership(*p) = none` (psp IV.1 in primitive-sp.md).
+/// names the kinds.  A few kinds carry extra semantics: `Null` is the guard
+/// branch of `any(Null(p), …)` (proved when `p` is null), and `Owning` asserts
+/// `ownership(*p) = none` (psp IV.1 in primitive-sp.md).  The kinds `Unwrap`,
+/// `Pinned`, `Opened` and `Unreachable` are declared but not yet verified (the
+/// checker returns `Unknown`), and `NonVolatile` is assumed satisfied (the VM
+/// does not model volatile access).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PropertyKind {
     Align,

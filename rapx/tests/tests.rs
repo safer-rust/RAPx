@@ -206,63 +206,62 @@ const CMD_ANALYZE_ADG: &[&str] = &["analyze", "adg", "--dump", "api_graph.yml"];
 const CMD_VERIFY_SCAN: &[&str] = &["verify", "--mode", "scan"];
 
 // ── Verify backend ──────────────────────────────────────────────
-const CMD_VERIFY_VM: &[&str] = &["verify", "--mode", "targeted"];
-const CMD_VERIFY_TARGETED_VM: &[&str] = &["verify", "--mode", "targeted"];
-const CMD_VERIFY_REPEAT_1_VM: &[&str] = &["verify", "--mode", "targeted", "--postfix-repeat", "1"];
-const CMD_VERIFY_REPEAT_2_VM: &[&str] = &["verify", "--mode", "targeted", "--postfix-repeat", "2"];
-const CMD_VERIFY_SKIP_INVARIANT_VM: &[&str] = &["verify", "--skip-invariant"];
-const CMD_VERIFY_TARGETED_SKIP_INVARIANT_VM: &[&str] = &["verify", "--mode", "targeted", "--skip-invariant"];
+const CMD_VERIFY_TARGETED: &[&str] = &["verify", "--mode", "targeted"];
+const CMD_VERIFY_REPEAT_1: &[&str] = &["verify", "--mode", "targeted", "--postfix-repeat", "1"];
+const CMD_VERIFY_REPEAT_2: &[&str] = &["verify", "--mode", "targeted", "--postfix-repeat", "2"];
+const CMD_VERIFY_SKIP_INVARIANT: &[&str] = &["verify", "--skip-invariant"];
+const CMD_VERIFY_TARGETED_SKIP_INVARIANT: &[&str] = &["verify", "--mode", "targeted", "--skip-invariant"];
 
-macro_rules! verify_sound_vm {
+macro_rules! verify_sound {
     ($dir:literal, $func:literal) => {{
-        let output = $crate::run_with_args($dir, CMD_VERIFY_VM);
+        let output = $crate::run_with_args($dir, CMD_VERIFY_TARGETED);
         $crate::assert_contain(&output, concat!("function: ", $func));
         $crate::assert_contain(&output, "result: SOUND");
     }};
 }
 
-macro_rules! verify_unsound_vm {
+macro_rules! verify_unsound {
     ($dir:literal, $func:literal, $prop:literal) => {{
-        let output = $crate::run_with_args($dir, CMD_VERIFY_VM);
+        let output = $crate::run_with_args($dir, CMD_VERIFY_TARGETED);
         $crate::assert_unproved_exclusive(&output, $func, &[$prop]);
     }};
 }
 
-macro_rules! sound_tests_vm {
+macro_rules! sound_tests {
     ($($name:ident: $dir:literal => $func:literal),* $(,)?) => {
         $(
             #[test]
             fn $name() {
-                verify_sound_vm!($dir, $func);
+                verify_sound!($dir, $func);
             }
         )*
     };
 }
 
-macro_rules! unsound_tests_vm {
+macro_rules! unsound_tests {
     ($($name:ident: $dir:literal => $func:literal => $prop:literal),* $(,)?) => {
         $(
             #[test]
             fn $name() {
-                verify_unsound_vm!($dir, $func, $prop);
+                verify_unsound!($dir, $func, $prop);
             }
         )*
     };
 }
 
-macro_rules! verify_unsound_hazard_vm {
+macro_rules! verify_unsound_hazard {
     ($dir:literal, $func:literal, $prop:literal) => {{
-        let output = $crate::run_with_args($dir, CMD_VERIFY_VM);
+        let output = $crate::run_with_args($dir, CMD_VERIFY_TARGETED);
         $crate::assert_unproved_exclusive_with_result(&output, $func, &[$prop], "UNSOUND");
     }};
 }
 
-macro_rules! unsound_hazard_tests_vm {
+macro_rules! unsound_hazard_tests {
     ($($name:ident: $dir:literal => $func:literal => $prop:literal),* $(,)?) => {
         $(
             #[test]
             fn $name() {
-                verify_unsound_hazard_vm!($dir, $func, $prop);
+                verify_unsound_hazard!($dir, $func, $prop);
             }
         )*
     };

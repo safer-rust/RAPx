@@ -254,4 +254,72 @@ impl PropertyChecker {
             _ => CheckResult::Unknown,
         }
     }
+
+    pub(super) fn check_no_padding<'ctx, 'tcx>(
+        &self,
+        vm_state: &VmState<'ctx, 'tcx>,
+        _solver: &Solver<'ctx>,
+        checkpoint: &Checkpoint<'tcx>,
+        property: &Property<'tcx>,
+    ) -> CheckResult {
+        let Some(ty) = property.args().iter().find_map(|a| match a {
+            PropertyArg::Ty(t) => Some(*t),
+            _ => None,
+        }) else {
+            return CheckResult::Unknown;
+        };
+        let ty = self.instantiate_callsite_ty(vm_state, checkpoint, ty);
+        match self.type_has_no_padding(vm_state, ty) {
+            Some(true) => CheckResult::Proved,
+            Some(false) => CheckResult::Failed,
+            None => CheckResult::Unknown,
+        }
+    }
+
+    /// Conservative "no padding" test: `Some(true)` when the type definitely has
+    /// no padding bytes, `Some(false)` when it definitely does, `None` when it
+    /// cannot be determined (generic / enum / union / opaque).
+    fn type_has_no_padding<'tcx>(&self, vm_state: &VmState<'_, 'tcx>, ty: Ty<'tcx>) -> Option<bool> {
+        let tcx = vm_state.tcx;
+        if self.is_generic_ty(ty) {
+            return None;
+        }
+        match ty.kind() {
+            TyKind::Bool
+            | TyKind::Char
+            | TyKind::Int(_)
+            | TyKind::Uint(_)
+            | TyKind::Float(_)
+            | TyKind::RawPtr(..)
+            | TyKind::Ref(..)
+            | TyKind::FnPtr(..)
+            | TyKind::Never => Some(true),
+            TyKind::Array(elem, _) => self.type_has_no_padding(vm_state, *elem),
+            TyKind::Tuple(elems) => {
+                let mut sum = 0u64;
+                for elem in *elems {
+                    match self.type_has_no_padding(vm_state, elem) {
+                        Some(true) => sum += vm_state.size_of_ty(elem),
+                        Some(false) => return Some(false),
+                        None => return None,
+                    }
+                }
+                Some(vm_state.size_of_ty(ty) == sum)
+            }
+            TyKind::Adt(adt_def, substs) if !adt_def.is_enum() && !adt_def.is_union() => {
+                let variant = adt_def.non_enum_variant();
+                let mut sum = 0u64;
+                for field_def in variant.fields.iter() {
+                    let field_ty: Ty<'tcx> = field_def.ty(tcx, substs).skip_norm_wip();
+                    match self.type_has_no_padding(vm_state, field_ty) {
+                        Some(true) => sum += vm_state.size_of_ty(field_ty),
+                        Some(false) => return Some(false),
+                        None => return None,
+                    }
+                }
+                Some(vm_state.size_of_ty(ty) == sum)
+            }
+            _ => None,
+        }
+    }
 }
