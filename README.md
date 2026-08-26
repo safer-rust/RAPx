@@ -216,7 +216,7 @@ This checklist maps RAPx's contract verification to the [Primitive Safety Proper
 |----------------|-----------------------------|:---------:|
 | `Align`        | Align(p, T)                 |     ✅    |
 | `Size`         | Size(T, c)                  |     ✅    |
-| `NoPadding`    | !Padding(T)                 |     —     |
+| `NoPadding`    | !Padding(T)                 |     ✅    |
 | `NonNull`      | !Null(p)                    |     ✅    |
 | `Allocated`    | Allocated(p, T, len, A)     |     ✅    |
 | `InBound`      | InBound(p, T, len)          |     ✅    |
