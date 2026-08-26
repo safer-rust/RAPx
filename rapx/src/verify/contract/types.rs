@@ -6,18 +6,28 @@
 
 use rustc_middle::ty::Ty;
 
+/// The root of a contract place: a function's return value, an argument, or a
+/// raw MIR local.  `Return` ⇔ `Local(0)`; `Arg(n)` ⇔ `Local(n + 1)`.
 #[derive(Clone, Debug, PartialEq)]
 pub enum PlaceBase {
+    /// The function's return value.
     Return,
+    /// The n-th parameter (0-indexed).
     Arg(usize),
+    /// A MIR local (`0` is the return place, `1..` are the parameters).
     Local(usize),
 }
 
+/// A step into a place, from the base down to the value a contract talks
+/// about (written as `.field`, `.unwrap_some()`, or `.iter()` in the DSL).
 #[derive(Clone, Debug)]
 pub enum ContractProjection<'tcx> {
+    /// Select a struct/tuple field.
     Field { index: usize, ty: Option<Ty<'tcx>> },
+    /// Unwrap the `Some` variant of an enum.
     Downcast { variant_index: usize },
-    IterElements,
+    /// Iterate over the elements of a container.
+    ForEach,
 }
 
 #[derive(Clone, Debug)]
@@ -232,7 +242,7 @@ pub struct AtomProperty<'tcx> {
     pub contract_kind: ContractKind,
     /// When set, this property must hold for every element of this
     /// container (e.g. `Owning(buckets.iter())`).  The target place
-    /// in `args` is already stripped of the `IterElements` projection
+    /// in `args` is already stripped of the `ForEach` projection
     /// and refers to a single element slot.
     pub for_each: Option<ContractPlace<'tcx>>,
     /// Display metadata when this property was expanded from a compound `def`.

@@ -97,7 +97,7 @@ impl<'tcx> ContractPlace<'tcx> {
                 ContractProjection::Downcast { .. } => {
                     result.push_str(".unwrap_some()");
                 }
-                ContractProjection::IterElements => {
+                ContractProjection::ForEach => {
                     result.push_str(".iter()");
                 }
             }

@@ -330,7 +330,7 @@ impl<'tcx> Property<'tcx> {
             if let Property::Atom(atom) = prop {
                 if atom.for_each.is_none() {
                     for arg in &mut atom.args {
-                        atom.for_each = super::place::strip_iter_elements(arg);
+                        atom.for_each = super::place::strip_for_each(arg);
                         if atom.for_each.is_some() {
                             break;
                         }
@@ -530,7 +530,7 @@ impl<'tcx> Property<'tcx> {
         for arg in raw_args {
             let mut clean = arg;
             if for_each.is_none() {
-                if let Some(container) = super::place::strip_iter_elements(&mut clean) {
+                if let Some(container) = super::place::strip_for_each(&mut clean) {
                     for_each = Some(container);
                 }
             }

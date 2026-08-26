@@ -99,7 +99,7 @@ impl PropertyChecker {
                         invariants: base_val.invariants,
                     });
                 }
-                ContractProjection::IterElements => {
+                ContractProjection::ForEach => {
                     // iter() projections: try to resolve the base field and
                     // return the base value (iterator elements handled elsewhere).
                     if let Some(val) = vm_state.field_value(base_local, &field_path) {
@@ -180,7 +180,7 @@ impl PropertyChecker {
             _ => return false,
         };
         let has_nullable_proj = cp.projections.iter().any(|p| {
-            matches!(p, ContractProjection::Downcast { .. } | ContractProjection::IterElements)
+            matches!(p, ContractProjection::Downcast { .. } | ContractProjection::ForEach)
         });
         if !has_nullable_proj {
             return false;
@@ -619,7 +619,7 @@ impl PropertyChecker {
         cp: &crate::verify::contract::ContractPlace<'tcx>) -> Option<Int<'ctx>>
     {
         // Collect numeric field projections.  Any non-field projection (e.g. a
-        // `Downcast` or `IterElements`) cannot be resolved to a scalar, so the
+        // `Downcast` or `ForEach`) cannot be resolved to a scalar, so the
         // place does not evaluate.
         let mut field_path: Vec<usize> = Vec::new();
         for proj in &cp.projections {
@@ -750,7 +750,7 @@ impl PropertyChecker {
         }
     }
 
-    pub(super) fn has_iter_elements<'tcx>(&self, property: &Property<'tcx>) -> bool {
+    pub(super) fn has_for_each<'tcx>(&self, property: &Property<'tcx>) -> bool {
         property.for_each().is_some()
     }
 }

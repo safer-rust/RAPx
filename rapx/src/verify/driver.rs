@@ -1099,7 +1099,7 @@ fn property_field_indices(property: &crate::verify::contract::Property<'_>) -> V
                         }
                     }
                     crate::verify::contract::ContractProjection::Downcast { .. } => {}
-                    crate::verify::contract::ContractProjection::IterElements => {}
+                    crate::verify::contract::ContractProjection::ForEach => {}
                 }
             }
         }

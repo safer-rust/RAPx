@@ -22,9 +22,11 @@ use quote::ToTokens;
 use regex::Regex;
 use std::sync::LazyLock;
 
-/// A parsed `requires` property in the form `tag(arg0, arg1, ...)`.
+/// The raw syntactic form of a property call `tag(arg0, arg1, ...)` parsed
+/// from an attribute — the *unevaluated* stage, before semantic resolution
+/// into a [`Property`](crate::verify::contract::Property).
 #[derive(Debug, Clone)]
-pub struct ParsedProperty {
+pub struct PropertyCall {
     /// The property name extracted from the call target.
     pub tag: String,
     /// The positional arguments passed to the property call.
@@ -33,7 +35,7 @@ pub struct ParsedProperty {
     pub kind: Option<String>,
 }
 
-impl Parse for ParsedProperty {
+impl Parse for PropertyCall {
     /// Parse a single property item from a `requires` attribute argument list.
     ///
     /// Supported forms:
@@ -100,7 +102,7 @@ impl Parse for RequireOuterAttribute {
 pub fn parse_rapx_attr(
     attr_str: &str,
     expected_name: &str,
-) -> SynResult<Option<ParsedProperty>> {
+) -> SynResult<Option<PropertyCall>> {
     let attr_str = strip_lifetime_ticks(attr_str);
     // Parse the raw string into a single outer attribute node.
     let attr = syn::parse_str::<RequireOuterAttribute>(&attr_str)?.attr;
@@ -113,7 +115,7 @@ pub fn parse_rapx_attr(
         return Ok(None);
     };
 
-    let property = meta_list.parse_args::<ParsedProperty>()?;
+    let property = meta_list.parse_args::<PropertyCall>()?;
     Ok(Some(property))
 }
 
@@ -133,7 +135,7 @@ fn is_expected_syn_rapx_attr(attr: &syn::Attribute, expected_name: &str) -> bool
 /// `Expr::Call`, because property arguments may be generic *types* (e.g.
 /// `ValidTransmute(T, Option<NonZero<T>>)`) that `syn` cannot parse as value
 /// expressions.
-fn parse_property_head(input: ParseStream<'_>) -> SynResult<ParsedProperty> {
+fn parse_property_head(input: ParseStream<'_>) -> SynResult<PropertyCall> {
     let path: syn::Path = input.parse()?;
     let tag = path
         .segments
@@ -153,7 +155,7 @@ fn parse_property_head(input: ParseStream<'_>) -> SynResult<ParsedProperty> {
         content.parse::<Token![,]>()?;
     }
 
-    Ok(ParsedProperty {
+    Ok(PropertyCall {
         tag,
         args,
         kind: None,

@@ -28,7 +28,7 @@ pub(crate) fn parse_contract_place<'tcx>(
             && expr_method.args.is_empty()
         {
             let mut place = parse_contract_place(tcx, def_id, &expr_method.receiver)?;
-            place.projections.push(ContractProjection::IterElements);
+            place.projections.push(ContractProjection::ForEach);
             return Some(place);
         }
     }
@@ -246,16 +246,16 @@ fn resolve_next_field<'tcx>(
     None
 }
 
-/// Strip `IterElements` from a property arg and return the container place
-/// (without the projection) if `IterElements` was present.
-pub(crate) fn strip_iter_elements<'tcx>(
+/// Strip `ForEach` from a property arg and return the container place
+/// (without the projection) if `ForEach` was present.
+pub(crate) fn strip_for_each<'tcx>(
     arg: &mut PropertyArg<'tcx>,
 ) -> Option<ContractPlace<'tcx>> {
     if let PropertyArg::Expr(ContractExpr::Place(place)) = arg {
-        if place.projections.iter().any(|p| matches!(p, ContractProjection::IterElements)) {
+        if place.projections.iter().any(|p| matches!(p, ContractProjection::ForEach)) {
             let mut container = place.clone();
-            container.projections.retain(|p| !matches!(p, ContractProjection::IterElements));
-            place.projections.retain(|p| !matches!(p, ContractProjection::IterElements));
+            container.projections.retain(|p| !matches!(p, ContractProjection::ForEach));
+            place.projections.retain(|p| !matches!(p, ContractProjection::ForEach));
             return Some(container);
         }
     }

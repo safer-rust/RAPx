@@ -113,9 +113,9 @@ impl PropertyChecker {
                                 }
                             }
                         }
-                        // IterElements: the allocation stores pointers, but the invariant
+                        // ForEach: the allocation stores pointers, but the invariant
                         // applies to the pointee type. Unwrap *const/*mut to match.
-                        if self.has_iter_elements(property) {
+                        if self.has_for_each(property) {
                             if let TyKind::RawPtr(inner, _) = elem_ty.kind() {
                                 if *inner == expected_ty {
                                     return CheckResult::Proved;
@@ -157,11 +157,11 @@ impl PropertyChecker {
                 }
             }
 
-            // For IterElements (for_each) properties, the invariant applies to
+            // For ForEach (for_each) properties, the invariant applies to
             // individual elements loaded from a container. The VM may not track
             // provenance through memory loads from heap allocations. When sizes
             // match, trust the type.
-            if self.has_iter_elements(property) {
+            if self.has_for_each(property) {
                 if vm_state.size_of_ty(value_elem_ty) > 0
                     && vm_state.size_of_ty(expected_ty) > 0
                     && vm_state.size_of_ty(value_elem_ty) == vm_state.size_of_ty(expected_ty)

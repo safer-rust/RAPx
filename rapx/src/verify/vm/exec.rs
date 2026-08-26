@@ -2620,7 +2620,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     /// - For a plain pointer *field* (e.g. `RawVecInner::ptr`), the allocation
     ///   is written back to the field via `set_contract_target_value`, and is
     ///   unbounded so field-subrange `InBound` checks auto-pass.
-    /// - For `IterElements`/`Downcast` targets (e.g. `buckets.iter()`), the
+    /// - For `ForEach`/`Downcast` targets (e.g. `buckets.iter()`), the
     ///   container itself is not a pointer — keep the legacy whole-local
     ///   behaviour.
     fn assert_allocated_fact(&mut self, property: &Property<'tcx>) {
@@ -2648,7 +2648,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             .unwrap_or(false);
 
         if has_nonfield {
-            // IterElements/Downcast target: legacy whole-local, exact size.
+            // ForEach/Downcast target: legacy whole-local, exact size.
             let Some(local) = self.contract_target_local(property) else { return };
             let Some(val) = self.locals.get(&local).cloned() else { return };
             if let Some(alloc_id) = val.provenance_alloc_id() {
@@ -2703,7 +2703,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     }
 
     /// Resolve a contract place to `(local, field_path)`. Field projections
-    /// are accumulated into `field_path`; `Downcast`/`IterElements` terminate
+    /// are accumulated into `field_path`; `Downcast`/`ForEach` terminate
     /// the path (they unwrap the value in place).
     fn contract_field_path(&self, property: &Property<'tcx>) -> Option<(Local, Vec<usize>)> {
         let cp = match property.args().first()? {
@@ -2835,7 +2835,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         crate::verify::contract::ContractProjection::Field { index, .. } => {
                             path.push(*index);
                         }
-                        // Downcast / IterElements are not scalar numeric values.
+                        // Downcast / ForEach are not scalar numeric values.
                         _ => return None,
                     }
                 }
