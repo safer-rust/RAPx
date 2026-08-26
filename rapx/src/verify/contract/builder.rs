@@ -7,7 +7,7 @@
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 use quote::ToTokens;
-use safety_parser::syn::Expr;
+use syn::Expr;
 
 use crate::helpers::name::access_ident_recursive;
 
@@ -23,7 +23,7 @@ impl<'tcx> Property<'tcx> {
         spec: &spec::PropertySpec,
         exprs: &[Expr],
     ) -> Self {
-        match spec.build {
+        let mut prop = match spec.build {
             spec::BuildKind::Uniform => Self::build_uniform(tcx, def_id, spec, exprs),
             spec::BuildKind::Size => Self::build_size(tcx, def_id, exprs),
             spec::BuildKind::Allocated => Self::build_allocated(tcx, def_id, exprs),
@@ -34,33 +34,43 @@ impl<'tcx> Property<'tcx> {
             spec::BuildKind::SplitTransmute => Self::build_split_transmute(tcx, def_id, exprs),
             spec::BuildKind::Targets => Self::build_targets(spec, tcx, def_id, exprs),
             spec::BuildKind::TobeSpecified => Self::new_simple(PropertyKind::Unknown),
-        }
+        };
+        // Apply the spec-declared `ContractKind` centrally, so `Hazard` /
+        // `Option_` tags keep their kind regardless of build strategy (not just
+        // for `BuildKind::Targets`).
+        prop.set_contract_kind(spec.contract_kind);
+        prop
     }
 
     /// Resolve a single positional argument according to its declared role.
+    ///
+    /// Returns `None` when a `Ty` argument cannot be resolved, so the caller
+    /// degrades the whole property to `Unknown` instead of silently
+    /// substituting the `never` type (which would make `Align`/`Typed` trivially
+    /// provable).
     fn resolve_arg(
         tcx: TyCtxt<'tcx>,
         def_id: DefId,
         tag: &str,
         arg_kind: spec::ArgKind,
         expr: &Expr,
-    ) -> PropertyArg<'tcx> {
+    ) -> Option<PropertyArg<'tcx>> {
         match arg_kind {
-            spec::ArgKind::Target => super::resolve::parse_target_arg(tcx, def_id, expr),
+            spec::ArgKind::Target => Some(super::resolve::parse_target_arg(tcx, def_id, expr)),
             spec::ArgKind::Ty => {
-                let ty = super::resolve::parse_type(tcx, def_id, expr, tag)
-                    .unwrap_or_else(|| tcx.types.never);
-                PropertyArg::Ty(ty)
+                super::resolve::parse_type(tcx, def_id, expr, tag).map(PropertyArg::Ty)
             }
             spec::ArgKind::Expr => {
                 let text = expr.to_token_stream().to_string();
-                PropertyArg::Expr(super::pest_conv::parse_expr_pest(tcx, def_id, &text))
+                Some(PropertyArg::Expr(super::pest_conv::parse_expr_pest(
+                    tcx, def_id, &text,
+                )))
             }
             spec::ArgKind::Ident => {
                 let s = access_ident_recursive(expr)
                     .map(|(name, _)| name)
                     .unwrap_or_default();
-                PropertyArg::Ident(s)
+                Some(PropertyArg::Ident(s))
             }
         }
     }
@@ -81,11 +91,13 @@ impl<'tcx> Property<'tcx> {
             );
             return Self::new_simple(PropertyKind::Unknown);
         };
-        let args: Vec<PropertyArg<'tcx>> = exprs
-            .iter()
-            .zip(form.iter())
-            .map(|(expr, &arg_kind)| Self::resolve_arg(tcx, def_id, spec.tag, arg_kind, expr))
-            .collect();
+        let mut args: Vec<PropertyArg<'tcx>> = Vec::with_capacity(exprs.len());
+        for (expr, &arg_kind) in exprs.iter().zip(form.iter()) {
+            let Some(arg) = Self::resolve_arg(tcx, def_id, spec.tag, arg_kind, expr) else {
+                return Self::new_simple(PropertyKind::Unknown);
+            };
+            args.push(arg);
+        }
         Self::new_atom(spec.kind, args)
     }
 
@@ -101,19 +113,22 @@ impl<'tcx> Property<'tcx> {
     fn build_size(tcx: TyCtxt<'tcx>, def_id: DefId, exprs: &[Expr]) -> Self {
         match exprs {
             [ty_expr, const_expr] => {
-                let mut args = Vec::new();
-                if let Some(ty) = super::resolve::parse_type(tcx, def_id, ty_expr, "Size") {
-                    args.push(PropertyArg::Ty(ty));
-                }
+                let Some(ty) = super::resolve::parse_type(tcx, def_id, ty_expr, "Size") else {
+                    return Self::new_simple(PropertyKind::Unknown);
+                };
                 if let Some((ident, _)) = access_ident_recursive(const_expr) {
                     if ident == "sized" || ident == "unsized" {
-                        args.push(PropertyArg::Ident(ident));
-                        return Self::new_with_args(PropertyKind::Size, args);
+                        return Self::new_with_args(
+                            PropertyKind::Size,
+                            vec![PropertyArg::Ty(ty), PropertyArg::Ident(ident)],
+                        );
                     }
                 }
                 let c = super::resolve::expr_to_pest(tcx, def_id, const_expr);
-                args.push(PropertyArg::Expr(c));
-                Self::new_with_args(PropertyKind::Size, args)
+                Self::new_with_args(
+                    PropertyKind::Size,
+                    vec![PropertyArg::Ty(ty), PropertyArg::Expr(c)],
+                )
             }
             _ => {
                 rap_error!(
@@ -163,7 +178,7 @@ impl<'tcx> Property<'tcx> {
             }
             _ => {
                 rap_error!(
-                    "Wrong args length for Allocated Tag! expected 3 or 4, got {}",
+                    "Wrong args length for Allocated Tag! expected 1, 3 or 4, got {}",
                     exprs.len()
                 );
                 Self::new_simple(PropertyKind::Unknown)
@@ -226,19 +241,21 @@ impl<'tcx> Property<'tcx> {
                 Self::new_with_args(PropertyKind::NonOverlap, vec![target])
             }
             [a, b, ty_expr, count_expr] => {
+                let Some(ty) = super::resolve::parse_type(tcx, def_id, ty_expr, "NonOverlap")
+                else {
+                    return Self::new_simple(PropertyKind::Unknown);
+                };
                 let left = super::resolve::parse_target_arg(tcx, def_id, a);
                 let right = super::resolve::parse_target_arg(tcx, def_id, b);
                 let count = super::resolve::expr_to_pest(tcx, def_id, count_expr);
-                let mut args = vec![left, right];
-                if let Some(ty) = super::resolve::parse_type(tcx, def_id, ty_expr, "NonOverlap") {
-                    args.push(PropertyArg::Ty(ty));
-                }
-                args.push(PropertyArg::Expr(count));
-                Self::new_with_args(PropertyKind::NonOverlap, args)
+                Self::new_with_args(
+                    PropertyKind::NonOverlap,
+                    vec![left, right, PropertyArg::Ty(ty), PropertyArg::Expr(count)],
+                )
             }
             _ => {
                 rap_error!(
-                    "Wrong args length for NonOverlap Tag! expected 4, got {}",
+                    "Wrong args length for NonOverlap Tag! expected 1 or 4, got {}",
                     exprs.len()
                 );
                 Self::new_simple(PropertyKind::Unknown)
@@ -264,23 +281,20 @@ impl<'tcx> Property<'tcx> {
         def_id: DefId,
         exprs: &[Expr],
     ) -> Self {
-        let mut prop = Self::new_with_targets(spec.kind, tcx, def_id, exprs);
-        prop.set_contract_kind(spec.contract_kind);
-        prop
+        Self::new_with_targets(spec.kind, tcx, def_id, exprs)
     }
 
     fn build_pinned(tcx: TyCtxt<'tcx>, def_id: DefId, exprs: &[Expr]) -> Self {
         match exprs {
             [ptr_expr, lifetime_expr] => {
                 let target = super::resolve::parse_target_arg(tcx, def_id, ptr_expr);
-                let lifetime = access_ident_recursive(lifetime_expr)
-                    .map(|(name, _)| name)
-                    .unwrap_or_default();
-                let mut args = vec![target];
-                if !lifetime.is_empty() {
-                    args.push(PropertyArg::Ident(lifetime));
-                }
-                Self::new_with_args(PropertyKind::Pinned, args)
+                let Some((lifetime, _)) = access_ident_recursive(lifetime_expr) else {
+                    return Self::new_simple(PropertyKind::Unknown);
+                };
+                Self::new_with_args(
+                    PropertyKind::Pinned,
+                    vec![target, PropertyArg::Ident(lifetime)],
+                )
             }
             _ => {
                 rap_error!(

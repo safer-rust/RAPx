@@ -10,7 +10,7 @@
 use rustc_abi::FieldIdx;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::{Ty, TyCtxt, TyKind};
-use safety_parser::syn::Expr;
+use syn::Expr;
 
 use crate::helpers::fn_info::{FnKind, get_type};
 use crate::helpers::name::{access_ident_recursive, get_struct_self_ty, parse_signature};

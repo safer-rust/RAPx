@@ -401,7 +401,7 @@ fn conv_place_bridge<'tcx>(
     pair: Pair<Rule>,
 ) -> ContractExpr<'tcx> {
     let text = pair.as_str();
-    let Ok(expr) = safety_parser::syn::parse_str::<safety_parser::syn::Expr>(text) else {
+    let Ok(expr) = syn::parse_str::<syn::Expr>(text) else {
         return ContractExpr::Unknown;
     };
     super::resolve::parse_contract_expr(tcx, def_id, &expr, "pest")

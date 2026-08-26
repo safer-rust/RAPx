@@ -44,7 +44,6 @@ num-traits = "0.2.19"
 rand = "0.9.3"
 toml = "0.8.23"
 itertools = "0.14.0"
-safety-parser = "0.4.3"
 syn = { version = "2", features = ["extra-traits", "full", "visit-mut"] }
 pest = "2"
 pest_derive = "2"

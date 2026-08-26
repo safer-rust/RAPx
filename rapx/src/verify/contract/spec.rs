@@ -31,7 +31,7 @@ pub(crate) enum BuildKind {
     NonOverlap,
     /// `ValidNum(predicate | value, interval)`.
     ValidNum,
-    /// `Pinned(ptr, lifetime)` — lifetime is optional.
+    /// `Pinned(ptr, lifetime)` — exactly two args; lifetime is required.
     Pinned,
     /// `SplitTransmute([T], [U])` — array element types.
     SplitTransmute,
@@ -44,8 +44,10 @@ pub(crate) enum BuildKind {
 pub(crate) struct PropertySpec {
     pub tag: &'static str,
     pub kind: PropertyKind,
-    /// Accepted argument shapes. For `BuildKind::Targets` the single entry is
-    /// a marker and the tag accepts one or more `Target` args.
+    /// Accepted argument shapes. Authoritative for [`BuildKind::Uniform`]
+    /// only: the other build kinds validate arity in their `build_*`
+    /// function, so keep the two in sync. For `BuildKind::Targets` the single
+    /// entry is a marker and the tag accepts one or more `Target` args.
     pub forms: &'static [&'static [ArgKind]],
     pub contract_kind: ContractKind,
     pub build: BuildKind,
@@ -53,8 +55,8 @@ pub(crate) struct PropertySpec {
     /// placeholders bound to the rendered positional arguments.  This keeps the
     /// display text co-located with the tag declaration instead of hardcoded in
     /// the renderer.  A few argument-dependent kinds (`InBound`, `Size`,
-    /// `ValidNum`, `Alive`, `Allocated`, `NonOverlap`) override this template
-    /// structurally at render time.
+    /// `ValidNum`, `Alive`, `Allocated`, `NonOverlap`, `Alias`) override this
+    /// template structurally at render time.
     pub meaning: &'static str,
 }
 
@@ -81,7 +83,7 @@ static SPECS: &[PropertySpec] = &[
     // Unverified: the checker returns `Unknown` (no implementation yet).
     ps("Opened",        PropertyKind::Opened,        &[&[Target]],               ContractKind::Precond, BuildKind::Uniform, "{0} is a valid open file descriptor"),
     // Unverified: the checker returns `Unknown` (no implementation yet).
-    ps("Unreachable",   PropertyKind::Unreachable,   &[&[]],                     ContractKind::Precond, BuildKind::Uniform, "not Reachable()"),
+    ps("Unreachable",   PropertyKind::Unreachable,   &[&[]],                     ContractKind::Precond, BuildKind::Uniform, "this branch is unreachable"),
     ps("Align",         PropertyKind::Align,         &[&[Target, Ty]],           ContractKind::Precond, BuildKind::Uniform, "({0} as usize) % align_of::<{1}>() == 0"),
     ps("Typed",         PropertyKind::Typed,         &[&[Target, Ty]],           ContractKind::Precond, BuildKind::Uniform, "*{0} holds TypeInvariant({1})"),
     ps("Init",          PropertyKind::Init,          &[&[Target, Ty, Expr]],     ContractKind::Precond, BuildKind::Uniform, "forall i in 0..{2}: *({0} + i*sizeof({1})) |= type_invariant({1}), and the {2} value(s) are initialized"),
@@ -104,7 +106,7 @@ static SPECS: &[PropertySpec] = &[
     ps("Alive",         PropertyKind::Alive,         &[&[Target, Target]],       ContractKind::Precond, BuildKind::Targets, "*{0} outlives '{1}"),
     // Unverified: the checker returns `Unknown` (no implementation yet).
     ps("Pinned",        PropertyKind::Pinned,        &[&[Target, Ident]],        ContractKind::Precond, BuildKind::Pinned, "{0} will not be moved"),
-    ps("SplitTransmute", PropertyKind::SplitTransmute, &[&[Ty, Ty]],             ContractKind::Precond, BuildKind::SplitTransmute, "[{0}] as [{1}]: every size_of({1})-byte contiguous chunk of [{0}] is a valid bit-pattern of {1} (type_invariant satisfied, alignment not required)\nforall w subset bytes([{0}]), |w| == |{1}|: reinterpret_as_{1}(w) |= type_invariant({1}) \\ align_of({1})"),
+    ps("SplitTransmute", PropertyKind::SplitTransmute, &[&[Ty, Ty]],             ContractKind::Precond, BuildKind::SplitTransmute, "[{0}] as [{1}]: every size_of({1})-byte contiguous chunk of [{0}] is a valid bit-pattern of {1} (type_invariant satisfied, alignment not required)\nforall w subset bytes([{0}]), |w| == |{1}|: reinterpret_as_{1}(w) |= type_invariant({1})"),
     ps("TobeSpecified", PropertyKind::Unknown,       &[],                        ContractKind::Precond, BuildKind::TobeSpecified, "(unresolved contract)"),
 ];
 

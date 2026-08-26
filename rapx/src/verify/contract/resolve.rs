@@ -8,7 +8,7 @@
 use quote::ToTokens;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::{GenericParamDefKind, Ty, TyCtxt};
-use safety_parser::syn::{Expr, Lit};
+use syn::{Expr, Lit};
 
 use crate::helpers::fn_info::parse_expr_into_number;
 use crate::helpers::name::{access_ident_recursive, match_ty_with_ident};
@@ -24,7 +24,7 @@ pub(crate) fn parse_contract_expr<'tcx>(
 ) -> ContractExpr<'tcx> {
     // `x.len` / `x.len()` sugar -> len(x).
     if let Expr::Field(expr_field) = expr
-        && matches!(&expr_field.member, safety_parser::syn::Member::Named(ident) if ident == "len")
+        && matches!(&expr_field.member, syn::Member::Named(ident) if ident == "len")
     {
         return ContractExpr::Len(Box::new(parse_contract_expr(
             tcx,
@@ -171,7 +171,7 @@ pub(crate) fn parse_type<'tcx>(
     // `Expr::Verbatim` by the attribute parser. Extract the outermost type name
     // and resolve it like a plain identifier.
     if let Expr::Verbatim(ts) = expr {
-        let name = safety_parser::syn::parse2::<safety_parser::syn::Type>(ts.clone())
+        let name = syn::parse2::<syn::Type>(ts.clone())
             .ok()
             .and_then(|ty| outermost_type_ident(&ty));
         let Some(name) = name else {
@@ -200,9 +200,9 @@ pub(crate) fn parse_type<'tcx>(
 
 /// Extract the outermost path segment name from a `syn::Type`, e.g. `Option`
 /// from `Option<NonZero<T>>` or `NonZero` from `NonZero<T>`.
-fn outermost_type_ident(ty: &safety_parser::syn::Type) -> Option<String> {
+fn outermost_type_ident(ty: &syn::Type) -> Option<String> {
     match ty {
-        safety_parser::syn::Type::Path(tp) if tp.qself.is_none() => {
+        syn::Type::Path(tp) if tp.qself.is_none() => {
             tp.path.segments.last().map(|s| s.ident.to_string())
         }
         _ => None,
@@ -317,8 +317,8 @@ fn parse_string_interval<'tcx>(
 
     let body = &trimmed[1..trimmed.len() - 1];
     let (lower_raw, upper_raw) = body.split_once(',')?;
-    let lower = safety_parser::syn::parse_str::<Expr>(lower_raw.trim()).ok()?;
-    let upper = safety_parser::syn::parse_str::<Expr>(upper_raw.trim()).ok()?;
+    let lower = syn::parse_str::<Expr>(lower_raw.trim()).ok()?;
+    let upper = syn::parse_str::<Expr>(upper_raw.trim()).ok()?;
 
     Some(build_interval_predicates(
         tcx,

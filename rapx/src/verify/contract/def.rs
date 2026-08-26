@@ -26,8 +26,8 @@ use std::sync::{OnceLock, RwLock};
 use pest::iterators::Pair;
 use pest::Parser;
 use rustc_hir::def_id::{CrateNum, LOCAL_CRATE};
-use safety_parser::syn::visit_mut::{self, VisitMut};
-use safety_parser::syn::Expr;
+use syn::visit_mut::{self, VisitMut};
+use syn::Expr;
 
 use super::pest_grammar::{ContractParser, Rule};
 use super::types::{Property, PropertyKind};
