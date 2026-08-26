@@ -1,4 +1,4 @@
-//! Function simulation: API behaviour modelling when MIR is unavailable.
+//! Builtin call models: API behaviour modelling when MIR is unavailable.
 //!
 //! Each recognised standard-library API is described by a single table
 //! row: a **name matcher** and an **effect builder**.  [`lookup_effect`]

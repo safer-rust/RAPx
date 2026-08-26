@@ -1,3 +1,10 @@
+//! Discovery of verification targets and their contract obligations.
+//!
+//! `VerifyTargetCollector` walks the crate's HIR (in `targeted` or `scan`
+//! mode), and for each candidate assembles a [`FunctionTarget`]: unsafe
+//! call-site checkpoints with per-callee preconditions, raw-pointer/static-mut
+//! synthetic checkpoints, struct invariants, and std type invariants.
+
 use crate::analysis::Analysis;
 use crate::analysis::safety_flow::root::{
     function_has_struct_invariant, function_has_trait_ensurance, hir_contains_unsafe,

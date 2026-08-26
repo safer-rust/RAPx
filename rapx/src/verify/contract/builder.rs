@@ -1,3 +1,9 @@
+//! Assemble a safety tag into a [`Property`] via the declarative spec table.
+//!
+//! `Property::new` looks up `spec::SPECS`, dispatches on the tag's `BuildKind`,
+//! and resolves arguments positionally. `Property::parse_list` is the shared
+//! entry point for all front-ends, including the `any(...)` combinator.
+
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 use quote::ToTokens;
@@ -349,8 +355,9 @@ impl<'tcx> Property<'tcx> {
     ///
     /// 1. **Null guard**: exactly two disjuncts, one being `Null(p)` alone,
     ///    the other a conjunction of properties over the same place `p`.  The
-    ///    disjunction expands to the conjunct properties, each holding
-    ///    whenever `p` is non-null and vacuously for a null `p`.
+    ///    disjunction expands to a single `Property::Or` whose first group is
+    ///    `Null(p)` (vacuously proved when `p` is null) and whose second group
+    ///    is the expanded conjuncts.
     ///
     /// 2. **General disjunction**: each disjunct is standalone or a
     ///    conjunction, e.g., `any(Trait(T, Copy), Trait(T, TrivialClone))`.
@@ -402,7 +409,11 @@ impl<'tcx> Property<'tcx> {
         vec![Self::new_simple(PropertyKind::Unknown)]
     }
 
-    /// Build the null-guard expansion: `Null(p) OR (P1 & P2 & ...)`.
+    /// Build the null-guard disjunction: `Null(p) OR (P1 & P2 & ...)`.
+    ///
+    /// Produces a single `Property::Or` with two groups: `[Null(p)]` and the
+    /// expanded conjuncts.  `Null` is a first-class `PropertyKind`, so the
+    /// whole thing is checked by the normal `Or` machinery.
     fn build_null_guard(
         tcx: TyCtxt<'tcx>,
         def_id: DefId,
@@ -418,53 +429,51 @@ impl<'tcx> Property<'tcx> {
             rap_error!("cannot resolve the place guarded by Null(...) inside any(...)");
             return vec![Self::new_simple(PropertyKind::Unknown)];
         };
-        let guard_key = crate::verify::def_use::PlaceKey::from_contract_place(&guard_place);
 
-        let mut properties = Vec::new();
+        let null_leaf = Self::new_leaf(
+            PropertyKind::Null,
+            vec![PropertyArg::Expr(ContractExpr::Place(guard_place.clone()))],
+        );
+
+        let mut conjunct_group: Vec<Box<Self>> = Vec::new();
         for (inner_name, inner_args) in conjuncts {
             // Use `parse_list` so a compound `def` conjunct (e.g. `ValidPtr`)
-            // expands to its primitive components, each guarded by `Null(p)`.
-            let expanded = Self::parse_list(tcx, def_id, inner_name, inner_args);
-            for mut property in expanded {
-                if !Self::apply_null_guard(&mut property, &guard_key) {
+            // expands to its primitive components, each over the guarded place.
+            for property in Self::parse_list(tcx, def_id, inner_name, inner_args) {
+                if !Self::conjuncts_guard_place(&property, &guard_place) {
                     rap_error!(
                         "any(Null(p), ...) requires every conjunct ({inner_name}) to \
                          constrain the guarded place"
                     );
                     return vec![Self::new_simple(PropertyKind::Unknown)];
                 }
-                properties.push(property);
+                conjunct_group.push(Box::new(property));
             }
         }
-        properties
+
+        vec![Self::new_or(vec![vec![Box::new(null_leaf)], conjunct_group])]
     }
 
-    /// Recursively propagate a null-guard to a property and every member of its
-    /// `Or` groups.  Returns `false` if a place-bearing member constrains a
-    /// place other than the guard.
-    fn apply_null_guard(
-        property: &mut Property<'tcx>,
-        guard_key: &crate::verify::def_use::PlaceKey,
+    /// Returns true when every place-bearing leaf of `property` constrains the
+    /// guarded place.  Used to reject a malformed `any(Null(p), ...)` whose
+    /// conjunct targets a different place than the guard.
+    fn conjuncts_guard_place(
+        property: &Property<'tcx>,
+        guard_place: &ContractPlace<'tcx>,
     ) -> bool {
         match property {
-            Property::Or(or) => {
-                for group in &mut or.groups {
-                    for sub in group.iter_mut() {
-                        if !Self::apply_null_guard(sub, guard_key) {
-                            return false;
-                        }
-                    }
-                }
-                true
-            }
+            Property::Or(or) => or
+                .groups
+                .iter()
+                .flat_map(|group| group.iter())
+                .all(|sub| Self::conjuncts_guard_place(sub, guard_place)),
             Property::Leaf(leaf) => {
                 if let Some(PropertyArg::Expr(ContractExpr::Place(place))) = leaf.args.first() {
-                    if crate::verify::def_use::PlaceKey::from_contract_place(place) != *guard_key {
-                        return false;
-                    }
+                    crate::verify::def_use::PlaceKey::from_contract_place(place)
+                        == crate::verify::def_use::PlaceKey::from_contract_place(guard_place)
+                } else {
+                    true
                 }
-                leaf.null_guard = Some(guard_key.clone());
-                true
             }
         }
     }

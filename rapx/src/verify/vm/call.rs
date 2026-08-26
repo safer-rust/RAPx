@@ -6,7 +6,7 @@
 //!
 //! When the callee has MIR available, the VM recursively inlines the
 //! callee's body to achieve context-sensitive precision, unless a
-//! fn_simulator summary provides more precise hand-crafted invariants.
+//! builtin_models summary provides more precise hand-crafted invariants.
 //! Otherwise it falls back to the summary-based approach.
 
 use rustc_hir::def_id::DefId;
@@ -28,7 +28,7 @@ const MAX_INLINE_DEPTH: usize = 5;
 impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     /// Execute a call terminator.
     ///
-    /// Dispatch priority: hand-specialized handlers first, then fn_simulator
+    /// Dispatch priority: hand-specialized handlers first, then builtin_models
     /// summaries (whose hand-crafted invariants are more precise than inline),
     /// then inline execution of the callee's MIR (including dependency
     /// crates), then interprocedural/effect summaries, and finally an
@@ -97,13 +97,13 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             }
         }
 
-        // Try inline for callees with available MIR, unless fn_simulator
+        // Try inline for callees with available MIR, unless builtin_models
         // has a precise summary (memory allocation, intrinsics, known ptr
         // arithmetic, etc.). The summary path handles these with
         // hand-crafted invariants that are more precise than BFS inline.
         if let Some(c) = callee {
             if self.tcx.is_mir_available(c) {
-                let has_fn_sim = crate::verify::call_summary::fn_simulator::lookup_effect(
+                let has_fn_sim = crate::verify::call_summary::builtin_models::lookup_effect(
                     self.tcx, caller_def_id, Some(c), &name, func, destination,
                 ).is_some();
                 if !has_fn_sim {
@@ -297,7 +297,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
 
     /// `Iter::len()` / `Iter::is_empty()`: compute from struct fields
     /// (ptr + end_or_len share the same allocation with per-field offsets).
-    /// The generic fn_simulator would return sizeof(Iter)/sizeof(T), which is
+    /// The generic builtin_models would return sizeof(Iter)/sizeof(T), which is
     /// wrong for generic T.
     fn try_iter_len_is_empty(
         &mut self,

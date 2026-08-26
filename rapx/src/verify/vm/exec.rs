@@ -1372,7 +1372,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         .filter(|&a| a > 1);
                     // Inherit in_bounds. For &[T] created via Deref of a
                     // fat raw ptr (inlined from_raw_parts), set in_bounds
-                    // like ReturnFreshAllocation does in fn_simulator.
+                    // like ReturnFreshAllocation does in builtin_models.
                     let has_deref = place.projection.iter().any(|p| {
                         matches!(p.kind(), rustc_middle::mir::ProjectionElem::Deref)
                     });

@@ -1,3 +1,8 @@
+//! Rendering of contracts, function signatures, and verification results.
+//!
+//! Presentation-only helpers: contract expansion to `(call, meaning)` pairs,
+//! function paths with generic bounds, and grouped result trees with verdicts.
+
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::{self, TyCtxt};
 use rustc_middle::ty::ClauseKind;
@@ -136,10 +141,12 @@ pub fn fmt_contract_expanded<'tcx>(
     // Compound `def` (e.g. `Ptr2Ref`, `Deref`, user `pred!`): show it
     // as a single `name(args)` entry with its doc-derived meaning, instead of
     // the underlying primitives it expanded into.
-    if let Some(name) = property.origin_name() {
-        let args = property.origin_args().map(|a| a.join(", ")).unwrap_or_default();
-        let meaning = property.origin_meaning().unwrap_or("");
-        return (format!("{name}({args})"), meaning.to_string());
+    if let Some(origin) = property.origin() {
+        let meaning = origin.meaning.as_deref().unwrap_or("");
+        return (
+            format!("{}({})", origin.name, origin.args.join(", ")),
+            meaning.to_string(),
+        );
     }
     if property.is_or() {
         let group_count = property.groups().len();
@@ -179,8 +186,8 @@ pub fn fmt_contract_expanded<'tcx>(
         .map(|a| a.display_for_report(tcx, struct_def_id, fn_def_id))
         .collect();
     let tag = property
-        .origin_name()
-        .map(String::from)
+        .origin()
+        .map(|o| o.name.clone())
         .unwrap_or_else(|| format!("{:?}", kind));
     let tag = if property.contract_kind() == crate::verify::contract::ContractKind::Hazard {
         format!("[hazard] {tag}")
@@ -328,8 +335,8 @@ pub(crate) fn dedup_compound_props<'a, 'tcx>(
     let mut out = Vec::new();
     let mut prev: Option<(String, Vec<String>)> = None;
     for p in props {
-        if let (Some(name), Some(args)) = (p.origin_name(), p.origin_args()) {
-            let key = (name.to_string(), args.to_vec());
+        if let Some(origin) = p.origin() {
+            let key = (origin.name.clone(), origin.args.clone());
             if prev.as_ref() == Some(&key) {
                 continue;
             }
@@ -471,7 +478,7 @@ pub fn emit_property_rows<'tcx>(
         )> = Vec::new();
         for r in props.iter() {
             let result = r.result.clone();
-            if let Some(on) = r.property.origin_name() {
+            if let Some(on) = r.property.origin().map(|o| o.name.as_str()) {
                 // Compound `def`: one entry per origin name, its primitives
                 // AND-combined into a single verdict (no hazard/option prefix).
                 if let Some(entry) =

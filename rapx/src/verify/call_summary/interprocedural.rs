@@ -1,3 +1,9 @@
+//! Interprocedural call summaries derived from MIR for local wrapper functions.
+//!
+//! When no hand-crafted summary exists, this module inspects a callee's own MIR
+//! to approximate its effects: pointer-arithmetic wrappers, `from_raw_parts`
+//! wrappers, argument-to-return dataflow, and index-disjointness validators.
+
 use std::collections::{HashSet, VecDeque};
 
 use rustc_hir::def_id::DefId;

@@ -1,3 +1,10 @@
+//! Recovery of constant C-string byte contents.
+//!
+//! Discharges `ValidCStr` obligations when the buffer is a compile-time
+//! constant: it traces `Ref`/`Use`/cast chains and `as_ptr`/`::add` calls back
+//! to `b"..."`/aggregate literals, validating the trailing NUL and interior
+//! bytes.
+
 use rustc_middle::mir::{
     Body, Local, Operand, Rvalue, StatementKind,
     TerminatorKind,

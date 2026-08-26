@@ -1,9 +1,15 @@
+//! Shared helpers for the property checkers.
+//!
+//! Argument/place resolution (`target_value`, `eval_contract_expr`), the
+//! `smt_check` "negate and prove" primitive, and size/byte-width utilities used
+//! by every checker family.
+
 use rustc_middle::mir::{Local, Operand, Rvalue, StatementKind, TerminatorKind};
 use rustc_middle::ty::{GenericArg, GenericArgKind, Ty, TyKind};
 #[cfg(not(rapx_has_skip_norm_wip))]
 use crate::compat::SkipNormWip;
 use z3::{SatResult, Solver, ast::{Ast, Bool, Int}};
-use crate::verify::contract::{ContractExpr, ContractProjection, NumericOp, PlaceBase, Property, PropertyArg, RelOp};
+use crate::verify::contract::{ContractExpr, ContractPlace, ContractProjection, NumericOp, PlaceBase, Property, PropertyArg, RelOp};
 use crate::verify::report::CheckResult;
 use crate::helpers::mir_scan::Checkpoint;
 use crate::verify::vm::state::{VmState, VmValue};
@@ -177,14 +183,18 @@ impl PropertyChecker {
         }
     }
 
-    pub(super) fn is_guard_null<'ctx, 'tcx>(
+    /// Whether `place` is null, in the vacuity sense of the `Null(p)` guard:
+    /// true when the value provably equals 0, or carries no provenance and is
+    /// not known non-null (e.g. an `Option::None` or an unmodeled value).
+    pub(super) fn is_null<'ctx, 'tcx>(
         &self,
         vm_state: &VmState<'ctx, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
-        guard_key: &crate::verify::def_use::PlaceKey,
+        place: &ContractPlace<'tcx>,
     ) -> bool {
-        use crate::verify::def_use::PlaceBaseKey;
-        let local = match guard_key.base {
+        use crate::verify::def_use::{PlaceBaseKey, PlaceKey};
+        let key = PlaceKey::from_contract_place(place);
+        let local = match key.base {
             PlaceBaseKey::Local(n) => Local::from_usize(n),
             PlaceBaseKey::Arg(n) => {
                 checkpoint.args.get(n)
@@ -196,10 +206,10 @@ impl PropertyChecker {
             }
             PlaceBaseKey::Return => Local::from_usize(0),
         };
-        let val = if guard_key.fields.is_empty() {
+        let val = if key.fields.is_empty() {
             vm_state.local_value(local).cloned()
         } else {
-            vm_state.field_value(local, &guard_key.fields).cloned()
+            vm_state.field_value(local, &key.fields).cloned()
         };
         match val {
             Some(v) => {

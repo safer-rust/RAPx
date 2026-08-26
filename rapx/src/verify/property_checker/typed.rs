@@ -1,3 +1,9 @@
+//! Checkers for `Typed` and `Size`.
+//!
+//! `Typed` matches an allocation's `element_ty` (or a field at the provenance
+//! offset) against the expected type; `Size` checks `sized`/`unsized`/exact
+//! size assertions.
+
 use rustc_middle::ty::{Ty, TyKind};
 #[cfg(not(rapx_has_skip_norm_wip))]
 use crate::compat::SkipNormWip;

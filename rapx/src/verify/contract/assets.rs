@@ -1,3 +1,10 @@
+//! Loading and indexing of the bundled contract databases.
+//!
+//! Two embedded JSON assets provide out-of-the-box contracts: std function
+//! contracts (`std-public-contracts.json`) and std type invariants
+//! (`std-type-invariants.json`). Lookup uses exact, path-stripped, and wildcard
+//! fallback so trait-method impls and re-exported paths resolve correctly.
+
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 use serde::{Deserialize, Serialize};

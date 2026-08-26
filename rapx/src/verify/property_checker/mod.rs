@@ -50,12 +50,6 @@ impl PropertyChecker {
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
-        // Null guard: property is vacuously true when the guarded place is null.
-        if let Some(guard_key) = property.null_guard() {
-            if self.is_guard_null(vm_state, checkpoint, guard_key) {
-                return CheckResult::Proved;
-            }
-        }
         // Vacuous truth: properties with unwrap_some() / iter() projections
         // are trivially true when the container value cannot be resolved to
         // a meaningful pointer (e.g. Option::None has no provenance).
@@ -67,6 +61,7 @@ impl PropertyChecker {
             Property::Leaf(leaf) => match leaf.kind {
                 PropertyKind::Align => self.check_align(vm_state, solver, checkpoint, property),
                 PropertyKind::NonNull => self.check_non_null(vm_state, solver, checkpoint, property),
+                PropertyKind::Null => self.check_null(vm_state, solver, checkpoint, property),
                 PropertyKind::Allocated => self.check_allocated(vm_state, solver, checkpoint, property),
                 PropertyKind::InBound => self.check_in_bound(vm_state, solver, checkpoint, property),
                 PropertyKind::Init => self.check_init(vm_state, solver, checkpoint, property),

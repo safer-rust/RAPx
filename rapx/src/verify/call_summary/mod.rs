@@ -8,7 +8,7 @@
 //! This module keeps those summaries in one place.  Standard unsafe/std APIs
 //! are summarized by name.  Local callees can additionally use the existing
 //! dataflow graph to approximate which arguments flow into the return value.
-pub mod fn_simulator;
+pub mod builtin_models;
 pub mod interprocedural;
 
 use rustc_hir::def_id::DefId;
@@ -277,7 +277,7 @@ pub fn effect_summary<'tcx>(
     let callee = mir_utils::dep_callee_def_id(func);
     let name = mir_utils::call_name(tcx, func);
 
-    if let Some(summary) = fn_simulator::lookup_effect(tcx, caller, callee, &name, func, destination) {
+    if let Some(summary) = builtin_models::lookup_effect(tcx, caller, callee, &name, func, destination) {
         return summary;
     }
 

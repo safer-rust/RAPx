@@ -1,3 +1,9 @@
+//! The staged verification pipeline.
+//!
+//! Contract-based, path-sensitive verification of safety properties: collect
+//! targets and contracts, extract SCC-aware paths, slice them backward, execute
+//! the relevant MIR symbolically, and discharge each property with Z3.
+
 pub mod alias_hazard;
 pub mod call_summary;
 pub mod contract;
@@ -12,6 +18,6 @@ pub mod property_checker;
 pub mod report;
 pub mod slicer;
 pub mod target;
-pub mod valid_cstr_util;
+pub mod cstr_const_bytes;
 
 pub mod vm;

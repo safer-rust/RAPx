@@ -72,6 +72,7 @@ use ArgKind::{Expr, Ident, Target, Ty};
 static SPECS: &[PropertySpec] = &[
     // Uniform single-form primitives.
     ps("NonNull",       PropertyKind::NonNull,       &[&[Target]],               ContractKind::Precond, BuildKind::Uniform, "{0} as usize != 0"),
+    ps("Null",          PropertyKind::Null,          &[&[Target]],               ContractKind::Precond, BuildKind::Uniform, "{0} is the null pointer"),
     ps("Owning",        PropertyKind::Owning,        &[&[Target]],               ContractKind::Precond, BuildKind::Uniform, "ownership(*{0}) = none: no live owner aliases the pointee"),
     ps("Opened",        PropertyKind::Opened,        &[&[Target]],               ContractKind::Precond, BuildKind::Uniform, "{0} is a valid open file descriptor"),
     ps("Unreachable",   PropertyKind::Unreachable,   &[&[]],                     ContractKind::Precond, BuildKind::Uniform, "not Reachable()"),

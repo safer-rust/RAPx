@@ -1,3 +1,9 @@
+//! Checkers for `InBound` and `NonOverlap`.
+//!
+//! Bounds are discharged from `has_checked_bounds`/`in_bounds` facts, layout
+//! field-offset invariants, or an SMT coverage check over allocation base/size.
+//! `NonOverlap` uses provenance-distinctness and range-overlap reasoning.
+
 use rustc_middle::mir::{Local, Operand, Rvalue, StatementKind};
 use rustc_middle::ty::{Ty, TyKind};
 #[cfg(not(rapx_has_skip_norm_wip))]

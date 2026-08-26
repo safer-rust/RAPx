@@ -258,10 +258,10 @@ impl PropertyChecker {
         let tcx = vm_state.tcx;
 
         // Build parent map (same as legacy)
-        let parents = crate::verify::valid_cstr_util::body_parents(tcx, body);
-        let root = crate::verify::valid_cstr_util::resolve_through_casts(
+        let parents = crate::verify::cstr_const_bytes::body_parents(tcx, body);
+        let root = crate::verify::cstr_const_bytes::resolve_through_casts(
             body,
-            crate::verify::valid_cstr_util::follow_parents(&parents, target_local),
+            crate::verify::cstr_const_bytes::follow_parents(&parents, target_local),
         );
 
         let mut buffer_locals: rustc_hash::FxHashSet<Local> = rustc_hash::FxHashSet::default();
@@ -299,7 +299,7 @@ impl PropertyChecker {
             for stmt in &data.statements {
                 let StatementKind::Assign(assign) = &stmt.kind else { continue };
                 let (target, rvalue) = &**assign;
-                let target_root = crate::verify::valid_cstr_util::follow_parents(&parents, target.local);
+                let target_root = crate::verify::cstr_const_bytes::follow_parents(&parents, target.local);
                 if target_root != root && !buffer_locals.contains(&target_root) {
                     continue;
                 }
@@ -345,7 +345,7 @@ impl PropertyChecker {
         let tcx = vm_state.tcx;
 
         // 1. Use worklist-based analysis for as_ptr() chains and branch cases
-        let all_bytes = crate::verify::valid_cstr_util::collect_all_const_bytes_worklist(tcx, body, target_local);
+        let all_bytes = crate::verify::cstr_const_bytes::collect_all_const_bytes_worklist(tcx, body, target_local);
         if !all_bytes.is_empty() {
             let any_invalid = all_bytes.iter().any(|bytes| {
                 !(bytes.last() == Some(&0) && !bytes[..bytes.len().saturating_sub(1)].contains(&0))
@@ -362,7 +362,7 @@ impl PropertyChecker {
         }
 
         // 2. Fallback: simple constant byte chain for Aggregate locals
-        if let Some(bytes) = crate::verify::valid_cstr_util::const_bytes_for_local(tcx, body, target_local) {
+        if let Some(bytes) = crate::verify::cstr_const_bytes::const_bytes_for_local(tcx, body, target_local) {
             let valid = bytes.last() == Some(&0) && !bytes[..bytes.len().saturating_sub(1)].contains(&0);
             return if valid { Some(CheckResult::Proved) } else { Some(CheckResult::Failed) };
         }

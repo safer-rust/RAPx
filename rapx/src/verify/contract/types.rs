@@ -1,6 +1,10 @@
-use rustc_middle::ty::Ty;
+//! The contract IR: places, expressions, predicates, and the property model.
+//!
+//! `Property` is a DNF form (only `Leaf` and `Or`; conjunction is a list), with
+//! a `PropertyKind` vocabulary of ~24 safety tags. All contract front-ends
+//! (attributes, JSON, `def` macros, pest DSL) produce this IR.
 
-use crate::verify::def_use::PlaceKey;
+use rustc_middle::ty::Ty;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum PlaceBase {
@@ -166,6 +170,9 @@ pub enum PropertyKind {
     Pinned,
     NonVolatile,
     Opened,
+    /// `Null(p)`: the guard branch of `any(Null(p), ...)`.  Proved when `p` is
+    /// null (or carries no allocation), making the guarded obligation vacuous.
+    Null,
     Trait,
     Unreachable,
     ValidTransmute,
@@ -186,6 +193,17 @@ pub enum ContractKind {
     Precond,
     Hazard,
     Option_,
+}
+
+/// Display metadata for a property expanded from a compound `def`
+/// (`pred!`-style macro).  Purely presentational: it lets reports render a
+/// macro-expanded contract as a single `name(args)` entry with its doc-derived
+/// meaning, instead of the underlying primitives it expanded into.
+#[derive(Clone, Debug)]
+pub struct ContractOrigin {
+    pub name: String,
+    pub args: Vec<String>,
+    pub meaning: Option<String>,
 }
 
 /// A safety property: either a single predicate (`Leaf`) or a disjunction of
@@ -209,24 +227,13 @@ pub struct LeafProperty<'tcx> {
     pub kind: PropertyKind,
     pub args: Vec<PropertyArg<'tcx>>,
     pub contract_kind: ContractKind,
-    /// When set, this property came from an `any(Null(guard), ...)` expansion
-    /// and is vacuously true when `guard` is null.
-    pub null_guard: Option<PlaceKey>,
     /// When set, this property must hold for every element of this
     /// container (e.g. `Owning(buckets.iter())`).  The target place
     /// in `args` is already stripped of the `IterElements` projection
     /// and refers to a single element slot.
     pub for_each: Option<ContractPlace<'tcx>>,
-    /// When set, the display name of the compound `def` this property expanded
-    /// from (e.g. `"Deref"`, `"ValidPtr"`), used for user-facing reports so a
-    /// macro-expanded contract keeps its original name.
-    pub origin_name: Option<String>,
-    /// The full call-site arguments of the compound `def` (rendered as source
-    /// text), used to display `name(args)` as a single entry.
-    pub origin_args: Option<Vec<String>>,
-    /// The human-readable meaning of the compound `def`, sourced from its `///`
-    /// doc comment.
-    pub origin_meaning: Option<String>,
+    /// Display metadata when this property was expanded from a compound `def`.
+    pub origin: Option<ContractOrigin>,
 }
 
 #[derive(Clone, Debug)]
@@ -235,12 +242,8 @@ pub struct OrProperty<'tcx> {
     /// must hold); at least one group must hold in a disjunction.
     pub groups: Vec<Vec<Box<Property<'tcx>>>>,
     pub contract_kind: ContractKind,
-    /// Display name of the compound `def` this property expanded from.
-    pub origin_name: Option<String>,
-    /// The full call-site arguments of the compound `def` (rendered source).
-    pub origin_args: Option<Vec<String>>,
-    /// The human-readable meaning of the compound `def`.
-    pub origin_meaning: Option<String>,
+    /// Display metadata when this property was expanded from a compound `def`.
+    pub origin: Option<ContractOrigin>,
 }
 
 impl<'tcx> Property<'tcx> {
@@ -250,11 +253,8 @@ impl<'tcx> Property<'tcx> {
             kind,
             args,
             contract_kind: ContractKind::Precond,
-            null_guard: None,
             for_each: None,
-            origin_name: None,
-            origin_args: None,
-            origin_meaning: None,
+            origin: None,
         })
     }
 
@@ -269,9 +269,7 @@ impl<'tcx> Property<'tcx> {
         Self::Or(OrProperty {
             groups,
             contract_kind: ContractKind::Precond,
-            origin_name: None,
-            origin_args: None,
-            origin_meaning: None,
+            origin: None,
         })
     }
 
@@ -307,13 +305,6 @@ impl<'tcx> Property<'tcx> {
         }
     }
 
-    pub fn null_guard(&self) -> Option<&PlaceKey> {
-        match self {
-            Property::Leaf(l) => l.null_guard.as_ref(),
-            Property::Or(_) => None,
-        }
-    }
-
     pub fn for_each(&self) -> Option<&ContractPlace<'tcx>> {
         match self {
             Property::Leaf(l) => l.for_each.as_ref(),
@@ -321,27 +312,11 @@ impl<'tcx> Property<'tcx> {
         }
     }
 
-    pub fn origin_name(&self) -> Option<&str> {
+    /// Display metadata when this property was expanded from a compound `def`.
+    pub fn origin(&self) -> Option<&ContractOrigin> {
         match self {
-            Property::Leaf(l) => l.origin_name.as_deref(),
-            Property::Or(o) => o.origin_name.as_deref(),
-        }
-    }
-
-    /// The full call-site arguments of the compound `def` this property
-    /// expanded from (`None` for plain primitives).
-    pub fn origin_args(&self) -> Option<&[String]> {
-        match self {
-            Property::Leaf(l) => l.origin_args.as_deref(),
-            Property::Or(o) => o.origin_args.as_deref(),
-        }
-    }
-
-    /// The human-readable meaning of the compound `def`.
-    pub fn origin_meaning(&self) -> Option<&str> {
-        match self {
-            Property::Leaf(l) => l.origin_meaning.as_deref(),
-            Property::Or(o) => o.origin_meaning.as_deref(),
+            Property::Leaf(l) => l.origin.as_ref(),
+            Property::Or(o) => o.origin.as_ref(),
         }
     }
 
@@ -381,17 +356,10 @@ impl<'tcx> Property<'tcx> {
     /// Tag a property (leaf or `Or`) with the display name, full call-site
     /// arguments, and meaning of the compound `def` it expanded from.
     pub(crate) fn set_origin(&mut self, name: String, args: Vec<String>, meaning: Option<String>) {
+        let origin = ContractOrigin { name, args, meaning };
         match self {
-            Property::Leaf(l) => {
-                l.origin_name = Some(name);
-                l.origin_args = Some(args);
-                l.origin_meaning = meaning;
-            }
-            Property::Or(o) => {
-                o.origin_name = Some(name);
-                o.origin_args = Some(args);
-                o.origin_meaning = meaning;
-            }
+            Property::Leaf(l) => l.origin = Some(origin),
+            Property::Or(o) => o.origin = Some(origin),
         }
     }
 

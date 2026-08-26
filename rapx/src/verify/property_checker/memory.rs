@@ -1,10 +1,17 @@
+//! Checkers for memory-shape properties: `Align`, `NonNull`, `Allocated`,
+//! `Init`, and `Alive`.
+//!
+//! These consume the VM's provenance/invariant facts (e.g. `align_n`,
+//! `in_bounds`, `non_null`) with fast paths, falling back to SMT over
+//! `value.term` and allocation base/size.
+
 use rustc_middle::mir::{Local, Operand, Rvalue, StatementKind};
 use rustc_middle::ty::{GenericArgKind, TyKind};
 #[cfg(not(rapx_has_skip_norm_wip))]
 use crate::compat::SkipNormWip;
 use rustc_hash::FxHashSet;
 use z3::{SatResult, Solver, ast::{Ast, Int}};
-use crate::verify::contract::{Property, PropertyArg};
+use crate::verify::contract::{ContractExpr, Property, PropertyArg};
 use crate::verify::report::CheckResult;
 use crate::helpers::mir_scan::Checkpoint;
 use crate::verify::vm::state::{AllocId, VmState, VmValue};
@@ -157,6 +164,26 @@ impl PropertyChecker {
         }
         let zero = Int::from_u64(vm_state.ctx, 0);
         self.smt_check(solver, &value.term._eq(&zero))
+    }
+
+    pub(super) fn check_null<'ctx, 'tcx>(&self, vm_state: &VmState<'ctx, 'tcx>, _solver: &Solver<'ctx>,
+        checkpoint: &Checkpoint<'tcx>, property: &Property<'tcx>) -> CheckResult
+    {
+        // `Null(p)` is the guard branch of `any(Null(p), ...)`.  It is Proved
+        // when `p` is null (or carries no allocation, i.e. not known non-null),
+        // making the guarded obligation vacuous; otherwise Failed, so the other
+        // disjunct decides the outcome.
+        let Some(place) = (match property.args().first() {
+            Some(PropertyArg::Expr(ContractExpr::Place(p))) => Some(p),
+            _ => None,
+        }) else {
+            return CheckResult::Unknown;
+        };
+        if self.is_null(vm_state, checkpoint, place) {
+            CheckResult::Proved
+        } else {
+            CheckResult::Failed
+        }
     }
 
     /// Whether `value` is a `MaybeUninit`-typed pointer access into `alloc_id`.

@@ -1,3 +1,9 @@
+//! Checker for `ValidNum`: numeric-interval and predicate reasoning.
+//!
+//! Evaluates each `NumericPredicate` to a Z3 comparison and discharges it with
+//! `assert_all` plus Euclidean-division (NIA) axioms injected for both the
+//! contract expression and the VM's computed terms.
+
 use rustc_middle::mir::Operand;
 use rustc_middle::ty::TyKind;
 #[cfg(not(rapx_has_skip_norm_wip))]

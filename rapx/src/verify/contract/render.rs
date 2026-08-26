@@ -247,9 +247,8 @@ impl<'tcx> Property<'tcx> {
     ) -> String {
         // Compound `def` (e.g. `Ptr2Ref`, `Deref`, user `pred!`): show
         // it as a single `name(args)` entry instead of its underlying primitives.
-        if let Some(name) = self.origin_name() {
-            let args = self.origin_args().map(|a| a.join(", ")).unwrap_or_default();
-            return format!("{name}({args})");
+        if let Some(origin) = self.origin() {
+            return format!("{}({})", origin.name, origin.args.join(", "));
         }
 
         let kind_str = match self.kind() {

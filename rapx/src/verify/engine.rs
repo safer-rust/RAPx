@@ -205,11 +205,8 @@ impl<'tcx> VerifyEngine<'tcx> {
                     kind: leaf.kind,
                     args: new_args,
                     contract_kind: leaf.contract_kind,
-                    null_guard: leaf.null_guard.clone(),
                     for_each: leaf.for_each.clone(),
-                    origin_name: None,
-                    origin_args: None,
-                    origin_meaning: None,
+                    origin: None,
                 })
             }
             Property::Or(or) => {
@@ -226,9 +223,7 @@ impl<'tcx> VerifyEngine<'tcx> {
                 Property::Or(OrProperty {
                     groups: new_groups,
                     contract_kind: or.contract_kind,
-                    origin_name: None,
-                    origin_args: None,
-                    origin_meaning: None,
+                    origin: None,
                 })
             }
         }

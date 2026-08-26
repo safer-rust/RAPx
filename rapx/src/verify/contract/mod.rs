@@ -1,3 +1,9 @@
+//! Contract parsing, resolution, and rendering.
+//!
+//! Three front-ends (inline attributes, embedded JSON, and `pred!`-style `def`
+//! macros, plus the pest DSL for expressions) all funnel into
+//! `Property::parse_list`, producing a single IR defined in [`types`].
+
 pub(crate) mod assets;
 pub(crate) mod attr;
 pub mod builder;

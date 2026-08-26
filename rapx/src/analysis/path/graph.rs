@@ -571,10 +571,10 @@ impl<'tcx> PathGraph<'tcx> {
             let is_intrinsic = name.contains("::intrinsics::")
                 || name.starts_with("intrinsics::")
                 || name.ends_with("::drop_in_place");
-            // If fn_simulator has a hand-written summary, use it directly (it is
+            // If builtin_models has a hand-written summary, use it directly (it is
             // more accurate than inline execution). Otherwise fall back to CFG
             // inlining for cross-crate callees with available MIR.
-            let has_fn_sim = crate::verify::call_summary::fn_simulator::is_modeled(&name);
+            let has_fn_sim = crate::verify::call_summary::builtin_models::is_modeled(&name);
             if callee != caller_def_id
                 && tcx.is_mir_available(callee)
                 && !is_intrinsic
