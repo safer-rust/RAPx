@@ -2427,14 +2427,14 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 }
             }
         }
-        let Property::Leaf(leaf) = property else {
+        let Property::Atom(atom) = property else {
             return;
         };
-        if leaf.contract_kind == ContractKind::Hazard {
+        if atom.contract_kind == ContractKind::Hazard {
             self.contract_flags.alias_hazard_accepted = true;
             return;
         }
-        let kind = leaf.kind;
+        let kind = atom.kind;
         match kind {
             PropertyKind::NonNull => {
                 if let Some(val) = self.contract_target_value(property) {

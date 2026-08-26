@@ -161,6 +161,14 @@ impl PropertyChecker {
         None
     }
 
+    /// Implicit vacuous truth for projected targets.
+    ///
+    /// A property over `x.unwrap_some()` / `x.iter()` talks about the contents
+    /// of an `Option`/container; when that container resolves to no allocation
+    /// (e.g. `Option::None`, an empty or unmodeled container) there is no
+    /// element to check, so the property holds vacuously.  The explicit
+    /// counterpart is the `Null(p)` guard ([`Self::is_null`]), which the user
+    /// writes via `any(Null(p), …)`.
     pub(super) fn is_vacuously_true_for_nullable<'ctx, 'tcx>(
         &self,
         vm_state: &VmState<'ctx, 'tcx>,
@@ -185,7 +193,10 @@ impl PropertyChecker {
 
     /// Whether `place` is null, in the vacuity sense of the `Null(p)` guard:
     /// true when the value provably equals 0, or carries no provenance and is
-    /// not known non-null (e.g. an `Option::None` or an unmodeled value).
+    /// not known non-null (e.g. an `Option::None` or an unmodeled value).  The
+    /// implicit counterpart is [`Self::is_vacuously_true_for_nullable`], which
+    /// handles `unwrap_some()` / `iter()` projections without an explicit
+    /// guard.
     pub(super) fn is_null<'ctx, 'tcx>(
         &self,
         vm_state: &VmState<'ctx, 'tcx>,

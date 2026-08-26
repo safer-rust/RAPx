@@ -375,20 +375,20 @@ impl<'tcx> LoopSensitivityAnalyzer<'tcx> {
             }
 
             for property in properties.iter() {
-                // Expand `Or` compound contracts into their leaf members so the
+                // Expand `Or` compound contracts into their atoms so the
                 // loop planner reasons about the underlying primitives (e.g.
                 // `ValidPtr = Size(T,0) || Deref` → `Allocated`/`InBound`).
-                let mut leaves = Vec::new();
-                flatten_or_property(property, &mut leaves);
-                for leaf in leaves {
-                    let mut roots = RelevantPlaces::from_property(leaf);
+                let mut atoms = Vec::new();
+                flatten_or_property(property, &mut atoms);
+                for atom in atoms {
+                    let mut roots = RelevantPlaces::from_property(atom);
                     bind_callsite_roots(self.tcx, &mut roots, checkpoint);
                     if roots.locals.is_empty() {
                         continue;
                     }
                     sinks.push(SafetySink {
                         checkpoint,
-                        property: leaf,
+                        property: atom,
                         roots,
                     });
                 }
@@ -399,7 +399,7 @@ impl<'tcx> LoopSensitivityAnalyzer<'tcx> {
     }
 }
 
-/// Collect the non-`Or` leaf properties of a (possibly compound) property tree.
+/// Collect the non-`Or` atom properties of a (possibly compound) property tree.
 fn flatten_or_property<'a, 'tcx>(
     property: &'a Property<'tcx>,
     out: &mut Vec<&'a Property<'tcx>>,

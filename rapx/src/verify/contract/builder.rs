@@ -86,7 +86,7 @@ impl<'tcx> Property<'tcx> {
             .zip(form.iter())
             .map(|(expr, &arg_kind)| Self::resolve_arg(tcx, def_id, spec.tag, arg_kind, expr))
             .collect();
-        Self::new_leaf(spec.kind, args)
+        Self::new_atom(spec.kind, args)
     }
 
     pub fn new(tcx: TyCtxt<'tcx>, def_id: DefId, name: &str, exprs: &[Expr]) -> Self {
@@ -202,7 +202,7 @@ impl<'tcx> Property<'tcx> {
                 }
                 // Auto-detect array index for for_each
                 let for_each = super::place::detect_array_for_each(tcx, def_id, index_expr);
-                let mut prop = Self::new_leaf(
+                let mut prop = Self::new_atom(
                     PropertyKind::InBound,
                     vec![PropertyArg::Expr(ContractExpr::IndexAccess {
                         slice: Box::new(slice),
@@ -308,7 +308,7 @@ impl<'tcx> Property<'tcx> {
     }
 
     fn new_simple(kind: PropertyKind) -> Self {
-        Self::new_leaf(kind, Vec::new())
+        Self::new_atom(kind, Vec::new())
     }
 
     /// Parse one annotation entry into the properties it denotes.
@@ -327,11 +327,11 @@ impl<'tcx> Property<'tcx> {
             vec![Self::new(tcx, def_id, name, exprs)]
         };
         for prop in &mut props {
-            if let Property::Leaf(leaf) = prop {
-                if leaf.for_each.is_none() {
-                    for arg in &mut leaf.args {
-                        leaf.for_each = super::place::strip_iter_elements(arg);
-                        if leaf.for_each.is_some() {
+            if let Property::Atom(atom) = prop {
+                if atom.for_each.is_none() {
+                    for arg in &mut atom.args {
+                        atom.for_each = super::place::strip_iter_elements(arg);
+                        if atom.for_each.is_some() {
                             break;
                         }
                     }
@@ -430,7 +430,7 @@ impl<'tcx> Property<'tcx> {
             return vec![Self::new_simple(PropertyKind::Unknown)];
         };
 
-        let null_leaf = Self::new_leaf(
+        let null_atom = Self::new_atom(
             PropertyKind::Null,
             vec![PropertyArg::Expr(ContractExpr::Place(guard_place.clone()))],
         );
@@ -451,10 +451,10 @@ impl<'tcx> Property<'tcx> {
             }
         }
 
-        vec![Self::new_or(vec![vec![Box::new(null_leaf)], conjunct_group])]
+        vec![Self::new_or(vec![vec![Box::new(null_atom)], conjunct_group])]
     }
 
-    /// Returns true when every place-bearing leaf of `property` constrains the
+    /// Returns true when every place-bearing atom of `property` constrains the
     /// guarded place.  Used to reject a malformed `any(Null(p), ...)` whose
     /// conjunct targets a different place than the guard.
     fn conjuncts_guard_place(
@@ -467,8 +467,8 @@ impl<'tcx> Property<'tcx> {
                 .iter()
                 .flat_map(|group| group.iter())
                 .all(|sub| Self::conjuncts_guard_place(sub, guard_place)),
-            Property::Leaf(leaf) => {
-                if let Some(PropertyArg::Expr(ContractExpr::Place(place))) = leaf.args.first() {
+            Property::Atom(atom) => {
+                if let Some(PropertyArg::Expr(ContractExpr::Place(place))) = atom.args.first() {
                     crate::verify::def_use::PlaceKey::from_contract_place(place)
                         == crate::verify::def_use::PlaceKey::from_contract_place(guard_place)
                 } else {
@@ -501,7 +501,7 @@ impl<'tcx> Property<'tcx> {
     }
 
     fn new_with_args(kind: PropertyKind, args: Vec<PropertyArg<'tcx>>) -> Self {
-        Self::new_leaf(kind, args)
+        Self::new_atom(kind, args)
     }
 
     fn new_with_targets(
@@ -511,7 +511,7 @@ impl<'tcx> Property<'tcx> {
         exprs: &[Expr],
     ) -> Self {
         let (args, for_each) = Self::parse_target_args_with_for_each(tcx, def_id, exprs);
-        let mut prop = Self::new_leaf(kind, args);
+        let mut prop = Self::new_atom(kind, args);
         prop.set_for_each(for_each);
         prop
     }

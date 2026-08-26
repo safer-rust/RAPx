@@ -1224,20 +1224,20 @@ fn build_raw_ptr_deref_checks<'tcx>(
 
             let mut properties = if info.is_ref {
                 vec![
-                    Property::new_leaf(PropertyKind::NonNull, vec![target.clone()]),
-                    Property::new_leaf(PropertyKind::Align, vec![target.clone(), ty.clone()]),
-                    { let mut p = Property::new_leaf(PropertyKind::Alias, vec![target.clone()]); p.set_contract_kind(crate::verify::contract::ContractKind::Hazard); p },
+                    Property::new_atom(PropertyKind::NonNull, vec![target.clone()]),
+                    Property::new_atom(PropertyKind::Align, vec![target.clone(), ty.clone()]),
+                    { let mut p = Property::new_atom(PropertyKind::Alias, vec![target.clone()]); p.set_contract_kind(crate::verify::contract::ContractKind::Hazard); p },
                 ]
             } else {
                 vec![
-                    Property::new_leaf(PropertyKind::Allocated, vec![target.clone(), ty.clone(), count.clone()]),
-                    Property::new_leaf(PropertyKind::InBound, vec![target.clone(), ty.clone(), count.clone()]),
-                    Property::new_leaf(PropertyKind::Align, vec![target.clone(), ty.clone()]),
+                    Property::new_atom(PropertyKind::Allocated, vec![target.clone(), ty.clone(), count.clone()]),
+                    Property::new_atom(PropertyKind::InBound, vec![target.clone(), ty.clone(), count.clone()]),
+                    Property::new_atom(PropertyKind::Align, vec![target.clone(), ty.clone()]),
                 ]
             };
 
             if info.is_read && !info.is_ref {
-                properties.push(Property::new_leaf(PropertyKind::Typed, vec![target, ty]));
+                properties.push(Property::new_atom(PropertyKind::Typed, vec![target, ty]));
             }
 
             (
@@ -1280,10 +1280,10 @@ fn build_static_mut_checks<'tcx>(
             let count = PropertyArg::Expr(ContractExpr::Const(1));
 
             let properties = vec![
-                Property::new_leaf(PropertyKind::Allocated, vec![target.clone(), ty.clone(), count.clone()]),
-                Property::new_leaf(PropertyKind::InBound, vec![target.clone(), ty.clone(), count.clone()]),
-                Property::new_leaf(PropertyKind::Align, vec![target.clone(), ty.clone()]),
-                Property::new_leaf(PropertyKind::Init, vec![target, ty, count]),
+                Property::new_atom(PropertyKind::Allocated, vec![target.clone(), ty.clone(), count.clone()]),
+                Property::new_atom(PropertyKind::InBound, vec![target.clone(), ty.clone(), count.clone()]),
+                Property::new_atom(PropertyKind::Align, vec![target.clone(), ty.clone()]),
+                Property::new_atom(PropertyKind::Init, vec![target, ty, count]),
             ];
 
             (

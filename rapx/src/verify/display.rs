@@ -179,7 +179,7 @@ pub fn fmt_contract_expanded<'tcx>(
             meaning.trim_end().to_string(),
         );
     }
-    let kind = property.kind().expect("leaf property");
+    let kind = property.kind().expect("atom property");
     let args: Vec<String> = property
         .args()
         .iter()

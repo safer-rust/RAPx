@@ -455,7 +455,7 @@ fn expand_body<'tcx>(
 }
 
 fn unknown_property<'tcx>() -> Property<'tcx> {
-    Property::new_leaf(PropertyKind::Unknown, Vec::new())
+    Property::new_atom(PropertyKind::Unknown, Vec::new())
 }
 
 // ── Registry ───────────────────────────────────────────────────

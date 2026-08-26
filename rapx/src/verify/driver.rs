@@ -1143,9 +1143,9 @@ fn remap_constructor_contract<'tcx>(
         .collect();
 
     match property {
-        crate::verify::contract::Property::Leaf(mut leaf) => {
-            leaf.args = new_args;
-            crate::verify::contract::Property::Leaf(leaf)
+        crate::verify::contract::Property::Atom(mut atom) => {
+            atom.args = new_args;
+            crate::verify::contract::Property::Atom(atom)
         }
         crate::verify::contract::Property::Or(or) => crate::verify::contract::Property::Or(or),
     }

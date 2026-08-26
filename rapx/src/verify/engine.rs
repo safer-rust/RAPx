@@ -13,7 +13,7 @@ use rustc_middle::ty::TyCtxt;
 use crate::analysis::path::PathTree;
 
 use super::{
-    contract::{LeafProperty, OrProperty, Property},
+    contract::{AtomProperty, OrProperty, Property},
     report::CheckResult,
     slicer::{RelevantItem, BackwardSlicer},
 };
@@ -176,8 +176,8 @@ impl<'tcx> VerifyEngine<'tcx> {
         checkpoint: &Checkpoint<'tcx>,
     ) -> Property<'tcx> {
         match property {
-            Property::Leaf(leaf) => {
-                let new_args: Vec<super::contract::PropertyArg<'tcx>> = leaf
+            Property::Atom(atom) => {
+                let new_args: Vec<super::contract::PropertyArg<'tcx>> = atom
                     .args
                     .iter()
                     .map(|a| match a {
@@ -201,11 +201,11 @@ impl<'tcx> VerifyEngine<'tcx> {
                         _ => a.clone(),
                     })
                     .collect();
-                Property::Leaf(LeafProperty {
-                    kind: leaf.kind,
+                Property::Atom(AtomProperty {
+                    kind: atom.kind,
                     args: new_args,
-                    contract_kind: leaf.contract_kind,
-                    for_each: leaf.for_each.clone(),
+                    contract_kind: atom.contract_kind,
+                    for_each: atom.for_each.clone(),
                     origin: None,
                 })
             }

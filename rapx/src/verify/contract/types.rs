@@ -1,6 +1,6 @@
 //! The contract IR: places, expressions, predicates, and the property model.
 //!
-//! `Property` is a DNF form (only `Leaf` and `Or`; conjunction is a list), with
+//! `Property` is a DNF form (only `Atom` and `Or`; conjunction is a list), with
 //! a `PropertyKind` vocabulary of ~24 safety tags. All contract front-ends
 //! (attributes, JSON, `def` macros, pest DSL) produce this IR.
 
@@ -147,6 +147,13 @@ impl<'tcx> NumericPredicate<'tcx> {
     }
 }
 
+/// The vocabulary of safety predicates a contract can assert.
+///
+/// Each kind's meaning, accepted argument shapes, and assembly strategy are
+/// declared in `spec::SPECS` (the single source of truth); this enum only
+/// names the kinds.  Two kinds carry extra semantics worth noting: `Null` is
+/// the guard branch of `any(Null(p), …)` (proved when `p` is null), and
+/// `Owning` asserts `ownership(*p) = none` (psp IV.1 in primitive-sp.md).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PropertyKind {
     Align,
@@ -162,16 +169,12 @@ pub enum PropertyKind {
     Init,
     Unwrap,
     Typed,
-    /// `ownership(*p) = none` — no live owner aliases the pointee, so the
-    /// callee may (re)claim ownership (psp IV.1 in primitive-sp.md).
     Owning,
     Alias,
     Alive,
     Pinned,
     NonVolatile,
     Opened,
-    /// `Null(p)`: the guard branch of `any(Null(p), ...)`.  Proved when `p` is
-    /// null (or carries no allocation), making the guarded obligation vacuous.
     Null,
     Trait,
     Unreachable,
@@ -206,24 +209,24 @@ pub struct ContractOrigin {
     pub meaning: Option<String>,
 }
 
-/// A safety property: either a single predicate (`Leaf`) or a disjunction of
-/// alternative predicate groups (`Or`).
+/// A safety property: either a single atomic predicate (`Atom`) or a
+/// disjunction of alternative predicate groups (`Or`).
 ///
 /// Conjunction (`And`) is deliberately *not* a variant: it is expressed by the
 /// surrounding collection — the caller's `requires` list is already a
 /// conjunction, and each `Or` group is a conjunction of its members (DNF).
 ///
-/// Splitting `Leaf` from `Or` makes the mutually-exclusive payloads (`args`
-/// vs. `groups`) explicit in the type, so a leaf can never carry alternatives
+/// Splitting `Atom` from `Or` makes the mutually-exclusive payloads (`args`
+/// vs. `groups`) explicit in the type, so an atom can never carry alternatives
 /// and an `Or` can never carry arguments.
 #[derive(Clone, Debug)]
 pub enum Property<'tcx> {
-    Leaf(LeafProperty<'tcx>),
+    Atom(AtomProperty<'tcx>),
     Or(OrProperty<'tcx>),
 }
 
 #[derive(Clone, Debug)]
-pub struct LeafProperty<'tcx> {
+pub struct AtomProperty<'tcx> {
     pub kind: PropertyKind,
     pub args: Vec<PropertyArg<'tcx>>,
     pub contract_kind: ContractKind,
@@ -247,9 +250,9 @@ pub struct OrProperty<'tcx> {
 }
 
 impl<'tcx> Property<'tcx> {
-    /// Build a single predicate leaf.
-    pub(crate) fn new_leaf(kind: PropertyKind, args: Vec<PropertyArg<'tcx>>) -> Self {
-        Self::Leaf(LeafProperty {
+    /// Build a single atomic predicate.
+    pub(crate) fn new_atom(kind: PropertyKind, args: Vec<PropertyArg<'tcx>>) -> Self {
+        Self::Atom(AtomProperty {
             kind,
             args,
             contract_kind: ContractKind::Precond,
@@ -273,41 +276,41 @@ impl<'tcx> Property<'tcx> {
         })
     }
 
-    /// The predicate kind of a leaf property (`None` for an `Or`, which has no
-    /// single kind).
+    /// The predicate kind of an atom (`None` for an `Or`, which has no single
+    /// kind).
     pub fn kind(&self) -> Option<PropertyKind> {
         match self {
-            Property::Leaf(l) => Some(l.kind),
+            Property::Atom(a) => Some(a.kind),
             Property::Or(_) => None,
         }
     }
 
-    /// The positional arguments of a leaf property (`Or` has none).
+    /// The positional arguments of an atom (`Or` has none).
     pub fn args(&self) -> &[PropertyArg<'tcx>] {
         match self {
-            Property::Leaf(l) => &l.args,
+            Property::Atom(a) => &a.args,
             Property::Or(_) => &[],
         }
     }
 
-    /// The alternative groups of an `Or` property (`Leaf` has none).
+    /// The alternative groups of an `Or` property (`Atom` has none).
     pub fn groups(&self) -> &[Vec<Box<Property<'tcx>>>] {
         match self {
-            Property::Leaf(_) => &[],
+            Property::Atom(_) => &[],
             Property::Or(o) => &o.groups,
         }
     }
 
     pub fn contract_kind(&self) -> ContractKind {
         match self {
-            Property::Leaf(l) => l.contract_kind,
+            Property::Atom(a) => a.contract_kind,
             Property::Or(o) => o.contract_kind,
         }
     }
 
     pub fn for_each(&self) -> Option<&ContractPlace<'tcx>> {
         match self {
-            Property::Leaf(l) => l.for_each.as_ref(),
+            Property::Atom(a) => a.for_each.as_ref(),
             Property::Or(_) => None,
         }
     }
@@ -315,7 +318,7 @@ impl<'tcx> Property<'tcx> {
     /// Display metadata when this property was expanded from a compound `def`.
     pub fn origin(&self) -> Option<&ContractOrigin> {
         match self {
-            Property::Leaf(l) => l.origin.as_ref(),
+            Property::Atom(a) => a.origin.as_ref(),
             Property::Or(o) => o.origin.as_ref(),
         }
     }
@@ -343,7 +346,7 @@ impl<'tcx> Property<'tcx> {
     /// Apply contract kind metadata from a JSON entry or attribute.
     pub fn apply_kind(&mut self, kind: Option<&str>) {
         let target = match self {
-            Property::Leaf(l) => &mut l.contract_kind,
+            Property::Atom(a) => &mut a.contract_kind,
             Property::Or(o) => &mut o.contract_kind,
         };
         match kind {
@@ -353,27 +356,27 @@ impl<'tcx> Property<'tcx> {
         }
     }
 
-    /// Tag a property (leaf or `Or`) with the display name, full call-site
+    /// Tag a property (atom or `Or`) with the display name, full call-site
     /// arguments, and meaning of the compound `def` it expanded from.
     pub(crate) fn set_origin(&mut self, name: String, args: Vec<String>, meaning: Option<String>) {
         let origin = ContractOrigin { name, args, meaning };
         match self {
-            Property::Leaf(l) => l.origin = Some(origin),
+            Property::Atom(a) => a.origin = Some(origin),
             Property::Or(o) => o.origin = Some(origin),
         }
     }
 
-    /// Attach a `for_each` container to a leaf property.
+    /// Attach a `for_each` container to an atom.
     pub(crate) fn set_for_each(&mut self, place: Option<ContractPlace<'tcx>>) {
-        if let Property::Leaf(l) = self {
-            l.for_each = place;
+        if let Property::Atom(a) = self {
+            a.for_each = place;
         }
     }
 
     /// Override the contract kind (e.g. `Alias` → `Hazard`).
     pub(crate) fn set_contract_kind(&mut self, k: ContractKind) {
         match self {
-            Property::Leaf(l) => l.contract_kind = k,
+            Property::Atom(a) => a.contract_kind = k,
             Property::Or(o) => o.contract_kind = k,
         }
     }

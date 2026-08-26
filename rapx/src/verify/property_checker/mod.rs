@@ -50,15 +50,17 @@ impl PropertyChecker {
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
-        // Vacuous truth: properties with unwrap_some() / iter() projections
-        // are trivially true when the container value cannot be resolved to
-        // a meaningful pointer (e.g. Option::None has no provenance).
+        // Vacuous truth (implicit): a property whose target place carries an
+        // `unwrap_some()` / `iter()` projection is trivially satisfied when the
+        // container resolves to no allocation (e.g. `Option::None`).  This is
+        // distinct from the explicit `Null(p)` guard in `any(Null(p), …)`,
+        // which is a `PropertyKind::Null` disjunct handled by `check_null`.
         if self.is_vacuously_true_for_nullable(vm_state, checkpoint, property) {
             return CheckResult::Proved;
         }
         match property {
             Property::Or(_) => self.check_or(vm_state, solver, checkpoint, property),
-            Property::Leaf(leaf) => match leaf.kind {
+            Property::Atom(atom) => match atom.kind {
                 PropertyKind::Align => self.check_align(vm_state, solver, checkpoint, property),
                 PropertyKind::NonNull => self.check_non_null(vm_state, solver, checkpoint, property),
                 PropertyKind::Null => self.check_null(vm_state, solver, checkpoint, property),
@@ -70,6 +72,11 @@ impl PropertyChecker {
                 PropertyKind::Owning => self.check_owning(vm_state, solver, checkpoint, property),
                 PropertyKind::Alive => self.check_alive(vm_state, solver, checkpoint, property),
                 PropertyKind::NonOverlap => self.check_non_overlap(vm_state, solver, checkpoint, property),
+                // `NonVolatile` is uncheckable: the VM does not model volatile
+                // access, so there is nothing to disprove.  Treated as
+                // satisfied (Proved) as a documented soundness assumption —
+                // analysed code is assumed not to mix volatile and non-volatile
+                // access.  Revisit if volatile tracking is ever added.
                 PropertyKind::NonVolatile => CheckResult::Proved,
                 PropertyKind::ValidNum => self.check_valid_num(vm_state, solver, checkpoint, property),
                 PropertyKind::ValidString => self.check_valid_string(vm_state, solver, checkpoint, property),
