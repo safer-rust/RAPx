@@ -37,8 +37,10 @@ cargo flags work for cross-compiled or bare-metal (`#![no_std]`) crates:
 
 ```shell
 # verify a no_std kernel crate for a bare-metal target
-cargo rapx verify --crate ostd -- -p ostd --target x86_64-unknown-none
+cargo rapx verify --crate ostd -- --target x86_64-unknown-none
 ```
+
+Here `ostd` is the kernel crate from [asterinas/asterinas](https://github.com/asterinas/asterinas/tree/main/ostd).
 
 Make sure the target is installed first (`rustup target add x86_64-unknown-none`).
 
