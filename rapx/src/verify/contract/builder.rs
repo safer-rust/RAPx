@@ -361,6 +361,7 @@ impl<'tcx> Property<'tcx> {
     ///
     /// ```text
     /// any(Null(p), (P1(p, ...), P2(p, ...), ...))
+    /// any(Trait(T, Copy), Trait(T, TrivialClone), ...)
     /// ```
     ///
     /// A disjunct is either a single property application `P(...)` or a
@@ -372,52 +373,49 @@ impl<'tcx> Property<'tcx> {
     ///    disjunction expands to an `Or` whose disjuncts are `Null(p)` and an
     ///    `And` of the conjuncts.
     ///
-    /// 2. **General disjunction**: each disjunct is standalone or a
-    ///    conjunction, e.g., `any(Trait(T, Copy), Trait(T, TrivialClone))`.
-    ///    Produces a single `Property::Or` whose `disjuncts` are atoms or
-    ///    `And` nodes.
+    /// 2. **General disjunction**: any number (≥ 2) of disjuncts, each
+    ///    standalone or a conjunction group, e.g.
+    ///    `any(Trait(T, Copy), Trait(T, TrivialClone))`.  Produces a single
+    ///    `Property::Or` whose `disjuncts` are atoms or `And` nodes.
     fn parse_any(tcx: TyCtxt<'tcx>, def_id: DefId, exprs: &[Expr]) -> Vec<Self> {
-        if !Self::check_arg_length(exprs.len(), 2, "any") {
+        if exprs.len() < 2 {
+            rap_error!("any(...) requires at least 2 disjuncts, got {}", exprs.len());
             return vec![Self::new_simple(PropertyKind::Unknown)];
         }
 
-        let (Some(first), Some(second)) = (
-            Self::disjunct_parts(&exprs[0]),
-            Self::disjunct_parts(&exprs[1]),
-        ) else {
-            rap_error!("any(...) disjuncts must be property applications or (P1, P2, ...) groups");
-            return vec![Self::new_simple(PropertyKind::Unknown)];
-        };
+        let mut disjuncts: Vec<Vec<(String, Vec<Expr>)>> = Vec::with_capacity(exprs.len());
+        for expr in exprs {
+            let Some(parts) = Self::disjunct_parts(expr) else {
+                rap_error!(
+                    "any(...) disjuncts must be property applications or (P1, P2, ...) groups"
+                );
+                return vec![Self::new_simple(PropertyKind::Unknown)];
+            };
+            disjuncts.push(parts);
+        }
 
         // --- null-guard pattern ---
         let is_null_guard =
             |disjunct: &[(String, Vec<Expr>)]| disjunct.len() == 1 && disjunct[0].0 == "Null";
-        if is_null_guard(&first) && !is_null_guard(&second) {
-            return Self::build_null_guard(tcx, def_id, &first, &second);
-        }
-        if is_null_guard(&second) && !is_null_guard(&first) {
-            return Self::build_null_guard(tcx, def_id, &second, &first);
+        if disjuncts.len() == 2 {
+            if is_null_guard(&disjuncts[0]) && !is_null_guard(&disjuncts[1]) {
+                return Self::build_null_guard(tcx, def_id, &disjuncts[0], &disjuncts[1]);
+            }
+            if is_null_guard(&disjuncts[1]) && !is_null_guard(&disjuncts[0]) {
+                return Self::build_null_guard(tcx, def_id, &disjuncts[1], &disjuncts[0]);
+            }
         }
 
         // --- general disjunction: build a single Or property ---
-        let all_standalone = [&first, &second].iter().all(|d| d.len() == 1);
-        if all_standalone {
-            let mut disjuncts: Vec<Self> = Vec::new();
-            for parts in [first, second] {
-                let mut conjuncts: Vec<Self> = Vec::new();
-                for (name, args) in parts {
-                    conjuncts.extend(Self::parse_list(tcx, def_id, &name, &args));
-                }
-                disjuncts.push(Self::conjunction(conjuncts));
+        let mut or_disjuncts: Vec<Self> = Vec::with_capacity(disjuncts.len());
+        for parts in disjuncts {
+            let mut conjuncts: Vec<Self> = Vec::new();
+            for (name, args) in parts {
+                conjuncts.extend(Self::parse_list(tcx, def_id, &name, &args));
             }
-            return vec![Self::new_or(disjuncts)];
+            or_disjuncts.push(Self::conjunction(conjuncts));
         }
-
-        rap_error!(
-            "any(...) currently supports either a Null(p) guard pattern or \
-             standalone property applications"
-        );
-        vec![Self::new_simple(PropertyKind::Unknown)]
+        vec![Self::new_or(or_disjuncts)]
     }
 
     /// Build the null-guard disjunction: `Null(p) OR (P1 & P2 & ...)`.
