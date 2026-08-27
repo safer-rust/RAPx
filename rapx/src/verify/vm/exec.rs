@@ -32,7 +32,7 @@ use crate::helpers::api_classify;
 
 impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     /// Execute all retained MIR items in path order.
-    pub fn execute_items(
+    pub(crate) fn execute_items(
         &mut self,
         items: &[RelevantItem<'tcx>],
     ) {

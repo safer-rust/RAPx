@@ -11,7 +11,7 @@ use crate::helpers::mir_scan::CheckpointLocation;
 
 /// Verification status for one required property on one path.
 #[derive(Clone, Debug, PartialEq)]
-pub enum CheckResult {
+pub(crate) enum CheckResult {
     /// The property has been proved for this path.
     Proved,
     /// The verifier found a possible violation for this path.
@@ -23,7 +23,7 @@ pub enum CheckResult {
 impl CheckResult {
     /// AND-combine two results: any `Failed` → `Failed`; any `Unknown` →
     /// `Unknown`; only all-`Proved` → `Proved`.
-    pub fn and(self, other: CheckResult) -> CheckResult {
+    pub(crate) fn and(self, other: CheckResult) -> CheckResult {
         match (self, other) {
             (CheckResult::Failed, _) | (_, CheckResult::Failed) => CheckResult::Failed,
             (CheckResult::Unknown, _) | (_, CheckResult::Unknown) => CheckResult::Unknown,
@@ -33,7 +33,7 @@ impl CheckResult {
 
     /// OR-combine two results: any `Proved` → `Proved`; all `Failed` →
     /// `Failed`; otherwise `Unknown`.
-    pub fn or(self, other: CheckResult) -> CheckResult {
+    pub(crate) fn or(self, other: CheckResult) -> CheckResult {
         match (self, other) {
             (CheckResult::Proved, _) | (_, CheckResult::Proved) => CheckResult::Proved,
             (CheckResult::Failed, CheckResult::Failed) => CheckResult::Failed,
@@ -44,7 +44,7 @@ impl CheckResult {
 
 /// Result for one required property along one path to a checkpoint.
 #[derive(Clone, Debug)]
-pub struct PropertyCheckResult<'tcx> {
+pub(crate) struct PropertyCheckResult<'tcx> {
     /// Unsafe checkpoint being checked.
     pub checkpoint: CheckpointLocation,
     /// Index of the checkpoint in the function-level checkpoint list.
@@ -67,7 +67,7 @@ pub struct PropertyCheckResult<'tcx> {
 
 /// Verification report for one function target.
 #[derive(Clone, Debug)]
-pub struct VerificationReport<'tcx> {
+pub(crate) struct VerificationReport<'tcx> {
     /// Function that was verified.
     pub function: DefId,
     /// Per-path property results emitted by the verifier.
@@ -76,7 +76,7 @@ pub struct VerificationReport<'tcx> {
 
 impl<'tcx> VerificationReport<'tcx> {
     /// Create an empty report for a function target.
-    pub fn new(function: DefId) -> Self {
+    pub(crate) fn new(function: DefId) -> Self {
         Self {
             function,
             results: Vec::new(),
@@ -84,22 +84,12 @@ impl<'tcx> VerificationReport<'tcx> {
     }
 
     /// Add one path/property check result to this report.
-    pub fn push(&mut self, result: PropertyCheckResult<'tcx>) {
+    pub(crate) fn push(&mut self, result: PropertyCheckResult<'tcx>) {
         self.results.push(result);
     }
 
-    /// Return the number of check results in this report.
-    pub fn len(&self) -> usize {
-        self.results.len()
-    }
-
-    /// Return true when this report contains no check results.
-    pub fn is_empty(&self) -> bool {
-        self.results.is_empty()
-    }
-
     /// Render the whole report as a readable multi-line diagnostic.
-    pub fn describe(&self) -> String {
+    pub(crate) fn describe(&self) -> String {
         let mut out = String::new();
         out.push_str(&format!(
             "[rapx::verify::diagnostics] function {:?}: {} check item(s)\n",

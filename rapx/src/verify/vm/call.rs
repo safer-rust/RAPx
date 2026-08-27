@@ -33,7 +33,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     /// then inline execution of the callee's MIR (including dependency
     /// crates), then interprocedural/effect summaries, and finally an
     /// unconstrained "unsupported call" result.
-    pub fn exec_call(
+    pub(crate) fn exec_call(
         &mut self,
         func: &Operand<'tcx>,
         args: &[Spanned<Operand<'tcx>>],
@@ -104,7 +104,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         if let Some(c) = callee {
             if self.tcx.is_mir_available(c) {
                 let has_fn_sim = crate::verify::call_summary::builtin_models::lookup_effect(
-                    self.tcx, caller_def_id, Some(c), &name, func, destination,
+                    self.tcx, caller_def_id, &name, func, destination,
                 ).is_some();
                 if !has_fn_sim {
                     if self.exec_inline_call(c, &arg_values, &caller_arg_locals, destination) {
@@ -1309,7 +1309,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     }
                 }
             }
-            CallEffect::ReturnAligned { align: _, ty_name: _ } => {
+            CallEffect::ReturnAligned => {
                 if let Some(mut existing) = self.locals.get(&dest).cloned() {
                     existing.invariants.aligned = true;
                     existing.invariants.non_null = true;
@@ -1371,7 +1371,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 };
                 self.set_local(dest, val);
             }
-            CallEffect::ReturnConst { value, label: _ } => {
+            CallEffect::ReturnConst { value } => {
                 let dest_ty = self.body.local_decls[dest].ty;
                 let term = Int::from_u64(self.ctx, *value);
                 let val = VmValue {
@@ -1582,7 +1582,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     }
                 }
             }
-            CallEffect::ReturnScanLength { ptr_arg: _ } => {
+            CallEffect::ReturnScanLength => {
                 // `strlen(ptr)` returns the byte length before the NUL
                 // terminator. The `ValidCStr` invariant guarantees the NUL is
                 // within `isize::MAX` bytes, so `len < isize::MAX`, and
@@ -1799,7 +1799,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     });
                 }
             }
-            CallEffect::ReturnNewAllocationFromBox { box_arg: _ } => {
+            CallEffect::ReturnNewAllocationFromBox => {
                 // Box→Vec conversion (into_vec, box_assume_init_into_vec_unsafe).
                 self.ensure_local_allocation(dest);
                 let dest_ty = self.body.local_decls[dest].ty;

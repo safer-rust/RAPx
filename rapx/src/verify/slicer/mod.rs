@@ -5,8 +5,8 @@
 //! one [`ProofGoal`] per path for the symbolic VM to execute forward.
 
 mod call_visit;
-pub mod types;
+pub(crate) mod types;
 mod visitor;
 
-pub use types::{RelevantItem, ProofGoal};
-pub use visitor::BackwardSlicer;
+pub(crate) use types::{RelevantItem, ProofGoal};
+pub(crate) use visitor::BackwardSlicer;

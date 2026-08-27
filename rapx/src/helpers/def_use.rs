@@ -116,11 +116,6 @@ impl RelevantPlaces {
         Self::default()
     }
 
-    /// Return true when no roots have been collected.
-    pub fn is_empty(&self) -> bool {
-        self.places.is_empty() && self.locals.is_empty()
-    }
-
     /// Insert a MIR local as a relevance root, tracking the addition.
     pub fn insert_local(&mut self, local: Local) {
         let pk = PlaceKey {

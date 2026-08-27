@@ -49,7 +49,7 @@ use super::types::{Property, PropertyKind};
 /// }
 /// ```
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct JsonProperty {
+pub(crate) struct JsonProperty {
     pub tag: String,
     #[serde(default)]
     pub args: Vec<String>,
@@ -67,7 +67,7 @@ pub struct JsonProperty {
 /// (all must hold together, forming one OR alternative).
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(untagged)]
-pub enum AnyItem {
+pub(crate) enum AnyItem {
     Single(JsonProperty),
     And(Vec<JsonProperty>),
 }
@@ -86,7 +86,7 @@ pub enum AnyItem {
 /// 3. `core::slice::<impl [T]>::*`          (all methods of `[T]`)
 /// 4. `core::slice::*`                      (all functions in slice module)
 /// 5. `core::*`                             (anything in core crate)
-pub fn get_std_contracts_from_json(tcx: TyCtxt<'_>, def_id: DefId) -> &'static [JsonProperty] {
+pub(crate) fn get_std_contracts_from_json(tcx: TyCtxt<'_>, def_id: DefId) -> &'static [JsonProperty] {
     let lookup_def_id = resolve_trait_method(tcx, def_id);
     let cleaned_path_name = get_cleaned_def_path_name(tcx, lookup_def_id);
     let db = load_std_contracts_json();
@@ -152,7 +152,7 @@ fn load_std_contracts_json() -> &'static HashMap<String, Vec<JsonProperty>> {
 
 /// Serialisation-friendly struct for the type-invariants JSON.
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct TypeInvariantEntry {
+pub(crate) struct TypeInvariantEntry {
     #[serde(default)]
     pub comment: Option<String>,
     pub invariants: Vec<JsonProperty>,
@@ -160,7 +160,7 @@ pub struct TypeInvariantEntry {
 
 /// Returns the std-type-invariants database, mapping a type path key
 /// (e.g. `"core::num::nonzero::NonZero"`) to its invariant entries.
-pub fn get_std_type_invariants() -> &'static HashMap<String, TypeInvariantEntry> {
+pub(crate) fn get_std_type_invariants() -> &'static HashMap<String, TypeInvariantEntry> {
     static TYPE_INVARIANTS: OnceLock<HashMap<String, TypeInvariantEntry>> = OnceLock::new();
     TYPE_INVARIANTS.get_or_init(|| {
         serde_json::from_str(include_str!("assets/std-type-invariants.json"))
@@ -176,7 +176,7 @@ pub fn get_std_type_invariants() -> &'static HashMap<String, TypeInvariantEntry>
 /// explicit JSON tokens (`arg:`, `const:`, `ty:`), and delegates to
 /// [`Property::parse_list`] for tag-based parsing.  A single entry may expand to
 /// several properties (via a compound property or `any`), hence the `Vec` return.
-pub fn entry_to_property<'tcx>(
+pub(crate) fn entry_to_property<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
     entry: &JsonProperty,
@@ -302,7 +302,7 @@ fn any_entry_to_property<'tcx>(
 /// - Named parameter resolution (e.g. `"src"` → `"arg:0"`)
 /// - Explicit token normalization (`arg:`, `const:`, `ty:` prefixes)
 /// - Lifetime stripping (`'a` → `a`)
-pub fn resolve_json_args(
+pub(crate) fn resolve_json_args(
     args: &[String],
     param_names: &[String],
     has_names: bool,
@@ -353,7 +353,7 @@ pub fn resolve_json_args(
 /// the `arg:N` positional form.  Complex expressions (containing function
 /// calls, field access, etc.) are left unchanged — they are handled later by
 /// the expression parser which already knows how to resolve named parameters.
-pub fn resolve_json_param_name(arg: &str, param_names: &[String]) -> String {
+pub(crate) fn resolve_json_param_name(arg: &str, param_names: &[String]) -> String {
     if arg.starts_with("arg:")
         || arg.starts_with("const:")
         || arg.starts_with("ty:")
@@ -382,7 +382,7 @@ pub fn resolve_json_param_name(arg: &str, param_names: &[String]) -> String {
 ///
 /// Unprefixed strings are kept unchanged for compatibility with older entries
 /// such as `"0"`, `"T"`, and `"1"`.
-pub fn normalize_json_contract_arg(arg: &str) -> String {
+pub(crate) fn normalize_json_contract_arg(arg: &str) -> String {
     let bytes = arg.as_bytes();
     let mut out = String::with_capacity(arg.len());
     let mut i = 0;
@@ -446,7 +446,7 @@ fn is_contract_token_char(ch: char) -> bool {
 ///
 /// Uses [`get_std_contracts_from_json`] for lookup with wildcard fallback,
 /// then parses each entry into a [`Property`] via [`entry_to_property`].
-pub fn query_json_contracts<'tcx>(
+pub(crate) fn query_json_contracts<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
 ) -> Vec<Property<'tcx>> {

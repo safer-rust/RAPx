@@ -9,7 +9,7 @@ use rustc_middle::ty::Ty;
 /// The root of a contract place: a function's return value, an argument, or a
 /// raw MIR local.  `Return` ⇔ `Local(0)`; `Arg(n)` ⇔ `Local(n + 1)`.
 #[derive(Clone, Debug, PartialEq)]
-pub enum PlaceBase {
+pub(crate) enum PlaceBase {
     /// The function's return value.
     Return,
     /// The n-th parameter (0-indexed).
@@ -21,7 +21,7 @@ pub enum PlaceBase {
 /// A step into a place, from the base down to the value a contract talks
 /// about (written as `.field`, `.unwrap_some()`, or `.iter()` in the DSL).
 #[derive(Clone, Debug)]
-pub enum ContractProjection<'tcx> {
+pub(crate) enum ContractProjection<'tcx> {
     /// Select a struct/tuple field.
     Field { index: usize, ty: Option<Ty<'tcx>> },
     /// Unwrap the `Some` variant of an enum.
@@ -33,7 +33,7 @@ pub enum ContractProjection<'tcx> {
 /// A place a contract refers to: a [`PlaceBase`] root plus a sequence of
 /// [`ContractProjection`] steps into it (e.g. `self.next.value`, `head.iter()`).
 #[derive(Clone, Debug)]
-pub struct ContractPlace<'tcx> {
+pub(crate) struct ContractPlace<'tcx> {
     /// The root: return value, an argument, or a MIR local.
     pub base: PlaceBase,
     /// Field / `Some`-unwrap / element steps from the base down.
@@ -41,7 +41,7 @@ pub struct ContractPlace<'tcx> {
 }
 
 impl<'tcx> ContractPlace<'tcx> {
-    pub fn local(base: usize, fields: Vec<(usize, Ty<'tcx>)>) -> Self {
+    pub(crate) fn local(base: usize, fields: Vec<(usize, Ty<'tcx>)>) -> Self {
         Self {
             base: if base == 0 {
                 PlaceBase::Return
@@ -58,14 +58,14 @@ impl<'tcx> ContractPlace<'tcx> {
         }
     }
 
-    pub fn arg(index: usize) -> Self {
+    pub(crate) fn arg(index: usize) -> Self {
         Self {
             base: PlaceBase::Arg(index),
             projections: Vec::new(),
         }
     }
 
-    pub fn local_base(&self) -> Option<usize> {
+    pub(crate) fn local_base(&self) -> Option<usize> {
         match self.base {
             PlaceBase::Return => Some(0),
             PlaceBase::Local(local) => Some(local),
@@ -75,7 +75,7 @@ impl<'tcx> ContractPlace<'tcx> {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub enum NumericBinOp {
+pub(crate) enum NumericBinOp {
     Add,
     Sub,
     Mul,
@@ -89,13 +89,13 @@ pub enum NumericBinOp {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub enum NumericUnaryOp {
+pub(crate) enum NumericUnaryOp {
     Not,
     Neg,
 }
 
 #[derive(Clone, Debug)]
-pub enum ContractExpr<'tcx> {
+pub(crate) enum ContractExpr<'tcx> {
     Place(ContractPlace<'tcx>),
     Const(u128),
     ConstParam {
@@ -127,13 +127,13 @@ pub enum ContractExpr<'tcx> {
 }
 
 impl<'tcx> ContractExpr<'tcx> {
-    pub fn new_value(value: usize) -> Self {
+    pub(crate) fn new_value(value: usize) -> Self {
         Self::Const(value as u128)
     }
 }
 
 #[derive(Clone, Copy, Debug)]
-pub enum RelOp {
+pub(crate) enum RelOp {
     Eq,
     Ne,
     Lt,
@@ -143,14 +143,14 @@ pub enum RelOp {
 }
 
 #[derive(Clone, Debug)]
-pub struct NumericPredicate<'tcx> {
+pub(crate) struct NumericPredicate<'tcx> {
     pub lhs: ContractExpr<'tcx>,
     pub op: RelOp,
     pub rhs: ContractExpr<'tcx>,
 }
 
 impl<'tcx> NumericPredicate<'tcx> {
-    pub fn new(lhs: ContractExpr<'tcx>, op: RelOp, rhs: ContractExpr<'tcx>) -> Self {
+    pub(crate) fn new(lhs: ContractExpr<'tcx>, op: RelOp, rhs: ContractExpr<'tcx>) -> Self {
         Self { lhs, op, rhs }
     }
 }
@@ -166,7 +166,7 @@ impl<'tcx> NumericPredicate<'tcx> {
 /// checker returns `Unknown`), and `NonVolatile` is assumed satisfied (the VM
 /// does not model volatile access).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum PropertyKind {
+pub(crate) enum PropertyKind {
     Align,
     Size,
     NoPadding,
@@ -196,7 +196,7 @@ pub enum PropertyKind {
 
 /// One argument of a predicate call — what the property is applied to.
 #[derive(Clone, Debug)]
-pub enum PropertyArg<'tcx> {
+pub(crate) enum PropertyArg<'tcx> {
     /// A type (e.g. `T` in `Align(ptr, T)`).
     Ty(Ty<'tcx>),
     /// A value expression (e.g. `buf`, `n`).
@@ -208,7 +208,7 @@ pub enum PropertyArg<'tcx> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum ContractKind {
+pub(crate) enum ContractKind {
     Precond,
     Hazard,
     Option_,
@@ -219,7 +219,7 @@ pub enum ContractKind {
 /// macro-expanded contract as a single `name(args)` entry with its doc-derived
 /// meaning, instead of the underlying primitives it expanded into.
 #[derive(Clone, Debug)]
-pub struct ContractOrigin {
+pub(crate) struct ContractOrigin {
     pub name: String,
     pub args: Vec<String>,
     pub meaning: Option<String>,
@@ -232,14 +232,14 @@ pub struct ContractOrigin {
 /// member holds).  `Box` breaks the recursion; the top level of a contract is
 /// simply a `Vec<Property>` (an implicit conjunction of requirements).
 #[derive(Clone, Debug)]
-pub enum Property<'tcx> {
+pub(crate) enum Property<'tcx> {
     Atom(AtomProperty<'tcx>),
     And(AndProperty<'tcx>),
     Or(OrProperty<'tcx>),
 }
 
 #[derive(Clone, Debug)]
-pub struct AtomProperty<'tcx> {
+pub(crate) struct AtomProperty<'tcx> {
     pub kind: PropertyKind,
     pub args: Vec<PropertyArg<'tcx>>,
     pub contract_kind: ContractKind,
@@ -254,7 +254,7 @@ pub struct AtomProperty<'tcx> {
 
 /// A conjunction: every [`conjuncts`](Self::conjuncts) member must hold.
 #[derive(Clone, Debug)]
-pub struct AndProperty<'tcx> {
+pub(crate) struct AndProperty<'tcx> {
     pub conjuncts: Vec<Box<Property<'tcx>>>,
     pub contract_kind: ContractKind,
     /// Display metadata when this property was expanded from a compound property.
@@ -263,7 +263,7 @@ pub struct AndProperty<'tcx> {
 
 /// A disjunction: at least one [`disjuncts`](Self::disjuncts) member must hold.
 #[derive(Clone, Debug)]
-pub struct OrProperty<'tcx> {
+pub(crate) struct OrProperty<'tcx> {
     pub disjuncts: Vec<Box<Property<'tcx>>>,
     pub contract_kind: ContractKind,
     /// Display metadata when this property was expanded from a compound property.
@@ -312,7 +312,7 @@ impl<'tcx> Property<'tcx> {
 
     /// The predicate kind of an atom (`None` for `And`/`Or`, which have no
     /// single kind).
-    pub fn kind(&self) -> Option<PropertyKind> {
+    pub(crate) fn kind(&self) -> Option<PropertyKind> {
         match self {
             Property::Atom(a) => Some(a.kind),
             Property::And(_) | Property::Or(_) => None,
@@ -320,7 +320,7 @@ impl<'tcx> Property<'tcx> {
     }
 
     /// The positional arguments of an atom (`And`/`Or` have none).
-    pub fn args(&self) -> &[PropertyArg<'tcx>] {
+    pub(crate) fn args(&self) -> &[PropertyArg<'tcx>] {
         match self {
             Property::Atom(a) => &a.args,
             Property::And(_) | Property::Or(_) => &[],
@@ -328,7 +328,7 @@ impl<'tcx> Property<'tcx> {
     }
 
     /// The conjuncts of an `And` property (`Atom`/`Or` have none).
-    pub fn conjuncts(&self) -> &[Box<Property<'tcx>>] {
+    pub(crate) fn conjuncts(&self) -> &[Box<Property<'tcx>>] {
         match self {
             Property::And(a) => &a.conjuncts,
             Property::Atom(_) | Property::Or(_) => &[],
@@ -336,14 +336,14 @@ impl<'tcx> Property<'tcx> {
     }
 
     /// The disjuncts of an `Or` property (`Atom`/`And` have none).
-    pub fn disjuncts(&self) -> &[Box<Property<'tcx>>] {
+    pub(crate) fn disjuncts(&self) -> &[Box<Property<'tcx>>] {
         match self {
             Property::Or(o) => &o.disjuncts,
             Property::Atom(_) | Property::And(_) => &[],
         }
     }
 
-    pub fn contract_kind(&self) -> ContractKind {
+    pub(crate) fn contract_kind(&self) -> ContractKind {
         match self {
             Property::Atom(a) => a.contract_kind,
             Property::And(a) => a.contract_kind,
@@ -351,7 +351,7 @@ impl<'tcx> Property<'tcx> {
         }
     }
 
-    pub fn for_each(&self) -> Option<&ContractPlace<'tcx>> {
+    pub(crate) fn for_each(&self) -> Option<&ContractPlace<'tcx>> {
         match self {
             Property::Atom(a) => a.for_each.as_ref(),
             Property::And(_) | Property::Or(_) => None,
@@ -359,7 +359,7 @@ impl<'tcx> Property<'tcx> {
     }
 
     /// Display metadata when this property was expanded from a compound property.
-    pub fn origin(&self) -> Option<&ContractOrigin> {
+    pub(crate) fn origin(&self) -> Option<&ContractOrigin> {
         match self {
             Property::Atom(a) => a.origin.as_ref(),
             Property::And(a) => a.origin.as_ref(),
@@ -367,16 +367,16 @@ impl<'tcx> Property<'tcx> {
         }
     }
 
-    pub fn is_or(&self) -> bool {
+    pub(crate) fn is_or(&self) -> bool {
         matches!(self, Property::Or(_))
     }
 
-    pub fn is_and(&self) -> bool {
+    pub(crate) fn is_and(&self) -> bool {
         matches!(self, Property::And(_))
     }
 
     /// Apply contract kind metadata from a JSON entry or attribute.
-    pub fn apply_kind(&mut self, kind: Option<&str>) {
+    pub(crate) fn apply_kind(&mut self, kind: Option<&str>) {
         let target = match self {
             Property::Atom(a) => &mut a.contract_kind,
             Property::And(a) => &mut a.contract_kind,

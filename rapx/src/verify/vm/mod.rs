@@ -5,12 +5,12 @@
 //! MIR patterns, the VM executes retained MIR items and directly builds
 //! symbolic state (`VmState`) with Z3 terms for every value.
 
-pub mod alias;
-pub mod call;
-pub mod display;
-pub mod exec;
-pub mod memory;
-pub mod state;
+pub(crate) mod alias;
+pub(crate) mod call;
+pub(crate) mod display;
+pub(crate) mod exec;
+pub(crate) mod memory;
+pub(crate) mod state;
 
 use rustc_middle::ty::TyCtxt;
 use z3::Context;
@@ -23,13 +23,13 @@ use self::state::VmState;
 ///
 /// Stateless wrapper around a `TyCtxt`; creates `VmState` instances
 /// for each path by executing retained MIR items.
-pub struct SymbolicVm<'tcx> {
+pub(crate) struct SymbolicVm<'tcx> {
     tcx: TyCtxt<'tcx>,
 }
 
 impl<'tcx> SymbolicVm<'tcx> {
     /// Create a symbolic VM for the given compiler context.
-    pub fn new(tcx: TyCtxt<'tcx>) -> Self {
+    pub(crate) fn new(tcx: TyCtxt<'tcx>) -> Self {
         Self { tcx }
     }
 
@@ -38,7 +38,7 @@ impl<'tcx> SymbolicVm<'tcx> {
     /// The `ctx` parameter provides a shared Z3 context; the resulting
     /// `VmState` borrows it so that a single context can be reused
     /// across property checks.
-    pub fn execute<'ctx>(
+    pub(crate) fn execute<'ctx>(
         &self,
         ctx: &'ctx Context,
         items: &ProofGoal<'tcx>,

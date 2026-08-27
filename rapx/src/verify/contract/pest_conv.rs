@@ -40,7 +40,7 @@ fn relop_from_str(s: &str) -> Option<RelOp> {
 }
 
 /// Parse a numeric expression (no comparison) into a `ContractExpr`.
-pub fn parse_expr_pest<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, text: &str) -> ContractExpr<'tcx> {
+pub(crate) fn parse_expr_pest<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, text: &str) -> ContractExpr<'tcx> {
     let Ok(mut pairs) = ContractParser::parse(Rule::expr, text) else {
         rap_debug!("contract expression not supported by grammar: {text}");
         return ContractExpr::Unknown;
@@ -50,7 +50,7 @@ pub fn parse_expr_pest<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, text: &str) -> Co
 
 /// Parse a predicate (comparison / `!x.is_empty()` / bare expr) into a
 /// `NumericPredicate`.
-pub fn parse_predicate_pest<'tcx>(
+pub(crate) fn parse_predicate_pest<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
     text: &str,
@@ -238,7 +238,11 @@ fn conv_unary<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, pair: Pair<Rule>) -> Contr
 fn conv_primary<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, pair: Pair<Rule>) -> ContractExpr<'tcx> {
     let inner = only_child(pair);
     match inner.as_rule() {
-        Rule::int => ContractExpr::Const(inner.as_str().parse::<u128>().unwrap_or(0)),
+        Rule::int => inner
+            .as_str()
+            .parse::<u128>()
+            .map(ContractExpr::Const)
+            .unwrap_or(ContractExpr::Unknown),
         Rule::call => conv_call(tcx, def_id, inner),
         Rule::size_of_call => conv_size_of_call(tcx, def_id, inner),
         Rule::const_path => conv_const_path(tcx, def_id, inner),
@@ -434,7 +438,7 @@ fn conv_base<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, base_text: &str) -> Contrac
 // ── Compound-body conversion (`pred!` / `def_body`) ─────────────────────────
 
 /// Parse a compound-property body into a DNF tree.  `||` binds looser than `&&`.
-pub fn parse_compound_body(body: &str, params: &[String]) -> Option<CompoundBody> {
+pub(crate) fn parse_compound_body(body: &str, params: &[String]) -> Option<CompoundBody> {
     let mut pairs = ContractParser::parse(Rule::def_body, body).ok()?;
     let def_body = pairs.next()?;
     let or_expr = def_body.into_inner().next()?;

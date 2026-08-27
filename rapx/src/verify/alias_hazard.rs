@@ -29,42 +29,41 @@ use crate::analysis::alias::{
 
 // Re-export utility functions moved to helpers/mir_utils for
 // backward compatibility.
-pub use crate::helpers::mir_utils::{
+pub(crate) use crate::helpers::mir_utils::{
     blocks_reachable_after_call, call_destination, collect_place_aliases, deep_resolve_place,
-    operand_mir_place, operand_place, resolve_mir_place, rvalue_any_place_matching,
-    trace_place_root, trace_raw_ptr_through_call,
+    operand_mir_place, operand_place, resolve_mir_place, rvalue_any_place_matching, trace_place_root,
 };
 
 // ── Shared types ─────────────────────────────────────────────────
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum HazardKind {
+pub(crate) enum HazardKind {
     SharedView,
     UniqueView,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum AliasProducer {
+pub(crate) enum AliasProducer {
     View(HazardKind),
     OwnershipTransfer,
     ReadMemory,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RawAccessKind {
+pub(crate) enum RawAccessKind {
     Read,
     Write,
 }
 
 #[derive(Clone, Debug)]
-pub struct SelfFieldOrigin {
+pub(crate) struct SelfFieldOrigin {
     pub struct_def_id: DefId,
     pub field_index: usize,
     pub field_name: String,
 }
 
 #[derive(Clone, Debug)]
-pub struct LocalCallsite<'tcx> {
+pub(crate) struct LocalCallsite<'tcx> {
     pub caller: DefId,
     pub block: BasicBlock,
     pub args: Vec<Operand<'tcx>>,
@@ -72,7 +71,7 @@ pub struct LocalCallsite<'tcx> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum HazardCheck {
+pub(crate) enum HazardCheck {
     Safe(String),
     Violation(String),
     Inconclusive,
@@ -80,7 +79,7 @@ pub enum HazardCheck {
 
 // ── API classification ───────────────────────────────────────────
 
-pub fn alias_producer(name: &str) -> Option<AliasProducer> {
+pub(crate) fn alias_producer(name: &str) -> Option<AliasProducer> {
     if name.contains("from_raw_parts_mut") {
         return Some(AliasProducer::View(HazardKind::UniqueView));
     }
@@ -101,7 +100,7 @@ pub fn alias_producer(name: &str) -> Option<AliasProducer> {
 
 // ── Origin-based parameter safety ────────────────────────────────
 
-pub fn alias_proved_for_param_local(
+pub(crate) fn alias_proved_for_param_local(
     tcx: TyCtxt<'_>,
     caller: DefId,
     local_index: usize,
@@ -134,7 +133,7 @@ pub fn alias_proved_for_param_local(
     }
 }
 
-pub fn alias_proved_for_param_local_from_origin(
+pub(crate) fn alias_proved_for_param_local_from_origin(
     tcx: TyCtxt<'_>,
     caller: DefId,
     origin: &PlaceKey,
@@ -166,7 +165,7 @@ pub fn alias_proved_for_param_local_from_origin(
     }
 }
 
-pub fn is_origin_a_reference(tcx: TyCtxt<'_>, caller: DefId, origin: &PlaceKey) -> bool {
+pub(crate) fn is_origin_a_reference(tcx: TyCtxt<'_>, caller: DefId, origin: &PlaceKey) -> bool {
     let body = tcx.optimized_mir(caller);
     let PlaceBaseKey::Local(mut local) = origin.base else {
         return false;
@@ -185,7 +184,7 @@ pub fn is_origin_a_reference(tcx: TyCtxt<'_>, caller: DefId, origin: &PlaceKey) 
     )
 }
 
-pub fn resolve_param_origin(tcx: TyCtxt<'_>, caller: DefId, origin: &PlaceKey) -> Option<usize> {
+pub(crate) fn resolve_param_origin(tcx: TyCtxt<'_>, caller: DefId, origin: &PlaceKey) -> Option<usize> {
     let body = tcx.optimized_mir(caller);
     if let PlaceBaseKey::Local(local) = origin.base {
         if local >= 1 && local <= body.arg_count {
@@ -200,7 +199,7 @@ pub fn resolve_param_origin(tcx: TyCtxt<'_>, caller: DefId, origin: &PlaceKey) -
     None
 }
 
-pub fn param_index_of_origin(
+pub(crate) fn param_index_of_origin(
     tcx: TyCtxt<'_>,
     caller: DefId,
     origin: &PlaceKey,
@@ -221,7 +220,7 @@ pub fn param_index_of_origin(
 
 // ── Escape analysis ──────────────────────────────────────────────
 
-pub fn destination_flows_to_return(
+pub(crate) fn destination_flows_to_return(
     tcx: TyCtxt<'_>,
     caller: DefId,
     destination: Option<Local>,
@@ -263,7 +262,7 @@ pub fn destination_flows_to_return(
     false
 }
 
-pub fn self_field_origin(
+pub(crate) fn self_field_origin(
     tcx: TyCtxt<'_>,
     caller: DefId,
     place: &PlaceKey,
@@ -279,7 +278,7 @@ pub fn self_field_origin(
     })
 }
 
-pub fn any_struct_field_origin(
+pub(crate) fn any_struct_field_origin(
     tcx: TyCtxt<'_>,
     caller: DefId,
     place: &PlaceKey,
@@ -310,7 +309,7 @@ fn self_borrow_mutability(tcx: TyCtxt<'_>, def_id: DefId) -> Option<ty::Mutabili
     }
 }
 
-pub fn escaped_self_field_violation(
+pub(crate) fn escaped_self_field_violation(
     tcx: TyCtxt<'_>,
     current: DefId,
     origin: &SelfFieldOrigin,
@@ -600,7 +599,7 @@ fn rvalue_mentions_local(rvalue: &Rvalue<'_>, local: Local, aliases: &HashMap<Lo
     })
 }
 
-pub fn raw_access_conflicts(kind: HazardKind, access: RawAccessKind) -> bool {
+pub(crate) fn raw_access_conflicts(kind: HazardKind, access: RawAccessKind) -> bool {
     match kind {
         HazardKind::SharedView => access == RawAccessKind::Write,
         HazardKind::UniqueView => true,
@@ -609,7 +608,7 @@ pub fn raw_access_conflicts(kind: HazardKind, access: RawAccessKind) -> bool {
 
 // ── Local hazard scanning ────────────────────────────────────────
 
-pub fn local_hazard_violation(
+pub(crate) fn local_hazard_violation(
     tcx: TyCtxt<'_>,
     caller: DefId,
     call_block: BasicBlock,
@@ -630,7 +629,7 @@ pub fn local_hazard_violation(
     )
 }
 
-pub fn local_hazard_violation_with(
+pub(crate) fn local_hazard_violation_with(
     tcx: TyCtxt<'_>,
     caller: DefId,
     call_block: BasicBlock,
@@ -1289,7 +1288,7 @@ fn is_ptr_from_ptr_add(tcx: TyCtxt<'_>, caller: DefId, ptr_place: &PlaceKey) -> 
 
 // ── Ownership transfer violation scanning ────────────────────────
 
-pub fn ownership_transfer_violation(
+pub(crate) fn ownership_transfer_violation(
     tcx: TyCtxt<'_>,
     caller: DefId,
     call_block: BasicBlock,
@@ -1757,7 +1756,7 @@ fn resolve_place_for_key(
 
 // ── Cross-crate callsite analysis ────────────────────────────────
 
-pub fn private_fn_callsite_delegation(
+pub(crate) fn private_fn_callsite_delegation(
     tcx: TyCtxt<'_>,
     caller: DefId,
     origin: &PlaceKey,
@@ -1797,7 +1796,7 @@ pub fn private_fn_callsite_delegation(
     None
 }
 
-pub fn local_callsites(tcx: TyCtxt<'_>, callee: DefId) -> Vec<LocalCallsite<'_>> {
+pub(crate) fn local_callsites(tcx: TyCtxt<'_>, callee: DefId) -> Vec<LocalCallsite<'_>> {
     let mut sites = Vec::new();
     for def_id in tcx.mir_keys(()) {
         let def_id = def_id.to_def_id();
@@ -1851,7 +1850,7 @@ fn call_target_def_id(func: &Operand<'_>) -> Option<DefId> {
     }
 }
 
-pub fn callsite_arg_origins(
+pub(crate) fn callsite_arg_origins(
     tcx: TyCtxt<'_>,
     caller: DefId,
     args: &[Operand<'_>],
@@ -1878,7 +1877,7 @@ pub fn callsite_arg_origins(
     origins
 }
 
-pub fn as_ptr_provenance_origins(
+pub(crate) fn as_ptr_provenance_origins(
     tcx: TyCtxt<'_>,
     caller: DefId,
     origins: &[PlaceKey],

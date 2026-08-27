@@ -22,14 +22,14 @@
 
 pub(crate) mod json;
 pub(crate) mod attr;
-pub mod builder;
-pub mod compound;
-pub mod pest_conv;
-pub mod pest_grammar;
+pub(crate) mod builder;
+pub(crate) mod compound;
+pub(crate) mod pest_conv;
+pub(crate) mod pest_grammar;
 pub(crate) mod place;
 pub(crate) mod render;
 pub(crate) mod resolve;
 pub(crate) mod spec;
-pub mod types;
+pub(crate) mod types;
 
-pub use types::*;
+pub(crate) use types::*;

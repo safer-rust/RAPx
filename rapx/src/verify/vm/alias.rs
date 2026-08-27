@@ -16,21 +16,19 @@ use crate::helpers::mir_scan::Checkpoint;
 use crate::helpers::api_classify;
 use crate::analysis::alias::collect_local_origins;
 
-use super::state::{AllocId, VmState, VmValue};
+use super::state::{VmState, VmValue};
 
 /// Information about a value's ultimate origin.
 #[derive(Clone, Debug)]
-pub struct VmOrigin {
+pub(crate) struct VmOrigin {
     /// The local (parameter or stack variable) that is the root source.
     pub local: Local,
-    /// The allocation ID this pointer targets.
-    pub alloc_id: AllocId,
     /// The type of the origin local (Ref/MutRef/RawPtr/Adt/...).
     pub kind: VmOriginKind,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum VmOriginKind {
+pub(crate) enum VmOriginKind {
     MutRef,
     SharedRef,
     RawMutPtr,
@@ -41,18 +39,18 @@ pub enum VmOriginKind {
 
 impl VmOrigin {
     /// Whether this origin is a `&mut T` reference — safe to create a unique view from.
-    pub fn is_mut_ref(&self) -> bool {
+    pub(crate) fn is_mut_ref(&self) -> bool {
         matches!(self.kind, VmOriginKind::MutRef)
     }
 
     /// Whether this origin is a `&T` reference — safe to create a shared view from.
-    pub fn is_shared_ref(&self) -> bool {
+    pub(crate) fn is_shared_ref(&self) -> bool {
         matches!(self.kind, VmOriginKind::SharedRef)
     }
 
     /// Whether this origin is an owned type (Box, Vec) whose allocation was
     /// transferred to this function.
-    pub fn is_owned(&self) -> bool {
+    pub(crate) fn is_owned(&self) -> bool {
         matches!(self.kind, VmOriginKind::Owned(_))
     }
 }
@@ -62,7 +60,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     ///
     /// Given a VmValue (extracted from a checkpoint argument), follows
     /// its provenance back to determine where the allocation came from.
-    pub fn resolve_origin(&self, value: &VmValue<'ctx, 'tcx>) -> Option<VmOrigin> {
+    pub(crate) fn resolve_origin(&self, value: &VmValue<'ctx, 'tcx>) -> Option<VmOrigin> {
         let Some(prov) = &value.provenance else {
             return None;
         };
@@ -84,7 +82,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             let kind = self.classify_local(local);
             let candidate = VmOrigin {
                 local: *local,
-                alloc_id,
                 kind,
             };
 
@@ -141,7 +138,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
 // ── High-level VM alias check ────────────────────────────────────
 
 /// Result of the VM-based alias check.
-pub enum VmAliasResult {
+pub(crate) enum VmAliasResult {
     Proved,
     Failed(String),
     Unknown,
@@ -150,7 +147,7 @@ pub enum VmAliasResult {
 /// Run the full alias hazard check for the VM backend.
 ///
 /// This is the function the `PropertyChecker::check_alias` delegates to.
-pub fn check_alias_vm<'ctx, 'tcx>(
+pub(crate) fn check_alias_vm<'ctx, 'tcx>(
     vm_state: &VmState<'ctx, 'tcx>,
     checkpoint: &Checkpoint<'tcx>,
     _property: &Property<'tcx>,

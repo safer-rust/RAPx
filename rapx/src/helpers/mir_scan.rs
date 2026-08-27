@@ -1,12 +1,11 @@
 use rustc_hir::{Safety, def_id::DefId};
 use rustc_middle::{
     mir::{
-        BasicBlock, Body, BorrowKind, Local, Operand, Place, ProjectionElem, Rvalue,
+        BasicBlock, Body, Local, Operand, Place, ProjectionElem, Rvalue,
         StatementKind, TerminatorKind,
     },
     ty::{self, Ty, TyCtxt, TyKind},
 };
-use rustc_span::Span;
 use std::collections::{HashMap, HashSet};
 
 use super::name::get_cleaned_def_path_name;
@@ -41,11 +40,8 @@ pub struct Checkpoint<'tcx> {
     pub caller: DefId,
     pub callee: Option<DefId>,
     pub block: BasicBlock,
-    pub span: Span,
     pub args: Vec<Operand<'tcx>>,
     pub kind: CheckpointKind,
-    pub is_ref: bool,
-    pub is_mut_ref: bool,
     pub destination: Option<Local>,
 }
 
@@ -207,7 +203,6 @@ pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<C
         let TerminatorKind::Call {
             func,
             args,
-            fn_span,
             ..
         } = &data.terminator().kind
         else {
@@ -238,11 +233,8 @@ pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<C
             caller: def_id,
             callee: Some(resolved_callee),
             block: bb,
-            span: *fn_span,
             args: args.iter().map(|arg| arg.node.clone()).collect(),
             kind: CheckpointKind::UnsafeCall,
-            is_ref: false,
-            is_mut_ref: false,
             destination: None,
         });
     }
@@ -298,7 +290,6 @@ pub struct RawPtrDerefInfo<'tcx> {
     pub pointee_ty: Ty<'tcx>,
     pub is_read: bool,
     pub is_ref: bool,
-    pub is_mut_ref: bool,
     pub destination: Local,
 }
 
@@ -338,15 +329,14 @@ pub fn collect_raw_ptr_deref_info<'tcx>(
             let (lhs, rhs) = &**assign;
 
             let is_write = place_has_raw_deref(tcx, &body, lhs);
-            let (is_read, is_ref, is_mut_ref) = match rhs {
+            let (is_read, is_ref) = match rhs {
                 Rvalue::Use(Operand::Copy(place) | Operand::Move(place), ..) => {
-                    (place_has_raw_deref(tcx, &body, place), false, false)
+                    (place_has_raw_deref(tcx, &body, place), false)
                 }
-                Rvalue::Ref(_, borrow_kind, place) => {
-                    let is_mut = matches!(borrow_kind, BorrowKind::Mut { .. });
-                    (place_has_raw_deref(tcx, &body, place), true, is_mut)
+                Rvalue::Ref(_, _borrow_kind, place) => {
+                    (place_has_raw_deref(tcx, &body, place), true)
                 }
-                _ => (false, false, false),
+                _ => (false, false),
             };
 
             if !is_write && !is_read {
@@ -377,7 +367,6 @@ pub fn collect_raw_ptr_deref_info<'tcx>(
                 pointee_ty,
                 is_read,
                 is_ref,
-                is_mut_ref,
                 destination: lhs.local,
             });
         }

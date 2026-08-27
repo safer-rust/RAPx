@@ -10,6 +10,6 @@ use pest_derive::Parser;
 /// Parser derived from `grammar.pest`.
 #[derive(Parser)]
 #[grammar = "verify/contract/grammar.pest"]
-pub struct ContractParser;
+pub(crate) struct ContractParser;
 
 

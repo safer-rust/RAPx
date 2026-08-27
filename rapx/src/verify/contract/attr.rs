@@ -23,7 +23,7 @@ use quote::ToTokens;
 /// from an attribute — the *unevaluated* stage, before semantic resolution
 /// into a [`Property`](crate::verify::contract::Property).
 #[derive(Debug, Clone)]
-pub struct AttrProperty {
+pub(crate) struct AttrProperty {
     /// The property name extracted from the call target.
     pub tag: String,
     /// The positional arguments passed to the property call.
@@ -96,7 +96,7 @@ impl Parse for RequireOuterAttribute {
 ///
 /// Returns `Ok(None)` when the attribute does not match `rapx::<expected_name>`
 /// or when it is not a list attribute.
-pub fn parse_rapx_attr(
+pub(crate) fn parse_rapx_attr(
     attr_str: &str,
     expected_name: &str,
 ) -> SynResult<Option<AttrProperty>> {

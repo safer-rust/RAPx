@@ -7,7 +7,7 @@ use rustc_hir::LangItem;
 #[cfg(rapx_ge_100)]
 use rustc_hir::attrs::lang_items::LangItem;
 use rustc_middle::{
-    mir::{BasicBlock, ConstValue, Local, Operand, Place, Rvalue, StatementKind, TerminatorKind},
+    mir::{BasicBlock, ConstValue, Local, Operand, Place, Rvalue, TerminatorKind},
     mir::interpret::{AllocId, GlobalAlloc},
     ty::{ConstKind, GenericArgKind, PseudoCanonicalInput, Ty, TyCtxt, TyKind, TypingEnv},
 };
@@ -275,59 +275,6 @@ pub fn deep_resolve_place(
             }
         }
     }
-}
-
-/// Trace a raw pointer local back through call terminators to find the
-/// originating place (e.g. slice from `get_unchecked`).
-pub fn trace_raw_ptr_through_call(
-    tcx: TyCtxt<'_>,
-    caller: DefId,
-    checkpoint_block: BasicBlock,
-    raw_ptr: Local,
-) -> Option<PlaceKey> {
-    let body = tcx.optimized_mir(caller);
-    let mut block = checkpoint_block;
-    let mut visited = HashSet::new();
-    loop {
-        if !visited.insert(block) {
-            break;
-        }
-        for statement in body.basic_blocks[block].statements.iter().rev() {
-            let StatementKind::Assign(assign) = &statement.kind else {
-                continue;
-            };
-            let (target, _rvalue) = assign.as_ref();
-            if target.local != raw_ptr {
-                continue;
-            }
-            break;
-        }
-        let predecessors = &body.basic_blocks.predecessors()[block];
-        if predecessors.len() != 1 {
-            break;
-        }
-        let prev = predecessors[0];
-        let terminator = body.basic_blocks[prev].terminator();
-        if let TerminatorKind::Call {
-            func,
-            args,
-            destination,
-            ..
-        } = &terminator.kind
-        {
-            if destination.local == raw_ptr {
-                let callee_name = call_name(tcx, func);
-                if callee_name.contains("::get_unchecked") {
-                    if let Some(slice) = args.get(1) {
-                        return operand_place(&slice.node);
-                    }
-                }
-                break;
-            }
-        }
-        block = prev;
-    }
-    None
 }
 
 // ── Block reachability ───────────────────────────────────────────

@@ -30,19 +30,14 @@ use super::{
 };
 
 /// Entry point for backward path visiting.
-pub struct BackwardSlicer<'tcx> {
+pub(crate) struct BackwardSlicer<'tcx> {
     tcx: TyCtxt<'tcx>,
 }
 
 impl<'tcx> BackwardSlicer<'tcx> {
     /// Create a backward visitor over the current compiler type context.
-    pub fn new(tcx: TyCtxt<'tcx>) -> Self {
+    pub(crate) fn new(tcx: TyCtxt<'tcx>) -> Self {
         Self { tcx }
-    }
-
-    /// Return the compiler type context owned by this visitor.
-    pub fn tcx(&self) -> TyCtxt<'tcx> {
-        self.tcx
     }
 
     /// Visit a path tree in post-order, sharing backward analysis across
@@ -50,7 +45,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
     /// union is a sound over-approximation). Returns per-leaf results.
     ///
     /// Callee parameter roots are bound at checkpoint nodes.
-    pub fn visit_path_tree(
+    pub(crate) fn visit_path_tree(
         &self,
         tree: &PathTree,
         target_block: usize,
@@ -70,7 +65,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
     /// Like [`visit_path_tree`] but without callee-root binding (used for
     /// struct-invariant checks where property places are already in the
     /// caller's local namespace).
-    pub fn visit_path_tree_for_checkpoint(
+    pub(crate) fn visit_path_tree_for_checkpoint(
         &self,
         tree: &PathTree,
         target_block: usize,

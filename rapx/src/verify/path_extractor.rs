@@ -59,7 +59,7 @@ pub(crate) const PATH_LIMIT: usize = 1024;
 ///
 /// Per-checkpoint path count is capped at [`PATH_LIMIT`] (1024) to prevent
 /// exponential blow-up in functions with many branches.
-pub struct PathExtractor<'tcx> {
+pub(crate) struct PathExtractor<'tcx> {
     /// Compiler type context used for MIR access and name resolution.
     tcx: TyCtxt<'tcx>,
     /// The function whose MIR body is being analyzed.
@@ -79,7 +79,7 @@ impl<'tcx> PathExtractor<'tcx> {
     ///
     /// `allow_repeat` controls how many times a repeated SCC postfix segment
     /// is allowed beyond the first occurrence. Default is 0 (no extra repeats).
-    pub fn new(
+    pub(crate) fn new(
         tcx: TyCtxt<'tcx>,
         def_id: DefId,
         checkpoints: Vec<Checkpoint<'tcx>>,
@@ -98,7 +98,7 @@ impl<'tcx> PathExtractor<'tcx> {
     /// Returns a `Vec<CallGroup>` — one entry per unique callee DefId.
     /// Checkpoints that target the same callee share a single `PathTree`,
     /// avoiding redundant subtree construction.
-    pub fn run(self) -> Vec<CallGroup<'tcx>> {
+    pub(crate) fn run(self) -> Vec<CallGroup<'tcx>> {
         let mut graph = PathGraph::new(self.tcx, self.def_id);
         graph.inline_callees();
         graph.find_scc();
@@ -120,7 +120,7 @@ impl<'tcx> PathExtractor<'tcx> {
 /// One `CallGroup` is produced per unique callee `DefId` in the function.
 /// All checkpoints in the group share the same `PathTree`; individual paths
 /// are filtered by `checkpoint.block` at query time.
-pub struct CallGroup<'tcx> {
+pub(crate) struct CallGroup<'tcx> {
     /// Shared full-CFG prefix tree, built once for all checkpoints in the group.
     pub tree: PathTree,
     /// Checkpoints that target this callee.
@@ -178,7 +178,7 @@ fn group_by_callee<'tcx>(
 /// In the path above, blocks 2, 3, and 4 are intermediate MIR blocks;
 /// block 5 contains the unsafecall terminator that the path targets.
 #[derive(Clone, Debug)]
-pub struct Path {
+pub(crate) struct Path {
     /// The checkpoint location (function + basic block) reached by this path.
     pub target: CheckpointLocation,
     /// Ordered sequence of basic blocks from function entry to `target`,
@@ -188,7 +188,7 @@ pub struct Path {
 
 impl Path {
     /// Render this path as a compact array of block indices.
-    pub fn describe_indices(&self) -> String {
+    pub(crate) fn describe_indices(&self) -> String {
         let mut indices: Vec<usize> = Vec::new();
         for step in &self.steps {
             match step {
@@ -207,7 +207,7 @@ impl Path {
 
 /// One step in a finite verification path.
 #[derive(Clone, Debug)]
-pub enum PathStep {
+pub(crate) enum PathStep {
     /// A normal MIR basic block.
     Block(BasicBlock),
     /// The target checkpoint that terminates the path.

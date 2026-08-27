@@ -14,7 +14,7 @@ use super::types::{
 };
 
 impl<'tcx> ContractPlace<'tcx> {
-    pub fn display_user_friendly(
+    pub(crate) fn display_user_friendly(
         &self,
         tcx: TyCtxt<'tcx>,
         struct_def_id: Option<DefId>,
@@ -107,7 +107,7 @@ impl<'tcx> ContractPlace<'tcx> {
 }
 
 impl<'tcx> NumericPredicate<'tcx> {
-    pub fn display_user_friendly(
+    pub(crate) fn display_user_friendly(
         &self,
         tcx: TyCtxt<'tcx>,
         struct_def_id: Option<DefId>,
@@ -130,7 +130,7 @@ impl<'tcx> NumericPredicate<'tcx> {
     }
 }
 
-pub fn display_expr_user_friendly<'tcx>(
+pub(crate) fn display_expr_user_friendly<'tcx>(
     expr: &ContractExpr<'tcx>,
     tcx: TyCtxt<'tcx>,
     struct_def_id: Option<DefId>,
@@ -200,7 +200,7 @@ pub fn display_expr_user_friendly<'tcx>(
 }
 
 impl<'tcx> PropertyArg<'tcx> {
-    pub fn display_for_report(
+    pub(crate) fn display_for_report(
         &self,
         tcx: TyCtxt<'tcx>,
         struct_def_id: Option<DefId>,
@@ -224,7 +224,7 @@ impl<'tcx> PropertyArg<'tcx> {
 }
 
 impl<'tcx> Property<'tcx> {
-    pub fn display_for_report(
+    pub(crate) fn display_for_report(
         &self,
         tcx: TyCtxt<'tcx>,
         struct_def_id: Option<DefId>,

@@ -11,7 +11,7 @@ pub(crate) mod graphs;
 pub mod help;
 pub(crate) mod helpers;
 pub(crate) mod preprocess;
-pub mod verify;
+pub(crate) mod verify;
 
 extern crate rustc_abi;
 extern crate rustc_ast;

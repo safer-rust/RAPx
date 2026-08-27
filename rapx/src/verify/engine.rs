@@ -21,14 +21,14 @@ use crate::helpers::mir_scan::{Checkpoint, CheckpointLocation};
 
 use super::{vm::SymbolicVm, property_checker::PropertyChecker};
 
-pub struct VerifyEngine<'tcx> {
+pub(crate) struct VerifyEngine<'tcx> {
     slicer: BackwardSlicer<'tcx>,
     vm: SymbolicVm<'tcx>,
     checker: PropertyChecker,
 }
 
 impl<'tcx> VerifyEngine<'tcx> {
-    pub fn new(tcx: TyCtxt<'tcx>) -> Self {
+    pub(crate) fn new(tcx: TyCtxt<'tcx>) -> Self {
         Self {
             slicer: BackwardSlicer::new(tcx),
             vm: SymbolicVm::new(tcx),
@@ -42,7 +42,7 @@ impl<'tcx> VerifyEngine<'tcx> {
         z3::Context::new(&cfg)
     }
 
-    pub fn check_callsite_from_tree(
+    pub(crate) fn check_callsite_from_tree(
         &self,
         tree: &PathTree,
         checkpoint: &Checkpoint<'tcx>,
@@ -308,7 +308,7 @@ impl<'tcx> VerifyEngine<'tcx> {
         }
     }
 
-    pub fn check_invariant_from_tree(
+    pub(crate) fn check_invariant_from_tree(
         &self,
         def_id: DefId,
         tree: &PathTree,
@@ -343,11 +343,8 @@ impl<'tcx> VerifyEngine<'tcx> {
                 caller: def_id,
                 callee: None,
                 block: checkpoint.block,
-                span: rustc_span::DUMMY_SP,
                 args: Vec::new(),
                 kind: crate::helpers::mir_scan::CheckpointKind::UnsafeCall,
-                is_ref: false,
-                is_mut_ref: false,
                 destination: None,
             };
             let result = self.checker.check(&vm_state, &fake_checkpoint, invariant);

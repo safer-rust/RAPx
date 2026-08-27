@@ -3,7 +3,7 @@
 //! Re-exports core types from `helpers/def_use` and augments
 //! `PlaceKey` / `RelevantPlaces` with contract/property-aware methods.
 
-pub use crate::helpers::def_use::*;
+pub(crate) use crate::helpers::def_use::*;
 
 use rustc_middle::mir::Operand;
 use rustc_middle::ty::TyCtxt;
@@ -17,7 +17,7 @@ use crate::helpers::mir_scan::Checkpoint;
 
 impl PlaceKey {
     /// Build a relevance place key from a parsed contract place.
-    pub fn from_contract_place(place: &ContractPlace<'_>) -> Self {
+    pub(crate) fn from_contract_place(place: &ContractPlace<'_>) -> Self {
         Self {
             base: match place.base {
                 PlaceBase::Return => PlaceBaseKey::Return,
@@ -39,14 +39,14 @@ impl PlaceKey {
 
 impl RelevantPlaces {
     /// Extract initial relevance roots from a required property.
-    pub fn from_property(property: &Property<'_>) -> Self {
+    pub(crate) fn from_property(property: &Property<'_>) -> Self {
         let mut set = Self::new();
         set.collect_property(property);
         set
     }
 
     /// Insert a contract place as a relevance root.
-    pub fn insert_contract_place(&mut self, place: &ContractPlace<'_>) {
+    pub(crate) fn insert_contract_place(&mut self, place: &ContractPlace<'_>) {
         self.insert_place_key(PlaceKey::from_contract_place(place));
     }
 
@@ -164,7 +164,7 @@ fn is_target_argument_index(kind: &PropertyKind, arg_index: usize) -> bool {
 }
 
 /// Bind callee parameter roots to concrete MIR call operands.
-pub fn bind_callsite_roots(
+pub(crate) fn bind_callsite_roots(
     tcx: TyCtxt<'_>,
     relevance: &mut RelevantPlaces,
     checkpoint: &Checkpoint<'_>,

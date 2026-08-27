@@ -40,10 +40,10 @@ use crate::helpers::mir_utils::{
 use crate::helpers::mir_scan::{Checkpoint, collect_unsafe_callsites};
 
 /// A list of parsed `requires` contracts.
-pub type FnContracts<'tcx> = Vec<Property<'tcx>>;
+pub(crate) type FnContracts<'tcx> = Vec<Property<'tcx>>;
 
 /// A list of parsed struct invariants.
-pub type StructInvariants<'tcx> = Vec<Property<'tcx>>;
+pub(crate) type StructInvariants<'tcx> = Vec<Property<'tcx>>;
 
 /// Collected verification data for a single function under analysis.
 ///
@@ -73,7 +73,7 @@ pub type StructInvariants<'tcx> = Vec<Property<'tcx>>;
 /// extracted from the MIR CFG.  The target is the primary data carrier between
 /// the *target collection* stage and the *path extraction / verification* stage.
 #[derive(Clone, Debug)]
-pub struct FunctionTarget<'tcx> {
+pub(crate) struct FunctionTarget<'tcx> {
     /// The function being verified.
     pub def_id: DefId,
 
@@ -136,7 +136,7 @@ pub struct FunctionTarget<'tcx> {
 }
 
 impl<'tcx> FunctionTarget<'tcx> {
-    pub fn all_checkpoints(&self) -> Vec<&Checkpoint<'tcx>> {
+    pub(crate) fn all_checkpoints(&self) -> Vec<&Checkpoint<'tcx>> {
         self.checkpoints
             .iter()
             .chain(
@@ -152,7 +152,7 @@ impl<'tcx> FunctionTarget<'tcx> {
             .collect()
     }
 
-    pub fn properties_for_callsite(&self, checkpoint: &Checkpoint<'tcx>) -> &[Property<'tcx>] {
+    pub(crate) fn properties_for_callsite(&self, checkpoint: &Checkpoint<'tcx>) -> &[Property<'tcx>] {
         let loc = checkpoint.location();
         match checkpoint.kind {
             crate::helpers::mir_scan::CheckpointKind::RawPtrDeref => self
@@ -177,7 +177,7 @@ impl<'tcx> FunctionTarget<'tcx> {
 }
 
 /// Collected verification data for a struct that owns methods marked with `#[rapx::verify]`.
-pub struct StructTarget<'tcx> {
+pub(crate) struct StructTarget<'tcx> {
     /// Struct that owns one or more methods selected as targets to verify.
     pub def_id: DefId,
     /// Parsed `invariant` contracts attached to the struct.
@@ -190,7 +190,7 @@ pub struct StructTarget<'tcx> {
 ///
 /// The trait's `#[rapx::ensures(...)]` contracts define safety obligations the
 /// implementor must satisfy.  Full verification of trait impls is deferred.
-pub struct TraitEnsurance<'tcx> {
+pub(crate) struct TraitEnsurance<'tcx> {
     /// The unsafe trait definition.
     pub def_id: DefId,
     /// The concrete type that implements the trait (e.g. `SomeStruct`).
@@ -266,7 +266,7 @@ fn resolve_chain_contracts<'tcx>(
 }
 
 /// Visitor that collects targets annotated with `#[rapx::verify]`.
-pub struct VerifyTargetCollector<'tcx> {
+pub(crate) struct VerifyTargetCollector<'tcx> {
     tcx: TyCtxt<'tcx>,
     mode: VerifyMode,
     skip_invariant: bool,
@@ -287,7 +287,7 @@ pub struct VerifyTargetCollector<'tcx> {
 impl<'tcx> VerifyTargetCollector<'tcx> {
     /// Collect all verification targets across the current crate and optionally
     /// external crates (when `crate_filter` is set).
-    pub fn collect_all(
+    pub(crate) fn collect_all(
         tcx: TyCtxt<'tcx>,
         mode: VerifyMode,
         skip_invariant: bool,
@@ -304,7 +304,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
     }
 
     /// Creates a new collector for the current type context.
-    pub fn new(
+    pub(crate) fn new(
         tcx: TyCtxt<'tcx>,
         mode: VerifyMode,
         skip_invariant: bool,
@@ -589,7 +589,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
         false
     }
 
-    pub fn check_module_filter_result(&self) {
+    pub(crate) fn check_module_filter_result(&self) {
         if let Some(ref filter) = self.crate_filter {
             if !self.crate_filter_matched {
                 rap_warn!("[rapx::verify] --crate \"{filter}\" matched no targets");
@@ -766,7 +766,7 @@ impl<'tcx> Visitor<'tcx> for VerifyTargetCollector<'tcx> {
 ///
 /// In `targeted` mode, only functions annotated with `#[rapx::verify]` are listed.
 /// In `scan` mode, all functions with unsafe callees or struct invariants are listed.
-pub struct PrepareTargets<'tcx> {
+pub(crate) struct PrepareTargets<'tcx> {
     tcx: TyCtxt<'tcx>,
     mode: VerifyMode,
     skip_invariant: bool,
@@ -868,7 +868,7 @@ impl<'tcx> Analysis for PrepareTargets<'tcx> {
 }
 
 impl<'tcx> PrepareTargets<'tcx> {
-    pub fn new(
+    pub(crate) fn new(
         tcx: TyCtxt<'tcx>,
         mode: VerifyMode,
         skip_invariant: bool,
@@ -1245,11 +1245,8 @@ fn build_raw_ptr_deref_checks<'tcx>(
                     caller: def_id,
                     callee: None,
                     block: info.block,
-                    span: rustc_span::DUMMY_SP,
                     args: vec![info.ptr_operand],
                     kind: crate::helpers::mir_scan::CheckpointKind::RawPtrDeref,
-                    is_ref: info.is_ref,
-                    is_mut_ref: info.is_mut_ref,
                     destination: Some(info.destination),
                 },
                 properties,
@@ -1291,11 +1288,8 @@ fn build_static_mut_checks<'tcx>(
                     caller: def_id,
                     callee: None,
                     block: info.block,
-                    span: rustc_span::DUMMY_SP,
                     args: vec![info.ptr_operand],
                     kind: crate::helpers::mir_scan::CheckpointKind::StaticMutAccess,
-                    is_ref: false,
-                    is_mut_ref: false,
                     destination: None,
                 },
                 properties,

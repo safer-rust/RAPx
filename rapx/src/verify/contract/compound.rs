@@ -34,14 +34,14 @@ use super::types::{Property, PropertyKind};
 /// A single argument in a compound body: a reference to a formal parameter, or a
 /// literal (kept as source text, re-parsed as `syn::Expr` at expansion time).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CompoundArg {
+pub(crate) enum CompoundArg {
     Param(usize),
     Lit(String),
 }
 
 /// The body of a compound property, structured as DNF (Or of And of calls).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CompoundBody {
+pub(crate) enum CompoundBody {
     And(Vec<CompoundBody>),
     Or(Vec<CompoundBody>),
     Call { tag: String, args: Vec<CompoundArg> },
@@ -49,7 +49,7 @@ pub enum CompoundBody {
 
 /// A parsed compound-property declaration.
 #[derive(Debug, Clone)]
-pub struct CompoundSpec {
+pub(crate) struct CompoundSpec {
     pub name: String,
     pub params: Vec<String>,
     pub param_tys: Vec<String>,
@@ -71,7 +71,7 @@ pub struct CompoundSpec {
 /// meaning in reports); `//` comments and blank lines are skipped.  The body
 /// supports `&&` (conjunction) and `||` (disjunction) of `Tag(arg, ...)` calls,
 /// plus `( ... )` grouping for a conjunction used as a single disjunct.
-pub fn parse_compounds(source: &str) -> Vec<CompoundSpec> {
+pub(crate) fn parse_compounds(source: &str) -> Vec<CompoundSpec> {
     let mut compounds = Vec::new();
     let mut doc: Vec<String> = Vec::new();
 
@@ -423,7 +423,7 @@ fn builtin_compounds() -> HashMap<String, CompoundSpec> {
 
 /// Look up a compound property by name, in the given crate's namespace first,
 /// then the builtin namespace.
-pub fn find_compound(krate: CrateNum, name: &str) -> Option<CompoundSpec> {
+pub(crate) fn find_compound(krate: CrateNum, name: &str) -> Option<CompoundSpec> {
     if let Some(d) = user_compounds_map()
         .read()
         .ok()
@@ -435,7 +435,7 @@ pub fn find_compound(krate: CrateNum, name: &str) -> Option<CompoundSpec> {
 }
 
 /// Expand a named compound against concrete argument expressions.
-pub fn expand_compound<'tcx>(
+pub(crate) fn expand_compound<'tcx>(
     tcx: rustc_middle::ty::TyCtxt<'tcx>,
     def_id: rustc_hir::def_id::DefId,
     name: &str,
@@ -486,7 +486,7 @@ pub fn expand_compound<'tcx>(
 /// Only edges that resolve to another registered compound are followed; calls to
 /// primitives (`Allocated`, `Align`, ...) terminate the walk.  The crate's own
 /// compounds are overlaid on the builtin namespace.
-pub fn find_compound_cycle(krate: CrateNum, start: &str) -> Option<Vec<String>> {
+pub(crate) fn find_compound_cycle(krate: CrateNum, start: &str) -> Option<Vec<String>> {
     let mut combined = builtin_compounds_map().clone();
     if let Ok(user) = user_compounds_map().read()
         && let Some(crate_defs) = user.get(&krate)
@@ -554,7 +554,7 @@ fn collect_compound_refs(body: &CompoundBody, out: &mut Vec<String>) {
 
 /// Parse compound-property declarations from `source` and insert them into the
 /// given crate's namespace.  Returns the number of compounds registered.
-pub fn register_compounds_from_source(krate: CrateNum, source: &str) -> usize {
+pub(crate) fn register_compounds_from_source(krate: CrateNum, source: &str) -> usize {
     let compounds = parse_compounds(source);
     let n = compounds.len();
     if n == 0 {
@@ -573,7 +573,7 @@ pub fn register_compounds_from_source(krate: CrateNum, source: &str) -> usize {
 /// Scan the local crate for `#[rapx::def_property("...")]` tool attributes
 /// (emitted by the `rapx_macros::pred` proc-macro) and register each embedded
 /// compound-property string.  Returns the number of compounds registered.
-pub fn register_compound_properties(tcx: rustc_middle::ty::TyCtxt<'_>) -> usize {
+pub(crate) fn register_compound_properties(tcx: rustc_middle::ty::TyCtxt<'_>) -> usize {
     struct Visitor<'tcx> {
         tcx: rustc_middle::ty::TyCtxt<'tcx>,
         count: usize,

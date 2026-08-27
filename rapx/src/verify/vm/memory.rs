@@ -9,7 +9,7 @@ use z3::ast::{Ast, Int};
 use super::state::{AllocId, Allocation, Provenance, VmState, VmValue, ValueInvariants};
 
 impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
-    pub fn address_of_place(&mut self, place: &Place<'tcx>) -> Option<VmValue<'ctx, 'tcx>> {
+    pub(crate) fn address_of_place(&mut self, place: &Place<'tcx>) -> Option<VmValue<'ctx, 'tcx>> {
         self.ensure_local_allocation(place.local);
 
         let zero = Int::from_u64(self.ctx, 0);
@@ -177,33 +177,33 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         crate::helpers::mir_utils::field_offset_in_bytes(self.tcx, self.caller_def_id, ty, field_idx)
     }
 
-    pub fn size_of_ty(&self, ty: Ty<'tcx>) -> u64 {
+    pub(crate) fn size_of_ty(&self, ty: Ty<'tcx>) -> u64 {
         crate::helpers::mir_utils::layout_of_ty(self.tcx, self.caller_def_id, ty)
             .map(|l| l.size.bytes())
             .unwrap_or(0)
     }
 
-    pub fn align_of_ty(&self, ty: Ty<'tcx>) -> u64 {
+    pub(crate) fn align_of_ty(&self, ty: Ty<'tcx>) -> u64 {
         crate::helpers::mir_utils::layout_of_ty(self.tcx, self.caller_def_id, ty)
             .map(|l| l.align.abi.bytes())
             .unwrap_or(1)
     }
 
-    pub fn alloc_for_local(&self, local: Local) -> Option<AllocId> {
+    pub(crate) fn alloc_for_local(&self, local: Local) -> Option<AllocId> {
         self.local_alloc_ids.get(&local).copied()
     }
 
-    pub fn allocation_size(&self, alloc_id: AllocId) -> Option<&Int<'ctx>> {
+    pub(crate) fn allocation_size(&self, alloc_id: AllocId) -> Option<&Int<'ctx>> {
         Some(&self.alloc(alloc_id).size)
     }
 
-    pub fn allocation_base(&self, alloc_id: AllocId) -> Option<&Int<'ctx>> {
+    pub(crate) fn allocation_base(&self, alloc_id: AllocId) -> Option<&Int<'ctx>> {
         Some(&self.alloc(alloc_id).base)
     }
 
     /// Get the element size (in bytes) for a pointer type, peeling
     /// through `*const T`, `*mut T`, `&T`, and `&[T]` to find `size_of(T)`.
-    pub fn pointee_elem_size(&self, ty: Ty<'tcx>) -> u64 {
+    pub(crate) fn pointee_elem_size(&self, ty: Ty<'tcx>) -> u64 {
         let inner = match ty.kind() {
             TyKind::RawPtr(inner_ty, _) | TyKind::Ref(_, inner_ty, _) => *inner_ty,
             _ => ty,

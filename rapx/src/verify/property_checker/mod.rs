@@ -29,10 +29,10 @@ mod transmute;
 mod typed;
 mod util;
 
-pub struct PropertyChecker;
+pub(crate) struct PropertyChecker;
 
 impl PropertyChecker {
-    pub fn check<'ctx, 'tcx>(
+    pub(crate) fn check<'ctx, 'tcx>(
         &self,
         vm_state: &VmState<'ctx, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,

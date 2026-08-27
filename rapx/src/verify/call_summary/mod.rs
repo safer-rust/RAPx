@@ -8,8 +8,8 @@
 //! This module keeps those summaries in one place.  Standard unsafe/std APIs
 //! are summarized by name.  Local callees can additionally use the existing
 //! dataflow graph to approximate which arguments flow into the return value.
-pub mod builtin_models;
-pub mod interprocedural;
+pub(crate) mod builtin_models;
+pub(crate) mod interprocedural;
 
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
@@ -21,11 +21,7 @@ use crate::helpers::mir_utils;
 
 /// Dependency summary consumed by the backward visitor.
 #[derive(Clone, Debug)]
-pub struct CallDependencySummary {
-    /// Callee definition when the call target is statically known.
-    pub callee: Option<DefId>,
-    /// Human-readable callee name.
-    pub name: String,
+pub(crate) struct CallDependencySummary {
     /// If the call destination is relevant, these call arguments are relevant.
     pub return_depends_on_args: Vec<usize>,
     /// Arguments that may be written or invalidated by the call.
@@ -36,10 +32,8 @@ pub struct CallDependencySummary {
 
 impl CallDependencySummary {
     /// Build a conservative summary that keeps all arguments relevant.
-    fn unknown(callee: Option<DefId>, name: String, arg_count: usize) -> Self {
+    fn unknown(arg_count: usize) -> Self {
         Self {
-            callee,
-            name,
             return_depends_on_args: (0..arg_count).collect(),
             may_write_args: Vec::new(),
             unsupported: true,
@@ -49,13 +43,9 @@ impl CallDependencySummary {
 
 /// Effect summary consumed by the forward visitor.
 #[derive(Clone, Debug)]
-pub struct CallEffectSummary {
-    /// Callee definition when the call target is statically known.
-    pub callee: Option<DefId>,
+pub(crate) struct CallEffectSummary {
     /// Human-readable callee name.
     pub name: String,
-    /// Destination local receiving the return value.
-    pub destination: Option<Local>,
     /// Effects that can be applied to the path-local abstract state.
     pub effects: Vec<CallEffect>,
     /// True when this summary is conservative rather than precise.
@@ -64,11 +54,9 @@ pub struct CallEffectSummary {
 
 impl CallEffectSummary {
     /// Build a conservative summary for an unsupported call.
-    fn unknown(callee: Option<DefId>, name: String, destination: Option<Local>) -> Self {
+    fn unknown(name: String) -> Self {
         Self {
-            callee,
             name,
-            destination,
             effects: Vec::new(),
             unsupported: true,
         }
@@ -77,7 +65,7 @@ impl CallEffectSummary {
 
 /// Path-local effect produced by a retained call.
 #[derive(Clone, Debug)]
-pub enum CallEffect {
+pub(crate) enum CallEffect {
     /// The return value aliases or is a direct value flow from an argument.
     ReturnAliasArg { arg: usize },
     /// The return value is a pointer extracted from an aggregate/reference arg.
@@ -97,9 +85,9 @@ pub enum CallEffect {
     /// The return value is known to be non-zero.
     ReturnNonZero,
     /// The return value is known to satisfy a concrete alignment.
-    ReturnAligned { align: u64, ty_name: String },
+    ReturnAligned,
     /// The return value is a concrete layout/numeric constant.
-    ReturnConst { value: u64, label: String },
+    ReturnConst { value: u64 },
     /// The call writes one initialized element through a pointer argument.
     WriteMemory { pointer_arg: usize },
     /// The return value is a pointer backed by a fresh allocation of
@@ -163,7 +151,7 @@ pub enum CallEffect {
     /// Like ReturnNewAllocation but the length is carried by the argument
     /// itself (a Box fat pointer) rather than a separate count argument.
     /// Used for `into_vec` / `box_assume_init_into_vec_unsafe`.
-    ReturnNewAllocationFromBox { box_arg: usize },
+    ReturnNewAllocationFromBox,
     /// The return value is a non-zero power of two (models `Layout::align`).
     ReturnPowerOfTwo,
     /// The call transfers a Vec's backing allocation into a Box (e.g.
@@ -190,7 +178,7 @@ pub enum CallEffect {
     /// `strlen`): `0 <= len < isize::MAX`, so `len + 1` (the byte length with
     /// the terminator) fits in `isize::MAX` — discharging the
     /// `from_raw_parts` `ValidNum(size_of(T)*(len+1) <= isize::MAX)` bound.
-    ReturnScanLength { ptr_arg: usize },
+    ReturnScanLength,
     /// `ptr.align_offset(align)` returns an offset such that
     /// `(ptr + offset) % align == 0` and `0 <= offset < align` (or `usize::MAX`
     /// when no such offset exists). Models `*const T::align_offset` /
@@ -219,7 +207,7 @@ pub enum CallEffect {
 }
 
 /// Return dependency information for a MIR call terminator.
-pub fn dependency_summary<'tcx>(
+pub(crate) fn dependency_summary<'tcx>(
     tcx: TyCtxt<'tcx>,
     func: &Operand<'tcx>,
     arg_count: usize,
@@ -234,13 +222,11 @@ pub fn dependency_summary<'tcx>(
             || name.starts_with("intrinsics::")
             || name.ends_with("::drop_in_place")
         {
-            return CallDependencySummary::unknown(Some(callee), name, arg_count);
+            return CallDependencySummary::unknown(arg_count);
         }
         if let Some(must_write_args) = interprocedural::local_must_write_args(tcx, callee) {
             if !must_write_args.is_empty() {
                 return CallDependencySummary {
-                    callee: Some(callee),
-                    name,
                     return_depends_on_args: Vec::new(),
                     may_write_args: must_write_args
                         .into_iter()
@@ -252,8 +238,6 @@ pub fn dependency_summary<'tcx>(
         }
         if let Some(return_deps) = interprocedural::local_return_dependencies(tcx, callee) {
             return CallDependencySummary {
-                callee: Some(callee),
-                name,
                 return_depends_on_args: return_deps
                     .into_iter()
                     .filter(|index| *index < arg_count)
@@ -264,11 +248,11 @@ pub fn dependency_summary<'tcx>(
         }
     }
 
-    CallDependencySummary::unknown(callee, name, arg_count)
+    CallDependencySummary::unknown(arg_count)
 }
 
 /// Return effect information for a MIR call terminator.
-pub fn effect_summary<'tcx>(
+pub(crate) fn effect_summary<'tcx>(
     tcx: TyCtxt<'tcx>,
     caller: DefId,
     func: &Operand<'tcx>,
@@ -277,7 +261,7 @@ pub fn effect_summary<'tcx>(
     let callee = mir_utils::dep_callee_def_id(func);
     let name = mir_utils::call_name(tcx, func);
 
-    if let Some(summary) = builtin_models::lookup_effect(tcx, caller, callee, &name, func, destination) {
+    if let Some(summary) = builtin_models::lookup_effect(tcx, caller, &name, func, destination) {
         return summary;
     }
 
@@ -287,9 +271,7 @@ pub fn effect_summary<'tcx>(
     // unavailable cross-crate, so model them with field-value peeling.
     if let Some(peel) = transparent_deref_peel(tcx, func) {
         return CallEffectSummary {
-            callee,
             name,
-            destination: Some(destination),
             effects: vec![CallEffect::ReturnTransparentDeref { arg: 0, peel }],
             unsupported: false,
         };
@@ -301,7 +283,7 @@ pub fn effect_summary<'tcx>(
             || name.starts_with("intrinsics::")
             || name.ends_with("::drop_in_place")
         {
-            return CallEffectSummary::unknown(Some(callee), name, Some(destination));
+            return CallEffectSummary::unknown(name);
         }
         if let Some(must_write_args) = interprocedural::local_must_write_args(tcx, callee) {
             let effects: Vec<_> = must_write_args
@@ -310,9 +292,7 @@ pub fn effect_summary<'tcx>(
                 .collect();
             if !effects.is_empty() {
                 return CallEffectSummary {
-                    callee: Some(callee),
                     name,
-                    destination: Some(destination),
                     effects,
                     unsupported: false,
                 };
@@ -320,18 +300,14 @@ pub fn effect_summary<'tcx>(
         }
         if let Some(effect) = interprocedural::try_pointer_arith_wrapper_effect(tcx, callee, Some(destination)) {
             return CallEffectSummary {
-                callee: Some(callee),
                 name,
-                destination: Some(destination),
                 effects: vec![effect],
                 unsupported: false,
             };
         }
         if let Some(effect) = interprocedural::try_from_raw_parts_wrapper_effect(tcx, callee, Some(destination)) {
             return CallEffectSummary {
-                callee: Some(callee),
                 name,
-                destination: Some(destination),
                 effects: vec![effect],
                 unsupported: false,
             };
@@ -340,9 +316,7 @@ pub fn effect_summary<'tcx>(
             .or_else(|| interprocedural::named_index_disjoint_validator(&name))
         {
             return CallEffectSummary {
-                callee: Some(callee),
                 name,
-                destination: Some(destination),
                 effects: vec![CallEffect::ChecksIndexBoundsDisjoint {
                     indices_arg,
                     len_arg,
@@ -360,9 +334,7 @@ pub fn effect_summary<'tcx>(
                 // back to `exec_inline_call`, which inlines the full body.
                 let has_nested_calls = interprocedural::callee_calls_other_local(tcx, callee);
                 return CallEffectSummary {
-                    callee: Some(callee),
                     name,
-                    destination: Some(destination),
                     effects: return_deps
                         .into_iter()
                         .map(|arg| CallEffect::ReturnAliasArg { arg })
@@ -373,7 +345,7 @@ pub fn effect_summary<'tcx>(
         }
     }
 
-    CallEffectSummary::unknown(callee, name, Some(destination))
+    CallEffectSummary::unknown(name)
 }
 
 /// Detect a transparent-wrapper deref whose receiver is `ManuallyDrop<T>` or

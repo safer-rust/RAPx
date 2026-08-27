@@ -99,7 +99,7 @@ impl<'tcx> Property<'tcx> {
         Self::new_atom(spec.kind, args)
     }
 
-    pub fn new(tcx: TyCtxt<'tcx>, def_id: DefId, name: &str, exprs: &[Expr]) -> Self {
+    pub(crate) fn new(tcx: TyCtxt<'tcx>, def_id: DefId, name: &str, exprs: &[Expr]) -> Self {
         match spec::find_spec(name) {
             Some(spec) => Self::parse_from_spec(tcx, def_id, spec, exprs),
             None => Self::new_simple(PropertyKind::Unknown),
@@ -334,7 +334,7 @@ impl<'tcx> Property<'tcx> {
     ///
     /// Plain entries (`Align(p, T)`, `Owning(p)`, ...) yield one property.
     /// The `any(...)` combinator may expand to several: see [`Self::parse_any`].
-    pub fn parse_list(tcx: TyCtxt<'tcx>, def_id: DefId, name: &str, exprs: &[Expr]) -> Vec<Self> {
+    pub(crate) fn parse_list(tcx: TyCtxt<'tcx>, def_id: DefId, name: &str, exprs: &[Expr]) -> Vec<Self> {
         // User-defined / compound property macro expansion takes precedence, so
         // `#[rapx::requires(MyTag(...))]` can reference DSL-defined contracts.
         if let Some(props) = super::compound::expand_compound(tcx, def_id, name, exprs) {

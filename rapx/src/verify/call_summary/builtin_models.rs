@@ -26,7 +26,7 @@ use crate::helpers::mir_utils::{
 
 // ── Context for effect builders ────────────────────────────────────────
 
-pub struct EffCtx<'a, 'tcx> {
+pub(crate) struct EffCtx<'a, 'tcx> {
     pub tcx: TyCtxt<'tcx>,
     pub caller: DefId,
     pub name: &'a str,
@@ -135,14 +135,13 @@ static REGISTRY: &[Entry] = &[
 /// True when `name` matches a hand-modelled API in the registry. The path
 /// graph uses this to keep such calls opaque (it must not inline their branchy
 /// CFG when the VM models their semantics more precisely).
-pub fn is_modeled(name: &str) -> bool {
+pub(crate) fn is_modeled(name: &str) -> bool {
     REGISTRY.iter().any(|e| (e.matches)(name))
 }
 
-pub fn lookup_effect<'tcx>(
+pub(crate) fn lookup_effect<'tcx>(
     tcx: TyCtxt<'tcx>,
     caller: DefId,
-    callee: Option<DefId>,
     name: &str,
     func: &Operand<'tcx>,
     destination: rustc_middle::mir::Local,
@@ -152,9 +151,7 @@ pub fn lookup_effect<'tcx>(
         if (e.matches)(name) {
             let ctx = EffCtx { tcx, caller, name, func, dest };
             return Some(CallEffectSummary {
-                callee,
                 name: name.to_string(),
-                destination: dest,
                 effects: (e.effects)(&ctx),
                 unsupported: false,
             });
@@ -172,8 +169,8 @@ fn eff_alias_ptr(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
         CallEffect::ReturnPointerFromArg { arg: 0 },
         CallEffect::ReturnNonZero,
     ];
-    if let Some((a, n)) = pointee_alignment(ctx.tcx, ctx.caller, ctx.dest) {
-        eff.push(CallEffect::ReturnAligned { align: a, ty_name: n });
+    if pointee_alignment(ctx.tcx, ctx.caller, ctx.dest).is_some() {
+        eff.push(CallEffect::ReturnAligned);
     }
     eff
 }
@@ -291,7 +288,7 @@ fn eff_option_scan_index(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 }
 
 fn eff_scan_length(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![CallEffect::ReturnScanLength { ptr_arg: 0 }]
+    vec![CallEffect::ReturnScanLength]
 }
 
 fn eff_align_offset(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
@@ -322,8 +319,8 @@ fn eff_from_raw_parts(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
         },
         CallEffect::ReturnNonZero,
     ];
-    if let Some((a, n)) = pointee_alignment(ctx.tcx, ctx.caller, ctx.dest) {
-        eff.push(CallEffect::ReturnAligned { align: a, ty_name: n });
+    if pointee_alignment(ctx.tcx, ctx.caller, ctx.dest).is_some() {
+        eff.push(CallEffect::ReturnAligned);
     }
     eff
 }
@@ -350,7 +347,7 @@ fn eff_new_allocation_from_cap(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 
 fn eff_vec_from_box(_ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     vec![
-        CallEffect::ReturnNewAllocationFromBox { box_arg: 0 },
+        CallEffect::ReturnNewAllocationFromBox,
     ]
 }
 
@@ -498,9 +495,9 @@ fn layout_constant_effect<'tcx>(
     let ty = layout_call_ty(func)?;
     let (align, size) = type_layout(tcx, caller, ty)?;
     if name.contains("align_of") {
-        Some(CallEffect::ReturnConst { value: align, label: format!("align_of::<{ty:?}>()") })
+        Some(CallEffect::ReturnConst { value: align })
     } else if name.contains("size_of") {
-        Some(CallEffect::ReturnConst { value: size, label: format!("size_of::<{ty:?}>()") })
+        Some(CallEffect::ReturnConst { value: size })
     } else {
         None
     }

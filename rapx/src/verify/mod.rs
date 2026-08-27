@@ -4,20 +4,20 @@
 //! targets and contracts, extract SCC-aware paths, slice them backward, execute
 //! the relevant MIR symbolically, and discharge each property with Z3.
 
-pub mod alias_hazard;
-pub mod call_summary;
-pub mod contract;
-pub mod def_use;
-pub mod display;
-pub mod driver;
-pub mod engine;
-pub mod loop_sensitivity;
-pub mod path_extractor;
+pub(crate) mod alias_hazard;
+pub(crate) mod call_summary;
+pub(crate) mod contract;
+pub(crate) mod def_use;
+pub(crate) mod display;
+pub(crate) mod driver;
+pub(crate) mod engine;
+pub(crate) mod loop_sensitivity;
+pub(crate) mod path_extractor;
 
-pub mod property_checker;
-pub mod report;
-pub mod slicer;
-pub mod target;
-pub mod cstr_const_bytes;
+pub(crate) mod property_checker;
+pub(crate) mod report;
+pub(crate) mod slicer;
+pub(crate) mod target;
+pub(crate) mod cstr_const_bytes;
 
-pub mod vm;
+pub(crate) mod vm;

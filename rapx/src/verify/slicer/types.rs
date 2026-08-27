@@ -15,7 +15,7 @@ use rustc_middle::mir::BasicBlock;
 /// A proof goal for one `(checkpoint, path)` item: the set of relevant items
 /// plus the path context needed to verify the target property.
 #[derive(Clone, Debug)]
-pub struct ProofGoal<'tcx> {
+pub(crate) struct ProofGoal<'tcx> {
     /// Path being visited; `path.target` identifies the checkpoint.
     pub path: Path,
     /// Items kept from the path.
@@ -27,7 +27,7 @@ pub struct ProofGoal<'tcx> {
 
 /// One relevant item kept from the backward slice.
 #[derive(Clone, Debug)]
-pub enum RelevantItem<'tcx> {
+pub(crate) enum RelevantItem<'tcx> {
     /// A MIR statement retained from a basic block. `def_id` identifies the
     /// function owning `block` (differs from the caller for inlined callees).
     Statement {

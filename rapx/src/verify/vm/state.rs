@@ -22,11 +22,11 @@ use crate::verify::{
 
 /// Unique identifier for a heap or stack allocation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct AllocId(pub usize);
+pub(crate) struct AllocId(pub usize);
 
 /// Pointer provenance: which allocation and at what byte offset.
 #[derive(Clone, Debug)]
-pub struct Provenance<'ctx> {
+pub(crate) struct Provenance<'ctx> {
     /// The allocation this pointer derives from.
     pub alloc_id: AllocId,
     /// Byte offset from the allocation base. A freshly created
@@ -41,7 +41,7 @@ pub struct Provenance<'ctx> {
 
 /// Known invariants about a symbolic value.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct ValueInvariants {
+pub(crate) struct ValueInvariants {
     pub non_null: bool,
     pub aligned: bool,
     pub init: bool,
@@ -69,7 +69,7 @@ pub struct ValueInvariants {
 /// asserted into the solver at check time:
 ///   `term == alloc[provenance.alloc_id].base + provenance.offset`
 #[derive(Clone, Debug)]
-pub struct VmValue<'ctx, 'tcx> {
+pub(crate) struct VmValue<'ctx, 'tcx> {
     /// The Z3 integer term (address or scalar value, see struct docs).
     pub term: Int<'ctx>,
     /// Rust type, for layout queries.
@@ -81,12 +81,12 @@ pub struct VmValue<'ctx, 'tcx> {
 }
 
 impl<'ctx, 'tcx> VmValue<'ctx, 'tcx> {
-    pub fn new(term: Int<'ctx>, ty: Ty<'tcx>) -> Self {
+    pub(crate) fn new(term: Int<'ctx>, ty: Ty<'tcx>) -> Self {
         VmValue { term, ty, provenance: None, invariants: ValueInvariants::default() }
     }
 
     /// Convenience: extract the `AllocId` from provenance, if any.
-    pub fn provenance_alloc_id(&self) -> Option<AllocId> {
+    pub(crate) fn provenance_alloc_id(&self) -> Option<AllocId> {
         self.provenance.as_ref().map(|p| p.alloc_id)
     }
 }
@@ -96,7 +96,7 @@ impl<'ctx, 'tcx> VmValue<'ctx, 'tcx> {
 /// The allocation is stored in `VmState::allocations` at index `AllocId.0`
 /// (an `AllocId` is a monotonic counter that doubles as the vector index).
 #[derive(Clone, Debug)]
-pub struct Allocation<'ctx, 'tcx> {
+pub(crate) struct Allocation<'ctx, 'tcx> {
     /// Base address (fresh Z3 constant).
     pub base: Int<'ctx>,
 
@@ -174,7 +174,7 @@ pub(crate) struct InlineFrame<'ctx, 'tcx> {
 /// Accumulates locals, allocations, path conditions, and definitions
 /// as the VM steps through retained MIR items. The Z3 context is
 /// borrowed so a single context can be reused across property checks.
-pub struct VmState<'ctx, 'tcx> {
+pub(crate) struct VmState<'ctx, 'tcx> {
     /// Shared Z3 context.
     pub(crate) ctx: &'ctx Context,
 
@@ -273,7 +273,7 @@ pub struct VmState<'ctx, 'tcx> {
 
 impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     /// Create a fresh VM state for executing a path.
-    pub fn new(
+    pub(crate) fn new(
         ctx: &'ctx Context,
         tcx: TyCtxt<'tcx>,
         body: &'ctx Body<'tcx>,
@@ -310,17 +310,17 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     }
 
     /// Look up the value bound to a MIR local.
-    pub fn local_value(&self, local: Local) -> Option<&VmValue<'ctx, 'tcx>> {
+    pub(crate) fn local_value(&self, local: Local) -> Option<&VmValue<'ctx, 'tcx>> {
         self.locals.get(&local)
     }
 
     /// Bind a value to a MIR local.
-    pub fn set_local(&mut self, local: Local, value: VmValue<'ctx, 'tcx>) {
+    pub(crate) fn set_local(&mut self, local: Local, value: VmValue<'ctx, 'tcx>) {
         self.locals.insert(local, value);
     }
 
     /// Get or create the symbolic address of a MIR local.
-    pub fn local_address(&mut self, local: Local) -> Int<'ctx> {
+    pub(crate) fn local_address(&mut self, local: Local) -> Int<'ctx> {
         if let Some(addr) = self.local_addresses.get(&local) {
             return addr.clone();
         }
@@ -331,7 +331,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     }
 
     /// Allocate a fresh symbolic object and return its ID and base address.
-    pub fn allocate(
+    pub(crate) fn allocate(
         &mut self,
         size: Int<'ctx>,
         align: u64,
@@ -362,7 +362,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
 
     /// Allocate a fresh external allocation (for raw-pointer parameters).
     /// External allocations may be null and have unlimited size.
-    pub fn allocate_external(
+    pub(crate) fn allocate_external(
         &mut self,
         size: Int<'ctx>,
         align: u64,
@@ -402,70 +402,70 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     }
 
     /// Create a symbolic Z3 int constant.
-    pub fn fresh_int(&self, prefix: &str) -> Int<'ctx> {
+    pub(crate) fn fresh_int(&self, prefix: &str) -> Int<'ctx> {
         let name = format!("{}_{}", prefix, self.definition_count);
         Int::new_const(self.ctx, name.as_str())
     }
 
     /// Bump the symbolic-name uniquifier (called once per executed assignment).
-    pub fn record_definition(&mut self) {
+    pub(crate) fn record_definition(&mut self) {
         self.definition_count += 1;
     }
 
     /// Get the value of a specific field within an aggregate local.
-    pub fn field_value(&self, local: Local, path: &[usize]) -> Option<&VmValue<'ctx, 'tcx>> {
+    pub(crate) fn field_value(&self, local: Local, path: &[usize]) -> Option<&VmValue<'ctx, 'tcx>> {
         self.field_values.get(&(local, path.to_vec()))
     }
 
     /// Set the value of a specific field within an aggregate local.
-    pub fn set_field_value(&mut self, local: Local, path: Vec<usize>, value: VmValue<'ctx, 'tcx>) {
+    pub(crate) fn set_field_value(&mut self, local: Local, path: Vec<usize>, value: VmValue<'ctx, 'tcx>) {
         self.field_values.insert((local, path), value);
     }
 
     /// Record a per-byte symbolic value at a concrete offset in an allocation.
-    pub fn record_byte_value(&mut self, alloc_id: AllocId, offset: usize, term: Int<'ctx>) {
+    pub(crate) fn record_byte_value(&mut self, alloc_id: AllocId, offset: usize, term: Int<'ctx>) {
         let byte = self.bytes.entry((alloc_id, offset)).or_default();
         byte.value = Some(term);
         byte.init = true;
     }
 
     /// Mark a byte as initialized without changing its value.
-    pub fn mark_byte_init(&mut self, alloc_id: AllocId, offset: usize) {
+    pub(crate) fn mark_byte_init(&mut self, alloc_id: AllocId, offset: usize) {
         self.bytes.entry((alloc_id, offset)).or_default().init = true;
     }
 
     /// Mark a byte as known NUL (0x00).
-    pub fn mark_byte_nul(&mut self, alloc_id: AllocId, offset: usize) {
+    pub(crate) fn mark_byte_nul(&mut self, alloc_id: AllocId, offset: usize) {
         self.bytes.entry((alloc_id, offset)).or_default().nul = Some(true);
     }
 
     /// Mark a byte as known non-NUL (!= 0x00).
-    pub fn mark_byte_non_nul(&mut self, alloc_id: AllocId, offset: usize) {
+    pub(crate) fn mark_byte_non_nul(&mut self, alloc_id: AllocId, offset: usize) {
         self.bytes.entry((alloc_id, offset)).or_default().nul = Some(false);
     }
 
     /// Look up a per-byte Z3 term for a concrete offset in an allocation.
-    pub fn get_byte_value(&self, alloc_id: AllocId, offset: usize) -> Option<&Int<'ctx>> {
+    pub(crate) fn get_byte_value(&self, alloc_id: AllocId, offset: usize) -> Option<&Int<'ctx>> {
         self.bytes.get(&(alloc_id, offset)).and_then(|b| b.value.as_ref())
     }
 
     /// Check whether a byte at a concrete offset is known to be initialized.
-    pub fn is_byte_init(&self, alloc_id: AllocId, offset: usize) -> bool {
+    pub(crate) fn is_byte_init(&self, alloc_id: AllocId, offset: usize) -> bool {
         self.bytes.get(&(alloc_id, offset)).is_some_and(|b| b.init)
     }
 
     /// Check whether a byte at a concrete offset is known to be NUL.
-    pub fn is_byte_nul(&self, alloc_id: AllocId, offset: usize) -> bool {
+    pub(crate) fn is_byte_nul(&self, alloc_id: AllocId, offset: usize) -> bool {
         self.bytes.get(&(alloc_id, offset)).is_some_and(|b| b.nul == Some(true))
     }
 
     /// Check whether a byte at a concrete offset is known to be non-NUL.
-    pub fn is_byte_non_nul(&self, alloc_id: AllocId, offset: usize) -> bool {
+    pub(crate) fn is_byte_non_nul(&self, alloc_id: AllocId, offset: usize) -> bool {
         self.bytes.get(&(alloc_id, offset)).is_some_and(|b| b.nul == Some(false))
     }
 
     /// Return all known (offset, term) pairs for an allocation, sorted by offset.
-    pub fn alloc_byte_values(&self, alloc_id: AllocId) -> Vec<(usize, &Int<'ctx>)> {
+    pub(crate) fn alloc_byte_values(&self, alloc_id: AllocId) -> Vec<(usize, &Int<'ctx>)> {
         let mut pairs: Vec<_> = self
             .bytes
             .iter()
@@ -478,7 +478,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     }
 
     /// Collect all offsets known to be NUL in an allocation.
-    pub fn alloc_nul_offsets(&self, alloc_id: AllocId) -> Vec<usize> {
+    pub(crate) fn alloc_nul_offsets(&self, alloc_id: AllocId) -> Vec<usize> {
         self.bytes.iter()
             .filter_map(|((aid, off), byte)| {
                 if *aid == alloc_id && byte.nul == Some(true) { Some(*off) } else { None }
@@ -487,7 +487,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     }
 
     /// Collect all offsets known to be non-NUL in an allocation.
-    pub fn alloc_non_nul_offsets(&self, alloc_id: AllocId) -> Vec<usize> {
+    pub(crate) fn alloc_non_nul_offsets(&self, alloc_id: AllocId) -> Vec<usize> {
         self.bytes.iter()
             .filter_map(|((aid, off), byte)| {
                 if *aid == alloc_id && byte.nul == Some(false) { Some(*off) } else { None }
@@ -508,7 +508,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     }
 
     /// Assert path conditions and invariant constraints into a solver.
-    pub fn assert_all(&self, solver: &z3::Solver<'ctx>) {
+    pub(crate) fn assert_all(&self, solver: &z3::Solver<'ctx>) {
         for cond in &self.path_conditions {
             solver.assert(cond);
         }

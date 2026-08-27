@@ -15,7 +15,7 @@ use crate::helpers::mir_scan::CheckpointLocation;
 use super::report::PropertyCheckResult;
 use crate::verify::contract::render::display_expr_user_friendly;
 
-pub fn fmt_fn_with_params(path: &str, arg_names: &[String], ret_ty: Option<&str>) -> String {
+pub(crate) fn fmt_fn_with_params(path: &str, arg_names: &[String], ret_ty: Option<&str>) -> String {
     let args = arg_names.join(", ");
     match ret_ty {
         Some(ret) => format!("fn {path}({args}) -> {ret}"),
@@ -24,7 +24,7 @@ pub fn fmt_fn_with_params(path: &str, arg_names: &[String], ret_ty: Option<&str>
     }
 }
 
-pub fn fmt_fn_path_with_generics(
+pub(crate) fn fmt_fn_path_with_generics(
     tcx: rustc_middle::ty::TyCtxt<'_>,
     def_id: rustc_hir::def_id::DefId,
 ) -> String {
@@ -42,7 +42,7 @@ pub fn fmt_fn_path_with_generics(
     }
 }
 
-pub fn fmt_fn_path_with_bounds(
+pub(crate) fn fmt_fn_path_with_bounds(
     tcx: TyCtxt<'_>,
     def_id: DefId,
 ) -> String {
@@ -131,7 +131,7 @@ fn insert_bounds_into_path(path: &str, param_bounds: &FxHashMap<String, Vec<Stri
     result
 }
 
-pub fn fmt_contract_expanded<'tcx>(
+pub(crate) fn fmt_contract_expanded<'tcx>(
     tcx: rustc_middle::ty::TyCtxt<'tcx>,
     property: &crate::verify::contract::Property<'tcx>,
     struct_def_id: Option<rustc_hir::def_id::DefId>,
@@ -347,7 +347,7 @@ pub(crate) fn dedup_compound_props<'a, 'tcx>(
     out
 }
 
-pub fn emit_results_counts_and_checkpoints<'tcx>(
+pub(crate) fn emit_results_counts_and_checkpoints<'tcx>(
     tcx: TyCtxt<'tcx>,
     all_results: &[PropertyCheckResult<'tcx>],
 ) -> (usize, usize) {
@@ -411,7 +411,7 @@ pub fn emit_results_counts_and_checkpoints<'tcx>(
     (unproved, hazard_failed)
 }
 
-pub fn emit_verify_summary<'tcx>(
+pub(crate) fn emit_verify_summary<'tcx>(
     tcx: TyCtxt<'tcx>,
     target_path: &str,
     def_id: rustc_hir::def_id::DefId,
@@ -433,7 +433,7 @@ pub fn emit_verify_summary<'tcx>(
     rap_info!("");
 }
 
-pub fn emit_results_and_verdict<'tcx>(
+pub(crate) fn emit_results_and_verdict<'tcx>(
     tcx: TyCtxt<'tcx>,
     all_results: &[PropertyCheckResult<'tcx>],
 ) {
@@ -448,7 +448,7 @@ pub fn emit_results_and_verdict<'tcx>(
 
 
 
-pub fn emit_property_rows<'tcx>(
+pub(crate) fn emit_property_rows<'tcx>(
     _tcx: TyCtxt<'tcx>,
     results: &[&PropertyCheckResult<'tcx>],
 ) {

@@ -67,7 +67,7 @@ use crate::helpers::mir_scan::{Checkpoint, CheckpointLocation};
 /// - [`verify_struct_invariants`](Self::verify_struct_invariants): checks
 ///   struct invariants at return-block checkpoints (constructors) or at all
 ///   path endpoints (non-constructor methods).
-pub struct VerifyDriver<'target, 'tcx> {
+pub(crate) struct VerifyDriver<'target, 'tcx> {
     tcx: TyCtxt<'tcx>,
 
     target: &'target FunctionTarget<'tcx>,
@@ -80,11 +80,7 @@ pub struct VerifyDriver<'target, 'tcx> {
 }
 
 impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
-    pub fn new(tcx: TyCtxt<'tcx>, target: &'target FunctionTarget<'tcx>) -> Self {
-        Self::new_with_repeat(tcx, target, 0)
-    }
-
-    pub fn new_with_repeat(
+    pub(crate) fn new_with_repeat(
         tcx: TyCtxt<'tcx>,
         target: &'target FunctionTarget<'tcx>,
         allow_repeat: usize,
@@ -100,23 +96,8 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
         }
     }
 
-    /// Return the compiler type context owned by this driver.
-    pub fn tcx(&self) -> TyCtxt<'tcx> {
-        self.tcx
-    }
-
-    /// Return the function target managed by this driver.
-    pub fn target(&self) -> &'target FunctionTarget<'tcx> {
-        self.target
-    }
-
-    /// Return the per-callee call groups managed by this driver.
-    pub fn path_info(&self) -> &[CallGroup<'tcx>] {
-        &self.path_info
-    }
-
     /// Run unsafe-checkpoint verification for the managed function target.
-    pub fn verify_function(&self) -> VerificationReport<'tcx> {
+    pub(crate) fn verify_function(&self) -> VerificationReport<'tcx> {
         let mut report = VerificationReport::new(self.target.def_id);
 
         for view in self.iter_callsite_checks() {
@@ -208,7 +189,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
     /// dereference, static mut access) carry their properties in
     /// `target.raw_ptr_deref_checks` / `target.static_mut_checks`; real
     /// unsafe calls look up `target.callee_requires` by callee `DefId`.
-    pub fn properties_for_callsite(
+    pub(crate) fn properties_for_callsite(
         &self,
         checkpoint: &Checkpoint<'tcx>,
     ) -> &'target [Property<'tcx>] {
@@ -216,7 +197,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
     }
 
     /// Iterate over checkpoints together with their shared path tree and properties.
-    pub fn iter_callsite_checks(
+    pub(crate) fn iter_callsite_checks(
         &self,
     ) -> impl Iterator<Item = CheckpointCheckView<'_, 'target, 'tcx>> + '_ {
         let mut checkpoint_index = 0usize;
@@ -244,7 +225,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
     /// return blocks to avoid unwinding paths where the struct may not be
     /// fully initialised. For methods, all whole-CFG paths from
     /// `PathGraph::enumerate_paths_repeat` are used directly.
-    pub fn verify_struct_invariants(&self) -> VerificationReport<'tcx> {
+    pub(crate) fn verify_struct_invariants(&self) -> VerificationReport<'tcx> {
         let mut report = VerificationReport::new(self.target.def_id);
         let invariants = &self.target.struct_invariants;
         if invariants.is_empty() {
@@ -405,7 +386,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
 
 /// Returns whether a function returns the owning struct type (i.e. is a constructor).
 /// Borrowed view of all verification inputs for one unsafe checkpoint.
-pub struct CheckpointCheckView<'view, 'target, 'tcx> {
+pub(crate) struct CheckpointCheckView<'view, 'target, 'tcx> {
     /// Position among checkpoints that have properties to verify.
     pub checkpoint_index: usize,
     /// The concrete unsafe checkpoint in the caller MIR body.
@@ -417,7 +398,7 @@ pub struct CheckpointCheckView<'view, 'target, 'tcx> {
 }
 
 /// Analysis pass that runs verification and emits function-level summaries.
-pub struct VerifyRun<'tcx> {
+pub(crate) struct VerifyRun<'tcx> {
     tcx: TyCtxt<'tcx>,
     repeat_strategy: RepeatStrategy,
     mode: VerifyMode,
@@ -429,7 +410,7 @@ pub struct VerifyRun<'tcx> {
 
 impl<'tcx> VerifyRun<'tcx> {
     /// Create the default verify pass for the current compiler type context.
-    pub fn new(
+    pub(crate) fn new(
         tcx: TyCtxt<'tcx>,
         repeat_strategy: RepeatStrategy,
         mode: VerifyMode,

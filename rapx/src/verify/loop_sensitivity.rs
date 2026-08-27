@@ -84,7 +84,7 @@ const BRANCH_SENSITIVE_BACKEDGES: usize = DEFAULT_LOOP_CARRIED_BACKEDGES;
 /// `0..=plan.repeat`, because the current SCC path enumerator is not strictly
 /// monotonic across repeat depths when path limits and branch order interact.
 #[derive(Clone, Copy, Debug)]
-pub enum RepeatStrategy {
+pub(crate) enum RepeatStrategy {
     /// Let `LoopSensitivityAnalyzer` choose a repeat count from MIR structure.
     Auto,
     /// Use the concrete repeat count supplied by `--postfix-repeat N`.
