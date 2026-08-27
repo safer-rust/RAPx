@@ -202,9 +202,6 @@ pub(crate) struct VmState<'ctx, 'tcx> {
     /// Accumulated path conditions (SwitchInt branches, Assert).
     pub(crate) path_conditions: Vec<Bool<'ctx>>,
 
-    /// Monotonic counter used to uniquify fresh symbolic constant names.
-    pub(crate) definition_count: usize,
-
     /// The next allocation ID.
     pub(crate) next_alloc_id: usize,
 
@@ -289,7 +286,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             local_alloc_ids: FxHashMap::default(),
             allocations: Vec::new(),
             path_conditions: Vec::new(),
-            definition_count: 0,
             next_alloc_id: 0,
             block_occurrences: FxHashMap::default(),
             binary_op_sources: FxHashMap::default(),
@@ -337,27 +333,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         align: u64,
         element_ty: Option<Ty<'tcx>>,
     ) -> (AllocId, Int<'ctx>) {
-        let id = AllocId(self.next_alloc_id);
-        self.next_alloc_id += 1;
-        let base = {
-            let name = format!("heap_{}", id.0);
-            Int::new_const(self.ctx, name.as_str())
-        };
-        let alloc = Allocation {
-            base: base.clone(),
-            size,
-            align,
-            element_ty,
-            is_external: false,
-            dead: false,
-            initialized: false,
-            alive_assumed: false,
-            nul_terminated: false,
-            parent: None,
-            slice_data: None,
-        };
-        self.allocations.push(alloc);
-        (id, base)
+        self.allocate_internal(size, align, element_ty, false)
     }
 
     /// Allocate a fresh external allocation (for raw-pointer parameters).
@@ -368,10 +344,20 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         align: u64,
         element_ty: Option<Ty<'tcx>>,
     ) -> (AllocId, Int<'ctx>) {
+        self.allocate_internal(size, align, element_ty, true)
+    }
+
+    fn allocate_internal(
+        &mut self,
+        size: Int<'ctx>,
+        align: u64,
+        element_ty: Option<Ty<'tcx>>,
+        is_external: bool,
+    ) -> (AllocId, Int<'ctx>) {
         let id = AllocId(self.next_alloc_id);
         self.next_alloc_id += 1;
         let base = {
-            let name = format!("ext_{}", id.0);
+            let name = format!("{}_{}", if is_external { "ext" } else { "heap" }, id.0);
             Int::new_const(self.ctx, name.as_str())
         };
         let alloc = Allocation {
@@ -379,7 +365,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             size,
             align,
             element_ty,
-            is_external: true,
+            is_external,
             dead: false,
             initialized: false,
             alive_assumed: false,
@@ -401,15 +387,10 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         &mut self.allocations[id.0]
     }
 
-    /// Create a symbolic Z3 int constant.
+    /// Create a fresh symbolic Z3 int constant (globally unique, even across
+    /// calls with the same prefix — `Z3_mk_fresh_const` auto-suffixes the name).
     pub(crate) fn fresh_int(&self, prefix: &str) -> Int<'ctx> {
-        let name = format!("{}_{}", prefix, self.definition_count);
-        Int::new_const(self.ctx, name.as_str())
-    }
-
-    /// Bump the symbolic-name uniquifier (called once per executed assignment).
-    pub(crate) fn record_definition(&mut self) {
-        self.definition_count += 1;
+        Int::fresh_const(self.ctx, prefix)
     }
 
     /// Get the value of a specific field within an aggregate local.
@@ -525,54 +506,39 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         }
 
         for (_local, value) in self.locals.iter() {
-            if value.invariants.non_null {
-                solver.assert(&value.term._eq(&zero).not());
-            }
-            if let Some(ref prov) = value.provenance {
-                let alloc = self.alloc(prov.alloc_id);
-                let expected = Int::add(self.ctx, &[&alloc.base, &prov.offset]);
-                solver.assert(&value.term._eq(&expected));
-            }
-            if matches!(value.ty.kind(),
-                rustc_middle::ty::TyKind::Uint(_)
-                | rustc_middle::ty::TyKind::Bool
-                | rustc_middle::ty::TyKind::Char
-            ) {
-                solver.assert(&value.term.ge(&zero));
-            }
-            if matches!(value.ty.kind(), rustc_middle::ty::TyKind::Bool) {
-                let one = Int::from_u64(self.ctx, 1);
-                solver.assert(&value.term.le(&one));
-            }
-            if matches!(value.ty.kind(), rustc_middle::ty::TyKind::Char) {
-                let max = Int::from_u64(self.ctx, 0x10FFFF);
-                solver.assert(&value.term.le(&max));
-            }
+            self.assert_value_constraints(solver, value);
         }
         for value in self.field_values.values() {
-            if value.invariants.non_null {
-                solver.assert(&value.term._eq(&zero).not());
-            }
-            if let Some(ref prov) = value.provenance {
-                let alloc = self.alloc(prov.alloc_id);
-                let expected = Int::add(self.ctx, &[&alloc.base, &prov.offset]);
-                solver.assert(&value.term._eq(&expected));
-            }
-            if matches!(value.ty.kind(),
-                rustc_middle::ty::TyKind::Uint(_)
+            self.assert_value_constraints(solver, value);
+        }
+    }
+
+    /// Assert a single symbolic value's known invariant constraints.
+    fn assert_value_constraints(&self, solver: &z3::Solver<'ctx>, value: &VmValue<'ctx, 'tcx>) {
+        let zero = Int::from_u64(self.ctx, 0);
+        if value.invariants.non_null {
+            solver.assert(&value.term._eq(&zero).not());
+        }
+        if let Some(ref prov) = value.provenance {
+            let alloc = self.alloc(prov.alloc_id);
+            let expected = Int::add(self.ctx, &[&alloc.base, &prov.offset]);
+            solver.assert(&value.term._eq(&expected));
+        }
+        if matches!(
+            value.ty.kind(),
+            rustc_middle::ty::TyKind::Uint(_)
                 | rustc_middle::ty::TyKind::Bool
                 | rustc_middle::ty::TyKind::Char
-            ) {
-                solver.assert(&value.term.ge(&zero));
-            }
-            if matches!(value.ty.kind(), rustc_middle::ty::TyKind::Bool) {
-                let one = Int::from_u64(self.ctx, 1);
-                solver.assert(&value.term.le(&one));
-            }
-            if matches!(value.ty.kind(), rustc_middle::ty::TyKind::Char) {
-                let max = Int::from_u64(self.ctx, 0x10FFFF);
-                solver.assert(&value.term.le(&max));
-            }
+        ) {
+            solver.assert(&value.term.ge(&zero));
+        }
+        if matches!(value.ty.kind(), rustc_middle::ty::TyKind::Bool) {
+            let one = Int::from_u64(self.ctx, 1);
+            solver.assert(&value.term.le(&one));
+        }
+        if matches!(value.ty.kind(), rustc_middle::ty::TyKind::Char) {
+            let max = Int::from_u64(self.ctx, 0x10FFFF);
+            solver.assert(&value.term.le(&max));
         }
     }
 }
@@ -583,7 +549,6 @@ impl std::fmt::Debug for VmState<'_, '_> {
             .field("locals_count", &self.locals.len())
             .field("allocations_count", &self.allocations.len())
             .field("path_conditions", &self.path_conditions.len())
-            .field("definitions", &self.definition_count)
             .field("notes", &self.notes)
             .finish()
     }
@@ -701,7 +666,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         for proj in place.projection.iter() {
             match proj.kind() {
                 ProjectionElem::Deref => {
-                    let _ = &base.provenance; // prov reference not yet used for value_of_place
                     base.ty = place.ty(self.body, self.tcx).ty;
                 }
                 ProjectionElem::Field(_field_idx, _) => {

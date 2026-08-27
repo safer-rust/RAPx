@@ -1129,8 +1129,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             self.record_indexed_store_for_vm(place, &value);
         }
 
-        self.record_definition();
-
         if place.projection.is_empty() {
             let mut value = value;
             value.invariants.init = true;
