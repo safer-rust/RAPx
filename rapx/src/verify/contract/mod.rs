@@ -23,7 +23,7 @@
 pub(crate) mod json;
 pub(crate) mod attr;
 pub mod builder;
-pub mod def;
+pub mod compound;
 pub mod pest_conv;
 pub mod pest_grammar;
 pub(crate) mod place;

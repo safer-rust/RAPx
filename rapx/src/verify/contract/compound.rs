@@ -1,18 +1,20 @@
-//! User-defined contract `def` layer.
+//! User-defined compound-contract layer.
 //!
 //! Users (downloading a prebuilt `rapx` binary) can define *new* named safety
-//! contracts as boolean combinations of the 21 primitive safety properties, and
+//! contracts as boolean combinations of the primitive safety properties, and
 //! reference them from `#[rapx::requires(MyTag(...))]` — without recompiling
 //! `rapx`.
 //!
-//! A `def` is a DNF macro over primitive property calls:
+//! A compound property is a DNF macro over primitive property calls:
 //!
 //! ```text
-//! def MySafeRead(p: Target, T: Ty, n: Expr) =
-//!     NonNull(p) && Align(p, T) && Allocated(p, T, n);
+//! MySafeRead(p: Ptr, T: Ty, n: Expr) {
+//!     NonNull(p) && Align(p, T) && Allocated(p, T, n)
+//! }
 //!
-//! def StrOrBytes(s: Target, T: Ty, n: Expr) =
-//!     ValidCStr(s, n) || (Allocated(s, T, n) && Init(s, T, n));
+//! StrOrBytes(s: Ptr, T: Ty, n: Expr) {
+//!     ValidCStr(s, n) || (Allocated(s, T, n) && Init(s, T, n))
+//! }
 //! ```
 //!
 //! The DSL only *composes* existing primitives; it cannot invent new primitive
@@ -32,48 +34,48 @@ use syn::Expr;
 use super::pest_grammar::{ContractParser, Rule};
 use super::types::{Property, PropertyKind};
 
-/// A single argument in a `def` body: a reference to a formal parameter, or a
+/// A single argument in a compound body: a reference to a formal parameter, or a
 /// literal (kept as source text, re-parsed as `syn::Expr` at expansion time).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DefArg {
+pub enum CompoundArg {
     Param(usize),
     Lit(String),
 }
 
-/// The body of a `def`, structured as DNF (Or of And of calls).
+/// The body of a compound property, structured as DNF (Or of And of calls).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DefBody {
-    And(Vec<DefBody>),
-    Or(Vec<DefBody>),
-    Call { tag: String, args: Vec<DefArg> },
+pub enum CompoundBody {
+    And(Vec<CompoundBody>),
+    Or(Vec<CompoundBody>),
+    Call { tag: String, args: Vec<CompoundArg> },
 }
 
-/// A parsed `def` declaration.
+/// A parsed compound-property declaration.
 #[derive(Debug, Clone)]
-pub struct DefSpec {
+pub struct CompoundSpec {
     pub name: String,
     pub params: Vec<String>,
     pub param_tys: Vec<String>,
-    pub body: DefBody,
+    pub body: CompoundBody,
     pub doc: Vec<String>,
 }
 
 /// Parse a source fragment containing block-shaped contract definitions
-/// (`Name(params) { body }`) into a list of `DefSpec`s.
+/// (`Name(params) { body }`) into a list of `CompoundSpec`s.
 ///
 /// This is the format produced by the `pred!` macro and used by the bundled
-/// `assets/*-contracts.rs` files:
+/// `assets/*-compound-properties.rs` files:
 ///
 /// ```text
 /// MySafeRead(p: Ptr, T: Ty, n: Expr) { NonNull(p) && Align(p, T) && Allocated(p, T, n) }
 /// ```
 ///
-/// Each def may be preceded by `///` doc lines (shown as the human-readable
+/// Each compound may be preceded by `///` doc lines (shown as the human-readable
 /// meaning in reports); `//` comments and blank lines are skipped.  The body
 /// supports `&&` (conjunction) and `||` (disjunction) of `Tag(arg, ...)` calls,
 /// plus `( ... )` grouping for a conjunction used as a single disjunct.
-pub fn parse_defs(source: &str) -> Vec<DefSpec> {
-    let mut defs = Vec::new();
+pub fn parse_compounds(source: &str) -> Vec<CompoundSpec> {
+    let mut compounds = Vec::new();
     let mut doc: Vec<String> = Vec::new();
 
     let mut s = source.trim_start();
@@ -95,19 +97,21 @@ pub fn parse_defs(source: &str) -> Vec<DefSpec> {
             break;
         }
 
-        let (Some(mut def), consumed) = parse_one_def_block(s) else {
+        let (Some(mut compound), consumed) = parse_one_compound_block(s) else {
+            let preview: String = s.chars().take(80).collect();
+            rap_error!("failed to parse contract compound near: {preview}");
             break;
         };
-        def.doc = std::mem::take(&mut doc);
-        defs.push(def);
+        compound.doc = std::mem::take(&mut doc);
+        compounds.push(compound);
         s = s[consumed..].trim_start();
     }
 
-    defs
+    compounds
 }
 
 /// Parse a single leading `Name(p: Ptr, T: Ty, ...) { body }` block from `s`.
-/// Returns the `DefSpec` (without doc) and the number of bytes consumed through
+/// Returns the `CompoundSpec` (without doc) and the number of bytes consumed through
 /// the closing `}`.
 ///
 /// The block is emitted by the `pred!` proc-macro as a single line of
@@ -115,7 +119,7 @@ pub fn parse_defs(source: &str) -> Vec<DefSpec> {
 /// `Ty`, `Expr`, `Ident`) are split on `:` and `,` after trimming whitespace.
 /// The braces delimit the body, so nested `==`/`<=` inside a `ValidNum`
 /// predicate cannot be confused with a definition separator.
-fn parse_one_def_block(s: &str) -> (Option<DefSpec>, usize) {
+fn parse_one_compound_block(s: &str) -> (Option<CompoundSpec>, usize) {
     let Some(open) = s.find('(') else {
         return (None, 0);
     };
@@ -163,18 +167,18 @@ fn parse_one_def_block(s: &str) -> (Option<DefSpec>, usize) {
     let body = s[body_start..j].trim();
 
     let (params, param_tys) = parse_equation_params(params_str);
-    let Some(body_ast) = parse_body(body, &params) else {
+    let Some(body_ast) = parse_compound_body(body, &params) else {
         return (None, 0);
     };
 
-    let def = DefSpec {
+    let compound = CompoundSpec {
         name,
         params,
         param_tys,
         body: body_ast,
         doc: Vec::new(),
     };
-    (Some(def), j + 1)
+    (Some(compound), j + 1)
 }
 
 fn parse_equation_params(params_str: &str) -> (Vec<String>, Vec<String>) {
@@ -212,7 +216,7 @@ fn render_expr_src(e: &Expr) -> String {
 }
 
 /// Resolve a call-site argument expression to its display form, following the
-/// def parameter's declared role so internal placeholders (e.g. `Arg_0` from a
+/// compound parameter's declared role so internal placeholders (e.g. `Arg_0` from a
 /// JSON contract) render as the actual parameter name.
 fn resolve_arg_string<'tcx>(
     tcx: rustc_middle::ty::TyCtxt<'tcx>,
@@ -223,7 +227,7 @@ fn resolve_arg_string<'tcx>(
     match param_ty {
         "Ptr" => super::resolve::parse_target_arg(tcx, def_id, expr)
             .display_for_report(tcx, None, Some(def_id)),
-        "Ty" => super::resolve::parse_type(tcx, def_id, expr, "def")
+        "Ty" => super::resolve::parse_type(tcx, def_id, expr, "compound")
             .map(|ty| ty.to_string())
             .unwrap_or_else(|| render_expr_src(expr)),
         "Expr" => {
@@ -235,52 +239,52 @@ fn resolve_arg_string<'tcx>(
 }
 
 /// Parse the body into a DNF tree.  `||` binds looser than `&&`.
-fn parse_body(body: &str, params: &[String]) -> Option<DefBody> {
+fn parse_compound_body(body: &str, params: &[String]) -> Option<CompoundBody> {
     let mut pairs = ContractParser::parse(Rule::def_body, body).ok()?;
     let def_body = pairs.next()?;
     let or_expr = def_body.into_inner().next()?;
-    Some(conv_def_or(or_expr, params))
+    Some(conv_compound_or(or_expr, params))
 }
 
-fn conv_def_or(pair: Pair<Rule>, params: &[String]) -> DefBody {
-    let parts: Vec<DefBody> = pair.into_inner().map(|p| conv_def_and(p, params)).collect();
+fn conv_compound_or(pair: Pair<Rule>, params: &[String]) -> CompoundBody {
+    let parts: Vec<CompoundBody> = pair.into_inner().map(|p| conv_compound_and(p, params)).collect();
     if parts.len() == 1 {
         parts.into_iter().next().unwrap()
     } else {
-        DefBody::Or(parts)
+        CompoundBody::Or(parts)
     }
 }
 
-fn conv_def_and(pair: Pair<Rule>, params: &[String]) -> DefBody {
-    let parts: Vec<DefBody> = pair.into_inner().map(|p| conv_def_leaf(p, params)).collect();
+fn conv_compound_and(pair: Pair<Rule>, params: &[String]) -> CompoundBody {
+    let parts: Vec<CompoundBody> = pair.into_inner().map(|p| conv_compound_leaf(p, params)).collect();
     if parts.len() == 1 {
         parts.into_iter().next().unwrap()
     } else {
-        DefBody::And(parts)
+        CompoundBody::And(parts)
     }
 }
 
-fn conv_def_leaf(pair: Pair<Rule>, params: &[String]) -> DefBody {
+fn conv_compound_leaf(pair: Pair<Rule>, params: &[String]) -> CompoundBody {
     match pair.into_inner().next() {
         Some(inner) => match inner.as_rule() {
-            Rule::tag_call => conv_def_call(inner, params),
-            Rule::or_expr => conv_def_or(inner, params),
-            _ => DefBody::Call {
+            Rule::tag_call => conv_compound_call(inner, params),
+            Rule::or_expr => conv_compound_or(inner, params),
+            _ => CompoundBody::Call {
                 tag: String::new(),
                 args: Vec::new(),
             },
         },
-        None => DefBody::Call {
+        None => CompoundBody::Call {
             tag: String::new(),
             args: Vec::new(),
         },
     }
 }
 
-fn conv_def_call(pair: Pair<Rule>, params: &[String]) -> DefBody {
+fn conv_compound_call(pair: Pair<Rule>, params: &[String]) -> CompoundBody {
     let mut inner = pair.into_inner();
     let Some(tag) = inner.next() else {
-        return DefBody::Call {
+        return CompoundBody::Call {
             tag: String::new(),
             args: Vec::new(),
         };
@@ -292,17 +296,17 @@ fn conv_def_call(pair: Pair<Rule>, params: &[String]) -> DefBody {
             .map(|arg| {
                 let text = arg.as_str().trim().to_string();
                 match params.iter().position(|n| n == &text) {
-                    Some(i) => DefArg::Param(i),
-                    None => DefArg::Lit(text),
+                    Some(i) => CompoundArg::Param(i),
+                    None => CompoundArg::Lit(text),
                 }
             })
             .collect(),
         None => Vec::new(),
     };
-    DefBody::Call { tag, args }
+    CompoundBody::Call { tag, args }
 }
 
-/// Substitute def formal parameters with the concrete call-site arguments inside
+/// Substitute compound formal parameters with the concrete call-site arguments inside
 /// a literal expression (e.g. turn `size_of(T) * n` into `size_of(u32) * len`,
 /// or `p.unwrap_some()` into `head.unwrap_some()`).
 ///
@@ -325,7 +329,7 @@ impl VisitMut for Subst<'_> {
                 if let Some(i) = self.params.iter().position(|n| *n == ident) {
                     if let Some(arg) = self.args.get(i) {
                         // The substituted argument comes from the call site and
-                        // never refers to this def's formals, so stop recursing.
+                        // never refers to this compound's formals, so stop recursing.
                         *node = arg.clone();
                         return;
                     }
@@ -336,8 +340,8 @@ impl VisitMut for Subst<'_> {
     }
 }
 
-/// Whether a def parameter annotation matches a primitive argument role.
-fn def_ty_matches_arg_kind(def_ty: &str, kind: super::spec::ArgKind) -> bool {
+/// Whether a compound parameter annotation matches a primitive argument role.
+fn compound_param_ty_matches_arg_kind(def_ty: &str, kind: super::spec::ArgKind) -> bool {
     use super::spec::ArgKind;
     match (def_ty, kind) {
         ("Ptr", ArgKind::Target) => true,
@@ -348,52 +352,52 @@ fn def_ty_matches_arg_kind(def_ty: &str, kind: super::spec::ArgKind) -> bool {
     }
 }
 
-/// Expand a `DefBody` into the property list it denotes.
+/// Expand a `CompoundBody` into the property list it denotes.
 ///
 /// `and` produces multiple `Property` values (the caller's `requires` list is
 /// already a conjunction); `or` produces a single `Property::Or` property
 /// whose `groups` encode the DNF groups.
-fn expand_body<'tcx>(
+fn expand_compound_body<'tcx>(
     tcx: rustc_middle::ty::TyCtxt<'tcx>,
     def_id: rustc_hir::def_id::DefId,
-    body: &DefBody,
+    body: &CompoundBody,
     exprs: &[Expr],
     params: &[String],
     param_tys: &[String],
 ) -> Vec<Property<'tcx>> {
     match body {
-        DefBody::And(parts) => parts
+        CompoundBody::And(parts) => parts
             .iter()
-            .flat_map(|p| expand_body(tcx, def_id, p, exprs, params, param_tys))
+            .flat_map(|p| expand_compound_body(tcx, def_id, p, exprs, params, param_tys))
             .collect(),
-        DefBody::Or(parts) => {
+        CompoundBody::Or(parts) => {
             let mut disjuncts: Vec<Property<'tcx>> = Vec::new();
             for part in parts {
-                let conjuncts = expand_body(tcx, def_id, part, exprs, params, param_tys);
+                let conjuncts = expand_compound_body(tcx, def_id, part, exprs, params, param_tys);
                 if !conjuncts.is_empty() {
                     disjuncts.push(Property::conjunction(conjuncts));
                 }
             }
             vec![Property::new_or(disjuncts)]
         }
-        DefBody::Call { tag, args } => {
-            // Validate the def's parameter annotations against the primitive's
+        CompoundBody::Call { tag, args } => {
+            // Validate the compound's parameter annotations against the primitive's
             // declared argument roles (e.g. a `Ptr` param used in a `Ty` slot).
             if let Some(spec) = super::spec::find_spec(tag) {
                 match spec.build {
                     // Variadic target list (Alias/Alive): every param must be Ptr.
                     super::spec::BuildKind::Targets => {
                         for (pos, a) in args.iter().enumerate() {
-                            if let DefArg::Param(i) = a
+                            if let CompoundArg::Param(i) = a
                                 && let Some(def_ty) = param_tys.get(*i)
-                                && !def_ty_matches_arg_kind(
+                                && !compound_param_ty_matches_arg_kind(
                                     def_ty,
                                     super::spec::ArgKind::Target,
                                 )
                             {
                                 let pname = params.get(*i).map(String::as_str).unwrap_or("?");
                                 rap_warn!(
-                                    "contract def type mismatch: `{tag}` arg {pos} expects \
+                                    "contract compound type mismatch: `{tag}` arg {pos} expects \
                                      {:?}, but param `{pname}` is annotated `{def_ty}`",
                                     super::spec::ArgKind::Target
                                 );
@@ -407,14 +411,14 @@ fn expand_body<'tcx>(
                     _ => {
                         if let Some(form) = spec.forms.iter().find(|f| f.len() == args.len()) {
                             for (pos, a) in args.iter().enumerate() {
-                                if let DefArg::Param(i) = a
+                                if let CompoundArg::Param(i) = a
                                     && let (Some(def_ty), Some(&arg_kind)) =
                                         (param_tys.get(*i), form.get(pos))
-                                    && !def_ty_matches_arg_kind(def_ty, arg_kind)
+                                    && !compound_param_ty_matches_arg_kind(def_ty, arg_kind)
                                 {
                                     let pname = params.get(*i).map(String::as_str).unwrap_or("?");
                                     rap_warn!(
-                                        "contract def type mismatch: `{tag}` arg {pos} expects \
+                                        "contract compound type mismatch: `{tag}` arg {pos} expects \
                                          {:?}, but param `{pname}` is annotated `{def_ty}`",
                                         arg_kind
                                     );
@@ -428,13 +432,13 @@ fn expand_body<'tcx>(
             let mut resolved: Vec<Expr> = Vec::with_capacity(args.len());
             for a in args {
                 match a {
-                    DefArg::Param(i) => {
+                    CompoundArg::Param(i) => {
                         let Some(e) = exprs.get(*i) else {
                             return vec![unknown_property()];
                         };
                         resolved.push(e.clone());
                     }
-                    DefArg::Lit(s) => {
+                    CompoundArg::Lit(s) => {
                         let Ok(mut e) = syn::parse_str::<Expr>(s) else {
                             return vec![unknown_property()];
                         };
@@ -443,7 +447,7 @@ fn expand_body<'tcx>(
                     }
                 }
             }
-            // Recurse through the normal property parser so nested defs and
+            // Recurse through the normal property parser so nested compounds and
             // primitives are handled uniformly.
             Property::parse_list(tcx, def_id, tag, &resolved)
         }
@@ -456,84 +460,90 @@ fn unknown_property<'tcx>() -> Property<'tcx> {
 
 // ── Registry ───────────────────────────────────────────────────
 
-/// Builtin defs shipped with `rapx`: the standard compound safety properties
-/// (`std-contracts.rs`) plus user extensions (`user-contracts.rs`).  Immutable
-/// and shared across every crate.
-fn builtin_defs_map() -> &'static HashMap<String, DefSpec> {
-    static BUILTIN: OnceLock<HashMap<String, DefSpec>> = OnceLock::new();
-    BUILTIN.get_or_init(builtin_defs)
+/// Builtin compounds shipped with `rapx`: the standard compound safety properties
+/// (`std-compound-properties.rs`) plus user extensions
+/// (`user-compound-properties.rs`).  Immutable and shared across every crate.
+fn builtin_compounds_map() -> &'static HashMap<String, CompoundSpec> {
+    static BUILTIN: OnceLock<HashMap<String, CompoundSpec>> = OnceLock::new();
+    BUILTIN.get_or_init(builtin_compounds)
 }
 
-/// Per-crate user defs, registered from `#[rapx::def_contract]` attributes.
+/// Per-crate user compounds, registered from `#[rapx::def_property]` attributes.
 ///
-/// Keyed by `CrateNum` so that defs defined in one crate cannot leak into (or
+/// Keyed by `CrateNum` so that compounds defined in one crate cannot leak into (or
 /// collide with) another crate analyzed in the same process.  A crate's own
-/// defs shadow builtin defs of the same name.
-fn user_defs_map() -> &'static RwLock<HashMap<CrateNum, HashMap<String, DefSpec>>> {
-    static USER: OnceLock<RwLock<HashMap<CrateNum, HashMap<String, DefSpec>>>> = OnceLock::new();
+/// compounds shadow builtin compounds of the same name.
+fn user_compounds_map() -> &'static RwLock<HashMap<CrateNum, HashMap<String, CompoundSpec>>> {
+    static USER: OnceLock<RwLock<HashMap<CrateNum, HashMap<String, CompoundSpec>>>> = OnceLock::new();
     USER.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
-/// Builtin defs shipped with `rapx`: the standard compound safety properties
-/// (`std-contracts.rs`) plus user extensions (`user-contracts.rs`).
-fn builtin_defs() -> HashMap<String, DefSpec> {
+/// Builtin compounds shipped with `rapx`: the standard compound safety properties
+/// (`std-compound-properties.rs`) plus user extensions
+/// (`user-compound-properties.rs`).
+fn builtin_compounds() -> HashMap<String, CompoundSpec> {
     let mut map = HashMap::new();
-    for def in parse_defs(include_str!("assets/std-contracts.rs")) {
-        map.insert(def.name.clone(), def);
+    for compound in parse_compounds(include_str!("assets/std-compound-properties.rs")) {
+        map.insert(compound.name.clone(), compound);
     }
-    for def in parse_defs(include_str!("assets/user-contracts.rs")) {
-        map.insert(def.name.clone(), def);
+    for compound in parse_compounds(include_str!("assets/user-compound-properties.rs")) {
+        map.insert(compound.name.clone(), compound);
     }
     map
 }
 
-/// Look up a `def` by name, in the given crate's namespace first, then the
-/// builtin namespace.
-pub fn find_def(krate: CrateNum, name: &str) -> Option<DefSpec> {
-    if let Some(d) = user_defs_map()
+/// Look up a compound property by name, in the given crate's namespace first,
+/// then the builtin namespace.
+pub fn find_compound(krate: CrateNum, name: &str) -> Option<CompoundSpec> {
+    if let Some(d) = user_compounds_map()
         .read()
         .ok()
         .and_then(|t| t.get(&krate).and_then(|m| m.get(name).cloned()))
     {
         return Some(d);
     }
-    builtin_defs_map().get(name).cloned()
+    builtin_compounds_map().get(name).cloned()
 }
 
-/// Expand a named def against concrete argument expressions.
-pub fn expand_def<'tcx>(
+/// Expand a named compound against concrete argument expressions.
+pub fn expand_compound<'tcx>(
     tcx: rustc_middle::ty::TyCtxt<'tcx>,
     def_id: rustc_hir::def_id::DefId,
     name: &str,
     exprs: &[Expr],
 ) -> Option<Vec<Property<'tcx>>> {
-    let def = find_def(def_id.krate, name)?;
-    if def.params.len() != exprs.len() {
+    let compound = find_compound(def_id.krate, name)?;
+    if compound.params.len() != exprs.len() {
+        rap_warn!(
+            "contract compound `{name}` expects {} argument(s), got {}",
+            compound.params.len(),
+            exprs.len()
+        );
         return None;
     }
-    // Guard against self-referential defs (direct or mutual) before recursing;
-    // otherwise `expand_body` → `Property::parse_list` → `expand_def` would
+    // Guard against self-referential compounds (direct or mutual) before recursing;
+    // otherwise `expand_compound_body` → `Property::parse_list` → `expand_compound` would
     // recurse forever and overflow the stack.
-    if let Some(cycle) = find_def_cycle(def_id.krate, name) {
-        rap_error!("contract def cycle detected: {}", cycle.join(" -> "));
+    if let Some(cycle) = find_compound_cycle(def_id.krate, name) {
+        rap_error!("contract compound cycle detected: {}", cycle.join(" -> "));
         return None;
     }
-    let mut props = expand_body(tcx, def_id, &def.body, exprs, &def.params, &def.param_tys);
-    // Tag expanded properties with the def name, its full call-site arguments,
+    let mut props = expand_compound_body(tcx, def_id, &compound.body, exprs, &compound.params, &compound.param_tys);
+    // Tag expanded properties with the compound name, its full call-site arguments,
     // and its doc-derived meaning so reports can show the compound as a single
     // entry instead of the underlying primitives.
     let arg_strings: Vec<String> = exprs
         .iter()
         .enumerate()
         .map(|(i, e)| {
-            let param_ty = def.param_tys.get(i).map(|s| s.as_str()).unwrap_or("");
+            let param_ty = compound.param_tys.get(i).map(|s| s.as_str()).unwrap_or("");
             resolve_arg_string(tcx, def_id, param_ty, e)
         })
         .collect();
-    let meaning = if def.doc.is_empty() {
+    let meaning = if compound.doc.is_empty() {
         None
     } else {
-        Some(def.doc.join(" "))
+        Some(compound.doc.join(" "))
     };
     for p in &mut props {
         p.set_origin(name.to_string(), arg_strings.clone(), meaning.clone());
@@ -542,27 +552,27 @@ pub fn expand_def<'tcx>(
 }
 
 /// Return a cycle path (e.g. `["A", "B", "A"]`) if expanding `start` can reach
-/// itself again through def-to-def references, `None` otherwise.
+/// itself again through compound-to-compound references, `None` otherwise.
 ///
-/// Only edges that resolve to another registered def are followed; calls to
+/// Only edges that resolve to another registered compound are followed; calls to
 /// primitives (`Allocated`, `Align`, ...) terminate the walk.  The crate's own
-/// defs are overlaid on the builtin namespace.
-pub fn find_def_cycle(krate: CrateNum, start: &str) -> Option<Vec<String>> {
-    let mut combined = builtin_defs_map().clone();
-    if let Ok(user) = user_defs_map().read()
+/// compounds are overlaid on the builtin namespace.
+pub fn find_compound_cycle(krate: CrateNum, start: &str) -> Option<Vec<String>> {
+    let mut combined = builtin_compounds_map().clone();
+    if let Ok(user) = user_compounds_map().read()
         && let Some(crate_defs) = user.get(&krate)
     {
-        for (name, def) in crate_defs {
-            combined.insert(name.clone(), def.clone());
+        for (name, compound) in crate_defs {
+            combined.insert(name.clone(), compound.clone());
         }
     }
     find_cycle_in(start, &combined)
 }
 
-fn find_cycle_in(start: &str, table: &HashMap<String, DefSpec>) -> Option<Vec<String>> {
+fn find_cycle_in(start: &str, table: &HashMap<String, CompoundSpec>) -> Option<Vec<String>> {
     fn dfs(
         name: &str,
-        table: &HashMap<String, DefSpec>,
+        table: &HashMap<String, CompoundSpec>,
         path: &mut Vec<String>,
         done: &mut HashSet<String>,
     ) -> Option<Vec<String>> {
@@ -574,11 +584,11 @@ fn find_cycle_in(start: &str, table: &HashMap<String, DefSpec>) -> Option<Vec<St
         if done.contains(name) {
             return None;
         }
-        let Some(def) = table.get(name) else {
+        let Some(compound) = table.get(name) else {
             return None;
         };
         path.push(name.to_string());
-        for tag in def_refs(&def.body) {
+        for tag in compound_refs(&compound.body) {
             if let Some(cycle) = dfs(&tag, table, path, done) {
                 return Some(cycle);
             }
@@ -593,48 +603,48 @@ fn find_cycle_in(start: &str, table: &HashMap<String, DefSpec>) -> Option<Vec<St
     dfs(start, table, &mut path, &mut done)
 }
 
-/// Collect the tag names referenced by a `DefBody`, in left-to-right order.
-fn def_refs(body: &DefBody) -> Vec<String> {
+/// Collect the tag names referenced by a `CompoundBody`, in left-to-right order.
+fn compound_refs(body: &CompoundBody) -> Vec<String> {
     let mut out = Vec::new();
-    collect_def_refs(body, &mut out);
+    collect_compound_refs(body, &mut out);
     out
 }
 
-fn collect_def_refs(body: &DefBody, out: &mut Vec<String>) {
+fn collect_compound_refs(body: &CompoundBody, out: &mut Vec<String>) {
     match body {
-        DefBody::And(parts) | DefBody::Or(parts) => {
+        CompoundBody::And(parts) | CompoundBody::Or(parts) => {
             for part in parts {
-                collect_def_refs(part, out);
+                collect_compound_refs(part, out);
             }
         }
-        DefBody::Call { tag, .. } => out.push(tag.clone()),
+        CompoundBody::Call { tag, .. } => out.push(tag.clone()),
     }
 }
 
-// ── Registration of user-defined defs ─────────────────────────
+// ── Registration of user-defined compounds ─────────────────────────
 
-/// Parse `def` declarations from `source` and insert them into the given
-/// crate's namespace.  Returns the number of defs registered.
-pub fn register_defs_from_source(krate: CrateNum, source: &str) -> usize {
-    let defs = parse_defs(source);
-    let n = defs.len();
+/// Parse compound-property declarations from `source` and insert them into the
+/// given crate's namespace.  Returns the number of compounds registered.
+pub fn register_compounds_from_source(krate: CrateNum, source: &str) -> usize {
+    let compounds = parse_compounds(source);
+    let n = compounds.len();
     if n == 0 {
         return 0;
     }
-    let mut table = user_defs_map().write().expect("def table poisoned");
+    let mut table = user_compounds_map().write().expect("compound table poisoned");
     let entry = table.entry(krate).or_default();
-    for def in defs {
-        entry.insert(def.name.clone(), def);
+    for compound in compounds {
+        entry.insert(compound.name.clone(), compound);
     }
     n
 }
 
 // ── Procedural-macro contract definitions ─────────────────────
 
-/// Scan the local crate for `#[rapx::def_contract("...")]` tool attributes
+/// Scan the local crate for `#[rapx::def_property("...")]` tool attributes
 /// (emitted by the `rapx_macros::pred` proc-macro) and register each embedded
-/// `def` string.  Returns the number of defs registered.
-pub fn register_contract_defs(tcx: rustc_middle::ty::TyCtxt<'_>) -> usize {
+/// compound-property string.  Returns the number of compounds registered.
+pub fn register_compound_properties(tcx: rustc_middle::ty::TyCtxt<'_>) -> usize {
     struct Visitor<'tcx> {
         tcx: rustc_middle::ty::TyCtxt<'tcx>,
         count: usize,
@@ -644,14 +654,14 @@ pub fn register_contract_defs(tcx: rustc_middle::ty::TyCtxt<'_>) -> usize {
         fn visit_item(&mut self, item: &'tcx rustc_hir::Item<'tcx>) {
             let attrs = self.tcx.hir_attrs(item.hir_id());
             for attr in attrs {
-                if !is_contract_def_attr(attr) {
+                if !is_def_property_attr(attr) {
                     continue;
                 }
                 let attr_str = crate::compat::attribute_to_string(self.tcx, attr);
-                if let Some(def_str) = extract_contract_def_string(&attr_str) {
-                    let n = register_defs_from_source(LOCAL_CRATE, &def_str);
+                if let Some(def_str) = extract_def_property_string(&attr_str) {
+                    let n = register_compounds_from_source(LOCAL_CRATE, &def_str);
                     if n > 0 {
-                        rap_info!("rapx: registered {n} contract def(s) from #[rapx::def_contract]");
+                        rap_info!("rapx: registered {n} contract compound(s) from #[rapx::def_property]");
                     }
                     self.count += n;
                 }
@@ -665,22 +675,22 @@ pub fn register_contract_defs(tcx: rustc_middle::ty::TyCtxt<'_>) -> usize {
     v.count
 }
 
-/// Whether an attribute path is `rapx::def_contract` (or the bare form with the
+/// Whether an attribute path is `rapx::def_property` (or the bare form with the
 /// tool prefix stripped).
-fn is_contract_def_attr(attr: &rustc_hir::Attribute) -> bool {
+fn is_def_property_attr(attr: &rustc_hir::Attribute) -> bool {
     let path = attr.path();
     if path.len() >= 2
         && path[path.len() - 2].as_str() == "rapx"
-        && path[path.len() - 1].as_str() == "def_contract"
+        && path[path.len() - 1].as_str() == "def_property"
     {
         return true;
     }
-    path.len() == 1 && path[0].as_str() == "def_contract"
+    path.len() == 1 && path[0].as_str() == "def_property"
 }
 
-/// Extract the string literal from a `#[rapx::def_contract("def ...")]`
+/// Extract the string literal from a `#[rapx::def_property("compound ...")]`
 /// attribute's textual representation.
-fn extract_contract_def_string(attr_str: &str) -> Option<String> {
+fn extract_def_property_string(attr_str: &str) -> Option<String> {
     struct OneAttr {
         attr: syn::Attribute,
     }

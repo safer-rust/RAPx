@@ -337,7 +337,7 @@ impl<'tcx> Property<'tcx> {
     pub fn parse_list(tcx: TyCtxt<'tcx>, def_id: DefId, name: &str, exprs: &[Expr]) -> Vec<Self> {
         // User-defined / compound `def` macro expansion takes precedence, so
         // `#[rapx::requires(MyTag(...))]` can reference DSL-defined contracts.
-        if let Some(props) = super::def::expand_def(tcx, def_id, name, exprs) {
+        if let Some(props) = super::compound::expand_compound(tcx, def_id, name, exprs) {
             return props;
         }
         let mut props = if name == "any" {

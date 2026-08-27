@@ -1,8 +1,8 @@
 // ============================================================
-// RAPx builtin contract definitions (compound macros)
+// RAPx builtin contract definitions (compound properties)
 //
 // Each compound is defined as a `Name(params) { body }` block whose body is a
-// boolean combination of the 21 primitive safety properties (see
+// boolean combination of the primitive safety properties (see
 // primitive-sp.md §2.2). Users can define new tags with the `pred!` macro in
 // their own crate using the same syntax.
 // ============================================================

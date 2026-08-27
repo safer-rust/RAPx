@@ -615,8 +615,8 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
     /// level. Earlier rounds use fewer loop unrollings; later rounds incrementally
     /// add deeper paths.
     fn run(&mut self) {
-        // Register `pred!`-emitted `#[rapx::def_contract("...")]` definitions.
-        crate::verify::contract::def::register_contract_defs(self.tcx);
+        // Register `pred!`-emitted `#[rapx::def_property("...")]` definitions.
+        crate::verify::contract::compound::register_compound_properties(self.tcx);
 
         let collector = VerifyTargetCollector::collect_all(
             self.tcx,
