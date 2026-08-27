@@ -38,10 +38,6 @@ impl<'tcx> Taint<'tcx> {
     pub fn set(&self) -> &HashSet<TyWithIndex<'tcx>> {
         &self.set
     }
-
-    pub fn set_mut(&mut self) -> &mut HashSet<TyWithIndex<'tcx>> {
-        &mut self.set
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
@@ -111,13 +107,6 @@ impl<'tcx> ContextTypeOwner<'tcx> {
         match self {
             ContextTypeOwner::Owned { .. } => true,
             ContextTypeOwner::Unowned => false,
-        }
-    }
-
-    pub fn get_ty(&self) -> Option<Ty<'tcx>> {
-        match *self {
-            ContextTypeOwner::Owned { ty, .. } => Some(ty),
-            ContextTypeOwner::Unowned => None,
         }
     }
 }

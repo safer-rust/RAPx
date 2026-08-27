@@ -1,4 +1,3 @@
-pub mod inter_visitor;
 pub mod intra_visitor;
 pub mod order;
 pub mod ownership;
@@ -49,16 +48,8 @@ impl Graph {
         }
     }
 
-    pub fn get_edges(&self) -> &Edges {
-        &self.e
-    }
-
     pub fn get_edges_mut(&mut self) -> &mut Edges {
         &mut self.e
-    }
-
-    pub fn get_pre(&self) -> &Edges {
-        &self.pre
     }
 
     pub fn get_pre_mut(&mut self) -> &mut Edges {
@@ -108,7 +99,6 @@ impl<'tcx, 'a> FlowAnalysis<'tcx, 'a> {
         // Note: we will not visit the clean-up blocks (unwinding)
         self.order();
         // this phase will generate the Intra procedural visitor for us to visit the block
-        // note that the inter procedural part is inside in this function but cod in module inter_visitor
         self.intra_run();
     }
 }
@@ -354,14 +344,6 @@ where
         }
     }
 
-    pub fn get_i(&self) -> &Vec<T> {
-        &self.i
-    }
-
-    pub fn get_o(&self) -> &Vec<T> {
-        &self.o
-    }
-
     pub fn get_i_mut(&mut self) -> &mut Vec<T> {
         &mut self.i
     }
@@ -388,10 +370,6 @@ where
         Self {
             pair_graph: vec![InOutPair::new(v_len); b_len],
         }
-    }
-
-    pub fn get_g(&self) -> &Vec<InOutPair<T>> {
-        &self.pair_graph
     }
 
     pub fn get_g_mut(&mut self) -> &mut Vec<InOutPair<T>> {

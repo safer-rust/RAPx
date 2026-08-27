@@ -43,10 +43,6 @@ impl<'tcx> rCanary<'tcx> {
         &self.adt_owner
     }
 
-    pub fn adt_owner_mut(&mut self) -> &mut OHAResultMap {
-        &mut self.adt_owner
-    }
-
     pub fn mir_graph(&self) -> &MirGraph {
         &self.mir_graph
     }

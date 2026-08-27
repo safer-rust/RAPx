@@ -375,22 +375,6 @@ impl<'tcx> Property<'tcx> {
         matches!(self, Property::And(_))
     }
 
-    /// The first `Ty` argument.
-    pub fn ty_arg(&self) -> Option<Ty<'tcx>> {
-        self.args().iter().find_map(|a| match a {
-            PropertyArg::Ty(ty) => Some(*ty),
-            _ => None,
-        })
-    }
-
-    /// The first `Expr` argument, typically a count/length expression.
-    pub fn count_expr(&self) -> Option<&ContractExpr<'tcx>> {
-        self.args().iter().find_map(|a| match a {
-            PropertyArg::Expr(e) => Some(e),
-            _ => None,
-        })
-    }
-
     /// Apply contract kind metadata from a JSON entry or attribute.
     pub fn apply_kind(&mut self, kind: Option<&str>) {
         let target = match self {
