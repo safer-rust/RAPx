@@ -1,7 +1,9 @@
-//! Semantic converter: pest `Pairs<Rule>` → `ContractExpr` / `NumericPredicate`.
+//! Semantic converter: pest `Pairs<Rule>` → `ContractExpr` / `NumericPredicate`
+//! / `CompoundBody`.
 //!
 //! This is the phase-2 counterpart to `pest_grammar.rs`: it turns the parse
-//! tree produced by the pest grammar into the contract AST (`types.rs`).
+//! tree produced by the pest grammar into the contract AST (`types.rs` /
+//! `compound.rs`).
 //!
 //! Places (fields, projections) are bridged through the `place.rs` / `resolve.rs`
 //! helpers via a `syn` round-trip, since resolving a field name to a `Ty` still
@@ -13,6 +15,7 @@ use pest::Parser;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 
+use super::compound::{CompoundArg, CompoundBody};
 use super::pest_grammar::{ContractParser, Rule};
 use super::place::resolve_place_from_ident;
 use super::types::{
@@ -426,4 +429,74 @@ fn conv_base<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, base_text: &str) -> Contrac
             ContractExpr::Place(ContractPlace::local(base, fields))
         }
     }
+}
+
+// ── Compound-body conversion (`pred!` / `def_body`) ─────────────────────────
+
+/// Parse a compound-property body into a DNF tree.  `||` binds looser than `&&`.
+pub fn parse_compound_body(body: &str, params: &[String]) -> Option<CompoundBody> {
+    let mut pairs = ContractParser::parse(Rule::def_body, body).ok()?;
+    let def_body = pairs.next()?;
+    let or_expr = def_body.into_inner().next()?;
+    Some(conv_compound_or(or_expr, params))
+}
+
+fn conv_compound_or(pair: Pair<Rule>, params: &[String]) -> CompoundBody {
+    let parts: Vec<CompoundBody> = pair.into_inner().map(|p| conv_compound_and(p, params)).collect();
+    if parts.len() == 1 {
+        parts.into_iter().next().unwrap()
+    } else {
+        CompoundBody::Or(parts)
+    }
+}
+
+fn conv_compound_and(pair: Pair<Rule>, params: &[String]) -> CompoundBody {
+    let parts: Vec<CompoundBody> = pair.into_inner().map(|p| conv_compound_leaf(p, params)).collect();
+    if parts.len() == 1 {
+        parts.into_iter().next().unwrap()
+    } else {
+        CompoundBody::And(parts)
+    }
+}
+
+fn conv_compound_leaf(pair: Pair<Rule>, params: &[String]) -> CompoundBody {
+    match pair.into_inner().next() {
+        Some(inner) => match inner.as_rule() {
+            Rule::tag_call => conv_compound_call(inner, params),
+            Rule::or_expr => conv_compound_or(inner, params),
+            _ => CompoundBody::Call {
+                tag: String::new(),
+                args: Vec::new(),
+            },
+        },
+        None => CompoundBody::Call {
+            tag: String::new(),
+            args: Vec::new(),
+        },
+    }
+}
+
+fn conv_compound_call(pair: Pair<Rule>, params: &[String]) -> CompoundBody {
+    let mut inner = pair.into_inner();
+    let Some(tag) = inner.next() else {
+        return CompoundBody::Call {
+            tag: String::new(),
+            args: Vec::new(),
+        };
+    };
+    let tag = tag.as_str().to_string();
+    let args = match inner.next() {
+        Some(arg_list) => arg_list
+            .into_inner()
+            .map(|arg| {
+                let text = arg.as_str().trim().to_string();
+                match params.iter().position(|n| n == &text) {
+                    Some(i) => CompoundArg::Param(i),
+                    None => CompoundArg::Lit(text),
+                }
+            })
+            .collect(),
+        None => Vec::new(),
+    };
+    CompoundBody::Call { tag, args }
 }
