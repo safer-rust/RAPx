@@ -67,9 +67,7 @@ impl<'tcx> Property<'tcx> {
                 )))
             }
             spec::ArgKind::Ident => {
-                let s = access_ident_recursive(expr)
-                    .map(|(name, _)| name)
-                    .unwrap_or_default();
+                let s = access_ident_recursive(expr).map(|(name, _)| name)?;
                 Some(PropertyArg::Ident(s))
             }
         }
@@ -118,14 +116,14 @@ impl<'tcx> Property<'tcx> {
                 };
                 if let Some((ident, _)) = access_ident_recursive(const_expr) {
                     if ident == "sized" || ident == "unsized" {
-                        return Self::new_with_args(
+                        return Self::new_atom(
                             PropertyKind::Size,
                             vec![PropertyArg::Ty(ty), PropertyArg::Ident(ident)],
                         );
                     }
                 }
                 let c = super::resolve::expr_to_pest(tcx, def_id, const_expr);
-                Self::new_with_args(
+                Self::new_atom(
                     PropertyKind::Size,
                     vec![PropertyArg::Ty(ty), PropertyArg::Expr(c)],
                 )
@@ -142,7 +140,7 @@ impl<'tcx> Property<'tcx> {
 
     fn build_allocated(tcx: TyCtxt<'tcx>, def_id: DefId, exprs: &[Expr]) -> Self {
         match exprs {
-            [target] => Self::new_with_args(
+            [target] => Self::new_atom(
                 PropertyKind::Allocated,
                 vec![super::resolve::parse_target_arg(tcx, def_id, target)],
             ),
@@ -152,7 +150,7 @@ impl<'tcx> Property<'tcx> {
                     return Self::new_simple(PropertyKind::Unknown);
                 };
                 let length = super::resolve::expr_to_pest(tcx, def_id, len_expr);
-                Self::new_with_args(
+                Self::new_atom(
                     PropertyKind::Allocated,
                     vec![target, PropertyArg::Ty(ty), PropertyArg::Expr(length)],
                 )
@@ -166,7 +164,7 @@ impl<'tcx> Property<'tcx> {
                 let allocator = access_ident_recursive(allocator_expr)
                     .map(|(name, _)| name)
                     .unwrap_or_else(|| "global".to_string());
-                Self::new_with_args(
+                Self::new_atom(
                     PropertyKind::Allocated,
                     vec![
                         target,
@@ -191,7 +189,7 @@ impl<'tcx> Property<'tcx> {
             [expr] => {
                 let expr = super::resolve::expr_to_pest(tcx, def_id, expr);
                 if matches!(expr, ContractExpr::IndexAccess { .. }) {
-                    Self::new_with_args(PropertyKind::InBound, vec![PropertyArg::Expr(expr)])
+                    Self::new_atom(PropertyKind::InBound, vec![PropertyArg::Expr(expr)])
                 } else {
                     Self::new_simple(PropertyKind::Unknown)
                 }
@@ -202,7 +200,7 @@ impl<'tcx> Property<'tcx> {
                     return Self::new_simple(PropertyKind::Unknown);
                 };
                 let length = super::resolve::expr_to_pest(tcx, def_id, len_expr);
-                Self::new_with_args(
+                Self::new_atom(
                     PropertyKind::InBound,
                     vec![target, PropertyArg::Ty(ty), PropertyArg::Expr(length)],
                 )
@@ -228,7 +226,10 @@ impl<'tcx> Property<'tcx> {
                 prop
             }
             _ => {
-                Self::check_arg_length(exprs.len(), 3, "InBound");
+                rap_error!(
+                    "Wrong args length for InBound Tag! expected 1, 2 or 3, got {}",
+                    exprs.len()
+                );
                 Self::new_simple(PropertyKind::Unknown)
             }
         }
@@ -238,7 +239,7 @@ impl<'tcx> Property<'tcx> {
         match exprs {
             [indices] => {
                 let target = super::resolve::parse_target_arg(tcx, def_id, indices);
-                Self::new_with_args(PropertyKind::NonOverlap, vec![target])
+                Self::new_atom(PropertyKind::NonOverlap, vec![target])
             }
             [a, b, ty_expr, count_expr] => {
                 let Some(ty) = super::resolve::parse_type(tcx, def_id, ty_expr, "NonOverlap")
@@ -248,7 +249,7 @@ impl<'tcx> Property<'tcx> {
                 let left = super::resolve::parse_target_arg(tcx, def_id, a);
                 let right = super::resolve::parse_target_arg(tcx, def_id, b);
                 let count = super::resolve::expr_to_pest(tcx, def_id, count_expr);
-                Self::new_with_args(
+                Self::new_atom(
                     PropertyKind::NonOverlap,
                     vec![left, right, PropertyArg::Ty(ty), PropertyArg::Expr(count)],
                 )
@@ -268,7 +269,7 @@ impl<'tcx> Property<'tcx> {
         if predicates.is_empty() {
             Self::new_simple(PropertyKind::Unknown)
         } else {
-            Self::new_with_args(
+            Self::new_atom(
                 PropertyKind::ValidNum,
                 vec![PropertyArg::Predicates(predicates)],
             )
@@ -281,7 +282,11 @@ impl<'tcx> Property<'tcx> {
         def_id: DefId,
         exprs: &[Expr],
     ) -> Self {
-        Self::new_with_targets(spec.kind, tcx, def_id, exprs)
+        let args = exprs
+            .iter()
+            .map(|expr| super::resolve::parse_target_arg(tcx, def_id, expr))
+            .collect();
+        Self::new_atom(spec.kind, args)
     }
 
     fn build_pinned(tcx: TyCtxt<'tcx>, def_id: DefId, exprs: &[Expr]) -> Self {
@@ -291,7 +296,7 @@ impl<'tcx> Property<'tcx> {
                 let Some((lifetime, _)) = access_ident_recursive(lifetime_expr) else {
                     return Self::new_simple(PropertyKind::Unknown);
                 };
-                Self::new_with_args(
+                Self::new_atom(
                     PropertyKind::Pinned,
                     vec![target, PropertyArg::Ident(lifetime)],
                 )
@@ -315,7 +320,7 @@ impl<'tcx> Property<'tcx> {
         let (Some(src_elem), Some(dst_elem)) = (src_elem, dst_elem) else {
             return Self::new_simple(PropertyKind::Unknown);
         };
-        Self::new_with_args(
+        Self::new_atom(
             PropertyKind::SplitTransmute,
             vec![PropertyArg::Ty(src_elem), PropertyArg::Ty(dst_elem)],
         )
@@ -509,60 +514,6 @@ impl<'tcx> Property<'tcx> {
         };
         let name = path.path.get_ident()?.to_string();
         Some((name, call.args.iter().cloned().collect()))
-    }
-
-    fn new_with_args(kind: PropertyKind, args: Vec<PropertyArg<'tcx>>) -> Self {
-        Self::new_atom(kind, args)
-    }
-
-    fn new_with_targets(
-        kind: PropertyKind,
-        tcx: TyCtxt<'tcx>,
-        def_id: DefId,
-        exprs: &[Expr],
-    ) -> Self {
-        let (args, for_each) = Self::parse_target_args_with_for_each(tcx, def_id, exprs);
-        let mut prop = Self::new_atom(kind, args);
-        prop.set_for_each(for_each);
-        prop
-    }
-
-    fn parse_target_args_with_for_each(
-        tcx: TyCtxt<'tcx>,
-        def_id: DefId,
-        exprs: &[Expr],
-    ) -> (Vec<PropertyArg<'tcx>>, Option<ContractPlace<'tcx>>) {
-        let raw_args: Vec<_> = exprs
-            .iter()
-            .map(|expr| super::resolve::parse_target_arg(tcx, def_id, expr))
-            .collect();
-        let mut for_each = None;
-        let mut clean_args = Vec::with_capacity(raw_args.len());
-        for arg in raw_args {
-            let mut clean = arg;
-            if for_each.is_none() {
-                if let Some(container) = super::place::strip_for_each(&mut clean) {
-                    for_each = Some(container);
-                }
-            }
-            clean_args.push(clean);
-        }
-        // Auto-detect array arguments: if no explicit .iter() was used
-        // but an argument is an array type [T; N], automatically set
-        // for_each so the property is checked per-element.
-        if for_each.is_none() {
-            let fn_sig = tcx.fn_sig(def_id).instantiate_identity().skip_binder();
-            for (i, arg_ty) in fn_sig.inputs().iter().enumerate() {
-                if let rustc_middle::ty::TyKind::Array(..) = arg_ty.kind() {
-                    for_each = Some(crate::verify::contract::ContractPlace {
-                        base: PlaceBase::Arg(i),
-                        projections: vec![],
-                    });
-                    break;
-                }
-            }
-        }
-        (clean_args, for_each)
     }
 
     fn check_arg_length(expr_len: usize, required_len: usize, sp: &str) -> bool {
