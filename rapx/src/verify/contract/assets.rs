@@ -59,13 +59,13 @@ pub struct PropertyEntry {
 
 /// One disjunct inside a JSON `any` entry.
 ///
-/// `Single` is one property; `Group` is a conjunction of properties
+/// `Single` is one property; `And` is a conjunction of properties
 /// (all must hold together, forming one OR alternative).
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(untagged)]
 pub enum AnyItem {
     Single(PropertyEntry),
-    Group(Vec<PropertyEntry>),
+    And(Vec<PropertyEntry>),
 }
 
 /// Looks up backup contracts for a standard-library function by its normalized path.

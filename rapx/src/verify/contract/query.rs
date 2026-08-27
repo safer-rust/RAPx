@@ -85,7 +85,7 @@ pub fn entry_to_property<'tcx>(
 ///
 /// Each element of `disjuncts` is an [`AnyItem`]:
 /// - `Single(entry)` → one-property disjunct
-/// - `Group(entries)` → conjunction group (all entries must hold for this disjunct)
+/// - `And(entries)` → conjunction group (all entries must hold for this disjunct)
 fn any_entry_to_property<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
@@ -120,7 +120,7 @@ fn any_entry_to_property<'tcx>(
                     or_disjuncts.push(Property::conjunction(group));
                 }
             }
-            AnyItem::Group(entries) => {
+            AnyItem::And(entries) => {
                 let mut group: Vec<Property<'tcx>> = Vec::new();
                 for entry in entries {
                     if entry.tag == "any" {
