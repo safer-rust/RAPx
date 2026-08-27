@@ -1,7 +1,7 @@
 //! Contract parsing, resolution, and rendering.
 //!
-//! Three front-ends (inline attributes, embedded JSON, and `pred!`-style `def`
-//! macros, plus the pest DSL for expressions) all funnel into
+//! Three front-ends (inline attributes, embedded JSON, and `pred!`-style
+//! compound-property macros, plus the pest DSL for expressions) all funnel into
 //! `Property::parse_list`, producing a single IR defined in [`types`].
 //!
 //! ## Layering
@@ -9,9 +9,9 @@
 //! Contracts go through two stages, each with its own type:
 //!
 //! ```text
-//! #[rapx::requires(...)] text                    std-*.json
-//!    └─ attr.rs ──▶ AttrProperty                  └─ json.rs ──▶ JsonProperty
-//!                      └───────────── builder.rs ─────────────▶ Property   (Atom | Or)
+//! #[rapx::requires(...)] text        std-*.json            pred!(...) / def_property
+//!    └─ attr.rs ──▶ AttrProperty      └─ json.rs ──▶ JsonProperty   └─ compound.rs ──▶ CompoundSpec
+//!                      └────────────────── builder.rs ──────────────────▶ Property   (Atom | Or)
 //! ```
 //!
 //! Within the resolved IR, the naming follows granularity rather than stage:
@@ -27,11 +27,9 @@ pub mod compound;
 pub mod pest_conv;
 pub mod pest_grammar;
 pub(crate) mod place;
-pub mod query;
 pub(crate) mod render;
 pub(crate) mod resolve;
 pub(crate) mod spec;
 pub mod types;
 
-pub use query::*;
 pub use types::*;

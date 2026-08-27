@@ -335,7 +335,7 @@ impl<'tcx> Property<'tcx> {
     /// Plain entries (`Align(p, T)`, `Owning(p)`, ...) yield one property.
     /// The `any(...)` combinator may expand to several: see [`Self::parse_any`].
     pub fn parse_list(tcx: TyCtxt<'tcx>, def_id: DefId, name: &str, exprs: &[Expr]) -> Vec<Self> {
-        // User-defined / compound `def` macro expansion takes precedence, so
+        // User-defined / compound property macro expansion takes precedence, so
         // `#[rapx::requires(MyTag(...))]` can reference DSL-defined contracts.
         if let Some(props) = super::compound::expand_compound(tcx, def_id, name, exprs) {
             return props;
@@ -450,7 +450,7 @@ impl<'tcx> Property<'tcx> {
 
         let mut expanded: Vec<Self> = Vec::new();
         for (inner_name, inner_args) in conjuncts {
-            // Use `parse_list` so a compound `def` conjunct (e.g. `ValidPtr`)
+            // Use `parse_list` so a compound property conjunct (e.g. `ValidPtr`)
             // expands to its primitive components, each over the guarded place.
             for property in Self::parse_list(tcx, def_id, inner_name, inner_args) {
                 if !Self::conjuncts_guard_place(&property, &guard_place) {

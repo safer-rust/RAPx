@@ -2,7 +2,7 @@
 //!
 //! `Property` is a DNF form (only `Atom` and `Or`; conjunction is a list), with
 //! a `PropertyKind` vocabulary of ~24 safety tags. All contract front-ends
-//! (attributes, JSON, `def` macros, pest DSL) produce this IR.
+//! (attributes, JSON, compound-property macros, pest DSL) produce this IR.
 
 use rustc_middle::ty::Ty;
 
@@ -214,7 +214,7 @@ pub enum ContractKind {
     Option_,
 }
 
-/// Display metadata for a property expanded from a compound `def`
+/// Display metadata for a property expanded from a compound property
 /// (`pred!`-style macro).  Purely presentational: it lets reports render a
 /// macro-expanded contract as a single `name(args)` entry with its doc-derived
 /// meaning, instead of the underlying primitives it expanded into.
@@ -248,7 +248,7 @@ pub struct AtomProperty<'tcx> {
     /// in `args` is already stripped of the `ForEach` projection
     /// and refers to a single element slot.
     pub for_each: Option<ContractPlace<'tcx>>,
-    /// Display metadata when this property was expanded from a compound `def`.
+    /// Display metadata when this property was expanded from a compound property.
     pub origin: Option<ContractOrigin>,
 }
 
@@ -257,7 +257,7 @@ pub struct AtomProperty<'tcx> {
 pub struct AndProperty<'tcx> {
     pub conjuncts: Vec<Box<Property<'tcx>>>,
     pub contract_kind: ContractKind,
-    /// Display metadata when this property was expanded from a compound `def`.
+    /// Display metadata when this property was expanded from a compound property.
     pub origin: Option<ContractOrigin>,
 }
 
@@ -266,7 +266,7 @@ pub struct AndProperty<'tcx> {
 pub struct OrProperty<'tcx> {
     pub disjuncts: Vec<Box<Property<'tcx>>>,
     pub contract_kind: ContractKind,
-    /// Display metadata when this property was expanded from a compound `def`.
+    /// Display metadata when this property was expanded from a compound property.
     pub origin: Option<ContractOrigin>,
 }
 
@@ -358,7 +358,7 @@ impl<'tcx> Property<'tcx> {
         }
     }
 
-    /// Display metadata when this property was expanded from a compound `def`.
+    /// Display metadata when this property was expanded from a compound property.
     pub fn origin(&self) -> Option<&ContractOrigin> {
         match self {
             Property::Atom(a) => a.origin.as_ref(),
@@ -390,7 +390,7 @@ impl<'tcx> Property<'tcx> {
     }
 
     /// Tag a property (atom, `And`, or `Or`) with the display name, full
-    /// call-site arguments, and meaning of the compound `def` it expanded from.
+    /// call-site arguments, and meaning of the compound property it expanded from.
     pub(crate) fn set_origin(&mut self, name: String, args: Vec<String>, meaning: Option<String>) {
         let origin = ContractOrigin { name, args, meaning };
         match self {

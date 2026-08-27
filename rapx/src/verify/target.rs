@@ -249,7 +249,7 @@ fn resolve_chain_contracts<'tcx>(
 
                 // Try std contracts database.
                 if reqs.is_empty() && is_std_crate_def_id(tcx, sub_def_id) {
-                    reqs = super::contract::query_json_contracts(tcx, sub_def_id);
+                    reqs = super::contract::json::query_json_contracts(tcx, sub_def_id);
                 }
 
                 // If still no contracts, recurse into this callee.
@@ -351,7 +351,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
                 }
 
                 if requires.is_empty() && is_std {
-                    requires = super::contract::query_json_contracts(
+                    requires = super::contract::json::query_json_contracts(
                         self.tcx,
                         callee_def_id,
                     );
@@ -431,7 +431,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
         // unchanged.
         if is_std_crate_def_id(self.tcx, def_id) {
             let json_contracts =
-                super::contract::query_json_contracts(self.tcx, def_id);
+                super::contract::json::query_json_contracts(self.tcx, def_id);
             caller_requires.extend(json_contracts);
         }
 

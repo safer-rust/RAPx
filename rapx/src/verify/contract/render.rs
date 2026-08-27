@@ -230,7 +230,7 @@ impl<'tcx> Property<'tcx> {
         struct_def_id: Option<DefId>,
         fn_def_id: Option<DefId>,
     ) -> String {
-        // Compound `def` (e.g. `Ptr2Ref`, `Deref`, user `pred!`): show
+        // Compound property (e.g. `Ptr2Ref`, `Deref`, user `pred!`): show
         // it as a single `name(args)` entry instead of its underlying primitives.
         if let Some(origin) = self.origin() {
             return format!("{}({})", origin.name, origin.args.join(", "));
