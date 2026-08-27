@@ -22,11 +22,11 @@ use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 use syn::Expr;
 
-use super::assets::{AnyItem, PropertyEntry, get_std_contracts_from_assets};
+use super::json::{AnyItem, JsonProperty, get_std_contracts_from_json};
 
 use super::types::{Property, PropertyKind};
 
-/// Convert a single [`PropertyEntry`] from JSON into the properties it denotes.
+/// Convert a single [`JsonProperty`] from JSON into the properties it denotes.
 ///
 /// Resolves named parameter references (e.g. `"src"` → `"Arg_0"`), normalizes
 /// explicit JSON tokens (`arg:`, `const:`, `ty:`), and delegates to
@@ -35,7 +35,7 @@ use super::types::{Property, PropertyKind};
 pub fn entry_to_property<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
-    entry: &PropertyEntry,
+    entry: &JsonProperty,
     param_names: &[String],
     has_names: bool,
 ) -> Vec<Property<'tcx>> {
@@ -300,13 +300,13 @@ fn is_contract_token_char(ch: char) -> bool {
 
 /// Query contracts for a function from the bundled JSON backup database.
 ///
-/// Uses [`get_std_contracts_from_assets`] for lookup with wildcard fallback,
+/// Uses [`get_std_contracts_from_json`] for lookup with wildcard fallback,
 /// then parses each entry into a [`Property`] via [`entry_to_property`].
 pub fn query_json_contracts<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
 ) -> Vec<Property<'tcx>> {
-    let entries = get_std_contracts_from_assets(tcx, def_id);
+    let entries = get_std_contracts_from_json(tcx, def_id);
     if entries.is_empty() {
         return Vec::new();
     }

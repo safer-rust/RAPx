@@ -9,9 +9,9 @@
 //! Contracts go through two stages, each with its own type:
 //!
 //! ```text
-//! #[rapx::requires(...)] text
-//!    └─ attr.rs ──▶ PropertyCall   raw `tag(args)` call, unevaluated
-//!                      └─ builder.rs ──▶ Property    resolved formula (Atom | Or)
+//! #[rapx::requires(...)] text                    std-*.json
+//!    └─ attr.rs ──▶ AttrProperty                  └─ json.rs ──▶ JsonProperty
+//!                      └───────────── builder.rs ─────────────▶ Property   (Atom | Or)
 //! ```
 //!
 //! Within the resolved IR, the naming follows granularity rather than stage:
@@ -20,7 +20,7 @@
 //! fills `PropertyArg::Expr` (`ContractPlace`, `ContractExpr`,
 //! `ContractProjection`).
 
-pub(crate) mod assets;
+pub(crate) mod json;
 pub(crate) mod attr;
 pub mod builder;
 pub mod def;

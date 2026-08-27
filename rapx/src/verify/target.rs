@@ -1310,7 +1310,7 @@ fn build_type_invariants_from_params<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
 ) -> Vec<Property<'tcx>> {
-    let db = crate::verify::contract::assets::get_std_type_invariants();
+    let db = crate::verify::contract::json::get_std_type_invariants();
     if db.is_empty() {
         return Vec::new();
     }
@@ -1347,7 +1347,7 @@ fn build_type_invariants_from_params<'tcx>(
 fn collect_type_invariants<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
-    db: &std::collections::HashMap<String, crate::verify::contract::assets::TypeInvariantEntry>,
+    db: &std::collections::HashMap<String, crate::verify::contract::json::TypeInvariantEntry>,
     type_path: &str,
     param_name: &str,
     results: &mut Vec<Property<'tcx>>,
@@ -1381,7 +1381,7 @@ fn collect_type_invariants<'tcx>(
 fn instantiate_type_invariant<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
-    entry: &crate::verify::contract::assets::PropertyEntry,
+    entry: &crate::verify::contract::json::JsonProperty,
     param_name: &str,
 ) -> Option<Property<'tcx>> {
     let mut exprs: Vec<syn::Expr> = Vec::new();

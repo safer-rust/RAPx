@@ -17,7 +17,7 @@ use crate::helpers::name::get_cleaned_def_path_name;
 ///
 /// When `tag == "any"` and `any` is present, the entry represents a
 /// disjunction (logical OR) of property groups.  Each element in `any`
-/// is either a single [`PropertyEntry`] (one disjunct) or an array of
+/// is either a single [`JsonProperty`] (one disjunct) or an array of
 /// entries (a conjunction group — all must hold).
 ///
 /// JSON format for `any` (flat OR):
@@ -45,7 +45,7 @@ use crate::helpers::name::get_cleaned_def_path_name;
 /// }
 /// ```
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct PropertyEntry {
+pub struct JsonProperty {
     pub tag: String,
     #[serde(default)]
     pub args: Vec<String>,
@@ -64,8 +64,8 @@ pub struct PropertyEntry {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(untagged)]
 pub enum AnyItem {
-    Single(PropertyEntry),
-    And(Vec<PropertyEntry>),
+    Single(JsonProperty),
+    And(Vec<JsonProperty>),
 }
 
 /// Looks up backup contracts for a standard-library function by its normalized path.
@@ -82,10 +82,10 @@ pub enum AnyItem {
 /// 3. `core::slice::<impl [T]>::*`          (all methods of `[T]`)
 /// 4. `core::slice::*`                      (all functions in slice module)
 /// 5. `core::*`                             (anything in core crate)
-pub fn get_std_contracts_from_assets(tcx: TyCtxt<'_>, def_id: DefId) -> &'static [PropertyEntry] {
+pub fn get_std_contracts_from_json(tcx: TyCtxt<'_>, def_id: DefId) -> &'static [JsonProperty] {
     let lookup_def_id = resolve_trait_method(tcx, def_id);
     let cleaned_path_name = get_cleaned_def_path_name(tcx, lookup_def_id);
-    let db = get_std_contracts_from_json();
+    let db = load_std_contracts_json();
 
     // Exact match first.
     if let Some(entries) = db.get(&cleaned_path_name) {
@@ -138,8 +138,8 @@ fn resolve_trait_method(tcx: TyCtxt<'_>, def_id: DefId) -> DefId {
 }
 
 /// Lazily loads the backup contract database for standard-library APIs.
-fn get_std_contracts_from_json() -> &'static HashMap<String, Vec<PropertyEntry>> {
-    static STD_CONTRACTS: OnceLock<HashMap<String, Vec<PropertyEntry>>> = OnceLock::new();
+fn load_std_contracts_json() -> &'static HashMap<String, Vec<JsonProperty>> {
+    static STD_CONTRACTS: OnceLock<HashMap<String, Vec<JsonProperty>>> = OnceLock::new();
     STD_CONTRACTS.get_or_init(|| {
         serde_json::from_str(include_str!("assets/std-public-contracts.json"))
             .expect("failed to parse verify std contracts backup")
@@ -151,7 +151,7 @@ fn get_std_contracts_from_json() -> &'static HashMap<String, Vec<PropertyEntry>>
 pub struct TypeInvariantEntry {
     #[serde(default)]
     pub comment: Option<String>,
-    pub invariants: Vec<PropertyEntry>,
+    pub invariants: Vec<JsonProperty>,
 }
 
 /// Returns the std-type-invariants database, mapping a type path key
