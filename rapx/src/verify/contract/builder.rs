@@ -370,18 +370,10 @@ impl<'tcx> Property<'tcx> {
     /// ```
     ///
     /// A disjunct is either a single property application `P(...)` or a
-    /// parenthesised conjunction `(P1(...), ..., Pn(...))`.  Two patterns are
-    /// supported:
-    ///
-    /// 1. **Null guard**: exactly two disjuncts, one being `Null(p)` alone,
-    ///    the other a conjunction of properties over the same place `p`.  The
-    ///    disjunction expands to an `Or` whose disjuncts are `Null(p)` and an
-    ///    `And` of the conjuncts.
-    ///
-    /// 2. **General disjunction**: any number (≥ 2) of disjuncts, each
-    ///    standalone or a conjunction group, e.g.
-    ///    `any(Trait(T, Copy), Trait(T, TrivialClone))`.  Produces a single
-    ///    `Property::Or` whose `disjuncts` are atoms or `And` nodes.
+    /// parenthesised conjunction `(P1(...), ..., Pn(...))`.  Any number (≥ 2)
+    /// of disjuncts is accepted; each is expanded into its constituent
+    /// properties, producing a single `Property::Or` whose disjuncts are atoms
+    /// or `And` nodes.
     fn parse_any(tcx: TyCtxt<'tcx>, def_id: DefId, exprs: &[Expr]) -> Vec<Self> {
         if exprs.len() < 2 {
             rap_error!("any(...) requires at least 2 disjuncts, got {}", exprs.len());
@@ -399,19 +391,6 @@ impl<'tcx> Property<'tcx> {
             disjuncts.push(parts);
         }
 
-        // --- null-guard pattern ---
-        let is_null_guard =
-            |disjunct: &[(String, Vec<Expr>)]| disjunct.len() == 1 && disjunct[0].0 == "Null";
-        if disjuncts.len() == 2 {
-            if is_null_guard(&disjuncts[0]) && !is_null_guard(&disjuncts[1]) {
-                return Self::build_null_guard(tcx, def_id, &disjuncts[0], &disjuncts[1]);
-            }
-            if is_null_guard(&disjuncts[1]) && !is_null_guard(&disjuncts[0]) {
-                return Self::build_null_guard(tcx, def_id, &disjuncts[1], &disjuncts[0]);
-            }
-        }
-
-        // --- general disjunction: build a single Or property ---
         let mut or_disjuncts: Vec<Self> = Vec::with_capacity(disjuncts.len());
         for parts in disjuncts {
             let mut conjuncts: Vec<Self> = Vec::new();
@@ -421,77 +400,6 @@ impl<'tcx> Property<'tcx> {
             or_disjuncts.push(Self::conjunction(conjuncts));
         }
         vec![Self::new_or(or_disjuncts)]
-    }
-
-    /// Build the null-guard disjunction: `Null(p) OR (P1 & P2 & ...)`.
-    ///
-    /// Produces an `Or` whose disjuncts are `Null(p)` and an `And` of the
-    /// expanded conjuncts.
-    fn build_null_guard(
-        tcx: TyCtxt<'tcx>,
-        def_id: DefId,
-        guard: &[(String, Vec<Expr>)],
-        conjuncts: &[(String, Vec<Expr>)],
-    ) -> Vec<Self> {
-        let guard_args = &guard[0].1;
-        if guard_args.len() != 1 {
-            rap_error!("Null(...) guard inside any(...) takes exactly one place");
-            return vec![Self::new_simple(PropertyKind::Unknown)];
-        }
-        let Some(guard_place) = super::place::parse_contract_place(tcx, def_id, &guard_args[0]) else {
-            rap_error!("cannot resolve the place guarded by Null(...) inside any(...)");
-            return vec![Self::new_simple(PropertyKind::Unknown)];
-        };
-
-        let null_atom = Self::new_atom(
-            PropertyKind::Null,
-            vec![PropertyArg::Expr(ContractExpr::Place(guard_place.clone()))],
-        );
-
-        let mut expanded: Vec<Self> = Vec::new();
-        for (inner_name, inner_args) in conjuncts {
-            // Use `parse_list` so a compound property conjunct (e.g. `ValidPtr`)
-            // expands to its primitive components, each over the guarded place.
-            for property in Self::parse_list(tcx, def_id, inner_name, inner_args) {
-                if !Self::conjuncts_guard_place(&property, &guard_place) {
-                    rap_error!(
-                        "any(Null(p), ...) requires every conjunct ({inner_name}) to \
-                         constrain the guarded place"
-                    );
-                    return vec![Self::new_simple(PropertyKind::Unknown)];
-                }
-                expanded.push(property);
-            }
-        }
-
-        vec![Self::new_or(vec![null_atom, Self::conjunction(expanded)])]
-    }
-
-    /// Returns true when every place-bearing atom of `property` constrains the
-    /// guarded place.  Used to reject a malformed `any(Null(p), ...)` whose
-    /// conjunct targets a different place than the guard.
-    fn conjuncts_guard_place(
-        property: &Property<'tcx>,
-        guard_place: &ContractPlace<'tcx>,
-    ) -> bool {
-        match property {
-            Property::Or(or) => or
-                .disjuncts
-                .iter()
-                .all(|sub| Self::conjuncts_guard_place(sub, guard_place)),
-            Property::And(and) => and
-                .conjuncts
-                .iter()
-                .all(|sub| Self::conjuncts_guard_place(sub, guard_place)),
-            Property::Atom(atom) => {
-                if let Some(PropertyArg::Expr(ContractExpr::Place(place))) = atom.args.first() {
-                    crate::verify::def_use::PlaceKey::from_contract_place(place)
-                        == crate::verify::def_use::PlaceKey::from_contract_place(guard_place)
-                } else {
-                    true
-                }
-            }
-        }
     }
 
     /// Split one disjunct into its conjunct calls: a `(P1, P2, ...)` tuple, a
