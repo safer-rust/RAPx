@@ -459,7 +459,7 @@ fn method_writes_self_field(tcx: TyCtxt<'_>, method: DefId, field_index: usize) 
         let Some(terminator) = &block.terminator else {
             continue;
         };
-        if terminator_writes_origin(tcx, method, &terminator.kind, &origin, &aliases) {
+        if terminator_writes_origin(tcx, &terminator.kind, &origin, &aliases) {
             return true;
         }
     }
@@ -675,7 +675,7 @@ fn local_hazard_violation_with(
                             hazard_locals.insert(target.local);
                         }
                     }
-                    if let Some(alias) = alias_from_rvalue(tcx, caller, rvalue, &aliases) {
+                    if let Some(alias) = alias_from_rvalue(rvalue, &aliases) {
                         aliases.insert(target.local, alias);
                     }
                     if !hazard_locals.is_empty()
@@ -730,7 +730,7 @@ fn local_hazard_violation_with(
                 continue;
             };
             if origins.iter().any(|origin| {
-                terminator_writes_origin(tcx, caller, &terminator.kind, origin, &aliases)
+                terminator_writes_origin(tcx, &terminator.kind, origin, &aliases)
                     && !is_ownership_transfer_terminator(tcx, &terminator.kind)
             }) && hazard_used_after_block(tcx, caller, block_index, &hazard_locals)
             {
@@ -743,7 +743,6 @@ fn local_hazard_violation_with(
                 && !vec_owners.is_empty()
                 && terminator_invalidates_vec_owner(
                     tcx,
-                    caller,
                     &terminator.kind,
                     &vec_owners,
                     &aliases,
@@ -759,7 +758,7 @@ fn local_hazard_violation_with(
                 && block_index != call_block
                 && !terminator_is_benign_origin_use(tcx, &terminator.kind)
                 && origins.iter().any(|origin| {
-                    terminator_uses_origin(tcx, caller, &terminator.kind, origin, &aliases)
+                    terminator_uses_origin(&terminator.kind, origin, &aliases)
                 })
                 && hazard_used_after_block(tcx, caller, block_index, &hazard_locals)
             {
@@ -784,7 +783,6 @@ fn local_hazard_violation_with(
                                 caller,
                                 &ptr_place,
                                 view_len_place.as_ref().unwrap(),
-                                &origins,
                             );
                             let from_add = is_ptr_from_ptr_add(tcx, caller, &ptr_place);
                             if offset_eq || from_add {
@@ -952,13 +950,11 @@ fn terminator_uses_any_local(
 }
 
 fn alias_from_rvalue<'tcx>(
-    _tcx: TyCtxt<'tcx>,
-    _def_id: DefId,
     rvalue: &Rvalue<'tcx>,
     aliases: &HashMap<Local, PlaceKey>,
 ) -> Option<PlaceKey> {
     let place = crate::helpers::mir_utils::rvalue_source_place(rvalue)?;
-    Some(resolve_mir_place(_tcx, place, aliases))
+    Some(resolve_mir_place(place, aliases))
 }
 
 fn place_is_raw_access_to_any_origin(
@@ -1036,7 +1032,6 @@ fn rvalue_reads_any_origin(
 
 fn terminator_writes_origin<'tcx>(
     tcx: TyCtxt<'tcx>,
-    _caller: DefId,
     terminator: &TerminatorKind<'tcx>,
     origin: &PlaceKey,
     aliases: &HashMap<Local, PlaceKey>,
@@ -1057,7 +1052,7 @@ fn terminator_writes_origin<'tcx>(
     }) else {
         return false;
     };
-    resolve_mir_place(tcx, place, aliases).overlaps(origin)
+    resolve_mir_place(place, aliases).overlaps(origin)
 }
 
 fn is_ownership_transfer_terminator<'tcx>(
@@ -1073,8 +1068,6 @@ fn is_ownership_transfer_terminator<'tcx>(
 }
 
 fn terminator_uses_origin<'tcx>(
-    _tcx: TyCtxt<'tcx>,
-    _caller: DefId,
     terminator: &TerminatorKind<'tcx>,
     origin: &PlaceKey,
     aliases: &HashMap<Local, PlaceKey>,
@@ -1089,7 +1082,7 @@ fn terminator_uses_origin<'tcx>(
         }) else {
             return false;
         };
-        resolve_mir_place(_tcx, place, aliases).overlaps(origin)
+        resolve_mir_place(place, aliases).overlaps(origin)
     })
 }
 
@@ -1104,7 +1097,6 @@ fn terminator_is_benign_origin_use<'tcx>(tcx: TyCtxt<'tcx>, terminator: &Termina
 
 fn terminator_invalidates_vec_owner<'tcx>(
     tcx: TyCtxt<'tcx>,
-    _caller: DefId,
     terminator: &TerminatorKind<'tcx>,
     owners: &[PlaceKey],
     aliases: &HashMap<Local, PlaceKey>,
@@ -1123,7 +1115,7 @@ fn terminator_invalidates_vec_owner<'tcx>(
         }) else {
             return false;
         };
-        let arg = resolve_mir_place(tcx, place, aliases);
+        let arg = resolve_mir_place(place, aliases);
         owners
             .iter()
             .any(|owner| arg.overlaps(owner) || owner.overlaps(&arg))
@@ -1178,7 +1170,7 @@ fn find_as_ptr_receivers(
         let Some(place) = operand_mir_place(&receiver.node) else {
             continue;
         };
-        let resolved = resolve_mir_place(tcx, place, aliases);
+        let resolved = resolve_mir_place(place, aliases);
         if !result.contains(&resolved) {
             result.push(resolved);
         }
@@ -1191,7 +1183,6 @@ fn is_ptr_add_offset_eq(
     caller: DefId,
     ptr_place: &PlaceKey,
     view_len: &PlaceKey,
-    _origins: &[PlaceKey],
 ) -> bool {
     let body = tcx.optimized_mir(caller);
     let origins_map = collect_local_origins(tcx, caller);

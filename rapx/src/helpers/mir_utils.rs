@@ -204,7 +204,7 @@ pub fn rvalue_source_place<'a, 'tcx>(rvalue: &'a Rvalue<'tcx>) -> Option<&'a rus
         | Rvalue::Use(Operand::Move(place), ..)
         | Rvalue::Cast(_, Operand::Copy(place), _)
         | Rvalue::Cast(_, Operand::Move(place), _)
-        |         Rvalue::Ref(_, _, place)
+        | Rvalue::Ref(_, _, place)
         | Rvalue::RawPtr(_, place)
         | Rvalue::CopyForDeref(place) => Some(place),
         _ => None,
@@ -328,7 +328,6 @@ pub fn collect_place_aliases(
 
 /// Resolve a MIR place through alias mapping to get a canonical PlaceKey.
 pub fn resolve_mir_place<'tcx>(
-    _tcx: TyCtxt<'tcx>,
     place: &Place<'tcx>,
     aliases: &HashMap<Local, PlaceKey>,
 ) -> PlaceKey {
@@ -700,8 +699,8 @@ pub fn extract_const_bytes_from_operand<'tcx>(
         _ => return None,
     };
     let ty = constant.const_.ty();
-    let (inner_ty, _is_ref) = match ty.kind() {
-        TyKind::Ref(_, inner, _) => (*inner, true),
+    let inner_ty = match ty.kind() {
+        TyKind::Ref(_, inner, _) => *inner,
         _ => return None,
     };
     // Peel through nested references (e.g. &&[u8])
@@ -710,10 +709,9 @@ pub fn extract_const_bytes_from_operand<'tcx>(
     } else {
         inner_ty
     };
-    let _elem_ty = match inner_ty.kind() {
-        TyKind::Array(elem, _) | TyKind::Slice(elem) => *elem,
-        _ => return None,
-    };
+    if !matches!(inner_ty.kind(), TyKind::Array(..) | TyKind::Slice(..)) {
+        return None;
+    }
 
     // Evaluate the MIR constant to get a ConstValue
     let typing_env = TypingEnv::fully_monomorphized();
@@ -994,6 +992,23 @@ fn scalar_constant(operand: &Operand<'_>) -> Option<u128> {
     constant.const_.try_to_scalar_int().map(|s| s.to_uint(s.size()))
 }
 
+fn is_as_ptr_like(name: &str) -> bool {
+    name.contains("as_ptr") || name.contains("::as_")
+}
+
+fn rvalue_const_bytes<'tcx>(tcx: TyCtxt<'tcx>, rvalue: &Rvalue<'tcx>) -> Option<Vec<u8>> {
+    let constant = match rvalue {
+        Rvalue::Use(Operand::Constant(constant), ..)
+        | Rvalue::Cast(_, Operand::Constant(constant), _) => constant,
+        _ => return None,
+    };
+    let value = constant
+        .const_
+        .eval(tcx, TypingEnv::fully_monomorphized(), DUMMY_SP)
+        .ok()?;
+    const_value_bytes(tcx, value, 0)
+}
+
 pub fn collect_all_const_bytes_worklist<'tcx>(
     tcx: TyCtxt<'tcx>,
     body: &Body<'tcx>,
@@ -1040,19 +1055,7 @@ pub fn collect_all_const_bytes_worklist<'tcx>(
                     }
                 }
 
-                let constant = match rvalue {
-                    Rvalue::Use(Operand::Constant(constant), ..)
-                    | Rvalue::Cast(_, Operand::Constant(constant), _) => constant,
-                    _ => continue,
-                };
-                let Ok(value) = constant.const_.eval(
-                    tcx,
-                    TypingEnv::fully_monomorphized(),
-                    DUMMY_SP,
-                ) else {
-                    continue;
-                };
-                if let Some(bytes) = const_value_bytes(tcx, value, 0) {
+                if let Some(bytes) = rvalue_const_bytes(tcx, rvalue) {
                     results.push(bytes);
                 }
             }
@@ -1069,7 +1072,7 @@ pub fn collect_all_const_bytes_worklist<'tcx>(
                         continue;
                     }
                     let name = call_name(tcx, func);
-                    if name.contains("as_ptr") || name.contains("::as_") {
+                    if is_as_ptr_like(&name) {
                         for arg in args {
                             if let Some(bytes) = const_bytes_from_operand(tcx, body, &arg.node) {
                                 results.push(bytes);
@@ -1102,6 +1105,17 @@ pub fn collect_all_const_bytes_worklist<'tcx>(
         }
     }
 
+    collect_aggregate_const_bytes(tcx, body, &mut results);
+    collect_as_ptr_const_bytes(tcx, body, &mut results);
+
+    results
+}
+
+fn collect_aggregate_const_bytes<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    body: &Body<'tcx>,
+    results: &mut Vec<Vec<u8>>,
+) {
     for data in body.basic_blocks.iter() {
         for statement in &data.statements {
             let StatementKind::Assign(assign) = &statement.kind else {
@@ -1136,14 +1150,20 @@ pub fn collect_all_const_bytes_worklist<'tcx>(
             }
         }
     }
+}
 
+fn collect_as_ptr_const_bytes<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    body: &Body<'tcx>,
+    results: &mut Vec<Vec<u8>>,
+) {
     for data in body.basic_blocks.iter() {
         if let Some(terminator) = &data.terminator {
             if let TerminatorKind::Call { func, args, .. } = &terminator.kind {
                 let name = call_name(tcx, func);
-                if name.contains("as_ptr") || name.contains("::as_") {
+                if is_as_ptr_like(&name) {
                     for arg in args {
-                        if let Some(bytes) = operand_const_bytes(tcx, &arg.node) {
+                        if let Some(bytes) = extract_const_bytes_from_operand(tcx, &arg.node) {
                             results.push(bytes);
                         } else if let Operand::Copy(p) | Operand::Move(p) = &arg.node {
                             if p.projection.is_empty() {
@@ -1157,8 +1177,6 @@ pub fn collect_all_const_bytes_worklist<'tcx>(
             }
         }
     }
-
-    results
 }
 
 fn const_bytes_from_operand<'tcx>(
@@ -1166,7 +1184,7 @@ fn const_bytes_from_operand<'tcx>(
     body: &Body<'tcx>,
     operand: &Operand<'tcx>,
 ) -> Option<Vec<u8>> {
-    if let Some(bytes) = operand_const_bytes(tcx, operand) {
+    if let Some(bytes) = extract_const_bytes_from_operand(tcx, operand) {
         return Some(bytes);
     }
     match operand {
@@ -1192,7 +1210,7 @@ fn const_bytes_from_call_dest<'tcx>(
                     continue;
                 }
                 let name = call_name(tcx, func);
-                if name.contains("as_ptr") || name.contains("::as_") {
+                if is_as_ptr_like(&name) {
                     for arg in args {
                         if let Some(bytes) = const_bytes_from_operand(tcx, body, &arg.node) {
                             return Some(bytes);
@@ -1252,20 +1270,7 @@ pub fn const_bytes_for_local<'tcx>(
                 }
                 continue;
             }
-            let constant = match rvalue {
-                Rvalue::Use(Operand::Constant(constant), ..)
-                | Rvalue::Cast(_, Operand::Constant(constant), _) => constant,
-                _ => continue,
-            };
-            let value = constant
-                .const_
-                .eval(
-                    tcx,
-                    TypingEnv::fully_monomorphized(),
-                    DUMMY_SP,
-                )
-                .ok()?;
-            return const_value_bytes(tcx, value, 0);
+            return rvalue_const_bytes(tcx, rvalue);
         }
     }
     None
@@ -1279,7 +1284,7 @@ fn aggregate_op_is_nonzero<'tcx>(
     if is_constant_zero_u8(operand) {
         return false;
     }
-    if operand_const_bytes(tcx, operand).is_some() {
+    if extract_const_bytes_from_operand(tcx, operand).is_some() {
         return true;
     }
     match operand {
@@ -1295,40 +1300,13 @@ fn aggregate_op_is_nonzero<'tcx>(
             }
             false
         }
-        Operand::Constant(c) => {
-            c.const_
-                .try_to_scalar_int()
-                .map_or(false, |s| s.to_uint(s.size()) != 0)
-        }
+        Operand::Constant(_) => scalar_constant(operand).is_some_and(|v| v != 0),
         _ => false,
     }
 }
 
-fn operand_const_bytes<'tcx>(tcx: TyCtxt<'tcx>, operand: &Operand<'tcx>) -> Option<Vec<u8>> {
-    let constant = match operand {
-        Operand::Constant(c) => c,
-        _ => return None,
-    };
-    let value = constant
-        .const_
-        .eval(
-            tcx,
-            TypingEnv::fully_monomorphized(),
-            DUMMY_SP,
-        )
-        .ok()?;
-    const_value_bytes(tcx, value, 0)
-}
-
 fn is_constant_zero_u8(operand: &Operand<'_>) -> bool {
-    let constant = match operand {
-        Operand::Constant(c) => c,
-        _ => return false,
-    };
-    constant
-        .const_
-        .try_to_scalar_int()
-        .map_or(false, |s| s.to_uint(s.size()) == 0)
+    scalar_constant(operand) == Some(0)
 }
 
 fn fn_always_returns_nonzero<'tcx>(
@@ -1351,7 +1329,7 @@ fn fn_always_returns_nonzero<'tcx>(
             if target.local != Local::from_usize(0) || !target.projection.is_empty() {
                 continue;
             }
-            if !rvalue_is_nonzero(tcx, rvalue, callee_body) {
+            if !rvalue_is_nonzero(rvalue) {
                 return false;
             }
         }
@@ -1360,14 +1338,13 @@ fn fn_always_returns_nonzero<'tcx>(
     has_return
 }
 
-fn rvalue_is_nonzero<'tcx>(_tcx: TyCtxt<'tcx>, rvalue: &Rvalue<'tcx>, _body: &Body<'tcx>) -> bool {
+fn rvalue_is_nonzero(rvalue: &Rvalue<'_>) -> bool {
     match rvalue {
-        Rvalue::Use(Operand::Constant(c), ..) => {
-            c.const_
-                .try_to_scalar_int()
-                .map_or(false, |s| s.to_uint(s.size()) != 0)
-        }
-        Rvalue::Use(Operand::Copy(_), ..) | Rvalue::Use(Operand::Move(_), ..) => true,
+        Rvalue::Use(operand, ..) => match operand {
+            Operand::Constant(_) => scalar_constant(operand).is_some_and(|v| v != 0),
+            Operand::Copy(_) | Operand::Move(_) => true,
+            _ => false,
+        },
         _ => false,
     }
 }
