@@ -1727,7 +1727,12 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         let max = Int::from_u64(self.ctx, i64::MAX as u64);
                         self.allocate_external(max, 1, None)
                     } else {
-                        self.allocate(total, *elem_size, None)
+                        let elem_ty = crate::helpers::mir_utils::from_raw_parts_elem_ty(
+                            self.tcx, self.caller_def_id, Some(dest),
+                        );
+                        let heap_align =
+                            elem_ty.map(|ty| self.align_of_ty(ty)).unwrap_or(1).max(1);
+                        self.allocate(total, heap_align, elem_ty)
                     };
                     let prov = Provenance {
                         alloc_id,

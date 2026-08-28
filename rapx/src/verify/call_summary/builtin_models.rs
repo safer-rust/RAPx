@@ -21,7 +21,7 @@ use super::{CallEffect, CallEffectSummary};
 use crate::helpers::api_classify;
 use crate::helpers::mir_utils::{
     type_layout, destination_stride, pointee_ty, pointee_alignment,
-    slice_element_size, vec_element_size,
+    from_raw_parts_elem_size, vec_element_size,
 };
 
 // ── Context for effect builders ────────────────────────────────────────
@@ -303,7 +303,7 @@ fn eff_split_at(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 }
 
 fn eff_from_raw_parts(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    let elem = slice_element_size(ctx.tcx, ctx.caller, ctx.dest);
+    let elem = from_raw_parts_elem_size(ctx.tcx, ctx.caller, ctx.dest);
     let mut eff = vec![
         // ReturnAliasArg keeps the legacy PointsTo chain intact so the
         // legacy SMT Align checker can trace through as_ptr() → reference

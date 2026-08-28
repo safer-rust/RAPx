@@ -571,27 +571,35 @@ pub fn pointee_alignment<'tcx>(
     Some((0, format!("{pointee:?}")))
 }
 
-pub fn slice_element_size(
-    tcx: TyCtxt<'_>, caller: DefId, dest: Option<Local>,
-) -> u64 {
-    let d = match dest {
-        Some(d) => d,
-        None => return 1,
-    };
+/// Element type of a `from_raw_parts` result: `&[T]`/`*[T]`/`Vec<T>` yield `T`;
+/// other types (including `String`) return `None`.
+pub fn from_raw_parts_elem_ty<'tcx>(
+    tcx: TyCtxt<'tcx>, caller: DefId, dest: Option<Local>,
+) -> Option<Ty<'tcx>> {
+    let d = dest?;
     let ty = tcx.optimized_mir(caller).local_decls[d].ty;
-    let elem = match ty.kind() {
+    match ty.kind() {
         TyKind::Ref(_, inner, _) => match inner.kind() {
-            TyKind::Slice(e) => *e,
-            _ => return 1,
+            TyKind::Slice(e) => Some(*e),
+            _ => None,
         },
         TyKind::RawPtr(inner, _) => match inner.kind() {
-            TyKind::Slice(e) => *e,
-            _ => return 1,
+            TyKind::Slice(e) => Some(*e),
+            _ => None,
         },
-        _ => return 1,
-    };
-    type_layout(tcx, caller, elem)
-        .map(|(_, s)| s)
+        TyKind::Adt(..) => vec_elem_ty(tcx, ty),
+        _ => None,
+    }
+}
+
+/// Element size of a `from_raw_parts` result. Covers `&[T]`/`*[T]` (borrowed
+/// slice) and `Vec<T>` (owned); `String` and unknown layouts fall back to 1
+/// (`String`'s element is `u8`, so 1 is correct).
+pub fn from_raw_parts_elem_size<'tcx>(
+    tcx: TyCtxt<'tcx>, caller: DefId, dest: Option<Local>,
+) -> u64 {
+    from_raw_parts_elem_ty(tcx, caller, dest)
+        .and_then(|e| type_layout(tcx, caller, e).map(|(_, s)| s))
         .unwrap_or(1)
 }
 

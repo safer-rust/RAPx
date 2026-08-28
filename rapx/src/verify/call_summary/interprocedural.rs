@@ -301,23 +301,9 @@ pub(super) fn try_from_raw_parts_wrapper_effect<'tcx>(
         let pointer_arg = trace_to_callee_arg(tcx, body, &args.get(0)?.node)?;
         let size_arg = trace_to_callee_arg(tcx, body, &args.get(1)?.node)?;
 
-        // Determine element size from return type
-        let ret_ty = body.local_decls[ret].ty;
-        let elem_size = match ret_ty.kind() {
-            rustc_middle::ty::TyKind::Ref(_, inner, _) => match inner.kind() {
-                rustc_middle::ty::TyKind::Slice(elem) => {
-                    let typing_env = rustc_middle::ty::TypingEnv::post_analysis(tcx, callee);
-                    let input = rustc_middle::ty::PseudoCanonicalInput { typing_env, value: *elem };
-                    crate::helpers::mir_utils::catch_panic(|| {
-                        tcx.layout_of(input)
-                    }).ok().and_then(|r| r.ok())
-                        .map(|l| l.size.bytes())
-                        .unwrap_or(1)
-                }
-                _ => 1,
-            },
-            _ => 1,
-        };
+        // Determine element size from return type (slice or Vec).
+        let elem_size =
+            crate::helpers::mir_utils::from_raw_parts_elem_size(tcx, callee, Some(ret));
 
         return Some(CallEffect::ReturnFreshAllocation {
             pointer_arg,

@@ -145,6 +145,7 @@ sound_tests! {
     inbound_sound_08: "verify_units/inbound_sound_8"  => "sound_range_index_guard",
     inbound_sound_09: "verify_units/inbound_sound_9"  => "sound_std_get_unchecked_sliceindex",
     inbound_sound_10: "verify_units/inbound_sound_10" => "sound_std_range_get_unchecked",
+    inbound_sound_11: "verify_units/inbound_sound_11" => "sound_vec_from_raw_parts_inbound",
 }
 
 // ================ InBound Unsound Cases =============

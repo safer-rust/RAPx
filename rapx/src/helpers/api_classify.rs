@@ -4,10 +4,16 @@
 //! `def_path_str` to determine what kind of operation it performs
 //! (pointer arithmetic, memory access, ownership transfer, etc.).
 
+/// Whether `name` reconstructs an owned value from a single raw pointer
+/// (`Box::from_raw`, `CString::from_raw`, `Arc::from_raw`, `Rc::from_raw`,
+/// `CString::from_vec_with_nul_unchecked`), taking ownership of the pointed-to
+/// memory. Distinct from [`is_from_raw_parts`], which builds a slice/`Vec`
+/// from `(ptr, len[, cap])`.
 pub fn is_ownership_reconstruction(name: &str) -> bool {
     name.contains("from_raw") && !name.contains("from_raw_parts")
         && (name.contains("boxed") || name.contains("Box")
-            || name.contains("CString") || name.contains("ffi::c_str"))
+            || name.contains("CString") || name.contains("ffi::c_str")
+            || name.contains("::Arc") || name.contains("::Rc"))
         || name.contains("from_vec_with_nul_unchecked")
 }
 
