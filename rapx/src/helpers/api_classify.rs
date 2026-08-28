@@ -88,14 +88,12 @@ pub fn is_from_raw_parts(name: &str) -> bool { name.contains("::from_raw_parts")
 pub fn is_cstr_from_ptr(name: &str) -> bool {
     name.contains("CStr") && name.ends_with("::from_ptr")
 }
-pub fn is_cstr_from_bytes_with_nul_unchecked(name: &str) -> bool {
-    name.contains("CStr") && name.ends_with("::from_bytes_with_nul_unchecked")
-}
 
 /// Strict C-string constructors whose caller must guarantee NUL termination
 /// (`CStr::from_bytes_with_nul_unchecked`, `CString::from_vec_with_nul_unchecked`).
 pub fn is_cstr_strict_constructor(name: &str) -> bool {
-    is_cstr_from_bytes_with_nul_unchecked(name) || name.contains("from_vec_with_nul_unchecked")
+    (name.contains("CStr") && name.ends_with("::from_bytes_with_nul_unchecked"))
+        || name.contains("from_vec_with_nul_unchecked")
 }
 pub fn is_vec_push(name: &str) -> bool {
     (name.ends_with("::push") || name.ends_with("::reserve") || name.ends_with("::reserve_exact"))
@@ -232,7 +230,8 @@ pub fn is_std_ordering(name: &str) -> bool { name.contains("cmp::Ordering") }
 
 pub fn is_select_unpredictable(name: &str) -> bool { name.contains("select_unpredictable") }
 pub fn is_post_inc_start(name: &str) -> bool { name.contains("::post_inc_start") }
-pub fn is_pre_dec_end(name: &str) -> bool { name.contains("::pre_dec_end") }
-pub fn is_iter_ptr_adj(name: &str) -> bool { is_post_inc_start(name) || is_pre_dec_end(name) }
+pub fn is_iter_ptr_adj(name: &str) -> bool {
+    is_post_inc_start(name) || name.contains("::pre_dec_end")
+}
 pub fn is_eq_or_partial_eq(name: &str) -> bool { name.contains("::eq") || name.contains("PartialEq") }
 pub fn is_vec_or_cstring_call(name: &str) -> bool { name.contains("::Vec") || name.contains("::CString") }

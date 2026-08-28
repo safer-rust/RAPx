@@ -6,8 +6,6 @@
 
 use rustc_middle::mir::{Local, Operand, Rvalue, StatementKind, TerminatorKind};
 use rustc_middle::ty::{GenericArg, GenericArgKind, Ty, TyKind};
-#[cfg(not(rapx_has_skip_norm_wip))]
-use crate::compat::SkipNormWip;
 use z3::{SatResult, Solver, ast::{Ast, Bool, Int}};
 use crate::verify::contract::{ContractExpr, ContractPlace, ContractProjection, NumericBinOp, PlaceBase, Property, PropertyArg, RelOp};
 use crate::verify::report::CheckResult;
@@ -80,7 +78,11 @@ impl PropertyChecker {
                             if adt_def.is_enum() {
                                 let variant = &adt_def.variants()[rustc_abi::VariantIdx::from_usize(*variant_index)];
                                 if !variant.fields.is_empty() {
-                                    Some(variant.fields[rustc_abi::FieldIdx::from_usize(0)].ty(vm_state.tcx, substs).skip_norm_wip())
+                                    Some(crate::helpers::mir_utils::field_ty(
+                                        vm_state.tcx,
+                                        &variant.fields[rustc_abi::FieldIdx::from_usize(0)],
+                                        substs,
+                                    ))
                                 } else {
                                     None
                                 }

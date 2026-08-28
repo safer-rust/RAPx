@@ -192,11 +192,7 @@ where
 
                 // Return the field's type as the result of this match arm.
                 // (The "let field_ty =" is removed from this line)
-                #[cfg(not(rapx_ge_99))]
-                let ft = field_def.ty(self.tcx, substs);
-                #[cfg(rapx_ge_99)]
-                let ft = field_def.ty(self.tcx, substs).skip_norm_wip();
-                ft
+                crate::helpers::mir_utils::field_ty(self.tcx, field_def, substs)
             }
             _ => {
                 panic!("get_field_place expected an ADT, but found {:?}", adt_ty);

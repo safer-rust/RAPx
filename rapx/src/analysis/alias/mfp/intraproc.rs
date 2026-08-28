@@ -257,10 +257,7 @@ impl<'tcx> PlaceInfo<'tcx> {
             // For ADTs (structs/enums), create fields
             ty::Adt(adt_def, substs) => {
                 for (field_idx, field) in adt_def.all_fields().enumerate() {
-                    #[cfg(not(rapx_ge_99))]
-                    let field_ty = field.ty(tcx, substs);
-                    #[cfg(rapx_ge_99)]
-                    let field_ty = field.ty(tcx, substs).skip_norm_wip();
+                    let field_ty = crate::helpers::mir_utils::field_ty(tcx, field, substs);
                     let field_place = base_place.project_field(field_idx);
 
                     // Check if field may/need drop

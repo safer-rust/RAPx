@@ -1,6 +1,7 @@
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::{GenericArgKind, Ty, TyCtxt, TyKind};
 use serde_json::Value;
+use std::sync::OnceLock;
 use syn::Expr;
 
 /// Clean a `DefId` debug representation into a human-readable path.
@@ -78,20 +79,18 @@ pub fn get_struct_self_ty<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Option<Ty<'
     if let Some(assoc_item) = tcx.opt_associated_item(def_id) {
         let impl_id = assoc_item.impl_container(tcx)?;
         let self_ty = tcx.type_of(impl_id).skip_binder();
-        match self_ty.kind() {
-            TyKind::Adt(_, _) => return Some(self_ty),
-            _ => return None,
+        if matches!(self_ty.kind(), TyKind::Adt(_, _)) {
+            return Some(self_ty);
         }
+        return None;
     }
-    let def_kind = tcx.def_kind(def_id);
     if matches!(
-        def_kind,
+        tcx.def_kind(def_id),
         rustc_hir::def::DefKind::Struct | rustc_hir::def::DefKind::Enum
     ) {
         let self_ty = tcx.type_of(def_id).skip_binder();
-        match self_ty.kind() {
-            TyKind::Adt(_, _) => return Some(self_ty),
-            _ => {}
+        if matches!(self_ty.kind(), TyKind::Adt(_, _)) {
+            return Some(self_ty);
         }
     }
     None
@@ -99,8 +98,11 @@ pub fn get_struct_self_ty<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Option<Ty<'
 
 /// Return the JSON value loaded from the pre-computed standard-library
 /// signature map (`data/std_sig.json`).
-fn get_std_api_signature_json() -> Value {
-    serde_json::from_str(include_str!("data/std_sig.json")).expect("Unable to parse JSON")
+fn get_std_api_signature_json() -> &'static Value {
+    static JSON: OnceLock<Value> = OnceLock::new();
+    JSON.get_or_init(|| {
+        serde_json::from_str(include_str!("data/std_sig.json")).expect("Unable to parse JSON")
+    })
 }
 
 /// Look up known argument names for standard-library APIs.
@@ -144,7 +146,9 @@ fn parse_local_signature<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
 ) -> (Vec<String>, Vec<Ty<'tcx>>) {
-    let local_def_id = def_id.as_local().unwrap();
+    let Some(local_def_id) = def_id.as_local() else {
+        return (vec!["0".to_string()], Vec::new());
+    };
     let hir_body = tcx.hir_body_owned_by(local_def_id);
     if hir_body.params.is_empty() {
         return (vec!["0".to_string()], Vec::new());
@@ -299,13 +303,13 @@ pub fn match_ty_with_ident<'tcx>(
     def_id: DefId,
     type_ident: String,
 ) -> Option<Ty<'tcx>> {
-    if let Some(primitive_ty) = match_primitive_type(tcx, type_ident.clone()) {
+    if let Some(primitive_ty) = match_primitive_type(tcx, &type_ident) {
         return Some(primitive_ty);
     }
     if let Some(param_ty) = find_declared_generic_param(tcx, def_id, &type_ident) {
         return Some(param_ty);
     }
-    find_generic_param(tcx, def_id, type_ident)
+    find_generic_param(tcx, def_id, &type_ident)
 }
 
 fn find_declared_generic_param<'tcx>(
@@ -327,8 +331,8 @@ fn find_declared_generic_param<'tcx>(
 
 /// Match a string against Rust's primitive types, returning the
 /// corresponding `Ty` from the type context.
-fn match_primitive_type<'tcx>(tcx: TyCtxt<'tcx>, type_ident: String) -> Option<Ty<'tcx>> {
-    match type_ident.as_str() {
+fn match_primitive_type<'tcx>(tcx: TyCtxt<'tcx>, type_ident: &str) -> Option<Ty<'tcx>> {
+    match type_ident {
         "i8" => Some(tcx.types.i8),
         "i16" => Some(tcx.types.i16),
         "i32" => Some(tcx.types.i32),
@@ -357,7 +361,7 @@ fn match_primitive_type<'tcx>(tcx: TyCtxt<'tcx>, type_ident: String) -> Option<T
 fn find_generic_param<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
-    type_ident: String,
+    type_ident: &str,
 ) -> Option<Ty<'tcx>> {
     rap_debug!(
         "Searching for generic param: {} in {:?}",
@@ -367,13 +371,13 @@ fn find_generic_param<'tcx>(
     let (_, param_tys) = parse_signature(tcx, def_id);
     rap_debug!("Function parameter types: {:?} of {:?}", param_tys, def_id);
     for &ty in &param_tys {
-        if let Some(found) = find_generic_in_ty(tcx, ty, &type_ident) {
+        if let Some(found) = find_generic_in_ty(tcx, ty, type_ident) {
             return Some(found);
         }
     }
 
     if let Some(struct_ty) = get_struct_self_ty(tcx, def_id) {
-        if let Some(found) = find_generic_in_ty(tcx, struct_ty, &type_ident) {
+        if let Some(found) = find_generic_in_ty(tcx, struct_ty, type_ident) {
             return Some(found);
         }
     }
@@ -382,7 +386,7 @@ fn find_generic_param<'tcx>(
     // (e.g. `NonZero<T>` / `Option<NonZero<T>>` in a generic fn) resolve to the
     // concrete ADT instead of falling back to `never`.
     let ret_ty = tcx.fn_sig(def_id).skip_binder().output().skip_binder();
-    if let Some(found) = find_generic_in_ty(tcx, ret_ty, &type_ident) {
+    if let Some(found) = find_generic_in_ty(tcx, ret_ty, type_ident) {
         return Some(found);
     }
 
@@ -426,10 +430,7 @@ fn find_generic_in_ty<'tcx>(
                 return Some(ty);
             }
             for field in adt_def.all_fields() {
-                #[cfg(not(rapx_ge_99))]
-                let field_ty = field.ty(tcx, substs);
-                #[cfg(rapx_ge_99)]
-                let field_ty = field.ty(tcx, substs).skip_norm_wip();
+                let field_ty = crate::helpers::mir_utils::field_ty(tcx, field, substs);
                 if let Some(found) = find_generic_in_ty(tcx, field_ty, type_ident) {
                     return Some(found);
                 }

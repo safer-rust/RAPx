@@ -9,18 +9,25 @@ use rustc_hir::attrs::lang_items::LangItem;
 use rustc_middle::{
     mir::{BasicBlock, Body, ConstValue, Local, Operand, Place, Rvalue, StatementKind, TerminatorKind},
     mir::interpret::{AllocId, GlobalAlloc},
-    ty::{ConstKind, GenericArgKind, PseudoCanonicalInput, Ty, TyCtxt, TyKind, TypingEnv},
+    ty::{
+        ConstKind, FieldDef, GenericArgKind, GenericArgsRef, PseudoCanonicalInput, Ty, TyCtxt,
+        TyKind, TypingEnv,
+    },
 };
 use rustc_span::{Symbol, DUMMY_SP};
 
 use std::collections::{HashMap, HashSet};
 
+#[cfg(not(rapx_has_skip_norm_wip))]
+use crate::compat::SkipNormWip;
+
 use crate::{
     analysis::alias::{collect_local_origins, LocalOriginMap},
     compat::FxHashMap,
     helpers::mir_scan::Checkpoint,
-    verify::def_use::PlaceKey,
 };
+
+use super::def_use::PlaceKey;
 
 pub(crate) fn pointee_ty<'tcx>(ty: Ty<'tcx>) -> Option<Ty<'tcx>> {
     match ty.kind() {
@@ -30,8 +37,8 @@ pub(crate) fn pointee_ty<'tcx>(ty: Ty<'tcx>) -> Option<Ty<'tcx>> {
 }
 
 pub(crate) fn dep_callee_def_id(func: &Operand<'_>) -> Option<DefId> {
-    let Operand::Constant(func_constant) = func else { return None };
-    let TyKind::FnDef(def_id, _) = func_constant.const_.ty().kind() else { return None };
+    let Operand::Constant(c) = func else { return None };
+    let TyKind::FnDef(def_id, _) = c.const_.ty().kind() else { return None };
     Some(*def_id)
 }
 
@@ -111,12 +118,11 @@ pub fn resolve_impl_self_ty_def_id(item: &rustc_hir::Item<'_>) -> Option<DefId> 
     }
 }
 
-pub fn has_rapx_verify_attr(tcx: TyCtxt<'_>, def_id: LocalDefId) -> bool {
+/// Whether a local item carries a `#[rapx::<name>(...)]` attribute.
+pub(crate) fn has_rapx_attr(tcx: TyCtxt<'_>, def_id: LocalDefId, name: Symbol) -> bool {
     let hir_id = tcx.local_def_id_to_hir_id(def_id);
 
     let rapx = Symbol::intern("rapx");
-    let verify = Symbol::intern("verify");
-
     let attrs = tcx.hir_attrs(hir_id);
 
     attrs.iter().any(|attr| {
@@ -126,19 +132,12 @@ pub fn has_rapx_verify_attr(tcx: TyCtxt<'_>, def_id: LocalDefId) -> bool {
 
         let path = attr.path();
 
-        path.len() == 2 && path[0] == rapx && path[1] == verify
+        path.len() == 2 && path[0] == rapx && path[1] == name
     })
 }
 
-pub fn get_owner_struct_def_id(tcx: TyCtxt<'_>, def_id: DefId) -> Option<DefId> {
-    let assoc_item = tcx.opt_associated_item(def_id)?;
-    let impl_id = assoc_item.impl_container(tcx)?;
-    let self_ty = tcx.type_of(impl_id).skip_binder();
-
-    match self_ty.kind() {
-        TyKind::Adt(adt_def, _) => Some(adt_def.did()),
-        _ => None,
-    }
+pub fn has_rapx_verify_attr(tcx: TyCtxt<'_>, def_id: LocalDefId) -> bool {
+    has_rapx_attr(tcx, def_id, Symbol::intern("verify"))
 }
 
 /// True when a type transitively contains a const-generic parameter or
@@ -481,15 +480,13 @@ fn is_const_def_kind(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
     }
 }
 
-fn offset_of_ty_from_func<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    func: &Operand<'tcx>,
-) -> Option<Ty<'tcx>> {
+/// Extract the first `Type` generic argument of an `FnDef` call operand.
+///
+/// Many monomorphized std APIs have the interesting type (the receiver or
+/// container element) as their first generic argument.
+pub(crate) fn fn_def_first_type_arg<'tcx>(func: &Operand<'tcx>) -> Option<Ty<'tcx>> {
     let Operand::Constant(c) = func else { return None };
-    let TyKind::FnDef(def_id, args) = c.const_.ty().kind() else { return None };
-    if !tcx.is_lang_item(*def_id, LangItem::OffsetOf) {
-        return None;
-    }
+    let TyKind::FnDef(_, args) = c.const_.ty().kind() else { return None };
     args.iter().find_map(|a| {
         #[cfg(rapx_ge_99)]
         let a = a.skip_binder();
@@ -498,6 +495,18 @@ fn offset_of_ty_from_func<'tcx>(
             _ => None,
         }
     })
+}
+
+fn offset_of_ty_from_func<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    func: &Operand<'tcx>,
+) -> Option<Ty<'tcx>> {
+    let Operand::Constant(c) = func else { return None };
+    let TyKind::FnDef(def_id, _) = c.const_.ty().kind() else { return None };
+    if !tcx.is_lang_item(*def_id, LangItem::OffsetOf) {
+        return None;
+    }
+    fn_def_first_type_arg(func)
 }
 
 pub fn type_layout<'tcx>(tcx: TyCtxt<'tcx>, caller: DefId, ty: Ty<'tcx>) -> Option<(u64, u64)> {
@@ -595,17 +604,6 @@ pub fn from_raw_parts_elem_size<'tcx>(
 ) -> u64 {
     from_raw_parts_elem_ty(tcx, caller, dest)
         .and_then(|e| type_layout(tcx, caller, e).map(|(_, s)| s))
-        .unwrap_or(1)
-}
-
-pub fn vec_element_size(tcx: TyCtxt<'_>, caller: DefId, dest: Option<Local>) -> u64 {
-    let d = match dest {
-        Some(d) => d,
-        None => return 1,
-    };
-    let ty = tcx.optimized_mir(caller).local_decls[d].ty;
-    vec_elem_ty(tcx, ty)
-        .and_then(|elem_ty| type_layout(tcx, caller, elem_ty).map(|(_, s)| s))
         .unwrap_or(1)
 }
 
@@ -775,15 +773,24 @@ pub fn type_contains_ref_or_ptr<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> bool {
             }
             let adt = tcx.adt_def(def.did());
             adt.all_fields().any(|field| {
-                #[cfg(not(rapx_ge_99))]
-                let field_ty = field.ty(tcx, args);
-                #[cfg(rapx_ge_99)]
-                let field_ty = field.ty(tcx, args).skip_norm_wip();
-                type_contains_ref_or_ptr(tcx, field_ty)
+                type_contains_ref_or_ptr(tcx, field_ty(tcx, field, args))
             })
         }
         _ => false,
     }
+}
+
+/// Resolve a struct field's type, normalizing where the rustc version requires it.
+///
+/// On newer rustc `field.ty(tcx, args)` returns an `Unnormalized<Ty>` that must
+/// be `.skip_norm_wip()`-ed; on older toolchains the `SkipNormWip` shim makes
+/// the same call a no-op, so this is version-independent.
+pub fn field_ty<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    field: &FieldDef,
+    args: GenericArgsRef<'tcx>,
+) -> Ty<'tcx> {
+    field.ty(tcx, args).skip_norm_wip()
 }
 
 /// Element type of a `Vec<T>`, if `ty` is a `Vec`.

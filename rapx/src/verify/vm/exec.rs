@@ -11,8 +11,6 @@ use rustc_middle::{
     },
     ty::Ty,
 };
-#[cfg(not(rapx_has_skip_norm_wip))]
-use crate::compat::SkipNormWip;
 use rustc_hir::def_id::DefId;
 use z3::ast::{Ast, Bool, Int};
 
@@ -280,7 +278,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     let mut elem_alloc: FxHashMap<Ty<'tcx>, (AllocId, Int<'ctx>)> =
                         FxHashMap::default();
                     for (idx, field_def) in variant.fields.iter().enumerate() {
-                        let field_ty: Ty<'tcx> = field_def.ty(self.tcx, substs).skip_norm_wip();
+                        let field_ty: Ty<'tcx> = crate::helpers::mir_utils::field_ty(self.tcx, field_def, substs);
                         if let rustc_middle::ty::TyKind::RawPtr(inner, _) = field_ty.kind() {
                             self.init_ptr_field(local, vec![idx], field_ty, *inner, local_idx, idx, &mut elem_alloc, true, "field_nn");
                         } else if let Some(pointee) = self.find_nn_pointee(field_ty) {
@@ -405,7 +403,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                             let mut elem_alloc: FxHashMap<Ty<'tcx>, (AllocId, Int<'ctx>)> =
                                 FxHashMap::default();
                             for (idx, field_def) in variant.fields.iter().enumerate() {
-                                let field_ty: Ty<'tcx> = field_def.ty(self.tcx, substs).skip_norm_wip();
+                                let field_ty: Ty<'tcx> = crate::helpers::mir_utils::field_ty(self.tcx, field_def, substs);
                                 if let rustc_middle::ty::TyKind::RawPtr(inner, _) = field_ty.kind() {
                                     self.init_ptr_field(local, vec![idx], field_ty, *inner, local_idx, idx, &mut elem_alloc, true, "field_nn");
                                 } else if let Some(pointee) = self.find_nn_pointee(field_ty) {
@@ -752,7 +750,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         }
         let variant = adt_def.non_enum_variant();
         for (idx, field_def) in variant.fields.iter().enumerate() {
-            let field_ty: Ty<'tcx> = field_def.ty(self.tcx, substs).skip_norm_wip();
+            let field_ty: Ty<'tcx> = crate::helpers::mir_utils::field_ty(self.tcx, field_def, substs);
             let mut path = prefix.clone();
             path.push(idx);
             if let rustc_middle::ty::TyKind::RawPtr(inner, _) = field_ty.kind() {
@@ -1244,8 +1242,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         if !adt_def.is_enum() {
                             let variant = adt_def.non_enum_variant();
                             if let Some(field_def) = variant.fields.get(field_idx) {
-                                let unnorm = field_def.ty(self.tcx, substs);
-                                cur_ty = unnorm.skip_norm_wip();
+                                cur_ty = crate::helpers::mir_utils::field_ty(self.tcx, field_def, substs);
                             }
                         }
                     }
@@ -3363,10 +3360,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 if adt_def.is_enum() { return vec![]; }
                 let variant = adt_def.non_enum_variant();
                 variant.fields.iter()
-                    .map(|f| {
-                        let unnorm = f.ty(self.tcx, substs);
-                        unnorm.skip_norm_wip()
-                    })
+                    .map(|f| crate::helpers::mir_utils::field_ty(self.tcx, f, substs))
                     .collect()
             }
             _ => vec![],

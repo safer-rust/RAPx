@@ -26,7 +26,7 @@ fn render_dot_file(dir_name: &str, name: &str, dot_graph: &str) {
 }
 
 pub fn render_dot_graphs(dot_graphs: Vec<(String, String)>) {
-    for (_index, dot) in dot_graphs.into_iter().enumerate() {
+    for dot in dot_graphs {
         render_dot_file("SafetyFlow", &dot.0, &dot.1);
     }
 }

@@ -83,8 +83,7 @@ impl PropertyChecker {
         for (predicate, _span) in pred_iter {
             if let rustc_middle::ty::ClauseKind::Trait(trait_ref) = predicate.kind().skip_binder() {
                 if trait_ref.self_ty() == ty {
-                    let def_path = tcx.def_path_str(trait_ref.def_id());
-                    let short_name = def_path.rsplit("::").next().unwrap_or(&def_path);
+                    let short_name = crate::helpers::name::short_fn_name(tcx, trait_ref.def_id());
                     if short_name == trait_name {
                         return CheckResult::Proved;
                     }

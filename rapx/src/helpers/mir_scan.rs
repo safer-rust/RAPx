@@ -9,6 +9,7 @@ use rustc_middle::{
 use std::collections::{HashMap, HashSet};
 
 use super::name::get_cleaned_def_path_name;
+use super::mir_utils::{dep_callee_def_id, pointee_ty};
 
 /// Stable MIR location for a call terminator inside one function body.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -75,11 +76,7 @@ pub fn check_safety(tcx: TyCtxt<'_>, def_id: DefId) -> Safety {
 }
 
 /// Helper checking if a [`Place`] involves raw pointer dereference.
-pub fn place_has_raw_deref<'tcx>(
-    _tcx: TyCtxt<'tcx>,
-    body: &Body<'tcx>,
-    place: &Place<'tcx>,
-) -> bool {
+pub fn place_has_raw_deref<'tcx>(body: &Body<'tcx>, place: &Place<'tcx>) -> bool {
     let local = place.local;
     for proj in place.projection.iter() {
         if let ProjectionElem::Deref = proj.kind() {
@@ -102,13 +99,13 @@ pub fn get_rawptr_deref(tcx: TyCtxt<'_>, def_id: DefId) -> HashSet<Local> {
             for stmt in &bb.statements {
                 if let StatementKind::Assign(assign) = &stmt.kind {
                     let (lhs, rhs) = &**assign;
-                    if place_has_raw_deref(tcx, &body, lhs) {
+                    if place_has_raw_deref(&body, lhs) {
                         raw_ptrs.insert(lhs.local);
                     }
                     if let Rvalue::Use(op, ..) = rhs {
                         match op {
                             Operand::Copy(place) | Operand::Move(place) => {
-                                if place_has_raw_deref(tcx, &body, place) {
+                                if place_has_raw_deref(&body, place) {
                                     raw_ptrs.insert(place.local);
                                 }
                             }
@@ -116,7 +113,7 @@ pub fn get_rawptr_deref(tcx: TyCtxt<'_>, def_id: DefId) -> HashSet<Local> {
                         }
                     }
                     if let Rvalue::Ref(_, _, place) = rhs {
-                        if place_has_raw_deref(tcx, &body, place) {
+                        if place_has_raw_deref(&body, place) {
                             raw_ptrs.insert(place.local);
                         }
                     }
@@ -128,7 +125,7 @@ pub fn get_rawptr_deref(tcx: TyCtxt<'_>, def_id: DefId) -> HashSet<Local> {
                         for arg in args {
                             match arg.node {
                                 Operand::Copy(place) | Operand::Move(place) => {
-                                    if place_has_raw_deref(tcx, &body, &place) {
+                                    if place_has_raw_deref(&body, &place) {
                                         raw_ptrs.insert(place.local);
                                     }
                                 }
@@ -178,11 +175,9 @@ pub fn get_unsafe_callees(tcx: TyCtxt<'_>, def_id: DefId) -> HashSet<DefId> {
         let body = tcx.optimized_mir(def_id);
         for bb in body.basic_blocks.iter() {
             if let TerminatorKind::Call { func, .. } = &bb.terminator().kind {
-                if let Operand::Constant(func_constant) = func {
-                    if let ty::FnDef(callee_def_id, _) = func_constant.const_.ty().kind() {
-                        if check_safety(tcx, *callee_def_id) == Safety::Unsafe {
-                            unsafe_callees.insert(*callee_def_id);
-                        }
+                if let Some(callee_def_id) = dep_callee_def_id(func) {
+                    if check_safety(tcx, callee_def_id) == Safety::Unsafe {
+                        unsafe_callees.insert(callee_def_id);
                     }
                 }
             }
@@ -328,13 +323,13 @@ pub fn collect_raw_ptr_deref_info<'tcx>(
             };
             let (lhs, rhs) = &**assign;
 
-            let is_write = place_has_raw_deref(tcx, &body, lhs);
+            let is_write = place_has_raw_deref(&body, lhs);
             let (is_read, is_ref) = match rhs {
                 Rvalue::Use(Operand::Copy(place) | Operand::Move(place), ..) => {
-                    (place_has_raw_deref(tcx, &body, place), false)
+                    (place_has_raw_deref(&body, place), false)
                 }
                 Rvalue::Ref(_, _borrow_kind, place) => {
-                    (place_has_raw_deref(tcx, &body, place), true)
+                    (place_has_raw_deref(&body, place), true)
                 }
                 _ => (false, false),
             };
@@ -357,14 +352,14 @@ pub fn collect_raw_ptr_deref_info<'tcx>(
                 continue;
             };
 
-            let Some(pointee_ty) = deref_place_pointee_ty(&body, deref_place) else {
+            let Some(pointee) = pointee_ty(body.local_decls[deref_place.local].ty) else {
                 continue;
             };
 
             infos.push(RawPtrDerefInfo {
                 block: bb,
                 ptr_operand,
-                pointee_ty,
+                pointee_ty: pointee,
                 is_read,
                 is_ref,
                 destination: lhs.local,
@@ -373,15 +368,6 @@ pub fn collect_raw_ptr_deref_info<'tcx>(
     }
 
     infos
-}
-
-/// Return the pointee type of the raw pointer being dereferenced.
-fn deref_place_pointee_ty<'tcx>(body: &Body<'tcx>, place: &Place<'tcx>) -> Option<Ty<'tcx>> {
-    let ty = body.local_decls[place.local].ty;
-    match ty.kind() {
-        TyKind::RawPtr(inner, _) => Some(*inner),
-        _ => None,
-    }
 }
 
 /// Extract the pointer operand from a dereference place.

@@ -15,13 +15,13 @@
 
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::Operand;
-use rustc_middle::ty::{GenericArgKind, Ty, TyCtxt, TyKind};
+use rustc_middle::ty::{Ty, TyCtxt};
 
 use super::{CallEffect, CallEffectSummary};
 use crate::helpers::api_classify;
 use crate::helpers::mir_utils::{
     type_layout, destination_stride, pointee_ty, pointee_alignment,
-    from_raw_parts_elem_size, vec_element_size,
+    from_raw_parts_elem_size,
 };
 
 // ── Context for effect builders ────────────────────────────────────────
@@ -326,7 +326,7 @@ fn eff_from_raw_parts(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 }
 
 fn eff_new_allocation(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    let elem = vec_element_size(ctx.tcx, ctx.caller, ctx.dest);
+    let elem = from_raw_parts_elem_size(ctx.tcx, ctx.caller, ctx.dest);
     vec![
         CallEffect::ReturnNewAllocation {
             size_arg: 1,
@@ -336,7 +336,7 @@ fn eff_new_allocation(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 }
 
 fn eff_new_allocation_from_cap(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    let elem = vec_element_size(ctx.tcx, ctx.caller, ctx.dest);
+    let elem = from_raw_parts_elem_size(ctx.tcx, ctx.caller, ctx.dest);
     vec![
         CallEffect::ReturnNewAllocation {
             size_arg: 0,
@@ -481,12 +481,7 @@ fn dest_is_pointer(tcx: TyCtxt<'_>, caller: DefId, dest: Option<rustc_middle::mi
 }
 
 fn layout_call_ty<'tcx>(func: &Operand<'tcx>) -> Option<Ty<'tcx>> {
-    let Operand::Constant(c) = func else { return None };
-    let TyKind::FnDef(_, args) = c.const_.ty().kind() else { return None };
-    args.iter().find_map(|a| {
-        #[cfg(rapx_ge_99)] let a = a.skip_binder();
-        match a.kind() { GenericArgKind::Type(t) => Some(t), _ => None }
-    })
+    crate::helpers::mir_utils::fn_def_first_type_arg(func)
 }
 
 fn layout_constant_effect<'tcx>(

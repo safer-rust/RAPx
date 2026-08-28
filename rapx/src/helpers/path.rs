@@ -21,7 +21,7 @@ fn join_path_with_ident(current_path: &str, ident: Ident) -> String {
     if current_path.is_empty() {
         ident.as_str().to_owned()
     } else {
-        (current_path.to_string() + "::" + ident.as_str()).to_owned()
+        format!("{current_path}::{ident}")
     }
 }
 
@@ -46,7 +46,7 @@ impl<'tcx> PathResolver<'tcx> {
             }
             if let Some(did) = child.res.opt_def_id() {
                 let path = join_path_with_ident(&current_path, child.ident);
-                self.path_map.entry(did).or_insert(path.clone());
+                self.path_map.entry(did).or_insert_with(|| path.clone());
                 if self.tcx.def_kind(did).is_module_like() {
                     self.build(did, path);
                 }
@@ -118,18 +118,11 @@ impl<'tcx> PathResolver<'tcx> {
                     #[cfg(rapx_ge_99)]
                     let trait_ref = trait_ref.skip_norm_wip();
 
-                    let self_ty_str = self.ty_str(trait_ref.self_ty());
-                    let trait_str = self.non_assoc_path_str(trait_ref.def_id);
-                    if trait_ref.args.len() > 1 {
-                        format!(
-                            "<{} as {}{}>",
-                            self_ty_str,
-                            trait_str,
-                            self.generic_args_str(&trait_ref.args[1..])
-                        )
-                    } else {
-                        format!("<{} as {}>", self_ty_str, trait_str)
-                    }
+                    self.qualified_path_str(
+                        trait_ref.self_ty(),
+                        trait_ref.def_id,
+                        &trait_ref.args[1..],
+                    )
                 }
                 // inherent impl
                 DefKind::Impl { of_trait: false } => {
@@ -143,19 +136,7 @@ impl<'tcx> PathResolver<'tcx> {
                 }
                 // Trait
                 DefKind::Trait => {
-                    let self_ty = parent_args[0].expect_ty();
-                    let self_ty_str = self.ty_str(self_ty);
-                    let trait_str = self.non_assoc_path_str(assoc_id);
-                    if parent_args.len() > 1 {
-                        format!(
-                            "<{} as {}{}>",
-                            self_ty_str,
-                            trait_str,
-                            self.generic_args_str(&parent_args[1..])
-                        )
-                    } else {
-                        format!("<{} as {}>", self_ty_str, trait_str)
-                    }
+                    self.qualified_path_str(parent_args[0].expect_ty(), assoc_id, &parent_args[1..])
                 }
                 _ => {
                     unreachable!(
@@ -168,7 +149,7 @@ impl<'tcx> PathResolver<'tcx> {
                 }
             };
 
-            if own_args.len() > 0 {
+            if !own_args.is_empty() {
                 format!(
                     "{}::{}::{}",
                     parent_path_str,
@@ -179,7 +160,7 @@ impl<'tcx> PathResolver<'tcx> {
                 format!("{}::{}", parent_path_str, self.tcx.item_name(def_id))
             }
         } else {
-            if args.len() > 0 {
+            if !args.is_empty() {
                 format!(
                     "{}::{}",
                     self.non_assoc_path_str(def_id),
@@ -196,6 +177,27 @@ impl<'tcx> PathResolver<'tcx> {
             ty::GenericArgKind::Lifetime(_) => "'_".to_string(),
             ty::GenericArgKind::Type(ty) => self.ty_str(ty),
             ty::GenericArgKind::Const(const_) => format!("{}", const_),
+        }
+    }
+
+    /// Format `<Self as Trait<args>>` for a trait impl or trait-associated item.
+    fn qualified_path_str(
+        &self,
+        self_ty: Ty<'tcx>,
+        trait_id: DefId,
+        args: &[ty::GenericArg<'tcx>],
+    ) -> String {
+        let self_ty_str = self.ty_str(self_ty);
+        let trait_str = self.non_assoc_path_str(trait_id);
+        if args.is_empty() {
+            format!("<{} as {}>", self_ty_str, trait_str)
+        } else {
+            format!(
+                "<{} as {}{}>",
+                self_ty_str,
+                trait_str,
+                self.generic_args_str(args)
+            )
         }
     }
 

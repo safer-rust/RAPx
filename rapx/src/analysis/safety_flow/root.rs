@@ -1,5 +1,7 @@
+use crate::helpers::fn_info::get_adt_def_id_by_adt_method;
 use crate::helpers::mir_scan::{collect_global_local_pairs, get_rawptr_deref, get_unsafe_callees};
-use rustc_hir::{BodyId, ItemKind, def_id::DefId};
+use crate::helpers::mir_utils::{has_rapx_attr, is_trait_unsafe};
+use rustc_hir::{BodyId, def_id::DefId};
 use rustc_middle::{mir::Local, ty::TyCtxt};
 use rustc_span::Symbol;
 use std::collections::HashSet;
@@ -45,31 +47,14 @@ pub fn has_struct_invariant(tcx: TyCtxt<'_>, struct_def_id: DefId) -> bool {
     let Some(local_def_id) = struct_def_id.as_local() else {
         return false;
     };
-    let rapx = Symbol::intern("rapx");
-    let invariant = Symbol::intern("invariant");
-    let attrs = tcx.hir_attrs(tcx.local_def_id_to_hir_id(local_def_id));
-    attrs.iter().any(|attr| {
-        if attr.is_doc_comment().is_some() {
-            return false;
-        }
-        let path = attr.path();
-        path.len() == 2 && path[0] == rapx && path[1] == invariant
-    })
+    has_rapx_attr(tcx, local_def_id, Symbol::intern("invariant"))
 }
 
 /// Quick check: does this function's owning struct have invariants?
 pub fn function_has_struct_invariant(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
-    let Some(assoc_item) = tcx.opt_associated_item(def_id) else {
-        return false;
-    };
-    let Some(impl_id) = assoc_item.impl_container(tcx) else {
-        return false;
-    };
-    let self_ty = tcx.type_of(impl_id).skip_binder();
-    match self_ty.kind() {
-        rustc_middle::ty::TyKind::Adt(adt_def, _) => has_struct_invariant(tcx, adt_def.did()),
-        _ => false,
-    }
+    get_adt_def_id_by_adt_method(tcx, def_id)
+        .map(|struct_def_id| has_struct_invariant(tcx, struct_def_id))
+        .unwrap_or(false)
 }
 
 /// Quick check: does this function's containing impl implement an `unsafe trait`?
@@ -82,31 +67,10 @@ pub fn function_has_trait_ensurance(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
     let Some(impl_id) = assoc_item.impl_container(tcx) else {
         return false;
     };
-
-    let trait_def_id = {
-        tcx.impl_opt_trait_ref(impl_id)
-    };
-    let Some(trait_ref) = trait_def_id else {
+    let Some(trait_ref) = tcx.impl_opt_trait_ref(impl_id) else {
         return false;
     };
-    let trait_def_id = trait_ref.skip_binder().def_id;
-
-    let Some(local_id) = trait_def_id.as_local() else {
-        return false;
-    };
-
-    // Check if the trait is declared `unsafe trait`
-    let item = tcx.hir_expect_item(local_id);
-    #[cfg(not(rapx_ge_99))]
-    if let ItemKind::Trait(_, _, unsafety, _, _, _, _) = &item.kind {
-        return matches!(unsafety, rustc_hir::Safety::Unsafe);
-    }
-    #[cfg(rapx_ge_99)]
-    if let ItemKind::Trait { safety, .. } = &item.kind {
-        return matches!(safety, rustc_hir::Safety::Unsafe);
-    }
-
-    false
+    is_trait_unsafe(tcx, trait_ref.skip_binder().def_id)
 }
 
 /// Full MIR-level detection: scan the function body for all unsafe operations.

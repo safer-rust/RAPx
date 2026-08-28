@@ -69,10 +69,7 @@ pub fn is_not_drop<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> bool {
         // For ADTs (structs, enums), check all fields.
         ty::Adt(adtdef, substs) => {
             for field in adtdef.all_fields() {
-                #[cfg(not(rapx_ge_99))]
-                let fty = field.ty(tcx, substs);
-                #[cfg(rapx_ge_99)]
-                let fty = field.ty(tcx, substs).skip_norm_wip();
+                let fty = crate::helpers::mir_utils::field_ty(tcx, field, substs);
                 if !is_not_drop(tcx, fty) {
                     return false;
                 }

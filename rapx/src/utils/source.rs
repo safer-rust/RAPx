@@ -52,26 +52,18 @@ pub fn get_name(tcx: TyCtxt<'_>, def_id: DefId) -> Option<Symbol> {
 
 pub fn get_filename(tcx: TyCtxt<'_>, def_id: DefId) -> Option<String> {
     // Get the HIR node corresponding to the DefId
-    if let Some(local_id) = def_id.as_local() {
-        let hir_id = tcx.local_def_id_to_hir_id(local_id);
-        let span = tcx.hir_span(hir_id);
-        let source_map = tcx.sess.source_map();
+    let local_id = def_id.as_local()?;
+    let hir_id = tcx.local_def_id_to_hir_id(local_id);
+    let span = tcx.hir_span(hir_id);
 
-        // Retrieve the file name
-        if let Some(filename) = source_map.span_to_filename(span).into() {
-            return Some(convert_filename(filename));
-        }
+    // Retrieve the file name
+    let filename = tcx.sess.source_map().span_to_filename(span);
+    match filename {
+        FileName::Real(realname) => realname
+            .local_path()
+            .map(|path| path.to_string_lossy().into()),
+        _ => None,
     }
-    None
-}
-
-fn convert_filename(filename: FileName) -> String {
-    if let FileName::Real(realname) = filename {
-        if let Some(ref path) = realname.local_path() {
-            return path.to_string_lossy().into();
-        }
-    }
-    return "<unknown>".to_string();
 }
 
 pub fn get_module_name(tcx: TyCtxt, def_id: DefId) -> String {
@@ -95,27 +87,25 @@ pub fn get_module_name(tcx: TyCtxt, def_id: DefId) -> String {
 pub fn get_adt_name(tcx: TyCtxt<'_>, def_id: DefId) -> String {
     match tcx.def_kind(def_id) {
         DefKind::Struct | DefKind::Enum | DefKind::Union => {
-            let raw_name = tcx.type_of(def_id).skip_binder().to_string();
-            return raw_name
-                .split('<')
-                .next()
-                .unwrap_or(&raw_name)
-                .trim()
-                .to_string();
+            return strip_generic_args(&tcx.type_of(def_id).skip_binder().to_string());
         }
         _ => {}
     }
     if let Some(assoc_item) = tcx.opt_associated_item(def_id) {
         if let Some(impl_id) = assoc_item.impl_container(tcx) {
             let ty = tcx.type_of(impl_id).skip_binder();
-            let raw_name = ty.to_string();
-            return raw_name
-                .split('<')
-                .next()
-                .unwrap_or(&raw_name)
-                .trim()
-                .to_string();
+            return strip_generic_args(&ty.to_string());
         }
     }
     "Free_Functions".to_string()
+}
+
+/// Strip the generic-argument suffix (`<...>`) from a type name.
+fn strip_generic_args(raw_name: &str) -> String {
+    raw_name
+        .split('<')
+        .next()
+        .unwrap_or(raw_name)
+        .trim()
+        .to_string()
 }

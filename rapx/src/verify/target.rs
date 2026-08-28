@@ -34,9 +34,10 @@ use super::{
     path_extractor::PathExtractor,
 };
 use crate::helpers::mir_utils::{
-    collect_return_block_indices, get_owner_struct_def_id, has_rapx_verify_attr,
-    is_std_crate_def_id, is_trait_unsafe, resolve_impl_self_ty_def_id,
+    collect_return_block_indices, has_rapx_verify_attr, is_std_crate_def_id, is_trait_unsafe,
+    resolve_impl_self_ty_def_id,
 };
+use crate::helpers::fn_info::get_adt_def_id_by_adt_method;
 use crate::helpers::mir_scan::{Checkpoint, collect_unsafe_callsites};
 
 /// A list of parsed `requires` contracts.
@@ -438,7 +439,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
         let raw_ptr_deref_checks = build_raw_ptr_deref_checks(self.tcx, def_id);
         let static_mut_checks = build_static_mut_checks(self.tcx, def_id);
 
-        let owner_struct_def_id = get_owner_struct_def_id(self.tcx, def_id);
+        let owner_struct_def_id = get_adt_def_id_by_adt_method(self.tcx, def_id);
         let mut struct_invariants = owner_struct_def_id
             .map(|struct_def_id| {
                 get_struct_invariants_from_annotation(self.tcx, struct_def_id, def_id)

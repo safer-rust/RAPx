@@ -5,8 +5,6 @@
 //! size assertions.
 
 use rustc_middle::ty::{Ty, TyKind};
-#[cfg(not(rapx_has_skip_norm_wip))]
-use crate::compat::SkipNormWip;
 use z3::{Solver, ast::Ast};
 use crate::verify::contract::{ContractExpr, Property, PropertyArg};
 use crate::verify::report::CheckResult;
@@ -85,7 +83,7 @@ impl PropertyChecker {
                                     if i > 0 && field_off == 0 {
                                         accum = 0;
                                     }
-                                    let field_ty: Ty<'tcx> = field_def.ty(vm_state.tcx, substs).skip_norm_wip();
+                                    let field_ty: Ty<'tcx> = crate::helpers::mir_utils::field_ty(vm_state.tcx, field_def, substs);
                                     if field_ty == expected_ty {
                                         if off_u64 == Some(accum) {
                                             if value.invariants.init {
@@ -310,7 +308,7 @@ impl PropertyChecker {
                 let variant = adt_def.non_enum_variant();
                 let mut sum = 0u64;
                 for field_def in variant.fields.iter() {
-                    let field_ty: Ty<'tcx> = field_def.ty(tcx, substs).skip_norm_wip();
+                    let field_ty: Ty<'tcx> = crate::helpers::mir_utils::field_ty(tcx, field_def, substs);
                     match self.type_has_no_padding(vm_state, field_ty) {
                         Some(true) => sum += vm_state.size_of_ty(field_ty),
                         Some(false) => return Some(false),

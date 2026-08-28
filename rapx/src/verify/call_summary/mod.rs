@@ -14,7 +14,7 @@ pub(crate) mod interprocedural;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{Local, Operand},
-    ty::{GenericArgKind, TyCtxt, TyKind},
+    ty::{TyCtxt, TyKind},
 };
 
 use crate::helpers::mir_utils;
@@ -354,12 +354,7 @@ pub(crate) fn effect_summary<'tcx>(
 ///   * `ManuallyDrop<T> { value: MaybeDangling<T> }` → 2 (`value` → `MaybeDangling.0`)
 ///   * `MaybeDangling<P>(P)` → 1.
 fn transparent_deref_peel<'tcx>(tcx: TyCtxt<'tcx>, func: &Operand<'tcx>) -> Option<usize> {
-    let Operand::Constant(c) = func else { return None };
-    let TyKind::FnDef(_, args) = c.const_.ty().kind() else { return None };
-    let self_ty = args.iter().find_map(|a| {
-        #[cfg(rapx_ge_99)] let a = a.skip_binder();
-        if let GenericArgKind::Type(t) = a.kind() { Some(t) } else { None }
-    })?;
+    let self_ty = crate::helpers::mir_utils::fn_def_first_type_arg(func)?;
     let TyKind::Adt(adt_def, _) = self_ty.kind() else { return None };
     let path = tcx.def_path_str(adt_def.did());
     if path.contains("ManuallyDrop") {
