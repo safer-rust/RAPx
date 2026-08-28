@@ -143,7 +143,7 @@ pub fn get_owner_struct_def_id(tcx: TyCtxt<'_>, def_id: DefId) -> Option<DefId> 
 
 /// True when a type transitively contains a const-generic parameter or
 /// an associated type alias (which may be layout-ambiguous).
-pub(crate) fn ty_has_param_const(ty: Ty<'_>) -> bool {
+fn ty_has_param_const(ty: Ty<'_>) -> bool {
     for arg in ty.walk() {
         match arg.kind() {
             GenericArgKind::Const(c) if matches!(c.kind(), ConstKind::Param(_)) => return true,
@@ -372,7 +372,7 @@ pub fn trace_place_root(
 }
 
 /// Extract raw bytes from a `ConstValue`, following reference indirection.
-pub fn const_value_bytes<'tcx>(
+fn const_value_bytes<'tcx>(
     tcx: TyCtxt<'tcx>,
     value: ConstValue,
     depth: usize,
@@ -396,7 +396,7 @@ pub fn const_value_bytes<'tcx>(
 }
 
 /// Read bytes from a global allocation.
-pub fn alloc_id_bytes<'tcx>(
+fn alloc_id_bytes<'tcx>(
     tcx: TyCtxt<'tcx>,
     alloc_id: AllocId,
     depth: usize,
@@ -769,11 +769,9 @@ pub fn type_contains_reference(ty: Ty<'_>) -> bool {
     }
 }
 
-/// Whether a type transitively contains a reference or raw pointer.
-///
-/// Unlike [`type_contains_reference`], this recurses through tuple elements and
-/// `Adt` fields, and also matches raw pointers. It needs a `TyCtxt` to resolve
-/// `Adt` fields.
+/// Whether a type transitively contains a reference or raw pointer,
+/// recursing through tuple elements and `Adt` fields. Unlike
+/// [`type_contains_reference`], this also matches raw pointers.
 pub fn type_contains_ref_or_ptr<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> bool {
     match ty.kind() {
         TyKind::Ref(_, _, _) | TyKind::RawPtr(_, _) => true,
@@ -812,13 +810,16 @@ pub fn vec_elem_ty<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<Ty<'tcx>> {
     None
 }
 
-/// Max `size_of` over all implementors of a generic type parameter's trait
-/// bounds (0 for non-param types).
-pub fn size_of_generic_param<'tcx>(tcx: TyCtxt<'tcx>, caller: DefId, ty: Ty<'tcx>) -> u64 {
-    match ty.kind() {
-        TyKind::Param(_) => {}
-        _ => return 0,
-    };
+/// Collect the layouts of every concrete implementor of a generic type
+/// parameter's trait bounds (empty for non-param types).
+fn generic_param_impl_layouts<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    caller: DefId,
+    ty: Ty<'tcx>,
+) -> Vec<rustc_abi::TyAndLayout<'tcx, Ty<'tcx>>> {
+    if !matches!(ty.kind(), TyKind::Param(_)) {
+        return Vec::new();
+    }
     let param_env = tcx.param_env(caller);
     let typing_env = TypingEnv::post_analysis(tcx, caller);
     for clause in param_env.caller_bounds() {
@@ -827,59 +828,42 @@ pub fn size_of_generic_param<'tcx>(tcx: TyCtxt<'tcx>, caller: DefId, ty: Ty<'tcx
         if self_ty != ty {
             continue;
         }
-        let trait_def_id = trait_clause.def_id();
-        let mut max_size: u64 = 0;
-        for impl_def_id in tcx.all_impls(trait_def_id) {
+        let mut layouts = Vec::new();
+        for impl_def_id in tcx.all_impls(trait_clause.def_id()) {
             let impl_ty = tcx.type_of(impl_def_id).skip_binder();
             if ty_has_param_const(impl_ty) {
                 continue;
             }
-            let layout = match catch_panic(|| {
+            let Ok(Ok(layout)) = catch_panic(|| {
                 tcx.layout_of(PseudoCanonicalInput { typing_env, value: impl_ty })
-            }) {
-                Ok(Ok(l)) => l,
-                _ => continue,
+            }) else {
+                continue;
             };
-            max_size = max_size.max(layout.size.bytes());
+            layouts.push(layout);
         }
-        return max_size;
+        return layouts;
     }
-    0
+    Vec::new()
+}
+
+/// Max `size_of` over all implementors of a generic type parameter's trait
+/// bounds (0 for non-param types).
+pub fn size_of_generic_param<'tcx>(tcx: TyCtxt<'tcx>, caller: DefId, ty: Ty<'tcx>) -> u64 {
+    generic_param_impl_layouts(tcx, caller, ty)
+        .into_iter()
+        .map(|l| l.size.bytes())
+        .max()
+        .unwrap_or(0)
 }
 
 /// Min `align_of` over all implementors of a generic type parameter's trait
 /// bounds (0 for non-param types).
 pub fn min_align_of_generic_param<'tcx>(tcx: TyCtxt<'tcx>, caller: DefId, ty: Ty<'tcx>) -> u64 {
-    match ty.kind() {
-        TyKind::Param(_) => {}
-        _ => return 0,
-    };
-    let param_env = tcx.param_env(caller);
-    let typing_env = TypingEnv::post_analysis(tcx, caller);
-    for clause in param_env.caller_bounds() {
-        let Some(trait_clause) = clause.as_trait_clause() else { continue };
-        let self_ty = trait_clause.self_ty().skip_binder();
-        if self_ty != ty {
-            continue;
-        }
-        let trait_def_id = trait_clause.def_id();
-        let mut min_align: u64 = u64::MAX;
-        for impl_def_id in tcx.all_impls(trait_def_id) {
-            let impl_ty = tcx.type_of(impl_def_id).skip_binder();
-            if ty_has_param_const(impl_ty) {
-                continue;
-            }
-            let layout = match catch_panic(|| {
-                tcx.layout_of(PseudoCanonicalInput { typing_env, value: impl_ty })
-            }) {
-                Ok(Ok(l)) => l,
-                _ => continue,
-            };
-            min_align = min_align.min(layout.align.abi.bytes());
-        }
-        return if min_align == u64::MAX { 0 } else { min_align };
-    }
-    0
+    generic_param_impl_layouts(tcx, caller, ty)
+        .into_iter()
+        .map(|l| l.align.abi.bytes())
+        .min()
+        .unwrap_or(0)
 }
 
 /// Follow a `parents` map (built by [`body_parents`]) from `start` to its root
@@ -1163,14 +1147,8 @@ fn collect_as_ptr_const_bytes<'tcx>(
                 let name = call_name(tcx, func);
                 if is_as_ptr_like(&name) {
                     for arg in args {
-                        if let Some(bytes) = extract_const_bytes_from_operand(tcx, &arg.node) {
+                        if let Some(bytes) = const_bytes_from_operand(tcx, body, &arg.node) {
                             results.push(bytes);
-                        } else if let Operand::Copy(p) | Operand::Move(p) = &arg.node {
-                            if p.projection.is_empty() {
-                                if let Some(bytes) = const_bytes_for_local(tcx, body, p.local) {
-                                    results.push(bytes);
-                                }
-                            }
                         }
                     }
                 }
@@ -1340,6 +1318,7 @@ fn fn_always_returns_nonzero<'tcx>(
 
 fn rvalue_is_nonzero(rvalue: &Rvalue<'_>) -> bool {
     match rvalue {
+        #[allow(unreachable_patterns)]
         Rvalue::Use(operand, ..) => match operand {
             Operand::Constant(_) => scalar_constant(operand).is_some_and(|v| v != 0),
             Operand::Copy(_) | Operand::Move(_) => true,

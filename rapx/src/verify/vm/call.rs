@@ -808,15 +808,12 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 }
                 TerminatorKind::SwitchInt { discr, targets } => {
                     // A constant discriminant folds to a single live edge.
-                    if let rustc_middle::mir::Operand::Constant(c) = discr {
-                        let text = format!("{:?}", c.const_);
-                        if let Some(v) = crate::helpers::mir_utils::const_int_from_debug(&text) {
-                            let t = targets.iter().find(|(val, _)| *val == v as u128)
-                                .map(|(_, t)| t)
-                                .unwrap_or_else(|| targets.otherwise());
-                            queue.push(t);
-                            continue;
-                        }
+                    if let Some(v) = crate::helpers::mir_utils::extract_operand_const(discr) {
+                        let t = targets.iter().find(|(val, _)| *val == v as u128)
+                            .map(|(_, t)| t)
+                            .unwrap_or_else(|| targets.otherwise());
+                        queue.push(t);
+                        continue;
                     }
                     // A `debug_assert!`/`assert!` switch or a drop-flag dispatch
                     // has its non-otherwise edges dead on the normal path, so
