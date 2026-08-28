@@ -17,8 +17,6 @@ pub fn is_as_ptr(name: &str) -> bool {
         || name.contains("::as_mut_ptr") && !name.ends_with("::as_mut_ptr_range")
         || name.ends_with("::into_raw_mut")
         || (name.contains("::cast") && !name.contains("::cast_to"))
-        || name.contains("cast_array")
-        || name.contains("cast_const") || name.contains("cast_mut")
         || name.ends_with("::from") && name.contains("ptr::non_null")
         || name.ends_with("::new_unchecked") && name.contains("ptr::non_null")
         || name.ends_with("::as_ref") && name.contains("ptr::non_null")
@@ -147,13 +145,11 @@ pub fn is_ownership_transfer_api(name: &str) -> bool {
     if is_vec_ownership_transfer_api(name) {
         return true;
     }
-    let is_from_raw = name.contains("from_raw");
-    is_from_raw
+    name.contains("from_raw")
         && (name.contains("boxed")
             || name.contains("Box")
             || name.contains("ffi::c_str")
-            || name.contains("CString")
-            || is_vec_ownership_transfer_api(name))
+            || name.contains("CString"))
 }
 
 pub fn is_vec_ownership_transfer_api(name: &str) -> bool {
@@ -205,7 +201,6 @@ pub fn is_benign_origin_use_api(name: &str) -> bool {
         || name.ends_with("::is_empty")
         || name.ends_with("::is_null")
         || name.ends_with("::addr")
-        || name.ends_with("::cast")
 }
 
 // ── ADT type-name classifiers (match def_path_str of ADT types) ──────
@@ -214,15 +209,12 @@ pub fn is_std_vec(name: &str) -> bool { name.ends_with("::Vec") || name == "Vec"
 pub fn is_std_box(name: &str) -> bool { name.ends_with("::Box") || name == "Box" }
 pub fn is_std_cstring(name: &str) -> bool {
     name.ends_with("::CString") || name == "CString"
-        || name.ends_with("::c_str::CString")
 }
 pub fn is_std_nonnull(name: &str) -> bool {
-    name.ends_with("::NonNull") || name == "NonNull"
-        || name.contains("::NonNull")
+    name == "NonNull" || name.contains("::NonNull")
 }
 pub fn is_std_option(name: &str) -> bool {
-    name.ends_with("::Option") || name == "Option"
-        || name.contains("::Option")
+    name == "Option" || name.contains("::Option")
 }
 pub fn is_std_iter_or_itermut(name: &str) -> bool {
     name.ends_with("::Iter") || name == "Iter"
