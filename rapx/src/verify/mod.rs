@@ -17,6 +17,5 @@ pub(crate) mod property_checker;
 pub(crate) mod report;
 pub(crate) mod slicer;
 pub(crate) mod target;
-pub(crate) mod cstr_const_bytes;
 
 pub(crate) mod vm;
