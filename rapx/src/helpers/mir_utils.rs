@@ -215,12 +215,7 @@ pub fn rvalue_source_place<'a, 'tcx>(rvalue: &'a Rvalue<'tcx>) -> Option<&'a rus
 
 /// Extract a PlaceKey from a MIR operand.
 pub fn operand_place(operand: &Operand<'_>) -> Option<PlaceKey> {
-    match operand {
-        Operand::Copy(place) | Operand::Move(place) => Some(PlaceKey::from_mir_place(place)),
-        Operand::Constant(_) => None,
-        #[cfg(rapx_ge_99)]
-        Operand::RuntimeChecks(_) => None,
-    }
+    operand_mir_place(operand).map(PlaceKey::from_mir_place)
 }
 
 /// Extract the MIR Place from an operand.
@@ -648,7 +643,7 @@ pub fn const_int_from_debug(text: &str) -> Option<u64> {
 /// evaluated here.  Arbitrary unevaluated consts — and the wide bounds
 /// `usize::MAX` / `u64::MAX` / `u128::MAX` — are deliberately left symbolic:
 /// forcing them to a concrete `u64` would overflow downstream size arithmetic.
-pub fn const_scalar_int<'tcx>(
+pub fn eval_const_scalar_int<'tcx>(
     tcx: TyCtxt<'tcx>,
     constant: &rustc_middle::mir::Const<'tcx>,
     text: &str,
@@ -690,7 +685,7 @@ pub fn const_scalar_int<'tcx>(
 /// Try to extract raw bytes from a MIR constant operand that is a reference
 /// to a byte array/slice (e.g. `b"hello\0"`). Returns the byte values.
 /// Used by the VM to populate byte-level tracking for constant C strings.
-pub fn extract_const_bytes_from_operand<'tcx>(
+pub fn const_operand_bytes<'tcx>(
     tcx: TyCtxt<'tcx>,
     operand: &Operand<'tcx>,
 ) -> Option<Vec<u8>> {
@@ -725,22 +720,14 @@ pub fn extract_const_bytes_from_operand<'tcx>(
 
 /// Extract the bare local from a Copy/Move operand with no projection.
 pub fn extract_local(operand: &Operand<'_>) -> Option<Local> {
-    match operand {
-        Operand::Copy(place) | Operand::Move(place)
-            if place.projection.is_empty() => Some(place.local),
-        _ => None,
-    }
+    operand_mir_place(operand)
+        .filter(|place| place.projection.is_empty())
+        .map(|place| place.local)
 }
 
 /// Extract a constant u64 value from an operand, if it's a known constant.
-pub fn extract_operand_const(operand: &Operand<'_>) -> Option<u64> {
-    match operand {
-        Operand::Constant(constant) => {
-            let text = format!("{:?}", constant.const_);
-            const_int_from_debug(&text)
-        }
-        _ => None,
-    }
+pub fn operand_const_u64(operand: &Operand<'_>) -> Option<u64> {
+    operand_scalar_int(operand).map(|v| v as u64)
 }
 
 /// Whether a type is a `u8` array (`[u8; N]`) or `u8` slice (`[u8]`).
@@ -968,15 +955,19 @@ pub fn body_parents<'tcx>(
 
 // ── Constant byte recovery from MIR ─────────────────────────────
 
-fn scalar_constant(operand: &Operand<'_>) -> Option<u128> {
+fn operand_scalar_int(operand: &Operand<'_>) -> Option<u128> {
     let constant = match operand {
         Operand::Constant(c) => c,
         _ => return None,
     };
-    constant.const_.try_to_scalar_int().map(|s| s.to_uint(s.size()))
+    constant
+        .const_
+        .try_to_scalar_int()
+        .map(|s| s.to_uint(s.size()))
+        .or_else(|| const_int_from_debug(&format!("{:?}", constant.const_)).map(|v| v as u128))
 }
 
-fn is_as_ptr_like(name: &str) -> bool {
+fn is_as_ptr_or_as_method(name: &str) -> bool {
     name.contains("as_ptr") || name.contains("::as_")
 }
 
@@ -1056,17 +1047,17 @@ pub fn collect_all_const_bytes_worklist<'tcx>(
                         continue;
                     }
                     let name = call_name(tcx, func);
-                    if is_as_ptr_like(&name) {
+                    if is_as_ptr_or_as_method(&name) {
                         for arg in args {
-                            if let Some(bytes) = const_bytes_from_operand(tcx, body, &arg.node) {
+                            if let Some(bytes) = trace_const_bytes_from_operand(tcx, body, &arg.node) {
                                 results.push(bytes);
                             }
                         }
                     }
                     if name.contains("::add") {
-                        if let Some(offset) = args.get(1).and_then(|a| scalar_constant(&a.node)) {
+                        if let Some(offset) = args.get(1).and_then(|a| operand_scalar_int(&a.node)) {
                             if let Some(base) = args.first() {
-                                if let Some(bytes) = const_bytes_from_operand(tcx, body, &base.node) {
+                                if let Some(bytes) = trace_const_bytes_from_operand(tcx, body, &base.node) {
                                     let start = offset as usize;
                                     if start < bytes.len() {
                                         results.push(bytes[start..].to_vec());
@@ -1113,7 +1104,7 @@ fn collect_aggregate_const_bytes<'tcx>(
                 continue;
             }
             let last_op = operands.iter().last().unwrap();
-            if !is_constant_zero_u8(last_op) {
+            if !is_constant_zero(last_op) {
                 continue;
             }
             let mut all_nonzero = true;
@@ -1145,9 +1136,9 @@ fn collect_as_ptr_const_bytes<'tcx>(
         if let Some(terminator) = &data.terminator {
             if let TerminatorKind::Call { func, args, .. } = &terminator.kind {
                 let name = call_name(tcx, func);
-                if is_as_ptr_like(&name) {
+                if is_as_ptr_or_as_method(&name) {
                     for arg in args {
-                        if let Some(bytes) = const_bytes_from_operand(tcx, body, &arg.node) {
+                        if let Some(bytes) = trace_const_bytes_from_operand(tcx, body, &arg.node) {
                             results.push(bytes);
                         }
                     }
@@ -1157,12 +1148,12 @@ fn collect_as_ptr_const_bytes<'tcx>(
     }
 }
 
-fn const_bytes_from_operand<'tcx>(
+fn trace_const_bytes_from_operand<'tcx>(
     tcx: TyCtxt<'tcx>,
     body: &Body<'tcx>,
     operand: &Operand<'tcx>,
 ) -> Option<Vec<u8>> {
-    if let Some(bytes) = extract_const_bytes_from_operand(tcx, operand) {
+    if let Some(bytes) = const_operand_bytes(tcx, operand) {
         return Some(bytes);
     }
     match operand {
@@ -1188,9 +1179,9 @@ fn const_bytes_from_call_dest<'tcx>(
                     continue;
                 }
                 let name = call_name(tcx, func);
-                if is_as_ptr_like(&name) {
+                if is_as_ptr_or_as_method(&name) {
                     for arg in args {
-                        if let Some(bytes) = const_bytes_from_operand(tcx, body, &arg.node) {
+                        if let Some(bytes) = trace_const_bytes_from_operand(tcx, body, &arg.node) {
                             return Some(bytes);
                         }
                     }
@@ -1259,10 +1250,10 @@ fn aggregate_op_is_nonzero<'tcx>(
     body: &Body<'tcx>,
     operand: &Operand<'tcx>,
 ) -> bool {
-    if is_constant_zero_u8(operand) {
+    if is_constant_zero(operand) {
         return false;
     }
-    if extract_const_bytes_from_operand(tcx, operand).is_some() {
+    if const_operand_bytes(tcx, operand).is_some() {
         return true;
     }
     match operand {
@@ -1278,13 +1269,13 @@ fn aggregate_op_is_nonzero<'tcx>(
             }
             false
         }
-        Operand::Constant(_) => scalar_constant(operand).is_some_and(|v| v != 0),
+        Operand::Constant(_) => operand_scalar_int(operand).is_some_and(|v| v != 0),
         _ => false,
     }
 }
 
-fn is_constant_zero_u8(operand: &Operand<'_>) -> bool {
-    scalar_constant(operand) == Some(0)
+fn is_constant_zero(operand: &Operand<'_>) -> bool {
+    operand_scalar_int(operand) == Some(0)
 }
 
 fn fn_always_returns_nonzero<'tcx>(
@@ -1320,7 +1311,7 @@ fn rvalue_is_nonzero(rvalue: &Rvalue<'_>) -> bool {
     match rvalue {
         #[allow(unreachable_patterns)]
         Rvalue::Use(operand, ..) => match operand {
-            Operand::Constant(_) => scalar_constant(operand).is_some_and(|v| v != 0),
+            Operand::Constant(_) => operand_scalar_int(operand).is_some_and(|v| v != 0),
             Operand::Copy(_) | Operand::Move(_) => true,
             _ => false,
         },

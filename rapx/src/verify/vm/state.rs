@@ -566,7 +566,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             }
             Operand::Constant(constant) => {
                 let text = format!("{:?}", constant.const_);
-                let int_val = crate::helpers::mir_utils::const_scalar_int(self.tcx, &constant.const_, &text);
+                let int_val = crate::helpers::mir_utils::eval_const_scalar_int(self.tcx, &constant.const_, &text);
                 let is_field_offset = int_val.is_none()
                     && crate::helpers::mir_utils::offset_of_container(self.tcx, &constant.const_)
                         .is_some();

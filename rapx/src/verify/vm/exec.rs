@@ -1688,7 +1688,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                             self.record_byte_value(alloc_id, byte_offset, field_term.clone());
                         }
                         // Record known_nul / known_non_nul from constant operands
-                        if let Some(int_val) = crate::helpers::mir_utils::extract_operand_const(operand) {
+                        if let Some(int_val) = crate::helpers::mir_utils::operand_const_u64(operand) {
                             if field_sz == 1 {
                                 if int_val == 0 {
                                     self.mark_byte_nul(alloc_id, byte_offset);
@@ -3197,7 +3197,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     _ => false,
                 };
                 if is_byte {
-                    let bytes_opt = crate::helpers::mir_utils::extract_const_bytes_from_operand(self.tcx, operand)
+                    let bytes_opt = crate::helpers::mir_utils::const_operand_bytes(self.tcx, operand)
                         .or_else(|| self.trace_to_const_bytes(operand));
                     if let Some(bytes) = bytes_opt {
                         let size = z3::ast::Int::from_u64(self.ctx, bytes.len() as u64);
@@ -3259,12 +3259,12 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     match rvalue {
                         #[cfg(rapx_rvalue_use_with_retag)]
                         Rvalue::Use(op, _) => {
-                            return crate::helpers::mir_utils::extract_const_bytes_from_operand(self.tcx, op)
+                            return crate::helpers::mir_utils::const_operand_bytes(self.tcx, op)
                                 .or_else(|| self.trace_to_const_bytes(op));
                         }
                         #[cfg(not(rapx_rvalue_use_with_retag))]
                         Rvalue::Use(op) => {
-                            return crate::helpers::mir_utils::extract_const_bytes_from_operand(self.tcx, op)
+                            return crate::helpers::mir_utils::const_operand_bytes(self.tcx, op)
                                 .or_else(|| self.trace_to_const_bytes(op));
                         }
                         Rvalue::Ref(_, _, p) => {

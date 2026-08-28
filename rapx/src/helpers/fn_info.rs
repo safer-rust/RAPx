@@ -1,15 +1,10 @@
 use rustc_hir::{Safety, def::DefKind, def_id::DefId};
 use rustc_middle::{
-    mir::Local,
     ty,
     ty::{AssocKind, Mutability, TyCtxt, TyKind},
 };
 use rustc_span::{kw, sym};
-use std::{
-    collections::{HashMap, HashSet},
-    fmt::Debug,
-    hash::Hash,
-};
+use std::{collections::HashSet, fmt::Debug, hash::Hash};
 use syn::Expr;
 
 pub use super::mir_scan::check_safety;
@@ -56,70 +51,53 @@ impl AdtInfo {
 }
 
 pub fn check_visibility(tcx: TyCtxt, func_defid: DefId) -> bool {
-    if !tcx.visibility(func_defid).is_public() {
-        return false;
+    tcx.visibility(func_defid).is_public()
+}
+
+/// Returns true when `ty` denotes `Self`: either the generic `Self` param
+/// (`ty.is_param(0)`) or a type equal to the impl's self type.
+fn is_self_ty<'tcx>(tcx: TyCtxt<'tcx>, assoc_item: &ty::AssocItem, ty: ty::Ty<'tcx>) -> bool {
+    if ty.is_param(0) {
+        return true;
     }
-    true
+    assoc_item
+        .impl_container(tcx)
+        .is_some_and(|impl_id| ty == tcx.type_of(impl_id).skip_binder())
 }
 
 pub fn get_type(tcx: TyCtxt<'_>, def_id: DefId) -> FnKind {
-    if let Some(assoc_item) = tcx.opt_associated_item(def_id) {
-        match assoc_item.kind {
-            AssocKind::Fn { has_self, .. } => {
-                if has_self {
-                    return FnKind::Method;
-                } else {
-                    let fn_sig = tcx.fn_sig(def_id).skip_binder();
-                    let output = fn_sig.output().skip_binder();
-                    // return type is 'Self'
-                    if output.is_param(0) {
-                        return FnKind::Constructor;
-                    }
-                    // return type is struct's name
-                    if let Some(impl_id) = assoc_item.impl_container(tcx) {
-                        let ty = tcx.type_of(impl_id).skip_binder();
-                        if output == ty {
-                            return FnKind::Constructor;
-                        }
-                    }
-                    match output.kind() {
-                        TyKind::Ref(_, ref_ty, _) => {
-                            if ref_ty.is_param(0) {
-                                return FnKind::Constructor;
-                            }
-                            if let Some(impl_id) = assoc_item.impl_container(tcx) {
-                                let ty = tcx.type_of(impl_id).skip_binder();
-                                if *ref_ty == ty {
-                                    return FnKind::Constructor;
-                                }
-                            }
-                        }
-                        TyKind::Adt(adt_def, substs) => {
-                            if adt_def.is_enum()
-                                && (tcx.is_diagnostic_item(sym::Option, adt_def.did())
-                                    || tcx.is_diagnostic_item(sym::Result, adt_def.did())
-                                    || tcx.is_diagnostic_item(kw::Box, adt_def.did()))
-                            {
-                                let inner_ty = substs.type_at(0);
-                                if inner_ty.is_param(0) {
-                                    return FnKind::Constructor;
-                                }
-                                if let Some(impl_id) = assoc_item.impl_container(tcx) {
-                                    let ty_impl = tcx.type_of(impl_id).skip_binder();
-                                    if inner_ty == ty_impl {
-                                        return FnKind::Constructor;
-                                    }
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            _ => todo!(),
-        }
+    let Some(assoc_item) = tcx.opt_associated_item(def_id) else {
+        return FnKind::Fn;
+    };
+    let AssocKind::Fn { has_self, .. } = assoc_item.kind else {
+        return FnKind::Fn;
+    };
+    if has_self {
+        return FnKind::Method;
     }
-    return FnKind::Fn;
+    let output = tcx.fn_sig(def_id).skip_binder().output().skip_binder();
+    if is_self_ty(tcx, &assoc_item, output) {
+        return FnKind::Constructor;
+    }
+    match output.kind() {
+        TyKind::Ref(_, ref_ty, _) => {
+            if is_self_ty(tcx, &assoc_item, *ref_ty) {
+                return FnKind::Constructor;
+            }
+        }
+        TyKind::Adt(adt_def, substs)
+            if adt_def.is_enum()
+                && (tcx.is_diagnostic_item(sym::Option, adt_def.did())
+                    || tcx.is_diagnostic_item(sym::Result, adt_def.did())
+                    || tcx.is_diagnostic_item(kw::Box, adt_def.did())) =>
+        {
+            if is_self_ty(tcx, &assoc_item, substs.type_at(0)) {
+                return FnKind::Constructor;
+            }
+        }
+        _ => {}
+    }
+    FnKind::Fn
 }
 
 /// Returns true when the function is a "wrapped" constructor that returns
@@ -135,7 +113,13 @@ pub fn returns_wrapped_self(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
     let Some(assoc_item) = tcx.opt_associated_item(def_id) else {
         return false;
     };
-    if !matches!(assoc_item.kind, AssocKind::Fn { has_self: false, .. }) {
+    if !matches!(
+        assoc_item.kind,
+        AssocKind::Fn {
+            has_self: false,
+            ..
+        }
+    ) {
         return false;
     }
     let fn_sig = tcx.fn_sig(def_id).skip_binder();
@@ -149,98 +133,58 @@ pub fn returns_wrapped_self(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
     {
         return false;
     }
-    let inner_ty = substs.type_at(0);
-    if inner_ty.is_param(0) {
-        return true;
-    }
-    if let Some(impl_id) = assoc_item.impl_container(tcx) {
-        let ty_impl = tcx.type_of(impl_id).skip_binder();
-        if inner_ty == ty_impl {
-            return true;
-        }
-    }
-    false
+    is_self_ty(tcx, &assoc_item, substs.type_at(0))
+}
+
+/// The `AdtDef` that `def_id`'s impl block is implemented for, if any.
+fn self_adt_def(tcx: TyCtxt<'_>, def_id: DefId) -> Option<ty::AdtDef<'_>> {
+    let assoc_item = tcx.opt_associated_item(def_id)?;
+    let impl_id = assoc_item.impl_container(tcx)?;
+    tcx.type_of(impl_id).skip_binder().ty_adt_def()
 }
 
 // result: adt_def_id, is_literal
 pub fn get_adt_via_method(tcx: TyCtxt<'_>, method_def_id: DefId) -> Option<AdtInfo> {
-    let assoc_item = tcx.opt_associated_item(method_def_id)?;
-    let impl_id = assoc_item.impl_container(tcx)?;
-    let ty = tcx.type_of(impl_id).skip_binder();
-    let adt_def = ty.ty_adt_def()?;
+    let adt_def = self_adt_def(tcx, method_def_id)?;
     let adt_def_id = adt_def.did();
 
-    let all_fields: Vec<_> = adt_def.all_fields().collect();
-    let total_count = all_fields.len();
+    let total_count = adt_def.all_fields().count();
 
     if total_count == 0 {
         return Some(AdtInfo::new(adt_def_id, true));
     }
 
-    let pub_count = all_fields
-        .iter()
-        .filter(|field| tcx.visibility(field.did).is_public())
-        .count();
+    let pub_count = public_field_indices(tcx, adt_def).len();
 
     if pub_count == 0 {
         return None;
     }
     Some(AdtInfo::new(adt_def_id, pub_count == total_count))
 }
-// return all the impls def id of corresponding struct
-fn get_impls_for_struct(tcx: TyCtxt<'_>, struct_def_id: DefId) -> Vec<DefId> {
-    let mut impls = Vec::new();
-    for item_id in tcx.hir_crate_items(()).free_items() {
-        let item = tcx.hir_item(item_id);
-        if let rustc_hir::ItemKind::Impl(impl_details) = &item.kind {
-            if let rustc_hir::TyKind::Path(rustc_hir::QPath::Resolved(_, path)) =
-                &impl_details.self_ty.kind
-            {
-                if let rustc_hir::def::Res::Def(_, def_id) = path.res {
-                    if def_id == struct_def_id {
-                        impls.push(item_id.owner_id.to_def_id());
-                    }
-                }
-            }
-        }
-    }
-    impls
-}
-
 pub fn get_adt_def_id_by_adt_method(tcx: TyCtxt<'_>, def_id: DefId) -> Option<DefId> {
-    if let Some(assoc_item) = tcx.opt_associated_item(def_id) {
-        if let Some(impl_id) = assoc_item.impl_container(tcx) {
-            // get struct ty
-            let ty = tcx.type_of(impl_id).skip_binder();
-            if let Some(adt_def) = ty.ty_adt_def() {
-                return Some(adt_def.did());
-            }
-        }
-    }
-    None
+    self_adt_def(tcx, def_id).map(|adt_def| adt_def.did())
 }
 
-fn has_mut_self_param(tcx: TyCtxt, def_id: DefId) -> bool {
-    if let Some(assoc_item) = tcx.opt_associated_item(def_id) {
-        match assoc_item.kind {
-            AssocKind::Fn { has_self, .. } => {
-                if has_self && tcx.is_mir_available(def_id) {
-                    let body = tcx.optimized_mir(def_id);
-                    let fst_arg = body.local_decls[Local::from_usize(1)].clone();
-                    let ty = fst_arg.ty;
-                    let is_mut_ref = matches!(ty.kind(), ty::Ref(_, _, Mutability::Mut));
-                    return fst_arg.mutability.is_mut() || is_mut_ref;
-                }
-            }
-            _ => (),
-        }
+/// Returns true when `def_id` is a method taking `&mut self` (a mutator).
+///
+/// Detection is based on the method signature rather than MIR, so it also
+/// works for foreign (e.g. std) functions whose MIR is unavailable.
+fn is_mut_self_method(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
+    let Some(assoc) = tcx.opt_associated_item(def_id) else {
+        return false;
+    };
+    if !matches!(assoc.kind, AssocKind::Fn { has_self: true, .. }) {
+        return false;
     }
-    false
+    let fn_sig = tcx.fn_sig(def_id).instantiate_identity().skip_binder();
+    let Some(first) = fn_sig.inputs_and_output.first().copied() else {
+        return false;
+    };
+    matches!(first.kind(), TyKind::Ref(_, _, Mutability::Mut))
 }
 
 // Check each field's visibility, return the public fields vec
-fn get_public_fields(tcx: TyCtxt, def_id: DefId) -> HashSet<usize> {
-    let adt_def = tcx.adt_def(def_id);
+fn public_field_indices(tcx: TyCtxt<'_>, adt_def: ty::AdtDef<'_>) -> HashSet<usize> {
     adt_def
         .all_fields()
         .enumerate()
@@ -284,78 +228,58 @@ pub fn get_all_std_fns_by_rustc_public(tcx: TyCtxt) -> Vec<DefId> {
     results
 }
 
-// Input the adt def id
-// Return set of (mutable method def_id, fields can be modified)
-pub fn get_all_mutable_methods(tcx: TyCtxt, src_def_id: DefId) -> HashMap<DefId, HashSet<usize>> {
-    let mut std_results = HashMap::new();
+/// Find `&mut self` methods (mutators) on the same struct as `src_def_id`.
+///
+/// For std types the mutators are located among the std library's public
+/// functions; for user types they are the struct's inherent `&mut self` methods.
+pub fn get_all_mutable_methods(tcx: TyCtxt, src_def_id: DefId) -> HashSet<DefId> {
     if get_type(tcx, src_def_id) == FnKind::Constructor {
-        return std_results;
+        return HashSet::new();
     }
-    let all_std_fn_def = get_all_std_fns_by_rustc_public(tcx);
     let target_adt_def = get_adt_def_id_by_adt_method(tcx, src_def_id);
+    let mut mutators = HashSet::new();
     let mut is_std = false;
-    for &def_id in &all_std_fn_def {
+    for def_id in get_all_std_fns_by_rustc_public(tcx) {
         let adt_def = get_adt_def_id_by_adt_method(tcx, def_id);
         if adt_def.is_some() && adt_def == target_adt_def && src_def_id != def_id {
-            if has_mut_self_param(tcx, def_id) {
-                std_results.insert(def_id, HashSet::new());
+            if is_mut_self_method(tcx, def_id) {
+                mutators.insert(def_id);
             }
             is_std = true;
         }
     }
     if is_std {
-        return std_results;
+        return mutators;
     }
-    let mut results = HashMap::new();
-    let public_fields = target_adt_def.map_or_else(HashSet::new, |def| get_public_fields(tcx, def));
-    let impl_vec = target_adt_def.map_or_else(Vec::new, |def| get_impls_for_struct(tcx, def));
-    for impl_id in impl_vec {
-        if !matches!(tcx.def_kind(impl_id), rustc_hir::def::DefKind::Impl { .. }) {
-            continue;
-        }
-        let associated_items = tcx.associated_items(impl_id);
-        for item in associated_items.in_definition_order() {
-            if let ty::AssocKind::Fn {
-                name: _,
-                has_self: _,
-            } = item.kind
-            {
-                let item_def_id = item.def_id;
-                if has_mut_self_param(tcx, item_def_id) {
-                    let modified_fields = public_fields.clone();
-                    results.insert(item_def_id, modified_fields);
-                }
+    mutators.extend(get_muts(tcx, src_def_id));
+    mutators
+}
+
+/// Associated function `DefId`s (inherent impls only) on the struct that
+/// `def_id`'s impl block is implemented for.
+fn assoc_fns_of_self(tcx: TyCtxt<'_>, def_id: DefId) -> Vec<DefId> {
+    let Some(adt_def) = self_adt_def(tcx, def_id) else {
+        return Vec::new();
+    };
+    let mut fns = Vec::new();
+    for impl_def_id in tcx.inherent_impls(adt_def.did()) {
+        for item in tcx.associated_item_def_ids(*impl_def_id) {
+            if matches!(tcx.def_kind(*item), DefKind::Fn | DefKind::AssocFn) {
+                fns.push(*item);
             }
         }
     }
-    results
+    fns
 }
 
 pub fn get_cons(tcx: TyCtxt<'_>, def_id: DefId) -> Vec<DefId> {
-    let mut cons = Vec::new();
     if tcx.def_kind(def_id) == DefKind::Fn || get_type(tcx, def_id) == FnKind::Constructor {
-        return cons;
+        return Vec::new();
     }
-    if let Some(assoc_item) = tcx.opt_associated_item(def_id) {
-        if let Some(impl_id) = assoc_item.impl_container(tcx) {
-            let ty = tcx.type_of(impl_id).skip_binder();
-            if let Some(adt_def) = ty.ty_adt_def() {
-                let adt_def_id = adt_def.did();
-                let impls = tcx.inherent_impls(adt_def_id);
-                for impl_def_id in impls {
-                    for item in tcx.associated_item_def_ids(*impl_def_id) {
-                        if (tcx.def_kind(*item) == DefKind::Fn
-                            || tcx.def_kind(*item) == DefKind::AssocFn)
-                            && get_type(tcx, *item) == FnKind::Constructor
-                        {
-                            cons.push(*item);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    cons
+    assoc_fns_of_self(tcx, def_id)
+        .into_iter()
+        .filter(|&item| get_type(tcx, item) == FnKind::Constructor)
+        .collect()
 }
 
 /// Find `&mut self` methods (mutators) on the same struct as `def_id`.
@@ -363,41 +287,10 @@ pub fn get_cons(tcx: TyCtxt<'_>, def_id: DefId) -> Vec<DefId> {
 /// A mutator is a method whose first parameter is a mutable reference to Self.
 /// These methods can change struct fields and affect subsequent invariant checks.
 pub fn get_muts(tcx: TyCtxt<'_>, def_id: DefId) -> Vec<DefId> {
-    let mut muts = Vec::new();
-    if let Some(assoc_item) = tcx.opt_associated_item(def_id) {
-        if let Some(impl_id) = assoc_item.impl_container(tcx) {
-            let ty = tcx.type_of(impl_id).skip_binder();
-            if let Some(adt_def) = ty.ty_adt_def() {
-                let adt_def_id = adt_def.did();
-                let impls = tcx.inherent_impls(adt_def_id);
-                for impl_def_id in impls {
-                    for item in tcx.associated_item_def_ids(*impl_def_id) {
-                        if !matches!(tcx.def_kind(*item), DefKind::Fn | DefKind::AssocFn) {
-                            continue;
-                        }
-                        if get_type(tcx, *item) != FnKind::Method {
-                            continue;
-                        }
-                        let Some(assoc) = tcx.opt_associated_item(*item) else {
-                            continue;
-                        };
-                        if !matches!(assoc.kind, AssocKind::Fn { has_self: true, .. }) {
-                            continue;
-                        }
-                        let fn_sig = tcx.fn_sig(*item).instantiate_identity().skip_binder();
-                        let all = fn_sig.inputs_and_output;
-                        let first_param = all.first().copied();
-                        if let Some(TyKind::Ref(_, _, Mutability::Mut)) =
-                            first_param.map(|ty| ty.kind())
-                        {
-                            muts.push(*item);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    muts
+    assoc_fns_of_self(tcx, def_id)
+        .into_iter()
+        .filter(|&item| is_mut_self_method(tcx, item))
+        .collect()
 }
 
 pub fn append_fn_with_types(tcx: TyCtxt, def_id: DefId) -> FnInfo {

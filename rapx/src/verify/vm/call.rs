@@ -620,7 +620,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
 
         // ── Capture return value and its per-field values ──
         let return_val = self.locals.get(&Local::from_usize(0)).cloned();
-        crate::rap_info!("exec_inline_call: callee={:?} return_val={:?}", callee_def_id, return_val.as_ref().map(|v| (v.term.to_string(), v.invariants.non_null)));
+        crate::rap_debug!("exec_inline_call: callee={:?} return_val={:?}", callee_def_id, return_val.as_ref().map(|v| (v.term.to_string(), v.invariants.non_null)));
         let return_fields: Vec<(Vec<usize>, VmValue<'ctx, 'tcx>)> = self
             .field_values
             .iter()
@@ -808,7 +808,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 }
                 TerminatorKind::SwitchInt { discr, targets } => {
                     // A constant discriminant folds to a single live edge.
-                    if let Some(v) = crate::helpers::mir_utils::extract_operand_const(discr) {
+                    if let Some(v) = crate::helpers::mir_utils::operand_const_u64(discr) {
                         let t = targets.iter().find(|(val, _)| *val == v as u128)
                             .map(|(_, t)| t)
                             .unwrap_or_else(|| targets.otherwise());
@@ -1969,7 +1969,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         for (i, arg) in args.iter().enumerate() {
             let arg_val = self.value_of_operand(&arg.node);
             if const_bytes.is_none() {
-                let bytes_opt = crate::helpers::mir_utils::extract_const_bytes_from_operand(
+                let bytes_opt = crate::helpers::mir_utils::const_operand_bytes(
                     self.tcx,
                     &arg.node,
                 ).or_else(|| self.trace_to_const_bytes(&arg.node));

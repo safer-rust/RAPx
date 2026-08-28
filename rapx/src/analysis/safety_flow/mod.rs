@@ -107,8 +107,7 @@ impl<'tcx> SafetyFlowAnalysis<'tcx> {
             return;
         }
 
-        let mut_methods_set = get_all_mutable_methods(self.tcx, def_id);
-        let mut_methods: HashSet<_> = mut_methods_set.keys().copied().collect();
+        let mut_methods = get_all_mutable_methods(self.tcx, def_id);
         let unit = SafetyFlowUnit::new(
             caller_typed,
             callees_typed,
