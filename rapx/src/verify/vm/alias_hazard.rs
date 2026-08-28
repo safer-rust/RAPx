@@ -1,11 +1,13 @@
-//! Shared alias hazard analysis for both legacy and VM backends.
+//! MIR-level alias hazard scanning for the symbolic VM backend.
 //!
-//! This module extracts the MIR-level hazard scanning logic from
-//! `smt_check/alias.rs` and makes it independent of the old forward
-//! verifier (`ForwardVisitResult`, `PtsGraph`, `SmtChecker`).
+//! This module holds the pure MIR hazard analysis (origin-based parameter
+//! safety, escape analysis, local hazard scanning, and ownership-transfer
+//! violation scanning) independent of VM state and Z3 terms. It was extracted
+//! from the old forward verifier's `smt_check/alias.rs`.
 //!
-//! The VM backend provides its own origin resolution via
-//! `vm/alias.rs` and calls into this module for hazard scanning.
+//! `vm/alias.rs` provides the VM-specific provenance→origin resolution and
+//! orchestrates the overall alias check, calling into this module for the
+//! underlying MIR scanning.
 
 use std::collections::{HashMap, HashSet};
 
@@ -24,12 +26,13 @@ use crate::{
 };
 use crate::helpers::fn_info::is_externally_reachable;
 use crate::analysis::alias::{
-    collect_local_origins, resolve_place, resolve_self_field_origin, LocalOriginMap,
+    collect_local_origins, resolve_any_field_origin, resolve_place, resolve_self_field_origin,
+    FieldOrigin, LocalOriginMap,
 };
 
 // Re-export utility functions moved to helpers/mir_utils for
 // backward compatibility.
-pub(crate) use crate::helpers::mir_utils::{
+pub(super) use crate::helpers::mir_utils::{
     blocks_reachable_after_call, call_destination, collect_place_aliases, deep_resolve_place,
     operand_mir_place, operand_place, resolve_mir_place, rvalue_any_place_matching, trace_place_root,
 };
@@ -37,33 +40,43 @@ pub(crate) use crate::helpers::mir_utils::{
 // ── Shared types ─────────────────────────────────────────────────
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum HazardKind {
+pub(super) enum HazardKind {
     SharedView,
     UniqueView,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum AliasProducer {
+pub(super) enum AliasProducer {
     View(HazardKind),
     OwnershipTransfer,
     ReadMemory,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum RawAccessKind {
+enum RawAccessKind {
     Read,
     Write,
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct SelfFieldOrigin {
+pub(super) struct SelfFieldOrigin {
     pub struct_def_id: DefId,
     pub field_index: usize,
     pub field_name: String,
 }
 
+impl From<FieldOrigin> for SelfFieldOrigin {
+    fn from(origin: FieldOrigin) -> Self {
+        SelfFieldOrigin {
+            struct_def_id: origin.struct_def_id,
+            field_index: origin.field_index,
+            field_name: origin.field_name,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
-pub(crate) struct LocalCallsite<'tcx> {
+struct LocalCallsite<'tcx> {
     pub caller: DefId,
     pub block: BasicBlock,
     pub args: Vec<Operand<'tcx>>,
@@ -71,7 +84,7 @@ pub(crate) struct LocalCallsite<'tcx> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum HazardCheck {
+pub(super) enum HazardCheck {
     Safe(String),
     Violation(String),
     Inconclusive,
@@ -79,7 +92,7 @@ pub(crate) enum HazardCheck {
 
 // ── API classification ───────────────────────────────────────────
 
-pub(crate) fn alias_producer(name: &str) -> Option<AliasProducer> {
+pub(super) fn alias_producer(name: &str) -> Option<AliasProducer> {
     if name.contains("from_raw_parts_mut") {
         return Some(AliasProducer::View(HazardKind::UniqueView));
     }
@@ -100,7 +113,7 @@ pub(crate) fn alias_producer(name: &str) -> Option<AliasProducer> {
 
 // ── Origin-based parameter safety ────────────────────────────────
 
-pub(crate) fn alias_proved_for_param_local(
+pub(super) fn alias_proved_for_param_local(
     tcx: TyCtxt<'_>,
     caller: DefId,
     local_index: usize,
@@ -124,7 +137,10 @@ pub(crate) fn alias_proved_for_param_local(
                 )
             }
         }
-        _ if !matches!(ty.kind(), ty::RawPtr(..)) && local_index <= body.arg_count => {
+        _ if !matches!(ty.kind(), ty::RawPtr(..))
+            && local_index >= 1
+            && local_index <= body.arg_count =>
+        {
             HazardCheck::Safe(
                 "returned view derives from an owned parameter; no external alias risk".into(),
             )
@@ -133,7 +149,7 @@ pub(crate) fn alias_proved_for_param_local(
     }
 }
 
-pub(crate) fn alias_proved_for_param_local_from_origin(
+pub(super) fn alias_proved_for_param_local_from_origin(
     tcx: TyCtxt<'_>,
     caller: DefId,
     origin: &PlaceKey,
@@ -165,7 +181,7 @@ pub(crate) fn alias_proved_for_param_local_from_origin(
     }
 }
 
-pub(crate) fn is_origin_a_reference(tcx: TyCtxt<'_>, caller: DefId, origin: &PlaceKey) -> bool {
+pub(super) fn is_origin_a_reference(tcx: TyCtxt<'_>, caller: DefId, origin: &PlaceKey) -> bool {
     let body = tcx.optimized_mir(caller);
     let PlaceBaseKey::Local(mut local) = origin.base else {
         return false;
@@ -184,7 +200,12 @@ pub(crate) fn is_origin_a_reference(tcx: TyCtxt<'_>, caller: DefId, origin: &Pla
     )
 }
 
-pub(crate) fn resolve_param_origin(tcx: TyCtxt<'_>, caller: DefId, origin: &PlaceKey) -> Option<usize> {
+/// Resolve `origin` to a parameter MIR local, tracing through local-copy origins
+/// when the base is not itself a parameter.
+///
+/// Returns a 1-based MIR local index (usable directly with `Local::from_usize`),
+/// or `None` when the origin does not trace back to a parameter.
+pub(super) fn resolve_param_origin(tcx: TyCtxt<'_>, caller: DefId, origin: &PlaceKey) -> Option<usize> {
     let body = tcx.optimized_mir(caller);
     if let PlaceBaseKey::Local(local) = origin.base {
         if local >= 1 && local <= body.arg_count {
@@ -199,7 +220,13 @@ pub(crate) fn resolve_param_origin(tcx: TyCtxt<'_>, caller: DefId, origin: &Plac
     None
 }
 
-pub(crate) fn param_index_of_origin(
+/// Return the 0-based argument index for `origin` when it is a direct, whole
+/// raw-pointer parameter (no field projections, no local-copy tracing).
+///
+/// Unlike [`resolve_param_origin`], this returns a 0-based index into the call
+/// argument list (used by `callsite_arg_origins`) and does not trace through
+/// `collect_local_origins`.
+fn param_index_of_origin(
     tcx: TyCtxt<'_>,
     caller: DefId,
     origin: &PlaceKey,
@@ -220,7 +247,7 @@ pub(crate) fn param_index_of_origin(
 
 // ── Escape analysis ──────────────────────────────────────────────
 
-pub(crate) fn destination_flows_to_return(
+pub(super) fn destination_flows_to_return(
     tcx: TyCtxt<'_>,
     caller: DefId,
     destination: Option<Local>,
@@ -262,7 +289,7 @@ pub(crate) fn destination_flows_to_return(
     false
 }
 
-pub(crate) fn self_field_origin(
+pub(super) fn self_field_origin(
     tcx: TyCtxt<'_>,
     caller: DefId,
     place: &PlaceKey,
@@ -270,15 +297,10 @@ pub(crate) fn self_field_origin(
     let PlaceBaseKey::Local(local) = place.base else {
         return None;
     };
-    let resolved = resolve_self_field_origin(tcx, caller, local, &place.fields)?;
-    Some(SelfFieldOrigin {
-        struct_def_id: resolved.struct_def_id,
-        field_index: resolved.field_index,
-        field_name: resolved.field_name,
-    })
+    resolve_self_field_origin(tcx, caller, local, &place.fields).map(SelfFieldOrigin::from)
 }
 
-pub(crate) fn any_struct_field_origin(
+pub(super) fn any_struct_field_origin(
     tcx: TyCtxt<'_>,
     caller: DefId,
     place: &PlaceKey,
@@ -289,13 +311,7 @@ pub(crate) fn any_struct_field_origin(
     if place.fields.is_empty() {
         return None;
     }
-    let resolved =
-        crate::analysis::alias::resolve_any_field_origin(tcx, caller, local, &place.fields)?;
-    Some(SelfFieldOrigin {
-        struct_def_id: resolved.struct_def_id,
-        field_index: resolved.field_index,
-        field_name: resolved.field_name,
-    })
+    resolve_any_field_origin(tcx, caller, local, &place.fields).map(SelfFieldOrigin::from)
 }
 
 fn self_borrow_mutability(tcx: TyCtxt<'_>, def_id: DefId) -> Option<ty::Mutability> {
@@ -309,7 +325,7 @@ fn self_borrow_mutability(tcx: TyCtxt<'_>, def_id: DefId) -> Option<ty::Mutabili
     }
 }
 
-pub(crate) fn escaped_self_field_violation(
+pub(super) fn escaped_self_field_violation(
     tcx: TyCtxt<'_>,
     current: DefId,
     origin: &SelfFieldOrigin,
@@ -521,7 +537,7 @@ fn method_exposes_self_field(tcx: TyCtxt<'_>, method: DefId, field_index: usize)
     }
 
     let ret_ty = body.local_decls[Local::from_usize(0)].ty;
-    if !type_contains_ref_or_ptr(tcx, ret_ty) {
+    if !crate::helpers::mir_utils::type_contains_ref_or_ptr(tcx, ret_ty) {
         return false;
     }
 
@@ -541,33 +557,6 @@ fn method_exposes_self_field(tcx: TyCtxt<'_>, method: DefId, field_index: usize)
     }
 
     false
-}
-
-fn type_contains_ref_or_ptr<'tcx>(tcx: TyCtxt<'tcx>, ty: ty::Ty<'tcx>) -> bool {
-    match ty.kind() {
-        TyKind::Ref(_, _, _) | TyKind::RawPtr(_, _) => true,
-        TyKind::Tuple(elems) => elems.iter().any(|t| type_contains_ref_or_ptr(tcx, t)),
-        TyKind::Adt(def, args) => {
-            if args.iter().any(|arg| {
-                if let Some(t) = arg.as_type() {
-                    type_contains_ref_or_ptr(tcx, t)
-                } else {
-                    false
-                }
-            }) {
-                return true;
-            }
-            let adt = tcx.adt_def(def.did());
-            adt.all_fields().any(|field| {
-                #[cfg(not(rapx_ge_99))]
-                let field_ty = field.ty(tcx, args);
-                #[cfg(rapx_ge_99)]
-                let field_ty = field.ty(tcx, args).skip_norm_wip();
-                type_contains_ref_or_ptr(tcx, field_ty)
-            })
-        }
-        _ => false,
-    }
 }
 
 fn rvalue_mentions_origin(
@@ -599,16 +588,16 @@ fn rvalue_mentions_local(rvalue: &Rvalue<'_>, local: Local, aliases: &HashMap<Lo
     })
 }
 
-pub(crate) fn raw_access_conflicts(kind: HazardKind, access: RawAccessKind) -> bool {
+// ── Local hazard scanning ────────────────────────────────────────
+
+fn raw_access_conflicts(kind: HazardKind, access: RawAccessKind) -> bool {
     match kind {
         HazardKind::SharedView => access == RawAccessKind::Write,
         HazardKind::UniqueView => true,
     }
 }
 
-// ── Local hazard scanning ────────────────────────────────────────
-
-pub(crate) fn local_hazard_violation(
+pub(super) fn local_hazard_violation(
     tcx: TyCtxt<'_>,
     caller: DefId,
     call_block: BasicBlock,
@@ -629,7 +618,7 @@ pub(crate) fn local_hazard_violation(
     )
 }
 
-pub(crate) fn local_hazard_violation_with(
+fn local_hazard_violation_with(
     tcx: TyCtxt<'_>,
     caller: DefId,
     call_block: BasicBlock,
@@ -663,7 +652,7 @@ pub(crate) fn local_hazard_violation_with(
             .local()
             .is_some_and(|l| hazard_locals.contains(&l))
     });
-    let vec_owners = vec_owners_for_origins(tcx, caller, &origins, &aliases);
+    let vec_owners = find_as_ptr_receivers(tcx, caller, &origins, &aliases, true);
     let reachable = blocks_reachable_after_call(tcx, caller, call_block);
 
     for (block_index, block) in reverse_postorder_blocks(body) {
@@ -714,7 +703,8 @@ pub(crate) fn local_hazard_violation_with(
                     if !hazard_locals.is_empty()
                         && !hazard_locals.contains(&target.local)
                         && raw_access_conflicts(kind, RawAccessKind::Read)
-                        && !rvalue_has_hazard_local_base(rvalue, &hazard_locals)
+                        && !crate::helpers::mir_utils::rvalue_source_place(rvalue)
+                            .is_some_and(|place| hazard_locals.contains(&place.local))
                         && !rvalue_reads_like_view(rvalue, tcx, caller, &origins, &aliases)
                         && rvalue_reads_any_origin(rvalue, &origins, &aliases, &body.local_decls)
                         && hazard_used_after_statement(
@@ -802,9 +792,6 @@ pub(crate) fn local_hazard_violation_with(
                                 continue;
                             }
                         }
-                    }
-                    if name.contains("::split_at") {
-                        hazard_locals.insert(call_dest.local);
                     }
                 }
             }
@@ -1036,13 +1023,6 @@ fn rvalue_reads_like_view(
     is_origin_a_reference(tcx, caller, &pointer)
 }
 
-fn rvalue_has_hazard_local_base(rvalue: &Rvalue<'_>, hazard_locals: &HashSet<Local>) -> bool {
-    let Some(place) = crate::helpers::mir_utils::rvalue_source_place(rvalue) else {
-        return false;
-    };
-    hazard_locals.contains(&place.local)
-}
-
 fn rvalue_reads_any_origin(
     rvalue: &Rvalue<'_>,
     origins: &[PlaceKey],
@@ -1087,8 +1067,9 @@ fn is_ownership_transfer_terminator<'tcx>(
     let TerminatorKind::Call { func, .. } = terminator else {
         return false;
     };
-    let name = crate::helpers::mir_utils::call_name(tcx, func);
-    name.contains("::from_raw") || name.contains("::drop_in_place")
+    crate::helpers::api_classify::is_ownership_transfer_terminator_api(
+        &crate::helpers::mir_utils::call_name(tcx, func),
+    )
 }
 
 fn terminator_uses_origin<'tcx>(
@@ -1116,22 +1097,9 @@ fn terminator_is_benign_origin_use<'tcx>(tcx: TyCtxt<'tcx>, terminator: &Termina
     let TerminatorKind::Call { func, .. } = terminator else {
         return true;
     };
-    let name = crate::helpers::mir_utils::call_name(tcx, func);
-    crate::helpers::api_classify::is_as_ptr(&name)
-        || name.ends_with("::len")
-        || name.ends_with("::is_empty")
-        || name.ends_with("::is_null")
-        || name.ends_with("::addr")
-        || name.ends_with("::cast")
-}
-
-fn vec_owners_for_origins(
-    tcx: TyCtxt<'_>,
-    caller: DefId,
-    origins: &[PlaceKey],
-    aliases: &HashMap<Local, PlaceKey>,
-) -> Vec<PlaceKey> {
-    find_as_ptr_receivers(tcx, caller, origins, aliases, true)
+    crate::helpers::api_classify::is_benign_origin_use_api(
+        &crate::helpers::mir_utils::call_name(tcx, func),
+    )
 }
 
 fn terminator_invalidates_vec_owner<'tcx>(
@@ -1145,7 +1113,7 @@ fn terminator_invalidates_vec_owner<'tcx>(
         return false;
     };
     let name = crate::helpers::mir_utils::call_name(tcx, func);
-    if !is_vec_invalidating_method(&name) {
+    if !crate::helpers::api_classify::is_vec_invalidating_method(&name) {
         return false;
     }
     args.iter().any(|arg| {
@@ -1160,20 +1128,6 @@ fn terminator_invalidates_vec_owner<'tcx>(
             .iter()
             .any(|owner| arg.overlaps(owner) || owner.overlaps(&arg))
     })
-}
-
-fn is_vec_invalidating_method(name: &str) -> bool {
-    (name.contains("Vec") || name.contains("vec::"))
-        && (name.contains("::push")
-            || name.contains("::reserve")
-            || name.contains("::reserve_exact")
-            || name.contains("::shrink_to_fit")
-            || name.contains("::shrink_to")
-            || name.contains("::insert")
-            || name.contains("::remove")
-            || name.contains("::clear")
-            || name.contains("::truncate")
-            || name.contains("::set_len"))
 }
 
 fn find_as_ptr_receivers(
@@ -1288,7 +1242,7 @@ fn is_ptr_from_ptr_add(tcx: TyCtxt<'_>, caller: DefId, ptr_place: &PlaceKey) -> 
 
 // ── Ownership transfer violation scanning ────────────────────────
 
-pub(crate) fn ownership_transfer_violation(
+pub(super) fn ownership_transfer_violation(
     tcx: TyCtxt<'_>,
     caller: DefId,
     call_block: BasicBlock,
@@ -1328,7 +1282,7 @@ pub(crate) fn ownership_transfer_violation(
     let mut worklist: Vec<(BasicBlock, Vec<PlaceKey>)> = vec![(start, origins)];
 
     while let Some((block_index, incoming)) = worklist.pop() {
-        let mut live = match entry_states.get_mut(&block_index) {
+        let mut live_origins = match entry_states.get_mut(&block_index) {
             Some(known) => {
                 let mut changed = false;
                 for origin in &incoming {
@@ -1360,18 +1314,20 @@ pub(crate) fn ownership_transfer_violation(
                             .iter()
                             .any(|p| matches!(p, ProjectionElem::Deref));
                     if !is_deref_to_pointee {
-                        live.retain(|origin| !place_key_is_prefix_of(&target_key, origin));
+                        live_origins.retain(|origin| !place_key_is_prefix_of(&target_key, origin));
                     }
-                    if place_is_raw_access_to_live_origin(target, &live)
-                        || rvalue_reads_live_origin(rvalue, &live)
+                    if place_is_raw_access_to_live_origin(target, &live_origins)
+                        || rvalue_any_place_matching(rvalue, &mut |place| {
+                            place_is_raw_access_to_live_origin(place, &live_origins)
+                        })
                     {
                         return Some(
                             "raw pointer reused after ownership was transferred to an owning value"
                                 .into(),
                         );
                     }
-                    let copies_origin = rvalue_copies_live_origin_value(rvalue, &live);
-                    kill_strongly_updated_origins(&body.local_decls, target, &mut live);
+                    let copies_origin = rvalue_copies_live_origin_value(rvalue, &live_origins);
+                    kill_strongly_updated_origins(&body.local_decls, target, &mut live_origins);
                     if copies_origin
                         && !target
                             .projection
@@ -1379,13 +1335,13 @@ pub(crate) fn ownership_transfer_violation(
                             .any(|projection| matches!(projection, ProjectionElem::Deref))
                     {
                         let target_key = PlaceKey::from_mir_place(target);
-                        if !live.contains(&target_key) {
-                            live.push(target_key);
+                        if !live_origins.contains(&target_key) {
+                            live_origins.push(target_key);
                         }
                     }
                 }
                 StatementKind::StorageDead(local) => {
-                    live.retain(|origin| origin.base != PlaceBaseKey::Local(local.as_usize()));
+                    live_origins.retain(|origin| origin.base != PlaceBaseKey::Local(local.as_usize()));
                 }
                 _ => {}
             }
@@ -1394,7 +1350,7 @@ pub(crate) fn ownership_transfer_violation(
         let Some(terminator) = &block.terminator else {
             continue;
         };
-        if terminator_uses_live_origin(&terminator.kind, &live) {
+        if terminator_uses_live_origin(&terminator.kind, &live_origins) {
             return Some(
                 "raw pointer passed to another call after ownership was transferred".into(),
             );
@@ -1404,13 +1360,13 @@ pub(crate) fn ownership_transfer_violation(
             ..
         } = &terminator.kind
         {
-            kill_strongly_updated_origins(&body.local_decls, call_destination, &mut live);
+            kill_strongly_updated_origins(&body.local_decls, call_destination, &mut live_origins);
         }
-        if live.is_empty() {
+        if live_origins.is_empty() {
             continue;
         }
         for successor in terminator.successors() {
-            worklist.push((successor, live.clone()));
+            worklist.push((successor, live_origins.clone()));
         }
     }
 
@@ -1530,7 +1486,7 @@ fn splice_holder_fields(target: &PlaceKey, holder: &PlaceKey, source: &PlaceKey)
 fn kill_strongly_updated_origins(
     local_decls: &LocalDecls<'_>,
     target: &Place<'_>,
-    live: &mut Vec<PlaceKey>,
+    live_origins: &mut Vec<PlaceKey>,
 ) {
     let deref_count = target
         .projection
@@ -1539,7 +1495,7 @@ fn kill_strongly_updated_origins(
         .count();
     if deref_count == 0 {
         let target_key = PlaceKey::from_mir_place(target);
-        live.retain(|origin| !place_key_is_prefix_of(&target_key, origin));
+        live_origins.retain(|origin| !place_key_is_prefix_of(&target_key, origin));
         return;
     }
     if deref_count == 1
@@ -1548,7 +1504,7 @@ fn kill_strongly_updated_origins(
         let ty = local_decls[target.local].ty;
         if matches!(ty.kind(), ty::Ref(_, _, ty::Mutability::Mut)) {
             let target_key = PlaceKey::from_mir_place(target);
-            live.retain(|origin| !place_key_is_prefix_of(&target_key, origin));
+            live_origins.retain(|origin| !place_key_is_prefix_of(&target_key, origin));
         }
     }
 }
@@ -1559,7 +1515,7 @@ fn place_key_is_prefix_of(prefix: &PlaceKey, place: &PlaceKey) -> bool {
         && place.fields[..prefix.fields.len()] == prefix.fields[..]
 }
 
-fn place_is_raw_access_to_live_origin(place: &Place<'_>, live: &[PlaceKey]) -> bool {
+fn place_is_raw_access_to_live_origin(place: &Place<'_>, live_origins: &[PlaceKey]) -> bool {
     if !place
         .projection
         .iter()
@@ -1568,14 +1524,10 @@ fn place_is_raw_access_to_live_origin(place: &Place<'_>, live: &[PlaceKey]) -> b
         return false;
     }
     let key = PlaceKey::from_mir_place(place);
-    live.iter().any(|origin| key.overlaps(origin))
+    live_origins.iter().any(|origin| key.overlaps(origin))
 }
 
-fn rvalue_reads_live_origin(rvalue: &Rvalue<'_>, live: &[PlaceKey]) -> bool {
-    rvalue_any_place_matching(rvalue, &mut |place| place_is_raw_access_to_live_origin(place, live))
-}
-
-fn rvalue_copies_live_origin_value(rvalue: &Rvalue<'_>, live: &[PlaceKey]) -> bool {
+fn rvalue_copies_live_origin_value(rvalue: &Rvalue<'_>, live_origins: &[PlaceKey]) -> bool {
     let Some(place) = crate::helpers::mir_utils::rvalue_source_place(rvalue) else {
         return false;
     };
@@ -1587,10 +1539,10 @@ fn rvalue_copies_live_origin_value(rvalue: &Rvalue<'_>, live: &[PlaceKey]) -> bo
         return false;
     }
     let key = PlaceKey::from_mir_place(place);
-    live.iter().any(|origin| key.overlaps(origin))
+    live_origins.iter().any(|origin| key.overlaps(origin))
 }
 
-fn terminator_uses_live_origin(kind: &TerminatorKind<'_>, live: &[PlaceKey]) -> bool {
+fn terminator_uses_live_origin(kind: &TerminatorKind<'_>, live_origins: &[PlaceKey]) -> bool {
     let TerminatorKind::Call { args, .. } = kind else {
         return false;
     };
@@ -1604,7 +1556,7 @@ fn terminator_uses_live_origin(kind: &TerminatorKind<'_>, live: &[PlaceKey]) -> 
             return false;
         };
         let key = PlaceKey::from_mir_place(place);
-        live.iter().any(|origin| key.overlaps(origin))
+        live_origins.iter().any(|origin| key.overlaps(origin))
     })
 }
 
@@ -1617,21 +1569,13 @@ fn terminator_returns_ownership(
         return false;
     };
     let name = crate::helpers::mir_utils::call_name(tcx, func);
-    if !is_ownership_return_api(&name) {
+    if !crate::helpers::api_classify::is_ownership_return_api(&name) {
         return false;
     }
     args.iter().any(|arg| match &arg.node {
         Operand::Copy(place) | Operand::Move(place) => owner_locals.contains(&place.local),
         _ => false,
     })
-}
-
-fn is_ownership_return_api(name: &str) -> bool {
-    name.contains("into_raw")
-        && (name.contains("boxed")
-            || name.contains("Box")
-            || name.contains("ffi::c_str")
-            || name.contains("CString"))
 }
 
 fn pre_existing_view_on_origin(
@@ -1696,19 +1640,12 @@ fn pre_existing_view_on_origin(
             let (_target, rvalue) = assign.as_ref();
             let src_place: Option<&Place<'_>> = match rvalue {
                 Rvalue::Ref(_, _, place) => Some(place),
-                Rvalue::Cast(kind, _, _)
+                Rvalue::Cast(kind, operand, _)
                     if matches!(kind, rustc_middle::mir::CastKind::PtrToPtr) =>
                 {
-                    // Inline PtrToPtr extraction: the source operand is the
-                    // derefed place.
-                    let (_target, _cast_rvalue) = assign.as_ref();
-                    if let Rvalue::Cast(_, operand, _) = _cast_rvalue {
-                        match operand {
-                            Operand::Copy(place) | Operand::Move(place) => Some(place),
-                            _ => None,
-                        }
-                    } else {
-                        None
+                    match operand {
+                        Operand::Copy(place) | Operand::Move(place) => Some(place),
+                        _ => None,
                     }
                 }
                 _ => None,
@@ -1756,7 +1693,7 @@ fn resolve_place_for_key(
 
 // ── Cross-crate callsite analysis ────────────────────────────────
 
-pub(crate) fn private_fn_callsite_delegation(
+pub(super) fn private_fn_callsite_delegation(
     tcx: TyCtxt<'_>,
     caller: DefId,
     origin: &PlaceKey,
@@ -1771,7 +1708,8 @@ pub(crate) fn private_fn_callsite_delegation(
         if origins.is_empty() {
             continue;
         }
-        let extra = as_ptr_provenance_origins(tcx, site.caller, &origins);
+        let aliases = collect_place_aliases(tcx, site.caller);
+        let extra = find_as_ptr_receivers(tcx, site.caller, &origins, &aliases, false);
         for place in extra {
             if !origins.contains(&place) {
                 origins.push(place);
@@ -1796,7 +1734,7 @@ pub(crate) fn private_fn_callsite_delegation(
     None
 }
 
-pub(crate) fn local_callsites(tcx: TyCtxt<'_>, callee: DefId) -> Vec<LocalCallsite<'_>> {
+fn local_callsites(tcx: TyCtxt<'_>, callee: DefId) -> Vec<LocalCallsite<'_>> {
     let mut sites = Vec::new();
     for def_id in tcx.mir_keys(()) {
         let def_id = def_id.to_def_id();
@@ -1823,7 +1761,7 @@ pub(crate) fn local_callsites(tcx: TyCtxt<'_>, callee: DefId) -> Vec<LocalCallsi
             else {
                 continue;
             };
-            let Some(target) = call_target_def_id(func) else {
+            let Some(target) = crate::helpers::mir_utils::dep_callee_def_id(func) else {
                 continue;
             };
             if target != callee {
@@ -1840,17 +1778,7 @@ pub(crate) fn local_callsites(tcx: TyCtxt<'_>, callee: DefId) -> Vec<LocalCallsi
     sites
 }
 
-fn call_target_def_id(func: &Operand<'_>) -> Option<DefId> {
-    let Operand::Constant(constant) = func else {
-        return None;
-    };
-    match constant.const_.ty().kind() {
-        TyKind::FnDef(def_id, _) => Some(*def_id),
-        _ => None,
-    }
-}
-
-pub(crate) fn callsite_arg_origins(
+fn callsite_arg_origins(
     tcx: TyCtxt<'_>,
     caller: DefId,
     args: &[Operand<'_>],
@@ -1875,13 +1803,4 @@ pub(crate) fn callsite_arg_origins(
         }
     }
     origins
-}
-
-pub(crate) fn as_ptr_provenance_origins(
-    tcx: TyCtxt<'_>,
-    caller: DefId,
-    origins: &[PlaceKey],
-) -> Vec<PlaceKey> {
-    let aliases = collect_place_aliases(tcx, caller);
-    find_as_ptr_receivers(tcx, caller, origins, &aliases, false)
 }

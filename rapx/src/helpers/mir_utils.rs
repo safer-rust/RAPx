@@ -750,10 +750,46 @@ pub fn is_u8_array_or_slice(ty: Ty<'_>) -> bool {
 }
 
 /// Whether a type transitively contains a reference.
+///
+/// This is a shallow check: it recurses only through `Adt` generic arguments,
+/// not through tuple elements or `Adt` fields. See [`type_contains_ref_or_ptr`]
+/// for a deeper check that also matches raw pointers.
 pub fn type_contains_reference(ty: Ty<'_>) -> bool {
     match ty.kind() {
         TyKind::Ref(..) => true,
         TyKind::Adt(_, substs) => substs.types().any(type_contains_reference),
+        _ => false,
+    }
+}
+
+/// Whether a type transitively contains a reference or raw pointer.
+///
+/// Unlike [`type_contains_reference`], this recurses through tuple elements and
+/// `Adt` fields, and also matches raw pointers. It needs a `TyCtxt` to resolve
+/// `Adt` fields.
+pub fn type_contains_ref_or_ptr<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> bool {
+    match ty.kind() {
+        TyKind::Ref(_, _, _) | TyKind::RawPtr(_, _) => true,
+        TyKind::Tuple(elems) => elems.iter().any(|t| type_contains_ref_or_ptr(tcx, t)),
+        TyKind::Adt(def, args) => {
+            if args.iter().any(|arg| {
+                if let Some(t) = arg.as_type() {
+                    type_contains_ref_or_ptr(tcx, t)
+                } else {
+                    false
+                }
+            }) {
+                return true;
+            }
+            let adt = tcx.adt_def(def.did());
+            adt.all_fields().any(|field| {
+                #[cfg(not(rapx_ge_99))]
+                let field_ty = field.ty(tcx, args);
+                #[cfg(rapx_ge_99)]
+                let field_ty = field.ty(tcx, args).skip_norm_wip();
+                type_contains_ref_or_ptr(tcx, field_ty)
+            })
+        }
         _ => false,
     }
 }

@@ -113,7 +113,7 @@ pub fn is_into_boxed_slice(name: &str) -> bool {
     name.ends_with("::into_boxed_slice")
 }
 
-// ── Alias-hazard classification (moved from verify/alias_hazard.rs) ──────
+// ── Alias-hazard classification ─────────────────────────────────────
 // These are the single home for "what does this raw-pointer API do" used by the
 // alias/hazard scanner. Note: `is_ownership_transfer_api` is *not* the same as
 // [`is_ownership_reconstruction`]: it also matches `Vec::from_raw_parts` /
@@ -163,6 +163,49 @@ pub fn is_vec_ownership_transfer_api(name: &str) -> bool {
 
 pub(crate) fn is_nonnull_api(name: &str) -> bool {
     name.contains("ptr::non_null") || name.contains("ptr::NonNull")
+}
+
+/// Whether `name` is a `Vec` method that may reallocate (invalidating any
+/// outstanding raw pointers derived from it).
+pub fn is_vec_invalidating_method(name: &str) -> bool {
+    (name.contains("Vec") || name.contains("vec::"))
+        && (name.contains("::push")
+            || name.contains("::reserve")
+            || name.contains("::reserve_exact")
+            || name.contains("::shrink_to_fit")
+            || name.contains("::shrink_to")
+            || name.contains("::insert")
+            || name.contains("::remove")
+            || name.contains("::clear")
+            || name.contains("::truncate")
+            || name.contains("::set_len"))
+}
+
+/// Whether `name` returns ownership of an allocation as a raw pointer
+/// (`Box::into_raw`, `CString::into_raw`, ...).
+pub fn is_ownership_return_api(name: &str) -> bool {
+    name.contains("into_raw")
+        && (name.contains("boxed")
+            || name.contains("Box")
+            || name.contains("ffi::c_str")
+            || name.contains("CString"))
+}
+
+/// Whether `name` terminates or reconstructs ownership of an allocation
+/// (`from_raw` or `drop_in_place`).
+pub fn is_ownership_transfer_terminator_api(name: &str) -> bool {
+    name.contains("::from_raw") || name.contains("::drop_in_place")
+}
+
+/// Whether `name` is a benign, read-only use of a raw-pointer origin
+/// (`as_ptr`, `len`, `is_empty`, `is_null`, `addr`, `cast`).
+pub fn is_benign_origin_use_api(name: &str) -> bool {
+    is_as_ptr(name)
+        || name.ends_with("::len")
+        || name.ends_with("::is_empty")
+        || name.ends_with("::is_null")
+        || name.ends_with("::addr")
+        || name.ends_with("::cast")
 }
 
 // ── ADT type-name classifiers (match def_path_str of ADT types) ──────

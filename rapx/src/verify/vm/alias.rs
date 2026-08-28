@@ -8,10 +8,10 @@
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{Local, Operand, ProjectionElem, Rvalue, StatementKind};
 use crate::verify::{
-    alias_hazard::{self, AliasProducer, HazardKind},
     contract::Property,
     def_use::PlaceKey,
 };
+use super::alias_hazard::{self, AliasProducer, HazardKind};
 use crate::helpers::mir_scan::Checkpoint;
 use crate::helpers::api_classify;
 use crate::analysis::alias::collect_local_origins;
@@ -672,7 +672,7 @@ fn resolve_origin_place_mir(tcx: rustc_middle::ty::TyCtxt<'_>, caller: DefId, pl
     };
     let origins = crate::analysis::alias::collect_local_origins(tcx, caller);
     let (root_local, mut root_fields) =
-        crate::verify::alias_hazard::deep_resolve_place(local.as_usize(), &origins);
+        alias_hazard::deep_resolve_place(local.as_usize(), &origins);
 
     // Preserve field projections from the original place if the root is same local
     if root_local == local.as_usize() && root_fields.is_empty() && !place.fields.is_empty() {

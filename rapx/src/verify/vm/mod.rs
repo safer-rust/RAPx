@@ -6,6 +6,7 @@
 //! symbolic state (`VmState`) with Z3 terms for every value.
 
 pub(crate) mod alias;
+pub(crate) mod alias_hazard;
 pub(crate) mod call;
 pub(crate) mod display;
 pub(crate) mod exec;
