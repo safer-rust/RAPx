@@ -140,12 +140,12 @@ static REGISTRY: &[Entry] = &[
     ED!(api_classify::is_align_offset, eff_align_offset),
 
     // ── Vec / collection constructors ────────────────────────────────
-    E!(api_classify::is_vec_alloc_constructor, eff_new_allocation),
+    ED!(api_classify::is_vec_alloc_constructor, eff_new_allocation),
     // `into_vec` / `box_assume_init_into_vec_unsafe`: needed on older
     // toolchains where `vec![…]` literals lower to `into_vec` (not `from_elem`).
     E!(api_classify::is_vec_from_box, eff_vec_from_box),
     E!(api_classify::is_vec_with_capacity, eff_new_allocation_from_cap),
-    E!(api_classify::is_into_boxed_slice, eff_box_from_vec),
+    ED!(api_classify::is_into_boxed_slice, eff_box_from_vec),
 
     // ── Layout accessors ────────────────────────────────────────────
     E!(layout_align, eff_layout_align),

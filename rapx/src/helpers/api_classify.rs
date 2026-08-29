@@ -43,6 +43,9 @@ pub fn is_ownership_reconstruction(callee: Option<DefId>) -> bool {
             crate::def_id::cstring_from_raw(),
             crate::def_id::arc_from_raw(),
             crate::def_id::rc_from_raw(),
+            crate::def_id::box_from_raw_in(),
+            crate::def_id::arc_from_raw_in(),
+            crate::def_id::rc_from_raw_in(),
             crate::def_id::cstring_from_vec_with_nul_unchecked(),
         ],
         callee,
@@ -77,12 +80,13 @@ pub fn is_as_ptr(name: &str) -> bool {
 // for callers that only care about one dimension.
 
 /// Element-strided `add`/`wrapping_add` and signed `offset`/`wrapping_offset`
-/// (stride = `size_of::<T>()`).
+/// (stride = `size_of::<T>()`). `offset_from`/`offset_from_unsigned` are *not*
+/// matched (they subtract two pointers into an `isize`).
 pub(crate) fn is_element_ptr_add(name: &str) -> bool {
     name.ends_with("::add")
         || name.ends_with("::wrapping_add")
-        || name.contains("::offset")
-        || name.contains("::wrapping_offset")
+        || name.ends_with("::offset")
+        || name.ends_with("::wrapping_offset")
 }
 
 /// Element-strided `sub`/`wrapping_sub` (stride = `size_of::<T>()`).
@@ -303,9 +307,9 @@ pub fn is_vec_push(callee: Option<DefId>) -> bool {
         callee,
     )
 }
-pub fn is_vec_alloc_constructor(name: &str) -> bool {
-    name.contains("::vec::from_elem")
-        || name == "from_elem"
+pub fn is_vec_alloc_constructor(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::contains(&[crate::def_id::vec_from_elem()], callee)
 }
 pub fn is_vec_from_box(name: &str) -> bool {
     name.contains("::into_vec")
@@ -315,25 +319,33 @@ pub fn is_vec_with_capacity(name: &str) -> bool {
     (name.contains("::Vec::") && name.ends_with("::with_capacity"))
         || name == "with_capacity"
 }
-pub fn is_into_boxed_slice(name: &str) -> bool {
-    name.ends_with("::into_boxed_slice")
+pub fn is_into_boxed_slice(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::contains(&[crate::def_id::vec_into_boxed_slice()], callee)
 }
 
 // ── Alias-hazard classification ───────────────────────────────────
 // These are the single home for "what does this raw-pointer API do" used by the
 // alias/hazard scanner. Note: `is_ownership_transfer` is *not* the same as
 // [`is_ownership_reconstruction`]: it also matches `Vec::from_raw_parts` /
-// `from_parts` (ownership transfer), but not `from_vec_with_nul_unchecked`.
+// `from_parts` (ownership transfer) — handled separately by
+// [`is_vec_ownership_transfer`] because `Vec::from_raw_parts` is not resolvable
+// via [`crate::def_id`] — but not `from_vec_with_nul_unchecked`.
 
-pub fn is_ownership_transfer(name: &str) -> bool {
-    if is_vec_ownership_transfer(name) {
-        return true;
-    }
-    name.contains("from_raw")
-        && (name.contains("boxed")
-            || name.contains("Box")
-            || name.contains("ffi::c_str")
-            || name.contains("CString"))
+pub fn is_ownership_transfer(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::contains(
+        &[
+            crate::def_id::box_from_raw(),
+            crate::def_id::cstring_from_raw(),
+            crate::def_id::arc_from_raw(),
+            crate::def_id::rc_from_raw(),
+            crate::def_id::box_from_raw_in(),
+            crate::def_id::arc_from_raw_in(),
+            crate::def_id::rc_from_raw_in(),
+        ],
+        callee,
+    )
 }
 
 pub fn is_vec_ownership_transfer(name: &str) -> bool {
@@ -361,14 +373,19 @@ pub fn is_vec_invalidating_method(name: &str) -> bool {
             || name.contains("::set_len"))
 }
 
-/// Whether `name` returns ownership of an allocation as a raw pointer
-/// (`Box::into_raw`, `CString::into_raw`, ...).
-pub fn is_ownership_return(name: &str) -> bool {
-    name.contains("into_raw")
-        && (name.contains("boxed")
-            || name.contains("Box")
-            || name.contains("ffi::c_str")
-            || name.contains("CString"))
+/// Whether `callee` returns ownership of an allocation as a raw pointer
+/// (`Box::into_raw`, `CString::into_raw`, `Arc::into_raw`, `Rc::into_raw`, ...).
+pub fn is_ownership_return(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::contains(
+        &[
+            crate::def_id::box_into_raw(),
+            crate::def_id::cstring_into_raw(),
+            crate::def_id::arc_into_raw(),
+            crate::def_id::rc_into_raw(),
+        ],
+        callee,
+    )
 }
 
 /// Whether `name` terminates or reconstructs ownership of an allocation

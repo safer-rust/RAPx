@@ -102,7 +102,7 @@ pub(super) fn alias_producer(callee: DefId, name: &str) -> Option<AliasProducer>
         }
         return Some(AliasProducer::View(HazardKind::SharedView));
     }
-    if crate::helpers::api_classify::is_ownership_transfer(name) {
+    if crate::helpers::api_classify::is_ownership_transfer(Some(callee)) {
         return Some(AliasProducer::OwnershipTransfer);
     }
     if crate::helpers::api_classify::is_ptr_read(Some(callee)) {
@@ -1552,15 +1552,16 @@ fn terminator_uses_live_origin(kind: &TerminatorKind<'_>, live_origins: &[PlaceK
 }
 
 fn terminator_returns_ownership(
-    tcx: TyCtxt<'_>,
+    _tcx: TyCtxt<'_>,
     terminator: &TerminatorKind<'_>,
     owner_locals: &HashSet<Local>,
 ) -> bool {
     let TerminatorKind::Call { func, args, .. } = terminator else {
         return false;
     };
-    let name = crate::helpers::mir_utils::call_name(tcx, func);
-    if !crate::helpers::api_classify::is_ownership_return(&name) {
+    if !crate::helpers::api_classify::is_ownership_return(
+        crate::helpers::mir_utils::dep_callee_def_id(func),
+    ) {
         return false;
     }
     args.iter().any(|arg| match &arg.node {

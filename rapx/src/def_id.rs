@@ -382,6 +382,42 @@ intrinsics! {
         "std::rc::Rc::<T>::from_raw",
         "alloc::rc::Rc::<T>::from_raw"
     ],
+    box_from_raw_in: &[
+        "std::boxed::Box::<T, A>::from_raw_in",
+        "alloc::boxed::Box::<T, A>::from_raw_in"
+    ],
+    arc_from_raw_in: &[
+        "std::sync::Arc::<T, A>::from_raw_in",
+        "alloc::sync::Arc::<T, A>::from_raw_in"
+    ],
+    rc_from_raw_in: &[
+        "std::rc::Rc::<T, A>::from_raw_in",
+        "alloc::rc::Rc::<T, A>::from_raw_in"
+    ],
+    box_into_raw: &[
+        "std::boxed::Box::<T>::into_raw",
+        "alloc::boxed::Box::<T>::into_raw"
+    ],
+    cstring_into_raw: &[
+        "std::ffi::CString::into_raw",
+        "alloc::ffi::CString::into_raw"
+    ],
+    arc_into_raw: &[
+        "std::sync::Arc::<T>::into_raw",
+        "alloc::sync::Arc::<T>::into_raw"
+    ],
+    rc_into_raw: &[
+        "std::rc::Rc::<T>::into_raw",
+        "alloc::rc::Rc::<T>::into_raw"
+    ],
+    vec_from_elem: &[
+        "std::vec::from_elem",
+        "alloc::vec::from_elem"
+    ],
+    vec_into_boxed_slice: &[
+        "std::vec::Vec::<T, A>::into_boxed_slice",
+        "alloc::vec::Vec::<T, A>::into_boxed_slice"
+    ],
 }
 
 /// rustc_public DefId to internal DefId
