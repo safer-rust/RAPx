@@ -311,9 +311,15 @@ pub fn is_vec_alloc_constructor(callee: Option<DefId>) -> bool {
     let Some(callee) = callee else { return false };
     crate::def_id::contains(&[crate::def_id::vec_from_elem()], callee)
 }
-pub fn is_vec_from_box(name: &str) -> bool {
-    name.contains("::into_vec")
-        || name.contains("box_assume_init_into_vec_unsafe")
+pub fn is_vec_from_box(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::contains(
+        &[
+            crate::def_id::slice_into_vec(),
+            crate::def_id::box_assume_init_into_vec_unsafe(),
+        ],
+        callee,
+    )
 }
 pub fn is_vec_with_capacity(name: &str) -> bool {
     (name.contains("::Vec::") && name.ends_with("::with_capacity"))

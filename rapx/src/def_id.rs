@@ -418,6 +418,14 @@ intrinsics! {
         "std::vec::Vec::<T, A>::into_boxed_slice",
         "alloc::vec::Vec::<T, A>::into_boxed_slice"
     ],
+    slice_into_vec: &[
+        "std::slice::<impl [T]>::into_vec",
+        "core::slice::<impl [T]>::into_vec"
+    ],
+    box_assume_init_into_vec_unsafe: &[
+        "std::boxed::box_assume_init_into_vec_unsafe",
+        "alloc::boxed::box_assume_init_into_vec_unsafe"
+    ],
 }
 
 /// rustc_public DefId to internal DefId
