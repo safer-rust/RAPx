@@ -387,11 +387,8 @@ impl PropertyChecker {
                 && matches!(value.ty.kind(), TyKind::RawPtr(..))
                 && !vm_state.alloc(id).dead
             {
-                if let Some(callee) = checkpoint.callee {
-                    let p = vm_state.tcx.def_path_str(callee);
-                    if crate::helpers::api_classify::is_mem_copy_or_write(&p) {
-                        return CheckResult::Proved;
-                    }
+                if crate::helpers::api_classify::is_mem_copy_or_write(checkpoint.callee) {
+                    return CheckResult::Proved;
                 }
             }
             // Check byte-level init: if all bytes in range are initialized

@@ -3081,38 +3081,53 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         }
     }
 
-    /// Extract the pointee type if `ty` is `NonNull<P>` or wrapped in
+    /// Extract the pointee type if `ty` is a `#[repr(transparent)]`
+    /// single-field raw-pointer wrapper (`NonNull<P>`) or wrapped in
     /// `Option<NonNull<P>>`. Returns `Some(P)`.
+    ///
+    /// Detected structurally (via `#[repr(transparent)]` + a raw-pointer field)
+    /// rather than by name, so re-implemented std types in the challenge
+    /// suites are modelled identically to their std counterparts.
     fn find_nn_pointee(&self, ty: Ty<'tcx>) -> Option<Ty<'tcx>> {
         use rustc_middle::ty::TyKind;
         match ty.kind() {
             TyKind::Adt(adt_def, substs) => {
-                let def_path = self.tcx.def_path_str(adt_def.did());
-                let is_nn = api_classify::is_std_nonnull(&def_path);
-                if is_nn {
-                    substs.first().and_then(|s| s.as_type())
-                } else if api_classify::is_std_option(&def_path)
-                {
-                    if let Some(inner) = substs.first().and_then(|s| s.as_type()) {
-                        match inner.kind() {
-                            TyKind::Adt(ia, is_) => {
-                                let ip = self.tcx.def_path_str(ia.did());
-                                let is_nn_inner = api_classify::is_std_nonnull(&ip);
-                                if is_nn_inner {
-                                    is_.first().and_then(|s| s.as_type())
-                                } else {
-                                    None
-                                }
-                            }
-                            _ => None,
-                        }
-                    } else {
-                        None
-                    }
-                } else {
-                    None
+                if let Some(pointee) = self.transparent_ptr_pointee(adt_def, substs) {
+                    return Some(pointee);
                 }
+                if self.tcx.is_diagnostic_item(rustc_span::sym::Option, adt_def.did()) {
+                    if let Some(inner) = substs.first().and_then(|s| s.as_type()) {
+                        if let TyKind::Adt(ia, is_) = inner.kind() {
+                            return self.transparent_ptr_pointee(ia, is_);
+                        }
+                    }
+                }
+                None
             }
+            _ => None,
+        }
+    }
+
+    /// Pointee type of a `#[repr(transparent)]` single-field raw-pointer
+    /// wrapper such as `NonNull<T>` (`struct NonNull<T> { pointer: *const T }`).
+    fn transparent_ptr_pointee(
+        &self,
+        adt_def: &rustc_middle::ty::AdtDef,
+        substs: rustc_middle::ty::GenericArgsRef<'tcx>,
+    ) -> Option<Ty<'tcx>> {
+        if !adt_def.repr().transparent() {
+            return None;
+        }
+        let field = adt_def.non_enum_variant().fields.iter().next()?;
+        let field_ty = crate::helpers::mir_utils::field_ty(self.tcx, field, substs);
+        match field_ty.kind() {
+            rustc_middle::ty::TyKind::RawPtr(pointee, _) => Some(*pointee),
+            // NonNull's field is a pattern type `*const T is !null` on newer
+            // toolchains; unwrap it to the underlying raw pointer.
+            rustc_middle::ty::TyKind::Pat(inner, _) => match inner.kind() {
+                rustc_middle::ty::TyKind::RawPtr(pointee, _) => Some(*pointee),
+                _ => None,
+            },
             _ => None,
         }
     }

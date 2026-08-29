@@ -92,7 +92,7 @@ pub(super) enum HazardCheck {
 
 // ── API classification ───────────────────────────────────────────
 
-pub(super) fn alias_producer(name: &str) -> Option<AliasProducer> {
+pub(super) fn alias_producer(callee: DefId, name: &str) -> Option<AliasProducer> {
     if name.contains("from_raw_parts_mut") {
         return Some(AliasProducer::View(HazardKind::UniqueView));
     }
@@ -105,7 +105,7 @@ pub(super) fn alias_producer(name: &str) -> Option<AliasProducer> {
     if crate::helpers::api_classify::is_ownership_transfer(name) {
         return Some(AliasProducer::OwnershipTransfer);
     }
-    if crate::helpers::api_classify::is_ptr_read(name) {
+    if crate::helpers::api_classify::is_ptr_read(Some(callee)) {
         return Some(AliasProducer::ReadMemory);
     }
     None
@@ -1031,7 +1031,7 @@ fn rvalue_reads_any_origin(
 }
 
 fn terminator_writes_origin<'tcx>(
-    tcx: TyCtxt<'tcx>,
+    _tcx: TyCtxt<'tcx>,
     terminator: &TerminatorKind<'tcx>,
     origin: &PlaceKey,
     aliases: &HashMap<Local, PlaceKey>,
@@ -1039,8 +1039,8 @@ fn terminator_writes_origin<'tcx>(
     let TerminatorKind::Call { func, args, .. } = terminator else {
         return false;
     };
-    let name = crate::helpers::mir_utils::call_name(tcx, func);
-    if !crate::helpers::api_classify::is_ptr_write(&name) {
+    let callee = crate::helpers::mir_utils::dep_callee_def_id(func);
+    if !crate::helpers::api_classify::is_ptr_write(callee) {
         return false;
     }
     let Some(arg0) = args.first() else {

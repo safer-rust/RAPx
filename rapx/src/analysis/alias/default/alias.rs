@@ -1,5 +1,5 @@
 use super::{MopFnAliasMap, graph::*};
-use crate::def_id::*;
+use crate::def_id::{call_mut, clone, contains, replace, take};
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{Operand, ProjectionElem, TerminatorKind},
@@ -71,7 +71,7 @@ impl<'tcx> AliasGraph<'tcx> {
 }
 
 pub fn is_no_alias_intrinsic(def_id: DefId) -> bool {
-    let v = [call_mut_opt(), clone_opt(), take_opt(), replace_opt()];
+    let v = [call_mut(), clone(), take(), replace()];
     contains(&v, def_id)
 }
 

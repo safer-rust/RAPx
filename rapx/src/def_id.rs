@@ -1,3 +1,42 @@
+//! Resolution of well-known `core`/`std`/`alloc` function paths to their
+//! internal [`DefId`]s.
+//!
+//! This module is the single home for "which standard-library item is this
+//! `DefId`?", used by [`crate::helpers::api_classify`] and the alias checker to
+//! match APIs exactly instead of substring-matching a `def_path_str`.  It is
+//! deliberately placed at the crate root (next to [`crate::compat`]) rather
+//! than under `helpers/`, because it owns global state and a one-time
+//! `init(tcx)` hook in the compiler callback.
+//!
+//! # How a lookup works
+//!
+//! 1. The [`intrinsics!`] macro declares a *path table*: each identifier maps
+//!    to one or more candidate `fn_def.name()` strings (typically the `std::`
+//!    re-export plus the `core::`/`alloc::` canonical form, for `#![no_std]`
+//!    crates) and generates a `{id}() -> Option<DefId>` accessor.
+//! 2. [`init`] runs once from [`crate::RapCallback::after_analysis`], iterates
+//!    every `fn_def` of the `core`/`std`/`alloc` crates via `rustc_public`,
+//!    and caches the `path -> DefId` map in a `OnceLock`.
+//! 3. [`contains`] tests whether a call-site `DefId` is in a set of resolved
+//!    ids; [`is_drop_fn`] is a convenience wrapper over the drop family.
+//!
+//! # Path format
+//!
+//! `rustc_public::CrateDef::name()` is `def_path_str` with crate-name
+//! resolution and untrimmed paths, so a re-exported item appears under its
+//! `std::` name and generics are kept: `std::mem::MaybeUninit::<T>::write`,
+//! `std::result::Result::<T, E>::unwrap`, `std::vec::Vec::<T, A>::push`,
+//! `std::ptr::mut_ptr::<impl *mut T>::copy_from`.
+//!
+//! # Limitations
+//!
+//! - Not every std item is emitted by `rustc_public::Crate::fn_defs()` (e.g.
+//!   `Vec::from_raw_parts`), so some APIs cannot be resolved here and must
+//!   keep a name matcher — see `api_classify::is_from_raw_parts`.
+//! - In `#![no_std]` builds some intrinsics are absent; [`init`] only warns
+//!   (`rap_warn!`) instead of panicking, so an entry with no matching path
+//!   simply yields `None`.
+
 use indexmap::IndexMap;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
@@ -18,49 +57,49 @@ pub fn init(tcx: TyCtxt) {
 fn init_inner(tcx: TyCtxt) -> Intrinsics {
     const CRATES: &[&str] = &["core", "std", "alloc"];
 
+    // Map every registered path — both with and without its
+    // `std::`/`core::`/`alloc::` prefix — to its entry index.
+    // `rustc_public::CrateDef::name()` emits the crate prefix only on newer
+    // toolchains, so both forms must resolve to the same entry.
     let path_to_idx: std::collections::HashMap<&str, usize> = INTRINSICS
         .iter()
         .enumerate()
-        .flat_map(|(idx, paths)| paths.iter().map(move |&p| (p, idx)))
+        .flat_map(|(idx, paths)| {
+            paths.iter().flat_map(move |&p| {
+                std::iter::once(p)
+                    .chain(
+                        ["std::", "core::", "alloc::"]
+                            .into_iter()
+                            .filter_map(move |pfx| p.strip_prefix(pfx)),
+                    )
+                    .map(move |q| (q, idx))
+            })
+        })
         .collect();
 
     let mut indices: IndexMap<_, _> = (0..INTRINSICS.len()).map(|idx| (idx, false)).collect();
     let mut map = IndexMap::<Box<str>, DefId>::with_capacity(INTRINSICS.len());
+
+    let mut try_insert = |name: &str, def_id: rustc_public::DefId| {
+        let Some(&idx) = path_to_idx.get(name) else { return };
+        assert_eq!(
+            indices.insert(idx, true),
+            Some(false),
+            "DefId for {name} has been found: {:?}",
+            map.get(INTRINSICS[idx][0])
+        );
+        // Store under the canonical (first) registered path so the `{id}()`
+        // accessors — which probe the registered paths — find it regardless of
+        // whether `name` carried a crate prefix.
+        map.insert(Box::from(INTRINSICS[idx][0]), rustc_internal::internal(tcx, def_id));
+    };
 
     for krate in std::iter::once(rustc_public::local_crate())
         .chain(rustc_public::external_crates().into_iter())
         .filter(|krate| CRATES.iter().any(|name| *name == krate.name))
     {
         for fn_def in krate.fn_defs() {
-            let fn_name: Box<str> = fn_def.name().into();
-            let idx = path_to_idx
-                .get(&*fn_name)
-                .copied()
-                .or_else(|| {
-                    fn_name
-                        .strip_prefix("core::")
-                        .and_then(|s| path_to_idx.get(s).copied())
-                })
-                .or_else(|| {
-                    fn_name
-                        .strip_prefix("std::")
-                        .and_then(|s| path_to_idx.get(s).copied())
-                })
-                .or_else(|| {
-                    fn_name
-                        .strip_prefix("alloc::")
-                        .and_then(|s| path_to_idx.get(s).copied())
-                });
-            if let Some(idx) = idx {
-                assert_eq!(
-                    indices.insert(idx, true),
-                    Some(false),
-                    "DefId for {fn_name} has been found: {:?}",
-                    map.get(&*fn_name)
-                );
-                let def_id = rustc_internal::internal(tcx, fn_def.def_id());
-                map.insert(fn_name, def_id);
-            }
+            try_insert(&fn_def.name(), fn_def.def_id());
         }
     }
 
@@ -90,18 +129,15 @@ macro_rules! intrinsics {
     ($( $id:ident : $paths:expr ,)+) => {
         const INTRINSICS: &[&[&str]] = &[$( $paths ,)+];
         $(
-            paste::paste! {
-                #[allow(dead_code)]
-                pub fn [<$id _opt>] () -> Option<DefId> {
-                    let map = &INIT.get().expect("Intrinsics DefIds haven't been initialized.").map;
-                    for path in $paths {
-                        match map.get(*path) {
-                            Some(id) => return Some(*id),
-                            None => ()
-                        }
+            pub fn $id() -> Option<DefId> {
+                let map = &INIT.get().expect("Intrinsics DefIds haven't been initialized.").map;
+                for path in $paths {
+                    match map.get(*path) {
+                        Some(id) => return Some(*id),
+                        None => ()
                     }
-                    None
                 }
+                None
             }
         )+
     };
@@ -110,12 +146,6 @@ macro_rules! intrinsics {
 // for #![no_std] crates, intrinsics fn paths start from core instead of core.
 // cc https://github.com/Artisan-Lab/RAPx/issues/190
 intrinsics! {
-    assume_init_drop: &[
-        "std::mem::MaybeUninit::<T>::assume_init_drop",
-        "core::mem::MaybeUninit::<T>::assume_init_drop",
-        "std::mem::maybe_uninit::MaybeUninit::<T>::assume_init_drop",
-        "core::mem::maybe_uninit::MaybeUninit::<T>::assume_init_drop"
-    ],
     call_mut: &[
         "std::ops::FnMut::call_mut",
         "core::ops::FnMut::call_mut",
@@ -168,13 +198,189 @@ intrinsics! {
         "std::mem::take",
         "core::mem::take"
     ],
-    read_via_copy: &[
-        "std::intrinsics::read_via_copy",
-        "core::intrinsics::read_via_copy"
+    select_unpredictable: &[
+        "std::intrinsics::select_unpredictable",
+        "core::intrinsics::select_unpredictable"
     ],
-    write_via_copy: &[
-        "std::intrinsics::write_via_move",
-        "core::intrinsics::write_via_move"
+    hint_select_unpredictable: &[
+        "std::hint::select_unpredictable",
+        "core::hint::select_unpredictable"
+    ],
+    ptr_read: &[
+        "std::ptr::read",
+        "core::ptr::read"
+    ],
+    ptr_read_unaligned: &[
+        "std::ptr::read_unaligned",
+        "core::ptr::read_unaligned"
+    ],
+    ptr_read_volatile: &[
+        "std::ptr::read_volatile",
+        "core::ptr::read_volatile"
+    ],
+    ptr_write: &[
+        "std::ptr::write",
+        "core::ptr::write"
+    ],
+    ptr_write_unaligned: &[
+        "std::ptr::write_unaligned",
+        "core::ptr::write_unaligned"
+    ],
+    ptr_write_volatile: &[
+        "std::ptr::write_volatile",
+        "core::ptr::write_volatile"
+    ],
+    ptr_write_bytes: &[
+        "std::ptr::write_bytes",
+        "core::ptr::write_bytes"
+    ],
+    intrinsics_copy: &[
+        "std::intrinsics::copy",
+        "core::intrinsics::copy"
+    ],
+    intrinsics_copy_nonoverlapping: &[
+        "std::intrinsics::copy_nonoverlapping",
+        "core::intrinsics::copy_nonoverlapping"
+    ],
+    assume_init_read: &[
+        "std::mem::MaybeUninit::<T>::assume_init_read",
+        "core::mem::MaybeUninit::<T>::assume_init_read",
+        "std::mem::maybe_uninit::MaybeUninit::<T>::assume_init_read",
+        "core::mem::maybe_uninit::MaybeUninit::<T>::assume_init_read"
+    ],
+    maybe_uninit_uninit: &[
+        "std::mem::MaybeUninit::<T>::uninit",
+        "core::mem::MaybeUninit::<T>::uninit",
+        "std::mem::maybe_uninit::MaybeUninit::<T>::uninit",
+        "core::mem::maybe_uninit::MaybeUninit::<T>::uninit"
+    ],
+    maybe_uninit_write: &[
+        "std::mem::MaybeUninit::<T>::write",
+        "core::mem::MaybeUninit::<T>::write",
+        "std::mem::maybe_uninit::MaybeUninit::<T>::write",
+        "core::mem::maybe_uninit::MaybeUninit::<T>::write"
+    ],
+    maybe_uninit_assume_init: &[
+        "std::mem::MaybeUninit::<T>::assume_init",
+        "core::mem::MaybeUninit::<T>::assume_init",
+        "std::mem::maybe_uninit::MaybeUninit::<T>::assume_init",
+        "core::mem::maybe_uninit::MaybeUninit::<T>::assume_init"
+    ],
+    maybe_uninit_assume_init_ref: &[
+        "std::mem::MaybeUninit::<T>::assume_init_ref",
+        "core::mem::MaybeUninit::<T>::assume_init_ref",
+        "std::mem::maybe_uninit::MaybeUninit::<T>::assume_init_ref",
+        "core::mem::maybe_uninit::MaybeUninit::<T>::assume_init_ref"
+    ],
+    maybe_uninit_assume_init_mut: &[
+        "std::mem::MaybeUninit::<T>::assume_init_mut",
+        "core::mem::MaybeUninit::<T>::assume_init_mut",
+        "std::mem::maybe_uninit::MaybeUninit::<T>::assume_init_mut",
+        "core::mem::maybe_uninit::MaybeUninit::<T>::assume_init_mut"
+    ],
+    mem_size_of: &[
+        "std::mem::size_of",
+        "core::mem::size_of"
+    ],
+    mem_align_of: &[
+        "std::mem::align_of",
+        "core::mem::align_of"
+    ],
+    intrinsics_size_of: &[
+        "std::intrinsics::size_of",
+        "core::intrinsics::size_of"
+    ],
+    intrinsics_align_of: &[
+        "std::intrinsics::align_of",
+        "core::intrinsics::align_of"
+    ],
+    ptr_align_offset: &[
+        "std::ptr::align_offset",
+        "core::ptr::align_offset"
+    ],
+    nonnull_align_offset: &[
+        "std::ptr::NonNull::<T>::align_offset",
+        "core::ptr::NonNull::<T>::align_offset"
+    ],
+    const_ptr_align_offset: &[
+        "std::ptr::const_ptr::<impl *const T>::align_offset",
+        "core::ptr::const_ptr::<impl *const T>::align_offset"
+    ],
+    mut_ptr_align_offset: &[
+        "std::ptr::mut_ptr::<impl *mut T>::align_offset",
+        "core::ptr::mut_ptr::<impl *mut T>::align_offset"
+    ],
+    option_unwrap: &[
+        "std::option::Option::<T>::unwrap",
+        "core::option::Option::<T>::unwrap"
+    ],
+    option_expect: &[
+        "std::option::Option::<T>::expect",
+        "core::option::Option::<T>::expect"
+    ],
+    option_unwrap_unchecked: &[
+        "std::option::Option::<T>::unwrap_unchecked",
+        "core::option::Option::<T>::unwrap_unchecked"
+    ],
+    result_unwrap: &[
+        "std::result::Result::<T, E>::unwrap",
+        "core::result::Result::<T, E>::unwrap"
+    ],
+    result_unwrap_err: &[
+        "std::result::Result::<T, E>::unwrap_err",
+        "core::result::Result::<T, E>::unwrap_err"
+    ],
+    result_expect: &[
+        "std::result::Result::<T, E>::expect",
+        "core::result::Result::<T, E>::expect"
+    ],
+    result_expect_err: &[
+        "std::result::Result::<T, E>::expect_err",
+        "core::result::Result::<T, E>::expect_err"
+    ],
+    result_unwrap_unchecked: &[
+        "std::result::Result::<T, E>::unwrap_unchecked",
+        "core::result::Result::<T, E>::unwrap_unchecked"
+    ],
+    cstr_from_ptr: &[
+        "std::ffi::CStr::from_ptr",
+        "core::ffi::CStr::from_ptr"
+    ],
+    cstr_from_bytes_with_nul_unchecked: &[
+        "std::ffi::CStr::from_bytes_with_nul_unchecked",
+        "core::ffi::CStr::from_bytes_with_nul_unchecked"
+    ],
+    cstring_from_vec_with_nul_unchecked: &[
+        "std::ffi::CString::from_vec_with_nul_unchecked",
+        "alloc::ffi::CString::from_vec_with_nul_unchecked"
+    ],
+    vec_push: &[
+        "std::vec::Vec::<T, A>::push",
+        "alloc::vec::Vec::<T, A>::push"
+    ],
+    vec_reserve: &[
+        "std::vec::Vec::<T, A>::reserve",
+        "alloc::vec::Vec::<T, A>::reserve"
+    ],
+    vec_reserve_exact: &[
+        "std::vec::Vec::<T, A>::reserve_exact",
+        "alloc::vec::Vec::<T, A>::reserve_exact"
+    ],
+    box_from_raw: &[
+        "std::boxed::Box::<T>::from_raw",
+        "alloc::boxed::Box::<T>::from_raw"
+    ],
+    cstring_from_raw: &[
+        "std::ffi::CString::from_raw",
+        "alloc::ffi::CString::from_raw"
+    ],
+    arc_from_raw: &[
+        "std::sync::Arc::<T>::from_raw",
+        "alloc::sync::Arc::<T>::from_raw"
+    ],
+    rc_from_raw: &[
+        "std::rc::Rc::<T>::from_raw",
+        "alloc::rc::Rc::<T>::from_raw"
     ],
 }
 
@@ -187,10 +393,10 @@ pub fn to_internal<T: CrateDef>(val: &T, tcx: TyCtxt) -> DefId {
 /// using alloc, dealloc doesn't exist.
 pub fn is_drop_fn(target: DefId) -> bool {
     let drop_fn = [
-        drop_opt(),
-        drop_in_place_opt(),
-        manually_drop_opt(),
-        dealloc_opt(),
+        drop(),
+        drop_in_place(),
+        manually_drop(),
+        dealloc(),
     ];
     contains(&drop_fn, target)
 }

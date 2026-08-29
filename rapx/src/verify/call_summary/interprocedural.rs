@@ -524,10 +524,9 @@ fn write_args_on_path<'tcx>(
         let TerminatorKind::Call { func, args, .. } = &terminator.kind else {
             continue;
         };
-        let name = helpers::call_name(tcx, func);
 
         // `ptr::write`-style writes: trace the pointer arg to a callee arg.
-        if crate::helpers::api_classify::is_ptr_write(&name) {
+        if crate::helpers::api_classify::is_ptr_write(helpers::dep_callee_def_id(func)) {
             if let Some(pointer_arg) = args
                 .first()
                 .and_then(|arg| trace_to_callee_arg(tcx, body, &arg.node))

@@ -261,7 +261,7 @@ pub(crate) fn effect_summary<'tcx>(
     let callee = mir_utils::dep_callee_def_id(func);
     let name = mir_utils::call_name(tcx, func);
 
-    if let Some(summary) = builtin_models::lookup_effect(tcx, caller, &name, func, destination) {
+    if let Some(summary) = builtin_models::lookup_effect(tcx, caller, callee, &name, func, destination) {
         return summary;
     }
 

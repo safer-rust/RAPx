@@ -138,7 +138,7 @@ impl<'tcx> AliasAnalyzer<'tcx> {
     }
 
     fn handle_conor_cases(&mut self) {
-        let cases = [copy_from_nonoverlapping_opt(), copy_to_nonoverlapping_opt(), copy_to_opt(), copy_from_opt()];
+        let cases = [copy_from_nonoverlapping(), copy_to_nonoverlapping(), copy_to(), copy_from()];
         let alias = MopAliasPair::new(1, true, true, 2, true, true);
         for (key, value) in self.fn_map.iter_mut() {
             if contains(&cases, *key) {

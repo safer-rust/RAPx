@@ -54,7 +54,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             .collect();
 
         // ── select_unpredictable: result ∈ {x, y} ─────────────────────
-        if self.try_select_unpredictable(&name, &arg_values, args, destination) {
+        if self.try_select_unpredictable(callee, &arg_values, args, destination) {
             return;
         }
 
@@ -103,7 +103,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         if let Some(c) = callee {
             if self.tcx.is_mir_available(c) {
                 let has_fn_sim = crate::verify::call_summary::builtin_models::lookup_effect(
-                    self.tcx, caller_def_id, &name, func, destination,
+                    self.tcx, caller_def_id, callee, &name, func, destination,
                 ).is_some();
                 if !has_fn_sim {
                     if self.exec_inline_call(c, &arg_values, &caller_arg_locals, destination) {
@@ -122,6 +122,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         );
 
         self.last_call_name = summary.name.clone();
+        self.last_call_callee = callee;
 
         if !summary.unsupported {
             for effect in &summary.effects {
@@ -165,12 +166,18 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     /// `select_unpredictable`: result ∈ {x, y}.
     fn try_select_unpredictable(
         &mut self,
-        name: &str,
+        callee: Option<DefId>,
         arg_values: &[VmValue<'ctx, 'tcx>],
         args: &[Spanned<Operand<'tcx>>],
         destination: Local,
     ) -> bool {
-        if !api_classify::is_select_unpredictable(name) || arg_values.len() < 3 {
+        let is_select_unpredictable = callee
+            .map(|c| crate::def_id::contains(
+                &[crate::def_id::select_unpredictable(), crate::def_id::hint_select_unpredictable()],
+                c,
+            ))
+            .unwrap_or(false);
+        if !is_select_unpredictable || arg_values.len() < 3 {
             return false;
         }
         let term = self.fresh_int(&format!("selunpred_{}", destination.as_usize()));
@@ -1717,7 +1724,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         // For locally-created Vec-like types: create a heap data
                         // allocation on first mutation. (Param Vecs already have
                         // an external allocation set by init_parameters.)
-                        let is_vec = crate::helpers::api_classify::is_vec_push(&self.last_call_name);
+                        let is_vec = crate::helpers::api_classify::is_vec_push(self.last_call_callee);
                         let is_external = self.alloc(prov.alloc_id).is_external;
                         if is_vec && !is_external {
                             let elem_ty = match arg_val.ty.kind() {

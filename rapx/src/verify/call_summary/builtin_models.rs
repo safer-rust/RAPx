@@ -37,13 +37,36 @@ pub(crate) struct EffCtx<'a, 'tcx> {
 // ── Registry table ─────────────────────────────────────────────────────
 
 struct Entry {
-    matches: fn(&str) -> bool,
+    matches_name: Option<fn(&str) -> bool>,
+    matches_defid: Option<fn(Option<DefId>) -> bool>,
     effects: fn(&EffCtx<'_, '_>) -> Vec<CallEffect>,
 }
 
+impl Entry {
+    /// Whether this registry row matches the given call site.  Rows matched by
+    /// `DefId` use the resolved callee; rows matched by name use the
+    /// `def_path_str`.  When both are set, both must agree.
+    fn matches(&self, callee: Option<DefId>, name: &str) -> bool {
+        match (self.matches_name, self.matches_defid) {
+            (Some(mn), None) => mn(name),
+            (None, Some(md)) => md(callee),
+            (Some(mn), Some(md)) => mn(name) && md(callee),
+            (None, None) => false,
+        }
+    }
+}
+
+/// Name-based matcher row (`fn(&str) -> bool`).
 macro_rules! E {
     ($m:expr, $e:ident) => {
-        Entry { matches: $m, effects: $e }
+        Entry { matches_name: Some($m), matches_defid: None, effects: $e }
+    };
+}
+
+/// `DefId`-based matcher row (`fn(Option<DefId>) -> bool`).
+macro_rules! ED {
+    ($m:expr, $e:ident) => {
+        Entry { matches_name: None, matches_defid: Some($m), effects: $e }
     };
 }
 
@@ -63,7 +86,7 @@ static REGISTRY: &[Entry] = &[
     E!(int_checked_add, eff_return_option_some_add),
     E!(int_checked_mul, eff_return_option_some_mul),
     E!(overflowing_nz, eff_overflowing_nz),
-    E!(api_classify::is_unwrap, eff_alias_arg0),
+    ED!(api_classify::is_unwrap, eff_alias_arg0),
 
     // ── Pointer extraction / cast ───────────────────────────────────
     // `NonNull::new`'s effect is modelled in the VM (`try_nonnull_new`); the
@@ -86,9 +109,9 @@ static REGISTRY: &[Entry] = &[
     // does not inline their branchy bodies. `write` marks the slot initialized;
     // its `WriteMemory` effect lets a later `assume_init`/`assume_init_read`
     // discharge `Init` (raw `ptr::write` is handled by the VM inline path).
-    E!(api_classify::is_maybe_uninit_uninit, eff_none),
-    E!(api_classify::is_maybe_uninit_assume_init, eff_none),
-    E!(api_classify::is_maybe_uninit_write, eff_write_mem),
+    ED!(api_classify::is_maybe_uninit_uninit, eff_none),
+    ED!(api_classify::is_maybe_uninit_assume_init, eff_none),
+    ED!(api_classify::is_maybe_uninit_write, eff_write_mem),
 
     // ── Slice / collection queries ──────────────────────────────────
     E!(api_classify::is_len, eff_len),
@@ -105,7 +128,7 @@ static REGISTRY: &[Entry] = &[
     E!(is_slice_get_unchecked, eff_alias_ptr),
 
     // ── Ownership reconstruction ────────────────────────────────────
-    E!(api_classify::is_ownership_reconstruction, eff_ownership_recon),
+    ED!(api_classify::is_ownership_reconstruction, eff_ownership_recon),
 
     // ── Slice helpers ───────────────────────────────────────────────
     E!(align_to_local, eff_align_to),
@@ -114,7 +137,7 @@ static REGISTRY: &[Entry] = &[
     E!(is_strlen, eff_scan_length),
     E!(split_at, eff_split_at),
     E!(api_classify::is_from_raw_parts, eff_from_raw_parts),
-    E!(api_classify::is_align_offset, eff_align_offset),
+    ED!(api_classify::is_align_offset, eff_align_offset),
 
     // ── Vec / collection constructors ────────────────────────────────
     E!(api_classify::is_vec_alloc_constructor, eff_new_allocation),
@@ -128,30 +151,31 @@ static REGISTRY: &[Entry] = &[
     E!(layout_align, eff_layout_align),
 
     // ── Layout constants ────────────────────────────────────────────
-    E!(api_classify::is_layout_constant, eff_layout_const),
+    ED!(api_classify::is_layout_constant, eff_layout_const),
 
     // ── CStr / CString helpers ──────────────────────────────────────
-    E!(api_classify::is_cstr_from_ptr, eff_alias_arg0),
-    E!(api_classify::is_vec_push, eff_write_mem),
+    ED!(api_classify::is_cstr_from_ptr, eff_alias_arg0),
+    ED!(api_classify::is_vec_push, eff_write_mem),
 ];
 
-/// True when `name` matches a hand-modelled API in the registry. The path
+/// True when `callee` matches a hand-modelled API in the registry. The path
 /// graph uses this to keep such calls opaque (it must not inline their branchy
 /// CFG when the VM models their semantics more precisely).
-pub(crate) fn is_modeled(name: &str) -> bool {
-    REGISTRY.iter().any(|e| (e.matches)(name))
+pub(crate) fn is_modeled(callee: Option<DefId>, name: &str) -> bool {
+    REGISTRY.iter().any(|e| e.matches(callee, name))
 }
 
 pub(crate) fn lookup_effect<'tcx>(
     tcx: TyCtxt<'tcx>,
     caller: DefId,
+    callee: Option<DefId>,
     name: &str,
     func: &Operand<'tcx>,
     destination: rustc_middle::mir::Local,
 ) -> Option<CallEffectSummary> {
     let dest = Some(destination);
     for e in REGISTRY {
-        if (e.matches)(name) {
+        if e.matches(callee, name) {
             let ctx = EffCtx { tcx, caller, name, func, dest };
             return Some(CallEffectSummary {
                 name: name.to_string(),

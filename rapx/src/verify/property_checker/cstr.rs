@@ -88,10 +88,7 @@ impl PropertyChecker {
         // 4. Fallback: if the constructor requires strict NUL-termination
         //    (from_bytes_with_nul_unchecked, from_vec_with_nul_unchecked)
         //    and we can't verify all bytes, return Unknown.
-        let is_strict = checkpoint.callee.as_ref().map_or(false, |callee| {
-            let name = vm_state.tcx.def_path_str(*callee);
-            crate::helpers::api_classify::is_cstr_unchecked_constructor(&name)
-        });
+        let is_strict = crate::helpers::api_classify::is_cstr_unchecked_constructor(checkpoint.callee);
         if is_strict {
             CheckResult::Unknown
         } else {
