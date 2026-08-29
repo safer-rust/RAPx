@@ -63,7 +63,7 @@ static REGISTRY: &[Entry] = &[
     E!(int_checked_add, eff_return_option_some_add),
     E!(int_checked_mul, eff_return_option_some_mul),
     E!(overflowing_nz, eff_overflowing_nz),
-    E!(api_classify::is_option_unwrap, eff_alias_arg0),
+    E!(api_classify::is_unwrap, eff_alias_arg0),
 
     // ── Pointer extraction / cast ───────────────────────────────────
     // `NonNull::new`'s effect is modelled in the VM (`try_nonnull_new`); the
@@ -76,6 +76,7 @@ static REGISTRY: &[Entry] = &[
     E!(|n| api_classify::is_pointer_add(n) && !api_classify::is_byte_ptr_arith(n), eff_ptr_add),
     E!(|n| api_classify::is_pointer_sub(n) && !api_classify::is_byte_ptr_arith(n), eff_ptr_sub),
     E!(|n| api_classify::is_pointer_add(n) && api_classify::is_byte_ptr_arith(n), eff_ptr_add),
+    E!(|n| api_classify::is_pointer_sub(n) && api_classify::is_byte_ptr_arith(n), eff_ptr_sub),
 
     // ── MaybeUninit ────────────────────────────────────────────────
     // `uninit`/`assume_init` are `eff_none` stubs: they have no symbolic

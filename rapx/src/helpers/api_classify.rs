@@ -17,34 +17,66 @@ pub fn is_ownership_reconstruction(name: &str) -> bool {
         || name.contains("from_vec_with_nul_unchecked")
 }
 
+/// Whether `name` produces a raw pointer (or `NonNull`) alias of its first
+/// argument: `as_ptr`/`as_mut_ptr`, `into_raw`/`into_raw_mut`, pointer `cast`
+/// (incl. `cast_mut`/`cast_const`), and the `NonNull` accessors
+/// (`from`, `new_unchecked`, `as_ptr`, `as_ref`, `as_mut`). `as_ptr_range` /
+/// `as_mut_ptr_range` are excluded because they return a `Range` of two
+/// pointers rather than a single pointer.
 pub fn is_as_ptr(name: &str) -> bool {
-    name.contains("::as_ptr") && !name.ends_with("::as_ptr_range")
+    (name.contains("::as_ptr") && !name.ends_with("::as_ptr_range"))
         || name.ends_with("::into_raw")
-        || name.contains("::as_mut_ptr") && !name.ends_with("::as_mut_ptr_range")
+        || (name.contains("::as_mut_ptr") && !name.ends_with("::as_mut_ptr_range"))
         || name.ends_with("::into_raw_mut")
         || (name.contains("::cast") && !name.contains("::cast_to"))
-        || name.ends_with("::from") && name.contains("ptr::non_null")
-        || name.ends_with("::new_unchecked") && name.contains("ptr::non_null")
-        || name.ends_with("::as_ref") && name.contains("ptr::non_null")
-        || name.ends_with("::as_mut") && name.contains("ptr::non_null")
+        || (name.contains("ptr::non_null")
+            && (name.ends_with("::from")
+                || name.ends_with("::new_unchecked")
+                || name.ends_with("::as_ref")
+                || name.ends_with("::as_mut")))
 }
 
+/// Whether `name` advances a raw pointer: element-strided `add`/`wrapping_add`,
+/// the signed `offset`/`wrapping_offset`, and the byte-granular
+/// `byte_add`/`byte_offset` (stride 1). `offset`/`byte_offset` take a signed
+/// `isize`, so a negative offset is still classified here (the sign lives in
+/// the argument); the positive-count `sub`/`byte_sub` belong to
+/// [`is_pointer_sub`].
 pub fn is_pointer_add(name: &str) -> bool {
-    name.ends_with("::add") || name.ends_with("::wrapping_add")
-        || name.contains("::offset") || name.contains("::wrapping_offset")
-        || name.contains("::byte_add") || name.contains("::wrapping_byte_add")
-        || name.contains("::byte_offset") || name.contains("::wrapping_byte_offset")
+    name.ends_with("::add")
+        || name.ends_with("::wrapping_add")
+        || name.contains("::offset")
+        || name.contains("::wrapping_offset")
+        || is_byte_ptr_add(name)
 }
 
+/// Whether `name` retreats a raw pointer: element-strided `sub`/`wrapping_sub`
+/// and byte-granular `byte_sub`/`wrapping_byte_sub` (stride 1). Unlike the
+/// signed `offset`/`byte_offset` (see [`is_pointer_add`]), these take a positive
+/// count and compute `base - count * stride`.
 pub fn is_pointer_sub(name: &str) -> bool {
-    name.ends_with("::sub") || name.ends_with("::wrapping_sub")
-        || name.contains("::byte_sub") || name.contains("::wrapping_byte_sub")
+    name.ends_with("::sub")
+        || name.ends_with("::wrapping_sub")
+        || is_byte_ptr_sub(name)
 }
 
+/// Whether `name` is byte-granular pointer arithmetic (stride 1). This is the
+/// union of the byte `add`/`offset` terms and the byte `sub` terms, so it
+/// overlaps [`is_pointer_add`] and [`is_pointer_sub`]; it exists so callers can
+/// select stride 1 uniformly regardless of direction.
 pub fn is_byte_ptr_arith(name: &str) -> bool {
-    name.contains("::byte_add") || name.contains("::wrapping_byte_add")
-        || name.contains("::byte_sub") || name.contains("::wrapping_byte_sub")
-        || name.contains("::byte_offset") || name.contains("::wrapping_byte_offset")
+    is_byte_ptr_add(name) || is_byte_ptr_sub(name)
+}
+
+fn is_byte_ptr_add(name: &str) -> bool {
+    name.contains("::byte_add")
+        || name.contains("::wrapping_byte_add")
+        || name.contains("::byte_offset")
+        || name.contains("::wrapping_byte_offset")
+}
+
+fn is_byte_ptr_sub(name: &str) -> bool {
+    name.contains("::byte_sub") || name.contains("::wrapping_byte_sub")
 }
 
 pub fn is_layout_constant(name: &str) -> bool { name.contains("align_of") || name.contains("size_of") }
@@ -73,10 +105,13 @@ pub fn is_mem_copy_or_write_api(name: &str) -> bool {
 }
 pub fn is_len(name: &str) -> bool { name.contains("::len") }
 pub fn is_capacity(name: &str) -> bool { name.contains("::capacity") }
-pub fn is_option_unwrap(name: &str) -> bool {
+pub fn is_unwrap(name: &str) -> bool {
     (name.contains("Option") || name.contains("Result"))
-        && (name.contains("::expect") || name.contains("::unwrap")
-            || name.contains("::unwrap_unchecked"))
+        && (name.ends_with("::expect")
+            || name.ends_with("::expect_err")
+            || name.ends_with("::unwrap")
+            || name.ends_with("::unwrap_unchecked")
+            || name.ends_with("::unwrap_err"))
 }
 pub fn is_maybe_uninit_uninit(name: &str) -> bool {
     name.contains("MaybeUninit") && name.ends_with("::uninit")
@@ -97,7 +132,7 @@ pub fn is_cstr_strict_constructor(name: &str) -> bool {
 }
 pub fn is_vec_push(name: &str) -> bool {
     (name.ends_with("::push") || name.ends_with("::reserve") || name.ends_with("::reserve_exact"))
-        && name.contains("Vec")
+        && name.contains("::Vec::")
 }
 pub fn is_vec_alloc_constructor(name: &str) -> bool {
     name.contains("::vec::from_elem")
@@ -108,7 +143,7 @@ pub fn is_vec_from_box(name: &str) -> bool {
         || name.contains("box_assume_init_into_vec_unsafe")
 }
 pub fn is_vec_with_capacity(name: &str) -> bool {
-    (name.contains("::Vec") && name.ends_with("::with_capacity"))
+    (name.contains("::Vec::") && name.ends_with("::with_capacity"))
         || name == "with_capacity"
 }
 pub fn is_into_boxed_slice(name: &str) -> bool {
@@ -168,7 +203,7 @@ pub(crate) fn is_nonnull_api(name: &str) -> bool {
 /// Whether `name` is a `Vec` method that may reallocate (invalidating any
 /// outstanding raw pointers derived from it).
 pub fn is_vec_invalidating_method(name: &str) -> bool {
-    (name.contains("Vec") || name.contains("vec::"))
+    (name.contains("::Vec::") || name.contains("vec::"))
         && (name.contains("::push")
             || name.contains("::reserve")
             || name.contains("::reserve_exact")
@@ -194,7 +229,8 @@ pub fn is_ownership_return_api(name: &str) -> bool {
 /// Whether `name` terminates or reconstructs ownership of an allocation
 /// (`from_raw` or `drop_in_place`).
 pub fn is_ownership_transfer_terminator_api(name: &str) -> bool {
-    name.contains("::from_raw") || name.contains("::drop_in_place")
+    (name.contains("::from_raw") && !name.contains("from_raw_parts"))
+        || name.contains("::drop_in_place")
 }
 
 /// Whether `name` is a benign, read-only use of a raw-pointer origin
