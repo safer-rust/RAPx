@@ -1,6 +1,6 @@
 [package]
 name = "rapx-macros"
-version = "0.7.37"
+version = "0.7.38"
 edition = "2024"
 description = "Procedural macros for RAPx contract definitions"
 license = "MPL-2.0"
