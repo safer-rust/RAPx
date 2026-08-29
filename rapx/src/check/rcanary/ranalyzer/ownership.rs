@@ -3,7 +3,7 @@ use z3::ast;
 
 use rustc_middle::ty::Ty;
 
-use crate::analysis::owned_heap::default::TyWithIndex;
+use crate::analysis::heap_ownership::default::TyWithIndex;
 
 #[derive(Clone, Debug)]
 pub struct Taint<'tcx> {

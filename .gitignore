@@ -8,3 +8,4 @@ UPG/
 **/*.dot
 **/*.png
 .rapx-test.lock
+es_*

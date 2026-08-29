@@ -90,7 +90,7 @@ Commands:
   adg         API dependency graphs
   callgraph   callgraph generation
   dataflow    dataflow graphs
-  owned-heap  analyze heap-owning types
+  heapowner   analyze heap-owning types
   paths       path-sensitive CFG paths
   range       range analysis
   scan        basic crate info

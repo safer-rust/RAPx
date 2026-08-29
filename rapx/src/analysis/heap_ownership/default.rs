@@ -14,22 +14,22 @@ use std::{collections::HashMap, ops::ControlFlow};
 
 use super::*;
 
-pub struct OwnedHeapAnalyzer<'tcx> {
+pub struct HeapOwnershipAnalyzer<'tcx> {
     tcx: TyCtxt<'tcx>,
-    adt_heap: OHAResultMap,
+    adt_heap: HeapOwnershipResultMap,
     fn_set: HashSet<DefId>,
     ty_map: HashMap<Ty<'tcx>, String>,
     adt_recorder: HashSet<DefId>,
 }
 
-impl<'tcx> Analysis for OwnedHeapAnalyzer<'tcx> {
+impl<'tcx> Analysis for HeapOwnershipAnalyzer<'tcx> {
     fn run(&mut self) {
         self.start();
     }
 }
 
-impl<'tcx> OwnedHeapAnalysis for OwnedHeapAnalyzer<'tcx> {
-    fn get_all_items(&self) -> OHAResultMap {
+impl<'tcx> HeapOwnershipAnalysis for HeapOwnershipAnalyzer<'tcx> {
+    fn get_all_items(&self) -> HeapOwnershipResultMap {
         self.adt_heap.clone()
     }
 }
@@ -47,7 +47,7 @@ pub(crate) fn copy_ty_context(tc: &TyContext) -> TyContext {
     }
 }
 
-impl<'tcx> OwnedHeapAnalyzer<'tcx> {
+impl<'tcx> HeapOwnershipAnalyzer<'tcx> {
     pub fn new(tcx: TyCtxt<'tcx>) -> Self {
         Self {
             tcx,
@@ -82,15 +82,15 @@ impl<'tcx> OwnedHeapAnalyzer<'tcx> {
         &mut self.adt_recorder
     }
 
-    pub fn adt_heap(&self) -> &OHAResultMap {
+    pub fn adt_heap(&self) -> &HeapOwnershipResultMap {
         &self.adt_heap
     }
 
-    pub fn adt_heap_mut(&mut self) -> &mut OHAResultMap {
+    pub fn adt_heap_mut(&mut self) -> &mut HeapOwnershipResultMap {
         &mut self.adt_heap
     }
 
-    pub fn format_heap_unit(unit: &(OwnedHeap, Vec<bool>)) -> String {
+    pub fn format_heap_unit(unit: &(HeapOwnership, Vec<bool>)) -> String {
         let (heap, flags) = unit;
         let vec_str = flags
             .iter()
@@ -134,7 +134,7 @@ impl<'tcx> OwnedHeapAnalyzer<'tcx> {
         }
 
         #[inline(always)]
-        fn show_heap(ref_type_analysis: &mut OwnedHeapAnalyzer) {
+        fn show_heap(ref_type_analysis: &mut HeapOwnershipAnalyzer) {
             for elem in ref_type_analysis.adt_heap() {
                 let name = format!(
                     "{:?}",
@@ -207,7 +207,7 @@ impl<'tcx> OwnedHeapAnalyzer<'tcx> {
                 let field_ty = crate::helpers::mir_utils::field_ty(self.tcx, field, substs);
                 let _ = field_ty.visit_with(&mut raw_generic);
             }
-            v_res.push((OwnedHeap::False, raw_generic.record_mut().clone()));
+            v_res.push((HeapOwnership::False, raw_generic.record_mut().clone()));
         }
 
         self.adt_heap_mut().insert(did, v_res);
@@ -269,7 +269,7 @@ impl<'tcx> OwnedHeapAnalyzer<'tcx> {
                 let _ = field_ty.visit_with(&mut raw_generic_prop);
             }
             v_res[variant_index as usize] =
-                (OwnedHeap::False, raw_generic_prop.record_mut().clone());
+                (HeapOwnership::False, raw_generic_prop.record_mut().clone());
         }
 
         self.adt_heap_mut().insert(did, v_res);
@@ -330,7 +330,7 @@ impl<'tcx> OwnedHeapAnalyzer<'tcx> {
                                                 }
                                             }
 
-                                            res.0 = OwnedHeap::True;
+                                            res.0 = HeapOwnership::True;
                                             self.adt_heap_mut().insert(did, vec![res.clone()]);
                                             return;
                                         }
@@ -378,7 +378,7 @@ impl<'tcx> OwnedHeapAnalyzer<'tcx> {
     }
 }
 
-impl<'tcx> Visitor<'tcx> for OwnedHeapAnalyzer<'tcx> {
+impl<'tcx> Visitor<'tcx> for HeapOwnershipAnalyzer<'tcx> {
     fn visit_body(&mut self, body: &Body<'tcx>) {
         for (local, local_decl) in body.local_decls.iter().enumerate() {
             self.visit_local_decl(Local::from(local), local_decl);
@@ -590,8 +590,8 @@ impl<'tcx, 'a> TypeVisitor<TyCtxt<'tcx>> for HeapPropagation<'tcx, 'a> {
                 let get_ans = get_ans[0].clone();
 
                 match get_ans.0 {
-                    OwnedHeap::True => {
-                        self.heap = OwnedHeap::True;
+                    HeapOwnership::True => {
+                        self.heap = HeapOwnership::True;
                         return ControlFlow::Break(());
                     }
                     _ => (),
@@ -678,11 +678,11 @@ impl<'tcx, 'a> TypeVisitor<TyCtxt<'tcx>> for DefaultOwnership<'tcx, 'a> {
                 let (unit_res, generic_list) = get_ans[0].clone();
 
                 match unit_res {
-                    OwnedHeap::True => {
-                        self.set_res(OwnedHeap::True);
+                    HeapOwnership::True => {
+                        self.set_res(HeapOwnership::True);
                         return ControlFlow::Break(());
                     }
-                    OwnedHeap::False => {
+                    HeapOwnership::False => {
                         for (index, each_generic) in generic_list.iter().enumerate() {
                             if *each_generic == false {
                                 continue;
@@ -703,7 +703,7 @@ impl<'tcx, 'a> TypeVisitor<TyCtxt<'tcx>> for DefaultOwnership<'tcx, 'a> {
             TyKind::Tuple(..) => ty.super_visit_with(self),
             TyKind::Param(..) => {
                 self.set_param(true);
-                self.set_res(OwnedHeap::True);
+                self.set_res(HeapOwnership::True);
                 ControlFlow::Break(())
             }
             TyKind::RawPtr(..) => {
@@ -775,7 +775,7 @@ impl<'tcx> Encoder {
     pub fn encode(
         tcx: TyCtxt<'tcx>,
         ty: Ty<'tcx>,
-        adt_heap: OHAResultMap,
+        adt_heap: HeapOwnershipResultMap,
         variant: Option<VariantIdx>,
     ) -> OwnershipLayoutResult {
         match ty.kind() {
@@ -839,19 +839,19 @@ impl<'tcx> Encoder {
                 res.set_requirement(true);
                 res.set_param(true);
                 res.set_owned(true);
-                res.layout_mut().push(OwnedHeap::True);
+                res.layout_mut().push(HeapOwnership::True);
                 res
             }
             TyKind::RawPtr(..) => {
                 let mut res = OwnershipLayoutResult::new();
                 res.set_requirement(true);
-                res.layout_mut().push(OwnedHeap::False);
+                res.layout_mut().push(HeapOwnership::False);
                 res
             }
             TyKind::Ref(..) => {
                 let mut res = OwnershipLayoutResult::new();
                 res.set_requirement(true);
-                res.layout_mut().push(OwnedHeap::False);
+                res.layout_mut().push(HeapOwnership::False);
                 res
             }
             _ => OwnershipLayoutResult::new(),
@@ -890,7 +890,7 @@ struct IsolatedParamPropagation<'tcx, 'a> {
     record: Vec<bool>,
     unique: HashSet<DefId>,
     source_enum: bool,
-    ref_adt_heap: &'a OHAResultMap,
+    ref_adt_heap: &'a HeapOwnershipResultMap,
 }
 
 impl<'tcx, 'a> IsolatedParamPropagation<'tcx, 'a> {
@@ -898,7 +898,7 @@ impl<'tcx, 'a> IsolatedParamPropagation<'tcx, 'a> {
         tcx: TyCtxt<'tcx>,
         record: Vec<bool>,
         source_enum: bool,
-        ref_adt_heap: &'a OHAResultMap,
+        ref_adt_heap: &'a HeapOwnershipResultMap,
     ) -> Self {
         Self {
             tcx,
@@ -921,7 +921,7 @@ impl<'tcx, 'a> IsolatedParamPropagation<'tcx, 'a> {
         self.source_enum
     }
 
-    pub fn heap(&self) -> &'a OHAResultMap {
+    pub fn heap(&self) -> &'a HeapOwnershipResultMap {
         self.ref_adt_heap
     }
 }
@@ -929,13 +929,13 @@ impl<'tcx, 'a> IsolatedParamPropagation<'tcx, 'a> {
 #[derive(Clone)]
 struct HeapPropagation<'tcx, 'a> {
     tcx: TyCtxt<'tcx>,
-    heap: OwnedHeap,
+    heap: HeapOwnership,
     unique: HashSet<DefId>,
-    heap_res: &'a OHAResultMap,
+    heap_res: &'a HeapOwnershipResultMap,
 }
 
 impl<'tcx, 'a> HeapPropagation<'tcx, 'a> {
-    pub fn new(tcx: TyCtxt<'tcx>, heap: OwnedHeap, heap_res: &'a OHAResultMap) -> Self {
+    pub fn new(tcx: TyCtxt<'tcx>, heap: HeapOwnership, heap_res: &'a HeapOwnershipResultMap) -> Self {
         Self {
             tcx,
             heap,
@@ -944,7 +944,7 @@ impl<'tcx, 'a> HeapPropagation<'tcx, 'a> {
         }
     }
 
-    pub fn heap(&self) -> OwnedHeap {
+    pub fn heap(&self) -> HeapOwnership {
         self.heap
     }
 
@@ -952,7 +952,7 @@ impl<'tcx, 'a> HeapPropagation<'tcx, 'a> {
         &mut self.unique
     }
 
-    pub fn heap_res(&self) -> &'a OHAResultMap {
+    pub fn heap_res(&self) -> &'a HeapOwnershipResultMap {
         self.heap_res
     }
 }
@@ -978,19 +978,19 @@ impl IsolatedParam {
 pub struct DefaultOwnership<'tcx, 'a> {
     tcx: TyCtxt<'tcx>,
     unique: HashSet<DefId>,
-    ref_adt_heap: &'a OHAResultMap,
-    res: OwnedHeap,
+    ref_adt_heap: &'a HeapOwnershipResultMap,
+    res: HeapOwnership,
     param: bool,
     ptr: bool,
 }
 
 impl<'tcx, 'a> DefaultOwnership<'tcx, 'a> {
-    pub fn new(tcx: TyCtxt<'tcx>, ref_adt_heap: &'a OHAResultMap) -> Self {
+    pub fn new(tcx: TyCtxt<'tcx>, ref_adt_heap: &'a HeapOwnershipResultMap) -> Self {
         Self {
             tcx,
             unique: HashSet::new(),
             ref_adt_heap,
-            res: OwnedHeap::False,
+            res: HeapOwnership::False,
             param: false,
             ptr: false,
         }
@@ -1008,16 +1008,16 @@ impl<'tcx, 'a> DefaultOwnership<'tcx, 'a> {
         &mut self.unique
     }
 
-    pub fn get_res(&self) -> OwnedHeap {
+    pub fn get_res(&self) -> HeapOwnership {
         self.res
     }
 
-    pub fn set_res(&mut self, res: OwnedHeap) {
+    pub fn set_res(&mut self, res: HeapOwnership) {
         self.res = res;
     }
 
     pub fn is_owning_true(&self) -> bool {
-        self.res == OwnedHeap::True
+        self.res == HeapOwnership::True
     }
 
     pub fn get_param(&self) -> bool {
@@ -1044,7 +1044,7 @@ impl<'tcx, 'a> DefaultOwnership<'tcx, 'a> {
         self.ptr == true
     }
 
-    pub fn heap(&self) -> &'a OHAResultMap {
+    pub fn heap(&self) -> &'a HeapOwnershipResultMap {
         self.ref_adt_heap
     }
 }
@@ -1144,7 +1144,7 @@ impl<'tcx> IndexedTy<'tcx> {
 
 #[derive(Clone, Debug)]
 pub struct OwnershipLayoutResult {
-    layout: Vec<OwnedHeap>,
+    layout: Vec<HeapOwnership>,
     param: bool,
     requirement: bool,
     owned: bool,
@@ -1160,11 +1160,11 @@ impl OwnershipLayoutResult {
         }
     }
 
-    pub fn layout(&self) -> &Vec<OwnedHeap> {
+    pub fn layout(&self) -> &Vec<HeapOwnership> {
         &self.layout
     }
 
-    pub fn layout_mut(&mut self) -> &mut Vec<OwnedHeap> {
+    pub fn layout_mut(&mut self) -> &mut Vec<HeapOwnership> {
         &mut self.layout
     }
 

@@ -73,10 +73,12 @@ static REGISTRY: &[Entry] = &[
     E!(api_classify::is_as_ptr, eff_alias_ptr),
 
     // ── Pointer arithmetic ──────────────────────────────────────────
-    E!(|n| api_classify::is_pointer_add(n) && !api_classify::is_byte_ptr_arith(n), eff_ptr_add),
-    E!(|n| api_classify::is_pointer_sub(n) && !api_classify::is_byte_ptr_arith(n), eff_ptr_sub),
-    E!(|n| api_classify::is_pointer_add(n) && api_classify::is_byte_ptr_arith(n), eff_ptr_add),
-    E!(|n| api_classify::is_pointer_sub(n) && api_classify::is_byte_ptr_arith(n), eff_ptr_sub),
+    // Direction and granularity are orthogonal: each entry picks a specific
+    // `ReturnPointerAdd`/`ReturnPointerSub` with a fixed stride.
+    E!(api_classify::is_element_ptr_add, eff_ptr_add),
+    E!(api_classify::is_element_ptr_sub, eff_ptr_sub),
+    E!(api_classify::is_byte_ptr_add, eff_ptr_add_byte),
+    E!(api_classify::is_byte_ptr_sub, eff_ptr_sub_byte),
 
     // ── MaybeUninit ────────────────────────────────────────────────
     // `uninit`/`assume_init` are `eff_none` stubs: they have no symbolic
@@ -181,31 +183,50 @@ fn eff_alias_arg0(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 }
 
 fn eff_ptr_add(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    // `wrapping_add`/`wrapping_sub` are shared between integers and raw
-    // pointers. When the destination is not a pointer type the call is an
-    // integer `wrapping_add`, whose result may wrap to zero, so it is left
-    // unconstrained rather than modelled as pointer arithmetic.
-    if !dest_is_pointer(ctx.tcx, ctx.caller, ctx.dest) {
-        return Vec::new();
-    }
-    let stride = if api_classify::is_byte_ptr_arith(ctx.name) {
-        Some(1)
-    } else {
-        destination_stride(ctx.tcx, ctx.caller, ctx.dest)
-    };
-    vec![CallEffect::ReturnPointerAdd { base_arg: 0, offset_arg: 1, stride }]
+    eff_ptr_arith(ctx, PtrDirection::Add, PtrGranularity::Element)
 }
 
 fn eff_ptr_sub(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    eff_ptr_arith(ctx, PtrDirection::Sub, PtrGranularity::Element)
+}
+
+fn eff_ptr_add_byte(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    eff_ptr_arith(ctx, PtrDirection::Add, PtrGranularity::Byte)
+}
+
+fn eff_ptr_sub_byte(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    eff_ptr_arith(ctx, PtrDirection::Sub, PtrGranularity::Byte)
+}
+
+enum PtrDirection {
+    Add,
+    Sub,
+}
+
+enum PtrGranularity {
+    Element,
+    Byte,
+}
+
+/// Shared model for `ReturnPointerAdd`/`ReturnPointerSub`.
+///
+/// `wrapping_add`/`wrapping_sub` are shared between integers and raw pointers.
+/// When the destination is not a pointer type the call is an integer
+/// `wrapping_add`, whose result may wrap to zero, so it is left unconstrained
+/// rather than modelled as pointer arithmetic.
+fn eff_ptr_arith(ctx: &EffCtx<'_, '_>, dir: PtrDirection, granularity: PtrGranularity) -> Vec<CallEffect> {
     if !dest_is_pointer(ctx.tcx, ctx.caller, ctx.dest) {
         return Vec::new();
     }
-    let stride = if api_classify::is_byte_ptr_arith(ctx.name) {
-        Some(1)
-    } else {
-        destination_stride(ctx.tcx, ctx.caller, ctx.dest)
+    let stride = match granularity {
+        PtrGranularity::Byte => Some(1),
+        PtrGranularity::Element => destination_stride(ctx.tcx, ctx.caller, ctx.dest),
     };
-    vec![CallEffect::ReturnPointerSub { base_arg: 0, offset_arg: 1, stride }]
+    let effect = match dir {
+        PtrDirection::Sub => CallEffect::ReturnPointerSub { base_arg: 0, offset_arg: 1, stride },
+        PtrDirection::Add => CallEffect::ReturnPointerAdd { base_arg: 0, offset_arg: 1, stride },
+    };
+    vec![effect]
 }
 
 fn eff_write_mem(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
@@ -373,7 +394,7 @@ fn into_iter_local(n: &str) -> bool          {
 }
 fn iter_position(n: &str) -> bool            { n.contains("Iterator::position") || n.contains("Iterator::find") || n.contains("Iterator::rposition") }
 fn is_strlen(n: &str) -> bool                { n == "strlen" || n.ends_with("::strlen") }
-fn nonnull_new(n: &str) -> bool             { n.ends_with("::new") && api_classify::is_nonnull_api(n) && !n.ends_with("::new_unchecked") }
+fn nonnull_new(n: &str) -> bool             { n.ends_with("::new") && api_classify::is_nonnull(n) && !n.ends_with("::new_unchecked") }
 fn cmp_min(n: &str) -> bool                 { (n.contains("::cmp::min") || n.contains("::Ord::min") || n.starts_with("core::cmp::min")) && !n.contains("min_by") }
 
 /// `u32::midpoint`/`usize::midpoint`: `midpoint(a, b) >= min(a, b)`, so it is
@@ -490,9 +511,9 @@ fn layout_constant_effect<'tcx>(
 ) -> Option<CallEffect> {
     let ty = layout_call_ty(func)?;
     let (align, size) = type_layout(tcx, caller, ty)?;
-    if name.contains("align_of") {
+    if name.ends_with("::align_of") {
         Some(CallEffect::ReturnConst { value: align })
-    } else if name.contains("size_of") {
+    } else if name.ends_with("::size_of") {
         Some(CallEffect::ReturnConst { value: size })
     } else {
         None

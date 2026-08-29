@@ -49,7 +49,7 @@ use analysis::{
     api_dependency::ApiDependencyAnalyzer,
     callgraph::{CallGraphAnalysis, FnCallDisplay, default::CallGraphAnalyzer},
     dataflow::{Arg2RetMapWrapper, DataflowAnalysis, default::DataflowAnalyzer},
-    owned_heap::{OHAResultMapWrapper, OwnedHeapAnalysis, default::OwnedHeapAnalyzer},
+    heap_ownership::{HeapOwnershipResultMapWrapper, HeapOwnershipAnalysis, default::HeapOwnershipAnalyzer},
     path::{PathMapWrapper, default::PathAnalyzer},
     range::{
         PathConstraintMapWrapper, RAResultMapWrapper, RangeAnalysis, default::RangeAnalyzer,
@@ -166,7 +166,7 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
                 SafeDrop::new(tcx).start();
             }
             if *mleak {
-                let mut heap = OwnedHeapAnalyzer::new(tcx);
+                let mut heap = HeapOwnershipAnalyzer::new(tcx);
                 heap.run();
                 let adt_owner = heap.get_all_items();
                 rCanary::new(tcx, adt_owner).start();
@@ -237,11 +237,11 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
                 let result = analyzer.get_all_arg2ret();
                 rap_info!("{}", Arg2RetMapWrapper(result));
             }
-            AnalysisKind::OwnedHeap => {
-                let mut analyzer = OwnedHeapAnalyzer::new(tcx);
+            AnalysisKind::HeapOwnership => {
+                let mut analyzer = HeapOwnershipAnalyzer::new(tcx);
                 analyzer.run();
                 let result = analyzer.get_all_items();
-                rap_info!("{}", OHAResultMapWrapper(result));
+                rap_info!("{}", HeapOwnershipResultMapWrapper(result));
             }
             &AnalysisKind::Paths { postfix_repeat } => {
                 let mut analyzer = PathAnalyzer::new(tcx, false);

@@ -20,7 +20,7 @@ use super::is_z3_goal_verbose;
 use super::ownership::IntraVar;
 use super::{FlowAnalysis, IcxSliceFroBlock, IntraFlowAnalysis};
 use crate::{
-    analysis::owned_heap::{default::*, *},
+    analysis::heap_ownership::{default::*, *},
     utils::{
         span::{
             are_spans_in_same_file, relative_pos_range, span_to_filename, span_to_line_number,
@@ -2439,7 +2439,7 @@ impl<'tcx, 'ctx, 'a> IntraFlowAnalysis<'tcx, 'ctx, 'a> {
                 let update_field = if source_flag {
                     ast::BV::from_u64(ctx, 1, 1)
                 } else {
-                    if return_value_layout.layout()[index_needed] == OwnedHeap::True {
+                    if return_value_layout.layout()[index_needed] == HeapOwnership::True {
                         ast::BV::from_u64(ctx, 1, 1)
                     } else {
                         ast::BV::from_u64(ctx, 0, 1)
@@ -2770,19 +2770,19 @@ impl<'tcx, 'ctx, 'a> IntraFlowAnalysis<'tcx, 'ctx, 'a> {
                 res.set_requirement(true);
                 res.set_param(true);
                 res.set_owned(true);
-                res.layout_mut().push(OwnedHeap::True);
+                res.layout_mut().push(HeapOwnership::True);
                 res
             }
             TyKind::RawPtr(..) => {
                 let mut res = OwnershipLayoutResult::new();
                 res.set_requirement(true);
-                res.layout_mut().push(OwnedHeap::False);
+                res.layout_mut().push(HeapOwnership::False);
                 res
             }
             TyKind::Ref(..) => {
                 let mut res = OwnershipLayoutResult::new();
                 res.set_requirement(true);
-                res.layout_mut().push(OwnedHeap::False);
+                res.layout_mut().push(HeapOwnership::False);
                 res
             }
             _ => OwnershipLayoutResult::new(),
@@ -2983,25 +2983,25 @@ fn has_projection(place: &Place) -> bool {
     };
 }
 
-fn heap_layout_to_rustbv(layout: &Vec<OwnedHeap>) -> Vec<bool> {
+fn heap_layout_to_rustbv(layout: &Vec<HeapOwnership>) -> Vec<bool> {
     let mut v = Vec::default();
     for item in layout.iter() {
         match item {
-            OwnedHeap::Unknown => rap_error!("item of raw type owner is uninit"),
-            OwnedHeap::False => v.push(false),
-            OwnedHeap::True => v.push(true),
+            HeapOwnership::Unknown => rap_error!("item of raw type owner is uninit"),
+            HeapOwnership::False => v.push(false),
+            HeapOwnership::True => v.push(true),
         }
     }
     v
 }
 
-fn reverse_heap_layout_to_rustbv(layout: &Vec<OwnedHeap>) -> Vec<bool> {
+fn reverse_heap_layout_to_rustbv(layout: &Vec<HeapOwnership>) -> Vec<bool> {
     let mut v = Vec::default();
     for item in layout.iter() {
         match item {
-            OwnedHeap::Unknown => rap_error!("item of raw type owner is uninit"),
-            OwnedHeap::False => v.push(true),
-            OwnedHeap::True => v.push(false),
+            HeapOwnership::Unknown => rap_error!("item of raw type owner is uninit"),
+            HeapOwnership::False => v.push(true),
+            HeapOwnership::True => v.push(false),
         }
     }
     v

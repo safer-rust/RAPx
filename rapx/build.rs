@@ -12,6 +12,7 @@ fn main() {
     emit_check_cfg("rapx_rvalue_has_reborrow");
     emit_check_cfg("rapx_scalar_to_pointer_interp_result");
     emit_check_cfg("rapx_has_fnptr_asptr");
+    emit_check_cfg("rapx_rvalue_has_nullary_op");
 
     emit_cfg("rapx_ge_99", minor >= 99);
     emit_cfg("rapx_ge_100", minor >= 100);
@@ -48,6 +49,10 @@ fn main() {
             "compiler/rustc_middle/src/ty/instance.rs",
             "FnPtrAsPtr",
         ),
+    );
+    emit_cfg(
+        "rapx_rvalue_has_nullary_op",
+        rustc_src_contains_path("compiler/rustc_middle/src/mir/syntax.rs", "NullaryOp(NullOp)"),
     );
 }
 

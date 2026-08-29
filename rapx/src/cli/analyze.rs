@@ -68,8 +68,8 @@ pub enum AnalysisKind {
         draw: bool,
     },
     /// analyze if the type holds a piece of memory on heap
-    #[clap(name = "ownedheap")]
-    OwnedHeap,
+    #[clap(name = "heapowner")]
+    HeapOwnership,
     /// extract path-sensitive CFG paths
     Paths {
         /// allow repeated SCC postfix segments (default 0)

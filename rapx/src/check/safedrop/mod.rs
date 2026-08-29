@@ -12,7 +12,7 @@ use rustc_middle::ty::TyCtxt;
 use crate::{
     analysis::{
         alias::default::{AliasAnalyzer, MopFnAliasMap},
-        owned_heap::{OHAResultMap, OwnedHeapAnalysis, default::OwnedHeapAnalyzer},
+        heap_ownership::{HeapOwnershipResultMap, HeapOwnershipAnalysis, default::HeapOwnershipAnalyzer},
         path::default::PathAnalyzer,
     },
     utils::source::get_fn_name,
@@ -38,7 +38,7 @@ impl<'tcx> SafeDrop<'tcx> {
         rap_info!("================================");
         rap_debug!("Aliases found: {:?}", fn_map);
 
-        let mut heap = OwnedHeapAnalyzer::new(self.tcx);
+        let mut heap = HeapOwnershipAnalyzer::new(self.tcx);
         heap.run();
         let adt_owner = heap.get_all_items();
 
@@ -59,7 +59,7 @@ pub fn query_safedrop<'tcx>(
     tcx: TyCtxt<'tcx>,
     fn_map: &MopFnAliasMap,
     def_id: DefId,
-    adt_owner: OHAResultMap,
+    adt_owner: HeapOwnershipResultMap,
     path_analyzer: &PathAnalyzer<'tcx>,
 ) {
     let fn_name = get_fn_name(tcx, def_id);

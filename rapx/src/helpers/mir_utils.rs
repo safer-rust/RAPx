@@ -42,6 +42,80 @@ pub(crate) fn dep_callee_def_id(func: &Operand<'_>) -> Option<DefId> {
     Some(*def_id)
 }
 
+/// Whether `func` is a call to `PartialEq::eq` (the equality comparison),
+/// determined from its `DefId` rather than by string-matching the callee path.
+pub(crate) fn is_eq_call(tcx: TyCtxt<'_>, func: &Operand<'_>) -> bool {
+    let Some(def_id) = dep_callee_def_id(func) else { return false };
+    let Some(assoc) = tcx.opt_associated_item(def_id) else { return false };
+    if assoc.name().as_str() != "eq" {
+        return false;
+    }
+    // Must be a trait method (`PartialEq::eq`), not an inherent `eq`.
+    let Some(trait_id) = assoc.trait_container(tcx) else { return false };
+    tcx.def_path_str(trait_id).ends_with("PartialEq")
+}
+
+/// Whether `def_id` is `slice::Iter`/`IterMut`'s private `post_inc_start`
+/// helper (a pointer-advancing side effect that cannot be inlined because of
+/// its ZST `SwitchInt` branch).
+pub(crate) fn is_post_inc_start(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
+    let name = tcx.item_name(def_id);
+    name.as_str() == "post_inc_start"
+}
+
+/// Whether `def_id` is one of `post_inc_start` / `pre_dec_end`.
+pub(crate) fn is_iter_ptr_adj(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
+    let name = tcx.item_name(def_id);
+    let n = name.as_str();
+    n == "post_inc_start" || n == "pre_dec_end"
+}
+
+/// Resolve a (possibly trait-method) callee to the concrete impl method that
+/// will actually be dispatched, given the caller context and the callee's
+/// generic arguments. Returns `None` when the callee cannot be resolved to a
+/// distinct concrete item (e.g. still generic/virtual), or is not a trait
+/// method at all (callers should then keep the original DefId).
+pub(crate) fn resolve_callee_impl<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    caller_def_id: DefId,
+    callee_def_id: DefId,
+    callee_args: GenericArgsRef<'tcx>,
+) -> Option<DefId> {
+    let assoc = tcx.opt_associated_item(callee_def_id)?;
+    if assoc.trait_container(tcx).is_none() {
+        return None;
+    }
+    let typing_env = TypingEnv::post_analysis(tcx, caller_def_id);
+    let instance = rustc_middle::ty::Instance::try_resolve(tcx, typing_env, callee_def_id, callee_args)
+        .ok()
+        .flatten()?;
+    let resolved = match instance.def {
+        rustc_middle::ty::InstanceKind::Item(def_id) => def_id,
+        _ => return None,
+    };
+    if resolved == callee_def_id {
+        None
+    } else {
+        Some(resolved)
+    }
+}
+
+/// Like [`dep_callee_def_id`], but resolves trait-method callees to their
+/// concrete impl so cross-crate `Deref`/`DerefMut` bodies — whose trait-method
+/// DefId has no available MIR — can still be inlined.
+pub(crate) fn dep_callee_resolved_def_id<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    caller: DefId,
+    func: &Operand<'tcx>,
+) -> Option<DefId> {
+    let Operand::Constant(c) = func else { return None };
+    let TyKind::FnDef(def_id, callee_args) = c.const_.ty().kind() else { return None };
+    let callee_def_id = *def_id;
+    #[cfg(rapx_ge_99)]
+    let callee_args = callee_args.skip_binder();
+    resolve_callee_impl(tcx, caller, callee_def_id, callee_args).or(Some(callee_def_id))
+}
+
 /// Collect all return basic block indices for a function body.
 pub fn collect_return_block_indices(tcx: TyCtxt<'_>, def_id: DefId) -> Vec<BasicBlock> {
     let mut blocks = Vec::new();

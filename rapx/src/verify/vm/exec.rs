@@ -893,8 +893,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 // constant bytes from a literal operand to the tracked
                 // operand's allocation so ValidCStr checks succeed.
                 if self.locals.contains_key(&dest) {
-                    let cmpr_name = crate::helpers::mir_utils::call_name(self.tcx, func);
-                    if api_classify::is_eq_or_partial_eq(&cmpr_name) {
+                    if crate::helpers::mir_utils::is_eq_call(self.tcx, func) {
                         self.propagate_const_bytes_to_tracked(args);
                     }
                 }
@@ -3295,7 +3294,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             matches!(p.kind(), rustc_middle::mir::ProjectionElem::Field(..)
                 | rustc_middle::mir::ProjectionElem::Deref)
         });
-        if !only_field_deref || source_place.projection.is_empty() {
+        if !only_field_deref {
             return;
         }
         let field_prefix: Vec<usize> = source_place
@@ -3306,6 +3305,11 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 _ => None,
             })
             .collect();
+        // A bare `&local` (no projection) exposes the pointee's whole field
+        // map. Only propagate fields that carry provenance (pointer leaves);
+        // plain scalar fields (e.g. array elements) must not leak into the
+        // reference or they can corrupt downstream InBound reasoning.
+        let empty_proj = source_place.projection.is_empty();
         let keys: Vec<Vec<usize>> = self
             .field_values
             .keys()
@@ -3322,6 +3326,9 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     path[field_prefix.len()..].to_vec()
                 };
                 if let Some(v) = self.field_values.get(&(source_place.local, path.clone())).cloned() {
+                    if empty_proj && v.provenance.is_none() {
+                        continue;
+                    }
                     self.set_field_value(dest, rest, v);
                 }
             }

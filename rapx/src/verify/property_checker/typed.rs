@@ -64,7 +64,7 @@ impl PropertyChecker {
                                     if inner == expected_ty {
                                         if let Some(c) = checkpoint.callee {
                                             let cp = vm_state.tcx.def_path_str(c);
-                                            if crate::helpers::api_classify::is_mem_copy_or_write_api(&cp)
+                                            if crate::helpers::api_classify::is_mem_copy_or_write(&cp)
                                             { return CheckResult::Proved; }
                                         }
                                     }

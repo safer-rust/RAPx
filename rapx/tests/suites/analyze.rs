@@ -162,10 +162,10 @@ fn alias_11_mfp() {
         "Missing alias for alias_11", &output);
 }
 
-// ===============OwnedHeap Analysis Tests==============
+// ===============HeapOwnership Analysis Tests==============
 #[test]
-fn ownedheap_cell() {
-    let output = run_with_args("analyze/ownedheap_cell", CMD_ANALYZE_OWNEDHEAP);
+fn heapowner_cell() {
+    let output = run_with_args("analyze/heapowner_cell", CMD_ANALYZE_HEAPOWNER);
     for pattern in [
         "Cell\": False, <1>",
         "RefCell\": False, <1>",
@@ -179,8 +179,8 @@ fn ownedheap_cell() {
 }
 
 #[test]
-fn ownedheap_collections() {
-    let output = run_with_args("analyze/ownedheap_collections", CMD_ANALYZE_OWNEDHEAP);
+fn heapowner_collections() {
+    let output = run_with_args("analyze/heapowner_collections", CMD_ANALYZE_HEAPOWNER);
     for pattern in [
         "Unique\": True, <0>",
         "Box\": True, <0,1>",
@@ -207,8 +207,8 @@ fn ownedheap_collections() {
 }
 
 #[test]
-fn ownedheap_nested() {
-    let output = run_with_args("analyze/ownedheap_nested", CMD_ANALYZE_OWNEDHEAP);
+fn heapowner_nested() {
+    let output = run_with_args("analyze/heapowner_nested", CMD_ANALYZE_HEAPOWNER);
     for pattern in [
         "X\": False, <1>",
         "Y\": False, <1>",
@@ -219,8 +219,8 @@ fn ownedheap_nested() {
 }
 
 #[test]
-fn ownedheap_proxy() {
-    let output = run_with_args("analyze/ownedheap_proxy", CMD_ANALYZE_OWNEDHEAP);
+fn heapowner_proxy() {
+    let output = run_with_args("analyze/heapowner_proxy", CMD_ANALYZE_HEAPOWNER);
     for pattern in [
         "Proxy1\": False, <0>",
         "Proxy2\": True, <0>",

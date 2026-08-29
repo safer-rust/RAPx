@@ -13,33 +13,33 @@ use crate::{Analysis, utils::source::get_fn_name_byid};
 
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-pub enum OwnedHeap {
+pub enum HeapOwnership {
     False = 0,
     True = 1,
     Unknown = 2,
 }
 
-impl Default for OwnedHeap {
+impl Default for HeapOwnership {
     fn default() -> Self {
         Self::Unknown
     }
 }
 
-impl OwnedHeap {
+impl HeapOwnership {
     pub fn is_onheap(&self) -> bool {
         match self {
-            OwnedHeap::True => true,
+            HeapOwnership::True => true,
             _ => false,
         }
     }
 }
 
-impl Display for OwnedHeap {
+impl Display for HeapOwnership {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let name = match self {
-            OwnedHeap::False => "0",
-            OwnedHeap::True => "1",
-            OwnedHeap::Unknown => "2",
+            HeapOwnership::False => "0",
+            HeapOwnership::True => "1",
+            HeapOwnership::Unknown => "2",
         };
         write!(f, "{}", name)
     }
@@ -52,12 +52,12 @@ impl Display for OwnedHeap {
 /// information of each variant.
 /// Also, because it may contain type parameters or generic types,
 /// the heap information is a tuple containing the information of each type parameter.
-pub type OHAResultMap = HashMap<DefId, Vec<(OwnedHeap, Vec<bool>)>>;
-pub struct OHAResultMapWrapper(pub HashMap<DefId, Vec<(OwnedHeap, Vec<bool>)>>);
+pub type HeapOwnershipResultMap = HashMap<DefId, Vec<(HeapOwnership, Vec<bool>)>>;
+pub struct HeapOwnershipResultMapWrapper(pub HashMap<DefId, Vec<(HeapOwnership, Vec<bool>)>>);
 
-impl Display for OHAResultMapWrapper {
+impl Display for HeapOwnershipResultMapWrapper {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "=== Print owned heap analysis results ===")?;
+        writeln!(f, "=== Print heap ownership analysis results ===")?;
         for (def_id, units) in &self.0 {
             let fn_name = get_fn_name_byid(def_id);
             let owning = units
@@ -71,8 +71,8 @@ impl Display for OHAResultMapWrapper {
     }
 }
 
-impl OHAResultMapWrapper {
-    fn format_heap_unit((heap, bits): &(OwnedHeap, Vec<bool>)) -> String {
+impl HeapOwnershipResultMapWrapper {
+    fn format_heap_unit((heap, bits): &(HeapOwnership, Vec<bool>)) -> String {
         let bit_str = bits
             .iter()
             .map(|b| if *b { "1" } else { "0" })
@@ -83,18 +83,18 @@ impl OHAResultMapWrapper {
 }
 /// This trait provides features for owned heap analysis, which is used to determine if a type owns
 /// memory on heap. Owned heap should be automatically released by default.
-pub trait OwnedHeapAnalysis: Analysis {
+pub trait HeapOwnershipAnalysis: Analysis {
     /// The function returns the result of owned heap analysis for all types.
-    fn get_all_items(&self) -> OHAResultMap;
+    fn get_all_items(&self) -> HeapOwnershipResultMap;
 
     /// If a type is a heap owner, the function returns Result<true>. If the specified type is
     /// illegal, the function returns Err.
-    fn is_heapowner<'tcx>(hares: OHAResultMap, ty: Ty<'tcx>) -> Result<bool, &'static str> {
+    fn is_heapowner<'tcx>(hares: HeapOwnershipResultMap, ty: Ty<'tcx>) -> Result<bool, &'static str> {
         match ty.kind() {
             TyKind::Adt(adtdef, ..) => {
                 let heapinfo = hares.get(&adtdef.0.0.did).unwrap();
                 for item in heapinfo {
-                    if item.0 == OwnedHeap::True {
+                    if item.0 == HeapOwnership::True {
                         return Ok(true);
                     }
                 }
@@ -106,12 +106,12 @@ pub trait OwnedHeapAnalysis: Analysis {
 
     /// A type might be a heap owner if it is not a heap owner directly but contains type
     /// parameters that may make the type become a heap owner after monomorphization.
-    fn maybe_heapowner<'tcx>(hares: OHAResultMap, ty: Ty<'tcx>) -> Result<bool, &'static str> {
+    fn maybe_heapowner<'tcx>(hares: HeapOwnershipResultMap, ty: Ty<'tcx>) -> Result<bool, &'static str> {
         match ty.kind() {
             TyKind::Adt(adtdef, ..) => {
                 let heapinfo = hares.get(&adtdef.0.0.did).unwrap();
                 for item in heapinfo {
-                    if item.0 == OwnedHeap::False && item.1.contains(&true) {
+                    if item.0 == HeapOwnership::False && item.1.contains(&true) {
                         return Ok(true);
                     }
                 }

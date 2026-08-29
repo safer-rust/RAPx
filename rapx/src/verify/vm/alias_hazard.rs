@@ -97,15 +97,15 @@ pub(super) fn alias_producer(name: &str) -> Option<AliasProducer> {
         return Some(AliasProducer::View(HazardKind::UniqueView));
     }
     if name.contains("from_raw_parts") || name.contains("from_parts") || name.contains("from_ptr") {
-        if crate::helpers::api_classify::is_vec_ownership_transfer_api(name) {
+        if crate::helpers::api_classify::is_vec_ownership_transfer(name) {
             return Some(AliasProducer::OwnershipTransfer);
         }
         return Some(AliasProducer::View(HazardKind::SharedView));
     }
-    if crate::helpers::api_classify::is_ownership_transfer_api(name) {
+    if crate::helpers::api_classify::is_ownership_transfer(name) {
         return Some(AliasProducer::OwnershipTransfer);
     }
-    if crate::helpers::api_classify::is_read_api(name) {
+    if crate::helpers::api_classify::is_ptr_read(name) {
         return Some(AliasProducer::ReadMemory);
     }
     None
@@ -1062,7 +1062,7 @@ fn is_ownership_transfer_terminator<'tcx>(
     let TerminatorKind::Call { func, .. } = terminator else {
         return false;
     };
-    crate::helpers::api_classify::is_ownership_transfer_terminator_api(
+    crate::helpers::api_classify::is_ownership_transfer_terminator(
         &crate::helpers::mir_utils::call_name(tcx, func),
     )
 }
@@ -1090,7 +1090,7 @@ fn terminator_is_benign_origin_use<'tcx>(tcx: TyCtxt<'tcx>, terminator: &Termina
     let TerminatorKind::Call { func, .. } = terminator else {
         return true;
     };
-    crate::helpers::api_classify::is_benign_origin_use_api(
+    crate::helpers::api_classify::is_benign_origin_use(
         &crate::helpers::mir_utils::call_name(tcx, func),
     )
 }
@@ -1560,7 +1560,7 @@ fn terminator_returns_ownership(
         return false;
     };
     let name = crate::helpers::mir_utils::call_name(tcx, func);
-    if !crate::helpers::api_classify::is_ownership_return_api(&name) {
+    if !crate::helpers::api_classify::is_ownership_return(&name) {
         return false;
     }
     args.iter().any(|arg| match &arg.node {

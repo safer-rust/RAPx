@@ -48,7 +48,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             .collect();
 
         let name = crate::helpers::mir_utils::call_name(self.tcx, func);
-        let callee = crate::helpers::mir_utils::dep_callee_def_id(func);
+        let callee = crate::helpers::mir_utils::dep_callee_resolved_def_id(self.tcx, caller_def_id, func);
         let caller_arg_locals: Vec<Option<Local>> = args.iter()
             .map(|a| a.node.place().map(|p| p.local))
             .collect();
@@ -87,11 +87,10 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         // so the ptr update would otherwise be lost.
         if let Some(c) = callee {
             if self.tcx.is_mir_available(c) {
-                let cname = self.tcx.def_path_str(c);
-                if (api_classify::is_iter_ptr_adj(&cname))
+                if crate::helpers::mir_utils::is_iter_ptr_adj(self.tcx, c)
                     && arg_values.len() >= 2
                 {
-                    self.apply_iter_ptr_update(c, &cname, &arg_values, &caller_arg_locals);
+                    self.apply_iter_ptr_update(c, &arg_values, &caller_arg_locals);
                     // Continue to normal handling (return value is () , ignored).
                 }
             }
@@ -362,7 +361,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         arg_values: &[VmValue<'ctx, 'tcx>],
         destination: Local,
     ) -> bool {
-        if !(api_classify::is_nonnull_api(name)
+        if !(api_classify::is_nonnull(name)
             && name.ends_with("::new")
             && !name.ends_with("::new_unchecked"))
         {
@@ -601,9 +600,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         for (i, caller_arg_opt) in caller_arg_locals.iter().enumerate() {
             let callee_param = Local::from_usize(i + 1);
             let Some(caller_arg) = caller_arg_opt else { continue; };
-            if *caller_arg == callee_param {
-                continue; // same local; field_values already present
-            }
             let caller_field_keys: Vec<Vec<usize>> = saved_field_values.keys()
                 .filter(|(l, _)| *l == *caller_arg)
                 .map(|(_, f)| f.clone())
@@ -744,14 +740,16 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                             return false;
                         };
                         let (dest, rvalue) = &**assign;
-                        let is_const = match rvalue {
+                        if dest != p {
+                            return false;
+                        }
+                        match rvalue {
                             #[cfg(rapx_rvalue_use_with_retag)]
                             rustc_middle::mir::Rvalue::Use(rustc_middle::mir::Operand::Constant(_), _) => true,
                             #[cfg(not(rapx_rvalue_use_with_retag))]
                             rustc_middle::mir::Rvalue::Use(rustc_middle::mir::Operand::Constant(_)) => true,
-                            _ => false,
-                        };
-                        dest == p && is_const
+                            _ => Self::rvalue_runtime_checks_value(tcx, rvalue).is_some(),
+                        }
                     })
                 })
             }
@@ -762,6 +760,63 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             return true;
         }
         Self::switch_targets_unreachable(tcx, body, targets)
+    }
+
+    /// Resolve a `cfg!`-style runtime-check flag (`UbChecks`,
+    /// `ContractChecks`, `OverflowChecks`) to a constant `u64`. We fold to the
+    /// *no-check* edge (`0`): the check only panics on a violated precondition,
+    /// and its branchy body would otherwise corrupt field/Typed propagation
+    /// during inlining. Older rustc lowers these to
+    /// `Rvalue::NullaryOp(NullOp::RuntimeChecks)`; newer rustc lowers them to
+    /// `Operand::RuntimeChecks`.
+    fn rvalue_runtime_checks_value(
+        _tcx: rustc_middle::ty::TyCtxt<'tcx>,
+        rvalue: &rustc_middle::mir::Rvalue<'tcx>,
+    ) -> Option<u64> {
+        #[cfg(rapx_rvalue_has_nullary_op)]
+        {
+            if let rustc_middle::mir::Rvalue::NullaryOp(rustc_middle::mir::NullOp::RuntimeChecks(_)) = rvalue {
+                return Some(0);
+            }
+        }
+        #[cfg(not(rapx_rvalue_has_nullary_op))]
+        {
+            #[cfg(rapx_rvalue_use_with_retag)]
+            if let rustc_middle::mir::Rvalue::Use(rustc_middle::mir::Operand::RuntimeChecks(_), _) = rvalue {
+                return Some(0);
+            }
+            #[cfg(not(rapx_rvalue_use_with_retag))]
+            if let rustc_middle::mir::Rvalue::Use(rustc_middle::mir::Operand::RuntimeChecks(_)) = rvalue {
+                return Some(0);
+            }
+        }
+        None
+    }
+
+    /// Resolve a `SwitchInt` discriminant to a constant `u64`, following a
+    /// single local-assignment chain (a `cfg!`-style runtime-check flag).
+    fn switch_discr_const(
+        tcx: rustc_middle::ty::TyCtxt<'tcx>,
+        body: &rustc_middle::mir::Body<'tcx>,
+        discr: &Operand<'tcx>,
+    ) -> Option<u64> {
+        if let Some(v) = crate::helpers::mir_utils::operand_const_u64(discr) {
+            return Some(v);
+        }
+        let (Operand::Copy(p) | Operand::Move(p)) = discr else { return None };
+        for bbd in body.basic_blocks.iter() {
+            for stmt in bbd.statements.iter() {
+                let rustc_middle::mir::StatementKind::Assign(assign) = &stmt.kind else {
+                    continue;
+                };
+                let (dest, rvalue) = &**assign;
+                if dest != p {
+                    continue;
+                }
+                return Self::rvalue_runtime_checks_value(tcx, rvalue);
+            }
+        }
+        None
     }
 
     /// BFS-execute the callee's MIR body.
@@ -808,7 +863,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 }
                 TerminatorKind::SwitchInt { discr, targets } => {
                     // A constant discriminant folds to a single live edge.
-                    if let Some(v) = crate::helpers::mir_utils::operand_const_u64(discr) {
+                    if let Some(v) = Self::switch_discr_const(self.tcx, &self.body, discr) {
                         let t = targets.iter().find(|(val, _)| *val == v as u128)
                             .map(|(_, t)| t)
                             .unwrap_or_else(|| targets.otherwise());
@@ -1177,20 +1232,19 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     if matches!(dest_ty.kind(), rustc_middle::ty::TyKind::RawPtr(..)) {
                         val.invariants.init = true;
                     }
-                    // For locally-created Vec: redirect as_ptr() from the
-                    // struct allocation to the heap data allocation.
-                    let is_vec = api_classify::is_vec_or_cstring_call(&self.last_call_name);
-                    if is_vec {
-                        if let Some(ref prov) = val.provenance {
-                            if let Some(data_alloc) = self.alloc(prov.alloc_id).slice_data {
-                                if let Some(data_base) = self.allocation_base(data_alloc).cloned() {
-                                    val.term = data_base;
-                                    val.provenance = Some(Provenance {
-                                        alloc_id: data_alloc,
-                                        offset: Int::from_u64(self.ctx, 0),
-                                        is_field_offset: false,
-                                    });
-                                }
+                    // For heap-backed containers (Vec/CString/String): redirect
+                    // as_ptr() from the struct allocation to the heap data
+                    // allocation. `slice_data` is the type-driven signal — only
+                    // such containers set it, so no name matching is needed.
+                    if let Some(ref prov) = val.provenance {
+                        if let Some(data_alloc) = self.alloc(prov.alloc_id).slice_data {
+                            if let Some(data_base) = self.allocation_base(data_alloc).cloned() {
+                                val.term = data_base;
+                                val.provenance = Some(Provenance {
+                                    alloc_id: data_alloc,
+                                    offset: Int::from_u64(self.ctx, 0),
+                                    is_field_offset: false,
+                                });
                             }
                         }
                     }
@@ -1645,6 +1699,21 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             CallEffect::WriteMemory { pointer_arg } => {
                 if let Some(arg_val) = args.get(*pointer_arg) {
                     if let Some(prov) = &arg_val.provenance {
+                        // Writing a non-`u8` value through a byte buffer reinterprets
+                        // it (e.g. `*mut FreeBlock` cast from a `Vec<u8>` buffer):
+                        // update the allocation's element type so a later `Typed`
+                        // invariant matches the written type.
+                        if let rustc_middle::ty::TyKind::RawPtr(inner, _)
+                            | rustc_middle::ty::TyKind::Ref(_, inner, _) = arg_val.ty.kind()
+                        {
+                            let cur = self.alloc(prov.alloc_id).element_ty;
+                            let is_u8 = |t: rustc_middle::ty::Ty<'_>| matches!(t.kind(), rustc_middle::ty::TyKind::Uint(rustc_middle::ty::UintTy::U8));
+                            if let Some(c) = cur {
+                                if is_u8(c) && !is_u8(*inner) {
+                                    self.alloc_mut(prov.alloc_id).element_ty = Some(*inner);
+                                }
+                            }
+                        }
                         // For locally-created Vec-like types: create a heap data
                         // allocation on first mutation. (Param Vecs already have
                         // an external allocation set by init_parameters.)
@@ -2059,12 +2128,11 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     /// `base_len - offset` via interpreter_iter_len.
     fn apply_iter_ptr_update(
         &mut self,
-        _callee: DefId,
-        cname: &str,
+        callee: DefId,
         arg_values: &[VmValue<'ctx, 'tcx>],
         _caller_arg_locals: &[Option<Local>],
     ) {
-        let is_inc = api_classify::is_post_inc_start(&cname);
+        let is_inc = crate::helpers::mir_utils::is_post_inc_start(self.tcx, callee);
         if !is_inc { return; }  // pre_dec_end not yet supported
         let self_val = &arg_values[0];
         let some_local = self.find_iter_self_local(self_val);

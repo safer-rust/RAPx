@@ -47,6 +47,7 @@ unsound_tests! {
 // ================ ValidString Sound Cases =============
 sound_tests! {
     validstring_std_sound_01: "verify_units/validstring_std_sound_01" => "sound_valid_utf8_literal",
+    string_as_ptr_sound_01: "verify_units/string_as_ptr_sound_01" => "sound_string_as_ptr",
 }
 
 // ================ ValidString Unsound Cases =============
