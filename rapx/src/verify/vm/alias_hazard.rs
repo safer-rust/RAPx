@@ -731,7 +731,6 @@ fn local_hazard_violation_with(
             };
             if origins.iter().any(|origin| {
                 terminator_writes_origin(tcx, &terminator.kind, origin, &aliases)
-                    && !is_ownership_transfer_terminator(tcx, &terminator.kind)
             }) && hazard_used_after_block(tcx, caller, block_index, &hazard_locals)
             {
                 return Some(format!(
@@ -1053,18 +1052,6 @@ fn terminator_writes_origin<'tcx>(
         return false;
     };
     resolve_mir_place(place, aliases).overlaps(origin)
-}
-
-fn is_ownership_transfer_terminator<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    terminator: &TerminatorKind<'tcx>,
-) -> bool {
-    let TerminatorKind::Call { func, .. } = terminator else {
-        return false;
-    };
-    crate::helpers::api_classify::is_ownership_transfer_terminator(
-        &crate::helpers::mir_utils::call_name(tcx, func),
-    )
 }
 
 fn terminator_uses_origin<'tcx>(

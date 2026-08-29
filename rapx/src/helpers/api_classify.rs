@@ -402,13 +402,6 @@ pub fn is_ownership_return(callee: Option<DefId>) -> bool {
     )
 }
 
-/// Whether `name` terminates or reconstructs ownership of an allocation
-/// (`from_raw` or `drop_in_place`).
-pub fn is_ownership_transfer_terminator(name: &str) -> bool {
-    (name.contains("::from_raw") && !name.contains("from_raw_parts"))
-        || name.contains("::drop_in_place")
-}
-
 /// Whether `callee` is a benign, read-only use of a raw-pointer origin
 /// (`len`, `is_empty`, `is_null`, `addr`, `as_ptr`/`as_mut_ptr`, `cast`).
 pub fn is_benign_origin_use(callee: Option<DefId>) -> bool {
