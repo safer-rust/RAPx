@@ -1086,12 +1086,12 @@ fn terminator_uses_origin<'tcx>(
     })
 }
 
-fn terminator_is_benign_origin_use<'tcx>(tcx: TyCtxt<'tcx>, terminator: &TerminatorKind<'tcx>) -> bool {
+fn terminator_is_benign_origin_use<'tcx>(_tcx: TyCtxt<'tcx>, terminator: &TerminatorKind<'tcx>) -> bool {
     let TerminatorKind::Call { func, .. } = terminator else {
         return true;
     };
     crate::helpers::api_classify::is_benign_origin_use(
-        &crate::helpers::mir_utils::call_name(tcx, func),
+        crate::helpers::mir_utils::dep_callee_def_id(func),
     )
 }
 

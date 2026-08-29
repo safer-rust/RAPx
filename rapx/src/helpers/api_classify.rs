@@ -409,14 +409,51 @@ pub fn is_ownership_transfer_terminator(name: &str) -> bool {
         || name.contains("::drop_in_place")
 }
 
-/// Whether `name` is a benign, read-only use of a raw-pointer origin
-/// (`as_ptr`, `len`, `is_empty`, `is_null`, `addr`, `cast`).
-pub fn is_benign_origin_use(name: &str) -> bool {
-    is_as_ptr(name)
-        || name.ends_with("::len")
-        || name.ends_with("::is_empty")
-        || name.ends_with("::is_null")
-        || name.ends_with("::addr")
+/// Whether `callee` is a benign, read-only use of a raw-pointer origin
+/// (`len`, `is_empty`, `is_null`, `addr`, `as_ptr`/`as_mut_ptr`, `cast`).
+pub fn is_benign_origin_use(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::contains(
+        &[
+            crate::def_id::const_ptr_is_null(),
+            crate::def_id::const_ptr_addr(),
+            crate::def_id::const_ptr_cast(),
+            crate::def_id::const_ptr_cast_mut(),
+            crate::def_id::const_ptr_slice_is_empty(),
+            crate::def_id::const_ptr_slice_len(),
+            crate::def_id::const_ptr_slice_as_ptr(),
+            crate::def_id::mut_ptr_is_null(),
+            crate::def_id::mut_ptr_addr(),
+            crate::def_id::mut_ptr_cast(),
+            crate::def_id::mut_ptr_cast_const(),
+            crate::def_id::mut_ptr_slice_is_empty(),
+            crate::def_id::mut_ptr_slice_len(),
+            crate::def_id::mut_ptr_slice_as_mut_ptr(),
+            crate::def_id::nonnull_addr(),
+            crate::def_id::nonnull_cast(),
+            crate::def_id::nonnull_as_ptr(),
+            crate::def_id::nonnull_slice_is_empty(),
+            crate::def_id::nonnull_slice_len(),
+            crate::def_id::nonnull_slice_as_mut_ptr(),
+            crate::def_id::slice_len(),
+            crate::def_id::slice_is_empty(),
+            crate::def_id::slice_as_ptr(),
+            crate::def_id::slice_as_mut_ptr(),
+            crate::def_id::str_len(),
+            crate::def_id::str_is_empty(),
+            crate::def_id::str_as_ptr(),
+            crate::def_id::str_as_mut_ptr(),
+            crate::def_id::vec_len(),
+            crate::def_id::vec_is_empty(),
+            crate::def_id::vec_as_ptr(),
+            crate::def_id::vec_as_mut_ptr(),
+            crate::def_id::string_len(),
+            crate::def_id::string_is_empty(),
+            crate::def_id::cstr_as_ptr(),
+            crate::def_id::cstr_is_empty(),
+        ],
+        callee,
+    )
 }
 
 // ── ADT type-name classifiers ─────────────────────────────────────

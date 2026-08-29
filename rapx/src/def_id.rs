@@ -458,6 +458,150 @@ intrinsics! {
         "std::boxed::box_assume_init_into_vec_unsafe",
         "alloc::boxed::box_assume_init_into_vec_unsafe"
     ],
+    const_ptr_is_null: &[
+        "std::ptr::const_ptr::<impl *const T>::is_null",
+        "core::ptr::const_ptr::<impl *const T>::is_null"
+    ],
+    const_ptr_addr: &[
+        "std::ptr::const_ptr::<impl *const T>::addr",
+        "core::ptr::const_ptr::<impl *const T>::addr"
+    ],
+    const_ptr_cast: &[
+        "std::ptr::const_ptr::<impl *const T>::cast",
+        "core::ptr::const_ptr::<impl *const T>::cast"
+    ],
+    const_ptr_cast_mut: &[
+        "std::ptr::const_ptr::<impl *const T>::cast_mut",
+        "core::ptr::const_ptr::<impl *const T>::cast_mut"
+    ],
+    const_ptr_slice_is_empty: &[
+        "std::ptr::const_ptr::<impl *const [T]>::is_empty",
+        "core::ptr::const_ptr::<impl *const [T]>::is_empty"
+    ],
+    const_ptr_slice_len: &[
+        "std::ptr::const_ptr::<impl *const [T]>::len",
+        "core::ptr::const_ptr::<impl *const [T]>::len"
+    ],
+    const_ptr_slice_as_ptr: &[
+        "std::ptr::const_ptr::<impl *const [T]>::as_ptr",
+        "core::ptr::const_ptr::<impl *const [T]>::as_ptr"
+    ],
+    mut_ptr_is_null: &[
+        "std::ptr::mut_ptr::<impl *mut T>::is_null",
+        "core::ptr::mut_ptr::<impl *mut T>::is_null"
+    ],
+    mut_ptr_addr: &[
+        "std::ptr::mut_ptr::<impl *mut T>::addr",
+        "core::ptr::mut_ptr::<impl *mut T>::addr"
+    ],
+    mut_ptr_cast: &[
+        "std::ptr::mut_ptr::<impl *mut T>::cast",
+        "core::ptr::mut_ptr::<impl *mut T>::cast"
+    ],
+    mut_ptr_cast_const: &[
+        "std::ptr::mut_ptr::<impl *mut T>::cast_const",
+        "core::ptr::mut_ptr::<impl *mut T>::cast_const"
+    ],
+    mut_ptr_slice_is_empty: &[
+        "std::ptr::mut_ptr::<impl *mut [T]>::is_empty",
+        "core::ptr::mut_ptr::<impl *mut [T]>::is_empty"
+    ],
+    mut_ptr_slice_len: &[
+        "std::ptr::mut_ptr::<impl *mut [T]>::len",
+        "core::ptr::mut_ptr::<impl *mut [T]>::len"
+    ],
+    mut_ptr_slice_as_mut_ptr: &[
+        "std::ptr::mut_ptr::<impl *mut [T]>::as_mut_ptr",
+        "core::ptr::mut_ptr::<impl *mut [T]>::as_mut_ptr"
+    ],
+    nonnull_addr: &[
+        "std::ptr::NonNull::<T>::addr",
+        "core::ptr::NonNull::<T>::addr"
+    ],
+    nonnull_cast: &[
+        "std::ptr::NonNull::<T>::cast",
+        "core::ptr::NonNull::<T>::cast"
+    ],
+    nonnull_as_ptr: &[
+        "std::ptr::NonNull::<T>::as_ptr",
+        "core::ptr::NonNull::<T>::as_ptr"
+    ],
+    nonnull_slice_is_empty: &[
+        "std::ptr::NonNull::<[T]>::is_empty",
+        "core::ptr::NonNull::<[T]>::is_empty"
+    ],
+    nonnull_slice_len: &[
+        "std::ptr::NonNull::<[T]>::len",
+        "core::ptr::NonNull::<[T]>::len"
+    ],
+    nonnull_slice_as_mut_ptr: &[
+        "std::ptr::NonNull::<[T]>::as_mut_ptr",
+        "core::ptr::NonNull::<[T]>::as_mut_ptr"
+    ],
+    slice_len: &[
+        "std::slice::<impl [T]>::len",
+        "core::slice::<impl [T]>::len"
+    ],
+    slice_is_empty: &[
+        "std::slice::<impl [T]>::is_empty",
+        "core::slice::<impl [T]>::is_empty"
+    ],
+    slice_as_ptr: &[
+        "std::slice::<impl [T]>::as_ptr",
+        "core::slice::<impl [T]>::as_ptr"
+    ],
+    slice_as_mut_ptr: &[
+        "std::slice::<impl [T]>::as_mut_ptr",
+        "core::slice::<impl [T]>::as_mut_ptr"
+    ],
+    str_len: &[
+        "std::str::<impl str>::len",
+        "core::str::<impl str>::len"
+    ],
+    str_is_empty: &[
+        "std::str::<impl str>::is_empty",
+        "core::str::<impl str>::is_empty"
+    ],
+    str_as_ptr: &[
+        "std::str::<impl str>::as_ptr",
+        "core::str::<impl str>::as_ptr"
+    ],
+    str_as_mut_ptr: &[
+        "std::str::<impl str>::as_mut_ptr",
+        "core::str::<impl str>::as_mut_ptr"
+    ],
+    vec_len: &[
+        "std::vec::Vec::<T, A>::len",
+        "alloc::vec::Vec::<T, A>::len"
+    ],
+    vec_is_empty: &[
+        "std::vec::Vec::<T, A>::is_empty",
+        "alloc::vec::Vec::<T, A>::is_empty"
+    ],
+    vec_as_ptr: &[
+        "std::vec::Vec::<T, A>::as_ptr",
+        "alloc::vec::Vec::<T, A>::as_ptr"
+    ],
+    vec_as_mut_ptr: &[
+        "std::vec::Vec::<T, A>::as_mut_ptr",
+        "alloc::vec::Vec::<T, A>::as_mut_ptr"
+    ],
+    string_len: &[
+        "std::string::String::len",
+        "alloc::string::String::len"
+    ],
+    string_is_empty: &[
+        "std::string::String::is_empty",
+        "alloc::string::String::is_empty"
+    ],
+    cstr_as_ptr: &[
+        "std::ffi::CStr::as_ptr",
+        "core::ffi::CStr::as_ptr"
+    ],
+    cstr_is_empty: &[
+        "std::ffi::CStr::is_empty",
+        "core::ffi::CStr::is_empty"
+    ],
 }
 
 /// rustc_public DefId to internal DefId
