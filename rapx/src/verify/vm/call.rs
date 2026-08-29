@@ -77,7 +77,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         // NonNull::new(ptr): the safe constructor returns Some(ptr) iff ptr is
         // non-null. Its body branches on `ptr.is_null()`, so the branch-free
         // inline path rejects it; model the null-check directly.
-        if self.try_nonnull_new(&name, &arg_values, destination) {
+        if self.try_nonnull_new(callee, &arg_values, destination) {
             return;
         }
 
@@ -364,14 +364,11 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     /// otherwise the `Option` is left symbolic (it may be `None`).
     fn try_nonnull_new(
         &mut self,
-        name: &str,
+        callee: Option<DefId>,
         arg_values: &[VmValue<'ctx, 'tcx>],
         destination: Local,
     ) -> bool {
-        if !(api_classify::is_nonnull(name)
-            && name.ends_with("::new")
-            && !name.ends_with("::new_unchecked"))
-        {
+        if !api_classify::is_nonnull(callee) {
             return false;
         }
         let Some(ptr) = arg_values.first() else { return false; };

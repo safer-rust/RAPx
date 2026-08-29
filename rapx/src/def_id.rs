@@ -302,6 +302,10 @@ intrinsics! {
         "std::ptr::NonNull::<T>::align_offset",
         "core::ptr::NonNull::<T>::align_offset"
     ],
+    nonnull_new: &[
+        "std::ptr::NonNull::<T>::new",
+        "core::ptr::NonNull::<T>::new"
+    ],
     const_ptr_align_offset: &[
         "std::ptr::const_ptr::<impl *const T>::align_offset",
         "core::ptr::const_ptr::<impl *const T>::align_offset"

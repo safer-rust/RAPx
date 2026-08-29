@@ -359,8 +359,10 @@ pub fn is_vec_ownership_transfer(name: &str) -> bool {
         && (name.contains("Vec") || name.contains("vec::"))
 }
 
-pub(crate) fn is_nonnull(name: &str) -> bool {
-    name.contains("ptr::non_null") || name.contains("ptr::NonNull")
+/// Whether `callee` is `NonNull::new` (the null-checked constructor).
+pub(crate) fn is_nonnull(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::contains(&[crate::def_id::nonnull_new()], callee)
 }
 
 /// Whether `name` is a `Vec` method that may reallocate (invalidating any

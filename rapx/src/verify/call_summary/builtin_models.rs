@@ -92,7 +92,7 @@ static REGISTRY: &[Entry] = &[
     // `NonNull::new`'s effect is modelled in the VM (`try_nonnull_new`); the
     // `eff_none` stub keeps it in the registry so `is_modeled` reports it as
     // opaque (the path graph must not inline its branchy `is_null` body).
-    E!(nonnull_new, eff_none),
+    ED!(api_classify::is_nonnull, eff_none),
     E!(api_classify::is_as_ptr, eff_alias_ptr),
 
     // ── Pointer arithmetic ──────────────────────────────────────────
@@ -418,7 +418,6 @@ fn into_iter_local(n: &str) -> bool          {
 }
 fn iter_position(n: &str) -> bool            { n.contains("Iterator::position") || n.contains("Iterator::find") || n.contains("Iterator::rposition") }
 fn is_strlen(n: &str) -> bool                { n == "strlen" || n.ends_with("::strlen") }
-fn nonnull_new(n: &str) -> bool             { n.ends_with("::new") && api_classify::is_nonnull(n) && !n.ends_with("::new_unchecked") }
 fn cmp_min(n: &str) -> bool                 { (n.contains("::cmp::min") || n.contains("::Ord::min") || n.starts_with("core::cmp::min")) && !n.contains("min_by") }
 
 /// `u32::midpoint`/`usize::midpoint`: `midpoint(a, b) >= min(a, b)`, so it is
