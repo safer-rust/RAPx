@@ -321,6 +321,7 @@ pub fn is_vec_from_box(callee: Option<DefId>) -> bool {
         callee,
     )
 }
+/// `Vec::with_capacity` — `#[inline]` const fn, not emitted by `fn_defs()`.
 pub fn is_vec_with_capacity(name: &str) -> bool {
     (name.contains("::Vec::") && name.ends_with("::with_capacity"))
         || name == "with_capacity"
@@ -365,20 +366,25 @@ pub(crate) fn is_nonnull(callee: Option<DefId>) -> bool {
     crate::def_id::contains(&[crate::def_id::nonnull_new()], callee)
 }
 
-/// Whether `name` is a `Vec` method that may reallocate (invalidating any
+/// Whether `callee` is a `Vec` method that may reallocate (invalidating any
 /// outstanding raw pointers derived from it).
-pub fn is_vec_invalidating_method(name: &str) -> bool {
-    (name.contains("::Vec::") || name.contains("vec::"))
-        && (name.contains("::push")
-            || name.contains("::reserve")
-            || name.contains("::reserve_exact")
-            || name.contains("::shrink_to_fit")
-            || name.contains("::shrink_to")
-            || name.contains("::insert")
-            || name.contains("::remove")
-            || name.contains("::clear")
-            || name.contains("::truncate")
-            || name.contains("::set_len"))
+pub fn is_vec_invalidating_method(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::contains(
+        &[
+            crate::def_id::vec_push(),
+            crate::def_id::vec_reserve(),
+            crate::def_id::vec_reserve_exact(),
+            crate::def_id::vec_shrink_to_fit(),
+            crate::def_id::vec_shrink_to(),
+            crate::def_id::vec_insert(),
+            crate::def_id::vec_remove(),
+            crate::def_id::vec_clear(),
+            crate::def_id::vec_truncate(),
+            crate::def_id::vec_set_len(),
+        ],
+        callee,
+    )
 }
 
 /// Whether `callee` returns ownership of an allocation as a raw pointer

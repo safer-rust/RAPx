@@ -1096,7 +1096,7 @@ fn terminator_is_benign_origin_use<'tcx>(tcx: TyCtxt<'tcx>, terminator: &Termina
 }
 
 fn terminator_invalidates_vec_owner<'tcx>(
-    tcx: TyCtxt<'tcx>,
+    _tcx: TyCtxt<'tcx>,
     terminator: &TerminatorKind<'tcx>,
     owners: &[PlaceKey],
     aliases: &HashMap<Local, PlaceKey>,
@@ -1104,8 +1104,9 @@ fn terminator_invalidates_vec_owner<'tcx>(
     let TerminatorKind::Call { func, args, .. } = terminator else {
         return false;
     };
-    let name = crate::helpers::mir_utils::call_name(tcx, func);
-    if !crate::helpers::api_classify::is_vec_invalidating_method(&name) {
+    if !crate::helpers::api_classify::is_vec_invalidating_method(
+        crate::helpers::mir_utils::dep_callee_def_id(func),
+    ) {
         return false;
     }
     args.iter().any(|arg| {

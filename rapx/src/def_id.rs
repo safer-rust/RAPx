@@ -370,6 +370,34 @@ intrinsics! {
         "std::vec::Vec::<T, A>::reserve_exact",
         "alloc::vec::Vec::<T, A>::reserve_exact"
     ],
+    vec_shrink_to_fit: &[
+        "std::vec::Vec::<T, A>::shrink_to_fit",
+        "alloc::vec::Vec::<T, A>::shrink_to_fit"
+    ],
+    vec_shrink_to: &[
+        "std::vec::Vec::<T, A>::shrink_to",
+        "alloc::vec::Vec::<T, A>::shrink_to"
+    ],
+    vec_insert: &[
+        "std::vec::Vec::<T, A>::insert",
+        "alloc::vec::Vec::<T, A>::insert"
+    ],
+    vec_remove: &[
+        "std::vec::Vec::<T, A>::remove",
+        "alloc::vec::Vec::<T, A>::remove"
+    ],
+    vec_clear: &[
+        "std::vec::Vec::<T, A>::clear",
+        "alloc::vec::Vec::<T, A>::clear"
+    ],
+    vec_truncate: &[
+        "std::vec::Vec::<T, A>::truncate",
+        "alloc::vec::Vec::<T, A>::truncate"
+    ],
+    vec_set_len: &[
+        "std::vec::Vec::<T, A>::set_len",
+        "alloc::vec::Vec::<T, A>::set_len"
+    ],
     box_from_raw: &[
         "std::boxed::Box::<T>::from_raw",
         "alloc::boxed::Box::<T>::from_raw"
