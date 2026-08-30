@@ -41,6 +41,7 @@ use indexmap::IndexMap;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 use rustc_public::{CrateDef, rustc_internal};
+use rustc_span::sym;
 use std::sync::OnceLock;
 
 static INIT: OnceLock<Intrinsics> = OnceLock::new();
@@ -50,8 +51,39 @@ struct Intrinsics {
     map: IndexMap<Box<str>, DefId>,
 }
 
+static TYPES: OnceLock<Types> = OnceLock::new();
+
+/// Resolved `DefId`s of well-known std *types* (ADTs), used by the ADT
+/// type-name classifiers ([`crate::helpers::api_classify::is_std_box`],
+/// [`crate::helpers::api_classify::is_std_cstring`]).  Unlike the function
+/// table above — which matches `fn_defs()` names — these are resolved directly
+/// from rustc's lang/diagnostic items, so they are not subject to the
+/// `fn_defs()` name-format caveats.
+struct Types {
+    box_type: Option<DefId>,
+    cstring_type: Option<DefId>,
+}
+
 pub fn init(tcx: TyCtxt) {
     INIT.get_or_init(|| init_inner(tcx));
+    TYPES.get_or_init(|| init_types(tcx));
+}
+
+fn init_types(tcx: TyCtxt) -> Types {
+    Types {
+        box_type: tcx.lang_items().owned_box(),
+        cstring_type: tcx.get_diagnostic_item(sym::cstring_type),
+    }
+}
+
+/// `alloc::boxed::Box` (`#[lang = "owned_box"]`).
+pub fn box_type() -> Option<DefId> {
+    TYPES.get().expect("Type DefIds haven't been initialized.").box_type
+}
+
+/// `alloc::ffi::CString` (`#[rustc_diagnostic_item = "cstring_type"]`).
+pub fn cstring_type() -> Option<DefId> {
+    TYPES.get().expect("Type DefIds haven't been initialized.").cstring_type
 }
 
 fn init_inner(tcx: TyCtxt) -> Intrinsics {

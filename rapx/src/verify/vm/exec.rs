@@ -200,9 +200,9 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 if let rustc_middle::ty::TyKind::Adt(adt_def, _) = ty.kind() {
                     let def_path = self.tcx.def_path_str(adt_def.did());
                     let is_vec = api_classify::is_std_vec(&def_path);
-                    if api_classify::is_std_box(&def_path)
+                    if api_classify::is_std_box(adt_def.did())
                         || is_vec
-                        || api_classify::is_std_cstring(&def_path)
+                        || api_classify::is_std_cstring(adt_def.did())
                     {
                         let heap_ty = if let rustc_middle::ty::TyKind::Adt(_, substs) = ty.kind() {
                             if let Some(first) = substs.first() {

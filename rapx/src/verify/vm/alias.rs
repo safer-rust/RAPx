@@ -340,7 +340,7 @@ fn check_view_alias<'ctx, 'tcx>(
                 VmOriginKind::Owned(def_id) => {
                     let def_path = tcx.def_path_str(*def_id);
                     api_classify::is_std_vec(&def_path)
-                        || api_classify::is_std_cstring(&def_path)
+                        || api_classify::is_std_cstring(*def_id)
                 }
                 _ => false,
             };
