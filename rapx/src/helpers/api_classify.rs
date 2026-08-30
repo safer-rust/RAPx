@@ -526,22 +526,19 @@ pub fn is_benign_origin_use(callee: Option<DefId>) -> bool {
 // ── ADT type-name classifiers ─────────────────────────────────────
 // *Shape* recognizers used by the VM to model repr(transparent) wrappers and
 // fixed field layouts (`Vec` = ptr/cap/len, `slice::Iter` = ptr/end, …).
-//
-// `Box`/`CString` are matched by `DefId` (resolved via lang/diagnostic items in
-// [`crate::def_id`]) — neither is re-implemented by the std-challenge suites.
-// `Vec`/`NonNull` stay name-based on purpose: those suites *do* re-implement
-// them under the same names, and matching the name is what lets the VM model
-// those re-implementations too.
+// Matched by `DefId` (resolved in [`crate::def_id`]).
 
-pub fn is_std_vec(name: &str) -> bool { name.ends_with("::Vec") || name == "Vec" }
+pub fn is_std_vec(def_id: DefId) -> bool {
+    crate::def_id::vec_types().contains(&def_id)
+}
 pub fn is_std_box(def_id: DefId) -> bool {
-    crate::def_id::contains(&[crate::def_id::box_type()], def_id)
+    crate::def_id::box_types().contains(&def_id)
 }
 pub fn is_std_cstring(def_id: DefId) -> bool {
-    crate::def_id::contains(&[crate::def_id::cstring_type()], def_id)
+    crate::def_id::cstring_types().contains(&def_id)
 }
-pub fn is_std_nonnull(name: &str) -> bool {
-    name == "NonNull" || name.contains("::NonNull")
+pub fn is_std_nonnull(def_id: DefId) -> bool {
+    crate::def_id::nonnull_types().contains(&def_id)
 }
 pub fn is_std_iter_or_itermut(name: &str) -> bool {
     name.ends_with("::Iter") || name == "Iter"

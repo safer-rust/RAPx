@@ -198,8 +198,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             if local_idx <= arg_count {
                 // ── Box / Vec parameter: heap-allocated pointee ──
                 if let rustc_middle::ty::TyKind::Adt(adt_def, _) = ty.kind() {
-                    let def_path = self.tcx.def_path_str(adt_def.did());
-                    let is_vec = api_classify::is_std_vec(&def_path);
+                    let is_vec = api_classify::is_std_vec(adt_def.did());
                     if api_classify::is_std_box(adt_def.did())
                         || is_vec
                         || api_classify::is_std_cstring(adt_def.did())
@@ -303,6 +302,23 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                                 provenance: None,
                                 invariants: ValueInvariants { init: true, ..Default::default() },
                             });
+                        }
+                    }
+                    // A single-raw-pointer wrapper (e.g. `NonNull<T>`) *is* its
+                    // pointer, so carry the field's provenance onto the whole local —
+                    // otherwise alias/ownership reasoning can't trace a deref of
+                    // `self.pointer` back to "owned" (the local's provenance would
+                    // be `None`).
+                    if crate::helpers::mir_utils::is_raw_ptr_wrapper(self.tcx, adt_def.did()) {
+                        if let Some(f0) = self.field_value(local, &vec![0]).cloned() {
+                            let prov = f0.provenance.clone();
+                            self.set_local(local, VmValue {
+                                term: f0.term,
+                                ty,
+                                provenance: prov,
+                                invariants: ValueInvariants { init: true, ..Default::default() },
+                            });
+                            continue;
                         }
                     }
                     let term = self.fresh_int(&format!("param_{}", local_idx));
@@ -2667,7 +2683,8 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     .map(|val| {
                         (matches!(val.ty.kind(), rustc_middle::ty::TyKind::RawPtr(..))
                             || matches!(val.ty.kind(), rustc_middle::ty::TyKind::Adt(adt, _)
-                                if api_classify::is_std_nonnull(&self.tcx.def_path_str(adt.did()))))
+                                if api_classify::is_std_nonnull(adt.did())
+                                    || crate::helpers::mir_utils::is_raw_ptr_wrapper(self.tcx, adt.did())))
                             && (elem_ty.is_primitive()
                                 || matches!(elem_ty.kind(), rustc_middle::ty::TyKind::Param(_)))
                     })

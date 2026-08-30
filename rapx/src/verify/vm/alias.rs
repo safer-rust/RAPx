@@ -174,7 +174,7 @@ pub(crate) fn check_alias_vm<'ctx, 'tcx>(
             if vm_state.body.arg_count >= 1 {
                 let self_ty = vm_state.body.local_decls[Local::from_usize(1)].ty;
                 if let rustc_middle::ty::TyKind::Adt(adt_def, _) = self_ty.kind() {
-                    if api_classify::is_std_nonnull(&vm_state.tcx.def_path_str(adt_def.did())) {
+                    if api_classify::is_std_nonnull(adt_def.did()) {
                         return VmAliasResult::Proved;
                     }
                 }
@@ -338,8 +338,7 @@ fn check_view_alias<'ctx, 'tcx>(
             // so MIR-level hazard scanning can detect reallocation hazards.
             let is_reallocatable = match &origin.kind {
                 VmOriginKind::Owned(def_id) => {
-                    let def_path = tcx.def_path_str(*def_id);
-                    api_classify::is_std_vec(&def_path)
+                    api_classify::is_std_vec(*def_id)
                         || api_classify::is_std_cstring(*def_id)
                 }
                 _ => false,
@@ -458,7 +457,7 @@ fn check_view_alias<'ctx, 'tcx>(
             // transfers exclusive ownership of its pointer, so producing a unique
             // view is safe even though the receiver is not a `&mut self`.
             if let rustc_middle::ty::TyKind::Adt(adt_def, _) = self_ty.kind() {
-                if api_classify::is_std_nonnull(&tcx.def_path_str(adt_def.did())) {
+                if api_classify::is_std_nonnull(adt_def.did()) {
                     return VmAliasResult::Proved;
                 }
             }

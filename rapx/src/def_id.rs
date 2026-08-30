@@ -55,13 +55,16 @@ static TYPES: OnceLock<Types> = OnceLock::new();
 
 /// Resolved `DefId`s of well-known std *types* (ADTs), used by the ADT
 /// type-name classifiers ([`crate::helpers::api_classify::is_std_box`],
-/// [`crate::helpers::api_classify::is_std_cstring`]).  Unlike the function
-/// table above — which matches `fn_defs()` names — these are resolved directly
-/// from rustc's lang/diagnostic items, so they are not subject to the
-/// `fn_defs()` name-format caveats.
+/// [`crate::helpers::api_classify::is_std_vec`], …).  Each entry collects the
+/// std type's `DefId` (via lang/diagnostic item, or — for `NonNull`, which has
+/// neither — by name-scanning the std crates' `adts()`) *and* any same-named
+/// re-implementations in the local crate (the std-challenge suites re-implement
+/// `Vec`/`NonNull` under the same names).
 struct Types {
-    box_type: Option<DefId>,
-    cstring_type: Option<DefId>,
+    box_types: Vec<DefId>,
+    cstring_types: Vec<DefId>,
+    vec_types: Vec<DefId>,
+    nonnull_types: Vec<DefId>,
 }
 
 pub fn init(tcx: TyCtxt) {
@@ -70,20 +73,59 @@ pub fn init(tcx: TyCtxt) {
 }
 
 fn init_types(tcx: TyCtxt) -> Types {
-    Types {
-        box_type: tcx.lang_items().owned_box(),
-        cstring_type: tcx.get_diagnostic_item(sym::cstring_type),
+    let mut types = Types {
+        box_types: Vec::new(),
+        cstring_types: Vec::new(),
+        vec_types: Vec::new(),
+        nonnull_types: Vec::new(),
+    };
+
+    // Real std types via diagnostic/lang items (`NonNull` only before rustc
+    // 1.100, when it was still a diagnostic item).
+    types.box_types.extend(tcx.lang_items().owned_box());
+    types.cstring_types.extend(tcx.get_diagnostic_item(sym::cstring_type));
+    types.vec_types.extend(tcx.get_diagnostic_item(sym::Vec));
+    #[cfg(not(rapx_has_public_adts))]
+    types.nonnull_types.extend(tcx.get_diagnostic_item(sym::NonNull));
+
+    // Real `NonNull` on newer toolchains (it became `#[lang = "non_null"]`,
+    // which has no `LangItem` variant): scan the std crates' ADTs by name.
+    #[cfg(rapx_has_public_adts)]
+    {
+        for krate in std::iter::once(rustc_public::local_crate())
+            .chain(rustc_public::external_crates())
+            .filter(|k| ["core", "std", "alloc"].iter().any(|n| *n == k.name))
+        {
+            for adt in krate.adts() {
+                let name = adt.name();
+                if name.ends_with("::NonNull") {
+                    types.nonnull_types.push(rustc_internal::internal(tcx, adt.def_id()));
+                }
+            }
+        }
     }
+
+    types
 }
 
-/// `alloc::boxed::Box` (`#[lang = "owned_box"]`).
-pub fn box_type() -> Option<DefId> {
-    TYPES.get().expect("Type DefIds haven't been initialized.").box_type
+/// `alloc::boxed::Box` (and any local `Box` re-implementation).
+pub fn box_types() -> &'static [DefId] {
+    &TYPES.get().expect("Type DefIds haven't been initialized.").box_types
 }
 
-/// `alloc::ffi::CString` (`#[rustc_diagnostic_item = "cstring_type"]`).
-pub fn cstring_type() -> Option<DefId> {
-    TYPES.get().expect("Type DefIds haven't been initialized.").cstring_type
+/// `alloc::ffi::CString` (and any local `CString` re-implementation).
+pub fn cstring_types() -> &'static [DefId] {
+    &TYPES.get().expect("Type DefIds haven't been initialized.").cstring_types
+}
+
+/// `alloc::vec::Vec` (and any local `Vec` re-implementation).
+pub fn vec_types() -> &'static [DefId] {
+    &TYPES.get().expect("Type DefIds haven't been initialized.").vec_types
+}
+
+/// `core::ptr::NonNull` (and any local `NonNull` re-implementation).
+pub fn nonnull_types() -> &'static [DefId] {
+    &TYPES.get().expect("Type DefIds haven't been initialized.").nonnull_types
 }
 
 fn init_inner(tcx: TyCtxt) -> Intrinsics {

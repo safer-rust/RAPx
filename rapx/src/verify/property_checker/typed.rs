@@ -53,6 +53,17 @@ impl PropertyChecker {
                         if elem_ty == expected_ty {
                             return CheckResult::Proved;
                         }
+                        // An allocation of `T` elements is also "typed" when
+                        // accessed through a slice/array pointer `[T]`/`[T; N]`
+                        // (a slice is just N contiguous `T` elements, e.g. a `u8`
+                        // buffer reinterpreted as `[u8]` by `slice_from_raw_parts`).
+                        let expected_elem = match expected_ty.kind() {
+                            TyKind::Slice(e) | TyKind::Array(e, _) => *e,
+                            _ => expected_ty,
+                        };
+                        if elem_ty == expected_elem {
+                            return CheckResult::Proved;
+                        }
                         // MaybeUninit<T> accessed via raw pointer from as_mut_ptr:
                         // treat as T for write ops where caller will initialize it.
                         if let TyKind::Adt(adt_def, substs) = elem_ty.kind() {

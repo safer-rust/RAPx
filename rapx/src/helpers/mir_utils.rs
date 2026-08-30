@@ -868,14 +868,29 @@ pub fn field_ty<'tcx>(
 }
 
 /// Element type of a `Vec<T>`, if `ty` is a `Vec`.
-pub fn vec_elem_ty<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<Ty<'tcx>> {
+pub fn vec_elem_ty<'tcx>(_tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<Ty<'tcx>> {
     if let TyKind::Adt(adt_def, substs) = ty.kind() {
-        let name = tcx.def_path_str(adt_def.did());
-        if crate::helpers::api_classify::is_std_vec(&name) {
+        if crate::helpers::api_classify::is_std_vec(adt_def.did()) {
             return substs.first().and_then(|s| s.as_type());
         }
     }
     None
+}
+
+/// Whether `def_id` is a single-field struct wrapping a raw pointer (i.e.
+/// `NonNull`-shaped).  Used by alias/ownership reasoning to recognize pointer
+/// wrappers — including local re-implementations — by their structure rather
+/// than by a std `DefId`.
+pub fn is_raw_ptr_wrapper<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> bool {
+    let adt = tcx.adt_def(def_id);
+    let variant = adt.non_enum_variant();
+    if variant.fields.len() != 1 {
+        return false;
+    }
+    let args = rustc_middle::ty::GenericArgs::identity_for_item(tcx, def_id);
+    let field = variant.fields.iter().next().unwrap();
+    let field_ty = field_ty(tcx, field, args);
+    matches!(field_ty.kind(), TyKind::RawPtr(..))
 }
 
 /// Collect the layouts of every concrete implementor of a generic type

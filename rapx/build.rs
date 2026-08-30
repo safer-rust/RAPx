@@ -5,6 +5,7 @@ fn main() {
 
     emit_check_cfg("rapx_ge_99");
     emit_check_cfg("rapx_ge_100");
+    emit_check_cfg("rapx_has_public_adts");
     emit_check_cfg("rapx_has_attr_item_kind");
     emit_check_cfg("rapx_has_fielddef_extras");
     emit_check_cfg("rapx_has_skip_norm_wip");
@@ -16,6 +17,10 @@ fn main() {
 
     emit_cfg("rapx_ge_99", minor >= 99);
     emit_cfg("rapx_ge_100", minor >= 100);
+    emit_cfg(
+        "rapx_has_public_adts",
+        rustc_src_contains_path("compiler/rustc_public/src/lib.rs", "pub fn adts"),
+    );
     emit_cfg(
         "rapx_has_attr_item_kind",
         rustc_src_contains("pub enum AttrItemKind"),
