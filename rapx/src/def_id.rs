@@ -260,6 +260,18 @@ intrinsics! {
         "std::mem::maybe_uninit::MaybeUninit::<T>::write",
         "core::mem::maybe_uninit::MaybeUninit::<T>::write"
     ],
+    maybe_uninit_as_ptr: &[
+        "std::mem::MaybeUninit::<T>::as_ptr",
+        "core::mem::MaybeUninit::<T>::as_ptr",
+        "std::mem::maybe_uninit::MaybeUninit::<T>::as_ptr",
+        "core::mem::maybe_uninit::MaybeUninit::<T>::as_ptr"
+    ],
+    maybe_uninit_as_mut_ptr: &[
+        "std::mem::MaybeUninit::<T>::as_mut_ptr",
+        "core::mem::MaybeUninit::<T>::as_mut_ptr",
+        "std::mem::maybe_uninit::MaybeUninit::<T>::as_mut_ptr",
+        "core::mem::maybe_uninit::MaybeUninit::<T>::as_mut_ptr"
+    ],
     maybe_uninit_assume_init: &[
         "std::mem::MaybeUninit::<T>::assume_init",
         "core::mem::MaybeUninit::<T>::assume_init",
@@ -313,6 +325,126 @@ intrinsics! {
     mut_ptr_align_offset: &[
         "std::ptr::mut_ptr::<impl *mut T>::align_offset",
         "core::ptr::mut_ptr::<impl *mut T>::align_offset"
+    ],
+    const_ptr_add: &[
+        "std::ptr::const_ptr::<impl *const T>::add",
+        "core::ptr::const_ptr::<impl *const T>::add"
+    ],
+    const_ptr_wrapping_add: &[
+        "std::ptr::const_ptr::<impl *const T>::wrapping_add",
+        "core::ptr::const_ptr::<impl *const T>::wrapping_add"
+    ],
+    const_ptr_sub: &[
+        "std::ptr::const_ptr::<impl *const T>::sub",
+        "core::ptr::const_ptr::<impl *const T>::sub"
+    ],
+    const_ptr_wrapping_sub: &[
+        "std::ptr::const_ptr::<impl *const T>::wrapping_sub",
+        "core::ptr::const_ptr::<impl *const T>::wrapping_sub"
+    ],
+    const_ptr_offset: &[
+        "std::ptr::const_ptr::<impl *const T>::offset",
+        "core::ptr::const_ptr::<impl *const T>::offset"
+    ],
+    const_ptr_wrapping_offset: &[
+        "std::ptr::const_ptr::<impl *const T>::wrapping_offset",
+        "core::ptr::const_ptr::<impl *const T>::wrapping_offset"
+    ],
+    const_ptr_byte_add: &[
+        "std::ptr::const_ptr::<impl *const T>::byte_add",
+        "core::ptr::const_ptr::<impl *const T>::byte_add"
+    ],
+    const_ptr_wrapping_byte_add: &[
+        "std::ptr::const_ptr::<impl *const T>::wrapping_byte_add",
+        "core::ptr::const_ptr::<impl *const T>::wrapping_byte_add"
+    ],
+    const_ptr_byte_sub: &[
+        "std::ptr::const_ptr::<impl *const T>::byte_sub",
+        "core::ptr::const_ptr::<impl *const T>::byte_sub"
+    ],
+    const_ptr_wrapping_byte_sub: &[
+        "std::ptr::const_ptr::<impl *const T>::wrapping_byte_sub",
+        "core::ptr::const_ptr::<impl *const T>::wrapping_byte_sub"
+    ],
+    const_ptr_byte_offset: &[
+        "std::ptr::const_ptr::<impl *const T>::byte_offset",
+        "core::ptr::const_ptr::<impl *const T>::byte_offset"
+    ],
+    const_ptr_wrapping_byte_offset: &[
+        "std::ptr::const_ptr::<impl *const T>::wrapping_byte_offset",
+        "core::ptr::const_ptr::<impl *const T>::wrapping_byte_offset"
+    ],
+    mut_ptr_add: &[
+        "std::ptr::mut_ptr::<impl *mut T>::add",
+        "core::ptr::mut_ptr::<impl *mut T>::add"
+    ],
+    mut_ptr_wrapping_add: &[
+        "std::ptr::mut_ptr::<impl *mut T>::wrapping_add",
+        "core::ptr::mut_ptr::<impl *mut T>::wrapping_add"
+    ],
+    mut_ptr_sub: &[
+        "std::ptr::mut_ptr::<impl *mut T>::sub",
+        "core::ptr::mut_ptr::<impl *mut T>::sub"
+    ],
+    mut_ptr_wrapping_sub: &[
+        "std::ptr::mut_ptr::<impl *mut T>::wrapping_sub",
+        "core::ptr::mut_ptr::<impl *mut T>::wrapping_sub"
+    ],
+    mut_ptr_offset: &[
+        "std::ptr::mut_ptr::<impl *mut T>::offset",
+        "core::ptr::mut_ptr::<impl *mut T>::offset"
+    ],
+    mut_ptr_wrapping_offset: &[
+        "std::ptr::mut_ptr::<impl *mut T>::wrapping_offset",
+        "core::ptr::mut_ptr::<impl *mut T>::wrapping_offset"
+    ],
+    mut_ptr_byte_add: &[
+        "std::ptr::mut_ptr::<impl *mut T>::byte_add",
+        "core::ptr::mut_ptr::<impl *mut T>::byte_add"
+    ],
+    mut_ptr_wrapping_byte_add: &[
+        "std::ptr::mut_ptr::<impl *mut T>::wrapping_byte_add",
+        "core::ptr::mut_ptr::<impl *mut T>::wrapping_byte_add"
+    ],
+    mut_ptr_byte_sub: &[
+        "std::ptr::mut_ptr::<impl *mut T>::byte_sub",
+        "core::ptr::mut_ptr::<impl *mut T>::byte_sub"
+    ],
+    mut_ptr_wrapping_byte_sub: &[
+        "std::ptr::mut_ptr::<impl *mut T>::wrapping_byte_sub",
+        "core::ptr::mut_ptr::<impl *mut T>::wrapping_byte_sub"
+    ],
+    mut_ptr_byte_offset: &[
+        "std::ptr::mut_ptr::<impl *mut T>::byte_offset",
+        "core::ptr::mut_ptr::<impl *mut T>::byte_offset"
+    ],
+    mut_ptr_wrapping_byte_offset: &[
+        "std::ptr::mut_ptr::<impl *mut T>::wrapping_byte_offset",
+        "core::ptr::mut_ptr::<impl *mut T>::wrapping_byte_offset"
+    ],
+    nonnull_add: &[
+        "std::ptr::NonNull::<T>::add",
+        "core::ptr::NonNull::<T>::add"
+    ],
+    nonnull_sub: &[
+        "std::ptr::NonNull::<T>::sub",
+        "core::ptr::NonNull::<T>::sub"
+    ],
+    nonnull_byte_add: &[
+        "std::ptr::NonNull::<T>::byte_add",
+        "core::ptr::NonNull::<T>::byte_add"
+    ],
+    nonnull_byte_sub: &[
+        "std::ptr::NonNull::<T>::byte_sub",
+        "core::ptr::NonNull::<T>::byte_sub"
+    ],
+    nonnull_offset: &[
+        "std::ptr::NonNull::<T>::offset",
+        "core::ptr::NonNull::<T>::offset"
+    ],
+    nonnull_byte_offset: &[
+        "std::ptr::NonNull::<T>::byte_offset",
+        "core::ptr::NonNull::<T>::byte_offset"
     ],
     option_unwrap: &[
         "std::option::Option::<T>::unwrap",
@@ -430,6 +562,14 @@ intrinsics! {
         "std::boxed::Box::<T>::into_raw",
         "alloc::boxed::Box::<T>::into_raw"
     ],
+    box_as_ptr: &[
+        "std::boxed::Box::<T, A>::as_ptr",
+        "alloc::boxed::Box::<T, A>::as_ptr"
+    ],
+    box_as_mut_ptr: &[
+        "std::boxed::Box::<T, A>::as_mut_ptr",
+        "alloc::boxed::Box::<T, A>::as_mut_ptr"
+    ],
     cstring_into_raw: &[
         "std::ffi::CString::into_raw",
         "alloc::ffi::CString::into_raw"
@@ -438,9 +578,17 @@ intrinsics! {
         "std::sync::Arc::<T>::into_raw",
         "alloc::sync::Arc::<T>::into_raw"
     ],
+    arc_as_ptr: &[
+        "std::sync::Arc::<T>::as_ptr",
+        "alloc::sync::Arc::<T>::as_ptr"
+    ],
     rc_into_raw: &[
         "std::rc::Rc::<T>::into_raw",
         "alloc::rc::Rc::<T>::into_raw"
+    ],
+    rc_as_ptr: &[
+        "std::rc::Rc::<T>::as_ptr",
+        "alloc::rc::Rc::<T>::as_ptr"
     ],
     vec_from_elem: &[
         "std::vec::from_elem",

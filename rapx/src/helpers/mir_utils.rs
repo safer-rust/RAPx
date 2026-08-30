@@ -985,7 +985,7 @@ pub fn resolve_through_casts<'tcx>(body: &Body<'tcx>, local: Local) -> Local {
 /// Build a `local -> source` map for `Use`/`Cast`/`Ref`/`RawPtr`/`CopyForDeref`
 /// assignments and `as_ptr` calls.
 pub fn body_parents<'tcx>(
-    tcx: TyCtxt<'tcx>,
+    _tcx: TyCtxt<'tcx>,
     body: &Body<'tcx>,
 ) -> FxHashMap<Local, Local> {
     let mut parents: FxHashMap<Local, Local> = Default::default();
@@ -1019,8 +1019,7 @@ pub fn body_parents<'tcx>(
         else {
             continue;
         };
-        let name = call_name(tcx, func);
-        if !crate::helpers::api_classify::is_as_ptr(&name) {
+        if !crate::helpers::api_classify::is_as_ptr(dep_callee_def_id(func)) {
             continue;
         }
         let Some(source) = args.first().and_then(|arg| match &arg.node {

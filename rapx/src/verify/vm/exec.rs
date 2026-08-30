@@ -3143,8 +3143,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         first_arg_val: VmValue<'ctx, 'tcx>,
         first_arg_op: &Operand<'tcx>,
     ) -> bool {
-        let name = crate::helpers::mir_utils::call_name(self.tcx, func);
-        if !api_classify::is_as_ptr(&name) {
+        if !api_classify::is_as_ptr(crate::helpers::mir_utils::dep_callee_def_id(func)) {
             return false;
         }
         let dest_ty = self.body.local_decls[dest].ty;

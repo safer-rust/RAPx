@@ -93,15 +93,15 @@ static REGISTRY: &[Entry] = &[
     // `eff_none` stub keeps it in the registry so `is_modeled` reports it as
     // opaque (the path graph must not inline its branchy `is_null` body).
     ED!(api_classify::is_nonnull, eff_none),
-    E!(api_classify::is_as_ptr, eff_alias_ptr),
+    ED!(api_classify::is_as_ptr, eff_alias_ptr),
 
     // ── Pointer arithmetic ──────────────────────────────────────────
     // Direction and granularity are orthogonal: each entry picks a specific
     // `ReturnPointerAdd`/`ReturnPointerSub` with a fixed stride.
-    E!(api_classify::is_element_ptr_add, eff_ptr_add),
-    E!(api_classify::is_element_ptr_sub, eff_ptr_sub),
-    E!(api_classify::is_byte_ptr_add, eff_ptr_add_byte),
-    E!(api_classify::is_byte_ptr_sub, eff_ptr_sub_byte),
+    ED!(api_classify::is_element_ptr_add, eff_ptr_add),
+    ED!(api_classify::is_element_ptr_sub, eff_ptr_sub),
+    ED!(api_classify::is_byte_ptr_add, eff_ptr_add_byte),
+    ED!(api_classify::is_byte_ptr_sub, eff_ptr_sub_byte),
 
     // ── MaybeUninit ────────────────────────────────────────────────
     // `uninit`/`assume_init` are `eff_none` stubs: they have no symbolic

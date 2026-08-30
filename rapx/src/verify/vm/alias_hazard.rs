@@ -1132,8 +1132,7 @@ fn find_as_ptr_receivers(
         else {
             continue;
         };
-        let name = crate::helpers::mir_utils::call_name(tcx, func);
-        if !crate::helpers::api_classify::is_as_ptr(&name) {
+        if !crate::helpers::api_classify::is_as_ptr(crate::helpers::mir_utils::dep_callee_def_id(func)) {
             continue;
         }
         let destination_key = PlaceKey {
@@ -1187,8 +1186,9 @@ fn is_ptr_add_offset_eq(
             if ptr_key != *ptr_place {
                 continue;
             }
-            let name = crate::helpers::mir_utils::call_name(tcx, func);
-            if crate::helpers::api_classify::is_pointer_add(&name) && args.len() >= 2 {
+            if crate::helpers::api_classify::is_pointer_add(crate::helpers::mir_utils::dep_callee_def_id(func))
+                && args.len() >= 2
+            {
                 if let Some(offset_place) = operand_place(&args[1].node) {
                     let offset_root = trace_place_root(&origins_map, &offset_place);
                     return offset_root == view_len_root;
@@ -1212,8 +1212,7 @@ fn is_ptr_from_ptr_add(tcx: TyCtxt<'_>, caller: DefId, ptr_place: &PlaceKey) -> 
             if ptr_key != *ptr_place {
                 continue;
             }
-            let name = crate::helpers::mir_utils::call_name(tcx, func);
-            return crate::helpers::api_classify::is_pointer_add(&name);
+            return crate::helpers::api_classify::is_pointer_add(crate::helpers::mir_utils::dep_callee_def_id(func));
         }
     }
     false
@@ -1431,8 +1430,7 @@ fn places_holding_transferred_pointer(
             if !killed.contains(&call_destination.local)
                 && holders.iter().any(|h| destination_key.overlaps(h))
             {
-                let name = crate::helpers::mir_utils::call_name(tcx, func);
-                if crate::helpers::api_classify::is_as_ptr(&name)
+                if crate::helpers::api_classify::is_as_ptr(crate::helpers::mir_utils::dep_callee_def_id(func))
                     && let Some(arg) = args.first()
                     && let Operand::Copy(place) | Operand::Move(place) = &arg.node
                     && !killed.contains(&place.local)

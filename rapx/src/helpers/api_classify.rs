@@ -16,9 +16,10 @@
 //!   match the callee `DefId` exactly via [`crate::def_id::contains`] and avoid
 //!   the false positives of substring matching.
 //! - **`fn(&str) -> bool`** — kept name-based when the target is not a closed
-//!   set of resolvable items: generic method names ([`is_len`], [`is_capacity`],
-//!   [`is_as_ptr`], the pointer-arithmetic family), APIs that `rustc_public`
-//!   does not emit as `fn_def` ([`is_from_raw_parts`], since
+//!   set of resolvable items, or when the match must also cover the
+//!   std-challenge test suites' *re-implementations* of std types under the
+//!   same names: generic query names ([`is_len`], [`is_capacity`]), APIs that
+//!   `rustc_public` does not emit as `fn_def` ([`is_from_raw_parts`], since
 //!   `Vec::from_raw_parts` cannot be resolved to a `DefId`), and the ADT
 //!   *type*-name classifiers at the bottom ([`is_std_vec`], [`is_std_box`],
 //!   …).
@@ -54,23 +55,46 @@ pub fn is_ownership_reconstruction(callee: Option<DefId>) -> bool {
 
 // ── Pointer extraction / cast ─────────────────────────────────────
 
-/// Whether `name` produces a raw pointer (or `NonNull`) alias of its first
-/// argument: `as_ptr`/`as_mut_ptr`, `into_raw`/`into_raw_mut`, pointer `cast`
-/// (incl. `cast_mut`/`cast_const`), and the `NonNull` accessors
-/// (`from`, `new_unchecked`, `as_ptr`, `as_ref`, `as_mut`). `as_ptr_range` /
-/// `as_mut_ptr_range` are excluded because they return a `Range` of two
-/// pointers rather than a single pointer.
-pub fn is_as_ptr(name: &str) -> bool {
-    (name.contains("::as_ptr") && !name.ends_with("::as_ptr_range"))
-        || name.ends_with("::into_raw")
-        || (name.contains("::as_mut_ptr") && !name.ends_with("::as_mut_ptr_range"))
-        || name.ends_with("::into_raw_mut")
-        || (name.contains("::cast") && !name.contains("::cast_to"))
-        || (name.contains("ptr::non_null")
-            && (name.ends_with("::from")
-                || name.ends_with("::new_unchecked")
-                || name.ends_with("::as_ref")
-                || name.ends_with("::as_mut")))
+/// Whether `callee` produces a raw pointer (or `NonNull`) alias of its first
+/// argument: `as_ptr`/`as_mut_ptr`, `into_raw`, and pointer `cast` (incl.
+/// `cast_mut`/`cast_const`). `as_ptr_range`/`as_mut_ptr_range` are excluded
+/// because they return a `Range` of two pointers rather than a single pointer;
+/// `NonNull::new_unchecked`/`as_ref`/`as_mut` are excluded because they do not
+/// produce a raw pointer (and `new_unchecked` must not mark its result
+/// non-null, or it would hide `new_unchecked(null)` unsoundness).
+pub fn is_as_ptr(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::contains(
+        &[
+            crate::def_id::slice_as_ptr(),
+            crate::def_id::slice_as_mut_ptr(),
+            crate::def_id::str_as_ptr(),
+            crate::def_id::str_as_mut_ptr(),
+            crate::def_id::vec_as_ptr(),
+            crate::def_id::vec_as_mut_ptr(),
+            crate::def_id::cstr_as_ptr(),
+            crate::def_id::nonnull_as_ptr(),
+            crate::def_id::const_ptr_slice_as_ptr(),
+            crate::def_id::mut_ptr_slice_as_mut_ptr(),
+            crate::def_id::nonnull_slice_as_mut_ptr(),
+            crate::def_id::box_as_ptr(),
+            crate::def_id::box_as_mut_ptr(),
+            crate::def_id::maybe_uninit_as_ptr(),
+            crate::def_id::maybe_uninit_as_mut_ptr(),
+            crate::def_id::arc_as_ptr(),
+            crate::def_id::rc_as_ptr(),
+            crate::def_id::const_ptr_cast(),
+            crate::def_id::const_ptr_cast_mut(),
+            crate::def_id::mut_ptr_cast(),
+            crate::def_id::mut_ptr_cast_const(),
+            crate::def_id::nonnull_cast(),
+            crate::def_id::box_into_raw(),
+            crate::def_id::cstring_into_raw(),
+            crate::def_id::arc_into_raw(),
+            crate::def_id::rc_into_raw(),
+        ],
+        callee,
+    )
 }
 
 // ── Pointer arithmetic ────────────────────────────────────────────
@@ -82,47 +106,91 @@ pub fn is_as_ptr(name: &str) -> bool {
 /// Element-strided `add`/`wrapping_add` and signed `offset`/`wrapping_offset`
 /// (stride = `size_of::<T>()`). `offset_from`/`offset_from_unsigned` are *not*
 /// matched (they subtract two pointers into an `isize`).
-pub(crate) fn is_element_ptr_add(name: &str) -> bool {
-    name.ends_with("::add")
-        || name.ends_with("::wrapping_add")
-        || name.ends_with("::offset")
-        || name.ends_with("::wrapping_offset")
+pub(crate) fn is_element_ptr_add(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::contains(
+        &[
+            crate::def_id::const_ptr_add(),
+            crate::def_id::const_ptr_wrapping_add(),
+            crate::def_id::const_ptr_offset(),
+            crate::def_id::const_ptr_wrapping_offset(),
+            crate::def_id::mut_ptr_add(),
+            crate::def_id::mut_ptr_wrapping_add(),
+            crate::def_id::mut_ptr_offset(),
+            crate::def_id::mut_ptr_wrapping_offset(),
+            crate::def_id::nonnull_add(),
+            crate::def_id::nonnull_offset(),
+        ],
+        callee,
+    )
 }
 
 /// Element-strided `sub`/`wrapping_sub` (stride = `size_of::<T>()`).
-pub(crate) fn is_element_ptr_sub(name: &str) -> bool {
-    name.ends_with("::sub") || name.ends_with("::wrapping_sub")
+pub(crate) fn is_element_ptr_sub(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::contains(
+        &[
+            crate::def_id::const_ptr_sub(),
+            crate::def_id::const_ptr_wrapping_sub(),
+            crate::def_id::mut_ptr_sub(),
+            crate::def_id::mut_ptr_wrapping_sub(),
+            crate::def_id::nonnull_sub(),
+        ],
+        callee,
+    )
 }
 
 /// Byte-granular `byte_add`/`wrapping_byte_add` and signed
 /// `byte_offset`/`wrapping_byte_offset` (stride 1).
-pub(crate) fn is_byte_ptr_add(name: &str) -> bool {
-    name.contains("::byte_add")
-        || name.contains("::wrapping_byte_add")
-        || name.contains("::byte_offset")
-        || name.contains("::wrapping_byte_offset")
+pub(crate) fn is_byte_ptr_add(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::contains(
+        &[
+            crate::def_id::const_ptr_byte_add(),
+            crate::def_id::const_ptr_wrapping_byte_add(),
+            crate::def_id::const_ptr_byte_offset(),
+            crate::def_id::const_ptr_wrapping_byte_offset(),
+            crate::def_id::mut_ptr_byte_add(),
+            crate::def_id::mut_ptr_wrapping_byte_add(),
+            crate::def_id::mut_ptr_byte_offset(),
+            crate::def_id::mut_ptr_wrapping_byte_offset(),
+            crate::def_id::nonnull_byte_add(),
+            crate::def_id::nonnull_byte_offset(),
+        ],
+        callee,
+    )
 }
 
 /// Byte-granular `byte_sub`/`wrapping_byte_sub` (stride 1).
-pub(crate) fn is_byte_ptr_sub(name: &str) -> bool {
-    name.contains("::byte_sub") || name.contains("::wrapping_byte_sub")
+pub(crate) fn is_byte_ptr_sub(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::contains(
+        &[
+            crate::def_id::const_ptr_byte_sub(),
+            crate::def_id::const_ptr_wrapping_byte_sub(),
+            crate::def_id::mut_ptr_byte_sub(),
+            crate::def_id::mut_ptr_wrapping_byte_sub(),
+            crate::def_id::nonnull_byte_sub(),
+        ],
+        callee,
+    )
 }
 
 /// Any pointer `add` (element or byte). `offset`/`byte_offset` take a signed
 /// `isize`, so a negative offset is still classified here (the sign lives in
 /// the argument); see [`is_pointer_sub`] for the positive-count `sub` family.
-pub fn is_pointer_add(name: &str) -> bool {
-    is_element_ptr_add(name) || is_byte_ptr_add(name)
+pub fn is_pointer_add(callee: Option<DefId>) -> bool {
+    is_element_ptr_add(callee) || is_byte_ptr_add(callee)
 }
 
 /// Any pointer `sub` (element or byte): a positive count, `base - count * stride`.
-pub fn is_pointer_sub(name: &str) -> bool {
-    is_element_ptr_sub(name) || is_byte_ptr_sub(name)
+pub fn is_pointer_sub(callee: Option<DefId>) -> bool {
+    is_element_ptr_sub(callee) || is_byte_ptr_sub(callee)
 }
 
 /// Any byte-granular pointer arithmetic (stride 1), regardless of direction.
-pub fn is_byte_ptr_arith(name: &str) -> bool {
-    is_byte_ptr_add(name) || is_byte_ptr_sub(name)
+pub fn is_byte_ptr_arith(callee: Option<DefId>) -> bool {
+    is_byte_ptr_add(callee) || is_byte_ptr_sub(callee)
 }
 
 // ── Layout constants ──────────────────────────────────────────────
@@ -248,7 +316,13 @@ pub fn is_mem_copy_or_write(callee: Option<DefId>) -> bool {
 
 // ── Queries and unwrap ────────────────────────────────────────────
 
+/// Whether `name` is a `len` query. Kept name-based: the std-challenge test
+/// suites re-implement slice/`Vec`-like types under their own names, and the
+/// VM must model those local `len` methods too (a `DefId`-only matcher would
+/// inline them and lose the length abstraction).
 pub fn is_len(name: &str) -> bool { name.contains("::len") }
+
+/// Whether `name` is a `capacity` query.
 pub fn is_capacity(name: &str) -> bool { name.contains("::capacity") }
 
 pub fn is_unwrap(callee: Option<DefId>) -> bool {

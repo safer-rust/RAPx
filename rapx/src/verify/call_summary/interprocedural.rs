@@ -24,7 +24,7 @@ use super::CallEffect;
 /// approximation (taking a reference is not a pure copy) but is adequate for
 /// wrapper recognition.
 fn trace_to_callee_arg<'tcx>(
-    tcx: TyCtxt<'tcx>,
+    _tcx: TyCtxt<'tcx>,
     body: &rustc_middle::mir::Body<'tcx>,
     operand: &Operand<'_>,
 ) -> Option<usize> {
@@ -82,15 +82,15 @@ fn trace_to_callee_arg<'tcx>(
             if destination.local != current {
                 continue;
             }
-            let name = helpers::call_name(tcx, func);
             // Trace through pointer-preserving calls: `as_ptr`/`as_mut_ptr`
             // (and friends) return the pointee address, while `add`/`sub`/
             // `offset` return the base pointer shifted by an offset — the
             // provenance (and thus the written-through arg) is carried by
             // their first (base/receiver) argument.
-            let traces_base = crate::helpers::api_classify::is_as_ptr(&name)
-                || crate::helpers::api_classify::is_pointer_add(&name)
-                || crate::helpers::api_classify::is_pointer_sub(&name);
+            let callee = helpers::dep_callee_def_id(func);
+            let traces_base = crate::helpers::api_classify::is_as_ptr(callee)
+                || crate::helpers::api_classify::is_pointer_add(callee)
+                || crate::helpers::api_classify::is_pointer_sub(callee);
             if !traces_base {
                 continue;
             }
@@ -141,9 +141,9 @@ pub(super) fn try_pointer_arith_wrapper_effect<'tcx>(
             continue;
         };
 
-        let name = helpers::call_name(tcx, func);
-        let is_add = crate::helpers::api_classify::is_pointer_add(&name);
-        let is_sub = crate::helpers::api_classify::is_pointer_sub(&name);
+        let callee_id = helpers::dep_callee_def_id(func);
+        let is_add = crate::helpers::api_classify::is_pointer_add(callee_id);
+        let is_sub = crate::helpers::api_classify::is_pointer_sub(callee_id);
 
         let inner_effect = if !is_add && !is_sub {
             helpers::dep_callee_def_id(func).and_then(|inner_callee| {
@@ -202,7 +202,7 @@ pub(super) fn try_pointer_arith_wrapper_effect<'tcx>(
 
         let base_arg = trace_to_callee_arg(tcx, body, &args.get(0)?.node)?;
         let offset_arg = trace_to_callee_arg(tcx, body, &args.get(1)?.node)?;
-        let stride = if crate::helpers::api_classify::is_byte_ptr_arith(&name) {
+        let stride = if crate::helpers::api_classify::is_byte_ptr_arith(callee_id) {
             Some(1)
         } else {
             helpers::destination_stride(tcx, callee, Some(call_dest.local))
@@ -234,8 +234,9 @@ pub(super) fn callee_contains_pointer_arithmetic(tcx: TyCtxt<'_>, callee: DefId)
     for bb in body.basic_blocks.iter() {
         let Some(terminator) = &bb.terminator else { continue };
         let TerminatorKind::Call { func, .. } = &terminator.kind else { continue };
-        let name = helpers::call_name(tcx, func);
-        if crate::helpers::api_classify::is_pointer_add(&name) || crate::helpers::api_classify::is_pointer_sub(&name) {
+        if crate::helpers::api_classify::is_pointer_add(helpers::dep_callee_def_id(func))
+            || crate::helpers::api_classify::is_pointer_sub(helpers::dep_callee_def_id(func))
+        {
             return true;
         }
     }
