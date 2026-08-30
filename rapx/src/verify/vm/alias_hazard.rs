@@ -97,15 +97,15 @@ pub(super) fn alias_producer(callee: DefId, name: &str) -> Option<AliasProducer>
         return Some(AliasProducer::View(HazardKind::UniqueView));
     }
     if name.contains("from_raw_parts") || name.contains("from_parts") || name.contains("from_ptr") {
-        if crate::helpers::api_classify::is_vec_ownership_transfer(name) {
+        if crate::verify::api_classify::is_vec_ownership_transfer(callee) {
             return Some(AliasProducer::OwnershipTransfer);
         }
         return Some(AliasProducer::View(HazardKind::SharedView));
     }
-    if crate::helpers::api_classify::is_ownership_transfer(Some(callee)) {
+    if crate::verify::api_classify::is_ownership_transfer(Some(callee)) {
         return Some(AliasProducer::OwnershipTransfer);
     }
-    if crate::helpers::api_classify::is_ptr_read(Some(callee)) {
+    if crate::verify::api_classify::is_ptr_read(Some(callee)) {
         return Some(AliasProducer::ReadMemory);
     }
     None
@@ -774,8 +774,8 @@ fn local_hazard_violation_with(
                     ..
                 } = &terminator.kind
                 {
-                    let name = crate::helpers::mir_utils::call_name(tcx, func);
-                    if crate::helpers::api_classify::is_from_raw_parts(&name) && args.len() >= 1 {
+                    let callee = crate::helpers::mir_utils::dep_callee_def_id(func);
+                    if crate::verify::api_classify::is_from_raw_parts(callee) && args.len() >= 1 {
                         if let Some(ptr_place) = operand_place(&args[0].node) {
                             let offset_eq = is_ptr_add_offset_eq(
                                 tcx,
@@ -1039,7 +1039,7 @@ fn terminator_writes_origin<'tcx>(
         return false;
     };
     let callee = crate::helpers::mir_utils::dep_callee_def_id(func);
-    if !crate::helpers::api_classify::is_ptr_write(callee) {
+    if !crate::verify::api_classify::is_ptr_write(callee) {
         return false;
     }
     let Some(arg0) = args.first() else {
@@ -1077,7 +1077,7 @@ fn terminator_is_benign_origin_use<'tcx>(_tcx: TyCtxt<'tcx>, terminator: &Termin
     let TerminatorKind::Call { func, .. } = terminator else {
         return true;
     };
-    crate::helpers::api_classify::is_benign_origin_use(
+    crate::verify::api_classify::is_benign_origin_use(
         crate::helpers::mir_utils::dep_callee_def_id(func),
     )
 }
@@ -1091,7 +1091,7 @@ fn terminator_invalidates_vec_owner<'tcx>(
     let TerminatorKind::Call { func, args, .. } = terminator else {
         return false;
     };
-    if !crate::helpers::api_classify::is_vec_invalidating_method(
+    if !crate::verify::api_classify::is_vec_invalidating_method(
         crate::helpers::mir_utils::dep_callee_def_id(func),
     ) {
         return false;
@@ -1132,7 +1132,7 @@ fn find_as_ptr_receivers(
         else {
             continue;
         };
-        if !crate::helpers::api_classify::is_as_ptr(crate::helpers::mir_utils::dep_callee_def_id(func)) {
+        if !crate::verify::api_classify::is_as_ptr(crate::helpers::mir_utils::dep_callee_def_id(func)) {
             continue;
         }
         let destination_key = PlaceKey {
@@ -1186,7 +1186,7 @@ fn is_ptr_add_offset_eq(
             if ptr_key != *ptr_place {
                 continue;
             }
-            if crate::helpers::api_classify::is_pointer_add(crate::helpers::mir_utils::dep_callee_def_id(func))
+            if crate::verify::api_classify::is_pointer_add(crate::helpers::mir_utils::dep_callee_def_id(func))
                 && args.len() >= 2
             {
                 if let Some(offset_place) = operand_place(&args[1].node) {
@@ -1212,7 +1212,7 @@ fn is_ptr_from_ptr_add(tcx: TyCtxt<'_>, caller: DefId, ptr_place: &PlaceKey) -> 
             if ptr_key != *ptr_place {
                 continue;
             }
-            return crate::helpers::api_classify::is_pointer_add(crate::helpers::mir_utils::dep_callee_def_id(func));
+            return crate::verify::api_classify::is_pointer_add(crate::helpers::mir_utils::dep_callee_def_id(func));
         }
     }
     false
@@ -1430,7 +1430,7 @@ fn places_holding_transferred_pointer(
             if !killed.contains(&call_destination.local)
                 && holders.iter().any(|h| destination_key.overlaps(h))
             {
-                if crate::helpers::api_classify::is_as_ptr(crate::helpers::mir_utils::dep_callee_def_id(func))
+                if crate::verify::api_classify::is_as_ptr(crate::helpers::mir_utils::dep_callee_def_id(func))
                     && let Some(arg) = args.first()
                     && let Operand::Copy(place) | Operand::Move(place) = &arg.node
                     && !killed.contains(&place.local)
@@ -1545,7 +1545,7 @@ fn terminator_returns_ownership(
     let TerminatorKind::Call { func, args, .. } = terminator else {
         return false;
     };
-    if !crate::helpers::api_classify::is_ownership_return(
+    if !crate::verify::api_classify::is_ownership_return(
         crate::helpers::mir_utils::dep_callee_def_id(func),
     ) {
         return false;

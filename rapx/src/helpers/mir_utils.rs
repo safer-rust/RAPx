@@ -649,38 +649,6 @@ pub fn pointee_alignment<'tcx>(
     Some((0, format!("{pointee:?}")))
 }
 
-/// Element type of a `from_raw_parts` result: `&[T]`/`*[T]`/`Vec<T>` yield `T`;
-/// other types (including `String`) return `None`.
-pub fn from_raw_parts_elem_ty<'tcx>(
-    tcx: TyCtxt<'tcx>, caller: DefId, dest: Option<Local>,
-) -> Option<Ty<'tcx>> {
-    let d = dest?;
-    let ty = tcx.optimized_mir(caller).local_decls[d].ty;
-    match ty.kind() {
-        TyKind::Ref(_, inner, _) => match inner.kind() {
-            TyKind::Slice(e) => Some(*e),
-            _ => None,
-        },
-        TyKind::RawPtr(inner, _) => match inner.kind() {
-            TyKind::Slice(e) => Some(*e),
-            _ => None,
-        },
-        TyKind::Adt(..) => vec_elem_ty(tcx, ty),
-        _ => None,
-    }
-}
-
-/// Element size of a `from_raw_parts` result. Covers `&[T]`/`*[T]` (borrowed
-/// slice) and `Vec<T>` (owned); `String` and unknown layouts fall back to 1
-/// (`String`'s element is `u8`, so 1 is correct).
-pub fn from_raw_parts_elem_size<'tcx>(
-    tcx: TyCtxt<'tcx>, caller: DefId, dest: Option<Local>,
-) -> u64 {
-    from_raw_parts_elem_ty(tcx, caller, dest)
-        .and_then(|e| type_layout(tcx, caller, e).map(|(_, s)| s))
-        .unwrap_or(1)
-}
-
 // ── Constant scalar / byte-string extraction ───────────────────
 
 /// Parse an integer from a MIR constant's `Debug` text. Handles decimal,
@@ -867,16 +835,6 @@ pub fn field_ty<'tcx>(
     field.ty(tcx, args).skip_norm_wip()
 }
 
-/// Element type of a `Vec<T>`, if `ty` is a `Vec`.
-pub fn vec_elem_ty<'tcx>(_tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<Ty<'tcx>> {
-    if let TyKind::Adt(adt_def, substs) = ty.kind() {
-        if crate::helpers::api_classify::is_std_vec(adt_def.did()) {
-            return substs.first().and_then(|s| s.as_type());
-        }
-    }
-    None
-}
-
 /// Whether `def_id` is a single-field struct wrapping a raw pointer (i.e.
 /// `NonNull`-shaped).  Used by alias/ownership reasoning to recognize pointer
 /// wrappers — including local re-implementations — by their structure rather
@@ -949,8 +907,8 @@ pub fn min_align_of_generic_param<'tcx>(tcx: TyCtxt<'tcx>, caller: DefId, ty: Ty
         .unwrap_or(0)
 }
 
-/// Follow a `parents` map (built by [`body_parents`]) from `start` to its root
-/// local, guarding against cycles.
+/// Follow a `parents` map (built by `verify::property_checker::cstr`'s
+/// `body_parents`) from `start` to its root local, guarding against cycles.
 pub fn follow_parents(parents: &FxHashMap<Local, Local>, start: Local) -> Local {
     let mut current = start;
     let mut seen = std::collections::HashSet::new();
@@ -995,57 +953,6 @@ pub fn resolve_through_casts<'tcx>(body: &Body<'tcx>, local: Local) -> Local {
         }
     }
     current
-}
-
-/// Build a `local -> source` map for `Use`/`Cast`/`Ref`/`RawPtr`/`CopyForDeref`
-/// assignments and `as_ptr` calls.
-pub fn body_parents<'tcx>(
-    _tcx: TyCtxt<'tcx>,
-    body: &Body<'tcx>,
-) -> FxHashMap<Local, Local> {
-    let mut parents: FxHashMap<Local, Local> = Default::default();
-    for data in body.basic_blocks.iter() {
-        for statement in &data.statements {
-            let StatementKind::Assign(assign) = &statement.kind else {
-                continue;
-            };
-            let (target, rvalue) = assign.as_ref();
-            let source = match rvalue {
-                Rvalue::Use(Operand::Copy(place) | Operand::Move(place), ..)
-                | Rvalue::Cast(_, Operand::Copy(place) | Operand::Move(place), _)
-                | Rvalue::Ref(_, _, place)
-                | Rvalue::RawPtr(_, place)
-                | Rvalue::CopyForDeref(place) => Some(place.local),
-                _ => None,
-            };
-            if let Some(source) = source {
-                parents.entry(target.local).or_insert(source);
-            }
-        }
-        let Some(terminator) = &data.terminator else {
-            continue;
-        };
-        let TerminatorKind::Call {
-            func,
-            args,
-            destination,
-            ..
-        } = &terminator.kind
-        else {
-            continue;
-        };
-        if !crate::helpers::api_classify::is_as_ptr(dep_callee_def_id(func)) {
-            continue;
-        }
-        let Some(source) = args.first().and_then(|arg| match &arg.node {
-            Operand::Copy(place) | Operand::Move(place) => Some(place.local),
-            _ => None,
-        }) else {
-            continue;
-        };
-        parents.entry(destination.local).or_insert(source);
-    }
-    parents
 }
 
 // ── Constant byte recovery from MIR ─────────────────────────────

@@ -88,9 +88,9 @@ fn trace_to_callee_arg<'tcx>(
             // provenance (and thus the written-through arg) is carried by
             // their first (base/receiver) argument.
             let callee = helpers::dep_callee_def_id(func);
-            let traces_base = crate::helpers::api_classify::is_as_ptr(callee)
-                || crate::helpers::api_classify::is_pointer_add(callee)
-                || crate::helpers::api_classify::is_pointer_sub(callee);
+            let traces_base = crate::verify::api_classify::is_as_ptr(callee)
+                || crate::verify::api_classify::is_pointer_add(callee)
+                || crate::verify::api_classify::is_pointer_sub(callee);
             if !traces_base {
                 continue;
             }
@@ -142,8 +142,8 @@ pub(super) fn try_pointer_arith_wrapper_effect<'tcx>(
         };
 
         let callee_id = helpers::dep_callee_def_id(func);
-        let is_add = crate::helpers::api_classify::is_pointer_add(callee_id);
-        let is_sub = crate::helpers::api_classify::is_pointer_sub(callee_id);
+        let is_add = crate::verify::api_classify::is_pointer_add(callee_id);
+        let is_sub = crate::verify::api_classify::is_pointer_sub(callee_id);
 
         let inner_effect = if !is_add && !is_sub {
             helpers::dep_callee_def_id(func).and_then(|inner_callee| {
@@ -202,7 +202,7 @@ pub(super) fn try_pointer_arith_wrapper_effect<'tcx>(
 
         let base_arg = trace_to_callee_arg(tcx, body, &args.get(0)?.node)?;
         let offset_arg = trace_to_callee_arg(tcx, body, &args.get(1)?.node)?;
-        let stride = if crate::helpers::api_classify::is_byte_ptr_arith(callee_id) {
+        let stride = if crate::verify::api_classify::is_byte_ptr_arith(callee_id) {
             Some(1)
         } else {
             helpers::destination_stride(tcx, callee, Some(call_dest.local))
@@ -234,8 +234,8 @@ pub(super) fn callee_contains_pointer_arithmetic(tcx: TyCtxt<'_>, callee: DefId)
     for bb in body.basic_blocks.iter() {
         let Some(terminator) = &bb.terminator else { continue };
         let TerminatorKind::Call { func, .. } = &terminator.kind else { continue };
-        if crate::helpers::api_classify::is_pointer_add(helpers::dep_callee_def_id(func))
-            || crate::helpers::api_classify::is_pointer_sub(helpers::dep_callee_def_id(func))
+        if crate::verify::api_classify::is_pointer_add(helpers::dep_callee_def_id(func))
+            || crate::verify::api_classify::is_pointer_sub(helpers::dep_callee_def_id(func))
         {
             return true;
         }
@@ -288,8 +288,8 @@ pub(super) fn try_from_raw_parts_wrapper_effect<'tcx>(
             func, args, destination: call_dest, ..
         } = &terminator.kind else { continue };
 
-        let name = helpers::call_name(tcx, func);
-        if !crate::helpers::api_classify::is_from_raw_parts(&name) {
+        let inner_callee = helpers::dep_callee_def_id(func);
+        if !crate::verify::api_classify::is_from_raw_parts(inner_callee) {
             continue;
         }
 
@@ -304,7 +304,7 @@ pub(super) fn try_from_raw_parts_wrapper_effect<'tcx>(
 
         // Determine element size from return type (slice or Vec).
         let elem_size =
-            crate::helpers::mir_utils::from_raw_parts_elem_size(tcx, callee, Some(ret));
+            crate::verify::call_summary::from_raw_parts_elem_size(tcx, callee, Some(ret));
 
         return Some(CallEffect::ReturnFreshAllocation {
             pointer_arg,
@@ -527,7 +527,7 @@ fn write_args_on_path<'tcx>(
         };
 
         // `ptr::write`-style writes: trace the pointer arg to a callee arg.
-        if crate::helpers::api_classify::is_ptr_write(helpers::dep_callee_def_id(func)) {
+        if crate::verify::api_classify::is_ptr_write(helpers::dep_callee_def_id(func)) {
             if let Some(pointer_arg) = args
                 .first()
                 .and_then(|arg| trace_to_callee_arg(tcx, body, &arg.node))

@@ -387,7 +387,7 @@ impl PropertyChecker {
                 && matches!(value.ty.kind(), TyKind::RawPtr(..))
                 && !vm_state.alloc(id).dead
             {
-                if crate::helpers::api_classify::is_mem_copy_or_write(checkpoint.callee) {
+                if crate::verify::api_classify::is_mem_copy_or_write(checkpoint.callee) {
                     return CheckResult::Proved;
                 }
             }

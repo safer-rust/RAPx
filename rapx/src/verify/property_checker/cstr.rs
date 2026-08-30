@@ -1,16 +1,67 @@
 //! ValidCStr property checking for the symbolic VM.
 
-use rustc_middle::mir::{Local, Operand, Rvalue, StatementKind};
+use rustc_middle::mir::{Body, Local, Operand, Rvalue, StatementKind, TerminatorKind};
 use z3::{Solver, ast::{Ast, Int}};
 
+use crate::compat::FxHashMap;
+use crate::helpers::mir_utils::dep_callee_def_id;
 use crate::verify::{
     contract::{ContractExpr, Property, PropertyArg},
     report::CheckResult,
 };
+use crate::verify::api_classify::is_as_ptr;
 use crate::helpers::mir_scan::Checkpoint;
 use crate::verify::vm::state::{AllocId, VmState};
 
 use super::PropertyChecker;
+
+/// Build a `local -> source` map for `Use`/`Cast`/`Ref`/`RawPtr`/`CopyForDeref`
+/// assignments and `as_ptr` calls.
+fn body_parents(body: &Body<'_>) -> FxHashMap<Local, Local> {
+    let mut parents: FxHashMap<Local, Local> = Default::default();
+    for data in body.basic_blocks.iter() {
+        for statement in &data.statements {
+            let StatementKind::Assign(assign) = &statement.kind else {
+                continue;
+            };
+            let (target, rvalue) = assign.as_ref();
+            let source = match rvalue {
+                Rvalue::Use(Operand::Copy(place) | Operand::Move(place), ..)
+                | Rvalue::Cast(_, Operand::Copy(place) | Operand::Move(place), _)
+                | Rvalue::Ref(_, _, place)
+                | Rvalue::RawPtr(_, place)
+                | Rvalue::CopyForDeref(place) => Some(place.local),
+                _ => None,
+            };
+            if let Some(source) = source {
+                parents.entry(target.local).or_insert(source);
+            }
+        }
+        let Some(terminator) = &data.terminator else {
+            continue;
+        };
+        let TerminatorKind::Call {
+            func,
+            args,
+            destination,
+            ..
+        } = &terminator.kind
+        else {
+            continue;
+        };
+        if !is_as_ptr(dep_callee_def_id(func)) {
+            continue;
+        }
+        let Some(source) = args.first().and_then(|arg| match &arg.node {
+            Operand::Copy(place) | Operand::Move(place) => Some(place.local),
+            _ => None,
+        }) else {
+            continue;
+        };
+        parents.entry(destination.local).or_insert(source);
+    }
+    parents
+}
 
 impl PropertyChecker {
     // ── check_valid_cstr ───────────────────────────────────────
@@ -88,7 +139,7 @@ impl PropertyChecker {
         // 4. Fallback: if the constructor requires strict NUL-termination
         //    (from_bytes_with_nul_unchecked, from_vec_with_nul_unchecked)
         //    and we can't verify all bytes, return Unknown.
-        let is_strict = crate::helpers::api_classify::is_cstr_unchecked_constructor(checkpoint.callee);
+        let is_strict = crate::verify::api_classify::is_cstr_unchecked_constructor(checkpoint.callee);
         if is_strict {
             CheckResult::Unknown
         } else {
@@ -252,10 +303,9 @@ impl PropertyChecker {
             _ => None,
         })?;
         let body = vm_state.body;
-        let tcx = vm_state.tcx;
 
         // Build parent map (same as legacy)
-        let parents = crate::helpers::mir_utils::body_parents(tcx, body);
+        let parents = body_parents(body);
         let root = crate::helpers::mir_utils::resolve_through_casts(
             body,
             crate::helpers::mir_utils::follow_parents(&parents, target_local),

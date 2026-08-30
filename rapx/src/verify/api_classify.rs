@@ -5,27 +5,16 @@
 //! the alias/hazard scanner, and the call-summary registry — use these to pick
 //! a modelling strategy or discharge a safety obligation.
 //!
-//! # Two matching mechanisms
+//! # Matching mechanism
 //!
-//! A classifier takes either a `DefId` or a name string, depending on what it
-//! targets:
-//!
-//! - **`fn(Option<DefId>) -> bool`** — for a *closed* set of well-known
-//!   `std`/`core`/`alloc` items that [`crate::def_id`] can resolve (e.g.
-//!   [`is_ptr_read`], [`is_unwrap`], [`is_maybe_uninit_assume_init`]). These
-//!   match the callee `DefId` exactly via [`crate::def_id::contains`] and avoid
-//!   the false positives of substring matching.
-//! - **`fn(&str) -> bool`** — kept name-based when the target is not a closed
-//!   set of resolvable items, or when the match must also cover the
-//!   std-challenge test suites' *re-implementations* of std types under the
-//!   same names: generic query names ([`is_len`], [`is_capacity`]), APIs that
-//!   `rustc_public` does not emit as `fn_def` ([`is_from_raw_parts`], since
-//!   `Vec::from_raw_parts` cannot be resolved to a `DefId`), and the ADT
-//!   *type*-name classifiers at the bottom ([`is_std_vec`], [`is_std_box`],
-//!   …).
-//!
-//! Prefer the `DefId` form for any new closed-set classifier; use the name
-//! form only when the set is open-ended or unresolvable.
+//! Every classifier takes a `DefId` — `fn(Option<DefId>) -> bool` for callee
+//! matching, or `fn(DefId) -> bool` for ADT *type* matching — and answers via
+//! exact set membership in [`crate::def_id`] rather than substring-matching a
+//! `def_path_str`. [`crate::def_id`] resolves the well-known `std`/`core`/`alloc`
+//! items (by lang/diagnostic item, explicit path, or — for the open-ended
+//! groups and the std-challenge suites' local re-implementations — by
+//! name-scanning `fn_defs()` at init), so a call site is matched by identity
+//! without the false positives of per-call-site name matching.
 
 use rustc_hir::def_id::DefId;
 
@@ -316,14 +305,20 @@ pub fn is_mem_copy_or_write(callee: Option<DefId>) -> bool {
 
 // ── Queries and unwrap ────────────────────────────────────────────
 
-/// Whether `name` is a `len` query. Kept name-based: the std-challenge test
-/// suites re-implement slice/`Vec`-like types under their own names, and the
-/// VM must model those local `len` methods too (a `DefId`-only matcher would
-/// inline them and lose the length abstraction).
-pub fn is_len(name: &str) -> bool { name.contains("::len") }
+/// Whether `callee` is a `len` query method. Matched by `DefId` via
+/// [`crate::def_id::len_fns`], which resolves every `::len` `fn_def` in the std
+/// crates *and* the local crate — so the std-challenge suites' re-implemented
+/// `len` methods are modelled too, without substring-matching a `def_path_str`.
+pub fn is_len(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::len_fns().contains(&callee)
+}
 
-/// Whether `name` is a `capacity` query.
-pub fn is_capacity(name: &str) -> bool { name.contains("::capacity") }
+/// Whether `callee` is a `capacity` query method.
+pub fn is_capacity(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::capacity_fns().contains(&callee)
+}
 
 pub fn is_unwrap(callee: Option<DefId>) -> bool {
     let Some(callee) = callee else { return false };
@@ -344,11 +339,14 @@ pub fn is_unwrap(callee: Option<DefId>) -> bool {
 
 // ── Slice / C-string ──────────────────────────────────────────────
 
-/// Whether `name` is a `from_raw_parts` constructor (`slice`/`str`/`ptr`/
-/// `String`/`Vec`/`NonNull`).  Kept name-based because `Vec::from_raw_parts`
-/// is not emitted as a `fn_def` in `rustc_public`, so it cannot be resolved to
-/// a `DefId` by [`crate::def_id`].
-pub fn is_from_raw_parts(name: &str) -> bool { name.contains("::from_raw_parts") }
+/// Whether `callee` is a `from_raw_parts` constructor (`slice`/`str`/`ptr`/
+/// `String`/`Vec`/`NonNull`). Matched by `DefId` via
+/// [`crate::def_id::from_raw_parts_fns`] (resolved from `fn_defs()`, including
+/// local re-implementations), instead of substring-matching `def_path_str`.
+pub fn is_from_raw_parts(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::from_raw_parts_fns().contains(&callee)
+}
 pub fn is_cstr_from_ptr(callee: Option<DefId>) -> bool {
     let Some(callee) = callee else { return false };
     crate::def_id::contains(&[crate::def_id::cstr_from_ptr()], callee)
@@ -395,10 +393,11 @@ pub fn is_vec_from_box(callee: Option<DefId>) -> bool {
         callee,
     )
 }
-/// `Vec::with_capacity` — `#[inline]` const fn, not emitted by `fn_defs()`.
-pub fn is_vec_with_capacity(name: &str) -> bool {
-    (name.contains("::Vec::") && name.ends_with("::with_capacity"))
-        || name == "with_capacity"
+/// `Vec::with_capacity` — matched by `DefId` via
+/// [`crate::def_id::with_capacity_fns`].
+pub fn is_vec_with_capacity(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::with_capacity_fns().contains(&callee)
 }
 pub fn is_into_boxed_slice(callee: Option<DefId>) -> bool {
     let Some(callee) = callee else { return false };
@@ -410,8 +409,7 @@ pub fn is_into_boxed_slice(callee: Option<DefId>) -> bool {
 // alias/hazard scanner. Note: `is_ownership_transfer` is *not* the same as
 // [`is_ownership_reconstruction`]: it also matches `Vec::from_raw_parts` /
 // `from_parts` (ownership transfer) — handled separately by
-// [`is_vec_ownership_transfer`] because `Vec::from_raw_parts` is not resolvable
-// via [`crate::def_id`] — but not `from_vec_with_nul_unchecked`.
+// [`is_vec_ownership_transfer`] — but not `from_vec_with_nul_unchecked`.
 
 pub fn is_ownership_transfer(callee: Option<DefId>) -> bool {
     let Some(callee) = callee else { return false };
@@ -429,9 +427,8 @@ pub fn is_ownership_transfer(callee: Option<DefId>) -> bool {
     )
 }
 
-pub fn is_vec_ownership_transfer(name: &str) -> bool {
-    (name.contains("from_raw_parts") || name.contains("from_parts"))
-        && (name.contains("Vec") || name.contains("vec::"))
+pub fn is_vec_ownership_transfer(callee: DefId) -> bool {
+    crate::def_id::vec_ownership_transfer_fns().contains(&callee)
 }
 
 /// Whether `callee` is `NonNull::new` (the null-checked constructor).
@@ -540,8 +537,103 @@ pub fn is_std_cstring(def_id: DefId) -> bool {
 pub fn is_std_nonnull(def_id: DefId) -> bool {
     crate::def_id::nonnull_types().contains(&def_id)
 }
-pub fn is_std_iter_or_itermut(name: &str) -> bool {
-    name.ends_with("::Iter") || name == "Iter"
-        || name.ends_with("::IterMut") || name == "IterMut"
+pub fn is_std_iter_or_itermut(def_id: DefId) -> bool {
+    crate::def_id::iter_types().contains(&def_id)
 }
-pub fn is_std_ordering(name: &str) -> bool { name.ends_with("cmp::Ordering") }
+pub fn is_std_ordering(def_id: DefId) -> bool {
+    crate::def_id::ordering_types().contains(&def_id)
+}
+
+// ── Arithmetic / collection-operation classifiers ─────────────────
+// Matched by `DefId` via [`crate::def_id::OP_FNS`] (resolved from `fn_defs()`).
+// These were previously name-based in the call-summary registry; see
+// [`crate::def_id`] for the exact method-name patterns each group collects.
+
+pub fn is_min_like(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::min_like_fns().contains(&callee)
+}
+pub fn is_max(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::max_fns().contains(&callee)
+}
+pub fn is_clamp(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::clamp_fns().contains(&callee)
+}
+pub fn is_abs(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::abs_fns().contains(&callee)
+}
+pub fn is_neg(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::neg_fns().contains(&callee)
+}
+pub fn is_sat_unchecked_add(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::sat_unchecked_add_fns().contains(&callee)
+}
+pub fn is_sat_unchecked_mul(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::sat_unchecked_mul_fns().contains(&callee)
+}
+pub fn is_checked_add(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::checked_add_fns().contains(&callee)
+}
+pub fn is_checked_mul(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::checked_mul_fns().contains(&callee)
+}
+pub fn is_overflowing_abs_neg(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::overflowing_nz_fns().contains(&callee)
+}
+pub fn is_bit_preserving_nz(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::bit_preserving_nz_fns().contains(&callee)
+}
+pub fn is_checked_nonzero_iff(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::checked_nonzero_iff_fns().contains(&callee)
+}
+pub fn is_checked_next_pow2(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::checked_next_pow2_fns().contains(&callee)
+}
+pub fn is_layout_align(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::layout_align_fns().contains(&callee)
+}
+pub fn is_split_at(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::split_at_fns().contains(&callee)
+}
+
+// ── Open-ended operation classifiers ──────────────────────────────
+// These match the std-challenge suites' local `_ext` re-implementations and
+// generic trait-method patterns. They cannot be tied to a *closed* hard-coded
+// set, so they are resolved by name-scanning `fn_defs()` in [`crate::def_id`]
+// (which also collects the local crate's re-implementations) and matched by
+// `DefId` like the other classifiers.
+
+pub fn is_align_to_local(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::align_to_local_fns().contains(&callee)
+}
+pub fn is_into_iter_local(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::into_iter_local_fns().contains(&callee)
+}
+pub fn is_iter_position(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::iter_position_fns().contains(&callee)
+}
+pub fn is_strlen(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::strlen_fns().contains(&callee)
+}
+pub fn is_slice_get_unchecked(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::slice_get_unchecked_fns().contains(&callee)
+}

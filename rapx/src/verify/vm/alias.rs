@@ -13,7 +13,7 @@ use crate::verify::{
 };
 use super::alias_hazard::{self, AliasProducer, HazardKind};
 use crate::helpers::mir_scan::Checkpoint;
-use crate::helpers::api_classify;
+use crate::verify::api_classify;
 use crate::analysis::alias::collect_local_origins;
 
 use super::state::{VmState, VmValue};

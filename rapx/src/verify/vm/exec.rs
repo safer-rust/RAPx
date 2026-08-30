@@ -26,7 +26,7 @@ use crate::{
 
 use super::state::{AllocId, InlineFrame, Provenance, VmState, VmValue, ValueInvariants};
 
-use crate::helpers::api_classify;
+use crate::verify::api_classify;
 
 impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     /// Execute all retained MIR items in path order.
@@ -1774,8 +1774,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     .or_else(|| self.local_value(place.local).cloned());
                 if let Some(ref pv) = place_val {
                     if let rustc_middle::ty::TyKind::Adt(adt_def, _) = pv.ty.kind() {
-                        let def_path = self.tcx.def_path_str(adt_def.did());
-                        if api_classify::is_std_ordering(&def_path) && adt_def.is_enum() {
+                        if api_classify::is_std_ordering(adt_def.did()) && adt_def.is_enum() {
                             let one = Int::from_u64(self.ctx, 1);
                             let discr_minus_one = Int::sub(self.ctx, &[&term, &one]);
                             self.path_conditions.push(pv.term._eq(&discr_minus_one));
@@ -2917,8 +2916,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         let is_iter = match arg_val.ty.kind() {
             TyKind::Ref(_, pointee, _) => match pointee.kind() {
                 TyKind::Adt(adt_def, _) => {
-                    let name = self.tcx.def_path_str(adt_def.did());
-                    api_classify::is_std_iter_or_itermut(&name)
+                    api_classify::is_std_iter_or_itermut(adt_def.did())
                 }
                 _ => false,
             },
@@ -2966,8 +2964,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         let is_iter = match local_val.ty.kind() {
             rustc_middle::ty::TyKind::Ref(_, pointee, _) => match pointee.kind() {
                 rustc_middle::ty::TyKind::Adt(adt_def, _) => {
-                    let name = self.tcx.def_path_str(adt_def.did());
-                    api_classify::is_std_iter_or_itermut(&name)
+                    api_classify::is_std_iter_or_itermut(adt_def.did())
                 }
                 _ => false,
             },

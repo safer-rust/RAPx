@@ -4,6 +4,7 @@
 //! targets and contracts, extract SCC-aware paths, slice them backward, execute
 //! the relevant MIR symbolically, and discharge each property with Z3.
 
+pub(crate) mod api_classify;
 pub(crate) mod call_summary;
 pub(crate) mod contract;
 pub(crate) mod def_use;

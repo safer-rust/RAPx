@@ -18,7 +18,7 @@ use crate::compat::{FxHashSet, Spanned};
 use crate::verify::call_summary::{self, CallEffect};
 use crate::verify::def_use::{PlaceBaseKey, PlaceKey};
 use crate::helpers::mir_utils::operand_place;
-use crate::helpers::api_classify;
+use crate::verify::api_classify;
 
 use super::state::{AllocId, Provenance, VmState, VmValue, ValueInvariants};
 
@@ -133,8 +133,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             let dest_ty = self.body.local_decls[destination].ty;
             let term = self.fresh_int(&format!("callret_{}", destination.as_usize()));
             if let TyKind::Adt(adt_def, _) = dest_ty.kind() {
-                let path = self.tcx.def_path_str(adt_def.did());
-                if api_classify::is_std_ordering(&path) {
+                if api_classify::is_std_ordering(adt_def.did()) {
                     let minus_one = Int::from_i64(self.ctx, -1);
                     let one = Int::from_i64(self.ctx, 1);
                     self.path_conditions.push(term.ge(&minus_one));
@@ -1721,12 +1720,12 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         // For locally-created Vec-like types: create a heap data
                         // allocation on first mutation. (Param Vecs already have
                         // an external allocation set by init_parameters.)
-                        let is_vec = crate::helpers::api_classify::is_vec_push(self.last_call_callee);
+                        let is_vec = crate::verify::api_classify::is_vec_push(self.last_call_callee);
                         let is_external = self.alloc(prov.alloc_id).is_external;
                         if is_vec && !is_external {
                             let elem_ty = match arg_val.ty.kind() {
-                                TyKind::Ref(_, inner, _) | TyKind::RawPtr(inner, _) => crate::helpers::mir_utils::vec_elem_ty(self.tcx, *inner),
-                                _ => crate::helpers::mir_utils::vec_elem_ty(self.tcx, arg_val.ty),
+                                TyKind::Ref(_, inner, _) | TyKind::RawPtr(inner, _) => crate::verify::call_summary::vec_elem_ty(self.tcx, *inner),
+                                _ => crate::verify::call_summary::vec_elem_ty(self.tcx, arg_val.ty),
                             };
                             let heap_align = elem_ty.map(|ty| self.align_of_ty(ty)).unwrap_or(1).max(1);
                             if let Some(old_data) = self.alloc(prov.alloc_id).slice_data {
@@ -1797,7 +1796,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         let max = Int::from_u64(self.ctx, i64::MAX as u64);
                         self.allocate_external(max, 1, None)
                     } else {
-                        let elem_ty = crate::helpers::mir_utils::from_raw_parts_elem_ty(
+                        let elem_ty = crate::verify::call_summary::from_raw_parts_elem_ty(
                             self.tcx, self.caller_def_id, Some(dest),
                         );
                         let heap_align =
@@ -1848,7 +1847,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     let elem_sz = Int::from_u64(self.ctx, *elem_size);
                     let total = Int::mul(self.ctx, &[&size_val.term, &elem_sz]);
                     let dest_ty = self.body.local_decls[dest].ty;
-                    let elem_ty = crate::helpers::mir_utils::vec_elem_ty(self.tcx, dest_ty);
+                    let elem_ty = crate::verify::call_summary::vec_elem_ty(self.tcx, dest_ty);
                     let heap_align = elem_ty.map(|ty| self.align_of_ty(ty)).unwrap_or(1).max(1);
                     let (alloc_id, base) = self.allocate_external(total, heap_align, elem_ty);
                     let dest_alloc_id = self.local_alloc_ids.get(&dest).copied();
@@ -1878,7 +1877,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 // Box→Vec conversion (into_vec, box_assume_init_into_vec_unsafe).
                 self.ensure_local_allocation(dest);
                 let dest_ty = self.body.local_decls[dest].ty;
-                let elem_ty = crate::helpers::mir_utils::vec_elem_ty(self.tcx, dest_ty);
+                let elem_ty = crate::verify::call_summary::vec_elem_ty(self.tcx, dest_ty);
                 let heap_align = elem_ty.map(|ty| self.align_of_ty(ty)).unwrap_or(1).max(1);
                 let max = Int::from_u64(self.ctx, i64::MAX as u64);
                 let (alloc_id, base) = self.allocate_external(max, heap_align, elem_ty);
@@ -2157,8 +2156,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         match arg_val.ty.kind() {
             TyKind::Ref(_, pointee, _) => match pointee.kind() {
                 TyKind::Adt(adt_def, _) => {
-                    let name = self.tcx.def_path_str(adt_def.did());
-                    if api_classify::is_std_iter_or_itermut(&name) {
+                    if api_classify::is_std_iter_or_itermut(adt_def.did()) {
                         // Find the local holding the iterator by matching the
                         // reference's address term against known local addresses
                         // (`&mut _iter` has term `addr__iter`).  A hardcoded

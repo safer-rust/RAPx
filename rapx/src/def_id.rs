@@ -2,7 +2,7 @@
 //! internal [`DefId`]s.
 //!
 //! This module is the single home for "which standard-library item is this
-//! `DefId`?", used by [`crate::helpers::api_classify`] and the alias checker to
+//! `DefId`?", used by [`crate::verify::api_classify`] and the alias checker to
 //! match APIs exactly instead of substring-matching a `def_path_str`.  It is
 //! deliberately placed at the crate root (next to [`crate::compat`]) rather
 //! than under `helpers/`, because it owns global state and a one-time
@@ -30,9 +30,6 @@
 //!
 //! # Limitations
 //!
-//! - Not every std item is emitted by `rustc_public::Crate::fn_defs()` (e.g.
-//!   `Vec::from_raw_parts`), so some APIs cannot be resolved here and must
-//!   keep a name matcher — see `api_classify::is_from_raw_parts`.
 //! - In `#![no_std]` builds some intrinsics are absent; [`init`] only warns
 //!   (`rap_warn!`) instead of panicking, so an entry with no matching path
 //!   simply yields `None`.
@@ -54,8 +51,8 @@ struct Intrinsics {
 static TYPES: OnceLock<Types> = OnceLock::new();
 
 /// Resolved `DefId`s of well-known std *types* (ADTs), used by the ADT
-/// type-name classifiers ([`crate::helpers::api_classify::is_std_box`],
-/// [`crate::helpers::api_classify::is_std_vec`], …).  Each entry collects the
+/// type-name classifiers ([`crate::verify::api_classify::is_std_box`],
+/// [`crate::verify::api_classify::is_std_vec`], …).  Each entry collects the
 /// std type's `DefId` (via lang/diagnostic item, or — for `NonNull`, which has
 /// neither — by name-scanning the std crates' `adts()`) *and* any same-named
 /// re-implementations in the local crate (the std-challenge suites re-implement
@@ -65,11 +62,14 @@ struct Types {
     cstring_types: Vec<DefId>,
     vec_types: Vec<DefId>,
     nonnull_types: Vec<DefId>,
+    ordering_types: Vec<DefId>,
+    iter_types: Vec<DefId>,
 }
 
 pub fn init(tcx: TyCtxt) {
     INIT.get_or_init(|| init_inner(tcx));
     TYPES.get_or_init(|| init_types(tcx));
+    METHODS.get_or_init(|| init_methods(tcx));
 }
 
 fn init_types(tcx: TyCtxt) -> Types {
@@ -78,6 +78,8 @@ fn init_types(tcx: TyCtxt) -> Types {
         cstring_types: Vec::new(),
         vec_types: Vec::new(),
         nonnull_types: Vec::new(),
+        ordering_types: Vec::new(),
+        iter_types: Vec::new(),
     };
 
     // Real std types via diagnostic/lang items (`NonNull` only before rustc
@@ -85,21 +87,74 @@ fn init_types(tcx: TyCtxt) -> Types {
     types.box_types.extend(tcx.lang_items().owned_box());
     types.cstring_types.extend(tcx.get_diagnostic_item(sym::cstring_type));
     types.vec_types.extend(tcx.get_diagnostic_item(sym::Vec));
-    #[cfg(not(rapx_has_public_adts))]
-    types.nonnull_types.extend(tcx.get_diagnostic_item(sym::NonNull));
+    // `core::cmp::Ordering` is `#[lang = "Ordering"]`.
+    types.ordering_types.extend(tcx.lang_items().ordering_enum());
 
-    // Real `NonNull` on newer toolchains (it became `#[lang = "non_null"]`,
-    // which has no `LangItem` variant): scan the std crates' ADTs by name.
+    // `core::slice::Iter` is `#[rustc_diagnostic_item = "SliceIter"]` on older
+    // toolchains (the item was dropped once `adts()` became available, so only
+    // referenced when `adts()` is absent). `slice::IterMut` has no diagnostic
+    // item, so resolve it from the self type of its `fn_defs()`-emitted methods.
+    #[cfg(not(rapx_has_public_adts))]
+    {
+        types.iter_types.extend(tcx.get_diagnostic_item(sym::SliceIter));
+        types.nonnull_types.extend(tcx.get_diagnostic_item(sym::NonNull));
+
+        for krate in rustc_public::external_crates()
+            .into_iter()
+            .filter(|k| ["core", "std", "alloc"].iter().any(|n| *n == k.name))
+        {
+            for fn_def in krate.fn_defs() {
+                let name = fn_def.name();
+                if !name.contains("::IterMut::") {
+                    continue;
+                }
+                let did = rustc_internal::internal(tcx, fn_def.def_id());
+                if let Some(adt_did) = assoc_self_adt_did(tcx, did) {
+                    types.iter_types.push(adt_did);
+                }
+            }
+        }
+    }
+
+    // Same-named re-implementations in the local crate (the std-challenge
+    // suites re-implement `NonNull`/`Iter`/`IterMut`). Scan local ADTs by name
+    // via `iter_local_def_id`, which works on every toolchain.
+    for local_did in tcx.iter_local_def_id() {
+        let did = local_did.to_def_id();
+        if !matches!(
+            tcx.def_kind(did),
+            rustc_hir::def::DefKind::Struct | rustc_hir::def::DefKind::Enum | rustc_hir::def::DefKind::Union
+        ) {
+            continue;
+        }
+        let name = tcx.def_path_str(did);
+        if name.ends_with("::Iter") || name == "Iter"
+            || name.ends_with("::IterMut") || name == "IterMut"
+        {
+            types.iter_types.push(did);
+        }
+        if name.ends_with("::NonNull") || name == "NonNull" {
+            types.nonnull_types.push(did);
+        }
+    }
+
+    // External std ADTs with neither a lang nor a diagnostic item: `NonNull`
+    // on newer toolchains (it became `#[lang = "non_null"]`, which has no
+    // `LangItem` variant) and `slice::Iter`/`IterMut` (no diagnostic item).
+    // Resolve by name-scanning the std crates' `adts()`.
     #[cfg(rapx_has_public_adts)]
     {
-        for krate in std::iter::once(rustc_public::local_crate())
-            .chain(rustc_public::external_crates())
+        for krate in rustc_public::external_crates()
+            .into_iter()
             .filter(|k| ["core", "std", "alloc"].iter().any(|n| *n == k.name))
         {
             for adt in krate.adts() {
                 let name = adt.name();
                 if name.ends_with("::NonNull") {
                     types.nonnull_types.push(rustc_internal::internal(tcx, adt.def_id()));
+                }
+                if name.ends_with("::Iter") || name.ends_with("::IterMut") {
+                    types.iter_types.push(rustc_internal::internal(tcx, adt.def_id()));
                 }
             }
         }
@@ -126,6 +181,315 @@ pub fn vec_types() -> &'static [DefId] {
 /// `core::ptr::NonNull` (and any local `NonNull` re-implementation).
 pub fn nonnull_types() -> &'static [DefId] {
     &TYPES.get().expect("Type DefIds haven't been initialized.").nonnull_types
+}
+
+/// `core::cmp::Ordering`.
+pub fn ordering_types() -> &'static [DefId] {
+    &TYPES.get().expect("Type DefIds haven't been initialized.").ordering_types
+}
+
+/// `core::slice::Iter` / `core::slice::IterMut` (the two-field `ptr`/`end`
+/// slice iterators, plus any local re-implementation).
+pub fn iter_types() -> &'static [DefId] {
+    &TYPES.get().expect("Type DefIds haven't been initialized.").iter_types
+}
+
+/// Resolved `DefId`s of std *methods* that are matched by *generic name* rather
+/// than a fixed `intrinsics!` path (e.g. `len`, `capacity`, `::abs`,
+/// `::checked_add`, `::split_at`, `Iterator::position`, …). Each group collects
+/// every `fn_def` — from the std crates *and* the local crate (the
+/// std-challenge suites re-implement `Vec`/slice-like types and their methods) —
+/// whose name matches the group's pattern. Callers match a call-site `DefId`
+/// against these sets via [`contains`].
+static METHODS: OnceLock<Methods> = OnceLock::new();
+
+struct Methods {
+    len_fns: Vec<DefId>,
+    capacity_fns: Vec<DefId>,
+    from_raw_parts_fns: Vec<DefId>,
+    with_capacity_fns: Vec<DefId>,
+    vec_ownership_transfer_fns: Vec<DefId>,
+    min_like: Vec<DefId>,
+    max: Vec<DefId>,
+    clamp: Vec<DefId>,
+    abs: Vec<DefId>,
+    neg: Vec<DefId>,
+    sat_unchecked_add: Vec<DefId>,
+    sat_unchecked_mul: Vec<DefId>,
+    checked_add: Vec<DefId>,
+    checked_mul: Vec<DefId>,
+    overflowing_nz: Vec<DefId>,
+    bit_preserving_nz: Vec<DefId>,
+    checked_nonzero_iff: Vec<DefId>,
+    checked_next_pow2: Vec<DefId>,
+    layout_align: Vec<DefId>,
+    split_at: Vec<DefId>,
+    align_to_local: Vec<DefId>,
+    into_iter_local: Vec<DefId>,
+    iter_position: Vec<DefId>,
+    strlen: Vec<DefId>,
+    slice_get_unchecked: Vec<DefId>,
+}
+
+fn init_methods(tcx: TyCtxt) -> Methods {
+    let mut methods = Methods {
+        len_fns: Vec::new(),
+        capacity_fns: Vec::new(),
+        from_raw_parts_fns: Vec::new(),
+        with_capacity_fns: Vec::new(),
+        vec_ownership_transfer_fns: Vec::new(),
+        min_like: Vec::new(),
+        max: Vec::new(),
+        clamp: Vec::new(),
+        abs: Vec::new(),
+        neg: Vec::new(),
+        sat_unchecked_add: Vec::new(),
+        sat_unchecked_mul: Vec::new(),
+        checked_add: Vec::new(),
+        checked_mul: Vec::new(),
+        overflowing_nz: Vec::new(),
+        bit_preserving_nz: Vec::new(),
+        checked_nonzero_iff: Vec::new(),
+        checked_next_pow2: Vec::new(),
+        layout_align: Vec::new(),
+        split_at: Vec::new(),
+        align_to_local: Vec::new(),
+        into_iter_local: Vec::new(),
+        iter_position: Vec::new(),
+        strlen: Vec::new(),
+        slice_get_unchecked: Vec::new(),
+    };
+
+    for krate in std::iter::once(rustc_public::local_crate())
+        .chain(rustc_public::external_crates())
+        .filter(|k| k.is_local || ["core", "std", "alloc"].iter().any(|n| *n == k.name))
+    {
+        for fn_def in krate.fn_defs() {
+            let name = fn_def.name();
+            let did = rustc_internal::internal(tcx, fn_def.def_id());
+
+            if name.ends_with("::len") {
+                methods.len_fns.push(did);
+            }
+            if name.ends_with("::capacity") {
+                methods.capacity_fns.push(did);
+            }
+            if name.ends_with("::from_raw_parts") || name.ends_with("::from_raw_parts_mut") {
+                methods.from_raw_parts_fns.push(did);
+            }
+            if name.ends_with("::with_capacity") && name.contains("::Vec::") {
+                methods.with_capacity_fns.push(did);
+            }
+            if (name.ends_with("::from_raw_parts") || name.ends_with("::from_parts"))
+                && (name.contains("Vec") || name.contains("vec::"))
+            {
+                methods.vec_ownership_transfer_fns.push(did);
+            }
+
+            if ((name.contains("::cmp::min") || name.contains("::Ord::min"))
+                && !name.contains("min_by"))
+                || name.ends_with("::midpoint")
+            {
+                methods.min_like.push(did);
+            }
+            if (name.contains("::cmp::max") || name.contains("::Ord::max"))
+                && !name.contains("max_by")
+            {
+                methods.max.push(did);
+            }
+            if name.ends_with("::clamp") {
+                methods.clamp.push(did);
+            }
+            if name.ends_with("::abs")
+                || name.ends_with("::saturating_abs")
+                || name.ends_with("::wrapping_abs")
+                || name.ends_with("::unsigned_abs")
+            {
+                methods.abs.push(did);
+            }
+            if name.ends_with("::neg")
+                || name.ends_with("::wrapping_neg")
+                || name.ends_with("::saturating_neg")
+            {
+                methods.neg.push(did);
+            }
+            if name.ends_with("::saturating_add") || name.ends_with("::unchecked_add") {
+                methods.sat_unchecked_add.push(did);
+            }
+            if name.ends_with("::saturating_mul") || name.ends_with("::unchecked_mul") {
+                methods.sat_unchecked_mul.push(did);
+            }
+            if name.ends_with("::checked_add") {
+                methods.checked_add.push(did);
+            }
+            if name.ends_with("::checked_mul") {
+                methods.checked_mul.push(did);
+            }
+            if name.ends_with("::overflowing_abs") || name.ends_with("::overflowing_neg") {
+                methods.overflowing_nz.push(did);
+            }
+            if name.contains("::rotate_left")
+                || name.contains("::rotate_right")
+                || name.contains("::swap_bytes")
+                || name.contains("::reverse_bits")
+                || name.contains("::from_be")
+                || name.contains("::from_le")
+                || name.contains("::to_be")
+                || name.contains("::to_le")
+                || name.contains("::count_ones")
+                || name.contains("::isqrt")
+                || name.contains("::saturating_pow")
+            {
+                methods.bit_preserving_nz.push(did);
+            }
+            if name.ends_with("::checked_pow")
+                || name.ends_with("::checked_abs")
+                || name.ends_with("::checked_neg")
+            {
+                methods.checked_nonzero_iff.push(did);
+            }
+            if name.ends_with("::checked_next_power_of_two") {
+                methods.checked_next_pow2.push(did);
+            }
+            if name.ends_with("Layout::align") {
+                methods.layout_align.push(did);
+            }
+            if name.contains("::split_at") {
+                methods.split_at.push(did);
+            }
+            if name.ends_with("align_to_ext") || name.ends_with("align_to_mut_ext") {
+                methods.align_to_local.push(did);
+            }
+            if (name.contains("into_iter")
+                && (name.contains("IntoIterator") || name.contains("slice::into_iter")))
+                || name.contains("slice::<impl [T]>::iter")
+            {
+                methods.into_iter_local.push(did);
+            }
+            if name.contains("Iterator::position")
+                || name.contains("Iterator::find")
+                || name.contains("Iterator::rposition")
+            {
+                methods.iter_position.push(did);
+            }
+            if name == "strlen" || name.ends_with("::strlen") {
+                methods.strlen.push(did);
+            }
+            if (name.contains("::get_unchecked") || name.contains("::get_unchecked_mut"))
+                && (name.contains("::SliceIndex")
+                    || name.contains("::<impl [T]>::get_unchecked")
+                    || name.contains("::mut_ptr::get_unchecked")
+                    || name.contains("::const_ptr::get_unchecked"))
+            {
+                methods.slice_get_unchecked.push(did);
+            }
+        }
+    }
+
+    methods
+}
+
+/// `len` query methods (`slice::len`, `str::len`, `Vec::len`, `String::len`,
+/// pointer-slice `len`, and any local re-implementation).
+pub fn len_fns() -> &'static [DefId] {
+    &METHODS.get().expect("Method DefIds haven't been initialized.").len_fns
+}
+
+/// `capacity` query methods (`Vec::capacity` and local re-implementations).
+pub fn capacity_fns() -> &'static [DefId] {
+    &METHODS.get().expect("Method DefIds haven't been initialized.").capacity_fns
+}
+
+/// `from_raw_parts` constructors (`slice`/`str`/`ptr`/`NonNull`/`Vec`/`String`
+/// and local re-implementations).
+pub fn from_raw_parts_fns() -> &'static [DefId] {
+    &METHODS.get().expect("Method DefIds haven't been initialized.").from_raw_parts_fns
+}
+
+/// `Vec::with_capacity` (and local re-implementations).
+pub fn with_capacity_fns() -> &'static [DefId] {
+    &METHODS.get().expect("Method DefIds haven't been initialized.").with_capacity_fns
+}
+
+/// `Vec::from_raw_parts` / `Vec::from_parts` (ownership transfer into a `Vec`).
+pub fn vec_ownership_transfer_fns() -> &'static [DefId] {
+    &METHODS
+        .get()
+        .expect("Method DefIds haven't been initialized.")
+        .vec_ownership_transfer_fns
+}
+
+/// The ADT `DefId` that `def_id`'s associated function belongs to (the impl's
+/// `self` type), used to resolve an ADT that has no lang/diagnostic item from
+/// one of its emitted methods (e.g. `slice::IterMut`).
+#[cfg(not(rapx_has_public_adts))]
+fn assoc_self_adt_did(tcx: TyCtxt, def_id: DefId) -> Option<DefId> {
+    let ty = crate::helpers::name::get_struct_self_ty(tcx, def_id)?;
+    match ty.kind() {
+        rustc_middle::ty::TyKind::Adt(adt, _) => Some(adt.did()),
+        _ => None,
+    }
+}
+
+pub fn min_like_fns() -> &'static [DefId] {
+    &METHODS.get().expect("Method DefIds haven't been initialized.").min_like
+}
+pub fn max_fns() -> &'static [DefId] {
+    &METHODS.get().expect("Method DefIds haven't been initialized.").max
+}
+pub fn clamp_fns() -> &'static [DefId] {
+    &METHODS.get().expect("Method DefIds haven't been initialized.").clamp
+}
+pub fn abs_fns() -> &'static [DefId] {
+    &METHODS.get().expect("Method DefIds haven't been initialized.").abs
+}
+pub fn neg_fns() -> &'static [DefId] {
+    &METHODS.get().expect("Method DefIds haven't been initialized.").neg
+}
+pub fn sat_unchecked_add_fns() -> &'static [DefId] {
+    &METHODS.get().expect("Method DefIds haven't been initialized.").sat_unchecked_add
+}
+pub fn sat_unchecked_mul_fns() -> &'static [DefId] {
+    &METHODS.get().expect("Method DefIds haven't been initialized.").sat_unchecked_mul
+}
+pub fn checked_add_fns() -> &'static [DefId] {
+    &METHODS.get().expect("Method DefIds haven't been initialized.").checked_add
+}
+pub fn checked_mul_fns() -> &'static [DefId] {
+    &METHODS.get().expect("Method DefIds haven't been initialized.").checked_mul
+}
+pub fn overflowing_nz_fns() -> &'static [DefId] {
+    &METHODS.get().expect("Method DefIds haven't been initialized.").overflowing_nz
+}
+pub fn bit_preserving_nz_fns() -> &'static [DefId] {
+    &METHODS.get().expect("Method DefIds haven't been initialized.").bit_preserving_nz
+}
+pub fn checked_nonzero_iff_fns() -> &'static [DefId] {
+    &METHODS.get().expect("Method DefIds haven't been initialized.").checked_nonzero_iff
+}
+pub fn checked_next_pow2_fns() -> &'static [DefId] {
+    &METHODS.get().expect("Method DefIds haven't been initialized.").checked_next_pow2
+}
+pub fn layout_align_fns() -> &'static [DefId] {
+    &METHODS.get().expect("Method DefIds haven't been initialized.").layout_align
+}
+pub fn split_at_fns() -> &'static [DefId] {
+    &METHODS.get().expect("Method DefIds haven't been initialized.").split_at
+}
+pub fn align_to_local_fns() -> &'static [DefId] {
+    &METHODS.get().expect("Method DefIds haven't been initialized.").align_to_local
+}
+pub fn into_iter_local_fns() -> &'static [DefId] {
+    &METHODS.get().expect("Method DefIds haven't been initialized.").into_iter_local
+}
+pub fn iter_position_fns() -> &'static [DefId] {
+    &METHODS.get().expect("Method DefIds haven't been initialized.").iter_position
+}
+pub fn strlen_fns() -> &'static [DefId] {
+    &METHODS.get().expect("Method DefIds haven't been initialized.").strlen
+}
+pub fn slice_get_unchecked_fns() -> &'static [DefId] {
+    &METHODS.get().expect("Method DefIds haven't been initialized.").slice_get_unchecked
 }
 
 fn init_inner(tcx: TyCtxt) -> Intrinsics {

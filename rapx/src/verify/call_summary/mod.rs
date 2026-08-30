@@ -14,10 +14,11 @@ pub(crate) mod interprocedural;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{Local, Operand},
-    ty::{TyCtxt, TyKind},
+    ty::{Ty, TyCtxt, TyKind},
 };
 
 use crate::helpers::mir_utils;
+use crate::verify::api_classify::is_std_vec;
 
 /// Dependency summary consumed by the backward visitor.
 #[derive(Clone, Debug)]
@@ -364,5 +365,52 @@ fn transparent_deref_peel<'tcx>(tcx: TyCtxt<'tcx>, func: &Operand<'tcx>) -> Opti
     } else {
         None
     }
+}
+
+// ── Collection element-size helpers ──────────────────────────────
+// Used by [`builtin_models`] and the VM to size `from_raw_parts`/`Vec`
+// results; moved here from `helpers::mir_utils` because they depend on the
+// [`crate::verify::api_classify`] classifiers.
+
+/// Element type of a `Vec<T>`, if `ty` is a `Vec`.
+pub(crate) fn vec_elem_ty<'tcx>(_tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<Ty<'tcx>> {
+    if let TyKind::Adt(adt_def, substs) = ty.kind() {
+        if is_std_vec(adt_def.did()) {
+            return substs.first().and_then(|s| s.as_type());
+        }
+    }
+    None
+}
+
+/// Element type of a `from_raw_parts` result: `&[T]`/`*[T]`/`Vec<T>` yield `T`;
+/// other types (including `String`) return `None`.
+pub(crate) fn from_raw_parts_elem_ty<'tcx>(
+    tcx: TyCtxt<'tcx>, caller: DefId, dest: Option<Local>,
+) -> Option<Ty<'tcx>> {
+    let d = dest?;
+    let ty = tcx.optimized_mir(caller).local_decls[d].ty;
+    match ty.kind() {
+        TyKind::Ref(_, inner, _) => match inner.kind() {
+            TyKind::Slice(e) => Some(*e),
+            _ => None,
+        },
+        TyKind::RawPtr(inner, _) => match inner.kind() {
+            TyKind::Slice(e) => Some(*e),
+            _ => None,
+        },
+        TyKind::Adt(..) => vec_elem_ty(tcx, ty),
+        _ => None,
+    }
+}
+
+/// Element size of a `from_raw_parts` result. Covers `&[T]`/`*[T]` (borrowed
+/// slice) and `Vec<T>` (owned); `String` and unknown layouts fall back to 1
+/// (`String`'s element is `u8`, so 1 is correct).
+pub(crate) fn from_raw_parts_elem_size<'tcx>(
+    tcx: TyCtxt<'tcx>, caller: DefId, dest: Option<Local>,
+) -> u64 {
+    from_raw_parts_elem_ty(tcx, caller, dest)
+        .and_then(|e| mir_utils::type_layout(tcx, caller, e).map(|(_, s)| s))
+        .unwrap_or(1)
 }
 
