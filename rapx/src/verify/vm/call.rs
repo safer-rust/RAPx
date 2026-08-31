@@ -1602,26 +1602,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 };
                 self.set_local(dest, val);
             }
-            CallEffect::ReturnCapacityOfArg { arg } => {
-                // `capacity()` is `self.buf.capacity()` (a nested-field call,
-                // not a simple field load), so it is not handled by
-                // `ReturnFieldOfArg`; reconstruct it as `size / elem_size`,
-                // which equals the buffer capacity for a Vec.
-                if let Some(arg_val) = args.get(*arg) {
-                    if self.set_len_from_alloc(arg_val, dest) {
-                        return;
-                    }
-                }
-                let dest_ty = self.body.local_decls[dest].ty;
-                let term = self.fresh_int(&format!("cap_{}", dest.as_usize()));
-                let val = VmValue {
-                    term,
-                    ty: dest_ty,
-                    provenance: None,
-                    invariants: ValueInvariants::default(),
-                };
-                self.set_local(dest, val);
-            }
             CallEffect::ReturnFieldOfArg { arg, field } => {
                 // Read the materialized field `field` of the receiver's pointee
                 // and return it. The field index came from the callee's MIR;
@@ -2660,10 +2640,9 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     }
 
     /// Derive an element count from the backing allocation (`size / elem_size`).
-    /// Used by `ReturnLengthOfArg`, `ReturnCapacityOfArg`, and the fallback in
-    /// `ReturnFieldOfArg` (slices, `&str`, and Vec values whose `{buf{ptr,cap},
-    /// len}` field was not materialized). Returns true when a value was
-    /// produced.
+    /// Used by `ReturnLengthOfArg` and the fallback in `ReturnFieldOfArg`
+    /// (slices, `&str`, and Vec values whose `{buf{ptr,cap}, len}` field was not
+    /// materialized). Returns true when a value was produced.
     fn set_len_from_alloc(&mut self, arg_val: &VmValue<'ctx, 'tcx>, dest: Local) -> bool {
         let effective_alloc_id = arg_val
             .provenance_alloc_id()

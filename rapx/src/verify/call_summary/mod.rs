@@ -101,11 +101,6 @@ pub(crate) enum CallEffect {
     },
     /// The return value is the length of an aggregate argument.
     ReturnLengthOfArg { arg: usize },
-    /// The return value is the capacity (field [0,1]) of a Vec-like aggregate
-    /// argument whose `{buf{ptr,cap}, len}` fields are materialized. Falls back
-    /// to the same `size / elem_size` computation as [`ReturnLengthOfArg`] when
-    /// the `cap` field is not materialized.
-    ReturnCapacityOfArg { arg: usize },
     /// The return value is field `field` of the pointee of argument `arg`
     /// (models `Vec::len` and any `(*self).field` getter; the field index is
     /// derived straight from the callee's MIR).

@@ -338,10 +338,9 @@ pub(super) fn try_from_raw_parts_wrapper_effect<'tcx>(
 /// the function's result. Produces a `ReturnFieldOfArg` effect so the
 /// materialized field is returned, without any name- or length-specific
 /// knowledge.
-/// read direction (no name- or length-specific knowledge).
 ///
-/// As with [`try_field_store_effect`], the match is conservative: the body must
-/// contain *only* the field load (plus a unit-return and storage markers).
+/// The match is conservative: the body must contain *only* the field load
+/// (plus a unit-return and storage markers).
 pub(crate) fn try_field_load_effect(tcx: TyCtxt<'_>, callee: DefId) -> Option<CallEffect> {
     if !tcx.is_mir_available(callee) {
         return None;

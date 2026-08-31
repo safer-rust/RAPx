@@ -91,7 +91,7 @@ static REGISTRY: &[Entry] = &[
     ED!(api_classify::is_maybe_uninit_write, eff_write_mem),
     // ── Slice / collection queries ──────────────────────────────────
     ED!(api_classify::is_len, eff_len),
-    ED!(api_classify::is_capacity, eff_capacity),
+    ED!(api_classify::is_capacity, eff_len),
     ED!(api_classify::is_min_like, eff_cmp_min),
     ED!(api_classify::is_bit_preserving_nz, eff_return_nonzero_iff),
     ED!(
@@ -257,10 +257,6 @@ fn eff_write_mem(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 
 fn eff_len(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     vec![CallEffect::ReturnLengthOfArg { arg: 0 }]
-}
-
-fn eff_capacity(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![CallEffect::ReturnCapacityOfArg { arg: 0 }]
 }
 
 fn eff_cmp_min(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
