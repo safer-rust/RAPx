@@ -415,7 +415,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         arg_values: &[VmValue<'ctx, 'tcx>],
         destination: Local,
     ) -> bool {
-        if !api_classify::is_nonnull(callee) {
+        if !api_classify::is_nonnull_checked_new(callee) {
             return false;
         }
         let Some(ptr) = arg_values.first() else {
@@ -1397,8 +1397,20 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     let mut val = arg_val.clone();
                     let dest_ty = self.body.local_decls[dest].ty;
                     val.ty = dest_ty;
-                    val.invariants.non_null = true;
-                    val.invariants.aligned = true;
+                    // The returned pointer aliases `arg`, so it is non-null
+                    // exactly when the source is. The source is non-null either
+                    // because its value already carries the fact, or by its
+                    // *type*: a reference (`&`/`&mut`) is never null, and
+                    // `NonNull` is non-null by invariant.
+                    let src_non_null = arg_val.invariants.non_null
+                        || matches!(arg_val.ty.kind(), rustc_middle::ty::TyKind::Ref(..))
+                        || matches!(
+                            arg_val.ty.kind(),
+                            rustc_middle::ty::TyKind::Adt(adt, _)
+                                if api_classify::is_std_nonnull(adt.did())
+                        );
+                    val.invariants.non_null = src_non_null;
+                    val.invariants.aligned = arg_val.invariants.aligned;
                     // Pointer-returning APIs expose the backing allocation;
                     // mark it init-accessible for raw pointer types.
                     if matches!(dest_ty.kind(), rustc_middle::ty::TyKind::RawPtr(..)) {
@@ -1419,6 +1431,10 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                                 });
                             }
                         }
+                    }
+                    if src_non_null {
+                        let zero = Int::from_u64(self.ctx, 0);
+                        self.path_conditions.push(val.term._eq(&zero).not());
                     }
                     self.set_local(dest, val);
                 }
@@ -1555,7 +1571,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             CallEffect::ReturnAligned => {
                 if let Some(mut existing) = self.locals.get(&dest).cloned() {
                     existing.invariants.aligned = true;
-                    existing.invariants.non_null = true;
                     self.set_local(dest, existing);
                 } else {
                     let dest_ty = self.body.local_decls[dest].ty;
@@ -1568,7 +1583,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                             provenance: None,
                             invariants: ValueInvariants {
                                 aligned: true,
-                                non_null: true,
                                 ..Default::default()
                             },
                         },
@@ -1977,8 +1991,9 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         // For locally-created Vec-like types: create a heap data
                         // allocation on first mutation. (Param Vecs already have
                         // an external allocation set by init_parameters.)
-                        let is_vec =
-                            crate::verify::api_classify::is_vec_push(self.last_call_callee);
+                        let is_vec = crate::verify::api_classify::is_vec_push_or_reserve(
+                            self.last_call_callee,
+                        );
                         let is_external = self.alloc(prov.alloc_id).is_external;
                         if is_vec && !is_external {
                             let elem_ty = match arg_val.ty.kind() {

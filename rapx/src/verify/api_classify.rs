@@ -20,11 +20,11 @@ use rustc_hir::def_id::DefId;
 
 // ── Ownership reconstruction ──────────────────────────────────────
 
-/// Whether `callee` reconstructs an owned value from a single raw pointer
-/// (`Box::from_raw`, `CString::from_raw`, `Arc::from_raw`, `Rc::from_raw`,
-/// `CString::from_vec_with_nul_unchecked`), taking ownership of the pointed-to
-/// memory. Distinct from [`is_from_raw_parts`], which builds a slice/`Vec`
-/// from `(ptr, len[, cap])`.
+/// Whether `callee` reconstructs an owned value, taking ownership of the
+/// pointed-to memory: from a single raw pointer (`Box::from_raw`,
+/// `CString::from_raw`, `Arc::from_raw`, `Rc::from_raw`) or from a `Vec<u8>`
+/// (`CString::from_vec_with_nul_unchecked`). Distinct from
+/// [`is_from_raw_parts`], which builds a slice/`Vec` from `(ptr, len[, cap])`.
 pub fn is_ownership_reconstruction(callee: Option<DefId>) -> bool {
     let Some(callee) = callee else { return false };
     crate::def_id::contains(
@@ -393,7 +393,7 @@ pub fn is_cstr_unchecked_constructor(callee: Option<DefId>) -> bool {
 
 // ── Vec constructors / methods ────────────────────────────────────
 
-pub fn is_vec_push(callee: Option<DefId>) -> bool {
+pub fn is_vec_push_or_reserve(callee: Option<DefId>) -> bool {
     let Some(callee) = callee else { return false };
     crate::def_id::contains(
         &[
@@ -431,33 +431,28 @@ pub fn is_into_boxed_slice(callee: Option<DefId>) -> bool {
 
 // ── Alias-hazard classification ───────────────────────────────────
 // These are the single home for "what does this raw-pointer API do" used by the
-// alias/hazard scanner. Note: `is_ownership_transfer` is *not* the same as
-// [`is_ownership_reconstruction`]: it also matches `Vec::from_raw_parts` /
-// `from_parts` (ownership transfer) — handled separately by
-// [`is_vec_ownership_transfer`] — but not `from_vec_with_nul_unchecked`.
+// alias/hazard scanner. `is_ownership_transfer` is the raw-pointer subset of
+// [`is_ownership_reconstruction`]: it excludes `from_vec_with_nul_unchecked`
+// (which consumes a `Vec<u8>` rather than a raw pointer). `Vec::from_raw_parts`
+// / `from_parts` ownership transfer is matched separately by
+// [`is_vec_ownership_transfer`].
 
 pub fn is_ownership_transfer(callee: Option<DefId>) -> bool {
     let Some(callee) = callee else { return false };
-    crate::def_id::contains(
-        &[
-            crate::def_id::box_from_raw(),
-            crate::def_id::cstring_from_raw(),
-            crate::def_id::arc_from_raw(),
-            crate::def_id::rc_from_raw(),
-            crate::def_id::box_from_raw_in(),
-            crate::def_id::arc_from_raw_in(),
-            crate::def_id::rc_from_raw_in(),
-        ],
-        callee,
-    )
+    is_ownership_reconstruction(Some(callee))
+        && !crate::def_id::contains(
+            &[crate::def_id::cstring_from_vec_with_nul_unchecked()],
+            callee,
+        )
 }
 
-pub fn is_vec_ownership_transfer(callee: DefId) -> bool {
+pub fn is_vec_ownership_transfer(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
     crate::def_id::vec_ownership_transfer_fns().contains(&callee)
 }
 
 /// Whether `callee` is `NonNull::new` (the null-checked constructor).
-pub(crate) fn is_nonnull(callee: Option<DefId>) -> bool {
+pub(crate) fn is_nonnull_checked_new(callee: Option<DefId>) -> bool {
     let Some(callee) = callee else { return false };
     crate::def_id::contains(&[crate::def_id::nonnull_new()], callee)
 }
@@ -661,4 +656,14 @@ pub fn is_strlen(callee: Option<DefId>) -> bool {
 pub fn is_slice_get_unchecked(callee: Option<DefId>) -> bool {
     let Some(callee) = callee else { return false };
     crate::def_id::slice_get_unchecked_fns().contains(&callee)
+}
+
+/// Whether `callee` is `SliceIndex::get_unchecked`/`get_unchecked_mut` (the
+/// trait method, whose receiver is the *index* and whose first argument is the
+/// slice pointer). Distinct from [`is_slice_get_unchecked`] (the slice-side
+/// methods whose receiver is the slice): the result aliases argument 1, not
+/// argument 0.
+pub fn is_sliceindex_get_unchecked(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::sliceindex_get_unchecked_fns().contains(&callee)
 }

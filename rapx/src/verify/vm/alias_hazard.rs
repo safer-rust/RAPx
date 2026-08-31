@@ -98,7 +98,7 @@ pub(super) fn alias_producer(callee: DefId, name: &str) -> Option<AliasProducer>
         return Some(AliasProducer::View(HazardKind::UniqueView));
     }
     if name.contains("from_raw_parts") || name.contains("from_parts") || name.contains("from_ptr") {
-        if crate::verify::api_classify::is_vec_ownership_transfer(callee) {
+        if crate::verify::api_classify::is_vec_ownership_transfer(Some(callee)) {
             return Some(AliasProducer::OwnershipTransfer);
         }
         return Some(AliasProducer::View(HazardKind::SharedView));

@@ -263,6 +263,7 @@ struct Methods {
     iter_position: Vec<DefId>,
     strlen: Vec<DefId>,
     slice_get_unchecked: Vec<DefId>,
+    sliceindex_get_unchecked: Vec<DefId>,
 }
 
 fn init_methods(tcx: TyCtxt) -> Methods {
@@ -292,6 +293,7 @@ fn init_methods(tcx: TyCtxt) -> Methods {
         iter_position: Vec::new(),
         strlen: Vec::new(),
         slice_get_unchecked: Vec::new(),
+        sliceindex_get_unchecked: Vec::new(),
     };
 
     for krate in std::iter::once(rustc_public::local_crate())
@@ -410,12 +412,16 @@ fn init_methods(tcx: TyCtxt) -> Methods {
                 methods.strlen.push(did);
             }
             if (name.contains("::get_unchecked") || name.contains("::get_unchecked_mut"))
-                && (name.contains("::SliceIndex")
-                    || name.contains("::<impl [T]>::get_unchecked")
+                && (name.contains("::<impl [T]>::get_unchecked")
                     || name.contains("::mut_ptr::get_unchecked")
                     || name.contains("::const_ptr::get_unchecked"))
             {
                 methods.slice_get_unchecked.push(did);
+            }
+            if (name.contains("::get_unchecked") || name.contains("::get_unchecked_mut"))
+                && name.contains("::SliceIndex")
+            {
+                methods.sliceindex_get_unchecked.push(did);
             }
         }
     }
@@ -597,6 +603,12 @@ pub fn slice_get_unchecked_fns() -> &'static [DefId] {
         .expect("Method DefIds haven't been initialized.")
         .slice_get_unchecked
 }
+pub fn sliceindex_get_unchecked_fns() -> &'static [DefId] {
+    &METHODS
+        .get()
+        .expect("Method DefIds haven't been initialized.")
+        .sliceindex_get_unchecked
+}
 
 fn init_inner(tcx: TyCtxt) -> Intrinsics {
     const CRATES: &[&str] = &["core", "std", "alloc"];
@@ -747,10 +759,6 @@ intrinsics! {
         "std::mem::take",
         "core::mem::take"
     ],
-    select_unpredictable: &[
-        "std::intrinsics::select_unpredictable",
-        "core::intrinsics::select_unpredictable"
-    ],
     hint_select_unpredictable: &[
         "std::hint::select_unpredictable",
         "core::hint::select_unpredictable"
@@ -783,6 +791,7 @@ intrinsics! {
         "std::ptr::write_bytes",
         "core::ptr::write_bytes"
     ],
+    // ── Core intrinsics ──
     intrinsics_copy: &[
         "std::intrinsics::copy",
         "core::intrinsics::copy"
@@ -790,6 +799,18 @@ intrinsics! {
     intrinsics_copy_nonoverlapping: &[
         "std::intrinsics::copy_nonoverlapping",
         "core::intrinsics::copy_nonoverlapping"
+    ],
+    intrinsics_size_of: &[
+        "std::intrinsics::size_of",
+        "core::intrinsics::size_of"
+    ],
+    intrinsics_align_of: &[
+        "std::intrinsics::align_of",
+        "core::intrinsics::align_of"
+    ],
+    select_unpredictable: &[
+        "std::intrinsics::select_unpredictable",
+        "core::intrinsics::select_unpredictable"
     ],
     assume_init_read: &[
         "std::mem::MaybeUninit::<T>::assume_init_read",
@@ -846,14 +867,6 @@ intrinsics! {
     mem_align_of: &[
         "std::mem::align_of",
         "core::mem::align_of"
-    ],
-    intrinsics_size_of: &[
-        "std::intrinsics::size_of",
-        "core::intrinsics::size_of"
-    ],
-    intrinsics_align_of: &[
-        "std::intrinsics::align_of",
-        "core::intrinsics::align_of"
     ],
     ptr_align_offset: &[
         "std::ptr::align_offset",
