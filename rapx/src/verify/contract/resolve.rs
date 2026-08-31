@@ -66,7 +66,11 @@ pub(crate) fn parse_contract_expr<'tcx>(
     ContractExpr::Unknown
 }
 
-pub(crate) fn resolve_type_name<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, name: &str) -> Option<Ty<'tcx>> {
+pub(crate) fn resolve_type_name<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def_id: DefId,
+    name: &str,
+) -> Option<Ty<'tcx>> {
     if name == "Self" {
         let sig = tcx.fn_sig(def_id).skip_binder();
         return sig.inputs().skip_binder().first().copied();
@@ -148,8 +152,7 @@ fn parse_const_param<'tcx>(
     let mut generics = Some(tcx.generics_of(def_id));
     while let Some(current) = generics {
         if let Some(param) = current.own_params.iter().find(|param| {
-            matches!(param.kind, GenericParamDefKind::Const { .. })
-                && param.name.as_str() == ident
+            matches!(param.kind, GenericParamDefKind::Const { .. }) && param.name.as_str() == ident
         }) {
             return Some(ContractExpr::ConstParam {
                 index: param.index,
@@ -240,7 +243,9 @@ pub(crate) fn parse_valid_num<'tcx>(
 ) -> Vec<NumericPredicate<'tcx>> {
     match exprs {
         [] => Vec::new(),
-        [expr] => parse_numeric_predicate(tcx, def_id, expr).into_iter().collect(),
+        [expr] => parse_numeric_predicate(tcx, def_id, expr)
+            .into_iter()
+            .collect(),
         [value, range, ..] => {
             if let Some(predicates) = parse_interval_predicates(tcx, def_id, value, range) {
                 predicates

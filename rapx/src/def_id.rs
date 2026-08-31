@@ -85,10 +85,14 @@ fn init_types(tcx: TyCtxt) -> Types {
     // Real std types via diagnostic/lang items (`NonNull` only before rustc
     // 1.100, when it was still a diagnostic item).
     types.box_types.extend(tcx.lang_items().owned_box());
-    types.cstring_types.extend(tcx.get_diagnostic_item(sym::cstring_type));
+    types
+        .cstring_types
+        .extend(tcx.get_diagnostic_item(sym::cstring_type));
     types.vec_types.extend(tcx.get_diagnostic_item(sym::Vec));
     // `core::cmp::Ordering` is `#[lang = "Ordering"]`.
-    types.ordering_types.extend(tcx.lang_items().ordering_enum());
+    types
+        .ordering_types
+        .extend(tcx.lang_items().ordering_enum());
 
     // `core::slice::Iter` is `#[rustc_diagnostic_item = "SliceIter"]` on older
     // toolchains (the item was dropped once `adts()` became available, so only
@@ -96,8 +100,12 @@ fn init_types(tcx: TyCtxt) -> Types {
     // item, so resolve it from the self type of its `fn_defs()`-emitted methods.
     #[cfg(not(rapx_has_public_adts))]
     {
-        types.iter_types.extend(tcx.get_diagnostic_item(sym::SliceIter));
-        types.nonnull_types.extend(tcx.get_diagnostic_item(sym::NonNull));
+        types
+            .iter_types
+            .extend(tcx.get_diagnostic_item(sym::SliceIter));
+        types
+            .nonnull_types
+            .extend(tcx.get_diagnostic_item(sym::NonNull));
 
         for krate in rustc_public::external_crates()
             .into_iter()
@@ -123,13 +131,17 @@ fn init_types(tcx: TyCtxt) -> Types {
         let did = local_did.to_def_id();
         if !matches!(
             tcx.def_kind(did),
-            rustc_hir::def::DefKind::Struct | rustc_hir::def::DefKind::Enum | rustc_hir::def::DefKind::Union
+            rustc_hir::def::DefKind::Struct
+                | rustc_hir::def::DefKind::Enum
+                | rustc_hir::def::DefKind::Union
         ) {
             continue;
         }
         let name = tcx.def_path_str(did);
-        if name.ends_with("::Iter") || name == "Iter"
-            || name.ends_with("::IterMut") || name == "IterMut"
+        if name.ends_with("::Iter")
+            || name == "Iter"
+            || name.ends_with("::IterMut")
+            || name == "IterMut"
         {
             types.iter_types.push(did);
         }
@@ -151,10 +163,14 @@ fn init_types(tcx: TyCtxt) -> Types {
             for adt in krate.adts() {
                 let name = adt.name();
                 if name.ends_with("::NonNull") {
-                    types.nonnull_types.push(rustc_internal::internal(tcx, adt.def_id()));
+                    types
+                        .nonnull_types
+                        .push(rustc_internal::internal(tcx, adt.def_id()));
                 }
                 if name.ends_with("::Iter") || name.ends_with("::IterMut") {
-                    types.iter_types.push(rustc_internal::internal(tcx, adt.def_id()));
+                    types
+                        .iter_types
+                        .push(rustc_internal::internal(tcx, adt.def_id()));
                 }
             }
         }
@@ -165,33 +181,51 @@ fn init_types(tcx: TyCtxt) -> Types {
 
 /// `alloc::boxed::Box` (and any local `Box` re-implementation).
 pub fn box_types() -> &'static [DefId] {
-    &TYPES.get().expect("Type DefIds haven't been initialized.").box_types
+    &TYPES
+        .get()
+        .expect("Type DefIds haven't been initialized.")
+        .box_types
 }
 
 /// `alloc::ffi::CString` (and any local `CString` re-implementation).
 pub fn cstring_types() -> &'static [DefId] {
-    &TYPES.get().expect("Type DefIds haven't been initialized.").cstring_types
+    &TYPES
+        .get()
+        .expect("Type DefIds haven't been initialized.")
+        .cstring_types
 }
 
 /// `alloc::vec::Vec` (and any local `Vec` re-implementation).
 pub fn vec_types() -> &'static [DefId] {
-    &TYPES.get().expect("Type DefIds haven't been initialized.").vec_types
+    &TYPES
+        .get()
+        .expect("Type DefIds haven't been initialized.")
+        .vec_types
 }
 
 /// `core::ptr::NonNull` (and any local `NonNull` re-implementation).
 pub fn nonnull_types() -> &'static [DefId] {
-    &TYPES.get().expect("Type DefIds haven't been initialized.").nonnull_types
+    &TYPES
+        .get()
+        .expect("Type DefIds haven't been initialized.")
+        .nonnull_types
 }
 
 /// `core::cmp::Ordering`.
 pub fn ordering_types() -> &'static [DefId] {
-    &TYPES.get().expect("Type DefIds haven't been initialized.").ordering_types
+    &TYPES
+        .get()
+        .expect("Type DefIds haven't been initialized.")
+        .ordering_types
 }
 
 /// `core::slice::Iter` / `core::slice::IterMut` (the two-field `ptr`/`end`
 /// slice iterators, plus any local re-implementation).
 pub fn iter_types() -> &'static [DefId] {
-    &TYPES.get().expect("Type DefIds haven't been initialized.").iter_types
+    &TYPES
+        .get()
+        .expect("Type DefIds haven't been initialized.")
+        .iter_types
 }
 
 /// Resolved `DefId`s of std *methods* that are matched by *generic name* rather
@@ -392,23 +426,35 @@ fn init_methods(tcx: TyCtxt) -> Methods {
 /// `len` query methods (`slice::len`, `str::len`, `Vec::len`, `String::len`,
 /// pointer-slice `len`, and any local re-implementation).
 pub fn len_fns() -> &'static [DefId] {
-    &METHODS.get().expect("Method DefIds haven't been initialized.").len_fns
+    &METHODS
+        .get()
+        .expect("Method DefIds haven't been initialized.")
+        .len_fns
 }
 
 /// `capacity` query methods (`Vec::capacity` and local re-implementations).
 pub fn capacity_fns() -> &'static [DefId] {
-    &METHODS.get().expect("Method DefIds haven't been initialized.").capacity_fns
+    &METHODS
+        .get()
+        .expect("Method DefIds haven't been initialized.")
+        .capacity_fns
 }
 
 /// `from_raw_parts` constructors (`slice`/`str`/`ptr`/`NonNull`/`Vec`/`String`
 /// and local re-implementations).
 pub fn from_raw_parts_fns() -> &'static [DefId] {
-    &METHODS.get().expect("Method DefIds haven't been initialized.").from_raw_parts_fns
+    &METHODS
+        .get()
+        .expect("Method DefIds haven't been initialized.")
+        .from_raw_parts_fns
 }
 
 /// `Vec::with_capacity` (and local re-implementations).
 pub fn with_capacity_fns() -> &'static [DefId] {
-    &METHODS.get().expect("Method DefIds haven't been initialized.").with_capacity_fns
+    &METHODS
+        .get()
+        .expect("Method DefIds haven't been initialized.")
+        .with_capacity_fns
 }
 
 /// `Vec::from_raw_parts` / `Vec::from_parts` (ownership transfer into a `Vec`).
@@ -432,64 +478,124 @@ fn assoc_self_adt_did(tcx: TyCtxt, def_id: DefId) -> Option<DefId> {
 }
 
 pub fn min_like_fns() -> &'static [DefId] {
-    &METHODS.get().expect("Method DefIds haven't been initialized.").min_like
+    &METHODS
+        .get()
+        .expect("Method DefIds haven't been initialized.")
+        .min_like
 }
 pub fn max_fns() -> &'static [DefId] {
-    &METHODS.get().expect("Method DefIds haven't been initialized.").max
+    &METHODS
+        .get()
+        .expect("Method DefIds haven't been initialized.")
+        .max
 }
 pub fn clamp_fns() -> &'static [DefId] {
-    &METHODS.get().expect("Method DefIds haven't been initialized.").clamp
+    &METHODS
+        .get()
+        .expect("Method DefIds haven't been initialized.")
+        .clamp
 }
 pub fn abs_fns() -> &'static [DefId] {
-    &METHODS.get().expect("Method DefIds haven't been initialized.").abs
+    &METHODS
+        .get()
+        .expect("Method DefIds haven't been initialized.")
+        .abs
 }
 pub fn neg_fns() -> &'static [DefId] {
-    &METHODS.get().expect("Method DefIds haven't been initialized.").neg
+    &METHODS
+        .get()
+        .expect("Method DefIds haven't been initialized.")
+        .neg
 }
 pub fn sat_unchecked_add_fns() -> &'static [DefId] {
-    &METHODS.get().expect("Method DefIds haven't been initialized.").sat_unchecked_add
+    &METHODS
+        .get()
+        .expect("Method DefIds haven't been initialized.")
+        .sat_unchecked_add
 }
 pub fn sat_unchecked_mul_fns() -> &'static [DefId] {
-    &METHODS.get().expect("Method DefIds haven't been initialized.").sat_unchecked_mul
+    &METHODS
+        .get()
+        .expect("Method DefIds haven't been initialized.")
+        .sat_unchecked_mul
 }
 pub fn checked_add_fns() -> &'static [DefId] {
-    &METHODS.get().expect("Method DefIds haven't been initialized.").checked_add
+    &METHODS
+        .get()
+        .expect("Method DefIds haven't been initialized.")
+        .checked_add
 }
 pub fn checked_mul_fns() -> &'static [DefId] {
-    &METHODS.get().expect("Method DefIds haven't been initialized.").checked_mul
+    &METHODS
+        .get()
+        .expect("Method DefIds haven't been initialized.")
+        .checked_mul
 }
 pub fn overflowing_nz_fns() -> &'static [DefId] {
-    &METHODS.get().expect("Method DefIds haven't been initialized.").overflowing_nz
+    &METHODS
+        .get()
+        .expect("Method DefIds haven't been initialized.")
+        .overflowing_nz
 }
 pub fn bit_preserving_nz_fns() -> &'static [DefId] {
-    &METHODS.get().expect("Method DefIds haven't been initialized.").bit_preserving_nz
+    &METHODS
+        .get()
+        .expect("Method DefIds haven't been initialized.")
+        .bit_preserving_nz
 }
 pub fn checked_nonzero_iff_fns() -> &'static [DefId] {
-    &METHODS.get().expect("Method DefIds haven't been initialized.").checked_nonzero_iff
+    &METHODS
+        .get()
+        .expect("Method DefIds haven't been initialized.")
+        .checked_nonzero_iff
 }
 pub fn checked_next_pow2_fns() -> &'static [DefId] {
-    &METHODS.get().expect("Method DefIds haven't been initialized.").checked_next_pow2
+    &METHODS
+        .get()
+        .expect("Method DefIds haven't been initialized.")
+        .checked_next_pow2
 }
 pub fn layout_align_fns() -> &'static [DefId] {
-    &METHODS.get().expect("Method DefIds haven't been initialized.").layout_align
+    &METHODS
+        .get()
+        .expect("Method DefIds haven't been initialized.")
+        .layout_align
 }
 pub fn split_at_fns() -> &'static [DefId] {
-    &METHODS.get().expect("Method DefIds haven't been initialized.").split_at
+    &METHODS
+        .get()
+        .expect("Method DefIds haven't been initialized.")
+        .split_at
 }
 pub fn align_to_local_fns() -> &'static [DefId] {
-    &METHODS.get().expect("Method DefIds haven't been initialized.").align_to_local
+    &METHODS
+        .get()
+        .expect("Method DefIds haven't been initialized.")
+        .align_to_local
 }
 pub fn into_iter_local_fns() -> &'static [DefId] {
-    &METHODS.get().expect("Method DefIds haven't been initialized.").into_iter_local
+    &METHODS
+        .get()
+        .expect("Method DefIds haven't been initialized.")
+        .into_iter_local
 }
 pub fn iter_position_fns() -> &'static [DefId] {
-    &METHODS.get().expect("Method DefIds haven't been initialized.").iter_position
+    &METHODS
+        .get()
+        .expect("Method DefIds haven't been initialized.")
+        .iter_position
 }
 pub fn strlen_fns() -> &'static [DefId] {
-    &METHODS.get().expect("Method DefIds haven't been initialized.").strlen
+    &METHODS
+        .get()
+        .expect("Method DefIds haven't been initialized.")
+        .strlen
 }
 pub fn slice_get_unchecked_fns() -> &'static [DefId] {
-    &METHODS.get().expect("Method DefIds haven't been initialized.").slice_get_unchecked
+    &METHODS
+        .get()
+        .expect("Method DefIds haven't been initialized.")
+        .slice_get_unchecked
 }
 
 fn init_inner(tcx: TyCtxt) -> Intrinsics {
@@ -519,7 +625,9 @@ fn init_inner(tcx: TyCtxt) -> Intrinsics {
     let mut map = IndexMap::<Box<str>, DefId>::with_capacity(INTRINSICS.len());
 
     let mut try_insert = |name: &str, def_id: rustc_public::DefId| {
-        let Some(&idx) = path_to_idx.get(name) else { return };
+        let Some(&idx) = path_to_idx.get(name) else {
+            return;
+        };
         assert_eq!(
             indices.insert(idx, true),
             Some(false),
@@ -529,7 +637,10 @@ fn init_inner(tcx: TyCtxt) -> Intrinsics {
         // Store under the canonical (first) registered path so the `{id}()`
         // accessors — which probe the registered paths — find it regardless of
         // whether `name` carried a crate prefix.
-        map.insert(Box::from(INTRINSICS[idx][0]), rustc_internal::internal(tcx, def_id));
+        map.insert(
+            Box::from(INTRINSICS[idx][0]),
+            rustc_internal::internal(tcx, def_id),
+        );
     };
 
     for krate in std::iter::once(rustc_public::local_crate())
@@ -1198,12 +1309,7 @@ pub fn to_internal<T: CrateDef>(val: &T, tcx: TyCtxt) -> DefId {
 /// Find any drop fn. Any of these drop fns can be missing, e.g. for crates like no_std without
 /// using alloc, dealloc doesn't exist.
 pub fn is_drop_fn(target: DefId) -> bool {
-    let drop_fn = [
-        drop(),
-        drop_in_place(),
-        manually_drop(),
-        dealloc(),
-    ];
+    let drop_fn = [drop(), drop_in_place(), manually_drop(), dealloc()];
     contains(&drop_fn, target)
 }
 

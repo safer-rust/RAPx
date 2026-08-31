@@ -12,8 +12,8 @@ use super::contract::{
     ContractExpr, ContractPlace, ContractProjection, NumericPredicate, PlaceBase, Property,
     PropertyArg, PropertyKind,
 };
-use crate::helpers::mir_utils::callee_param_index_for_local;
 use crate::helpers::mir_scan::Checkpoint;
+use crate::helpers::mir_utils::callee_param_index_for_local;
 
 impl PlaceKey {
     /// Build a relevance place key from a parsed contract place.

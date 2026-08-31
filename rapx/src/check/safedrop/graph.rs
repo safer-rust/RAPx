@@ -24,7 +24,10 @@ impl<'tcx> SafeDropGraph<'tcx> {
         path_graph: PathGraph<'tcx>,
         adt_owner: HeapOwnershipResultMap,
     ) -> Self {
-        Self::from_alias_graph(AliasGraph::from_path_graph(tcx, def_id, path_graph), adt_owner)
+        Self::from_alias_graph(
+            AliasGraph::from_path_graph(tcx, def_id, path_graph),
+            adt_owner,
+        )
     }
 
     fn from_alias_graph(alias_graph: AliasGraph<'tcx>, adt_owner: HeapOwnershipResultMap) -> Self {

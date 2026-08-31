@@ -142,10 +142,7 @@ fn extract_pat_ident(pat: &rustc_hir::Pat<'_>) -> Option<rustc_span::symbol::Ide
     }
 }
 
-fn parse_local_signature<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    def_id: DefId,
-) -> (Vec<String>, Vec<Ty<'tcx>>) {
+fn parse_local_signature<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> (Vec<String>, Vec<Ty<'tcx>>) {
     let Some(local_def_id) = def_id.as_local() else {
         return (vec!["0".to_string()], Vec::new());
     };
@@ -177,10 +174,7 @@ fn parse_local_signature<'tcx>(
 ///
 /// First tries the pre-defined standard-library names; falls back to
 /// numeric indices (`"0"`, `"1"`, …).
-fn parse_outside_signature<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    def_id: DefId,
-) -> (Vec<String>, Vec<Ty<'tcx>>) {
+fn parse_outside_signature<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> (Vec<String>, Vec<Ty<'tcx>>) {
     let sig = tcx.fn_sig(def_id).skip_binder();
     let param_tys: Vec<Ty<'tcx>> = sig.inputs().skip_binder().iter().copied().collect();
 
@@ -398,11 +392,7 @@ fn find_generic_param<'tcx>(
 ///
 /// This handles parameter types, pointers, references, slices, arrays,
 /// tuples, and ADT fields.
-fn find_generic_in_ty<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    ty: Ty<'tcx>,
-    type_ident: &str,
-) -> Option<Ty<'tcx>> {
+fn find_generic_in_ty<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>, type_ident: &str) -> Option<Ty<'tcx>> {
     match ty.kind() {
         TyKind::Param(param_ty) => {
             if param_ty.name.as_str() == type_ident {
@@ -453,14 +443,9 @@ pub fn short_fn_name(tcx: TyCtxt<'_>, def_id: DefId) -> String {
     path.rsplit("::").next().unwrap_or(&path).to_string()
 }
 
-pub fn resolve_field_name(
-    tcx: TyCtxt<'_>,
-    index: &usize,
-    struct_def_id: Option<DefId>,
-) -> String {
+pub fn resolve_field_name(tcx: TyCtxt<'_>, index: &usize, struct_def_id: Option<DefId>) -> String {
     if let Some(struct_def_id) = struct_def_id
-        && let TyKind::Adt(adt_def, _) =
-            tcx.type_of(struct_def_id).skip_binder().kind()
+        && let TyKind::Adt(adt_def, _) = tcx.type_of(struct_def_id).skip_binder().kind()
     {
         let variant = adt_def.non_enum_variant();
         let field_idx = rustc_abi::FieldIdx::from_usize(*index);

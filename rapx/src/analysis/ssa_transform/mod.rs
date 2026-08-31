@@ -39,7 +39,10 @@ impl<'tcx> SSATrans<'tcx> {
 
     pub fn start(&mut self) {
         for local_def_id in self.tcx.iter_local_def_id() {
-            if matches!(self.tcx.def_kind(local_def_id), DefKind::Fn | DefKind::AssocFn) {
+            if matches!(
+                self.tcx.def_kind(local_def_id),
+                DefKind::Fn | DefKind::AssocFn
+            ) {
                 if self.tcx.hir_maybe_body_owned_by(local_def_id).is_some() {
                     if let Some(def_id) = self
                         .tcx
@@ -217,8 +220,13 @@ impl<'tcx> PassRunner<'tcx> {
 
     pub fn run_pass(&mut self, body: &mut Body<'tcx>, ssa_def_id: DefId, essa_def_id: DefId) {
         let arg_count = body.arg_count;
-        let ssatransformer =
-            ssa_transformer::SSATransformer::new(self.tcx, body, ssa_def_id, essa_def_id, arg_count);
+        let ssatransformer = ssa_transformer::SSATransformer::new(
+            self.tcx,
+            body,
+            ssa_def_id,
+            essa_def_id,
+            arg_count,
+        );
         let mut replacer = replacer::Replacer {
             tcx: self.tcx,
             ssatransformer,

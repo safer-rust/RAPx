@@ -21,7 +21,6 @@ impl<'tcx> Analysis for CallGraphAnalyzer<'tcx> {
     fn run(&mut self) {
         self.start();
     }
-
 }
 
 impl<'tcx> CallGraphAnalysis for CallGraphAnalyzer<'tcx> {

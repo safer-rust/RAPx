@@ -254,5 +254,5 @@ impl<'tcx, T: IntervalArithmetic + ConstConvert + Debug> CallOp<'tcx, T> {
             self.def_id
         );
         Range::top()
-}
+    }
 }

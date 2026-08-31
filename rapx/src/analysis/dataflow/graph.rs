@@ -73,10 +73,22 @@ impl DataflowGraph {
                     graph.add_node_edge(src, dst, EdgeOp::Deref, block, stmt_idx);
                 }
                 PlaceElem::Field(field_idx, _) => {
-                    graph.add_node_edge(src, dst, EdgeOp::Field(field_idx.as_usize()), block, stmt_idx);
+                    graph.add_node_edge(
+                        src,
+                        dst,
+                        EdgeOp::Field(field_idx.as_usize()),
+                        block,
+                        stmt_idx,
+                    );
                 }
                 PlaceElem::Downcast(symbol, _) => {
-                    graph.add_node_edge(src, dst, EdgeOp::Downcast(symbol.unwrap().to_string()), block, stmt_idx);
+                    graph.add_node_edge(
+                        src,
+                        dst,
+                        EdgeOp::Downcast(symbol.unwrap().to_string()),
+                        block,
+                        stmt_idx,
+                    );
                 }
                 PlaceElem::Index(idx) => {
                     graph.add_node_edge(src, dst, EdgeOp::Index, block, stmt_idx);

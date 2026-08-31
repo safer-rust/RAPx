@@ -1,10 +1,7 @@
 use annotate_snippets::Level;
 
-
 use crate::{
-    analysis::dataflow::Graph,
-    check::opt::OptCheck,
-    check::opt::loop_visitors::MethodCallFinder,
+    analysis::dataflow::Graph, check::opt::OptCheck, check::opt::loop_visitors::MethodCallFinder,
 };
 use rustc_hir::intravisit;
 use rustc_middle::ty::TyCtxt;
@@ -15,7 +12,6 @@ use crate::check::opt::report::OptReport;
 crate::def_paths! {
     slice_contains: "slice::contains",
 }
-
 
 pub struct SliceContainsCheck {
     record: Vec<Span>,

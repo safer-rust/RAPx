@@ -1,7 +1,4 @@
-use crate::{
-    analysis::dataflow::*,
-    check::opt::OptCheck,
-};
+use crate::{analysis::dataflow::*, check::opt::OptCheck};
 use rustc_hir::intravisit;
 use rustc_middle::mir::Local;
 use rustc_middle::ty::TyCtxt;
@@ -9,11 +6,11 @@ use rustc_middle::ty::TyCtxt;
 use annotate_snippets::Level;
 use rustc_span::Span;
 
-use crate::check::opt::report::OptReport;
 use crate::check::opt::check_utils::node_matches_call;
+use crate::check::opt::report::OptReport;
 
-use super::super::super::loop_visitors::LoopFinder;
 use super::super::super::LEVEL;
+use super::super::super::loop_visitors::LoopFinder;
 
 crate::def_paths! {
     vec_new: "std::vec::Vec::new",
@@ -21,7 +18,6 @@ crate::def_paths! {
     vec_with_capacity: "std::vec::Vec::with_capacity",
     vec_reserve: "std::vec::Vec::reserve",
 }
-
 
 pub struct UnreservedVecCheck {
     record: Vec<Span>,

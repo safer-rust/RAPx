@@ -191,7 +191,13 @@ pub fn collect_local_origins<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> LocalOri
                 origins.insert(target.local.as_usize(), origin);
             }
         }
-        if let rustc_middle::mir::TerminatorKind::Call { func, args, destination, .. } = &block.terminator().kind {
+        if let rustc_middle::mir::TerminatorKind::Call {
+            func,
+            args,
+            destination,
+            ..
+        } = &block.terminator().kind
+        {
             if let rustc_middle::mir::Operand::Constant(c) = func {
                 if let rustc_middle::ty::FnDef(_, _) = c.const_.ty().kind() {
                     if let Some(first_arg) = args.first() {

@@ -86,7 +86,10 @@ pub(crate) enum AnyItem {
 /// 3. `core::slice::<impl [T]>::*`          (all methods of `[T]`)
 /// 4. `core::slice::*`                      (all functions in slice module)
 /// 5. `core::*`                             (anything in core crate)
-pub(crate) fn get_std_contracts_from_json(tcx: TyCtxt<'_>, def_id: DefId) -> &'static [JsonProperty] {
+pub(crate) fn get_std_contracts_from_json(
+    tcx: TyCtxt<'_>,
+    def_id: DefId,
+) -> &'static [JsonProperty] {
     let lookup_def_id = resolve_trait_method(tcx, def_id);
     let cleaned_path_name = get_cleaned_def_path_name(tcx, lookup_def_id);
     let db = load_std_contracts_json();
@@ -186,7 +189,8 @@ pub(crate) fn entry_to_property<'tcx>(
     if entry.tag == "any" {
         if let Some(disjuncts) = &entry.any {
             if disjuncts.len() >= 2 {
-                let mut prop = any_entry_to_property(tcx, def_id, disjuncts, param_names, has_names);
+                let mut prop =
+                    any_entry_to_property(tcx, def_id, disjuncts, param_names, has_names);
                 prop.apply_kind(entry.kind.as_deref());
                 return vec![prop];
             }
@@ -204,7 +208,8 @@ pub(crate) fn entry_to_property<'tcx>(
     if exprs.len() != entry.args.len() {
         rap_error!(
             "Parse JSON API args error: Failed to parse arg '{:?}' for tag {}",
-            entry.args, entry.tag
+            entry.args,
+            entry.tag
         );
         return Vec::new();
     }
@@ -216,7 +221,8 @@ pub(crate) fn entry_to_property<'tcx>(
         if matches!(property.kind(), Some(PropertyKind::Unknown)) {
             rap_debug!(
                 "skip unsupported std safety contract tag '{}' for callee {:?}",
-                entry.tag, def_id
+                entry.tag,
+                def_id
             );
             continue;
         }
@@ -245,12 +251,12 @@ fn any_entry_to_property<'tcx>(
                     rap_error!("Nested 'any' inside 'any' is not supported in JSON contracts");
                     continue;
                 }
-                let exprs =
-                    resolve_json_args(&entry.args, param_names, has_names, &entry.tag);
+                let exprs = resolve_json_args(&entry.args, param_names, has_names, &entry.tag);
                 if exprs.len() != entry.args.len() {
                     rap_error!(
                         "Parse any entry arg error: Failed to parse arg '{:?}' for tag {}",
-                        entry.args, entry.tag
+                        entry.args,
+                        entry.tag
                     );
                     continue;
                 }
@@ -271,17 +277,16 @@ fn any_entry_to_property<'tcx>(
                         rap_error!("Nested 'any' inside 'any' group is not supported");
                         continue;
                     }
-                    let exprs =
-                        resolve_json_args(&entry.args, param_names, has_names, &entry.tag);
+                    let exprs = resolve_json_args(&entry.args, param_names, has_names, &entry.tag);
                     if exprs.len() != entry.args.len() {
                         rap_error!(
                             "Parse any group entry arg error: failed to parse '{:?}' for tag {}",
-                            entry.args, entry.tag
+                            entry.args,
+                            entry.tag
                         );
                         continue;
                     }
-                    let props =
-                        Property::parse_list(tcx, def_id, entry.tag.as_str(), &exprs);
+                    let props = Property::parse_list(tcx, def_id, entry.tag.as_str(), &exprs);
                     for mut prop in props {
                         prop.apply_kind(entry.kind.as_deref());
                         group.push(prop);
@@ -327,20 +332,23 @@ pub(crate) fn resolve_json_args(
                                 rap_error!(
                                     "JSON Contract Error: Failed to parse lifetime \
                                      '{}' as Rust Expr for tag {}",
-                                    arg_str, tag
+                                    arg_str,
+                                    tag
                                 );
                             }
                         }
                     } else {
                         rap_error!(
                             "JSON Contract Error: Failed to parse arg '{}' as Rust Expr for tag {}",
-                            arg_str, tag
+                            arg_str,
+                            tag
                         );
                     }
                 } else {
                     rap_error!(
                         "JSON Contract Error: Failed to parse arg '{}' as Rust Expr for tag {}",
-                        arg_str, tag
+                        arg_str,
+                        tag
                     );
                 }
             }
@@ -446,21 +454,23 @@ fn is_contract_token_char(ch: char) -> bool {
 ///
 /// Uses [`get_std_contracts_from_json`] for lookup with wildcard fallback,
 /// then parses each entry into a [`Property`] via [`entry_to_property`].
-pub(crate) fn query_json_contracts<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    def_id: DefId,
-) -> Vec<Property<'tcx>> {
+pub(crate) fn query_json_contracts<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<Property<'tcx>> {
     let entries = get_std_contracts_from_json(tcx, def_id);
     if entries.is_empty() {
         return Vec::new();
     }
     let (param_names, _) = crate::helpers::name::parse_signature(tcx, def_id);
-    let has_names =
-        !param_names.is_empty() && !param_names[0].chars().all(|c| c.is_ascii_digit());
+    let has_names = !param_names.is_empty() && !param_names[0].chars().all(|c| c.is_ascii_digit());
 
     let mut results = Vec::new();
     for entry in entries {
-        results.extend(entry_to_property(tcx, def_id, entry, &param_names, has_names));
+        results.extend(entry_to_property(
+            tcx,
+            def_id,
+            entry,
+            &param_names,
+            has_names,
+        ));
     }
     results
 }

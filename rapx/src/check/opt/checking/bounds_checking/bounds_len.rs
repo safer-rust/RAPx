@@ -5,10 +5,7 @@ use rustc_hir::{Expr, ExprKind, intravisit};
 use rustc_middle::{mir::Local, ty::TyCtxt};
 use rustc_span::Span;
 
-use crate::{
-    analysis::dataflow::*,
-    helpers::def_path::DefPath,
-};
+use crate::{analysis::dataflow::*, helpers::def_path::DefPath};
 use annotate_snippets::Level;
 
 use crate::check::opt::report::OptReport;

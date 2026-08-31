@@ -14,7 +14,12 @@
 use super::types::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ArgKind { Target, Ty, Expr, Ident }
+pub(crate) enum ArgKind {
+    Target,
+    Ty,
+    Expr,
+    Ident,
+}
 
 /// How a tag's arguments are assembled into a `Property`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -68,7 +73,14 @@ const fn ps(
     build: BuildKind,
     meaning: &'static str,
 ) -> PropertySpec {
-    PropertySpec { tag, kind, forms, contract_kind, build, meaning }
+    PropertySpec {
+        tag,
+        kind,
+        forms,
+        contract_kind,
+        build,
+        meaning,
+    }
 }
 
 use ArgKind::{Expr, Ident, Target, Ty};
@@ -77,37 +89,212 @@ use ArgKind::{Expr, Ident, Target, Ty};
 
 static SPECS: &[PropertySpec] = &[
     // Uniform single-form primitives.
-    ps("NonNull",       PropertyKind::NonNull,       &[&[Target]],               ContractKind::Precond, BuildKind::Uniform, "{0} as usize != 0"),
-    ps("Null",          PropertyKind::Null,          &[&[Target]],               ContractKind::Precond, BuildKind::Uniform, "{0} is the null pointer"),
-    ps("Owning",        PropertyKind::Owning,        &[&[Target]],               ContractKind::Precond, BuildKind::Uniform, "ownership(*{0}) = none: no live owner aliases the pointee"),
+    ps(
+        "NonNull",
+        PropertyKind::NonNull,
+        &[&[Target]],
+        ContractKind::Precond,
+        BuildKind::Uniform,
+        "{0} as usize != 0",
+    ),
+    ps(
+        "Null",
+        PropertyKind::Null,
+        &[&[Target]],
+        ContractKind::Precond,
+        BuildKind::Uniform,
+        "{0} is the null pointer",
+    ),
+    ps(
+        "Owning",
+        PropertyKind::Owning,
+        &[&[Target]],
+        ContractKind::Precond,
+        BuildKind::Uniform,
+        "ownership(*{0}) = none: no live owner aliases the pointee",
+    ),
     // Unverified: the checker returns `Unknown` (no implementation yet).
-    ps("Opened",        PropertyKind::Opened,        &[&[Target]],               ContractKind::Precond, BuildKind::Uniform, "{0} is a valid open file descriptor"),
+    ps(
+        "Opened",
+        PropertyKind::Opened,
+        &[&[Target]],
+        ContractKind::Precond,
+        BuildKind::Uniform,
+        "{0} is a valid open file descriptor",
+    ),
     // Unverified: the checker returns `Unknown` (no implementation yet).
-    ps("Unreachable",   PropertyKind::Unreachable,   &[&[]],                     ContractKind::Precond, BuildKind::Uniform, "this branch is unreachable"),
-    ps("Align",         PropertyKind::Align,         &[&[Target, Ty]],           ContractKind::Precond, BuildKind::Uniform, "({0} as usize) % align_of::<{1}>() == 0"),
-    ps("Typed",         PropertyKind::Typed,         &[&[Target, Ty]],           ContractKind::Precond, BuildKind::Uniform, "*{0} holds TypeInvariant({1})"),
-    ps("Init",          PropertyKind::Init,          &[&[Target, Ty, Expr]],     ContractKind::Precond, BuildKind::Uniform, "forall i in 0..{2}: *({0} + i*sizeof({1})) |= type_invariant({1}), and the {2} value(s) are initialized"),
-    ps("ValidString",   PropertyKind::ValidString,   &[&[Target, Ty, Expr]],     ContractKind::Precond, BuildKind::Uniform, "{0} is valid UTF-8"),
+    ps(
+        "Unreachable",
+        PropertyKind::Unreachable,
+        &[&[]],
+        ContractKind::Precond,
+        BuildKind::Uniform,
+        "this branch is unreachable",
+    ),
+    ps(
+        "Align",
+        PropertyKind::Align,
+        &[&[Target, Ty]],
+        ContractKind::Precond,
+        BuildKind::Uniform,
+        "({0} as usize) % align_of::<{1}>() == 0",
+    ),
+    ps(
+        "Typed",
+        PropertyKind::Typed,
+        &[&[Target, Ty]],
+        ContractKind::Precond,
+        BuildKind::Uniform,
+        "*{0} holds TypeInvariant({1})",
+    ),
+    ps(
+        "Init",
+        PropertyKind::Init,
+        &[&[Target, Ty, Expr]],
+        ContractKind::Precond,
+        BuildKind::Uniform,
+        "forall i in 0..{2}: *({0} + i*sizeof({1})) |= type_invariant({1}), and the {2} value(s) are initialized",
+    ),
+    ps(
+        "ValidString",
+        PropertyKind::ValidString,
+        &[&[Target, Ty, Expr]],
+        ContractKind::Precond,
+        BuildKind::Uniform,
+        "{0} is valid UTF-8",
+    ),
     // Assumed satisfied: the VM does not model volatile access.
-    ps("NonVolatile",   PropertyKind::NonVolatile,   &[&[Target, Ty, Expr]],     ContractKind::Precond, BuildKind::Uniform, "{0} does not reference volatile memory"),
-    ps("ValidTransmute", PropertyKind::ValidTransmute, &[&[Ty, Ty]],             ContractKind::Precond, BuildKind::Uniform, "bytes_of({1}) within bytes_of({0})"),
-    ps("Trait",         PropertyKind::Trait,         &[&[Ty, Ident]],            ContractKind::Precond, BuildKind::Uniform, "{0} satisfies the trait bound {1}"),
-    ps("NoPadding",     PropertyKind::NoPadding,     &[&[Ty]],                   ContractKind::Precond, BuildKind::Uniform, "{0} has no padding bytes between fields"),
-    ps("ValidCStr",     PropertyKind::ValidCStr,     &[&[Target, Expr]],         ContractKind::Precond, BuildKind::Uniform, "{0} is a null-terminated valid UTF-8 byte sequence"),
+    ps(
+        "NonVolatile",
+        PropertyKind::NonVolatile,
+        &[&[Target, Ty, Expr]],
+        ContractKind::Precond,
+        BuildKind::Uniform,
+        "{0} does not reference volatile memory",
+    ),
+    ps(
+        "ValidTransmute",
+        PropertyKind::ValidTransmute,
+        &[&[Ty, Ty]],
+        ContractKind::Precond,
+        BuildKind::Uniform,
+        "bytes_of({1}) within bytes_of({0})",
+    ),
+    ps(
+        "Trait",
+        PropertyKind::Trait,
+        &[&[Ty, Ident]],
+        ContractKind::Precond,
+        BuildKind::Uniform,
+        "{0} satisfies the trait bound {1}",
+    ),
+    ps(
+        "NoPadding",
+        PropertyKind::NoPadding,
+        &[&[Ty]],
+        ContractKind::Precond,
+        BuildKind::Uniform,
+        "{0} has no padding bytes between fields",
+    ),
+    ps(
+        "ValidCStr",
+        PropertyKind::ValidCStr,
+        &[&[Target, Expr]],
+        ContractKind::Precond,
+        BuildKind::Uniform,
+        "{0} is a null-terminated valid UTF-8 byte sequence",
+    ),
     // Unverified: the checker returns `Unknown` (no implementation yet).
-    ps("Unwrap",        PropertyKind::Unwrap,        &[&[Target, Ident]],        ContractKind::Precond, BuildKind::Uniform, "unwrap({0}) = {1}"),
+    ps(
+        "Unwrap",
+        PropertyKind::Unwrap,
+        &[&[Target, Ident]],
+        ContractKind::Precond,
+        BuildKind::Uniform,
+        "unwrap({0}) = {1}",
+    ),
     // Variable-arity / special-build primitives.
-    ps("Size",          PropertyKind::Size,          &[&[Ty, Ident], &[Ty, Expr]], ContractKind::Precond, BuildKind::Size, "sizeof({0}) = {1}"),
-    ps("Allocated",     PropertyKind::Allocated,     &[&[Target], &[Target, Ty, Expr], &[Target, Ty, Expr, Ident]], ContractKind::Precond, BuildKind::Allocated, "{0} points to a live allocation of size: size_of({1}) * {2}"),
-    ps("InBound",       PropertyKind::InBound,       &[&[Expr], &[Target, Expr], &[Target, Ty, Expr]], ContractKind::Precond, BuildKind::InBound, "same_alloc([{0}, {0} + sizeof({1})*{2}])"),
-    ps("NonOverlap",    PropertyKind::NonOverlap,    &[&[Target], &[Target, Target, Ty, Expr]], ContractKind::Precond, BuildKind::NonOverlap, "[{0}] are pairwise disjoint memory ranges"),
-    ps("ValidNum",      PropertyKind::ValidNum,      &[&[Expr], &[Expr, Expr]],   ContractKind::Precond, BuildKind::ValidNum, "{0}"),
-    ps("Alias",         PropertyKind::Alias,         &[&[Target, Target]],       ContractKind::Hazard,  BuildKind::Targets, "{0} and {1} alias each other (hazard)"),
-    ps("Alive",         PropertyKind::Alive,         &[&[Target, Target]],       ContractKind::Precond, BuildKind::Targets, "*{0} outlives '{1}"),
+    ps(
+        "Size",
+        PropertyKind::Size,
+        &[&[Ty, Ident], &[Ty, Expr]],
+        ContractKind::Precond,
+        BuildKind::Size,
+        "sizeof({0}) = {1}",
+    ),
+    ps(
+        "Allocated",
+        PropertyKind::Allocated,
+        &[&[Target], &[Target, Ty, Expr], &[Target, Ty, Expr, Ident]],
+        ContractKind::Precond,
+        BuildKind::Allocated,
+        "{0} points to a live allocation of size: size_of({1}) * {2}",
+    ),
+    ps(
+        "InBound",
+        PropertyKind::InBound,
+        &[&[Expr], &[Target, Expr], &[Target, Ty, Expr]],
+        ContractKind::Precond,
+        BuildKind::InBound,
+        "same_alloc([{0}, {0} + sizeof({1})*{2}])",
+    ),
+    ps(
+        "NonOverlap",
+        PropertyKind::NonOverlap,
+        &[&[Target], &[Target, Target, Ty, Expr]],
+        ContractKind::Precond,
+        BuildKind::NonOverlap,
+        "[{0}] are pairwise disjoint memory ranges",
+    ),
+    ps(
+        "ValidNum",
+        PropertyKind::ValidNum,
+        &[&[Expr], &[Expr, Expr]],
+        ContractKind::Precond,
+        BuildKind::ValidNum,
+        "{0}",
+    ),
+    ps(
+        "Alias",
+        PropertyKind::Alias,
+        &[&[Target, Target]],
+        ContractKind::Hazard,
+        BuildKind::Targets,
+        "{0} and {1} alias each other (hazard)",
+    ),
+    ps(
+        "Alive",
+        PropertyKind::Alive,
+        &[&[Target, Target]],
+        ContractKind::Precond,
+        BuildKind::Targets,
+        "*{0} outlives '{1}",
+    ),
     // Unverified: the checker returns `Unknown` (no implementation yet).
-    ps("Pinned",        PropertyKind::Pinned,        &[&[Target, Ident]],        ContractKind::Precond, BuildKind::Pinned, "{0} will not be moved"),
-    ps("SplitTransmute", PropertyKind::SplitTransmute, &[&[Ty, Ty]],             ContractKind::Precond, BuildKind::SplitTransmute, "[{0}] as [{1}]: every size_of({1})-byte contiguous chunk of [{0}] is a valid bit-pattern of {1} (type_invariant satisfied, alignment not required)\nforall w subset bytes([{0}]), |w| == |{1}|: reinterpret_as_{1}(w) |= type_invariant({1})"),
-    ps("TobeSpecified", PropertyKind::Unknown,       &[],                        ContractKind::Precond, BuildKind::TobeSpecified, "(unresolved contract)"),
+    ps(
+        "Pinned",
+        PropertyKind::Pinned,
+        &[&[Target, Ident]],
+        ContractKind::Precond,
+        BuildKind::Pinned,
+        "{0} will not be moved",
+    ),
+    ps(
+        "SplitTransmute",
+        PropertyKind::SplitTransmute,
+        &[&[Ty, Ty]],
+        ContractKind::Precond,
+        BuildKind::SplitTransmute,
+        "[{0}] as [{1}]: every size_of({1})-byte contiguous chunk of [{0}] is a valid bit-pattern of {1} (type_invariant satisfied, alignment not required)\nforall w subset bytes([{0}]), |w| == |{1}|: reinterpret_as_{1}(w) |= type_invariant({1})",
+    ),
+    ps(
+        "TobeSpecified",
+        PropertyKind::Unknown,
+        &[],
+        ContractKind::Precond,
+        BuildKind::TobeSpecified,
+        "(unresolved contract)",
+    ),
 ];
 
 pub(crate) fn find_spec(name: &str) -> Option<&'static PropertySpec> {
@@ -117,7 +304,8 @@ pub(crate) fn find_spec(name: &str) -> Option<&'static PropertySpec> {
 /// The canonical meaning template for a property kind (the first tag that maps
 /// to `kind`).  Argument-dependent kinds override this at render time.
 pub(crate) fn kind_meaning(kind: PropertyKind) -> &'static str {
-    SPECS.iter()
+    SPECS
+        .iter()
         .find(|s| s.kind == kind)
         .map(|s| s.meaning)
         .unwrap_or("(unresolved contract)")

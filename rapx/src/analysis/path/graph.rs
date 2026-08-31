@@ -271,29 +271,19 @@ impl<'tcx> PathGraph<'tcx> {
                                 }
                             }
                         }
-                        Rvalue::BinaryOp(op, operands)
-                            if matches!(
-                                op,
-                                BinOp::AddWithOverflow
-                            ) =>
-                        {
+                        Rvalue::BinaryOp(op, operands) if matches!(op, BinOp::AddWithOverflow) => {
                             let (lhs, rhs): (&Operand<'_>, &Operand<'_>) =
                                 (&operands.0, &operands.1);
                             if let Some(lhs_local) = match lhs {
-                                Operand::Copy(l) | Operand::Move(l)
-                                    if l.projection.is_empty() =>
-                                {
+                                Operand::Copy(l) | Operand::Move(l) if l.projection.is_empty() => {
                                     Some(l.local.as_usize())
                                 }
                                 _ => None,
                             } {
                                 let incr = match rhs {
                                     Operand::Constant(c) => {
-                                        let typing_env =
-                                            TypingEnv::post_analysis(tcx, def_id);
-                                        c.const_
-                                            .try_eval_bits(tcx, typing_env)
-                                            .map(|v| v as usize)
+                                        let typing_env = TypingEnv::post_analysis(tcx, def_id);
+                                        c.const_.try_eval_bits(tcx, typing_env).map(|v| v as usize)
                                     }
                                     _ => None,
                                 };
@@ -317,9 +307,7 @@ impl<'tcx> PathGraph<'tcx> {
                             let (lhs, rhs): (&Operand<'_>, &Operand<'_>) =
                                 (&operands.0, &operands.1);
                             let lhs_local = match lhs {
-                                Operand::Copy(l) | Operand::Move(l)
-                                    if l.projection.is_empty() =>
-                                {
+                                Operand::Copy(l) | Operand::Move(l) if l.projection.is_empty() => {
                                     Some(l.local.as_usize())
                                 }
                                 _ => None,
@@ -327,8 +315,7 @@ impl<'tcx> PathGraph<'tcx> {
                             if let Some(lhs_local) = lhs_local {
                                 let rhs_eval = match rhs {
                                     Operand::Constant(c) => {
-                                        let typing_env =
-                                            TypingEnv::post_analysis(tcx, def_id);
+                                        let typing_env = TypingEnv::post_analysis(tcx, def_id);
                                         c.const_
                                             .try_eval_bits(tcx, typing_env)
                                             .map(|v| (v as usize, true))
@@ -363,7 +350,8 @@ impl<'tcx> PathGraph<'tcx> {
                             }
                         }
                         Rvalue::BinaryOp(op, operands) if matches!(op, BinOp::Rem) => {
-                            let (lhs, rhs): (&Operand<'_>, &Operand<'_>) = (&operands.0, &operands.1);
+                            let (lhs, rhs): (&Operand<'_>, &Operand<'_>) =
+                                (&operands.0, &operands.1);
                             if let Some(lhs_local) = match lhs {
                                 Operand::Copy(l) | Operand::Move(l) if l.projection.is_empty() => {
                                     Some(l.local.as_usize())
@@ -373,9 +361,7 @@ impl<'tcx> PathGraph<'tcx> {
                                 let divisor = match rhs {
                                     Operand::Constant(c) => {
                                         let typing_env = TypingEnv::post_analysis(tcx, def_id);
-                                        c.const_
-                                            .try_eval_bits(tcx, typing_env)
-                                            .map(|v| v as usize)
+                                        c.const_.try_eval_bits(tcx, typing_env).map(|v| v as usize)
                                     }
                                     _ => None,
                                 };
@@ -1097,10 +1083,34 @@ impl<'tcx> PathGraph<'tcx> {
                     };
                     if let (Some(lhs), Some(rhs)) = (lhs_val, rhs_val) {
                         let val = match cmp.op {
-                            BinOp::Lt => if lhs < rhs { 1 } else { 0 },
-                            BinOp::Le => if lhs <= rhs { 1 } else { 0 },
-                            BinOp::Gt => if lhs > rhs { 1 } else { 0 },
-                            BinOp::Ge => if lhs >= rhs { 1 } else { 0 },
+                            BinOp::Lt => {
+                                if lhs < rhs {
+                                    1
+                                } else {
+                                    0
+                                }
+                            }
+                            BinOp::Le => {
+                                if lhs <= rhs {
+                                    1
+                                } else {
+                                    0
+                                }
+                            }
+                            BinOp::Gt => {
+                                if lhs > rhs {
+                                    1
+                                } else {
+                                    0
+                                }
+                            }
+                            BinOp::Ge => {
+                                if lhs >= rhs {
+                                    1
+                                } else {
+                                    0
+                                }
+                            }
                             _ => unreachable!(),
                         };
                         let expected = resolve_switch_target(targets, val as u128);

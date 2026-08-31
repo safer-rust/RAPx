@@ -2,7 +2,9 @@ pub mod ranalyzer;
 
 use crate::analysis::{
     Analysis,
-    heap_ownership::{HeapOwnershipResultMap, HeapOwnershipAnalysis, default::HeapOwnershipAnalyzer},
+    heap_ownership::{
+        HeapOwnershipAnalysis, HeapOwnershipResultMap, default::HeapOwnershipAnalyzer,
+    },
 };
 use ranalyzer::{FlowAnalysis, IcxSliceFroBlock, IntraFlowContext, MirGraph};
 use rustc_middle::ty::TyCtxt;

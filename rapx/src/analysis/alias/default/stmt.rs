@@ -6,8 +6,8 @@ use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{AggregateKind, Operand, Rvalue, StatementKind, TerminatorKind};
 use rustc_span::Span;
 
-use super::graph::AliasGraph;
 use super::MopFnAliasMap;
+use super::graph::AliasGraph;
 
 impl<'tcx> AliasGraph<'tcx> {
     pub fn init_pts_graph(&mut self) {
@@ -64,7 +64,9 @@ impl<'tcx> AliasGraph<'tcx> {
                     if let Some((rv_val, rv_pts)) = self.resolve_operand(rv_place) {
                         self.move_sources.insert(lv_val, rv_val);
                         obs.on_value_use(self, rv_val, span, false);
-                        if obs.track_all_moves() || self.pts_graph.slot_kind(rv_pts) == ValueKind::RawPtr {
+                        if obs.track_all_moves()
+                            || self.pts_graph.slot_kind(rv_pts) == ValueKind::RawPtr
+                        {
                             self.pts_graph.assign_value(lv_pts, rv_pts);
                         }
                         obs.on_value_assign(self, lv_val);
@@ -82,7 +84,8 @@ impl<'tcx> AliasGraph<'tcx> {
                     obs.on_value_use(self, rv_val, span, false);
                 }
                 let rv_slot_clone = rv_slot.clone();
-                self.pts_graph.assign_pointee(lv_pts, AbstractLoc::Slot(rv_slot));
+                self.pts_graph
+                    .assign_pointee(lv_pts, AbstractLoc::Slot(rv_slot));
                 if let Some(rv_pts) = self.pts_graph.get_slot_idx(&rv_slot_clone) {
                     self.pts_graph.merge_equivalence(lv_pts, rv_pts);
                 }
@@ -106,7 +109,8 @@ impl<'tcx> AliasGraph<'tcx> {
                                 Operand::Copy(rv_place) | Operand::Move(rv_place) => {
                                     if let Some((rv_val, rv_pts)) = self.resolve_operand(rv_place) {
                                         let field_slot = lv_slot.project(field_idx.as_usize());
-                                        let field_pts = self.pts_graph.ensure_slot(field_slot, false, false);
+                                        let field_pts =
+                                            self.pts_graph.ensure_slot(field_slot, false, false);
                                         // Ensure value entry exists for the field
                                         let field_val = self.projection_field(place, field_idx);
                                         obs.on_value_use(self, rv_val, span, false);
@@ -157,7 +161,10 @@ impl<'tcx> AliasGraph<'tcx> {
     }
 
     /// Resolve a MIR Place to (value_index, pts_slot_index) if it may drop.
-    fn resolve_operand(&mut self, place: &rustc_middle::mir::Place<'tcx>) -> Option<(usize, usize)> {
+    fn resolve_operand(
+        &mut self,
+        place: &rustc_middle::mir::Place<'tcx>,
+    ) -> Option<(usize, usize)> {
         let slot = Slot::from_mir_place(place);
         let pts_idx = self.pts_graph.ensure_slot(slot, false, false);
         if !self.pts_graph.may_drop(pts_idx) {
@@ -182,7 +189,9 @@ impl<'tcx> AliasGraph<'tcx> {
         let body = self.tcx().optimized_mir(self.def_id());
         let base_ty = base.ty(&body.local_decls, self.tcx()).ty;
         let field_ty = match base_ty.kind() {
-            rustc_middle::ty::TyKind::Tuple(fields) => fields.get(field_idx.as_usize()).copied().unwrap_or(base_ty),
+            rustc_middle::ty::TyKind::Tuple(fields) => {
+                fields.get(field_idx.as_usize()).copied().unwrap_or(base_ty)
+            }
             rustc_middle::ty::TyKind::Adt(..) => base_ty,
             _ => base_ty,
         };
@@ -256,7 +265,12 @@ impl<'tcx> AliasGraph<'tcx> {
             }
             None => {
                 let (ret_val, _) = merge_slots[0];
-                if ret_val != 0 && self.pts_graph.get_slot_idx(&Slot::new(ret_local)).map_or(false, |si| self.pts_graph.slot_is_ptr(si)) {
+                if ret_val != 0
+                    && self
+                        .pts_graph
+                        .get_slot_idx(&Slot::new(ret_local))
+                        .map_or(false, |si| self.pts_graph.slot_is_ptr(si))
+                {
                     let slot_args: Vec<usize> = merge_slots.iter().map(|&(_, s)| s).collect();
                     self.pts_graph.conservative_call_merge(&slot_args);
                     obs.on_value_assign(self, ret_val);
@@ -280,8 +294,14 @@ impl<'tcx> AliasGraph<'tcx> {
             None => return (vec![], 0, 0, None, rustc_span::DUMMY_SP),
         };
         let TerminatorKind::Call {
-            func: ref func_op, ref args, ref destination, ..
-        } = terminator.kind else { return (vec![], 0, 0, None, rustc_span::DUMMY_SP); };
+            func: ref func_op,
+            ref args,
+            ref destination,
+            ..
+        } = terminator.kind
+        else {
+            return (vec![], 0, 0, None, rustc_span::DUMMY_SP);
+        };
         let span = terminator.source_info.span;
 
         let target_id = match func_op {
@@ -297,7 +317,11 @@ impl<'tcx> AliasGraph<'tcx> {
         let ret_pts = self.pts_graph.ensure_slot(ret_slot, false, false);
         let ret_val = self.projection(*destination);
         let mut result = vec![(ret_val, ret_pts)];
-        let mut may_drop_count: usize = if self.pts_graph.may_drop(ret_pts) { 1 } else { 0 };
+        let mut may_drop_count: usize = if self.pts_graph.may_drop(ret_pts) {
+            1
+        } else {
+            0
+        };
 
         for arg in args {
             match arg.node {
@@ -311,7 +335,9 @@ impl<'tcx> AliasGraph<'tcx> {
                     }
                     result.push((arg_val, arg_pts));
                 }
-                Operand::Constant(_) => { result.push((0, 0)); }
+                Operand::Constant(_) => {
+                    result.push((0, 0));
+                }
                 #[cfg(rapx_ge_99)]
                 Operand::RuntimeChecks(_) => {}
             }
@@ -327,8 +353,12 @@ impl<'tcx> AliasGraph<'tcx> {
         fn_map: &MopFnAliasMap,
         obs: &mut dyn AliasObserver,
     ) {
-        let Some(fn_aliases) = fn_map.get(&target_id) else { return };
-        if fn_aliases.aliases().is_empty() { return; }
+        let Some(fn_aliases) = fn_map.get(&target_id) else {
+            return;
+        };
+        if fn_aliases.aliases().is_empty() {
+            return;
+        }
         let unified: crate::analysis::alias::FnAliasPairs = From::from(fn_aliases.clone());
         let slot_args: Vec<usize> = merge_vec.iter().map(|&(_, s)| s).collect();
         self.pts_graph.apply_callee_summary(&unified, &slot_args);

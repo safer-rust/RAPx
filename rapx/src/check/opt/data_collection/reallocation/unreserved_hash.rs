@@ -1,14 +1,11 @@
-use crate::{
-    analysis::dataflow::*,
-    check::opt::OptCheck,
-};
+use crate::{analysis::dataflow::*, check::opt::OptCheck};
 use rustc_middle::{mir::Local, ty::TyCtxt};
 
 use annotate_snippets::Level;
 use rustc_span::Span;
 
-use crate::check::opt::report::OptReport;
 use crate::check::opt::check_utils::node_matches_call;
+use crate::check::opt::report::OptReport;
 
 crate::def_paths! {
     hashset_insert: "std::collections::HashSet::insert",
@@ -17,7 +14,6 @@ crate::def_paths! {
     hashmap_new: "std::collections::HashMap::new",
     entry: "std::collections::HashMap::entry",
 }
-
 
 pub struct UnreservedHashCheck {
     record: Vec<(Span, Span)>,
@@ -54,7 +50,13 @@ impl OptCheck for UnreservedHashCheck {
     fn check(&mut self, graph: &Graph, tcx: &TyCtxt) {
         let def_paths = &DEFPATHS.get_or_init(|| DefPaths::new(tcx));
         for (node_idx, node) in graph.nodes.iter_enumerated() {
-            if node_matches_call(node, &[def_paths.hashmap_new.last_def_id(), def_paths.hashset_new.last_def_id()]) {
+            if node_matches_call(
+                node,
+                &[
+                    def_paths.hashmap_new.last_def_id(),
+                    def_paths.hashset_new.last_def_id(),
+                ],
+            ) {
                 if let Some(insert_idx) = find_downside_hash_insert_node(graph, node_idx) {
                     let insert_node = &graph.nodes[insert_idx];
                     self.record.push((node.span, insert_node.span));

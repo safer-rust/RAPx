@@ -107,7 +107,12 @@ impl<'tcx> PathExtractor<'tcx> {
             enumerator.enumerate_paths_repeat(self.allow_repeat)
         };
         tree.set_block_fn(
-            graph.cfg.blocks.iter().map(|b| (b.def_id, b.local_index)).collect(),
+            graph
+                .cfg
+                .blocks
+                .iter()
+                .map(|b| (b.def_id, b.local_index))
+                .collect(),
             graph.inline_bindings.clone(),
             graph.inlined_call_blocks.clone(),
         );

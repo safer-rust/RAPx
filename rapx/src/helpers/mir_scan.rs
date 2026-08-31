@@ -1,15 +1,15 @@
 use rustc_hir::{Safety, def_id::DefId};
 use rustc_middle::{
     mir::{
-        BasicBlock, Body, Local, Operand, Place, ProjectionElem, Rvalue,
-        StatementKind, TerminatorKind,
+        BasicBlock, Body, Local, Operand, Place, ProjectionElem, Rvalue, StatementKind,
+        TerminatorKind,
     },
     ty::{self, Ty, TyCtxt, TyKind},
 };
 use std::collections::{HashMap, HashSet};
 
-use super::name::get_cleaned_def_path_name;
 use super::mir_utils::{dep_callee_def_id, pointee_ty};
+use super::name::get_cleaned_def_path_name;
 
 /// Stable MIR location for a call terminator inside one function body.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -195,12 +195,7 @@ pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<C
 
     let body = tcx.optimized_mir(def_id);
     for (bb, data) in body.basic_blocks.iter_enumerated() {
-        let TerminatorKind::Call {
-            func,
-            args,
-            ..
-        } = &data.terminator().kind
-        else {
+        let TerminatorKind::Call { func, args, .. } = &data.terminator().kind else {
             continue;
         };
 
@@ -221,8 +216,13 @@ pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<C
         // Normalize a trait-method callee to the concrete impl method so that
         // inline `#[rapx::requires]` contracts (which live on the impl, not the
         // trait declaration) are found during contract lookup.
-        let resolved_callee =
-            crate::helpers::mir_utils::resolve_callee_impl(tcx, def_id, *callee_def_id, callee_args).unwrap_or(*callee_def_id);
+        let resolved_callee = crate::helpers::mir_utils::resolve_callee_impl(
+            tcx,
+            def_id,
+            *callee_def_id,
+            callee_args,
+        )
+        .unwrap_or(*callee_def_id);
 
         checkpoints.push(Checkpoint {
             caller: def_id,
@@ -288,9 +288,7 @@ pub fn collect_raw_ptr_deref_info<'tcx>(
                 Rvalue::Use(Operand::Copy(place) | Operand::Move(place), ..) => {
                     (place_has_raw_deref(&body, place), false)
                 }
-                Rvalue::Ref(_, _borrow_kind, place) => {
-                    (place_has_raw_deref(&body, place), true)
-                }
+                Rvalue::Ref(_, _borrow_kind, place) => (place_has_raw_deref(&body, place), true),
                 _ => (false, false),
             };
 

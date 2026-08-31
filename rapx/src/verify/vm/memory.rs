@@ -6,7 +6,7 @@ use rustc_middle::{
 };
 use z3::ast::{Ast, Int};
 
-use super::state::{AllocId, Allocation, Provenance, VmState, VmValue, ValueInvariants};
+use super::state::{AllocId, Allocation, Provenance, ValueInvariants, VmState, VmValue};
 
 impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     pub(crate) fn address_of_place(&mut self, place: &Place<'tcx>) -> Option<VmValue<'ctx, 'tcx>> {
@@ -20,10 +20,20 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             // Prefer the local's value provenance over the stack-allocation
             // provenance. For Box/Vec parameters, the value tracks the heap
             // allocation while local_alloc_ids tracks the stack location.
-            let provenance = self.locals.get(&place.local)
+            let provenance = self
+                .locals
+                .get(&place.local)
                 .and_then(|v| v.provenance.clone())
-                .or_else(|| self.local_alloc_ids.get(&place.local).copied()
-                    .map(|alloc_id| Provenance { alloc_id, offset: zero, is_field_offset: false }));
+                .or_else(|| {
+                    self.local_alloc_ids
+                        .get(&place.local)
+                        .copied()
+                        .map(|alloc_id| Provenance {
+                            alloc_id,
+                            offset: zero,
+                            is_field_offset: false,
+                        })
+                });
             return Some(VmValue {
                 term: base_addr,
                 ty,
@@ -85,9 +95,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     provenance = pointed.provenance.clone();
                     // For fat pointers (aggregates without provenance),
                     // use the first field's provenance (the data pointer).
-                    if provenance.is_none()
-                        && matches!(pointed.ty.kind(), TyKind::RawPtr(..))
-                    {
+                    if provenance.is_none() && matches!(pointed.ty.kind(), TyKind::RawPtr(..)) {
                         if let Some(field0) = self.field_value(place.local, &[0]) {
                             provenance = field0.provenance.clone();
                         }
@@ -97,7 +105,8 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     }
                 }
                 _ => {
-                    self.notes.push(format!("unsupported projection: {:?}", proj.kind()));
+                    self.notes
+                        .push(format!("unsupported projection: {:?}", proj.kind()));
                     return None;
                 }
             }
@@ -174,7 +183,12 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     }
 
     pub(crate) fn field_offset_in_bytes(&self, ty: Ty<'tcx>, field_idx: usize) -> u64 {
-        crate::helpers::mir_utils::field_offset_in_bytes(self.tcx, self.caller_def_id, ty, field_idx)
+        crate::helpers::mir_utils::field_offset_in_bytes(
+            self.tcx,
+            self.caller_def_id,
+            ty,
+            field_idx,
+        )
     }
 
     pub(crate) fn size_of_ty(&self, ty: Ty<'tcx>) -> u64 {

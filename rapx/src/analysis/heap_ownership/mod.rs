@@ -89,7 +89,10 @@ pub trait HeapOwnershipAnalysis: Analysis {
 
     /// If a type is a heap owner, the function returns Result<true>. If the specified type is
     /// illegal, the function returns Err.
-    fn is_heapowner<'tcx>(hares: HeapOwnershipResultMap, ty: Ty<'tcx>) -> Result<bool, &'static str> {
+    fn is_heapowner<'tcx>(
+        hares: HeapOwnershipResultMap,
+        ty: Ty<'tcx>,
+    ) -> Result<bool, &'static str> {
         match ty.kind() {
             TyKind::Adt(adtdef, ..) => {
                 let heapinfo = hares.get(&adtdef.0.0.did).unwrap();
@@ -106,7 +109,10 @@ pub trait HeapOwnershipAnalysis: Analysis {
 
     /// A type might be a heap owner if it is not a heap owner directly but contains type
     /// parameters that may make the type become a heap owner after monomorphization.
-    fn maybe_heapowner<'tcx>(hares: HeapOwnershipResultMap, ty: Ty<'tcx>) -> Result<bool, &'static str> {
+    fn maybe_heapowner<'tcx>(
+        hares: HeapOwnershipResultMap,
+        ty: Ty<'tcx>,
+    ) -> Result<bool, &'static str> {
         match ty.kind() {
             TyKind::Adt(adtdef, ..) => {
                 let heapinfo = hares.get(&adtdef.0.0.did).unwrap();

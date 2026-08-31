@@ -17,14 +17,18 @@ pub struct FatherInfo {
 
 impl FatherInfo {
     pub fn new(father_value_id: usize, field_id: usize) -> Self {
-        FatherInfo { father_value_id, field_id }
+        FatherInfo {
+            father_value_id,
+            field_id,
+        }
     }
 }
 
 impl Value {
     pub fn new(index: usize, local: usize) -> Self {
         Value {
-            index, local,
+            index,
+            local,
             father: None,
             fields: FxHashMap::default(),
             slot_idx: None,

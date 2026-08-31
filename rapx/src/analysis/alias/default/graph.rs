@@ -126,11 +126,7 @@ impl<'tcx> AliasGraph<'tcx> {
                 }
             }
         }
-        if result.len() > 1 {
-            Some(result)
-        } else {
-            None
-        }
+        if result.len() > 1 { Some(result) } else { None }
     }
 
     // ── Value type queries (delegate to PtsGraph) ──
@@ -146,7 +142,6 @@ impl<'tcx> AliasGraph<'tcx> {
             .map(|si| self.pts_graph.slot_is_ptr(si))
             .unwrap_or(false)
     }
-
 }
 
 impl<'tcx> std::fmt::Display for AliasGraph<'tcx> {

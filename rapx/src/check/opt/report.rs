@@ -1,6 +1,8 @@
 use annotate_snippets::{Level, Renderer, Snippet};
 
-use crate::utils::span::{relative_pos_range, span_to_filename, span_to_line_number, span_to_source_code};
+use crate::utils::span::{
+    relative_pos_range, span_to_filename, span_to_line_number, span_to_source_code,
+};
 use rustc_span::Span;
 
 #[must_use]
@@ -67,7 +69,11 @@ impl OptReport {
             .origin(&self.filename)
             .fold(true);
         for (level, span, label) in &self.annotations {
-            snippet = snippet.annotation(level.span(relative_pos_range(self.rel_span, *span)).label(label));
+            snippet = snippet.annotation(
+                level
+                    .span(relative_pos_range(self.rel_span, *span))
+                    .label(label),
+            );
         }
         let message = if let Some(ref footer) = self.footer {
             self.title_level
@@ -75,9 +81,7 @@ impl OptReport {
                 .snippet(snippet)
                 .footer(Level::Help.title(footer.as_str()))
         } else {
-            self.title_level
-                .title(&self.title)
-                .snippet(snippet)
+            self.title_level.title(&self.title).snippet(snippet)
         };
         let renderer = Renderer::styled();
         rap_warn!("{}", renderer.render(message));

@@ -15,11 +15,11 @@ use crate::analysis::path::PathTree;
 use super::{
     contract::{AndProperty, AtomProperty, OrProperty, Property},
     report::CheckResult,
-    slicer::{RelevantItem, BackwardSlicer},
+    slicer::{BackwardSlicer, RelevantItem},
 };
 use crate::helpers::mir_scan::{Checkpoint, CheckpointLocation};
 
-use super::{vm::SymbolicVm, property_checker::PropertyChecker};
+use super::{property_checker::PropertyChecker, vm::SymbolicVm};
 
 pub(crate) struct VerifyEngine<'tcx> {
     slicer: BackwardSlicer<'tcx>,
@@ -75,8 +75,12 @@ impl<'tcx> VerifyEngine<'tcx> {
                 items.extend(
                     caller_contracts
                         .iter()
-                        .filter(|c| !matches!(c.kind(), Some(super::contract::PropertyKind::Unknown)))
-                        .map(|c| RelevantItem::ContractFact { property: c.clone() }),
+                        .filter(|c| {
+                            !matches!(c.kind(), Some(super::contract::PropertyKind::Unknown))
+                        })
+                        .map(|c| RelevantItem::ContractFact {
+                            property: c.clone(),
+                        }),
                 );
             }
             items.extend(backward.items);
@@ -95,7 +99,8 @@ impl<'tcx> VerifyEngine<'tcx> {
             // Accumulate checked bounds/disjointness facts across
             // checkpoints so that a validator called in one checkpoint
             // can discharge InBound checks in a later checkpoint.
-            accumulated_has_checked = accumulated_has_checked || vm_state.contract_flags.has_checked_bounds;
+            accumulated_has_checked =
+                accumulated_has_checked || vm_state.contract_flags.has_checked_bounds;
             let mut vm_state = vm_state;
             vm_state.contract_flags.has_checked_bounds = accumulated_has_checked;
 
@@ -183,8 +188,7 @@ impl<'tcx> VerifyEngine<'tcx> {
                     .map(|a| match a {
                         super::contract::PropertyArg::Expr(expr) => {
                             super::contract::PropertyArg::Expr(Self::rebind_contract_expr(
-                                expr,
-                                checkpoint,
+                                expr, checkpoint,
                             ))
                         }
                         super::contract::PropertyArg::Predicates(predicates) => {
@@ -265,11 +269,13 @@ impl<'tcx> VerifyEngine<'tcx> {
             super::contract::ContractExpr::Place(place) => {
                 super::contract::ContractExpr::Place(Self::rebind_place(place, checkpoint))
             }
-            super::contract::ContractExpr::Len(inner) => {
-                super::contract::ContractExpr::Len(Box::new(Self::rebind_contract_expr(inner, checkpoint)))
-            }
-            super::contract::ContractExpr::SizeOf(_) | super::contract::ContractExpr::AlignOf(_)
-            | super::contract::ContractExpr::Const(_) | super::contract::ContractExpr::ConstParam { .. }
+            super::contract::ContractExpr::Len(inner) => super::contract::ContractExpr::Len(
+                Box::new(Self::rebind_contract_expr(inner, checkpoint)),
+            ),
+            super::contract::ContractExpr::SizeOf(_)
+            | super::contract::ContractExpr::AlignOf(_)
+            | super::contract::ContractExpr::Const(_)
+            | super::contract::ContractExpr::ConstParam { .. }
             | super::contract::ContractExpr::Unknown => expr.clone(),
             super::contract::ContractExpr::IndexAccess { slice, index } => {
                 super::contract::ContractExpr::IndexAccess {
@@ -294,17 +300,15 @@ impl<'tcx> VerifyEngine<'tcx> {
                 cond,
                 then_expr,
                 else_expr,
-            } => {
-                super::contract::ContractExpr::If {
-                    cond: Box::new(super::contract::NumericPredicate::new(
-                        Self::rebind_contract_expr(&cond.lhs, checkpoint),
-                        cond.op,
-                        Self::rebind_contract_expr(&cond.rhs, checkpoint),
-                    )),
-                    then_expr: Box::new(Self::rebind_contract_expr(then_expr, checkpoint)),
-                    else_expr: Box::new(Self::rebind_contract_expr(else_expr, checkpoint)),
-                }
-            }
+            } => super::contract::ContractExpr::If {
+                cond: Box::new(super::contract::NumericPredicate::new(
+                    Self::rebind_contract_expr(&cond.lhs, checkpoint),
+                    cond.op,
+                    Self::rebind_contract_expr(&cond.rhs, checkpoint),
+                )),
+                then_expr: Box::new(Self::rebind_contract_expr(then_expr, checkpoint)),
+                else_expr: Box::new(Self::rebind_contract_expr(else_expr, checkpoint)),
+            },
         }
     }
 

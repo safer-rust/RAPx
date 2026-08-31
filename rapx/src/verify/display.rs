@@ -4,15 +4,15 @@
 //! function paths with generic bounds, and grouped result trees with verdicts.
 
 use rustc_hir::def_id::DefId;
-use rustc_middle::ty::{self, TyCtxt};
 use rustc_middle::ty::ClauseKind;
+use rustc_middle::ty::{self, TyCtxt};
 
 use crate::compat::FxHashMap;
 use crate::helpers::fn_info::get_cons;
 use indexmap::IndexMap;
 
-use crate::helpers::mir_scan::CheckpointLocation;
 use super::report::PropertyCheckResult;
+use crate::helpers::mir_scan::CheckpointLocation;
 use crate::verify::contract::render::display_expr_user_friendly;
 
 pub(crate) fn fmt_fn_with_params(path: &str, arg_names: &[String], ret_ty: Option<&str>) -> String {
@@ -42,10 +42,7 @@ pub(crate) fn fmt_fn_path_with_generics(
     }
 }
 
-pub(crate) fn fmt_fn_path_with_bounds(
-    tcx: TyCtxt<'_>,
-    def_id: DefId,
-) -> String {
+pub(crate) fn fmt_fn_path_with_bounds(tcx: TyCtxt<'_>, def_id: DefId) -> String {
     let path = tcx.def_path_str(def_id);
     let predicates = crate::compat::predicates_of(tcx, def_id);
 
@@ -225,7 +222,8 @@ pub(crate) fn fmt_contract_expanded<'tcx>(
         }
     };
     let call = if matches!(kind, PropertyKind::ValidNum)
-        && let Some(crate::verify::contract::PropertyArg::Predicates(preds)) = property.args().first()
+        && let Some(crate::verify::contract::PropertyArg::Predicates(preds)) =
+            property.args().first()
     {
         let inner = preds
             .iter()
@@ -305,10 +303,7 @@ pub(crate) fn fmt_contract_expanded<'tcx>(
             let p2 = args.get(1).map(|s| s.as_str()).unwrap_or("p2");
             format!("{p1} and {p2} alias each other (hazard)")
         }
-        _ => fmt_meaning_template(
-            crate::verify::contract::spec::kind_meaning(kind),
-            &args,
-        ),
+        _ => fmt_meaning_template(crate::verify::contract::spec::kind_meaning(kind), &args),
     };
     (call, meaning)
 }
@@ -351,9 +346,8 @@ pub(crate) fn emit_results_counts_and_checkpoints<'tcx>(
     tcx: TyCtxt<'tcx>,
     all_results: &[PropertyCheckResult<'tcx>],
 ) -> (usize, usize) {
-
-    use crate::verify::contract::ContractKind;
     use super::report::CheckResult;
+    use crate::verify::contract::ContractKind;
 
     let unproved = all_results
         .iter()
@@ -446,18 +440,11 @@ pub(crate) fn emit_results_and_verdict<'tcx>(
     }
 }
 
-
-
-pub(crate) fn emit_property_rows<'tcx>(
-    _tcx: TyCtxt<'tcx>,
-    results: &[&PropertyCheckResult<'tcx>],
-) {
+pub(crate) fn emit_property_rows<'tcx>(_tcx: TyCtxt<'tcx>, results: &[&PropertyCheckResult<'tcx>]) {
     let path_groups: Vec<(&str, Vec<_>)> = {
         let mut map: FxHashMap<&str, Vec<_>> = FxHashMap::default();
         for r in results.iter() {
-            map.entry(r.path_description.as_str())
-                .or_default()
-                .push(r);
+            map.entry(r.path_description.as_str()).or_default().push(r);
         }
         let mut entries: Vec<_> = map.into_iter().collect();
         entries.sort_by_key(|(desc, _)| desc.matches(',').count());
@@ -479,8 +466,9 @@ pub(crate) fn emit_property_rows<'tcx>(
             if let Some(on) = r.property.origin().map(|o| o.name.as_str()) {
                 // Compound `def`: one entry per origin name, its primitives
                 // AND-combined into a single verdict (no hazard/option prefix).
-                if let Some(entry) =
-                    counts.iter_mut().find(|(_, o, _, _, _, _)| o.as_deref() == Some(on))
+                if let Some(entry) = counts
+                    .iter_mut()
+                    .find(|(_, o, _, _, _, _)| o.as_deref() == Some(on))
                 {
                     entry.4 = entry.4.clone().and(result);
                 } else {

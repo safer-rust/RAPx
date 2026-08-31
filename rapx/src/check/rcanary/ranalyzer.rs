@@ -9,7 +9,9 @@ use rustc_middle::{
 use rustc_span::def_id::DefId;
 
 use super::{IcxMut, IcxSliceMut, Rcx, RcxMut, rCanary};
-use crate::analysis::heap_ownership::{HeapOwnershipResultMap, HeapOwnership, default::TyWithIndex};
+use crate::analysis::heap_ownership::{
+    HeapOwnership, HeapOwnershipResultMap, default::TyWithIndex,
+};
 use ownership::{IntraVar, Taint};
 
 use std::{
@@ -498,5 +500,5 @@ pub fn is_z3_goal_verbose() -> bool {
     match env::var_os("Z3") {
         Some(_) => true,
         _ => false,
-     }
+    }
 }

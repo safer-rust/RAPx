@@ -4,30 +4,41 @@
 //! `assert_all` plus Euclidean-division (NIA) axioms injected for both the
 //! contract expression and the VM's computed terms.
 
-use rustc_middle::mir::Operand;
-use rustc_middle::ty::TyKind;
 #[cfg(not(rapx_has_skip_norm_wip))]
 use crate::compat::SkipNormWip;
-use rustc_hash::FxHashSet;
-use z3::{SatResult, Solver, ast::{Ast, Bool, Int}};
-use crate::verify::contract::{ContractExpr, NumericBinOp, PlaceBase, Property, PropertyArg, RelOp};
+use crate::helpers::mir_scan::Checkpoint;
+use crate::verify::contract::{
+    ContractExpr, NumericBinOp, PlaceBase, Property, PropertyArg, RelOp,
+};
 use crate::verify::def_use::PlaceKey;
 use crate::verify::report::CheckResult;
-use crate::helpers::mir_scan::Checkpoint;
 use crate::verify::vm::state::VmState;
+use rustc_hash::FxHashSet;
+use rustc_middle::mir::Operand;
+use rustc_middle::ty::TyKind;
+use z3::{
+    SatResult, Solver,
+    ast::{Ast, Bool, Int},
+};
 
 use super::PropertyChecker;
 
 impl PropertyChecker {
-    pub(super) fn check_valid_num<'ctx, 'tcx>(&self, vm_state: &VmState<'ctx, 'tcx>, solver: &Solver<'ctx>,
-        checkpoint: &Checkpoint<'tcx>, property: &Property<'tcx>) -> CheckResult
-    {
+    pub(super) fn check_valid_num<'ctx, 'tcx>(
+        &self,
+        vm_state: &VmState<'ctx, 'tcx>,
+        solver: &Solver<'ctx>,
+        checkpoint: &Checkpoint<'tcx>,
+        property: &Property<'tcx>,
+    ) -> CheckResult {
         if let Some(PropertyArg::Predicates(predicates)) = property.args().first() {
             if self.all_predicates_are_slice_size_invariant(vm_state, checkpoint, predicates) {
                 return CheckResult::Proved;
             }
             for pred in predicates {
-                if let Some(r) = self.eval_numeric_predicate(vm_state, solver, Some(checkpoint), pred) {
+                if let Some(r) =
+                    self.eval_numeric_predicate(vm_state, solver, Some(checkpoint), pred)
+                {
                     if !matches!(r, CheckResult::Proved) {
                         return r;
                     }
@@ -35,8 +46,16 @@ impl PropertyChecker {
             }
             return CheckResult::Proved;
         }
-        let Some(value) = self.target_value(vm_state, checkpoint, property) else { return CheckResult::Unknown };
-        let ty = property.args().get(1).and_then(|a| if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None });
+        let Some(value) = self.target_value(vm_state, checkpoint, property) else {
+            return CheckResult::Unknown;
+        };
+        let ty = property.args().get(1).and_then(|a| {
+            if let PropertyArg::Ty(ty) = a {
+                Some(*ty)
+            } else {
+                None
+            }
+        });
         if let Some(ty) = ty {
             let size_bits = vm_state.size_of_ty(ty) * 8;
             if size_bits > 0 && size_bits < 128 {
@@ -56,10 +75,17 @@ impl PropertyChecker {
                     solver.pop(1);
                     return r;
                 }
-                let max = Int::from_u64(vm_state.ctx, ((1u128 << size_bits) - 1).min(u64::MAX as u128) as u64);
+                let max = Int::from_u64(
+                    vm_state.ctx,
+                    ((1u128 << size_bits) - 1).min(u64::MAX as u128) as u64,
+                );
                 solver.push();
                 solver.assert(&value.term.gt(&max));
-                let r = match solver.check() { SatResult::Unsat => CheckResult::Proved, SatResult::Sat => CheckResult::Failed, _ => CheckResult::Unknown };
+                let r = match solver.check() {
+                    SatResult::Unsat => CheckResult::Proved,
+                    SatResult::Sat => CheckResult::Failed,
+                    _ => CheckResult::Unknown,
+                };
                 solver.pop(1);
                 return r;
             }
@@ -68,10 +94,13 @@ impl PropertyChecker {
         CheckResult::Proved
     }
 
-    pub(super) fn eval_numeric_predicate<'ctx, 'tcx>(&self, vm_state: &VmState<'ctx, 'tcx>, solver: &Solver<'ctx>,
+    pub(super) fn eval_numeric_predicate<'ctx, 'tcx>(
+        &self,
+        vm_state: &VmState<'ctx, 'tcx>,
+        solver: &Solver<'ctx>,
         checkpoint: Option<&Checkpoint<'tcx>>,
-        pred: &crate::verify::contract::NumericPredicate<'tcx>) -> Option<CheckResult>
-    {
+        pred: &crate::verify::contract::NumericPredicate<'tcx>,
+    ) -> Option<CheckResult> {
         let lhs = self.eval_contract_expr(vm_state, checkpoint, &pred.lhs)?;
         let rhs = self.eval_contract_expr(vm_state, checkpoint, &pred.rhs)?;
         let condition = match pred.op {
@@ -127,10 +156,16 @@ impl PropertyChecker {
         }
         solver.assert(&condition.not());
         let r0 = solver.check();
-        let mut r = match r0 { SatResult::Unsat => Some(CheckResult::Proved), SatResult::Sat => Some(CheckResult::Failed), _ => None };
+        let mut r = match r0 {
+            SatResult::Unsat => Some(CheckResult::Proved),
+            SatResult::Sat => Some(CheckResult::Failed),
+            _ => None,
+        };
         // If Le/Ge check failed, inject a path-condition-level NIA axiom
         // based on the VM's binary op sources and retry.
-        if matches!(r, Some(CheckResult::Failed)) && matches!(pred.op, RelOp::Le | RelOp::Ge | RelOp::Lt | RelOp::Gt) {
+        if matches!(r, Some(CheckResult::Failed))
+            && matches!(pred.op, RelOp::Le | RelOp::Ge | RelOp::Lt | RelOp::Gt)
+        {
             solver.pop(1);
             solver.push();
             vm_state.assert_all(solver);
@@ -139,18 +174,29 @@ impl PropertyChecker {
             self.inject_vm_div_axioms(vm_state, solver, &pred.lhs);
             self.inject_vm_div_axioms(vm_state, solver, &pred.rhs);
             solver.assert(&condition.not());
-            r = match solver.check() { SatResult::Unsat => Some(CheckResult::Proved), SatResult::Sat => Some(CheckResult::Failed), _ => r };
+            r = match solver.check() {
+                SatResult::Unsat => Some(CheckResult::Proved),
+                SatResult::Sat => Some(CheckResult::Failed),
+                _ => r,
+            };
         }
         solver.pop(1);
         r
     }
 
-    pub(super) fn inject_nia_axioms<'ctx, 'tcx>(&self, vm_state: &VmState<'ctx, 'tcx>,
-        solver: &Solver<'ctx>, checkpoint: Option<&Checkpoint<'tcx>>,
-        expr: &ContractExpr<'tcx>)
-    {
+    pub(super) fn inject_nia_axioms<'ctx, 'tcx>(
+        &self,
+        vm_state: &VmState<'ctx, 'tcx>,
+        solver: &Solver<'ctx>,
+        checkpoint: Option<&Checkpoint<'tcx>>,
+        expr: &ContractExpr<'tcx>,
+    ) {
         match expr {
-            ContractExpr::Binary { op: NumericBinOp::Div, lhs, rhs } => {
+            ContractExpr::Binary {
+                op: NumericBinOp::Div,
+                lhs,
+                rhs,
+            } => {
                 if let (Some(l), Some(r)) = (
                     self.eval_contract_expr(vm_state, checkpoint, lhs),
                     self.eval_contract_expr(vm_state, checkpoint, rhs),
@@ -163,7 +209,11 @@ impl PropertyChecker {
                     solver.assert(&rem_term.ge(&zero));
                 }
             }
-            ContractExpr::Binary { op: NumericBinOp::Mul, lhs, rhs } => {
+            ContractExpr::Binary {
+                op: NumericBinOp::Mul,
+                lhs,
+                rhs,
+            } => {
                 // Recurse into mul operands in case one is a div
                 self.inject_nia_axioms(vm_state, solver, checkpoint, lhs);
                 self.inject_nia_axioms(vm_state, solver, checkpoint, rhs);
@@ -179,22 +229,28 @@ impl PropertyChecker {
         }
     }
 
-    pub(super) fn inject_vm_div_axioms<'ctx, 'tcx>(&self,
+    pub(super) fn inject_vm_div_axioms<'ctx, 'tcx>(
+        &self,
         vm_state: &VmState<'ctx, 'tcx>,
         solver: &Solver<'ctx>,
         expr: &ContractExpr<'tcx>,
     ) {
-        let Some(val) = self.eval_contract_expr(vm_state, None, expr) else { return };
+        let Some(val) = self.eval_contract_expr(vm_state, None, expr) else {
+            return;
+        };
         self.inject_div_axioms_for_term(vm_state, solver, &val, 4);
     }
 
-    pub(super) fn inject_div_axioms_for_term<'ctx, 'tcx>(&self,
+    pub(super) fn inject_div_axioms_for_term<'ctx, 'tcx>(
+        &self,
         vm_state: &VmState<'ctx, 'tcx>,
         solver: &Solver<'ctx>,
         target: &Int<'ctx>,
         depth: usize,
     ) {
-        if depth == 0 { return; }
+        if depth == 0 {
+            return;
+        }
 
         // Walk both binary_op_sources (Add, Sub, Div, etc.) and
         // other_op_sources (select_unpredictable) for destinations
@@ -202,15 +258,21 @@ impl PropertyChecker {
         let op_sources: Vec<&(Option<PlaceKey>, Option<PlaceKey>)> = {
             let mut src: Vec<&(Option<PlaceKey>, Option<PlaceKey>)> = Vec::new();
             for (pk, pair) in vm_state.binary_op_sources.iter() {
-                if pk.local().and_then(|l| vm_state.local_value(l))
-                    .map(|v| v.term == *target).unwrap_or(false)
+                if pk
+                    .local()
+                    .and_then(|l| vm_state.local_value(l))
+                    .map(|v| v.term == *target)
+                    .unwrap_or(false)
                 {
                     src.push(pair);
                 }
             }
             for (pk, pair) in vm_state.other_op_sources.iter() {
-                if pk.local().and_then(|l| vm_state.local_value(l))
-                    .map(|v| v.term == *target).unwrap_or(false)
+                if pk
+                    .local()
+                    .and_then(|l| vm_state.local_value(l))
+                    .map(|v| v.term == *target)
+                    .unwrap_or(false)
                 {
                     src.push(pair);
                 }
@@ -225,10 +287,16 @@ impl PropertyChecker {
         // that *consumes* that local as an operand, walk the destination.
         for local_idx in 0..vm_state.body.local_decls.len() {
             let local = rustc_middle::mir::Local::from_usize(local_idx);
-            let Some(val) = vm_state.local_value(local) else { continue };
-            if val.term != *target { continue }
+            let Some(val) = vm_state.local_value(local) else {
+                continue;
+            };
+            if val.term != *target {
+                continue;
+            }
 
-            for (pk, (lhs, rhs)) in vm_state.binary_op_sources.iter()
+            for (pk, (lhs, rhs)) in vm_state
+                .binary_op_sources
+                .iter()
                 .chain(vm_state.other_op_sources.iter())
             {
                 if let Some(dest_local) = pk.local() {
@@ -240,7 +308,10 @@ impl PropertyChecker {
                         {
                             already_seen.insert(dest_val.term.clone());
                             self.inject_div_axioms_for_term(
-                                vm_state, solver, &dest_val.term, depth - 1,
+                                vm_state,
+                                solver,
+                                &dest_val.term,
+                                depth - 1,
                             );
                         }
                     }
@@ -250,16 +321,34 @@ impl PropertyChecker {
 
         // ── Process direct matches (both binary and other sources) ──
         for (lhs_pk, rhs_pk) in &op_sources {
-            let (Some(lhs_pk), Some(rhs_pk)) = (lhs_pk, rhs_pk) else { continue };
-            let (Some(lhs_local), Some(rhs_local)) = (lhs_pk.local(), rhs_pk.local()) else { continue };
-            let (Some(lhs_val), Some(rhs_val)) = (vm_state.local_value(lhs_local), vm_state.local_value(rhs_local)) else { continue };
+            let (Some(lhs_pk), Some(rhs_pk)) = (lhs_pk, rhs_pk) else {
+                continue;
+            };
+            let (Some(lhs_local), Some(rhs_local)) = (lhs_pk.local(), rhs_pk.local()) else {
+                continue;
+            };
+            let (Some(lhs_val), Some(rhs_val)) = (
+                vm_state.local_value(lhs_local),
+                vm_state.local_value(rhs_local),
+            ) else {
+                continue;
+            };
 
             // Check if lhs is itself a Div / Rem result
-            if let Some((div_lhs_pk, div_rhs_pk)) = vm_state.binary_op_sources.get(lhs_pk).cloned() {
-                let Some(div_lhs_local) = div_lhs_pk.and_then(|pk| pk.local()) else { continue };
-                let Some(div_rhs_local) = div_rhs_pk.and_then(|pk| pk.local()) else { continue };
-                let Some(div_lhs_val) = vm_state.local_value(div_lhs_local) else { continue };
-                let Some(div_rhs_val) = vm_state.local_value(div_rhs_local) else { continue };
+            if let Some((div_lhs_pk, div_rhs_pk)) = vm_state.binary_op_sources.get(lhs_pk).cloned()
+            {
+                let Some(div_lhs_local) = div_lhs_pk.and_then(|pk| pk.local()) else {
+                    continue;
+                };
+                let Some(div_rhs_local) = div_rhs_pk.and_then(|pk| pk.local()) else {
+                    continue;
+                };
+                let Some(div_lhs_val) = vm_state.local_value(div_lhs_local) else {
+                    continue;
+                };
+                let Some(div_rhs_val) = vm_state.local_value(div_rhs_local) else {
+                    continue;
+                };
 
                 let quot = div_lhs_val.term.div(&div_rhs_val.term);
                 let rem = div_lhs_val.term.rem(&div_rhs_val.term);
@@ -282,23 +371,31 @@ impl PropertyChecker {
         vm_state: &VmState<'ctx, 'tcx>,
         expr: &ContractExpr<'tcx>,
     ) -> Option<Int<'ctx>> {
-        let ContractExpr::Len(_) = expr else { return None };
+        let ContractExpr::Len(_) = expr else {
+            return None;
+        };
         for (_, val) in vm_state.locals.iter() {
             let is_iter = match val.ty.kind() {
                 TyKind::Ref(_, pointee, _) => match pointee.kind() {
                     TyKind::Adt(adt_def, _) => {
                         let name = vm_state.tcx.def_path_str(adt_def.did());
-                        name.ends_with("::Iter") || name == "Iter"
-                            || name.ends_with("::IterMut") || name == "IterMut"
+                        name.ends_with("::Iter")
+                            || name == "Iter"
+                            || name.ends_with("::IterMut")
+                            || name == "IterMut"
                     }
                     _ => false,
                 },
                 _ => false,
             };
-            if !is_iter { continue; }
+            if !is_iter {
+                continue;
+            }
             let alloc_id = val.provenance_alloc_id()?;
             for (&l, lv) in vm_state.locals.iter() {
-                if lv.provenance_alloc_id() != Some(alloc_id) { continue; }
+                if lv.provenance_alloc_id() != Some(alloc_id) {
+                    continue;
+                }
                 if let (Some(ptr), Some(end)) =
                     (vm_state.field_value(l, &[0]), vm_state.field_value(l, &[1]))
                 {
@@ -308,7 +405,8 @@ impl PropertyChecker {
                                 TyKind::Adt(_, substs) => substs.first().and_then(|s| s.as_type()),
                                 _ => None,
                             };
-                            let elem_size = elem_ty.map(|t| vm_state.size_of_ty(t).max(1)).unwrap_or(1) as u64;
+                            let elem_size =
+                                elem_ty.map(|t| vm_state.size_of_ty(t).max(1)).unwrap_or(1) as u64;
                             let diff = Int::sub(vm_state.ctx, &[&ep.offset, &pp.offset]);
                             let sz = Int::from_u64(vm_state.ctx, elem_size);
                             return Some(diff.div(&sz));
@@ -327,13 +425,18 @@ impl PropertyChecker {
         expr: &ContractExpr<'tcx>,
     ) -> Option<Int<'ctx>> {
         use rustc_middle::mir::Place;
-        let ContractExpr::Place(cp) = expr else { return None };
+        let ContractExpr::Place(cp) = expr else {
+            return None;
+        };
         let op: &Operand<'tcx> = match cp.base {
             PlaceBase::Arg(n) => checkpoint.args.get(n)?,
             PlaceBase::Local(n) => {
                 let callee = checkpoint.callee?;
                 let idx = crate::helpers::mir_utils::callee_param_index_for_local(
-                    vm_state.tcx, callee, n)?;
+                    vm_state.tcx,
+                    callee,
+                    n,
+                )?;
                 checkpoint.args.get(idx)?
             }
             _ => return None,
@@ -348,18 +451,23 @@ impl PropertyChecker {
             TyKind::Ref(_, pointee, _) => match pointee.kind() {
                 TyKind::Adt(adt_def, _) => {
                     let name = vm_state.tcx.def_path_str(adt_def.did());
-                    name.ends_with("::Iter") || name == "Iter"
-                        || name.ends_with("::IterMut") || name == "IterMut"
+                    name.ends_with("::Iter")
+                        || name == "Iter"
+                        || name.ends_with("::IterMut")
+                        || name == "IterMut"
                 }
                 _ => false,
             },
             _ => false,
         };
-        if !is_iter { return None; }
+        if !is_iter {
+            return None;
+        }
         // Direct lookup first, then scan by alloc_id for temp copies.
-        if let (Some(ptr), Some(end)) =
-            (vm_state.field_value(local, &[0]), vm_state.field_value(local, &[1]))
-        {
+        if let (Some(ptr), Some(end)) = (
+            vm_state.field_value(local, &[0]),
+            vm_state.field_value(local, &[1]),
+        ) {
             if let (Some(pp), Some(ep)) = (&ptr.provenance, &end.provenance) {
                 if pp.alloc_id == ep.alloc_id {
                     let diff = Int::sub(vm_state.ctx, &[&ep.offset, &pp.offset]);
@@ -371,10 +479,13 @@ impl PropertyChecker {
         // Fallback: scan all locals for one with same struct alloc.
         let target_alloc = local_val.provenance_alloc_id()?;
         for (&scan_local, scan_val) in vm_state.locals.iter() {
-            if scan_val.provenance_alloc_id() != Some(target_alloc) { continue; }
-            if let (Some(ptr), Some(end)) =
-                (vm_state.field_value(scan_local, &[0]), vm_state.field_value(scan_local, &[1]))
-            {
+            if scan_val.provenance_alloc_id() != Some(target_alloc) {
+                continue;
+            }
+            if let (Some(ptr), Some(end)) = (
+                vm_state.field_value(scan_local, &[0]),
+                vm_state.field_value(scan_local, &[1]),
+            ) {
                 if let (Some(pp), Some(ep)) = (&ptr.provenance, &end.provenance) {
                     if pp.alloc_id == ep.alloc_id {
                         let diff = Int::sub(vm_state.ctx, &[&ep.offset, &pp.offset]);

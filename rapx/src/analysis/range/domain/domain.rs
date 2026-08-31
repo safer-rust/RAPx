@@ -122,7 +122,10 @@ impl<'tcx, T: IntervalArithmetic + ConstConvert + Debug> fmt::Display for BasicO
                 op.source1,
                 op.source2,
                 op.inst,
-                op.const_value.as_ref().map(|c| format!("{:?}", c)).unwrap_or_else(|| "None".to_string())
+                op.const_value
+                    .as_ref()
+                    .map(|c| format!("{:?}", c))
+                    .unwrap_or_else(|| "None".to_string())
             ),
             BasicOpKind::Essa(op) => write!(
                 f,
@@ -593,7 +596,10 @@ impl<'tcx, T: IntervalArithmetic + ConstConvert + Debug> BinaryOp<'tcx, T> {
             if let Some(value) = T::from_const(const_value) {
                 op2 = Range::new(value, value, RangeType::Regular);
             } else {
-                rap_trace!("BinaryOp::eval: from_const returned None for {:?}\n", const_value);
+                rap_trace!(
+                    "BinaryOp::eval: from_const returned None for {:?}\n",
+                    const_value
+                );
                 op2 = Range::top();
             }
         } else {

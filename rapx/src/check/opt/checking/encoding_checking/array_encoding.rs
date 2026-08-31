@@ -1,6 +1,5 @@
 use std::collections::HashSet;
 
-
 use rustc_middle::{mir::Local, ty::TyCtxt};
 use rustc_span::Span;
 
@@ -11,7 +10,6 @@ use crate::check::opt::OptCheck;
 crate::def_paths! {
     str_from_utf8: "std::str::from_utf8",
 }
-
 
 pub struct ArrayEncodingCheck {
     record: Vec<Span>,

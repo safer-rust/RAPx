@@ -18,13 +18,13 @@ impl<'tcx> AliasGraph<'tcx> {
                 ProjectionElem::Field(field, ty) => {
                     let field_idx = field.as_usize();
                     if !self.values[value_idx].fields.contains_key(&field_idx) {
-                        if self.values.len() < crate::analysis::points_to::graph::MAX_VALUES_PER_PATH {
+                        if self.values.len()
+                            < crate::analysis::points_to::graph::MAX_VALUES_PER_PATH
+                        {
                             let ty_env = TypingEnv::post_analysis(self.tcx(), self.def_id());
                             let need_drop = ty.needs_drop(self.tcx(), ty_env);
                             let may_drop = !super::types::is_not_drop(self.tcx(), ty);
-                            let mut node = super::value::Value::new(
-                                self.values.len(), local,
-                            );
+                            let mut node = super::value::Value::new(self.values.len(), local);
                             node.father = Some(super::value::FatherInfo::new(value_idx, field_idx));
                             let node_index = node.index;
                             self.values[value_idx].fields.insert(field_idx, node.index);
@@ -33,9 +33,15 @@ impl<'tcx> AliasGraph<'tcx> {
                                 local,
                                 fields: self.get_field_seq(node_index).into_iter().rev().collect(),
                             };
-                            self.values[node_index].slot_idx = Some(self.pts_graph.ensure_slot(field_slot, may_drop, need_drop));
-                            self.pts_graph.set_slot_kind(self.values[node_index].slot_idx.unwrap(), super::types::kind(ty));
-                        } else { break; }
+                            self.values[node_index].slot_idx =
+                                Some(self.pts_graph.ensure_slot(field_slot, may_drop, need_drop));
+                            self.pts_graph.set_slot_kind(
+                                self.values[node_index].slot_idx.unwrap(),
+                                super::types::kind(ty),
+                            );
+                        } else {
+                            break;
+                        }
                     }
                     value_idx = *self.values[value_idx].fields.get(&field_idx).unwrap();
                 }
@@ -48,7 +54,10 @@ impl<'tcx> AliasGraph<'tcx> {
     pub fn call_target_of(&self, bb_index: usize) -> Option<DefId> {
         let term = self.terminator(bb_index)?;
         match &term.kind {
-            TerminatorKind::Call { func: Operand::Constant(c), .. } => match c.ty().kind() {
+            TerminatorKind::Call {
+                func: Operand::Constant(c),
+                ..
+            } => match c.ty().kind() {
                 ty::FnDef(id, _) => Some(*id),
                 _ => None,
             },
@@ -62,7 +71,9 @@ impl<'tcx> AliasGraph<'tcx> {
         let mut iter = 0usize;
         while let Some(ref father) = self.values[cur].father {
             iter += 1;
-            if iter > 1000 { break; }
+            if iter > 1000 {
+                break;
+            }
             seq.push(father.field_id);
             cur = father.father_value_id;
         }

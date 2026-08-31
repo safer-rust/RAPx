@@ -1,8 +1,8 @@
-use rustc_span::Span;
-use crate::analysis::alias::default::graph::AliasGraph;
-use crate::analysis::alias::default::types::ValueKind;
 use super::bug_records::*;
 use super::drop::*;
+use crate::analysis::alias::default::graph::AliasGraph;
+use crate::analysis::alias::default::types::ValueKind;
+use rustc_span::Span;
 
 // ── public entry points ──
 
@@ -90,7 +90,8 @@ pub fn check_drop_status(
             return None;
         }
     }
-    let kind = graph.value_to_slot_idx(idx)
+    let kind = graph
+        .value_to_slot_idx(idx)
         .map(|si| graph.pts_graph.slot_kind(si))
         .unwrap_or(ValueKind::Adt);
     Some(rate_confidence(kind, fully_dropped))
@@ -182,8 +183,10 @@ fn push_drop_top_down(
     rap_debug!("push_drop_top_down: value_idx = {}", value_idx);
     let mut prop_chain = vec![value_idx];
     for (_field_id, field_value_id) in graph.values[value_idx].fields.clone() {
-        if graph.value_to_slot_idx(field_value_id)
-            .map_or(false, |si| graph.pts_graph.slot_kind(si) == ValueKind::Ref) {
+        if graph
+            .value_to_slot_idx(field_value_id)
+            .map_or(false, |si| graph.pts_graph.slot_kind(si) == ValueKind::Ref)
+        {
             continue;
         }
         drop_record[field_value_id] = DropRecord::new(field_value_id, true, drop_spot);
@@ -196,11 +199,7 @@ fn push_drop_top_down(
 
 // ── drop fetching ──
 
-fn fetch_drop_info(
-    graph: &AliasGraph,
-    drop_record: &mut Vec<DropRecord>,
-    value_idx: usize,
-) {
+fn fetch_drop_info(graph: &AliasGraph, drop_record: &mut Vec<DropRecord>, value_idx: usize) {
     fetch_drop_from_bottom(graph, drop_record, value_idx);
     fetch_drop_from_top(graph, drop_record, value_idx);
     fetch_drop_from_alias(graph, drop_record, value_idx);
@@ -221,7 +220,9 @@ fn fetch_drop_from_pointee(
     let Some(slot_idx) = graph.value_to_slot_idx(value_idx) else {
         return;
     };
-    let pointees: Vec<usize> = graph.pts_graph.direct_pointees(slot_idx)
+    let pointees: Vec<usize> = graph
+        .pts_graph
+        .direct_pointees(slot_idx)
         .filter_map(|loc| match loc {
             crate::analysis::points_to::slot::AbstractLoc::Slot(s) => {
                 if s.fields.is_empty() && s.local < graph.values.len() {
@@ -229,7 +230,9 @@ fn fetch_drop_from_pointee(
                 } else {
                     for (v, _) in graph.values.iter().enumerate() {
                         if let Some(v_slot) = graph.value_to_slot_idx(v) {
-                            if graph.pts_graph.get_slot(v_slot)
+                            if graph
+                                .pts_graph
+                                .get_slot(v_slot)
                                 .is_some_and(|vs| vs.local == s.local && vs.fields == s.fields)
                             {
                                 return Some(v);
@@ -256,11 +259,7 @@ fn fetch_drop_from_pointee(
     }
 }
 
-fn fetch_drop_from_bottom(
-    graph: &AliasGraph,
-    drop_record: &mut Vec<DropRecord>,
-    value_idx: usize,
-) {
+fn fetch_drop_from_bottom(graph: &AliasGraph, drop_record: &mut Vec<DropRecord>, value_idx: usize) {
     rap_debug!("fetch_drop_from_bottom: value_idx = {}", value_idx);
     for (_field_id, field_value_id) in graph.values[value_idx].fields.clone() {
         rap_debug!("{:?}", drop_record[field_value_id]);
@@ -299,7 +298,9 @@ fn fetch_drop_from_pts_fields(
         let Some(child_slot) = graph.pts_graph.get_slot(i) else {
             continue;
         };
-        if child_slot.local != base_slot.local || child_slot.fields.len() != base_slot.fields.len() + 1 {
+        if child_slot.local != base_slot.local
+            || child_slot.fields.len() != base_slot.fields.len() + 1
+        {
             continue;
         }
         if !child_slot.fields.starts_with(&base_slot.fields) {
@@ -325,11 +326,7 @@ fn fetch_drop_from_pts_fields(
     }
 }
 
-fn fetch_drop_from_top(
-    graph: &AliasGraph,
-    drop_record: &mut Vec<DropRecord>,
-    value_idx: usize,
-) {
+fn fetch_drop_from_top(graph: &AliasGraph, drop_record: &mut Vec<DropRecord>, value_idx: usize) {
     rap_debug!("fetch_drop_from_top: value_idx = {}", value_idx);
     let mut father = graph.values[value_idx].father.clone();
     while let Some(father_info) = father {
@@ -349,11 +346,7 @@ fn fetch_drop_from_top(
     }
 }
 
-fn fetch_drop_from_alias(
-    graph: &AliasGraph,
-    drop_record: &mut Vec<DropRecord>,
-    value_idx: usize,
-) {
+fn fetch_drop_from_alias(graph: &AliasGraph, drop_record: &mut Vec<DropRecord>, value_idx: usize) {
     rap_debug!("fetch_drop_from_alias: value_idx = {}", value_idx);
     if let Some(aliases) = get_alias_set(graph, value_idx) {
         for idx in aliases {
@@ -368,11 +361,7 @@ fn fetch_drop_from_alias(
 
 // ── drop clearing ──
 
-fn clear_father_drop(
-    graph: &AliasGraph,
-    drop_record: &mut Vec<DropRecord>,
-    value_idx: usize,
-) {
+fn clear_father_drop(graph: &AliasGraph, drop_record: &mut Vec<DropRecord>, value_idx: usize) {
     rap_debug!("clear_drop_father: value_idx = {}", value_idx);
     let mut father = graph.values[value_idx].father.clone();
     while let Some(father_info) = father {
@@ -384,11 +373,7 @@ fn clear_father_drop(
     }
 }
 
-fn clear_field_drop(
-    graph: &AliasGraph,
-    drop_record: &mut Vec<DropRecord>,
-    value_idx: usize,
-) {
+fn clear_field_drop(graph: &AliasGraph, drop_record: &mut Vec<DropRecord>, value_idx: usize) {
     rap_debug!("clear_field_drop: value_idx = {}", value_idx);
     for (_field_id, field_value_id) in graph.values[value_idx].fields.clone() {
         drop_record[field_value_id].clear();

@@ -10,8 +10,8 @@
 //! needs the rustc type context.  The arithmetic / call / if / constant layers
 //! are converted directly from the pest tree.
 
-use pest::iterators::Pair;
 use pest::Parser;
+use pest::iterators::Pair;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 
@@ -24,7 +24,9 @@ use super::types::{
 use crate::helpers::name::match_ty_with_ident;
 
 fn only_child(pair: Pair<Rule>) -> Pair<Rule> {
-    pair.into_inner().next().expect("expected a single child pair")
+    pair.into_inner()
+        .next()
+        .expect("expected a single child pair")
 }
 
 fn relop_from_str(s: &str) -> Option<RelOp> {
@@ -40,7 +42,11 @@ fn relop_from_str(s: &str) -> Option<RelOp> {
 }
 
 /// Parse a numeric expression (no comparison) into a `ContractExpr`.
-pub(crate) fn parse_expr_pest<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, text: &str) -> ContractExpr<'tcx> {
+pub(crate) fn parse_expr_pest<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def_id: DefId,
+    text: &str,
+) -> ContractExpr<'tcx> {
     let Ok(mut pairs) = ContractParser::parse(Rule::expr, text) else {
         rap_debug!("contract expression not supported by grammar: {text}");
         return ContractExpr::Unknown;
@@ -106,7 +112,11 @@ fn conv_predicate<'tcx>(
                     Some(NumericPredicate::new(lhs, op, rhs))
                 }
                 // Bare expression → `expr != 0`.
-                None => Some(NumericPredicate::new(lhs, RelOp::Ne, ContractExpr::Const(0))),
+                None => Some(NumericPredicate::new(
+                    lhs,
+                    RelOp::Ne,
+                    ContractExpr::Const(0),
+                )),
             }
         }
         Rule::not_is_empty => {
@@ -343,11 +353,7 @@ fn conv_call<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, pair: Pair<Rule>) -> Contra
     }
 }
 
-fn conv_arg_expr<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    def_id: DefId,
-    arg: Pair<Rule>,
-) -> ContractExpr<'tcx> {
+fn conv_arg_expr<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, arg: Pair<Rule>) -> ContractExpr<'tcx> {
     let inner = only_child(arg);
     match inner.as_rule() {
         Rule::expr => conv_expr(tcx, def_id, inner),
@@ -355,11 +361,7 @@ fn conv_arg_expr<'tcx>(
     }
 }
 
-fn conv_const_path<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    def_id: DefId,
-    pair: Pair<Rule>,
-) -> ContractExpr<'tcx> {
+fn conv_const_path<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, pair: Pair<Rule>) -> ContractExpr<'tcx> {
     let text = pair.as_str();
     let Some((ty_name, which)) = text.rsplit_once("::") else {
         return ContractExpr::Unknown;
@@ -427,7 +429,8 @@ fn conv_base<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, base_text: &str) -> Contrac
             ContractExpr::Place(ContractPlace::arg(idx))
         }
         _ => {
-            let Some((base, fields, _)) = resolve_place_from_ident(tcx, def_id, base_text, &[]) else {
+            let Some((base, fields, _)) = resolve_place_from_ident(tcx, def_id, base_text, &[])
+            else {
                 return ContractExpr::Unknown;
             };
             ContractExpr::Place(ContractPlace::local(base, fields))
@@ -446,7 +449,10 @@ pub(crate) fn parse_compound_body(body: &str, params: &[String]) -> Option<Compo
 }
 
 fn conv_compound_or(pair: Pair<Rule>, params: &[String]) -> CompoundBody {
-    let parts: Vec<CompoundBody> = pair.into_inner().map(|p| conv_compound_and(p, params)).collect();
+    let parts: Vec<CompoundBody> = pair
+        .into_inner()
+        .map(|p| conv_compound_and(p, params))
+        .collect();
     if parts.len() == 1 {
         parts.into_iter().next().unwrap()
     } else {
@@ -455,7 +461,10 @@ fn conv_compound_or(pair: Pair<Rule>, params: &[String]) -> CompoundBody {
 }
 
 fn conv_compound_and(pair: Pair<Rule>, params: &[String]) -> CompoundBody {
-    let parts: Vec<CompoundBody> = pair.into_inner().map(|p| conv_compound_leaf(p, params)).collect();
+    let parts: Vec<CompoundBody> = pair
+        .into_inner()
+        .map(|p| conv_compound_leaf(p, params))
+        .collect();
     if parts.len() == 1 {
         parts.into_iter().next().unwrap()
     } else {

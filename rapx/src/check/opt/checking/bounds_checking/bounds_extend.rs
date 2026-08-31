@@ -3,14 +3,11 @@ use once_cell::sync::OnceCell;
 use rustc_middle::ty::TyCtxt;
 use rustc_span::Span;
 
-use crate::{
-    analysis::dataflow::*,
-    helpers::def_path::DefPath,
-};
+use crate::{analysis::dataflow::*, helpers::def_path::DefPath};
 use annotate_snippets::Level;
 
-use crate::check::opt::report::OptReport;
 use crate::check::opt::check_utils::node_matches_call;
+use crate::check::opt::report::OptReport;
 
 use super::super::super::LEVEL;
 use super::super::super::NO_STD;

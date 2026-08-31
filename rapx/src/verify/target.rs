@@ -10,21 +10,21 @@ use crate::analysis::safety_flow::root::{
     function_has_struct_invariant, function_has_trait_ensurance, hir_contains_unsafe,
 };
 use crate::cli::VerifyMode;
+use crate::compat::FxHashMap;
 use crate::helpers::mir_scan::{collect_raw_ptr_deref_info, collect_static_mut_access_info};
 use crate::helpers::name::short_fn_name;
+#[cfg(not(rapx_ge_100))]
+use rustc_hir::LangItem;
+#[cfg(rapx_ge_100)]
+use rustc_hir::attrs::lang_items::LangItem;
 use rustc_hir::{
     Attribute, BodyId, FnDecl, ItemKind,
     def_id::{DefId, LocalDefId},
     intravisit::{FnKind, Visitor},
 };
-#[cfg(not(rapx_ge_100))]
-use rustc_hir::LangItem;
-#[cfg(rapx_ge_100)]
-use rustc_hir::attrs::lang_items::LangItem;
 use rustc_middle::{hir::nested_filter, ty::TyCtxt};
 use rustc_span::Span;
 use std::collections::{HashMap, HashSet};
-use crate::compat::FxHashMap;
 
 use super::{
     contract::{
@@ -33,12 +33,12 @@ use super::{
     },
     path_extractor::PathExtractor,
 };
+use crate::helpers::fn_info::get_adt_def_id_by_adt_method;
+use crate::helpers::mir_scan::{Checkpoint, collect_unsafe_callsites};
 use crate::helpers::mir_utils::{
     collect_return_block_indices, has_rapx_verify_attr, is_std_crate_def_id, is_trait_unsafe,
     resolve_impl_self_ty_def_id,
 };
-use crate::helpers::fn_info::get_adt_def_id_by_adt_method;
-use crate::helpers::mir_scan::{Checkpoint, collect_unsafe_callsites};
 
 /// A list of parsed `requires` contracts.
 pub(crate) type FnContracts<'tcx> = Vec<Property<'tcx>>;
@@ -153,7 +153,10 @@ impl<'tcx> FunctionTarget<'tcx> {
             .collect()
     }
 
-    pub(crate) fn properties_for_callsite(&self, checkpoint: &Checkpoint<'tcx>) -> &[Property<'tcx>] {
+    pub(crate) fn properties_for_callsite(
+        &self,
+        checkpoint: &Checkpoint<'tcx>,
+    ) -> &[Property<'tcx>] {
         let loc = checkpoint.location();
         match checkpoint.kind {
             crate::helpers::mir_scan::CheckpointKind::RawPtrDeref => self
@@ -295,7 +298,13 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
         crate_filter: Option<String>,
         module_filter: Option<String>,
     ) -> Self {
-        let mut collector = Self::new(tcx, mode, skip_invariant, crate_filter.clone(), module_filter);
+        let mut collector = Self::new(
+            tcx,
+            mode,
+            skip_invariant,
+            crate_filter.clone(),
+            module_filter,
+        );
         tcx.hir_visit_all_item_likes_in_crate(&mut collector);
         if crate_filter.is_some() {
             collector.collect_extern_crate_targets();
@@ -413,13 +422,12 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
             .iter()
             .map(|callee_def_id| {
                 let mut contracts = self.get_fn_contracts(*callee_def_id);
-                contracts
-                    .retain(|p| {
-                        !matches!(
-                            p.kind(),
-                            Some(crate::verify::contract::PropertyKind::Unknown)
-                        )
-                    });
+                contracts.retain(|p| {
+                    !matches!(
+                        p.kind(),
+                        Some(crate::verify::contract::PropertyKind::Unknown)
+                    )
+                });
                 (*callee_def_id, contracts)
             })
             .collect();
@@ -431,8 +439,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
         // the full documented safety contract.  Callee-side resolution is
         // unchanged.
         if is_std_crate_def_id(self.tcx, def_id) {
-            let json_contracts =
-                super::contract::json::query_json_contracts(self.tcx, def_id);
+            let json_contracts = super::contract::json::query_json_contracts(self.tcx, def_id);
             caller_requires.extend(json_contracts);
         }
 
@@ -652,9 +659,7 @@ impl<'tcx> Visitor<'tcx> for VerifyTargetCollector<'tcx> {
             }
             self.module_filter_matched = true;
 
-            let trait_ref = {
-                self.tcx.impl_opt_trait_ref(impl_def_id)
-            };
+            let trait_ref = { self.tcx.impl_opt_trait_ref(impl_def_id) };
 
             if let Some(trait_ref) = trait_ref {
                 let trait_def_id = trait_ref.skip_binder().def_id;
@@ -739,8 +744,7 @@ impl<'tcx> Visitor<'tcx> for VerifyTargetCollector<'tcx> {
                             return;
                         }
                     } else {
-                        let root =
-                            crate::analysis::safety_flow::root::scan_mir(self.tcx, def_id);
+                        let root = crate::analysis::safety_flow::root::scan_mir(self.tcx, def_id);
                         if root.is_none() {
                             return;
                         }
@@ -865,7 +869,6 @@ impl<'tcx> Analysis for PrepareTargets<'tcx> {
         );
         rap_info!("============================================================");
     }
-
 }
 
 impl<'tcx> PrepareTargets<'tcx> {
@@ -890,7 +893,9 @@ impl<'tcx> PrepareTargets<'tcx> {
             rap_info!("  struct invariants: <none>");
         } else {
             rap_info!("  struct invariants:");
-            for property in crate::verify::display::dedup_compound_props(struct_target.invariants.iter()) {
+            for property in
+                crate::verify::display::dedup_compound_props(struct_target.invariants.iter())
+            {
                 rap_info!(
                     "    - {}",
                     property.display_for_report(self.tcx, Some(struct_target.def_id), None,)
@@ -953,7 +958,7 @@ impl<'tcx> PrepareTargets<'tcx> {
             return;
         }
 
-            let mut unsafe_callee_ids: Vec<_> = target.callee_requires.keys().copied().collect();
+        let mut unsafe_callee_ids: Vec<_> = target.callee_requires.keys().copied().collect();
         unsafe_callee_ids.sort_by_key(|def_id| self.tcx.def_path_str(*def_id));
 
         for unsafe_callee_def_id in unsafe_callee_ids {
@@ -1138,18 +1143,14 @@ fn get_struct_invariants_from_annotation<'tcx>(
 
     let mut invariants = collect_properties_from_named_attrs(
         tcx,
-        {
-            crate::compat::get_all_attrs(tcx, struct_def_id)
-        },
+        crate::compat::get_all_attrs(tcx, struct_def_id),
         context_def_id,
         "invariant",
         "requires",
     );
     invariants.extend(collect_properties_from_named_attrs(
         tcx,
-        {
-            crate::compat::get_all_attrs(tcx, struct_def_id)
-        },
+        crate::compat::get_all_attrs(tcx, struct_def_id),
         context_def_id,
         "invariant",
         "invariant",
@@ -1191,8 +1192,13 @@ fn get_trait_contracts_from_annotation<'tcx>(
         let method_name = tcx.def_path_str(trait_item_def_id);
         let attrs = crate::compat::get_all_attrs(tcx, trait_item_def_id);
 
-        let method_ensures =
-            collect_properties_from_named_attrs(tcx, attrs, trait_item_def_id, "trait ensures", "ensures");
+        let method_ensures = collect_properties_from_named_attrs(
+            tcx,
+            attrs,
+            trait_item_def_id,
+            "trait ensures",
+            "ensures",
+        );
 
         if !method_ensures.is_empty() {
             ensures.push((method_name, method_ensures));
@@ -1227,12 +1233,22 @@ fn build_raw_ptr_deref_checks<'tcx>(
                 vec![
                     Property::new_atom(PropertyKind::NonNull, vec![target.clone()]),
                     Property::new_atom(PropertyKind::Align, vec![target.clone(), ty.clone()]),
-                    { let mut p = Property::new_atom(PropertyKind::Alias, vec![target.clone()]); p.set_contract_kind(crate::verify::contract::ContractKind::Hazard); p },
+                    {
+                        let mut p = Property::new_atom(PropertyKind::Alias, vec![target.clone()]);
+                        p.set_contract_kind(crate::verify::contract::ContractKind::Hazard);
+                        p
+                    },
                 ]
             } else {
                 vec![
-                    Property::new_atom(PropertyKind::Allocated, vec![target.clone(), ty.clone(), count.clone()]),
-                    Property::new_atom(PropertyKind::InBound, vec![target.clone(), ty.clone(), count.clone()]),
+                    Property::new_atom(
+                        PropertyKind::Allocated,
+                        vec![target.clone(), ty.clone(), count.clone()],
+                    ),
+                    Property::new_atom(
+                        PropertyKind::InBound,
+                        vec![target.clone(), ty.clone(), count.clone()],
+                    ),
                     Property::new_atom(PropertyKind::Align, vec![target.clone(), ty.clone()]),
                 ]
             };
@@ -1278,8 +1294,14 @@ fn build_static_mut_checks<'tcx>(
             let count = PropertyArg::Expr(ContractExpr::Const(1));
 
             let properties = vec![
-                Property::new_atom(PropertyKind::Allocated, vec![target.clone(), ty.clone(), count.clone()]),
-                Property::new_atom(PropertyKind::InBound, vec![target.clone(), ty.clone(), count.clone()]),
+                Property::new_atom(
+                    PropertyKind::Allocated,
+                    vec![target.clone(), ty.clone(), count.clone()],
+                ),
+                Property::new_atom(
+                    PropertyKind::InBound,
+                    vec![target.clone(), ty.clone(), count.clone()],
+                ),
                 Property::new_atom(PropertyKind::Align, vec![target.clone(), ty.clone()]),
                 Property::new_atom(PropertyKind::Init, vec![target, ty, count]),
             ];

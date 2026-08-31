@@ -251,8 +251,7 @@ impl<'tcx> LoopSensitivityAnalyzer<'tcx> {
         let mut hints = Vec::new();
 
         for sink in sinks {
-            if sink.property.is_or()
-                || matches!(sink.property.kind(), Some(PropertyKind::Unknown))
+            if sink.property.is_or() || matches!(sink.property.kind(), Some(PropertyKind::Unknown))
             {
                 continue;
             }
@@ -284,9 +283,7 @@ impl<'tcx> LoopSensitivityAnalyzer<'tcx> {
                     )
                     .unwrap_or(0);
                     let needed_backedges = distance_backedges.max(branch_backedges);
-                    hints.push(DataflowDistanceHint {
-                        needed_backedges,
-                    });
+                    hints.push(DataflowDistanceHint { needed_backedges });
                     break;
                 }
             }
@@ -345,9 +342,7 @@ impl<'tcx> LoopSensitivityAnalyzer<'tcx> {
                 };
 
                 if let Some(witness_iteration) = witness_iteration {
-                    hints.push(NumericRangeHint {
-                        witness_iteration,
-                    });
+                    hints.push(NumericRangeHint { witness_iteration });
                     break;
                 }
             }
@@ -400,10 +395,7 @@ impl<'tcx> LoopSensitivityAnalyzer<'tcx> {
 }
 
 /// Collect the atom leaves of a (possibly compound) property tree.
-fn collect_atoms<'a, 'tcx>(
-    property: &'a Property<'tcx>,
-    out: &mut Vec<&'a Property<'tcx>>,
-) {
+fn collect_atoms<'a, 'tcx>(property: &'a Property<'tcx>, out: &mut Vec<&'a Property<'tcx>>) {
     match property {
         Property::Atom(_) => out.push(property),
         Property::And(and) => {
@@ -441,9 +433,7 @@ fn loop_components(graph: &PathGraph<'_>) -> Vec<LoopComponent> {
         }
         let mut blocks = scc.nodes.clone();
         blocks.insert(scc.enter);
-        components.push(LoopComponent {
-            blocks,
-        });
+        components.push(LoopComponent { blocks });
     }
     components
 }

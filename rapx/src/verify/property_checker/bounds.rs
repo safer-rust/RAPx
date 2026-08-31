@@ -4,22 +4,31 @@
 //! field-offset invariants, or an SMT coverage check over allocation base/size.
 //! `NonOverlap` uses provenance-distinctness and range-overlap reasoning.
 
-use rustc_middle::mir::{Local, Operand, Rvalue, StatementKind};
-use rustc_middle::ty::{Ty, TyKind};
 #[cfg(not(rapx_has_skip_norm_wip))]
 use crate::compat::SkipNormWip;
-use z3::{SatResult, Solver, ast::{Ast, Bool, Int}};
-use crate::verify::contract::{ContractExpr, NumericBinOp, PlaceBase, Property, PropertyArg, RelOp};
-use crate::verify::report::CheckResult;
 use crate::helpers::mir_scan::Checkpoint;
+use crate::verify::contract::{
+    ContractExpr, NumericBinOp, PlaceBase, Property, PropertyArg, RelOp,
+};
+use crate::verify::report::CheckResult;
 use crate::verify::vm::state::{VmState, VmValue};
+use rustc_middle::mir::{Local, Operand, Rvalue, StatementKind};
+use rustc_middle::ty::{Ty, TyKind};
+use z3::{
+    SatResult, Solver,
+    ast::{Ast, Bool, Int},
+};
 
 use super::PropertyChecker;
 
 impl PropertyChecker {
-    pub(super) fn check_in_bound<'ctx, 'tcx>(&self, vm_state: &VmState<'ctx, 'tcx>, solver: &Solver<'ctx>,
-        checkpoint: &Checkpoint<'tcx>, property: &Property<'tcx>) -> CheckResult
-    {
+    pub(super) fn check_in_bound<'ctx, 'tcx>(
+        &self,
+        vm_state: &VmState<'ctx, 'tcx>,
+        solver: &Solver<'ctx>,
+        checkpoint: &Checkpoint<'tcx>,
+        property: &Property<'tcx>,
+    ) -> CheckResult {
         // Fast-path: if a prior ChecksIndexBoundsDisjoint call already
         // validated bounds for this function, the InBound holds.
         if vm_state.contract_flags.has_checked_bounds {
@@ -31,14 +40,19 @@ impl PropertyChecker {
             return CheckResult::Proved;
         }
 
-        if let Some(PropertyArg::Expr(ContractExpr::IndexAccess { index: _, .. }))
-            = property.args().first()
+        if let Some(PropertyArg::Expr(ContractExpr::IndexAccess { index: _, .. })) =
+            property.args().first()
         {
             return self.check_in_bound_slice(vm_state, solver, checkpoint, property);
         }
 
-        let required_ty = property.args().get(1)
-            .and_then(|a| if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None });
+        let required_ty = property.args().get(1).and_then(|a| {
+            if let PropertyArg::Ty(ty) = a {
+                Some(*ty)
+            } else {
+                None
+            }
+        });
         if self.zst_guard(vm_state, checkpoint, property) {
             return CheckResult::Proved;
         }
@@ -70,7 +84,9 @@ impl PropertyChecker {
         // When the contract expression for the element count evaluates to
         // zero (e.g. div-by-sizeof for ZST generic params), the byte-level
         // access is zero and limits checking is trivial.
-        let count_term = property.args().get(2)
+        let count_term = property
+            .args()
+            .get(2)
             .and_then(|a| self.resolve_arg_term(vm_state, checkpoint, a));
         if let Some(ref ct) = count_term {
             if ct.as_u64() == Some(0) {
@@ -81,7 +97,10 @@ impl PropertyChecker {
         let Some(alloc_id) = value.provenance_alloc_id() else {
             return CheckResult::Unknown;
         };
-        let (Some(base), Some(size)) = (vm_state.allocation_base(alloc_id).cloned(), vm_state.allocation_size(alloc_id).cloned()) else {
+        let (Some(base), Some(size)) = (
+            vm_state.allocation_base(alloc_id).cloned(),
+            vm_state.allocation_size(alloc_id).cloned(),
+        ) else {
             return CheckResult::Unknown;
         };
 
@@ -97,9 +116,12 @@ impl PropertyChecker {
             return CheckResult::Proved;
         }
 
-        let alloc_elem_is_generic = vm_state.alloc(alloc_id)
-            .element_ty.map_or(false, |ty| matches!(ty.kind(), TyKind::Param(_)));
-        let fallback_for_generic = alloc_elem_is_generic && !size.as_u64().is_some() && !access.as_u64().is_some();
+        let alloc_elem_is_generic = vm_state
+            .alloc(alloc_id)
+            .element_ty
+            .map_or(false, |ty| matches!(ty.kind(), TyKind::Param(_)));
+        let fallback_for_generic =
+            alloc_elem_is_generic && !size.as_u64().is_some() && !access.as_u64().is_some();
 
         solver.push();
         let bound = Int::add(vm_state.ctx, &[&base, &size]);
@@ -108,7 +130,11 @@ impl PropertyChecker {
         // container together with the accessed range: the field plus its own
         // size fits inside the container.  Assert this layout fact so the
         // in-bounds check below can be discharged.
-        if value.provenance.as_ref().is_some_and(|prov| prov.is_field_offset) {
+        if value
+            .provenance
+            .as_ref()
+            .is_some_and(|prov| prov.is_field_offset)
+        {
             let prov = value.provenance.as_ref().unwrap();
             let zero = Int::from_u64(vm_state.ctx, 0);
             solver.assert(&prov.offset.ge(&zero));
@@ -118,7 +144,10 @@ impl PropertyChecker {
         let above_negated = covered.le(&bound).not();
         // Lower bound: value < base (pointer below allocation start)
         let below_negated = value.term.lt(&base);
-        solver.assert(&z3::ast::Bool::or(vm_state.ctx, &[&above_negated, &below_negated]));
+        solver.assert(&z3::ast::Bool::or(
+            vm_state.ctx,
+            &[&above_negated, &below_negated],
+        ));
         let sat_result = solver.check();
         let r = match sat_result {
             SatResult::Unsat => CheckResult::Proved,
@@ -152,7 +181,8 @@ impl PropertyChecker {
         let Operand::Constant(c) = operand else {
             return false;
         };
-        let Some(container) = crate::helpers::mir_utils::offset_of_container(vm_state.tcx, &c.const_)
+        let Some(container) =
+            crate::helpers::mir_utils::offset_of_container(vm_state.tcx, &c.const_)
         else {
             return false;
         };
@@ -166,14 +196,15 @@ impl PropertyChecker {
             return false;
         }
         // The allocation must be the same container the offset was computed on.
-        crate::helpers::mir_utils::pointee_ty(value.ty)
-            .is_some_and(|pointee| pointee == container)
+        crate::helpers::mir_utils::pointee_ty(value.ty).is_some_and(|pointee| pointee == container)
     }
 
     pub(super) fn resolve_index_access_args(
         property: &Property<'_>,
     ) -> (Option<usize>, Option<usize>) {
-        if let Some(PropertyArg::Expr(ContractExpr::IndexAccess { slice, index })) = property.args().first() {
+        if let Some(PropertyArg::Expr(ContractExpr::IndexAccess { slice, index })) =
+            property.args().first()
+        {
             let slice_idx = Self::extract_place_arg_index(slice);
             let index_idx = Self::extract_place_arg_index(index);
             (slice_idx, index_idx)
@@ -192,9 +223,13 @@ impl PropertyChecker {
         }
     }
 
-    pub(super) fn check_in_bound_slice<'ctx, 'tcx>(&self, vm_state: &VmState<'ctx, 'tcx>, solver: &Solver<'ctx>,
-        checkpoint: &Checkpoint<'tcx>, property: &Property<'tcx>) -> CheckResult
-    {
+    pub(super) fn check_in_bound_slice<'ctx, 'tcx>(
+        &self,
+        vm_state: &VmState<'ctx, 'tcx>,
+        solver: &Solver<'ctx>,
+        checkpoint: &Checkpoint<'tcx>,
+        property: &Property<'tcx>,
+    ) -> CheckResult {
         let (slice_arg_idx, index_arg_idx) = Self::resolve_index_access_args(property);
 
         let slice_val = match slice_arg_idx.and_then(|idx| checkpoint.args.get(idx)) {
@@ -217,11 +252,16 @@ impl PropertyChecker {
         };
 
         let data_alloc_id = slice_val.provenance_alloc_id();
-        let Some(data_alloc_id) = data_alloc_id else { return CheckResult::Unknown };
+        let Some(data_alloc_id) = data_alloc_id else {
+            return CheckResult::Unknown;
+        };
 
-        let Some(size) = vm_state.allocation_size(data_alloc_id).cloned() else { return CheckResult::Unknown };
+        let Some(size) = vm_state.allocation_size(data_alloc_id).cloned() else {
+            return CheckResult::Unknown;
+        };
 
-        let elem_size = vm_state.alloc(data_alloc_id)
+        let elem_size = vm_state
+            .alloc(data_alloc_id)
             .element_ty
             .map(|ty| vm_state.size_of_ty(ty) as u64)
             .unwrap_or(1)
@@ -247,23 +287,34 @@ impl PropertyChecker {
             index_plus_one.le(&len).not()
         };
         solver.assert(&negated);
-        let r = match solver.check() { SatResult::Unsat => CheckResult::Proved, SatResult::Sat => CheckResult::Failed, _ => CheckResult::Unknown };
+        let r = match solver.check() {
+            SatResult::Unsat => CheckResult::Proved,
+            SatResult::Sat => CheckResult::Failed,
+            _ => CheckResult::Unknown,
+        };
         solver.pop(1);
         r
     }
 
-    pub(super) fn extract_range_end<'ctx, 'tcx>(&self, vm_state: &VmState<'ctx, 'tcx>,
-        op: &Operand<'tcx>, _checkpoint: &Checkpoint<'tcx>) -> Option<VmValue<'ctx, 'tcx>>
-    {
+    pub(super) fn extract_range_end<'ctx, 'tcx>(
+        &self,
+        vm_state: &VmState<'ctx, 'tcx>,
+        op: &Operand<'tcx>,
+        _checkpoint: &Checkpoint<'tcx>,
+    ) -> Option<VmValue<'ctx, 'tcx>> {
         let place = match op {
             Operand::Copy(p) | Operand::Move(p) => p,
             _ => return None,
         };
-        if !place.projection.is_empty() { return None; }
+        if !place.projection.is_empty() {
+            return None;
+        }
         let range_local = place.local;
         let ty = vm_state.body.local_decls[range_local].ty;
         let is_range = format!("{:?}", ty.kind()).contains("Range");
-        if !is_range { return None; }
+        if !is_range {
+            return None;
+        }
         for block in vm_state.body.basic_blocks.iter() {
             for stmt in &block.statements {
                 if let StatementKind::Assign(assign) = &stmt.kind {
@@ -282,25 +333,41 @@ impl PropertyChecker {
         None
     }
 
-    pub(super) fn check_non_overlap<'ctx, 'tcx>(&self, vm_state: &VmState<'ctx, 'tcx>, solver: &Solver<'ctx>,
-        checkpoint: &Checkpoint<'tcx>, property: &Property<'tcx>) -> CheckResult
-    {
-        let Some(v1) = self.target_value(vm_state, checkpoint, property) else { return CheckResult::Unknown };
+    pub(super) fn check_non_overlap<'ctx, 'tcx>(
+        &self,
+        vm_state: &VmState<'ctx, 'tcx>,
+        solver: &Solver<'ctx>,
+        checkpoint: &Checkpoint<'tcx>,
+        property: &Property<'tcx>,
+    ) -> CheckResult {
+        let Some(v1) = self.target_value(vm_state, checkpoint, property) else {
+            return CheckResult::Unknown;
+        };
         // Get the second pointer from the property args (not from checkpoint directly).
         // The property may reference the two pointers in any order (e.g. dst at args[0]).
-        let v2 = property.args().get(1)
+        let v2 = property
+            .args()
+            .get(1)
             .and_then(|a| {
                 let cp = match a {
                     PropertyArg::Expr(ContractExpr::Place(cp)) => cp.clone(),
                     _ => return None,
                 };
                 match cp.base {
-                    PlaceBase::Arg(n) => checkpoint.args.get(n).map(|op| vm_state.value_of_operand(op)),
+                    PlaceBase::Arg(n) => checkpoint
+                        .args
+                        .get(n)
+                        .map(|op| vm_state.value_of_operand(op)),
                     PlaceBase::Local(n) => vm_state.local_value(Local::from_usize(n)).cloned(),
                     _ => None,
                 }
             })
-            .or_else(|| checkpoint.args.get(1).map(|op| vm_state.value_of_operand(op)));
+            .or_else(|| {
+                checkpoint
+                    .args
+                    .get(1)
+                    .map(|op| vm_state.value_of_operand(op))
+            });
         let Some(v2) = v2 else {
             // Without a second pointer we cannot prove non-overlap.
             return CheckResult::Unknown;
@@ -316,19 +383,26 @@ impl PropertyChecker {
         }
 
         // Try range-based overlap detection when count and element size are available.
-        if let Some(count_term) = checkpoint.args.get(2).map(|op| vm_state.value_of_operand(op).term) {
+        if let Some(count_term) = checkpoint
+            .args
+            .get(2)
+            .map(|op| vm_state.value_of_operand(op).term)
+        {
             // Use the pointee element size from either pointer type.
-            let elem_size = vm_state.pointee_elem_size(v1.ty).max(vm_state.pointee_elem_size(v2.ty)).max(1) as u64;
+            let elem_size = vm_state
+                .pointee_elem_size(v1.ty)
+                .max(vm_state.pointee_elem_size(v2.ty))
+                .max(1) as u64;
             let _elem_size_term = Int::from_u64(vm_state.ctx, elem_size);
             if let Some(count) = count_term.simplify().as_u64() {
                 let range = Int::from_u64(vm_state.ctx, elem_size * count.max(1));
                 let src_end = Int::add(vm_state.ctx, &[&v1.term, &range]);
                 let dst_end = Int::add(vm_state.ctx, &[&v2.term, &range]);
                 solver.push();
-                let overlap = Bool::and(vm_state.ctx, &[
-                    &v1.term.lt(&dst_end),
-                    &v2.term.lt(&src_end),
-                ]);
+                let overlap = Bool::and(
+                    vm_state.ctx,
+                    &[&v1.term.lt(&dst_end), &v2.term.lt(&src_end)],
+                );
                 solver.assert(&overlap);
                 let r = match solver.check() {
                     SatResult::Unsat => CheckResult::Proved,
@@ -344,22 +418,29 @@ impl PropertyChecker {
         solver.push();
         let ne = v1.term._eq(&v2.term).not();
         solver.assert(&ne);
-        let r = match solver.check() { SatResult::Unsat => CheckResult::Proved, SatResult::Sat => CheckResult::Failed, _ => CheckResult::Unknown };
+        let r = match solver.check() {
+            SatResult::Unsat => CheckResult::Proved,
+            SatResult::Sat => CheckResult::Failed,
+            _ => CheckResult::Unknown,
+        };
         solver.pop(1);
         r
     }
 
-    pub(super) fn all_predicates_are_slice_size_invariant<'ctx, 'tcx>(&self,
+    pub(super) fn all_predicates_are_slice_size_invariant<'ctx, 'tcx>(
+        &self,
         vm_state: &VmState<'ctx, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
         predicates: &[crate::verify::contract::NumericPredicate<'tcx>],
     ) -> bool {
-        !predicates.is_empty() && predicates.iter().all(|p| {
-            self.predicate_is_slice_size_invariant(vm_state, checkpoint, p)
-        })
+        !predicates.is_empty()
+            && predicates
+                .iter()
+                .all(|p| self.predicate_is_slice_size_invariant(vm_state, checkpoint, p))
     }
 
-    pub(super) fn predicate_is_slice_size_invariant<'ctx, 'tcx>(&self,
+    pub(super) fn predicate_is_slice_size_invariant<'ctx, 'tcx>(
+        &self,
         vm_state: &VmState<'ctx, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
         pred: &crate::verify::contract::NumericPredicate<'tcx>,
@@ -368,12 +449,19 @@ impl PropertyChecker {
             return false;
         }
         // rhs must be >= isize::MAX (the language invaraint bound)
-        let ContractExpr::Const(bound) = &pred.rhs else { return false };
+        let ContractExpr::Const(bound) = &pred.rhs else {
+            return false;
+        };
         if *bound < i64::MAX as u128 {
             return false;
         }
         // lhs must be size_of(T) * count
-        let ContractExpr::Binary { op: NumericBinOp::Mul, lhs, rhs } = &pred.lhs else {
+        let ContractExpr::Binary {
+            op: NumericBinOp::Mul,
+            lhs,
+            rhs,
+        } = &pred.lhs
+        else {
             return false;
         };
         let (size_ty, count_expr) = match (lhs.as_ref(), rhs.as_ref()) {
@@ -387,20 +475,34 @@ impl PropertyChecker {
         self.count_derives_from_slice_param(vm_state, checkpoint, count_expr, resolved_ty)
     }
 
-    pub(super) fn count_derives_from_slice_param<'ctx, 'tcx>(&self,
+    pub(super) fn count_derives_from_slice_param<'ctx, 'tcx>(
+        &self,
         vm_state: &VmState<'ctx, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
         count_expr: &ContractExpr<'tcx>,
         elem_ty: Ty<'tcx>,
     ) -> bool {
         // Must be a Place, not a constant literal
-        let ContractExpr::Place(cp) = count_expr else { return false };
-        if !cp.projections.is_empty() { return false; }
-        let Some(local) = cp.local_base() else { return false };
-        if local == 0 { return false; }
-        let Some(callee) = checkpoint.callee else { return false };
-        let Some(arg_idx) = crate::helpers::mir_utils::callee_param_index_for_local(
-            vm_state.tcx, callee, local) else { return false };
+        let ContractExpr::Place(cp) = count_expr else {
+            return false;
+        };
+        if !cp.projections.is_empty() {
+            return false;
+        }
+        let Some(local) = cp.local_base() else {
+            return false;
+        };
+        if local == 0 {
+            return false;
+        }
+        let Some(callee) = checkpoint.callee else {
+            return false;
+        };
+        let Some(arg_idx) =
+            crate::helpers::mir_utils::callee_param_index_for_local(vm_state.tcx, callee, local)
+        else {
+            return false;
+        };
         // Reject constant literal arguments (like usize::MAX)
         if matches!(checkpoint.args.get(arg_idx), Some(Operand::Constant(_))) {
             return false;
@@ -425,10 +527,16 @@ impl PropertyChecker {
         false
     }
 
-    pub(super) fn is_slice_ref_with_elem<'ctx, 'tcx>(&self, ty: Ty<'tcx>, elem_ty: Ty<'tcx>,
-        vm_state: &VmState<'ctx, 'tcx>, checkpoint: &Checkpoint<'tcx>) -> bool
-    {
-        let rustc_middle::ty::TyKind::Ref(_, inner, _) = ty.kind() else { return false };
+    pub(super) fn is_slice_ref_with_elem<'ctx, 'tcx>(
+        &self,
+        ty: Ty<'tcx>,
+        elem_ty: Ty<'tcx>,
+        vm_state: &VmState<'ctx, 'tcx>,
+        checkpoint: &Checkpoint<'tcx>,
+    ) -> bool {
+        let rustc_middle::ty::TyKind::Ref(_, inner, _) = ty.kind() else {
+            return false;
+        };
         match inner.kind() {
             rustc_middle::ty::TyKind::Slice(slice_elem) => {
                 let resolved = self.instantiate_callsite_ty(vm_state, checkpoint, *slice_elem);
@@ -438,16 +546,25 @@ impl PropertyChecker {
         }
     }
 
-    pub(super) fn same_erased_ty<'ctx, 'tcx>(&self,
+    pub(super) fn same_erased_ty<'ctx, 'tcx>(
+        &self,
         vm_state: &VmState<'ctx, 'tcx>,
-        a: Ty<'tcx>, b: Ty<'tcx>,
+        a: Ty<'tcx>,
+        b: Ty<'tcx>,
     ) -> bool {
-        vm_state.size_of_ty(a) > 0 && vm_state.size_of_ty(b) > 0
+        vm_state.size_of_ty(a) > 0
+            && vm_state.size_of_ty(b) > 0
             && vm_state.size_of_ty(a) == vm_state.size_of_ty(b)
     }
 
-    pub(super) fn is_caller_type_param<'ctx, 'tcx>(&self, vm_state: &VmState<'ctx, 'tcx>, ty: Ty<'tcx>) -> bool {
-        let rustc_middle::ty::TyKind::Param(param_ty) = ty.kind() else { return false };
+    pub(super) fn is_caller_type_param<'ctx, 'tcx>(
+        &self,
+        vm_state: &VmState<'ctx, 'tcx>,
+        ty: Ty<'tcx>,
+    ) -> bool {
+        let rustc_middle::ty::TyKind::Param(param_ty) = ty.kind() else {
+            return false;
+        };
         let generics = vm_state.tcx.generics_of(vm_state.caller_def_id);
         generics.own_params.iter().any(|p| {
             matches!(p.kind, rustc_middle::ty::GenericParamDefKind::Type { .. })

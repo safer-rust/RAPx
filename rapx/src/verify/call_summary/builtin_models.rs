@@ -15,12 +15,10 @@ use rustc_hir::def_id::DefId;
 use rustc_middle::mir::Operand;
 use rustc_middle::ty::{Ty, TyCtxt};
 
-use super::{CallEffect, CallEffectSummary};
-use crate::verify::api_classify;
-use crate::helpers::mir_utils::{
-    type_layout, destination_stride, pointee_ty, pointee_alignment,
-};
 use super::from_raw_parts_elem_size;
+use super::{CallEffect, CallEffectSummary};
+use crate::helpers::mir_utils::{destination_stride, pointee_alignment, pointee_ty, type_layout};
+use crate::verify::api_classify;
 
 // ── Context for effect builders ────────────────────────────────────────
 
@@ -42,7 +40,10 @@ struct Entry {
 /// `DefId`-based matcher row (`fn(Option<DefId>) -> bool`).
 macro_rules! ED {
     ($m:expr, $e:ident) => {
-        Entry { matches: $m, effects: $e }
+        Entry {
+            matches: $m,
+            effects: $e,
+        }
     };
 }
 
@@ -63,14 +64,15 @@ static REGISTRY: &[Entry] = &[
     ED!(api_classify::is_checked_mul, eff_return_option_some_mul),
     ED!(api_classify::is_overflowing_abs_neg, eff_overflowing_nz),
     ED!(api_classify::is_unwrap, eff_alias_arg0),
-
     // ── Pointer extraction / cast ───────────────────────────────────
     // `NonNull::new`'s effect is modelled in the VM (`try_nonnull_new`); the
     // `eff_none` stub keeps it in the registry so `is_modeled` reports it as
     // opaque (the path graph must not inline its branchy `is_null` body).
     ED!(api_classify::is_nonnull, eff_none),
-    ED!(api_classify::is_as_ptr, eff_alias_ptr),
-
+    // Raw-pointer `cast`/`cast_mut`/`cast_const` preserve null-ness, so they
+    // must not get `eff_alias_ptr`'s unconditional `ReturnNonZero`; those are
+    // left to the MIR inlining path (`is_as_ptr_non_null` excludes them).
+    ED!(api_classify::is_as_ptr_non_null, eff_alias_ptr),
     // ── Pointer arithmetic ──────────────────────────────────────────
     // Direction and granularity are orthogonal: each entry picks a specific
     // `ReturnPointerAdd`/`ReturnPointerSub` with a fixed stride.
@@ -78,7 +80,6 @@ static REGISTRY: &[Entry] = &[
     ED!(api_classify::is_element_ptr_sub, eff_ptr_sub),
     ED!(api_classify::is_byte_ptr_add, eff_ptr_add_byte),
     ED!(api_classify::is_byte_ptr_sub, eff_ptr_sub_byte),
-
     // ── MaybeUninit ────────────────────────────────────────────────
     // `uninit`/`assume_init` are `eff_none` stubs: they have no symbolic
     // effect, but staying registered keeps `is_modeled` true so the path graph
@@ -88,21 +89,26 @@ static REGISTRY: &[Entry] = &[
     ED!(api_classify::is_maybe_uninit_uninit, eff_none),
     ED!(api_classify::is_maybe_uninit_assume_init, eff_none),
     ED!(api_classify::is_maybe_uninit_write, eff_write_mem),
-
     // ── Slice / collection queries ──────────────────────────────────
     ED!(api_classify::is_len, eff_len),
-    ED!(api_classify::is_capacity, eff_len),
+    ED!(api_classify::is_capacity, eff_capacity),
     ED!(api_classify::is_min_like, eff_cmp_min),
     ED!(api_classify::is_bit_preserving_nz, eff_return_nonzero_iff),
-    ED!(api_classify::is_checked_nonzero_iff, eff_return_option_some_nonzero_iff),
-    ED!(api_classify::is_checked_next_pow2, eff_return_option_some_nonzero),
-
+    ED!(
+        api_classify::is_checked_nonzero_iff,
+        eff_return_option_some_nonzero_iff
+    ),
+    ED!(
+        api_classify::is_checked_next_pow2,
+        eff_return_option_some_nonzero
+    ),
     // ── SliceIndex::get_unchecked / get_unchecked_mut ───────────────
     ED!(api_classify::is_slice_get_unchecked, eff_alias_ptr),
-
     // ── Ownership reconstruction ────────────────────────────────────
-    ED!(api_classify::is_ownership_reconstruction, eff_ownership_recon),
-
+    ED!(
+        api_classify::is_ownership_reconstruction,
+        eff_ownership_recon
+    ),
     // ── Slice helpers ───────────────────────────────────────────────
     ED!(api_classify::is_align_to_local, eff_align_to),
     ED!(api_classify::is_into_iter_local, eff_return_iter),
@@ -111,21 +117,20 @@ static REGISTRY: &[Entry] = &[
     ED!(api_classify::is_split_at, eff_split_at),
     ED!(api_classify::is_from_raw_parts, eff_from_raw_parts),
     ED!(api_classify::is_align_offset, eff_align_offset),
-
     // ── Vec / collection constructors ────────────────────────────────
     ED!(api_classify::is_vec_alloc_constructor, eff_new_allocation),
     // `into_vec` / `box_assume_init_into_vec_unsafe`: needed on older
     // toolchains where `vec![…]` literals lower to `into_vec` (not `from_elem`).
     ED!(api_classify::is_vec_from_box, eff_vec_from_box),
-    ED!(api_classify::is_vec_with_capacity, eff_new_allocation_from_cap),
+    ED!(
+        api_classify::is_vec_with_capacity,
+        eff_new_allocation_from_cap
+    ),
     ED!(api_classify::is_into_boxed_slice, eff_box_from_vec),
-
     // ── Layout accessors ────────────────────────────────────────────
     ED!(api_classify::is_layout_align, eff_layout_align),
-
     // ── Layout constants ────────────────────────────────────────────
     ED!(api_classify::is_layout_constant, eff_layout_const),
-
     // ── CStr / CString helpers ──────────────────────────────────────
     ED!(api_classify::is_cstr_from_ptr, eff_alias_arg0),
     ED!(api_classify::is_vec_push, eff_write_mem),
@@ -149,7 +154,13 @@ pub(crate) fn lookup_effect<'tcx>(
     let dest = Some(destination);
     for e in REGISTRY {
         if (e.matches)(callee) {
-            let ctx = EffCtx { tcx, caller, name, func, dest };
+            let ctx = EffCtx {
+                tcx,
+                caller,
+                name,
+                func,
+                dest,
+            };
             return Some(CallEffectSummary {
                 name: name.to_string(),
                 effects: (e.effects)(&ctx),
@@ -162,7 +173,9 @@ pub(crate) fn lookup_effect<'tcx>(
 
 // ── Effect builders — one small function per API semantic ──────────────
 
-fn eff_none(_: &EffCtx<'_, '_>) -> Vec<CallEffect> { Vec::new() }
+fn eff_none(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    Vec::new()
+}
 
 fn eff_alias_ptr(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     let mut eff = vec![
@@ -211,7 +224,11 @@ enum PtrGranularity {
 /// When the destination is not a pointer type the call is an integer
 /// `wrapping_add`, whose result may wrap to zero, so it is left unconstrained
 /// rather than modelled as pointer arithmetic.
-fn eff_ptr_arith(ctx: &EffCtx<'_, '_>, dir: PtrDirection, granularity: PtrGranularity) -> Vec<CallEffect> {
+fn eff_ptr_arith(
+    ctx: &EffCtx<'_, '_>,
+    dir: PtrDirection,
+    granularity: PtrGranularity,
+) -> Vec<CallEffect> {
     if !dest_is_pointer(ctx.tcx, ctx.caller, ctx.dest) {
         return Vec::new();
     }
@@ -220,8 +237,16 @@ fn eff_ptr_arith(ctx: &EffCtx<'_, '_>, dir: PtrDirection, granularity: PtrGranul
         PtrGranularity::Element => destination_stride(ctx.tcx, ctx.caller, ctx.dest),
     };
     let effect = match dir {
-        PtrDirection::Sub => CallEffect::ReturnPointerSub { base_arg: 0, offset_arg: 1, stride },
-        PtrDirection::Add => CallEffect::ReturnPointerAdd { base_arg: 0, offset_arg: 1, stride },
+        PtrDirection::Sub => CallEffect::ReturnPointerSub {
+            base_arg: 0,
+            offset_arg: 1,
+            stride,
+        },
+        PtrDirection::Add => CallEffect::ReturnPointerAdd {
+            base_arg: 0,
+            offset_arg: 1,
+            stride,
+        },
     };
     vec![effect]
 }
@@ -234,8 +259,15 @@ fn eff_len(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     vec![CallEffect::ReturnLengthOfArg { arg: 0 }]
 }
 
+fn eff_capacity(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnCapacityOfArg { arg: 0 }]
+}
+
 fn eff_cmp_min(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![CallEffect::ReturnMin { lhs_arg: 0, rhs_arg: 1 }]
+    vec![CallEffect::ReturnMin {
+        lhs_arg: 0,
+        rhs_arg: 1,
+    }]
 }
 
 fn eff_return_nonzero_iff(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
@@ -251,11 +283,18 @@ fn eff_return_option_some_nonzero(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 }
 
 fn eff_return_max(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![CallEffect::ReturnMax { lhs_arg: 0, rhs_arg: 1 }]
+    vec![CallEffect::ReturnMax {
+        lhs_arg: 0,
+        rhs_arg: 1,
+    }]
 }
 
 fn eff_return_clamp(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![CallEffect::ReturnClamp { value_arg: 0, min_arg: 1, max_arg: 2 }]
+    vec![CallEffect::ReturnClamp {
+        value_arg: 0,
+        min_arg: 1,
+        max_arg: 2,
+    }]
 }
 
 fn eff_return_abs(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
@@ -267,19 +306,31 @@ fn eff_return_neg(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 }
 
 fn eff_return_add(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![CallEffect::ReturnAdd { lhs_arg: 0, rhs_arg: 1 }]
+    vec![CallEffect::ReturnAdd {
+        lhs_arg: 0,
+        rhs_arg: 1,
+    }]
 }
 
 fn eff_return_mul(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![CallEffect::ReturnMul { lhs_arg: 0, rhs_arg: 1 }]
+    vec![CallEffect::ReturnMul {
+        lhs_arg: 0,
+        rhs_arg: 1,
+    }]
 }
 
 fn eff_return_option_some_add(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![CallEffect::ReturnOptionSomeAdd { lhs_arg: 0, rhs_arg: 1 }]
+    vec![CallEffect::ReturnOptionSomeAdd {
+        lhs_arg: 0,
+        rhs_arg: 1,
+    }]
 }
 
 fn eff_return_option_some_mul(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![CallEffect::ReturnOptionSomeMul { lhs_arg: 0, rhs_arg: 1 }]
+    vec![CallEffect::ReturnOptionSomeMul {
+        lhs_arg: 0,
+        rhs_arg: 1,
+    }]
 }
 
 fn eff_overflowing_nz(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
@@ -311,13 +362,19 @@ fn eff_scan_length(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 }
 
 fn eff_align_offset(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![CallEffect::ReturnAlignOffset { ptr_arg: 0, align_arg: 1 }]
+    vec![CallEffect::ReturnAlignOffset {
+        ptr_arg: 0,
+        align_arg: 1,
+    }]
 }
 
 fn eff_split_at(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     vec![
         CallEffect::ReturnAliasArg { arg: 0 },
-        CallEffect::ReturnTupleFieldLength { field: 0, from_arg: 1 },
+        CallEffect::ReturnTupleFieldLength {
+            field: 0,
+            from_arg: 1,
+        },
     ]
 }
 
@@ -346,28 +403,22 @@ fn eff_from_raw_parts(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 
 fn eff_new_allocation(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     let elem = from_raw_parts_elem_size(ctx.tcx, ctx.caller, ctx.dest);
-    vec![
-        CallEffect::ReturnNewAllocation {
-            size_arg: 1,
-            elem_size: elem,
-        },
-    ]
+    vec![CallEffect::ReturnNewAllocation {
+        size_arg: 1,
+        elem_size: elem,
+    }]
 }
 
 fn eff_new_allocation_from_cap(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     let elem = from_raw_parts_elem_size(ctx.tcx, ctx.caller, ctx.dest);
-    vec![
-        CallEffect::ReturnNewAllocation {
-            size_arg: 0,
-            elem_size: elem,
-        },
-    ]
+    vec![CallEffect::ReturnNewAllocationFromCap {
+        cap_arg: 0,
+        elem_size: elem,
+    }]
 }
 
 fn eff_vec_from_box(_ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![
-        CallEffect::ReturnNewAllocationFromBox,
-    ]
+    vec![CallEffect::ReturnNewAllocationFromBox]
 }
 
 fn eff_layout_align(_ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
@@ -392,7 +443,10 @@ fn layout_call_ty<'tcx>(func: &Operand<'tcx>) -> Option<Ty<'tcx>> {
 }
 
 fn layout_constant_effect<'tcx>(
-    tcx: TyCtxt<'tcx>, caller: DefId, func: &Operand<'tcx>, name: &str,
+    tcx: TyCtxt<'tcx>,
+    caller: DefId,
+    func: &Operand<'tcx>,
+    name: &str,
 ) -> Option<CallEffect> {
     let ty = layout_call_ty(func)?;
     let (align, size) = type_layout(tcx, caller, ty)?;

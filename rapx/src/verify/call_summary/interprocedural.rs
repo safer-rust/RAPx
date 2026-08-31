@@ -8,7 +8,9 @@ use std::collections::{HashSet, VecDeque};
 
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
-    mir::{BasicBlock, BinOp, Local, Operand, ProjectionElem, Rvalue, StatementKind, TerminatorKind},
+    mir::{
+        BasicBlock, BinOp, Local, Operand, ProjectionElem, Rvalue, StatementKind, TerminatorKind,
+    },
     ty::TyCtxt,
 };
 
@@ -228,12 +230,20 @@ pub(super) fn try_pointer_arith_wrapper_effect<'tcx>(
 
 /// Check whether a callee body contains pointer arithmetic calls.
 pub(super) fn callee_contains_pointer_arithmetic(tcx: TyCtxt<'_>, callee: DefId) -> bool {
-    let Some(_) = callee.as_local() else { return false };
-    if !tcx.is_mir_available(callee) { return false; }
+    let Some(_) = callee.as_local() else {
+        return false;
+    };
+    if !tcx.is_mir_available(callee) {
+        return false;
+    }
     let body = tcx.optimized_mir(callee);
     for bb in body.basic_blocks.iter() {
-        let Some(terminator) = &bb.terminator else { continue };
-        let TerminatorKind::Call { func, .. } = &terminator.kind else { continue };
+        let Some(terminator) = &bb.terminator else {
+            continue;
+        };
+        let TerminatorKind::Call { func, .. } = &terminator.kind else {
+            continue;
+        };
         if crate::verify::api_classify::is_pointer_add(helpers::dep_callee_def_id(func))
             || crate::verify::api_classify::is_pointer_sub(helpers::dep_callee_def_id(func))
         {
@@ -283,10 +293,18 @@ pub(super) fn try_from_raw_parts_wrapper_effect<'tcx>(
     let ret = Local::from_usize(0);
 
     for bb in body.basic_blocks.iter() {
-        let Some(terminator) = &bb.terminator else { continue };
+        let Some(terminator) = &bb.terminator else {
+            continue;
+        };
         let TerminatorKind::Call {
-            func, args, destination: call_dest, ..
-        } = &terminator.kind else { continue };
+            func,
+            args,
+            destination: call_dest,
+            ..
+        } = &terminator.kind
+        else {
+            continue;
+        };
 
         let inner_callee = helpers::dep_callee_def_id(func);
         if !crate::verify::api_classify::is_from_raw_parts(inner_callee) {
@@ -311,6 +329,138 @@ pub(super) fn try_from_raw_parts_wrapper_effect<'tcx>(
             size_arg,
             elem_size,
         });
+    }
+    None
+}
+
+/// Detect a field-setter callee from its MIR: a function whose body is
+/// (essentially) `(*self).field = new_value` — a single `Deref` + `Field` store
+/// of a scalar argument into the `&mut self` pointee. Produces a
+/// `WriteFieldOfArg` effect so the materialized field is updated, without any
+/// name- or length-specific knowledge: the field index and the written value
+/// come straight from the callee's MIR.
+///
+/// The match is deliberately conservative: the body must contain *only* the
+/// field store (plus a unit-return `_0 = const ()` and storage markers), so a
+/// function that also does real work is never misrecognized as a pure setter.
+pub(crate) fn try_field_store_effect(tcx: TyCtxt<'_>, callee: DefId) -> Option<CallEffect> {
+    if !tcx.is_mir_available(callee) {
+        return None;
+    }
+    let body = tcx.optimized_mir(callee);
+    if body.basic_blocks.len() > 4 || body.arg_count < 2 {
+        return None;
+    }
+
+    let mut found: Option<(usize, usize)> = None; // (field, from_arg)
+    for bb in body.basic_blocks.iter() {
+        for stmt in &bb.statements {
+            match &stmt.kind {
+                StatementKind::Assign(assign) => {
+                    let (place, rvalue) = &**assign;
+                    // Trivial `_0 = const ()` unit return.
+                    if place.local.as_usize() == 0 && place.projection.is_empty() {
+                        if matches!(rvalue, Rvalue::Use(Operand::Constant(_), ..)) {
+                            continue;
+                        }
+                    }
+                    // The field store: `(*_1).<field> = <scalar arg>`.
+                    if place.local.as_usize() == 1 {
+                        let mut proj = place.projection.iter();
+                        if !matches!(proj.next().map(|p| p.kind()), Some(ProjectionElem::Deref)) {
+                            return None;
+                        }
+                        let Some(ProjectionElem::Field(idx, _)) = proj.next().map(|p| p.kind())
+                        else {
+                            return None;
+                        };
+                        if proj.next().is_some() {
+                            return None;
+                        }
+                        let src = match rvalue {
+                            Rvalue::Use(Operand::Copy(p), ..)
+                            | Rvalue::Use(Operand::Move(p), ..) => p.local,
+                            _ => return None,
+                        };
+                        if src.as_usize() >= 2 && found.is_none() {
+                            found = Some((idx.as_usize(), src.as_usize() - 1));
+                            continue;
+                        }
+                    }
+                    // Any other real statement disqualifies the shape.
+                    return None;
+                }
+                // Storage markers are benign.
+                StatementKind::StorageLive(_) | StatementKind::StorageDead(_) => {}
+                _ => return None,
+            }
+        }
+    }
+
+    found.map(|(field, from_arg)| CallEffect::WriteFieldOfArg {
+        arg: 0,
+        field,
+        from_arg,
+    })
+}
+
+/// Detect a field-getter callee from its MIR: a function whose body is
+/// (essentially) `(*self).field` — a single `Deref` + `Field` load returned as
+/// the function's result. Produces a `ReturnFieldOfArg` effect so the
+/// materialized field is returned, mirroring [`try_field_store_effect`] for the
+/// read direction (no name- or length-specific knowledge).
+///
+/// As with [`try_field_store_effect`], the match is conservative: the body must
+/// contain *only* the field load (plus a unit-return and storage markers).
+pub(crate) fn try_field_load_effect(tcx: TyCtxt<'_>, callee: DefId) -> Option<CallEffect> {
+    if !tcx.is_mir_available(callee) {
+        return None;
+    }
+    let body = tcx.optimized_mir(callee);
+    if body.basic_blocks.len() > 4 || body.arg_count < 1 {
+        return None;
+    }
+
+    for bb in body.basic_blocks.iter() {
+        for stmt in &bb.statements {
+            match &stmt.kind {
+                StatementKind::Assign(assign) => {
+                    let (place, rvalue) = &**assign;
+                    // `_0 = (*_1).<field>` (return value is a field read).
+                    if place.local.as_usize() == 0 && place.projection.is_empty() {
+                        let src_place = match rvalue {
+                            Rvalue::Use(Operand::Copy(p), ..)
+                            | Rvalue::Use(Operand::Move(p), ..) => p,
+                            Rvalue::CopyForDeref(p) => p,
+                            _ => return None,
+                        };
+                        if src_place.local.as_usize() == 1 {
+                            let mut proj = src_place.projection.iter();
+                            if !matches!(proj.next().map(|p| p.kind()), Some(ProjectionElem::Deref))
+                            {
+                                return None;
+                            }
+                            let Some(ProjectionElem::Field(idx, _)) = proj.next().map(|p| p.kind())
+                            else {
+                                return None;
+                            };
+                            if proj.next().is_some() {
+                                return None;
+                            }
+                            return Some(CallEffect::ReturnFieldOfArg {
+                                arg: 0,
+                                field: idx.as_usize(),
+                            });
+                        }
+                        return None;
+                    }
+                    // Any other real statement disqualifies the shape.
+                    return None;
+                }
+                StatementKind::StorageLive(_) | StatementKind::StorageDead(_) => {}
+                _ => return None,
+            }
+        }
     }
     None
 }
@@ -369,8 +519,8 @@ pub(super) fn named_index_disjoint_validator(name: &str) -> Option<(usize, usize
         .next()
         .unwrap_or(name)
         .trim_end_matches("::");
-    if base.ends_with("get_disjoint_check_valid")
-        || base.ends_with("get_disjoint_check_valid_ext") {
+    if base.ends_with("get_disjoint_check_valid") || base.ends_with("get_disjoint_check_valid_ext")
+    {
         Some((0, 1))
     } else {
         None
@@ -381,7 +531,10 @@ pub(super) fn named_index_disjoint_validator(name: &str) -> Option<(usize, usize
 /// from an array argument, and returns early (`Err`) both when an element is
 /// out of range against a scalar argument (`>= len`) and when two elements are
 /// equal (a duplicate).  Returns `(indices_arg, len_arg)`.
-pub(super) fn detect_index_disjoint_validator(tcx: TyCtxt<'_>, callee: DefId) -> Option<(usize, usize)> {
+pub(super) fn detect_index_disjoint_validator(
+    tcx: TyCtxt<'_>,
+    callee: DefId,
+) -> Option<(usize, usize)> {
     callee.as_local()?;
     if !tcx.is_mir_available(callee) {
         return None;
@@ -600,7 +753,8 @@ fn call_result_reaches_return<'tcx>(
 pub(super) fn callee_calls_other_local(tcx: TyCtxt<'_>, callee: DefId) -> bool {
     let body = tcx.optimized_mir(callee);
     for bb in body.basic_blocks.iter() {
-        if matches!(bb.terminator().kind,
+        if matches!(
+            bb.terminator().kind,
             rustc_middle::mir::TerminatorKind::Call { .. }
         ) {
             return true;

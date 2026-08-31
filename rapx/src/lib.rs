@@ -49,11 +49,11 @@ use analysis::{
     api_dependency::ApiDependencyAnalyzer,
     callgraph::{CallGraphAnalysis, FnCallDisplay, default::CallGraphAnalyzer},
     dataflow::{Arg2RetMapWrapper, DataflowAnalysis, default::DataflowAnalyzer},
-    heap_ownership::{HeapOwnershipResultMapWrapper, HeapOwnershipAnalysis, default::HeapOwnershipAnalyzer},
-    path::{PathMapWrapper, default::PathAnalyzer},
-    range::{
-        PathConstraintMapWrapper, RAResultMapWrapper, RangeAnalysis, default::RangeAnalyzer,
+    heap_ownership::{
+        HeapOwnershipAnalysis, HeapOwnershipResultMapWrapper, default::HeapOwnershipAnalyzer,
     },
+    path::{PathMapWrapper, default::PathAnalyzer},
+    range::{PathConstraintMapWrapper, RAResultMapWrapper, RangeAnalysis, default::RangeAnalyzer},
     safety_flow::{SafetyFlowAnalysis, TargetCrate},
     ssa_transform::SSATrans,
 };

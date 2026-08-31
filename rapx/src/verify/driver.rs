@@ -12,7 +12,9 @@ use crate::analysis::path::{
     graph::{PathEnumerator, PathGraph},
 };
 use crate::cli::VerifyMode;
-use crate::helpers::fn_info::{FnKind, get_cons, get_mutated_fields, get_muts, get_type, returns_wrapped_self};
+use crate::helpers::fn_info::{
+    FnKind, get_cons, get_mutated_fields, get_muts, get_type, returns_wrapped_self,
+};
 use crate::verify::contract::PropertyKind;
 use crate::verify::target::get_contract_from_annotation;
 
@@ -23,9 +25,8 @@ use rustc_middle::ty::TyCtxt;
 use super::{
     contract::Property,
     display::{
-        dedup_compound_props, emit_results_and_verdict, emit_verify_summary,
-        fmt_contract_expanded, fmt_fn_path_with_bounds, fmt_fn_path_with_generics,
-        fmt_fn_with_params,
+        dedup_compound_props, emit_results_and_verdict, emit_verify_summary, fmt_contract_expanded,
+        fmt_fn_path_with_bounds, fmt_fn_path_with_generics, fmt_fn_with_params,
     },
     engine::VerifyEngine,
     loop_sensitivity::{LoopSensitivityAnalyzer, RepeatStrategy},
@@ -152,8 +153,8 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
                         per_path.resize(bulk.len(), None);
                     }
                     for (i, (result, desc)) in bulk.iter().enumerate() {
-                        let slot = per_path[i]
-                            .get_or_insert_with(|| (result.clone(), desc.clone()));
+                        let slot =
+                            per_path[i].get_or_insert_with(|| (result.clone(), desc.clone()));
                         slot.0 = slot.0.clone().and(result.clone());
                         if matches!(result, CheckResult::Failed | CheckResult::Unknown) {
                             slot.1 = desc.clone();
@@ -170,8 +171,8 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
                         per_path.resize(bulk.len(), None);
                     }
                     for (i, (result, desc)) in bulk.iter().enumerate() {
-                        let slot = per_path[i]
-                            .get_or_insert_with(|| (result.clone(), desc.clone()));
+                        let slot =
+                            per_path[i].get_or_insert_with(|| (result.clone(), desc.clone()));
                         slot.0 = slot.0.clone().or(result.clone());
                         if matches!(result, CheckResult::Proved) {
                             slot.1 = desc.clone();
@@ -306,9 +307,14 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
         // some path actually `Failed`, so a genuine soundness gap still surfaces.
         let wrapped_self = returns_wrapped_self(self.tcx, self.target.def_id);
         if (!returns_self && !is_constructor) || (is_constructor && wrapped_self) {
-            let has_failed = report.results.iter().any(|r| matches!(r.result, CheckResult::Failed));
+            let has_failed = report
+                .results
+                .iter()
+                .any(|r| matches!(r.result, CheckResult::Failed));
             if !has_failed {
-                report.results.retain(|r| !matches!(r.result, CheckResult::Unknown));
+                report
+                    .results
+                    .retain(|r| !matches!(r.result, CheckResult::Unknown));
             }
         }
 
@@ -466,12 +472,7 @@ impl<'tcx> VerifyRun<'tcx> {
                 for &mut_id in &muts {
                     let con_target =
                         self.build_virtual_target(target, read_def_id, con_id, &[mut_id]);
-                    self.verify_and_emit_sequence(
-                        read_def_id,
-                        &con_target,
-                        con_id,
-                        &[mut_id],
-                    );
+                    self.verify_and_emit_sequence(read_def_id, &con_target, con_id, &[mut_id]);
                 }
             }
         }
@@ -543,9 +544,7 @@ impl<'tcx> VerifyRun<'tcx> {
 
         let (_, repeat_rounds) = self.repeat_rounds_for_target(con_target);
         for repeat in repeat_rounds {
-            let driver = VerifyDriver::new_with_repeat(
-                self.tcx, con_target, repeat,
-            );
+            let driver = VerifyDriver::new_with_repeat(self.tcx, con_target, repeat);
             match crate::helpers::mir_utils::catch_panic(|| driver.verify_function()) {
                 Ok(report) => {
                     rap_debug!("{}", report.describe());
@@ -621,9 +620,7 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
 
             // Phase 1: unsafe checkpoint verification
             for repeat in repeat_rounds {
-                let driver = VerifyDriver::new_with_repeat(
-                    self.tcx, target, repeat,
-                );
+                let driver = VerifyDriver::new_with_repeat(self.tcx, target, repeat);
                 match crate::helpers::mir_utils::catch_panic(|| driver.verify_function()) {
                     Ok(report) => {
                         rap_debug!("{}", report.describe());
@@ -644,9 +641,7 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
 
             // Phase 2: struct invariant verification
             if !target.struct_invariants.is_empty() && !self.skip_invariant {
-                let driver = VerifyDriver::new_with_repeat(
-                    self.tcx, target, planned_repeat,
-                );
+                let driver = VerifyDriver::new_with_repeat(self.tcx, target, planned_repeat);
                 match crate::helpers::mir_utils::catch_panic(|| driver.verify_struct_invariants()) {
                     Ok(struct_report) => {
                         rap_debug!("{}", struct_report.describe());
@@ -762,7 +757,6 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
             self.run_invless_sequences(&collector.function_targets);
         }
     }
-
 }
 
 impl<'tcx> VerifyRun<'tcx> {
@@ -772,10 +766,8 @@ impl<'tcx> VerifyRun<'tcx> {
         rap_info!("{:=<1$}", "", 76);
         rap_info!("");
 
-        let mut struct_groups: FxHashMap<
-            rustc_hir::def_id::DefId,
-            Vec<&FunctionTarget<'tcx>>,
-        > = FxHashMap::default();
+        let mut struct_groups: FxHashMap<rustc_hir::def_id::DefId, Vec<&FunctionTarget<'tcx>>> =
+            FxHashMap::default();
         let mut free_targets: Vec<&FunctionTarget<'tcx>> = Vec::new();
 
         for target in targets {
@@ -794,14 +786,10 @@ impl<'tcx> VerifyRun<'tcx> {
             let struct_name = self.tcx.def_path_str(struct_def_id);
 
             // -- Struct invariants (once) --
-            let inv_target = methods
-                .iter()
-                .find(|t| !t.struct_invariants.is_empty());
+            let inv_target = methods.iter().find(|t| !t.struct_invariants.is_empty());
             let have_invariants = inv_target.is_some();
 
-            if have_invariants || methods.iter().any(|t| {
-                self.has_printable_contracts(t)
-            }) {
+            if have_invariants || methods.iter().any(|t| self.has_printable_contracts(t)) {
                 rap_info!("{:=<1$}", "", 76);
                 rap_info!("[rapx::debug-contracts] struct: {struct_name}");
                 rap_info!("{:=<1$}", "", 76);
@@ -848,12 +836,8 @@ impl<'tcx> VerifyRun<'tcx> {
 
     fn has_printable_contracts(&self, target: &FunctionTarget<'tcx>) -> bool {
         use crate::verify::contract::PropertyKind;
-        let is_unsafe_fn = self
-            .tcx
-            .fn_sig(target.def_id)
-            .skip_binder()
-            .safety()
-            == rustc_hir::Safety::Unsafe;
+        let is_unsafe_fn =
+            self.tcx.fn_sig(target.def_id).skip_binder().safety() == rustc_hir::Safety::Unsafe;
         let has_caller = is_unsafe_fn
             && target
                 .caller_requires
@@ -862,9 +846,10 @@ impl<'tcx> VerifyRun<'tcx> {
         if has_caller {
             return true;
         }
-        target.callee_requires.values().any(|c| {
-            c.iter().any(|p| p.kind() != Some(PropertyKind::Unknown))
-        })
+        target
+            .callee_requires
+            .values()
+            .any(|c| c.iter().any(|p| p.kind() != Some(PropertyKind::Unknown)))
     }
 
     fn print_contract_lines(&self, prefix: &str, branch: &str, call: &str, meaning: &str) {
@@ -884,12 +869,8 @@ impl<'tcx> VerifyRun<'tcx> {
         use crate::verify::contract::PropertyKind;
 
         let (arg_names_typed, ret_ty) = self.resolve_arg_names_with_types(target.def_id);
-        let is_unsafe_fn = self
-            .tcx
-            .fn_sig(target.def_id)
-            .skip_binder()
-            .safety()
-            == rustc_hir::Safety::Unsafe;
+        let is_unsafe_fn =
+            self.tcx.fn_sig(target.def_id).skip_binder().safety() == rustc_hir::Safety::Unsafe;
 
         let target_path = fmt_fn_path_with_generics(self.tcx, target.def_id);
         let short_name = crate::helpers::name::short_fn_name(self.tcx, target.def_id);
@@ -938,12 +919,7 @@ impl<'tcx> VerifyRun<'tcx> {
                     target.owner_struct_def_id,
                     Some(target.def_id),
                 );
-                self.print_contract_lines(
-                    &format!("{cont}  "),
-                    pbranch,
-                    &call,
-                    &meaning,
-                );
+                self.print_contract_lines(&format!("{cont}  "), pbranch, &call, &meaning);
             }
             if !has_callees {
                 rap_info!("");
@@ -958,16 +934,11 @@ impl<'tcx> VerifyRun<'tcx> {
                 let cbranch = if is_last_callee { "`-" } else { "|-" };
                 let ccont = if is_last_callee { "  " } else { "| " };
                 let contracts = target.callee_requires.get(&callee_id).unwrap();
-                let (callee_typed, callee_ret) =
-                    self.resolve_arg_names_with_types(callee_id);
+                let (callee_typed, callee_ret) = self.resolve_arg_names_with_types(callee_id);
                 let callee_path = fmt_fn_path_with_generics(self.tcx, callee_id);
                 rap_info!(
                     "{cont}  {cbranch} {}",
-                    fmt_fn_with_params(
-                        &callee_path,
-                        &callee_typed,
-                        callee_ret.as_deref()
-                    )
+                    fmt_fn_with_params(&callee_path, &callee_typed, callee_ret.as_deref())
                 );
                 let props = dedup_compound_props(
                     contracts
@@ -977,12 +948,8 @@ impl<'tcx> VerifyRun<'tcx> {
                 for (pi, property) in props.iter().enumerate() {
                     let is_last_prop = pi + 1 == props.len();
                     let pbranch = if is_last_prop { "`-" } else { "|-" };
-                    let (call, meaning) = fmt_contract_expanded(
-                        self.tcx,
-                        property,
-                        None,
-                        Some(callee_id),
-                    );
+                    let (call, meaning) =
+                        fmt_contract_expanded(self.tcx, property, None, Some(callee_id));
                     self.print_contract_lines(
                         &format!("{cont}  {ccont}"),
                         pbranch,

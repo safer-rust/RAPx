@@ -101,6 +101,25 @@ pub(crate) enum CallEffect {
     },
     /// The return value is the length of an aggregate argument.
     ReturnLengthOfArg { arg: usize },
+    /// The return value is the capacity (field [0,1]) of a Vec-like aggregate
+    /// argument whose `{buf{ptr,cap}, len}` fields are materialized. Falls back
+    /// to the same `size / elem_size` computation as [`ReturnLengthOfArg`] when
+    /// the `cap` field is not materialized.
+    ReturnCapacityOfArg { arg: usize },
+    /// The return value is field `field` of the pointee of argument `arg`
+    /// (models `Vec::len` and any `(*self).field` getter; the field index is
+    /// derived straight from the callee's MIR, mirroring [`WriteFieldOfArg`]).
+    ReturnFieldOfArg { arg: usize, field: usize },
+    /// The call writes the value of argument `from_arg` into field `field` of
+    /// the pointee of the `&mut` argument `arg` (models `Vec::set_len` and any
+    /// `(*self).field = arg` setter; the field index and value are derived
+    /// straight from the callee's MIR, so no length-specific or name-based
+    /// knowledge is needed).
+    WriteFieldOfArg {
+        arg: usize,
+        field: usize,
+        from_arg: usize,
+    },
     /// The return value is `min(lhs_arg, rhs_arg)`, satisfying
     /// `return <= lhs_arg` and `return <= rhs_arg`.
     ReturnMin { lhs_arg: usize, rhs_arg: usize },
@@ -153,6 +172,10 @@ pub(crate) enum CallEffect {
     /// itself (a Box fat pointer) rather than a separate count argument.
     /// Used for `into_vec` / `box_assume_init_into_vec_unsafe`.
     ReturnNewAllocationFromBox,
+    /// Like `ReturnNewAllocation`, but the argument is the *capacity*: the
+    /// returned Vec starts empty (`len == 0`) with `cap == cap_arg` (models
+    /// `Vec::with_capacity`).
+    ReturnNewAllocationFromCap { cap_arg: usize, elem_size: u64 },
     /// The return value is a non-zero power of two (models `Layout::align`).
     ReturnPowerOfTwo,
     /// The call transfers a Vec's backing allocation into a Box (e.g.
@@ -262,7 +285,9 @@ pub(crate) fn effect_summary<'tcx>(
     let callee = mir_utils::dep_callee_def_id(func);
     let name = mir_utils::call_name(tcx, func);
 
-    if let Some(summary) = builtin_models::lookup_effect(tcx, caller, callee, &name, func, destination) {
+    if let Some(summary) =
+        builtin_models::lookup_effect(tcx, caller, callee, &name, func, destination)
+    {
         return summary;
     }
 
@@ -299,22 +324,27 @@ pub(crate) fn effect_summary<'tcx>(
                 };
             }
         }
-        if let Some(effect) = interprocedural::try_pointer_arith_wrapper_effect(tcx, callee, Some(destination)) {
+        if let Some(effect) =
+            interprocedural::try_pointer_arith_wrapper_effect(tcx, callee, Some(destination))
+        {
             return CallEffectSummary {
                 name,
                 effects: vec![effect],
                 unsupported: false,
             };
         }
-        if let Some(effect) = interprocedural::try_from_raw_parts_wrapper_effect(tcx, callee, Some(destination)) {
+        if let Some(effect) =
+            interprocedural::try_from_raw_parts_wrapper_effect(tcx, callee, Some(destination))
+        {
             return CallEffectSummary {
                 name,
                 effects: vec![effect],
                 unsupported: false,
             };
         }
-        if let Some((indices_arg, len_arg)) = interprocedural::detect_index_disjoint_validator(tcx, callee)
-            .or_else(|| interprocedural::named_index_disjoint_validator(&name))
+        if let Some((indices_arg, len_arg)) =
+            interprocedural::detect_index_disjoint_validator(tcx, callee)
+                .or_else(|| interprocedural::named_index_disjoint_validator(&name))
         {
             return CallEffectSummary {
                 name,
@@ -356,7 +386,9 @@ pub(crate) fn effect_summary<'tcx>(
 ///   * `MaybeDangling<P>(P)` → 1.
 fn transparent_deref_peel<'tcx>(tcx: TyCtxt<'tcx>, func: &Operand<'tcx>) -> Option<usize> {
     let self_ty = crate::helpers::mir_utils::fn_def_first_type_arg(func)?;
-    let TyKind::Adt(adt_def, _) = self_ty.kind() else { return None };
+    let TyKind::Adt(adt_def, _) = self_ty.kind() else {
+        return None;
+    };
     let path = tcx.def_path_str(adt_def.did());
     if path.contains("ManuallyDrop") {
         Some(2)
@@ -385,7 +417,9 @@ pub(crate) fn vec_elem_ty<'tcx>(_tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<Ty<'
 /// Element type of a `from_raw_parts` result: `&[T]`/`*[T]`/`Vec<T>` yield `T`;
 /// other types (including `String`) return `None`.
 pub(crate) fn from_raw_parts_elem_ty<'tcx>(
-    tcx: TyCtxt<'tcx>, caller: DefId, dest: Option<Local>,
+    tcx: TyCtxt<'tcx>,
+    caller: DefId,
+    dest: Option<Local>,
 ) -> Option<Ty<'tcx>> {
     let d = dest?;
     let ty = tcx.optimized_mir(caller).local_decls[d].ty;
@@ -407,10 +441,11 @@ pub(crate) fn from_raw_parts_elem_ty<'tcx>(
 /// slice) and `Vec<T>` (owned); `String` and unknown layouts fall back to 1
 /// (`String`'s element is `u8`, so 1 is correct).
 pub(crate) fn from_raw_parts_elem_size<'tcx>(
-    tcx: TyCtxt<'tcx>, caller: DefId, dest: Option<Local>,
+    tcx: TyCtxt<'tcx>,
+    caller: DefId,
+    dest: Option<Local>,
 ) -> u64 {
     from_raw_parts_elem_ty(tcx, caller, dest)
         .and_then(|e| mir_utils::type_layout(tcx, caller, e).map(|(_, s)| s))
         .unwrap_or(1)
 }
-

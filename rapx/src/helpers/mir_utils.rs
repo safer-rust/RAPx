@@ -1,20 +1,22 @@
-use rustc_hir::{
-    ItemKind,
-    def_id::{DefId, LocalDefId},
-};
 #[cfg(not(rapx_ge_100))]
 use rustc_hir::LangItem;
 #[cfg(rapx_ge_100)]
 use rustc_hir::attrs::lang_items::LangItem;
+use rustc_hir::{
+    ItemKind,
+    def_id::{DefId, LocalDefId},
+};
 use rustc_middle::{
-    mir::{BasicBlock, Body, ConstValue, Local, Operand, Place, Rvalue, StatementKind, TerminatorKind},
     mir::interpret::{AllocId, GlobalAlloc},
+    mir::{
+        BasicBlock, Body, ConstValue, Local, Operand, Place, Rvalue, StatementKind, TerminatorKind,
+    },
     ty::{
         ConstKind, FieldDef, GenericArgKind, GenericArgsRef, PseudoCanonicalInput, Ty, TyCtxt,
         TyKind, TypingEnv,
     },
 };
-use rustc_span::{Symbol, DUMMY_SP};
+use rustc_span::{DUMMY_SP, Symbol};
 
 use std::collections::{HashMap, HashSet};
 
@@ -22,7 +24,7 @@ use std::collections::{HashMap, HashSet};
 use crate::compat::SkipNormWip;
 
 use crate::{
-    analysis::alias::{collect_local_origins, LocalOriginMap},
+    analysis::alias::{LocalOriginMap, collect_local_origins},
     compat::FxHashMap,
     helpers::mir_scan::Checkpoint,
 };
@@ -37,21 +39,31 @@ pub(crate) fn pointee_ty<'tcx>(ty: Ty<'tcx>) -> Option<Ty<'tcx>> {
 }
 
 pub(crate) fn dep_callee_def_id(func: &Operand<'_>) -> Option<DefId> {
-    let Operand::Constant(c) = func else { return None };
-    let TyKind::FnDef(def_id, _) = c.const_.ty().kind() else { return None };
+    let Operand::Constant(c) = func else {
+        return None;
+    };
+    let TyKind::FnDef(def_id, _) = c.const_.ty().kind() else {
+        return None;
+    };
     Some(*def_id)
 }
 
 /// Whether `func` is a call to `PartialEq::eq` (the equality comparison),
 /// determined from its `DefId` rather than by string-matching the callee path.
 pub(crate) fn is_eq_call(tcx: TyCtxt<'_>, func: &Operand<'_>) -> bool {
-    let Some(def_id) = dep_callee_def_id(func) else { return false };
-    let Some(assoc) = tcx.opt_associated_item(def_id) else { return false };
+    let Some(def_id) = dep_callee_def_id(func) else {
+        return false;
+    };
+    let Some(assoc) = tcx.opt_associated_item(def_id) else {
+        return false;
+    };
     if assoc.name().as_str() != "eq" {
         return false;
     }
     // Must be a trait method (`PartialEq::eq`), not an inherent `eq`.
-    let Some(trait_id) = assoc.trait_container(tcx) else { return false };
+    let Some(trait_id) = assoc.trait_container(tcx) else {
+        return false;
+    };
     tcx.def_path_str(trait_id).ends_with("PartialEq")
 }
 
@@ -86,9 +98,10 @@ pub(crate) fn resolve_callee_impl<'tcx>(
         return None;
     }
     let typing_env = TypingEnv::post_analysis(tcx, caller_def_id);
-    let instance = rustc_middle::ty::Instance::try_resolve(tcx, typing_env, callee_def_id, callee_args)
-        .ok()
-        .flatten()?;
+    let instance =
+        rustc_middle::ty::Instance::try_resolve(tcx, typing_env, callee_def_id, callee_args)
+            .ok()
+            .flatten()?;
     let resolved = match instance.def {
         rustc_middle::ty::InstanceKind::Item(def_id) => def_id,
         _ => return None,
@@ -108,8 +121,12 @@ pub(crate) fn dep_callee_resolved_def_id<'tcx>(
     caller: DefId,
     func: &Operand<'tcx>,
 ) -> Option<DefId> {
-    let Operand::Constant(c) = func else { return None };
-    let TyKind::FnDef(def_id, callee_args) = c.const_.ty().kind() else { return None };
+    let Operand::Constant(c) = func else {
+        return None;
+    };
+    let TyKind::FnDef(def_id, callee_args) = c.const_.ty().kind() else {
+        return None;
+    };
     let callee_def_id = *def_id;
     #[cfg(rapx_ge_99)]
     let callee_args = callee_args.skip_binder();
@@ -270,7 +287,9 @@ pub fn has_crate(tcx: TyCtxt<'_>, name: &str) -> bool {
 
 /// Extracts the source `Place` from an rvalue for simple forwarding operations
 /// (copy, move, cast, reference, raw-pointer, copy-for-deref).
-pub fn rvalue_source_place<'a, 'tcx>(rvalue: &'a Rvalue<'tcx>) -> Option<&'a rustc_middle::mir::Place<'tcx>> {
+pub fn rvalue_source_place<'a, 'tcx>(
+    rvalue: &'a Rvalue<'tcx>,
+) -> Option<&'a rustc_middle::mir::Place<'tcx>> {
     use rustc_middle::mir::{Operand, Rvalue};
     match rvalue {
         Rvalue::Use(Operand::Copy(place), ..)
@@ -300,10 +319,7 @@ pub fn operand_mir_place<'a, 'tcx>(operand: &'a Operand<'tcx>) -> Option<&'a Pla
 }
 
 /// Return the destination local for a checkpoint's call or deref.
-pub fn call_destination<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    checkpoint: &Checkpoint<'tcx>,
-) -> Option<Local> {
+pub fn call_destination<'tcx>(tcx: TyCtxt<'tcx>, checkpoint: &Checkpoint<'tcx>) -> Option<Local> {
     if checkpoint.kind == crate::helpers::mir_scan::CheckpointKind::RawPtrDeref {
         return checkpoint.destination;
     }
@@ -319,10 +335,7 @@ pub fn call_destination<'tcx>(
 
 /// Follow local-origin associations transitively to resolve to the
 /// ultimate source (parameter or root local) and accumulated field path.
-pub fn deep_resolve_place(
-    mut local: usize,
-    origins: &LocalOriginMap,
-) -> (usize, Vec<usize>) {
+pub fn deep_resolve_place(mut local: usize, origins: &LocalOriginMap) -> (usize, Vec<usize>) {
     let mut seen = HashSet::new();
     let mut all_fields: Vec<usize> = Vec::new();
     loop {
@@ -379,10 +392,7 @@ pub fn blocks_reachable_after_call(
 // ── MIR place alias mapping ──────────────────────────────────────
 
 /// Build a mapping from MIR locals to their resolved PlaceKey origins.
-pub fn collect_place_aliases(
-    tcx: TyCtxt<'_>,
-    def_id: DefId,
-) -> HashMap<Local, PlaceKey> {
+pub fn collect_place_aliases(tcx: TyCtxt<'_>, def_id: DefId) -> HashMap<Local, PlaceKey> {
     collect_local_origins(tcx, def_id)
         .into_iter()
         .map(|(local, (origin_local, fields))| {
@@ -420,18 +430,14 @@ pub fn rvalue_any_place_matching<'tcx>(
             #[cfg(rapx_ge_99)]
             Operand::RuntimeChecks(_) => false,
         }),
-        _ => rvalue_source_place(rvalue)
-            .map_or(false, |place| pred(place)),
+        _ => rvalue_source_place(rvalue).map_or(false, |place| pred(place)),
     }
 }
 
 // ── Pointer arithmetic origin tracing ────────────────────────────
 
 /// Trace a place back to its root local via local origin map.
-pub fn trace_place_root(
-    origins: &LocalOriginMap,
-    place: &PlaceKey,
-) -> Option<(usize, Vec<usize>)> {
+pub fn trace_place_root(origins: &LocalOriginMap, place: &PlaceKey) -> Option<(usize, Vec<usize>)> {
     let Some(local) = place.local() else {
         return None;
     };
@@ -440,11 +446,7 @@ pub fn trace_place_root(
 }
 
 /// Extract raw bytes from a `ConstValue`, following reference indirection.
-fn const_value_bytes<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    value: ConstValue,
-    depth: usize,
-) -> Option<Vec<u8>> {
+fn const_value_bytes<'tcx>(tcx: TyCtxt<'tcx>, value: ConstValue, depth: usize) -> Option<Vec<u8>> {
     if depth > 4 {
         return None;
     }
@@ -464,11 +466,7 @@ fn const_value_bytes<'tcx>(
 }
 
 /// Read bytes from a global allocation.
-fn alloc_id_bytes<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    alloc_id: AllocId,
-    depth: usize,
-) -> Option<Vec<u8>> {
+fn alloc_id_bytes<'tcx>(tcx: TyCtxt<'tcx>, alloc_id: AllocId, depth: usize) -> Option<Vec<u8>> {
     if depth > 4 {
         return None;
     }
@@ -559,8 +557,12 @@ fn is_const_def_kind(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
 /// Many monomorphized std APIs have the interesting type (the receiver or
 /// container element) as their first generic argument.
 pub(crate) fn fn_def_first_type_arg<'tcx>(func: &Operand<'tcx>) -> Option<Ty<'tcx>> {
-    let Operand::Constant(c) = func else { return None };
-    let TyKind::FnDef(_, args) = c.const_.ty().kind() else { return None };
+    let Operand::Constant(c) = func else {
+        return None;
+    };
+    let TyKind::FnDef(_, args) = c.const_.ty().kind() else {
+        return None;
+    };
     args.iter().find_map(|a| {
         #[cfg(rapx_ge_99)]
         let a = a.skip_binder();
@@ -571,12 +573,13 @@ pub(crate) fn fn_def_first_type_arg<'tcx>(func: &Operand<'tcx>) -> Option<Ty<'tc
     })
 }
 
-fn offset_of_ty_from_func<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    func: &Operand<'tcx>,
-) -> Option<Ty<'tcx>> {
-    let Operand::Constant(c) = func else { return None };
-    let TyKind::FnDef(def_id, _) = c.const_.ty().kind() else { return None };
+fn offset_of_ty_from_func<'tcx>(tcx: TyCtxt<'tcx>, func: &Operand<'tcx>) -> Option<Ty<'tcx>> {
+    let Operand::Constant(c) = func else {
+        return None;
+    };
+    let TyKind::FnDef(def_id, _) = c.const_.ty().kind() else {
+        return None;
+    };
     if !tcx.is_lang_item(*def_id, LangItem::OffsetOf) {
         return None;
     }
@@ -584,7 +587,9 @@ fn offset_of_ty_from_func<'tcx>(
 }
 
 pub fn type_layout<'tcx>(tcx: TyCtxt<'tcx>, caller: DefId, ty: Ty<'tcx>) -> Option<(u64, u64)> {
-    if ty_has_param_const(ty) { return None }
+    if ty_has_param_const(ty) {
+        return None;
+    }
     match layout_of_ty(tcx, caller, ty) {
         Some(l) => Some((l.align.abi.bytes(), l.size.bytes())),
         None if matches!(ty.kind(), TyKind::Param(_)) => Some((0, 0)),
@@ -601,9 +606,14 @@ pub fn layout_of_ty<'tcx>(
     ty: Ty<'tcx>,
 ) -> Option<rustc_abi::TyAndLayout<'tcx, Ty<'tcx>>> {
     let env = TypingEnv::post_analysis(tcx, caller);
-    catch_panic(|| tcx.layout_of(PseudoCanonicalInput { typing_env: env, value: ty }))
-        .ok()
-        .and_then(|r| r.ok())
+    catch_panic(|| {
+        tcx.layout_of(PseudoCanonicalInput {
+            typing_env: env,
+            value: ty,
+        })
+    })
+    .ok()
+    .and_then(|r| r.ok())
 }
 
 /// Byte offset of a struct field within its container type (0 on failure).
@@ -613,11 +623,15 @@ pub fn field_offset_in_bytes<'tcx>(
     ty: Ty<'tcx>,
     field_idx: usize,
 ) -> u64 {
-    let Some(layout) = layout_of_ty(tcx, caller, ty) else { return 0 };
+    let Some(layout) = layout_of_ty(tcx, caller, ty) else {
+        return 0;
+    };
     match layout.fields {
         rustc_abi::FieldsShape::Arbitrary { ref offsets, .. } => {
             let idx = rustc_abi::FieldIdx::from_usize(field_idx);
-            if idx.as_usize() < offsets.len() { return offsets[idx].bytes(); }
+            if idx.as_usize() < offsets.len() {
+                return offsets[idx].bytes();
+            }
         }
         _ => {}
     }
@@ -625,7 +639,9 @@ pub fn field_offset_in_bytes<'tcx>(
 }
 
 pub fn destination_stride<'tcx>(
-    tcx: TyCtxt<'tcx>, caller: DefId, dest: Option<Local>,
+    tcx: TyCtxt<'tcx>,
+    caller: DefId,
+    dest: Option<Local>,
 ) -> Option<u64> {
     let d = dest?;
     let pointee = pointee_ty(tcx.optimized_mir(caller).local_decls[d].ty)?;
@@ -633,7 +649,9 @@ pub fn destination_stride<'tcx>(
 }
 
 pub fn pointee_alignment<'tcx>(
-    tcx: TyCtxt<'tcx>, caller: DefId, dest: Option<Local>,
+    tcx: TyCtxt<'tcx>,
+    caller: DefId,
+    dest: Option<Local>,
 ) -> Option<(u64, String)> {
     let d = dest?;
     let ty = tcx.optimized_mir(caller).local_decls[d].ty;
@@ -693,8 +711,7 @@ pub fn eval_const_scalar_int<'tcx>(
     }
     // Resolve `T::{BITS,MAX,MIN}` associated constants of small integer types,
     // used in numeric bounds (`u32::MAX`) and shift-width masks (`u32::BITS`).
-    let is_num_bound =
-        text.contains("::BITS") || text.contains("::MAX") || text.contains("::MIN");
+    let is_num_bound = text.contains("::BITS") || text.contains("::MAX") || text.contains("::MIN");
     if !is_num_bound && offset_of_container(tcx, constant).is_none() {
         return None;
     }
@@ -725,10 +742,7 @@ pub fn eval_const_scalar_int<'tcx>(
 /// Try to extract raw bytes from a MIR constant operand that is a reference
 /// to a byte array/slice (e.g. `b"hello\0"`). Returns the byte values.
 /// Used by the VM to populate byte-level tracking for constant C strings.
-pub fn const_operand_bytes<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    operand: &Operand<'tcx>,
-) -> Option<Vec<u8>> {
+pub fn const_operand_bytes<'tcx>(tcx: TyCtxt<'tcx>, operand: &Operand<'tcx>) -> Option<Vec<u8>> {
     let constant = match operand {
         Operand::Constant(c) => c,
         _ => return None,
@@ -814,9 +828,8 @@ pub fn type_contains_ref_or_ptr<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> bool {
                 return true;
             }
             let adt = tcx.adt_def(def.did());
-            adt.all_fields().any(|field| {
-                type_contains_ref_or_ptr(tcx, field_ty(tcx, field, args))
-            })
+            adt.all_fields()
+                .any(|field| type_contains_ref_or_ptr(tcx, field_ty(tcx, field, args)))
         }
         _ => false,
     }
@@ -827,11 +840,7 @@ pub fn type_contains_ref_or_ptr<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> bool {
 /// On newer rustc `field.ty(tcx, args)` returns an `Unnormalized<Ty>` that must
 /// be `.skip_norm_wip()`-ed; on older toolchains the `SkipNormWip` shim makes
 /// the same call a no-op, so this is version-independent.
-pub fn field_ty<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    field: &FieldDef,
-    args: GenericArgsRef<'tcx>,
-) -> Ty<'tcx> {
+pub fn field_ty<'tcx>(tcx: TyCtxt<'tcx>, field: &FieldDef, args: GenericArgsRef<'tcx>) -> Ty<'tcx> {
     field.ty(tcx, args).skip_norm_wip()
 }
 
@@ -864,7 +873,9 @@ fn generic_param_impl_layouts<'tcx>(
     let param_env = tcx.param_env(caller);
     let typing_env = TypingEnv::post_analysis(tcx, caller);
     for clause in param_env.caller_bounds() {
-        let Some(trait_clause) = clause.as_trait_clause() else { continue };
+        let Some(trait_clause) = clause.as_trait_clause() else {
+            continue;
+        };
         let self_ty = trait_clause.self_ty().skip_binder();
         if self_ty != ty {
             continue;
@@ -876,7 +887,10 @@ fn generic_param_impl_layouts<'tcx>(
                 continue;
             }
             let Ok(Ok(layout)) = catch_panic(|| {
-                tcx.layout_of(PseudoCanonicalInput { typing_env, value: impl_ty })
+                tcx.layout_of(PseudoCanonicalInput {
+                    typing_env,
+                    value: impl_ty,
+                })
             }) else {
                 continue;
             };
@@ -1040,7 +1054,13 @@ pub fn collect_all_const_bytes_worklist<'tcx>(
 
         for data in body.basic_blocks.iter() {
             if let Some(terminator) = &data.terminator {
-                if let TerminatorKind::Call { destination, func, args, .. } = &terminator.kind {
+                if let TerminatorKind::Call {
+                    destination,
+                    func,
+                    args,
+                    ..
+                } = &terminator.kind
+                {
                     let dlocal = destination.local;
                     if dlocal != local {
                         continue;
@@ -1051,15 +1071,20 @@ pub fn collect_all_const_bytes_worklist<'tcx>(
                     let name = call_name(tcx, func);
                     if is_as_ptr_or_as_method(&name) {
                         for arg in args {
-                            if let Some(bytes) = trace_const_bytes_from_operand(tcx, body, &arg.node) {
+                            if let Some(bytes) =
+                                trace_const_bytes_from_operand(tcx, body, &arg.node)
+                            {
                                 results.push(bytes);
                             }
                         }
                     }
                     if name.contains("::add") {
-                        if let Some(offset) = args.get(1).and_then(|a| operand_scalar_int(&a.node)) {
+                        if let Some(offset) = args.get(1).and_then(|a| operand_scalar_int(&a.node))
+                        {
                             if let Some(base) = args.first() {
-                                if let Some(bytes) = trace_const_bytes_from_operand(tcx, body, &base.node) {
+                                if let Some(bytes) =
+                                    trace_const_bytes_from_operand(tcx, body, &base.node)
+                                {
                                     let start = offset as usize;
                                     if start < bytes.len() {
                                         results.push(bytes[start..].to_vec());
@@ -1176,7 +1201,13 @@ fn const_bytes_from_call_dest<'tcx>(
 ) -> Option<Vec<u8>> {
     for data in body.basic_blocks.iter() {
         if let Some(terminator) = &data.terminator {
-            if let TerminatorKind::Call { destination, func, args, .. } = &terminator.kind {
+            if let TerminatorKind::Call {
+                destination,
+                func,
+                args,
+                ..
+            } = &terminator.kind
+            {
                 if destination.local != local || !destination.projection.is_empty() {
                     continue;
                 }
@@ -1262,7 +1293,10 @@ fn aggregate_op_is_nonzero<'tcx>(
         Operand::Copy(p) | Operand::Move(p) if p.projection.is_empty() => {
             for data in body.basic_blocks.iter() {
                 if let Some(terminator) = &data.terminator {
-                    if let TerminatorKind::Call { destination, func, .. } = &terminator.kind {
+                    if let TerminatorKind::Call {
+                        destination, func, ..
+                    } = &terminator.kind
+                    {
                         if destination.local == p.local && destination.projection.is_empty() {
                             return fn_always_returns_nonzero(tcx, func);
                         }
@@ -1280,11 +1314,10 @@ fn is_constant_zero(operand: &Operand<'_>) -> bool {
     operand_scalar_int(operand) == Some(0)
 }
 
-fn fn_always_returns_nonzero<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    func: &Operand<'tcx>,
-) -> bool {
-    let Some(fn_def_id) = dep_callee_def_id(func) else { return false };
+fn fn_always_returns_nonzero<'tcx>(tcx: TyCtxt<'tcx>, func: &Operand<'tcx>) -> bool {
+    let Some(fn_def_id) = dep_callee_def_id(func) else {
+        return false;
+    };
     let callee_body = tcx.optimized_mir(fn_def_id);
 
     let mut has_return = false;
@@ -1295,7 +1328,9 @@ fn fn_always_returns_nonzero<'tcx>(
             }
         }
         for stmt in &bb_data.statements {
-            let StatementKind::Assign(assign) = &stmt.kind else { continue };
+            let StatementKind::Assign(assign) = &stmt.kind else {
+                continue;
+            };
             let (target, rvalue) = assign.as_ref();
             if target.local != Local::from_usize(0) || !target.projection.is_empty() {
                 continue;

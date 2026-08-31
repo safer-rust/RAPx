@@ -25,7 +25,6 @@ impl<'tcx> Analysis for ScanAnalysis<'tcx> {
         stats.info().print_log();
         rap_info!("============================");
     }
-
 }
 
 impl<'tcx> ScanAnalysis<'tcx> {

@@ -8,5 +8,5 @@ mod call_visit;
 pub(crate) mod types;
 mod visitor;
 
-pub(crate) use types::{RelevantItem, ProofGoal};
+pub(crate) use types::{ProofGoal, RelevantItem};
 pub(crate) use visitor::BackwardSlicer;

@@ -15,10 +15,7 @@ use z3::{
 };
 
 use crate::compat::{FxHashMap, FxHashSet};
-use crate::verify::{
-    def_use::PlaceKey,
-    path_extractor::Path,
-};
+use crate::verify::{def_use::PlaceKey, path_extractor::Path};
 
 /// Unique identifier for a heap or stack allocation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -82,7 +79,12 @@ pub(crate) struct VmValue<'ctx, 'tcx> {
 
 impl<'ctx, 'tcx> VmValue<'ctx, 'tcx> {
     pub(crate) fn new(term: Int<'ctx>, ty: Ty<'tcx>) -> Self {
-        VmValue { term, ty, provenance: None, invariants: ValueInvariants::default() }
+        VmValue {
+            term,
+            ty,
+            provenance: None,
+            invariants: ValueInvariants::default(),
+        }
     }
 
     /// Convenience: extract the `AllocId` from provenance, if any.
@@ -403,7 +405,12 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     }
 
     /// Set the value of a specific field within an aggregate local.
-    pub(crate) fn set_field_value(&mut self, local: Local, path: Vec<usize>, value: VmValue<'ctx, 'tcx>) {
+    pub(crate) fn set_field_value(
+        &mut self,
+        local: Local,
+        path: Vec<usize>,
+        value: VmValue<'ctx, 'tcx>,
+    ) {
         self.field_values.insert((local, path), value);
     }
 
@@ -431,7 +438,9 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
 
     /// Look up a per-byte Z3 term for a concrete offset in an allocation.
     pub(crate) fn get_byte_value(&self, alloc_id: AllocId, offset: usize) -> Option<&Int<'ctx>> {
-        self.bytes.get(&(alloc_id, offset)).and_then(|b| b.value.as_ref())
+        self.bytes
+            .get(&(alloc_id, offset))
+            .and_then(|b| b.value.as_ref())
     }
 
     /// Check whether a byte at a concrete offset is known to be initialized.
@@ -441,12 +450,16 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
 
     /// Check whether a byte at a concrete offset is known to be NUL.
     pub(crate) fn is_byte_nul(&self, alloc_id: AllocId, offset: usize) -> bool {
-        self.bytes.get(&(alloc_id, offset)).is_some_and(|b| b.nul == Some(true))
+        self.bytes
+            .get(&(alloc_id, offset))
+            .is_some_and(|b| b.nul == Some(true))
     }
 
     /// Check whether a byte at a concrete offset is known to be non-NUL.
     pub(crate) fn is_byte_non_nul(&self, alloc_id: AllocId, offset: usize) -> bool {
-        self.bytes.get(&(alloc_id, offset)).is_some_and(|b| b.nul == Some(false))
+        self.bytes
+            .get(&(alloc_id, offset))
+            .is_some_and(|b| b.nul == Some(false))
     }
 
     /// Return all known (offset, term) pairs for an allocation, sorted by offset.
@@ -455,7 +468,11 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             .bytes
             .iter()
             .filter_map(|((aid, off), byte)| {
-                if *aid == alloc_id { byte.value.as_ref().map(|term| (*off, term)) } else { None }
+                if *aid == alloc_id {
+                    byte.value.as_ref().map(|term| (*off, term))
+                } else {
+                    None
+                }
             })
             .collect();
         pairs.sort_by_key(|(off, _)| *off);
@@ -464,18 +481,28 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
 
     /// Collect all offsets known to be NUL in an allocation.
     pub(crate) fn alloc_nul_offsets(&self, alloc_id: AllocId) -> Vec<usize> {
-        self.bytes.iter()
+        self.bytes
+            .iter()
             .filter_map(|((aid, off), byte)| {
-                if *aid == alloc_id && byte.nul == Some(true) { Some(*off) } else { None }
+                if *aid == alloc_id && byte.nul == Some(true) {
+                    Some(*off)
+                } else {
+                    None
+                }
             })
             .collect()
     }
 
     /// Collect all offsets known to be non-NUL in an allocation.
     pub(crate) fn alloc_non_nul_offsets(&self, alloc_id: AllocId) -> Vec<usize> {
-        self.bytes.iter()
+        self.bytes
+            .iter()
             .filter_map(|((aid, off), byte)| {
-                if *aid == alloc_id && byte.nul == Some(false) { Some(*off) } else { None }
+                if *aid == alloc_id && byte.nul == Some(false) {
+                    Some(*off)
+                } else {
+                    None
+                }
             })
             .collect()
     }
@@ -483,7 +510,9 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     /// Copy all per-byte tracking (value, init, NUL knowledge) from one
     /// allocation to another.
     pub(crate) fn copy_byte_tracking(&mut self, src: AllocId, dst: AllocId) {
-        let infos: Vec<(usize, ByteInfo<'ctx>)> = self.bytes.iter()
+        let infos: Vec<(usize, ByteInfo<'ctx>)> = self
+            .bytes
+            .iter()
             .filter(|((aid, _), _)| *aid == src)
             .map(|((_, off), byte)| (*off, byte.clone()))
             .collect();
@@ -564,13 +593,16 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     /// Extract a VmValue from a MIR operand.
     pub(crate) fn value_of_operand(&self, operand: &Operand<'tcx>) -> VmValue<'ctx, 'tcx> {
         match operand {
-            Operand::Copy(place) | Operand::Move(place) => {
-                self.value_of_place(place)
-                    .unwrap_or_else(|| self.unknown_value_for_place(place))
-            }
+            Operand::Copy(place) | Operand::Move(place) => self
+                .value_of_place(place)
+                .unwrap_or_else(|| self.unknown_value_for_place(place)),
             Operand::Constant(constant) => {
                 let text = format!("{:?}", constant.const_);
-                let int_val = crate::helpers::mir_utils::eval_const_scalar_int(self.tcx, &constant.const_, &text);
+                let int_val = crate::helpers::mir_utils::eval_const_scalar_int(
+                    self.tcx,
+                    &constant.const_,
+                    &text,
+                );
                 let is_field_offset = int_val.is_none()
                     && crate::helpers::mir_utils::offset_of_container(self.tcx, &constant.const_)
                         .is_some();
@@ -598,9 +630,10 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 }
             }
             #[cfg(rapx_ge_99)]
-            Operand::RuntimeChecks(_) => {
-                VmValue::new(self.fresh_int("runtime_checks"), self.body.local_decls[Local::from_usize(0)].ty)
-            }
+            Operand::RuntimeChecks(_) => VmValue::new(
+                self.fresh_int("runtime_checks"),
+                self.body.local_decls[Local::from_usize(0)].ty,
+            ),
         }
     }
 
@@ -611,7 +644,9 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         }
 
         // Collect field indices from projections
-        let field_path: Vec<usize> = place.projection.iter()
+        let field_path: Vec<usize> = place
+            .projection
+            .iter()
             .filter_map(|proj| match proj.kind() {
                 ProjectionElem::Field(field_idx, _) => Some(field_idx.as_usize()),
                 _ => None,
@@ -643,15 +678,23 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
 
         // For Deref+Field chains (e.g. (*self).ptr), strip the leading Deref
         // projection(s) and look up field_values with the remaining field path.
-        if !field_path.is_empty() && field_path.len() < place.projection.len()
-            && place.projection.iter().any(|p| matches!(p.kind(), ProjectionElem::Deref))
+        if !field_path.is_empty()
+            && field_path.len() < place.projection.len()
+            && place
+                .projection
+                .iter()
+                .any(|p| matches!(p.kind(), ProjectionElem::Deref))
         {
             // Only Deref and Field projections — all non-Field must be Deref.
-            let non_field_deref = place.projection.iter()
+            let non_field_deref = place
+                .projection
+                .iter()
                 .all(|p| matches!(p.kind(), ProjectionElem::Field(..) | ProjectionElem::Deref));
             if non_field_deref {
                 // Recompute field_path since the original was moved.
-                let fp: Vec<usize> = place.projection.iter()
+                let fp: Vec<usize> = place
+                    .projection
+                    .iter()
                     .filter_map(|proj| match proj.kind() {
                         ProjectionElem::Field(field_idx, _) => Some(field_idx.as_usize()),
                         _ => None,
@@ -674,14 +717,20 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 }
                 ProjectionElem::Field(_field_idx, _) => {
                     // Try to get the field value from the VM's field tracking
-                    let field_indices: Vec<usize> = place.projection.iter()
+                    let field_indices: Vec<usize> = place
+                        .projection
+                        .iter()
                         .filter_map(|p| match p.kind() {
                             ProjectionElem::Field(fi, _) => Some(fi.as_usize()),
                             _ => None,
                         })
                         .collect();
                     if !field_indices.is_empty() {
-                        if let Some(val) = self.field_values.get(&(place.local, field_indices)).cloned() {
+                        if let Some(val) = self
+                            .field_values
+                            .get(&(place.local, field_indices))
+                            .cloned()
+                        {
                             return Some(val);
                         }
                     }
@@ -752,13 +801,13 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         let val = base.clone();
                         return Some(val);
                     }
-                _ => {
-                    // Downcast or other unsupported projection: still return
-                    // the base with updated type so provenance propagates.
-                    let mut val = base.clone();
-                    val.ty = place.ty(self.body, self.tcx).ty;
-                    return Some(val);
-                }
+                    _ => {
+                        // Downcast or other unsupported projection: still return
+                        // the base with updated type so provenance propagates.
+                        let mut val = base.clone();
+                        val.ty = place.ty(self.body, self.tcx).ty;
+                        return Some(val);
+                    }
                 }
             }
         }
@@ -766,9 +815,12 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         // For multi-element projections with Deref+Field or Downcast, return
         // the base value since we already traced through Deref above.
         if place.projection.len() > 1
-            && place.projection.iter().any(|p| matches!(
-                p.kind(), ProjectionElem::Deref | ProjectionElem::Downcast(..)
-            ))
+            && place.projection.iter().any(|p| {
+                matches!(
+                    p.kind(),
+                    ProjectionElem::Deref | ProjectionElem::Downcast(..)
+                )
+            })
         {
             let mut val = base;
             val.ty = place.ty(self.body, self.tcx).ty;
@@ -793,4 +845,3 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         }
     }
 }
-

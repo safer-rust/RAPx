@@ -5,10 +5,7 @@
 //! only variant never produced by the backward visitor itself — it is injected
 //! by the engine before the forward visit.
 
-use crate::verify::{
-    contract,
-    path_extractor::Path,
-};
+use crate::verify::{contract, path_extractor::Path};
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::BasicBlock;
 

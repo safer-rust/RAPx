@@ -11,5 +11,3 @@ use pest_derive::Parser;
 #[derive(Parser)]
 #[grammar = "verify/contract/grammar.pest"]
 pub(crate) struct ContractParser;
-
-

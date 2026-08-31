@@ -4,15 +4,15 @@
 //! and resolves arguments positionally. `Property::parse_list` is the shared
 //! entry point for all front-ends, including the `any(...)` combinator.
 
+use quote::ToTokens;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
-use quote::ToTokens;
 use syn::Expr;
 
 use crate::helpers::name::access_ident_recursive;
 
-use super::types::*;
 use super::spec;
+use super::types::*;
 
 impl<'tcx> Property<'tcx> {
     /// Parse a property from the declaration table, dispatching on the tag's
@@ -208,8 +208,7 @@ impl<'tcx> Property<'tcx> {
             [target, index_expr] => {
                 let slice = super::resolve::expr_to_pest(tcx, def_id, target);
                 let index = super::resolve::expr_to_pest(tcx, def_id, index_expr);
-                if matches!(slice, ContractExpr::Unknown)
-                    || matches!(index, ContractExpr::Unknown)
+                if matches!(slice, ContractExpr::Unknown) || matches!(index, ContractExpr::Unknown)
                 {
                     return Self::new_simple(PropertyKind::Unknown);
                 }
@@ -334,7 +333,12 @@ impl<'tcx> Property<'tcx> {
     ///
     /// Plain entries (`Align(p, T)`, `Owning(p)`, ...) yield one property.
     /// The `any(...)` combinator may expand to several: see [`Self::parse_any`].
-    pub(crate) fn parse_list(tcx: TyCtxt<'tcx>, def_id: DefId, name: &str, exprs: &[Expr]) -> Vec<Self> {
+    pub(crate) fn parse_list(
+        tcx: TyCtxt<'tcx>,
+        def_id: DefId,
+        name: &str,
+        exprs: &[Expr],
+    ) -> Vec<Self> {
         // User-defined / compound property macro expansion takes precedence, so
         // `#[rapx::requires(MyTag(...))]` can reference DSL-defined contracts.
         if let Some(props) = super::compound::expand_compound(tcx, def_id, name, exprs) {
@@ -376,7 +380,10 @@ impl<'tcx> Property<'tcx> {
     /// or `And` nodes.
     fn parse_any(tcx: TyCtxt<'tcx>, def_id: DefId, exprs: &[Expr]) -> Vec<Self> {
         if exprs.len() < 2 {
-            rap_error!("any(...) requires at least 2 disjuncts, got {}", exprs.len());
+            rap_error!(
+                "any(...) requires at least 2 disjuncts, got {}",
+                exprs.len()
+            );
             return vec![Self::new_simple(PropertyKind::Unknown)];
         }
 
@@ -435,4 +442,3 @@ impl<'tcx> Property<'tcx> {
         true
     }
 }
-

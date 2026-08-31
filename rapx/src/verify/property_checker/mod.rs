@@ -12,12 +12,12 @@ use z3::{
     ast::{Ast, Bool, Int},
 };
 
+use crate::helpers::mir_scan::Checkpoint;
+use crate::verify::vm::state::VmState;
 use crate::verify::{
     contract::{Property, PropertyKind},
     report::CheckResult,
 };
-use crate::helpers::mir_scan::Checkpoint;
-use crate::verify::vm::state::VmState;
 
 mod alias;
 mod bounds;
@@ -63,25 +63,39 @@ impl PropertyChecker {
             Property::And(_) => self.check_and(vm_state, solver, checkpoint, property),
             Property::Atom(atom) => match atom.kind {
                 PropertyKind::Align => self.check_align(vm_state, solver, checkpoint, property),
-                PropertyKind::NonNull => self.check_non_null(vm_state, solver, checkpoint, property),
+                PropertyKind::NonNull => {
+                    self.check_non_null(vm_state, solver, checkpoint, property)
+                }
                 PropertyKind::Null => self.check_null(vm_state, solver, checkpoint, property),
-                PropertyKind::Allocated => self.check_allocated(vm_state, solver, checkpoint, property),
-                PropertyKind::InBound => self.check_in_bound(vm_state, solver, checkpoint, property),
+                PropertyKind::Allocated => {
+                    self.check_allocated(vm_state, solver, checkpoint, property)
+                }
+                PropertyKind::InBound => {
+                    self.check_in_bound(vm_state, solver, checkpoint, property)
+                }
                 PropertyKind::Init => self.check_init(vm_state, solver, checkpoint, property),
                 PropertyKind::Typed => self.check_typed(vm_state, solver, checkpoint, property),
                 PropertyKind::Alias => self.check_alias(vm_state, solver, checkpoint, property),
                 PropertyKind::Owning => self.check_owning(vm_state, solver, checkpoint, property),
                 PropertyKind::Alive => self.check_alive(vm_state, solver, checkpoint, property),
-                PropertyKind::NonOverlap => self.check_non_overlap(vm_state, solver, checkpoint, property),
+                PropertyKind::NonOverlap => {
+                    self.check_non_overlap(vm_state, solver, checkpoint, property)
+                }
                 // `NonVolatile` is uncheckable: the VM does not model volatile
                 // access, so there is nothing to disprove.  Treated as
                 // satisfied (Proved) as a documented soundness assumption —
                 // analysed code is assumed not to mix volatile and non-volatile
                 // access.  Revisit if volatile tracking is ever added.
                 PropertyKind::NonVolatile => CheckResult::Proved,
-                PropertyKind::ValidNum => self.check_valid_num(vm_state, solver, checkpoint, property),
-                PropertyKind::ValidString => self.check_valid_string(vm_state, solver, checkpoint, property),
-                PropertyKind::ValidCStr => self.check_valid_cstr(vm_state, solver, checkpoint, property),
+                PropertyKind::ValidNum => {
+                    self.check_valid_num(vm_state, solver, checkpoint, property)
+                }
+                PropertyKind::ValidString => {
+                    self.check_valid_string(vm_state, solver, checkpoint, property)
+                }
+                PropertyKind::ValidCStr => {
+                    self.check_valid_cstr(vm_state, solver, checkpoint, property)
+                }
                 PropertyKind::ValidTransmute => {
                     self.check_valid_transmute(vm_state, solver, checkpoint, property)
                 }
@@ -90,16 +104,22 @@ impl PropertyChecker {
                 }
                 PropertyKind::Trait => self.check_trait(vm_state, solver, checkpoint, property),
                 PropertyKind::Size => self.check_size(vm_state, property),
-                PropertyKind::NoPadding => self.check_no_padding(vm_state, solver, checkpoint, property),
+                PropertyKind::NoPadding => {
+                    self.check_no_padding(vm_state, solver, checkpoint, property)
+                }
 
                 _ => CheckResult::Unknown,
             },
         }
     }
 
-    fn check_or<'ctx, 'tcx>(&self, vm_state: &VmState<'ctx, 'tcx>, solver: &Solver<'ctx>,
-        checkpoint: &Checkpoint<'tcx>, property: &Property<'tcx>) -> CheckResult
-    {
+    fn check_or<'ctx, 'tcx>(
+        &self,
+        vm_state: &VmState<'ctx, 'tcx>,
+        solver: &Solver<'ctx>,
+        checkpoint: &Checkpoint<'tcx>,
+        property: &Property<'tcx>,
+    ) -> CheckResult {
         // OR semantics: proved if any disjunct is proved; failed only if every
         // disjunct is definitely violated; otherwise unknown.  An empty
         // disjunction is unsatisfiable, hence Failed.
@@ -111,9 +131,13 @@ impl PropertyChecker {
         overall
     }
 
-    fn check_and<'ctx, 'tcx>(&self, vm_state: &VmState<'ctx, 'tcx>, solver: &Solver<'ctx>,
-        checkpoint: &Checkpoint<'tcx>, property: &Property<'tcx>) -> CheckResult
-    {
+    fn check_and<'ctx, 'tcx>(
+        &self,
+        vm_state: &VmState<'ctx, 'tcx>,
+        solver: &Solver<'ctx>,
+        checkpoint: &Checkpoint<'tcx>,
+        property: &Property<'tcx>,
+    ) -> CheckResult {
         // AND semantics: proved if every conjunct is proved; failed if any is
         // definitely violated; otherwise unknown.  An empty conjunction is
         // vacuously proved.
@@ -127,7 +151,10 @@ impl PropertyChecker {
 }
 
 /// Check if the source-level function signature has a named lifetime in return type.
-pub(super) fn signature_return_has_lifetime(tcx: TyCtxt<'_>, def_id: DefId) -> Option<(String, String)> {
+pub(super) fn signature_return_has_lifetime(
+    tcx: TyCtxt<'_>,
+    def_id: DefId,
+) -> Option<(String, String)> {
     let local = def_id.as_local()?;
     let hir_id = tcx.local_def_id_to_hir_id(local);
     let span = tcx.hir_span(hir_id);
@@ -183,10 +210,10 @@ pub(super) fn utf8_validity<'ctx>(ctx: &'ctx z3::Context, bytes: &[Int<'ctx>]) -
         // Overlong / surrogate / >U+10FFFF refinements on the first
         // continuation byte.  Each disjunct is vacuous unless `lead` equals the
         // constrained lead byte.
-        let refine_3 = (lead._eq(&c_0xe0).not() | b.ge(&c_0xa0))
-            & (lead._eq(&c_0xed).not() | b.lt(&c_0xa0));
-        let refine_4 = (lead._eq(&c_0xf0).not() | b.ge(&c_0x90))
-            & (lead._eq(&c_0xf4).not() | b.lt(&c_0x90));
+        let refine_3 =
+            (lead._eq(&c_0xe0).not() | b.ge(&c_0xa0)) & (lead._eq(&c_0xed).not() | b.lt(&c_0xa0));
+        let refine_4 =
+            (lead._eq(&c_0xf0).not() | b.ge(&c_0x90)) & (lead._eq(&c_0xf4).not() | b.lt(&c_0x90));
 
         let valid_s0 = is_ascii.clone() | is_2lead.clone() | is_3lead.clone() | is_4lead.clone();
         let valid_s1 = is_cont.clone();
@@ -200,7 +227,11 @@ pub(super) fn utf8_validity<'ctx>(ctx: &'ctx z3::Context, bytes: &[Int<'ctx>]) -
         let byte_valid = Bool::ite(
             &state0,
             &valid_s0,
-            &Bool::ite(&state1, &valid_s1, &Bool::ite(&state2, &valid_s2, &valid_s3)),
+            &Bool::ite(
+                &state1,
+                &valid_s1,
+                &Bool::ite(&state2, &valid_s2, &valid_s3),
+            ),
         );
 
         let new_state_s0 = Bool::ite(

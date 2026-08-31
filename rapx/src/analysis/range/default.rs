@@ -74,7 +74,6 @@ where
         self.only_caller_range();
         self.start_path_constraints_analysis();
     }
-
 }
 
 impl<'tcx, T: IntervalArithmetic + ConstConvert + Debug> RangeAnalysis<'tcx, T>
@@ -160,13 +159,19 @@ where
     }
 
     fn collect_fn_def_ids(&self) -> Vec<DefId> {
-        self.tcx.iter_local_def_id().filter_map(|local_def_id| {
-            if matches!(self.tcx.def_kind(local_def_id), DefKind::Fn | DefKind::AssocFn) {
-                Some(local_def_id.to_def_id())
-            } else {
-                None
-            }
-        }).collect()
+        self.tcx
+            .iter_local_def_id()
+            .filter_map(|local_def_id| {
+                if matches!(
+                    self.tcx.def_kind(local_def_id),
+                    DefKind::Fn | DefKind::AssocFn
+                ) {
+                    Some(local_def_id.to_def_id())
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     fn only_caller_range(&mut self) {
@@ -178,52 +183,55 @@ where
         rap_debug!("PHASE 1: Building all ConstraintGraphs and the CallGraph...");
         for def_id in self.collect_fn_def_ids() {
             if self.tcx.is_mir_available(def_id) {
-                    rap_info!("Processing function: {}", self.tcx.def_path_str(def_id));
-                    let mut body = self.tcx.optimized_mir(def_id).clone();
-                    let body_mut_ref = unsafe { &mut *(&mut body as *mut Body<'tcx>) };
-                    // Run SSA/ESSA passes
-                    let mut passrunner = PassRunner::new(self.tcx);
-                    passrunner.run_pass(body_mut_ref, ssa_def_id, essa_def_id);
-                    // Print the MIR after SSA/ESSA passes
-                    if self.debug {
-                        print_diff(self.tcx, body_mut_ref, def_id.into());
-                        print_mir_graph(self.tcx, body_mut_ref, def_id.into());
-                    }
-
-                    self.ssa_places_mapping
-                        .insert(def_id, passrunner.places_map.clone());
-
-                    // Build ConstraintGraph locally (avoids self-referential borrows)
-                    let mut cg: ConstraintGraph<'tcx, T> =
-                        ConstraintGraph::new(body_mut_ref, self.tcx, def_id, essa_def_id, ssa_def_id);
-                    cg.build_graph(body_mut_ref);
-                    cg.build_nuutila(false);
-                    let vars_map = cg.get_vars().clone();
-                    let dot_output = cg.to_dot();
-
-                    // Visit for call graph construction (before body is moved)
-                    let mut call_graph_visitor =
-                        CallGraphVisitor::new(self.tcx, def_id, body_mut_ref, &mut self.callgraph);
-                    call_graph_visitor.visit();
-
-                    // Now move body into map (all local references are done)
-                    self.body_map.insert(def_id, body);
-                    self.cg_map.insert(def_id, Rc::new(RefCell::new(cg)));
-                    self.vars_map.entry(def_id).or_default().push(RefCell::new(vars_map));
-
-                    // Write dot file
-                    let function_name = self.tcx.def_path_str(def_id);
-                    let dir_path = PathBuf::from("cg_dot");
-                    fs::create_dir_all(dir_path.clone()).unwrap();
-                    let safe_filename = format!("{}_cg.dot", function_name);
-                    let output_path = dir_path.join(format!("{}", safe_filename));
-                    let mut file = File::create(&output_path).expect("cannot create file");
-                    file.write_all(dot_output.as_bytes())
-                        .expect("Could not write to file");
-                    rap_trace!("Successfully generated graph.dot");
+                rap_info!("Processing function: {}", self.tcx.def_path_str(def_id));
+                let mut body = self.tcx.optimized_mir(def_id).clone();
+                let body_mut_ref = unsafe { &mut *(&mut body as *mut Body<'tcx>) };
+                // Run SSA/ESSA passes
+                let mut passrunner = PassRunner::new(self.tcx);
+                passrunner.run_pass(body_mut_ref, ssa_def_id, essa_def_id);
+                // Print the MIR after SSA/ESSA passes
+                if self.debug {
+                    print_diff(self.tcx, body_mut_ref, def_id.into());
+                    print_mir_graph(self.tcx, body_mut_ref, def_id.into());
                 }
+
+                self.ssa_places_mapping
+                    .insert(def_id, passrunner.places_map.clone());
+
+                // Build ConstraintGraph locally (avoids self-referential borrows)
+                let mut cg: ConstraintGraph<'tcx, T> =
+                    ConstraintGraph::new(body_mut_ref, self.tcx, def_id, essa_def_id, ssa_def_id);
+                cg.build_graph(body_mut_ref);
+                cg.build_nuutila(false);
+                let vars_map = cg.get_vars().clone();
+                let dot_output = cg.to_dot();
+
+                // Visit for call graph construction (before body is moved)
+                let mut call_graph_visitor =
+                    CallGraphVisitor::new(self.tcx, def_id, body_mut_ref, &mut self.callgraph);
+                call_graph_visitor.visit();
+
+                // Now move body into map (all local references are done)
+                self.body_map.insert(def_id, body);
+                self.cg_map.insert(def_id, Rc::new(RefCell::new(cg)));
+                self.vars_map
+                    .entry(def_id)
+                    .or_default()
+                    .push(RefCell::new(vars_map));
+
+                // Write dot file
+                let function_name = self.tcx.def_path_str(def_id);
+                let dir_path = PathBuf::from("cg_dot");
+                fs::create_dir_all(dir_path.clone()).unwrap();
+                let safe_filename = format!("{}_cg.dot", function_name);
+                let output_path = dir_path.join(format!("{}", safe_filename));
+                let mut file = File::create(&output_path).expect("cannot create file");
+                file.write_all(dot_output.as_bytes())
+                    .expect("Could not write to file");
+                rap_trace!("Successfully generated graph.dot");
             }
-            rap_debug!("PHASE 1 Complete. ConstraintGraphs & CallGraphs built.");
+        }
+        rap_debug!("PHASE 1 Complete. ConstraintGraphs & CallGraphs built.");
         // self.callgraph.print_call_graph(); // Optional: for debugging
 
         // ====================================================================

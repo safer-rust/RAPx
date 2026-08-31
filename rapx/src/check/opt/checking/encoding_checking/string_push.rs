@@ -1,7 +1,5 @@
 use super::value_is_from_const;
-use crate::{
-    analysis::dataflow::*,
-};
+use crate::analysis::dataflow::*;
 use rustc_middle::{mir::Local, ty::TyCtxt};
 use rustc_span::Span;
 
@@ -13,7 +11,6 @@ crate::def_paths! {
     string_new: "std::string::String::new",
     string_push: "std::string::String::push",
 }
-
 
 use crate::check::opt::OptCheck;
 
@@ -86,8 +83,7 @@ impl OptCheck for StringPushCheck {
 }
 
 fn report_string_push_bug(graph: &Graph, spans: &Vec<Span>) {
-    let mut report = OptReport::from_graph(graph)
-        .title("Unnecessary encoding checkings detected");
+    let mut report = OptReport::from_graph(graph).title("Unnecessary encoding checkings detected");
     for span in spans.iter() {
         report = report.annotate(Level::Error, *span, "Checked here.");
     }

@@ -26,7 +26,7 @@ use crate::analysis::path::{PathNode, PathTree};
 
 use super::{
     call_visit,
-    types::{RelevantItem, ProofGoal},
+    types::{ProofGoal, RelevantItem},
 };
 
 /// Entry point for backward path visiting.
@@ -167,7 +167,9 @@ impl<'tcx> BackwardSlicer<'tcx> {
         let body = &bodies[&def_id];
         let flow = &flows[&def_id];
         let block = BasicBlock::from(local_index);
-        let keep_inv = property.kind().is_some_and(|k| needs_invalidation_tracking(&k));
+        let keep_inv = property
+            .kind()
+            .is_some_and(|k| needs_invalidation_tracking(&k));
         let block_data = &body.basic_blocks[block];
         let mut results = Vec::new();
 
@@ -197,7 +199,16 @@ impl<'tcx> BackwardSlicer<'tcx> {
             }
             // Pass 2: re-visit definitions that became relevant only
             // during pass 1.
-            Self::re_visit_newly_added(visitor, def_id, checkpoint_block, block_data, flow, &mut relevant, &mut items, keep_inv);
+            Self::re_visit_newly_added(
+                visitor,
+                def_id,
+                checkpoint_block,
+                block_data,
+                flow,
+                &mut relevant,
+                &mut items,
+                keep_inv,
+            );
             (items, relevant)
         } else {
             (Vec::new(), RelevantPlaces::new())
@@ -276,7 +287,16 @@ impl<'tcx> BackwardSlicer<'tcx> {
                 }
                 let dist_to_target = child_path.iter().position(|&b| b == target_block);
                 if block_stmt_count > 0 && dist_to_target.map_or(false, |d| d <= 2) {
-                    Self::re_visit_newly_added(visitor, def_id, block, block_data, flow, &mut relevant, &mut items, keep_inv);
+                    Self::re_visit_newly_added(
+                        visitor,
+                        def_id,
+                        block,
+                        block_data,
+                        flow,
+                        &mut relevant,
+                        &mut items,
+                        keep_inv,
+                    );
                 }
                 child_path.insert(0, node.block);
                 results.push((child_path, items, relevant));
@@ -322,20 +342,12 @@ impl<'tcx> BackwardSlicer<'tcx> {
                 }
                 _ => continue,
             };
-            let any_new = defs.places.iter().any(|dp| {
-                newly_added.iter().any(|np| dp.local() == np.local())
-            });
+            let any_new = defs
+                .places
+                .iter()
+                .any(|dp| newly_added.iter().any(|np| dp.local() == np.local()));
             if any_new {
-                visitor.visit_statement(
-                    def_id,
-                    block,
-                    si,
-                    stmt,
-                    flow,
-                    relevant,
-                    items,
-                    keep_inv,
-                );
+                visitor.visit_statement(def_id, block, si, stmt, flow, relevant, items, keep_inv);
             }
         }
     }
@@ -352,7 +364,11 @@ impl<'tcx> BackwardSlicer<'tcx> {
         items: &mut Vec<RelevantItem<'tcx>>,
         keep_invalidations: bool,
     ) {
-        if keep_invalidations && matches!(statement.kind, StatementKind::StorageDead(_) | StatementKind::StorageLive(_))
+        if keep_invalidations
+            && matches!(
+                statement.kind,
+                StatementKind::StorageDead(_) | StatementKind::StorageLive(_)
+            )
         {
             items.push(RelevantItem::Statement {
                 def_id,

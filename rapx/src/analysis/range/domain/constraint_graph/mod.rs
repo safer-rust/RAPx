@@ -2,11 +2,11 @@ pub mod debug;
 pub mod graph;
 pub mod solver;
 
-use crate::analysis::range::domain::domain::*;
 use crate::analysis::range::Range;
+use crate::analysis::range::domain::domain::*;
 
-use crate::analysis::range::domain::symbolic_expr::*;
 use crate::analysis::path::PathTree;
+use crate::analysis::range::domain::symbolic_expr::*;
 use rustc_abi::FieldIdx;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
@@ -52,8 +52,6 @@ pub struct ConstraintGraph<'tcx, T: IntervalArithmetic + ConstConvert + Debug> {
     pub const_func_place: HashMap<&'tcx Place<'tcx>, usize>,
     pub unique_adt_path: HashMap<String, usize>,
 }
-
-
 
 impl<'tcx, T> ConstraintGraph<'tcx, T>
 where
@@ -248,10 +246,14 @@ where
                     }) = &current_bb_data.terminator
                     {
                         let Some((constraint_place_1_ref, constraint_place_2_ref)) =
-                            self.switchbbs.get(&current_bb) else {
-                                rap_trace!("addvar_in_branches: bb {:?} not in switchbbs\n", current_bb);
-                                continue;
-                            };
+                            self.switchbbs.get(&current_bb)
+                        else {
+                            rap_trace!(
+                                "addvar_in_branches: bb {:?} not in switchbbs\n",
+                                current_bb
+                            );
+                            continue;
+                        };
                         let constraint_place_1 = *constraint_place_1_ref;
                         let constraint_place_2 = *constraint_place_2_ref;
                         if let Some(vbm) = self.values_branchmap.get(&constraint_place_1) {

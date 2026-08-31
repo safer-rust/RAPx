@@ -197,9 +197,7 @@ fn resolve_projection_from_struct_ident<'tcx>(
     // lives inside the `Ok`/`Some` variant (field 0 of the enum). Prepend that
     // field access so the invariant's place resolves through the variant's data
     // (e.g. `ptr` -> `Return.Field(0).Field(0)`).
-    if base_local == 0
-        && crate::helpers::fn_info::returns_wrapped_self(tcx, def_id)
-    {
+    if base_local == 0 && crate::helpers::fn_info::returns_wrapped_self(tcx, def_id) {
         field_indices.insert(0, (0, struct_ty));
     }
 
@@ -246,14 +244,20 @@ fn resolve_next_field<'tcx>(
 
 /// Strip `ForEach` from a property arg and return the container place
 /// (without the projection) if `ForEach` was present.
-pub(crate) fn strip_for_each<'tcx>(
-    arg: &mut PropertyArg<'tcx>,
-) -> Option<ContractPlace<'tcx>> {
+pub(crate) fn strip_for_each<'tcx>(arg: &mut PropertyArg<'tcx>) -> Option<ContractPlace<'tcx>> {
     if let PropertyArg::Expr(ContractExpr::Place(place)) = arg {
-        if place.projections.iter().any(|p| matches!(p, ContractProjection::ForEach)) {
+        if place
+            .projections
+            .iter()
+            .any(|p| matches!(p, ContractProjection::ForEach))
+        {
             let mut container = place.clone();
-            container.projections.retain(|p| !matches!(p, ContractProjection::ForEach));
-            place.projections.retain(|p| !matches!(p, ContractProjection::ForEach));
+            container
+                .projections
+                .retain(|p| !matches!(p, ContractProjection::ForEach));
+            place
+                .projections
+                .retain(|p| !matches!(p, ContractProjection::ForEach));
             return Some(container);
         }
     }

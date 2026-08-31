@@ -4,20 +4,29 @@
 //! `smt_check` "negate and prove" primitive, and size/byte-width utilities used
 //! by every checker family.
 
+use crate::helpers::mir_scan::Checkpoint;
+use crate::verify::contract::{
+    ContractExpr, ContractPlace, ContractProjection, NumericBinOp, PlaceBase, Property,
+    PropertyArg, RelOp,
+};
+use crate::verify::report::CheckResult;
+use crate::verify::vm::state::{VmState, VmValue};
 use rustc_middle::mir::{Local, Operand, Rvalue, StatementKind, TerminatorKind};
 use rustc_middle::ty::{GenericArg, GenericArgKind, Ty, TyKind};
-use z3::{SatResult, Solver, ast::{Ast, Bool, Int}};
-use crate::verify::contract::{ContractExpr, ContractPlace, ContractProjection, NumericBinOp, PlaceBase, Property, PropertyArg, RelOp};
-use crate::verify::report::CheckResult;
-use crate::helpers::mir_scan::Checkpoint;
-use crate::verify::vm::state::{VmState, VmValue};
+use z3::{
+    SatResult, Solver,
+    ast::{Ast, Bool, Int},
+};
 
 use super::PropertyChecker;
 
 impl PropertyChecker {
-    pub(super) fn target_value<'ctx, 'tcx>(&self, vm_state: &VmState<'ctx, 'tcx>,
-        checkpoint: &Checkpoint<'tcx>, property: &Property<'tcx>) -> Option<VmValue<'ctx, 'tcx>>
-    {
+    pub(super) fn target_value<'ctx, 'tcx>(
+        &self,
+        vm_state: &VmState<'ctx, 'tcx>,
+        checkpoint: &Checkpoint<'tcx>,
+        property: &Property<'tcx>,
+    ) -> Option<VmValue<'ctx, 'tcx>> {
         let cp = match property.args().first()? {
             PropertyArg::Expr(ContractExpr::Const(n)) => {
                 let idx = usize::try_from(*n).ok()?;
@@ -28,12 +37,10 @@ impl PropertyChecker {
             }
             PropertyArg::Predicates(_) | PropertyArg::Ty(_) | PropertyArg::Ident(_) => return None,
             PropertyArg::Expr(ContractExpr::Place(cp)) => cp.clone(),
-            PropertyArg::Expr(ContractExpr::IndexAccess { slice, .. }) => {
-                match slice.as_ref() {
-                    ContractExpr::Place(cp) => cp.clone(),
-                    _ => return None,
-                }
-            }
+            PropertyArg::Expr(ContractExpr::IndexAccess { slice, .. }) => match slice.as_ref() {
+                ContractExpr::Place(cp) => cp.clone(),
+                _ => return None,
+            },
             _ => return None,
         };
         if cp.projections.is_empty() {
@@ -67,16 +74,20 @@ impl PropertyChecker {
                     last_field_ty = *ty;
                 }
                 ContractProjection::Downcast { variant_index } => {
-                    let base_val = vm_state.field_value(base_local, &field_path)
+                    let base_val = vm_state
+                        .field_value(base_local, &field_path)
                         .cloned()
                         .or_else(|| vm_state.local_value(base_local).cloned());
-                    let Some(base_val) = base_val else { return None };
+                    let Some(base_val) = base_val else {
+                        return None;
+                    };
 
                     let enum_ty = last_field_ty.unwrap_or(base_val.ty);
                     let inner_ty = match enum_ty.kind() {
                         TyKind::Adt(adt_def, substs) => {
                             if adt_def.is_enum() {
-                                let variant = &adt_def.variants()[rustc_abi::VariantIdx::from_usize(*variant_index)];
+                                let variant = &adt_def.variants()
+                                    [rustc_abi::VariantIdx::from_usize(*variant_index)];
                                 if !variant.fields.is_empty() {
                                     Some(crate::helpers::mir_utils::field_ty(
                                         vm_state.tcx,
@@ -136,7 +147,9 @@ impl PropertyChecker {
                             let (ref place, ref rval) = **assign;
                             if let rustc_middle::mir::Rvalue::Aggregate(_, operands) = rval {
                                 if place.local == base_local {
-                                    if let Some(operand) = operands.get(rustc_abi::FieldIdx::from_usize(field_path[0])) {
+                                    if let Some(operand) =
+                                        operands.get(rustc_abi::FieldIdx::from_usize(field_path[0]))
+                                    {
                                         let val = vm_state.value_of_operand(operand);
                                         if field_path.len() == 1 {
                                             return Some(val);
@@ -182,7 +195,10 @@ impl PropertyChecker {
             _ => return false,
         };
         let has_nullable_proj = cp.projections.iter().any(|p| {
-            matches!(p, ContractProjection::Downcast { .. } | ContractProjection::ForEach)
+            matches!(
+                p,
+                ContractProjection::Downcast { .. } | ContractProjection::ForEach
+            )
         });
         if !has_nullable_proj {
             return false;
@@ -209,14 +225,14 @@ impl PropertyChecker {
         let key = PlaceKey::from_contract_place(place);
         let local = match key.base {
             PlaceBaseKey::Local(n) => Local::from_usize(n),
-            PlaceBaseKey::Arg(n) => {
-                checkpoint.args.get(n)
-                    .and_then(|op| match op {
-                        Operand::Copy(place) | Operand::Move(place) => Some(place.local),
-                        _ => None,
-                    })
-                    .unwrap_or(Local::from_usize(n + 1))
-            }
+            PlaceBaseKey::Arg(n) => checkpoint
+                .args
+                .get(n)
+                .and_then(|op| match op {
+                    Operand::Copy(place) | Operand::Move(place) => Some(place.local),
+                    _ => None,
+                })
+                .unwrap_or(Local::from_usize(n + 1)),
             PlaceBaseKey::Return => Local::from_usize(0),
         };
         let val = if key.fields.is_empty() {
@@ -240,10 +256,18 @@ impl PropertyChecker {
         }
     }
 
-    pub(super) fn smt_check<'ctx>(&self, solver: &Solver<'ctx>, condition: &Bool<'ctx>) -> CheckResult {
+    pub(super) fn smt_check<'ctx>(
+        &self,
+        solver: &Solver<'ctx>,
+        condition: &Bool<'ctx>,
+    ) -> CheckResult {
         solver.push();
         solver.assert(condition);
-        let r = match solver.check() { SatResult::Unsat => CheckResult::Proved, SatResult::Sat => CheckResult::Failed, SatResult::Unknown => CheckResult::Unknown };
+        let r = match solver.check() {
+            SatResult::Unsat => CheckResult::Proved,
+            SatResult::Sat => CheckResult::Failed,
+            SatResult::Unknown => CheckResult::Unknown,
+        };
         solver.pop(1);
         r
     }
@@ -272,7 +296,9 @@ impl PropertyChecker {
                             let op = &checkpoint.args[arg_idx];
                             Some(vm_state.value_of_operand(op).term)
                         } else {
-                            vm_state.local_value(Local::from_usize(n)).map(|v| v.term.clone())
+                            vm_state
+                                .local_value(Local::from_usize(n))
+                                .map(|v| v.term.clone())
                         }
                     }
                     PlaceBase::Return => None,
@@ -283,17 +309,32 @@ impl PropertyChecker {
         }
     }
 
-    pub(super) fn access_bytes<'ctx, 'tcx>(&self, vm_state: &VmState<'ctx, 'tcx>,
-        property: &Property<'tcx>, ty_arg: usize, count_arg: usize,
-        checkpoint: &Checkpoint<'tcx>, _value: &VmValue<'ctx, 'tcx>) -> Int<'ctx>
-    {
-        let elem_size = property.args().get(ty_arg)
-            .and_then(|a| if let PropertyArg::Ty(ty) = a { Some(vm_state.size_of_ty(*ty)) } else { None })
+    pub(super) fn access_bytes<'ctx, 'tcx>(
+        &self,
+        vm_state: &VmState<'ctx, 'tcx>,
+        property: &Property<'tcx>,
+        ty_arg: usize,
+        count_arg: usize,
+        checkpoint: &Checkpoint<'tcx>,
+        _value: &VmValue<'ctx, 'tcx>,
+    ) -> Int<'ctx> {
+        let elem_size = property
+            .args()
+            .get(ty_arg)
+            .and_then(|a| {
+                if let PropertyArg::Ty(ty) = a {
+                    Some(vm_state.size_of_ty(*ty))
+                } else {
+                    None
+                }
+            })
             .unwrap_or(0);
         // When the contract uses a generic T (size_of returns 0), infer the
         // concrete element type from the checkpoint's target argument's pointee.
         let elem_size = if elem_size == 0 {
-            checkpoint.args.first()
+            checkpoint
+                .args
+                .first()
                 .map(|op| {
                     let arg_val = vm_state.value_of_operand(op);
                     vm_state.pointee_elem_size(arg_val.ty)
@@ -304,7 +345,9 @@ impl PropertyChecker {
         };
         let elem_size_term = Int::from_u64(vm_state.ctx, (elem_size as u64).max(1));
 
-        let count_term = property.args().get(count_arg)
+        let count_term = property
+            .args()
+            .get(count_arg)
             .and_then(|a| self.resolve_arg_term(vm_state, checkpoint, a))
             .unwrap_or_else(|| Int::from_u64(vm_state.ctx, 1));
         // Simplify the multiplication for concrete count and elem_size
@@ -320,19 +363,29 @@ impl PropertyChecker {
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> bool {
-        let required_ty = property.args().get(1)
-            .and_then(|a| if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None });
+        let required_ty = property.args().get(1).and_then(|a| {
+            if let PropertyArg::Ty(ty) = a {
+                Some(*ty)
+            } else {
+                None
+            }
+        });
         self.is_zst_type(vm_state, checkpoint, required_ty)
     }
 
-    pub(super) fn is_zst_type<'ctx, 'tcx>(&self, vm_state: &VmState<'ctx, 'tcx>, checkpoint: &Checkpoint<'tcx>,
-        ty: Option<Ty<'tcx>>) -> bool
-    {
+    pub(super) fn is_zst_type<'ctx, 'tcx>(
+        &self,
+        vm_state: &VmState<'ctx, 'tcx>,
+        checkpoint: &Checkpoint<'tcx>,
+        ty: Option<Ty<'tcx>>,
+    ) -> bool {
         let ty = match ty {
             Some(t) => t,
             None => return false,
         };
-        if self.is_concrete_zst(vm_state, ty) { return true; }
+        if self.is_concrete_zst(vm_state, ty) {
+            return true;
+        }
         let resolved = self.instantiate_callsite_ty(vm_state, checkpoint, ty);
         if resolved != ty {
             return self.is_concrete_zst(vm_state, resolved);
@@ -340,7 +393,11 @@ impl PropertyChecker {
         false
     }
 
-    pub(super) fn is_concrete_zst<'ctx, 'tcx>(&self, vm_state: &VmState<'ctx, 'tcx>, ty: Ty<'tcx>) -> bool {
+    pub(super) fn is_concrete_zst<'ctx, 'tcx>(
+        &self,
+        vm_state: &VmState<'ctx, 'tcx>,
+        ty: Ty<'tcx>,
+    ) -> bool {
         match ty.kind() {
             TyKind::Param(_) | TyKind::Alias(..) | TyKind::Error(_) => false,
             _ => vm_state.size_of_ty(ty) == 0,
@@ -348,7 +405,10 @@ impl PropertyChecker {
     }
 
     pub(super) fn is_generic_ty<'tcx>(&self, ty: Ty<'tcx>) -> bool {
-        matches!(ty.kind(), TyKind::Param(_) | TyKind::Alias(..) | TyKind::Error(_))
+        matches!(
+            ty.kind(),
+            TyKind::Param(_) | TyKind::Alias(..) | TyKind::Error(_)
+        )
     }
 
     pub(super) fn instantiate_callsite_ty<'ctx, 'tcx>(
@@ -403,9 +463,10 @@ impl PropertyChecker {
             GenericArgKind::Const(actual_const) => actual_const
                 .try_to_target_usize(vm_state.tcx)
                 .map(|value| value as u128)
-                .or_else(|| crate::helpers::mir_utils::const_int_from_debug(
-                    &format!("{actual_const:?}")
-                ).map(|v| v as u128)),
+                .or_else(|| {
+                    crate::helpers::mir_utils::const_int_from_debug(&format!("{actual_const:?}"))
+                        .map(|v| v as u128)
+                }),
             _ => None,
         }
     }
@@ -420,8 +481,9 @@ impl PropertyChecker {
             TyKind::Param(_) => self.instantiate_callsite_ty(vm_state, checkpoint, ty),
             TyKind::Adt(adt_def, substs) => {
                 let mut changed = false;
-                let resolved_substs: Vec<_> = substs.iter().map(|arg| {
-                    match arg.kind() {
+                let resolved_substs: Vec<_> = substs
+                    .iter()
+                    .map(|arg| match arg.kind() {
                         GenericArgKind::Type(t) => {
                             let resolved = self.resolve_ty_params(vm_state, checkpoint, t);
                             if resolved != t {
@@ -432,10 +494,14 @@ impl PropertyChecker {
                             }
                         }
                         _ => arg.clone(),
-                    }
-                }).collect();
+                    })
+                    .collect();
                 if changed {
-                    Ty::new_adt(vm_state.tcx, *adt_def, vm_state.tcx.mk_args(&resolved_substs))
+                    Ty::new_adt(
+                        vm_state.tcx,
+                        *adt_def,
+                        vm_state.tcx.mk_args(&resolved_substs),
+                    )
                 } else {
                     ty
                 }
@@ -444,16 +510,22 @@ impl PropertyChecker {
         }
     }
 
-    pub(super) fn eval_contract_expr<'ctx, 'tcx>(&self, vm_state: &VmState<'ctx, 'tcx>,
+    pub(super) fn eval_contract_expr<'ctx, 'tcx>(
+        &self,
+        vm_state: &VmState<'ctx, 'tcx>,
         checkpoint: Option<&Checkpoint<'tcx>>,
-        expr: &ContractExpr<'tcx>) -> Option<Int<'ctx>>
-    {
+        expr: &ContractExpr<'tcx>,
+    ) -> Option<Int<'ctx>> {
         match expr {
             ContractExpr::Const(n) => Some(Int::from_u64(vm_state.ctx, *n as u64)),
             ContractExpr::SizeOf(ty) => {
                 let mut size = vm_state.size_of_ty(*ty);
                 if size == 0 && matches!(ty.kind(), rustc_middle::ty::TyKind::Param(_)) {
-                    size = crate::helpers::mir_utils::size_of_generic_param(vm_state.tcx, vm_state.caller_def_id, *ty);
+                    size = crate::helpers::mir_utils::size_of_generic_param(
+                        vm_state.tcx,
+                        vm_state.caller_def_id,
+                        *ty,
+                    );
                     if size == 0 {
                         if let Some(ck) = checkpoint {
                             if let Some(_callee) = ck.callee {
@@ -501,7 +573,10 @@ impl PropertyChecker {
                             Some(l.div(&r))
                         } else {
                             let q = l.div(&r);
-                            Some(Int::sub(vm_state.ctx, &[&l, &Int::mul(vm_state.ctx, &[&q, &r])]))
+                            Some(Int::sub(
+                                vm_state.ctx,
+                                &[&l, &Int::mul(vm_state.ctx, &[&q, &r])],
+                            ))
                         }
                     }
                     NumericBinOp::Min => Some(l.le(&r).ite(&l, &r)),
@@ -513,8 +588,10 @@ impl PropertyChecker {
                 let v = self.eval_contract_expr(vm_state, checkpoint, inner)?;
                 match op {
                     crate::verify::contract::NumericUnaryOp::Not => {
-                        Some(v._eq(&Int::from_u64(vm_state.ctx, 0))
-                            .ite(&Int::from_u64(vm_state.ctx, 1), &Int::from_u64(vm_state.ctx, 0)))
+                        Some(v._eq(&Int::from_u64(vm_state.ctx, 0)).ite(
+                            &Int::from_u64(vm_state.ctx, 1),
+                            &Int::from_u64(vm_state.ctx, 0),
+                        ))
                     }
                     crate::verify::contract::NumericUnaryOp::Neg => {
                         let zero = Int::from_u64(vm_state.ctx, 0);
@@ -539,11 +616,10 @@ impl PropertyChecker {
                 let elem_term = Int::from_u64(vm_state.ctx, elem_size);
                 Some(alloc.size.div(&elem_term))
             }
-            ContractExpr::ConstParam { index, name: _ } => {
-                self.instantiate_callsite_const(vm_state, checkpoint?, *index)
-                    .and_then(|v| u64::try_from(v).ok())
-                    .map(|v| Int::from_u64(vm_state.ctx, v))
-            }
+            ContractExpr::ConstParam { index, name: _ } => self
+                .instantiate_callsite_const(vm_state, checkpoint?, *index)
+                .and_then(|v| u64::try_from(v).ok())
+                .map(|v| Int::from_u64(vm_state.ctx, v)),
             ContractExpr::If {
                 cond,
                 then_expr,
@@ -577,41 +653,45 @@ impl PropertyChecker {
         }
     }
 
-    pub(super) fn eval_contract_expr_to_value<'ctx, 'tcx>(&self,
+    pub(super) fn eval_contract_expr_to_value<'ctx, 'tcx>(
+        &self,
         vm_state: &VmState<'ctx, 'tcx>,
         checkpoint: Option<&Checkpoint<'tcx>>,
-        expr: &ContractExpr<'tcx>) -> Option<VmValue<'ctx, 'tcx>>
-    {
+        expr: &ContractExpr<'tcx>,
+    ) -> Option<VmValue<'ctx, 'tcx>> {
         match expr {
-            ContractExpr::Place(cp) => {
-                match cp.base {
-                    PlaceBase::Arg(n) => {
-                        checkpoint?.args.get(n).map(|op| vm_state.value_of_operand(op))
-                    }
-                    PlaceBase::Local(n) => {
-                        let ck = checkpoint?;
-                        if let Some(callee) = ck.callee {
-                            if let Some(idx) = crate::helpers::mir_utils::callee_param_index_for_local(
-                                vm_state.tcx, callee, n)
-                            {
-                                if let Some(op) = ck.args.get(idx) {
-                                    return Some(vm_state.value_of_operand(op));
-                                }
+            ContractExpr::Place(cp) => match cp.base {
+                PlaceBase::Arg(n) => checkpoint?
+                    .args
+                    .get(n)
+                    .map(|op| vm_state.value_of_operand(op)),
+                PlaceBase::Local(n) => {
+                    let ck = checkpoint?;
+                    if let Some(callee) = ck.callee {
+                        if let Some(idx) = crate::helpers::mir_utils::callee_param_index_for_local(
+                            vm_state.tcx,
+                            callee,
+                            n,
+                        ) {
+                            if let Some(op) = ck.args.get(idx) {
+                                return Some(vm_state.value_of_operand(op));
                             }
                         }
-                        vm_state.local_value(Local::from_usize(n)).cloned()
                     }
-                    _ => None,
+                    vm_state.local_value(Local::from_usize(n)).cloned()
                 }
-            }
+                _ => None,
+            },
             _ => None,
         }
     }
 
-    pub(super) fn eval_contract_place<'ctx, 'tcx>(&self, vm_state: &VmState<'ctx, 'tcx>,
+    pub(super) fn eval_contract_place<'ctx, 'tcx>(
+        &self,
+        vm_state: &VmState<'ctx, 'tcx>,
         checkpoint: Option<&Checkpoint<'tcx>>,
-        cp: &crate::verify::contract::ContractPlace<'tcx>) -> Option<Int<'ctx>>
-    {
+        cp: &crate::verify::contract::ContractPlace<'tcx>,
+    ) -> Option<Int<'ctx>> {
         // Collect numeric field projections.  Any non-field projection (e.g. a
         // `Downcast` or `ForEach`) cannot be resolved to a scalar, so the
         // place does not evaluate.
@@ -634,10 +714,12 @@ impl PropertyChecker {
                 }
                 // A field projection of an argument: resolve the argument
                 // operand to its underlying local so the field can be read.
-                checkpoint.and_then(|ck| ck.args.get(n)).and_then(|op| match op {
-                    Operand::Copy(p) | Operand::Move(p) => Some(p.local),
-                    _ => None,
-                })
+                checkpoint
+                    .and_then(|ck| ck.args.get(n))
+                    .and_then(|op| match op {
+                        Operand::Copy(p) | Operand::Move(p) => Some(p.local),
+                        _ => None,
+                    })
             }
             PlaceBase::Local(n) => {
                 if field_path.is_empty() {
@@ -645,7 +727,10 @@ impl PropertyChecker {
                         if let Some(callee) = ck.callee {
                             if let Some(idx) =
                                 crate::helpers::mir_utils::callee_param_index_for_local(
-                                    vm_state.tcx, callee, n)
+                                    vm_state.tcx,
+                                    callee,
+                                    n,
+                                )
                             {
                                 if let Some(op) = ck.args.get(idx) {
                                     if let Some(v) = self.eval_contract_operand(vm_state, op) {
@@ -664,21 +749,33 @@ impl PropertyChecker {
         if field_path.is_empty() {
             vm_state.local_value(local).map(|v| v.term.clone())
         } else {
-            vm_state.field_value(local, &field_path).map(|v| v.term.clone())
+            vm_state
+                .field_value(local, &field_path)
+                .map(|v| v.term.clone())
         }
     }
 
-    pub(super) fn eval_contract_operand<'ctx, 'tcx>(&self, vm_state: &VmState<'ctx, 'tcx>,
-        op: &Operand<'tcx>) -> Option<Int<'ctx>>
-    {
+    pub(super) fn eval_contract_operand<'ctx, 'tcx>(
+        &self,
+        vm_state: &VmState<'ctx, 'tcx>,
+        op: &Operand<'tcx>,
+    ) -> Option<Int<'ctx>> {
         match op {
             Operand::Constant(c) => {
                 let const_text = format!("{:?}", c.const_);
                 let typing_env = rustc_middle::ty::TypingEnv::fully_monomorphized();
-                if let Ok(val) = c.const_.eval(vm_state.tcx, typing_env, rustc_span::DUMMY_SP) {
+                if let Ok(val) = c
+                    .const_
+                    .eval(vm_state.tcx, typing_env, rustc_span::DUMMY_SP)
+                {
                     if let Some(scalar) = val.try_to_scalar_int() {
                         let v = scalar.to_bits(scalar.size()) as u64;
-                        if v == 0 && (const_text.contains("AlignOf") || const_text.contains("SizeOf") || const_text.contains("min_align_of") || const_text.contains("min_size_of")) {
+                        if v == 0
+                            && (const_text.contains("AlignOf")
+                                || const_text.contains("SizeOf")
+                                || const_text.contains("min_align_of")
+                                || const_text.contains("min_size_of"))
+                        {
                             // Generic AlignOf/SizeOf may evaluate to 0 but
                             // are always >= 1 for non-ZST types. Fall through
                             // to the debug text path below.
@@ -690,23 +787,25 @@ impl PropertyChecker {
                 crate::helpers::mir_utils::const_int_from_debug(&const_text)
                     .map(|v| Int::from_u64(vm_state.ctx, v))
             }
-            Operand::Copy(p) | Operand::Move(p)
-                if p.projection.is_empty()
-            => {
+            Operand::Copy(p) | Operand::Move(p) if p.projection.is_empty() => {
                 vm_state.local_value(p.local).map(|v| v.term.clone())
             }
             _ => None,
         }
     }
 
-    pub(super) fn trace_value<'ctx, 'tcx>(&self, vm_state: &VmState<'ctx, 'tcx>,
-        op: &Operand<'tcx>) -> VmValue<'ctx, 'tcx>
-    {
+    pub(super) fn trace_value<'ctx, 'tcx>(
+        &self,
+        vm_state: &VmState<'ctx, 'tcx>,
+        op: &Operand<'tcx>,
+    ) -> VmValue<'ctx, 'tcx> {
         let place = match op {
             Operand::Copy(p) | Operand::Move(p) => p,
             _ => return vm_state.value_of_operand(op),
         };
-        if !place.projection.is_empty() { return vm_state.value_of_operand(op); }
+        if !place.projection.is_empty() {
+            return vm_state.value_of_operand(op);
+        }
         let local = place.local;
         // If this local is a parameter (arg), use it directly
         if local.as_usize() <= vm_state.body.arg_count {
@@ -733,13 +832,19 @@ impl PropertyChecker {
         vm_state.value_of_operand(op)
     }
 
-    pub(super) fn alloc_elem_is_array_of<'tcx>(&self, alloc_elem_ty: Ty<'tcx>, required_ty: Ty<'tcx>) -> bool {
+    pub(super) fn alloc_elem_is_array_of<'tcx>(
+        &self,
+        alloc_elem_ty: Ty<'tcx>,
+        required_ty: Ty<'tcx>,
+    ) -> bool {
         match alloc_elem_ty.kind() {
             TyKind::Array(inner_ty, _) => {
                 *inner_ty == required_ty
-                || matches!((inner_ty.kind(), required_ty.kind()),
-                    (TyKind::Param(_), TyKind::Param(_)))
-            },
+                    || matches!(
+                        (inner_ty.kind(), required_ty.kind()),
+                        (TyKind::Param(_), TyKind::Param(_))
+                    )
+            }
             _ => false,
         }
     }

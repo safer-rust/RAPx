@@ -50,8 +50,14 @@ fn register_field_slots<'tcx>(
     match ty.kind() {
         ty::Ref(_, inner_ty, _) | ty::RawPtr(inner_ty, _) => {
             register_field_slots(
-                tcx, *inner_ty, base_slot, _base_idx, graph,
-                field_depth, deref_depth + 1, ty_env,
+                tcx,
+                *inner_ty,
+                base_slot,
+                _base_idx,
+                graph,
+                field_depth,
+                deref_depth + 1,
+                ty_env,
             );
         }
         ty::Adt(adt_def, substs) => {
@@ -64,12 +70,17 @@ fn register_field_slots<'tcx>(
                 } else {
                     !is_not_drop(tcx, field_ty)
                 };
-                let field_idx_global =
-                    graph.ensure_slot(field_slot.clone(), may_drop, need_drop);
+                let field_idx_global = graph.ensure_slot(field_slot.clone(), may_drop, need_drop);
                 graph.set_slot_kind(field_idx_global, kind(field_ty));
                 register_field_slots(
-                    tcx, field_ty, &field_slot, field_idx_global, graph,
-                    field_depth + 1, deref_depth, ty_env,
+                    tcx,
+                    field_ty,
+                    &field_slot,
+                    field_idx_global,
+                    graph,
+                    field_depth + 1,
+                    deref_depth,
+                    ty_env,
                 );
             }
         }
@@ -82,12 +93,17 @@ fn register_field_slots<'tcx>(
                     !is_not_drop(tcx, field_ty)
                 };
                 let need_drop = field_ty.needs_drop(tcx, ty_env);
-                let field_idx_global =
-                    graph.ensure_slot(field_slot.clone(), may_drop, need_drop);
+                let field_idx_global = graph.ensure_slot(field_slot.clone(), may_drop, need_drop);
                 graph.set_slot_kind(field_idx_global, kind(field_ty));
                 register_field_slots(
-                    tcx, field_ty, &field_slot, field_idx_global, graph,
-                    field_depth + 1, deref_depth, ty_env,
+                    tcx,
+                    field_ty,
+                    &field_slot,
+                    field_idx_global,
+                    graph,
+                    field_depth + 1,
+                    deref_depth,
+                    ty_env,
                 );
             }
         }

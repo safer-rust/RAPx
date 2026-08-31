@@ -1,12 +1,11 @@
-
 use crate::analysis::range::domain::domain::*;
 use crate::analysis::range::{Range, RangeType};
 
 use crate::analysis::range::domain::symbolic_expr::*;
 use crate::compat::Spanned;
 use rustc_abi::FieldIdx;
-use rustc_hir::def_id::LOCAL_CRATE;
 use rustc_hir::def_id::DefId;
+use rustc_hir::def_id::LOCAL_CRATE;
 use rustc_index::IndexVec;
 use rustc_middle::{
     mir::*,
@@ -35,10 +34,7 @@ where
         let local_decls = &self.body.local_decls;
 
         let node = VarNode::new(v);
-        let node_ref: &mut VarNode<'tcx, T> = self
-            .vars
-            .entry(v)
-            .or_insert(node);
+        let node_ref: &mut VarNode<'tcx, T> = self.vars.entry(v).or_insert(node);
         self.usemap.entry(v).or_insert(HashSet::new());
 
         let ty = local_decls[v.local].ty;
@@ -931,7 +927,6 @@ where
         block: BasicBlock,
     ) {
         let sink_node = self.def_add_varnode_sym(sink, rvalue);
-
 
         let loc_1: usize = 0;
         let loc_2: usize = 1;

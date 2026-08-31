@@ -86,6 +86,31 @@ pub fn is_as_ptr(callee: Option<DefId>) -> bool {
     )
 }
 
+/// Whether `callee` is a raw-pointer `cast`/`cast_mut`/`cast_const` (which
+/// preserves null-ness: casting a null pointer yields a null pointer).
+/// Distinguished from [`is_as_ptr`] so callers that need the *non-null* subset
+/// (e.g. the builtin-models registry's `ReturnNonZero` effect) can exclude it.
+pub fn is_raw_ptr_cast(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::contains(
+        &[
+            crate::def_id::const_ptr_cast(),
+            crate::def_id::const_ptr_cast_mut(),
+            crate::def_id::mut_ptr_cast(),
+            crate::def_id::mut_ptr_cast_const(),
+        ],
+        callee,
+    )
+}
+
+/// [`is_as_ptr`] restricted to the *non-null-producing* subset: `as_ptr`/
+/// `as_mut_ptr`, `into_raw`, and `NonNull::cast` (all of which are guaranteed
+/// non-null), but *not* raw-pointer `cast`/`cast_mut`/`cast_const` (which
+/// preserve null-ness and must not be marked `ReturnNonZero`).
+pub fn is_as_ptr_non_null(callee: Option<DefId>) -> bool {
+    is_as_ptr(callee) && !is_raw_ptr_cast(callee)
+}
+
 // ── Pointer arithmetic ────────────────────────────────────────────
 // Direction (`add` vs `sub`) and granularity (`element` vs `byte`) are two
 // orthogonal axes. Each of the four combinations is a first-class classifier

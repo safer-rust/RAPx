@@ -1,6 +1,5 @@
-
-use crate::analysis::range::domain::domain::*;
 use crate::analysis::range::Range;
+use crate::analysis::range::domain::domain::*;
 
 use crate::analysis::range::domain::symbolic_expr::*;
 use crate::compat::FxHashMap;
@@ -19,7 +18,6 @@ where
 {
     fn fix_intersects(&mut self, component: &HashSet<&'tcx Place<'tcx>>) {
         for &place in component.iter() {
-
             if let Some(sit) = self.symbmap.get_mut(place) {
                 let Some(node) = self.vars.get(place) else {
                     rap_trace!("fix_intersects: place {:?} not in vars\n", place);
@@ -61,7 +59,13 @@ where
         }
         rap_trace!(
             "{} in {} set {:?}: E {:?} U {:?} {:?} -> {:?}",
-            trace_op, op, sink, estimated_interval, updated, old_interval, updated
+            trace_op,
+            op,
+            sink,
+            estimated_interval,
+            updated,
+            old_interval,
+            updated
         );
         old_interval != updated
     }
@@ -91,7 +95,12 @@ where
         cg_map: &FxHashMap<DefId, Rc<RefCell<ConstraintGraph<'tcx, T>>>>,
         vars_map: &mut FxHashMap<DefId, Vec<RefCell<VarNodes<'tcx, T>>>>,
         trace_char: &str,
-        step_fn: impl Fn(&mut Self, usize, &FxHashMap<DefId, Rc<RefCell<ConstraintGraph<'tcx, T>>>>, &mut FxHashMap<DefId, Vec<RefCell<VarNodes<'tcx, T>>>>) -> bool,
+        step_fn: impl Fn(
+            &mut Self,
+            usize,
+            &FxHashMap<DefId, Rc<RefCell<ConstraintGraph<'tcx, T>>>>,
+            &mut FxHashMap<DefId, Vec<RefCell<VarNodes<'tcx, T>>>>,
+        ) -> bool,
         iter_limit: usize,
     ) {
         let mut worklist: Vec<&'tcx Place<'tcx>> = entry_points.iter().cloned().collect();
@@ -122,8 +131,15 @@ where
         cg_map: &FxHashMap<DefId, Rc<RefCell<ConstraintGraph<'tcx, T>>>>,
         vars_map: &mut FxHashMap<DefId, Vec<RefCell<VarNodes<'tcx, T>>>>,
     ) {
-        self.run_worklist(comp_use_map, entry_points, cg_map, vars_map, "W",
-            |this, op, cg, vm| this.widen(op, cg, vm), 0)
+        self.run_worklist(
+            comp_use_map,
+            entry_points,
+            cg_map,
+            vars_map,
+            "W",
+            |this, op, cg, vm| this.widen(op, cg, vm),
+            0,
+        )
     }
 
     fn pos_update(
@@ -133,8 +149,15 @@ where
         cg_map: &FxHashMap<DefId, Rc<RefCell<ConstraintGraph<'tcx, T>>>>,
         vars_map: &mut FxHashMap<DefId, Vec<RefCell<VarNodes<'tcx, T>>>>,
     ) {
-        self.run_worklist(comp_use_map, entry_points, cg_map, vars_map, "N",
-            |this, op, cg, vm| this.narrow(op, cg, vm), 1000)
+        self.run_worklist(
+            comp_use_map,
+            entry_points,
+            cg_map,
+            vars_map,
+            "N",
+            |this, op, cg, vm| this.narrow(op, cg, vm),
+            1000,
+        )
     }
 
     fn generate_entry_points(
@@ -250,9 +273,6 @@ where
         cg_map: &FxHashMap<DefId, Rc<RefCell<ConstraintGraph<'tcx, T>>>>,
         vars_map: &mut FxHashMap<DefId, Vec<RefCell<VarNodes<'tcx, T>>>>,
     ) {
-
-
-
         self.solve_const_func_call(cg_map, vars_map);
         self.numSCCs = self.worklist.len();
         let mut seen = HashSet::new();
@@ -286,14 +306,15 @@ where
                         varnode.set_default();
                     }
                 } else {
-                    rap_trace!("find_intervals: single variable {:?} not in vars\n", variable);
+                    rap_trace!(
+                        "find_intervals: single variable {:?} not in vars\n",
+                        variable
+                    );
                 }
             } else {
-
                 let comp_use_map = self.build_use_map(&component);
 
                 let mut entry_points = HashSet::new();
-
 
                 self.generate_entry_points(&component, &mut entry_points, cg_map, vars_map);
                 rap_trace!("entry_points {:?}  \n", entry_points);
@@ -436,13 +457,19 @@ where
             }
 
             if !self.in_component.contains(name)
-                && self.dfs.get(self.root.get(place).copied().unwrap_or(place)).copied().unwrap_or(-1)
-                    >= self.dfs.get(self.root.get(name).copied().unwrap_or(name)).copied().unwrap_or(-1)
+                && self
+                    .dfs
+                    .get(self.root.get(place).copied().unwrap_or(place))
+                    .copied()
+                    .unwrap_or(-1)
+                    >= self
+                        .dfs
+                        .get(self.root.get(name).copied().unwrap_or(name))
+                        .copied()
+                        .unwrap_or(-1)
             {
                 let name_root = self.root.get(name).copied();
-                if let (Some(place_root), Some(name_root)) =
-                    (self.root.get_mut(place), name_root)
-                {
+                if let (Some(place_root), Some(name_root)) = (self.root.get_mut(place), name_root) {
                     *place_root = name_root;
                 }
             }

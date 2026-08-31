@@ -7,9 +7,7 @@
 use rust_intervals::NothingBetween;
 
 use crate::analysis::range::domain::ConstraintGraph;
-use crate::analysis::range::domain::domain::{
-    ConstConvert, IntervalArithmetic, VarNode, VarNodes,
-};
+use crate::analysis::range::domain::domain::{ConstConvert, IntervalArithmetic, VarNode, VarNodes};
 use crate::analysis::range::{Range, RangeType};
 use crate::compat::FxHashMap;
 use crate::{rap_debug, rap_trace};

@@ -2,11 +2,11 @@
 
 #[cfg(not(rapx_has_skip_norm_wip))]
 use crate::compat::SkipNormWip;
-use z3::{SatResult, Solver, ast::Int};
+use crate::helpers::mir_scan::Checkpoint;
 use crate::verify::contract::Property;
 use crate::verify::report::CheckResult;
-use crate::helpers::mir_scan::Checkpoint;
 use crate::verify::vm::state::VmState;
+use z3::{SatResult, Solver, ast::Int};
 
 use super::PropertyChecker;
 

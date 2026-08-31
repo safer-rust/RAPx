@@ -935,7 +935,11 @@ struct HeapPropagation<'tcx, 'a> {
 }
 
 impl<'tcx, 'a> HeapPropagation<'tcx, 'a> {
-    pub fn new(tcx: TyCtxt<'tcx>, heap: HeapOwnership, heap_res: &'a HeapOwnershipResultMap) -> Self {
+    pub fn new(
+        tcx: TyCtxt<'tcx>,
+        heap: HeapOwnership,
+        heap_res: &'a HeapOwnershipResultMap,
+    ) -> Self {
         Self {
             tcx,
             heap,

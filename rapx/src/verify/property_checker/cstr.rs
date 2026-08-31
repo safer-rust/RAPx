@@ -1,17 +1,20 @@
 //! ValidCStr property checking for the symbolic VM.
 
 use rustc_middle::mir::{Body, Local, Operand, Rvalue, StatementKind, TerminatorKind};
-use z3::{Solver, ast::{Ast, Int}};
+use z3::{
+    Solver,
+    ast::{Ast, Int},
+};
 
 use crate::compat::FxHashMap;
+use crate::helpers::mir_scan::Checkpoint;
 use crate::helpers::mir_utils::dep_callee_def_id;
+use crate::verify::api_classify::is_as_ptr;
+use crate::verify::vm::state::{AllocId, VmState};
 use crate::verify::{
     contract::{ContractExpr, Property, PropertyArg},
     report::CheckResult,
 };
-use crate::verify::api_classify::is_as_ptr;
-use crate::helpers::mir_scan::Checkpoint;
-use crate::verify::vm::state::{AllocId, VmState};
 
 use super::PropertyChecker;
 
@@ -66,14 +69,23 @@ fn body_parents(body: &Body<'_>) -> FxHashMap<Local, Local> {
 impl PropertyChecker {
     // ── check_valid_cstr ───────────────────────────────────────
 
-    pub(super) fn check_valid_cstr<'ctx, 'tcx>(&self, vm_state: &VmState<'ctx, 'tcx>, solver: &Solver<'ctx>,
-        checkpoint: &Checkpoint<'tcx>, property: &Property<'tcx>) -> CheckResult
-    {
-        let value = self.target_value(vm_state, checkpoint, property)
+    pub(super) fn check_valid_cstr<'ctx, 'tcx>(
+        &self,
+        vm_state: &VmState<'ctx, 'tcx>,
+        solver: &Solver<'ctx>,
+        checkpoint: &Checkpoint<'tcx>,
+        property: &Property<'tcx>,
+    ) -> CheckResult {
+        let value = self
+            .target_value(vm_state, checkpoint, property)
             .or_else(|| {
-                checkpoint.destination.and_then(|d| vm_state.local_value(d).cloned())
+                checkpoint
+                    .destination
+                    .and_then(|d| vm_state.local_value(d).cloned())
             });
-        let Some(value) = value else { return CheckResult::Unknown };
+        let Some(value) = value else {
+            return CheckResult::Unknown;
+        };
 
         // If we have provenace, check liveness and byte-level tracking
         if let Some(alloc_id) = value.provenance_alloc_id() {
@@ -91,9 +103,7 @@ impl PropertyChecker {
             while let Some(parent_id) = vm_state.alloc(root_id).parent {
                 root_id = parent_id;
             }
-            if vm_state.alloc(alloc_id).nul_terminated
-                || vm_state.alloc(root_id).nul_terminated
-            {
+            if vm_state.alloc(alloc_id).nul_terminated || vm_state.alloc(root_id).nul_terminated {
                 return CheckResult::Proved;
             }
 
@@ -112,19 +122,24 @@ impl PropertyChecker {
             let buffer_size = n_term.or(alloc_size);
 
             // Starting offset within the allocation (for pointer arithmetic like .add(2))
-            let start_offset = value.provenance.as_ref()
+            let start_offset = value
+                .provenance
+                .as_ref()
                 .and_then(|p| p.offset.as_u64())
                 .map(|v| v as usize)
                 .unwrap_or(0);
 
             // 1. Try fast-path: concrete byte-level check from known_nul / known_non_nul
-            if let Some(r) = self.check_valid_cstr_from_known_nul(vm_state, alloc_id, start_offset) {
+            if let Some(r) = self.check_valid_cstr_from_known_nul(vm_state, alloc_id, start_offset)
+            {
                 return r;
             }
 
             // 2. Try byte_value-based symbolic check via SMT
             if let Some(size) = buffer_size {
-                if let Some(r) = self.check_valid_cstr_from_byte_values(vm_state, solver, alloc_id, &size) {
+                if let Some(r) =
+                    self.check_valid_cstr_from_byte_values(vm_state, solver, alloc_id, &size)
+                {
                     return r;
                 }
             }
@@ -139,7 +154,8 @@ impl PropertyChecker {
         // 4. Fallback: if the constructor requires strict NUL-termination
         //    (from_bytes_with_nul_unchecked, from_vec_with_nul_unchecked)
         //    and we can't verify all bytes, return Unknown.
-        let is_strict = crate::verify::api_classify::is_cstr_unchecked_constructor(checkpoint.callee);
+        let is_strict =
+            crate::verify::api_classify::is_cstr_unchecked_constructor(checkpoint.callee);
         if is_strict {
             CheckResult::Unknown
         } else {
@@ -159,7 +175,8 @@ impl PropertyChecker {
         start_offset: usize,
     ) -> Option<CheckResult> {
         // Collect all concrete offsets where we know what the byte is
-        let known_offsets: Vec<usize> = vm_state.alloc_nul_offsets(alloc_id)
+        let known_offsets: Vec<usize> = vm_state
+            .alloc_nul_offsets(alloc_id)
             .into_iter()
             .chain(vm_state.alloc_non_nul_offsets(alloc_id))
             .collect();
@@ -171,7 +188,8 @@ impl PropertyChecker {
         let max_known = known_offsets.iter().max().copied().unwrap_or(0);
 
         // Find the NUL byte at or after start_offset
-        let nul_offsets: Vec<usize> = vm_state.alloc_nul_offsets(alloc_id)
+        let nul_offsets: Vec<usize> = vm_state
+            .alloc_nul_offsets(alloc_id)
             .into_iter()
             .filter(|off| *off >= start_offset && *off <= max_known)
             .collect();
@@ -320,9 +338,13 @@ impl PropertyChecker {
             }
             for data in body.basic_blocks.iter() {
                 for stmt in &data.statements {
-                    let StatementKind::Assign(assign) = &stmt.kind else { continue };
+                    let StatementKind::Assign(assign) = &stmt.kind else {
+                        continue;
+                    };
                     let (target, rvalue) = &**assign;
-                    if target.local != local || !target.projection.is_empty() { continue; }
+                    if target.local != local || !target.projection.is_empty() {
+                        continue;
+                    }
                     if let Rvalue::Ref(_, _, place) = rvalue {
                         buffer_locals.insert(place.local);
                     }
@@ -335,7 +357,9 @@ impl PropertyChecker {
                         work.push(p.local);
                     }
                     if let Rvalue::Cast(_, Operand::Copy(p) | Operand::Move(p), _) = rvalue {
-                        if p.projection.is_empty() { work.push(p.local); }
+                        if p.projection.is_empty() {
+                            work.push(p.local);
+                        }
                     }
                 }
             }
@@ -344,7 +368,9 @@ impl PropertyChecker {
         let mut nul_store_count = 0u32;
         for data in body.basic_blocks.iter() {
             for stmt in &data.statements {
-                let StatementKind::Assign(assign) = &stmt.kind else { continue };
+                let StatementKind::Assign(assign) = &stmt.kind else {
+                    continue;
+                };
                 let (target, rvalue) = &**assign;
                 let target_root = crate::helpers::mir_utils::follow_parents(&parents, target.local);
                 if target_root != root && !buffer_locals.contains(&target_root) {
@@ -354,10 +380,15 @@ impl PropertyChecker {
                     continue;
                 }
                 #[cfg(rapx_rvalue_use_with_retag)]
-                let Rvalue::Use(Operand::Constant(c), _) = rvalue else { continue };
+                let Rvalue::Use(Operand::Constant(c), _) = rvalue else {
+                    continue;
+                };
                 #[cfg(not(rapx_rvalue_use_with_retag))]
-                let Rvalue::Use(Operand::Constant(c)) = rvalue else { continue };
-                if c.const_.try_to_scalar_int()
+                let Rvalue::Use(Operand::Constant(c)) = rvalue else {
+                    continue;
+                };
+                if c.const_
+                    .try_to_scalar_int()
                     .map_or(false, |s| s.to_uint(s.size()) == 0)
                 {
                     nul_store_count += 1;
@@ -392,7 +423,8 @@ impl PropertyChecker {
         let tcx = vm_state.tcx;
 
         // 1. Use worklist-based analysis for as_ptr() chains and branch cases
-        let all_bytes = crate::helpers::mir_utils::collect_all_const_bytes_worklist(tcx, body, target_local);
+        let all_bytes =
+            crate::helpers::mir_utils::collect_all_const_bytes_worklist(tcx, body, target_local);
         if !all_bytes.is_empty() {
             let any_invalid = all_bytes.iter().any(|bytes| {
                 !(bytes.last() == Some(&0) && !bytes[..bytes.len().saturating_sub(1)].contains(&0))
@@ -409,9 +441,16 @@ impl PropertyChecker {
         }
 
         // 2. Fallback: simple constant byte chain for Aggregate locals
-        if let Some(bytes) = crate::helpers::mir_utils::const_bytes_for_local(tcx, body, target_local) {
-            let valid = bytes.last() == Some(&0) && !bytes[..bytes.len().saturating_sub(1)].contains(&0);
-            return if valid { Some(CheckResult::Proved) } else { Some(CheckResult::Failed) };
+        if let Some(bytes) =
+            crate::helpers::mir_utils::const_bytes_for_local(tcx, body, target_local)
+        {
+            let valid =
+                bytes.last() == Some(&0) && !bytes[..bytes.len().saturating_sub(1)].contains(&0);
+            return if valid {
+                Some(CheckResult::Proved)
+            } else {
+                Some(CheckResult::Failed)
+            };
         }
 
         // 3. Scan MIR for a single 0_u8 store into the target buffer

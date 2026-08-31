@@ -5,48 +5,77 @@
 //! `in_bounds`, `non_null`) with fast paths, falling back to SMT over
 //! `value.term` and allocation base/size.
 
-use rustc_middle::mir::{Local, Operand, Rvalue, StatementKind};
-use rustc_middle::ty::{GenericArgKind, TyKind};
 #[cfg(not(rapx_has_skip_norm_wip))]
 use crate::compat::SkipNormWip;
-use rustc_hash::FxHashSet;
-use z3::{SatResult, Solver, ast::{Ast, Int}};
+use crate::helpers::mir_scan::Checkpoint;
 use crate::verify::contract::{ContractExpr, Property, PropertyArg};
 use crate::verify::report::CheckResult;
-use crate::helpers::mir_scan::Checkpoint;
 use crate::verify::vm::state::{AllocId, VmState, VmValue};
+use rustc_hash::FxHashSet;
+use rustc_middle::mir::{Local, Operand, Rvalue, StatementKind};
+use rustc_middle::ty::{GenericArgKind, TyKind};
+use z3::{
+    SatResult, Solver,
+    ast::{Ast, Int},
+};
 
 use super::PropertyChecker;
 
 impl PropertyChecker {
-    pub(super) fn check_align<'ctx, 'tcx>(&self, vm_state: &VmState<'ctx, 'tcx>, _solver: &Solver<'ctx>,
-        checkpoint: &Checkpoint<'tcx>, property: &Property<'tcx>) -> CheckResult
-    {
-        let Some(value) = self.target_value(vm_state, checkpoint, property) else { return CheckResult::Unknown };
+    pub(super) fn check_align<'ctx, 'tcx>(
+        &self,
+        vm_state: &VmState<'ctx, 'tcx>,
+        _solver: &Solver<'ctx>,
+        checkpoint: &Checkpoint<'tcx>,
+        property: &Property<'tcx>,
+    ) -> CheckResult {
+        let Some(value) = self.target_value(vm_state, checkpoint, property) else {
+            return CheckResult::Unknown;
+        };
 
-        if self.zst_guard(vm_state, checkpoint, property) { return CheckResult::Proved; }
-        if self.is_concrete_zst(vm_state, value.ty) { return CheckResult::Proved; }
-        let ty_arg = property.args().get(1).and_then(|a| if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None });
+        if self.zst_guard(vm_state, checkpoint, property) {
+            return CheckResult::Proved;
+        }
+        if self.is_concrete_zst(vm_state, value.ty) {
+            return CheckResult::Proved;
+        }
+        let ty_arg = property.args().get(1).and_then(|a| {
+            if let PropertyArg::Ty(ty) = a {
+                Some(*ty)
+            } else {
+                None
+            }
+        });
         let align = ty_arg.map(|ty| vm_state.align_of_ty(ty)).unwrap_or(1);
         let align = if align <= 1 {
-            ty_arg.and_then(|ty| {
-                let resolved = self.instantiate_callsite_ty(vm_state, checkpoint, ty);
-                let resolved_align = vm_state.align_of_ty(resolved);
-                if resolved_align > 1 {
-                    Some(resolved_align)
-                } else {
-                    let min_a = crate::helpers::mir_utils::min_align_of_generic_param(vm_state.tcx, vm_state.caller_def_id, resolved);
-                    if min_a > 1 { Some(min_a) } else { None }
-                }
-            }).unwrap_or(align)
+            ty_arg
+                .and_then(|ty| {
+                    let resolved = self.instantiate_callsite_ty(vm_state, checkpoint, ty);
+                    let resolved_align = vm_state.align_of_ty(resolved);
+                    if resolved_align > 1 {
+                        Some(resolved_align)
+                    } else {
+                        let min_a = crate::helpers::mir_utils::min_align_of_generic_param(
+                            vm_state.tcx,
+                            vm_state.caller_def_id,
+                            resolved,
+                        );
+                        if min_a > 1 { Some(min_a) } else { None }
+                    }
+                })
+                .unwrap_or(align)
         } else {
             align
         };
-        if align <= 1 { return CheckResult::Proved; }
+        if align <= 1 {
+            return CheckResult::Proved;
+        }
         // Check allocation base alignment with concrete offset
         if let Some(ref prov) = value.provenance {
             let alloc = vm_state.alloc(prov.alloc_id);
-            let off_u64 = prov.offset.as_u64()
+            let off_u64 = prov
+                .offset
+                .as_u64()
                 .or_else(|| prov.offset.simplify().as_u64());
             if let Some(off) = off_u64 {
                 if alloc.align >= align {
@@ -82,7 +111,11 @@ impl PropertyChecker {
         local.push();
         if let Some(ref prov) = value.provenance {
             let alloc = vm_state.alloc(prov.alloc_id);
-            local.assert(&value.term._eq(&Int::add(vm_state.ctx, &[&alloc.base, &prov.offset])));
+            local.assert(
+                &value
+                    .term
+                    ._eq(&Int::add(vm_state.ctx, &[&alloc.base, &prov.offset])),
+            );
             local.assert(&alloc.base._eq(&zero).not());
             local.assert(&alloc.base.ge(&zero));
             if alloc.align > 1 {
@@ -106,9 +139,17 @@ impl PropertyChecker {
         };
         local.pop(1);
         if matches!(r, CheckResult::Failed) {
-            rap_debug!("align=Failed vterm={} align_n={:?} aligned={} off={}",
-                value.term.to_string(), value.invariants.align_n, value.invariants.aligned,
-                value.provenance.as_ref().map(|p| p.offset.to_string()).unwrap_or_default());
+            rap_debug!(
+                "align=Failed vterm={} align_n={:?} aligned={} off={}",
+                value.term.to_string(),
+                value.invariants.align_n,
+                value.invariants.aligned,
+                value
+                    .provenance
+                    .as_ref()
+                    .map(|p| p.offset.to_string())
+                    .unwrap_or_default()
+            );
         }
         r
     }
@@ -131,7 +172,11 @@ impl PropertyChecker {
         let zero = Int::from_u64(vm_state.ctx, 0);
         if let Some(ref prov) = value.provenance {
             let alloc = vm_state.alloc(prov.alloc_id);
-            solver.assert(&value.term._eq(&Int::add(vm_state.ctx, &[&alloc.base, &prov.offset])));
+            solver.assert(
+                &value
+                    .term
+                    ._eq(&Int::add(vm_state.ctx, &[&alloc.base, &prov.offset])),
+            );
             solver.assert(&alloc.base.ge(&zero));
             if alloc.align > 1 {
                 let a = Int::from_u64(vm_state.ctx, alloc.align);
@@ -148,12 +193,22 @@ impl PropertyChecker {
         r
     }
 
-    pub(super) fn check_non_null<'ctx, 'tcx>(&self, vm_state: &VmState<'ctx, 'tcx>, solver: &Solver<'ctx>,
-        checkpoint: &Checkpoint<'tcx>, property: &Property<'tcx>) -> CheckResult
-    {
-        let Some(value) = self.target_value(vm_state, checkpoint, property) else { return CheckResult::Unknown };
-        if value.invariants.non_null { return CheckResult::Proved; }
-        if value.invariants.in_bounds { return CheckResult::Proved; }
+    pub(super) fn check_non_null<'ctx, 'tcx>(
+        &self,
+        vm_state: &VmState<'ctx, 'tcx>,
+        solver: &Solver<'ctx>,
+        checkpoint: &Checkpoint<'tcx>,
+        property: &Property<'tcx>,
+    ) -> CheckResult {
+        let Some(value) = self.target_value(vm_state, checkpoint, property) else {
+            return CheckResult::Unknown;
+        };
+        if value.invariants.non_null {
+            return CheckResult::Proved;
+        }
+        if value.invariants.in_bounds {
+            return CheckResult::Proved;
+        }
         // Pointers with non-external provenance point into known stack/heap
         // allocations whose base addresses are never zero.  Raw-pointer
         // parameters get external provenance which may be null.
@@ -166,9 +221,13 @@ impl PropertyChecker {
         self.smt_check(solver, &value.term._eq(&zero))
     }
 
-    pub(super) fn check_null<'ctx, 'tcx>(&self, vm_state: &VmState<'ctx, 'tcx>, _solver: &Solver<'ctx>,
-        checkpoint: &Checkpoint<'tcx>, property: &Property<'tcx>) -> CheckResult
-    {
+    pub(super) fn check_null<'ctx, 'tcx>(
+        &self,
+        vm_state: &VmState<'ctx, 'tcx>,
+        _solver: &Solver<'ctx>,
+        checkpoint: &Checkpoint<'tcx>,
+        property: &Property<'tcx>,
+    ) -> CheckResult {
         // `Null(p)` is the guard branch of `any(Null(p), ...)`.  It is Proved
         // when `p` is null (or carries no allocation, i.e. not known non-null),
         // making the guarded obligation vacuous; otherwise Failed, so the other
@@ -197,57 +256,83 @@ impl PropertyChecker {
         value: &VmValue<'ctx, 'tcx>,
         alloc_id: AllocId,
     ) -> bool {
-        value.invariants.init && value.invariants.non_null && value.invariants.aligned
+        value.invariants.init
+            && value.invariants.non_null
+            && value.invariants.aligned
             && (matches!(value.ty.kind(), TyKind::RawPtr(..))
                 || matches!(value.ty.kind(), TyKind::Ref(_, inner, _)
                     if matches!(inner.kind(), TyKind::Adt(adt, _)
                         if vm_state.tcx.def_path_str(adt.did()).contains("::MaybeUninit"))))
             && {
                 let a = vm_state.alloc(alloc_id);
-                !a.is_external && a.element_ty.map_or(false, |ty| {
-                    if let TyKind::Adt(adt, _) = ty.kind() {
-                        vm_state.tcx.def_path_str(adt.did()).contains("::MaybeUninit")
-                    } else { false }
-                })
+                !a.is_external
+                    && a.element_ty.map_or(false, |ty| {
+                        if let TyKind::Adt(adt, _) = ty.kind() {
+                            vm_state
+                                .tcx
+                                .def_path_str(adt.did())
+                                .contains("::MaybeUninit")
+                        } else {
+                            false
+                        }
+                    })
             }
     }
 
-    pub(super) fn check_allocated<'ctx, 'tcx>(&self, vm_state: &VmState<'ctx, 'tcx>, _solver: &Solver<'ctx>,
-        checkpoint: &Checkpoint<'tcx>, property: &Property<'tcx>) -> CheckResult
-    {
-        let Some(value) = self.target_value(vm_state, checkpoint, property) else { return CheckResult::Unknown };
+    pub(super) fn check_allocated<'ctx, 'tcx>(
+        &self,
+        vm_state: &VmState<'ctx, 'tcx>,
+        _solver: &Solver<'ctx>,
+        checkpoint: &Checkpoint<'tcx>,
+        property: &Property<'tcx>,
+    ) -> CheckResult {
+        let Some(value) = self.target_value(vm_state, checkpoint, property) else {
+            return CheckResult::Unknown;
+        };
 
-        if self.zst_guard(vm_state, checkpoint, property) { return CheckResult::Proved; }
-        if self.is_concrete_zst(vm_state, value.ty) { return CheckResult::Proved; }
+        if self.zst_guard(vm_state, checkpoint, property) {
+            return CheckResult::Proved;
+        }
+        if self.is_concrete_zst(vm_state, value.ty) {
+            return CheckResult::Proved;
+        }
 
         // Zero-element access (`Allocated(p, T, 0)`) is trivially satisfied:
         // any pointer is valid for its 0-byte prefix, so this holds even when
         // provenance has been lost through a cast.  Mirrors the `count == 0`
         // fast-path in `check_in_bound` and covers `from_raw_parts(ptr, 0)`
         // (e.g. `Option::as_slice` on `None`).
-        let count_term = property.args().get(2)
+        let count_term = property
+            .args()
+            .get(2)
             .and_then(|a| self.resolve_arg_term(vm_state, checkpoint, a));
         if count_term.as_ref().is_some_and(|ct| ct.as_u64() == Some(0)) {
             return CheckResult::Proved;
         }
 
-        let Some(alloc_id) = value.provenance_alloc_id() else { return CheckResult::Unknown };
+        let Some(alloc_id) = value.provenance_alloc_id() else {
+            return CheckResult::Unknown;
+        };
 
         if vm_state.alloc(alloc_id).dead {
             if !Self::is_maybe_uninit_ptr(vm_state, &value, alloc_id) {
-                let is_param_ref = vm_state.resolve_origin(&value)
-                    .map_or(false, |origin| {
-                        origin.local.as_usize() <= vm_state.body.arg_count
-                            && origin.local != Local::from_usize(0)
-                    });
+                let is_param_ref = vm_state.resolve_origin(&value).map_or(false, |origin| {
+                    origin.local.as_usize() <= vm_state.body.arg_count
+                        && origin.local != Local::from_usize(0)
+                });
                 if !is_param_ref {
                     return CheckResult::Failed;
                 }
             }
         }
 
-        let required_ty = property.args().get(1)
-            .and_then(|a| if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None });
+        let required_ty = property.args().get(1).and_then(|a| {
+            if let PropertyArg::Ty(ty) = a {
+                Some(*ty)
+            } else {
+                None
+            }
+        });
 
         let alloc = vm_state.alloc(alloc_id);
         if let (Some(alloc_elem_ty), Some(req_ty)) = (alloc.element_ty, required_ty) {
@@ -259,13 +344,18 @@ impl PropertyChecker {
             // sizes are opaque. If the pointer is derived from the same
             // function's slice parameter, the byte-level layout is
             // compatible by Rust's type system.
-            if matches!((alloc_elem_ty.kind(), req_ty.kind()),
-                (TyKind::Param(_), TyKind::Param(_))) {
+            if matches!(
+                (alloc_elem_ty.kind(), req_ty.kind()),
+                (TyKind::Param(_), TyKind::Param(_))
+            ) {
                 return CheckResult::Proved;
             }
         }
 
-        let (Some(base), Some(size)) = (vm_state.allocation_base(alloc_id).cloned(), vm_state.allocation_size(alloc_id).cloned()) else {
+        let (Some(base), Some(size)) = (
+            vm_state.allocation_base(alloc_id).cloned(),
+            vm_state.allocation_size(alloc_id).cloned(),
+        ) else {
             return CheckResult::Unknown;
         };
 
@@ -289,10 +379,19 @@ impl PropertyChecker {
         // "offset + count <= total_len" relies on facts (split_at, etc.)
         // that may not be in path conditions. Fall back to Unknown rather
         // than Failed for generic-element allocations.
-        let alloc_elem_is_generic = vm_state.alloc(alloc_id)
-            .element_ty.map_or(false, |ty| matches!(ty.kind(), TyKind::Param(_)));
+        let alloc_elem_is_generic = vm_state
+            .alloc(alloc_id)
+            .element_ty
+            .map_or(false, |ty| matches!(ty.kind(), TyKind::Param(_)));
         if alloc_elem_is_generic && !size.as_u64().is_some() && !access.as_u64().is_some() {
-            return Self::allocation_covers_access(vm_state, &value, &access, &base, &size, CheckResult::Unknown);
+            return Self::allocation_covers_access(
+                vm_state,
+                &value,
+                &access,
+                &base,
+                &size,
+                CheckResult::Unknown,
+            );
         }
 
         Self::allocation_covers_access(vm_state, &value, &access, &base, &size, CheckResult::Failed)
@@ -326,12 +425,22 @@ impl PropertyChecker {
         r
     }
 
-    pub(super) fn check_init<'ctx, 'tcx>(&self, vm_state: &VmState<'ctx, 'tcx>, _solver: &Solver<'ctx>,
-        checkpoint: &Checkpoint<'tcx>, property: &Property<'tcx>) -> CheckResult
-    {
-        if self.zst_guard(vm_state, checkpoint, property) { return CheckResult::Proved; }
-        let Some(value) = self.target_value(vm_state, checkpoint, property) else { return CheckResult::Unknown };
-        if self.is_concrete_zst(vm_state, value.ty) { return CheckResult::Proved; }
+    pub(super) fn check_init<'ctx, 'tcx>(
+        &self,
+        vm_state: &VmState<'ctx, 'tcx>,
+        _solver: &Solver<'ctx>,
+        checkpoint: &Checkpoint<'tcx>,
+        property: &Property<'tcx>,
+    ) -> CheckResult {
+        if self.zst_guard(vm_state, checkpoint, property) {
+            return CheckResult::Proved;
+        }
+        let Some(value) = self.target_value(vm_state, checkpoint, property) else {
+            return CheckResult::Unknown;
+        };
+        if self.is_concrete_zst(vm_state, value.ty) {
+            return CheckResult::Proved;
+        }
 
         // Compute the required init range: count * sizeof(T) bytes
         let access = if property.args().len() >= 3 {
@@ -341,9 +450,12 @@ impl PropertyChecker {
         };
 
         if let Some(id) = value.provenance_alloc_id() {
-            rap_debug!("check_init: alloc={} init_set={} access={:?}",
-                id.0, vm_state.alloc(id).initialized,
-                access.as_ref().and_then(|a| a.as_u64()));
+            rap_debug!(
+                "check_init: alloc={} init_set={} access={:?}",
+                id.0,
+                vm_state.alloc(id).initialized,
+                access.as_ref().and_then(|a| a.as_u64())
+            );
             if vm_state.alloc(id).dead {
                 // `assume_init_drop` (and other MaybeUninit drop/read ops)
                 // legitimately consume an initialized element from storage that
@@ -359,7 +471,8 @@ impl PropertyChecker {
                 if let (Some(access_val), Some(prov)) = (access_term.as_u64(), &value.provenance) {
                     if let Some(prov_off) = prov.offset.as_u64() {
                         let end = prov_off + access_val;
-                        let all_init = (prov_off as usize..end as usize).all(|off| vm_state.is_byte_init(id, off));
+                        let all_init = (prov_off as usize..end as usize)
+                            .all(|off| vm_state.is_byte_init(id, off));
                         if all_init && access_val > 0 {
                             return CheckResult::Proved;
                         }
@@ -367,8 +480,12 @@ impl PropertyChecker {
                 }
             }
             if vm_state.alloc(id).initialized {
-                if let (Some(ref access_term), Some(ref size)) = (access, vm_state.allocation_size(id)) {
-                    if let (Some(access_val), Some(size_val)) = (access_term.as_u64(), size.as_u64()) {
+                if let (Some(ref access_term), Some(ref size)) =
+                    (access, vm_state.allocation_size(id))
+                {
+                    if let (Some(access_val), Some(size_val)) =
+                        (access_term.as_u64(), size.as_u64())
+                    {
                         // `size_val == 0` means the element type is generic
                         // (size unknown), so the required access can't exceed a
                         // meaningful allocation size; skip the bound check.
@@ -383,7 +500,9 @@ impl PropertyChecker {
                 return CheckResult::Proved;
             }
             // as_ptr/as_mut_ptr on MaybeUninit → write operations don't need pre-init.
-            if value.invariants.init && value.invariants.non_null && value.invariants.aligned
+            if value.invariants.init
+                && value.invariants.non_null
+                && value.invariants.aligned
                 && matches!(value.ty.kind(), TyKind::RawPtr(..))
                 && !vm_state.alloc(id).dead
             {
@@ -409,7 +528,9 @@ impl PropertyChecker {
                 if vm_state.alloc(prov.alloc_id).initialized {
                     if let Some(ref access_term) = access {
                         if let Some(size) = vm_state.allocation_size(prov.alloc_id) {
-                            if let (Some(access_val), Some(size_val)) = (access_term.as_u64(), size.as_u64()) {
+                            if let (Some(access_val), Some(size_val)) =
+                                (access_term.as_u64(), size.as_u64())
+                            {
                                 if access_val <= size_val {
                                     return CheckResult::Proved;
                                 }
@@ -429,7 +550,9 @@ impl PropertyChecker {
                     if vm_state.alloc(alloc_id).initialized {
                         if let Some(ref access_term) = access {
                             if let Some(size) = vm_state.allocation_size(alloc_id) {
-                                if let (Some(access_val), Some(size_val)) = (access_term.as_u64(), size.as_u64()) {
+                                if let (Some(access_val), Some(size_val)) =
+                                    (access_term.as_u64(), size.as_u64())
+                                {
                                     if access_val <= size_val {
                                         return CheckResult::Proved;
                                     }
@@ -439,7 +562,7 @@ impl PropertyChecker {
                             } else {
                                 return CheckResult::Proved;
                             }
-                         }
+                        }
                     }
                 }
             }
@@ -465,7 +588,9 @@ impl PropertyChecker {
     }
 
     pub(super) fn trace_alloc_ids<'ctx, 'tcx>(
-        &self, vm_state: &VmState<'ctx, 'tcx>, local: Local,
+        &self,
+        vm_state: &VmState<'ctx, 'tcx>,
+        local: Local,
     ) -> Vec<AllocId> {
         let mut result = Vec::new();
         if let Some(id) = vm_state.local_alloc_ids.get(&local) {
@@ -485,13 +610,22 @@ impl PropertyChecker {
                         let src_local = match rvalue {
                             #[cfg(rapx_rvalue_use_with_retag)]
                             Rvalue::Use(Operand::Copy(p) | Operand::Move(p), _)
-                                if p.projection.is_empty() => Some(p.local),
+                                if p.projection.is_empty() =>
+                            {
+                                Some(p.local)
+                            }
                             #[cfg(not(rapx_rvalue_use_with_retag))]
                             Rvalue::Use(Operand::Copy(p) | Operand::Move(p))
-                                if p.projection.is_empty() => Some(p.local),
+                                if p.projection.is_empty() =>
+                            {
+                                Some(p.local)
+                            }
                             Rvalue::CopyForDeref(p) if p.projection.is_empty() => Some(p.local),
                             Rvalue::Cast(_, Operand::Copy(p) | Operand::Move(p), _)
-                                if p.projection.is_empty() => Some(p.local),
+                                if p.projection.is_empty() =>
+                            {
+                                Some(p.local)
+                            }
                             Rvalue::RawPtr(_, p) if p.projection.is_empty() => Some(p.local),
                             _ => None,
                         };
@@ -510,10 +644,16 @@ impl PropertyChecker {
         result
     }
 
-    pub(super) fn check_alive<'ctx, 'tcx>(&self, vm_state: &VmState<'ctx, 'tcx>, _solver: &Solver<'ctx>,
-        checkpoint: &Checkpoint<'tcx>, property: &Property<'tcx>) -> CheckResult
-    {
-        let Some(value) = self.target_value(vm_state, checkpoint, property) else { return CheckResult::Unknown };
+    pub(super) fn check_alive<'ctx, 'tcx>(
+        &self,
+        vm_state: &VmState<'ctx, 'tcx>,
+        _solver: &Solver<'ctx>,
+        checkpoint: &Checkpoint<'tcx>,
+        property: &Property<'tcx>,
+    ) -> CheckResult {
+        let Some(value) = self.target_value(vm_state, checkpoint, property) else {
+            return CheckResult::Unknown;
+        };
         if let Some(id) = value.provenance_alloc_id() {
             if vm_state.alloc(id).dead {
                 if let Some(origin) = vm_state.resolve_origin(&value) {
@@ -526,9 +666,11 @@ impl PropertyChecker {
                 return CheckResult::Failed;
             }
             if let Some(origin) = vm_state.resolve_origin(&value) {
-                let is_raw_ptr = matches!(origin.kind,
+                let is_raw_ptr = matches!(
+                    origin.kind,
                     crate::verify::vm::alias::VmOriginKind::RawMutPtr
-                    | crate::verify::vm::alias::VmOriginKind::RawConstPtr);
+                        | crate::verify::vm::alias::VmOriginKind::RawConstPtr
+                );
                 if is_raw_ptr {
                     let is_field = origin.local.as_usize() > vm_state.body.arg_count;
                     if is_field {
@@ -558,8 +700,11 @@ impl PropertyChecker {
                             }
                             _ => false,
                         };
-                        if is_named || super::signature_return_has_lifetime(
-                            vm_state.tcx, vm_state.caller_def_id)
+                        if is_named
+                            || super::signature_return_has_lifetime(
+                                vm_state.tcx,
+                                vm_state.caller_def_id,
+                            )
                             .map_or(false, |(_, t)| t.contains('\''))
                         {
                             // Named/explicit return lifetime: check whether
@@ -573,13 +718,17 @@ impl PropertyChecker {
                             let body = vm_state.body;
                             let adt_no_lifetime = (1..=body.arg_count).any(|i| {
                                 let param_ty = body.local_decls[Local::from_usize(i)].ty;
-                                if let rustc_middle::ty::TyKind::Ref(_, pointee, _) = param_ty.kind() {
-                                    if let rustc_middle::ty::TyKind::Adt(_adt_def, substs) = pointee.kind() {
+                                if let rustc_middle::ty::TyKind::Ref(_, pointee, _) =
+                                    param_ty.kind()
+                                {
+                                    if let rustc_middle::ty::TyKind::Adt(_adt_def, substs) =
+                                        pointee.kind()
+                                    {
                                         return !substs.types().any(|t| {
                                             matches!(t.kind(), rustc_middle::ty::TyKind::Param(_))
-                                        })
-                                        && !substs.iter().any(|g| matches!(g.kind(),
-                                            GenericArgKind::Lifetime(_)));
+                                        }) && !substs.iter().any(|g| {
+                                            matches!(g.kind(), GenericArgKind::Lifetime(_))
+                                        });
                                     }
                                 }
                                 false
@@ -598,7 +747,8 @@ impl PropertyChecker {
                         if !matches!(param_ty.kind(), rustc_middle::ty::TyKind::Ref(..)) {
                             return false;
                         }
-                        vm_state.local_value(param_local)
+                        vm_state
+                            .local_value(param_local)
                             .and_then(|v| v.provenance_alloc_id())
                             .is_some_and(|pid| pid == id)
                     });
@@ -610,7 +760,9 @@ impl PropertyChecker {
             }
             return CheckResult::Proved;
         }
-        if value.invariants.non_null || value.invariants.init { return CheckResult::Proved; }
+        if value.invariants.non_null || value.invariants.init {
+            return CheckResult::Proved;
+        }
         CheckResult::Unknown
     }
 }

@@ -1,4 +1,3 @@
-
 use super::ConstraintGraph;
 use crate::analysis::range::domain::domain::BasicOpKind;
 use crate::analysis::range::domain::domain::{ConstConvert, IntervalArithmetic};
@@ -80,7 +79,8 @@ where
                     &mut dot,
                     "    \"{:?}\" -> \"op_{}\" [color=blue, style=dashed];",
                     place, op_idx
-                ).unwrap();
+                )
+                .unwrap();
             }
         }
 

@@ -1,14 +1,11 @@
 use annotate_snippets::Level;
 
-use crate::{
-    analysis::dataflow::*,
-    check::opt::OptCheck,
-};
+use crate::{analysis::dataflow::*, check::opt::OptCheck};
 use rustc_middle::{mir::Local, ty::TyCtxt};
 use rustc_span::Span;
 
-use crate::check::opt::report::OptReport;
 use crate::check::opt::check_utils::node_matches_any_call;
+use crate::check::opt::report::OptReport;
 
 crate::def_paths! {
     hashset_new: "std::collections::HashSet::new",
@@ -38,7 +35,8 @@ impl OptCheck for LocalSetCheck {
                     || id == def_paths.btreeset_new.last_def_id()
                     || id == def_paths.hashmap_with_capacity.last_def_id()
                     || id == def_paths.hashset_with_capacity.last_def_id()
-            }) && !graph.is_connected(Local::from_usize(0), node_idx) {
+            }) && !graph.is_connected(Local::from_usize(0), node_idx)
+            {
                 self.record.push(node.span);
             }
         }

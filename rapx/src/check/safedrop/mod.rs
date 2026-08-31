@@ -12,7 +12,9 @@ use rustc_middle::ty::TyCtxt;
 use crate::{
     analysis::{
         alias::default::{AliasAnalyzer, MopFnAliasMap},
-        heap_ownership::{HeapOwnershipResultMap, HeapOwnershipAnalysis, default::HeapOwnershipAnalyzer},
+        heap_ownership::{
+            HeapOwnershipAnalysis, HeapOwnershipResultMap, default::HeapOwnershipAnalyzer,
+        },
         path::default::PathAnalyzer,
     },
     utils::source::get_fn_name,

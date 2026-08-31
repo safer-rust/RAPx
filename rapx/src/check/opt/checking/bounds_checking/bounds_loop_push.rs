@@ -6,9 +6,7 @@ use rustc_span::Span;
 
 use crate::analysis::dataflow::Graph;
 use crate::helpers::def_path::DefPath;
-use crate::utils::span::{
-    span_to_first_line, span_to_trimmed_span,
-};
+use crate::utils::span::{span_to_first_line, span_to_trimmed_span};
 
 use annotate_snippets::Level;
 

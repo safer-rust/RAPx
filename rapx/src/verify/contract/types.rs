@@ -392,7 +392,11 @@ impl<'tcx> Property<'tcx> {
     /// Tag a property (atom, `And`, or `Or`) with the display name, full
     /// call-site arguments, and meaning of the compound property it expanded from.
     pub(crate) fn set_origin(&mut self, name: String, args: Vec<String>, meaning: Option<String>) {
-        let origin = ContractOrigin { name, args, meaning };
+        let origin = ContractOrigin {
+            name,
+            args,
+            meaning,
+        };
         match self {
             Property::Atom(a) => a.origin = Some(origin),
             Property::And(a) => a.origin = Some(origin),

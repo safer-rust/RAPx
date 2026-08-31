@@ -5,16 +5,13 @@
 //! each local's value points to; this module traces that provenance
 //! back to the originating parameter/local.
 
-use rustc_hir::def_id::DefId;
-use rustc_middle::mir::{Local, Operand, ProjectionElem, Rvalue, StatementKind};
-use crate::verify::{
-    contract::Property,
-    def_use::PlaceKey,
-};
 use super::alias_hazard::{self, AliasProducer, HazardKind};
+use crate::analysis::alias::collect_local_origins;
 use crate::helpers::mir_scan::Checkpoint;
 use crate::verify::api_classify;
-use crate::analysis::alias::collect_local_origins;
+use crate::verify::{contract::Property, def_use::PlaceKey};
+use rustc_hir::def_id::DefId;
+use rustc_middle::mir::{Local, Operand, ProjectionElem, Rvalue, StatementKind};
 
 use super::state::{VmState, VmValue};
 
@@ -127,9 +124,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 VmOriginKind::RawMutPtr
             }
             rustc_middle::ty::TyKind::RawPtr(..) => VmOriginKind::RawConstPtr,
-            rustc_middle::ty::TyKind::Adt(adt_def, _) => {
-                VmOriginKind::Owned(adt_def.did())
-            }
+            rustc_middle::ty::TyKind::Adt(adt_def, _) => VmOriginKind::Owned(adt_def.did()),
             _ => VmOriginKind::Unknown,
         }
     }
@@ -187,7 +182,10 @@ pub(crate) fn check_alias_vm<'ctx, 'tcx>(
                 }
                 // External provenance: safe for shared ref, unsafe for mut ref.
                 let has_shared_ref = vm_state.body.local_decls.iter().any(|d| {
-                    matches!(d.ty.kind(), rustc_middle::ty::TyKind::Ref(_, _, rustc_middle::ty::Mutability::Not))
+                    matches!(
+                        d.ty.kind(),
+                        rustc_middle::ty::TyKind::Ref(_, _, rustc_middle::ty::Mutability::Not)
+                    )
                 });
                 if has_shared_ref {
                     return VmAliasResult::Proved;
@@ -205,8 +203,8 @@ pub(crate) fn check_alias_vm<'ctx, 'tcx>(
             // struct field and that field is a shared reference, the view is safe.
             let tcx = vm_state.tcx;
             let caller = checkpoint.caller;
-            let arg_place = alias_hazard::operand_mir_place(origin_arg)
-                .map(|p| PlaceKey::from_mir_place(p));
+            let arg_place =
+                alias_hazard::operand_mir_place(origin_arg).map(|p| PlaceKey::from_mir_place(p));
             if let Some(mir_place) = arg_place {
                 let origin_map = collect_local_origins(tcx, caller);
                 let (root, fields) = alias_hazard::deep_resolve_place(
@@ -251,15 +249,9 @@ pub(crate) fn check_alias_vm<'ctx, 'tcx>(
     };
 
     match producer {
-        AliasProducer::View(kind) => {
-            check_view_alias(vm_state, checkpoint, callee_name, kind)
-        }
-        AliasProducer::OwnershipTransfer => {
-            check_ownership_transfer_alias(vm_state, checkpoint)
-        }
-        AliasProducer::ReadMemory => {
-            check_read_memory_alias(vm_state, checkpoint)
-        }
+        AliasProducer::View(kind) => check_view_alias(vm_state, checkpoint, callee_name, kind),
+        AliasProducer::OwnershipTransfer => check_ownership_transfer_alias(vm_state, checkpoint),
+        AliasProducer::ReadMemory => check_read_memory_alias(vm_state, checkpoint),
     }
 }
 
@@ -281,12 +273,15 @@ fn check_view_alias<'ctx, 'tcx>(
 
     // Resolve origin PlaceKey from the checkpoint argument
     let origin_place = alias_hazard::operand_place(origin_arg)
-        .or_else(|| alias_hazard::operand_mir_place(origin_arg)
-            .map(|p| PlaceKey::from_mir_place(p)))
+        .or_else(|| {
+            alias_hazard::operand_mir_place(origin_arg).map(|p| PlaceKey::from_mir_place(p))
+        })
         .unwrap_or_else(|| {
             // Fallback: extract from the origin value's type
             PlaceKey::from_origin(
-                crate::helpers::mir_utils::extract_local(origin_arg).map(|l| l.as_usize()).unwrap_or(1),
+                crate::helpers::mir_utils::extract_local(origin_arg)
+                    .map(|l| l.as_usize())
+                    .unwrap_or(1),
                 vec![],
             )
         });
@@ -301,7 +296,9 @@ fn check_view_alias<'ctx, 'tcx>(
 
     // Also try to extract field projections from the checkpoint arg's MIR place.
     // If the arg directly references a struct field (e.g., `(*_1).0`), capture it.
-    let mir_place_from_arg = checkpoint.args.first()
+    let mir_place_from_arg = checkpoint
+        .args
+        .first()
         .and_then(|a| alias_hazard::operand_mir_place(a));
     if let Some(place) = mir_place_from_arg {
         if !place.projection.is_empty() && place.local == Local::from_usize(1) {
@@ -332,14 +329,16 @@ fn check_view_alias<'ctx, 'tcx>(
         }
         if origin.is_owned() {
             let check = alias_hazard::alias_proved_for_param_local(
-                tcx, caller, origin.local.as_usize(), kind,
+                tcx,
+                caller,
+                origin.local.as_usize(),
+                kind,
             );
             // Skip the early Safe return for Vec/CString (reallocatable) types,
             // so MIR-level hazard scanning can detect reallocation hazards.
             let is_reallocatable = match &origin.kind {
                 VmOriginKind::Owned(def_id) => {
-                    api_classify::is_std_vec(*def_id)
-                        || api_classify::is_std_cstring(*def_id)
+                    api_classify::is_std_vec(*def_id) || api_classify::is_std_cstring(*def_id)
                 }
                 _ => false,
             };
@@ -350,12 +349,20 @@ fn check_view_alias<'ctx, 'tcx>(
     }
 
     // Extract view length for from_raw_parts[_mut](ptr, len)
-    let view_len_place =
-        checkpoint.args.get(1).and_then(|a| alias_hazard::operand_place(a));
+    let view_len_place = checkpoint
+        .args
+        .get(1)
+        .and_then(|a| alias_hazard::operand_place(a));
 
     // Run MIR-level hazard scanning
     if let Some(reason) = alias_hazard::local_hazard_violation(
-        tcx, caller, call_block, destination, &origins, kind, view_len_place,
+        tcx,
+        caller,
+        call_block,
+        destination,
+        &origins,
+        kind,
+        view_len_place,
     ) {
         return VmAliasResult::Failed(reason);
     }
@@ -382,7 +389,10 @@ fn check_view_alias<'ctx, 'tcx>(
         origin_place.clone()
     };
     match alias_hazard::alias_proved_for_param_local_from_origin(
-        tcx, caller, &origin_local_place, kind,
+        tcx,
+        caller,
+        &origin_local_place,
+        kind,
     ) {
         alias_hazard::HazardCheck::Violation(_) => {} // defer to struct field analysis
         alias_hazard::HazardCheck::Safe(_) => {}
@@ -412,15 +422,19 @@ fn check_view_alias<'ctx, 'tcx>(
             }
             return VmAliasResult::Proved;
         }
-        if let Some(reason) = alias_hazard::private_fn_callsite_delegation(
-            tcx, caller, &origin_place, kind,
-        ) {
+        if let Some(reason) =
+            alias_hazard::private_fn_callsite_delegation(tcx, caller, &origin_place, kind)
+        {
             return VmAliasResult::Failed(reason);
         }
         if kind == HazardKind::SharedView {
             let param_origin = alias_hazard::resolve_param_origin(tcx, caller, &origin_place);
             if let Some(local) = param_origin
-                && alias_hazard::is_origin_a_reference(tcx, caller, &PlaceKey::from_origin(local, vec![]))
+                && alias_hazard::is_origin_a_reference(
+                    tcx,
+                    caller,
+                    &PlaceKey::from_origin(local, vec![]),
+                )
             {
                 return VmAliasResult::Proved;
             }
@@ -486,13 +500,18 @@ fn find_struct_field_origin_for_param<'tcx>(
     let self_ty = body.local_decls[Local::from_usize(1)].ty;
     let inner_adt = match self_ty.kind() {
         rustc_middle::ty::TyKind::Ref(_, inner, _)
-            if matches!(inner.kind(), rustc_middle::ty::TyKind::Adt(..)) => *inner,
+            if matches!(inner.kind(), rustc_middle::ty::TyKind::Adt(..)) =>
+        {
+            *inner
+        }
         _ => return None,
     };
     let (adt_def, _) = crate::analysis::alias::adt_from_ty(inner_adt)?;
 
     // Try to resolve the checkpoint's first arg to determine which field
-    let Some(arg0) = checkpoint.args.first() else { return None; };
+    let Some(arg0) = checkpoint.args.first() else {
+        return None;
+    };
     let arg_place = match arg0 {
         Operand::Copy(p) | Operand::Move(p) => p,
         _ => return None,
@@ -500,7 +519,9 @@ fn find_struct_field_origin_for_param<'tcx>(
 
     // If the arg already has projections, use them directly
     if !arg_place.projection.is_empty() && arg_place.local == Local::from_usize(1) {
-        let fields: Vec<usize> = arg_place.projection.iter()
+        let fields: Vec<usize> = arg_place
+            .projection
+            .iter()
             .filter_map(|p| match p {
                 ProjectionElem::Field(idx, _) => Some(idx.as_usize()),
                 _ => None,
@@ -523,9 +544,13 @@ fn find_struct_field_origin_for_param<'tcx>(
     if arg_place.projection.is_empty() && arg_local != Local::from_usize(1) {
         for block in body.basic_blocks.iter() {
             for stmt in &block.statements {
-                let StatementKind::Assign(assign) = &stmt.kind else { continue };
+                let StatementKind::Assign(assign) = &stmt.kind else {
+                    continue;
+                };
                 let (target, rvalue) = assign.as_ref();
-                if target.local != arg_local { continue; }
+                if target.local != arg_local {
+                    continue;
+                }
                 let source = match rvalue {
                     #[cfg(rapx_rvalue_use_with_retag)]
                     Rvalue::Use(operand, _) => match operand {
@@ -540,14 +565,20 @@ fn find_struct_field_origin_for_param<'tcx>(
                     Rvalue::CopyForDeref(p) => p,
                     _ => continue,
                 };
-                if source.local != Local::from_usize(1) { continue; }
-                let fields: Vec<usize> = source.projection.iter()
+                if source.local != Local::from_usize(1) {
+                    continue;
+                }
+                let fields: Vec<usize> = source
+                    .projection
+                    .iter()
                     .filter_map(|p| match p {
                         ProjectionElem::Field(idx, _) => Some(idx.as_usize()),
                         _ => None,
                     })
                     .collect();
-                if fields.is_empty() { continue; }
+                if fields.is_empty() {
+                    continue;
+                }
                 let field_index = fields[0];
                 let adt = tcx.adt_def(adt_def);
                 let field = adt.all_fields().nth(field_index)?;
@@ -612,7 +643,9 @@ fn infer_self_field_from_type<'tcx>(
     if let Some(arg0) = checkpoint.args.first()
         && let Some(place) = alias_hazard::operand_mir_place(arg0)
     {
-        let fields: Vec<usize> = place.projection.iter()
+        let fields: Vec<usize> = place
+            .projection
+            .iter()
             .filter_map(|p| match p {
                 ProjectionElem::Field(idx, _) => Some(idx.as_usize()),
                 _ => None,
@@ -663,7 +696,11 @@ fn is_self_field_shared_ref(
 }
 
 /// copies/casts (e.g. `_tmp = self.ptr` → `_1.0`).
-fn resolve_origin_place_mir(tcx: rustc_middle::ty::TyCtxt<'_>, caller: DefId, place: &PlaceKey) -> PlaceKey {
+fn resolve_origin_place_mir(
+    tcx: rustc_middle::ty::TyCtxt<'_>,
+    caller: DefId,
+    place: &PlaceKey,
+) -> PlaceKey {
     let Some(local) = place.local() else {
         return place.clone();
     };
@@ -704,7 +741,11 @@ fn check_ownership_transfer_alias<'ctx, 'tcx>(
     };
 
     if let Some(reason) = alias_hazard::ownership_transfer_violation(
-        tcx, caller, call_block, destination, &origin_place,
+        tcx,
+        caller,
+        call_block,
+        destination,
+        &origin_place,
     ) {
         return VmAliasResult::Failed(reason);
     }
@@ -746,7 +787,6 @@ fn check_read_memory_alias<'ctx, 'tcx>(
     }
 
     VmAliasResult::Failed(
-        "read API value escapes while the source pointer persists — structural alias hazard"
-            .into(),
+        "read API value escapes while the source pointer persists — structural alias hazard".into(),
     )
 }

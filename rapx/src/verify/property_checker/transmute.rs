@@ -3,25 +3,43 @@
 use rustc_middle::ty::{GenericArgKind, Ty, TyKind};
 use z3::Solver;
 
+use crate::helpers::mir_scan::Checkpoint;
+use crate::verify::vm::state::VmState;
 use crate::verify::{
     contract::{Property, PropertyArg},
     report::CheckResult,
 };
-use crate::helpers::mir_scan::Checkpoint;
-use crate::verify::vm::state::VmState;
 
 use super::PropertyChecker;
 
 impl PropertyChecker {
     // ── check_valid_transmute ──────────────────────────────────
 
-    pub(super) fn check_valid_transmute<'ctx, 'tcx>(&self, vm_state: &VmState<'ctx, 'tcx>, _solver: &Solver<'ctx>,
-        _checkpoint: &Checkpoint<'tcx>, property: &Property<'tcx>) -> CheckResult
-    {
-        let src = property.args().get(0).and_then(|a| if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None });
-        let dst = property.args().get(1).and_then(|a| if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None });
+    pub(super) fn check_valid_transmute<'ctx, 'tcx>(
+        &self,
+        vm_state: &VmState<'ctx, 'tcx>,
+        _solver: &Solver<'ctx>,
+        _checkpoint: &Checkpoint<'tcx>,
+        property: &Property<'tcx>,
+    ) -> CheckResult {
+        let src = property.args().get(0).and_then(|a| {
+            if let PropertyArg::Ty(ty) = a {
+                Some(*ty)
+            } else {
+                None
+            }
+        });
+        let dst = property.args().get(1).and_then(|a| {
+            if let PropertyArg::Ty(ty) = a {
+                Some(*ty)
+            } else {
+                None
+            }
+        });
         match (src, dst) {
-            (Some(s), Some(d)) if vm_state.size_of_ty(s) == vm_state.size_of_ty(d) => CheckResult::Proved,
+            (Some(s), Some(d)) if vm_state.size_of_ty(s) == vm_state.size_of_ty(d) => {
+                CheckResult::Proved
+            }
             (Some(s), Some(d)) => {
                 let ss = vm_state.size_of_ty(s);
                 let ds = vm_state.size_of_ty(d);
@@ -42,9 +60,13 @@ impl PropertyChecker {
 
     // ── check_trait ────────────────────────────────────────────
 
-    pub(super) fn check_trait<'ctx, 'tcx>(&self, vm_state: &VmState<'ctx, 'tcx>, _solver: &Solver<'ctx>,
-        checkpoint: &Checkpoint<'tcx>, property: &Property<'tcx>) -> CheckResult
-    {
+    pub(super) fn check_trait<'ctx, 'tcx>(
+        &self,
+        vm_state: &VmState<'ctx, 'tcx>,
+        _solver: &Solver<'ctx>,
+        checkpoint: &Checkpoint<'tcx>,
+        property: &Property<'tcx>,
+    ) -> CheckResult {
         let ty = match property.args().first() {
             Some(PropertyArg::Ty(ty)) => *ty,
             _ => return CheckResult::Unknown,
@@ -69,7 +91,10 @@ impl PropertyChecker {
         }
 
         if trait_name == "Sized" {
-            if !ty.is_sized(tcx, rustc_middle::ty::TypingEnv::post_analysis(tcx, checkpoint.caller)) {
+            if !ty.is_sized(
+                tcx,
+                rustc_middle::ty::TypingEnv::post_analysis(tcx, checkpoint.caller),
+            ) {
                 return CheckResult::Failed;
             }
             return CheckResult::Proved;
@@ -96,14 +121,30 @@ impl PropertyChecker {
 
     // ── check_split_transmute ──────────────────────────────────
 
-    pub(super) fn check_split_transmute<'ctx, 'tcx>(&self, vm_state: &VmState<'ctx, 'tcx>, _solver: &Solver<'ctx>,
-        checkpoint: &Checkpoint<'tcx>, property: &Property<'tcx>) -> CheckResult
-    {
+    pub(super) fn check_split_transmute<'ctx, 'tcx>(
+        &self,
+        vm_state: &VmState<'ctx, 'tcx>,
+        _solver: &Solver<'ctx>,
+        checkpoint: &Checkpoint<'tcx>,
+        property: &Property<'tcx>,
+    ) -> CheckResult {
         if vm_state.contract_flags.split_transmute_asserted {
             return CheckResult::Proved;
         }
-        let src = property.args().get(0).and_then(|a| if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None });
-        let dst = property.args().get(1).and_then(|a| if let PropertyArg::Ty(ty) = a { Some(*ty) } else { None });
+        let src = property.args().get(0).and_then(|a| {
+            if let PropertyArg::Ty(ty) = a {
+                Some(*ty)
+            } else {
+                None
+            }
+        });
+        let dst = property.args().get(1).and_then(|a| {
+            if let PropertyArg::Ty(ty) = a {
+                Some(*ty)
+            } else {
+                None
+            }
+        });
         let src = src.map(|ty| self.instantiate_callsite_ty(vm_state, checkpoint, ty));
         let dst = dst.map(|ty| self.instantiate_callsite_ty(vm_state, checkpoint, ty));
         match (src, dst) {
@@ -129,7 +170,10 @@ impl PropertyChecker {
                 // the transmute is valid by the standard library contract.
                 if Self::is_simd_vector(vm_state, d) {
                     if let TyKind::Adt(_, args) = d.kind() {
-                        if args.iter().any(|a| matches!(a.kind(), GenericArgKind::Type(t) if t == s)) {
+                        if args
+                            .iter()
+                            .any(|a| matches!(a.kind(), GenericArgKind::Type(t) if t == s))
+                        {
                             return CheckResult::Proved;
                         }
                     }
@@ -137,7 +181,9 @@ impl PropertyChecker {
 
                 let src_sz = Self::ty_size(vm_state, s);
                 let dst_sz = Self::ty_size(vm_state, d);
-                if src_sz == 0 || dst_sz == 0 { return CheckResult::Failed; }
+                if src_sz == 0 || dst_sz == 0 {
+                    return CheckResult::Failed;
+                }
                 // A split transmute is sound whenever the destination element
                 // type accepts all bit patterns (integers, floats, raw pointers):
                 // any contiguous `size_of::<U>()`-byte chunk of the source is
@@ -168,19 +214,36 @@ impl PropertyChecker {
     /// Compute type size, trying different typing environments.
     fn ty_size<'ctx, 'tcx>(vm_state: &VmState<'ctx, 'tcx>, ty: Ty<'tcx>) -> u64 {
         let sz = vm_state.size_of_ty(ty);
-        if sz > 0 { return sz; }
+        if sz > 0 {
+            return sz;
+        }
         // Fallback 1: try with the monomorphized environment.
-        let typing_env = rustc_middle::ty::TypingEnv::post_analysis(
-            vm_state.tcx, vm_state.caller_def_id);
+        let typing_env =
+            rustc_middle::ty::TypingEnv::post_analysis(vm_state.tcx, vm_state.caller_def_id);
         let sz = crate::helpers::mir_utils::catch_panic(|| {
-            vm_state.tcx.layout_of(
-                rustc_middle::ty::PseudoCanonicalInput { typing_env, value: ty }
-            )
-        }).ok().and_then(|r| r.ok()).map(|l| l.size.bytes()).unwrap_or(0);
-        if sz > 0 { return sz; }
+            vm_state
+                .tcx
+                .layout_of(rustc_middle::ty::PseudoCanonicalInput {
+                    typing_env,
+                    value: ty,
+                })
+        })
+        .ok()
+        .and_then(|r| r.ok())
+        .map(|l| l.size.bytes())
+        .unwrap_or(0);
+        if sz > 0 {
+            return sz;
+        }
         // Fallback 2: for generic type params, enumerate impl sizes.
-        let generic_sz = crate::helpers::mir_utils::size_of_generic_param(vm_state.tcx, vm_state.caller_def_id, ty);
-        if generic_sz > 0 { return generic_sz; }
+        let generic_sz = crate::helpers::mir_utils::size_of_generic_param(
+            vm_state.tcx,
+            vm_state.caller_def_id,
+            ty,
+        );
+        if generic_sz > 0 {
+            return generic_sz;
+        }
         0
     }
 

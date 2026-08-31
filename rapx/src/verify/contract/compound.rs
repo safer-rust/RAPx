@@ -26,8 +26,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{OnceLock, RwLock};
 
 use rustc_hir::def_id::{CrateNum, LOCAL_CRATE};
-use syn::visit_mut::{self, VisitMut};
 use syn::Expr;
+use syn::visit_mut::{self, VisitMut};
 
 use super::types::{Property, PropertyKind};
 
@@ -222,8 +222,11 @@ fn resolve_arg_string<'tcx>(
     expr: &Expr,
 ) -> String {
     match param_ty {
-        "Ptr" => super::resolve::parse_target_arg(tcx, def_id, expr)
-            .display_for_report(tcx, None, Some(def_id)),
+        "Ptr" => super::resolve::parse_target_arg(tcx, def_id, expr).display_for_report(
+            tcx,
+            None,
+            Some(def_id),
+        ),
         "Ty" => super::resolve::parse_type(tcx, def_id, expr, "compound")
             .map(|ty| ty.to_string())
             .unwrap_or_else(|| render_expr_src(expr)),
@@ -371,7 +374,11 @@ fn expand_compound_body<'tcx>(
                         let Ok(mut e) = syn::parse_str::<Expr>(s) else {
                             return vec![unknown_property()];
                         };
-                        Subst { params, args: exprs }.visit_expr_mut(&mut e);
+                        Subst {
+                            params,
+                            args: exprs,
+                        }
+                        .visit_expr_mut(&mut e);
                         resolved.push(e);
                     }
                 }
@@ -403,7 +410,8 @@ fn builtin_compounds_map() -> &'static HashMap<String, CompoundSpec> {
 /// collide with) another crate analyzed in the same process.  A crate's own
 /// compounds shadow builtin compounds of the same name.
 fn user_compounds_map() -> &'static RwLock<HashMap<CrateNum, HashMap<String, CompoundSpec>>> {
-    static USER: OnceLock<RwLock<HashMap<CrateNum, HashMap<String, CompoundSpec>>>> = OnceLock::new();
+    static USER: OnceLock<RwLock<HashMap<CrateNum, HashMap<String, CompoundSpec>>>> =
+        OnceLock::new();
     USER.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
@@ -457,7 +465,14 @@ pub(crate) fn expand_compound<'tcx>(
         rap_error!("contract compound cycle detected: {}", cycle.join(" -> "));
         return None;
     }
-    let mut props = expand_compound_body(tcx, def_id, &compound.body, exprs, &compound.params, &compound.param_tys);
+    let mut props = expand_compound_body(
+        tcx,
+        def_id,
+        &compound.body,
+        exprs,
+        &compound.params,
+        &compound.param_tys,
+    );
     // Tag expanded properties with the compound name, its full call-site arguments,
     // and its doc-derived meaning so reports can show the compound as a single
     // entry instead of the underlying primitives.
@@ -560,7 +575,9 @@ pub(crate) fn register_compounds_from_source(krate: CrateNum, source: &str) -> u
     if n == 0 {
         return 0;
     }
-    let mut table = user_compounds_map().write().expect("compound table poisoned");
+    let mut table = user_compounds_map()
+        .write()
+        .expect("compound table poisoned");
     let entry = table.entry(krate).or_default();
     for compound in compounds {
         entry.insert(compound.name.clone(), compound);
@@ -590,7 +607,9 @@ pub(crate) fn register_compound_properties(tcx: rustc_middle::ty::TyCtxt<'_>) ->
                 if let Some(def_str) = extract_def_property_string(&attr_str) {
                     let n = register_compounds_from_source(LOCAL_CRATE, &def_str);
                     if n > 0 {
-                        rap_info!("rapx: registered {n} contract compound(s) from #[rapx::def_property]");
+                        rap_info!(
+                            "rapx: registered {n} contract compound(s) from #[rapx::def_property]"
+                        );
                     }
                     self.count += n;
                 }
@@ -641,4 +660,3 @@ fn extract_def_property_string(attr_str: &str) -> Option<String> {
     let lit: syn::LitStr = syn::parse2(list.tokens).ok()?;
     Some(lit.value())
 }
-

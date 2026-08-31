@@ -20,10 +20,10 @@
 //! fills `PropertyArg::Expr` (`ContractPlace`, `ContractExpr`,
 //! `ContractProjection`).
 
-pub(crate) mod json;
 pub(crate) mod attr;
 pub(crate) mod builder;
 pub(crate) mod compound;
+pub(crate) mod json;
 pub(crate) mod pest_conv;
 pub(crate) mod pest_grammar;
 pub(crate) mod place;
