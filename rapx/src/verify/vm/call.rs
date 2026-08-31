@@ -103,22 +103,8 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         // hand-crafted invariants that are more precise than BFS inline.
         if let Some(c) = callee {
             if self.tcx.is_mir_available(c) {
-                // MIR-derived field store (`(*self).field = arg` setter shape):
-                // recognized from the callee's MIR rather than matched by name.
-                if let Some(effect) =
-                    crate::verify::call_summary::interprocedural::try_field_store_effect(
-                        self.tcx, c,
-                    )
-                {
-                    self.apply_call_effect(&effect, &arg_values, &caller_arg_locals, destination);
-                    self.last_call_name = name.clone();
-                    self.last_call_callee = callee;
-                    self.materialize_const_bytes_after_call(args, destination);
-                    return;
-                }
                 // MIR-derived field load (`(*self).field` getter shape, e.g.
-                // `Vec::len`): recognized from the callee's MIR, mirroring the
-                // field store above.
+                // `Vec::len`): recognized from the callee's MIR, not by name.
                 if let Some(effect) =
                     crate::verify::call_summary::interprocedural::try_field_load_effect(self.tcx, c)
                 {
@@ -668,6 +654,14 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         }
 
         // ── Save caller context ──
+        // Resolve each arg's referent local (for `&self`/`&mut self` reborrow
+        // temps) *before* the caller's address map is saved away, so that
+        // `exec_assign` can resolve `(*self).field = val` writes back to the
+        // caller's referent while the callee executes.
+        let inline_arg_referents: Vec<Option<Local>> = arg_values
+            .iter()
+            .map(|v| self.find_local_by_address(&v.term))
+            .collect();
         let saved_body = self.body;
         let saved_caller = self.caller_def_id;
         let saved_locals = std::mem::take(&mut self.locals);
@@ -678,6 +672,9 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         let saved_other_op_sources = std::mem::take(&mut self.other_op_sources);
         let saved_iter_ptr_offset = std::mem::take(&mut self.iter_ptr_offset);
         let saved_discriminant_terms = std::mem::take(&mut self.discriminant_terms);
+        let saved_inline_arg_referents =
+            std::mem::replace(&mut self.inline_arg_referents, inline_arg_referents);
+        let saved_deferred_field_writes = std::mem::take(&mut self.deferred_field_writes);
 
         // ── Switch to callee context ──
         self.body = callee_body;
@@ -743,6 +740,15 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         self.other_op_sources = saved_other_op_sources;
         self.iter_ptr_offset = saved_iter_ptr_offset;
         self.discriminant_terms = saved_discriminant_terms;
+
+        // Apply deferred field writes (`(*self).field = val` through a
+        // `&mut self` reborrow) collected during the callee's execution, now
+        // that the caller's `field_values` is live again.
+        for (local, path, value) in std::mem::take(&mut self.deferred_field_writes) {
+            self.set_field_value(local, path, value);
+        }
+        self.inline_arg_referents = saved_inline_arg_referents;
+        self.deferred_field_writes = saved_deferred_field_writes;
 
         // ── Write return value to caller destination ──
         let dest_ty = self.body.local_decls[dest].ty;
@@ -1578,21 +1584,9 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         return;
                     }
                 }
-                // Read the materialized `len` field (path [1]) directly when it
-                // is a `usize` — materialized either by the `{buf{ptr,cap},len}`
-                // Vec layout or by the regular struct decomposition of any
-                // `{.., len: usize}` type. The gate checks the *materialized
-                // field's* type, not the type name.
-                if let Some(local) = caller_arg_locals.get(*arg).copied().flatten() {
-                    if let Some(len_val) = self.field_value(local, &[1]) {
-                        if len_val.ty == self.tcx.types.usize {
-                            let mut v = len_val.clone();
-                            v.ty = self.body.local_decls[dest].ty;
-                            self.set_local(dest, v);
-                            return;
-                        }
-                    }
-                }
+                // Field-read `len` (e.g. `Vec::len`) is handled by
+                // `ReturnFieldOfArg`; here fall back to `size / elem_size`
+                // (slices, `&str`, and legacy Vec values).
                 if let Some(arg_val) = args.get(*arg) {
                     if self.set_len_from_alloc(arg_val, dest) {
                         return;
@@ -1609,19 +1603,10 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 self.set_local(dest, val);
             }
             CallEffect::ReturnCapacityOfArg { arg } => {
-                // Read the materialized `cap` field (path [0, 1]) directly when
-                // it is a `usize` (materialized by the `{buf{ptr,cap},len}` Vec
-                // layout). Gate on the materialized field's type, not the name.
-                if let Some(local) = caller_arg_locals.get(*arg).copied().flatten() {
-                    if let Some(cap_val) = self.field_value(local, &[0, 1]) {
-                        if cap_val.ty == self.tcx.types.usize {
-                            let mut v = cap_val.clone();
-                            v.ty = self.body.local_decls[dest].ty;
-                            self.set_local(dest, v);
-                            return;
-                        }
-                    }
-                }
+                // `capacity()` is `self.buf.capacity()` (a nested-field call,
+                // not a simple field load), so it is not handled by
+                // `ReturnFieldOfArg`; reconstruct it as `size / elem_size`,
+                // which equals the buffer capacity for a Vec.
                 if let Some(arg_val) = args.get(*arg) {
                     if self.set_len_from_alloc(arg_val, dest) {
                         return;
@@ -1642,16 +1627,15 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 // and return it. The field index came from the callee's MIR;
                 // preserve the field's own type/provenance.
                 //
-                // The receiver of a `&self` getter is often a reborrow temp
+                // The receiver of a `&self` getter is a reborrow temp
                 // (`_t = &data`) whose local carries no field values, while the
                 // fields were materialized on the referent (`data`). Resolve the
                 // referent by matching the receiver value's address term against
-                // the known local addresses.
-                let direct = caller_arg_locals.get(*arg).copied().flatten();
-                let local = direct.or_else(|| {
-                    args.get(*arg)
-                        .and_then(|v| self.find_local_by_address(&v.term))
-                });
+                // the known local addresses; fall back to the direct arg local.
+                let local = args
+                    .get(*arg)
+                    .and_then(|v| self.find_local_by_address(&v.term))
+                    .or_else(|| caller_arg_locals.get(*arg).copied().flatten());
                 if let Some(local) = local {
                     if let Some(field_val) = self.field_value(local, &[*field]) {
                         let mut v = field_val.clone();
@@ -1680,23 +1664,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     invariants: ValueInvariants::default(),
                 };
                 self.set_local(dest, val);
-            }
-            CallEffect::WriteFieldOfArg {
-                arg,
-                field,
-                from_arg,
-            } => {
-                // Write `arg[from_arg]` into field `field` of the `&mut` arg's
-                // pointee. The field index and value come from the callee's
-                // MIR; preserve the written value's own type/provenance (no
-                // length or usize assumption).
-                let Some(local) = caller_arg_locals.get(*arg).copied().flatten() else {
-                    return;
-                };
-                let Some(value) = args.get(*from_arg).cloned() else {
-                    return;
-                };
-                self.set_field_value(local, vec![*field], value);
             }
             CallEffect::ReturnConst { value } => {
                 let dest_ty = self.body.local_decls[dest].ty;
@@ -2652,7 +2619,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     /// reference value points at). Used to resolve a `&self`/`&mut self`
     /// receiver (often a reborrow temp) back to the referent local that carries
     /// the materialized field values.
-    fn find_local_by_address(&self, term: &Int<'ctx>) -> Option<Local> {
+    pub(crate) fn find_local_by_address(&self, term: &Int<'ctx>) -> Option<Local> {
         for (local, addr) in &self.local_addresses {
             if addr == term {
                 return Some(*local);
@@ -2692,11 +2659,11 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         }
     }
 
-    /// Fallback length/capacity computation: derive the element count from the
-    /// backing allocation (`size / elem_size`). Used by `ReturnLengthOfArg` /
-    /// `ReturnCapacityOfArg` when the `{buf{ptr,cap}, len}` fields are not
-    /// materialized (slices, `&str`, and legacy Vec values). Returns true when
-    /// a value was produced.
+    /// Derive an element count from the backing allocation (`size / elem_size`).
+    /// Used by `ReturnLengthOfArg`, `ReturnCapacityOfArg`, and the fallback in
+    /// `ReturnFieldOfArg` (slices, `&str`, and Vec values whose `{buf{ptr,cap},
+    /// len}` field was not materialized). Returns true when a value was
+    /// produced.
     fn set_len_from_alloc(&mut self, arg_val: &VmValue<'ctx, 'tcx>, dest: Local) -> bool {
         let effective_alloc_id = arg_val
             .provenance_alloc_id()
@@ -2735,12 +2702,13 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     ///   * field `[0, 1]` = capacity (`buf.cap`),
     ///   * field `[1]`   = length (`len`).
     ///
-    /// The symbolic invariant `0 <= len <= cap` is asserted as a path condition
-    /// so downstream `len()` / `capacity()` / `InBound` queries agree. This is
-    /// the internalized counterpart of a user `#[rapx::invariant]` for the
-    /// `Vec` layout — the length is no longer folded into `alloc.size` but
-    /// tracked as a named field, so `len()`/`capacity()` become plain field
-    /// reads.
+    /// The symbolic invariant `0 <= len <= cap` and `cap * elem_size <=
+    /// isize::MAX` is asserted as a path condition so downstream `len()` /
+    /// `capacity()` / `InBound` / `ValidNum` queries agree. This is the
+    /// internalized counterpart of a user `#[rapx::invariant]` for the `Vec`
+    /// layout — the length/capacity are tracked as named fields (read back by
+    /// `ReturnFieldOfArg` for `len()`) instead of being recomputed from
+    /// `alloc.size`.
     pub(crate) fn materialize_vec_fields(
         &mut self,
         local: Local,

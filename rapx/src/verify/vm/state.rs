@@ -271,6 +271,19 @@ pub(crate) struct VmState<'ctx, 'tcx> {
     /// Used to recognize `x & !(align-1)` alignment patterns in BitAnd so we
     /// can derive `align = -mask` and emit linear bounds for the result.
     pub(crate) not_mask_terms: FxHashSet<Int<'ctx>>,
+
+    /// During `exec_inline_call`, maps each callee argument index to the
+    /// *caller* local its value points at (resolved from the reference's
+    /// address term before the caller's address map is saved away). Used by
+    /// `exec_assign` to resolve `(*self).field = val` writes through a `&mut
+    /// self` reborrow temp back to the caller's referent.
+    pub(crate) inline_arg_referents: Vec<Option<Local>>,
+
+    /// Field writes collected during `exec_inline_call` that must be applied to
+    /// the caller's `field_values` *after* the inline frame is popped (the
+    /// caller's field map is not live while the callee executes). Each entry is
+    /// `(caller_referent_local, field_path, value)`.
+    pub(crate) deferred_field_writes: Vec<(Local, Vec<usize>, VmValue<'ctx, 'tcx>)>,
 }
 
 impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
@@ -308,6 +321,8 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             inline_depth: 0,
             inline_frames: Vec::new(),
             not_mask_terms: FxHashSet::default(),
+            inline_arg_referents: Vec::new(),
+            deferred_field_writes: Vec::new(),
         }
     }
 

@@ -1494,6 +1494,51 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     self.track_iter_ptr_update(place.local);
                 }
             }
+        } else {
+            // Deref projection (`(*ptr).field = val`): resolve the referent
+            // local and write the field there, so `&mut self` setters
+            // (`set_len`, `clear`, …) actually update the referent's
+            // materialized fields instead of being silently dropped.
+            //
+            // A pure `*ptr = val` (no trailing Field) still must NOT overwrite
+            // the pointer local — writing through a pointer should not reassign
+            // the pointer variable.
+            let mut proj = place.projection.iter();
+            if matches!(
+                proj.next().map(|p| p.kind()),
+                Some(rustc_middle::mir::ProjectionElem::Deref)
+            ) {
+                let field_indices: Vec<usize> = proj
+                    .filter_map(|p| match p.kind() {
+                        rustc_middle::mir::ProjectionElem::Field(idx, _) => Some(idx.as_usize()),
+                        _ => None,
+                    })
+                    .collect();
+                if !field_indices.is_empty() {
+                    // Resolve the dereferenced pointer (a reference/reborrow
+                    // temp) back to the local it points at, matching its
+                    // address term against the known local addresses.
+                    let pointed = self.locals.get(&place.local).cloned();
+                    if let Some(pointed) = pointed {
+                        if let Some(referent) = self.find_local_by_address(&pointed.term) {
+                            let mut write_value = value;
+                            write_value.invariants.init = true;
+                            self.set_field_value(referent, field_indices, write_value);
+                        } else if let Some(arg_idx) = place.local.as_usize().checked_sub(1) {
+                            // Inline frame: the caller's address map is saved
+                            // away, so resolve through the precomputed
+                            // `&mut self` referent and defer the write until the
+                            // caller's `field_values` is restored.
+                            if let Some(referent) =
+                                self.inline_arg_referents.get(arg_idx).copied().flatten()
+                            {
+                                self.deferred_field_writes
+                                    .push((referent, field_indices, value));
+                            }
+                        }
+                    }
+                }
+            }
         }
         // For deref projections (`*ptr = val`): do NOT overwrite the base local.
         // Writing through a pointer should not reassign the pointer variable.

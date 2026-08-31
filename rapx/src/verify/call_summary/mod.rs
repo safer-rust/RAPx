@@ -108,18 +108,8 @@ pub(crate) enum CallEffect {
     ReturnCapacityOfArg { arg: usize },
     /// The return value is field `field` of the pointee of argument `arg`
     /// (models `Vec::len` and any `(*self).field` getter; the field index is
-    /// derived straight from the callee's MIR, mirroring [`WriteFieldOfArg`]).
+    /// derived straight from the callee's MIR).
     ReturnFieldOfArg { arg: usize, field: usize },
-    /// The call writes the value of argument `from_arg` into field `field` of
-    /// the pointee of the `&mut` argument `arg` (models `Vec::set_len` and any
-    /// `(*self).field = arg` setter; the field index and value are derived
-    /// straight from the callee's MIR, so no length-specific or name-based
-    /// knowledge is needed).
-    WriteFieldOfArg {
-        arg: usize,
-        field: usize,
-        from_arg: usize,
-    },
     /// The return value is `min(lhs_arg, rhs_arg)`, satisfying
     /// `return <= lhs_arg` and `return <= rhs_arg`.
     ReturnMin { lhs_arg: usize, rhs_arg: usize },
