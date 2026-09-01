@@ -21,6 +21,8 @@ use crate::helpers::mir_scan::{Checkpoint, CheckpointLocation};
 
 use super::{property_checker::PropertyChecker, vm::SymbolicVm};
 
+/// The three verification stages: a backward [`BackwardSlicer`], a
+/// [`SymbolicVm`], and a [`PropertyChecker`].
 pub(crate) struct VerifyEngine<'tcx> {
     slicer: BackwardSlicer<'tcx>,
     vm: SymbolicVm<'tcx>,
@@ -28,6 +30,7 @@ pub(crate) struct VerifyEngine<'tcx> {
 }
 
 impl<'tcx> VerifyEngine<'tcx> {
+    /// Construct a fresh engine wired to `tcx`.
     pub(crate) fn new(tcx: TyCtxt<'tcx>) -> Self {
         Self {
             slicer: BackwardSlicer::new(tcx),
@@ -36,12 +39,21 @@ impl<'tcx> VerifyEngine<'tcx> {
         }
     }
 
+    /// Create a fresh Z3 context with a fixed 10s solver timeout.
+    ///
+    /// A new context is created per top-level check so that each verification
+    /// runs in isolation (no shared solver state leaks between checks).
     fn new_z3_context() -> z3::Context {
         let mut cfg = Config::new();
         cfg.set_timeout_msec(10000);
         z3::Context::new(&cfg)
     }
 
+    /// Verify a property against every path reaching `checkpoint`, one result
+    /// per path. Each path is sliced backward from the checkpoint, replayed
+    /// symbolically by the VM, and finally discharged by the property checker.
+    ///
+    /// Returns `(result, path_description)` pairs in forward MIR order.
     pub(crate) fn check_callsite_from_tree(
         &self,
         tree: &PathTree,
@@ -63,6 +75,13 @@ impl<'tcx> VerifyEngine<'tcx> {
         // A ChecksIndexBoundsDisjoint call in an earlier checkpoint
         // can discharge InBound checks in a later checkpoint.
         let mut accumulated_has_checked: bool = false;
+
+        // Map (def_id, local block) -> global block, computed once and reused
+        // by `inject_inline_boundaries` for every checkpoint.
+        let mut local_to_global: HashMap<(DefId, usize), usize> = HashMap::new();
+        for (global, (def_id, local)) in tree.block_fns().iter().enumerate() {
+            local_to_global.insert((*def_id, *local), global);
+        }
 
         // Process checkpoints in forward (MIR) order so that facts
         // collected by earlier calls are available to later checks.
@@ -86,7 +105,7 @@ impl<'tcx> VerifyEngine<'tcx> {
             items.extend(backward.items);
             // Insert inlined-callee boundary markers (argument binding / return
             // write-back) based on def_id transitions across the path.
-            items = Self::inject_inline_boundaries(items, tree, checkpoint.caller);
+            items = Self::inject_inline_boundaries(items, tree, &local_to_global, checkpoint.caller);
 
             let wrapped = crate::verify::slicer::ProofGoal {
                 path: backward.path,
@@ -115,16 +134,16 @@ impl<'tcx> VerifyEngine<'tcx> {
     /// detecting `def_id` transitions (caller → callee → caller). Each inlined
     /// callee entry carries its argument binding; each exit writes the callee's
     /// return value back to the caller's destination.
+    ///
+    /// `local_to_global` maps `(def_id, local_block)` pairs to their global
+    /// block index in `tree`; it is precomputed by the caller so it can be
+    /// reused across every checkpoint instead of rebuilt per path.
     fn inject_inline_boundaries(
         items: Vec<RelevantItem<'tcx>>,
         tree: &PathTree,
+        local_to_global: &HashMap<(DefId, usize), usize>,
         caller: DefId,
     ) -> Vec<RelevantItem<'tcx>> {
-        let mut local_to_global: HashMap<(DefId, usize), usize> = HashMap::new();
-        for (global, (def_id, local)) in tree.block_fns().iter().enumerate() {
-            local_to_global.insert((*def_id, *local), global);
-        }
-
         let mut out: Vec<RelevantItem<'tcx>> = Vec::new();
         // Start in the caller so a path that begins inside an inlined callee
         // still emits its CalleeEntry on the first item.
@@ -176,6 +195,10 @@ impl<'tcx> VerifyEngine<'tcx> {
         out
     }
 
+    /// Rewrite a property so its contract expressions refer to the caller's
+    /// argument positions at `checkpoint` rather than the callee's local
+    /// numbering. Recurses through `Atom`/`And`/`Or` nodes and clears `origin`
+    /// metadata (which only applies to the source-level property).
     fn bind_property_to_checkpoint(
         property: &Property<'tcx>,
         checkpoint: &Checkpoint<'tcx>,
@@ -209,7 +232,10 @@ impl<'tcx> VerifyEngine<'tcx> {
                     kind: atom.kind,
                     args: new_args,
                     contract_kind: atom.contract_kind,
-                    for_each: atom.for_each.clone(),
+                    for_each: atom
+                        .for_each
+                        .as_ref()
+                        .map(|p| Self::rebind_place(p, checkpoint)),
                     origin: None,
                 })
             }
@@ -240,6 +266,11 @@ impl<'tcx> VerifyEngine<'tcx> {
         }
     }
 
+    /// Rewrite a contract place's base to the checkpoint's view.
+    ///
+    /// `Return` and `Arg` bases are unchanged; a `Local(n)` that falls within
+    /// the checkpoint's argument range is remapped to `Arg(n - 1)` (locals
+    /// 1..=k correspond to the callee's arguments in order).
     fn rebind_place(
         place: &super::contract::ContractPlace<'tcx>,
         checkpoint: &Checkpoint<'tcx>,
@@ -261,6 +292,8 @@ impl<'tcx> VerifyEngine<'tcx> {
         }
     }
 
+    /// Recursively rewrite every place embedded in a contract expression,
+    /// rebinding `Local` bases to argument positions via [`Self::rebind_place`].
     fn rebind_contract_expr(
         expr: &super::contract::ContractExpr<'tcx>,
         checkpoint: &Checkpoint<'tcx>,
@@ -312,6 +345,12 @@ impl<'tcx> VerifyEngine<'tcx> {
         }
     }
 
+    /// Verify an invariant against every path reaching `checkpoint`.
+    ///
+    /// Unlike [`Self::check_callsite_from_tree`], there is no callsite to bind
+    /// against, so `entry_facts` are prepended to each sliced path and the
+    /// checker runs directly against the invariant. Returns
+    /// `(result, path_description)` pairs.
     pub(crate) fn check_invariant_from_tree(
         &self,
         def_id: DefId,
