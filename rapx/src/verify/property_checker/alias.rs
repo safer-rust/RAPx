@@ -3,8 +3,6 @@
 //! `Alias` delegates to [`crate::verify::vm::alias::check_alias_vm`]; `Owning`
 //! is a simple liveness check on the target allocation.
 
-#[cfg(not(rapx_has_skip_norm_wip))]
-use crate::compat::SkipNormWip;
 use crate::helpers::mir_scan::Checkpoint;
 use crate::verify::contract::Property;
 use crate::verify::report::CheckResult;

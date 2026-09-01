@@ -322,6 +322,22 @@ impl PropertyChecker {
         }
     }
 
+    /// Whether the element-count argument (`args[2]`) evaluates to the constant
+    /// `0`, making any InBound/Allocated byte-range check trivially satisfied.
+    pub(super) fn count_is_zero<'ctx, 'tcx>(
+        &self,
+        vm_state: &VmState<'ctx, 'tcx>,
+        checkpoint: &Checkpoint<'tcx>,
+        property: &Property<'tcx>,
+    ) -> bool {
+        property
+            .args()
+            .get(2)
+            .and_then(|a| self.resolve_arg_term(vm_state, checkpoint, a))
+            .and_then(|ct| ct.as_u64())
+            == Some(0)
+    }
+
     pub(super) fn access_bytes<'ctx, 'tcx>(
         &self,
         vm_state: &VmState<'ctx, 'tcx>,

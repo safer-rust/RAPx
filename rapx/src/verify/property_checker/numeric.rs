@@ -4,8 +4,6 @@
 //! `assert_all` plus Euclidean-division (NIA) axioms injected for both the
 //! contract expression and the VM's computed terms.
 
-#[cfg(not(rapx_has_skip_norm_wip))]
-use crate::compat::SkipNormWip;
 use crate::helpers::mir_scan::Checkpoint;
 use crate::verify::api_classify;
 use crate::verify::contract::{

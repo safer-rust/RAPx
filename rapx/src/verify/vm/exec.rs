@@ -2223,6 +2223,17 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
 
     // ── Arithmetic ────────────────────────────────────────────────
 
+    /// Encode a boolean condition as the integer `1`/`0`.
+    fn bool_as_int(&self, cond: &Bool<'ctx>) -> Int<'ctx> {
+        cond.ite(&Int::from_u64(self.ctx, 1), &Int::from_u64(self.ctx, 0))
+    }
+
+    /// Negate a Z3 integer (`0 - val`).
+    fn negate(&self, val: &Int<'ctx>) -> Int<'ctx> {
+        let zero = Int::from_u64(self.ctx, 0);
+        Int::sub(self.ctx, &[&zero, val])
+    }
+
     fn eval_binary_op(&mut self, op: BinOp, lhs: &Int<'ctx>, rhs: &Int<'ctx>) -> Int<'ctx> {
         match op {
             BinOp::Add | BinOp::AddWithOverflow | BinOp::AddUnchecked => {
@@ -2236,30 +2247,12 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             }
             BinOp::Div => lhs.div(rhs),
             BinOp::Rem => lhs.rem(rhs),
-            BinOp::Eq => {
-                let cond = lhs._eq(rhs);
-                cond.ite(&Int::from_u64(self.ctx, 1), &Int::from_u64(self.ctx, 0))
-            }
-            BinOp::Ne => {
-                let cond = lhs._eq(rhs).not();
-                cond.ite(&Int::from_u64(self.ctx, 1), &Int::from_u64(self.ctx, 0))
-            }
-            BinOp::Lt => {
-                let cond = lhs.lt(rhs);
-                cond.ite(&Int::from_u64(self.ctx, 1), &Int::from_u64(self.ctx, 0))
-            }
-            BinOp::Le => {
-                let cond = lhs.le(rhs);
-                cond.ite(&Int::from_u64(self.ctx, 1), &Int::from_u64(self.ctx, 0))
-            }
-            BinOp::Gt => {
-                let cond = lhs.gt(rhs);
-                cond.ite(&Int::from_u64(self.ctx, 1), &Int::from_u64(self.ctx, 0))
-            }
-            BinOp::Ge => {
-                let cond = lhs.ge(rhs);
-                cond.ite(&Int::from_u64(self.ctx, 1), &Int::from_u64(self.ctx, 0))
-            }
+            BinOp::Eq => self.bool_as_int(&lhs._eq(rhs)),
+            BinOp::Ne => self.bool_as_int(&lhs._eq(rhs).not()),
+            BinOp::Lt => self.bool_as_int(&lhs.lt(rhs)),
+            BinOp::Le => self.bool_as_int(&lhs.le(rhs)),
+            BinOp::Gt => self.bool_as_int(&lhs.gt(rhs)),
+            BinOp::Ge => self.bool_as_int(&lhs.ge(rhs)),
             BinOp::Offset => Int::add(self.ctx, &[lhs, rhs]),
             BinOp::BitAnd => {
                 let result = self.fresh_int("binop");
@@ -2315,18 +2308,13 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     val._eq(&zero).ite(&one, &zero)
                 } else {
                     // Two's-complement bitwise NOT: !x == -x - 1.
-                    let zero = Int::from_u64(self.ctx, 0);
                     let one = Int::from_u64(self.ctx, 1);
-                    let neg = Int::sub(self.ctx, &[&zero, val]);
-                    let result = Int::sub(self.ctx, &[&neg, &one]);
+                    let result = Int::sub(self.ctx, &[&self.negate(val), &one]);
                     self.not_mask_terms.insert(result.clone());
                     result
                 }
             }
-            UnOp::Neg => {
-                let zero = Int::from_u64(self.ctx, 0);
-                Int::sub(self.ctx, &[&zero, val])
-            }
+            UnOp::Neg => self.negate(val),
             UnOp::PtrMetadata => self.fresh_int("ptr_metadata"),
         }
     }
@@ -2455,26 +2443,9 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 }
             }
             BinOp::Mul | BinOp::MulWithOverflow | BinOp::MulUnchecked => {
-                if let Some(c) = rhs.term.as_u64() {
-                    if c > 0 && c.is_power_of_two() {
-                        Some(c)
-                    } else if c > 0 {
-                        let factor = 1u64 << c.trailing_zeros();
-                        if factor > 1 { Some(factor) } else { None }
-                    } else {
-                        None
-                    }
-                } else if let Some(c) = lhs.term.as_u64() {
-                    if c > 0 && c.is_power_of_two() {
-                        Some(c)
-                    } else if c > 0 {
-                        let factor = 1u64 << c.trailing_zeros();
-                        if factor > 1 { Some(factor) } else { None }
-                    } else {
-                        None
-                    }
-                } else {
-                    None
+                match rhs.term.as_u64() {
+                    Some(c) => pow2_factor(c),
+                    None => lhs.term.as_u64().and_then(pow2_factor),
                 }
             }
             _ => lhs.invariants.align_n,
@@ -2719,29 +2690,14 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         };
         let cond_pk = PlaceKey::from_mir_place(place);
 
-        // Check if cond was defined by BinaryOp(Ne, (ptr, 0)) or similar
+        // Check if cond was defined by BinaryOp(Ne, (ptr, 0)) or similar:
+        // mark the non-constant side as non-null.
         if let Some((lhs_pk, rhs_pk)) = self.binary_op_sources.get(&cond_pk).cloned() {
-            // lhs is pointer, rhs is None (constant zero) → mark lhs as non_null
             if rhs_pk.is_none() {
-                if let Some(ptr_pk) = &lhs_pk {
-                    if let Some(local) = ptr_pk.local() {
-                        if let Some(mut val) = self.locals.get(&local).cloned() {
-                            val.invariants.non_null = true;
-                            self.set_local(local, val);
-                        }
-                    }
-                }
+                self.mark_guard_pointer(&lhs_pk, &None);
             }
-            // rhs is pointer, lhs is None (constant zero) → mark rhs as non_null
             if lhs_pk.is_none() {
-                if let Some(ptr_pk) = &rhs_pk {
-                    if let Some(local) = ptr_pk.local() {
-                        if let Some(mut val) = self.locals.get(&local).cloned() {
-                            val.invariants.non_null = true;
-                            self.set_local(local, val);
-                        }
-                    }
-                }
+                self.mark_guard_pointer(&rhs_pk, &None);
             }
         }
     }
@@ -3279,14 +3235,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         let local = Local::from_usize(1);
         let ptr = self.field_value(local, &[0])?;
         let end = self.field_value(local, &[1])?;
-        let pp = ptr.provenance.as_ref()?;
-        let ep = end.provenance.as_ref()?;
-        if pp.alloc_id != ep.alloc_id {
-            return None;
-        }
-        let diff = Int::sub(self.ctx, &[&ep.offset, &pp.offset]);
-        let sz = Int::from_u64(self.ctx, self.iter_elem_size(ptr));
-        Some(diff.div(&sz))
+        self.iter_len_from_ptrs(ptr, end)
     }
 
     /// For a predicate of the form `self.len() != 0` (i.e. `!self.is_empty()`),
@@ -3837,4 +3786,18 @@ fn resolve_u64_from_place_key<'ctx, 'tcx>(
     let local = pk.local()?;
     let val = state.local_value(local)?;
     val.term.as_u64()
+}
+
+/// Largest power-of-two factor of a non-negative constant (the alignment
+/// implied by multiplying by `c`): `c` itself if it is a power of two,
+/// otherwise `2^trailing_zeros(c)`.
+fn pow2_factor(c: u64) -> Option<u64> {
+    if c > 0 && c.is_power_of_two() {
+        Some(c)
+    } else if c > 0 {
+        let factor = 1u64 << c.trailing_zeros();
+        if factor > 1 { Some(factor) } else { None }
+    } else {
+        None
+    }
 }

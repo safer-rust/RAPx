@@ -1067,6 +1067,17 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         }
     }
 
+    /// Clone `arg_val`, retype it to `dest`'s type, mark it as a non-null,
+    /// aligned, initialized pointer, and bind it to `dest`.
+    fn set_dest_as_heap_ptr(&mut self, arg_val: &VmValue<'ctx, 'tcx>, dest: Local) {
+        let mut val = arg_val.clone();
+        val.ty = self.body.local_decls[dest].ty;
+        val.invariants.non_null = true;
+        val.invariants.aligned = true;
+        val.invariants.init = true;
+        self.set_local(dest, val);
+    }
+
     /// Apply a single call effect to the VM state.
     fn apply_call_effect(
         &mut self,
@@ -1078,22 +1089,12 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         match effect {
             CallEffect::ReturnAliasArg { arg } => {
                 if let Some(arg_val) = args.get(*arg) {
-                    let mut val = arg_val.clone();
-                    val.ty = self.body.local_decls[dest].ty;
-                    val.invariants.non_null = true;
-                    val.invariants.aligned = true;
-                    val.invariants.init = true;
-                    self.set_local(dest, val);
+                    self.set_dest_as_heap_ptr(arg_val, dest);
                 }
             }
             CallEffect::ReturnTransparentDeref { arg, peel } => {
                 if let Some(arg_val) = args.get(*arg) {
-                    let mut val = arg_val.clone();
-                    val.ty = self.body.local_decls[dest].ty;
-                    val.invariants.non_null = true;
-                    val.invariants.aligned = true;
-                    val.invariants.init = true;
-                    self.set_local(dest, val);
+                    self.set_dest_as_heap_ptr(arg_val, dest);
                     // Peel `peel` leading field-0 hops off the argument's
                     // pointee field values (ManuallyDrop.value → MaybeDangling.0)
                     // and expose them as the deref result's pointee fields.
@@ -2535,6 +2536,23 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         elem_ty.map(|t| self.size_of_ty(t).max(1)).unwrap_or(1) as u64
     }
 
+    /// Element count from two pointer fields sharing the same allocation:
+    /// `(end.offset - ptr.offset) / elem_size`.
+    pub(crate) fn iter_len_from_ptrs(
+        &self,
+        ptr: &VmValue<'ctx, 'tcx>,
+        end: &VmValue<'ctx, 'tcx>,
+    ) -> Option<Int<'ctx>> {
+        let pp = ptr.provenance.as_ref()?;
+        let ep = end.provenance.as_ref()?;
+        if pp.alloc_id != ep.alloc_id {
+            return None;
+        }
+        let diff = Int::sub(self.ctx, &[&ep.offset, &pp.offset]);
+        let sz = Int::from_u64(self.ctx, self.iter_elem_size(ptr));
+        Some(diff.div(&sz))
+    }
+
     /// Remaining element count of the Iter/IterMut backed by `local`
     /// (fields `[0]` = ptr, `[1]` = end_or_len).  When a tracked pointer
     /// offset exists (`iter_ptr_offset`), prefers the compact
@@ -2543,9 +2561,8 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     fn iter_remaining_len(&self, local: Local) -> Option<Int<'ctx>> {
         let ptr = self.field_value(local, &[0])?;
         let end = self.field_value(local, &[1])?;
-        let pp = ptr.provenance.as_ref()?;
         let ep = end.provenance.as_ref()?;
-        if pp.alloc_id != ep.alloc_id {
+        if ptr.provenance.as_ref().map(|p| p.alloc_id) != Some(ep.alloc_id) {
             return None;
         }
         let sz = Int::from_u64(self.ctx, self.iter_elem_size(&ptr));
@@ -2558,7 +2575,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     .ite(&zero, &Int::sub(self.ctx, &[&base_len, offset])),
             )
         } else {
-            Some(Int::sub(self.ctx, &[&ep.offset, &pp.offset]).div(&sz))
+            self.iter_len_from_ptrs(&ptr, &end)
         }
     }
 
@@ -2634,10 +2651,8 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         // the iterator is the first argument; direct trait
                         // `Iterator::next` calls keep the iterator at an
                         // arbitrary local.
-                        for (local, addr) in &self.local_addresses {
-                            if addr == &arg_val.term {
-                                return Some(*local);
-                            }
+                        if let Some(local) = self.find_local_by_address(&arg_val.term) {
+                            return Some(local);
                         }
                         // Fallback for inlined `next` bodies (iter bound to arg 1).
                         return Some(Local::from_usize(1));

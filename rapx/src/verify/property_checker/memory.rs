@@ -5,8 +5,6 @@
 //! `in_bounds`, `non_null`) with fast paths, falling back to SMT over
 //! `value.term` and allocation base/size.
 
-#[cfg(not(rapx_has_skip_norm_wip))]
-use crate::compat::SkipNormWip;
 use crate::helpers::mir_scan::Checkpoint;
 use crate::verify::api_classify;
 use crate::verify::contract::{ContractExpr, Property, PropertyArg};
@@ -300,11 +298,7 @@ impl PropertyChecker {
         // provenance has been lost through a cast.  Mirrors the `count == 0`
         // fast-path in `check_in_bound` and covers `from_raw_parts(ptr, 0)`
         // (e.g. `Option::as_slice` on `None`).
-        let count_term = property
-            .args()
-            .get(2)
-            .and_then(|a| self.resolve_arg_term(vm_state, checkpoint, a));
-        if count_term.as_ref().is_some_and(|ct| ct.as_u64() == Some(0)) {
+        if self.count_is_zero(vm_state, checkpoint, property) {
             return CheckResult::Proved;
         }
 

@@ -4,8 +4,6 @@
 //! field-offset invariants, or an SMT coverage check over allocation base/size.
 //! `NonOverlap` uses provenance-distinctness and range-overlap reasoning.
 
-#[cfg(not(rapx_has_skip_norm_wip))]
-use crate::compat::SkipNormWip;
 use crate::helpers::mir_scan::Checkpoint;
 use crate::verify::api_classify;
 use crate::verify::contract::{
@@ -84,14 +82,8 @@ impl PropertyChecker {
         // When the contract expression for the element count evaluates to
         // zero (e.g. div-by-sizeof for ZST generic params), the byte-level
         // access is zero and limits checking is trivial.
-        let count_term = property
-            .args()
-            .get(2)
-            .and_then(|a| self.resolve_arg_term(vm_state, checkpoint, a));
-        if let Some(ref ct) = count_term {
-            if ct.as_u64() == Some(0) {
-                return CheckResult::Proved;
-            }
+        if self.count_is_zero(vm_state, checkpoint, property) {
+            return CheckResult::Proved;
         }
         let access = self.access_bytes(vm_state, property, 1, 2, checkpoint, &value);
         let Some(alloc_id) = value.provenance_alloc_id() else {

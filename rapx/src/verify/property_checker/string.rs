@@ -1,7 +1,5 @@
 //! Checker for `ValidString`: UTF-8 validity of tracked byte buffers.
 
-#[cfg(not(rapx_has_skip_norm_wip))]
-use crate::compat::SkipNormWip;
 use crate::helpers::mir_scan::Checkpoint;
 use crate::verify::contract::Property;
 use crate::verify::report::CheckResult;
