@@ -8,6 +8,10 @@ use crate::helpers::mir_scan::Checkpoint;
 use crate::verify::contract::{ContractExpr, Property, PropertyArg};
 use crate::verify::report::CheckResult;
 use crate::verify::vm::state::VmState;
+#[cfg(not(rapx_ge_100))]
+use rustc_hir::LangItem;
+#[cfg(rapx_ge_100)]
+use rustc_hir::attrs::lang_items::LangItem;
 use rustc_middle::ty::{Ty, TyKind};
 use z3::{Solver, ast::Ast};
 
@@ -127,11 +131,16 @@ impl PropertyChecker {
                                     // Unwrap ManuallyDrop<T> → T for unions like MaybeUninit.
                                     if let TyKind::Adt(wrap_adt, wrap_substs) = field_ty.kind() {
                                         if !wrap_adt.is_enum() {
-                                            let did = format!("{:?}", wrap_adt.did());
-                                            if (did.contains("ManuallyDrop")
-                                                || did.contains("UnsafeCell"))
-                                                && wrap_substs.first().and_then(|s| s.as_type())
-                                                    == Some(expected_ty)
+                                            if (vm_state.tcx.is_lang_item(
+                                                wrap_adt.did(),
+                                                LangItem::ManuallyDrop,
+                                            ) || vm_state.tcx.is_lang_item(
+                                                wrap_adt.did(),
+                                                LangItem::UnsafeCell,
+                                            )) && wrap_substs
+                                                .first()
+                                                .and_then(|s| s.as_type())
+                                                == Some(expected_ty)
                                             {
                                                 if vm_state.alloc(alloc_id).initialized {
                                                     return CheckResult::Proved;

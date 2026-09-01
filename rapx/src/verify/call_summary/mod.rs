@@ -229,7 +229,7 @@ pub(crate) fn dependency_summary<'tcx>(
     if let Some(callee) = callee {
         if name.contains("::intrinsics::")
             || name.starts_with("intrinsics::")
-            || name.ends_with("::drop_in_place")
+            || mir_utils::is_drop_in_place(tcx, callee)
         {
             return CallDependencySummary::unknown(arg_count);
         }
@@ -292,7 +292,7 @@ pub(crate) fn effect_summary<'tcx>(
     if let Some(callee) = callee {
         if name.contains("::intrinsics::")
             || name.starts_with("intrinsics::")
-            || name.ends_with("::drop_in_place")
+            || mir_utils::is_drop_in_place(tcx, callee)
         {
             return CallEffectSummary::unknown(name);
         }
