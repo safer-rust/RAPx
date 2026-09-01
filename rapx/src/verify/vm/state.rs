@@ -136,6 +136,32 @@ pub(crate) struct Allocation<'ctx, 'tcx> {
     pub slice_data: Option<AllocId>,
 }
 
+impl<'ctx, 'tcx> Allocation<'ctx, 'tcx> {
+    /// Construct a fresh allocation with all live/dead/invariant flags in
+    /// their initial state.
+    pub(crate) fn new(
+        base: Int<'ctx>,
+        size: Int<'ctx>,
+        align: u64,
+        element_ty: Option<Ty<'tcx>>,
+        is_external: bool,
+    ) -> Self {
+        Allocation {
+            base,
+            size,
+            align,
+            element_ty,
+            is_external,
+            dead: false,
+            initialized: false,
+            alive_assumed: false,
+            nul_terminated: false,
+            parent: None,
+            slice_data: None,
+        }
+    }
+}
+
 /// One-shot execution/contract flags accumulated while stepping a path.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct ContractFlags {
@@ -381,19 +407,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             let name = format!("{}_{}", if is_external { "ext" } else { "heap" }, id.0);
             Int::new_const(self.ctx, name.as_str())
         };
-        let alloc = Allocation {
-            base: base.clone(),
-            size,
-            align,
-            element_ty,
-            is_external,
-            dead: false,
-            initialized: false,
-            alive_assumed: false,
-            nul_terminated: false,
-            parent: None,
-            slice_data: None,
-        };
+        let alloc = Allocation::new(base.clone(), size, align, element_ty, is_external);
         self.allocations.push(alloc);
         (id, base)
     }
@@ -706,16 +720,11 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 .iter()
                 .all(|p| matches!(p.kind(), ProjectionElem::Field(..) | ProjectionElem::Deref));
             if non_field_deref {
-                // Recompute field_path since the original was moved.
-                let fp: Vec<usize> = place
-                    .projection
-                    .iter()
-                    .filter_map(|proj| match proj.kind() {
-                        ProjectionElem::Field(field_idx, _) => Some(field_idx.as_usize()),
-                        _ => None,
-                    })
-                    .collect();
-                if let Some(val) = self.field_values.get(&(place.local, fp)).cloned() {
+                if let Some(val) = self
+                    .field_values
+                    .get(&(place.local, field_path.clone()))
+                    .cloned()
+                {
                     return Some(val);
                 }
             }
@@ -732,18 +741,10 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 }
                 ProjectionElem::Field(_field_idx, _) => {
                     // Try to get the field value from the VM's field tracking
-                    let field_indices: Vec<usize> = place
-                        .projection
-                        .iter()
-                        .filter_map(|p| match p.kind() {
-                            ProjectionElem::Field(fi, _) => Some(fi.as_usize()),
-                            _ => None,
-                        })
-                        .collect();
-                    if !field_indices.is_empty() {
+                    if !field_path.is_empty() {
                         if let Some(val) = self
                             .field_values
-                            .get(&(place.local, field_indices))
+                            .get(&(place.local, field_path.clone()))
                             .cloned()
                         {
                             return Some(val);

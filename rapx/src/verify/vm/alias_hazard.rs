@@ -30,12 +30,14 @@ use crate::{
     verify::def_use::{PlaceBaseKey, PlaceKey},
 };
 
-// Re-export utility functions moved to helpers/mir_utils for
-// backward compatibility.
+// Re-export the mir_utils helpers still consumed by `vm/alias.rs`.
 pub(super) use crate::helpers::mir_utils::{
-    blocks_reachable_after_call, call_destination, collect_place_aliases, deep_resolve_place,
-    operand_mir_place, operand_place, resolve_mir_place, rvalue_any_place_matching,
-    trace_place_root,
+    call_destination, deep_resolve_place, operand_mir_place, operand_place,
+};
+// Remaining mir_utils helpers used only within this module.
+use crate::helpers::mir_utils::{
+    blocks_reachable_after_call, collect_place_aliases, resolve_mir_place,
+    rvalue_any_place_matching, trace_place_root,
 };
 
 // ── Shared types ─────────────────────────────────────────────────

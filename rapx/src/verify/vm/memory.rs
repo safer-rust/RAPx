@@ -165,19 +165,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 (Int::from_u64(self.ctx, size), Some(ty), false)
             }
         };
-        let alloc = Allocation {
-            base,
-            size: size_term,
-            align,
-            element_ty,
-            is_external,
-            dead: false,
-            initialized: false,
-            alive_assumed: false,
-            nul_terminated: false,
-            parent: None,
-            slice_data: None,
-        };
+        let alloc = Allocation::new(base, size_term, align, element_ty, is_external);
         self.allocations.push(alloc);
         self.local_alloc_ids.insert(local, id);
     }
@@ -207,12 +195,12 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         self.local_alloc_ids.get(&local).copied()
     }
 
-    pub(crate) fn allocation_size(&self, alloc_id: AllocId) -> Option<&Int<'ctx>> {
-        Some(&self.alloc(alloc_id).size)
+    pub(crate) fn allocation_size(&self, alloc_id: AllocId) -> &Int<'ctx> {
+        &self.alloc(alloc_id).size
     }
 
-    pub(crate) fn allocation_base(&self, alloc_id: AllocId) -> Option<&Int<'ctx>> {
-        Some(&self.alloc(alloc_id).base)
+    pub(crate) fn allocation_base(&self, alloc_id: AllocId) -> &Int<'ctx> {
+        &self.alloc(alloc_id).base
     }
 
     /// Get the element size (in bytes) for a pointer type, peeling

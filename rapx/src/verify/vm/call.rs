@@ -1424,14 +1424,12 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     // such containers set it, so no name matching is needed.
                     if let Some(ref prov) = val.provenance {
                         if let Some(data_alloc) = self.alloc(prov.alloc_id).slice_data {
-                            if let Some(data_base) = self.allocation_base(data_alloc).cloned() {
-                                val.term = data_base;
-                                val.provenance = Some(Provenance {
-                                    alloc_id: data_alloc,
-                                    offset: Int::from_u64(self.ctx, 0),
-                                    is_field_offset: false,
-                                });
-                            }
+                            val.term = self.allocation_base(data_alloc).clone();
+                            val.provenance = Some(Provenance {
+                                alloc_id: data_alloc,
+                                offset: Int::from_u64(self.ctx, 0),
+                                is_field_offset: false,
+                            });
                         }
                     }
                     if src_non_null {
@@ -2040,9 +2038,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                             let write_size = if elem_size > 0 {
                                 elem_size
                             } else {
-                                self.allocation_size(prov.alloc_id)
-                                    .and_then(|s| s.as_u64())
-                                    .unwrap_or(0) as usize
+                                self.allocation_size(prov.alloc_id).as_u64().unwrap_or(0) as usize
                             };
                             let end = (off as usize + write_size).min(4096);
                             for byte_off in (off as usize)..end {
@@ -2057,8 +2053,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                             // mark the whole allocation initialized so a later
                             // `assume_init_read`/`assume_init_drop` can discharge
                             // `Init` on those (fully initialized) elements.
-                            let size_val =
-                                self.allocation_size(prov.alloc_id).and_then(|s| s.as_u64());
+                            let size_val = self.allocation_size(prov.alloc_id).as_u64();
                             match size_val {
                                 Some(sz) if sz > 0 => {
                                     for off in 0..(sz as usize).min(1024) {
@@ -2352,28 +2347,27 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 if let Some(vec_val) = args.get(*arg) {
                     if let Some(ref prov) = vec_val.provenance {
                         if let Some(heap_alloc_id) = self.alloc(prov.alloc_id).slice_data {
-                            if let Some(heap_base) = self.allocation_base(heap_alloc_id).cloned() {
-                                let dest_ty = self.body.local_decls[dest].ty;
-                                self.set_local(
-                                    dest,
-                                    VmValue {
-                                        term: heap_base,
-                                        ty: dest_ty,
-                                        provenance: Some(Provenance {
-                                            alloc_id: heap_alloc_id,
-                                            offset: Int::from_u64(self.ctx, 0),
-                                            is_field_offset: false,
-                                        }),
-                                        invariants: ValueInvariants {
-                                            non_null: true,
-                                            init: true,
-                                            in_bounds: true,
-                                            aligned: true,
-                                            ..ValueInvariants::default()
-                                        },
+                            let heap_base = self.allocation_base(heap_alloc_id).clone();
+                            let dest_ty = self.body.local_decls[dest].ty;
+                            self.set_local(
+                                dest,
+                                VmValue {
+                                    term: heap_base,
+                                    ty: dest_ty,
+                                    provenance: Some(Provenance {
+                                        alloc_id: heap_alloc_id,
+                                        offset: Int::from_u64(self.ctx, 0),
+                                        is_field_offset: false,
+                                    }),
+                                    invariants: ValueInvariants {
+                                        non_null: true,
+                                        init: true,
+                                        in_bounds: true,
+                                        aligned: true,
+                                        ..ValueInvariants::default()
                                     },
-                                );
-                            }
+                                },
+                            );
                         }
                     }
                 }
@@ -2671,24 +2665,21 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         let dest_ty = self.body.local_decls[dest].ty;
         if let Some(elem_ty) = self.alloc(alloc_id).element_ty {
             let elem_size = self.size_of_ty(elem_ty) as u64;
+            let size = self.allocation_size(alloc_id);
             if elem_size > 1 {
-                if let Some(size) = self.allocation_size(alloc_id) {
-                    let div = Int::from_u64(self.ctx, elem_size);
-                    let val = VmValue::new(size.div(&div), dest_ty);
-                    self.set_local(dest, val);
-                    return true;
-                }
-            } else if let Some(size) = self.allocation_size(alloc_id) {
-                let val = VmValue::new(size.clone(), dest_ty);
+                let div = Int::from_u64(self.ctx, elem_size);
+                let val = VmValue::new(size.div(&div), dest_ty);
                 self.set_local(dest, val);
                 return true;
             }
-        } else if let Some(size) = self.allocation_size(alloc_id) {
             let val = VmValue::new(size.clone(), dest_ty);
             self.set_local(dest, val);
             return true;
         }
-        false
+        let size = self.allocation_size(alloc_id);
+        let val = VmValue::new(size.clone(), dest_ty);
+        self.set_local(dest, val);
+        true
     }
 
     /// Materialize the `{ptr, cap, len}` field values of a `Vec<T>` aggregate
@@ -2712,9 +2703,22 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         cap: Int<'ctx>,
         len: Int<'ctx>,
     ) {
-        let usize_ty = self.tcx.types.usize;
         let elem_size = self.size_of_ty(ptr.ty).max(1) as u64;
         self.set_field_value(local, vec![0, 0], ptr);
+        self.materialize_vec_len_cap(local, cap, len, elem_size);
+    }
+
+    /// Materialize a Vec's `cap` field (`[0, 1]`) and `len` field (`[1]`) as
+    /// fresh symbolic values, together with the invariants `0 <= len <= cap`
+    /// and `cap * elem_size <= isize::MAX`.
+    pub(crate) fn materialize_vec_len_cap(
+        &mut self,
+        local: Local,
+        cap: Int<'ctx>,
+        len: Int<'ctx>,
+        elem_size: u64,
+    ) {
+        let usize_ty = self.tcx.types.usize;
         self.set_field_value(local, vec![0, 1], VmValue::new(cap.clone(), usize_ty));
         self.set_field_value(local, vec![1], VmValue::new(len.clone(), usize_ty));
         let zero = Int::from_u64(self.ctx, 0);
@@ -2726,7 +2730,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         // `size_of(T) * len <= isize::MAX` is provable from the materialized
         // fields (`len <= cap` and `cap * elem_size <= isize::MAX`).
         let isize_max = Int::from_u64(self.ctx, isize::MAX as u64);
-        let elem_term = Int::from_u64(self.ctx, elem_size);
+        let elem_term = Int::from_u64(self.ctx, elem_size.max(1));
         self.path_conditions
             .push(Int::mul(self.ctx, &[&cap, &elem_term]).le(&isize_max));
     }

@@ -350,12 +350,8 @@ impl PropertyChecker {
             }
         }
 
-        let (Some(base), Some(size)) = (
-            vm_state.allocation_base(alloc_id).cloned(),
-            vm_state.allocation_size(alloc_id).cloned(),
-        ) else {
-            return CheckResult::Unknown;
-        };
+        let base = vm_state.allocation_base(alloc_id).clone();
+        let size = vm_state.allocation_size(alloc_id).clone();
 
         if vm_state.alloc(alloc_id).is_external {
             return CheckResult::Proved;
@@ -478,9 +474,8 @@ impl PropertyChecker {
                 }
             }
             if vm_state.alloc(id).initialized {
-                if let (Some(ref access_term), Some(ref size)) =
-                    (access, vm_state.allocation_size(id))
-                {
+                if let Some(ref access_term) = access {
+                    let size = vm_state.allocation_size(id);
                     if let (Some(access_val), Some(size_val)) =
                         (access_term.as_u64(), size.as_u64())
                     {
@@ -509,13 +504,12 @@ impl PropertyChecker {
                 }
             }
             // Check byte-level init: if all bytes in range are initialized
-            if let Some(size) = vm_state.allocation_size(id).cloned() {
-                if let Some(size_val) = size.as_u64() {
-                    let size_usize = (size_val as usize).min(4096);
-                    let all_init = (0..size_usize).all(|off| vm_state.is_byte_init(id, off));
-                    if all_init && size_val > 0 {
-                        return CheckResult::Proved;
-                    }
+            let size = vm_state.allocation_size(id).clone();
+            if let Some(size_val) = size.as_u64() {
+                let size_usize = (size_val as usize).min(4096);
+                let all_init = (0..size_usize).all(|off| vm_state.is_byte_init(id, off));
+                if all_init && size_val > 0 {
+                    return CheckResult::Proved;
                 }
             }
         }
@@ -525,17 +519,14 @@ impl PropertyChecker {
             if let Some(prov) = &origin_val.provenance {
                 if vm_state.alloc(prov.alloc_id).initialized {
                     if let Some(ref access_term) = access {
-                        if let Some(size) = vm_state.allocation_size(prov.alloc_id) {
-                            if let (Some(access_val), Some(size_val)) =
-                                (access_term.as_u64(), size.as_u64())
-                            {
-                                if access_val <= size_val {
-                                    return CheckResult::Proved;
-                                }
-                                // Required bytes exceed allocation → not fully init
-                            } else {
+                        let size = vm_state.allocation_size(prov.alloc_id);
+                        if let (Some(access_val), Some(size_val)) =
+                            (access_term.as_u64(), size.as_u64())
+                        {
+                            if access_val <= size_val {
                                 return CheckResult::Proved;
                             }
+                            // Required bytes exceed allocation → not fully init
                         } else {
                             return CheckResult::Proved;
                         }
@@ -547,14 +538,11 @@ impl PropertyChecker {
                 for alloc_id in self.trace_alloc_ids(vm_state, place.local) {
                     if vm_state.alloc(alloc_id).initialized {
                         if let Some(ref access_term) = access {
-                            if let Some(size) = vm_state.allocation_size(alloc_id) {
-                                if let (Some(access_val), Some(size_val)) =
-                                    (access_term.as_u64(), size.as_u64())
-                                {
-                                    if access_val <= size_val {
-                                        return CheckResult::Proved;
-                                    }
-                                } else {
+                            let size = vm_state.allocation_size(alloc_id);
+                            if let (Some(access_val), Some(size_val)) =
+                                (access_term.as_u64(), size.as_u64())
+                            {
+                                if access_val <= size_val {
                                     return CheckResult::Proved;
                                 }
                             } else {

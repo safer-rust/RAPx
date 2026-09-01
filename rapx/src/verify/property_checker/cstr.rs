@@ -116,7 +116,7 @@ impl PropertyChecker {
                 return CheckResult::Proved;
             }
 
-            let alloc_size = vm_state.allocation_size(alloc_id).cloned();
+            let alloc_size = vm_state.allocation_size(alloc_id).clone();
 
             // The `ValidCStr(p, n)` length argument is the exact byte length of
             // the nul-terminated buffer.  Prefer it over the allocation size
@@ -128,7 +128,7 @@ impl PropertyChecker {
                 PropertyArg::Expr(ContractExpr::Const(_)) => None,
                 a => self.resolve_arg_term(vm_state, checkpoint, a),
             });
-            let buffer_size = n_term.or(alloc_size);
+            let buffer_size = n_term.or(Some(alloc_size));
 
             // Starting offset within the allocation (for pointer arithmetic like .add(2))
             let start_offset = value
@@ -205,11 +205,10 @@ impl PropertyChecker {
 
         if nul_offsets.is_empty() {
             // No NUL in tracked range — might be in untracked region.
-            if let Some(size) = vm_state.allocation_size(alloc_id) {
-                if let Some(size_val) = size.as_u64() {
-                    if max_known + 1 < size_val as usize {
-                        return None;
-                    }
+            let size = vm_state.allocation_size(alloc_id);
+            if let Some(size_val) = size.as_u64() {
+                if max_known + 1 < size_val as usize {
+                    return None;
                 }
             }
             return Some(CheckResult::Failed);

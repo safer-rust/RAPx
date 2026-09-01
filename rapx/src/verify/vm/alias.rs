@@ -119,8 +119,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             rustc_middle::ty::TyKind::Ref(_, _, rustc_middle::ty::Mutability::Not) => {
                 VmOriginKind::SharedRef
             }
-            rustc_middle::ty::TyKind::RawPtr(inner_ty, rustc_middle::ty::Mutability::Mut) => {
-                let _ = inner_ty;
+            rustc_middle::ty::TyKind::RawPtr(_, rustc_middle::ty::Mutability::Mut) => {
                 VmOriginKind::RawMutPtr
             }
             rustc_middle::ty::TyKind::RawPtr(..) => VmOriginKind::RawConstPtr,
@@ -494,17 +493,7 @@ fn find_struct_field_origin_for_param<'tcx>(
     checkpoint: &Checkpoint<'tcx>,
 ) -> Option<alias_hazard::SelfFieldOrigin> {
     let body = tcx.optimized_mir(caller);
-
-    let self_ty = body.local_decls[Local::from_usize(1)].ty;
-    let inner_adt = match self_ty.kind() {
-        rustc_middle::ty::TyKind::Ref(_, inner, _)
-            if matches!(inner.kind(), rustc_middle::ty::TyKind::Adt(..)) =>
-        {
-            *inner
-        }
-        _ => return None,
-    };
-    let (adt_def, _) = crate::analysis::alias::adt_from_ty(inner_adt)?;
+    let (adt_def, _) = self_adt(tcx, caller)?;
 
     // Try to resolve the checkpoint's first arg to determine which field
     let Some(arg0) = checkpoint.args.first() else {
@@ -600,16 +589,7 @@ fn infer_self_field_from_type<'tcx>(
     caller: DefId,
     checkpoint: &Checkpoint<'tcx>,
 ) -> Option<alias_hazard::SelfFieldOrigin> {
-    let body = tcx.optimized_mir(caller);
-    if body.arg_count == 0 {
-        return None;
-    }
-    let self_ty = body.local_decls[Local::from_usize(1)].ty;
-    let inner = match self_ty.kind() {
-        rustc_middle::ty::TyKind::Ref(_, inner, _) => *inner,
-        _ => return None,
-    };
-    let Some((adt_def, _)) = crate::analysis::alias::adt_from_ty(inner) else {
+    let Some((adt_def, _)) = self_adt(tcx, caller) else {
         return None;
     };
 
@@ -670,17 +650,7 @@ fn is_self_field_shared_ref(
     caller: DefId,
     origin: &alias_hazard::SelfFieldOrigin,
 ) -> Option<bool> {
-    let body = tcx.optimized_mir(caller);
-    let self_ty = body.local_decls[Local::from_usize(1)].ty;
-    let ((adt_def, args), _) = match self_ty.kind() {
-        rustc_middle::ty::TyKind::Ref(_, inner, _)
-            if matches!(inner.kind(), rustc_middle::ty::TyKind::Adt(..)) =>
-        {
-            let (did, a) = crate::analysis::alias::adt_from_ty(*inner)?;
-            ((did, a), Some(inner))
-        }
-        _ => return None,
-    };
+    let (adt_def, args) = self_adt(tcx, caller)?;
     if adt_def != origin.struct_def_id {
         return Some(false);
     }
@@ -718,6 +688,24 @@ fn resolve_origin_place_mir(
     }
 
     PlaceKey::from_origin(root_local, root_fields)
+}
+
+/// Extract the `&self`/`&mut self` receiver's ADT (peeling one reference layer),
+/// or `None` for non-ADT receivers.  Shared by the struct-field origin heuristics.
+fn self_adt<'tcx>(
+    tcx: rustc_middle::ty::TyCtxt<'tcx>,
+    caller: DefId,
+) -> Option<(DefId, rustc_middle::ty::GenericArgsRef<'tcx>)> {
+    let body = tcx.optimized_mir(caller);
+    if body.arg_count == 0 {
+        return None;
+    }
+    let self_ty = body.local_decls[Local::from_usize(1)].ty;
+    let inner = match self_ty.kind() {
+        rustc_middle::ty::TyKind::Ref(_, inner, _) => *inner,
+        _ => return None,
+    };
+    crate::analysis::alias::adt_from_ty(inner)
 }
 
 fn check_ownership_transfer_alias<'ctx, 'tcx>(

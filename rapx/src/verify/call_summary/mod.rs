@@ -12,6 +12,10 @@ pub(crate) mod builtin_models;
 pub(crate) mod interprocedural;
 
 use rustc_hir::def_id::DefId;
+#[cfg(not(rapx_ge_100))]
+use rustc_hir::LangItem;
+#[cfg(rapx_ge_100)]
+use rustc_hir::attrs::lang_items::LangItem;
 use rustc_middle::{
     mir::{Local, Operand},
     ty::{Ty, TyCtxt, TyKind},
@@ -374,13 +378,30 @@ fn transparent_deref_peel<'tcx>(tcx: TyCtxt<'tcx>, func: &Operand<'tcx>) -> Opti
     let TyKind::Adt(adt_def, _) = self_ty.kind() else {
         return None;
     };
-    let path = tcx.def_path_str(adt_def.did());
-    if path.contains("ManuallyDrop") {
-        Some(2)
-    } else if path.contains("MaybeDangling") {
-        Some(1)
-    } else {
-        None
+    let did = adt_def.did();
+    if tcx.is_lang_item(did, LangItem::ManuallyDrop) {
+        return Some(2);
+    }
+    if is_maybe_dangling(tcx, did) {
+        return Some(1);
+    }
+    None
+}
+
+/// Whether `did` is the `MaybeDangling` lang item.
+///
+/// The `MaybeDangling` lang item was only added to rustc's table after
+/// nightly-2025-11-25 (the `verify-std` toolchain), so gate the lang-item
+/// lookup behind a build-time check and fall back to name matching on
+/// toolchains that lack it.
+fn is_maybe_dangling(tcx: TyCtxt<'_>, did: DefId) -> bool {
+    #[cfg(rapx_has_maybe_dangling_lang_item)]
+    {
+        return tcx.is_lang_item(did, LangItem::MaybeDangling);
+    }
+    #[cfg(not(rapx_has_maybe_dangling_lang_item))]
+    {
+        tcx.def_path_str(did).contains("MaybeDangling")
     }
 }
 

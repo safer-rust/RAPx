@@ -256,18 +256,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         if is_vec {
                             let cap = self.fresh_int(&format!("vec_cap_{}", local_idx));
                             let len = self.fresh_int(&format!("vec_len_{}", local_idx));
-                            let zero = Int::from_u64(self.ctx, 0);
-                            self.path_conditions.push(len.ge(&zero));
-                            self.path_conditions.push(len.le(&cap));
-                            self.path_conditions.push(cap.ge(&zero));
-                            // Language invariant: byte length fits in isize::MAX.
-                            let isize_max = Int::from_u64(self.ctx, isize::MAX as u64);
-                            let elem_term = Int::from_u64(self.ctx, heap_size.max(1));
-                            self.path_conditions
-                                .push(Int::mul(self.ctx, &[&cap, &elem_term]).le(&isize_max));
-                            let usize_ty = self.tcx.types.usize;
-                            self.set_field_value(local, vec![0, 1], VmValue::new(cap, usize_ty));
-                            self.set_field_value(local, vec![1], VmValue::new(len, usize_ty));
+                            self.materialize_vec_len_cap(local, cap, len, heap_size);
                         }
                         self.set_local(
                             local,

@@ -97,12 +97,8 @@ impl PropertyChecker {
         let Some(alloc_id) = value.provenance_alloc_id() else {
             return CheckResult::Unknown;
         };
-        let (Some(base), Some(size)) = (
-            vm_state.allocation_base(alloc_id).cloned(),
-            vm_state.allocation_size(alloc_id).cloned(),
-        ) else {
-            return CheckResult::Unknown;
-        };
+        let base = vm_state.allocation_base(alloc_id).clone();
+        let size = vm_state.allocation_size(alloc_id).clone();
 
         let alloc = vm_state.alloc(alloc_id);
         if let (Some(alloc_elem_ty), Some(req_ty)) = (alloc.element_ty, required_ty) {
@@ -256,9 +252,7 @@ impl PropertyChecker {
             return CheckResult::Unknown;
         };
 
-        let Some(size) = vm_state.allocation_size(data_alloc_id).cloned() else {
-            return CheckResult::Unknown;
-        };
+        let size = vm_state.allocation_size(data_alloc_id).clone();
 
         let elem_size = vm_state
             .alloc(data_alloc_id)
