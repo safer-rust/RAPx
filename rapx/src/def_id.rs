@@ -323,11 +323,17 @@ fn init_methods(tcx: TyCtxt) -> Methods {
             if ((name.contains("::cmp::min") || name.contains("::Ord::min"))
                 && !name.contains("min_by"))
                 || name.ends_with("::midpoint")
+                // Recent nightly lowered `Ord::min`/`Ord::max` for integers to the
+                // `integer_min`/`integer_max` intrinsics (instead of an inline
+                // `if self <= other` branch), so match those here to keep the
+                // `ReturnMin`/`ReturnMax` (ite) modelling working.
+                || name.ends_with("::integer_min")
             {
                 methods.min_like.push(did);
             }
             if (name.contains("::cmp::max") || name.contains("::Ord::max"))
                 && !name.contains("max_by")
+                || name.ends_with("::integer_max")
             {
                 methods.max.push(did);
             }
