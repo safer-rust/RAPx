@@ -8,6 +8,7 @@
 #[cfg(not(rapx_has_skip_norm_wip))]
 use crate::compat::SkipNormWip;
 use crate::helpers::mir_scan::Checkpoint;
+use crate::verify::api_classify;
 use crate::verify::contract::{ContractExpr, Property, PropertyArg};
 use crate::verify::report::CheckResult;
 use crate::verify::vm::state::{AllocId, VmState, VmValue};
@@ -262,16 +263,13 @@ impl PropertyChecker {
             && (matches!(value.ty.kind(), TyKind::RawPtr(..))
                 || matches!(value.ty.kind(), TyKind::Ref(_, inner, _)
                     if matches!(inner.kind(), TyKind::Adt(adt, _)
-                        if vm_state.tcx.def_path_str(adt.did()).contains("::MaybeUninit"))))
+                        if api_classify::is_maybe_uninit_type(adt.did()))))
             && {
                 let a = vm_state.alloc(alloc_id);
                 !a.is_external
                     && a.element_ty.map_or(false, |ty| {
                         if let TyKind::Adt(adt, _) = ty.kind() {
-                            vm_state
-                                .tcx
-                                .def_path_str(adt.did())
-                                .contains("::MaybeUninit")
+                            api_classify::is_maybe_uninit_type(adt.did())
                         } else {
                             false
                         }

@@ -7,6 +7,7 @@
 #[cfg(not(rapx_has_skip_norm_wip))]
 use crate::compat::SkipNormWip;
 use crate::helpers::mir_scan::Checkpoint;
+use crate::verify::api_classify;
 use crate::verify::contract::{
     ContractExpr, NumericBinOp, PlaceBase, Property, PropertyArg, RelOp,
 };
@@ -65,8 +66,7 @@ impl PropertyChecker {
         }
         if value.provenance.is_some() {
             if let TyKind::Adt(adt_def, _) = value.ty.kind() {
-                let path = vm_state.tcx.def_path_str(adt_def.did());
-                if path.contains("::NonNull") {
+                if api_classify::is_std_nonnull(adt_def.did()) {
                     return CheckResult::Proved;
                 }
             }

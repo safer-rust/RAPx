@@ -62,6 +62,7 @@ struct Types {
     cstring_types: Vec<DefId>,
     vec_types: Vec<DefId>,
     nonnull_types: Vec<DefId>,
+    maybe_uninit_types: Vec<DefId>,
     ordering_types: Vec<DefId>,
     iter_types: Vec<DefId>,
 }
@@ -78,6 +79,7 @@ fn init_types(tcx: TyCtxt) -> Types {
         cstring_types: Vec::new(),
         vec_types: Vec::new(),
         nonnull_types: Vec::new(),
+        maybe_uninit_types: Vec::new(),
         ordering_types: Vec::new(),
         iter_types: Vec::new(),
     };
@@ -93,6 +95,10 @@ fn init_types(tcx: TyCtxt) -> Types {
     types
         .ordering_types
         .extend(tcx.lang_items().ordering_enum());
+    // `core::mem::MaybeUninit` is `#[lang = "maybe_uninit"]`.
+    types
+        .maybe_uninit_types
+        .extend(tcx.lang_items().maybe_uninit());
 
     // `core::slice::Iter` is `#[rustc_diagnostic_item = "SliceIter"]` on older
     // toolchains (the item was dropped once `adts()` became available, so only
@@ -148,6 +154,9 @@ fn init_types(tcx: TyCtxt) -> Types {
         if name.ends_with("::NonNull") || name == "NonNull" {
             types.nonnull_types.push(did);
         }
+        if name.ends_with("::MaybeUninit") || name == "MaybeUninit" {
+            types.maybe_uninit_types.push(did);
+        }
     }
 
     // External std ADTs with neither a lang nor a diagnostic item: `NonNull`
@@ -165,6 +174,11 @@ fn init_types(tcx: TyCtxt) -> Types {
                 if name.ends_with("::NonNull") {
                     types
                         .nonnull_types
+                        .push(rustc_internal::internal(tcx, adt.def_id()));
+                }
+                if name.ends_with("::MaybeUninit") {
+                    types
+                        .maybe_uninit_types
                         .push(rustc_internal::internal(tcx, adt.def_id()));
                 }
                 if name.ends_with("::Iter") || name.ends_with("::IterMut") {
@@ -209,6 +223,14 @@ pub fn nonnull_types() -> &'static [DefId] {
         .get()
         .expect("Type DefIds haven't been initialized.")
         .nonnull_types
+}
+
+/// `core::mem::MaybeUninit` (and any local re-implementation).
+pub fn maybe_uninit_types() -> &'static [DefId] {
+    &TYPES
+        .get()
+        .expect("Type DefIds haven't been initialized.")
+        .maybe_uninit_types
 }
 
 /// `core::cmp::Ordering`.

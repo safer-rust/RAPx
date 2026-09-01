@@ -50,7 +50,7 @@ impl PropertyChecker {
             // to `Box::from_raw_in` by `RawVec::into_box`) is therefore always
             // "typed" — alignment/size are discharged by the separate
             // `Align`/`Allocated` facts.
-            if Self::ty_is_maybe_uninit(vm_state.tcx, expected_ty) {
+            if Self::ty_is_maybe_uninit(expected_ty) {
                 return CheckResult::Proved;
             }
 
@@ -83,8 +83,7 @@ impl PropertyChecker {
                     // MaybeUninit<T> accessed via raw pointer from as_mut_ptr:
                     // treat as T for write ops where caller will initialize it.
                     if let TyKind::Adt(adt_def, substs) = elem_ty.kind() {
-                        let dp = vm_state.tcx.def_path_str(adt_def.did());
-                        if dp.contains("::MaybeUninit")
+                        if crate::verify::api_classify::is_maybe_uninit_type(adt_def.did())
                             && matches!(value.ty.kind(), TyKind::RawPtr(..))
                         {
                             if let Some(inner) = substs.first().and_then(|s| s.as_type()) {
@@ -223,14 +222,14 @@ impl PropertyChecker {
         CheckResult::Unknown
     }
 
-    pub(super) fn ty_is_maybe_uninit(tcx: rustc_middle::ty::TyCtxt<'_>, ty: Ty<'_>) -> bool {
+    pub(super) fn ty_is_maybe_uninit(ty: Ty<'_>) -> bool {
         let mut t = ty;
         loop {
             match t.kind() {
                 TyKind::Slice(e) | TyKind::Array(e, _) => t = *e,
                 TyKind::RawPtr(e, _) | TyKind::Ref(_, e, _) => t = *e,
                 TyKind::Adt(adt, _) => {
-                    return tcx.def_path_str(adt.did()).contains("::MaybeUninit");
+                    return crate::verify::api_classify::is_maybe_uninit_type(adt.did());
                 }
                 _ => return false,
             }

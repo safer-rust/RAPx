@@ -560,6 +560,9 @@ pub fn is_std_cstring(def_id: DefId) -> bool {
 pub fn is_std_nonnull(def_id: DefId) -> bool {
     crate::def_id::nonnull_types().contains(&def_id)
 }
+pub fn is_maybe_uninit_type(def_id: DefId) -> bool {
+    crate::def_id::maybe_uninit_types().contains(&def_id)
+}
 pub fn is_std_iter_or_itermut(def_id: DefId) -> bool {
     crate::def_id::iter_types().contains(&def_id)
 }
