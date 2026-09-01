@@ -233,9 +233,7 @@ pub(crate) fn check_alias_vm<'ctx, 'tcx>(
     // the only remaining question is whether the produced reference escapes.
     // When the enclosing function returns a reference, the result may escape
     // (hazard for struct-field Owning invariants) → Unknown; otherwise safe.
-    if callee_name.contains("::NonNull::")
-        && (callee_name.ends_with("::as_ref") || callee_name.ends_with("::as_mut"))
-    {
+    if api_classify::is_nonnull_as_ref_as_mut(Some(callee)) {
         let ret_ty = vm_state.body.local_decls[rustc_middle::mir::RETURN_PLACE].ty;
         if crate::helpers::mir_utils::type_contains_reference(ret_ty) {
             return VmAliasResult::Unknown;

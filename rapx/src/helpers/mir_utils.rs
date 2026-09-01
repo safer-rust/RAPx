@@ -67,9 +67,9 @@ pub(crate) fn is_eq_call(tcx: TyCtxt<'_>, func: &Operand<'_>) -> bool {
     tcx.def_path_str(trait_id).ends_with("PartialEq")
 }
 
-/// Whether `def_id` is `core::ptr::drop_in_place` (the `DropGlue` lang item).
-pub(crate) fn is_drop_in_place(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
-    tcx.is_lang_item(def_id, LangItem::DropGlue)
+/// Whether `def_id` is `core::ptr::drop_in_place`.
+pub(crate) fn is_drop_in_place(def_id: DefId) -> bool {
+    crate::def_id::drop_in_place() == Some(def_id)
 }
 
 /// Whether `def_id` is `slice::Iter`/`IterMut`'s private `post_inc_start`

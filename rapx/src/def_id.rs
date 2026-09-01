@@ -890,6 +890,14 @@ intrinsics! {
         "std::ptr::NonNull::<T>::align_offset",
         "core::ptr::NonNull::<T>::align_offset"
     ],
+    nonnull_as_ref: &[
+        "std::ptr::NonNull::<T>::as_ref",
+        "core::ptr::NonNull::<T>::as_ref"
+    ],
+    nonnull_as_mut: &[
+        "std::ptr::NonNull::<T>::as_mut",
+        "core::ptr::NonNull::<T>::as_mut"
+    ],
     nonnull_new: &[
         "std::ptr::NonNull::<T>::new",
         "core::ptr::NonNull::<T>::new"

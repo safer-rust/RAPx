@@ -460,6 +460,18 @@ pub(crate) fn is_nonnull_checked_new(callee: Option<DefId>) -> bool {
     crate::def_id::contains(&[crate::def_id::nonnull_new()], callee)
 }
 
+/// Whether `callee` is `NonNull::as_ref` or `NonNull::as_mut`.
+pub fn is_nonnull_as_ref_as_mut(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::contains(
+        &[
+            crate::def_id::nonnull_as_ref(),
+            crate::def_id::nonnull_as_mut(),
+        ],
+        callee,
+    )
+}
+
 /// Whether `callee` is a `Vec` method that may reallocate (invalidating any
 /// outstanding raw pointers derived from it).
 pub fn is_vec_invalidating_method(callee: Option<DefId>) -> bool {

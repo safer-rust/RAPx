@@ -152,7 +152,7 @@ pub(super) fn try_pointer_arith_wrapper_effect<'tcx>(
                 let inner_name = helpers::call_name(tcx, func);
                 if inner_name.contains("::intrinsics::")
                     || inner_name.starts_with("intrinsics::")
-                    || helpers::is_drop_in_place(tcx, inner_callee)
+                    || helpers::is_drop_in_place(inner_callee)
                 {
                     return None;
                 }
@@ -541,7 +541,7 @@ fn must_write_args_rec(tcx: TyCtxt<'_>, callee: DefId, depth: usize) -> Option<H
     let name = tcx.def_path_str(callee);
     if name.contains("::intrinsics::")
         || name.starts_with("intrinsics::")
-        || helpers::is_drop_in_place(tcx, callee)
+        || helpers::is_drop_in_place(callee)
     {
         return None;
     }
