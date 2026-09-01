@@ -86,11 +86,13 @@ pub fn is_as_ptr(callee: Option<DefId>) -> bool {
     )
 }
 
-/// Whether `callee` is a raw-pointer `cast`/`cast_mut`/`cast_const` (which
-/// preserves null-ness: casting a null pointer yields a null pointer).
-/// Distinguished from [`is_as_ptr`] so callers that need the *non-null* subset
-/// (e.g. the builtin-models registry's `ReturnNonZero` effect) can exclude it.
-pub fn is_raw_ptr_cast(callee: Option<DefId>) -> bool {
+/// Whether `callee` is a raw-pointer `cast`/`cast_mut`/`cast_const`. These only
+/// *reinterpret* the address — they preserve null-ness and provenance, but do
+/// not establish that the result is non-null, aligned, or points at initialized
+/// memory. Distinguished from [`is_as_ptr`] so [`is_as_ptr_valid`] can keep
+/// them on the MIR-inlining path rather than the `ReturnPointerFromArg` model
+/// (which asserts those facts).
+pub(crate) fn is_raw_ptr_cast(callee: Option<DefId>) -> bool {
     let Some(callee) = callee else { return false };
     crate::def_id::contains(
         &[
@@ -103,11 +105,12 @@ pub fn is_raw_ptr_cast(callee: Option<DefId>) -> bool {
     )
 }
 
-/// [`is_as_ptr`] restricted to the *non-null-producing* subset: `as_ptr`/
-/// `as_mut_ptr`, `into_raw`, and `NonNull::cast` (all of which are guaranteed
-/// non-null), but *not* raw-pointer `cast`/`cast_mut`/`cast_const` (which
-/// preserve null-ness and must not be marked `ReturnNonZero`).
-pub fn is_as_ptr_non_null(callee: Option<DefId>) -> bool {
+/// [`is_as_ptr`] restricted to the *pointer-validity-establishing* subset:
+/// `as_ptr`/`as_mut_ptr`, `into_raw`, and `NonNull::cast` — which expose a
+/// non-null, aligned, initialized backing pointer. Raw-pointer `cast`/
+/// `cast_mut`/`cast_const` are excluded because they only reinterpret the
+/// address (preserving null-ness) and are left to MIR inlining.
+pub fn is_as_ptr_valid(callee: Option<DefId>) -> bool {
     is_as_ptr(callee) && !is_raw_ptr_cast(callee)
 }
 
@@ -640,10 +643,6 @@ pub fn is_split_at(callee: Option<DefId>) -> bool {
 pub fn is_align_to_local(callee: Option<DefId>) -> bool {
     let Some(callee) = callee else { return false };
     crate::def_id::align_to_local_fns().contains(&callee)
-}
-pub fn is_into_iter_local(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::into_iter_local_fns().contains(&callee)
 }
 pub fn is_iter_position(callee: Option<DefId>) -> bool {
     let Some(callee) = callee else { return false };

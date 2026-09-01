@@ -259,7 +259,6 @@ struct Methods {
     layout_align: Vec<DefId>,
     split_at: Vec<DefId>,
     align_to_local: Vec<DefId>,
-    into_iter_local: Vec<DefId>,
     iter_position: Vec<DefId>,
     strlen: Vec<DefId>,
     slice_get_unchecked: Vec<DefId>,
@@ -289,7 +288,6 @@ fn init_methods(tcx: TyCtxt) -> Methods {
         layout_align: Vec::new(),
         split_at: Vec::new(),
         align_to_local: Vec::new(),
-        into_iter_local: Vec::new(),
         iter_position: Vec::new(),
         strlen: Vec::new(),
         slice_get_unchecked: Vec::new(),
@@ -395,12 +393,6 @@ fn init_methods(tcx: TyCtxt) -> Methods {
             }
             if name.ends_with("align_to_ext") || name.ends_with("align_to_mut_ext") {
                 methods.align_to_local.push(did);
-            }
-            if (name.contains("into_iter")
-                && (name.contains("IntoIterator") || name.contains("slice::into_iter")))
-                || name.contains("slice::<impl [T]>::iter")
-            {
-                methods.into_iter_local.push(did);
             }
             if name.contains("Iterator::position")
                 || name.contains("Iterator::find")
@@ -578,12 +570,6 @@ pub fn align_to_local_fns() -> &'static [DefId] {
         .get()
         .expect("Method DefIds haven't been initialized.")
         .align_to_local
-}
-pub fn into_iter_local_fns() -> &'static [DefId] {
-    &METHODS
-        .get()
-        .expect("Method DefIds haven't been initialized.")
-        .into_iter_local
 }
 pub fn iter_position_fns() -> &'static [DefId] {
     &METHODS

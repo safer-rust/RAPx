@@ -95,10 +95,11 @@ static REGISTRY: &[Entry] = &[
     ED!(api_classify::is_element_ptr_sub, eff_ptr_sub),
     ED!(api_classify::is_byte_ptr_add, eff_ptr_add_byte),
     ED!(api_classify::is_byte_ptr_sub, eff_ptr_sub_byte),
-    // Pointer extraction / cast: `as_ptr`/`into_raw` return a non-null alias of
-    // their argument. Raw-pointer `cast` is *excluded* (`is_as_ptr_non_null`)
-    // because it preserves null-ness and is left to the MIR inlining path.
-    ED!(api_classify::is_as_ptr_non_null, eff_alias_ptr),
+    // Pointer extraction / cast: `as_ptr`/`into_raw` return a non-null, aligned,
+    // initialized alias of their argument (`ReturnPointerFromArg` derives those
+    // from the source). Raw-pointer `cast` is excluded (`is_as_ptr_valid`)
+    // because it only reinterprets the address and is left to MIR inlining.
+    ED!(api_classify::is_as_ptr_valid, eff_alias_ptr),
     // Slice / collection queries.
     ED!(api_classify::is_len, eff_len),
     ED!(api_classify::is_capacity, eff_len),
@@ -137,8 +138,9 @@ static REGISTRY: &[Entry] = &[
     // Local re-implementations (std-challenge suites' `_ext` fns): matched by
     // name-scanning `fn_defs()`. Their MIR is local, but the re-implemented
     // algorithm is modelled with the same effect as the std original.
+    // (`iter`/`into_iter`/`iter_mut` are *not* here — they are derived from
+    // the return type by `try_iter_constructor_effect`.)
     ED!(api_classify::is_align_to_local, eff_align_to),
-    ED!(api_classify::is_into_iter_local, eff_return_iter),
     ED!(api_classify::is_iter_position, eff_option_scan_index),
     ED!(api_classify::is_strlen, eff_scan_length),
     // ── MIR available — deliberately opaque ─────────────────────────
@@ -371,10 +373,6 @@ fn eff_ownership_recon(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 
 fn eff_align_to(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     vec![CallEffect::ReturnAlignTo { receiver_arg: 0 }]
-}
-
-fn eff_return_iter(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![CallEffect::ReturnIter { receiver_arg: 0 }]
 }
 
 fn eff_option_scan_index(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {

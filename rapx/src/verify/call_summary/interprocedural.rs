@@ -11,7 +11,7 @@ use rustc_middle::{
     mir::{
         BasicBlock, BinOp, Local, Operand, ProjectionElem, Rvalue, StatementKind, TerminatorKind,
     },
-    ty::TyCtxt,
+    ty::{Ty, TyCtxt, TyKind},
 };
 
 use crate::analysis::dataflow::{DataflowAnalysis, default::DataflowAnalyzer};
@@ -392,6 +392,136 @@ pub(crate) fn try_field_load_effect(tcx: TyCtxt<'_>, callee: DefId) -> Option<Ca
         }
     }
     None
+}
+
+/// Detect a slice-iterator constructor structurally: a callee whose argument
+/// is a `&[T]`/`&mut [T]` and whose return type is a struct whose first two
+/// fields are pointers into `T` (field 0 = start `NonNull<T>`, field 1 = end
+/// `*const T`/`*mut T`). This matches `slice::Iter`/`IterMut` *and* same-shaped
+/// local re-implementations by structure rather than by the type's name.
+pub(super) fn try_iter_constructor_effect<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    callee: DefId,
+) -> Option<CallEffect> {
+    let fn_sig = tcx.fn_sig(callee).skip_binder();
+    let output = fn_sig.output().skip_binder();
+    let TyKind::Adt(adt, substs) = output.kind() else {
+        return None;
+    };
+    let inputs = fn_sig.inputs().skip_binder();
+    let Some(arg0) = inputs.first() else {
+        return None;
+    };
+    let TyKind::Ref(_, inner, _) = arg0.kind() else {
+        return None;
+    };
+    let TyKind::Slice(elem_ty) = inner.kind() else {
+        return None;
+    };
+    let elem_ty = *elem_ty;
+    if adt.is_enum() {
+        return None;
+    }
+    let variant = adt.non_enum_variant();
+    if variant.fields.len() < 2 {
+        return None;
+    }
+    // A pointer field is one of `*const T`/`*mut T` or `NonNull<T>` (a
+    // `NonNull` pointer wrapper), whose pointee is the slice element type.
+    let is_elem_ptr = |ty: Ty<'tcx>| -> bool {
+        match ty.kind() {
+            TyKind::RawPtr(pointee, _) => *pointee == elem_ty,
+            TyKind::Adt(a, args)
+                if crate::verify::api_classify::is_std_nonnull(a.did())
+                    && args.type_at(0) == elem_ty =>
+            {
+                true
+            }
+            _ => false,
+        }
+    };
+    let mut fields = variant.fields.iter();
+    let (Some(f0), Some(f1)) = (fields.next(), fields.next()) else {
+        return None;
+    };
+    if !is_elem_ptr(helpers::field_ty(tcx, f0, substs))
+        || !is_elem_ptr(helpers::field_ty(tcx, f1, substs))
+    {
+        return None;
+    }
+    // The shape alone is not sufficient — two pointers into `T` could be an
+    // unrelated pair. Verify (following at most one thin `_0 = ctor(&*_1)`
+    // wrapper) that the constructor actually reads the slice's length, which is
+    // necessary for an iterator that covers the whole slice.
+    if !iter_ctor_reads_slice_len(tcx, callee, 1) {
+        return None;
+    }
+    Some(CallEffect::ReturnIter { receiver_arg: 0 })
+}
+
+/// Whether the callee (following at most `depth` single-call wrappers) reads
+/// the length of its slice argument — a necessary condition for a slice
+/// iterator, whose `end` field is `start + len`.
+fn iter_ctor_reads_slice_len<'tcx>(tcx: TyCtxt<'tcx>, callee: DefId, depth: usize) -> bool {
+    if !tcx.is_mir_available(callee) {
+        return false;
+    }
+    let body = tcx.optimized_mir(callee);
+    if body_reads_slice_len(tcx, body) {
+        return true;
+    }
+    if depth > 0 {
+        if let Some(target) = single_call_wrapper_target(tcx, callee) {
+            return iter_ctor_reads_slice_len(tcx, target, depth - 1);
+        }
+    }
+    false
+}
+
+/// Whether `body` contains a `len` call whose receiver traces back to argument 0.
+fn body_reads_slice_len<'tcx>(tcx: TyCtxt<'tcx>, body: &rustc_middle::mir::Body<'tcx>) -> bool {
+    for bb in body.basic_blocks.iter() {
+        let Some(term) = &bb.terminator else { continue };
+        let TerminatorKind::Call { func, args, .. } = &term.kind else {
+            continue;
+        };
+        if !crate::verify::api_classify::is_len(helpers::dep_callee_def_id(func)) {
+            continue;
+        }
+        if let Some(arg0) = args.first()
+            && trace_to_callee_arg(tcx, body, &arg0.node) == Some(0)
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// The callee delegated to by a thin wrapper whose body is a single call
+/// returning directly into `_0` (e.g. `slice::iter` → `Iter::new`).
+fn single_call_wrapper_target<'tcx>(tcx: TyCtxt<'tcx>, callee: DefId) -> Option<DefId> {
+    let body = tcx.optimized_mir(callee);
+    let mut found: Option<DefId> = None;
+    for bb in body.basic_blocks.iter() {
+        let Some(term) = &bb.terminator else { continue };
+        let TerminatorKind::Call {
+            func, destination, ..
+        } = &term.kind
+        else {
+            continue;
+        };
+        if destination.local.as_usize() != 0 {
+            continue;
+        }
+        let Some(c) = helpers::dep_callee_def_id(func) else {
+            return None;
+        };
+        match found {
+            Some(f) if f != c => return None,
+            _ => found = Some(c),
+        }
+    }
+    found
 }
 
 /// Return callee argument indices that are definitely written on every

@@ -327,6 +327,13 @@ pub(crate) fn effect_summary<'tcx>(
                 unsupported: false,
             };
         }
+        if let Some(effect) = interprocedural::try_iter_constructor_effect(tcx, callee) {
+            return CallEffectSummary {
+                name,
+                effects: vec![effect],
+                unsupported: false,
+            };
+        }
         if let Some((indices_arg, len_arg)) =
             interprocedural::detect_index_disjoint_validator(tcx, callee)
                 .or_else(|| interprocedural::named_index_disjoint_validator(&name))
