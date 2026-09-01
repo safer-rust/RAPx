@@ -18,6 +18,16 @@
 
 use rustc_hir::def_id::DefId;
 
+/// Whether `callee` is `Some` and matches any item in the (Option<DefId>) list.
+fn any_of(callee: Option<DefId>, items: &[Option<DefId>]) -> bool {
+    callee.is_some_and(|c| items.contains(&Some(c)))
+}
+
+/// Whether `callee` is `Some` and matches any resolved DefId in the slice.
+fn any_fn(callee: Option<DefId>, fns: &[DefId]) -> bool {
+    callee.is_some_and(|c| fns.contains(&c))
+}
+
 // ── Ownership reconstruction ──────────────────────────────────────
 
 /// Whether `callee` reconstructs an owned value, taking ownership of the
@@ -26,8 +36,8 @@ use rustc_hir::def_id::DefId;
 /// (`CString::from_vec_with_nul_unchecked`). Distinct from
 /// [`is_from_raw_parts`], which builds a slice/`Vec` from `(ptr, len[, cap])`.
 pub fn is_ownership_reconstruction(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::contains(
+    any_of(
+        callee,
         &[
             crate::def_id::box_from_raw(),
             crate::def_id::cstring_from_raw(),
@@ -38,7 +48,6 @@ pub fn is_ownership_reconstruction(callee: Option<DefId>) -> bool {
             crate::def_id::rc_from_raw_in(),
             crate::def_id::cstring_from_vec_with_nul_unchecked(),
         ],
-        callee,
     )
 }
 
@@ -52,8 +61,8 @@ pub fn is_ownership_reconstruction(callee: Option<DefId>) -> bool {
 /// produce a raw pointer (and `new_unchecked` must not mark its result
 /// non-null, or it would hide `new_unchecked(null)` unsoundness).
 pub fn is_as_ptr(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::contains(
+    any_of(
+        callee,
         &[
             crate::def_id::slice_as_ptr(),
             crate::def_id::slice_as_mut_ptr(),
@@ -82,7 +91,6 @@ pub fn is_as_ptr(callee: Option<DefId>) -> bool {
             crate::def_id::arc_into_raw(),
             crate::def_id::rc_into_raw(),
         ],
-        callee,
     )
 }
 
@@ -93,15 +101,14 @@ pub fn is_as_ptr(callee: Option<DefId>) -> bool {
 /// them on the MIR-inlining path rather than the `ReturnPointerFromArg` model
 /// (which asserts those facts).
 pub(crate) fn is_raw_ptr_cast(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::contains(
+    any_of(
+        callee,
         &[
             crate::def_id::const_ptr_cast(),
             crate::def_id::const_ptr_cast_mut(),
             crate::def_id::mut_ptr_cast(),
             crate::def_id::mut_ptr_cast_const(),
         ],
-        callee,
     )
 }
 
@@ -124,8 +131,8 @@ pub fn is_as_ptr_valid(callee: Option<DefId>) -> bool {
 /// (stride = `size_of::<T>()`). `offset_from`/`offset_from_unsigned` are *not*
 /// matched (they subtract two pointers into an `isize`).
 pub(crate) fn is_element_ptr_add(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::contains(
+    any_of(
+        callee,
         &[
             crate::def_id::const_ptr_add(),
             crate::def_id::const_ptr_wrapping_add(),
@@ -138,14 +145,13 @@ pub(crate) fn is_element_ptr_add(callee: Option<DefId>) -> bool {
             crate::def_id::nonnull_add(),
             crate::def_id::nonnull_offset(),
         ],
-        callee,
     )
 }
 
 /// Element-strided `sub`/`wrapping_sub` (stride = `size_of::<T>()`).
 pub(crate) fn is_element_ptr_sub(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::contains(
+    any_of(
+        callee,
         &[
             crate::def_id::const_ptr_sub(),
             crate::def_id::const_ptr_wrapping_sub(),
@@ -153,15 +159,14 @@ pub(crate) fn is_element_ptr_sub(callee: Option<DefId>) -> bool {
             crate::def_id::mut_ptr_wrapping_sub(),
             crate::def_id::nonnull_sub(),
         ],
-        callee,
     )
 }
 
 /// Byte-granular `byte_add`/`wrapping_byte_add` and signed
 /// `byte_offset`/`wrapping_byte_offset` (stride 1).
 pub(crate) fn is_byte_ptr_add(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::contains(
+    any_of(
+        callee,
         &[
             crate::def_id::const_ptr_byte_add(),
             crate::def_id::const_ptr_wrapping_byte_add(),
@@ -174,14 +179,13 @@ pub(crate) fn is_byte_ptr_add(callee: Option<DefId>) -> bool {
             crate::def_id::nonnull_byte_add(),
             crate::def_id::nonnull_byte_offset(),
         ],
-        callee,
     )
 }
 
 /// Byte-granular `byte_sub`/`wrapping_byte_sub` (stride 1).
 pub(crate) fn is_byte_ptr_sub(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::contains(
+    any_of(
+        callee,
         &[
             crate::def_id::const_ptr_byte_sub(),
             crate::def_id::const_ptr_wrapping_byte_sub(),
@@ -189,7 +193,6 @@ pub(crate) fn is_byte_ptr_sub(callee: Option<DefId>) -> bool {
             crate::def_id::mut_ptr_wrapping_byte_sub(),
             crate::def_id::nonnull_byte_sub(),
         ],
-        callee,
     )
 }
 
@@ -216,30 +219,28 @@ pub fn is_byte_ptr_arith(callee: Option<DefId>) -> bool {
 /// `align_of::<T>()`. The runtime intrinsics (`size_of_val`, `align_of_val`,
 /// `pref_align_of`, `*_val_raw`, …) are *not* classified here.
 pub fn is_layout_constant(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::contains(
+    any_of(
+        callee,
         &[
             crate::def_id::mem_size_of(),
             crate::def_id::mem_align_of(),
             crate::def_id::intrinsics_size_of(),
             crate::def_id::intrinsics_align_of(),
         ],
-        callee,
     )
 }
 
 /// Whether `callee` is `ptr::align_offset` / `NonNull::align_offset` /
 /// `*const T::align_offset` / `*mut T::align_offset`.
 pub fn is_align_offset(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::contains(
+    any_of(
+        callee,
         &[
             crate::def_id::ptr_align_offset(),
             crate::def_id::nonnull_align_offset(),
             crate::def_id::const_ptr_align_offset(),
             crate::def_id::mut_ptr_align_offset(),
         ],
-        callee,
     )
 }
 
@@ -248,15 +249,14 @@ pub fn is_align_offset(callee: Option<DefId>) -> bool {
 /// Whether `callee` writes through a raw pointer to its first argument
 /// (`ptr::write`, `write_bytes`, `write_unaligned`, `write_volatile`).
 pub fn is_ptr_write(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::contains(
+    any_of(
+        callee,
         &[
             crate::def_id::ptr_write(),
             crate::def_id::ptr_write_unaligned(),
             crate::def_id::ptr_write_volatile(),
             crate::def_id::ptr_write_bytes(),
         ],
-        callee,
     )
 }
 
@@ -264,8 +264,8 @@ pub fn is_ptr_write(callee: Option<DefId>) -> bool {
 /// (`ptr::read`/`read_unaligned`/`read_volatile`, `copy_to`/`copy_from`,
 /// `MaybeUninit::assume_init_read`, and intrinsics `copy`/`copy_nonoverlapping`).
 pub fn is_ptr_read(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::contains(
+    any_of(
+        callee,
         &[
             crate::def_id::ptr_read(),
             crate::def_id::ptr_read_unaligned(),
@@ -278,7 +278,6 @@ pub fn is_ptr_read(callee: Option<DefId>) -> bool {
             crate::def_id::intrinsics_copy(),
             crate::def_id::intrinsics_copy_nonoverlapping(),
         ],
-        callee,
     )
 }
 
@@ -287,28 +286,25 @@ pub fn is_ptr_read(callee: Option<DefId>) -> bool {
 /// Whether `callee` is `MaybeUninit::write`, which initializes the slot (unlike
 /// raw `ptr::write`, handled by [`is_mem_copy_or_write`]).
 pub fn is_maybe_uninit_write(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::contains(&[crate::def_id::maybe_uninit_write()], callee)
+    any_of(callee, &[crate::def_id::maybe_uninit_write()])
 }
 
 /// Whether `callee` is `MaybeUninit::uninit` (a new uninitialized slot).
 pub fn is_maybe_uninit_uninit(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::contains(&[crate::def_id::maybe_uninit_uninit()], callee)
+    any_of(callee, &[crate::def_id::maybe_uninit_uninit()])
 }
 
 /// Whether `callee` is a `MaybeUninit` "assume initialized" accessor
 /// (`assume_init`, `assume_init_read`, `assume_init_ref`, `assume_init_mut`).
 pub fn is_maybe_uninit_assume_init(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::contains(
+    any_of(
+        callee,
         &[
             crate::def_id::maybe_uninit_assume_init(),
             crate::def_id::assume_init_read(),
             crate::def_id::maybe_uninit_assume_init_ref(),
             crate::def_id::maybe_uninit_assume_init_mut(),
         ],
-        callee,
     )
 }
 
@@ -317,8 +313,8 @@ pub fn is_maybe_uninit_assume_init(callee: Option<DefId>) -> bool {
 /// `write_bytes`, `copy_nonoverlapping`, `ptr::copy`). Used by the checker to
 /// discharge `Init`/`Typed` obligations on `MaybeUninit` targets.
 pub fn is_mem_copy_or_write(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::contains(
+    any_of(
+        callee,
         &[
             crate::def_id::intrinsics_copy(),
             crate::def_id::intrinsics_copy_nonoverlapping(),
@@ -327,7 +323,6 @@ pub fn is_mem_copy_or_write(callee: Option<DefId>) -> bool {
             crate::def_id::ptr_write(),
             crate::def_id::ptr_write_bytes(),
         ],
-        callee,
     )
 }
 
@@ -338,19 +333,17 @@ pub fn is_mem_copy_or_write(callee: Option<DefId>) -> bool {
 /// crates *and* the local crate — so the std-challenge suites' re-implemented
 /// `len` methods are modelled too, without substring-matching a `def_path_str`.
 pub fn is_len(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::len_fns().contains(&callee)
+    any_fn(callee, crate::def_id::len_fns())
 }
 
 /// Whether `callee` is a `capacity` query method.
 pub fn is_capacity(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::capacity_fns().contains(&callee)
+    any_fn(callee, crate::def_id::capacity_fns())
 }
 
 pub fn is_unwrap(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::contains(
+    any_of(
+        callee,
         &[
             crate::def_id::option_unwrap(),
             crate::def_id::option_expect(),
@@ -361,7 +354,6 @@ pub fn is_unwrap(callee: Option<DefId>) -> bool {
             crate::def_id::result_expect_err(),
             crate::def_id::result_unwrap_unchecked(),
         ],
-        callee,
     )
 }
 
@@ -372,71 +364,62 @@ pub fn is_unwrap(callee: Option<DefId>) -> bool {
 /// [`crate::def_id::from_raw_parts_fns`] (resolved from `fn_defs()`, including
 /// local re-implementations), instead of substring-matching `def_path_str`.
 pub fn is_from_raw_parts(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::from_raw_parts_fns().contains(&callee)
+    any_fn(callee, crate::def_id::from_raw_parts_fns())
 }
 
 /// Whether `callee` is a `from_raw_parts_mut` constructor.
 pub fn is_from_raw_parts_mut(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::from_raw_parts_mut_fns().contains(&callee)
+    any_fn(callee, crate::def_id::from_raw_parts_mut_fns())
 }
 
 pub fn is_cstr_from_ptr(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::contains(&[crate::def_id::cstr_from_ptr()], callee)
+    any_of(callee, &[crate::def_id::cstr_from_ptr()])
 }
 
 /// `_unchecked` C-string constructors whose caller must guarantee NUL
 /// termination (`CStr::from_bytes_with_nul_unchecked`,
 /// `CString::from_vec_with_nul_unchecked`).
 pub fn is_cstr_unchecked_constructor(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::contains(
+    any_of(
+        callee,
         &[
             crate::def_id::cstr_from_bytes_with_nul_unchecked(),
             crate::def_id::cstring_from_vec_with_nul_unchecked(),
         ],
-        callee,
     )
 }
 
 // ── Vec constructors / methods ────────────────────────────────────
 
 pub fn is_vec_push_or_reserve(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::contains(
+    any_of(
+        callee,
         &[
             crate::def_id::vec_push(),
             crate::def_id::vec_reserve(),
             crate::def_id::vec_reserve_exact(),
         ],
-        callee,
     )
 }
 pub fn is_vec_alloc_constructor(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::contains(&[crate::def_id::vec_from_elem()], callee)
+    any_of(callee, &[crate::def_id::vec_from_elem()])
 }
 pub fn is_vec_from_box(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::contains(
+    any_of(
+        callee,
         &[
             crate::def_id::slice_into_vec(),
             crate::def_id::box_assume_init_into_vec_unsafe(),
         ],
-        callee,
     )
 }
 /// `Vec::with_capacity` — matched by `DefId` via
 /// [`crate::def_id::with_capacity_fns`].
 pub fn is_vec_with_capacity(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::with_capacity_fns().contains(&callee)
+    any_fn(callee, crate::def_id::with_capacity_fns())
 }
 pub fn is_into_boxed_slice(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::contains(&[crate::def_id::vec_into_boxed_slice()], callee)
+    any_of(callee, &[crate::def_id::vec_into_boxed_slice()])
 }
 
 // ── Alias-hazard classification ───────────────────────────────────
@@ -457,33 +440,30 @@ pub fn is_ownership_transfer(callee: Option<DefId>) -> bool {
 }
 
 pub fn is_vec_ownership_transfer(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::vec_ownership_transfer_fns().contains(&callee)
+    any_fn(callee, crate::def_id::vec_ownership_transfer_fns())
 }
 
 /// Whether `callee` is `NonNull::new` (the null-checked constructor).
 pub(crate) fn is_nonnull_checked_new(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::contains(&[crate::def_id::nonnull_new()], callee)
+    any_of(callee, &[crate::def_id::nonnull_new()])
 }
 
 /// Whether `callee` is `NonNull::as_ref` or `NonNull::as_mut`.
 pub fn is_nonnull_as_ref_as_mut(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::contains(
+    any_of(
+        callee,
         &[
             crate::def_id::nonnull_as_ref(),
             crate::def_id::nonnull_as_mut(),
         ],
-        callee,
     )
 }
 
 /// Whether `callee` is a `Vec` method that may reallocate (invalidating any
 /// outstanding raw pointers derived from it).
 pub fn is_vec_invalidating_method(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::contains(
+    any_of(
+        callee,
         &[
             crate::def_id::vec_push(),
             crate::def_id::vec_reserve(),
@@ -496,30 +476,28 @@ pub fn is_vec_invalidating_method(callee: Option<DefId>) -> bool {
             crate::def_id::vec_truncate(),
             crate::def_id::vec_set_len(),
         ],
-        callee,
     )
 }
 
 /// Whether `callee` returns ownership of an allocation as a raw pointer
 /// (`Box::into_raw`, `CString::into_raw`, `Arc::into_raw`, `Rc::into_raw`, ...).
 pub fn is_ownership_return(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::contains(
+    any_of(
+        callee,
         &[
             crate::def_id::box_into_raw(),
             crate::def_id::cstring_into_raw(),
             crate::def_id::arc_into_raw(),
             crate::def_id::rc_into_raw(),
         ],
-        callee,
     )
 }
 
 /// Whether `callee` is a benign, read-only use of a raw-pointer origin
 /// (`len`, `is_empty`, `is_null`, `addr`, `as_ptr`/`as_mut_ptr`, `cast`).
 pub fn is_benign_origin_use(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::contains(
+    any_of(
+        callee,
         &[
             crate::def_id::const_ptr_is_null(),
             crate::def_id::const_ptr_addr(),
@@ -558,7 +536,6 @@ pub fn is_benign_origin_use(callee: Option<DefId>) -> bool {
             crate::def_id::cstr_as_ptr(),
             crate::def_id::cstr_is_empty(),
         ],
-        callee,
     )
 }
 
@@ -595,64 +572,49 @@ pub fn is_std_ordering(def_id: DefId) -> bool {
 // [`crate::def_id`] for the exact method-name patterns each group collects.
 
 pub fn is_min_like(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::min_like_fns().contains(&callee)
+    any_fn(callee, crate::def_id::min_like_fns())
 }
 pub fn is_max(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::max_fns().contains(&callee)
+    any_fn(callee, crate::def_id::max_fns())
 }
 pub fn is_clamp(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::clamp_fns().contains(&callee)
+    any_fn(callee, crate::def_id::clamp_fns())
 }
 pub fn is_abs(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::abs_fns().contains(&callee)
+    any_fn(callee, crate::def_id::abs_fns())
 }
 pub fn is_neg(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::neg_fns().contains(&callee)
+    any_fn(callee, crate::def_id::neg_fns())
 }
 pub fn is_sat_unchecked_add(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::sat_unchecked_add_fns().contains(&callee)
+    any_fn(callee, crate::def_id::sat_unchecked_add_fns())
 }
 pub fn is_sat_unchecked_mul(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::sat_unchecked_mul_fns().contains(&callee)
+    any_fn(callee, crate::def_id::sat_unchecked_mul_fns())
 }
 pub fn is_checked_add(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::checked_add_fns().contains(&callee)
+    any_fn(callee, crate::def_id::checked_add_fns())
 }
 pub fn is_checked_mul(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::checked_mul_fns().contains(&callee)
+    any_fn(callee, crate::def_id::checked_mul_fns())
 }
 pub fn is_overflowing_abs_neg(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::overflowing_nz_fns().contains(&callee)
+    any_fn(callee, crate::def_id::overflowing_nz_fns())
 }
 pub fn is_bit_preserving_nz(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::bit_preserving_nz_fns().contains(&callee)
+    any_fn(callee, crate::def_id::bit_preserving_nz_fns())
 }
 pub fn is_checked_nonzero_iff(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::checked_nonzero_iff_fns().contains(&callee)
+    any_fn(callee, crate::def_id::checked_nonzero_iff_fns())
 }
 pub fn is_checked_next_pow2(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::checked_next_pow2_fns().contains(&callee)
+    any_fn(callee, crate::def_id::checked_next_pow2_fns())
 }
 pub fn is_layout_align(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::layout_align_fns().contains(&callee)
+    any_fn(callee, crate::def_id::layout_align_fns())
 }
 pub fn is_split_at(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::split_at_fns().contains(&callee)
+    any_fn(callee, crate::def_id::split_at_fns())
 }
 
 // ── Open-ended operation classifiers ──────────────────────────────
@@ -663,20 +625,16 @@ pub fn is_split_at(callee: Option<DefId>) -> bool {
 // `DefId` like the other classifiers.
 
 pub fn is_align_to_local(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::align_to_local_fns().contains(&callee)
+    any_fn(callee, crate::def_id::align_to_local_fns())
 }
 pub fn is_iter_position(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::iter_position_fns().contains(&callee)
+    any_fn(callee, crate::def_id::iter_position_fns())
 }
 pub fn is_strlen(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::strlen_fns().contains(&callee)
+    any_fn(callee, crate::def_id::strlen_fns())
 }
 pub fn is_slice_get_unchecked(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::slice_get_unchecked_fns().contains(&callee)
+    any_fn(callee, crate::def_id::slice_get_unchecked_fns())
 }
 
 /// Whether `callee` is `SliceIndex::get_unchecked`/`get_unchecked_mut` (the
@@ -685,6 +643,5 @@ pub fn is_slice_get_unchecked(callee: Option<DefId>) -> bool {
 /// methods whose receiver is the slice): the result aliases argument 1, not
 /// argument 0.
 pub fn is_sliceindex_get_unchecked(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    crate::def_id::sliceindex_get_unchecked_fns().contains(&callee)
+    any_fn(callee, crate::def_id::sliceindex_get_unchecked_fns())
 }

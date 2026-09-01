@@ -247,25 +247,7 @@ fn any_entry_to_property<'tcx>(
     for item in disjuncts {
         match item {
             AnyItem::Single(entry) => {
-                if entry.tag == "any" {
-                    rap_error!("Nested 'any' inside 'any' is not supported in JSON contracts");
-                    continue;
-                }
-                let exprs = resolve_json_args(&entry.args, param_names, has_names, &entry.tag);
-                if exprs.len() != entry.args.len() {
-                    rap_error!(
-                        "Parse any entry arg error: Failed to parse arg '{:?}' for tag {}",
-                        entry.args,
-                        entry.tag
-                    );
-                    continue;
-                }
-                let props = Property::parse_list(tcx, def_id, entry.tag.as_str(), &exprs);
-                let mut group: Vec<Property<'tcx>> = Vec::new();
-                for mut prop in props {
-                    prop.apply_kind(entry.kind.as_deref());
-                    group.push(prop);
-                }
+                let group = resolve_entry_group(tcx, def_id, entry, param_names, has_names, false);
                 if !group.is_empty() {
                     or_disjuncts.push(Property::conjunction(group));
                 }
@@ -273,24 +255,9 @@ fn any_entry_to_property<'tcx>(
             AnyItem::And(entries) => {
                 let mut group: Vec<Property<'tcx>> = Vec::new();
                 for entry in entries {
-                    if entry.tag == "any" {
-                        rap_error!("Nested 'any' inside 'any' group is not supported");
-                        continue;
-                    }
-                    let exprs = resolve_json_args(&entry.args, param_names, has_names, &entry.tag);
-                    if exprs.len() != entry.args.len() {
-                        rap_error!(
-                            "Parse any group entry arg error: failed to parse '{:?}' for tag {}",
-                            entry.args,
-                            entry.tag
-                        );
-                        continue;
-                    }
-                    let props = Property::parse_list(tcx, def_id, entry.tag.as_str(), &exprs);
-                    for mut prop in props {
-                        prop.apply_kind(entry.kind.as_deref());
-                        group.push(prop);
-                    }
+                    group.extend(resolve_entry_group(
+                        tcx, def_id, entry, param_names, has_names, true,
+                    ));
                 }
                 if !group.is_empty() {
                     or_disjuncts.push(Property::conjunction(group));
@@ -299,6 +266,49 @@ fn any_entry_to_property<'tcx>(
         }
     }
     Property::new_or(or_disjuncts)
+}
+
+/// Resolve a single JSON `any` entry into its property group (empty on error).
+fn resolve_entry_group<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def_id: DefId,
+    entry: &JsonProperty,
+    param_names: &[String],
+    has_names: bool,
+    in_group: bool,
+) -> Vec<Property<'tcx>> {
+    if entry.tag == "any" {
+        if in_group {
+            rap_error!("Nested 'any' inside 'any' group is not supported");
+        } else {
+            rap_error!("Nested 'any' inside 'any' is not supported in JSON contracts");
+        }
+        return Vec::new();
+    }
+    let exprs = resolve_json_args(&entry.args, param_names, has_names, &entry.tag);
+    if exprs.len() != entry.args.len() {
+        if in_group {
+            rap_error!(
+                "Parse any group entry arg error: failed to parse '{:?}' for tag {}",
+                entry.args,
+                entry.tag
+            );
+        } else {
+            rap_error!(
+                "Parse any entry arg error: Failed to parse arg '{:?}' for tag {}",
+                entry.args,
+                entry.tag
+            );
+        }
+        return Vec::new();
+    }
+    let props = Property::parse_list(tcx, def_id, entry.tag.as_str(), &exprs);
+    let mut group = Vec::new();
+    for mut prop in props {
+        prop.apply_kind(entry.kind.as_deref());
+        group.push(prop);
+    }
+    group
 }
 
 /// Resolve JSON contract argument strings to parsed [`syn::Expr`] values.

@@ -80,10 +80,7 @@ pub(crate) fn visit<'tcx>(
         let callee = crate::helpers::mir_utils::dep_callee_def_id(func);
         if crate::verify::api_classify::is_len(callee) {
             if let Some(first) = args.first() {
-                let arg_place = match &first.node {
-                    Operand::Copy(p) | Operand::Move(p) => Some(PlaceKey::from_mir_place(p)),
-                    _ => None,
-                };
+                let arg_place = crate::helpers::mir_utils::operand_place(&first.node);
                 if let Some(arg_key) = arg_place {
                     let matches = relevant.need_len.contains(&arg_key)
                         || relevant.need_len.iter().any(|nl| {

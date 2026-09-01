@@ -391,7 +391,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
         }
 
         if defs.intersects(relevant) {
-            let mut uses = collect_statement_uses(statement, block, statement_index, flow);
+            let mut uses = collect_statement_uses(statement, block, statement_index, flow, &defs);
             items.push(RelevantItem::Statement {
                 def_id,
                 block,
@@ -425,22 +425,8 @@ impl<'tcx> BackwardSlicer<'tcx> {
             return;
         }
 
-        if statement_invalidates_relevant(statement, relevant) {
-            items.push(RelevantItem::Statement {
-                def_id,
-                block,
-                statement_index,
-            });
-        } else if statement_can_refine(statement) {
-            let mut uses = RelevantPlaces::new();
-            for &local in &defs.locals {
-                for &edge_idx in &flow.node(local).in_edges {
-                    let edge = &flow.edges[edge_idx];
-                    if edge.block == block.as_usize() && edge.statement_index == statement_index {
-                        uses.insert_local(edge.src);
-                    }
-                }
-            }
+        if statement_can_refine(statement) {
+            let uses = collect_flow_uses(flow, block, statement_index, &defs);
             if uses.intersects(relevant) {
                 items.push(RelevantItem::Statement {
                     def_id,
@@ -498,9 +484,6 @@ impl<'tcx> BackwardSlicer<'tcx> {
         }
 
         if use_def.defs.intersects(relevant) {
-            if terminator_may_havoc(terminator) {
-                items.push(RelevantItem::Forget);
-            }
             items.push(RelevantItem::Terminator { def_id, block });
             relevant.remove_all(&use_def.defs);
             relevant.extend(use_def.uses);
@@ -508,9 +491,6 @@ impl<'tcx> BackwardSlicer<'tcx> {
         }
 
         if use_def.uses.intersects(relevant) {
-            if terminator_may_havoc(terminator) {
-                items.push(RelevantItem::Forget);
-            }
             items.push(RelevantItem::Terminator { def_id, block });
         }
     }
@@ -548,25 +528,11 @@ fn statement_can_refine(statement: &rustc_middle::mir::Statement<'_>) -> bool {
     ))
 }
 
-fn statement_invalidates_relevant(
-    statement: &rustc_middle::mir::Statement<'_>,
-    relevant: &RelevantPlaces,
-) -> bool {
-    match &statement.kind {
-        StatementKind::StorageDead(local) => relevant.locals.contains(local),
-        _ => false,
-    }
-}
-
 fn terminator_is_path_condition(terminator: &rustc_middle::mir::Terminator<'_>) -> bool {
     matches!(
         terminator.kind,
         TerminatorKind::SwitchInt { .. } | TerminatorKind::Assert { .. }
     )
-}
-
-fn terminator_may_havoc(terminator: &rustc_middle::mir::Terminator<'_>) -> bool {
-    matches!(terminator.kind, TerminatorKind::Call { .. })
 }
 
 /// Collect all place-uses for a statement from dataflow edges and operands.
@@ -575,27 +541,9 @@ fn collect_statement_uses<'tcx>(
     block: BasicBlock,
     statement_index: usize,
     flow: &DataflowGraph,
+    defs: &RelevantPlaces,
 ) -> RelevantPlaces {
-    let mut uses = RelevantPlaces::new();
-
-    // Collect def locals (we know there are defs — caller already checked)
-    let def_locals = match &statement.kind {
-        StatementKind::Assign(assign) => {
-            let (place, _) = &**assign;
-            vec![place.local]
-        }
-        StatementKind::StorageDead(local) => vec![*local],
-        _ => Vec::new(),
-    };
-
-    for &local in &def_locals {
-        for &edge_idx in &flow.node(local).in_edges {
-            let edge = &flow.edges[edge_idx];
-            if edge.block == block.as_usize() && edge.statement_index == statement_index {
-                uses.insert_local(edge.src);
-            }
-        }
-    }
+    let mut uses = collect_flow_uses(flow, block, statement_index, defs);
 
     // Also collect uses directly from operands — the dataflow graph
     // creates synthetic nodes for field projections (e.g. _13.0),
@@ -620,5 +568,25 @@ fn collect_statement_uses<'tcx>(
         }
     }
 
+    uses
+}
+
+/// Collect the source locals of the dataflow edges entering
+/// `(block, statement_index)` from the def locals of `defs`.
+fn collect_flow_uses(
+    flow: &DataflowGraph,
+    block: BasicBlock,
+    statement_index: usize,
+    defs: &RelevantPlaces,
+) -> RelevantPlaces {
+    let mut uses = RelevantPlaces::new();
+    for &local in &defs.locals {
+        for &edge_idx in &flow.node(local).in_edges {
+            let edge = &flow.edges[edge_idx];
+            if edge.block == block.as_usize() && edge.statement_index == statement_index {
+                uses.insert_local(edge.src);
+            }
+        }
+    }
     uses
 }

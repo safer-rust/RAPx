@@ -13,6 +13,26 @@ use super::types::{
     NumericUnaryOp, PlaceBase, Property, PropertyArg, PropertyKind, RelOp,
 };
 
+/// Best-effort source snippet for a MIR local's declaration, if its function
+/// MIR is available and the local index is in range.
+fn local_snippet<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    fn_def_id: Option<DefId>,
+    mir_local: usize,
+) -> Option<String> {
+    let fn_def_id = fn_def_id?;
+    if !tcx.is_mir_available(fn_def_id) {
+        return None;
+    }
+    let body = tcx.optimized_mir(fn_def_id);
+    if mir_local >= body.local_decls.len() {
+        return None;
+    }
+    let local = rustc_middle::mir::Local::from_usize(mir_local);
+    let span = body.local_decls[local].source_info.span;
+    tcx.sess.source_map().span_to_snippet(span).ok()
+}
+
 impl<'tcx> ContractPlace<'tcx> {
     pub(crate) fn display_user_friendly(
         &self,
@@ -30,44 +50,14 @@ impl<'tcx> ContractPlace<'tcx> {
                     "return".to_string()
                 }
             }
-            PlaceBase::Arg(idx) => {
-                if let Some(fn_def_id) = fn_def_id
-                    && tcx.is_mir_available(fn_def_id)
-                {
-                    let mir_local = idx + 1;
-                    let body = tcx.optimized_mir(fn_def_id);
-                    if mir_local < body.local_decls.len() {
-                        let local = rustc_middle::mir::Local::from_usize(mir_local);
-                        let span = body.local_decls[local].source_info.span;
-                        if let Ok(snippet) = tcx.sess.source_map().span_to_snippet(span)
-                            && !snippet.is_empty()
-                        {
-                            return snippet;
-                        }
-                    }
-                }
-                format!("arg{}", idx)
-            }
+            PlaceBase::Arg(idx) => local_snippet(tcx, fn_def_id, idx + 1)
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| format!("arg{}", idx)),
             PlaceBase::Local(n) => {
                 if n == 0 {
                     "return".to_string()
-                } else if let Some(fn_def_id) = fn_def_id
-                    && tcx.is_mir_available(fn_def_id)
-                {
-                    let body = tcx.optimized_mir(fn_def_id);
-                    if n < body.local_decls.len() {
-                        let local = rustc_middle::mir::Local::from_usize(n);
-                        let span = body.local_decls[local].source_info.span;
-                        if let Ok(snippet) = tcx.sess.source_map().span_to_snippet(span) {
-                            snippet
-                        } else {
-                            format!("arg{}", n)
-                        }
-                    } else {
-                        format!("arg{}", n)
-                    }
                 } else {
-                    format!("arg{}", n)
+                    local_snippet(tcx, fn_def_id, n).unwrap_or_else(|| format!("arg{}", n))
                 }
             }
         };

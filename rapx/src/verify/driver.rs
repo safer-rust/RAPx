@@ -145,43 +145,45 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
                 property,
                 &self.target.caller_requires,
             ),
-            Property::And(and) => {
-                let mut per_path: Vec<Option<(CheckResult, String)>> = Vec::new();
-                for conjunct in and.conjuncts.iter() {
-                    let bulk = self.check_property_paths(view, conjunct);
-                    if per_path.is_empty() {
-                        per_path.resize(bulk.len(), None);
-                    }
-                    for (i, (result, desc)) in bulk.iter().enumerate() {
-                        let slot =
-                            per_path[i].get_or_insert_with(|| (result.clone(), desc.clone()));
-                        slot.0 = slot.0.clone().and(result.clone());
-                        if matches!(result, CheckResult::Failed | CheckResult::Unknown) {
-                            slot.1 = desc.clone();
-                        }
-                    }
-                }
-                per_path.into_iter().map(|x| x.unwrap()).collect()
+            Property::And(and) => self.combine_check_paths(
+                view,
+                &and.conjuncts,
+                CheckResult::and,
+                |r| matches!(r, CheckResult::Failed | CheckResult::Unknown),
+            ),
+            Property::Or(or) => self.combine_check_paths(
+                view,
+                &or.disjuncts,
+                CheckResult::or,
+                |r| matches!(r, CheckResult::Proved),
+            ),
+        }
+    }
+
+    /// Fold `And`/`Or` children per path: `fold` combines results, and the
+    /// description is replaced when `replace_desc_on` matches the child result.
+    fn combine_check_paths(
+        &self,
+        view: &CheckpointCheckView<'_, '_, 'tcx>,
+        children: &[Box<Property<'tcx>>],
+        fold: fn(CheckResult, CheckResult) -> CheckResult,
+        replace_desc_on: fn(&CheckResult) -> bool,
+    ) -> Vec<(CheckResult, String)> {
+        let mut per_path: Vec<Option<(CheckResult, String)>> = Vec::new();
+        for child in children {
+            let bulk = self.check_property_paths(view, child);
+            if per_path.is_empty() {
+                per_path.resize(bulk.len(), None);
             }
-            Property::Or(or) => {
-                let mut per_path: Vec<Option<(CheckResult, String)>> = Vec::new();
-                for disjunct in or.disjuncts.iter() {
-                    let bulk = self.check_property_paths(view, disjunct);
-                    if per_path.is_empty() {
-                        per_path.resize(bulk.len(), None);
-                    }
-                    for (i, (result, desc)) in bulk.iter().enumerate() {
-                        let slot =
-                            per_path[i].get_or_insert_with(|| (result.clone(), desc.clone()));
-                        slot.0 = slot.0.clone().or(result.clone());
-                        if matches!(result, CheckResult::Proved) {
-                            slot.1 = desc.clone();
-                        }
-                    }
+            for (i, (result, desc)) in bulk.iter().enumerate() {
+                let slot = per_path[i].get_or_insert_with(|| (result.clone(), desc.clone()));
+                slot.0 = fold(slot.0.clone(), result.clone());
+                if replace_desc_on(result) {
+                    slot.1 = desc.clone();
                 }
-                per_path.into_iter().map(|x| x.unwrap()).collect()
             }
         }
+        per_path.into_iter().map(|x| x.unwrap()).collect()
     }
 
     /// Return the required properties for a concrete unsafe checkpoint.
@@ -532,6 +534,32 @@ impl<'tcx> VerifyRun<'tcx> {
         }
     }
 
+    /// Run `verify_function` across `repeat_rounds`, collecting results and
+    /// returning the crash message (if any round panicked).
+    fn run_repeat_rounds(
+        &self,
+        target: &FunctionTarget<'tcx>,
+        repeat_rounds: &[usize],
+        skip_label: &str,
+        all_results: &mut Vec<PropertyCheckResult<'tcx>>,
+    ) -> Option<String> {
+        for &repeat in repeat_rounds {
+            let driver = VerifyDriver::new_with_repeat(self.tcx, target, repeat);
+            match crate::helpers::mir_utils::catch_panic(|| driver.verify_function()) {
+                Ok(report) => {
+                    rap_debug!("{}", report.describe());
+                    all_results.extend(report.results);
+                }
+                Err(msg) => {
+                    rap_warn!("Skipping {} (repeat {}): {msg}", skip_label, repeat);
+                    all_results.clear();
+                    return Some(format!("repeat {repeat}: {msg}"));
+                }
+            }
+        }
+        None
+    }
+
     fn verify_and_emit_sequence(
         &self,
         read_def_id: rustc_hir::def_id::DefId,
@@ -540,28 +568,14 @@ impl<'tcx> VerifyRun<'tcx> {
         mut_ids: &[rustc_hir::def_id::DefId],
     ) {
         let mut all_results: Vec<PropertyCheckResult<'_>> = Vec::new();
-        let mut crashed: Option<String> = None;
 
         let (_, repeat_rounds) = self.repeat_rounds_for_target(con_target);
-        for repeat in repeat_rounds {
-            let driver = VerifyDriver::new_with_repeat(self.tcx, con_target, repeat);
-            match crate::helpers::mir_utils::catch_panic(|| driver.verify_function()) {
-                Ok(report) => {
-                    rap_debug!("{}", report.describe());
-                    all_results.extend(report.results);
-                }
-                Err(msg) => {
-                    rap_warn!(
-                        "Skipping constructor {} (repeat {}): {msg}",
-                        self.tcx.def_path_str(con_id),
-                        repeat,
-                    );
-                    all_results.clear();
-                    crashed = Some(format!("repeat {repeat}: {msg}"));
-                    break;
-                }
-            }
-        }
+        let crashed = self.run_repeat_rounds(
+            con_target,
+            &repeat_rounds,
+            &format!("constructor {}", self.tcx.def_path_str(con_id)),
+            &mut all_results,
+        );
 
         let read_name = short_fn_name(self.tcx, read_def_id);
         let con_name = short_fn_name(self.tcx, con_id);
@@ -614,30 +628,17 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
         for target in &collector.function_targets {
             let target_path = fmt_fn_path_with_bounds(self.tcx, target.def_id);
             let mut all_results: Vec<PropertyCheckResult<'_>> = Vec::new();
-            let mut fn_crashed: Option<String> = None;
+            let mut fn_crashed: Option<String>;
 
             let (planned_repeat, repeat_rounds) = self.repeat_rounds_for_target(target);
 
             // Phase 1: unsafe checkpoint verification
-            for repeat in repeat_rounds {
-                let driver = VerifyDriver::new_with_repeat(self.tcx, target, repeat);
-                match crate::helpers::mir_utils::catch_panic(|| driver.verify_function()) {
-                    Ok(report) => {
-                        rap_debug!("{}", report.describe());
-                        all_results.extend(report.results);
-                    }
-                    Err(msg) => {
-                        rap_warn!(
-                            "Skipping function {} (repeat {}): {msg}",
-                            target_path,
-                            repeat,
-                        );
-                        all_results.clear();
-                        fn_crashed = Some(format!("repeat {repeat}: {msg}"));
-                        break;
-                    }
-                }
-            }
+            fn_crashed = self.run_repeat_rounds(
+                target,
+                &repeat_rounds,
+                &format!("function {}", target_path),
+                &mut all_results,
+            );
 
             // Phase 2: struct invariant verification
             if !target.struct_invariants.is_empty() && !self.skip_invariant {
@@ -834,22 +835,25 @@ impl<'tcx> VerifyRun<'tcx> {
         }
     }
 
-    fn has_printable_contracts(&self, target: &FunctionTarget<'tcx>) -> bool {
-        use crate::verify::contract::PropertyKind;
-        let is_unsafe_fn =
-            self.tcx.fn_sig(target.def_id).skip_binder().safety() == rustc_hir::Safety::Unsafe;
-        let has_caller = is_unsafe_fn
+    fn is_unsafe_fn(&self, def_id: rustc_hir::def_id::DefId) -> bool {
+        self.tcx.fn_sig(def_id).skip_binder().safety() == rustc_hir::Safety::Unsafe
+    }
+
+    fn has_caller_contracts(&self, target: &FunctionTarget<'tcx>, is_unsafe_fn: bool) -> bool {
+        is_unsafe_fn
             && target
                 .caller_requires
                 .iter()
-                .any(|p| p.kind() != Some(PropertyKind::Unknown));
-        if has_caller {
-            return true;
-        }
-        target
-            .callee_requires
-            .values()
-            .any(|c| c.iter().any(|p| p.kind() != Some(PropertyKind::Unknown)))
+                .any(|p| p.kind() != Some(PropertyKind::Unknown))
+    }
+
+    fn has_printable_contracts(&self, target: &FunctionTarget<'tcx>) -> bool {
+        let is_unsafe_fn = self.is_unsafe_fn(target.def_id);
+        self.has_caller_contracts(target, is_unsafe_fn)
+            || target
+                .callee_requires
+                .values()
+                .any(|c| c.iter().any(|p| p.kind() != Some(PropertyKind::Unknown)))
     }
 
     fn print_contract_lines(&self, prefix: &str, branch: &str, call: &str, meaning: &str) {
@@ -869,18 +873,13 @@ impl<'tcx> VerifyRun<'tcx> {
         use crate::verify::contract::PropertyKind;
 
         let (arg_names_typed, ret_ty) = self.resolve_arg_names_with_types(target.def_id);
-        let is_unsafe_fn =
-            self.tcx.fn_sig(target.def_id).skip_binder().safety() == rustc_hir::Safety::Unsafe;
+        let is_unsafe_fn = self.is_unsafe_fn(target.def_id);
 
         let target_path = fmt_fn_path_with_generics(self.tcx, target.def_id);
-        let short_name = crate::helpers::name::short_fn_name(self.tcx, target.def_id);
+        let short_name = short_fn_name(self.tcx, target.def_id);
 
         // Collect what to print first
-        let has_caller = is_unsafe_fn
-            && target
-                .caller_requires
-                .iter()
-                .any(|p| p.kind() != Some(PropertyKind::Unknown));
+        let has_caller = self.has_caller_contracts(target, is_unsafe_fn);
         let mut callee_ids: Vec<_> = target.callee_requires.keys().copied().collect();
         callee_ids.retain(|did| {
             target
@@ -1003,7 +1002,6 @@ impl<'tcx> VerifyRun<'tcx> {
 
 use crate::helpers::name::short_fn_name;
 
-/// Return true when two properties have the same kind.
 /// Collect struct field indices referenced by a property's contract places.
 ///
 /// Used to determine which invariants are invalidated when a mutator writes

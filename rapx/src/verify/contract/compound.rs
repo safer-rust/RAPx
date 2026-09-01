@@ -396,9 +396,7 @@ fn unknown_property<'tcx>() -> Property<'tcx> {
 
 // ── Registry ───────────────────────────────────────────────────
 
-/// Builtin compounds shipped with `rapx`: the standard compound safety properties
-/// (`std-compound-properties.rs`) plus user extensions
-/// (`user-compound-properties.rs`).  Immutable and shared across every crate.
+/// Cached, shared builtin compound map (see [`builtin_compounds`]).
 fn builtin_compounds_map() -> &'static HashMap<String, CompoundSpec> {
     static BUILTIN: OnceLock<HashMap<String, CompoundSpec>> = OnceLock::new();
     BUILTIN.get_or_init(builtin_compounds)

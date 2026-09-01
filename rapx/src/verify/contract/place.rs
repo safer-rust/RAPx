@@ -51,23 +51,11 @@ pub(crate) fn parse_contract_place<'tcx>(
                                 }
                             });
                         if let Some(variant_index) = some_variant {
-                            let mut projections: Vec<ContractProjection> = fields
-                                .into_iter()
-                                .map(|(index, ty)| ContractProjection::Field {
-                                    index,
-                                    ty: Some(ty),
-                                })
-                                .collect();
-                            projections.push(ContractProjection::Downcast { variant_index });
-                            let base_enum = if base == 0 {
-                                PlaceBase::Return
-                            } else {
-                                PlaceBase::Local(base)
-                            };
-                            return Some(ContractPlace {
-                                base: base_enum,
-                                projections,
-                            });
+                            let mut place = ContractPlace::local(base, fields);
+                            place
+                                .projections
+                                .push(ContractProjection::Downcast { variant_index });
+                            return Some(place);
                         }
                     }
                 }
@@ -145,6 +133,21 @@ pub(crate) fn resolve_place_from_ident<'tcx>(
     None
 }
 
+/// Walk a list of field names from `current_ty`, appending `(index, ty)` pairs.
+fn walk_fields<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    mut current_ty: Ty<'tcx>,
+    mut field_indices: Vec<(usize, Ty<'tcx>)>,
+    fields: &[String],
+) -> Option<(Vec<(usize, Ty<'tcx>)>, Ty<'tcx>)> {
+    for field_name in fields {
+        let (field_idx, field_ty) = resolve_next_field(tcx, current_ty, field_name)?;
+        current_ty = field_ty;
+        field_indices.push((field_idx, current_ty));
+    }
+    Some((field_indices, current_ty))
+}
+
 fn resolve_projection_from_base_ident<'tcx>(
     tcx: TyCtxt<'tcx>,
     _base_ident: String,
@@ -152,15 +155,7 @@ fn resolve_projection_from_base_ident<'tcx>(
     base_local: usize,
     base_ty: Ty<'tcx>,
 ) -> Option<(usize, Vec<(usize, Ty<'tcx>)>, Ty<'tcx>)> {
-    let mut current_ty = base_ty;
-    let mut field_indices = Vec::new();
-    for field_name in fields {
-        let Some((field_idx, field_ty)) = resolve_next_field(tcx, current_ty, &field_name) else {
-            return None;
-        };
-        current_ty = field_ty;
-        field_indices.push((field_idx, current_ty));
-    }
+    let (field_indices, current_ty) = walk_fields(tcx, base_ty, Vec::new(), &fields)?;
     Some((base_local, field_indices, current_ty))
 }
 
@@ -171,21 +166,9 @@ fn resolve_projection_from_struct_ident<'tcx>(
     fields: Vec<String>,
     struct_ty: Ty<'tcx>,
 ) -> Option<(usize, Vec<(usize, Ty<'tcx>)>, Ty<'tcx>)> {
-    let Some((field_idx, field_ty)) = resolve_next_field(tcx, struct_ty, &base_ident) else {
-        return None;
-    };
-
-    let mut current_ty = field_ty;
-    let mut field_indices = vec![(field_idx, current_ty)];
-    for field_name in fields {
-        let Some((next_field_idx, next_field_ty)) =
-            resolve_next_field(tcx, current_ty, &field_name)
-        else {
-            return None;
-        };
-        current_ty = next_field_ty;
-        field_indices.push((next_field_idx, current_ty));
-    }
+    let (field_idx, field_ty) = resolve_next_field(tcx, struct_ty, &base_ident)?;
+    let (mut field_indices, current_ty) =
+        walk_fields(tcx, field_ty, vec![(field_idx, field_ty)], &fields)?;
 
     let base_local = if get_type(tcx, def_id) == FnKind::Constructor {
         0

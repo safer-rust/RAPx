@@ -453,11 +453,7 @@ fn conv_compound_or(pair: Pair<Rule>, params: &[String]) -> CompoundBody {
         .into_inner()
         .map(|p| conv_compound_and(p, params))
         .collect();
-    if parts.len() == 1 {
-        parts.into_iter().next().unwrap()
-    } else {
-        CompoundBody::Or(parts)
-    }
+    singleton_or_wrap(parts, CompoundBody::Or)
 }
 
 fn conv_compound_and(pair: Pair<Rule>, params: &[String]) -> CompoundBody {
@@ -465,10 +461,18 @@ fn conv_compound_and(pair: Pair<Rule>, params: &[String]) -> CompoundBody {
         .into_inner()
         .map(|p| conv_compound_leaf(p, params))
         .collect();
+    singleton_or_wrap(parts, CompoundBody::And)
+}
+
+/// Unwrap a single-element list, otherwise wrap it with `wrap`.
+fn singleton_or_wrap(
+    parts: Vec<CompoundBody>,
+    wrap: fn(Vec<CompoundBody>) -> CompoundBody,
+) -> CompoundBody {
     if parts.len() == 1 {
         parts.into_iter().next().unwrap()
     } else {
-        CompoundBody::And(parts)
+        wrap(parts)
     }
 }
 

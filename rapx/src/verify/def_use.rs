@@ -172,14 +172,7 @@ pub(crate) fn bind_callsite_roots(
     let argument_roots: Vec<(PlaceKey, usize)> = relevance
         .places
         .iter()
-        .filter_map(|place| match place.base {
-            PlaceBaseKey::Arg(index) => Some((place.clone(), index)),
-            PlaceBaseKey::Local(local) => checkpoint
-                .callee
-                .and_then(|callee| callee_param_index_for_local(tcx, callee, local))
-                .map(|index| (place.clone(), index)),
-            _ => None,
-        })
+        .filter_map(|place| argument_index_of_place(tcx, checkpoint, place))
         .collect();
 
     let mut bound_roots = RelevantPlaces::new();
@@ -206,14 +199,7 @@ pub(crate) fn bind_callsite_roots(
         let need_len_roots: Vec<(PlaceKey, usize)> = relevance
             .need_len
             .iter()
-            .filter_map(|place| match place.base {
-                PlaceBaseKey::Arg(index) => Some((place.clone(), index)),
-                PlaceBaseKey::Local(local) => checkpoint
-                    .callee
-                    .and_then(|callee| callee_param_index_for_local(tcx, callee, local))
-                    .map(|index| (place.clone(), index)),
-                _ => None,
-            })
+            .filter_map(|place| argument_index_of_place(tcx, checkpoint, place))
             .collect();
         for (root, index) in need_len_roots {
             if let Some(operand) = checkpoint.args.get(index) {
@@ -222,6 +208,23 @@ pub(crate) fn bind_callsite_roots(
                 }
             }
         }
+    }
+}
+
+/// Map a root place to its callee argument index, if it is an `Arg` or a
+/// `Local` that traces to a callee parameter.
+fn argument_index_of_place(
+    tcx: TyCtxt<'_>,
+    checkpoint: &Checkpoint<'_>,
+    place: &PlaceKey,
+) -> Option<(PlaceKey, usize)> {
+    match place.base {
+        PlaceBaseKey::Arg(index) => Some((place.clone(), index)),
+        PlaceBaseKey::Local(local) => checkpoint
+            .callee
+            .and_then(|callee| callee_param_index_for_local(tcx, callee, local))
+            .map(|index| (place.clone(), index)),
+        _ => None,
     }
 }
 

@@ -4,7 +4,6 @@
 //! and resolves arguments positionally. `Property::parse_list` is the shared
 //! entry point for all front-ends, including the `any(...)` combinator.
 
-use quote::ToTokens;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 use syn::Expr;
@@ -60,12 +59,9 @@ impl<'tcx> Property<'tcx> {
             spec::ArgKind::Ty => {
                 super::resolve::parse_type(tcx, def_id, expr, tag).map(PropertyArg::Ty)
             }
-            spec::ArgKind::Expr => {
-                let text = expr.to_token_stream().to_string();
-                Some(PropertyArg::Expr(super::pest_conv::parse_expr_pest(
-                    tcx, def_id, &text,
-                )))
-            }
+            spec::ArgKind::Expr => Some(PropertyArg::Expr(super::resolve::expr_to_pest(
+                tcx, def_id, expr,
+            ))),
             spec::ArgKind::Ident => {
                 let s = access_ident_recursive(expr).map(|(name, _)| name)?;
                 Some(PropertyArg::Ident(s))

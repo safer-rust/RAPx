@@ -206,10 +206,7 @@ pub(crate) fn fmt_contract_expanded<'tcx>(
         if let Some(PropertyArg::Expr(ContractExpr::IndexAccess { slice, index })) =
             property.args().first()
         {
-            let mut s = display_expr_user_friendly(slice, tcx, struct_def_id, fn_def_id);
-            s = s.strip_prefix("&mut ").unwrap_or(&s).to_string();
-            s = s.strip_prefix("&").unwrap_or(&s).to_string();
-            let i = display_expr_user_friendly(index, tcx, struct_def_id, fn_def_id);
+            let (s, i) = fmt_index_access(slice, index, tcx, struct_def_id, fn_def_id);
             format!("{tag}({s}, {i})")
         } else {
             unreachable!()
@@ -240,10 +237,7 @@ pub(crate) fn fmt_contract_expanded<'tcx>(
             let placeholder = format!("InBound({})", args.join(", "));
             match property.args().first() {
                 Some(PropertyArg::Expr(ContractExpr::IndexAccess { slice, index })) => {
-                    let mut s = display_expr_user_friendly(slice, tcx, struct_def_id, fn_def_id);
-                    s = s.strip_prefix("&mut ").unwrap_or(&s).to_string();
-                    s = s.strip_prefix("&").unwrap_or(&s).to_string();
-                    let i = display_expr_user_friendly(index, tcx, struct_def_id, fn_def_id);
+                    let (s, i) = fmt_index_access(slice, index, tcx, struct_def_id, fn_def_id);
                     format!("0 <= {i} < {s}.len()")
                 }
                 Some(PropertyArg::Expr(ContractExpr::Place(place))) => {
@@ -529,4 +523,20 @@ pub(crate) fn emit_property_rows<'tcx>(_tcx: TyCtxt<'tcx>, results: &[&PropertyC
             }
         }
     }
+}
+
+/// Render an `IndexAccess { slice, index }` into `(slice_str, index_str)`,
+/// stripping leading `&mut `/`&` from the slice display.
+fn fmt_index_access<'tcx>(
+    slice: &crate::verify::contract::ContractExpr<'tcx>,
+    index: &crate::verify::contract::ContractExpr<'tcx>,
+    tcx: TyCtxt<'tcx>,
+    struct_def_id: Option<DefId>,
+    fn_def_id: Option<DefId>,
+) -> (String, String) {
+    let mut s = display_expr_user_friendly(slice, tcx, struct_def_id, fn_def_id);
+    s = s.strip_prefix("&mut ").unwrap_or(&s).to_string();
+    s = s.strip_prefix("&").unwrap_or(&s).to_string();
+    let i = display_expr_user_friendly(index, tcx, struct_def_id, fn_def_id);
+    (s, i)
 }
