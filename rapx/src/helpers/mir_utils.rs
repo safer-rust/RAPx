@@ -72,6 +72,21 @@ pub(crate) fn is_drop_in_place(def_id: DefId) -> bool {
     crate::def_id::drop_in_place() == Some(def_id)
 }
 
+/// Whether `def_id` is a diverging call target: a `panic*` lang item or the
+/// `unreachable`/`abort` intrinsics.
+pub(crate) fn is_diverging_call(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
+    tcx.is_lang_item(def_id, LangItem::Panic)
+        || tcx.is_lang_item(def_id, LangItem::PanicNounwind)
+        || tcx.is_lang_item(def_id, LangItem::PanicFmt)
+        || tcx.is_lang_item(def_id, LangItem::PanicDisplay)
+        || tcx.is_lang_item(def_id, LangItem::ConstPanicFmt)
+        || tcx.is_lang_item(def_id, LangItem::PanicBoundsCheck)
+        || tcx.is_lang_item(def_id, LangItem::PanicMisalignedPointerDereference)
+        || tcx.intrinsic(def_id).is_some_and(|i| {
+            i.name == rustc_span::sym::unreachable || i.name == rustc_span::sym::abort
+        })
+}
+
 /// The concrete `core::ops::Range*` struct a `DefId` denotes.
 pub(crate) enum RangeKind {
     RangeTo,

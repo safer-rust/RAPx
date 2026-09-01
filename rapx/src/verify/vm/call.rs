@@ -813,10 +813,11 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 match &term.kind {
                     rustc_middle::mir::TerminatorKind::Unreachable => return true,
                     rustc_middle::mir::TerminatorKind::Call { func, .. } => {
-                        let name = crate::helpers::mir_utils::call_name(tcx, func);
-                        return name.contains("panic")
-                            || name.contains("unreachable")
-                            || name.contains("abort");
+                        let Some(callee) = crate::helpers::mir_utils::dep_callee_def_id(func)
+                        else {
+                            return false;
+                        };
+                        return crate::helpers::mir_utils::is_diverging_call(tcx, callee);
                     }
                     rustc_middle::mir::TerminatorKind::Goto { target: next } => {
                         cur = *next;

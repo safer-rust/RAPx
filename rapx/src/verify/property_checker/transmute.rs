@@ -199,14 +199,11 @@ impl PropertyChecker {
         }
     }
 
-    /// Return true if `ty` is `core::simd::Simd<T, N>`.
-    fn is_simd_vector<'ctx, 'tcx>(vm_state: &VmState<'ctx, 'tcx>, ty: Ty<'tcx>) -> bool {
+    /// Return true if `ty` is a SIMD vector (a `#[repr(simd)]` ADT such as
+    /// `core::simd::Simd<T, N>`).
+    fn is_simd_vector<'ctx, 'tcx>(_vm_state: &VmState<'ctx, 'tcx>, ty: Ty<'tcx>) -> bool {
         if let TyKind::Adt(adt_def, _) = ty.kind() {
-            let name = vm_state.tcx.item_name(adt_def.did());
-            if name.as_str() == "Simd" {
-                let path = vm_state.tcx.def_path_str(adt_def.did());
-                return path.contains("::simd::");
-            }
+            return adt_def.repr().simd();
         }
         false
     }
