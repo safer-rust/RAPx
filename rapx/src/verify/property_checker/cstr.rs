@@ -18,6 +18,15 @@ use crate::verify::{
 
 use super::PropertyChecker;
 
+/// The root local of the checkpoint's first argument, when it is a plain
+/// `Copy`/`Move` operand with no projection.
+fn first_arg_local<'tcx>(checkpoint: &Checkpoint<'tcx>) -> Option<Local> {
+    checkpoint.args.get(0).and_then(|op| match op {
+        Operand::Copy(p) | Operand::Move(p) if p.projection.is_empty() => Some(p.local),
+        _ => None,
+    })
+}
+
 /// Build a `local -> source` map for `Use`/`Cast`/`Ref`/`RawPtr`/`CopyForDeref`
 /// assignments and `as_ptr` calls.
 fn body_parents(body: &Body<'_>) -> FxHashMap<Local, Local> {
@@ -316,10 +325,7 @@ impl PropertyChecker {
         vm_state: &VmState<'_, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
     ) -> Option<CheckResult> {
-        let target_local = checkpoint.args.get(0).and_then(|op| match op {
-            Operand::Copy(p) | Operand::Move(p) if p.projection.is_empty() => Some(p.local),
-            _ => None,
-        })?;
+        let target_local = first_arg_local(checkpoint)?;
         let body = vm_state.body;
 
         // Build parent map (same as legacy)
@@ -414,10 +420,7 @@ impl PropertyChecker {
         checkpoint: &Checkpoint<'tcx>,
         _property: &Property<'tcx>,
     ) -> Option<CheckResult> {
-        let target_local = checkpoint.args.get(0).and_then(|op| match op {
-            Operand::Copy(p) | Operand::Move(p) if p.projection.is_empty() => Some(p.local),
-            _ => None,
-        })?;
+        let target_local = first_arg_local(checkpoint)?;
 
         let body = vm_state.body;
         let tcx = vm_state.tcx;

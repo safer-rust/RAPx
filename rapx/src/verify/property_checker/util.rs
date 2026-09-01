@@ -20,6 +20,19 @@ use z3::{
 
 use super::PropertyChecker;
 
+/// Resolve a callee `Local(n)` to the corresponding checkpoint operand, using
+/// the callee's real argument count. Returns `None` when the checkpoint has no
+/// callee or `n` is not an argument local.
+fn local_param_operand<'a, 'ctx, 'tcx>(
+    vm_state: &VmState<'ctx, 'tcx>,
+    ck: &'a Checkpoint<'tcx>,
+    n: usize,
+) -> Option<&'a Operand<'tcx>> {
+    let callee = ck.callee?;
+    let idx = crate::helpers::mir_utils::callee_param_index_for_local(vm_state.tcx, callee, n)?;
+    ck.args.get(idx)
+}
+
 impl PropertyChecker {
     pub(super) fn target_value<'ctx, 'tcx>(
         &self,
@@ -667,16 +680,8 @@ impl PropertyChecker {
                     .map(|op| vm_state.value_of_operand(op)),
                 PlaceBase::Local(n) => {
                     let ck = checkpoint?;
-                    if let Some(callee) = ck.callee {
-                        if let Some(idx) = crate::helpers::mir_utils::callee_param_index_for_local(
-                            vm_state.tcx,
-                            callee,
-                            n,
-                        ) {
-                            if let Some(op) = ck.args.get(idx) {
-                                return Some(vm_state.value_of_operand(op));
-                            }
-                        }
+                    if let Some(op) = local_param_operand(vm_state, ck, n) {
+                        return Some(vm_state.value_of_operand(op));
                     }
                     vm_state.local_value(Local::from_usize(n)).cloned()
                 }
@@ -724,19 +729,9 @@ impl PropertyChecker {
             PlaceBase::Local(n) => {
                 if field_path.is_empty() {
                     if let Some(ck) = checkpoint {
-                        if let Some(callee) = ck.callee {
-                            if let Some(idx) =
-                                crate::helpers::mir_utils::callee_param_index_for_local(
-                                    vm_state.tcx,
-                                    callee,
-                                    n,
-                                )
-                            {
-                                if let Some(op) = ck.args.get(idx) {
-                                    if let Some(v) = self.eval_contract_operand(vm_state, op) {
-                                        return Some(v);
-                                    }
-                                }
+                        if let Some(op) = local_param_operand(vm_state, ck, n) {
+                            if let Some(v) = self.eval_contract_operand(vm_state, op) {
+                                return Some(v);
                             }
                         }
                     }
