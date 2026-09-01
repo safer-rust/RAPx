@@ -954,6 +954,15 @@ fn alias_from_rvalue<'tcx>(
     Some(resolve_mir_place(place, aliases))
 }
 
+/// Resolve a place to its origin PlaceKey through the alias map, falling back
+/// to the MIR place itself when unmapped.
+fn resolve_place_key(place: &Place<'_>, aliases: &HashMap<Local, PlaceKey>) -> PlaceKey {
+    aliases
+        .get(&place.local)
+        .cloned()
+        .unwrap_or_else(|| PlaceKey::from_mir_place(place))
+}
+
 fn place_is_raw_access_to_any_origin(
     place: &Place<'_>,
     origins: &[PlaceKey],
@@ -982,10 +991,7 @@ fn place_is_raw_access_to_origin(
     if !has_raw_deref {
         return false;
     }
-    let pointer = aliases
-        .get(&place.local)
-        .cloned()
-        .unwrap_or_else(|| PlaceKey::from_mir_place(place));
+    let pointer = resolve_place_key(place, aliases);
     pointer.overlaps(origin)
 }
 
@@ -1006,10 +1012,7 @@ fn rvalue_reads_like_view(
     {
         return false;
     }
-    let pointer = aliases
-        .get(&place.local)
-        .cloned()
-        .unwrap_or_else(|| PlaceKey::from_mir_place(place));
+    let pointer = resolve_place_key(place, aliases);
     if !origins.iter().any(|origin| pointer.overlaps(origin)) {
         return false;
     }
@@ -1043,10 +1046,7 @@ fn terminator_writes_origin<'tcx>(
     let Some(arg0) = args.first() else {
         return false;
     };
-    let Some(place) = (match &arg0.node {
-        Operand::Copy(place) | Operand::Move(place) => Some(place),
-        _ => None,
-    }) else {
+    let Some(place) = operand_mir_place(&arg0.node) else {
         return false;
     };
     resolve_mir_place(place, aliases).overlaps(origin)
@@ -1061,10 +1061,7 @@ fn terminator_uses_origin<'tcx>(
         return false;
     };
     args.iter().any(|arg| {
-        let Some(place) = (match &arg.node {
-            Operand::Copy(place) | Operand::Move(place) => Some(place),
-            _ => None,
-        }) else {
+        let Some(place) = operand_mir_place(&arg.node) else {
             return false;
         };
         resolve_mir_place(place, aliases).overlaps(origin)
@@ -1098,10 +1095,7 @@ fn terminator_invalidates_vec_owner<'tcx>(
         return false;
     }
     args.iter().any(|arg| {
-        let Some(place) = (match &arg.node {
-            Operand::Copy(place) | Operand::Move(place) => Some(place),
-            _ => None,
-        }) else {
+        let Some(place) = operand_mir_place(&arg.node) else {
             return false;
         };
         let arg = resolve_mir_place(place, aliases);
@@ -1530,12 +1524,7 @@ fn terminator_uses_live_origin(kind: &TerminatorKind<'_>, live_origins: &[PlaceK
         return false;
     };
     args.iter().any(|arg| {
-        let Some(place) = (match &arg.node {
-            Operand::Copy(place) | Operand::Move(place) => Some(place),
-            Operand::Constant(_) => None,
-            #[cfg(rapx_ge_99)]
-            Operand::RuntimeChecks(_) => None,
-        }) else {
+        let Some(place) = operand_mir_place(&arg.node) else {
             return false;
         };
         let key = PlaceKey::from_mir_place(place);
