@@ -378,13 +378,7 @@ impl PropertyChecker {
         for (_, val) in vm_state.locals.iter() {
             let is_iter = match val.ty.kind() {
                 TyKind::Ref(_, pointee, _) => match pointee.kind() {
-                    TyKind::Adt(adt_def, _) => {
-                        let name = vm_state.tcx.def_path_str(adt_def.did());
-                        name.ends_with("::Iter")
-                            || name == "Iter"
-                            || name.ends_with("::IterMut")
-                            || name == "IterMut"
-                    }
+                    TyKind::Adt(adt_def, _) => api_classify::is_std_iter_or_itermut(adt_def.did()),
                     _ => false,
                 },
                 _ => false,

@@ -77,8 +77,8 @@ pub(crate) fn visit<'tcx>(
     // same origin, add the destination to relevance so the length term
     // is available for the contract obligation.
     if !relevant.need_len.is_empty() {
-        let name = crate::helpers::mir_utils::call_name(tcx, func);
-        if name.ends_with("::len") || name.contains("::len(") {
+        let callee = crate::helpers::mir_utils::dep_callee_def_id(func);
+        if crate::verify::api_classify::is_len(callee) {
             if let Some(first) = args.first() {
                 let arg_place = match &first.node {
                     Operand::Copy(p) | Operand::Move(p) => Some(PlaceKey::from_mir_place(p)),
