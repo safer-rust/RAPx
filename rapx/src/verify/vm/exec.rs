@@ -2920,19 +2920,8 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
 
     /// Get the local referenced by a contract property's target.
     fn contract_target_local(&self, property: &Property<'tcx>) -> Option<Local> {
-        let cp = match property.args().first()? {
-            PropertyArg::Expr(ContractExpr::Place(cp)) => cp,
-            PropertyArg::Expr(ContractExpr::IndexAccess { slice, .. }) => match slice.as_ref() {
-                ContractExpr::Place(cp) => cp,
-                _ => return None,
-            },
-            _ => return None,
-        };
-        match cp.base {
-            PlaceBase::Local(n) => Some(Local::from_usize(n)),
-            PlaceBase::Arg(n) => Some(Local::from_usize(n + 1)),
-            PlaceBase::Return => Some(Local::from_usize(0)),
-        }
+        let cp = property.target_place()?;
+        Some(cp.base.to_local())
     }
 
     /// Materialize a fresh external allocation for an `Allocated` contract
@@ -3008,18 +2997,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         let Some(elem_ty) = elem_ty else { return };
 
         let has_nonfield = property
-            .args()
-            .first()
-            .and_then(|a| match a {
-                PropertyArg::Expr(ContractExpr::Place(cp)) => Some(cp),
-                PropertyArg::Expr(ContractExpr::IndexAccess { slice, .. }) => {
-                    match slice.as_ref() {
-                        ContractExpr::Place(cp) => Some(cp),
-                        _ => None,
-                    }
-                }
-                _ => None,
-            })
+            .target_place()
             .map(|cp| {
                 cp.projections.iter().any(|p| {
                     !matches!(p, crate::verify::contract::ContractProjection::Field { .. })
@@ -3099,19 +3077,8 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     /// are accumulated into `field_path`; `Downcast`/`ForEach` terminate
     /// the path (they unwrap the value in place).
     fn contract_field_path(&self, property: &Property<'tcx>) -> Option<(Local, Vec<usize>)> {
-        let cp = match property.args().first()? {
-            PropertyArg::Expr(ContractExpr::Place(cp)) => cp,
-            PropertyArg::Expr(ContractExpr::IndexAccess { slice, .. }) => match slice.as_ref() {
-                ContractExpr::Place(cp) => cp,
-                _ => return None,
-            },
-            _ => return None,
-        };
-        let local = match cp.base {
-            PlaceBase::Local(n) => Local::from_usize(n),
-            PlaceBase::Arg(n) => Local::from_usize(n + 1),
-            PlaceBase::Return => Local::from_usize(0),
-        };
+        let cp = property.target_place()?;
+        let local = cp.base.to_local();
         let mut path = Vec::new();
         for proj in &cp.projections {
             match proj {
@@ -3154,11 +3121,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             PropertyArg::Expr(ContractExpr::Place(cp)) => cp.clone(),
             _ => return None,
         };
-        let local = match cp.base {
-            PlaceBase::Local(n) => Local::from_usize(n),
-            PlaceBase::Arg(n) => Local::from_usize(n + 1),
-            PlaceBase::Return => Local::from_usize(0),
-        };
+        let local = cp.base.to_local();
         let mut field_path: Vec<usize> = Vec::new();
         for proj in &cp.projections {
             match proj {
@@ -3212,18 +3175,14 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         &self,
         expr: &crate::verify::contract::ContractExpr<'tcx>,
     ) -> Option<Int<'ctx>> {
-        use crate::verify::contract::{ContractExpr, NumericBinOp, PlaceBase};
+        use crate::verify::contract::{ContractExpr, NumericBinOp};
         match expr {
             ContractExpr::SizeOf(ty) => {
                 let size = self.size_of_ty(*ty).max(1);
                 Some(Int::from_u64(self.ctx, size as u64))
             }
             ContractExpr::Place(cp) => {
-                let local = match cp.base {
-                    PlaceBase::Local(n) => Local::from_usize(n),
-                    PlaceBase::Arg(n) => Local::from_usize(n + 1),
-                    PlaceBase::Return => Local::from_usize(0),
-                };
+                let local = cp.base.to_local();
                 let mut path: Vec<usize> = Vec::new();
                 for proj in &cp.projections {
                     match proj {

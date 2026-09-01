@@ -4,6 +4,7 @@
 //! a `PropertyKind` vocabulary of ~24 safety tags. All contract front-ends
 //! (attributes, JSON, compound-property macros, pest DSL) produce this IR.
 
+use rustc_middle::mir::Local;
 use rustc_middle::ty::Ty;
 
 /// The root of a contract place: a function's return value, an argument, or a
@@ -16,6 +17,17 @@ pub(crate) enum PlaceBase {
     Arg(usize),
     /// A MIR local (`0` is the return place, `1..` are the parameters).
     Local(usize),
+}
+
+impl PlaceBase {
+    /// The MIR local this base denotes (`Return` ⇔ `Local(0)`, `Arg(n)` ⇔ `Local(n + 1)`).
+    pub(crate) fn to_local(&self) -> Local {
+        match self {
+            PlaceBase::Return => Local::from_usize(0),
+            PlaceBase::Arg(n) => Local::from_usize(*n + 1),
+            PlaceBase::Local(n) => Local::from_usize(*n),
+        }
+    }
 }
 
 /// A step into a place, from the base down to the value a contract talks
@@ -324,6 +336,19 @@ impl<'tcx> Property<'tcx> {
         match self {
             Property::Atom(a) => &a.args,
             Property::And(_) | Property::Or(_) => &[],
+        }
+    }
+
+    /// The `ContractPlace` this atom's first argument refers to, when the
+    /// first argument is a place (or an index access over one, e.g. `slice[i]`).
+    pub(crate) fn target_place(&self) -> Option<&ContractPlace<'tcx>> {
+        match self.args().first()? {
+            PropertyArg::Expr(ContractExpr::Place(cp)) => Some(cp),
+            PropertyArg::Expr(ContractExpr::IndexAccess { slice, .. }) => match slice.as_ref() {
+                ContractExpr::Place(cp) => Some(cp),
+                _ => None,
+            },
+            _ => None,
         }
     }
 

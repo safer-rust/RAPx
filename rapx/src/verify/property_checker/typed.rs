@@ -148,7 +148,7 @@ impl PropertyChecker {
                     }
                     // ForEach: the allocation stores pointers, but the invariant
                     // applies to the pointee type. Unwrap *const/*mut to match.
-                    if self.has_for_each(property) {
+                    if property.for_each().is_some() {
                         if let TyKind::RawPtr(inner, _) = elem_ty.kind() {
                             if *inner == expected_ty {
                                 return CheckResult::Proved;
@@ -194,7 +194,7 @@ impl PropertyChecker {
             // individual elements loaded from a container. The VM may not track
             // provenance through memory loads from heap allocations. When sizes
             // match, trust the type.
-            if self.has_for_each(property) {
+            if property.for_each().is_some() {
                 if vm_state.size_of_ty(value_elem_ty) > 0
                     && vm_state.size_of_ty(expected_ty) > 0
                     && vm_state.size_of_ty(value_elem_ty) == vm_state.size_of_ty(expected_ty)

@@ -848,8 +848,4 @@ impl PropertyChecker {
             _ => false,
         }
     }
-
-    pub(super) fn has_for_each<'tcx>(&self, property: &Property<'tcx>) -> bool {
-        property.for_each().is_some()
-    }
 }
