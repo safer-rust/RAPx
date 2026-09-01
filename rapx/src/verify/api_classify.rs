@@ -375,6 +375,13 @@ pub fn is_from_raw_parts(callee: Option<DefId>) -> bool {
     let Some(callee) = callee else { return false };
     crate::def_id::from_raw_parts_fns().contains(&callee)
 }
+
+/// Whether `callee` is a `from_raw_parts_mut` constructor.
+pub fn is_from_raw_parts_mut(callee: Option<DefId>) -> bool {
+    let Some(callee) = callee else { return false };
+    crate::def_id::from_raw_parts_mut_fns().contains(&callee)
+}
+
 pub fn is_cstr_from_ptr(callee: Option<DefId>) -> bool {
     let Some(callee) = callee else { return false };
     crate::def_id::contains(&[crate::def_id::cstr_from_ptr()], callee)

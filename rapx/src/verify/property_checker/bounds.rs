@@ -311,7 +311,12 @@ impl PropertyChecker {
         }
         let range_local = place.local;
         let ty = vm_state.body.local_decls[range_local].ty;
-        let is_range = format!("{:?}", ty.kind()).contains("Range");
+        let is_range = match ty.kind() {
+            TyKind::Adt(adt_def, _) => {
+                crate::helpers::mir_utils::is_range_type(vm_state.tcx, adt_def.did())
+            }
+            _ => false,
+        };
         if !is_range {
             return None;
         }

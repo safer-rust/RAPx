@@ -242,7 +242,7 @@ pub(crate) fn check_alias_vm<'ctx, 'tcx>(
     }
 
     // Step 1: Determine the producer
-    let Some(producer) = alias_hazard::alias_producer(callee, &callee_name) else {
+    let Some(producer) = alias_hazard::alias_producer(callee) else {
         return VmAliasResult::Unknown;
     };
 

@@ -25,7 +25,6 @@ use crate::verify::api_classify;
 pub(crate) struct EffCtx<'a, 'tcx> {
     pub tcx: TyCtxt<'tcx>,
     pub caller: DefId,
-    pub name: &'a str,
     pub func: &'a Operand<'tcx>,
     pub dest: Option<rustc_middle::mir::Local>,
 }
@@ -175,7 +174,6 @@ pub(crate) fn lookup_effect<'tcx>(
             let ctx = EffCtx {
                 tcx,
                 caller,
-                name,
                 func,
                 dest,
             };
@@ -448,7 +446,7 @@ fn eff_layout_align(_ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 }
 
 fn eff_layout_const(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    layout_constant_effect(ctx.tcx, ctx.caller, ctx.func, ctx.name)
+    layout_constant_effect(ctx.tcx, ctx.caller, ctx.func)
         .into_iter()
         .collect()
 }
@@ -468,13 +466,27 @@ fn layout_constant_effect<'tcx>(
     tcx: TyCtxt<'tcx>,
     caller: DefId,
     func: &Operand<'tcx>,
-    name: &str,
 ) -> Option<CallEffect> {
     let ty = layout_call_ty(func)?;
     let (align, size) = type_layout(tcx, caller, ty)?;
-    if name.ends_with("::align_of") {
+    let Some(callee) = crate::helpers::mir_utils::dep_callee_def_id(func) else {
+        return None;
+    };
+    if crate::def_id::contains(
+        &[
+            crate::def_id::mem_align_of(),
+            crate::def_id::intrinsics_align_of(),
+        ],
+        callee,
+    ) {
         Some(CallEffect::ReturnConst { value: align })
-    } else if name.ends_with("::size_of") {
+    } else if crate::def_id::contains(
+        &[
+            crate::def_id::mem_size_of(),
+            crate::def_id::intrinsics_size_of(),
+        ],
+        callee,
+    ) {
         Some(CallEffect::ReturnConst { value: size })
     } else {
         None

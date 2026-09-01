@@ -263,6 +263,7 @@ struct Methods {
     len_fns: Vec<DefId>,
     capacity_fns: Vec<DefId>,
     from_raw_parts_fns: Vec<DefId>,
+    from_raw_parts_mut_fns: Vec<DefId>,
     with_capacity_fns: Vec<DefId>,
     vec_ownership_transfer_fns: Vec<DefId>,
     min_like: Vec<DefId>,
@@ -292,6 +293,7 @@ fn init_methods(tcx: TyCtxt) -> Methods {
         len_fns: Vec::new(),
         capacity_fns: Vec::new(),
         from_raw_parts_fns: Vec::new(),
+        from_raw_parts_mut_fns: Vec::new(),
         with_capacity_fns: Vec::new(),
         vec_ownership_transfer_fns: Vec::new(),
         min_like: Vec::new(),
@@ -332,6 +334,9 @@ fn init_methods(tcx: TyCtxt) -> Methods {
             }
             if name.ends_with("::from_raw_parts") || name.ends_with("::from_raw_parts_mut") {
                 methods.from_raw_parts_fns.push(did);
+            }
+            if name.ends_with("::from_raw_parts_mut") {
+                methods.from_raw_parts_mut_fns.push(did);
             }
             if name.ends_with("::with_capacity") && name.contains("::Vec::") {
                 methods.with_capacity_fns.push(did);
@@ -473,6 +478,15 @@ pub fn from_raw_parts_fns() -> &'static [DefId] {
         .get()
         .expect("Method DefIds haven't been initialized.")
         .from_raw_parts_fns
+}
+
+/// `from_raw_parts_mut` constructors (`slice`/`ptr`/`NonNull` and local
+/// re-implementations).
+pub fn from_raw_parts_mut_fns() -> &'static [DefId] {
+    &METHODS
+        .get()
+        .expect("Method DefIds haven't been initialized.")
+        .from_raw_parts_mut_fns
 }
 
 /// `Vec::with_capacity` (and local re-implementations).

@@ -72,6 +72,53 @@ pub(crate) fn is_drop_in_place(def_id: DefId) -> bool {
     crate::def_id::drop_in_place() == Some(def_id)
 }
 
+/// The concrete `core::ops::Range*` struct a `DefId` denotes.
+pub(crate) enum RangeKind {
+    RangeTo,
+    RangeFrom,
+    Range,
+    RangeInclusive,
+    Other,
+}
+
+/// Classify a `DefId` as one of the `core::ops::Range*` structs.
+pub(crate) fn range_kind(tcx: TyCtxt<'_>, def_id: DefId) -> RangeKind {
+    if tcx.is_lang_item(def_id, LangItem::RangeTo) {
+        RangeKind::RangeTo
+    } else if tcx.is_lang_item(def_id, LangItem::RangeFrom) {
+        RangeKind::RangeFrom
+    } else if tcx.is_lang_item(def_id, LangItem::RangeInclusiveStruct) {
+        RangeKind::RangeInclusive
+    } else if tcx.is_lang_item(def_id, LangItem::Range) {
+        RangeKind::Range
+    } else {
+        RangeKind::Other
+    }
+}
+
+/// Whether `def_id` is any `core::ops::Range*` struct.
+pub(crate) fn is_range_type(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
+    !matches!(range_kind(tcx, def_id), RangeKind::Other)
+        || tcx.is_lang_item(def_id, LangItem::RangeToInclusive)
+        || tcx.is_lang_item(def_id, LangItem::RangeFull)
+}
+
+/// Whether `def_id` is the `Index::index` / `IndexMut::index_mut` trait method.
+pub(crate) fn is_index_method(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
+    let Some(assoc) = tcx.opt_associated_item(def_id) else {
+        return false;
+    };
+    let name = assoc.name();
+    if name.as_str() != "index" && name.as_str() != "index_mut" {
+        return false;
+    }
+    let Some(trait_id) = assoc.trait_container(tcx) else {
+        return false;
+    };
+    (tcx.is_lang_item(trait_id, LangItem::Index) && name.as_str() == "index")
+        || (tcx.is_lang_item(trait_id, LangItem::IndexMut) && name.as_str() == "index_mut")
+}
+
 /// Whether `def_id` is `slice::Iter`/`IterMut`'s private `post_inc_start`
 /// helper (a pointer-advancing side effect that cannot be inlined because of
 /// its ZST `SwitchInt` branch).

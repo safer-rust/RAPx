@@ -222,15 +222,11 @@ pub(crate) fn dependency_summary<'tcx>(
     arg_count: usize,
 ) -> CallDependencySummary {
     let callee = mir_utils::dep_callee_def_id(func);
-    let name = mir_utils::call_name(tcx, func);
 
     // MIR dataflow first: works for local and cross-crate (`#[inline]`)
     // callees alike, no hand-written table needed.
     if let Some(callee) = callee {
-        if name.contains("::intrinsics::")
-            || name.starts_with("intrinsics::")
-            || mir_utils::is_drop_in_place(callee)
-        {
+        if tcx.intrinsic(callee).is_some() || mir_utils::is_drop_in_place(callee) {
             return CallDependencySummary::unknown(arg_count);
         }
         if let Some(must_write_args) = interprocedural::local_must_write_args(tcx, callee) {
@@ -290,10 +286,7 @@ pub(crate) fn effect_summary<'tcx>(
 
     // Interprocedural fallback for local callees.
     if let Some(callee) = callee {
-        if name.contains("::intrinsics::")
-            || name.starts_with("intrinsics::")
-            || mir_utils::is_drop_in_place(callee)
-        {
+        if tcx.intrinsic(callee).is_some() || mir_utils::is_drop_in_place(callee) {
             return CallEffectSummary::unknown(name);
         }
         if let Some(must_write_args) = interprocedural::local_must_write_args(tcx, callee) {

@@ -149,9 +149,7 @@ pub(super) fn try_pointer_arith_wrapper_effect<'tcx>(
 
         let inner_effect = if !is_add && !is_sub {
             helpers::dep_callee_def_id(func).and_then(|inner_callee| {
-                let inner_name = helpers::call_name(tcx, func);
-                if inner_name.contains("::intrinsics::")
-                    || inner_name.starts_with("intrinsics::")
+                if tcx.intrinsic(inner_callee).is_some()
                     || helpers::is_drop_in_place(inner_callee)
                 {
                     return None;
@@ -538,11 +536,7 @@ fn must_write_args_rec(tcx: TyCtxt<'_>, callee: DefId, depth: usize) -> Option<H
     if !tcx.is_mir_available(callee) {
         return None;
     }
-    let name = tcx.def_path_str(callee);
-    if name.contains("::intrinsics::")
-        || name.starts_with("intrinsics::")
-        || helpers::is_drop_in_place(callee)
-    {
+    if tcx.intrinsic(callee).is_some() || helpers::is_drop_in_place(callee) {
         return None;
     }
 

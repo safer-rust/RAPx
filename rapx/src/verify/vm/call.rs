@@ -62,7 +62,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
 
         // Slice range indexing: `<[T]>::index(range)` / `::index_mut(range)`
         // returns a sub-slice whose length is the range's extent.
-        if self.try_slice_index(&name, &arg_values, args, destination) {
+        if self.try_slice_index(callee, &arg_values, args, destination) {
             return;
         }
 
@@ -237,12 +237,13 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     /// alias behaviour from the summary table.
     fn try_slice_index(
         &mut self,
-        name: &str,
+        callee: Option<DefId>,
         arg_values: &[VmValue<'ctx, 'tcx>],
         args: &[Spanned<Operand<'tcx>>],
         destination: Local,
     ) -> bool {
-        let is_index = name.ends_with("::Index::index") || name.ends_with("::IndexMut::index_mut");
+        let is_index =
+            callee.is_some_and(|c| crate::helpers::mir_utils::is_index_method(self.tcx, c));
         if !is_index || arg_values.len() < 2 {
             return false;
         }
@@ -285,32 +286,32 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             .size
             .clone()
             .div(&Int::from_u64(self.ctx, elem_size));
-        let range_ty_path = arg_values.get(1).and_then(|v| match v.ty.kind() {
-            TyKind::Adt(adt_def, _) => Some(self.tcx.def_path_str(adt_def.did())),
+        let range_kind = arg_values.get(1).and_then(|v| match v.ty.kind() {
+            TyKind::Adt(adt_def, _) => Some(crate::helpers::mir_utils::range_kind(
+                self.tcx,
+                adt_def.did(),
+            )),
             _ => None,
         });
-        let (start, len) = match range_ty_path.as_deref() {
-            Some(p) if p.ends_with("::RangeTo") => (
+        let (start, len) = match range_kind {
+            Some(crate::helpers::mir_utils::RangeKind::RangeTo) => (
                 zero.clone(),
                 range_field(0).unwrap_or_else(|| total_len.clone()),
             ),
-            Some(p) if p.ends_with("::RangeFrom") => {
+            Some(crate::helpers::mir_utils::RangeKind::RangeFrom) => {
                 let s = range_field(0).unwrap_or_else(|| zero.clone());
                 (s.clone(), Int::sub(self.ctx, &[&total_len, &s]))
             }
-            Some(p) if p.ends_with("::Range") || p.ends_with("::RangeInclusive") => {
-                let inclusive = p.ends_with("::RangeInclusive");
+            Some(crate::helpers::mir_utils::RangeKind::Range) => {
+                let s = range_field(0).unwrap_or_else(|| zero.clone());
+                let e = range_field(1).unwrap_or_else(|| total_len.clone());
+                (s.clone(), Int::sub(self.ctx, &[&e, &s]))
+            }
+            Some(crate::helpers::mir_utils::RangeKind::RangeInclusive) => {
                 let s = range_field(0).unwrap_or_else(|| zero.clone());
                 let e = range_field(1).unwrap_or_else(|| total_len.clone());
                 let l = Int::sub(self.ctx, &[&e, &s]);
-                (
-                    s.clone(),
-                    if inclusive {
-                        Int::add(self.ctx, &[&l, &one])
-                    } else {
-                        l
-                    },
-                )
+                (s.clone(), Int::add(self.ctx, &[&l, &one]))
             }
             _ => (zero.clone(), total_len.clone()),
         };

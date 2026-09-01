@@ -93,14 +93,16 @@ pub(super) enum HazardCheck {
 
 // ── API classification ───────────────────────────────────────────
 
-pub(super) fn alias_producer(callee: DefId, name: &str) -> Option<AliasProducer> {
-    if name.contains("from_raw_parts_mut") {
+pub(super) fn alias_producer(callee: DefId) -> Option<AliasProducer> {
+    if crate::verify::api_classify::is_from_raw_parts_mut(Some(callee)) {
         return Some(AliasProducer::View(HazardKind::UniqueView));
     }
-    if name.contains("from_raw_parts") || name.contains("from_parts") || name.contains("from_ptr") {
-        if crate::verify::api_classify::is_vec_ownership_transfer(Some(callee)) {
-            return Some(AliasProducer::OwnershipTransfer);
-        }
+    if crate::verify::api_classify::is_vec_ownership_transfer(Some(callee)) {
+        return Some(AliasProducer::OwnershipTransfer);
+    }
+    if crate::verify::api_classify::is_from_raw_parts(Some(callee))
+        || crate::verify::api_classify::is_cstr_from_ptr(Some(callee))
+    {
         return Some(AliasProducer::View(HazardKind::SharedView));
     }
     if crate::verify::api_classify::is_ownership_transfer(Some(callee)) {
@@ -648,8 +650,9 @@ fn local_hazard_violation_with(
                 ..
             } = &terminator.kind
             {
-                let name = crate::helpers::mir_utils::call_name(tcx, func);
-                if name.contains("::split_at") {
+                if crate::verify::api_classify::is_split_at(
+                    crate::helpers::mir_utils::dep_callee_def_id(func),
+                ) {
                     hazard_locals.insert(call_dest.local);
                 }
             }
