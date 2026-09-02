@@ -339,7 +339,7 @@ fn all_fixture_dirs_tested() {
 fn std_contracts_valid() {
     let json = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("src/verify/contract/assets/std-public-contracts.json"),
+            .join("src/verify/contract/assets/std-api-requires.json"),
     )
     .expect("failed to read contracts JSON");
     let db: std::collections::HashMap<String, Vec<serde_json::Value>> =
@@ -347,13 +347,13 @@ fn std_contracts_valid() {
 
     for (key, entries) in &db {
         for entry in entries {
-            assert!(entry["tag"].is_string(), "{key}: missing or invalid tag");
-            if entry["tag"].as_str() == Some("any") {
+            if entry.get("any").is_some() {
                 assert!(
                     entry["any"].is_array(),
                     "{key}: any entry missing 'any' array"
                 );
             } else {
+                assert!(entry["tag"].is_string(), "{key}: missing or invalid tag");
                 assert!(entry["args"].is_array(), "{key}: missing or invalid args");
             }
         }

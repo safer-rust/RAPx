@@ -65,6 +65,8 @@ struct Types {
     maybe_uninit_types: Vec<DefId>,
     ordering_types: Vec<DefId>,
     iter_types: Vec<DefId>,
+    rc_types: Vec<DefId>,
+    sync_primitive_types: Vec<DefId>,
 }
 
 pub fn init(tcx: TyCtxt) {
@@ -82,6 +84,8 @@ fn init_types(tcx: TyCtxt) -> Types {
         maybe_uninit_types: Vec::new(),
         ordering_types: Vec::new(),
         iter_types: Vec::new(),
+        rc_types: Vec::new(),
+        sync_primitive_types: Vec::new(),
     };
 
     // Real std types via diagnostic/lang items (`NonNull` only before rustc
@@ -91,6 +95,7 @@ fn init_types(tcx: TyCtxt) -> Types {
         .cstring_types
         .extend(tcx.get_diagnostic_item(sym::cstring_type));
     types.vec_types.extend(tcx.get_diagnostic_item(sym::Vec));
+    types.rc_types.extend(tcx.get_diagnostic_item(sym::Rc));
     // `core::cmp::Ordering` is `#[lang = "Ordering"]`.
     types
         .ordering_types
@@ -119,12 +124,21 @@ fn init_types(tcx: TyCtxt) -> Types {
         {
             for fn_def in krate.fn_defs() {
                 let name = fn_def.name();
-                if !name.contains("::IterMut::") {
-                    continue;
-                }
                 let did = rustc_internal::internal(tcx, fn_def.def_id());
-                if let Some(adt_did) = assoc_self_adt_did(tcx, did) {
-                    types.iter_types.push(adt_did);
+                if name.contains("::IterMut::") {
+                    if let Some(adt_did) = assoc_self_adt_did(tcx, did) {
+                        types.iter_types.push(adt_did);
+                    }
+                }
+                // Synchronization primitives have no diagnostic/lang item, so
+                // resolve them from the self type of their methods (the
+                // `adts()`-less fallback path).
+                if is_sync_primitive_method(&name) {
+                    if let Some(adt_did) = assoc_self_adt_did(tcx, did) {
+                        if !types.sync_primitive_types.contains(&adt_did) {
+                            types.sync_primitive_types.push(adt_did);
+                        }
+                    }
                 }
             }
         }
@@ -157,6 +171,13 @@ fn init_types(tcx: TyCtxt) -> Types {
         if name.ends_with("::MaybeUninit") || name == "MaybeUninit" {
             types.maybe_uninit_types.push(did);
         }
+        if name.ends_with("::Rc") || name == "Rc" {
+            types.rc_types.push(did);
+        }
+        let short = name.rsplit("::").next().unwrap_or(&name);
+        if is_sync_primitive_short_name(short) {
+            types.sync_primitive_types.push(did);
+        }
     }
 
     // External std ADTs with neither a lang nor a diagnostic item: `NonNull`
@@ -186,11 +207,41 @@ fn init_types(tcx: TyCtxt) -> Types {
                         .iter_types
                         .push(rustc_internal::internal(tcx, adt.def_id()));
                 }
+                if name.ends_with("::Rc") || name == "Rc" {
+                    types
+                        .rc_types
+                        .push(rustc_internal::internal(tcx, adt.def_id()));
+                }
+                let short = name.rsplit("::").next().unwrap_or(&name);
+                if is_sync_primitive_short_name(short) {
+                    types
+                        .sync_primitive_types
+                        .push(rustc_internal::internal(tcx, adt.def_id()));
+                }
             }
         }
     }
 
     types
+}
+
+/// Whether a type's short name denotes a synchronization primitive that guards
+/// its interior mutability (`Mutex`/`RwLock`/`OnceLock`/`OnceCell`/`Atomic*`).
+fn is_sync_primitive_short_name(short: &str) -> bool {
+    matches!(short, "Mutex" | "RwLock" | "OnceLock" | "OnceCell")
+        || short.starts_with("Atomic")
+}
+
+/// Whether an `fn_def.name()` (e.g. `std::sync::Mutex::<T>::lock`) belongs to a
+/// synchronization primitive's inherent method.  Used to resolve the primitive's
+/// ADT from its methods' self type when `adts()` is unavailable.
+#[cfg(not(rapx_has_public_adts))]
+fn is_sync_primitive_method(name: &str) -> bool {
+    name.contains("::Mutex::")
+        || name.contains("::RwLock::")
+        || name.contains("::OnceLock::")
+        || name.contains("::OnceCell::")
+        || name.contains("::Atomic")
 }
 
 /// `alloc::boxed::Box` (and any local `Box` re-implementation).
@@ -248,6 +299,36 @@ pub fn iter_types() -> &'static [DefId] {
         .get()
         .expect("Type DefIds haven't been initialized.")
         .iter_types
+}
+
+/// `alloc::rc::Rc` (and any local `Rc` re-implementation) — the non-atomic
+/// reference-counted smart pointer, a `!Send`/`!Sync` negative type.
+pub fn rc_types() -> &'static [DefId] {
+    &TYPES
+        .get()
+        .expect("Type DefIds haven't been initialized.")
+        .rc_types
+}
+
+/// Synchronization primitives (`Mutex`/`RwLock`/`OnceLock`/`OnceCell`/`Atomic*`,
+/// plus any local re-implementation) that guard their interior mutability, used
+/// to discharge the `AtomicUpdate` auto-trait obligation.
+pub fn sync_primitive_types() -> &'static [DefId] {
+    &TYPES
+        .get()
+        .expect("Type DefIds haven't been initialized.")
+        .sync_primitive_types
+}
+
+/// Resolve a negative-type name (as written in `std-trait-ensures.json`) to its
+/// resolved `DefId` set.  `"Rc"`/`"NonNull"` are built-in negatives; unknown
+/// names resolve to an empty set (the checker then reports `Unknown`).
+pub fn negative_type_defs(name: &str) -> &'static [DefId] {
+    match name {
+        "Rc" => rc_types(),
+        "NonNull" => nonnull_types(),
+        _ => &[],
+    }
 }
 
 /// Resolved `DefId`s of std *methods* that are matched by *generic name* rather

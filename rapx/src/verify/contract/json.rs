@@ -1,8 +1,9 @@
 //! The bundled JSON contract front-end: loading, lookup, and conversion.
 //!
-//! Two embedded JSON assets provide out-of-the-box contracts: std function
-//! contracts (`std-public-contracts.json`) and std type invariants
-//! (`std-type-invariants.json`). Lookup uses exact, path-stripped, and wildcard
+//! Three embedded JSON assets provide out-of-the-box contracts: std function
+//! `requires` contracts (`std-api-requires.json`), std type invariants
+//! (`std-type-invariants.json`), and std auto-trait `ensures` obligations
+//! (`std-trait-ensures.json`).  Lookup uses exact, path-stripped, and wildcard
 //! fallback so trait-method impls and re-exported paths resolve correctly.
 //! Entries are then converted into [`Property`] values via [`entry_to_property`].
 
@@ -19,15 +20,14 @@ use super::types::{Property, PropertyKind};
 
 /// Structure of JSON entries.
 ///
-/// When `tag == "any"` and `any` is present, the entry represents a
-/// disjunction (logical OR) of property groups.  Each element in `any`
-/// is either a single [`JsonProperty`] (one disjunct) or an array of
-/// entries (a conjunction group — all must hold).
+/// When the `any` field is present, the entry represents a disjunction (logical
+/// OR) of property groups.  Each element in `any` is either a single
+/// [`JsonProperty`] (one disjunct) or an array of entries (a conjunction group —
+/// all must hold).
 ///
 /// JSON format for `any` (flat OR):
 /// ```json
 /// {
-///   "tag": "any",
 ///   "any": [
 ///     {"tag": "Trait", "args": ["T", "Copy"]},
 ///     {"tag": "Alias", "args": ["T", "return"]}
@@ -38,7 +38,6 @@ use super::types::{Property, PropertyKind};
 /// JSON format for `any` with conjunction group (null-guard):
 /// ```json
 /// {
-///   "tag": "any",
 ///   "any": [
 ///     {"tag": "Null", "args": ["head"]},
 ///     [
@@ -50,12 +49,13 @@ use super::types::{Property, PropertyKind};
 /// ```
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct JsonProperty {
+    #[serde(default)]
     pub tag: String,
     #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
     pub kind: Option<String>,
-    /// When `tag == "any"`, the list of disjuncts (OR alternatives).
+    /// The list of disjuncts (OR alternatives) when this entry is a disjunction.
     /// Each element is either a single entry or a conjunction group.
     #[serde(default)]
     pub any: Option<Vec<AnyItem>>,
@@ -148,7 +148,7 @@ fn resolve_trait_method(tcx: TyCtxt<'_>, def_id: DefId) -> DefId {
 fn load_std_contracts_json() -> &'static HashMap<String, Vec<JsonProperty>> {
     static STD_CONTRACTS: OnceLock<HashMap<String, Vec<JsonProperty>>> = OnceLock::new();
     STD_CONTRACTS.get_or_init(|| {
-        serde_json::from_str(include_str!("assets/std-public-contracts.json"))
+        serde_json::from_str(include_str!("assets/std-api-requires.json"))
             .expect("failed to parse verify std contracts backup")
     })
 }
@@ -171,6 +171,38 @@ pub(crate) fn get_std_type_invariants() -> &'static HashMap<String, TypeInvarian
     })
 }
 
+/// Lazily loads the std auto-trait `ensures` obligation database.
+fn load_trait_ensures_json() -> &'static HashMap<String, Vec<JsonProperty>> {
+    static TRAIT_ENSURES: OnceLock<HashMap<String, Vec<JsonProperty>>> = OnceLock::new();
+    TRAIT_ENSURES.get_or_init(|| {
+        serde_json::from_str(include_str!("assets/std-trait-ensures.json"))
+            .expect("failed to parse std trait ensures")
+    })
+}
+
+/// Returns the `ensures` obligation template for an auto-trait such as
+/// `Send`/`Sync`, keyed by the trait's def path (e.g. `"core::marker::Send"`).
+///
+/// The returned entries are templates: `ty:Self` placeholders are resolved to
+/// the concrete implementing type by the caller (`VerifyUnit` collection).
+///
+/// Matching falls back to the trait's short name so that `std`/`core` re-exports
+/// (`std::marker::Send` vs `core::marker::Send`) resolve to the same entry.
+pub(crate) fn query_trait_ensures(tcx: TyCtxt<'_>, trait_def_id: DefId) -> Vec<JsonProperty> {
+    let db = load_trait_ensures_json();
+    let key = tcx.def_path_str(trait_def_id);
+    if let Some(entries) = db.get(&key) {
+        return entries.clone();
+    }
+    let short = key.rsplit("::").next().unwrap_or(&key).to_string();
+    for (k, entries) in db.iter() {
+        if k.rsplit("::").next() == Some(short.as_str()) {
+            return entries.clone();
+        }
+    }
+    Vec::new()
+}
+
 // ── Entry conversion & argument normalization ───────────────────────────────
 
 /// Convert a single [`JsonProperty`] from JSON into the properties it denotes.
@@ -186,21 +218,17 @@ pub(crate) fn entry_to_property<'tcx>(
     param_names: &[String],
     has_names: bool,
 ) -> Vec<Property<'tcx>> {
-    if entry.tag == "any" {
-        if let Some(disjuncts) = &entry.any {
-            if disjuncts.len() >= 2 {
-                let mut prop =
-                    any_entry_to_property(tcx, def_id, disjuncts, param_names, has_names);
-                prop.apply_kind(entry.kind.as_deref());
-                return vec![prop];
-            }
-            rap_error!(
-                "JSON any entry requires at least 2 disjuncts, got {}",
-                disjuncts.len()
-            );
-            return Vec::new();
+    if let Some(disjuncts) = &entry.any {
+        if disjuncts.len() >= 2 {
+            let mut prop =
+                any_entry_to_property(tcx, def_id, disjuncts, param_names, has_names);
+            prop.apply_kind(entry.kind.as_deref());
+            return vec![prop];
         }
-        rap_error!("JSON any entry missing 'any' field");
+        rap_error!(
+            "JSON any entry requires at least 2 disjuncts, got {}",
+            disjuncts.len()
+        );
         return Vec::new();
     }
 
@@ -277,7 +305,7 @@ fn resolve_entry_group<'tcx>(
     has_names: bool,
     in_group: bool,
 ) -> Vec<Property<'tcx>> {
-    if entry.tag == "any" {
+    if entry.any.is_some() {
         if in_group {
             rap_error!("Nested 'any' inside 'any' group is not supported");
         } else {

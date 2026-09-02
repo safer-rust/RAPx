@@ -16,6 +16,7 @@ use crate::helpers::fn_info::{
     FnKind, get_cons, get_mutated_fields, get_muts, get_type, returns_wrapped_self,
 };
 use crate::verify::contract::PropertyKind;
+use crate::verify::property_checker::{atomic_update_check, no_internal_mutate_check, not_type_check};
 use crate::verify::target::get_contract_from_annotation;
 
 use crate::compat::{FxHashMap, FxHashSet};
@@ -23,7 +24,7 @@ use rustc_middle::mir::BasicBlock;
 use rustc_middle::ty::TyCtxt;
 
 use super::{
-    contract::Property,
+    contract::{Property, PropertyArg},
     display::{
         dedup_compound_props, emit_results_and_verdict, emit_verify_summary, fmt_contract_expanded,
         fmt_fn_path_with_bounds, fmt_fn_path_with_generics, fmt_fn_with_params,
@@ -33,7 +34,7 @@ use super::{
     path_extractor::{CallGroup, PATH_LIMIT, PathExtractor},
     report::{CheckResult, PropertyCheckResult, VerificationReport},
     slicer::RelevantItem,
-    target::{FunctionTarget, VerifyTargetCollector},
+    target::{AutoTraitKind, FunctionTarget, VerifyTargetCollector, VerifyUnit},
 };
 
 use crate::helpers::mir_utils::collect_return_block_indices;
@@ -753,6 +754,11 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
             }
         }
 
+        // Verify auto-trait (`Send`/`Sync`) impls structurally.
+        if !collector.verify_units.is_empty() {
+            self.emit_verify_units(&collector.verify_units);
+        }
+
         // --skip-invariant: generate constructor-mutator-method sequences
         if self.skip_invariant {
             self.run_invless_sequences(&collector.function_targets);
@@ -761,6 +767,112 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
 }
 
 impl<'tcx> VerifyRun<'tcx> {
+    /// Structurally verify collected `Send`/`Sync` auto-trait impls.
+    fn emit_verify_units(&self, units: &[VerifyUnit<'tcx>]) {
+        for unit in units {
+            let trait_name = match unit.trait_kind {
+                AutoTraitKind::Send => "Send",
+                AutoTraitKind::Sync => "Sync",
+            };
+            let self_ty_label = unit
+                .self_ty_def_id
+                .or(Some(unit.impl_def_id))
+                .map(|d| self.tcx.def_path_str(d))
+                .unwrap_or_else(|| "<unknown>".to_string());
+
+            rap_info!("============================================================");
+            rap_info!("[rapx::verify] unsafe impl {trait_name} for {self_ty_label}");
+            rap_info!("============================================================");
+
+            if unit.obligations.is_empty() {
+                rap_info!("  ensures: <none>");
+            }
+
+            let mut any_failed = false;
+            let mut any_unknown = false;
+            for property in &unit.obligations {
+                let result = self.check_type_obligation(property);
+                let label = property.display_for_report(self.tcx, unit.self_ty_def_id, None);
+                let verdict = match result {
+                    CheckResult::Proved => "PROVED",
+                    CheckResult::Failed => "FAILED",
+                    CheckResult::Unknown => "UNKNOWN",
+                };
+                rap_info!("  - {label} => {verdict}");
+                any_failed |= matches!(result, CheckResult::Failed);
+                any_unknown |= matches!(result, CheckResult::Unknown);
+            }
+
+            let verdict = if any_failed {
+                "UNSAFE (obligation failed)"
+            } else if any_unknown {
+                "UNKNOWN"
+            } else {
+                "SAFE (all obligations proved)"
+            };
+            rap_info!("  verdict: {verdict}");
+            rap_info!("");
+        }
+    }
+
+    /// Dispatch a single type-level obligation (`NotType` / `NoInternalMutate`
+    /// / `AtomicUpdate`).
+    fn check_type_obligation(&self, property: &Property<'tcx>) -> CheckResult {
+        match property {
+            Property::Atom(atom) => match atom.kind {
+                PropertyKind::NotType => {
+                    let Some(ty) = atom.args.first().and_then(|a| match a {
+                        PropertyArg::Ty(t) => Some(*t),
+                        _ => None,
+                    }) else {
+                        return CheckResult::Unknown;
+                    };
+                    let negatives: Vec<String> = atom.args[1..]
+                        .iter()
+                        .filter_map(|a| match a {
+                            PropertyArg::Ident(n) => Some(n.clone()),
+                            _ => None,
+                        })
+                        .collect();
+                    not_type_check(self.tcx, ty, &negatives)
+                }
+                PropertyKind::NoInternalMutate => {
+                    let Some(ty) = atom.args.first().and_then(|a| match a {
+                        PropertyArg::Ty(t) => Some(*t),
+                        _ => None,
+                    }) else {
+                        return CheckResult::Unknown;
+                    };
+                    no_internal_mutate_check(self.tcx, ty)
+                }
+                PropertyKind::AtomicUpdate => {
+                    let Some(ty) = atom.args.first().and_then(|a| match a {
+                        PropertyArg::Ty(t) => Some(*t),
+                        _ => None,
+                    }) else {
+                        return CheckResult::Unknown;
+                    };
+                    atomic_update_check(self.tcx, ty)
+                }
+                _ => CheckResult::Unknown,
+            },
+            Property::And(and) => {
+                let mut overall = CheckResult::Proved;
+                for conjunct in &and.conjuncts {
+                    overall = overall.and(self.check_type_obligation(conjunct));
+                }
+                overall
+            }
+            Property::Or(or) => {
+                let mut overall = CheckResult::Failed;
+                for disjunct in &or.disjuncts {
+                    overall = overall.or(self.check_type_obligation(disjunct));
+                }
+                overall
+            }
+        }
+    }
+
     fn print_contracts_debug(&self, targets: &[FunctionTarget<'tcx>]) {
         rap_info!("{:=<1$}", "", 76);
         rap_info!("[rapx::debug-contracts] Expanded Contract Assertions");

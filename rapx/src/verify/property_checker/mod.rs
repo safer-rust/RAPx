@@ -20,6 +20,7 @@ use crate::verify::{
 };
 
 mod alias;
+mod auto_trait;
 mod bounds;
 mod cstr;
 mod memory;
@@ -28,6 +29,10 @@ mod string;
 mod transmute;
 mod typed;
 mod util;
+
+pub(crate) use auto_trait::{
+    atomic_update_check, no_internal_mutate_check, not_type_check,
+};
 
 pub(crate) struct PropertyChecker;
 
@@ -106,6 +111,15 @@ impl PropertyChecker {
                 PropertyKind::Size => self.check_size(vm_state, property),
                 PropertyKind::NoPadding => {
                     self.check_no_padding(vm_state, solver, checkpoint, property)
+                }
+                PropertyKind::NotType => {
+                    self.check_not_type(vm_state, solver, checkpoint, property)
+                }
+                PropertyKind::NoInternalMutate => {
+                    self.check_no_internal_mutate(vm_state, solver, checkpoint, property)
+                }
+                PropertyKind::AtomicUpdate => {
+                    self.check_atomic_update(vm_state, solver, checkpoint, property)
                 }
 
                 _ => CheckResult::Unknown,

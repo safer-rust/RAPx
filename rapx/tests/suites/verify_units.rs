@@ -736,3 +736,41 @@ sound_tests! {
 unsound_tests! {
     raw_eq_unsound_01: "verify_units/raw_eq_unsound_01" => "unsound_raw_eq_padded" => "NoPadding",
 }
+
+// ================ Send/Sync Auto-Trait Cases =============
+#[test]
+fn send_unsound_cases() {
+    let output = run_with_args("verify_units/send_unsound_01", CMD_VERIFY_TARGETED);
+    assert_contain(&output, "unsafe impl Send for RcHolder");
+    assert_contain(&output, "NotType(RcHolder, Rc, NonNull) => FAILED");
+    assert_contain(&output, "unsafe impl Send for MyRc");
+    assert_contain(&output, "Or => FAILED");
+    assert_contain(&output, "NotType(MyRc, Rc, NonNull) => PROVED");
+    assert_contain(&output, "verdict: UNSAFE");
+}
+
+#[test]
+fn send_sound_cases() {
+    let output = run_with_args("verify_units/send_sound_01", CMD_VERIFY_TARGETED);
+    assert_contain(&output, "unsafe impl Send for PlainData");
+    assert_contain(&output, "unsafe impl Send for ReadOnlyPtr");
+    assert_contain(&output, "unsafe impl Send for MutablePtrNoWrite");
+    assert_contain(&output, "unsafe impl Send for MyCell");
+    assert_contain(&output, "verdict: SAFE");
+}
+
+#[test]
+fn sync_unsound_cases() {
+    let output = run_with_args("verify_units/sync_unsound_01", CMD_VERIFY_TARGETED);
+    assert_contain(&output, "unsafe impl Sync for MyCell");
+    assert_contain(&output, "AtomicUpdate(MyCell) => FAILED");
+    assert_contain(&output, "verdict: UNSAFE");
+}
+
+#[test]
+fn sync_sound_cases() {
+    let output = run_with_args("verify_units/sync_sound_01", CMD_VERIFY_TARGETED);
+    assert_contain(&output, "unsafe impl Sync for MutexCell");
+    assert_contain(&output, "AtomicUpdate(MutexCell) => PROVED");
+    assert_contain(&output, "verdict: SAFE");
+}

@@ -89,6 +89,28 @@ pub fn place_has_raw_deref<'tcx>(body: &Body<'tcx>, place: &Place<'tcx>) -> bool
     false
 }
 
+/// Detect whether a function writes through a raw pointer (`*ptr = ...`).
+///
+/// Used by the auto-trait (`Send`/`Sync`) checker to decide whether a type's
+/// methods mutate through a raw-pointer field, which would make `NoInternalMutate`
+/// fail.
+pub fn has_raw_ptr_write(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
+    if !tcx.is_mir_available(def_id) {
+        return false;
+    }
+    let body = tcx.optimized_mir(def_id);
+    body.basic_blocks.iter().any(|bb| {
+        bb.statements.iter().any(|stmt| {
+            if let StatementKind::Assign(assign) = &stmt.kind {
+                let (lhs, _) = &**assign;
+                place_has_raw_deref(&body, lhs)
+            } else {
+                false
+            }
+        })
+    })
+}
+
 /// Analyzes the MIR of the given function to collect all local variables
 /// that are involved in dereferencing raw pointers (`*const T` or `*mut T`).
 pub fn get_rawptr_deref(tcx: TyCtxt<'_>, def_id: DefId) -> HashSet<Local> {

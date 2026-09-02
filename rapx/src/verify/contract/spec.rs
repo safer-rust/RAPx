@@ -42,6 +42,9 @@ pub(crate) enum BuildKind {
     SplitTransmute,
     /// One-or-more target places (`Alias`, `Alive`).
     Targets,
+    /// `NotType(T, bad1, bad2, ...)` — first arg is a type, the rest are
+    /// negative type names (one or more).
+    NotType,
     /// Placeholder accepting any args; always yields `Unknown`.
     TobeSpecified,
 }
@@ -187,6 +190,38 @@ static SPECS: &[PropertySpec] = &[
         ContractKind::Precond,
         BuildKind::Uniform,
         "{0} satisfies the trait bound {1}",
+    ),
+    // Variable-arity negative type predicate: first arg is the target type,
+    // the rest are negative type names the target must not (structurally)
+    // contain.  Arity is validated by `build_not_type`.
+    ps(
+        "NotType",
+        PropertyKind::NotType,
+        &[&[Ty, Ident]],
+        ContractKind::Precond,
+        BuildKind::NotType,
+        "{0} does not structurally contain {1}",
+    ),
+    // Synchronization predicate: every interior-mutability / raw-pointer field
+    // of {0} is guarded by a synchronization primitive (mutex/rwlock/atomic).
+    ps(
+        "AtomicUpdate",
+        PropertyKind::AtomicUpdate,
+        &[&[Ty]],
+        ContractKind::Precond,
+        BuildKind::Uniform,
+        "all shared mutations of {0} go through a synchronization primitive",
+    ),
+    // Interior-mutability predicate: {0} has no *mutable* raw pointers (a
+    // `*const` read-only pointer is Send-safe).  (`UnsafeCell` is not rejected
+    // here: it is `Send`, only `!Sync`.)
+    ps(
+        "NoInternalMutate",
+        PropertyKind::NoInternalMutate,
+        &[&[Ty]],
+        ContractKind::Precond,
+        BuildKind::Uniform,
+        "{0} has no mutable raw pointers",
     ),
     ps(
         "NoPadding",

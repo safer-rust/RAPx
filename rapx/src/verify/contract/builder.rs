@@ -32,6 +32,7 @@ impl<'tcx> Property<'tcx> {
             spec::BuildKind::Pinned => Self::build_pinned(tcx, def_id, exprs),
             spec::BuildKind::SplitTransmute => Self::build_split_transmute(tcx, def_id, exprs),
             spec::BuildKind::Targets => Self::build_targets(spec, tcx, def_id, exprs),
+            spec::BuildKind::NotType => Self::build_not_type(tcx, def_id, exprs),
             spec::BuildKind::TobeSpecified => Self::new_simple(PropertyKind::Unknown),
         };
         // Apply the spec-declared `ContractKind` centrally, so `Hazard` /
@@ -319,6 +320,27 @@ impl<'tcx> Property<'tcx> {
             PropertyKind::SplitTransmute,
             vec![PropertyArg::Ty(src_elem), PropertyArg::Ty(dst_elem)],
         )
+    }
+
+    fn build_not_type(tcx: TyCtxt<'tcx>, def_id: DefId, exprs: &[Expr]) -> Self {
+        if exprs.len() < 2 {
+            rap_error!(
+                "Wrong args length for NotType Tag! expected at least 2 (ty, ident...), got {}",
+                exprs.len()
+            );
+            return Self::new_simple(PropertyKind::Unknown);
+        }
+        let Some(ty) = super::resolve::parse_type(tcx, def_id, &exprs[0], "NotType") else {
+            return Self::new_simple(PropertyKind::Unknown);
+        };
+        let mut args = vec![PropertyArg::Ty(ty)];
+        for expr in &exprs[1..] {
+            let Some((name, _)) = access_ident_recursive(expr) else {
+                return Self::new_simple(PropertyKind::Unknown);
+            };
+            args.push(PropertyArg::Ident(name));
+        }
+        Self::new_atom(PropertyKind::NotType, args)
     }
 
     fn new_simple(kind: PropertyKind) -> Self {

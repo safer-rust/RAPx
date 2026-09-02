@@ -203,6 +203,33 @@ pub(crate) struct TraitEnsurance<'tcx> {
     pub ensures: Vec<(String, FnContracts<'tcx>)>,
 }
 
+/// Which auto-trait an `unsafe impl` is claiming safety for.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum AutoTraitKind {
+    Send,
+    Sync,
+}
+
+/// A type-level verification unit: one `unsafe impl Send` / `unsafe impl Sync`
+/// (or other auto-trait) whose safety contract must be discharged.
+///
+/// Unlike [`FunctionTarget`] (which verifies unsafe call-sites along MIR paths),
+/// a `VerifyUnit` carries a set of *type-level* `ensures` obligations (e.g.
+/// `NotType(Self, Rc)`, `NoInternalMutate(Self)`, `AtomicUpdate(Self)`)
+/// generated from the trait's bundled obligation template.  These are checked
+/// structurally against the implementing type, without symbolic execution.
+pub(crate) struct VerifyUnit<'tcx> {
+    /// The `impl Send/Sync for Type` block's DefId.
+    pub impl_def_id: DefId,
+    /// The concrete implementing type (`SomeStruct`), when resolvable.
+    pub self_ty_def_id: Option<DefId>,
+    /// The auto-trait being implemented (`Send` / `Sync`).
+    pub trait_kind: AutoTraitKind,
+    /// Generated type-level obligations (`NotType` / `NoInternalMutate` /
+    /// `AtomicUpdate` properties).
+    pub obligations: Vec<Property<'tcx>>,
+}
+
 /// Follow an unsafe callee's call chain to find inherited safety contracts.
 ///
 /// When an unsafe callee (e.g. B) lacks its own contracts, look into its MIR
@@ -284,6 +311,8 @@ pub(crate) struct VerifyTargetCollector<'tcx> {
     pub struct_targets: HashMap<DefId, StructTarget<'tcx>>,
     /// All trait targets to verify collected from the current crate.
     pub trait_targets: HashMap<DefId, TraitEnsurance<'tcx>>,
+    /// All auto-trait (`Send`/`Sync`) verification units collected.
+    pub verify_units: Vec<VerifyUnit<'tcx>>,
     /// Cached contracts for each callee function so repeated callees are parsed once.
     fn_contract_cache: HashMap<DefId, FnContracts<'tcx>>,
 }
@@ -332,6 +361,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
             function_targets: Vec::new(),
             struct_targets: HashMap::new(),
             trait_targets: HashMap::new(),
+            verify_units: Vec::new(),
             fn_contract_cache: HashMap::new(),
         }
     }
@@ -663,10 +693,22 @@ impl<'tcx> Visitor<'tcx> for VerifyTargetCollector<'tcx> {
 
             if let Some(trait_ref) = trait_ref {
                 let trait_def_id = trait_ref.skip_binder().def_id;
-                if is_trait_unsafe(self.tcx, trait_def_id) {
-                    let ensures = get_trait_contracts_from_annotation(self.tcx, trait_def_id);
 
-                    let self_ty_def_id = resolve_impl_self_ty_def_id(&item);
+                let self_ty_def_id = resolve_impl_self_ty_def_id(&item);
+
+                // Auto-trait (`Send`/`Sync`) impls become type-level verification
+                // units, not method-level trait-ensurance placeholders.
+                if let Some(kind) = auto_trait_kind(self.tcx, trait_def_id) {
+                    let obligations =
+                        build_auto_trait_obligations(self.tcx, self_ty_def_id, kind);
+                    self.verify_units.push(VerifyUnit {
+                        impl_def_id,
+                        self_ty_def_id,
+                        trait_kind: kind,
+                        obligations,
+                    });
+                } else if is_trait_unsafe(self.tcx, trait_def_id) {
+                    let ensures = get_trait_contracts_from_annotation(self.tcx, trait_def_id);
 
                     self.trait_targets
                         .entry(trait_def_id)
@@ -1064,6 +1106,101 @@ fn is_rapx_named_attr(attr: &Attribute, name: &str) -> bool {
     // In newer rustc, tool attrs may have the tool prefix stripped from the path.
     // Match bare name when the attribute has exactly one path segment.
     path.len() == 1 && path[0].as_str() == name
+}
+
+/// Resolve whether an `unsafe impl` is implementing the `Send`/`Sync` auto-trait.
+fn auto_trait_kind(tcx: TyCtxt<'_>, trait_def_id: DefId) -> Option<AutoTraitKind> {
+    if tcx.get_diagnostic_item(rustc_span::sym::Send) == Some(trait_def_id) {
+        Some(AutoTraitKind::Send)
+    } else if tcx.get_diagnostic_item(rustc_span::sym::Sync) == Some(trait_def_id) {
+        Some(AutoTraitKind::Sync)
+    } else {
+        None
+    }
+}
+
+/// Generate the type-level `ensures` obligations for an auto-trait impl from the
+/// bundled `std-trait-ensures.json` template, substituting `ty:Self` with the
+/// implementing type.
+fn build_auto_trait_obligations<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    self_ty_def_id: Option<DefId>,
+    trait_kind: AutoTraitKind,
+) -> Vec<Property<'tcx>> {
+    let Some(self_ty_def_id) = self_ty_def_id else {
+        return Vec::new();
+    };
+    let self_ty = tcx.type_of(self_ty_def_id).skip_binder();
+
+    let trait_def_id = match trait_kind {
+        AutoTraitKind::Send => tcx.get_diagnostic_item(rustc_span::sym::Send),
+        AutoTraitKind::Sync => tcx.get_diagnostic_item(rustc_span::sym::Sync),
+    };
+    let Some(trait_def_id) = trait_def_id else {
+        return Vec::new();
+    };
+
+    let templates = super::contract::json::query_trait_ensures(tcx, trait_def_id);
+    let mut obligations = Vec::new();
+    for entry in templates {
+        if let Some(prop) = build_type_atom(&entry, self_ty) {
+            obligations.push(prop);
+        }
+    }
+    obligations
+}
+
+/// Build a single type-level obligation from a `std-trait-ensures.json` entry,
+/// substituting `ty:Self` with `self_ty`.  Supports the `any` disjunction.
+fn build_type_atom<'tcx>(
+    entry: &super::contract::json::JsonProperty,
+    self_ty: rustc_middle::ty::Ty<'tcx>,
+) -> Option<Property<'tcx>> {
+    if let Some(items) = &entry.any {
+        let disjuncts: Vec<Property<'tcx>> = items
+            .iter()
+            .filter_map(|item| match item {
+                super::contract::json::AnyItem::Single(e) => build_type_atom(e, self_ty),
+                super::contract::json::AnyItem::And(es) => {
+                    let conjuncts: Vec<Property<'tcx>> = es
+                        .iter()
+                        .filter_map(|e| build_type_atom(e, self_ty))
+                        .collect();
+                    if conjuncts.is_empty() {
+                        None
+                    } else {
+                        Some(Property::new_and(conjuncts))
+                    }
+                }
+            })
+            .collect();
+        return if disjuncts.is_empty() {
+            None
+        } else {
+            Some(Property::new_or(disjuncts))
+        };
+    }
+
+    match entry.tag.as_str() {
+        "NotType" => {
+            let negatives: Vec<String> = entry.args[1..]
+                .iter()
+                .map(|s| s.strip_prefix("ty:").unwrap_or(s).to_string())
+                .collect();
+            let mut args = vec![PropertyArg::Ty(self_ty)];
+            args.extend(negatives.into_iter().map(PropertyArg::Ident));
+            Some(Property::new_atom(PropertyKind::NotType, args))
+        }
+        "NoInternalMutate" => Some(Property::new_atom(
+            PropertyKind::NoInternalMutate,
+            vec![PropertyArg::Ty(self_ty)],
+        )),
+        "AtomicUpdate" => Some(Property::new_atom(
+            PropertyKind::AtomicUpdate,
+            vec![PropertyArg::Ty(self_ty)],
+        )),
+        _ => None,
+    }
 }
 
 fn collect_properties_from_named_attrs<'tcx>(
