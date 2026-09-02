@@ -180,11 +180,11 @@ fn load_trait_ensures_json() -> &'static HashMap<String, Vec<JsonProperty>> {
     })
 }
 
-/// Returns the `ensures` obligation template for an auto-trait such as
+/// Returns the `ensures` obligation template for a marker trait such as
 /// `Send`/`Sync`, keyed by the trait's def path (e.g. `"core::marker::Send"`).
 ///
 /// The returned entries are templates: `ty:Self` placeholders are resolved to
-/// the concrete implementing type by the caller (`VerifyUnit` collection).
+/// the concrete implementing type by the caller (`TraitEnsurance` collection).
 ///
 /// Matching falls back to the trait's short name so that `std`/`core` re-exports
 /// (`std::marker::Send` vs `core::marker::Send`) resolve to the same entry.

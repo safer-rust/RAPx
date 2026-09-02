@@ -192,42 +192,33 @@ pub(crate) struct StructTarget<'tcx> {
 
 /// Collected verification data for an `impl unsafe Trait for Type` block.
 ///
-/// The trait's `#[rapx::ensures(...)]` contracts define safety obligations the
-/// implementor must satisfy.  Full verification of trait impls is deferred.
+/// Covers two cases, distinguished by whether the trait has methods:
+/// - marker traits (`Send`/`Sync`) carry *type-level* obligations, and
+/// - unsafe traits with methods carry *method-level* `ensures` contracts
+///   (verification deferred).
 pub(crate) struct TraitEnsurance<'tcx> {
-    /// The unsafe trait definition.
+    /// The trait being implemented.
     pub def_id: DefId,
     /// The concrete type that implements the trait (e.g. `SomeStruct`).
     pub self_ty_def_id: Option<DefId>,
-    /// `ensures` contracts grouped by trait method name.
-    pub ensures: Vec<(String, FnContracts<'tcx>)>,
+    /// The obligations to verify, keyed by whether the trait has methods.
+    pub kind: TraitEnsuranceKind<'tcx>,
 }
 
-/// Which auto-trait an `unsafe impl` is claiming safety for.
+/// What a [`TraitEnsurance`] must verify.
+pub(crate) enum TraitEnsuranceKind<'tcx> {
+    /// A marker trait (`Send`/`Sync`, no methods): type-level obligations
+    /// generated from the bundled `std-trait-ensures.json` template.
+    Marker(MarkerTraitKind, Vec<Property<'tcx>>),
+    /// An unsafe trait with methods: `ensures` contracts grouped by method name.
+    Unsafe(Vec<(String, FnContracts<'tcx>)>),
+}
+
+/// Which marker trait an `unsafe impl` is claiming safety for.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum AutoTraitKind {
+pub(crate) enum MarkerTraitKind {
     Send,
     Sync,
-}
-
-/// A type-level verification unit: one `unsafe impl Send` / `unsafe impl Sync`
-/// (or other auto-trait) whose safety contract must be discharged.
-///
-/// Unlike [`FunctionTarget`] (which verifies unsafe call-sites along MIR paths),
-/// a `VerifyUnit` carries a set of *type-level* `ensures` obligations (e.g.
-/// `NotType(Self, Rc)`, `NoInternalMutate(Self)`, `AtomicUpdate(Self)`)
-/// generated from the trait's bundled obligation template.  These are checked
-/// structurally against the implementing type, without symbolic execution.
-pub(crate) struct VerifyUnit<'tcx> {
-    /// The `impl Send/Sync for Type` block's DefId.
-    pub impl_def_id: DefId,
-    /// The concrete implementing type (`SomeStruct`), when resolvable.
-    pub self_ty_def_id: Option<DefId>,
-    /// The auto-trait being implemented (`Send` / `Sync`).
-    pub trait_kind: AutoTraitKind,
-    /// Generated type-level obligations (`NotType` / `NoInternalMutate` /
-    /// `AtomicUpdate` properties).
-    pub obligations: Vec<Property<'tcx>>,
 }
 
 /// Follow an unsafe callee's call chain to find inherited safety contracts.
@@ -309,10 +300,9 @@ pub(crate) struct VerifyTargetCollector<'tcx> {
     pub function_targets: Vec<FunctionTarget<'tcx>>,
     /// All struct targets to verify collected from the current crate.
     pub struct_targets: HashMap<DefId, StructTarget<'tcx>>,
-    /// All trait targets to verify collected from the current crate.
-    pub trait_targets: HashMap<DefId, TraitEnsurance<'tcx>>,
-    /// All auto-trait (`Send`/`Sync`) verification units collected.
-    pub verify_units: Vec<VerifyUnit<'tcx>>,
+    /// All trait impls to verify (marker traits and unsafe traits), one entry
+    /// per `impl` block.
+    pub trait_targets: Vec<TraitEnsurance<'tcx>>,
     /// Cached contracts for each callee function so repeated callees are parsed once.
     fn_contract_cache: HashMap<DefId, FnContracts<'tcx>>,
 }
@@ -360,8 +350,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
             module_filter_matched: false,
             function_targets: Vec::new(),
             struct_targets: HashMap::new(),
-            trait_targets: HashMap::new(),
-            verify_units: Vec::new(),
+            trait_targets: Vec::new(),
             fn_contract_cache: HashMap::new(),
         }
     }
@@ -696,27 +685,24 @@ impl<'tcx> Visitor<'tcx> for VerifyTargetCollector<'tcx> {
 
                 let self_ty_def_id = resolve_impl_self_ty_def_id(&item);
 
-                // Auto-trait (`Send`/`Sync`) impls become type-level verification
-                // units, not method-level trait-ensurance placeholders.
-                if let Some(kind) = auto_trait_kind(self.tcx, trait_def_id) {
+                // Marker traits (`Send`/`Sync`) carry type-level obligations;
+                // unsafe traits with methods carry method-level `ensures`.
+                if let Some(kind) = marker_trait_kind(self.tcx, trait_def_id) {
                     let obligations =
-                        build_auto_trait_obligations(self.tcx, self_ty_def_id, kind);
-                    self.verify_units.push(VerifyUnit {
-                        impl_def_id,
+                        build_marker_trait_obligations(self.tcx, self_ty_def_id, kind);
+                    self.trait_targets.push(TraitEnsurance {
+                        def_id: trait_def_id,
                         self_ty_def_id,
-                        trait_kind: kind,
-                        obligations,
+                        kind: TraitEnsuranceKind::Marker(kind, obligations),
                     });
                 } else if is_trait_unsafe(self.tcx, trait_def_id) {
                     let ensures = get_trait_contracts_from_annotation(self.tcx, trait_def_id);
 
-                    self.trait_targets
-                        .entry(trait_def_id)
-                        .or_insert_with(|| TraitEnsurance {
-                            def_id: trait_def_id,
-                            self_ty_def_id,
-                            ensures,
-                        });
+                    self.trait_targets.push(TraitEnsurance {
+                        def_id: trait_def_id,
+                        self_ty_def_id,
+                        kind: TraitEnsuranceKind::Unsafe(ensures),
+                    });
                 }
             }
         }
@@ -871,11 +857,11 @@ impl<'tcx> Analysis for PrepareTargets<'tcx> {
         }
 
         // Traits with impl methods
-        let mut trait_ids: Vec<_> = collector.trait_targets.keys().copied().collect();
-        trait_ids.sort_by_key(|def_id| self.tcx.def_path_str(*def_id));
+        let mut trait_targets: Vec<_> = collector.trait_targets.iter().collect();
+        trait_targets.sort_by_key(|t| self.tcx.def_path_str(t.def_id));
 
-        for trait_def_id in trait_ids {
-            let Some(trait_target) = collector.trait_targets.get(&trait_def_id) else {
+        for trait_target in trait_targets {
+            let TraitEnsuranceKind::Unsafe(_) = &trait_target.kind else {
                 continue;
             };
             let trait_path = self.tcx.def_path_str(trait_target.def_id);
@@ -950,11 +936,14 @@ impl<'tcx> PrepareTargets<'tcx> {
         if let Some(self_ty) = trait_target.self_ty_def_id {
             rap_info!("  impl for: {}", self.tcx.def_path_str(self_ty));
         }
-        if trait_target.ensures.is_empty() {
+        let TraitEnsuranceKind::Unsafe(ensures) = &trait_target.kind else {
+            return;
+        };
+        if ensures.is_empty() {
             rap_info!("  ensures: <none>");
         } else {
             rap_info!("  ensures (implementor must satisfy):");
-            for (method_name, contracts) in &trait_target.ensures {
+            for (method_name, contracts) in ensures {
                 rap_info!("    fn {}:", method_name);
                 for property in crate::verify::display::dedup_compound_props(contracts.iter()) {
                     rap_info!(
@@ -1108,24 +1097,24 @@ fn is_rapx_named_attr(attr: &Attribute, name: &str) -> bool {
     path.len() == 1 && path[0].as_str() == name
 }
 
-/// Resolve whether an `unsafe impl` is implementing the `Send`/`Sync` auto-trait.
-fn auto_trait_kind(tcx: TyCtxt<'_>, trait_def_id: DefId) -> Option<AutoTraitKind> {
+/// Resolve whether an `unsafe impl` is implementing the `Send`/`Sync` marker trait.
+fn marker_trait_kind(tcx: TyCtxt<'_>, trait_def_id: DefId) -> Option<MarkerTraitKind> {
     if tcx.get_diagnostic_item(rustc_span::sym::Send) == Some(trait_def_id) {
-        Some(AutoTraitKind::Send)
+        Some(MarkerTraitKind::Send)
     } else if tcx.get_diagnostic_item(rustc_span::sym::Sync) == Some(trait_def_id) {
-        Some(AutoTraitKind::Sync)
+        Some(MarkerTraitKind::Sync)
     } else {
         None
     }
 }
 
-/// Generate the type-level `ensures` obligations for an auto-trait impl from the
-/// bundled `std-trait-ensures.json` template, substituting `ty:Self` with the
-/// implementing type.
-fn build_auto_trait_obligations<'tcx>(
+/// Generate the type-level `ensures` obligations for a marker-trait impl from
+/// the bundled `std-trait-ensures.json` template, substituting `ty:Self` with
+/// the implementing type.
+fn build_marker_trait_obligations<'tcx>(
     tcx: TyCtxt<'tcx>,
     self_ty_def_id: Option<DefId>,
-    trait_kind: AutoTraitKind,
+    trait_kind: MarkerTraitKind,
 ) -> Vec<Property<'tcx>> {
     let Some(self_ty_def_id) = self_ty_def_id else {
         return Vec::new();
@@ -1133,8 +1122,8 @@ fn build_auto_trait_obligations<'tcx>(
     let self_ty = tcx.type_of(self_ty_def_id).skip_binder();
 
     let trait_def_id = match trait_kind {
-        AutoTraitKind::Send => tcx.get_diagnostic_item(rustc_span::sym::Send),
-        AutoTraitKind::Sync => tcx.get_diagnostic_item(rustc_span::sym::Sync),
+        MarkerTraitKind::Send => tcx.get_diagnostic_item(rustc_span::sym::Send),
+        MarkerTraitKind::Sync => tcx.get_diagnostic_item(rustc_span::sym::Sync),
     };
     let Some(trait_def_id) = trait_def_id else {
         return Vec::new();

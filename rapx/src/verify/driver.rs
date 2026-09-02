@@ -34,7 +34,10 @@ use super::{
     path_extractor::{CallGroup, PATH_LIMIT, PathExtractor},
     report::{CheckResult, PropertyCheckResult, VerificationReport},
     slicer::RelevantItem,
-    target::{AutoTraitKind, FunctionTarget, VerifyTargetCollector, VerifyUnit},
+    target::{
+        FunctionTarget, MarkerTraitKind, TraitEnsurance, TraitEnsuranceKind,
+        VerifyTargetCollector,
+    },
 };
 
 use crate::helpers::mir_utils::collect_return_block_indices;
@@ -715,48 +718,55 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
         }
 
         // Emit detected unsafe trait impls (verification deferred)
-        if !collector.trait_targets.is_empty() {
-            let mut trait_ids: Vec<_> = collector.trait_targets.keys().copied().collect();
-            trait_ids.sort_by_key(|def_id| self.tcx.def_path_str(*def_id));
-            for trait_def_id in trait_ids {
-                let Some(trait_target) = collector.trait_targets.get(&trait_def_id) else {
-                    continue;
-                };
-                rap_info!("============================================================");
-                rap_info!(
-                    "[rapx::verify] unsafe trait impl: {}",
-                    self.tcx.def_path_str(trait_target.def_id)
-                );
-                rap_info!("============================================================");
-                if let Some(self_ty) = trait_target.self_ty_def_id {
-                    rap_info!("  impl for: {}", self.tcx.def_path_str(self_ty));
-                }
-                if trait_target.ensures.is_empty() {
-                    rap_info!("  ensures: <none>");
-                } else {
-                    rap_info!("  ensures (implementor must satisfy):");
-                    for (method_name, contracts) in &trait_target.ensures {
-                        rap_info!("    fn {}:", method_name);
-                        for property in dedup_compound_props(contracts.iter()) {
-                            rap_info!(
-                                "      - {}",
-                                property.display_for_report(
-                                    self.tcx,
-                                    trait_target.self_ty_def_id,
-                                    None,
-                                )
-                            );
-                        }
+        let mut unsafe_traits: Vec<_> = collector
+            .trait_targets
+            .iter()
+            .filter(|t| matches!(&t.kind, TraitEnsuranceKind::Unsafe(_)))
+            .collect();
+        unsafe_traits.sort_by_key(|t| self.tcx.def_path_str(t.def_id));
+        for trait_target in unsafe_traits {
+            let TraitEnsuranceKind::Unsafe(ensures) = &trait_target.kind else {
+                continue;
+            };
+            rap_info!("============================================================");
+            rap_info!(
+                "[rapx::verify] unsafe trait impl: {}",
+                self.tcx.def_path_str(trait_target.def_id)
+            );
+            rap_info!("============================================================");
+            if let Some(self_ty) = trait_target.self_ty_def_id {
+                rap_info!("  impl for: {}", self.tcx.def_path_str(self_ty));
+            }
+            if ensures.is_empty() {
+                rap_info!("  ensures: <none>");
+            } else {
+                rap_info!("  ensures (implementor must satisfy):");
+                for (method_name, contracts) in ensures {
+                    rap_info!("    fn {}:", method_name);
+                    for property in dedup_compound_props(contracts.iter()) {
+                        rap_info!(
+                            "      - {}",
+                            property.display_for_report(
+                                self.tcx,
+                                trait_target.self_ty_def_id,
+                                None,
+                            )
+                        );
                     }
                 }
-                rap_info!("  verification: deferred");
-                rap_info!("");
             }
+            rap_info!("  verification: deferred");
+            rap_info!("");
         }
 
-        // Verify auto-trait (`Send`/`Sync`) impls structurally.
-        if !collector.verify_units.is_empty() {
-            self.emit_verify_units(&collector.verify_units);
+        // Verify marker-trait (`Send`/`Sync`) impls structurally.
+        let marker_targets: Vec<_> = collector
+            .trait_targets
+            .iter()
+            .filter(|t| matches!(&t.kind, TraitEnsuranceKind::Marker(..)))
+            .collect();
+        if !marker_targets.is_empty() {
+            self.emit_marker_trait_ensurance(&marker_targets);
         }
 
         // --skip-invariant: generate constructor-mutator-method sequences
@@ -767,16 +777,18 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
 }
 
 impl<'tcx> VerifyRun<'tcx> {
-    /// Structurally verify collected `Send`/`Sync` auto-trait impls.
-    fn emit_verify_units(&self, units: &[VerifyUnit<'tcx>]) {
+    /// Structurally verify collected `Send`/`Sync` marker-trait impls.
+    fn emit_marker_trait_ensurance(&self, units: &[&TraitEnsurance<'tcx>]) {
         for unit in units {
-            let trait_name = match unit.trait_kind {
-                AutoTraitKind::Send => "Send",
-                AutoTraitKind::Sync => "Sync",
+            let TraitEnsuranceKind::Marker(kind, obligations) = &unit.kind else {
+                continue;
+            };
+            let trait_name = match kind {
+                MarkerTraitKind::Send => "Send",
+                MarkerTraitKind::Sync => "Sync",
             };
             let self_ty_label = unit
                 .self_ty_def_id
-                .or(Some(unit.impl_def_id))
                 .map(|d| self.tcx.def_path_str(d))
                 .unwrap_or_else(|| "<unknown>".to_string());
 
@@ -784,13 +796,13 @@ impl<'tcx> VerifyRun<'tcx> {
             rap_info!("[rapx::verify] unsafe impl {trait_name} for {self_ty_label}");
             rap_info!("============================================================");
 
-            if unit.obligations.is_empty() {
+            if obligations.is_empty() {
                 rap_info!("  ensures: <none>");
             }
 
             let mut any_failed = false;
             let mut any_unknown = false;
-            for property in &unit.obligations {
+            for property in obligations {
                 let result = self.check_type_obligation(property);
                 let label = property.display_for_report(self.tcx, unit.self_ty_def_id, None);
                 let verdict = match result {
