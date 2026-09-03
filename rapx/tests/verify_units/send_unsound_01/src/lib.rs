@@ -24,7 +24,7 @@ pub struct MyRcBox {
 
 impl Clone for MyRc {
     fn clone(&self) -> Self {
-        unsafe { (*self.ptr).strong += 1 }
+        self.inc();
         MyRc { ptr: self.ptr }
     }
 }
