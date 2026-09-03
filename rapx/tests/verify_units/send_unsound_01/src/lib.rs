@@ -59,3 +59,6 @@ impl<T> MyRcGeneric<T> {
 
 #[rapx::verify]
 unsafe impl<T> Send for MyRcGeneric<T> {}
+
+#[rapx::verify]
+unsafe impl<T> Sync for MyRcGeneric<T> {}

@@ -57,6 +57,9 @@ impl<T> MyRcGeneric<T> {
 #[rapx::verify]
 unsafe impl<T: Send> Send for MyRcGeneric<T> {}
 
+#[rapx::verify]
+unsafe impl<T: Sync> Sync for MyRcGeneric<T> {}
+
 // A Cell-like type: interior mutability via UnsafeCell, no raw pointer field.
 // `set` mutates through `&self` (interior mutation), but the value is still
 // Send-safe (move => exclusive).

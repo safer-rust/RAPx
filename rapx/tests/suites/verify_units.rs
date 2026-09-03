@@ -748,6 +748,8 @@ fn send_unsound_cases() {
     assert_contain(&output, "unsafe impl Send for MyRcGeneric");
     assert_contain(&output, "ContainNoType(MyRcGeneric<T>");
     assert_contain(&output, "=> UNKNOWN");
+    assert_contain(&output, "unsafe impl Sync for MyRcGeneric");
+    assert_contain(&output, "RefSend(MyRcGeneric<T>) => FAILED");
     assert_contain(&output, "verdict: UNSAFE");
 }
 
@@ -758,6 +760,8 @@ fn send_sound_cases() {
     assert_contain(&output, "unsafe impl Send for MyRc");
     assert_contain(&output, "unsafe impl Send for MyRcGeneric");
     assert_contain(&output, "unsafe impl Send for MyCell");
+    assert_contain(&output, "unsafe impl Sync for MyRcGeneric");
+    assert_contain(&output, "RefSend(MyRcGeneric<T>) => FAILED");
     assert_contain(&output, "verdict: SAFE");
 }
 
