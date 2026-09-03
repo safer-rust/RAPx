@@ -861,19 +861,34 @@ impl<'tcx> Analysis for PrepareTargets<'tcx> {
         trait_targets.sort_by_key(|t| self.tcx.def_path_str(t.def_id));
 
         for trait_target in trait_targets {
-            let TraitEnsuranceKind::Unsafe(_) = &trait_target.kind else {
-                continue;
-            };
             let trait_path = self.tcx.def_path_str(trait_target.def_id);
 
-            rap_info!("============================================================");
-            rap_info!(
-                "[rapx::verify] prepare targets for unsafe trait: {}",
-                trait_path
-            );
-            rap_info!("============================================================");
+            match &trait_target.kind {
+                TraitEnsuranceKind::Unsafe(_) => {
+                    rap_info!("============================================================");
+                    rap_info!(
+                        "[rapx::verify] prepare targets for unsafe trait: {}",
+                        trait_path
+                    );
+                    rap_info!("============================================================");
 
-            self.log_trait_ensurance(trait_target);
+                    self.log_trait_ensurance(trait_target);
+                }
+                TraitEnsuranceKind::Marker(kind, obligations) => {
+                    let name = match kind {
+                        MarkerTraitKind::Send => "Send",
+                        MarkerTraitKind::Sync => "Sync",
+                    };
+                    rap_info!("============================================================");
+                    rap_info!(
+                        "[rapx::verify] prepare targets for marker trait: {}",
+                        name
+                    );
+                    rap_info!("============================================================");
+
+                    self.log_marker_trait(trait_target, obligations);
+                }
+            }
 
             rap_info!("");
         }
@@ -951,6 +966,23 @@ impl<'tcx> PrepareTargets<'tcx> {
                         property.display_for_report(self.tcx, trait_target.self_ty_def_id, None,)
                     );
                 }
+            }
+        }
+    }
+
+    fn log_marker_trait(&self, trait_target: &TraitEnsurance<'tcx>, obligations: &[Property<'tcx>]) {
+        if let Some(self_ty) = trait_target.self_ty_def_id {
+            rap_info!("  impl for: {}", self.tcx.def_path_str(self_ty));
+        }
+        if obligations.is_empty() {
+            rap_info!("  obligations: <none>");
+        } else {
+            rap_info!("  obligations:");
+            for property in obligations {
+                rap_info!(
+                    "    - {}",
+                    property.display_for_report(self.tcx, trait_target.self_ty_def_id, None,)
+                );
             }
         }
     }
