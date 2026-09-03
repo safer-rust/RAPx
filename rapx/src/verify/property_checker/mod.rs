@@ -31,7 +31,7 @@ mod typed;
 mod util;
 
 pub(crate) use auto_trait::{
-    atomic_update_check, no_internal_mutate_check, not_type_check,
+    atomic_update_check, no_internal_ref_mut_check, not_type_check,
 };
 
 pub(crate) struct PropertyChecker;
@@ -115,8 +115,8 @@ impl PropertyChecker {
                 PropertyKind::NotType => {
                     self.check_not_type(vm_state, solver, checkpoint, property)
                 }
-                PropertyKind::NoInternalMutate => {
-                    self.check_no_internal_mutate(vm_state, solver, checkpoint, property)
+                PropertyKind::NoInternalRefMut => {
+                    self.check_no_internal_ref_mut(vm_state, solver, checkpoint, property)
                 }
                 PropertyKind::AtomicUpdate => {
                     self.check_atomic_update(vm_state, solver, checkpoint, property)

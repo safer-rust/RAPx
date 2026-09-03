@@ -1180,8 +1180,8 @@ fn build_type_atom<'tcx>(
             args.extend(negatives.into_iter().map(PropertyArg::Ident));
             Some(Property::new_atom(PropertyKind::NotType, args))
         }
-        "NoInternalMutate" => Some(Property::new_atom(
-            PropertyKind::NoInternalMutate,
+        "NoInternalRefMut" => Some(Property::new_atom(
+            PropertyKind::NoInternalRefMut,
             vec![PropertyArg::Ty(self_ty)],
         )),
         "AtomicUpdate" => Some(Property::new_atom(

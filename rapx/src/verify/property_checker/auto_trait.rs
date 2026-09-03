@@ -1,4 +1,4 @@
-//! Checkers for `NotType`, `NoInternalMutate` and `AtomicUpdate` — the
+//! Checkers for `NotType`, `NoInternalRefMut` and `AtomicUpdate` — the
 //! structural predicates used to approximate `Send`/`Sync` auto-trait safety.
 //!
 //! These are intentionally *structural* approximations (sound-incomplete): a
@@ -6,7 +6,7 @@
 //! needs an ownership + concurrency model (e.g. separation logic), which the
 //! current sequential VM does not have.  What we can check here is whether a
 //! type *structurally* contains a negative type (`NotType`), has interior
-//! mutability (`NoInternalMutate`), or guards its interior mutability with a
+//! mutability (`NoInternalRefMut`), or guards its interior mutability with a
 //! synchronization primitive (`AtomicUpdate`).
 
 #[cfg(not(rapx_ge_100))]
@@ -77,8 +77,8 @@ impl PropertyChecker {
         not_type_check(vm_state.tcx, ty, &negatives)
     }
 
-    /// `NoInternalMutate(T)`: `T` must have no *mutable* raw pointers.
-    pub(super) fn check_no_internal_mutate<'ctx, 'tcx>(
+    /// `NoInternalRefMut(T)`: `T` must have no *mutable* raw pointers.
+    pub(super) fn check_no_internal_ref_mut<'ctx, 'tcx>(
         &self,
         vm_state: &VmState<'ctx, 'tcx>,
         _solver: &Solver<'ctx>,
@@ -91,7 +91,7 @@ impl PropertyChecker {
         }) else {
             return CheckResult::Unknown;
         };
-        no_internal_mutate_check(vm_state.tcx, ty)
+        no_internal_ref_mut_check(vm_state.tcx, ty)
     }
 
     /// `AtomicUpdate(T)`: every interior-mutability (`UnsafeCell`) / raw-pointer
@@ -132,29 +132,42 @@ pub(crate) fn not_type_check<'tcx>(
     }
 }
 
-/// Type-level `NoInternalMutate` obligation check (no VM state required).
+/// Type-level `NoInternalRefMut` obligation check (no VM state required).
 ///
 /// A type has "interior mutation" if one of its methods writes through a raw
-/// pointer (e.g. `(*self.ptr).strong += 1`).  This is a behavioural check over
-/// the type's inherent methods, not a structural one: a `*mut` field alone does
-/// not mutate anything unless some method dereferences-and-writes it.
-pub(crate) fn no_internal_mutate_check<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> CheckResult {
+/// pointer (e.g. `(*self.ptr).strong += 1`).  A write is only a cross-thread
+/// data race if the type *aliases* the pointee — approximated here by whether
+/// the type implements `Clone` (which copies the raw pointer).  An exclusive
+/// write (no `Clone`) is Send-safe.
+pub(crate) fn no_internal_ref_mut_check<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> CheckResult {
     let TyKind::Adt(adt_def, _) = ty.kind() else {
         return CheckResult::Proved;
     };
     let adt_def_id = adt_def.did();
 
-    for impl_def_id in tcx.inherent_impls(adt_def_id) {
-        for item in tcx.associated_item_def_ids(*impl_def_id) {
-            if !matches!(tcx.def_kind(*item), DefKind::Fn | DefKind::AssocFn) {
-                continue;
-            }
-            if has_raw_ptr_write(tcx, *item) {
-                return CheckResult::Failed;
-            }
-        }
+    let writes = tcx.inherent_impls(adt_def_id).iter().any(|impl_id| {
+        tcx.associated_item_def_ids(*impl_id).iter().any(|item| {
+            matches!(tcx.def_kind(*item), DefKind::Fn | DefKind::AssocFn)
+                && has_raw_ptr_write(tcx, *item)
+        })
+    });
+
+    if writes && type_implements_clone(tcx, ty) {
+        CheckResult::Failed
+    } else {
+        CheckResult::Proved
     }
-    CheckResult::Proved
+}
+
+/// Whether `ty` implements `Clone` (which copies any raw-pointer field, aliasing
+/// the pointee across a move).
+fn type_implements_clone<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> bool {
+    let Some(clone_did) = tcx.lang_items().clone_trait() else {
+        return false;
+    };
+    tcx.all_impls(clone_did).any(|impl_did| {
+        tcx.impl_trait_ref(impl_did).skip_binder().self_ty() == ty
+    })
 }
 
 /// Type-level `AtomicUpdate` obligation check (no VM state required).

@@ -753,7 +753,7 @@ fn send_unsound_cases() {
 fn send_sound_cases() {
     let output = run_with_args("verify_units/send_sound_01", CMD_VERIFY_TARGETED);
     assert_contain(&output, "unsafe impl Send for ReadOnlyPtr");
-    assert_contain(&output, "unsafe impl Send for MutablePtrNoWrite");
+    assert_contain(&output, "unsafe impl Send for MyRc");
     assert_contain(&output, "unsafe impl Send for MyCell");
     assert_contain(&output, "verdict: SAFE");
 }

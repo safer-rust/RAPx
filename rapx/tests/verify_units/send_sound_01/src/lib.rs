@@ -11,14 +11,25 @@ pub struct ReadOnlyPtr {
 #[rapx::verify]
 unsafe impl Send for ReadOnlyPtr {}
 
-// A `*mut` field with no method that writes through it: structurally mutable
-// but behaviourally read-only, so Send-safe.
-pub struct MutablePtrNoWrite {
-    ptr: *mut u8,
+// A `*mut` field written through exclusively (no `Clone` => no aliasing): the
+// write is not a cross-thread data race, so Send-safe.
+pub struct MyRc {
+    ptr: *mut MyRcBox,
+}
+
+pub struct MyRcBox {
+    strong: usize,
+    value: u8,
+}
+
+impl MyRc {
+    pub fn inc(&self) {
+        unsafe { (*self.ptr).strong += 1 }
+    }
 }
 
 #[rapx::verify]
-unsafe impl Send for MutablePtrNoWrite {}
+unsafe impl Send for MyRc {}
 
 pub struct MyCell {
     value: UnsafeCell<u8>,

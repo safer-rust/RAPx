@@ -16,7 +16,7 @@ use crate::helpers::fn_info::{
     FnKind, get_cons, get_mutated_fields, get_muts, get_type, returns_wrapped_self,
 };
 use crate::verify::contract::PropertyKind;
-use crate::verify::property_checker::{atomic_update_check, no_internal_mutate_check, not_type_check};
+use crate::verify::property_checker::{atomic_update_check, no_internal_ref_mut_check, not_type_check};
 use crate::verify::target::get_contract_from_annotation;
 
 use crate::compat::{FxHashMap, FxHashSet};
@@ -827,7 +827,7 @@ impl<'tcx> VerifyRun<'tcx> {
         }
     }
 
-    /// Dispatch a single type-level obligation (`NotType` / `NoInternalMutate`
+    /// Dispatch a single type-level obligation (`NotType` / `NoInternalRefMut`
     /// / `AtomicUpdate`).
     fn check_type_obligation(&self, property: &Property<'tcx>) -> CheckResult {
         match property {
@@ -848,14 +848,14 @@ impl<'tcx> VerifyRun<'tcx> {
                         .collect();
                     not_type_check(self.tcx, ty, &negatives)
                 }
-                PropertyKind::NoInternalMutate => {
+                PropertyKind::NoInternalRefMut => {
                     let Some(ty) = atom.args.first().and_then(|a| match a {
                         PropertyArg::Ty(t) => Some(*t),
                         _ => None,
                     }) else {
                         return CheckResult::Unknown;
                     };
-                    no_internal_mutate_check(self.tcx, ty)
+                    no_internal_ref_mut_check(self.tcx, ty)
                 }
                 PropertyKind::AtomicUpdate => {
                     let Some(ty) = atom.args.first().and_then(|a| match a {

@@ -2,7 +2,7 @@
   "core::marker::Send": [
     {
       "any": [
-        { "tag": "NoInternalMutate", "args": ["ty:Self"] },
+        { "tag": "NoInternalRefMut", "args": ["ty:Self"] },
         { "tag": "AtomicUpdate", "args": ["ty:Self"] }
       ]
     },

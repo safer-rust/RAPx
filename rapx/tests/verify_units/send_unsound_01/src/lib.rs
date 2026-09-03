@@ -11,6 +11,8 @@ pub struct RcHolder {
 #[rapx::verify]
 unsafe impl Send for RcHolder {}
 
+// An Rc-like type: `Clone` copies the raw pointer (aliasing the pointee), so
+// the non-atomic `inc` write is a cross-thread data race.
 pub struct MyRc {
     ptr: *mut MyRcBox,
 }
@@ -18,6 +20,13 @@ pub struct MyRc {
 pub struct MyRcBox {
     strong: usize,
     value: u8,
+}
+
+impl Clone for MyRc {
+    fn clone(&self) -> Self {
+        unsafe { (*self.ptr).strong += 1 }
+        MyRc { ptr: self.ptr }
+    }
 }
 
 impl MyRc {

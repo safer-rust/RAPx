@@ -216,8 +216,8 @@ static SPECS: &[PropertySpec] = &[
     // `*const` read-only pointer is Send-safe).  (`UnsafeCell` is not rejected
     // here: it is `Send`, only `!Sync`.)
     ps(
-        "NoInternalMutate",
-        PropertyKind::NoInternalMutate,
+        "NoInternalRefMut",
+        PropertyKind::NoInternalRefMut,
         &[&[Ty]],
         ContractKind::Precond,
         BuildKind::Uniform,
