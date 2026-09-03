@@ -961,10 +961,13 @@ impl<'tcx> PrepareTargets<'tcx> {
             for (method_name, contracts) in ensures {
                 rap_info!("    fn {}:", method_name);
                 for property in crate::verify::display::dedup_compound_props(contracts.iter()) {
-                    rap_info!(
-                        "      - {}",
-                        property.display_for_report(self.tcx, trait_target.self_ty_def_id, None,)
+                    let (call, _meaning) = crate::verify::display::fmt_contract_expanded(
+                        self.tcx,
+                        property,
+                        trait_target.self_ty_def_id,
+                        None,
                     );
+                    rap_info!("      - {call}");
                 }
             }
         }
@@ -979,10 +982,13 @@ impl<'tcx> PrepareTargets<'tcx> {
         } else {
             rap_info!("  obligations:");
             for property in obligations {
-                rap_info!(
-                    "    - {}",
-                    property.display_for_report(self.tcx, trait_target.self_ty_def_id, None,)
+                let (call, _meaning) = crate::verify::display::fmt_contract_expanded(
+                    self.tcx,
+                    property,
+                    trait_target.self_ty_def_id,
+                    None,
                 );
+                rap_info!("    - {call}");
             }
         }
     }
