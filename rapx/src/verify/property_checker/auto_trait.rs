@@ -1,13 +1,17 @@
-//! Checkers for `NotType`, `NoInternalRefMut` and `AtomicUpdate` — the
-//! structural predicates used to approximate `Send`/`Sync` auto-trait safety.
+//! Checkers for the `Send`/`Sync` marker-trait predicates.
 //!
-//! These are intentionally *structural* approximations (sound-incomplete): a
-//! full proof of "no cross-thread aliasing" / "every mutation holds a lock"
-//! needs an ownership + concurrency model (e.g. separation logic), which the
-//! current sequential VM does not have.  What we can check here is whether a
-//! type *structurally* contains a negative type (`NotType`), has interior
-//! mutability (`NoInternalRefMut`), or guards its interior mutability with a
-//! synchronization primitive (`AtomicUpdate`).
+//! These are intentionally *structural/behavioural* approximations
+//! (sound-incomplete): a full proof of "exclusive ownership" / "no cross-thread
+//! aliasing" needs an ownership + concurrency model (e.g. separation logic),
+//! which the current sequential VM does not have.
+//!
+//! The vocabulary follows the Rust model: a raw pointer is `!Send` unless
+//! *tamed* — [`NoRawPtr`], or [`TamedRawPtr`] (the pointer is `Allocated`,
+//! `Owning`, and either read-only [`NoInternalMut`] or exclusively mutated
+//! [`UniInternalMut`]).  The `Allocated`/`Owning` halves are discharged by the
+//! struct's `#[rapx::invariant]` annotations (verified by the VM), so
+//! [`TamedRawPtr`] only checks that those invariants are present plus the
+//! interior-mutability behaviour.
 
 #[cfg(not(rapx_ge_100))]
 use rustc_hir::LangItem;
@@ -21,8 +25,9 @@ use z3::Solver;
 use crate::helpers::mir_scan::{Checkpoint, has_raw_ptr_write};
 use crate::verify::vm::state::VmState;
 use crate::verify::{
-    contract::{Property, PropertyArg},
+    contract::{Property, PropertyArg, PropertyKind},
     report::CheckResult,
+    target::get_struct_invariants_from_annotation,
 };
 
 use super::PropertyChecker;
@@ -77,8 +82,8 @@ impl PropertyChecker {
         not_type_check(vm_state.tcx, ty, &negatives)
     }
 
-    /// `NoInternalRefMut(T)`: `T` must have no *mutable* raw pointers.
-    pub(super) fn check_no_internal_ref_mut<'ctx, 'tcx>(
+    /// `NoRawPtr(T)`: `T` must have no raw pointers.
+    pub(super) fn check_no_raw_ptr<'ctx, 'tcx>(
         &self,
         vm_state: &VmState<'ctx, 'tcx>,
         _solver: &Solver<'ctx>,
@@ -91,7 +96,60 @@ impl PropertyChecker {
         }) else {
             return CheckResult::Unknown;
         };
-        no_internal_ref_mut_check(vm_state.tcx, ty)
+        no_raw_ptr_check(vm_state.tcx, ty)
+    }
+
+    /// `NoInternalMut(T)`: `T` must have no interior mutation through raw pointers.
+    pub(super) fn check_no_internal_mut<'ctx, 'tcx>(
+        &self,
+        vm_state: &VmState<'ctx, 'tcx>,
+        _solver: &Solver<'ctx>,
+        _checkpoint: &Checkpoint<'tcx>,
+        property: &Property<'tcx>,
+    ) -> CheckResult {
+        let Some(ty) = property.args().first().and_then(|a| match a {
+            PropertyArg::Ty(ty) => Some(*ty),
+            _ => None,
+        }) else {
+            return CheckResult::Unknown;
+        };
+        no_internal_mut_check(vm_state.tcx, ty)
+    }
+
+    /// `UniInternalMut(T)`: `T`'s interior mutation must be unique (exclusive
+    /// owner, no aliasing `Clone`).
+    pub(super) fn check_uni_internal_mut<'ctx, 'tcx>(
+        &self,
+        vm_state: &VmState<'ctx, 'tcx>,
+        _solver: &Solver<'ctx>,
+        _checkpoint: &Checkpoint<'tcx>,
+        property: &Property<'tcx>,
+    ) -> CheckResult {
+        let Some(ty) = property.args().first().and_then(|a| match a {
+            PropertyArg::Ty(ty) => Some(*ty),
+            _ => None,
+        }) else {
+            return CheckResult::Unknown;
+        };
+        uni_internal_mut_check(vm_state.tcx, ty)
+    }
+
+    /// `TamedRawPtr(T)`: `T`'s raw pointers are tamed (`Allocated` ∧ `Owning` ∧
+    /// (`NoInternalMut` ∨ `UniInternalMut`)).
+    pub(super) fn check_tamed_raw_ptr<'ctx, 'tcx>(
+        &self,
+        vm_state: &VmState<'ctx, 'tcx>,
+        _solver: &Solver<'ctx>,
+        _checkpoint: &Checkpoint<'tcx>,
+        property: &Property<'tcx>,
+    ) -> CheckResult {
+        let Some(ty) = property.args().first().and_then(|a| match a {
+            PropertyArg::Ty(ty) => Some(*ty),
+            _ => None,
+        }) else {
+            return CheckResult::Unknown;
+        };
+        tamed_raw_ptr_check(vm_state.tcx, ty)
     }
 
     /// `AtomicUpdate(T)`: every interior-mutability (`UnsafeCell`) / raw-pointer
@@ -132,30 +190,71 @@ pub(crate) fn not_type_check<'tcx>(
     }
 }
 
-/// Type-level `NoInternalRefMut` obligation check (no VM state required).
+/// Type-level `NoRawPtr` obligation check (no VM state required).
+pub(crate) fn no_raw_ptr_check<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> CheckResult {
+    match find_raw_ptr(tcx, ty) {
+        Contains::Yes => CheckResult::Failed,
+        Contains::Maybe => CheckResult::Unknown,
+        Contains::No => CheckResult::Proved,
+    }
+}
+
+/// Type-level `NoInternalMut` obligation check (no VM state required): `Failed`
+/// if any inherent method writes through a raw pointer.
+pub(crate) fn no_internal_mut_check<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> CheckResult {
+    if has_raw_ptr_writes(tcx, ty) {
+        CheckResult::Failed
+    } else {
+        CheckResult::Proved
+    }
+}
+
+/// Type-level `UniInternalMut` obligation check (no VM state required): `Proved`
+/// if the type writes through a raw pointer but does not implement `Clone`
+/// (which would copy the pointer and alias the pointee).
+pub(crate) fn uni_internal_mut_check<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> CheckResult {
+    if has_raw_ptr_writes(tcx, ty) && !type_implements_clone(tcx, ty) {
+        CheckResult::Proved
+    } else {
+        CheckResult::Failed
+    }
+}
+
+/// Type-level `TamedRawPtr` obligation check (no VM state required).
 ///
-/// A type has "interior mutation" if one of its methods writes through a raw
-/// pointer (e.g. `(*self.ptr).strong += 1`).  A write is only a cross-thread
-/// data race if the type *aliases* the pointee — approximated here by whether
-/// the type implements `Clone` (which copies the raw pointer).  An exclusive
-/// write (no `Clone`) is Send-safe.
-pub(crate) fn no_internal_ref_mut_check<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> CheckResult {
+/// The `Allocated`/`Owning` halves are discharged by the struct's
+/// `#[rapx::invariant]` annotations (verified by the VM); here we only check
+/// that those invariants exist, plus the interior-mutability behaviour.
+pub(crate) fn tamed_raw_ptr_check<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> CheckResult {
     let TyKind::Adt(adt_def, _) = ty.kind() else {
         return CheckResult::Proved;
     };
     let adt_def_id = adt_def.did();
 
-    let writes = tcx.inherent_impls(adt_def_id).iter().any(|impl_id| {
-        tcx.associated_item_def_ids(*impl_id).iter().any(|item| {
-            matches!(tcx.def_kind(*item), DefKind::Fn | DefKind::AssocFn)
-                && has_raw_ptr_write(tcx, *item)
-        })
-    });
+    let invariants = get_struct_invariants_from_annotation(tcx, adt_def_id, adt_def_id);
+    let has_owning = invariants.iter().any(|p| p.kind() == Some(PropertyKind::Owning));
+    let has_allocated = invariants
+        .iter()
+        .any(|p| p.kind() == Some(PropertyKind::Allocated));
+    if !has_owning || !has_allocated {
+        return CheckResult::Failed;
+    }
 
-    if writes && type_implements_clone(tcx, ty) {
-        CheckResult::Failed
-    } else {
+    if no_internal_mut_check(tcx, ty) == CheckResult::Proved
+        || uni_internal_mut_check(tcx, ty) == CheckResult::Proved
+    {
         CheckResult::Proved
+    } else {
+        CheckResult::Failed
+    }
+}
+
+/// Type-level `AtomicUpdate` obligation check (no VM state required).
+pub(crate) fn atomic_update_check<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> CheckResult {
+    match find_unsynchronized_mutation(tcx, ty) {
+        Contains::Yes => CheckResult::Failed,
+        Contains::Maybe => CheckResult::Unknown,
+        Contains::No => CheckResult::Proved,
     }
 }
 
@@ -170,12 +269,54 @@ fn type_implements_clone<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> bool {
     })
 }
 
-/// Type-level `AtomicUpdate` obligation check (no VM state required).
-pub(crate) fn atomic_update_check<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> CheckResult {
-    match find_unsynchronized_mutation(tcx, ty) {
-        Contains::Yes => CheckResult::Failed,
-        Contains::Maybe => CheckResult::Unknown,
-        Contains::No => CheckResult::Proved,
+/// Whether any inherent method of `ty` writes through a raw pointer.
+fn has_raw_ptr_writes<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> bool {
+    let TyKind::Adt(adt_def, _) = ty.kind() else {
+        return false;
+    };
+    let adt_def_id = adt_def.did();
+    tcx.inherent_impls(adt_def_id).iter().any(|impl_id| {
+        tcx.associated_item_def_ids(*impl_id).iter().any(|item| {
+            matches!(tcx.def_kind(*item), DefKind::Fn | DefKind::AssocFn)
+                && has_raw_ptr_write(tcx, *item)
+        })
+    })
+}
+
+/// Structurally check whether `ty` (transitively) contains a raw pointer.
+/// A raw pointer may also appear as a pattern type (`pattern_type!(*const T
+/// is ..)`), so recurse into `TyKind::Pat`.
+fn find_raw_ptr<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Contains {
+    match ty.kind() {
+        TyKind::RawPtr(..) => Contains::Yes,
+        TyKind::Pat(inner, _) => find_raw_ptr(tcx, *inner),
+        TyKind::Adt(adt_def, substs) => {
+            let mut result = Contains::No;
+            for field in adt_def.all_fields() {
+                let field_ty = crate::helpers::mir_utils::field_ty(tcx, field, substs);
+                result = result.join(find_raw_ptr(tcx, field_ty));
+                if result == Contains::Yes {
+                    return Contains::Yes;
+                }
+            }
+            for subst in substs.iter() {
+                if let GenericArgKind::Type(subst_ty) = subst.kind() {
+                    result = result.join(find_raw_ptr(tcx, subst_ty));
+                    if result == Contains::Yes {
+                        return Contains::Yes;
+                    }
+                }
+            }
+            result
+        }
+        TyKind::Ref(_, inner, _) | TyKind::Slice(inner) | TyKind::Array(inner, _) => {
+            find_raw_ptr(tcx, *inner)
+        }
+        TyKind::Tuple(tys) => tys.iter().fold(Contains::No, |acc, t| {
+            acc.join(find_raw_ptr(tcx, t))
+        }),
+        TyKind::Param(_) => Contains::Maybe,
+        _ => Contains::No,
     }
 }
 

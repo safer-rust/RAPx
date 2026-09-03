@@ -1180,8 +1180,20 @@ fn build_type_atom<'tcx>(
             args.extend(negatives.into_iter().map(PropertyArg::Ident));
             Some(Property::new_atom(PropertyKind::NotType, args))
         }
-        "NoInternalRefMut" => Some(Property::new_atom(
-            PropertyKind::NoInternalRefMut,
+        "NoRawPtr" => Some(Property::new_atom(
+            PropertyKind::NoRawPtr,
+            vec![PropertyArg::Ty(self_ty)],
+        )),
+        "NoInternalMut" => Some(Property::new_atom(
+            PropertyKind::NoInternalMut,
+            vec![PropertyArg::Ty(self_ty)],
+        )),
+        "UniInternalMut" => Some(Property::new_atom(
+            PropertyKind::UniInternalMut,
+            vec![PropertyArg::Ty(self_ty)],
+        )),
+        "TamedRawPtr" => Some(Property::new_atom(
+            PropertyKind::TamedRawPtr,
             vec![PropertyArg::Ty(self_ty)],
         )),
         "AtomicUpdate" => Some(Property::new_atom(
@@ -1253,7 +1265,7 @@ pub(crate) fn get_contract_from_annotation<'tcx>(
 }
 
 /// Parses struct invariants from source-level RAPx annotations attached to a struct definition.
-fn get_struct_invariants_from_annotation<'tcx>(
+pub(crate) fn get_struct_invariants_from_annotation<'tcx>(
     tcx: TyCtxt<'tcx>,
     struct_def_id: DefId,
     context_def_id: DefId,

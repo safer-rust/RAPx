@@ -742,10 +742,9 @@ unsound_tests! {
 fn send_unsound_cases() {
     let output = run_with_args("verify_units/send_unsound_01", CMD_VERIFY_TARGETED);
     assert_contain(&output, "unsafe impl Send for RcHolder");
-    assert_contain(&output, "NotType(RcHolder, Rc, NonNull) => FAILED");
+    assert_contain(&output, "Or => FAILED");
     assert_contain(&output, "unsafe impl Send for MyRc");
     assert_contain(&output, "Or => FAILED");
-    assert_contain(&output, "NotType(MyRc, Rc, NonNull) => PROVED");
     assert_contain(&output, "verdict: UNSAFE");
 }
 

@@ -2,11 +2,10 @@
   "core::marker::Send": [
     {
       "any": [
-        { "tag": "NoInternalRefMut", "args": ["ty:Self"] },
-        { "tag": "AtomicUpdate", "args": ["ty:Self"] }
+        { "tag": "NoRawPtr", "args": ["ty:Self"] },
+        { "tag": "TamedRawPtr", "args": ["ty:Self"] }
       ]
-    },
-    { "tag": "NotType", "args": ["ty:Self", "Rc", "NonNull"] }
+    }
   ],
   "core::marker::Sync": [
     { "tag": "AtomicUpdate", "args": ["ty:Self"] },

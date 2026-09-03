@@ -4,6 +4,8 @@
 
 use std::cell::UnsafeCell;
 
+#[rapx::invariant(Owning(ptr))]
+#[rapx::invariant(Allocated(ptr))]
 pub struct ReadOnlyPtr {
     ptr: *const u8,
 }
@@ -13,6 +15,8 @@ unsafe impl Send for ReadOnlyPtr {}
 
 // A `*mut` field written through exclusively (no `Clone` => no aliasing): the
 // write is not a cross-thread data race, so Send-safe.
+#[rapx::invariant(Owning(ptr))]
+#[rapx::invariant(Allocated(ptr))]
 pub struct MyRc {
     ptr: *mut MyRcBox,
 }

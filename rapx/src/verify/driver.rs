@@ -16,7 +16,10 @@ use crate::helpers::fn_info::{
     FnKind, get_cons, get_mutated_fields, get_muts, get_type, returns_wrapped_self,
 };
 use crate::verify::contract::PropertyKind;
-use crate::verify::property_checker::{atomic_update_check, no_internal_ref_mut_check, not_type_check};
+use crate::verify::property_checker::{
+    atomic_update_check, no_internal_mut_check, no_raw_ptr_check, not_type_check,
+    tamed_raw_ptr_check, uni_internal_mut_check,
+};
 use crate::verify::target::get_contract_from_annotation;
 
 use crate::compat::{FxHashMap, FxHashSet};
@@ -827,8 +830,8 @@ impl<'tcx> VerifyRun<'tcx> {
         }
     }
 
-    /// Dispatch a single type-level obligation (`NotType` / `NoInternalRefMut`
-    /// / `AtomicUpdate`).
+    /// Dispatch a single type-level obligation (`NotType` / `NoRawPtr` /
+    /// `NoInternalMut` / `UniInternalMut` / `TamedRawPtr` / `AtomicUpdate`).
     fn check_type_obligation(&self, property: &Property<'tcx>) -> CheckResult {
         match property {
             Property::Atom(atom) => match atom.kind {
@@ -848,14 +851,41 @@ impl<'tcx> VerifyRun<'tcx> {
                         .collect();
                     not_type_check(self.tcx, ty, &negatives)
                 }
-                PropertyKind::NoInternalRefMut => {
+                PropertyKind::NoRawPtr => {
                     let Some(ty) = atom.args.first().and_then(|a| match a {
                         PropertyArg::Ty(t) => Some(*t),
                         _ => None,
                     }) else {
                         return CheckResult::Unknown;
                     };
-                    no_internal_ref_mut_check(self.tcx, ty)
+                    no_raw_ptr_check(self.tcx, ty)
+                }
+                PropertyKind::NoInternalMut => {
+                    let Some(ty) = atom.args.first().and_then(|a| match a {
+                        PropertyArg::Ty(t) => Some(*t),
+                        _ => None,
+                    }) else {
+                        return CheckResult::Unknown;
+                    };
+                    no_internal_mut_check(self.tcx, ty)
+                }
+                PropertyKind::UniInternalMut => {
+                    let Some(ty) = atom.args.first().and_then(|a| match a {
+                        PropertyArg::Ty(t) => Some(*t),
+                        _ => None,
+                    }) else {
+                        return CheckResult::Unknown;
+                    };
+                    uni_internal_mut_check(self.tcx, ty)
+                }
+                PropertyKind::TamedRawPtr => {
+                    let Some(ty) = atom.args.first().and_then(|a| match a {
+                        PropertyArg::Ty(t) => Some(*t),
+                        _ => None,
+                    }) else {
+                        return CheckResult::Unknown;
+                    };
+                    tamed_raw_ptr_check(self.tcx, ty)
                 }
                 PropertyKind::AtomicUpdate => {
                     let Some(ty) = atom.args.first().and_then(|a| match a {

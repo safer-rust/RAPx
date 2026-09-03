@@ -212,16 +212,38 @@ static SPECS: &[PropertySpec] = &[
         BuildKind::Uniform,
         "all shared mutations of {0} go through a synchronization primitive",
     ),
-    // Interior-mutability predicate: {0} has no *mutable* raw pointers (a
-    // `*const` read-only pointer is Send-safe).  (`UnsafeCell` is not rejected
-    // here: it is `Send`, only `!Sync`.)
+    // Interior-mutability predicates for taming raw pointers in `Send`/`Sync`.
     ps(
-        "NoInternalRefMut",
-        PropertyKind::NoInternalRefMut,
+        "NoRawPtr",
+        PropertyKind::NoRawPtr,
         &[&[Ty]],
         ContractKind::Precond,
         BuildKind::Uniform,
-        "{0} has no mutable raw pointers",
+        "{0} has no raw pointers",
+    ),
+    ps(
+        "NoInternalMut",
+        PropertyKind::NoInternalMut,
+        &[&[Ty]],
+        ContractKind::Precond,
+        BuildKind::Uniform,
+        "{0} has no interior mutation through raw pointers",
+    ),
+    ps(
+        "UniInternalMut",
+        PropertyKind::UniInternalMut,
+        &[&[Ty]],
+        ContractKind::Precond,
+        BuildKind::Uniform,
+        "{0} has unique interior mutation (exclusive owner, no aliasing Clone)",
+    ),
+    ps(
+        "TamedRawPtr",
+        PropertyKind::TamedRawPtr,
+        &[&[Ty]],
+        ContractKind::Precond,
+        BuildKind::Uniform,
+        "{0} tames its raw pointers (Allocated ∧ Owning ∧ (NoInternalMut ∨ UniInternalMut))",
     ),
     ps(
         "NoPadding",

@@ -204,7 +204,10 @@ pub(crate) enum PropertyKind {
     ValidTransmute,
     SplitTransmute,
     NotType,
-    NoInternalRefMut,
+    NoRawPtr,
+    NoInternalMut,
+    UniInternalMut,
+    TamedRawPtr,
     AtomicUpdate,
     Unknown,
 }
