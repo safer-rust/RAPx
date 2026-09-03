@@ -632,7 +632,7 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
         );
 
         if self.debug_contracts {
-            self.print_contracts_debug(&collector.function_targets);
+            self.print_contracts_debug(&collector.function_targets, &collector.trait_targets);
             return;
         }
 
@@ -932,7 +932,11 @@ impl<'tcx> VerifyRun<'tcx> {
         }
     }
 
-    fn print_contracts_debug(&self, targets: &[FunctionTarget<'tcx>]) {
+    fn print_contracts_debug(
+        &self,
+        targets: &[FunctionTarget<'tcx>],
+        trait_targets: &[TraitEnsurance<'tcx>],
+    ) {
         rap_info!("{:=<1$}", "", 76);
         rap_info!("[rapx::debug-contracts] Expanded Contract Assertions");
         rap_info!("{:=<1$}", "", 76);
@@ -1003,6 +1007,66 @@ impl<'tcx> VerifyRun<'tcx> {
         // -- Free functions --
         for target in &free_targets {
             self.print_target_contracts(target, "- ", "  ");
+        }
+
+        // -- Traits (ensures / marker obligations) --
+        let mut traits = trait_targets.iter().collect::<Vec<_>>();
+        traits.sort_by_key(|t| self.tcx.def_path_str(t.def_id));
+        for trait_target in traits {
+            match &trait_target.kind {
+                TraitEnsuranceKind::Unsafe(ensures) => {
+                    let trait_path = self.tcx.def_path_str(trait_target.def_id);
+                    rap_info!("{:=<1$}", "", 76);
+                    rap_info!("[rapx::debug-contracts] unsafe trait: {trait_path}");
+                    rap_info!("{:=<1$}", "", 76);
+                    if let Some(self_ty) = trait_target.self_ty_def_id {
+                        rap_info!("  impl for: {}", self.tcx.def_path_str(self_ty));
+                    }
+                    if ensures.is_empty() {
+                        rap_info!("  ensures: <none>");
+                    } else {
+                        for (method_name, contracts) in ensures {
+                            rap_info!("  fn {method_name}:");
+                            for property in dedup_compound_props(contracts.iter()) {
+                                let (call, meaning) = fmt_contract_expanded(
+                                    self.tcx,
+                                    property,
+                                    trait_target.self_ty_def_id,
+                                    Some(trait_target.def_id),
+                                );
+                                self.print_contract_lines("  ", "|-", &call, &meaning);
+                            }
+                        }
+                    }
+                    rap_info!("");
+                }
+                TraitEnsuranceKind::Marker(kind, obligations) => {
+                    let name = match kind {
+                        MarkerTraitKind::Send => "Send",
+                        MarkerTraitKind::Sync => "Sync",
+                    };
+                    rap_info!("{:=<1$}", "", 76);
+                    rap_info!("[rapx::debug-contracts] marker trait: {name}");
+                    rap_info!("{:=<1$}", "", 76);
+                    if let Some(self_ty) = trait_target.self_ty_def_id {
+                        rap_info!("  impl for: {}", self.tcx.def_path_str(self_ty));
+                    }
+                    if obligations.is_empty() {
+                        rap_info!("  obligations: <none>");
+                    } else {
+                        for property in obligations {
+                            let (call, meaning) = fmt_contract_expanded(
+                                self.tcx,
+                                property,
+                                trait_target.self_ty_def_id,
+                                None,
+                            );
+                            self.print_contract_lines("  ", "|-", &call, &meaning);
+                        }
+                    }
+                    rap_info!("");
+                }
+            }
         }
     }
 

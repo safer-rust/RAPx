@@ -14,7 +14,7 @@ use crate::helpers::fn_info::parse_expr_into_number;
 use crate::helpers::name::{access_ident_recursive, match_ty_with_ident};
 
 use super::place;
-use super::types::{ContractExpr, NumericPredicate, PropertyArg, RelOp};
+use super::types::{ContractExpr, ContractPlace, NumericPredicate, PlaceBase, PropertyArg, RelOp};
 
 pub(crate) fn parse_contract_expr<'tcx>(
     tcx: TyCtxt<'tcx>,
@@ -217,6 +217,14 @@ pub(crate) fn parse_target_arg<'tcx>(
     def_id: DefId,
     expr: &Expr,
 ) -> PropertyArg<'tcx> {
+    // `return` parses as `syn::Expr::Return { expr: None }` (a bare `return`),
+    // which the place parser below does not recognise — handle it directly.
+    if matches!(expr, Expr::Return(_)) {
+        return PropertyArg::Expr(ContractExpr::Place(ContractPlace {
+            base: PlaceBase::Return,
+            projections: Vec::new(),
+        }));
+    }
     // For simple identifiers that aren't local variables (e.g., lifetime param
     // 'a parsed as ident `a`), store as Ident rather than Expr (which would
     // become Unknown).
