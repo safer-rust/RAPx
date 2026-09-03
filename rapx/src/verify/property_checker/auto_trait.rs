@@ -321,7 +321,9 @@ fn find_raw_ptr<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Contains {
 }
 
 /// Structurally check whether `ty` (transitively) contains one of the negative
-/// types identified by `negative_defs`.
+/// types identified by `negative_defs`.  A synchronization primitive (`Mutex`/
+/// `RwLock`/`Atomic*`) guards its interior, so the scan stops there — a negative
+/// type nested inside one (e.g. `Mutex<UnsafeCell>`) is considered tamed.
 fn type_structurally_contains<'tcx>(
     tcx: TyCtxt<'tcx>,
     ty: Ty<'tcx>,
@@ -331,6 +333,9 @@ fn type_structurally_contains<'tcx>(
         TyKind::Adt(adt_def, substs) => {
             if negative_defs.contains(&adt_def.did()) {
                 return Contains::Yes;
+            }
+            if crate::def_id::sync_primitive_types().contains(&adt_def.did()) {
+                return Contains::No;
             }
             let mut result = Contains::No;
             for field in adt_def.all_fields() {

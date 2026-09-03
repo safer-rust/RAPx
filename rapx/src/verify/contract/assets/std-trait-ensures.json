@@ -1,5 +1,6 @@
 {
   "core::marker::Send": [
+    { "tag": "NotType", "args": ["ty:Self", "Rc", "Ref", "RefMut", "MutexGuard", "RwLockWriteGuard", "MappedMutexGuard"] },
     {
       "any": [
         { "tag": "NoRawPtr", "args": ["ty:Self"] },
@@ -9,6 +10,6 @@
   ],
   "core::marker::Sync": [
     { "tag": "RefSend", "args": ["ty:Self"] },
-    { "tag": "NotType", "args": ["ty:Self", "Rc", "NonNull"] }
+    { "tag": "NotType", "args": ["ty:Self", "Rc", "Cell", "UnsafeCell", "RefCell", "Ref", "RefMut"] }
   ]
 }

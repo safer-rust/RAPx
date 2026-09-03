@@ -67,7 +67,23 @@ struct Types {
     iter_types: Vec<DefId>,
     rc_types: Vec<DefId>,
     sync_primitive_types: Vec<DefId>,
+    /// Negative auto-trait types (`Cell`/`UnsafeCell`/`RefCell`/`Ref`/`RefMut`/
+    /// guards), keyed by short name — used by `NotType` in Send/Sync obligations.
+    negative_types: IndexMap<Box<str>, Vec<DefId>>,
 }
+
+/// Short names of the std `!Send`/`!Sync` negative types resolved by name scan
+/// (those without a lang/diagnostic item).  `UnsafeCell` is resolved via its
+/// `#[lang = "unsafe_cell"]` item instead.
+const NEGATIVE_TYPE_NAMES: &[&str] = &[
+    "Cell",
+    "RefCell",
+    "Ref",
+    "RefMut",
+    "MutexGuard",
+    "RwLockWriteGuard",
+    "MappedMutexGuard",
+];
 
 pub fn init(tcx: TyCtxt) {
     INIT.get_or_init(|| init_inner(tcx));
@@ -86,6 +102,7 @@ fn init_types(tcx: TyCtxt) -> Types {
         iter_types: Vec::new(),
         rc_types: Vec::new(),
         sync_primitive_types: Vec::new(),
+        negative_types: IndexMap::new(),
     };
 
     // Real std types via diagnostic/lang items (`NonNull` only before rustc
@@ -104,6 +121,14 @@ fn init_types(tcx: TyCtxt) -> Types {
     types
         .maybe_uninit_types
         .extend(tcx.lang_items().maybe_uninit());
+    // `core::cell::UnsafeCell` is `#[lang = "unsafe_cell"]`.
+    if let Some(unsafe_cell) = tcx.lang_items().unsafe_cell_type() {
+        types
+            .negative_types
+            .entry("UnsafeCell".into())
+            .or_default()
+            .push(unsafe_cell);
+    }
 
     // `core::slice::Iter` is `#[rustc_diagnostic_item = "SliceIter"]` on older
     // toolchains (the item was dropped once `adts()` became available, so only
@@ -178,6 +203,13 @@ fn init_types(tcx: TyCtxt) -> Types {
         if is_sync_primitive_short_name(short) {
             types.sync_primitive_types.push(did);
         }
+        if let Some(neg) = negative_type_name(short) {
+            types
+                .negative_types
+                .entry(neg.into())
+                .or_default()
+                .push(did);
+        }
     }
 
     // External std ADTs with neither a lang nor a diagnostic item: `NonNull`
@@ -218,6 +250,13 @@ fn init_types(tcx: TyCtxt) -> Types {
                         .sync_primitive_types
                         .push(rustc_internal::internal(tcx, adt.def_id()));
                 }
+                if let Some(neg) = negative_type_name(short) {
+                    types
+                        .negative_types
+                        .entry(neg.into())
+                        .or_default()
+                        .push(rustc_internal::internal(tcx, adt.def_id()));
+                }
             }
         }
     }
@@ -230,6 +269,12 @@ fn init_types(tcx: TyCtxt) -> Types {
 fn is_sync_primitive_short_name(short: &str) -> bool {
     matches!(short, "Mutex" | "RwLock" | "OnceLock" | "OnceCell")
         || short.starts_with("Atomic")
+}
+
+/// The negative-type name for a short type name, if it is one of the std
+/// `!Send`/`!Sync` negative types.
+fn negative_type_name(short: &str) -> Option<&'static str> {
+    NEGATIVE_TYPE_NAMES.iter().copied().find(|&n| n == short)
 }
 
 /// Whether an `fn_def.name()` (e.g. `std::sync::Mutex::<T>::lock`) belongs to a
@@ -321,13 +366,17 @@ pub fn sync_primitive_types() -> &'static [DefId] {
 }
 
 /// Resolve a negative-type name (as written in `std-trait-ensures.json`) to its
-/// resolved `DefId` set.  `"Rc"`/`"NonNull"` are built-in negatives; unknown
-/// names resolve to an empty set (the checker then reports `Unknown`).
+/// resolved `DefId` set.  Unknown names resolve to an empty set (the checker
+/// then reports `Unknown`).
 pub fn negative_type_defs(name: &str) -> &'static [DefId] {
     match name {
         "Rc" => rc_types(),
         "NonNull" => nonnull_types(),
-        _ => &[],
+        _ => TYPES
+            .get()
+            .and_then(|t| t.negative_types.get(name))
+            .map(Vec::as_slice)
+            .unwrap_or(&[]),
     }
 }
 
