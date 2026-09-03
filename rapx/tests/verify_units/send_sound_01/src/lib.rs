@@ -35,8 +35,21 @@ impl MyRc {
 #[rapx::verify]
 unsafe impl Send for MyRc {}
 
+// A Cell-like type: interior mutability via UnsafeCell, no raw pointer field.
+// `set` mutates through `&self` (interior mutation), but the value is still
+// Send-safe (move => exclusive).
 pub struct MyCell {
     value: UnsafeCell<u8>,
+}
+
+impl MyCell {
+    pub fn get(&self) -> u8 {
+        unsafe { *self.value.get() }
+    }
+
+    pub fn set(&self, val: u8) {
+        unsafe { *self.value.get() = val }
+    }
 }
 
 #[rapx::verify]
