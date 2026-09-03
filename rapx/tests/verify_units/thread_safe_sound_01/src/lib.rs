@@ -3,7 +3,9 @@
 #![allow(dead_code)]
 
 use std::cell::UnsafeCell;
+use std::sync::Mutex;
 
+// A read-only raw pointer: `*const` mutates nothing, so it is Send-safe.
 #[rapx::invariant(Owning(ptr))]
 #[rapx::invariant(Allocated(ptr))]
 pub struct ReadOnlyPtr {
@@ -35,8 +37,8 @@ impl MyRc {
 #[rapx::verify]
 unsafe impl Send for MyRc {}
 
-// A generic Rc-like type: the value field `T` requires a `T: Send` bound for
-// the impl to be sound.
+// A generic Rc-like type: `Send` needs a `T: Send` bound; `Sync` always fails
+// because the raw pointer is not synchronized.
 #[rapx::invariant(Owning(ptr))]
 #[rapx::invariant(Allocated(ptr))]
 pub struct MyRcGeneric<T> {
@@ -61,8 +63,7 @@ unsafe impl<T: Send> Send for MyRcGeneric<T> {}
 unsafe impl<T: Sync> Sync for MyRcGeneric<T> {}
 
 // A Cell-like type: interior mutability via UnsafeCell, no raw pointer field.
-// `set` mutates through `&self` (interior mutation), but the value is still
-// Send-safe (move => exclusive).
+// `Send` (move => exclusive) but `!Sync` (shared interior mutability).
 pub struct MyCell {
     value: UnsafeCell<u8>,
 }
@@ -79,3 +80,14 @@ impl MyCell {
 
 #[rapx::verify]
 unsafe impl Send for MyCell {}
+
+#[rapx::verify]
+unsafe impl Sync for MyCell {}
+
+// A Mutex-guarded UnsafeCell: the interior mutation is synchronized, so Sync.
+pub struct MutexCell {
+    inner: Mutex<UnsafeCell<u8>>,
+}
+
+#[rapx::verify]
+unsafe impl Sync for MutexCell {}

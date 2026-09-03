@@ -737,10 +737,26 @@ unsound_tests! {
     raw_eq_unsound_01: "verify_units/raw_eq_unsound_01" => "unsound_raw_eq_padded" => "NoPadding",
 }
 
-// ================ Send/Sync Auto-Trait Cases =============
+// ================ Thread-Safety (Send/Sync) Auto-Trait Cases =============
 #[test]
-fn send_unsound_cases() {
-    let output = run_with_args("verify_units/send_unsound_01", CMD_VERIFY_TARGETED);
+fn thread_safe_sound_cases() {
+    let output = run_with_args("verify_units/thread_safe_sound_01", CMD_VERIFY_TARGETED);
+    assert_contain(&output, "unsafe impl Send for ReadOnlyPtr");
+    assert_contain(&output, "unsafe impl Send for MyRc");
+    assert_contain(&output, "unsafe impl Send for MyRcGeneric");
+    assert_contain(&output, "unsafe impl Send for MyCell");
+    assert_contain(&output, "unsafe impl Sync for MyRcGeneric");
+    assert_contain(&output, "RefSend(MyRcGeneric<T>) => FAILED");
+    assert_contain(&output, "unsafe impl Sync for MyCell");
+    assert_contain(&output, "RefSend(MyCell) => FAILED");
+    assert_contain(&output, "unsafe impl Sync for MutexCell");
+    assert_contain(&output, "RefSend(MutexCell) => PROVED");
+    assert_contain(&output, "verdict: SAFE");
+}
+
+#[test]
+fn thread_safe_unsound_cases() {
+    let output = run_with_args("verify_units/thread_safe_unsound_01", CMD_VERIFY_TARGETED);
     assert_contain(&output, "unsafe impl Send for RcHolder");
     assert_contain(&output, "Or => FAILED");
     assert_contain(&output, "unsafe impl Send for MyRc");
@@ -751,32 +767,4 @@ fn send_unsound_cases() {
     assert_contain(&output, "unsafe impl Sync for MyRcGeneric");
     assert_contain(&output, "RefSend(MyRcGeneric<T>) => FAILED");
     assert_contain(&output, "verdict: UNSAFE");
-}
-
-#[test]
-fn send_sound_cases() {
-    let output = run_with_args("verify_units/send_sound_01", CMD_VERIFY_TARGETED);
-    assert_contain(&output, "unsafe impl Send for ReadOnlyPtr");
-    assert_contain(&output, "unsafe impl Send for MyRc");
-    assert_contain(&output, "unsafe impl Send for MyRcGeneric");
-    assert_contain(&output, "unsafe impl Send for MyCell");
-    assert_contain(&output, "unsafe impl Sync for MyRcGeneric");
-    assert_contain(&output, "RefSend(MyRcGeneric<T>) => FAILED");
-    assert_contain(&output, "verdict: SAFE");
-}
-
-#[test]
-fn sync_unsound_cases() {
-    let output = run_with_args("verify_units/sync_unsound_01", CMD_VERIFY_TARGETED);
-    assert_contain(&output, "unsafe impl Sync for MyCell");
-    assert_contain(&output, "RefSend(MyCell) => FAILED");
-    assert_contain(&output, "verdict: UNSAFE");
-}
-
-#[test]
-fn sync_sound_cases() {
-    let output = run_with_args("verify_units/sync_sound_01", CMD_VERIFY_TARGETED);
-    assert_contain(&output, "unsafe impl Sync for MutexCell");
-    assert_contain(&output, "RefSend(MutexCell) => PROVED");
-    assert_contain(&output, "verdict: SAFE");
 }

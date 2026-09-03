@@ -1,5 +1,5 @@
 [package]
-name = "sync_unsound_01"
+name = "thread_safe_unsound_01"
 version = "0.1.0"
 edition = "2024"
 

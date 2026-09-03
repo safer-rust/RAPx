@@ -1,8 +1,0 @@
-[package]
-name = "send_sound_01"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-
-[workspace]
