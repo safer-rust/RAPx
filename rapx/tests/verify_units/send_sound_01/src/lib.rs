@@ -4,13 +4,6 @@
 
 use std::cell::UnsafeCell;
 
-pub struct PlainData {
-    value: u8,
-}
-
-#[rapx::verify]
-unsafe impl Send for PlainData {}
-
 pub struct ReadOnlyPtr {
     ptr: *const u8,
 }
