@@ -31,7 +31,7 @@ mod typed;
 mod util;
 
 pub(crate) use auto_trait::{
-    ref_send_check, no_internal_mut_check, no_raw_ptr_check, not_type_check,
+    ref_send_check, no_internal_mut_check, no_raw_ptr_check, contain_no_type_check,
     tamed_raw_ptr_check, uni_internal_mut_check,
 };
 
@@ -113,8 +113,8 @@ impl PropertyChecker {
                 PropertyKind::NoPadding => {
                     self.check_no_padding(vm_state, solver, checkpoint, property)
                 }
-                PropertyKind::NotType => {
-                    self.check_not_type(vm_state, solver, checkpoint, property)
+                PropertyKind::ContainNoType => {
+                    self.check_contain_no_type(vm_state, solver, checkpoint, property)
                 }
                 PropertyKind::NoRawPtr => {
                     self.check_no_raw_ptr(vm_state, solver, checkpoint, property)

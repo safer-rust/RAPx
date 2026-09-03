@@ -17,7 +17,7 @@ use crate::helpers::fn_info::{
 };
 use crate::verify::contract::PropertyKind;
 use crate::verify::property_checker::{
-    ref_send_check, no_internal_mut_check, no_raw_ptr_check, not_type_check,
+    ref_send_check, no_internal_mut_check, no_raw_ptr_check, contain_no_type_check,
     tamed_raw_ptr_check, uni_internal_mut_check,
 };
 use crate::verify::target::get_contract_from_annotation;
@@ -847,12 +847,12 @@ impl<'tcx> VerifyRun<'tcx> {
         }
     }
 
-    /// Dispatch a single type-level obligation (`NotType` / `NoRawPtr` /
+    /// Dispatch a single type-level obligation (`ContainNoType` / `NoRawPtr` /
     /// `NoInternalMut` / `UniInternalMut` / `TamedRawPtr` / `RefSend`).
     fn check_type_obligation(&self, property: &Property<'tcx>) -> CheckResult {
         match property {
             Property::Atom(atom) => match atom.kind {
-                PropertyKind::NotType => {
+                PropertyKind::ContainNoType => {
                     let Some(ty) = atom.args.first().and_then(|a| match a {
                         PropertyArg::Ty(t) => Some(*t),
                         _ => None,
@@ -866,7 +866,7 @@ impl<'tcx> VerifyRun<'tcx> {
                             _ => None,
                         })
                         .collect();
-                    not_type_check(self.tcx, ty, &negatives)
+                    contain_no_type_check(self.tcx, ty, &negatives)
                 }
                 PropertyKind::NoRawPtr => {
                     let Some(ty) = atom.args.first().and_then(|a| match a {

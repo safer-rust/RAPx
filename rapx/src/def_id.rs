@@ -68,7 +68,7 @@ struct Types {
     rc_types: Vec<DefId>,
     sync_primitive_types: Vec<DefId>,
     /// Negative auto-trait types (`Cell`/`UnsafeCell`/`RefCell`/`Ref`/`RefMut`/
-    /// guards), keyed by short name — used by `NotType` in Send/Sync obligations.
+    /// guards), keyed by short name — used by `ContainNoType` in Send/Sync obligations.
     negative_types: IndexMap<Box<str>, Vec<DefId>>,
 }
 

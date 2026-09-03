@@ -55,9 +55,9 @@ impl Contains {
 }
 
 impl PropertyChecker {
-    /// `NotType(T, bad1, bad2, ...)`: `T` must not structurally contain any of
+    /// `ContainNoType(T, bad1, bad2, ...)`: `T` must not structurally contain any of
     /// the named negative types.
-    pub(super) fn check_not_type<'ctx, 'tcx>(
+    pub(super) fn check_contain_no_type<'ctx, 'tcx>(
         &self,
         vm_state: &VmState<'ctx, 'tcx>,
         _solver: &Solver<'ctx>,
@@ -80,7 +80,7 @@ impl PropertyChecker {
         if negatives.is_empty() {
             return CheckResult::Unknown;
         }
-        not_type_check(vm_state.tcx, ty, &negatives)
+        contain_no_type_check(vm_state.tcx, ty, &negatives)
     }
 
     /// `NoRawPtr(T)`: `T` must have no raw pointers.
@@ -172,10 +172,10 @@ impl PropertyChecker {
     }
 }
 
-/// Type-level `NotType` obligation check (no VM state required): returns
+/// Type-level `ContainNoType` obligation check (no VM state required): returns
 /// `Failed` if `ty` structurally contains any named negative, `Unknown` if a
 /// generic parameter makes the answer unresolved, else `Proved`.
-pub(crate) fn not_type_check<'tcx>(
+pub(crate) fn contain_no_type_check<'tcx>(
     tcx: TyCtxt<'tcx>,
     ty: Ty<'tcx>,
     negatives: &[String],

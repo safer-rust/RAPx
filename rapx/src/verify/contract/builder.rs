@@ -32,7 +32,7 @@ impl<'tcx> Property<'tcx> {
             spec::BuildKind::Pinned => Self::build_pinned(tcx, def_id, exprs),
             spec::BuildKind::SplitTransmute => Self::build_split_transmute(tcx, def_id, exprs),
             spec::BuildKind::Targets => Self::build_targets(spec, tcx, def_id, exprs),
-            spec::BuildKind::NotType => Self::build_not_type(tcx, def_id, exprs),
+            spec::BuildKind::ContainNoType => Self::build_contain_no_type(tcx, def_id, exprs),
             spec::BuildKind::TobeSpecified => Self::new_simple(PropertyKind::Unknown),
         };
         // Apply the spec-declared `ContractKind` centrally, so `Hazard` /
@@ -322,15 +322,15 @@ impl<'tcx> Property<'tcx> {
         )
     }
 
-    fn build_not_type(tcx: TyCtxt<'tcx>, def_id: DefId, exprs: &[Expr]) -> Self {
+    fn build_contain_no_type(tcx: TyCtxt<'tcx>, def_id: DefId, exprs: &[Expr]) -> Self {
         if exprs.len() < 2 {
             rap_error!(
-                "Wrong args length for NotType Tag! expected at least 2 (ty, ident...), got {}",
+                "Wrong args length for ContainNoType Tag! expected at least 2 (ty, ident...), got {}",
                 exprs.len()
             );
             return Self::new_simple(PropertyKind::Unknown);
         }
-        let Some(ty) = super::resolve::parse_type(tcx, def_id, &exprs[0], "NotType") else {
+        let Some(ty) = super::resolve::parse_type(tcx, def_id, &exprs[0], "ContainNoType") else {
             return Self::new_simple(PropertyKind::Unknown);
         };
         let mut args = vec![PropertyArg::Ty(ty)];
@@ -340,7 +340,7 @@ impl<'tcx> Property<'tcx> {
             };
             args.push(PropertyArg::Ident(name));
         }
-        Self::new_atom(PropertyKind::NotType, args)
+        Self::new_atom(PropertyKind::ContainNoType, args)
     }
 
     fn new_simple(kind: PropertyKind) -> Self {

@@ -1209,14 +1209,14 @@ fn build_type_atom<'tcx>(
     }
 
     match entry.tag.as_str() {
-        "NotType" => {
+        "ContainNoType" => {
             let negatives: Vec<String> = entry.args[1..]
                 .iter()
                 .map(|s| s.strip_prefix("ty:").unwrap_or(s).to_string())
                 .collect();
             let mut args = vec![PropertyArg::Ty(self_ty)];
             args.extend(negatives.into_iter().map(PropertyArg::Ident));
-            Some(Property::new_atom(PropertyKind::NotType, args))
+            Some(Property::new_atom(PropertyKind::ContainNoType, args))
         }
         "NoRawPtr" => Some(Property::new_atom(
             PropertyKind::NoRawPtr,

@@ -42,9 +42,9 @@ pub(crate) enum BuildKind {
     SplitTransmute,
     /// One-or-more target places (`Alias`, `Alive`).
     Targets,
-    /// `NotType(T, bad1, bad2, ...)` — first arg is a type, the rest are
+    /// `ContainNoType(T, bad1, bad2, ...)` — first arg is a type, the rest are
     /// negative type names (one or more).
-    NotType,
+    ContainNoType,
     /// Placeholder accepting any args; always yields `Unknown`.
     TobeSpecified,
 }
@@ -193,13 +193,13 @@ static SPECS: &[PropertySpec] = &[
     ),
     // Variable-arity negative type predicate: first arg is the target type,
     // the rest are negative type names the target must not (structurally)
-    // contain.  Arity is validated by `build_not_type`.
+    // contain.  Arity is validated by `build_contain_no_type`.
     ps(
-        "NotType",
-        PropertyKind::NotType,
+        "ContainNoType",
+        PropertyKind::ContainNoType,
         &[&[Ty, Ident]],
         ContractKind::Precond,
-        BuildKind::NotType,
+        BuildKind::ContainNoType,
         "{0} does not structurally contain {1}",
     ),
     // `&T: Send` — the type can be shared across threads: every
