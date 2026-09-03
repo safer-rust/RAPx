@@ -743,10 +743,7 @@ fn thread_safe_sound_cases() {
     let output = run_with_args("verify_units/thread_safe_sound_01", CMD_VERIFY_TARGETED);
     assert_contain(&output, "unsafe impl Send for ReadOnlyPtr");
     assert_contain(&output, "unsafe impl Send for MyRc");
-    assert_contain(&output, "unsafe impl Send for MyRcGeneric");
     assert_contain(&output, "unsafe impl Send for MyCell");
-    assert_contain(&output, "unsafe impl Sync for MyRcGeneric");
-    assert_contain(&output, "RefSend(MyRcGeneric<T>) => FAILED");
     assert_contain(&output, "unsafe impl Sync for MyCell");
     assert_contain(&output, "RefSend(MyCell) => FAILED");
     assert_contain(&output, "unsafe impl Sync for MutexCell");
@@ -761,10 +758,25 @@ fn thread_safe_unsound_cases() {
     assert_contain(&output, "Or => FAILED");
     assert_contain(&output, "unsafe impl Send for MyRc");
     assert_contain(&output, "Or => FAILED");
+    assert_contain(&output, "verdict: UNSAFE");
+}
+
+#[test]
+fn thread_safe_generic_sound_cases() {
+    let output = run_with_args("verify_units/thread_safe_generic_sound_01", CMD_VERIFY_TARGETED);
+    assert_contain(&output, "unsafe impl Send for MyRcGeneric");
+    assert_contain(&output, "ContainNoType(MyRcGeneric<T>");
+    assert_contain(&output, "=> PROVED");
+    assert_contain(&output, "unsafe impl Sync for MyRcGeneric");
+    assert_contain(&output, "RefSend(MyRcGeneric<T>) => FAILED");
+}
+
+#[test]
+fn thread_safe_generic_unsound_cases() {
+    let output = run_with_args("verify_units/thread_safe_generic_unsound_01", CMD_VERIFY_TARGETED);
     assert_contain(&output, "unsafe impl Send for MyRcGeneric");
     assert_contain(&output, "ContainNoType(MyRcGeneric<T>");
     assert_contain(&output, "=> UNKNOWN");
     assert_contain(&output, "unsafe impl Sync for MyRcGeneric");
     assert_contain(&output, "RefSend(MyRcGeneric<T>) => FAILED");
-    assert_contain(&output, "verdict: UNSAFE");
 }
