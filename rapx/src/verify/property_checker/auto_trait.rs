@@ -22,6 +22,7 @@ use rustc_hir::def_id::DefId;
 use rustc_middle::ty::{GenericArgKind, Ty, TyCtxt, TyKind};
 use z3::Solver;
 
+use crate::compat::FxHashMap;
 use crate::helpers::mir_scan::{Checkpoint, has_raw_ptr_write};
 use crate::verify::vm::state::VmState;
 use crate::verify::{
@@ -149,7 +150,7 @@ impl PropertyChecker {
         }) else {
             return CheckResult::Unknown;
         };
-        tamed_raw_ptr_check(vm_state.tcx, ty)
+        tamed_raw_ptr_check(vm_state.tcx, ty, &FxHashMap::default())
     }
 
     /// `RefSend(T)`: every interior-mutability (`UnsafeCell`) / raw-pointer
@@ -223,9 +224,14 @@ pub(crate) fn uni_internal_mut_check<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> C
 /// Type-level `TamedRawPtr` obligation check (no VM state required).
 ///
 /// The `Allocated`/`Owning` halves are discharged by the struct's
-/// `#[rapx::invariant]` annotations (verified by the VM); here we only check
-/// that those invariants exist, plus the interior-mutability behaviour.
-pub(crate) fn tamed_raw_ptr_check<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> CheckResult {
+/// `#[rapx::invariant]` annotations.  `invariant_results` carries the per-struct
+/// verdict of the (already-run) struct-invariant verification; when a struct's
+/// invariants failed to verify, its `TamedRawPtr` fails too.
+pub(crate) fn tamed_raw_ptr_check<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    ty: Ty<'tcx>,
+    invariant_results: &FxHashMap<DefId, CheckResult>,
+) -> CheckResult {
     let TyKind::Adt(adt_def, _) = ty.kind() else {
         return CheckResult::Proved;
     };
@@ -238,6 +244,13 @@ pub(crate) fn tamed_raw_ptr_check<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Chec
         .any(|p| p.kind() == Some(PropertyKind::Allocated));
     if !has_owning || !has_allocated {
         return CheckResult::Failed;
+    }
+
+    // The invariants must actually hold, not just be annotated.
+    if let Some(result) = invariant_results.get(&adt_def_id) {
+        if *result != CheckResult::Proved {
+            return CheckResult::Failed;
+        }
     }
 
     if no_internal_mut_check(tcx, ty) == CheckResult::Proved

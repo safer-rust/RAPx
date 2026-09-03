@@ -421,6 +421,9 @@ pub(crate) struct VerifyRun<'tcx> {
     crate_filter: Option<String>,
     module_filter: Option<String>,
     debug_contracts: bool,
+    /// Per-struct verdict of the struct-invariant verification, consumed by
+    /// `TamedRawPtr` to discharge its `Allocated`/`Owning` halves.
+    struct_invariant_results: FxHashMap<rustc_hir::def_id::DefId, CheckResult>,
 }
 
 impl<'tcx> VerifyRun<'tcx> {
@@ -442,6 +445,7 @@ impl<'tcx> VerifyRun<'tcx> {
             crate_filter,
             module_filter,
             debug_contracts,
+            struct_invariant_results: FxHashMap::default(),
         }
     }
 
@@ -653,7 +657,20 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                 match crate::helpers::mir_utils::catch_panic(|| driver.verify_struct_invariants()) {
                     Ok(struct_report) => {
                         rap_debug!("{}", struct_report.describe());
-                        all_results.extend(struct_report.results);
+                        all_results.extend(struct_report.results.clone());
+                        // Record the per-struct verdict so `TamedRawPtr` can
+                        // discharge its `Allocated`/`Owning` halves only when the
+                        // invariants actually hold.
+                        if let Some(struct_id) = target.owner_struct_def_id {
+                            let verdict = struct_report
+                                .results
+                                .iter()
+                                .fold(CheckResult::Proved, |acc, r| acc.and(r.result.clone()));
+                            self.struct_invariant_results
+                                .entry(struct_id)
+                                .and_modify(|v| *v = v.clone().and(verdict.clone()))
+                                .or_insert(verdict);
+                        }
                     }
                     Err(msg) => {
                         rap_warn!("Skipping struct invariants for {} : {msg}", target_path);
@@ -885,7 +902,7 @@ impl<'tcx> VerifyRun<'tcx> {
                     }) else {
                         return CheckResult::Unknown;
                     };
-                    tamed_raw_ptr_check(self.tcx, ty)
+                    tamed_raw_ptr_check(self.tcx, ty, &self.struct_invariant_results)
                 }
                 PropertyKind::RefSend => {
                     let Some(ty) = atom.args.first().and_then(|a| match a {
