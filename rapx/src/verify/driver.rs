@@ -807,6 +807,7 @@ impl<'tcx> VerifyRun<'tcx> {
                 MarkerTraitKind::Send => "Send",
                 MarkerTraitKind::Sync => "Sync",
             };
+            let is_sync = matches!(kind, MarkerTraitKind::Sync);
             let self_ty_label = unit
                 .self_ty_def_id
                 .map(|d| self.tcx.def_path_str(d))
@@ -823,7 +824,7 @@ impl<'tcx> VerifyRun<'tcx> {
             let mut any_failed = false;
             let mut any_unknown = false;
             for property in obligations {
-                let result = self.check_type_obligation(property);
+                let result = self.check_type_obligation(property, unit.impl_def_id, is_sync);
                 let label = property.display_for_report(self.tcx, unit.self_ty_def_id, None);
                 let verdict = match result {
                     CheckResult::Proved => "PROVED",
@@ -849,7 +850,12 @@ impl<'tcx> VerifyRun<'tcx> {
 
     /// Dispatch a single type-level obligation (`ContainNoType` / `NoRawPtr` /
     /// `NoInternalMut` / `UniInternalMut` / `TamedRawPtr` / `RefSend`).
-    fn check_type_obligation(&self, property: &Property<'tcx>) -> CheckResult {
+    fn check_type_obligation(
+        &self,
+        property: &Property<'tcx>,
+        impl_def_id: rustc_hir::def_id::DefId,
+        is_sync: bool,
+    ) -> CheckResult {
         match property {
             Property::Atom(atom) => match atom.kind {
                 PropertyKind::ContainNoType => {
@@ -866,7 +872,7 @@ impl<'tcx> VerifyRun<'tcx> {
                             _ => None,
                         })
                         .collect();
-                    contain_no_type_check(self.tcx, ty, &negatives)
+                    contain_no_type_check(self.tcx, ty, &negatives, impl_def_id, is_sync)
                 }
                 PropertyKind::NoRawPtr => {
                     let Some(ty) = atom.args.first().and_then(|a| match a {
@@ -875,7 +881,7 @@ impl<'tcx> VerifyRun<'tcx> {
                     }) else {
                         return CheckResult::Unknown;
                     };
-                    no_raw_ptr_check(self.tcx, ty)
+                    no_raw_ptr_check(self.tcx, ty, impl_def_id, is_sync)
                 }
                 PropertyKind::NoInternalMut => {
                     let Some(ty) = atom.args.first().and_then(|a| match a {
@@ -911,21 +917,21 @@ impl<'tcx> VerifyRun<'tcx> {
                     }) else {
                         return CheckResult::Unknown;
                     };
-                    ref_send_check(self.tcx, ty)
+                    ref_send_check(self.tcx, ty, impl_def_id, is_sync)
                 }
                 _ => CheckResult::Unknown,
             },
             Property::And(and) => {
                 let mut overall = CheckResult::Proved;
                 for conjunct in &and.conjuncts {
-                    overall = overall.and(self.check_type_obligation(conjunct));
+                    overall = overall.and(self.check_type_obligation(conjunct, impl_def_id, is_sync));
                 }
                 overall
             }
             Property::Or(or) => {
                 let mut overall = CheckResult::Failed;
                 for disjunct in &or.disjuncts {
-                    overall = overall.or(self.check_type_obligation(disjunct));
+                    overall = overall.or(self.check_type_obligation(disjunct, impl_def_id, is_sync));
                 }
                 overall
             }

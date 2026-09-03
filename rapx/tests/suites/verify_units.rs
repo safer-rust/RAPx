@@ -745,6 +745,9 @@ fn send_unsound_cases() {
     assert_contain(&output, "Or => FAILED");
     assert_contain(&output, "unsafe impl Send for MyRc");
     assert_contain(&output, "Or => FAILED");
+    assert_contain(&output, "unsafe impl Send for MyRcGeneric");
+    assert_contain(&output, "ContainNoType(MyRcGeneric<T>");
+    assert_contain(&output, "=> UNKNOWN");
     assert_contain(&output, "verdict: UNSAFE");
 }
 
@@ -753,6 +756,7 @@ fn send_sound_cases() {
     let output = run_with_args("verify_units/send_sound_01", CMD_VERIFY_TARGETED);
     assert_contain(&output, "unsafe impl Send for ReadOnlyPtr");
     assert_contain(&output, "unsafe impl Send for MyRc");
+    assert_contain(&output, "unsafe impl Send for MyRcGeneric");
     assert_contain(&output, "unsafe impl Send for MyCell");
     assert_contain(&output, "verdict: SAFE");
 }

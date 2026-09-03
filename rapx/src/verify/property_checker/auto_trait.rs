@@ -19,7 +19,7 @@ use rustc_hir::LangItem;
 use rustc_hir::attrs::lang_items::LangItem;
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
-use rustc_middle::ty::{GenericArgKind, Ty, TyCtxt, TyKind};
+use rustc_middle::ty::{ClauseKind, GenericArgKind, ParamTy, Ty, TyCtxt, TyKind};
 use z3::Solver;
 
 use crate::compat::FxHashMap;
@@ -61,7 +61,7 @@ impl PropertyChecker {
         &self,
         vm_state: &VmState<'ctx, 'tcx>,
         _solver: &Solver<'ctx>,
-        _checkpoint: &Checkpoint<'tcx>,
+        checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
         let Some(ty) = property.args().first().and_then(|a| match a {
@@ -80,7 +80,7 @@ impl PropertyChecker {
         if negatives.is_empty() {
             return CheckResult::Unknown;
         }
-        contain_no_type_check(vm_state.tcx, ty, &negatives)
+        contain_no_type_check(vm_state.tcx, ty, &negatives, checkpoint.caller, false)
     }
 
     /// `NoRawPtr(T)`: `T` must have no raw pointers.
@@ -88,7 +88,7 @@ impl PropertyChecker {
         &self,
         vm_state: &VmState<'ctx, 'tcx>,
         _solver: &Solver<'ctx>,
-        _checkpoint: &Checkpoint<'tcx>,
+        checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
         let Some(ty) = property.args().first().and_then(|a| match a {
@@ -97,7 +97,7 @@ impl PropertyChecker {
         }) else {
             return CheckResult::Unknown;
         };
-        no_raw_ptr_check(vm_state.tcx, ty)
+        no_raw_ptr_check(vm_state.tcx, ty, checkpoint.caller, false)
     }
 
     /// `NoInternalMut(T)`: `T` must have no interior mutation through raw pointers.
@@ -159,7 +159,7 @@ impl PropertyChecker {
         &self,
         vm_state: &VmState<'ctx, 'tcx>,
         _solver: &Solver<'ctx>,
-        _checkpoint: &Checkpoint<'tcx>,
+        checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
         let Some(ty) = property.args().first().and_then(|a| match a {
@@ -168,7 +168,7 @@ impl PropertyChecker {
         }) else {
             return CheckResult::Unknown;
         };
-        ref_send_check(vm_state.tcx, ty)
+        ref_send_check(vm_state.tcx, ty, checkpoint.caller, true)
     }
 }
 
@@ -179,12 +179,14 @@ pub(crate) fn contain_no_type_check<'tcx>(
     tcx: TyCtxt<'tcx>,
     ty: Ty<'tcx>,
     negatives: &[String],
+    impl_def_id: DefId,
+    is_sync: bool,
 ) -> CheckResult {
     let mut defs: Vec<DefId> = Vec::new();
     for name in negatives {
         defs.extend_from_slice(crate::def_id::negative_type_defs(name));
     }
-    match type_structurally_contains(tcx, ty, &defs) {
+    match type_structurally_contains(tcx, ty, &defs, impl_def_id, is_sync) {
         Contains::Yes => CheckResult::Failed,
         Contains::Maybe => CheckResult::Unknown,
         Contains::No => CheckResult::Proved,
@@ -192,8 +194,13 @@ pub(crate) fn contain_no_type_check<'tcx>(
 }
 
 /// Type-level `NoRawPtr` obligation check (no VM state required).
-pub(crate) fn no_raw_ptr_check<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> CheckResult {
-    match find_raw_ptr(tcx, ty) {
+pub(crate) fn no_raw_ptr_check<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    ty: Ty<'tcx>,
+    impl_def_id: DefId,
+    is_sync: bool,
+) -> CheckResult {
+    match find_raw_ptr(tcx, ty, impl_def_id, is_sync) {
         Contains::Yes => CheckResult::Failed,
         Contains::Maybe => CheckResult::Unknown,
         Contains::No => CheckResult::Proved,
@@ -263,8 +270,13 @@ pub(crate) fn tamed_raw_ptr_check<'tcx>(
 }
 
 /// Type-level `RefSend` obligation check (no VM state required).
-pub(crate) fn ref_send_check<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> CheckResult {
-    match find_unsynchronized_mutation(tcx, ty) {
+pub(crate) fn ref_send_check<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    ty: Ty<'tcx>,
+    impl_def_id: DefId,
+    is_sync: bool,
+) -> CheckResult {
+    match find_unsynchronized_mutation(tcx, ty, impl_def_id, is_sync) {
         Contains::Yes => CheckResult::Failed,
         Contains::Maybe => CheckResult::Unknown,
         Contains::No => CheckResult::Proved,
@@ -280,6 +292,41 @@ fn type_implements_clone<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> bool {
     tcx.all_impls(clone_did).any(|impl_did| {
         tcx.impl_trait_ref(impl_did).skip_binder().self_ty() == ty
     })
+}
+
+/// Whether a generic type parameter carries a `Send`/`Sync` bound on the impl,
+/// letting the checker treat it as satisfied instead of `Unknown`.
+fn param_bound_is_satisfied(
+    tcx: TyCtxt<'_>,
+    impl_def_id: DefId,
+    param_ty: ParamTy,
+    is_sync: bool,
+) -> bool {
+    let trait_did = if is_sync {
+        tcx.get_diagnostic_item(rustc_span::sym::Sync)
+    } else {
+        tcx.get_diagnostic_item(rustc_span::sym::Send)
+    };
+    let Some(trait_did) = trait_did else {
+        return false;
+    };
+    let predicates = crate::compat::predicates_of(tcx, impl_def_id);
+    #[cfg(not(rapx_ge_100))]
+    let iter = predicates.predicates.iter();
+    #[cfg(rapx_ge_100)]
+    let iter = predicates.clauses.iter();
+    for (pred, _) in iter {
+        if let ClauseKind::Trait(trait_ref) = pred.kind().skip_binder() {
+            if trait_ref.def_id() == trait_did {
+                if let TyKind::Param(p) = trait_ref.self_ty().kind() {
+                    if p.index == param_ty.index {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
 }
 
 /// Whether any inherent method of `ty` writes through a raw pointer.
@@ -299,22 +346,27 @@ fn has_raw_ptr_writes<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> bool {
 /// Structurally check whether `ty` (transitively) contains a raw pointer.
 /// A raw pointer may also appear as a pattern type (`pattern_type!(*const T
 /// is ..)`), so recurse into `TyKind::Pat`.
-fn find_raw_ptr<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Contains {
+fn find_raw_ptr<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    ty: Ty<'tcx>,
+    impl_def_id: DefId,
+    is_sync: bool,
+) -> Contains {
     match ty.kind() {
         TyKind::RawPtr(..) => Contains::Yes,
-        TyKind::Pat(inner, _) => find_raw_ptr(tcx, *inner),
+        TyKind::Pat(inner, _) => find_raw_ptr(tcx, *inner, impl_def_id, is_sync),
         TyKind::Adt(adt_def, substs) => {
             let mut result = Contains::No;
             for field in adt_def.all_fields() {
                 let field_ty = crate::helpers::mir_utils::field_ty(tcx, field, substs);
-                result = result.join(find_raw_ptr(tcx, field_ty));
+                result = result.join(find_raw_ptr(tcx, field_ty, impl_def_id, is_sync));
                 if result == Contains::Yes {
                     return Contains::Yes;
                 }
             }
             for subst in substs.iter() {
                 if let GenericArgKind::Type(subst_ty) = subst.kind() {
-                    result = result.join(find_raw_ptr(tcx, subst_ty));
+                    result = result.join(find_raw_ptr(tcx, subst_ty, impl_def_id, is_sync));
                     if result == Contains::Yes {
                         return Contains::Yes;
                     }
@@ -323,12 +375,18 @@ fn find_raw_ptr<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Contains {
             result
         }
         TyKind::Ref(_, inner, _) | TyKind::Slice(inner) | TyKind::Array(inner, _) => {
-            find_raw_ptr(tcx, *inner)
+            find_raw_ptr(tcx, *inner, impl_def_id, is_sync)
         }
         TyKind::Tuple(tys) => tys.iter().fold(Contains::No, |acc, t| {
-            acc.join(find_raw_ptr(tcx, t))
+            acc.join(find_raw_ptr(tcx, t, impl_def_id, is_sync))
         }),
-        TyKind::Param(_) => Contains::Maybe,
+        TyKind::Param(param_ty) => {
+            if param_bound_is_satisfied(tcx, impl_def_id, *param_ty, is_sync) {
+                Contains::No
+            } else {
+                Contains::Maybe
+            }
+        }
         _ => Contains::No,
     }
 }
@@ -341,6 +399,8 @@ fn type_structurally_contains<'tcx>(
     tcx: TyCtxt<'tcx>,
     ty: Ty<'tcx>,
     negative_defs: &[DefId],
+    impl_def_id: DefId,
+    is_sync: bool,
 ) -> Contains {
     match ty.kind() {
         TyKind::Adt(adt_def, substs) => {
@@ -353,14 +413,26 @@ fn type_structurally_contains<'tcx>(
             let mut result = Contains::No;
             for field in adt_def.all_fields() {
                 let field_ty = crate::helpers::mir_utils::field_ty(tcx, field, substs);
-                result = result.join(type_structurally_contains(tcx, field_ty, negative_defs));
+                result = result.join(type_structurally_contains(
+                    tcx,
+                    field_ty,
+                    negative_defs,
+                    impl_def_id,
+                    is_sync,
+                ));
                 if result == Contains::Yes {
                     return Contains::Yes;
                 }
             }
             for subst in substs.iter() {
                 if let GenericArgKind::Type(subst_ty) = subst.kind() {
-                    result = result.join(type_structurally_contains(tcx, subst_ty, negative_defs));
+                    result = result.join(type_structurally_contains(
+                        tcx,
+                        subst_ty,
+                        negative_defs,
+                        impl_def_id,
+                        is_sync,
+                    ));
                     if result == Contains::Yes {
                         return Contains::Yes;
                     }
@@ -369,12 +441,24 @@ fn type_structurally_contains<'tcx>(
             result
         }
         TyKind::Ref(_, inner, _) | TyKind::Slice(inner) | TyKind::Array(inner, _) => {
-            type_structurally_contains(tcx, *inner, negative_defs)
+            type_structurally_contains(tcx, *inner, negative_defs, impl_def_id, is_sync)
         }
         TyKind::Tuple(tys) => tys.iter().fold(Contains::No, |acc, t| {
-            acc.join(type_structurally_contains(tcx, t, negative_defs))
+            acc.join(type_structurally_contains(
+                tcx,
+                t,
+                negative_defs,
+                impl_def_id,
+                is_sync,
+            ))
         }),
-        TyKind::Param(_) => Contains::Maybe,
+        TyKind::Param(param_ty) => {
+            if param_bound_is_satisfied(tcx, impl_def_id, *param_ty, is_sync) {
+                Contains::No
+            } else {
+                Contains::Maybe
+            }
+        }
         _ => Contains::No,
     }
 }
@@ -382,10 +466,15 @@ fn type_structurally_contains<'tcx>(
 /// Find an interior-mutability / raw-pointer field that is not guarded by a
 /// synchronization primitive.  A raw pointer may also appear as a pattern type
 /// (`pattern_type!(*const T is ..)`), so recurse into `TyKind::Pat`.
-fn find_unsynchronized_mutation<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Contains {
+fn find_unsynchronized_mutation<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    ty: Ty<'tcx>,
+    impl_def_id: DefId,
+    is_sync: bool,
+) -> Contains {
     match ty.kind() {
         TyKind::RawPtr(..) => Contains::Yes,
-        TyKind::Pat(inner, _) => find_unsynchronized_mutation(tcx, *inner),
+        TyKind::Pat(inner, _) => find_unsynchronized_mutation(tcx, *inner, impl_def_id, is_sync),
         TyKind::Adt(adt_def, substs) => {
             let did = adt_def.did();
             if crate::def_id::sync_primitive_types().contains(&did) {
@@ -397,14 +486,24 @@ fn find_unsynchronized_mutation<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Contai
             let mut result = Contains::No;
             for field in adt_def.all_fields() {
                 let field_ty = crate::helpers::mir_utils::field_ty(tcx, field, substs);
-                result = result.join(find_unsynchronized_mutation(tcx, field_ty));
+                result = result.join(find_unsynchronized_mutation(
+                    tcx,
+                    field_ty,
+                    impl_def_id,
+                    is_sync,
+                ));
                 if result == Contains::Yes {
                     return Contains::Yes;
                 }
             }
             for subst in substs.iter() {
                 if let GenericArgKind::Type(subst_ty) = subst.kind() {
-                    result = result.join(find_unsynchronized_mutation(tcx, subst_ty));
+                    result = result.join(find_unsynchronized_mutation(
+                        tcx,
+                        subst_ty,
+                        impl_def_id,
+                        is_sync,
+                    ));
                     if result == Contains::Yes {
                         return Contains::Yes;
                     }
@@ -413,12 +512,18 @@ fn find_unsynchronized_mutation<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Contai
             result
         }
         TyKind::Ref(_, inner, _) | TyKind::Slice(inner) | TyKind::Array(inner, _) => {
-            find_unsynchronized_mutation(tcx, *inner)
+            find_unsynchronized_mutation(tcx, *inner, impl_def_id, is_sync)
         }
         TyKind::Tuple(tys) => tys.iter().fold(Contains::No, |acc, t| {
-            acc.join(find_unsynchronized_mutation(tcx, t))
+            acc.join(find_unsynchronized_mutation(tcx, t, impl_def_id, is_sync))
         }),
-        TyKind::Param(_) => Contains::Maybe,
+        TyKind::Param(param_ty) => {
+            if param_bound_is_satisfied(tcx, impl_def_id, *param_ty, is_sync) {
+                Contains::No
+            } else {
+                Contains::Maybe
+            }
+        }
         _ => Contains::No,
     }
 }

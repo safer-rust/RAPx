@@ -199,6 +199,9 @@ pub(crate) struct StructTarget<'tcx> {
 pub(crate) struct TraitEnsurance<'tcx> {
     /// The trait being implemented.
     pub def_id: DefId,
+    /// The `impl ... for Type` block's DefId (carries the impl's generic bounds,
+    /// e.g. `T: Send`).
+    pub impl_def_id: DefId,
     /// The concrete type that implements the trait (e.g. `SomeStruct`).
     pub self_ty_def_id: Option<DefId>,
     /// The obligations to verify, keyed by whether the trait has methods.
@@ -692,6 +695,7 @@ impl<'tcx> Visitor<'tcx> for VerifyTargetCollector<'tcx> {
                         build_marker_trait_obligations(self.tcx, self_ty_def_id, kind);
                     self.trait_targets.push(TraitEnsurance {
                         def_id: trait_def_id,
+                        impl_def_id,
                         self_ty_def_id,
                         kind: TraitEnsuranceKind::Marker(kind, obligations),
                     });
@@ -700,6 +704,7 @@ impl<'tcx> Visitor<'tcx> for VerifyTargetCollector<'tcx> {
 
                     self.trait_targets.push(TraitEnsurance {
                         def_id: trait_def_id,
+                        impl_def_id,
                         self_ty_def_id,
                         kind: TraitEnsuranceKind::Unsafe(ensures),
                     });

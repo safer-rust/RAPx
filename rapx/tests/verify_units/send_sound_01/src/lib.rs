@@ -35,6 +35,28 @@ impl MyRc {
 #[rapx::verify]
 unsafe impl Send for MyRc {}
 
+// A generic Rc-like type: the value field `T` requires a `T: Send` bound for
+// the impl to be sound.
+#[rapx::invariant(Owning(ptr))]
+#[rapx::invariant(Allocated(ptr))]
+pub struct MyRcGeneric<T> {
+    ptr: *mut MyRcBoxGeneric<T>,
+}
+
+pub struct MyRcBoxGeneric<T> {
+    strong: usize,
+    value: T,
+}
+
+impl<T> MyRcGeneric<T> {
+    pub fn inc(&self) {
+        unsafe { (*self.ptr).strong += 1 }
+    }
+}
+
+#[rapx::verify]
+unsafe impl<T: Send> Send for MyRcGeneric<T> {}
+
 // A Cell-like type: interior mutability via UnsafeCell, no raw pointer field.
 // `set` mutates through `&self` (interior mutation), but the value is still
 // Send-safe (move => exclusive).
