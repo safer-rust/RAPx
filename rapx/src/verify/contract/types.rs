@@ -208,7 +208,7 @@ pub(crate) enum PropertyKind {
     NoInternalMut,
     UniInternalMut,
     TamedRawPtr,
-    AtomicUpdate,
+    RefSend,
     Unknown,
 }
 

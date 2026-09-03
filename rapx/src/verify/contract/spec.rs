@@ -202,15 +202,16 @@ static SPECS: &[PropertySpec] = &[
         BuildKind::NotType,
         "{0} does not structurally contain {1}",
     ),
-    // Synchronization predicate: every interior-mutability / raw-pointer field
-    // of {0} is guarded by a synchronization primitive (mutex/rwlock/atomic).
+    // `&T: Send` — the type can be shared across threads: every
+    // interior-mutability / raw-pointer field of {0} is guarded by a
+    // synchronization primitive (mutex/rwlock/atomic).
     ps(
-        "AtomicUpdate",
-        PropertyKind::AtomicUpdate,
+        "RefSend",
+        PropertyKind::RefSend,
         &[&[Ty]],
         ContractKind::Precond,
         BuildKind::Uniform,
-        "all shared mutations of {0} go through a synchronization primitive",
+        "&{0} is Send: all shared mutations of {0} go through a synchronization primitive",
     ),
     // Interior-mutability predicates for taming raw pointers in `Send`/`Sync`.
     ps(

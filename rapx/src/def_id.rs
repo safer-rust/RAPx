@@ -312,7 +312,7 @@ pub fn rc_types() -> &'static [DefId] {
 
 /// Synchronization primitives (`Mutex`/`RwLock`/`OnceLock`/`OnceCell`/`Atomic*`,
 /// plus any local re-implementation) that guard their interior mutability, used
-/// to discharge the `AtomicUpdate` auto-trait obligation.
+/// to discharge the `RefSend` auto-trait obligation.
 pub fn sync_primitive_types() -> &'static [DefId] {
     &TYPES
         .get()

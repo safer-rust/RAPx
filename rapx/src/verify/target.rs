@@ -1196,8 +1196,8 @@ fn build_type_atom<'tcx>(
             PropertyKind::TamedRawPtr,
             vec![PropertyArg::Ty(self_ty)],
         )),
-        "AtomicUpdate" => Some(Property::new_atom(
-            PropertyKind::AtomicUpdate,
+        "RefSend" => Some(Property::new_atom(
+            PropertyKind::RefSend,
             vec![PropertyArg::Ty(self_ty)],
         )),
         _ => None,

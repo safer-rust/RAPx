@@ -8,7 +8,7 @@
     }
   ],
   "core::marker::Sync": [
-    { "tag": "AtomicUpdate", "args": ["ty:Self"] },
+    { "tag": "RefSend", "args": ["ty:Self"] },
     { "tag": "NotType", "args": ["ty:Self", "Rc", "NonNull"] }
   ]
 }

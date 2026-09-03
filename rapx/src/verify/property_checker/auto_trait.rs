@@ -152,9 +152,9 @@ impl PropertyChecker {
         tamed_raw_ptr_check(vm_state.tcx, ty)
     }
 
-    /// `AtomicUpdate(T)`: every interior-mutability (`UnsafeCell`) / raw-pointer
+    /// `RefSend(T)`: every interior-mutability (`UnsafeCell`) / raw-pointer
     /// field of `T` must be guarded by a synchronization primitive.
-    pub(super) fn check_atomic_update<'ctx, 'tcx>(
+    pub(super) fn check_ref_send<'ctx, 'tcx>(
         &self,
         vm_state: &VmState<'ctx, 'tcx>,
         _solver: &Solver<'ctx>,
@@ -167,7 +167,7 @@ impl PropertyChecker {
         }) else {
             return CheckResult::Unknown;
         };
-        atomic_update_check(vm_state.tcx, ty)
+        ref_send_check(vm_state.tcx, ty)
     }
 }
 
@@ -249,8 +249,8 @@ pub(crate) fn tamed_raw_ptr_check<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Chec
     }
 }
 
-/// Type-level `AtomicUpdate` obligation check (no VM state required).
-pub(crate) fn atomic_update_check<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> CheckResult {
+/// Type-level `RefSend` obligation check (no VM state required).
+pub(crate) fn ref_send_check<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> CheckResult {
     match find_unsynchronized_mutation(tcx, ty) {
         Contains::Yes => CheckResult::Failed,
         Contains::Maybe => CheckResult::Unknown,

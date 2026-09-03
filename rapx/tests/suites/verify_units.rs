@@ -761,7 +761,7 @@ fn send_sound_cases() {
 fn sync_unsound_cases() {
     let output = run_with_args("verify_units/sync_unsound_01", CMD_VERIFY_TARGETED);
     assert_contain(&output, "unsafe impl Sync for MyCell");
-    assert_contain(&output, "AtomicUpdate(MyCell) => FAILED");
+    assert_contain(&output, "RefSend(MyCell) => FAILED");
     assert_contain(&output, "verdict: UNSAFE");
 }
 
@@ -769,6 +769,6 @@ fn sync_unsound_cases() {
 fn sync_sound_cases() {
     let output = run_with_args("verify_units/sync_sound_01", CMD_VERIFY_TARGETED);
     assert_contain(&output, "unsafe impl Sync for MutexCell");
-    assert_contain(&output, "AtomicUpdate(MutexCell) => PROVED");
+    assert_contain(&output, "RefSend(MutexCell) => PROVED");
     assert_contain(&output, "verdict: SAFE");
 }
