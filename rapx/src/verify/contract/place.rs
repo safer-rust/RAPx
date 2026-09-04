@@ -8,6 +8,7 @@
 //! without a dependency cycle.
 
 use rustc_abi::FieldIdx;
+use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::{Ty, TyCtxt, TyKind};
 use syn::Expr;
@@ -274,4 +275,44 @@ pub(crate) fn detect_array_for_each<'tcx>(
         }
     }
     None
+}
+
+/// The field name selected by the first `Field` projection of `place` on
+/// `adt_def_id` (e.g. `ptr` in `self.ptr`), if any.
+pub(crate) fn field_name_from_place<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    adt_def_id: DefId,
+    place: &ContractPlace<'tcx>,
+) -> Option<String> {
+    // `adt_def_id` may be a function/impl def-id (e.g. from a `requires`
+    // annotation on a method); only resolve fields on real ADTs.
+    if !matches!(
+        tcx.def_kind(adt_def_id),
+        DefKind::Struct | DefKind::Enum | DefKind::Union
+    ) {
+        return None;
+    }
+    let idx = place.projections.iter().find_map(|p| match p {
+        ContractProjection::Field { index, .. } => Some(*index),
+        _ => None,
+    })?;
+    let adt = tcx.adt_def(adt_def_id);
+    let field = adt.non_enum_variant().fields.get(FieldIdx::from_usize(idx))?;
+    Some(field.name.to_string())
+}
+
+/// The field name targeted by an `Allocated`/`Owning`-style property argument,
+/// whether it was parsed as a bare identifier or as a resolved place.
+pub(crate) fn field_name_from_arg<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    adt_def_id: DefId,
+    arg: &PropertyArg<'tcx>,
+) -> Option<String> {
+    match arg {
+        PropertyArg::Ident(s) => Some(s.clone()),
+        PropertyArg::Expr(ContractExpr::Place(place)) => {
+            field_name_from_place(tcx, adt_def_id, place)
+        }
+        _ => None,
+    }
 }

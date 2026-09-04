@@ -32,7 +32,7 @@ mod util;
 
 pub(crate) use auto_trait::{
     ref_send_check, no_internal_mut_check, no_raw_ptr_check, contain_no_type_check,
-    tamed_raw_ptr_check, uni_internal_mut_check,
+    uni_internal_mut_check, atomic_update_check, field_invariant_check,
 };
 
 pub(crate) struct PropertyChecker;
@@ -125,8 +125,8 @@ impl PropertyChecker {
                 PropertyKind::UniInternalMut => {
                     self.check_uni_internal_mut(vm_state, solver, checkpoint, property)
                 }
-                PropertyKind::TamedRawPtr => {
-                    self.check_tamed_raw_ptr(vm_state, solver, checkpoint, property)
+                PropertyKind::AtomicUpdate => {
+                    self.check_atomic_update(vm_state, solver, checkpoint, property)
                 }
                 PropertyKind::RefSend => {
                     self.check_ref_send(vm_state, solver, checkpoint, property)

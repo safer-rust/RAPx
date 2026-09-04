@@ -239,12 +239,12 @@ static SPECS: &[PropertySpec] = &[
         "{0} has unique interior mutation (exclusive owner, no aliasing Clone)",
     ),
     ps(
-        "TamedRawPtr",
-        PropertyKind::TamedRawPtr,
+        "AtomicUpdate",
+        PropertyKind::AtomicUpdate,
         &[&[Ty]],
         ContractKind::Precond,
         BuildKind::Uniform,
-        "{0} tames its raw pointers (Allocated ∧ Owning ∧ (NoInternalMut ∨ UniInternalMut))",
+        "{0} updates its raw pointers under synchronization or atomically",
     ),
     ps(
         "NoPadding",

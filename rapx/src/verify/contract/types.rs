@@ -207,7 +207,7 @@ pub(crate) enum PropertyKind {
     NoRawPtr,
     NoInternalMut,
     UniInternalMut,
-    TamedRawPtr,
+    AtomicUpdate,
     RefSend,
     Unknown,
 }
@@ -432,6 +432,15 @@ impl<'tcx> Property<'tcx> {
             Property::Atom(a) => a.origin = Some(origin),
             Property::And(a) => a.origin = Some(origin),
             Property::Or(o) => o.origin = Some(origin),
+        }
+    }
+
+    /// Remove the compound-origin display metadata from this property.
+    pub(crate) fn clear_origin(&mut self) {
+        match self {
+            Property::Atom(a) => a.origin = None,
+            Property::And(a) => a.origin = None,
+            Property::Or(o) => o.origin = None,
         }
     }
 

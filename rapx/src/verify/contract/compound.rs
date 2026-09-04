@@ -29,7 +29,7 @@ use rustc_hir::def_id::{CrateNum, LOCAL_CRATE};
 use syn::Expr;
 use syn::visit_mut::{self, VisitMut};
 
-use super::types::{Property, PropertyKind};
+use super::types::{ContractExpr, Property, PropertyArg, PropertyKind};
 
 /// A single argument in a compound body: a reference to a formal parameter, or a
 /// literal (kept as source text, re-parsed as `syn::Expr` at expansion time).
@@ -222,11 +222,17 @@ fn resolve_arg_string<'tcx>(
     expr: &Expr,
 ) -> String {
     match param_ty {
-        "Ptr" => super::resolve::parse_target_arg(tcx, def_id, expr).display_for_report(
-            tcx,
-            None,
-            Some(def_id),
-        ),
+        "Ptr" => {
+            let arg = super::resolve::parse_target_arg(tcx, def_id, expr);
+            // For a resolved field place, show the field name (e.g. `ptr` in
+            // `self.ptr`) rather than the internal `arg1.0` form.
+            if let PropertyArg::Expr(ContractExpr::Place(place)) = &arg
+                && let Some(name) = super::place::field_name_from_place(tcx, def_id, place)
+            {
+                return name;
+            }
+            arg.display_for_report(tcx, None, Some(def_id))
+        }
         "Ty" => super::resolve::parse_type(tcx, def_id, expr, "compound")
             .map(|ty| ty.to_string())
             .unwrap_or_else(|| render_expr_src(expr)),

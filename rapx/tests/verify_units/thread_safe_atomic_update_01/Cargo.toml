@@ -1,0 +1,8 @@
+[package]
+name = "thread_safe_atomic_update_01"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+
+[workspace]

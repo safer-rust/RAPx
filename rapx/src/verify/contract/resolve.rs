@@ -6,6 +6,7 @@
 //! `x.len()` sugar, tag argument types/targets, and `ValidNum` predicates.
 
 use quote::ToTokens;
+use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::{GenericParamDefKind, Ty, TyCtxt};
 use syn::{Expr, Lit};
@@ -72,8 +73,18 @@ pub(crate) fn resolve_type_name<'tcx>(
     name: &str,
 ) -> Option<Ty<'tcx>> {
     if name == "Self" {
-        let sig = tcx.fn_sig(def_id).skip_binder();
-        return sig.inputs().skip_binder().first().copied();
+        // `Self` refers to the type owning `def_id`: for an ADT (struct/enum/
+        // union) it is the type itself (`tcx.type_of`), for a function it is
+        // the receiver (the first input of the signature).
+        return match tcx.def_kind(def_id) {
+            DefKind::Struct | DefKind::Enum | DefKind::Union => {
+                Some(tcx.type_of(def_id).skip_binder())
+            }
+            _ => {
+                let sig = tcx.fn_sig(def_id).skip_binder();
+                sig.inputs().skip_binder().first().copied()
+            }
+        };
     }
     match_ty_with_ident(tcx, def_id, name.to_string())
 }
@@ -181,7 +192,7 @@ pub(crate) fn parse_type<'tcx>(
             rap_debug!("Incorrect expression for the type of {:?} Tag!", sp);
             return None;
         };
-        let ty = match_ty_with_ident(tcx, def_id, name);
+        let ty = resolve_ty_ident(tcx, def_id, &name);
         if ty.is_none() {
             rap_debug!("Cannot get type in {:?} Tag!", sp);
         }
@@ -194,11 +205,22 @@ pub(crate) fn parse_type<'tcx>(
         return None;
     }
     let ty_ident = ty_ident_full.unwrap().0;
-    let ty = match_ty_with_ident(tcx, def_id, ty_ident);
+    let ty = resolve_ty_ident(tcx, def_id, &ty_ident);
     if ty.is_none() {
         rap_debug!("Cannot get type in {:?} Tag!", sp);
     }
     ty
+}
+
+/// Resolve a type identifier to a `Ty`, handling the `Self` keyword (which
+/// [`match_ty_with_ident`] does not understand) by delegating to
+/// [`resolve_type_name`].
+fn resolve_ty_ident<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, name: &str) -> Option<Ty<'tcx>> {
+    if name == "Self" {
+        resolve_type_name(tcx, def_id, name)
+    } else {
+        match_ty_with_ident(tcx, def_id, name.to_string())
+    }
 }
 
 /// Extract the outermost path segment name from a `syn::Type`, e.g. `Option`

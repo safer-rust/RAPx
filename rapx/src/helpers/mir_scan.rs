@@ -110,6 +110,38 @@ pub fn has_raw_ptr_write(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
     })
 }
 
+/// Detect whether a function performs an atomic operation, either through a
+/// compiler intrinsic (`atomic_store`/`atomic_xadd`/...) or through an
+/// `Atomic*` method (`fetch_add`/`store`/...).
+///
+/// Used by the marker-trait (`Send`/`Sync`) checker to recognize raw-pointer
+/// updates that are performed atomically rather than through a plain
+/// `*ptr = ...` write.  `AtomicUsize::fetch_add` and friends lower to intrinsic
+/// calls only when inlined; rapx disables inlining (`-Zmir-opt-level=0`), so the
+/// `Atomic*` method-call form must be recognized too.
+pub fn has_atomic_call(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
+    if !tcx.is_mir_available(def_id) {
+        return false;
+    }
+    let body = tcx.optimized_mir(def_id);
+    body.basic_blocks.iter().any(|bb| {
+        if let TerminatorKind::Call { func, .. } = &bb.terminator().kind {
+            let Some(callee) = dep_callee_def_id(func) else {
+                return false;
+            };
+            if tcx
+                .intrinsic(callee)
+                .is_some_and(|i| i.name.as_str().starts_with("atomic_"))
+            {
+                return true;
+            }
+            tcx.def_path_str(callee).contains("Atomic")
+        } else {
+            false
+        }
+    })
+}
+
 /// Analyzes the MIR of the given function to collect all local variables
 /// that are involved in dereferencing raw pointers (`*const T` or `*mut T`).
 pub fn get_rawptr_deref(tcx: TyCtxt<'_>, def_id: DefId) -> HashSet<Local> {

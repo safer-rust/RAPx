@@ -32,3 +32,11 @@ ValidTraitObj(p: Ptr) { NonNull(p) }
 /// zero-sized type (so the bounds check is vacuous and never divides by
 /// `size_of(T)`), otherwise `(end_or_len - ptr) / size_of(T)` elements.
 ZstAwareInBound(ptr: Ptr, T: Ty, end_or_len: Expr) { InBound(ptr, T, if size_of(T) == 0 { 0 } else { (end_or_len - ptr) / size_of(T) }) }
+
+// ── Auto-trait (Send/Sync) type-level compounds ──
+
+/// A raw pointer field `ptr` that is `Allocated` and `Owning` (discharged by the
+/// struct's `#[rapx::invariant(Allocated(ptr))]` / `#[rapx::invariant(Owning(ptr))]`
+/// annotations) and whose updates are read-only (`NoInternalMut`), exclusive
+/// (`UniInternalMut`), or atomic (`AtomicUpdate`).
+TamedRawPtr(T: Ty, ptr: Ptr) { Allocated(ptr, T, 1) && Owning(ptr) && (NoInternalMut(T) || UniInternalMut(T) || AtomicUpdate(T)) }

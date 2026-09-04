@@ -6,12 +6,13 @@
 //! which the current sequential VM does not have.
 //!
 //! The vocabulary follows the Rust model: a raw pointer is `!Send` unless
-//! *tamed* — [`NoRawPtr`], or [`TamedRawPtr`] (the pointer is `Allocated`,
-//! `Owning`, and either read-only [`NoInternalMut`] or exclusively mutated
-//! [`UniInternalMut`]).  The `Allocated`/`Owning` halves are discharged by the
-//! struct's `#[rapx::invariant]` annotations (verified by the VM), so
-//! [`TamedRawPtr`] only checks that those invariants are present plus the
-//! interior-mutability behaviour.
+//! *tamed* — either the type has no raw pointers at all ([`NoRawPtr`]), or its
+//! raw-pointer field is `Allocated`/`Owning` (discharged via the struct's
+//! `#[rapx::invariant]` annotations) and updated read-only ([`NoInternalMut`]),
+//! exclusively ([`UniInternalMut`]), or under synchronization / atomically
+//! ([`AtomicUpdate`]).  The composition is declared in
+//! `std-trait-ensures.json` + `std-compound-properties.rs`; this module only
+//! implements the primitive type-level checks.
 
 #[cfg(not(rapx_ge_100))]
 use rustc_hir::LangItem;
@@ -23,7 +24,7 @@ use rustc_middle::ty::{ClauseKind, GenericArgKind, ParamTy, Ty, TyCtxt, TyKind};
 use z3::Solver;
 
 use crate::compat::FxHashMap;
-use crate::helpers::mir_scan::{Checkpoint, has_raw_ptr_write};
+use crate::helpers::mir_scan::{Checkpoint, has_atomic_call, has_raw_ptr_write};
 use crate::verify::vm::state::VmState;
 use crate::verify::{
     contract::{Property, PropertyArg, PropertyKind},
@@ -135,13 +136,14 @@ impl PropertyChecker {
         uni_internal_mut_check(vm_state.tcx, ty)
     }
 
-    /// `TamedRawPtr(T)`: `T`'s raw pointers are tamed (`Allocated` ∧ `Owning` ∧
-    /// (`NoInternalMut` ∨ `UniInternalMut`)).
-    pub(super) fn check_tamed_raw_ptr<'ctx, 'tcx>(
+    /// `AtomicUpdate(T)`: `T`'s raw-pointer updates are guarded by a
+    /// synchronization primitive (`Mutex`/`RwLock`) or performed atomically
+    /// (`Atomic*`).
+    pub(super) fn check_atomic_update<'ctx, 'tcx>(
         &self,
         vm_state: &VmState<'ctx, 'tcx>,
         _solver: &Solver<'ctx>,
-        _checkpoint: &Checkpoint<'tcx>,
+        checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
         let Some(ty) = property.args().first().and_then(|a| match a {
@@ -150,7 +152,7 @@ impl PropertyChecker {
         }) else {
             return CheckResult::Unknown;
         };
-        tamed_raw_ptr_check(vm_state.tcx, ty, &FxHashMap::default())
+        atomic_update_check(vm_state.tcx, ty, checkpoint.caller, false)
     }
 
     /// `RefSend(T)`: every interior-mutability (`UnsafeCell`) / raw-pointer
@@ -208,9 +210,10 @@ pub(crate) fn no_raw_ptr_check<'tcx>(
 }
 
 /// Type-level `NoInternalMut` obligation check (no VM state required): `Failed`
-/// if any inherent method writes through a raw pointer.
+/// if any inherent method writes through a raw pointer — either a plain
+/// `*ptr = ...` write or an atomic update (`Atomic*` intrinsic).
 pub(crate) fn no_internal_mut_check<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> CheckResult {
-    if has_raw_ptr_writes(tcx, ty) {
+    if has_raw_ptr_writes(tcx, ty) || has_atomic_ptr_updates(tcx, ty) {
         CheckResult::Failed
     } else {
         CheckResult::Proved
@@ -218,55 +221,89 @@ pub(crate) fn no_internal_mut_check<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Ch
 }
 
 /// Type-level `UniInternalMut` obligation check (no VM state required): `Proved`
-/// if the type writes through a raw pointer but does not implement `Clone`
-/// (which would copy the pointer and alias the pointee).
+/// if the type writes through a raw pointer (plain or atomic) but does not
+/// implement `Clone` (which would copy the pointer and alias the pointee).
 pub(crate) fn uni_internal_mut_check<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> CheckResult {
-    if has_raw_ptr_writes(tcx, ty) && !type_implements_clone(tcx, ty) {
+    if (has_raw_ptr_writes(tcx, ty) || has_atomic_ptr_updates(tcx, ty))
+        && !type_implements_clone(tcx, ty)
+    {
         CheckResult::Proved
     } else {
         CheckResult::Failed
     }
 }
 
-/// Type-level `TamedRawPtr` obligation check (no VM state required).
-///
-/// The `Allocated`/`Owning` halves are discharged by the struct's
-/// `#[rapx::invariant]` annotations.  `invariant_results` carries the per-struct
-/// verdict of the (already-run) struct-invariant verification; when a struct's
-/// invariants failed to verify, its `TamedRawPtr` fails too.
-pub(crate) fn tamed_raw_ptr_check<'tcx>(
+/// Type-level `AtomicUpdate` obligation check (no VM state required): `Proved`
+/// when aliased updates of the type's raw pointers are safe without exclusive
+/// ownership.  Two ways satisfy this:
+///  1. *structural* — every interior-mutability / raw-pointer field is guarded
+///     by a synchronization primitive (`Mutex`/`RwLock`/`Atomic*`), so the
+///     `find_unsynchronized_mutation` scan finds nothing unsynchronized; or
+///  2. *behavioural* — the type's raw-pointer updates go through an atomic
+///     intrinsic (`AtomicUsize::fetch_add` & friends), as in `Arc`-style
+///     reference counting.
+pub(crate) fn atomic_update_check<'tcx>(
     tcx: TyCtxt<'tcx>,
     ty: Ty<'tcx>,
+    impl_def_id: DefId,
+    is_sync: bool,
+) -> CheckResult {
+    match find_unsynchronized_mutation(tcx, ty, impl_def_id, is_sync) {
+        Contains::No => CheckResult::Proved,
+        Contains::Maybe => CheckResult::Unknown,
+        Contains::Yes => {
+            if has_atomic_ptr_updates(tcx, ty) {
+                CheckResult::Proved
+            } else {
+                CheckResult::Failed
+            }
+        }
+    }
+}
+
+/// Type-level `Allocated(ptr, T, n)` / `Owning(ptr)` obligation check (no VM
+/// state required): `Proved` when `T` declares a matching
+/// `#[rapx::invariant(Allocated(ptr))]` / `#[rapx::invariant(Owning(ptr))]`
+/// annotation (optionally restricted to the `field` named in the property) *and*
+/// the already-run struct-invariant verification discharged it.
+/// `invariant_results` carries the per-struct verdict; when a struct's
+/// invariants failed to verify, the check fails too.
+pub(crate) fn field_invariant_check<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    ty: Ty<'tcx>,
+    kind: PropertyKind,
+    field: Option<&str>,
     invariant_results: &FxHashMap<DefId, CheckResult>,
 ) -> CheckResult {
     let TyKind::Adt(adt_def, _) = ty.kind() else {
-        return CheckResult::Proved;
+        return CheckResult::Failed;
     };
     let adt_def_id = adt_def.did();
 
     let invariants = get_struct_invariants_from_annotation(tcx, adt_def_id, adt_def_id);
-    let has_owning = invariants.iter().any(|p| p.kind() == Some(PropertyKind::Owning));
-    let has_allocated = invariants
-        .iter()
-        .any(|p| p.kind() == Some(PropertyKind::Allocated));
-    if !has_owning || !has_allocated {
+    let matched = invariants.iter().any(|p| {
+        p.kind() == Some(kind)
+            && field.map_or(true, |f| {
+                p.args()
+                    .first()
+                    .and_then(|a| {
+                        crate::verify::contract::place::field_name_from_arg(tcx, adt_def_id, a)
+                    })
+                    .as_deref()
+                    == Some(f)
+            })
+    });
+    if !matched {
         return CheckResult::Failed;
     }
 
-    // The invariants must actually hold, not just be annotated.
+    // The invariant must actually hold, not just be annotated.
     if let Some(result) = invariant_results.get(&adt_def_id) {
         if *result != CheckResult::Proved {
             return CheckResult::Failed;
         }
     }
-
-    if no_internal_mut_check(tcx, ty) == CheckResult::Proved
-        || uni_internal_mut_check(tcx, ty) == CheckResult::Proved
-    {
-        CheckResult::Proved
-    } else {
-        CheckResult::Failed
-    }
+    CheckResult::Proved
 }
 
 /// Type-level `RefSend` obligation check (no VM state required).
@@ -339,6 +376,22 @@ fn has_raw_ptr_writes<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> bool {
         tcx.associated_item_def_ids(*impl_id).iter().any(|item| {
             matches!(tcx.def_kind(*item), DefKind::Fn | DefKind::AssocFn)
                 && has_raw_ptr_write(tcx, *item)
+        })
+    })
+}
+
+/// Whether any inherent method of `ty` performs an atomic update through an
+/// atomic intrinsic or an `Atomic*` method (`fetch_add`/`store`/...), e.g. an
+/// `Arc`-style `fetch_add` on a reference count reached via a raw pointer.
+fn has_atomic_ptr_updates<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> bool {
+    let TyKind::Adt(adt_def, _) = ty.kind() else {
+        return false;
+    };
+    let adt_def_id = adt_def.did();
+    tcx.inherent_impls(adt_def_id).iter().any(|impl_id| {
+        tcx.associated_item_def_ids(*impl_id).iter().any(|item| {
+            matches!(tcx.def_kind(*item), DefKind::Fn | DefKind::AssocFn)
+                && has_atomic_call(tcx, *item)
         })
     })
 }

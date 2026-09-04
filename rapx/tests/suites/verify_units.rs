@@ -752,6 +752,13 @@ fn thread_safe_sound_cases() {
 }
 
 #[test]
+fn thread_safe_atomic_update_cases() {
+    let output = run_with_args("verify_units/thread_safe_atomic_update_01", CMD_VERIFY_TARGETED);
+    assert_contain(&output, "unsafe impl Send for MyArc");
+    assert_contain(&output, "verdict: SAFE");
+}
+
+#[test]
 fn thread_safe_unsound_cases() {
     let output = run_with_args("verify_units/thread_safe_unsound_01", CMD_VERIFY_TARGETED);
     assert_contain(&output, "unsafe impl Send for RcHolder");

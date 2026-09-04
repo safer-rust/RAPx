@@ -18,7 +18,7 @@ use crate::helpers::fn_info::{
 use crate::verify::contract::PropertyKind;
 use crate::verify::property_checker::{
     ref_send_check, no_internal_mut_check, no_raw_ptr_check, contain_no_type_check,
-    tamed_raw_ptr_check, uni_internal_mut_check,
+    uni_internal_mut_check, atomic_update_check, field_invariant_check,
 };
 use crate::verify::target::get_contract_from_annotation;
 
@@ -421,8 +421,8 @@ pub(crate) struct VerifyRun<'tcx> {
     crate_filter: Option<String>,
     module_filter: Option<String>,
     debug_contracts: bool,
-    /// Per-struct verdict of the struct-invariant verification, consumed by
-    /// `TamedRawPtr` to discharge its `Allocated`/`Owning` halves.
+    /// Per-struct verdict of the struct-invariant verification, consumed by the
+    /// type-level `Allocated`/`Owning` checks to discharge the field invariants.
     struct_invariant_results: FxHashMap<rustc_hir::def_id::DefId, CheckResult>,
 }
 
@@ -658,9 +658,9 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                     Ok(struct_report) => {
                         rap_debug!("{}", struct_report.describe());
                         all_results.extend(struct_report.results.clone());
-                        // Record the per-struct verdict so `TamedRawPtr` can
-                        // discharge its `Allocated`/`Owning` halves only when the
-                        // invariants actually hold.
+                        // Record the per-struct verdict so the type-level
+                        // `Allocated`/`Owning` checks can discharge the field
+                        // invariants only when they actually hold.
                         if let Some(struct_id) = target.owner_struct_def_id {
                             let verdict = struct_report
                                 .results
@@ -824,7 +824,19 @@ impl<'tcx> VerifyRun<'tcx> {
             let mut any_failed = false;
             let mut any_unknown = false;
             for property in obligations {
-                let result = self.check_type_obligation(property, unit.impl_def_id, is_sync);
+                let Some(self_ty) = unit
+                    .self_ty_def_id
+                    .map(|d| self.tcx.type_of(d).skip_binder())
+                else {
+                    any_unknown = true;
+                    continue;
+                };
+                let result = self.check_type_obligation(
+                    property,
+                    unit.impl_def_id,
+                    self_ty,
+                    is_sync,
+                );
                 let label = property.display_for_report(self.tcx, unit.self_ty_def_id, None);
                 let verdict = match result {
                     CheckResult::Proved => "PROVED",
@@ -849,11 +861,13 @@ impl<'tcx> VerifyRun<'tcx> {
     }
 
     /// Dispatch a single type-level obligation (`ContainNoType` / `NoRawPtr` /
-    /// `NoInternalMut` / `UniInternalMut` / `TamedRawPtr` / `RefSend`).
+    /// `NoInternalMut` / `UniInternalMut` / `AtomicUpdate` / `Allocated` /
+    /// `Owning` / `RefSend`).
     fn check_type_obligation(
         &self,
         property: &Property<'tcx>,
         impl_def_id: rustc_hir::def_id::DefId,
+        self_ty: rustc_middle::ty::Ty<'tcx>,
         is_sync: bool,
     ) -> CheckResult {
         match property {
@@ -901,14 +915,38 @@ impl<'tcx> VerifyRun<'tcx> {
                     };
                     uni_internal_mut_check(self.tcx, ty)
                 }
-                PropertyKind::TamedRawPtr => {
+                PropertyKind::Allocated | PropertyKind::Owning => {
+                    // Type-level `Allocated(ptr, T, n)` / `Owning(ptr)` reached
+                    // through a `TamedRawPtr` compound: check that the type declares
+                    // a matching `#[rapx::invariant(...)]` (optionally restricted to
+                    // the field named in the property) and that it verified.
+                    let adt_def_id = match self_ty.kind() {
+                        rustc_middle::ty::TyKind::Adt(adt_def, _) => adt_def.did(),
+                        _ => return CheckResult::Unknown,
+                    };
+                    let field = atom.args.first().and_then(|a| {
+                        crate::verify::contract::place::field_name_from_arg(
+                            self.tcx,
+                            adt_def_id,
+                            a,
+                        )
+                    });
+                    field_invariant_check(
+                        self.tcx,
+                        self_ty,
+                        atom.kind,
+                        field.as_deref(),
+                        &self.struct_invariant_results,
+                    )
+                }
+                PropertyKind::AtomicUpdate => {
                     let Some(ty) = atom.args.first().and_then(|a| match a {
                         PropertyArg::Ty(t) => Some(*t),
                         _ => None,
                     }) else {
                         return CheckResult::Unknown;
                     };
-                    tamed_raw_ptr_check(self.tcx, ty, &self.struct_invariant_results)
+                    atomic_update_check(self.tcx, ty, impl_def_id, is_sync)
                 }
                 PropertyKind::RefSend => {
                     let Some(ty) = atom.args.first().and_then(|a| match a {
@@ -924,14 +962,16 @@ impl<'tcx> VerifyRun<'tcx> {
             Property::And(and) => {
                 let mut overall = CheckResult::Proved;
                 for conjunct in &and.conjuncts {
-                    overall = overall.and(self.check_type_obligation(conjunct, impl_def_id, is_sync));
+                    overall = overall
+                        .and(self.check_type_obligation(conjunct, impl_def_id, self_ty, is_sync));
                 }
                 overall
             }
             Property::Or(or) => {
                 let mut overall = CheckResult::Failed;
                 for disjunct in &or.disjuncts {
-                    overall = overall.or(self.check_type_obligation(disjunct, impl_def_id, is_sync));
+                    overall = overall
+                        .or(self.check_type_obligation(disjunct, impl_def_id, self_ty, is_sync));
                 }
                 overall
             }

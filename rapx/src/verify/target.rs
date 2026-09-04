@@ -1175,7 +1175,7 @@ fn build_marker_trait_obligations<'tcx>(
     let templates = super::contract::json::query_trait_ensures(tcx, trait_def_id);
     let mut obligations = Vec::new();
     for entry in templates {
-        if let Some(prop) = build_type_atom(&entry, self_ty) {
+        if let Some(prop) = build_type_atom(tcx, self_ty_def_id, &entry, self_ty) {
             obligations.push(prop);
         }
     }
@@ -1183,8 +1183,12 @@ fn build_marker_trait_obligations<'tcx>(
 }
 
 /// Build a single type-level obligation from a `std-trait-ensures.json` entry,
-/// substituting `ty:Self` with `self_ty`.  Supports the `any` disjunction.
+/// substituting `ty:Self` with `self_ty`.  Supports the `any` disjunction and
+/// falls back to named compound properties (`expand_compound`) for tags that are
+/// not built-in primitives.
 fn build_type_atom<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def_id: DefId,
     entry: &super::contract::json::JsonProperty,
     self_ty: rustc_middle::ty::Ty<'tcx>,
 ) -> Option<Property<'tcx>> {
@@ -1192,11 +1196,13 @@ fn build_type_atom<'tcx>(
         let disjuncts: Vec<Property<'tcx>> = items
             .iter()
             .filter_map(|item| match item {
-                super::contract::json::AnyItem::Single(e) => build_type_atom(e, self_ty),
+                super::contract::json::AnyItem::Single(e) => {
+                    build_type_atom(tcx, def_id, e, self_ty)
+                }
                 super::contract::json::AnyItem::And(es) => {
                     let conjuncts: Vec<Property<'tcx>> = es
                         .iter()
-                        .filter_map(|e| build_type_atom(e, self_ty))
+                        .filter_map(|e| build_type_atom(tcx, def_id, e, self_ty))
                         .collect();
                     if conjuncts.is_empty() {
                         None
@@ -1235,16 +1241,85 @@ fn build_type_atom<'tcx>(
             PropertyKind::UniInternalMut,
             vec![PropertyArg::Ty(self_ty)],
         )),
-        "TamedRawPtr" => Some(Property::new_atom(
-            PropertyKind::TamedRawPtr,
+        "AtomicUpdate" => Some(Property::new_atom(
+            PropertyKind::AtomicUpdate,
             vec![PropertyArg::Ty(self_ty)],
         )),
         "RefSend" => Some(Property::new_atom(
             PropertyKind::RefSend,
             vec![PropertyArg::Ty(self_ty)],
         )),
-        _ => None,
+        // Fall back to a named compound property (e.g. `TamedRawPtr` defined in
+        // `std-compound-properties.rs`).  The `ty:Self` placeholder is normalized
+        // to `Self` and resolved by the compound's `Ty` parameter; a `Ptr`
+        // parameter not supplied by the JSON template is filled in from the
+        // struct's own `Allocated`/`Owning` invariant field.
+        _ => {
+            let mut exprs: Vec<syn::Expr> = entry
+                .args
+                .iter()
+                .filter_map(|s| {
+                    let normalized = super::contract::json::normalize_json_contract_arg(s);
+                    syn::parse_str::<syn::Expr>(&normalized).ok()
+                })
+                .collect();
+            if exprs.len() != entry.args.len() {
+                return None;
+            }
+
+            if let Some(spec) = super::contract::compound::find_compound(def_id.krate, &entry.tag)
+            {
+                for i in exprs.len()..spec.param_tys.len() {
+                    if spec.param_tys.get(i).map(|s| s.as_str()) != Some("Ptr") {
+                        return None;
+                    }
+                    let Some(field) = extract_tamed_field(tcx, def_id) else {
+                        return None;
+                    };
+                    let Ok(e) = syn::parse_str::<syn::Expr>(&field) else {
+                        return None;
+                    };
+                    exprs.push(e);
+                }
+            }
+
+            match super::contract::compound::expand_compound(tcx, def_id, &entry.tag, &exprs) {
+                Some(mut props) if !props.is_empty() => {
+                    // A compound body expands into one property per conjunct, each
+                    // tagged with the compound's origin.  Hoist that origin onto the
+                    // combined node so the report shows `Name(args)` once instead of
+                    // `And(Name, Name, Name)`.
+                    let origin = props.first().and_then(|p| p.origin()).cloned();
+                    for p in &mut props {
+                        p.clear_origin();
+                    }
+                    let mut combined = Property::conjunction(props);
+                    if let Some(o) = origin {
+                        combined.set_origin(o.name, o.args, o.meaning);
+                    }
+                    Some(combined)
+                }
+                _ => None,
+            }
+        }
     }
+}
+
+/// The raw-pointer field name a struct declares via `#[rapx::invariant(Allocated(field))]`
+/// or `#[rapx::invariant(Owning(field))]`, used to bind a `TamedRawPtr` compound's
+/// `Ptr` parameter.
+fn extract_tamed_field<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Option<String> {
+    let invariants = get_struct_invariants_from_annotation(tcx, def_id, def_id);
+    invariants
+        .iter()
+        .find(|p| {
+            matches!(
+                p.kind(),
+                Some(PropertyKind::Allocated) | Some(PropertyKind::Owning)
+            )
+        })
+        .and_then(|p| p.args().first())
+        .and_then(|a| super::contract::place::field_name_from_arg(tcx, def_id, a))
 }
 
 fn collect_properties_from_named_attrs<'tcx>(
