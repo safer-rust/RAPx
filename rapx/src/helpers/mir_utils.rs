@@ -34,6 +34,11 @@ use super::def_use::PlaceKey;
 pub(crate) fn pointee_ty<'tcx>(ty: Ty<'tcx>) -> Option<Ty<'tcx>> {
     match ty.kind() {
         TyKind::RawPtr(ty, _) | TyKind::Ref(_, ty, _) => Some(*ty),
+        // `NonNull<T>` is a raw-pointer wrapper; unwrap it so pointer-arith
+        // effects (`NonNull::add`/`sub`/`offset`) keep their provenance.
+        TyKind::Adt(adt, args) if crate::def_id::nonnull_types().contains(&adt.did()) => {
+            args.types().next()
+        }
         _ => None,
     }
 }
@@ -140,6 +145,13 @@ pub(crate) fn is_index_method(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
 pub(crate) fn is_post_inc_start(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
     let name = tcx.item_name(def_id);
     name.as_str() == "post_inc_start"
+}
+
+/// Whether `def_id` is `pre_dec_end` (the end-decrementing sibling of
+/// `post_inc_start`).
+pub(crate) fn is_pre_dec_end(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
+    let name = tcx.item_name(def_id);
+    name.as_str() == "pre_dec_end"
 }
 
 /// Whether `def_id` is one of `post_inc_start` / `pre_dec_end`.

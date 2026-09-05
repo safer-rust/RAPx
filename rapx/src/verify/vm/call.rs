@@ -114,6 +114,17 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     self.materialize_const_bytes_after_call(args, destination);
                     return;
                 }
+                if let Some(effect) =
+                    crate::verify::call_summary::interprocedural::try_ptr_field_return_effect(
+                        self.tcx, c,
+                    )
+                {
+                    self.apply_call_effect(&effect, &arg_values, &caller_arg_locals, destination);
+                    self.last_call_name = name.clone();
+                    self.last_call_callee = callee;
+                    self.materialize_const_bytes_after_call(args, destination);
+                    return;
+                }
                 let has_fn_sim = crate::verify::call_summary::builtin_models::lookup_effect(
                     self.tcx,
                     caller_def_id,
@@ -465,7 +476,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         _args: &[Spanned<Operand<'tcx>>],
         destination: Local,
     ) -> bool {
-        let is_next = name.contains("::next")
+        let is_next = name.ends_with("::next")
             && (name.starts_with("Iter::")
                 || name.starts_with("IterMut::")
                 || name.contains("::Iter::")
@@ -1618,47 +1629,17 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 self.set_local(dest, val);
             }
             CallEffect::ReturnFieldOfArg { arg, field } => {
-                // Read the materialized field `field` of the receiver's pointee
-                // and return it. The field index came from the callee's MIR;
-                // preserve the field's own type/provenance.
-                //
-                // The receiver of a `&self` getter is a reborrow temp
-                // (`_t = &data`) whose local carries no field values, while the
-                // fields were materialized on the referent (`data`). Resolve the
-                // referent by matching the receiver value's address term against
-                // the known local addresses; fall back to the direct arg local.
-                let local = args
-                    .get(*arg)
-                    .and_then(|v| self.find_local_by_address(&v.term))
-                    .or_else(|| caller_arg_locals.get(*arg).copied().flatten());
-                if let Some(local) = local {
-                    if let Some(field_val) = self.field_value(local, &[*field]) {
-                        let mut v = field_val.clone();
-                        v.ty = self.body.local_decls[dest].ty;
-                        self.set_local(dest, v);
-                        return;
-                    }
-                }
-                // Fallback: for an integer result (e.g. `len`/`capacity`), the
-                // receiver is often a reborrow temp whose referent carries no
-                // field values; reconstruct the length from the backing
-                // allocation (`size / elem_size`), as `ReturnLengthOfArg` does.
-                let dest_ty = self.body.local_decls[dest].ty;
-                if matches!(dest_ty.kind(), TyKind::Uint(_) | TyKind::Int(_)) {
-                    if let Some(arg_val) = args.get(*arg) {
-                        if self.set_len_from_alloc(arg_val, dest) {
-                            return;
-                        }
-                    }
-                }
-                let term = self.fresh_int(&format!("field_{}", dest.as_usize()));
-                let val = VmValue {
-                    term,
-                    ty: dest_ty,
-                    provenance: None,
-                    invariants: ValueInvariants::default(),
-                };
-                self.set_local(dest, val);
+                self.apply_field_of_arg_effect(*arg, *field, None, args, caller_arg_locals, dest);
+            }
+            CallEffect::ReturnFieldOfArgSub { arg, field, offset } => {
+                self.apply_field_of_arg_effect(
+                    *arg,
+                    *field,
+                    Some(*offset),
+                    args,
+                    caller_arg_locals,
+                    dest,
+                );
             }
             CallEffect::ReturnConst { value } => {
                 let dest_ty = self.body.local_decls[dest].ty;
@@ -2695,6 +2676,90 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         let val = VmValue::new(size.clone(), dest_ty);
         self.set_local(dest, val);
         true
+    }
+
+    /// Apply a `ReturnFieldOfArg`/`ReturnFieldOfArgSub` effect: read the
+    /// materialized field `field` of the receiver's pointee and return it,
+    /// preserving the field's own type/provenance. For `ReturnFieldOfArgSub`,
+    /// subtract `sub_offset` elements from the field pointer (`next_back_unchecked`
+    /// after `pre_dec_end`).
+    ///
+    /// The receiver of a `&self` getter is a reborrow temp (`_t = &data`) whose
+    /// local carries no field values, while the fields were materialized on the
+    /// referent (`data`). Resolve the referent by matching the receiver value's
+    /// address term against the known local addresses; fall back to the direct
+    /// arg local.
+    fn apply_field_of_arg_effect(
+        &mut self,
+        arg: usize,
+        field: usize,
+        sub_offset: Option<u64>,
+        args: &[VmValue<'ctx, 'tcx>],
+        caller_arg_locals: &[Option<Local>],
+        dest: Local,
+    ) {
+        // Candidate locals that may carry the materialized field, in order of
+        // preference. A `&mut self` receiver is often a mutable reborrow
+        // (`_t = &mut (*self)`) whose local does not carry the field values,
+        // while the parameter and the shared reborrow (`_t = &(*self)`) do.
+        let mut candidates: Vec<Local> = Vec::new();
+        if let Some(l) = args.get(arg).and_then(|v| self.find_local_by_address(&v.term)) {
+            candidates.push(l);
+        }
+        if let Some(l) = caller_arg_locals.get(arg).copied().flatten() {
+            candidates.push(l);
+        }
+        // Any local that already materializes the field (covers the receiver
+        // parameter / shared reborrow that the mutable reborrow does not copy).
+        for (l, _) in self.field_values.keys() {
+            candidates.push(*l);
+        }
+        let mut found: Option<VmValue<'ctx, 'tcx>> = None;
+        for l in candidates {
+            if let Some(fv) = self.field_value(l, &[field]) {
+                found = Some(fv.clone());
+                break;
+            }
+        }
+        if let Some(mut v) = found {
+            if let Some(offset) = sub_offset {
+                // `field - offset` elements: subtract the element stride from
+                // both the address term and the provenance offset.
+                let stride = self.pointee_elem_size(v.ty).max(1) as u64;
+                let scaled = Int::from_u64(self.ctx, offset * stride);
+                v.term = Int::sub(self.ctx, &[&v.term, &scaled]);
+                if let Some(prov) = &v.provenance {
+                    v.provenance = Some(Provenance {
+                        alloc_id: prov.alloc_id,
+                        offset: Int::sub(self.ctx, &[&prov.offset, &scaled]),
+                        is_field_offset: false,
+                    });
+                }
+            }
+            v.ty = self.body.local_decls[dest].ty;
+            self.set_local(dest, v);
+            return;
+        }
+        // Fallback: for an integer result (e.g. `len`/`capacity`), the
+        // receiver is often a reborrow temp whose referent carries no field
+        // values; reconstruct the length from the backing allocation
+        // (`size / elem_size`), as `ReturnLengthOfArg` does.
+        let dest_ty = self.body.local_decls[dest].ty;
+        if matches!(dest_ty.kind(), TyKind::Uint(_) | TyKind::Int(_)) {
+            if let Some(arg_val) = args.get(arg) {
+                if self.set_len_from_alloc(arg_val, dest) {
+                    return;
+                }
+            }
+        }
+        let term = self.fresh_int(&format!("field_{}", dest.as_usize()));
+        let val = VmValue {
+            term,
+            ty: dest_ty,
+            provenance: None,
+            invariants: ValueInvariants::default(),
+        };
+        self.set_local(dest, val);
     }
 
     /// Materialize the `{ptr, cap, len}` field values of a `Vec<T>` aggregate

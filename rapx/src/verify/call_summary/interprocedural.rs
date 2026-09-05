@@ -9,7 +9,8 @@ use std::collections::{HashSet, VecDeque};
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{
-        BasicBlock, BinOp, Local, Operand, ProjectionElem, Rvalue, StatementKind, TerminatorKind,
+        BasicBlock, BinOp, Local, Operand, Place, ProjectionElem, Rvalue, StatementKind,
+        TerminatorKind,
     },
     ty::{Ty, TyCtxt, TyKind},
 };
@@ -123,7 +124,6 @@ pub(super) fn try_pointer_arith_wrapper_effect<'tcx>(
     if !tcx.is_mir_available(callee) {
         return None;
     }
-
     let body = tcx.optimized_mir(callee);
     if body.basic_blocks.len() > 16 {
         return None;
@@ -388,6 +388,119 @@ pub(crate) fn try_field_load_effect(tcx: TyCtxt<'_>, callee: DefId) -> Option<Ca
                 _ => return None,
             }
         }
+    }
+    None
+}
+
+/// Detect a function that returns a raw-pointer field of its receiver
+/// (`(*self).end_or_len`-shaped), even when the body also contains a
+/// ZST/non-ZST branch and a preceding mutation call (e.g. an iterator's
+/// `next_back_unchecked`). Produces a `ReturnFieldOfArg` effect so the returned
+/// pointer keeps the field's provenance across the interprocedural boundary.
+///
+/// Unlike [`try_field_load_effect`], this does not require the body to be a
+/// single field-load shape — it only requires that *some* return path loads a
+/// raw-pointer field of the receiver directly into the return local. This is a
+/// conservative over-approximation: for a ZST receiver the returned pointer is
+/// never dereferenced (ZST accesses are vacuous), so preferring the raw field
+/// is sound.
+pub(crate) fn try_ptr_field_return_effect(
+    tcx: TyCtxt<'_>,
+    callee: DefId,
+) -> Option<CallEffect> {
+    if !tcx.is_mir_available(callee) {
+        return None;
+    }
+    let body = tcx.optimized_mir(callee);
+    if body.arg_count < 1 {
+        return None;
+    }
+    let ret_ty = body.local_decls[Local::from_usize(0)].ty;
+    if !matches!(ret_ty.kind(), TyKind::RawPtr(..)) {
+        return None;
+    }
+    // A preceding `pre_dec_end(offset)` on the receiver (arg 0) mutates its
+    // `end_or_len` field *before* it is returned (e.g. `next_back_unchecked`).
+    // In that case the returned pointer is `field - offset` elements past the
+    // stored field value; returning the un-adjusted field would point one past
+    // the last element. Record the offset so the effect can be adjusted.
+    let pre_dec_offset = detect_pre_dec_end_offset(tcx, &body);
+    // Trace backward from the return local through Copy/Move/Cast/CopyForDeref
+    // assignments until a `(*arg).field` load of the receiver is reached. This
+    // handles the optimized-MIR form where the field is first copied into a
+    // temporary and then cast into the return slot (`_0 = _tmp as *const T`).
+    let mut queue = VecDeque::from([Local::from_usize(0)]);
+    let mut seen = HashSet::from([Local::from_usize(0)]);
+    while let Some(cur) = queue.pop_front() {
+        for bb in body.basic_blocks.iter() {
+            for stmt in &bb.statements {
+                let StatementKind::Assign(assign) = &stmt.kind else {
+                    continue;
+                };
+                let (dest, rvalue) = &**assign;
+                if dest.local != cur || !dest.projection.is_empty() {
+                    continue;
+                }
+                let src: Option<&Place<'_>> = match rvalue {
+                    Rvalue::Use(Operand::Copy(p) | Operand::Move(p), ..) => Some(p),
+                    Rvalue::CopyForDeref(p) => Some(p),
+                    Rvalue::Cast(_, Operand::Copy(p) | Operand::Move(p), _) => Some(p),
+                    _ => None,
+                };
+                let Some(src) = src else {
+                    continue;
+                };
+                // `(*arg).field` — a raw-pointer field of the receiver.
+                if src.local.as_usize() >= 1 && src.local.as_usize() <= body.arg_count {
+                    let mut proj = src.projection.iter();
+                    if matches!(proj.next().map(|p| p.kind()), Some(ProjectionElem::Deref)) {
+                        if let Some(ProjectionElem::Field(idx, _)) = proj.next().map(|p| p.kind()) {
+                            if proj.next().is_none() {
+                                let arg = src.local.as_usize() - 1;
+                                let field = idx.as_usize();
+                                return match pre_dec_offset {
+                                    Some(offset) if offset > 0 => {
+                                        Some(CallEffect::ReturnFieldOfArgSub { arg, field, offset })
+                                    }
+                                    _ => Some(CallEffect::ReturnFieldOfArg { arg, field }),
+                                };
+                            }
+                        }
+                    }
+                }
+                // Otherwise keep tracing through the source local.
+                if src.projection.is_empty() && seen.insert(src.local) {
+                    queue.push_back(src.local);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Detect a `pre_dec_end(offset)` call on the receiver (arg 0) and return its
+/// constant offset. `next_back_unchecked` calls `self.pre_dec_end(1)` before
+/// returning the `end_or_len` field, so the returned pointer must be adjusted
+/// by `offset` elements.
+fn detect_pre_dec_end_offset<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    body: &rustc_middle::mir::Body<'tcx>,
+) -> Option<u64> {
+    for bb in body.basic_blocks.iter() {
+        let Some(term) = &bb.terminator else {
+            continue;
+        };
+        let TerminatorKind::Call { func, args, .. } = &term.kind else {
+            continue;
+        };
+        let Some(callee) = helpers::dep_callee_def_id(func) else {
+            continue;
+        };
+        if !crate::helpers::mir_utils::is_pre_dec_end(tcx, callee) {
+            continue;
+        }
+        // Receiver is arg 0 (the iterator), offset is arg 1.
+        return args.get(1).and_then(|a| helpers::operand_const_u64(&a.node));
     }
     None
 }

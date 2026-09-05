@@ -1485,9 +1485,12 @@ fn build_raw_ptr_deref_checks<'tcx>(
             let ty = PropertyArg::Ty(info.pointee_ty);
             let count = PropertyArg::Expr(ContractExpr::Const(1));
 
-            let mut properties = if info.is_ref {
+            let mut properties = if info.is_ptr2ref {
                 vec![
-                    Property::new_atom(PropertyKind::NonNull, vec![target.clone()]),
+                    Property::new_atom(
+                        PropertyKind::Init,
+                        vec![target.clone(), ty.clone(), count.clone()],
+                    ),
                     Property::new_atom(PropertyKind::Align, vec![target.clone(), ty.clone()]),
                     {
                         let mut p = Property::new_atom(PropertyKind::Alias, vec![target.clone()]);
@@ -1509,7 +1512,7 @@ fn build_raw_ptr_deref_checks<'tcx>(
                 ]
             };
 
-            if info.is_read && !info.is_ref {
+            if info.is_read && !info.is_ptr2ref {
                 properties.push(Property::new_atom(PropertyKind::Typed, vec![target, ty]));
             }
 

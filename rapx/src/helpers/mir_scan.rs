@@ -297,7 +297,10 @@ pub struct RawPtrDerefInfo<'tcx> {
     pub ptr_operand: Operand<'tcx>,
     pub pointee_ty: Ty<'tcx>,
     pub is_read: bool,
-    pub is_ref: bool,
+    /// Whether the statement is a reference creation from a raw pointer
+    /// (`&*raw_ptr` / `&mut *raw_ptr`), i.e. an `Rvalue::Ref` whose place has a
+    /// raw-pointer deref projection. This is the `Ptr2Ref` operation.
+    pub is_ptr2ref: bool,
     pub destination: Local,
 }
 
@@ -337,7 +340,7 @@ pub fn collect_raw_ptr_deref_info<'tcx>(
             let (lhs, rhs) = &**assign;
 
             let is_write = place_has_raw_deref(&body, lhs);
-            let (is_read, is_ref) = match rhs {
+            let (is_read, is_ptr2ref) = match rhs {
                 Rvalue::Use(Operand::Copy(place) | Operand::Move(place), ..) => {
                     (place_has_raw_deref(&body, place), false)
                 }
@@ -372,7 +375,7 @@ pub fn collect_raw_ptr_deref_info<'tcx>(
                 ptr_operand,
                 pointee_ty: pointee,
                 is_read,
-                is_ref,
+                is_ptr2ref,
                 destination: lhs.local,
             });
         }

@@ -109,6 +109,12 @@ pub(crate) enum CallEffect {
     /// (models `Vec::len` and any `(*self).field` getter; the field index is
     /// derived straight from the callee's MIR).
     ReturnFieldOfArg { arg: usize, field: usize },
+    /// The return value is field `field` of the pointee of argument `arg`,
+    /// minus `offset` elements. Models an iterator's `next_back_unchecked`,
+    /// which mutates its `end_or_len` field via `pre_dec_end(offset)` before
+    /// returning it — so the returned pointer is `field - offset` elements past
+    /// the stored field value.
+    ReturnFieldOfArgSub { arg: usize, field: usize, offset: u64 },
     /// The return value is `min(lhs_arg, rhs_arg)`, satisfying
     /// `return <= lhs_arg` and `return <= rhs_arg`.
     ReturnMin { lhs_arg: usize, rhs_arg: usize },
