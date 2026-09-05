@@ -338,7 +338,7 @@ fn parse_string_interval<'tcx>(
     raw_range: &str,
 ) -> Option<Vec<NumericPredicate<'tcx>>> {
     let trimmed = raw_range.trim();
-    if trimmed.len() < 5 {
+    if trimmed.len() < 3 {
         return None;
     }
 
@@ -352,18 +352,37 @@ fn parse_string_interval<'tcx>(
 
     let body = &trimmed[1..trimmed.len() - 1];
     let (lower_raw, upper_raw) = body.split_once(',')?;
-    let lower = syn::parse_str::<Expr>(lower_raw.trim()).ok()?;
-    let upper = syn::parse_str::<Expr>(upper_raw.trim()).ok()?;
+    let lower_raw = lower_raw.trim();
+    let upper_raw = upper_raw.trim();
 
-    Some(build_interval_predicates(
-        tcx,
-        def_id,
-        value,
-        &lower,
-        lower_inclusive,
-        &upper,
-        upper_inclusive,
-    ))
+    // An unbounded side is written as an empty bound, e.g. `[1,)` (no upper
+    // bound) or `(,5]` (no lower bound). Reject an entirely empty interval.
+    if lower_raw.is_empty() && upper_raw.is_empty() {
+        return None;
+    }
+
+    let value_expr = expr_to_pest(tcx, def_id, value);
+    let mut predicates = Vec::with_capacity(2);
+
+    if !lower_raw.is_empty() {
+        let lower = syn::parse_str::<Expr>(lower_raw).ok()?;
+        predicates.push(NumericPredicate::new(
+            expr_to_pest(tcx, def_id, &lower),
+            if lower_inclusive { RelOp::Le } else { RelOp::Lt },
+            value_expr.clone(),
+        ));
+    }
+
+    if !upper_raw.is_empty() {
+        let upper = syn::parse_str::<Expr>(upper_raw).ok()?;
+        predicates.push(NumericPredicate::new(
+            value_expr,
+            if upper_inclusive { RelOp::Le } else { RelOp::Lt },
+            expr_to_pest(tcx, def_id, &upper),
+        ));
+    }
+
+    Some(predicates)
 }
 
 fn build_interval_predicates<'tcx>(
