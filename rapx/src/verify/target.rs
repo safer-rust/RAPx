@@ -494,10 +494,12 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
         // the return type for constructors), look up the type's invariants
         // from std-type-invariants.json and add them as preconditions.
         let mut type_invariants = build_type_invariants_from_params(self.tcx, def_id);
-        // Built-in slice invariants (`NonNull`/`Init`/`Alive`) for `&[T]`/
-        // `&mut [T]` receivers and returns.
-        type_invariants.extend(build_slice_type_invariants(self.tcx, def_id));
         caller_requires.extend(type_invariants.clone());
+        // Built-in slice invariants (`NonNull`/`Init`/`Alive`) for `&[T]`/
+        // `&mut [T]` receivers and returns.  Their entry facts are synthesized
+        // by the VM's `init_parameters` (not asserted via `caller_requires`),
+        // so they are re-proved at return through `type_invariants` only.
+        type_invariants.extend(build_slice_type_invariants(self.tcx, def_id));
 
         FunctionTarget {
             def_id,

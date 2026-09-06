@@ -449,6 +449,9 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                             self.alloc_mut(ref_alloc_id).slice_data = Some(data_alloc_id);
                         }
                         self.alloc_mut(data_alloc_id).initialized = true;
+                        // The built-in slice invariant (`NonNull`/`Init`/`Alive`)
+                        // is established here at entry, mirroring `Alive(self)`.
+                        self.alloc_mut(data_alloc_id).alive_assumed = true;
                         self.set_local(
                             local,
                             VmValue {
