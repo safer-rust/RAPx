@@ -115,6 +115,15 @@ pub(crate) struct FunctionTarget<'tcx> {
     /// blocks and at all path endpoints for non-constructor methods.
     pub struct_invariants: Vec<Property<'tcx>>,
 
+    /// Built-in type invariants (e.g. the synthesized `NonNull`/`Init`/`Alive`
+    /// slice invariant for `&[T]`/`&mut [T]` receivers and returns).
+    ///
+    /// Like [`struct_invariants`](Self::struct_invariants), these are assumed
+    /// at entry (via `caller_requires`) and re-proved at return so a mutation
+    /// that breaks them (e.g. an out-of-bounds write) is caught even without a
+    /// user-written `#[rapx::invariant]`.
+    pub type_invariants: Vec<Property<'tcx>>,
+
     /// Raw pointer dereference checks with their required safety properties.
     ///
     /// Each entry is a `(Checkpoint, Vec<Property>)` pair where the `Checkpoint`
@@ -489,8 +498,11 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
         // Standard-library type invariants: for each function parameter (and
         // the return type for constructors), look up the type's invariants
         // from std-type-invariants.json and add them as preconditions.
-        let type_invariants = build_type_invariants_from_params(self.tcx, def_id);
-        caller_requires.extend(type_invariants);
+        let mut type_invariants = build_type_invariants_from_params(self.tcx, def_id);
+        // Built-in slice invariants (`NonNull`/`Init`/`Alive`) for `&[T]`/
+        // `&mut [T]` receivers and returns.
+        type_invariants.extend(build_slice_type_invariants(self.tcx, def_id));
+        caller_requires.extend(type_invariants.clone());
 
         FunctionTarget {
             def_id,
@@ -499,6 +511,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
             callee_requires,
             caller_requires,
             struct_invariants,
+            type_invariants,
             raw_ptr_deref_checks,
             static_mut_checks,
         }
@@ -1705,6 +1718,72 @@ fn is_numeric_field_access(s: &str) -> bool {
         && trimmed
             .split('.')
             .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
+}
+
+/// Generate the built-in slice invariant for every `&[T]`/`&mut [T]` parameter
+/// and for the return type when it is a slice reference.
+///
+/// These mirror the synthesized entry facts produced by the VM's
+/// `init_parameters` (a live, initialized, aligned, non-null data pointer with
+/// a valid length). By materializing them as `Property`s they can be re-proved
+/// at return, so a mutation that breaks the slice (e.g. an out-of-bounds raw
+/// write) is caught even without a user `#[rapx::invariant]`.
+fn build_slice_type_invariants<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def_id: DefId,
+) -> Vec<Property<'tcx>> {
+    let fn_sig = tcx.fn_sig(def_id).skip_binder();
+    let mut results = Vec::new();
+
+    for (index, &param_ty) in fn_sig.inputs().skip_binder().iter().enumerate() {
+        if let Some(elem_ty) = slice_ref_elem_ty(param_ty) {
+            let place = ContractPlace::local(index + 1, Vec::new());
+            results.extend(slice_invariant_properties(tcx, place, elem_ty));
+        }
+    }
+
+    let output = fn_sig.output().skip_binder();
+    if let Some(elem_ty) = slice_ref_elem_ty(output) {
+        let place = ContractPlace {
+            base: PlaceBase::Return,
+            projections: Vec::new(),
+        };
+        results.extend(slice_invariant_properties(tcx, place, elem_ty));
+    }
+
+    results
+}
+
+/// The element type `T` when `ty` is a `&[T]` / `&mut [T]` reference.
+fn slice_ref_elem_ty<'tcx>(ty: rustc_middle::ty::Ty<'tcx>) -> Option<rustc_middle::ty::Ty<'tcx>> {
+    match ty.kind() {
+        rustc_middle::ty::TyKind::Ref(_, inner, _) => match inner.kind() {
+            rustc_middle::ty::TyKind::Slice(elem) => Some(*elem),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The synthesized slice invariant: `NonNull(p) && Init(p, T, len(p)) && Alive(p)`.
+///
+/// `Align` is intentionally omitted: it is immutable (the data pointer's
+/// address never changes) and is already enforced at deref/`from_raw_parts`
+/// sites, while `check_align` cannot discharge it for a generic element type.
+fn slice_invariant_properties<'tcx>(
+    _tcx: TyCtxt<'tcx>,
+    place: ContractPlace<'tcx>,
+    elem_ty: rustc_middle::ty::Ty<'tcx>,
+) -> Vec<Property<'tcx>> {
+    let place_expr = PropertyArg::Expr(ContractExpr::Place(place.clone()));
+    let ty_arg = PropertyArg::Ty(elem_ty);
+    let len_expr =
+        PropertyArg::Expr(ContractExpr::Len(Box::new(ContractExpr::Place(place))));
+    vec![
+        Property::new_atom(PropertyKind::NonNull, vec![place_expr.clone()]),
+        Property::new_atom(PropertyKind::Init, vec![place_expr.clone(), ty_arg, len_expr]),
+        Property::new_atom(PropertyKind::Alive, vec![place_expr]),
+    ]
 }
 
 /// Generate a normalised type path key for lookups in the type-invariants DB.

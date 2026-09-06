@@ -330,6 +330,82 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
         report
     }
 
+    /// Verify built-in type invariants (e.g. the synthesized slice invariant)
+    /// at every path endpoint, mirroring [`verify_struct_invariants`](Self::verify_struct_invariants)
+    /// for `#[rapx::invariant]` structs. Assumes them at entry (as `ContractFact`s)
+    /// and re-proves them at the end of each path, so a mutation that breaks the
+    /// invariant is caught even without a user-written invariant annotation.
+    pub(crate) fn verify_type_invariants(&self) -> VerificationReport<'tcx> {
+        let mut report = VerificationReport::new(self.target.def_id);
+        let invariants = &self.target.type_invariants;
+        if invariants.is_empty() {
+            return report;
+        }
+
+        let entry_facts: Vec<RelevantItem<'tcx>> = invariants
+            .iter()
+            .map(|inv| RelevantItem::ContractFact {
+                property: inv.clone(),
+            })
+            .collect();
+
+        for (checkpoint, tree) in self.build_invariant_trees(false) {
+            rap_debug!(
+                "[rapx::verify] type invariant checkpoint bb{}: {} tree node(s)",
+                checkpoint.block.as_usize(),
+                tree.len()
+            );
+            let paths = tree.to_vecs();
+
+            for (property_index, invariant) in invariants.iter().enumerate() {
+                let results = self.engine.check_invariant_from_tree(
+                    self.target.def_id,
+                    &tree,
+                    checkpoint,
+                    invariant,
+                    &entry_facts,
+                );
+
+                for (path_index, (result, _path_desc)) in results.iter().enumerate() {
+                    let path_description = paths
+                        .get(path_index)
+                        .map(|p| {
+                            p.iter()
+                                .map(|b| b.to_string())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        })
+                        .unwrap_or_default();
+                    report.push(PropertyCheckResult {
+                        checkpoint,
+                        checkpoint_index: checkpoint.block.as_usize(),
+                        path_index,
+                        property_index,
+                        property: invariant.clone(),
+                        result: result.clone(),
+                        diagnostics: Some(format!("vm-type-invariant: {:?}", result)),
+                        path_description,
+                        callee_name: format!("type-invariant(bb{})", checkpoint.block.as_usize()),
+                    });
+                }
+            }
+        }
+
+        // A path that returns early without touching the receiver leaves the
+        // invariant `Unknown`; keep it only when some path actually `Failed`.
+        let has_failed = report
+            .results
+            .iter()
+            .any(|r| matches!(r.result, CheckResult::Failed));
+        if !has_failed {
+            report
+                .results
+                .retain(|r| !matches!(r.result, CheckResult::Unknown));
+        }
+
+        report
+    }
+
     fn build_invariant_trees(
         &self,
         is_constructor: bool,
@@ -540,6 +616,7 @@ impl<'tcx> VerifyRun<'tcx> {
             callee_requires: read_target.callee_requires.clone(),
             caller_requires: accumulated_requires,
             struct_invariants: Vec::new(),
+            type_invariants: Vec::new(),
             raw_ptr_deref_checks: read_target.raw_ptr_deref_checks.clone(),
             static_mut_checks: read_target.static_mut_checks.clone(),
         }
@@ -680,6 +757,22 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                 }
             }
 
+            // Phase 3: built-in type invariant verification
+            if !target.type_invariants.is_empty() && !self.skip_invariant {
+                let driver = VerifyDriver::new_with_repeat(self.tcx, target, planned_repeat);
+                match crate::helpers::mir_utils::catch_panic(|| driver.verify_type_invariants()) {
+                    Ok(type_report) => {
+                        rap_debug!("{}", type_report.describe());
+                        all_results.extend(type_report.results.clone());
+                    }
+                    Err(msg) => {
+                        rap_warn!("Skipping type invariants for {} : {msg}", target_path);
+                        all_results.clear();
+                        fn_crashed = Some(format!("type-invariant: {msg}"));
+                    }
+                }
+            }
+
             if let Some(msg) = &fn_crashed {
                 rap_info!("============================================================");
                 rap_info!("[rapx::verify] function: {target_path}");
@@ -703,6 +796,7 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                     && target.raw_ptr_deref_checks.is_empty()
                     && target.static_mut_checks.is_empty()
                     && target.struct_invariants.is_empty()
+                    && target.type_invariants.is_empty()
                 {
                     rap_info!("============================================================");
                     rap_info!("[rapx::verify] function: {target_path}");
