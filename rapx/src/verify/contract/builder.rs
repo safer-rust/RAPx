@@ -183,14 +183,6 @@ impl<'tcx> Property<'tcx> {
 
     fn build_inbound(tcx: TyCtxt<'tcx>, def_id: DefId, exprs: &[Expr]) -> Self {
         match exprs {
-            [expr] => {
-                let expr = super::resolve::expr_to_pest(tcx, def_id, expr);
-                if matches!(expr, ContractExpr::IndexAccess { .. }) {
-                    Self::new_atom(PropertyKind::InBound, vec![PropertyArg::Expr(expr)])
-                } else {
-                    Self::new_simple(PropertyKind::Unknown)
-                }
-            }
             [_target, ty_expr, len_expr] => {
                 let target = super::resolve::parse_target_arg(tcx, def_id, &exprs[0]);
                 let Some(ty) = super::resolve::parse_type(tcx, def_id, ty_expr, "InBound") else {
@@ -223,7 +215,7 @@ impl<'tcx> Property<'tcx> {
             }
             _ => {
                 rap_error!(
-                    "Wrong args length for InBound Tag! expected 1, 2 or 3, got {}",
+                    "Wrong args length for InBound Tag! expected 2 or 3, got {}",
                     exprs.len()
                 );
                 Self::new_simple(PropertyKind::Unknown)

@@ -184,7 +184,7 @@ pub(crate) enum CallEffect {
     /// The call validates that every element of the array argument `indices_arg`
     /// is `< args[len_arg]` and that the elements are pairwise distinct, returning
     /// `Err` otherwise.  On the `Ok` continuation the caller may assume
-    /// `InBound(index_access(slice_of(len_arg), indices_arg))` and
+    /// `InBound(slice_of(len_arg), indices_arg)` and
     /// `NonOverlap(indices_arg)`.  (A trusted interprocedural summary, like the
     /// std-primitive summaries — the validator's body is not re-proved here.)
     ChecksIndexBoundsDisjoint { indices_arg: usize, len_arg: usize },

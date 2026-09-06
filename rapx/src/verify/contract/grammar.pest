@@ -66,7 +66,7 @@ primary     = { int | call | size_of_call | const_path | place | "(" ~ expr ~ ")
 // ── Builtin functions ───────────────────────────────────────────────────────
 
 call    = { builtin ~ "(" ~ arg_list? ~ ")" }
-builtin = { "size_of" | "align_of" | "len" | "min" | "max" | "index_access" }
+builtin = { "size_of" | "align_of" | "len" | "min" | "max" }
 
 // size_of::<T>() / align_of::<T>() with optional `std::mem::` / `core::mem::`
 // path prefix (turbofish form).

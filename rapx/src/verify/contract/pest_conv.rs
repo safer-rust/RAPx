@@ -338,17 +338,6 @@ fn conv_call<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, pair: Pair<Rule>) -> Contra
                 rhs: Box::new(b),
             }
         }
-        "index_access" => {
-            if args.len() != 2 {
-                return ContractExpr::Unknown;
-            }
-            let slice = conv_arg_expr(tcx, def_id, args[0].clone());
-            let index = conv_arg_expr(tcx, def_id, args[1].clone());
-            ContractExpr::IndexAccess {
-                slice: Box::new(slice),
-                index: Box::new(index),
-            }
-        }
         _ => ContractExpr::Unknown,
     }
 }

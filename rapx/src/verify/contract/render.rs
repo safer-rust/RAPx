@@ -140,7 +140,7 @@ pub(crate) fn display_expr_user_friendly<'tcx>(
         }
         ContractExpr::IndexAccess { slice, index } => {
             format!(
-                "index_access({}, {})",
+                "{}[{}]",
                 display_expr_user_friendly(slice, tcx, struct_def_id, fn_def_id),
                 display_expr_user_friendly(index, tcx, struct_def_id, fn_def_id),
             )

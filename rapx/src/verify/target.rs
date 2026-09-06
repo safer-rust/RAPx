@@ -464,15 +464,10 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
             .collect();
 
         let mut caller_requires = self.get_fn_contracts(def_id);
-        // Supplement inline #[rapx::requires] with JSON contracts from the
-        // standard-library database so that `caller_requires` (used as the
-        // entry-point assumptions when verifying the function body) reflects
-        // the full documented safety contract.  Callee-side resolution is
-        // unchanged.
-        if is_std_crate_def_id(self.tcx, def_id) {
-            let json_contracts = super::contract::json::query_json_contracts(self.tcx, def_id);
-            caller_requires.extend(json_contracts);
-        }
+        // `get_fn_contracts` already resolves the entry contracts with the
+        // right precedence — inline `#[rapx::requires]`, then trait contracts,
+        // then the std JSON database (only when no annotation is present).
+        // Querying JSON again here would duplicate the annotation.
 
         let raw_ptr_deref_checks = build_raw_ptr_deref_checks(self.tcx, def_id);
         let static_mut_checks = build_static_mut_checks(self.tcx, def_id);
