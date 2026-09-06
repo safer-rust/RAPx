@@ -266,48 +266,9 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
                 .collect()
         };
 
-        for (checkpoint, tree) in self.build_invariant_trees(is_constructor) {
-            rap_debug!(
-                "[rapx::verify] struct invariant checkpoint bb{}: {} tree node(s)",
-                checkpoint.block.as_usize(),
-                tree.len()
-            );
-
-            let paths = tree.to_vecs();
-
-            for (property_index, invariant) in invariants.iter().enumerate() {
-                let results = self.engine.check_invariant_from_tree(
-                    self.target.def_id,
-                    &tree,
-                    checkpoint,
-                    invariant,
-                    &entry_facts,
-                );
-
-                for (path_index, (result, _path_desc)) in results.iter().enumerate() {
-                    let path_description = paths
-                        .get(path_index)
-                        .map(|p| {
-                            p.iter()
-                                .map(|b| b.to_string())
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        })
-                        .unwrap_or_default();
-                    report.push(PropertyCheckResult {
-                        checkpoint: checkpoint,
-                        checkpoint_index: checkpoint.block.as_usize(),
-                        path_index,
-                        property_index,
-                        property: invariant.clone(),
-                        result: result.clone(),
-                        diagnostics: Some(format!("vm-invariant: {:?}", result)),
-                        path_description,
-                        callee_name: format!("struct-invariant(bb{})", checkpoint.block.as_usize()),
-                    });
-                }
-            }
-        }
+        report
+            .results
+            .extend(self.run_invariant_checks(invariants, &entry_facts, is_constructor, "struct"));
 
         // For plain methods, and for "wrapped" constructors (`Result<Self>`,
         // `Option<Self>`, `Box<Self>`), `Unknown` results are benign: methods
@@ -331,9 +292,8 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
     }
 
     /// Verify built-in type invariants (e.g. the synthesized slice invariant)
-    /// at every path endpoint, mirroring [`verify_struct_invariants`](Self::verify_struct_invariants)
-    /// for `#[rapx::invariant]` structs. Assumes them at entry (as `ContractFact`s)
-    /// and re-proves them at the end of each path, so a mutation that breaks the
+    /// at every path endpoint. Assumes them at entry (as `ContractFact`s) and
+    /// re-proves them at the end of each path, so a mutation that breaks the
     /// invariant is caught even without a user-written invariant annotation.
     pub(crate) fn verify_type_invariants(&self) -> VerificationReport<'tcx> {
         let mut report = VerificationReport::new(self.target.def_id);
@@ -349,47 +309,9 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
             })
             .collect();
 
-        for (checkpoint, tree) in self.build_invariant_trees(false) {
-            rap_debug!(
-                "[rapx::verify] type invariant checkpoint bb{}: {} tree node(s)",
-                checkpoint.block.as_usize(),
-                tree.len()
-            );
-            let paths = tree.to_vecs();
-
-            for (property_index, invariant) in invariants.iter().enumerate() {
-                let results = self.engine.check_invariant_from_tree(
-                    self.target.def_id,
-                    &tree,
-                    checkpoint,
-                    invariant,
-                    &entry_facts,
-                );
-
-                for (path_index, (result, _path_desc)) in results.iter().enumerate() {
-                    let path_description = paths
-                        .get(path_index)
-                        .map(|p| {
-                            p.iter()
-                                .map(|b| b.to_string())
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        })
-                        .unwrap_or_default();
-                    report.push(PropertyCheckResult {
-                        checkpoint,
-                        checkpoint_index: checkpoint.block.as_usize(),
-                        path_index,
-                        property_index,
-                        property: invariant.clone(),
-                        result: result.clone(),
-                        diagnostics: Some(format!("vm-type-invariant: {:?}", result)),
-                        path_description,
-                        callee_name: format!("type-invariant(bb{})", checkpoint.block.as_usize()),
-                    });
-                }
-            }
-        }
+        report
+            .results
+            .extend(self.run_invariant_checks(invariants, &entry_facts, false, "type"));
 
         // A path that returns early without touching the receiver leaves the
         // invariant `Unknown`; keep it only when some path actually `Failed`.
@@ -404,6 +326,63 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
         }
 
         report
+    }
+
+    /// Shared core for `verify_struct_invariants` / `verify_type_invariants`:
+    /// enumerate the paths to each invariant checkpoint (`build_invariant_trees`)
+    /// and check every invariant against every path, producing one
+    /// `PropertyCheckResult` per (checkpoint, invariant, path) triple.
+    fn run_invariant_checks(
+        &self,
+        invariants: &[Property<'tcx>],
+        entry_facts: &[RelevantItem<'tcx>],
+        is_constructor: bool,
+        label: &str,
+    ) -> Vec<PropertyCheckResult<'tcx>> {
+        let mut results = Vec::new();
+        for (checkpoint, tree) in self.build_invariant_trees(is_constructor) {
+            rap_debug!(
+                "[rapx::verify] {label} invariant checkpoint bb{}: {} tree node(s)",
+                checkpoint.block.as_usize(),
+                tree.len()
+            );
+
+            let paths = tree.to_vecs();
+
+            for (property_index, invariant) in invariants.iter().enumerate() {
+                let check_results = self.engine.check_invariant_from_tree(
+                    self.target.def_id,
+                    &tree,
+                    checkpoint,
+                    invariant,
+                    entry_facts,
+                );
+
+                for (path_index, (result, _path_desc)) in check_results.iter().enumerate() {
+                    let path_description = paths
+                        .get(path_index)
+                        .map(|p| {
+                            p.iter()
+                                .map(|b| b.to_string())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        })
+                        .unwrap_or_default();
+                    results.push(PropertyCheckResult {
+                        checkpoint,
+                        checkpoint_index: checkpoint.block.as_usize(),
+                        path_index,
+                        property_index,
+                        property: invariant.clone(),
+                        result: result.clone(),
+                        diagnostics: Some(format!("vm-{label}-invariant: {:?}", result)),
+                        path_description,
+                        callee_name: format!("{label}-invariant(bb{})", checkpoint.block.as_usize()),
+                    });
+                }
+            }
+        }
+        results
     }
 
     fn build_invariant_trees(
