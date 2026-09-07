@@ -22,7 +22,7 @@
     ]
   },
   "[T]": {
-    "comment": "slice \u2014 non-null, aligned data pointer; empty, or allocated + initialized",
+    "comment": "slice \u2014 non-null, aligned data pointer; length fits isize; empty, or allocated + initialized",
     "invariants": [
       {
         "tag": "NonNull",
@@ -35,6 +35,12 @@
         "args": [
           "$self",
           "$elem"
+        ]
+      },
+      {
+        "tag": "ValidNum",
+        "args": [
+          "size_of($elem) * len($self) <= isize::MAX"
         ]
       },
       {

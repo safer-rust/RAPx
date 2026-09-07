@@ -13,7 +13,9 @@
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::{Ty, TyCtxt};
 
-use super::contract::{Property, PropertyArg, PropertyKind, json::AnyItem};
+use super::contract::{
+    ContractExpr, NumericPredicate, Property, PropertyArg, PropertyKind, json::AnyItem,
+};
 
 /// For each function parameter (and the return type), look up the type's
 /// invariants from `std-type-invariants.json` and create preconditions.
@@ -199,13 +201,20 @@ fn instantiate_entry<'tcx>(
 ///
 /// The slice invariant's only type arguments are the `$elem` placeholders, so
 /// this recovers the concrete element type (including composites such as
-/// `[T; N]`) that the name-based JSON type parser cannot express.
+/// `[T; N]`) that the name-based JSON type parser cannot express. It also
+/// reaches `size_of`/`align_of` type arguments inside `ValidNum` predicates.
 fn replace_ty_args<'tcx>(property: &mut Property<'tcx>, ty: Ty<'tcx>) {
     match property {
         Property::Atom(atom) => {
             for arg in &mut atom.args {
-                if let PropertyArg::Ty(t) = arg {
-                    *t = ty;
+                match arg {
+                    PropertyArg::Ty(t) => *t = ty,
+                    PropertyArg::Predicates(preds) => {
+                        for pred in preds {
+                            replace_pred_ty(pred, ty);
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -219,6 +228,39 @@ fn replace_ty_args<'tcx>(property: &mut Property<'tcx>, ty: Ty<'tcx>) {
                 replace_ty_args(disjunct, ty);
             }
         }
+    }
+}
+
+/// Replace `size_of`/`align_of` type arguments inside a numeric predicate.
+fn replace_pred_ty<'tcx>(pred: &mut NumericPredicate<'tcx>, ty: Ty<'tcx>) {
+    replace_expr_ty(&mut pred.lhs, ty);
+    replace_expr_ty(&mut pred.rhs, ty);
+}
+
+/// Replace `size_of`/`align_of` type arguments inside a contract expression.
+fn replace_expr_ty<'tcx>(expr: &mut ContractExpr<'tcx>, ty: Ty<'tcx>) {
+    match expr {
+        ContractExpr::SizeOf(t) | ContractExpr::AlignOf(t) => *t = ty,
+        ContractExpr::Len(inner) => replace_expr_ty(inner, ty),
+        ContractExpr::IndexAccess { slice, index } => {
+            replace_expr_ty(slice, ty);
+            replace_expr_ty(index, ty);
+        }
+        ContractExpr::Binary { lhs, rhs, .. } => {
+            replace_expr_ty(lhs, ty);
+            replace_expr_ty(rhs, ty);
+        }
+        ContractExpr::Unary { expr: inner, .. } => replace_expr_ty(inner, ty),
+        ContractExpr::If {
+            cond,
+            then_expr,
+            else_expr,
+        } => {
+            replace_pred_ty(cond, ty);
+            replace_expr_ty(then_expr, ty);
+            replace_expr_ty(else_expr, ty);
+        }
+        _ => {}
     }
 }
 
