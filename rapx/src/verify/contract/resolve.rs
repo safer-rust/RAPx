@@ -321,12 +321,21 @@ fn parse_interval_predicates<'tcx>(
                 tcx, def_id, value, lower, true, upper, true,
             ))
         }
-        Expr::Lit(expr_lit) => {
-            let Lit::Str(range_lit) = &expr_lit.lit else {
-                return None;
-            };
-            parse_string_interval(tcx, def_id, value, &range_lit.value())
-        }
+        Expr::Lit(expr_lit) => match &expr_lit.lit {
+            Lit::Str(range_lit) => {
+                parse_string_interval(tcx, def_id, value, &range_lit.value())
+            }
+            Lit::Int(int_lit) => {
+                // A bare integer `ValidNum(v, n)` is shorthand for the singleton
+                // interval `[n, n]`, i.e. `v == n`.
+                let n = int_lit.base10_parse::<u64>().ok()?;
+                let n_expr = syn::parse_str::<Expr>(&n.to_string()).ok()?;
+                Some(build_interval_predicates(
+                    tcx, def_id, value, &n_expr, true, &n_expr, true,
+                ))
+            }
+            _ => None,
+        },
         _ => None,
     }
 }

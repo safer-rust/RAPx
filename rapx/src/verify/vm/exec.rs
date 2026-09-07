@@ -443,8 +443,23 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                             self.ctx,
                             &[&len, &Int::from_u64(self.ctx, elem_size.max(1))],
                         );
+                        // For a generic element type the rustc layout collapses to
+                        // align 1; recover the real (minimum) alignment from the
+                        // trait bounds so `check_align` can discharge `Align` at
+                        // return, mirroring `size_of_generic_param` above.
+                        let mut elem_align = self.align_of_ty(*elem_ty);
+                        if elem_align <= 1 {
+                            let min_a = crate::helpers::mir_utils::min_align_of_generic_param(
+                                self.tcx,
+                                self.caller_def_id,
+                                *elem_ty,
+                            );
+                            if min_a > 1 {
+                                elem_align = min_a;
+                            }
+                        }
                         let (data_alloc_id, data_base) =
-                            self.allocate(data_size, self.align_of_ty(*elem_ty), Some(*elem_ty));
+                            self.allocate(data_size, elem_align, Some(*elem_ty));
                         if let Some(ref_alloc_id) = self.alloc_for_local(local) {
                             self.alloc_mut(ref_alloc_id).slice_data = Some(data_alloc_id);
                         }
@@ -1750,6 +1765,26 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                             .get(&place.local)
                             .map_or(false, |v| v.invariants.in_bounds)
                     };
+                    // An empty slice (`&[]` from `align_to`'s `offset > len` /
+                    // ZST branch) is built as `&*dangling`: the dangling raw
+                    // pointer (`NonNull::dangling`) is aligned to the *element*
+                    // type, but its provenance here may reuse `self`'s allocation
+                    // (whose align is that of `T`).  Record the element type's
+                    // alignment so `check_align` can discharge it.
+                    let slice_elem_align = if is_slice_ref && is_from_raw_parts_like && has_deref {
+                        if let rustc_middle::ty::TyKind::Ref(_, inner, _) = dest_ty.kind() {
+                            if let rustc_middle::ty::TyKind::Slice(elem) = inner.kind() {
+                                let a = self.align_of_ty(*elem);
+                                if a > 1 { Some(a) } else { None }
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
                     let val = VmValue {
                         term: addr.term,
                         ty: dest_ty,
@@ -1759,7 +1794,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                             aligned: self.check_place_alignment(place),
                             init: true,
                             in_bounds: src_in_bounds,
-                            align_n: alloc_align,
+                            align_n: slice_elem_align.or(alloc_align),
                             is_field_offset: false,
                         },
                     };

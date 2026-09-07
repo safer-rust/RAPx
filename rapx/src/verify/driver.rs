@@ -22,8 +22,7 @@ use crate::verify::property_checker::{
 };
 use crate::verify::target::get_contract_from_annotation;
 
-use crate::compat::{FxHashMap, FxHashSet};
-use rustc_middle::mir::BasicBlock;
+use crate::compat::FxHashMap;
 use rustc_middle::ty::TyCtxt;
 
 use super::{
@@ -430,23 +429,30 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
                 }
             }
         } else {
-            let mut seen_paths = FxHashSet::default();
-            for path in all_paths.iter() {
-                if path.is_empty() {
-                    continue;
-                }
-                if !seen_paths.insert(path.clone()) {
-                    continue;
-                }
-                let last_block = BasicBlock::from(*path.last().unwrap());
+            // Method: re-prove the invariant only at `Return` blocks.  Checking
+            // every path's last block would also pick up panicking paths (e.g.
+            // `assert!` failures), whose return place is never initialized, so
+            // their `NonNull`/`Align`/`Allocated` would spuriously fail.
+            let return_blocks = collect_return_block_indices(self.tcx, self.target.def_id);
+            for &return_block in &return_blocks {
                 let checkpoint = CheckpointLocation {
                     caller: self.target.def_id,
-                    block: last_block,
+                    block: return_block,
                 };
-                trees_by_checkpoint
-                    .entry(checkpoint)
-                    .or_insert_with(PathTree::new)
-                    .insert(path.as_slice());
+                let mut tree = PathTree::new();
+                let _ = all_paths.walk_prefixes(
+                    return_block.as_usize(),
+                    &mut |prefix: &[usize]| -> bool {
+                        if tree.len() >= PATH_LIMIT {
+                            return false;
+                        }
+                        tree.insert(prefix);
+                        true
+                    },
+                );
+                if !tree.is_empty() {
+                    trees_by_checkpoint.insert(checkpoint, tree);
+                }
             }
         }
 

@@ -28,8 +28,8 @@ use std::collections::{HashMap, HashSet};
 
 use super::{
     contract::{
-        ContractExpr, ContractPlace, PlaceBase, Property, PropertyArg, PropertyKind,
-        attr::parse_rapx_attr,
+        ContractExpr, ContractPlace, NumericPredicate, PlaceBase, Property, PropertyArg,
+        PropertyKind, RelOp, attr::parse_rapx_attr,
     },
     path_extractor::PathExtractor,
 };
@@ -1762,11 +1762,13 @@ fn slice_ref_elem_ty<'tcx>(ty: rustc_middle::ty::Ty<'tcx>) -> Option<rustc_middl
     }
 }
 
-/// The synthesized slice invariant: `NonNull(p) && Init(p, T, len(p)) && Allocated(p, T, len(p))`.
+/// The synthesized slice invariant:
+/// `NonNull(p) && Align(p, T) && (len(p) == 0 || (Allocated(p, T, len(p)) && Init(p, T, len(p))))`.
 ///
-/// `Align` is intentionally omitted: it is immutable (the data pointer's
-/// address never changes) and is already enforced at deref/`from_raw_parts`
-/// sites, while `check_align` cannot discharge it for a generic element type.
+/// An empty slice (`len == 0`) still requires its data pointer to be non-null
+/// and properly aligned — Rust guarantees this even for size-0 access (a
+/// dangling `NonNull::dangling` is used), so `NonNull`/`Align` apply to every
+/// slice. `Allocated`/`Init` apply only to non-empty slices, which have elements.
 fn slice_invariant_properties<'tcx>(
     _tcx: TyCtxt<'tcx>,
     place: ContractPlace<'tcx>,
@@ -1775,14 +1777,40 @@ fn slice_invariant_properties<'tcx>(
     let place_expr = PropertyArg::Expr(ContractExpr::Place(place.clone()));
     let ty_arg = PropertyArg::Ty(elem_ty);
     let len_expr =
-        PropertyArg::Expr(ContractExpr::Len(Box::new(ContractExpr::Place(place))));
-    vec![
-        Property::new_atom(PropertyKind::NonNull, vec![place_expr.clone()]),
+        PropertyArg::Expr(ContractExpr::Len(Box::new(ContractExpr::Place(place.clone()))));
+
+    // Empty slice: `len(self) == 0`.
+    let len_zero = Property::new_atom(
+        PropertyKind::ValidNum,
+        vec![PropertyArg::Predicates(vec![NumericPredicate::new(
+            ContractExpr::Len(Box::new(ContractExpr::Place(place.clone()))),
+            RelOp::Eq,
+            ContractExpr::Const(0),
+        )])],
+    );
+
+    // Non-empty: `Allocated(self, T, len(self)) && Init(self, T, len(self))`.
+    let nonempty = Property::conjunction(vec![
+        Property::new_atom(
+            PropertyKind::Allocated,
+            vec![place_expr.clone(), ty_arg.clone(), len_expr.clone()],
+        ),
         Property::new_atom(
             PropertyKind::Init,
             vec![place_expr.clone(), ty_arg.clone(), len_expr.clone()],
         ),
-        Property::new_atom(PropertyKind::Allocated, vec![place_expr, ty_arg, len_expr]),
+    ]);
+
+    // `any(len(self) == 0, (Allocated, Init))`.
+    let allocated_or_empty = Property::new_or(vec![len_zero, nonempty]);
+
+    vec![
+        Property::new_atom(PropertyKind::NonNull, vec![place_expr.clone()]),
+        Property::new_atom(
+            PropertyKind::Align,
+            vec![place_expr, ty_arg],
+        ),
+        allocated_or_empty,
     ]
 }
 
