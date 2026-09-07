@@ -53,6 +53,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 is_field_offset: false,
             });
         let mut current_ty = self.body.local_decls[place.local].ty;
+        let mut field_path: Vec<usize> = Vec::new();
 
         for proj in place.projection.iter() {
             let mut handled = false;
@@ -82,14 +83,53 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             }
             match proj.kind() {
                 ProjectionElem::Field(field_idx, _) => {
-                    let field_offset = self.field_offset_in_bytes(current_ty, field_idx.as_usize());
+                    let fidx = field_idx.as_usize();
+                    field_path.push(fidx);
+                    let field_offset = self.field_offset_in_bytes(current_ty, fidx);
                     let field_off = Int::from_u64(self.ctx, field_offset);
-                    term = Int::add(self.ctx, &[&term, &field_off]);
-                    if let Some(ref mut prov) = provenance {
-                        prov.offset = Int::add(self.ctx, &[&prov.offset, &field_off]);
+                    // Advance `current_ty` to the field's type so that subsequent
+                    // projections resolve their offsets against the right layout.
+                    let field_ty = match current_ty.kind() {
+                        TyKind::Adt(adt_def, substs) => {
+                            let variant = adt_def.non_enum_variant();
+                            variant
+                                .fields
+                                .get(rustc_abi::FieldIdx::from_usize(fidx))
+                                .map(|f| crate::helpers::mir_utils::field_ty(self.tcx, f, substs))
+                                .unwrap_or(current_ty)
+                        }
+                        _ => current_ty,
+                    };
+                    // A DST slice field (e.g. `CStr { inner: [u8] }`) carries its
+                    // own allocation so its length stays symbolic.  Prefer that
+                    // allocation over the parent struct's byte-offset address,
+                    // otherwise `&raw const self.inner` collapses the slice length
+                    // to the struct's own (minimal) size.
+                    let field_replacement = if matches!(field_ty.kind(), TyKind::Slice(_)) {
+                        self.field_value(place.local, &field_path).and_then(|fv| {
+                            fv.provenance
+                                .clone()
+                                .map(|p| (fv.term.clone(), p))
+                        })
+                    } else {
+                        None
+                    };
+                    match field_replacement {
+                        Some((fv_term, fv_prov)) => {
+                            term = fv_term;
+                            provenance = Some(fv_prov);
+                        }
+                        None => {
+                            term = Int::add(self.ctx, &[&term, &field_off]);
+                            if let Some(ref mut prov) = provenance {
+                                prov.offset = Int::add(self.ctx, &[&prov.offset, &field_off]);
+                            }
+                        }
                     }
+                    current_ty = field_ty;
                 }
                 ProjectionElem::Deref => {
+                    field_path.clear();
                     let pointed = self.locals.get(&place.local)?;
                     term = pointed.term.clone();
                     provenance = pointed.provenance.clone();

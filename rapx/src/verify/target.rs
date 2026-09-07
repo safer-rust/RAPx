@@ -1762,7 +1762,7 @@ fn slice_ref_elem_ty<'tcx>(ty: rustc_middle::ty::Ty<'tcx>) -> Option<rustc_middl
     }
 }
 
-/// The synthesized slice invariant: `NonNull(p) && Init(p, T, len(p)) && Alive(p)`.
+/// The synthesized slice invariant: `NonNull(p) && Init(p, T, len(p)) && Allocated(p, T, len(p))`.
 ///
 /// `Align` is intentionally omitted: it is immutable (the data pointer's
 /// address never changes) and is already enforced at deref/`from_raw_parts`
@@ -1778,8 +1778,11 @@ fn slice_invariant_properties<'tcx>(
         PropertyArg::Expr(ContractExpr::Len(Box::new(ContractExpr::Place(place))));
     vec![
         Property::new_atom(PropertyKind::NonNull, vec![place_expr.clone()]),
-        Property::new_atom(PropertyKind::Init, vec![place_expr.clone(), ty_arg, len_expr]),
-        Property::new_atom(PropertyKind::Alive, vec![place_expr]),
+        Property::new_atom(
+            PropertyKind::Init,
+            vec![place_expr.clone(), ty_arg.clone(), len_expr.clone()],
+        ),
+        Property::new_atom(PropertyKind::Allocated, vec![place_expr, ty_arg, len_expr]),
     ]
 }
 

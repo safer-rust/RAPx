@@ -494,7 +494,7 @@ fn alive_unsound_02() {
     assert_unproved_exclusive(
         &output,
         "slice_tied_to_unrelated_host",
-        &["ValidNum", "Alive", "ValidPtr", "Init", "NonNull", "Alias"],
+        &["ValidNum", "Alive", "ValidPtr", "Init", "NonNull", "Alias", "Allocated"],
     );
 }
 
@@ -617,7 +617,7 @@ fn alias_unsound_02() {
 #[test]
 fn alias_unsound_20() {
     let output = run_with_args("verify_units/alias_unsound_20", CMD_VERIFY_TARGETED);
-    assert_unproved_exclusive_with_result(&output, "as_bytes_mut_ptr_len_missing_alias", &["Alias", "ValidNum"], "UNSOUND");
+    assert_unproved_exclusive_with_result(&output, "as_bytes_mut_ptr_len_missing_alias", &["Alias", "ValidNum", "Allocated"], "UNSOUND");
 }
 
 // Custom test: from_raw_parts wrong element type causes multiple failures
@@ -642,7 +642,7 @@ fn alias_unsound_06() {
 #[test]
 fn alias_unsound_07() {
     let output = run_with_args("verify_units/alias_unsound_07", &["verify"]);
-    assert_unproved_exclusive(&output, "make_mut_slice", &["Alias", "Alive", "Init", "NonNull", "ValidPtr", "ValidNum"]);
+    assert_unproved_exclusive(&output, "make_mut_slice", &["Alias", "Alive", "Init", "NonNull", "ValidPtr", "ValidNum", "Allocated"]);
 }
 
 // ================ NonOverlap Unsound Cases =============

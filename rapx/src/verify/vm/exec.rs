@@ -449,9 +449,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                             self.alloc_mut(ref_alloc_id).slice_data = Some(data_alloc_id);
                         }
                         self.alloc_mut(data_alloc_id).initialized = true;
-                        // The built-in slice invariant (`NonNull`/`Init`/`Alive`)
-                        // is established here at entry, mirroring `Alive(self)`.
-                        self.alloc_mut(data_alloc_id).alive_assumed = true;
                         self.set_local(
                             local,
                             VmValue {
@@ -596,6 +593,36 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                                             },
                                         );
                                     }
+                                } else if let rustc_middle::ty::TyKind::Slice(elem_ty) =
+                                    field_ty.kind()
+                                {
+                                    // DST slice field (e.g. `CStr { inner: [u8] }`):
+                                    // model it as an external allocation so its length
+                                    // stays symbolic instead of defaulting to a single
+                                    // element (which would make `inner.len()` == 1).
+                                    let elem_align = 1u64.max(self.align_of_ty(*elem_ty));
+                                    let max_size = Int::from_u64(self.ctx, i64::MAX as u64);
+                                    let (data_alloc_id, data_base) =
+                                        self.allocate_external(max_size, elem_align, Some(*elem_ty));
+                                    self.alloc_mut(data_alloc_id).initialized = true;
+                                    self.set_field_value(
+                                        local,
+                                        vec![idx],
+                                        VmValue {
+                                            term: data_base,
+                                            ty: field_ty,
+                                            provenance: Some(Provenance {
+                                                alloc_id: data_alloc_id,
+                                                offset: Int::from_u64(self.ctx, 0),
+                                                is_field_offset: false,
+                                            }),
+                                            invariants: ValueInvariants {
+                                                non_null: true,
+                                                init: true,
+                                                ..Default::default()
+                                            },
+                                        },
+                                    );
                                 } else if matches!(
                                     field_ty.kind(),
                                     rustc_middle::ty::TyKind::Uint(_)
