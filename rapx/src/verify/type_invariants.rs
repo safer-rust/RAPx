@@ -241,8 +241,18 @@ fn is_numeric_field_access(s: &str) -> bool {
 fn type_path_key<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> (String, Option<Ty<'tcx>>) {
     match ty.kind() {
         rustc_middle::ty::TyKind::Adt(adt_def, _) => {
-            let path = tcx.def_path_str(adt_def.did());
-            (path, None)
+            // Build the canonical `crate::module::Type` path from the *defining*
+            // crate, so the key is stable regardless of whether the type is
+            // referenced through a `std` / `alloc` re-export (`def_path_str`
+            // alone is crate-context dependent, e.g. `std::num::NonZero`).
+            let def_id = adt_def.did();
+            let crate_name = tcx.crate_name(def_id.krate);
+            let path = tcx
+                .def_path(def_id)
+                .to_string_no_crate_verbose()
+                .trim_start_matches("::")
+                .to_string();
+            (format!("{crate_name}::{path}"), None)
         }
         rustc_middle::ty::TyKind::Ref(_, inner, _) => match inner.kind() {
             rustc_middle::ty::TyKind::Slice(elem) => ("[T]".to_string(), Some(*elem)),

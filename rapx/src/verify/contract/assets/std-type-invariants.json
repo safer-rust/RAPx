@@ -1,28 +1,6 @@
 {
-  "core::num::NonZero": {
-    "comment": "NonZero integer \u2014 inner value must be non-zero",
-    "invariants": [
-      {
-        "tag": "ValidNum",
-        "args": [
-          "$self.0 != 0"
-        ]
-      }
-    ]
-  },
   "core::num::nonzero::NonZero": {
-    "comment": "NonZero integer (full path) \u2014 inner value must be non-zero",
-    "invariants": [
-      {
-        "tag": "ValidNum",
-        "args": [
-          "$self.0 != 0"
-        ]
-      }
-    ]
-  },
-  "std::num::NonZero": {
-    "comment": "NonZero integer (std path) \u2014 inner value must be non-zero",
+    "comment": "NonZero integer \u2014 inner value must be non-zero",
     "invariants": [
       {
         "tag": "ValidNum",
