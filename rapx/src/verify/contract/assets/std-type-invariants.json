@@ -42,6 +42,52 @@
         ]
       }
     ]
+  },
+  "[T]": {
+    "comment": "slice \u2014 non-null, aligned data pointer; empty, or allocated + initialized",
+    "invariants": [
+      {
+        "tag": "NonNull",
+        "args": [
+          "$self"
+        ]
+      },
+      {
+        "tag": "Align",
+        "args": [
+          "$self",
+          "$elem"
+        ]
+      },
+      {
+        "any": [
+          {
+            "tag": "ValidNum",
+            "args": [
+              "len($self) == 0"
+            ]
+          },
+          [
+            {
+              "tag": "Allocated",
+              "args": [
+                "$self",
+                "$elem",
+                "len($self)"
+              ]
+            },
+            {
+              "tag": "Init",
+              "args": [
+                "$self",
+                "$elem",
+                "len($self)"
+              ]
+            }
+          ]
+        ]
+      }
+    ]
   }
 }
 

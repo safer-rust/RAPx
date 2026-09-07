@@ -28,10 +28,11 @@ use std::collections::{HashMap, HashSet};
 
 use super::{
     contract::{
-        ContractExpr, ContractPlace, NumericPredicate, PlaceBase, Property, PropertyArg,
-        PropertyKind, RelOp, attr::parse_rapx_attr,
+        ContractExpr, ContractPlace, PlaceBase, Property, PropertyArg, PropertyKind,
+        attr::parse_rapx_attr,
     },
     path_extractor::PathExtractor,
+    type_invariants::build_type_invariants_from_params,
 };
 use crate::helpers::fn_info::get_adt_def_id_by_adt_method;
 use crate::helpers::mir_scan::{Checkpoint, collect_unsafe_callsites};
@@ -491,15 +492,11 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
         }
 
         // Standard-library type invariants: for each function parameter (and
-        // the return type for constructors), look up the type's invariants
-        // from std-type-invariants.json and add them as preconditions.
-        let mut type_invariants = build_type_invariants_from_params(self.tcx, def_id);
+        // the return type), look up the type's invariants from
+        // std-type-invariants.json (including the built-in `[T]` slice key)
+        // and add them as preconditions.
+        let type_invariants = build_type_invariants_from_params(self.tcx, def_id);
         caller_requires.extend(type_invariants.clone());
-        // Built-in slice invariants (`NonNull`/`Init`/`Alive`) for `&[T]`/
-        // `&mut [T]` receivers and returns.  Their entry facts are synthesized
-        // by the VM's `init_parameters` (not asserted via `caller_requires`),
-        // so they are re-proved at return through `type_invariants` only.
-        type_invariants.extend(build_slice_type_invariants(self.tcx, def_id));
 
         FunctionTarget {
             def_id,
@@ -1588,241 +1585,6 @@ fn build_static_mut_checks<'tcx>(
             )
         })
         .collect()
-}
-
-/// For each function parameter (and the return type), look up the type's
-/// invariants from `std-type-invariants.json` and create preconditions.
-fn build_type_invariants_from_params<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    def_id: DefId,
-) -> Vec<Property<'tcx>> {
-    let db = crate::verify::contract::json::get_std_type_invariants();
-    if db.is_empty() {
-        return Vec::new();
-    }
-
-    let fn_sig = tcx.fn_sig(def_id).skip_binder();
-    let inputs = fn_sig.inputs().skip_binder();
-    let output = fn_sig.output().skip_binder();
-
-    let mut results = Vec::new();
-
-    // Use the existing signature parser for parameter names.
-    let (param_names, _param_tys) = crate::helpers::name::parse_signature(tcx, def_id);
-
-    // Add invariants for each parameter
-    for (index, &param_ty) in inputs.iter().enumerate() {
-        if param_ty.is_primitive() {
-            continue;
-        }
-        let param_name = param_names.get(index).cloned().unwrap_or_default();
-        let type_path = type_path_key(tcx, param_ty);
-        collect_type_invariants(tcx, def_id, &db, &type_path, &param_name, &mut results);
-    }
-
-    // Also add invariants for the return type
-    if !output.is_unit() && !output.is_primitive() {
-        let type_path = type_path_key(tcx, output);
-        collect_type_invariants(tcx, def_id, &db, &type_path, "return", &mut results);
-    }
-
-    results
-}
-
-/// Look up the type path in the DB and add instantiated invariants to `results`.
-fn collect_type_invariants<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    def_id: DefId,
-    db: &std::collections::HashMap<String, crate::verify::contract::json::TypeInvariantEntry>,
-    type_path: &str,
-    param_name: &str,
-    results: &mut Vec<Property<'tcx>>,
-) {
-    if let Some(entry) = db.get(type_path) {
-        for prop_entry in &entry.invariants {
-            if let Some(property) = instantiate_type_invariant(tcx, def_id, prop_entry, param_name)
-            {
-                results.push(property);
-            }
-        }
-    }
-    // Also try with common alloc/std prefixes
-    for prefix in ["alloc::", "std::"] {
-        let prefixed = format!("{prefix}{type_path}");
-        if prefixed != type_path {
-            if let Some(entry) = db.get(&prefixed) {
-                for prop_entry in &entry.invariants {
-                    if let Some(property) =
-                        instantiate_type_invariant(tcx, def_id, prop_entry, param_name)
-                    {
-                        results.push(property);
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Create a property from a type invariant entry, substituting the parameter name.
-fn instantiate_type_invariant<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    def_id: DefId,
-    entry: &crate::verify::contract::json::JsonProperty,
-    param_name: &str,
-) -> Option<Property<'tcx>> {
-    let mut exprs: Vec<syn::Expr> = Vec::new();
-    for arg_str in &entry.args {
-        // Substitute the `$self` placeholder with the actual parameter name
-        // (or "return"), so e.g. "$self.0 != 0" becomes "param.0 != 0".
-        let substituted = arg_str.replace("$self", param_name);
-        // Substitute struct field references like "0" → "param_name.0"
-        let resolved = if is_numeric_field_access(&substituted) {
-            format!("{}.{}", param_name, substituted)
-        } else {
-            substituted
-        };
-        match syn::parse_str::<syn::Expr>(&resolved) {
-            Ok(expr) => exprs.push(expr),
-            Err(_) => {
-                rap_debug!(
-                    "  [type-invariant] failed to parse arg '{}' for tag {}",
-                    resolved,
-                    entry.tag
-                );
-                return None;
-            }
-        }
-    }
-    if exprs.is_empty() {
-        return None;
-    }
-    let mut property = Property::new(tcx, def_id, &entry.tag, &exprs);
-    property.apply_kind(entry.kind.as_deref());
-    if !matches!(
-        property.kind(),
-        Some(crate::verify::contract::PropertyKind::Unknown)
-    ) {
-        Some(property)
-    } else {
-        None
-    }
-}
-
-/// Check if a string looks like a numeric field access (e.g. "0").
-fn is_numeric_field_access(s: &str) -> bool {
-    let trimmed = s.trim();
-    !trimmed.is_empty()
-        && trimmed
-            .split('.')
-            .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
-}
-
-/// Generate the built-in slice invariant for every `&[T]`/`&mut [T]` parameter
-/// and for the return type when it is a slice reference.
-///
-/// These mirror the synthesized entry facts produced by the VM's
-/// `init_parameters` (a live, initialized, aligned, non-null data pointer with
-/// a valid length). By materializing them as `Property`s they can be re-proved
-/// at return, so a mutation that breaks the slice (e.g. an out-of-bounds raw
-/// write) is caught even without a user `#[rapx::invariant]`.
-fn build_slice_type_invariants<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    def_id: DefId,
-) -> Vec<Property<'tcx>> {
-    let fn_sig = tcx.fn_sig(def_id).skip_binder();
-    let mut results = Vec::new();
-
-    for (index, &param_ty) in fn_sig.inputs().skip_binder().iter().enumerate() {
-        if let Some(elem_ty) = slice_ref_elem_ty(param_ty) {
-            let place = ContractPlace::local(index + 1, Vec::new());
-            results.extend(slice_invariant_properties(tcx, place, elem_ty));
-        }
-    }
-
-    let output = fn_sig.output().skip_binder();
-    if let Some(elem_ty) = slice_ref_elem_ty(output) {
-        let place = ContractPlace {
-            base: PlaceBase::Return,
-            projections: Vec::new(),
-        };
-        results.extend(slice_invariant_properties(tcx, place, elem_ty));
-    }
-
-    results
-}
-
-/// The element type `T` when `ty` is a `&[T]` / `&mut [T]` reference.
-fn slice_ref_elem_ty<'tcx>(ty: rustc_middle::ty::Ty<'tcx>) -> Option<rustc_middle::ty::Ty<'tcx>> {
-    match ty.kind() {
-        rustc_middle::ty::TyKind::Ref(_, inner, _) => match inner.kind() {
-            rustc_middle::ty::TyKind::Slice(elem) => Some(*elem),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-/// The synthesized slice invariant:
-/// `NonNull(p) && Align(p, T) && (len(p) == 0 || (Allocated(p, T, len(p)) && Init(p, T, len(p))))`.
-///
-/// An empty slice (`len == 0`) still requires its data pointer to be non-null
-/// and properly aligned — Rust guarantees this even for size-0 access (a
-/// dangling `NonNull::dangling` is used), so `NonNull`/`Align` apply to every
-/// slice. `Allocated`/`Init` apply only to non-empty slices, which have elements.
-fn slice_invariant_properties<'tcx>(
-    _tcx: TyCtxt<'tcx>,
-    place: ContractPlace<'tcx>,
-    elem_ty: rustc_middle::ty::Ty<'tcx>,
-) -> Vec<Property<'tcx>> {
-    let place_expr = PropertyArg::Expr(ContractExpr::Place(place.clone()));
-    let ty_arg = PropertyArg::Ty(elem_ty);
-    let len_expr =
-        PropertyArg::Expr(ContractExpr::Len(Box::new(ContractExpr::Place(place.clone()))));
-
-    // Empty slice: `len(self) == 0`.
-    let len_zero = Property::new_atom(
-        PropertyKind::ValidNum,
-        vec![PropertyArg::Predicates(vec![NumericPredicate::new(
-            ContractExpr::Len(Box::new(ContractExpr::Place(place.clone()))),
-            RelOp::Eq,
-            ContractExpr::Const(0),
-        )])],
-    );
-
-    // Non-empty: `Allocated(self, T, len(self)) && Init(self, T, len(self))`.
-    let nonempty = Property::conjunction(vec![
-        Property::new_atom(
-            PropertyKind::Allocated,
-            vec![place_expr.clone(), ty_arg.clone(), len_expr.clone()],
-        ),
-        Property::new_atom(
-            PropertyKind::Init,
-            vec![place_expr.clone(), ty_arg.clone(), len_expr.clone()],
-        ),
-    ]);
-
-    // `any(len(self) == 0, (Allocated, Init))`.
-    let allocated_or_empty = Property::new_or(vec![len_zero, nonempty]);
-
-    vec![
-        Property::new_atom(PropertyKind::NonNull, vec![place_expr.clone()]),
-        Property::new_atom(
-            PropertyKind::Align,
-            vec![place_expr, ty_arg],
-        ),
-        allocated_or_empty,
-    ]
-}
-
-/// Generate a normalised type path key for lookups in the type-invariants DB.
-fn type_path_key<'tcx>(tcx: TyCtxt<'tcx>, ty: rustc_middle::ty::Ty<'tcx>) -> String {
-    match ty.kind() {
-        rustc_middle::ty::TyKind::Adt(adt_def, _) => {
-            let path = tcx.def_path_str(adt_def.did());
-            path
-        }
-        _ => format!("{ty:?}"),
-    }
 }
 
 fn is_drop_impl(tcx: TyCtxt<'_>, fn_did: DefId) -> bool {
