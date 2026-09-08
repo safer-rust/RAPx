@@ -147,6 +147,9 @@ sound_tests! {
     inbound_sound_09: "verify_units/inbound_sound_9"  => "sound_std_get_unchecked_sliceindex",
     inbound_sound_10: "verify_units/inbound_sound_10" => "sound_std_range_get_unchecked",
     inbound_sound_11: "verify_units/inbound_sound_11" => "sound_vec_from_raw_parts_inbound",
+    // `index - 1` is in bounds when `index >= 1` and `InBound(data, index)`
+    // records the numeric `index < len` bound.
+    inbound_sound_12: "verify_units/inbound_derived_index_1" => "derived_index_minus_one",
 }
 
 // ================ InBound Unsound Cases =============
@@ -164,13 +167,6 @@ unsound_tests! {
     inbound_unsound_10: "verify_units/inbound_unsound_10" => "unsound_scalar_index_wrong_guard" => "InBound",
     inbound_unsound_11: "verify_units/inbound_unsound_11" => "unsound_range_index_missing_end_guard" => "InBound",
     inbound_unsound_12: "verify_units/inbound_unsound_12" => "unsound_std_range_missing_end_guard" => "InBound",
-}
-
-// ================ InBound Derived-Index Cases =============
-sound_tests! {
-    // `index - 1` is in bounds when `index >= 1` and `InBound(data, index)`
-    // records the numeric `index < len` bound.
-    inbound_derived_index_01: "verify_units/inbound_derived_index_1" => "derived_index_minus_one",
 }
 
 // ================ Init Std Sound Cases =============

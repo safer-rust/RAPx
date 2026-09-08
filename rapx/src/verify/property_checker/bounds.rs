@@ -297,22 +297,29 @@ impl PropertyChecker {
         }
         let range_local = place.local;
         let ty = vm_state.body.local_decls[range_local].ty;
-        let is_range = match ty.kind() {
-            TyKind::Adt(adt_def, _) => {
-                crate::helpers::mir_utils::is_range_type(vm_state.tcx, adt_def.did())
-            }
-            _ => false,
+        let adt_def = match ty.kind() {
+            TyKind::Adt(adt_def, _) => *adt_def,
+            _ => return None,
         };
-        if !is_range {
-            return None;
-        }
+        // The `end` field index depends on the range kind: `Range`/`RangeInclusive`
+        // store `(start, end)` (end at field 1), while `RangeTo` stores just `end`
+        // (field 0). `RangeFrom`/`RangeFull`/`RangeToInclusive` have no usable end
+        // field here and fall back to the single-index path.
+        let end_idx = match crate::helpers::mir_utils::range_kind(vm_state.tcx, adt_def.did()) {
+            crate::helpers::mir_utils::RangeKind::RangeTo => Some(rustc_abi::FieldIdx::from_usize(0)),
+            crate::helpers::mir_utils::RangeKind::Range
+            | crate::helpers::mir_utils::RangeKind::RangeInclusive => {
+                Some(rustc_abi::FieldIdx::from_usize(1))
+            }
+            _ => None,
+        };
+        let Some(end_idx) = end_idx else { return None };
         for block in vm_state.body.basic_blocks.iter() {
             for stmt in &block.statements {
                 if let StatementKind::Assign(assign) = &stmt.kind {
                     let (dest, rvalue) = &**assign;
                     if dest.local == range_local && dest.projection.is_empty() {
                         if let Rvalue::Aggregate(_kind, operands) = rvalue {
-                            let end_idx = rustc_abi::FieldIdx::from_usize(1);
                             if let Some(end_op) = operands.get(end_idx) {
                                 return Some(self.trace_value(vm_state, end_op));
                             }
