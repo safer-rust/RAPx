@@ -2848,6 +2848,8 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 if let Some(fe_place) = property.for_each() {
                     self.assert_in_bound_for_each(property, fe_place);
                     self.contract_flags.has_checked_bounds = true;
+                } else {
+                    self.assert_in_bound_single(property);
                 }
             }
             PropertyKind::Allocated => {
@@ -3427,6 +3429,57 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             self.path_conditions.push(term.ge(&zero));
             self.path_conditions.push(term.lt(&len));
         }
+    }
+
+    /// Record the numeric `index < len` bound for a single-index
+    /// `InBound(slice, index)`, so a derived index (e.g. `index - 1` guarded by
+    /// `index >= 1`) can be discharged by SMT rather than only via the coarse
+    /// `in_bounds` flag. Range indices (`start..end`) are left to the checker's
+    /// `extract_range_end` (`end <= len`).
+    fn assert_in_bound_single(&mut self, property: &Property<'tcx>) {
+        let Some(PropertyArg::Expr(ContractExpr::IndexAccess { slice, index })) =
+            property.args().first()
+        else {
+            return;
+        };
+        if let ContractExpr::Place(index_place) = index.as_ref() {
+            let index_local = index_place.base.to_local();
+            if let rustc_middle::ty::TyKind::Adt(adt_def, _) =
+                self.body.local_decls[index_local].ty.kind()
+            {
+                if crate::helpers::mir_utils::is_range_type(self.tcx, adt_def.did()) {
+                    return;
+                }
+            }
+        }
+        let slice_local = match slice.as_ref() {
+            ContractExpr::Place(cp) => match cp.base {
+                PlaceBase::Arg(n) => Some(Local::from_usize(n + 1)),
+                PlaceBase::Local(n) => Some(Local::from_usize(n)),
+                _ => None,
+            },
+            _ => None,
+        };
+        let Some(slice_local) = slice_local else { return };
+        let Some(da_id) = self
+            .locals
+            .get(&slice_local)
+            .and_then(|v| v.provenance_alloc_id())
+        else {
+            return;
+        };
+        let elem_sz = self
+            .alloc(da_id)
+            .element_ty
+            .map(|ty| self.size_of_ty(ty) as u64)
+            .unwrap_or(1)
+            .max(1);
+        let elem_sz_term = Int::from_u64(self.ctx, elem_sz);
+        let len = self.alloc(da_id).size.div(&elem_sz_term);
+        let Some(index_term) = self.eval_contract_expr_simple(index) else {
+            return;
+        };
+        self.path_conditions.push(index_term.lt(&len));
     }
 
     /// Set align invariant on the target value.

@@ -166,6 +166,13 @@ unsound_tests! {
     inbound_unsound_12: "verify_units/inbound_unsound_12" => "unsound_std_range_missing_end_guard" => "InBound",
 }
 
+// ================ InBound Derived-Index Cases =============
+sound_tests! {
+    // `index - 1` is in bounds when `index >= 1` and `InBound(data, index)`
+    // records the numeric `index < len` bound.
+    inbound_derived_index_01: "verify_units/inbound_derived_index_1" => "derived_index_minus_one",
+}
+
 // ================ Init Std Sound Cases =============
 sound_tests! {
     init_std_sound_01: "verify_units/init_std_sound_1" => "sound_assume_init_read_after_write",
