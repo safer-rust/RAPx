@@ -791,7 +791,12 @@ pub fn eval_const_scalar_int<'tcx>(
     // Resolve `T::{BITS,MAX,MIN}` associated constants of small integer types,
     // used in numeric bounds (`u32::MAX`) and shift-width masks (`u32::BITS`).
     let is_num_bound = text.contains("::BITS") || text.contains("::MAX") || text.contains("::MIN");
-    if !is_num_bound && offset_of_container(tcx, constant).is_none() {
+    // An unevaluated `const` item (e.g. `const CAPACITY: usize = 2 * B - 1`)
+    // must be const-evaluated to its scalar value, so comparisons like
+    // `idx < CAPACITY` are modeled as `idx < 11` rather than an opaque symbol.
+    let is_unevaluated =
+        matches!(*constant, rustc_middle::mir::Const::Unevaluated(..));
+    if !is_num_bound && !is_unevaluated && offset_of_container(tcx, constant).is_none() {
         return None;
     }
     let typing_env = TypingEnv::fully_monomorphized();
