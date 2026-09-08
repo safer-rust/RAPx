@@ -2691,12 +2691,25 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         _occurrence: usize,
     ) {
         let cond_val = self.value_of_operand(cond);
+        // If the asserted operand is a comparison result, record the direct
+        // boolean condition (`idx < len`) alongside the ite-encoded fact, so
+        // the SMT solver can unfold it (mirrors `exec_switchint`).
+        let cmp_cond = cond.place().and_then(|p| {
+            let pk = PlaceKey::from_mir_place(&p);
+            self.comparison_conds.get(&pk).cloned()
+        });
         if expected {
             let zero = Int::from_u64(self.ctx, 0);
             self.path_conditions.push(cond_val.term._eq(&zero).not());
+            if let Some(c) = &cmp_cond {
+                self.path_conditions.push(c.clone());
+            }
         } else {
             let zero = Int::from_u64(self.ctx, 0);
             self.path_conditions.push(cond_val.term._eq(&zero));
+            if let Some(c) = &cmp_cond {
+                self.path_conditions.push(c.not());
+            }
         }
 
         // Guard inference: trace the assert condition back to find non_null sources
