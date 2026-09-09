@@ -69,6 +69,17 @@ impl PropertyChecker {
                 }
             }
         }
+        // The `in_bounds` flag is a coarse "this pointer/slice is within its
+        // allocation" fact carried from the entry slice.  It discharges the
+        // 3-arg `InBound(ptr, T, n)` obligations (`ptr::add` and friends) whose
+        // precise numeric bound is not (yet) expressible symbolically — e.g. a
+        // generic element type collapses `size_of(T)` to 0/1 inconsistently, and
+        // `slice::range`'s `start <= end <= len` guard does not reach the SMT
+        // path conditions.  The 2-arg `InBound(slice, index)` form is discharged
+        // precisely by SMT (see `check_in_bound_slice`).
+        if value.invariants.in_bounds {
+            return CheckResult::Proved;
+        }
         // `byte_add(offset_of!(Container, field))` always keeps the pointer
         // within the container allocation, because the byte offset of a field
         // never exceeds `size_of::<Container>()`.  This covers patterns such
