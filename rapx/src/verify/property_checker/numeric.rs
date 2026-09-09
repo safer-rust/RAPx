@@ -93,6 +93,33 @@ impl PropertyChecker {
         CheckResult::Proved
     }
 
+    /// If `expr` is a `SliceIndex` range parameter (e.g. `..n`), return its
+    /// *exclusive* end term, so `ValidNum(index < CAPACITY)` compares `n` (not
+    /// the opaque range value).
+    fn range_end_of_lhs<'ctx, 'tcx>(
+        &self,
+        vm_state: &VmState<'ctx, 'tcx>,
+        checkpoint: Option<&Checkpoint<'tcx>>,
+        expr: &ContractExpr<'tcx>,
+    ) -> Option<Int<'ctx>> {
+        let cp = match expr {
+            ContractExpr::Place(cp) => cp,
+            _ => return None,
+        };
+        if !cp.projections.is_empty() {
+            return None;
+        }
+        let ck = checkpoint?;
+        let op: Option<&Operand<'tcx>> = match cp.base {
+            PlaceBase::Arg(n) => ck.args.get(n),
+            PlaceBase::Local(n) => super::util::local_param_operand(vm_state, ck, n),
+            _ => None,
+        };
+        let op = op?;
+        let end = self.extract_range_end(vm_state, op, ck)?;
+        Some(end.term.clone())
+    }
+
     pub(super) fn eval_numeric_predicate<'ctx, 'tcx>(
         &self,
         vm_state: &VmState<'ctx, 'tcx>,
@@ -100,10 +127,18 @@ impl PropertyChecker {
         checkpoint: Option<&Checkpoint<'tcx>>,
         pred: &crate::verify::contract::NumericPredicate<'tcx>,
     ) -> Option<CheckResult> {
-        let lhs = self.eval_contract_expr(vm_state, checkpoint, &pred.lhs)?;
+        // For a `SliceIndex` range (e.g. `..n`), `ValidNum(index < CAPACITY)`
+        // must compare the range's *exclusive end* (`n <= CAPACITY`) rather than
+        // the opaque range value. Detect ranges and adjust `<` to `<=`.
+        let (lhs, is_range) =
+            match self.range_end_of_lhs(vm_state, checkpoint, &pred.lhs) {
+                Some(end) => (end, true),
+                None => (self.eval_contract_expr(vm_state, checkpoint, &pred.lhs)?, false),
+            };
         let rhs = self.eval_contract_expr(vm_state, checkpoint, &pred.rhs)?;
         let condition = match pred.op {
             RelOp::Le => lhs.le(&rhs),
+            RelOp::Lt if is_range => lhs.le(&rhs),
             RelOp::Lt => lhs.lt(&rhs),
             RelOp::Ge => lhs.ge(&rhs),
             RelOp::Gt => lhs.gt(&rhs),

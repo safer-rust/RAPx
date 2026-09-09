@@ -23,7 +23,7 @@ use super::PropertyChecker;
 /// Resolve a callee `Local(n)` to the corresponding checkpoint operand, using
 /// the callee's real argument count. Returns `None` when the checkpoint has no
 /// callee or `n` is not an argument local.
-fn local_param_operand<'a, 'ctx, 'tcx>(
+pub(super) fn local_param_operand<'a, 'ctx, 'tcx>(
     vm_state: &VmState<'ctx, 'tcx>,
     ck: &'a Checkpoint<'tcx>,
     n: usize,

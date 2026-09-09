@@ -59,6 +59,16 @@ pub(crate) fn parse_contract_expr<'tcx>(
     if let Some(value) = parse_expr_into_number(expr) {
         return ContractExpr::new_value(value);
     }
+    // A `const` item (e.g. `CAPACITY` in `ValidNum(len <= CAPACITY)`).
+    if let Expr::Path(expr_path) = expr
+        && let Some(ident) = expr_path.path.get_ident()
+        && let Some(value) = crate::helpers::mir_utils::resolve_const_item_value(
+            tcx,
+            &ident.to_string(),
+        )
+    {
+        return ContractExpr::Const(value);
+    }
     rap_debug!(
         "Numeric expression in {:?} could not be resolved: {:?}",
         sp,

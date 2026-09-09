@@ -27,7 +27,7 @@ const KV_IDX_CENTER: usize = B - 1;
 const EDGE_IDX_LEFT_OF_CENTER: usize = B - 1;
 const EDGE_IDX_RIGHT_OF_CENTER: usize = B;
 
-#[rapx::invariant(ValidNum(len <= 11))]
+#[rapx::invariant(ValidNum(len <= CAPACITY))]
 pub struct LeafNode<K, V> {
     pub parent: Option<NonNull<InternalNode<K, V>>>,
     pub parent_idx: MaybeUninit<u16>,
@@ -801,6 +801,7 @@ impl<'a, K: 'a, V: 'a, NodeType> Handle<NodeRef<marker::Immut<'a>, K, V, NodeTyp
 
 impl<'a, K: 'a, V: 'a, NodeType> Handle<NodeRef<marker::Mut<'a>, K, V, NodeType>, marker::KV> {
     #[rapx::verify]
+    #[rapx::requires(ValidNum(self.idx < CAPACITY))]
     pub fn key_mut(&mut self) -> &mut K {
         unsafe { self.node.key_area_mut(self.idx).assume_init_mut() }
     }

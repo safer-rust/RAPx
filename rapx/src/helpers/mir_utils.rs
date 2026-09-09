@@ -524,6 +524,39 @@ pub fn trace_place_root(origins: &LocalOriginMap, place: &PlaceKey) -> Option<(u
     Some((root_local, root_fields))
 }
 
+/// Resolve a `const` item (e.g. `const CAPACITY: usize = 2 * B - 1`) by name in
+/// the local crate to its evaluated unsigned-integer value, for use in the
+/// contract DSL (`ValidNum(len <= CAPACITY)`).
+pub(crate) fn resolve_const_item_value<'tcx>(tcx: TyCtxt<'tcx>, name: &str) -> Option<u128> {
+    for item_id in tcx.hir_crate_items(()).free_items() {
+        let def_id = item_id.owner_id.to_def_id();
+        let Some(item_name) = tcx.opt_item_name(def_id) else {
+            continue;
+        };
+        if item_name.as_str() != name {
+            continue;
+        }
+        if !matches!(tcx.def_kind(def_id), rustc_hir::def::DefKind::Const { .. }) {
+            continue;
+        }
+        let instance = rustc_middle::ty::Instance::mono(tcx, def_id);
+        let cid = rustc_middle::mir::interpret::GlobalId {
+            instance,
+            promoted: None,
+        };
+        let Ok(val) =
+            tcx.const_eval_global_id(TypingEnv::fully_monomorphized(), cid, DUMMY_SP)
+        else {
+            continue;
+        };
+        let Some(scalar) = val.try_to_scalar_int() else {
+            continue;
+        };
+        return Some(scalar.to_bits(scalar.size()) as u128);
+    }
+    None
+}
+
 /// Extract raw bytes from a `ConstValue`, following reference indirection.
 fn const_value_bytes<'tcx>(tcx: TyCtxt<'tcx>, value: ConstValue, depth: usize) -> Option<Vec<u8>> {
     if depth > 4 {

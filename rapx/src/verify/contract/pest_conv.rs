@@ -420,6 +420,13 @@ fn conv_base<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, base_text: &str) -> Contrac
         _ => {
             let Some((base, fields, _)) = resolve_place_from_ident(tcx, def_id, base_text, &[])
             else {
+                // Fall back to a `const` item (e.g. `CAPACITY` in
+                // `ValidNum(len <= CAPACITY)`).
+                if let Some(value) =
+                    crate::helpers::mir_utils::resolve_const_item_value(tcx, base_text)
+                {
+                    return ContractExpr::Const(value);
+                }
                 return ContractExpr::Unknown;
             };
             ContractExpr::Place(ContractPlace::local(base, fields))
