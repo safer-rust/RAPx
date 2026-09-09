@@ -922,6 +922,11 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 self.allocate_external(max_size, field_align, Some(pointee));
             self.alloc_mut(field_alloc_id).initialized = true;
             elem_alloc.insert(pointee, (field_alloc_id, field_base.clone()));
+            // Decompose the pointee's own fields into per-allocation tracking
+            // so `(*ptr).field` derefs resolve to the field value (not the raw
+            // pointer term). This is what lets `&*NonNull<LeafNode>` expose
+            // `LeafNode.len`.
+            self.decompose_pointee_fields(field_alloc_id, Vec::new(), pointee, local_idx, 0);
             let field_term = if is_raw_ptr {
                 field_base
             } else {
@@ -993,6 +998,109 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         term: field_term,
                         ty: field_ty,
                         provenance: None,
+                        invariants: ValueInvariants {
+                            init: true,
+                            ..Default::default()
+                        },
+                    },
+                );
+            }
+        }
+    }
+
+    /// Recursively decompose a pointee ADT's fields into per-allocation field
+    /// tracking, mirroring [`decompose_adt_fields`](Self::decompose_adt_fields)
+    /// but keyed by allocation instead of local. This is what lets a
+    /// `&*NonNull<LeafNode>` dereference resolve `(*leaf).len` to the actual
+    /// `len` field value rather than the raw pointer term.
+    fn decompose_pointee_fields(
+        &mut self,
+        alloc_id: AllocId,
+        prefix: Vec<usize>,
+        ty: Ty<'tcx>,
+        local_idx: usize,
+        depth: usize,
+    ) {
+        use rustc_middle::ty::TyKind;
+        if depth > 4 {
+            return;
+        }
+        let TyKind::Adt(adt_def, substs) = ty.kind() else {
+            return;
+        };
+        if adt_def.is_enum() {
+            return;
+        }
+        let variant = adt_def.non_enum_variant();
+        for (idx, field_def) in variant.fields.iter().enumerate() {
+            let field_ty = crate::helpers::mir_utils::field_ty(self.tcx, field_def, substs);
+            let mut path = prefix.clone();
+            path.push(idx);
+            if let Some(pointee) = self.find_nn_pointee(field_ty) {
+                let field_align = 1u64.max(self.align_of_ty(pointee));
+                let max_size = Int::from_u64(self.ctx, i64::MAX as u64);
+                let (fa, _fb) = self.allocate_external(max_size, field_align, Some(pointee));
+                self.alloc_mut(fa).initialized = true;
+                let term = self.fresh_int(&format!("pointee_nn_{}_{}", local_idx, idx));
+                self.alloc_field_values.insert(
+                    (alloc_id, path.clone()),
+                    VmValue {
+                        term,
+                        ty: field_ty,
+                        provenance: Some(Provenance {
+                            alloc_id: fa,
+                            offset: Int::from_u64(self.ctx, 0),
+                            is_field_offset: false,
+                        }),
+                        invariants: ValueInvariants {
+                            init: true,
+                            ..Default::default()
+                        },
+                    },
+                );
+                self.decompose_pointee_fields(fa, Vec::new(), pointee, local_idx, depth + 1);
+            } else if let TyKind::Adt(_, _) = field_ty.kind() {
+                self.decompose_pointee_fields(alloc_id, path, field_ty, local_idx, depth + 1);
+            } else if matches!(
+                field_ty.kind(),
+                TyKind::Uint(_)
+                    | TyKind::Int(_)
+                    | TyKind::Float(_)
+                    | TyKind::Bool
+                    | TyKind::Char
+            ) {
+                let field_term = self.fresh_int(&format!("pointee_field_{}_{}", local_idx, idx));
+                self.alloc_field_values.insert(
+                    (alloc_id, path.clone()),
+                    VmValue {
+                        term: field_term,
+                        ty: field_ty,
+                        provenance: None,
+                        invariants: ValueInvariants {
+                            init: true,
+                            ..Default::default()
+                        },
+                    },
+                );
+            } else if let TyKind::Array(elem_ty, const_len) = field_ty.kind() {
+                // Array field: allocate its contents so `.len()` / `as_slice()`
+                // resolve to the concrete array length.
+                let n = const_len.try_to_target_usize(self.tcx).unwrap_or(0) as u64;
+                let elem_sz = self.size_of_ty(*elem_ty).max(1) as u64;
+                let arr_size = Int::from_u64(self.ctx, n.saturating_mul(elem_sz));
+                let arr_align = 1u64.max(self.align_of_ty(*elem_ty));
+                let (fa, fb) = self.allocate(arr_size, arr_align, Some(*elem_ty));
+                self.alloc_mut(fa).initialized = true;
+                self.alloc_field_values.insert(
+                    (alloc_id, path.clone()),
+                    VmValue {
+                        term: fb,
+                        ty: field_ty,
+                        provenance: Some(Provenance {
+                            alloc_id: fa,
+                            offset: Int::from_u64(self.ctx, 0),
+                            is_field_offset: false,
+                        }),
                         invariants: ValueInvariants {
                             init: true,
                             ..Default::default()
@@ -1800,6 +1908,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     };
                     self.propagate_byte_values_to_ref(place, &val);
                     self.propagate_field_values_to_ref(place, dest_place.local);
+                    self.assert_pointee_struct_invariants(dest_ty, dest_place.local);
                     val
                 } else {
                     let term = self.fresh_int("ref_addr");
@@ -3495,6 +3604,31 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         self.path_conditions.push(index_term.lt(&len));
     }
 
+    /// When a `&T`/`&mut T` reference is created (e.g. via `&*NonNull<T>`), assume
+    /// `T`'s `#[rapx::invariant]`s on the new reference local, rebinding the
+    /// invariant's `self` place to that reference. This is what lets a struct's
+    /// invariants flow through pointer dereferences into the caller's state.
+    fn assert_pointee_struct_invariants(&mut self, dest_ty: Ty<'tcx>, dest_local: Local) {
+        let pointee = match dest_ty.kind() {
+            rustc_middle::ty::TyKind::Ref(_, inner, _) => *inner,
+            _ => return,
+        };
+        let adt_def = match pointee.kind() {
+            rustc_middle::ty::TyKind::Adt(adt_def, _) => *adt_def,
+            _ => return,
+        };
+        let invariants = crate::verify::target::get_struct_invariants_from_annotation(
+            self.tcx,
+            adt_def.did(),
+            adt_def.did(),
+        );
+        for inv in &invariants {
+            let mut rebound = inv.clone();
+            rebind_property_place(&mut rebound, dest_local);
+            self.assert_contract_fact(&rebound);
+        }
+    }
+
     /// Set align invariant on the target value.
     fn set_align_for_value(&mut self, property: &Property<'tcx>, mut val: VmValue<'ctx, 'tcx>) {
         val.invariants.aligned = true;
@@ -3930,5 +4064,66 @@ fn pow2_factor(c: u64) -> Option<u64> {
         if factor > 1 { Some(factor) } else { None }
     } else {
         None
+    }
+}
+
+/// Rebind every `self` place in a struct invariant to the given MIR local, so
+/// an invariant parsed against the struct's own `self` can be asserted on a
+/// freshly-created reference (`&*NonNull<T>` → `&T`).
+fn rebind_property_place<'tcx>(property: &mut Property<'tcx>, local: Local) {
+    match property {
+        Property::Atom(atom) => {
+            for arg in &mut atom.args {
+                match arg {
+                    PropertyArg::Expr(expr) => rebind_expr_place(expr, local),
+                    PropertyArg::Predicates(preds) => {
+                        for pred in preds {
+                            rebind_expr_place(&mut pred.lhs, local);
+                            rebind_expr_place(&mut pred.rhs, local);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Property::And(and) => {
+            for c in &mut and.conjuncts {
+                rebind_property_place(c, local);
+            }
+        }
+        Property::Or(or) => {
+            for d in &mut or.disjuncts {
+                rebind_property_place(d, local);
+            }
+        }
+    }
+}
+
+fn rebind_expr_place<'tcx>(expr: &mut ContractExpr<'tcx>, local: Local) {
+    match expr {
+        ContractExpr::Place(cp) => {
+            cp.base = PlaceBase::Local(local.as_usize());
+        }
+        ContractExpr::Len(inner) => rebind_expr_place(inner, local),
+        ContractExpr::IndexAccess { slice, index } => {
+            rebind_expr_place(slice, local);
+            rebind_expr_place(index, local);
+        }
+        ContractExpr::Binary { lhs, rhs, .. } => {
+            rebind_expr_place(lhs, local);
+            rebind_expr_place(rhs, local);
+        }
+        ContractExpr::Unary { expr: inner, .. } => rebind_expr_place(inner, local),
+        ContractExpr::If {
+            cond,
+            then_expr,
+            else_expr,
+        } => {
+            rebind_expr_place(&mut cond.lhs, local);
+            rebind_expr_place(&mut cond.rhs, local);
+            rebind_expr_place(then_expr, local);
+            rebind_expr_place(else_expr, local);
+        }
+        _ => {}
     }
 }

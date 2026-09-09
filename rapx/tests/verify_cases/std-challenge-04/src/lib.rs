@@ -27,6 +27,7 @@ const KV_IDX_CENTER: usize = B - 1;
 const EDGE_IDX_LEFT_OF_CENTER: usize = B - 1;
 const EDGE_IDX_RIGHT_OF_CENTER: usize = B;
 
+#[rapx::invariant(ValidNum(len <= 11))]
 pub struct LeafNode<K, V> {
     pub parent: Option<NonNull<InternalNode<K, V>>>,
     pub parent_idx: MaybeUninit<u16>,

@@ -261,6 +261,12 @@ pub(crate) struct VmState<'ctx, 'tcx> {
     /// Example: `(local_3, [0])` is `local_3.0`, `(local_3, [0, 1])` is `local_3.0.1`.
     pub(crate) field_values: FxHashMap<(Local, Vec<usize>), VmValue<'ctx, 'tcx>>,
 
+    /// Per-allocation field tracking: (alloc_id, field_indices) → value.  This
+    /// mirrors `field_values` but is keyed by allocation instead of local, so a
+    /// `&*NonNull<ADT>` dereference can resolve the pointee's fields (e.g.
+    /// `(*leaf).len`) regardless of which local holds the pointer.
+    pub(crate) alloc_field_values: FxHashMap<(AllocId, Vec<usize>), VmValue<'ctx, 'tcx>>,
+
     /// Cumulative ptr offset for Iter/IterMut field [0] (ptr).
     /// Key: (struct_local). When post_inc_start advances the ptr by
     /// `n` elements, we increment this offset instead of nesting
@@ -338,6 +344,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             other_op_sources: FxHashMap::default(),
             contract_flags: ContractFlags::default(),
             field_values: FxHashMap::default(),
+            alloc_field_values: FxHashMap::default(),
             iter_ptr_offset: FxHashMap::default(),
             bytes: FxHashMap::default(),
             notes: Vec::new(),
@@ -726,6 +733,21 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     .cloned()
                 {
                     return Some(val);
+                }
+                // Resolve a Deref+Field access through the pointee allocation's
+                // per-allocation field tracking (e.g. `(*leaf).len` → the
+                // `LeafNode.len` field value materialized by
+                // `decompose_pointee_fields`).
+                if let Some(base_val) = self.locals.get(&place.local) {
+                    if let Some(alloc_id) = base_val.provenance_alloc_id() {
+                        if let Some(val) = self
+                            .alloc_field_values
+                            .get(&(alloc_id, field_path.clone()))
+                            .cloned()
+                        {
+                            return Some(val);
+                        }
+                    }
                 }
             }
         }
