@@ -15,6 +15,7 @@ fn main() {
     emit_check_cfg("rapx_has_fnptr_asptr");
     emit_check_cfg("rapx_has_maybe_dangling_lang_item");
     emit_check_cfg("rapx_rvalue_has_nullary_op");
+    emit_check_cfg("rapx_constkind_alias");
 
     emit_cfg("rapx_ge_99", minor >= 99);
     emit_cfg("rapx_ge_100", minor >= 100);
@@ -66,6 +67,15 @@ fn main() {
         rustc_src_contains_path(
             "compiler/rustc_middle/src/mir/syntax.rs",
             "NullaryOp(NullOp)",
+        ),
+    );
+    // `ty::ConstKind` renamed its unevaluated-const variant from `Unevaluated`
+    // to `Alias` (with `IsRigid` + `AliasConst`) around 2026-07.
+    emit_cfg(
+        "rapx_constkind_alias",
+        rustc_src_contains_path(
+            "compiler/rustc_type_ir/src/const_kind.rs",
+            "Alias(ty::IsRigid",
         ),
     );
 }

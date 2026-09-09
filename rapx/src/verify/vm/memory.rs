@@ -105,14 +105,26 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     // allocation over the parent struct's byte-offset address,
                     // otherwise `&raw const self.inner` collapses the slice length
                     // to the struct's own (minimal) size.
-                    let field_replacement = if matches!(field_ty.kind(), TyKind::Slice(_)) {
-                        self.field_value(place.local, &field_path).and_then(|fv| {
-                            fv.provenance
-                                .clone()
-                                .map(|p| (fv.term.clone(), p))
-                        })
-                    } else {
-                        None
+                    let field_replacement = match field_ty.kind() {
+                        TyKind::Slice(_) => self.field_value(place.local, &field_path).and_then(
+                            |fv| fv.provenance.clone().map(|p| (fv.term.clone(), p)),
+                        ),
+                        TyKind::Array(..) => {
+                            // An array field decomposed into its own allocation by
+                            // `decompose_pointee_fields` (e.g. `keys: [MaybeUninit<K>; N]`)
+                            // carries a concrete element count. Prefer that allocation
+                            // over the parent struct's byte-offset address so
+                            // `&(*leaf).keys` keeps `len = N` for downstream InBound.
+                            let alloc = provenance.as_ref().map(|p| p.alloc_id);
+                            alloc.and_then(|a| {
+                                self.alloc_field_values
+                                    .get(&(a, field_path.clone()))
+                                    .and_then(|fv| {
+                                        fv.provenance.clone().map(|p| (fv.term.clone(), p))
+                                    })
+                            })
+                        }
+                        _ => None,
                     };
                     match field_replacement {
                         Some((fv_term, fv_prov)) => {

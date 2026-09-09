@@ -856,6 +856,49 @@ pub fn eval_const_scalar_int<'tcx>(
     }
 }
 
+/// Resolve an array length const (`ty::Const`) to a concrete `u64`. Unlike
+/// `try_to_target_usize`, this also evaluates unevaluated const expressions
+/// (e.g. `[MaybeUninit<K>; CAPACITY]` where `CAPACITY = 2 * B - 1`), so the
+/// VM can allocate the array with its true element count instead of a
+/// collapsed zero-size fallback.
+pub(crate) fn eval_array_len<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    c: &rustc_middle::ty::Const<'tcx>,
+) -> Option<u64> {
+    if let Some(v) = c.try_to_target_usize(tcx) {
+        return Some(v);
+    }
+    // An unevaluated array length (`[MaybeUninit<K>; CAPACITY]` where
+    // `CAPACITY = 2 * B - 1`) is an anonymous const. Its `ConstKind`
+    // representation differs across toolchains: `Unevaluated` before the
+    // `Alias` rename (~2026-07), `Alias` afterwards.
+    #[cfg(rapx_constkind_alias)]
+    let def_id = {
+        let ConstKind::Alias(_, alias_const) = c.kind() else {
+            return None;
+        };
+        alias_const.kind.opt_def_id()?
+    };
+    #[cfg(not(rapx_constkind_alias))]
+    let def_id = {
+        let ConstKind::Unevaluated(uneval) = c.kind() else {
+            return None;
+        };
+        uneval.def
+    };
+    let instance = rustc_middle::ty::Instance::mono(tcx, def_id);
+    let cid = rustc_middle::mir::interpret::GlobalId {
+        instance,
+        promoted: None,
+    };
+    if let Ok(val) = tcx.const_eval_global_id(TypingEnv::fully_monomorphized(), cid, DUMMY_SP) {
+        if let Some(scalar) = val.try_to_scalar_int() {
+            return Some(scalar.to_target_usize(tcx));
+        }
+    }
+    None
+}
+
 /// Try to extract raw bytes from a MIR constant operand that is a reference
 /// to a byte array/slice (e.g. `b"hello\0"`). Returns the byte values.
 /// Used by the VM to populate byte-level tracking for constant C strings.

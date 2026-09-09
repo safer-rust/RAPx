@@ -1,7 +1,7 @@
 //! Checkers for `InBound` and `NonOverlap`.
 //!
-//! Bounds are discharged from `has_checked_bounds`/`in_bounds` facts, layout
-//! field-offset invariants, or an SMT coverage check over allocation base/size.
+//! Bounds are discharged from `has_checked_bounds` facts, layout field-offset
+//! invariants, or an SMT coverage check over allocation base/size.
 //! `NonOverlap` uses provenance-distinctness and range-overlap reasoning.
 
 use crate::helpers::mir_scan::Checkpoint;
@@ -68,9 +68,6 @@ impl PropertyChecker {
                     return CheckResult::Proved;
                 }
             }
-        }
-        if value.invariants.in_bounds {
-            return CheckResult::Proved;
         }
         // `byte_add(offset_of!(Container, field))` always keeps the pointer
         // within the container allocation, because the byte offset of a field
@@ -224,10 +221,6 @@ impl PropertyChecker {
             Some(op) => vm_state.value_of_operand(op),
             None => return CheckResult::Unknown,
         };
-        if slice_val.invariants.in_bounds {
-            return CheckResult::Proved;
-        }
-
         let (index_val, is_range) = match index_arg_idx.and_then(|idx| checkpoint.args.get(idx)) {
             Some(op) => {
                 if let Some(end_val) = self.extract_range_end(vm_state, op, checkpoint) {

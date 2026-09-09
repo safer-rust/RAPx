@@ -689,20 +689,50 @@ impl PropertyChecker {
         expr: &ContractExpr<'tcx>,
     ) -> Option<VmValue<'ctx, 'tcx>> {
         match expr {
-            ContractExpr::Place(cp) => match cp.base {
-                PlaceBase::Arg(n) => checkpoint?
-                    .args
-                    .get(n)
-                    .map(|op| vm_state.value_of_operand(op)),
-                PlaceBase::Local(n) => {
-                    let ck = checkpoint?;
-                    if let Some(op) = local_param_operand(vm_state, ck, n) {
-                        return Some(vm_state.value_of_operand(op));
-                    }
-                    vm_state.local_value(Local::from_usize(n)).cloned()
+            ContractExpr::Place(cp) => {
+                if cp.projections.is_empty() {
+                    return match cp.base {
+                        PlaceBase::Return => {
+                            vm_state.local_value(Local::from_usize(0)).cloned()
+                        }
+                        PlaceBase::Arg(n) => checkpoint?
+                            .args
+                            .get(n)
+                            .map(|op| vm_state.value_of_operand(op)),
+                        PlaceBase::Local(n) => {
+                            let ck = checkpoint?;
+                            if let Some(op) = local_param_operand(vm_state, ck, n) {
+                                return Some(vm_state.value_of_operand(op));
+                            }
+                            vm_state.local_value(Local::from_usize(n)).cloned()
+                        }
+                    };
                 }
-                _ => None,
-            },
+                // Field projections: resolve the base local, then read the
+                // materialized field value (mirrors `target_value`). This is
+                // what lets `InBound(v, T, v.len())` resolve `Len(v)` for a
+                // struct field `v` (e.g. a `*mut [T]` slice field on the
+                // constructed return value).
+                let base_local = match cp.base {
+                    PlaceBase::Return => Local::from_usize(0),
+                    PlaceBase::Arg(n) => {
+                        let op = checkpoint?.args.get(n)?;
+                        match op {
+                            Operand::Copy(p) | Operand::Move(p) => p.local,
+                            _ => return None,
+                        }
+                    }
+                    PlaceBase::Local(n) => Local::from_usize(n),
+                };
+                let mut field_path: Vec<usize> = Vec::new();
+                for proj in &cp.projections {
+                    match proj {
+                        ContractProjection::Field { index, .. } => field_path.push(*index),
+                        _ => return None,
+                    }
+                }
+                vm_state.field_value(base_local, &field_path).cloned()
+            }
             _ => None,
         }
     }

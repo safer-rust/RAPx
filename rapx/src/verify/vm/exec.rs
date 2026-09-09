@@ -726,7 +726,8 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 // can record the alloc_id and property checker can match it later.
                 if let rustc_middle::ty::TyKind::Array(elem_ty, const_len) = ty.kind() {
                     let n: Option<usize> =
-                        const_len.try_to_target_usize(self.tcx).map(|v| v as usize);
+                        crate::helpers::mir_utils::eval_array_len(self.tcx, const_len)
+                            .map(|v| v as usize);
                     let elem_size = self.size_of_ty(*elem_ty) as u64;
                     let step = (elem_size.max(1)) as usize;
                     let align = self.align_of_ty(*elem_ty);
@@ -1085,7 +1086,8 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             } else if let TyKind::Array(elem_ty, const_len) = field_ty.kind() {
                 // Array field: allocate its contents so `.len()` / `as_slice()`
                 // resolve to the concrete array length.
-                let n = const_len.try_to_target_usize(self.tcx).unwrap_or(0) as u64;
+                let n = crate::helpers::mir_utils::eval_array_len(self.tcx, const_len).unwrap_or(0)
+                    as u64;
                 let elem_sz = self.size_of_ty(*elem_ty).max(1) as u64;
                 let arr_size = Int::from_u64(self.ctx, n.saturating_mul(elem_sz));
                 let arr_align = 1u64.max(self.align_of_ty(*elem_ty));
@@ -1591,7 +1593,26 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     .projection
                     .iter()
                     .all(|p| matches!(p.kind(), rustc_middle::mir::ProjectionElem::Field(..)));
-                if only_field {
+                // Also propagate for a leading `Deref` (`_3 = copy (*_1)`): the
+                // source is the pointee of a reference, whose per-field values
+                // are keyed by the reference local itself, so copying the pointee
+                // value into a fresh local must carry those field values along
+                // (otherwise `into_leaf(self)`'s `self.node` provenance is lost).
+                let has_deref_src = sp
+                    .projection
+                    .iter()
+                    .any(|p| matches!(p.kind(), rustc_middle::mir::ProjectionElem::Deref));
+                let only_field_deref = sp
+                    .projection
+                    .iter()
+                    .all(|p| {
+                        matches!(
+                            p.kind(),
+                            rustc_middle::mir::ProjectionElem::Field(..)
+                                | rustc_middle::mir::ProjectionElem::Deref
+                        )
+                    });
+                if only_field || (only_field_deref && has_deref_src) {
                     let keys: Vec<Vec<usize>> = self
                         .field_values
                         .keys()
@@ -1908,6 +1929,13 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     };
                     self.propagate_byte_values_to_ref(place, &val);
                     self.propagate_field_values_to_ref(place, dest_place.local);
+                    // Expose the freshly-created reference's provenance before
+                    // asserting the pointee struct's `#[rapx::invariant]`s: the
+                    // invariant predicates (`ValidNum(len <= CAPACITY)` on
+                    // `&LeafNode`) resolve their field places through the
+                    // pointee allocation, which needs `dest_place`'s provenance
+                    // to be live (`exec_assign` only stores `val` afterwards).
+                    self.set_local(dest_place.local, val.clone());
                     self.assert_pointee_struct_invariants(dest_ty, dest_place.local);
                     val
                 } else {
@@ -3330,7 +3358,16 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 if path.is_empty() {
                     self.local_value(local).map(|v| v.term.clone())
                 } else {
-                    self.field_value(local, &path).map(|v| v.term.clone())
+                    self.field_value(local, &path).map(|v| v.term.clone()).or_else(|| {
+                        // Deref+Field: the base local is a reference whose pointee
+                        // fields live in the per-allocation map (e.g. the
+                        // `ValidNum(len <= CAPACITY)` invariant on `&LeafNode`
+                        // reads `(*leaf).len` through `alloc_field_values`).
+                        let alloc_id = self.local_value(local)?.provenance_alloc_id()?;
+                        self.alloc_field_values
+                            .get(&(alloc_id, path.clone()))
+                            .map(|v| v.term.clone())
+                    })
                 }
             }
             ContractExpr::Len(inner) => {
