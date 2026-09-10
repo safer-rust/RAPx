@@ -645,3 +645,9 @@ pub fn is_slice_get_unchecked(callee: Option<DefId>) -> bool {
 pub fn is_sliceindex_get_unchecked(callee: Option<DefId>) -> bool {
     any_fn(callee, crate::def_id::sliceindex_get_unchecked_fns())
 }
+
+/// Whether `callee` is `slice::range(range, bounds)` — the range normalizer that
+/// returns `Range { start, end }` with `0 <= start <= end <= bounds.end`.
+pub fn is_slice_range(callee: Option<DefId>) -> bool {
+    any_fn(callee, crate::def_id::slice_range_fns())
+}

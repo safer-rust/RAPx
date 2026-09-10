@@ -223,6 +223,10 @@ pub(crate) enum CallEffect {
     /// pointee) and its pointee field values are the argument's field values
     /// with the leading `peel` transparent field-0 hops stripped.
     ReturnTransparentDeref { arg: usize, peel: usize },
+    /// `slice::range(range, bounds)` returns `Range { start, end }` satisfying
+    /// `0 <= start <= end <= bounds.end`. Models the range normalizer whose
+    /// `start_bound`/`end_bound` trait dispatch cannot be inlined.
+    ReturnRange { bounds_arg: usize },
 }
 
 /// Return dependency information for a MIR call terminator.

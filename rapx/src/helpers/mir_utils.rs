@@ -757,7 +757,25 @@ pub fn destination_stride<'tcx>(
 ) -> Option<u64> {
     let d = dest?;
     let pointee = pointee_ty(tcx.optimized_mir(caller).local_decls[d].ty)?;
-    type_layout(tcx, caller, pointee).map(|(_, s)| s)
+    let (_, s) = type_layout(tcx, caller, pointee)?;
+    // A generic pointee (`T`) has no concrete size; signal "symbolic stride" by
+    // returning None so the VM supplies the shared `sizeof_T` constant instead
+    // of collapsing it to 0 (which would drop the element offset entirely).
+    if s == 0 && ty_has_type_param(pointee) {
+        return None;
+    }
+    Some(s)
+}
+
+/// Whether `ty` mentions a (type) generic parameter anywhere in its structure,
+/// e.g. `T`, `*mut T`, `Option<T>`.
+pub(crate) fn ty_has_type_param(ty: Ty<'_>) -> bool {
+    ty.walk().any(|t| {
+        matches!(
+            t.kind(),
+            GenericArgKind::Type(inner) if matches!(inner.kind(), TyKind::Param(_))
+        )
+    })
 }
 
 pub fn pointee_alignment<'tcx>(

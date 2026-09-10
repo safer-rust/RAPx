@@ -345,34 +345,27 @@ impl PropertyChecker {
         ty_arg: usize,
         count_arg: usize,
         checkpoint: &Checkpoint<'tcx>,
-        _value: &VmValue<'ctx, 'tcx>,
+        value: &VmValue<'ctx, 'tcx>,
     ) -> Int<'ctx> {
-        let elem_size = property
+        // Element size as a symbolic term.  A concrete contract `T` uses its
+        // constant byte size; a generic `T` falls back to the target pointer's
+        // own pointee type (which may resolve to the call-site concrete type,
+        // e.g. `from_raw_parts::<u32>`), and only then to the symbolic `sizeof_T`.
+        let elem_ty = property
             .args()
             .get(ty_arg)
             .and_then(|a| {
                 if let PropertyArg::Ty(ty) = a {
-                    Some(vm_state.size_of_ty(*ty))
+                    Some(*ty)
                 } else {
                     None
                 }
             })
-            .unwrap_or(0);
-        // When the contract uses a generic T (size_of returns 0), infer the
-        // concrete element type from the checkpoint's target argument's pointee.
-        let elem_size = if elem_size == 0 {
-            checkpoint
-                .args
-                .first()
-                .map(|op| {
-                    let arg_val = vm_state.value_of_operand(op);
-                    vm_state.pointee_elem_size(arg_val.ty)
-                })
-                .unwrap_or(0)
-        } else {
-            elem_size
-        };
-        let elem_size_term = Int::from_u64(vm_state.ctx, (elem_size as u64).max(1));
+            .filter(|ty| vm_state.size_of_ty(*ty) > 0)
+            .or_else(|| crate::helpers::mir_utils::pointee_ty(value.ty));
+        let elem_size_term = elem_ty
+            .map(|ty| vm_state.size_sym_read(ty))
+            .unwrap_or_else(|| Int::from_u64(vm_state.ctx, 1));
 
         let count_term = property
             .args()
@@ -380,8 +373,10 @@ impl PropertyChecker {
             .and_then(|a| self.resolve_arg_term(vm_state, checkpoint, a))
             .unwrap_or_else(|| Int::from_u64(vm_state.ctx, 1));
         // Simplify the multiplication for concrete count and elem_size
-        if let (Some(elem), Some(count)) = (Some(elem_size), count_term.simplify().as_u64()) {
-            return Int::from_u64(vm_state.ctx, (elem as u64).max(1) * count.max(1));
+        if let (Some(elem), Some(count)) =
+            (elem_size_term.simplify().as_u64(), count_term.simplify().as_u64())
+        {
+            return Int::from_u64(vm_state.ctx, elem.max(1) * count.max(1));
         }
         Int::mul(vm_state.ctx, &[&elem_size_term, &count_term])
     }
@@ -638,11 +633,12 @@ impl PropertyChecker {
                 let alloc_id = val.provenance_alloc_id()?;
                 let alloc = vm_state.alloc(alloc_id);
                 let elem_ty = alloc.element_ty?;
-                let elem_size = vm_state.size_of_ty(elem_ty).max(1) as u64;
-                if elem_size == 1 {
+                // Use the symbolic element size so `len = (len·S) / S` cancels
+                // for a generic element type instead of returning `len·S`.
+                let elem_term = vm_state.size_sym_read(elem_ty);
+                if elem_term.simplify().as_u64() == Some(1) {
                     return Some(alloc.size.clone());
                 }
-                let elem_term = Int::from_u64(vm_state.ctx, elem_size);
                 Some(alloc.size.div(&elem_term))
             }
             ContractExpr::ConstParam { index, name: _ } => self

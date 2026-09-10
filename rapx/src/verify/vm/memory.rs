@@ -267,4 +267,49 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             _ => self.size_of_ty(inner),
         }
     }
+
+    /// Element size of `ty` as a symbolic Z3 term.  For concrete types this is
+    /// the constant byte size; for a generic type whose `size_of` is unknown
+    /// (an unconstrained `T`) it is a single reusable symbolic constant with
+    /// `>= 1`.  Using the same constant everywhere (ptr strides, access counts,
+    /// allocation sizes) lets SMT cancel the factor in `InBound`.
+    pub(crate) fn size_sym(&mut self, ty: Ty<'tcx>) -> Int<'ctx> {
+        let ty = peel_slice_elem(ty);
+        let size = self.size_of_ty(ty);
+        if size > 0 || !crate::helpers::mir_utils::ty_has_type_param(ty) {
+            return Int::from_u64(self.ctx, size);
+        }
+        if let Some(s) = self.sym_sizes.get(&ty) {
+            return s.clone();
+        }
+        let s = self.fresh_int(&format!("sizeof_{ty}"));
+        self.sym_sizes.insert(ty, s.clone());
+        let one = Int::from_u64(self.ctx, 1);
+        self.path_conditions.push(s.ge(&one));
+        s
+    }
+
+    /// Read-only sibling of [`size_sym`](Self::size_sym): returns the symbolic
+    /// size for `ty`, falling back to `1` when the symbolic constant has not
+    /// been created yet (e.g. a checker invoked before the exec phase created
+    /// it).  Concrete types still return their constant byte size.
+    pub(crate) fn size_sym_read(&self, ty: Ty<'tcx>) -> Int<'ctx> {
+        let ty = peel_slice_elem(ty);
+        let size = self.size_of_ty(ty);
+        if size > 0 {
+            return Int::from_u64(self.ctx, size);
+        }
+        self.sym_sizes
+            .get(&ty)
+            .cloned()
+            .unwrap_or_else(|| Int::from_u64(self.ctx, 1))
+    }
+}
+
+/// Peel a slice type `[T]` to its element `T` (other types unchanged).
+fn peel_slice_elem(ty: Ty<'_>) -> Ty<'_> {
+    match ty.kind() {
+        TyKind::Slice(elem) => *elem,
+        _ => ty,
+    }
 }

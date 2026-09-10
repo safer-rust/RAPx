@@ -316,6 +316,13 @@ pub(crate) struct VmState<'ctx, 'tcx> {
     /// caller's field map is not live while the callee executes). Each entry is
     /// `(caller_referent_local, field_path, value)`.
     pub(crate) deferred_field_writes: Vec<(Local, Vec<usize>, VmValue<'ctx, 'tcx>)>,
+
+    /// Symbolic element size for generic types whose concrete `size_of` is
+    /// unknown at verification time (e.g. an unconstrained `T`).  A single
+    /// symbolic constant per type keeps `ptr.add` strides, `access_bytes`
+    /// element sizes, and allocation sizes consistent so that SMT can cancel the
+    /// factor in `InBound` (e.g. `(mid+n)·S <= len·S  ⟺  mid+n <= len`).
+    pub(crate) sym_sizes: FxHashMap<Ty<'tcx>, Int<'ctx>>,
 }
 
 impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
@@ -356,6 +363,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             not_mask_terms: FxHashSet::default(),
             inline_arg_referents: Vec::new(),
             deferred_field_writes: Vec::new(),
+            sym_sizes: FxHashMap::default(),
         }
     }
 

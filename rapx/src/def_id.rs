@@ -416,6 +416,7 @@ struct Methods {
     strlen: Vec<DefId>,
     slice_get_unchecked: Vec<DefId>,
     sliceindex_get_unchecked: Vec<DefId>,
+    slice_range_fns: Vec<DefId>,
 }
 
 fn init_methods(tcx: TyCtxt) -> Methods {
@@ -446,6 +447,7 @@ fn init_methods(tcx: TyCtxt) -> Methods {
         strlen: Vec::new(),
         slice_get_unchecked: Vec::new(),
         sliceindex_get_unchecked: Vec::new(),
+        slice_range_fns: Vec::new(),
     };
 
     for krate in std::iter::once(rustc_public::local_crate())
@@ -577,6 +579,9 @@ fn init_methods(tcx: TyCtxt) -> Methods {
                 && name.contains("::SliceIndex")
             {
                 methods.sliceindex_get_unchecked.push(did);
+            }
+            if name.ends_with("slice::index::range") || name.ends_with("::slice::range") {
+                methods.slice_range_fns.push(did);
             }
         }
     }
@@ -766,6 +771,12 @@ pub fn sliceindex_get_unchecked_fns() -> &'static [DefId] {
         .get()
         .expect("Method DefIds haven't been initialized.")
         .sliceindex_get_unchecked
+}
+pub fn slice_range_fns() -> &'static [DefId] {
+    &METHODS
+        .get()
+        .expect("Method DefIds haven't been initialized.")
+        .slice_range_fns
 }
 
 fn init_inner(tcx: TyCtxt) -> Intrinsics {

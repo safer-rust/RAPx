@@ -439,10 +439,10 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         let elem_sz_term = Int::from_u64(self.ctx, elem_sz);
                         self.path_conditions
                             .push(Int::mul(self.ctx, &[&len, &elem_sz_term]).le(&isize_max));
-                        let data_size = Int::mul(
-                            self.ctx,
-                            &[&len, &Int::from_u64(self.ctx, elem_size.max(1))],
-                        );
+                        // The data allocation's byte size uses the shared
+                        // symbolic `sizeof_T` so `InBound` can cancel the factor
+                        // (`len·S / S == len`).
+                        let data_size = Int::mul(self.ctx, &[&len, &self.size_sym(*elem_ty)]);
                         // For a generic element type the rustc layout collapses to
                         // align 1; recover the real (minimum) alignment from the
                         // trait bounds so `check_align` can discharge `Align` at
@@ -2131,7 +2131,10 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         aligned,
                         in_bounds: src_val.invariants.in_bounds,
                         align_n: src_val.invariants.align_n,
-                        is_field_offset: false,
+                        // A raw-pointer cast only reinterprets the address; keep
+                        // the field-offset flag so `byte_add(offset_of!()).cast()`
+                        // stays a field pointer (`Option::as_slice`).
+                        is_field_offset: src_val.invariants.is_field_offset,
                     },
                 }
             }
@@ -3381,11 +3384,12 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 let alloc_id = val.provenance_alloc_id()?;
                 let alloc = self.alloc(alloc_id);
                 let elem_ty = alloc.element_ty?;
-                let elem_size = self.size_of_ty(elem_ty).max(1) as u64;
-                if elem_size == 1 {
+                // Use the symbolic element size so `len = (len·S) / S` cancels
+                // for a generic element type instead of returning `len·S`.
+                let elem_term = self.size_sym_read(elem_ty);
+                if elem_term.simplify().as_u64() == Some(1) {
                     return Some(alloc.size.clone());
                 }
-                let elem_term = Int::from_u64(self.ctx, elem_size);
                 Some(alloc.size.div(&elem_term))
             }
             ContractExpr::Binary {
@@ -3627,13 +3631,11 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         else {
             return;
         };
-        let elem_sz = self
+        let elem_sz_term = self
             .alloc(da_id)
             .element_ty
-            .map(|ty| self.size_of_ty(ty) as u64)
-            .unwrap_or(1)
-            .max(1);
-        let elem_sz_term = Int::from_u64(self.ctx, elem_sz);
+            .map(|ty| self.size_sym_read(ty))
+            .unwrap_or_else(|| Int::from_u64(self.ctx, 1));
         let len = self.alloc(da_id).size.div(&elem_sz_term);
         let Some(index_term) = self.eval_contract_expr_simple(index) else {
             return;
@@ -3806,7 +3808,10 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         init: true,
                         in_bounds: first_arg_val.invariants.in_bounds,
                         align_n: first_arg_val.invariants.align_n,
-                        is_field_offset: false,
+                        // A pointer `cast` only reinterprets the address; keep
+                        // the field-offset flag so `byte_add(offset_of!())` +
+                        // `cast` stays a field pointer (`Option::as_slice`).
+                        is_field_offset: first_arg_val.invariants.is_field_offset,
                     },
                 },
             );

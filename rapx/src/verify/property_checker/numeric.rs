@@ -433,10 +433,10 @@ impl PropertyChecker {
                                 TyKind::Adt(_, substs) => substs.first().and_then(|s| s.as_type()),
                                 _ => None,
                             };
-                            let elem_size =
-                                elem_ty.map(|t| vm_state.size_of_ty(t).max(1)).unwrap_or(1) as u64;
+                            let sz = elem_ty
+                                .map(|t| vm_state.size_sym_read(t))
+                                .unwrap_or_else(|| Int::from_u64(vm_state.ctx, 1));
                             let diff = Int::sub(vm_state.ctx, &[&ep.offset, &pp.offset]);
-                            let sz = Int::from_u64(vm_state.ctx, elem_size);
                             return Some(diff.div(&sz));
                         }
                     }

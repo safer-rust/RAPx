@@ -69,17 +69,6 @@ impl PropertyChecker {
                 }
             }
         }
-        // The `in_bounds` flag is a coarse "this pointer/slice is within its
-        // allocation" fact carried from the entry slice.  It discharges the
-        // 3-arg `InBound(ptr, T, n)` obligations (`ptr::add` and friends) whose
-        // precise numeric bound is not (yet) expressible symbolically — e.g. a
-        // generic element type collapses `size_of(T)` to 0/1 inconsistently, and
-        // `slice::range`'s `start <= end <= len` guard does not reach the SMT
-        // path conditions.  The 2-arg `InBound(slice, index)` form is discharged
-        // precisely by SMT (see `check_in_bound_slice`).
-        if value.invariants.in_bounds {
-            return CheckResult::Proved;
-        }
         // `byte_add(offset_of!(Container, field))` always keeps the pointer
         // within the container allocation, because the byte offset of a field
         // never exceeds `size_of::<Container>()`.  This covers patterns such
@@ -120,26 +109,49 @@ impl PropertyChecker {
             alloc_elem_is_generic && !size.as_u64().is_some() && !access.as_u64().is_some();
 
         solver.push();
-        let bound = Int::add(vm_state.ctx, &[&base, &size]);
-        let covered = Int::add(vm_state.ctx, &[&value.term, &access]);
-        // A field-offset provenance (`offset_of!`) is always within the
-        // container together with the accessed range: the field plus its own
-        // size fits inside the container.  Assert this layout fact so the
-        // in-bounds check below can be discharged.
+        // A field-offset pointer (`byte_add(offset_of!())`) is valid within the
+        // *field* it addresses: the accessed range must fit in the field's own
+        // size.  "The field lies inside its container" is a layout invariant
+        // that needs no proof here, so skip the container-coverage check below
+        // (whose container layout may be unknown, e.g. `Option<T>`).
         if value
             .provenance
             .as_ref()
             .is_some_and(|prov| prov.is_field_offset)
         {
-            let prov = value.provenance.as_ref().unwrap();
-            let zero = Int::from_u64(vm_state.ctx, 0);
-            solver.assert(&prov.offset.ge(&zero));
-            solver.assert(&Int::add(vm_state.ctx, &[&prov.offset, &access]).le(&size));
+            let field_size = crate::helpers::mir_utils::pointee_ty(value.ty)
+                .map(|ty| vm_state.size_sym_read(ty))
+                .unwrap_or_else(|| Int::from_u64(vm_state.ctx, 1));
+            for cond in &vm_state.path_conditions {
+                solver.assert(cond);
+            }
+            solver.assert(&access.le(&field_size).not());
+            let r = match solver.check() {
+                SatResult::Unsat => CheckResult::Proved,
+                SatResult::Sat => CheckResult::Failed,
+                _ => CheckResult::Unknown,
+            };
+            solver.pop(1);
+            return r;
         }
-        // Upper bound: value + access > base + size
-        let above_negated = covered.le(&bound).not();
-        // Lower bound: value < base (pointer below allocation start)
-        let below_negated = value.term.lt(&base);
+
+        let bound = Int::add(vm_state.ctx, &[&base, &size]);
+        // Assert accumulated path conditions so numeric bounds (`index < len`,
+        // `S >= 1`, …) recorded at entry participate in the coverage check, and
+        // the symbolic size factor can be cancelled.
+        for cond in &vm_state.path_conditions {
+            solver.assert(cond);
+        }
+        // `sub` walks *backwards*: the accessed range is `[value - access, value)`,
+        // so the lower bound is `value - access >= base` and the upper bound is
+        // `value <= base + size`.  `add` (and everything else) walks forwards.
+        let (above_negated, below_negated) = if api_classify::is_pointer_sub(checkpoint.callee) {
+            let walked = Int::sub(vm_state.ctx, &[&value.term, &access]);
+            (value.term.gt(&bound), walked.lt(&base))
+        } else {
+            let covered = Int::add(vm_state.ctx, &[&value.term, &access]);
+            (covered.gt(&bound), value.term.lt(&base))
+        };
         solver.assert(&z3::ast::Bool::or(
             vm_state.ctx,
             &[&above_negated, &below_negated],
@@ -250,14 +262,13 @@ impl PropertyChecker {
 
         let size = vm_state.allocation_size(data_alloc_id).clone();
 
-        let elem_size = vm_state
+        // Use the symbolic element size so `len = (len·S) / S` cancels for a
+        // generic element type.
+        let elem_sz = vm_state
             .alloc(data_alloc_id)
             .element_ty
-            .map(|ty| vm_state.size_of_ty(ty) as u64)
-            .unwrap_or(1)
-            .max(1);
-
-        let elem_sz = Int::from_u64(vm_state.ctx, elem_size);
+            .map(|ty| vm_state.size_sym_read(ty))
+            .unwrap_or_else(|| Int::from_u64(vm_state.ctx, 1));
         let len = size.div(&elem_sz);
 
         solver.push();

@@ -132,6 +132,7 @@ static REGISTRY: &[Entry] = &[
     ED!(api_classify::is_from_raw_parts, eff_from_raw_parts),
     ED!(api_classify::is_align_offset, eff_align_offset),
     ED!(api_classify::is_cstr_from_ptr, eff_alias_arg0),
+    ED!(api_classify::is_slice_range, eff_slice_range),
     // Layout accessor (`align_of`): returns a power of two.
     ED!(api_classify::is_layout_align, eff_layout_align),
     // Local re-implementations (std-challenge suites' `_ext` fns): matched by
@@ -396,6 +397,10 @@ fn eff_split_at(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
             from_arg: 1,
         },
     ]
+}
+
+fn eff_slice_range(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnRange { bounds_arg: 1 }]
 }
 
 fn eff_from_raw_parts(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {

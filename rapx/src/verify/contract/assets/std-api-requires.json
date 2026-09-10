@@ -3544,15 +3544,6 @@
         "y",
         "T"
       ]
-    },
-    {
-      "tag": "NonOverlap",
-      "args": [
-        "x",
-        "y",
-        "T",
-        "1"
-      ]
     }
   ],
   "core::ptr::swap_nonoverlapping": [
@@ -3907,7 +3898,7 @@
       "args": [
         "mid",
         "T",
-        "1"
+        "right"
       ]
     }
   ],

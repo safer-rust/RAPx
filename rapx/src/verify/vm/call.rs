@@ -1295,6 +1295,9 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 self.set_field_value(dest, vec![0], start_val);
                 self.set_field_value(dest, vec![1], end_val);
             }
+            CallEffect::ReturnRange { bounds_arg } => {
+                self.apply_range_effect(*bounds_arg, args, caller_arg_locals, dest);
+            }
             CallEffect::ReturnAlignTo { receiver_arg } => {
                 let Some(self_val) = args.get(*receiver_arg).cloned() else {
                     return;
@@ -1456,17 +1459,23 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 offset_arg,
                 stride,
             } => {
+                let stride = *stride;
                 if let (Some(base), Some(offset)) = (args.get(*base_arg), args.get(*offset_arg)) {
-                    let stride_bytes = stride.unwrap_or(1);
-                    let adjusted_offset = if stride_bytes == 1 {
-                        Int::add(self.ctx, &[&offset.term])
+                    let stride_term = match stride {
+                        Some(s) => Int::from_u64(self.ctx, s),
+                        None => {
+                            let dest_ty = self.body.local_decls[dest].ty;
+                            let pointee =
+                                crate::helpers::mir_utils::pointee_ty(dest_ty).unwrap_or(dest_ty);
+                            self.size_sym(pointee)
+                        }
+                    };
+                    let adjusted_offset = if stride == Some(1) {
+                        offset.term.clone()
                     } else {
-                        let stride_term = Int::from_u64(self.ctx, stride_bytes);
                         Int::mul(self.ctx, &[&offset.term, &stride_term])
                     };
                     let new_term = Int::add(self.ctx, &[&base.term, &adjusted_offset]);
-                    // A field offset (`offset_of!`) added to a container base
-                    // keeps the pointer within the container allocation.
                     let is_field_offset = offset.invariants.is_field_offset
                         && base
                             .provenance
@@ -1477,8 +1486,10 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         offset: Int::add(self.ctx, &[&prov.offset, &adjusted_offset]),
                         is_field_offset,
                     });
-                    // Preserve alignment if the added offset is compatible
-                    let align_n = self.compute_pointer_add_align(base, offset, stride_bytes);
+                    let align_n = match stride {
+                        Some(s) => self.compute_pointer_add_align(base, offset, s),
+                        None => base.invariants.align_n,
+                    };
                     let val = VmValue {
                         term: new_term,
                         ty: self.body.local_decls[dest].ty,
@@ -1500,17 +1511,32 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 offset_arg,
                 stride,
             } => {
+                let stride = *stride;
                 if let (Some(base), Some(offset)) = (args.get(*base_arg), args.get(*offset_arg)) {
-                    let stride_bytes = stride.unwrap_or(1);
-                    let stride_term = Int::from_u64(self.ctx, stride_bytes);
-                    let scaled = Int::mul(self.ctx, &[&offset.term, &stride_term]);
+                    let stride_term = match stride {
+                        Some(s) => Int::from_u64(self.ctx, s),
+                        None => {
+                            let dest_ty = self.body.local_decls[dest].ty;
+                            let pointee =
+                                crate::helpers::mir_utils::pointee_ty(dest_ty).unwrap_or(dest_ty);
+                            self.size_sym(pointee)
+                        }
+                    };
+                    let scaled = if stride == Some(1) {
+                        offset.term.clone()
+                    } else {
+                        Int::mul(self.ctx, &[&offset.term, &stride_term])
+                    };
                     let new_term = Int::sub(self.ctx, &[&base.term, &scaled]);
                     let adjusted_provenance = base.provenance.as_ref().map(|prov| Provenance {
                         alloc_id: prov.alloc_id,
                         offset: Int::sub(self.ctx, &[&prov.offset, &scaled]),
                         is_field_offset: false,
                     });
-                    let align_n = self.compute_pointer_add_align(base, offset, stride_bytes);
+                    let align_n = match stride {
+                        Some(s) => self.compute_pointer_add_align(base, offset, s),
+                        None => base.invariants.align_n,
+                    };
                     let val = VmValue {
                         term: new_term,
                         ty: self.body.local_decls[dest].ty,
@@ -2058,23 +2084,23 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 if let (Some(ptr_val), Some(size_val)) =
                     (args.get(*pointer_arg), args.get(*size_arg))
                 {
-                    let elem_sz = Int::from_u64(self.ctx, *elem_size);
-                    let total = Int::mul(self.ctx, &[&size_val.term, &elem_sz]);
                     let dest_ty = self.body.local_decls[dest].ty;
-                    // For generic types (elem_size == 0), use external alloc
-                    // so Allocated/InBound checks auto-pass.
-                    let (alloc_id, base) = if *elem_size == 0 {
-                        let max = Int::from_u64(self.ctx, i64::MAX as u64);
-                        self.allocate_external(max, 1, None)
+                    let elem_ty = crate::verify::call_summary::from_raw_parts_elem_ty(
+                        self.tcx,
+                        self.caller_def_id,
+                        Some(dest),
+                    );
+                    // A generic element type uses the shared symbolic `sizeof_T`
+                    // so the fresh allocation's size stays consistent with ptr
+                    // strides and `InBound` cancels the factor.
+                    let elem_sz_term = if *elem_size == 0 {
+                        self.size_sym(elem_ty.unwrap_or(dest_ty))
                     } else {
-                        let elem_ty = crate::verify::call_summary::from_raw_parts_elem_ty(
-                            self.tcx,
-                            self.caller_def_id,
-                            Some(dest),
-                        );
-                        let heap_align = elem_ty.map(|ty| self.align_of_ty(ty)).unwrap_or(1).max(1);
-                        self.allocate(total, heap_align, elem_ty)
+                        Int::from_u64(self.ctx, *elem_size)
                     };
+                    let total = Int::mul(self.ctx, &[&size_val.term, &elem_sz_term]);
+                    let heap_align = elem_ty.map(|ty| self.align_of_ty(ty)).unwrap_or(1).max(1);
+                    let (alloc_id, base) = self.allocate(total, heap_align, elem_ty);
                     let prov = Provenance {
                         alloc_id,
                         offset: Int::from_u64(self.ctx, 0),
@@ -2660,15 +2686,14 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         };
         let dest_ty = self.body.local_decls[dest].ty;
         if let Some(elem_ty) = self.alloc(alloc_id).element_ty {
-            let elem_size = self.size_of_ty(elem_ty) as u64;
+            let elem_term = self.size_sym_read(elem_ty);
             let size = self.allocation_size(alloc_id);
-            if elem_size > 1 {
-                let div = Int::from_u64(self.ctx, elem_size);
-                let val = VmValue::new(size.div(&div), dest_ty);
+            if elem_term.simplify().as_u64() == Some(1) {
+                let val = VmValue::new(size.clone(), dest_ty);
                 self.set_local(dest, val);
                 return true;
             }
-            let val = VmValue::new(size.clone(), dest_ty);
+            let val = VmValue::new(size.div(&elem_term), dest_ty);
             self.set_local(dest, val);
             return true;
         }
@@ -2760,6 +2785,69 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             invariants: ValueInvariants::default(),
         };
         self.set_local(dest, val);
+    }
+
+    /// Apply a `ReturnRange` effect: model `slice::range(range, bounds)`
+    /// returning `Range { start, end }` with `0 <= start <= end <= bounds.end`.
+    /// The `bounds` argument is a `RangeTo<usize>` whose field 0 carries the
+    /// slice length; the returned `Range<usize>` fields are fresh symbols bound
+    /// by the range invariant.
+    fn apply_range_effect(
+        &mut self,
+        bounds_arg: usize,
+        args: &[VmValue<'ctx, 'tcx>],
+        caller_arg_locals: &[Option<Local>],
+        dest: Local,
+    ) {
+        let dest_ty = self.body.local_decls[dest].ty;
+        let TyKind::Adt(adt, substs) = dest_ty.kind() else {
+            return;
+        };
+        let variant = adt.non_enum_variant();
+        let field_ty = |idx: usize| -> Ty<'tcx> {
+            variant
+                .fields
+                .iter()
+                .nth(idx)
+                .map(|f| crate::helpers::mir_utils::field_ty(self.tcx, f, substs))
+                .unwrap_or(dest_ty)
+        };
+
+        // Resolve `bounds.end` (the slice length): prefer the materialized
+        // field 0 of the `RangeTo<usize>` argument, falling back to the
+        // argument's own term.
+        let mut len_term = None;
+        if let Some(l) = caller_arg_locals.get(bounds_arg).copied().flatten() {
+            if let Some(fv) = self.field_value(l, &[0]) {
+                len_term = Some(fv.term.clone());
+            }
+        }
+        let len_term = len_term.or_else(|| args.get(bounds_arg).map(|v| v.term.clone()));
+        let Some(len_term) = len_term else {
+            return;
+        };
+
+        let start = self.fresh_int(&format!("range_start_{}", dest.as_usize()));
+        let end = self.fresh_int(&format!("range_end_{}", dest.as_usize()));
+        let zero = Int::from_u64(self.ctx, 0);
+        self.path_conditions.push(start.ge(&zero));
+        self.path_conditions.push(start.le(&end));
+        self.path_conditions.push(end.le(&len_term));
+
+        let start_val = VmValue {
+            term: start,
+            ty: field_ty(0),
+            provenance: None,
+            invariants: ValueInvariants::default(),
+        };
+        let end_val = VmValue {
+            term: end,
+            ty: field_ty(1),
+            provenance: None,
+            invariants: ValueInvariants::default(),
+        };
+        self.set_field_value(dest, vec![0], start_val);
+        self.set_field_value(dest, vec![1], end_val);
     }
 
     /// Materialize the `{ptr, cap, len}` field values of a `Vec<T>` aggregate

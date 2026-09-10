@@ -353,6 +353,32 @@ impl PropertyChecker {
 
         let access = self.access_bytes(vm_state, property, 1, 2, checkpoint, &value);
 
+        // A field-offset pointer (`byte_add(offset_of!())`) is allocated within
+        // the *field* it addresses: the accessed range must fit in the field's
+        // own size.  "The field lies inside its container" is a layout
+        // invariant that needs no proof here (and the container's generic
+        // layout may be unknown, e.g. `Option<T>`).
+        if value
+            .provenance
+            .as_ref()
+            .is_some_and(|prov| prov.is_field_offset)
+        {
+            let field_size = crate::helpers::mir_utils::pointee_ty(value.ty)
+                .map(|ty| vm_state.size_sym_read(ty))
+                .unwrap_or_else(|| Int::from_u64(vm_state.ctx, 1));
+            let solver = Solver::new(vm_state.ctx);
+            solver.push();
+            vm_state.assert_all(&solver);
+            solver.assert(&access.le(&field_size).not());
+            let r = match solver.check() {
+                SatResult::Unsat => CheckResult::Proved,
+                SatResult::Sat => CheckResult::Failed,
+                _ => CheckResult::Unknown,
+            };
+            solver.pop(1);
+            return r;
+        }
+
         // Concrete sizes: direct comparison.
         if let (Some(size_val), Some(access_val)) = (size.as_u64(), access.as_u64()) {
             if size_val < access_val {
