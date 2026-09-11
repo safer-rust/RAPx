@@ -12,18 +12,22 @@
 /// The pointer can be safely dereferenced: in-bounds and within a live allocation.
 Deref(p: Ptr, T: Ty, n: Expr) { Allocated(p, T, n) && InBound(p, T, n) }
 
-/// A valid pointer: vacuously true for ZSTs, otherwise Deref.
-ValidPtr(p: Ptr, T: Ty, n: Expr) { Size(T, 0) || Deref(p, T, n) }
+/// A valid pointer (valid for reads/writes): non-null, and dereferenceable
+/// (in-bounds within a live allocation) — vacuously satisfied for a ZST, where
+/// non-nullness alone suffices ("every non-null pointer is valid for size-0
+/// accesses"; a null pointer is *never* valid).
+ValidPtr(p: Ptr, T: Ty, n: Expr) { NonNull(p) && (Size(T, 0) || Deref(p, T, n)) }
 
 /// A raw pointer meets all requirements for sound `&T`/`&mut T` conversion:
-/// initialized, non-null, dereferenceable, aligned, no aliasing conflict.
-Ptr2Ref(p: Ptr, T: Ty) { Init(p, T, 1) && NonNull(p) && ValidPtr(p, T, 1) && Align(p, T) && Alias(p) }
+/// initialized, valid (non-null + dereferenceable), aligned, no aliasing
+/// conflict.
+Ptr2Ref(p: Ptr, T: Ty) { Init(p, T, 1) && ValidPtr(p, T, 1) && Align(p, T) && Alias(p) }
 
 /// A raw pointer meets all requirements for sound `&MaybeUninit<T>` /
 /// `&mut MaybeUninit<T>` conversion: type-valid (the content need *not* be
-/// initialized — `Init` is deliberately absent), non-null, dereferenceable,
-/// aligned, no aliasing conflict.
-Ptr2RefUninit(p: Ptr, T: Ty) { Typed(p, T) && NonNull(p) && ValidPtr(p, T, 1) && Align(p, T) && Alias(p) }
+/// initialized — `Init` is deliberately absent), valid (non-null +
+/// dereferenceable), aligned, no aliasing conflict.
+Ptr2RefUninit(p: Ptr, T: Ty) { Typed(p, T) && ValidPtr(p, T, 1) && Align(p, T) && Alias(p) }
 
 /// The pointer matches the `Layout` it was allocated with (`realloc`/`dealloc`
 /// require "the same layout that was used to allocate the block"): aligned to
