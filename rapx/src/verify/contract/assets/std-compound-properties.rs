@@ -19,6 +19,12 @@ ValidPtr(p: Ptr, T: Ty, n: Expr) { Size(T, 0) || Deref(p, T, n) }
 /// initialized, aligned, no aliasing conflict.
 Ptr2Ref(p: Ptr, T: Ty) { Init(p, T, 1) && Align(p, T) && Alias(p) }
 
+/// A raw pointer meets all requirements for sound `&MaybeUninit<T>` /
+/// `&mut MaybeUninit<T>` conversion: type-valid (the content need *not* be
+/// initialized — `Init` is deliberately absent), dereferenceable, aligned, no
+/// aliasing conflict.
+Ptr2RefUninit(p: Ptr, T: Ty) { Typed(p, T) && ValidPtr(p, T, 1) && Align(p, T) && Alias(p) }
+
 /// The pointer matches the layout's size/alignment from a prior allocation.
 Layout(p: Ptr, l: Ptr) { Allocated(p) }
 

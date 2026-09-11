@@ -1225,7 +1225,7 @@
       ]
     },
     {
-      "tag": "Ptr2Ref",
+      "tag": "Ptr2RefUninit",
       "args": [
         "self",
         "T"
@@ -1240,7 +1240,7 @@
       ]
     },
     {
-      "tag": "Ptr2Ref",
+      "tag": "Ptr2RefUninit",
       "args": [
         "self",
         "T"
@@ -2041,7 +2041,7 @@
       ]
     },
     {
-      "tag": "Ptr2Ref",
+      "tag": "Ptr2RefUninit",
       "args": [
         "self",
         "T"
@@ -2541,7 +2541,7 @@
       ]
     },
     {
-      "tag": "Ptr2Ref",
+      "tag": "Ptr2RefUninit",
       "args": [
         "self",
         "T"
@@ -2584,7 +2584,7 @@
       ]
     },
     {
-      "tag": "Ptr2Ref",
+      "tag": "Ptr2RefUninit",
       "args": [
         "self",
         "T"
