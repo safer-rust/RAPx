@@ -839,6 +839,14 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 }
                 match proj.kind() {
                     ProjectionElem::Deref => {
+                        // A `*dest` load of a reference created from a field
+                        // (`let r = &mut self.v`) should yield the field's
+                        // *value* (materialized by `propagate_field_values_to_ref`
+                        // at the empty field path), not the field's address.
+                        if let Some(v) = self.field_values.get(&(place.local, Vec::new())).cloned()
+                        {
+                            return Some(v);
+                        }
                         let mut val = base.clone();
                         val.ty = place.ty(self.body, self.tcx).ty;
                         return Some(val);

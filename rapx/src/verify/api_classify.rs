@@ -651,3 +651,9 @@ pub fn is_sliceindex_get_unchecked(callee: Option<DefId>) -> bool {
 pub fn is_slice_range(callee: Option<DefId>) -> bool {
     any_fn(callee, crate::def_id::slice_range_fns())
 }
+
+/// Whether `callee` is `mem::replace(dest, src)` — returns `*dest` (the old
+/// value), so the summary must deref the reference argument.
+pub fn is_mem_replace(callee: Option<DefId>) -> bool {
+    any_of(callee, &[crate::def_id::replace()])
+}

@@ -480,10 +480,13 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         continue;
                     }
 
-                    // Non-slice reference: allocate pointee
-                    let pointee_size = self.size_of_ty(pointee_ty) as u64;
+                    // Non-slice reference: allocate pointee.  A generic `T`
+                    // yields `sizeof_T`; a struct with a generic field is summed
+                    // (`struct_size_sym`) so a field reference can be discharged.
                     let pointee_align = self.align_of_ty(pointee_ty);
-                    let pointee_size_term = Int::from_u64(self.ctx, pointee_size.max(1));
+                    let pointee_size_term = self
+                        .struct_size_sym(pointee_ty)
+                        .unwrap_or_else(|| self.size_sym(pointee_ty));
                     let (pointee_alloc_id, pointee_base) =
                         self.allocate(pointee_size_term, pointee_align, Some(pointee_ty));
                     self.alloc_mut(pointee_alloc_id).initialized = true;
@@ -861,6 +864,29 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     }
                 }
             }
+        }
+
+        // Pre-warm a shared symbolic `sizeof_T` for every generic type parameter
+        // appearing in the signature.  The property checkers read element sizes
+        // through the read-only `size_sym_read`, which falls back to `1` when the
+        // constant has not been created yet — order-dependent and potentially
+        // unsound (`InBound` would weaken `n·S <= len·S` to `n <= len·S`).
+        // Warming all signature type parameters here makes the fallback dead.
+        let fn_sig = self.tcx.fn_sig(self.caller_def_id).skip_binder();
+        let inputs = fn_sig.inputs().skip_binder();
+        let output = fn_sig.output().skip_binder();
+        let mut warmed: FxHashSet<Ty<'tcx>> = FxHashSet::default();
+        for ty in inputs.iter().chain(std::iter::once(&output)) {
+            for t in ty.walk() {
+                if let rustc_middle::ty::GenericArgKind::Type(inner) = t.kind() {
+                    if matches!(inner.kind(), rustc_middle::ty::TyKind::Param(_)) {
+                        warmed.insert(inner);
+                    }
+                }
+            }
+        }
+        for ty in warmed {
+            self.size_sym(ty);
         }
     }
 
@@ -1353,6 +1379,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             Rvalue::CopyForDeref(p) => Some(p),
             _ => None,
         };
+
         if let Some(place) = src_place {
             if !place.projection.is_empty() {
                 if let Some(val) = self.value_of_place(place) {
@@ -3986,7 +4013,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             .collect();
         for path in keys {
             let matches_prefix = field_prefix.is_empty()
-                || (path.len() > field_prefix.len()
+                || (path.len() >= field_prefix.len()
                     && path[..field_prefix.len()] == field_prefix[..]);
             if matches_prefix {
                 let rest = if field_prefix.is_empty() {

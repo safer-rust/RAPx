@@ -213,8 +213,8 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 (size, Some(*elem), false)
             }
             _ => {
-                let size = self.size_of_ty(ty).max(1) as u64;
-                (Int::from_u64(self.ctx, size), Some(ty), false)
+                let size = self.struct_size_sym(ty).unwrap_or_else(|| self.size_sym(ty));
+                (size, Some(ty), false)
             }
         };
         let alloc = Allocation::new(base, size_term, align, element_ty, is_external);
@@ -303,6 +303,34 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             .get(&ty)
             .cloned()
             .unwrap_or_else(|| Int::from_u64(self.ctx, 1))
+    }
+
+    /// Size of a struct/ADT as the *sum* of its fields' sizes (each via
+    /// [`size_sym`](Self::size_sym)).  This lower-bounds the real layout so a
+    /// field reference (`Allocated(&alloc)`) can be discharged against the
+    /// struct allocation (`sizeof_A <= 8 + 8 + sizeof_A`).  Returns `None` for
+    /// non-ADT or enum types.
+    pub(crate) fn struct_size_sym(&mut self, ty: Ty<'tcx>) -> Option<Int<'ctx>> {
+        let TyKind::Adt(adt_def, substs) = ty.kind() else {
+            return None;
+        };
+        if adt_def.is_enum() {
+            return None;
+        }
+        let concrete = self.size_of_ty(ty);
+        if concrete > 0 {
+            return Some(Int::from_u64(self.ctx, concrete));
+        }
+        let variant = adt_def.non_enum_variant();
+        let mut total = Int::from_u64(self.ctx, 0);
+        for field in variant.fields.iter() {
+            let field_ty = crate::helpers::mir_utils::field_ty(self.tcx, field, substs);
+            let field_size = self
+                .struct_size_sym(field_ty)
+                .unwrap_or_else(|| self.size_sym(field_ty));
+            total = Int::add(self.ctx, &[&total, &field_size]);
+        }
+        Some(total)
     }
 }
 

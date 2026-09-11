@@ -882,6 +882,13 @@ impl PropertyChecker {
                         (TyKind::Param(_), TyKind::Param(_))
                     )
             }
+            TyKind::Slice(inner_ty) => {
+                *inner_ty == required_ty
+                    || matches!(
+                        (inner_ty.kind(), required_ty.kind()),
+                        (TyKind::Param(_), TyKind::Param(_))
+                    )
+            }
             _ => false,
         }
     }

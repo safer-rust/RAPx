@@ -1103,6 +1103,52 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     self.set_dest_as_heap_ptr(arg_val, dest);
                 }
             }
+            CallEffect::ReturnDerefArg { arg } => {
+                // `mem::replace(dest, src)` returns `*dest`: the pointee value,
+                // not the `&mut` reference. Prefer the materialized pointee
+                // (`field_values` at the empty path, set by
+                // `propagate_field_values_to_ref` for `&mut self.field`).  When
+                // the borrow chain was dropped by the slicer (no pointee), model
+                // the returned slice as a fresh external allocation so a
+                // downstream `Allocated`/`InBound` can still match `[T]` vs `T`.
+                let dest_ty = self.body.local_decls[dest].ty;
+                let mut val = args.get(*arg).cloned().unwrap_or_else(|| VmValue {
+                    term: self.fresh_int("replaced"),
+                    ty: dest_ty,
+                    provenance: None,
+                    invariants: ValueInvariants::default(),
+                });
+                let arg_local = caller_arg_locals.get(*arg).copied().flatten();
+                let pointee = arg_local
+                    .and_then(|l| self.field_values.get(&(l, Vec::new())).cloned());
+                if let Some(p) = pointee {
+                    val = p;
+                } else if let Some(elem) = crate::helpers::mir_utils::pointee_ty(dest_ty) {
+                    let is_slice = matches!(
+                        elem.kind(),
+                        rustc_middle::ty::TyKind::Slice(_)
+                    );
+                    if is_slice {
+                        let (alloc_id, base) = self.allocate_external(
+                            Int::from_u64(self.ctx, i64::MAX as u64),
+                            self.align_of_ty(elem).max(1),
+                            Some(elem),
+                        );
+                        val = VmValue {
+                            term: base,
+                            ty: dest_ty,
+                            provenance: Some(Provenance {
+                                alloc_id,
+                                offset: Int::from_u64(self.ctx, 0),
+                                is_field_offset: false,
+                            }),
+                            invariants: ValueInvariants::default(),
+                        };
+                    }
+                }
+                val.ty = dest_ty;
+                self.set_local(dest, val);
+            }
             CallEffect::ReturnTransparentDeref { arg, peel } => {
                 if let Some(arg_val) = args.get(*arg) {
                     self.set_dest_as_heap_ptr(arg_val, dest);
@@ -1148,16 +1194,23 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         .map(|p| p.offset.clone())
                         .unwrap_or_else(|| Int::from_u64(self.ctx, 0));
 
-                    let (elem_ty, elem_sz, alloc_size) = src_alloc_id
+                    let (elem_ty, elem_sz_term, alloc_size) = src_alloc_id
                         .map(|id| self.alloc(id))
                         .map(|a| {
                             let ty = a.element_ty;
-                            let sz = self.size_of_ty(ty.unwrap_or(self_val.ty)).max(1) as u64;
-                            (ty, sz, a.size.clone())
+                            let sz_term = self.size_sym_read(ty.unwrap_or(self_val.ty));
+                            (ty, sz_term, a.size.clone())
                         })
-                        .unwrap_or((None, 1, Int::from_u64(self.ctx, 1)));
+                        .unwrap_or_else(|| {
+                            // Provenance lost (e.g. `mem::replace` on a raw field
+                            // whose borrow the slicer dropped): fall back to the
+                            // slice pointee type so `InBound`/`Allocated` can
+                            // still match `[T]` against the element `T`.
+                            let pointee = crate::helpers::mir_utils::pointee_ty(self_val.ty);
+                            let sz = self.size_sym_read(pointee.unwrap_or(self_val.ty));
+                            (pointee, sz, Int::from_u64(self.ctx, 1))
+                        });
 
-                    let elem_sz_term = Int::from_u64(self.ctx, elem_sz);
                     let total_len = alloc_size.div(&elem_sz_term); // self.len()
 
                     let zero = Int::from_u64(self.ctx, 0);
