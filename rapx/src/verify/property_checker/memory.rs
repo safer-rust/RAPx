@@ -456,6 +456,25 @@ impl PropertyChecker {
             return CheckResult::Proved;
         }
 
+        // `Init(p, MaybeUninit<T>, n)` reduces to `Typed(p, MaybeUninit<T>)`:
+        // `MaybeUninit<T>` carries no validity invariant (any bit pattern is a
+        // valid `MaybeUninit<T>`), so there is nothing to "initialize" — the
+        // content need only be of type `MaybeUninit<T>`.  Mirrors the
+        // `ty_is_maybe_uninit` fast-path in `check_typed`; this is what lets a
+        // `&[MaybeUninit<T>]` slice satisfy `Init` without its contents being
+        // initialized.
+        if let Some(required_ty) = property.args().get(1).and_then(|a| {
+            if let PropertyArg::Ty(ty) = a {
+                Some(*ty)
+            } else {
+                None
+            }
+        }) {
+            if Self::ty_is_maybe_uninit(required_ty) {
+                return CheckResult::Proved;
+            }
+        }
+
         // Compute the required init range: count * sizeof(T) bytes
         let access = if property.args().len() >= 3 {
             Some(self.access_bytes(vm_state, property, 1, 2, checkpoint, &value))

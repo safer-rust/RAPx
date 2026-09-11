@@ -28,6 +28,24 @@ use super::state::{AllocId, InlineFrame, Provenance, ValueInvariants, VmState, V
 
 use crate::verify::api_classify;
 
+/// Whether `ty` (peeling through `&` / `*mut` / `*const` / `[T]` / `[T; N]`) is
+/// `MaybeUninit<...>`, i.e. carries no validity invariant (any bit pattern is a
+/// valid value).  Mirrors `PropertyChecker::ty_is_maybe_uninit`.
+fn ty_is_maybe_uninit(ty: Ty<'_>) -> bool {
+    use rustc_middle::ty::TyKind;
+    let mut t = ty;
+    loop {
+        match t.kind() {
+            TyKind::Slice(e) | TyKind::Array(e, _) => t = *e,
+            TyKind::RawPtr(e, _) | TyKind::Ref(_, e, _) => t = *e,
+            TyKind::Adt(adt, _) => {
+                return api_classify::is_maybe_uninit_type(adt.did());
+            }
+            _ => return false,
+        }
+    }
+}
+
 impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
     /// Execute all retained MIR items in path order.
     pub(crate) fn execute_items(&mut self, items: &[RelevantItem<'tcx>]) {
@@ -409,8 +427,22 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 // provenance so that pointer-deriving operations (as_ptr,
                 // add, etc.) propagate correctly.
                 if let rustc_middle::ty::TyKind::Ref(..) = ty.kind() {
+                    let pointee_ty =
+                        if let rustc_middle::ty::TyKind::Ref(_, inner_ty, _) = ty.kind() {
+                            *inner_ty
+                        } else {
+                            ty
+                        };
+                    // `&MaybeUninit<T>` / `&[MaybeUninit<T>]` carry no validity
+                    // invariant — the content need not be initialized — so do not
+                    // claim `Init` for them (the content property reduces to
+                    // `Typed`).
+                    let pointee_is_maybe_uninit = ty_is_maybe_uninit(pointee_ty);
+
                     invariants.non_null = true;
-                    invariants.init = true;
+                    if !pointee_is_maybe_uninit {
+                        invariants.init = true;
+                    }
                     invariants.aligned = true;
                     // A reference always points within a live allocation, so it
                     // carries the pointer-validity facts (`NonNull`, `Allocated`,
@@ -418,13 +450,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     // not be the only source of pointer validity (see
                     // std-subsumption.rs).
                     invariants.in_bounds = true;
-
-                    let pointee_ty =
-                        if let rustc_middle::ty::TyKind::Ref(_, inner_ty, _) = ty.kind() {
-                            *inner_ty
-                        } else {
-                            ty
-                        };
 
                     if let rustc_middle::ty::TyKind::Slice(elem_ty) = pointee_ty.kind() {
                         let elem_size = self.size_of_ty(*elem_ty) as u64;
@@ -469,7 +494,9 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         if let Some(ref_alloc_id) = self.alloc_for_local(local) {
                             self.alloc_mut(ref_alloc_id).slice_data = Some(data_alloc_id);
                         }
-                        self.alloc_mut(data_alloc_id).initialized = true;
+                        if !pointee_is_maybe_uninit {
+                            self.alloc_mut(data_alloc_id).initialized = true;
+                        }
                         self.set_local(
                             local,
                             VmValue {
@@ -495,7 +522,9 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                         .unwrap_or_else(|| self.size_sym(pointee_ty));
                     let (pointee_alloc_id, pointee_base) =
                         self.allocate(pointee_size_term, pointee_align, Some(pointee_ty));
-                    self.alloc_mut(pointee_alloc_id).initialized = true;
+                    if !pointee_is_maybe_uninit {
+                        self.alloc_mut(pointee_alloc_id).initialized = true;
+                    }
                     self.set_local(
                         local,
                         VmValue {
@@ -3740,6 +3769,23 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
 
     /// Set init invariant on the target value and its allocation.
     fn set_init_for_value(&mut self, property: &Property<'tcx>, val: VmValue<'ctx, 'tcx>) {
+        // `Init(p, MaybeUninit<T>, n)` reduces to `Typed(p, MaybeUninit<T>)`: the
+        // content carries no validity invariant, so there is nothing to mark
+        // initialized — the `Init ⇒ Typed` subsumption records the element type.
+        let is_maybe_uninit = property
+            .args()
+            .get(1)
+            .and_then(|a| {
+                if let PropertyArg::Ty(ty) = a {
+                    Some(ty_is_maybe_uninit(*ty))
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(false);
+        if is_maybe_uninit {
+            return;
+        }
         if let Some(prov) = &val.provenance {
             self.alloc_mut(prov.alloc_id).initialized = true;
         }
