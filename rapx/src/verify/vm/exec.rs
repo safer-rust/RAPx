@@ -412,6 +412,12 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     invariants.non_null = true;
                     invariants.init = true;
                     invariants.aligned = true;
+                    // A reference always points within a live allocation, so it
+                    // carries the pointer-validity facts (`NonNull`, `Allocated`,
+                    // `InBound`) explicitly — the content property `Init` must
+                    // not be the only source of pointer validity (see
+                    // std-subsumption.rs).
+                    invariants.in_bounds = true;
 
                     let pointee_ty =
                         if let rustc_middle::ty::TyKind::Ref(_, inner_ty, _) = ty.kind() {
@@ -2994,6 +3000,22 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         if atom.contract_kind == ContractKind::Hazard {
             return;
         }
+        // Assert the atom's own effect, then each of its transitive
+        // consequences exactly once (`subsumption_closure` is deduplicated, so
+        // the diamond `Init ⇒ NonNull` via `Allocated`/`Typed` collapses to a
+        // single `NonNull` rather than re-asserting it three times).
+        self.assert_atom_direct(property);
+        for sub in crate::verify::contract::compound::subsumption_closure(atom) {
+            self.assert_atom_direct(&Property::Atom(sub));
+        }
+    }
+
+    /// Apply a single atom's direct effect (its `match kind` arm), without
+    /// recursing into its subsumption consequences.
+    fn assert_atom_direct(&mut self, property: &Property<'tcx>) {
+        let Property::Atom(atom) = property else {
+            return;
+        };
         let kind = atom.kind;
         match kind {
             PropertyKind::NonNull => {
@@ -3045,7 +3067,16 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                                 None
                             }
                         }) {
-                            self.alloc_mut(alloc_id).element_ty = Some(expected_ty);
+                            // Only record the type invariant when the allocation
+                            // has no element type yet.  `Init ⇒ Typed` (and other
+                            // typed preconditions) may re-assert `Typed` with a
+                            // *re-numbered* instantiation of the same `T` (e.g.
+                            // `T/#1` vs the `T/#0` used to size the allocation),
+                            // which must not clobber the original element type —
+                            // doing so makes `len()` fall back to the byte size.
+                            if self.alloc(alloc_id).element_ty.is_none() {
+                                self.alloc_mut(alloc_id).element_ty = Some(expected_ty);
+                            }
                         }
                     }
                 }
@@ -3107,15 +3138,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 self.notes
                     .push(format!("contract fact {:?} not directly asserted", kind));
             }
-        }
-
-        // Subsumption: asserting a stronger fact also asserts its weaker
-        // consequences (`Init(p, T, n) ⇒ NonNull ∧ Allocated ∧ InBound ∧ Typed`,
-        // `Allocated ⇒ NonNull`, …).  These are declared declaratively in
-        // `std-subsumption.rs`; see `compound::subsumed_atoms`.  The graph is a
-        // strict DAG, so no cycle guard is needed.
-        for sub in crate::verify::contract::compound::subsumed_atoms(atom) {
-            self.assert_contract_fact(&Property::Atom(sub));
         }
     }
 

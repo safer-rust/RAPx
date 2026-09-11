@@ -33,7 +33,7 @@ use super::types::{AtomProperty, ContractExpr, ContractKind, Property, PropertyA
 
 /// A single argument in a compound body: a reference to a formal parameter, or a
 /// literal (kept as source text, re-parsed as `syn::Expr` at expansion time).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) enum CompoundArg {
     Param(usize),
     Lit(String),
@@ -402,7 +402,7 @@ fn unknown_property<'tcx>() -> Property<'tcx> {
 
 // ── Subsumption (one-way weakening) ───────────────────────────
 
-/// Cached builtin subsumption map (see [`subsumed_atoms`]).
+/// Cached builtin subsumption map (see [`subsumption_closure`]).
 fn builtin_subsumptions_map() -> &'static HashMap<String, CompoundSpec> {
     static BUILTIN: OnceLock<HashMap<String, CompoundSpec>> = OnceLock::new();
     BUILTIN.get_or_init(|| {
@@ -421,48 +421,86 @@ fn builtin_subsumptions_map() -> &'static HashMap<String, CompoundSpec> {
 /// primitive calls whose parameters map positionally to the head's arguments
 /// (e.g. `Init(p, T, n) ⇒ NonNull(p) ∧ Allocated(p, T, n) ∧ InBound(p, T, n) ∧
 /// Typed(p, T)`, `Allocated(p, T, n) ⇒ NonNull(p)`).
-pub(crate) fn subsumed_atoms<'tcx>(atom: &AtomProperty<'tcx>) -> Vec<AtomProperty<'tcx>> {
-    let Some(tag) = super::spec::tag_name_for_kind(atom.kind) else {
+///
+/// Returns the *transitive closure* of the subsumption relation applied to
+/// `atom`, deduplicated: each weaker consequence appears exactly once, so the
+/// diamond `Init ⇒ NonNull` (directly, and via `Allocated`/`Typed`) collapses
+/// to a single `NonNull` instead of re-asserting it three times.  Breadth-first
+/// order keeps a stronger premise (`Allocated`) ahead of its own consequences.
+pub(crate) fn subsumption_closure<'tcx>(atom: &AtomProperty<'tcx>) -> Vec<AtomProperty<'tcx>> {
+    let Some(head_tag) = super::spec::tag_name_for_kind(atom.kind) else {
         return Vec::new();
     };
-    let Some(spec) = builtin_subsumptions_map().get(tag).cloned() else {
-        return Vec::new();
-    };
-    let calls = flatten_subsumption_body(&spec.body);
-    let mut out = Vec::with_capacity(calls.len());
-    for (tag, args) in calls {
-        let Some(kind) = super::spec::find_spec(&tag).map(|s| s.kind) else {
+
+    // BFS over the subsumption graph, tracking `(tag, args)` pairs at the
+    // declared level, where `args` stay positionally relative to the original
+    // `atom` (substitution keeps them as `Param(i)`/`Lit`).  `CompoundArg` is
+    // `Eq + Hash`, so the pair is a valid dedup key.
+    let mut out: Vec<AtomProperty<'tcx>> = Vec::new();
+    let mut seen: HashSet<(String, Vec<CompoundArg>)> = HashSet::new();
+    let mut queue: Vec<(String, Vec<CompoundArg>)> = Vec::new();
+    if let Some(spec) = builtin_subsumptions_map().get(head_tag) {
+        queue.extend(flatten_subsumption_body(&spec.body));
+    }
+    let mut cursor = 0;
+    while cursor < queue.len() {
+        let (tag, args) = queue[cursor].clone();
+        cursor += 1;
+        if !seen.insert((tag.clone(), args.clone())) {
             continue;
-        };
-        let mut resolved: Vec<PropertyArg<'tcx>> = Vec::with_capacity(args.len());
-        let mut ok = true;
-        for a in args {
-            match a {
-                CompoundArg::Param(i) => match atom.args.get(i) {
-                    Some(pa) => resolved.push(pa.clone()),
-                    None => {
-                        ok = false;
-                        break;
-                    }
-                },
-                CompoundArg::Lit(s) => {
-                    rap_warn!("subsumption body literal `{s}` unsupported; skipping");
-                    ok = false;
-                    break;
-                }
+        }
+        if let Some(kind) = super::spec::find_spec(&tag).map(|s| s.kind) {
+            if let Some(resolved) = resolve_subsumption_args(&args, atom) {
+                out.push(AtomProperty {
+                    kind,
+                    args: resolved,
+                    contract_kind: ContractKind::Precond,
+                    for_each: None,
+                    origin: None,
+                });
             }
         }
-        if ok {
-            out.push(AtomProperty {
-                kind,
-                args: resolved,
-                contract_kind: ContractKind::Precond,
-                for_each: None,
-                origin: None,
-            });
+        // Enqueue this tag's own consequences, substituting its params with the
+        // actual `args` passed to it (kept relative to `atom`).
+        if let Some(spec) = builtin_subsumptions_map().get(&tag) {
+            for (child_tag, child_args) in flatten_subsumption_body(&spec.body) {
+                let substituted: Vec<CompoundArg> = child_args
+                    .into_iter()
+                    .map(|a| match a {
+                        CompoundArg::Param(j) => args
+                            .get(j)
+                            .cloned()
+                            .unwrap_or(CompoundArg::Lit(String::new())),
+                        lit @ CompoundArg::Lit(_) => lit,
+                    })
+                    .collect();
+                queue.push((child_tag, substituted));
+            }
         }
     }
     out
+}
+
+/// Resolve a subsumption body's `(tag, args)` — whose `args` are `Param(i)`
+/// indices into `atom`'s own arguments — into concrete `PropertyArg`s.
+fn resolve_subsumption_args<'tcx>(
+    args: &[CompoundArg],
+    atom: &AtomProperty<'tcx>,
+) -> Option<Vec<PropertyArg<'tcx>>> {
+    let mut resolved: Vec<PropertyArg<'tcx>> = Vec::with_capacity(args.len());
+    for a in args {
+        match a {
+            CompoundArg::Param(i) => match atom.args.get(*i) {
+                Some(pa) => resolved.push(pa.clone()),
+                None => return None,
+            },
+            CompoundArg::Lit(s) => {
+                rap_warn!("subsumption body literal `{s}` unsupported; skipping");
+                return None;
+            }
+        }
+    }
+    Some(resolved)
 }
 
 /// Flatten a subsumption body (a pure conjunction of primitive calls) into a

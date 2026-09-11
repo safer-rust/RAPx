@@ -8,17 +8,14 @@
 // `parse_compounds`, but the head is an existing primitive tag and the body is
 // a pure conjunction of weaker primitive calls (parameters map positionally to
 // the head's arguments).
+//
+// Only *content/type-hierarchy* weakenings live here.  The pointer-validity
+// primitives (`NonNull`, `Allocated`, `InBound`) are deliberately NOT implied
+// by `Init`/`Typed`: they are orthogonal requirements that contracts state
+// explicitly (e.g. the `Ptr2Ref` compound).  See primitive-sp.md §3.3.3/§3.3.5.
 // ============================================================
 
-/// Reading a valid `T` value at `p` requires the pointer to be non-null, to
-/// point at a live allocation, and to be in-bounds, and entails the type
-/// invariant — so `Init(p, T, n)` also asserts `NonNull(p) ∧ Allocated(p, T, n)
-/// ∧ InBound(p, T, n) ∧ Typed(p, T)`.
-Init(p: Ptr, T: Ty, n: Expr) { NonNull(p) && Allocated(p, T, n) && InBound(p, T, n) && Typed(p, T) }
-
-/// A pointer into a live allocation is non-null (a null address is not
-/// allocated by any allocator).
-Allocated(p: Ptr, T: Ty, n: Expr) { NonNull(p) }
-
-/// A pointer to a typed value is non-null (a typed value cannot live at null).
-Typed(p: Ptr, T: Ty) { NonNull(p) }
+/// Reading a valid `T` value at `p` entails the type invariant, so
+/// `Init(p, T, n)` also asserts `Typed(p, T)` — but *not* the pointer-validity
+/// primitives (`NonNull`/`Allocated`/`InBound`), which are orthogonal.
+Init(p: Ptr, T: Ty, n: Expr) { Typed(p, T) }
