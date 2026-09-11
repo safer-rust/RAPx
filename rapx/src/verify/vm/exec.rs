@@ -3108,6 +3108,15 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     .push(format!("contract fact {:?} not directly asserted", kind));
             }
         }
+
+        // Subsumption: asserting a stronger fact also asserts its weaker
+        // consequences (`Init(p, T, n) ⇒ NonNull ∧ Allocated ∧ InBound ∧ Typed`,
+        // `Allocated ⇒ NonNull`, …).  These are declared declaratively in
+        // `std-subsumption.rs`; see `compound::subsumed_atoms`.  The graph is a
+        // strict DAG, so no cycle guard is needed.
+        for sub in crate::verify::contract::compound::subsumed_atoms(atom) {
+            self.assert_contract_fact(&Property::Atom(sub));
+        }
     }
 
     /// Get the local referenced by a contract property's target.

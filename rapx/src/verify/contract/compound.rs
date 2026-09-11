@@ -29,7 +29,7 @@ use rustc_hir::def_id::{CrateNum, LOCAL_CRATE};
 use syn::Expr;
 use syn::visit_mut::{self, VisitMut};
 
-use super::types::{ContractExpr, Property, PropertyArg, PropertyKind};
+use super::types::{AtomProperty, ContractExpr, ContractKind, Property, PropertyArg, PropertyKind};
 
 /// A single argument in a compound body: a reference to a formal parameter, or a
 /// literal (kept as source text, re-parsed as `syn::Expr` at expansion time).
@@ -398,6 +398,84 @@ fn expand_compound_body<'tcx>(
 
 fn unknown_property<'tcx>() -> Property<'tcx> {
     Property::new_atom(PropertyKind::Unknown, Vec::new())
+}
+
+// ── Subsumption (one-way weakening) ───────────────────────────
+
+/// Cached builtin subsumption map (see [`subsumed_atoms`]).
+fn builtin_subsumptions_map() -> &'static HashMap<String, CompoundSpec> {
+    static BUILTIN: OnceLock<HashMap<String, CompoundSpec>> = OnceLock::new();
+    BUILTIN.get_or_init(|| {
+        parse_compounds(include_str!("assets/std-subsumption.rs"))
+            .into_iter()
+            .map(|c| (c.name.clone(), c))
+            .collect()
+    })
+}
+
+/// Apply the builtin subsumption rules to an asserted fact: a stronger
+/// primitive also asserts its weaker consequences — a one-way weakening, unlike
+/// the `≡` compound equivalences above.  The rules are declared declaratively
+/// in `std-subsumption.rs` with the same `Name(params) { body }` syntax; the
+/// head is an existing primitive tag and the body a pure conjunction of weaker
+/// primitive calls whose parameters map positionally to the head's arguments
+/// (e.g. `Init(p, T, n) ⇒ NonNull(p) ∧ Allocated(p, T, n) ∧ InBound(p, T, n) ∧
+/// Typed(p, T)`, `Allocated(p, T, n) ⇒ NonNull(p)`).
+pub(crate) fn subsumed_atoms<'tcx>(atom: &AtomProperty<'tcx>) -> Vec<AtomProperty<'tcx>> {
+    let Some(tag) = super::spec::tag_name_for_kind(atom.kind) else {
+        return Vec::new();
+    };
+    let Some(spec) = builtin_subsumptions_map().get(tag).cloned() else {
+        return Vec::new();
+    };
+    let calls = flatten_subsumption_body(&spec.body);
+    let mut out = Vec::with_capacity(calls.len());
+    for (tag, args) in calls {
+        let Some(kind) = super::spec::find_spec(&tag).map(|s| s.kind) else {
+            continue;
+        };
+        let mut resolved: Vec<PropertyArg<'tcx>> = Vec::with_capacity(args.len());
+        let mut ok = true;
+        for a in args {
+            match a {
+                CompoundArg::Param(i) => match atom.args.get(i) {
+                    Some(pa) => resolved.push(pa.clone()),
+                    None => {
+                        ok = false;
+                        break;
+                    }
+                },
+                CompoundArg::Lit(s) => {
+                    rap_warn!("subsumption body literal `{s}` unsupported; skipping");
+                    ok = false;
+                    break;
+                }
+            }
+        }
+        if ok {
+            out.push(AtomProperty {
+                kind,
+                args: resolved,
+                contract_kind: ContractKind::Precond,
+                for_each: None,
+                origin: None,
+            });
+        }
+    }
+    out
+}
+
+/// Flatten a subsumption body (a pure conjunction of primitive calls) into a
+/// list of `(tag, args)` pairs.
+fn flatten_subsumption_body(body: &CompoundBody) -> Vec<(String, Vec<CompoundArg>)> {
+    match body {
+        CompoundBody::And(parts) => parts.iter().flat_map(flatten_subsumption_body).collect(),
+        CompoundBody::Call { tag, args } => vec![(tag.clone(), args.clone())],
+        CompoundBody::Or(_) => {
+            rap_warn!("subsumption body must be a conjunction (no `||`); ignoring disjunction");
+            Vec::new()
+        }
+    }
 }
 
 // ── Registry ───────────────────────────────────────────────────

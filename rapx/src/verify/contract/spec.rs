@@ -359,6 +359,11 @@ pub(crate) fn find_spec(name: &str) -> Option<&'static PropertySpec> {
     SPECS.iter().find(|s| s.tag == name)
 }
 
+/// The first tag name that maps to `kind` (the inverse of [`find_spec`]).
+pub(crate) fn tag_name_for_kind(kind: PropertyKind) -> Option<&'static str> {
+    SPECS.iter().find(|s| s.kind == kind).map(|s| s.tag)
+}
+
 /// The canonical meaning template for a property kind (the first tag that maps
 /// to `kind`).  Argument-dependent kinds override this at render time.
 pub(crate) fn kind_meaning(kind: PropertyKind) -> &'static str {
