@@ -2588,16 +2588,17 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
 
     /// Compute the slice length for a `&[T]` / `&mut [T]` value: the allocation
     /// size divided by the element size. Reuses the allocation's size term so
-    /// it agrees with InBound/`alloc.size` checks.
+    /// it agrees with InBound/`alloc.size` checks.  Uses the symbolic element
+    /// size (`size_sym_read`) so `len = (len·S) / S` cancels to `len` for a
+    /// generic element type — mirroring `set_len_from_alloc`.
     fn slice_len_from_value(&self, val: &VmValue<'ctx, 'tcx>) -> Option<Int<'ctx>> {
         let alloc_id = val.provenance_alloc_id()?;
         let alloc = self.alloc(alloc_id);
         let elem_ty = alloc.element_ty?;
-        let elem_size = self.size_of_ty(elem_ty).max(1) as u64;
-        if elem_size == 1 {
+        let elem_term = self.size_sym_read(elem_ty);
+        if elem_term.simplify().as_u64() == Some(1) {
             return Some(alloc.size.clone());
         }
-        let elem_term = Int::from_u64(self.ctx, elem_size);
         Some(alloc.size.div(&elem_term))
     }
 
@@ -3430,8 +3431,12 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         use crate::verify::contract::{ContractExpr, NumericBinOp};
         match expr {
             ContractExpr::SizeOf(ty) => {
-                let size = self.size_of_ty(*ty).max(1);
-                Some(Int::from_u64(self.ctx, size as u64))
+                // Symbolic-aware: a generic `T` yields the shared `sizeof_T`
+                // (≥ 1) instead of the concrete `1` placeholder, so bounds like
+                // `size_of(T) * len <= isize::MAX` match the data allocation's
+                // `len·sizeof_T` byte size.  Concrete types still return their
+                // real size.
+                Some(self.size_sym_read(*ty))
             }
             ContractExpr::Place(cp) => {
                 let local = cp.base.to_local();
