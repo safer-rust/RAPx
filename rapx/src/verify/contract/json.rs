@@ -156,8 +156,6 @@ fn load_std_contracts_json() -> &'static HashMap<String, Vec<JsonProperty>> {
 /// Serialisation-friendly struct for the type-invariants JSON.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct TypeInvariantEntry {
-    #[serde(default)]
-    pub comment: Option<String>,
     pub invariants: Vec<JsonProperty>,
 }
 

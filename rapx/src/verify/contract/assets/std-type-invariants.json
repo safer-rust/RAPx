@@ -1,6 +1,5 @@
 {
   "core::num::nonzero::NonZero": {
-    "comment": "NonZero integer \u2014 inner value must be non-zero",
     "invariants": [
       {
         "tag": "ValidNum",
@@ -11,7 +10,6 @@
     ]
   },
   "core::ptr::non_null::NonNull": {
-    "comment": "NonNull pointer \u2014 inner raw pointer must be non-null",
     "invariants": [
       {
         "tag": "NonNull",
@@ -22,7 +20,6 @@
     ]
   },
   "[T]": {
-    "comment": "slice \u2014 non-null, aligned data pointer; length fits isize; allocated + initialized",
     "invariants": [
       {
         "tag": "NonNull",
