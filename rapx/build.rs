@@ -16,6 +16,7 @@ fn main() {
     emit_check_cfg("rapx_has_maybe_dangling_lang_item");
     emit_check_cfg("rapx_rvalue_has_nullary_op");
     emit_check_cfg("rapx_constkind_alias");
+    emit_check_cfg("rapx_has_deeply_resolve_ignoring_regions");
 
     emit_cfg("rapx_ge_99", minor >= 99);
     emit_cfg("rapx_ge_100", minor >= 100);
@@ -76,6 +77,15 @@ fn main() {
         rustc_src_contains_path(
             "compiler/rustc_type_ir/src/const_kind.rs",
             "Alias(ty::IsRigid",
+        ),
+    );
+    // `InferCtxt::resolve_vars_if_possible` was renamed to
+    // `deeply_resolve_ignoring_regions` in nightly 2026-09-11.
+    emit_cfg(
+        "rapx_has_deeply_resolve_ignoring_regions",
+        rustc_src_contains_path(
+            "compiler/rustc_infer/src/infer/mod.rs",
+            "deeply_resolve_ignoring_regions",
         ),
     );
 }

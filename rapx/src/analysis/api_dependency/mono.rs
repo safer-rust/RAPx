@@ -196,6 +196,25 @@ impl<'tcx> MonoSet<'tcx> {
     }
 }
 
+/// Resolve inference variables to concrete values after unification.  The
+/// method was renamed `resolve_vars_if_possible` → `deeply_resolve_ignoring_regions`
+/// in nightly 2026-09-11.
+#[cfg(rapx_has_deeply_resolve_ignoring_regions)]
+fn resolve_var<'tcx, T: rustc_middle::ty::TypeFoldable<TyCtxt<'tcx>>>(
+    infcx: &InferCtxt<'tcx>,
+    value: T,
+) -> T {
+    infcx.deeply_resolve_ignoring_regions(value)
+}
+
+#[cfg(not(rapx_has_deeply_resolve_ignoring_regions))]
+fn resolve_var<'tcx, T: rustc_middle::ty::TypeFoldable<TyCtxt<'tcx>>>(
+    infcx: &InferCtxt<'tcx>,
+    value: T,
+) -> T {
+    infcx.resolve_vars_if_possible(value)
+}
+
 /// try to unfiy lhs = rhs,
 /// e.g.,
 /// try_unify(Vec<T>, Vec<i32>, ...) = Some(i32)
@@ -220,10 +239,10 @@ fn unify_ty<'tcx>(
                     .iter()
                     .map(|arg| match arg.kind() {
                         ty::GenericArgKind::Lifetime(region) => {
-                            infcx.deeply_resolve_ignoring_regions(region).into()
+                            resolve_var(infcx, region).into()
                         }
-                        ty::GenericArgKind::Type(ty) => infcx.deeply_resolve_ignoring_regions(ty).into(),
-                        ty::GenericArgKind::Const(ct) => infcx.deeply_resolve_ignoring_regions(ct).into(),
+                        ty::GenericArgKind::Type(ty) => resolve_var(infcx, ty).into(),
+                        ty::GenericArgKind::Const(ct) => resolve_var(infcx, ct).into(),
                     })
                     .collect();
                 Some(mono)
