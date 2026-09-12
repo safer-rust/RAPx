@@ -395,7 +395,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         let dest_ty = self.body.local_decls[destination].ty;
         if name.ends_with("::len") {
             let diff = Int::sub(self.ctx, &[&ep.offset, &pp.offset]);
-            let sz = Int::from_u64(self.ctx, self.iter_elem_size(ptr));
+            let sz = self.iter_elem_size(ptr);
             let val = VmValue::new(diff.div(&sz), dest_ty);
             self.set_local(destination, val);
         } else {
@@ -503,7 +503,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         }
         let dest_ty = self.body.local_decls[destination].ty;
         // Compute is_empty from fields/tracked offset (same as is_empty()).
-        let sz = Int::from_u64(self.ctx, self.iter_elem_size(ptr));
+        let sz = self.iter_elem_size(ptr);
         let ep_offset = ep.offset.clone();
         let remaining = if let Some(off) = self.iter_ptr_offset.get(&local) {
             let base_len = ep_offset.div(&sz);
@@ -2587,13 +2587,17 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         }
     }
 
-    /// Element size (bytes) of the type iterated by an Iter/IterMut pointer.
-    pub(crate) fn iter_elem_size(&self, ptr: &VmValue<'ctx, 'tcx>) -> u64 {
+    /// Element size of the type iterated by an Iter/IterMut pointer, symbolic
+    /// (`sizeof_T`) for a generic element type so `size / elem_size` cancels.
+    pub(crate) fn iter_elem_size(&self, ptr: &VmValue<'ctx, 'tcx>) -> Int<'ctx> {
         let elem_ty = match ptr.ty.kind() {
             TyKind::Adt(_, substs) => substs.first().and_then(|s| s.as_type()),
             _ => None,
         };
-        elem_ty.map(|t| self.size_of_ty(t).max(1)).unwrap_or(1) as u64
+        match elem_ty {
+            Some(t) => self.size_sym_read(t),
+            None => Int::from_u64(self.ctx, 1),
+        }
     }
 
     /// Element count from two pointer fields sharing the same allocation:
@@ -2609,7 +2613,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             return None;
         }
         let diff = Int::sub(self.ctx, &[&ep.offset, &pp.offset]);
-        let sz = Int::from_u64(self.ctx, self.iter_elem_size(ptr));
+        let sz = self.iter_elem_size(ptr);
         Some(diff.div(&sz))
     }
 
@@ -2625,7 +2629,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         if ptr.provenance.as_ref().map(|p| p.alloc_id) != Some(ep.alloc_id) {
             return None;
         }
-        let sz = Int::from_u64(self.ctx, self.iter_elem_size(&ptr));
+        let sz = self.iter_elem_size(&ptr);
         if let Some(offset) = self.iter_ptr_offset.get(&local) {
             let base_len = ep.offset.div(&sz);
             let zero = Int::from_u64(self.ctx, 0);

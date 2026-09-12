@@ -769,8 +769,12 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                     let elem_size = self.size_of_ty(*elem_ty) as u64;
                     let step = (elem_size.max(1)) as usize;
                     let align = self.align_of_ty(*elem_ty);
+                    // Symbolic-aware element size: a generic `T` gets `sizeof_T`
+                    // (≥ 1) so the allocation is `N·sizeof_T` bytes, not `N`.
+                    let elem_sym = self.size_sym(*elem_ty);
                     let (alloc_id, base) = if let Some(n) = n {
-                        let total = Int::from_u64(self.ctx, (step as u64).saturating_mul(n as u64));
+                        let total =
+                            Int::mul(self.ctx, &[&Int::from_u64(self.ctx, n as u64), &elem_sym]);
                         self.allocate(total, align, Some(*elem_ty))
                     } else {
                         // Generic N: unbounded external allocation
@@ -1149,8 +1153,8 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 // resolve to the concrete array length.
                 let n = crate::helpers::mir_utils::eval_array_len(self.tcx, const_len).unwrap_or(0)
                     as u64;
-                let elem_sz = self.size_of_ty(*elem_ty).max(1) as u64;
-                let arr_size = Int::from_u64(self.ctx, n.saturating_mul(elem_sz));
+                let elem_sz = self.size_sym(*elem_ty);
+                let arr_size = Int::mul(self.ctx, &[&Int::from_u64(self.ctx, n), &elem_sz]);
                 let arr_align = 1u64.max(self.align_of_ty(*elem_ty));
                 let (fa, fb) = self.allocate(arr_size, arr_align, Some(*elem_ty));
                 self.alloc_mut(fa).initialized = true;

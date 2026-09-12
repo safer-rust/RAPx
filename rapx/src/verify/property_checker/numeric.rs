@@ -493,7 +493,7 @@ impl PropertyChecker {
             if let (Some(pp), Some(ep)) = (&ptr.provenance, &end.provenance) {
                 if pp.alloc_id == ep.alloc_id {
                     let diff = Int::sub(vm_state.ctx, &[&ep.offset, &pp.offset]);
-                    let sz = Int::from_u64(vm_state.ctx, vm_state.iter_elem_size(ptr));
+                    let sz = vm_state.iter_elem_size(ptr);
                     return Some(diff.div(&sz));
                 }
             }
@@ -511,7 +511,7 @@ impl PropertyChecker {
                 if let (Some(pp), Some(ep)) = (&ptr.provenance, &end.provenance) {
                     if pp.alloc_id == ep.alloc_id {
                         let diff = Int::sub(vm_state.ctx, &[&ep.offset, &pp.offset]);
-                        let sz = Int::from_u64(vm_state.ctx, vm_state.iter_elem_size(ptr));
+                        let sz = vm_state.iter_elem_size(ptr);
                         return Some(diff.div(&sz));
                     }
                 }
