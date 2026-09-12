@@ -220,10 +220,10 @@ fn unify_ty<'tcx>(
                     .iter()
                     .map(|arg| match arg.kind() {
                         ty::GenericArgKind::Lifetime(region) => {
-                            infcx.resolve_vars_if_possible(region).into()
+                            infcx.deeply_resolve_ignoring_regions(region).into()
                         }
-                        ty::GenericArgKind::Type(ty) => infcx.resolve_vars_if_possible(ty).into(),
-                        ty::GenericArgKind::Const(ct) => infcx.resolve_vars_if_possible(ct).into(),
+                        ty::GenericArgKind::Type(ty) => infcx.deeply_resolve_ignoring_regions(ty).into(),
+                        ty::GenericArgKind::Const(ct) => infcx.deeply_resolve_ignoring_regions(ct).into(),
                     })
                     .collect();
                 Some(mono)

@@ -58,9 +58,18 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
         for proj in place.projection.iter() {
             let mut handled = false;
             if let ProjectionElem::Index(local) = proj {
+                // The element stride is the *element* size, not the container
+                // size: peel `[T; N]` / `[T]` down to `T` (mirroring state.rs's
+                // `Index` arm).  Keep `max(1)` so the stride matches the array
+                // allocation's `elem_size` (`N·max(1)`), letting the SMT cancel
+                // the factor for `idx + 1 <= N`.
+                let elem_ty = match current_ty.kind() {
+                    TyKind::Array(e, _) | TyKind::Slice(e) => *e,
+                    _ => current_ty,
+                };
+                let elem_sz = Int::from_u64(self.ctx, self.size_of_ty(elem_ty).max(1));
                 if let Some(val) = self.locals.get(&local) {
                     if let Some(idx) = val.term.simplify().as_u64() {
-                        let elem_sz = Int::from_u64(self.ctx, self.size_of_ty(current_ty));
                         let scaled = Int::mul(self.ctx, &[&Int::from_u64(self.ctx, idx), &elem_sz]);
                         term = Int::add(self.ctx, &[&term, &scaled]);
                         if let Some(ref mut prov) = provenance {
@@ -71,8 +80,6 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 }
                 if !handled {
                     let idx = self.fresh_int("idx");
-                    let elem_size = self.size_of_ty(current_ty);
-                    let elem_sz = Int::from_u64(self.ctx, elem_size);
                     let scaled = Int::mul(self.ctx, &[&idx, &elem_sz]);
                     term = Int::add(self.ctx, &[&term, &scaled]);
                     if let Some(ref mut prov) = provenance {
