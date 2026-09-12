@@ -19,6 +19,7 @@ use z3::{
 };
 
 use super::PropertyChecker;
+use super::util::maybe_uninit_inner;
 
 impl PropertyChecker {
     pub(super) fn check_align<'ctx, 'tcx>(
@@ -331,6 +332,18 @@ impl PropertyChecker {
             if self.alloc_elem_is_array_of(alloc_elem_ty, req_ty) {
                 return CheckResult::Proved;
             }
+            // `MaybeUninit<T>` is `#[repr(transparent)]` over a union, so it has
+            // exactly the size/alignment of `T`.  An allocation of
+            // `MaybeUninit<T>` is therefore a valid allocation of `T` (and vice
+            // versa).  This lets `assume_init_ref`/`assume_init_mut`
+            // (`&[MaybeUninit<T>]` → `&[T]`) and `assume_init_drop` discharge
+            // `Allocated(p, T, n)` against the `MaybeUninit<T>` allocation whose
+            // symbolic size would otherwise be a distinct constant.
+            if maybe_uninit_inner(alloc_elem_ty) == Some(req_ty)
+                || maybe_uninit_inner(req_ty) == Some(alloc_elem_ty)
+            {
+                return CheckResult::Proved;
+            }
             // Cross-type generic fast-path: when allocation element type
             // and required type are both generic params (e.g. T vs U),
             // sizes are opaque. If the pointer is derived from the same
@@ -453,6 +466,13 @@ impl PropertyChecker {
             return CheckResult::Unknown;
         };
         if self.is_concrete_zst(vm_state, value.ty) {
+            return CheckResult::Proved;
+        }
+
+        // Zero elements: `Init(p, T, 0)` is vacuously satisfied (the empty
+        // range is trivially initialized, regardless of whether `p` is a
+        // dangling pointer), mirroring `check_allocated`'s fast-path.
+        if self.count_is_zero(vm_state, checkpoint, property) {
             return CheckResult::Proved;
         }
 

@@ -3183,6 +3183,21 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
 
     /// Materialize a fresh external allocation for an `Allocated` contract
     /// fact, returning a value carrying the allocation's provenance.
+    /// Mark the target pointer's existing allocation as live (and record its
+    /// element type for downstream `Typed` checks).  Returns `true` when the
+    /// pointer already carried an allocation, so a fresh external allocation
+    /// should *not* be materialized (which would loosen bound checks).
+    fn mark_alloc_live_keep(&mut self, val: &VmValue<'ctx, 'tcx>, elem_ty: Ty<'tcx>) -> bool {
+        let Some(alloc_id) = val.provenance_alloc_id() else {
+            return false;
+        };
+        self.alloc_mut(alloc_id).dead = false;
+        if self.alloc(alloc_id).element_ty.is_none() {
+            self.alloc_mut(alloc_id).element_ty = Some(elem_ty);
+        }
+        true
+    }
+
     fn materialize_external_alloc(
         &mut self,
         elem_ty: Ty<'tcx>,
@@ -3284,8 +3299,8 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                 let Some(val) = self.locals.get(&local).cloned() else {
                     return;
                 };
-                if let Some(alloc_id) = val.provenance_alloc_id() {
-                    self.alloc_mut(alloc_id).dead = false;
+                if self.mark_alloc_live_keep(&val, elem_ty) {
+                    return;
                 }
                 let v = self.materialize_external_alloc(elem_ty, count_term, val.ty, false);
                 self.set_local(local, v);

@@ -893,3 +893,16 @@ impl PropertyChecker {
         }
     }
 }
+
+/// Unwrap `MaybeUninit<T>` to `T` (or `None` for any other type).  `MaybeUninit`
+/// is `#[repr(transparent)]` over a union, so `MaybeUninit<T>` and `T` share
+/// size and alignment.
+pub(super) fn maybe_uninit_inner(ty: Ty<'_>) -> Option<Ty<'_>> {
+    if let TyKind::Adt(adt_def, substs) = ty.kind()
+        && crate::verify::api_classify::is_maybe_uninit_type(adt_def.did())
+        && let Some(inner) = substs.first().and_then(|s| s.as_type())
+    {
+        return Some(inner);
+    }
+    None
+}

@@ -71,6 +71,20 @@ pub(crate) fn parse_contract_place<'tcx>(
 }
 
 fn parse_named_place<'tcx>(expr: &Expr) -> Option<ContractPlace<'tcx>> {
+    // A bare `return` parses as `syn::Expr::Return { expr: None }` (a keyword,
+    // not an `Expr::Path`), so `parse_named_place`'s `Expr::Path` arm below
+    // never sees it.  Resolve it to the return-value place here so it works
+    // inside nested numeric expressions (e.g. the slice invariant's
+    // `Allocated($self, $elem, len($self))` for the return type, whose `$self`
+    // is substituted with the `return` placeholder).
+    if let Expr::Return(expr_return) = expr
+        && expr_return.expr.is_none()
+    {
+        return Some(ContractPlace {
+            base: PlaceBase::Return,
+            projections: Vec::new(),
+        });
+    }
     if let Expr::Path(expr_path) = expr {
         if let Some(ident) = expr_path.path.get_ident() {
             let s = ident.to_string();
