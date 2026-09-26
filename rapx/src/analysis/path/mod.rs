@@ -53,6 +53,9 @@ pub struct PathTree {
     inline_bindings: FxHashMap<usize, InlineBinding>,
     /// Caller blocks whose `Call` terminator was inlined.
     inlined_call_blocks: FxHashSet<usize>,
+    /// Set when enumeration stopped at a path or depth limit, so the tree
+    /// holds only some of the paths.
+    truncated: bool,
 }
 
 /// A node in a [`PathTree`] trie.
@@ -90,11 +93,20 @@ impl PathTree {
             block_fn: Vec::new(),
             inline_bindings: FxHashMap::default(),
             inlined_call_blocks: FxHashSet::default(),
+            truncated: false,
         }
     }
 
     pub fn len(&self) -> usize {
         self.len
+    }
+
+    pub fn is_truncated(&self) -> bool {
+        self.truncated
+    }
+
+    pub fn mark_truncated(&mut self) {
+        self.truncated = true;
     }
 
     pub fn is_empty(&self) -> bool {

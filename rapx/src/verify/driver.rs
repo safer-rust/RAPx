@@ -127,6 +127,21 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
                     };
                     view_results.push(item);
                 }
+                // Paths past the enumeration limit were never checked, so the
+                // property can't be proved from the ones that were.
+                if view.tree.is_truncated() {
+                    view_results.push(PropertyCheckResult {
+                        checkpoint: view.checkpoint.location(),
+                        checkpoint_index: view.checkpoint_index,
+                        path_index: bulk.len(),
+                        property_index,
+                        property: property.clone(),
+                        result: CheckResult::Unknown,
+                        diagnostics: Some("path enumeration stopped at its limit".to_string()),
+                        path_description: "[not enumerated: path limit reached]".to_string(),
+                        callee_name: view.checkpoint.callee_name(self.tcx),
+                    });
+                }
             }
 
             for item in view_results {

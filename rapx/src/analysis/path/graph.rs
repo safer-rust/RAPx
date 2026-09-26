@@ -1730,6 +1730,7 @@ impl<'g, 'tcx> PathEnumerator<'g, 'tcx> {
             return;
         }
         if depth > WHOLE_CFG_PATH_DEPTH_LIMIT || tree.len() >= WHOLE_CFG_PATH_LIMIT {
+            tree.mark_truncated();
             return;
         }
 
@@ -1746,6 +1747,7 @@ impl<'g, 'tcx> PathEnumerator<'g, 'tcx> {
 
             for seg in segments {
                 if tree.len() >= WHOLE_CFG_PATH_LIMIT {
+                    tree.mark_truncated();
                     break;
                 }
 

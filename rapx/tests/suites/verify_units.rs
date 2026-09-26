@@ -190,6 +190,7 @@ unsound_tests! {
     inbound_unsound_10: "verify_units/inbound_unsound_10" => "unsound_scalar_index_wrong_guard" => "InBound",
     inbound_unsound_11: "verify_units/inbound_unsound_11" => "unsound_range_index_missing_end_guard" => "InBound",
     inbound_unsound_12: "verify_units/inbound_unsound_12" => "unsound_std_range_missing_end_guard" => "InBound",
+    inbound_unsound_13: "verify_units/inbound_unsound_13" => "unsound_index_past_path_limit" => "InBound",
 }
 
 // ================ InBound Manual Cases =============
@@ -218,6 +219,7 @@ unsound_tests! {
     init_std_unsound_05: "verify_units/init_std_unsound_5" => "unsound_intra_helper_maybe_initializes" => "Init",
     init_std_unsound_06: "verify_units/init_std_unsound_6" => "unsound_from_raw_parts_uninitialized" => "Init",
     init_std_unsound_08: "verify_units/init_std_unsound_8" => "unsound_len_bound_loop_skips_even_indices" => "Init",
+    init_std_unsound_09: "verify_units/init_std_unsound_9" => "unsound_write_past_path_limit" => "Init",
 }
 
 // Custom: `from_raw_parts` with the wrong element type causes multiple failures.

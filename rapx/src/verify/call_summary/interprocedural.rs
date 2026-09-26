@@ -1233,6 +1233,11 @@ fn must_write_args_rec(
         graph.find_scc();
         let mut enumerator = PathEnumerator::new(&graph);
         let paths = enumerator.enumerate_paths_repeat(0);
+        // An intersection over only some of the paths can claim a write that a
+        // missing path skips.
+        if paths.is_truncated() {
+            return None;
+        }
 
         let mut must_write: Option<HashSet<usize>> = None;
         for path in paths.iter() {
@@ -1249,9 +1254,10 @@ fn must_write_args_rec(
             });
         }
 
-        must_write.unwrap_or_default()
+        Some(must_write.unwrap_or_default())
     })
-    .ok();
+    .ok()
+    .flatten();
     memo.insert((callee, depth), summary.clone());
     summary
 }
