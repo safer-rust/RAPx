@@ -567,66 +567,13 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                                     // Field contains a reference (&T, &mut T, &[T], etc.).
                                     // Give it provenance so that as_ptr() / as_mut_ptr()
                                     // on the field propagates the allocation info.
-                                    if let rustc_middle::ty::TyKind::Slice(elem_ty) = pointee.kind()
-                                    {
-                                        let elem_align = self.align_sym(*elem_ty);
-                                        let max_size = Int::from_u64(self.ctx, i64::MAX as u64);
-                                        let (data_alloc_id, data_base) = self.allocate_external(
-                                            max_size,
-                                            elem_align,
-                                            Some(*elem_ty),
-                                        );
-                                        self.alloc_mut(data_alloc_id).initialized = true;
-                                        self.alloc_mut(data_alloc_id).liveness = Liveness::Assumed;
-                                        self.set_field_value(
-                                            local,
-                                            vec![idx],
-                                            VmValue {
-                                                term: data_base,
-                                                ty: field_ty,
-                                                provenance: Some(Provenance {
-                                                    alloc_id: data_alloc_id,
-                                                    offset: Int::from_u64(self.ctx, 0),
-                                                    is_field_offset: false,
-                                                    element_offset: None,
-                                                }),
-                                                invariants: ValueInvariants {
-                                                    non_null: true,
-                                                    init: true,
-                                                    ..Default::default()
-                                                },
-                                            },
-                                        );
-                                    } else {
-                                        let pointee_align = self.align_sym(*pointee);
-                                        let max_size = Int::from_u64(self.ctx, i64::MAX as u64);
-                                        let (field_alloc_id, field_base) = self.allocate_external(
-                                            max_size,
-                                            pointee_align,
-                                            Some(*pointee),
-                                        );
-                                        self.alloc_mut(field_alloc_id).initialized = true;
-                                        self.alloc_mut(field_alloc_id).liveness = Liveness::Assumed;
-                                        self.set_field_value(
-                                            local,
-                                            vec![idx],
-                                            VmValue {
-                                                term: field_base,
-                                                ty: field_ty,
-                                                provenance: Some(Provenance {
-                                                    alloc_id: field_alloc_id,
-                                                    offset: Int::from_u64(self.ctx, 0),
-                                                    is_field_offset: false,
-                                                    element_offset: None,
-                                                }),
-                                                invariants: ValueInvariants {
-                                                    non_null: true,
-                                                    init: true,
-                                                    ..Default::default()
-                                                },
-                                            },
-                                        );
-                                    }
+                                    let elem_ty = match pointee.kind() {
+                                        rustc_middle::ty::TyKind::Slice(e) => *e,
+                                        _ => *pointee,
+                                    };
+                                    self.materialize_external_field(
+                                        local, idx, field_ty, elem_ty, true,
+                                    );
                                 } else if let rustc_middle::ty::TyKind::Slice(elem_ty) =
                                     field_ty.kind()
                                 {
@@ -634,32 +581,8 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                                     // model it as an external allocation so its length
                                     // stays symbolic instead of defaulting to a single
                                     // element (which would make `inner.len()` == 1).
-                                    let elem_align = self.align_sym(*elem_ty);
-                                    let max_size = Int::from_u64(self.ctx, i64::MAX as u64);
-                                    let (data_alloc_id, data_base) = self.allocate_external(
-                                        max_size,
-                                        elem_align,
-                                        Some(*elem_ty),
-                                    );
-                                    self.alloc_mut(data_alloc_id).initialized = true;
-                                    self.set_field_value(
-                                        local,
-                                        vec![idx],
-                                        VmValue {
-                                            term: data_base,
-                                            ty: field_ty,
-                                            provenance: Some(Provenance {
-                                                alloc_id: data_alloc_id,
-                                                offset: Int::from_u64(self.ctx, 0),
-                                                is_field_offset: false,
-                                                element_offset: None,
-                                            }),
-                                            invariants: ValueInvariants {
-                                                non_null: true,
-                                                init: true,
-                                                ..Default::default()
-                                            },
-                                        },
+                                    self.materialize_external_field(
+                                        local, idx, field_ty, *elem_ty, false,
                                     );
                                 } else if let rustc_middle::ty::TyKind::Adt(adt, substs) =
                                     field_ty.kind()
@@ -668,9 +591,7 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                                     // `Vec<T>`) inside a referenced struct: materialize
                                     // the pointee allocation so field access (e.g.
                                     // `self.buckets.iter()`) resolves to the *data*
-                                    // elements, not the whole struct. Mirrors the
-                                    // Box/Vec parameter materialization in
-                                    // `init_parameters`.
+                                    // elements, not the whole struct.
                                     if api_classify::is_std_box(adt.did())
                                         || api_classify::is_std_vec(adt.did())
                                     {
@@ -681,34 +602,8 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
                                                 rustc_middle::ty::TyKind::Slice(e) => *e,
                                                 _ => pointee,
                                             };
-                                            let elem_align = self.align_sym(elem_ty);
-                                            let max_size =
-                                                Int::from_u64(self.ctx, i64::MAX as u64);
-                                            let (data_alloc_id, data_base) =
-                                                self.allocate_external(
-                                                    max_size,
-                                                    elem_align,
-                                                    Some(elem_ty),
-                                                );
-                                            self.alloc_mut(data_alloc_id).initialized = true;
-                                            self.set_field_value(
-                                                local,
-                                                vec![idx],
-                                                VmValue {
-                                                    term: data_base,
-                                                    ty: field_ty,
-                                                    provenance: Some(Provenance {
-                                                        alloc_id: data_alloc_id,
-                                                        offset: Int::from_u64(self.ctx, 0),
-                                                        is_field_offset: false,
-                                                        element_offset: None,
-                                                    }),
-                                                    invariants: ValueInvariants {
-                                                        non_null: true,
-                                                        init: true,
-                                                        ..Default::default()
-                                                    },
-                                                },
+                                            self.materialize_external_field(
+                                                local, idx, field_ty, elem_ty, false,
                                             );
                                         }
                                     }
@@ -973,6 +868,50 @@ impl<'ctx, 'tcx> VmState<'ctx, 'tcx> {
             self.size_sym(ty);
             self.align_sym(ty);
         }
+    }
+
+    /// Materialize a struct field holding a reference (`&T` / `&[T]`), a DST
+    /// slice (`[T]`), or a heap-backed smart pointer (`Box`/`Vec`) as an external
+    /// allocation, so field access (e.g. `self.buckets.iter()`, `as_ptr()`)
+    /// resolves to the *data* rather than the whole struct. The caller
+    /// pre-computes `elem_ty` (the pointee / slice element). `assumed_alive`
+    /// marks a reference field's referent as live (a reference guarantees its
+    /// referent is alive; a raw slice / `Box` / `Vec` field carries no such
+    /// guarantee).
+    fn materialize_external_field(
+        &mut self,
+        local: Local,
+        idx: usize,
+        field_ty: Ty<'tcx>,
+        elem_ty: Ty<'tcx>,
+        assumed_alive: bool,
+    ) {
+        let align = self.align_sym(elem_ty);
+        let max_size = Int::from_u64(self.ctx, i64::MAX as u64);
+        let (alloc_id, base) = self.allocate_external(max_size, align, Some(elem_ty));
+        self.alloc_mut(alloc_id).initialized = true;
+        if assumed_alive {
+            self.alloc_mut(alloc_id).liveness = Liveness::Assumed;
+        }
+        self.set_field_value(
+            local,
+            vec![idx],
+            VmValue {
+                term: base,
+                ty: field_ty,
+                provenance: Some(Provenance {
+                    alloc_id,
+                    offset: Int::from_u64(self.ctx, 0),
+                    is_field_offset: false,
+                    element_offset: None,
+                }),
+                invariants: ValueInvariants {
+                    non_null: true,
+                    init: true,
+                    ..Default::default()
+                },
+            },
+        );
     }
 
     /// Initialize one pointer-like field (raw pointer or `NonNull<T>`) of a
