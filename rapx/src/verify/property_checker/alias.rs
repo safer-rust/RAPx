@@ -115,7 +115,7 @@ impl PropertyChecker {
                 }
             }
         }
-        for (local, _val) in &vm_state.current_frame.locals {
+        for local in vm_state.current_frame.local_alloc.keys() {
             if Some(*local) == dest_local {
                 continue;
             }

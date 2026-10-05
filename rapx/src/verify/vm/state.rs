@@ -401,10 +401,10 @@ pub(crate) struct PathFacts {
 /// }
 /// ```
 ///
-/// 1. Enter `bar`: `save_frame` parks `main`'s locals; `arg_referents[0] = x`.
+/// 1. Enter `bar`: `save_frame` parks `main`'s local_alloc; `arg_referents[0] = x`.
 /// 2. Run `bar`: `foo.field = 1` (`(*foo).field`) can no longer resolve `x` by
 ///    address (the caller's address map is gone), so it pushes `(x, [0], 1)`.
-/// 3. Exit `bar`: `restore_frame` brings `main`'s locals back, then the deferred
+/// 3. Exit `bar`: `restore_frame` brings `main`'s local_alloc back, then the deferred
 ///    write is replayed, giving `x.field == 1`.
 #[derive(Default)]
 pub(crate) struct InlineCtx<'z3, 'tcx> {
@@ -485,7 +485,8 @@ impl<'z3> ValueSource<'z3> {
 /// keyed purely by `AllocId` (fields and byte state).
 ///
 /// This is the *address/place* layer — the memory that values live in — kept
-/// separate from [`FrameState`], which binds MIR locals (names) to values. An
+/// separate from [`FrameState`], which binds MIR locals (names) to stack
+/// allocations. An
 /// `AllocId` doubles as the index into `allocations` (a fresh id is
 /// `allocations.len()`), so the `AllocId`-keyed field/byte tables stay
 /// consistent with the allocation vector.
@@ -587,20 +588,16 @@ pub(crate) struct TermCaches<'z3, 'tcx> {
 /// The frame-scoped subset of [`VmState`]: everything keyed by MIR `Local` /
 /// `PlaceKey`, which the callee reuses, so it must be swapped out for the
 /// duration of an inlined callee and swapped back afterwards.
-pub(crate) struct FrameState<'z3, 'tcx> {
+pub(crate) struct FrameState {
     /// The function whose body we execute (the MIR is derived via
     /// [`VmState::body`]).
     pub(crate) current_def_id: DefId,
 
-    /// Current whole value bound to each MIR local (its rvalue). This is the
-    /// Local layer's name → value binding; the per-field values live in the
-    /// Value layer ([`Memory::values`]).
-    pub(crate) locals: FxHashMap<Local, VmValue<'z3, 'tcx>>,
-
     /// The stack allocation backing each local's place (lvalue identity). A
-    /// local's field values live *in* that allocation (see [`Memory::values`],
-    /// keyed `(AllocId, view_ty, path)` with the local's declared type as the
-    /// view type), so there is no local-keyed field table here.
+    /// local's whole value lives at `path == []` and its field values at
+    /// `path == [i, ..]` in that allocation (see [`Memory::values`], keyed
+    /// `(AllocId, view_ty, path)` with the local's declared type as the view
+    /// type), so there is no local-keyed value table here.
     pub(crate) local_alloc: FxHashMap<Local, AllocId>,
 }
 
@@ -620,7 +617,7 @@ pub(crate) struct VmState<'z3, 'tcx> {
 
     // ── Frame-scoped state (swapped on inline entry/exit; the exact set
     //    captured by [`Self::save_frame`])
-    pub(crate) current_frame: FrameState<'z3, 'tcx>,
+    pub(crate) current_frame: FrameState,
 
     // ── Path-scoped state (accumulates across the whole path, including
     //    inlined frames)
@@ -628,7 +625,7 @@ pub(crate) struct VmState<'z3, 'tcx> {
     /// (`CalleeEntry`/`CalleeExit` items).  Together with [`Self::current_frame`]
     /// (the current frame) it forms the call stack: entering an inlined callee
     /// moves the current frame here, exiting restores it.
-    pub(crate) caller_frames: Vec<FrameState<'z3, 'tcx>>,
+    pub(crate) caller_frames: Vec<FrameState>,
 
     /// The object space: allocations, per-byte state, and per-allocation fields.
     pub(crate) memory: Memory<'z3, 'tcx>,
@@ -670,7 +667,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             tcx,
             current_frame: FrameState {
                 current_def_id: caller_def_id,
-                locals: FxHashMap::default(),
                 local_alloc: FxHashMap::default(),
             },
             caller_frames: Vec::default(),
@@ -695,27 +691,33 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// [`FrameState`] (function identity, local bindings, and operand sources).
     /// Both inline mechanisms (`handle_callee_entry` in path replay and
     /// `exec_inline_call`) call this, so they can no longer drift apart.
-    pub(crate) fn save_frame(&mut self) -> FrameState<'z3, 'tcx> {
+    pub(crate) fn save_frame(&mut self) -> FrameState {
         FrameState {
             current_def_id: self.current_frame.current_def_id,
-            locals: std::mem::take(&mut self.current_frame.locals),
             local_alloc: std::mem::take(&mut self.current_frame.local_alloc),
         }
     }
 
     /// Restore the frame-scoped state after an inlined callee returns.
-    pub(crate) fn restore_frame(&mut self, frame: FrameState<'z3, 'tcx>) {
+    pub(crate) fn restore_frame(&mut self, frame: FrameState) {
         self.current_frame = frame;
     }
 
-    /// Look up the value bound to a MIR local.
+    /// Look up the whole value bound to a MIR local (its `path == []` slot in
+    /// the allocation backing the local).
     pub(crate) fn local_value(&self, local: Local) -> Option<&VmValue<'z3, 'tcx>> {
-        self.current_frame.locals.get(&local)
+        let alloc_id = *self.current_frame.local_alloc.get(&local)?;
+        let view_ty = self.body().local_decls[local].ty;
+        self.load_value(alloc_id, view_ty, &[])
     }
 
-    /// Bind a value to a MIR local.
+    /// Bind a whole value to a MIR local (store it at `path == []` in the
+    /// allocation backing the local, allocating that stack slot on demand).
     pub(crate) fn set_local(&mut self, local: Local, value: VmValue<'z3, 'tcx>) {
-        self.current_frame.locals.insert(local, value);
+        self.ensure_local_allocation(local);
+        let alloc_id = self.current_frame.local_alloc[&local];
+        let view_ty = self.body().local_decls[local].ty;
+        self.store_value(alloc_id, view_ty, vec![], value);
     }
 
     /// Get the symbolic address of a MIR local (its stack allocation's base).
@@ -841,9 +843,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         self.load_value(alloc_id, view_ty, path)
     }
 
-    /// Enumerate the field paths materialized for a local: every `path` for
-    /// which [`Self::field_value`] currently returns a value (the local's
-    /// allocation's fields under its declared view type).
+    /// Enumerate the field paths materialized for a local: every non-empty
+    /// `path` for which [`Self::field_value`] currently returns a value (the
+    /// local's allocation's fields under its declared view type).  The whole
+    /// value (`path == []`) is deliberately excluded — it is read via
+    /// [`Self::local_value`], not as a "field", so callers iterating fields do
+    /// not accidentally treat the whole value as a field projection.
     pub(crate) fn field_paths(&self, local: Local) -> Vec<Vec<usize>> {
         let Some(&alloc_id) = self.current_frame.local_alloc.get(&local) else {
             return Vec::new();
@@ -852,13 +857,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         self.memory
             .values
             .keys()
-            .filter(|(a, t, _)| *a == alloc_id && *t == view_ty)
+            .filter(|(a, t, p)| *a == alloc_id && *t == view_ty && !p.is_empty())
             .map(|(_, _, p)| p.clone())
             .collect()
     }
 
     /// The declared type of `local` in `frame`'s body.
-    fn frame_local_ty(&self, frame: &FrameState<'z3, 'tcx>, local: Local) -> Ty<'tcx> {
+    fn frame_local_ty(&self, frame: &FrameState, local: Local) -> Ty<'tcx> {
         self.tcx.optimized_mir(frame.current_def_id).local_decls[local].ty
     }
 
@@ -867,7 +872,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// are read via `frame`'s `local_alloc` and declared type.
     pub(crate) fn frame_field_paths(
         &self,
-        frame: &FrameState<'z3, 'tcx>,
+        frame: &FrameState,
         local: Local,
     ) -> Vec<Vec<usize>> {
         let Some(&alloc_id) = frame.local_alloc.get(&local) else {
@@ -877,7 +882,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         self.memory
             .values
             .keys()
-            .filter(|(a, t, _)| *a == alloc_id && *t == view_ty)
+            .filter(|(a, t, p)| *a == alloc_id && *t == view_ty && !p.is_empty())
             .map(|(_, _, p)| p.clone())
             .collect()
     }
@@ -885,13 +890,38 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// Read a field of `local` in a saved caller `frame`.
     pub(crate) fn frame_field_value(
         &self,
-        frame: &FrameState<'z3, 'tcx>,
+        frame: &FrameState,
         local: Local,
         path: &[usize],
     ) -> Option<&VmValue<'z3, 'tcx>> {
         let alloc_id = *frame.local_alloc.get(&local)?;
         let view_ty = self.frame_local_ty(frame, local);
         self.load_value(alloc_id, view_ty, path)
+    }
+
+    /// Read the whole value of `local` in a saved caller `frame` (its
+    /// `path == []` slot). The value lives in the path-scoped [`Memory::values`],
+    /// while the name → allocation binding lives in the saved `frame`.
+    pub(crate) fn frame_local_value(
+        &self,
+        frame: &FrameState,
+        local: Local,
+    ) -> Option<&VmValue<'z3, 'tcx>> {
+        let alloc_id = *frame.local_alloc.get(&local)?;
+        let view_ty = self.frame_local_ty(frame, local);
+        self.load_value(alloc_id, view_ty, &[])
+    }
+
+    /// Enumerate `(local, whole value)` for every local with a materialized
+    /// whole value (its `path == []` slot). This is the whole-value counterpart
+    /// to [`Self::field_paths`], used where code used to iterate `locals`.
+    pub(crate) fn all_local_values(&self) -> Vec<(Local, &VmValue<'z3, 'tcx>)> {
+        self.current_frame
+            .local_alloc
+            .keys()
+            .copied()
+            .filter_map(|local| self.local_value(local).map(|value| (local, value)))
+            .collect()
     }
 
     /// The buffer an `Iter`/`IterMut` at `local` walks: the provenance of its
@@ -997,15 +1027,15 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             }
         }
 
-        for (_local, value) in self.current_frame.locals.iter() {
-            self.assert_value_constraints(solver, value);
-        }
-        // Field values live in the memory-contents layer; assert the constraints
-        // of the *current frame's* fields (keyed by each local's allocation and
-        // declared view type) — the M1 translation of the old frame-scoped
-        // `field_values` iteration.
+        // Whole values (`path == []`) and field values (`path == [i, ..]`) both
+        // live in the memory-contents layer.  Field paths exclude the whole
+        // value (see [`Self::field_paths`]), so assert the whole value and the
+        // fields separately.
         let local_ids: Vec<Local> = self.current_frame.local_alloc.keys().copied().collect();
         for local in local_ids {
+            if let Some(value) = self.local_value(local) {
+                self.assert_value_constraints(solver, value);
+            }
             for path in self.field_paths(local) {
                 if let Some(value) = self.field_value(local, &path) {
                     self.assert_value_constraints(solver, value);
@@ -1047,7 +1077,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 impl std::fmt::Debug for VmState<'_, '_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("VmState")
-            .field("locals_count", &self.current_frame.locals.len())
+            .field("locals_count", &self.current_frame.local_alloc.len())
             .field("allocations_count", &self.memory.allocations.len())
             .field("assertions", &self.constraints.assertions.len())
             .finish()
@@ -1129,7 +1159,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// Look up the value stored at a MIR place.
     pub(crate) fn value_of_place(&self, place: &Place<'tcx>) -> Option<VmValue<'z3, 'tcx>> {
         if place.projection.is_empty() {
-            return self.current_frame.locals.get(&place.local).cloned();
+            return self.local_value(place.local).cloned();
         }
         let place_ty = place.ty(self.body(), self.tcx).ty;
 
@@ -1167,7 +1197,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 // to field accesses. This handles pointer-wrapper types (Box,
                 // Unique, NonNull) where accessing inner pointer fields yields
                 // the same provenance as the container.
-                if let Some(base_val) = self.current_frame.locals.get(&place.local) {
+                if let Some(base_val) = self.local_value(place.local) {
                     if let Some(ref prov) = base_val.provenance {
                         return Some(VmValue {
                             z3_term: base_val.z3_term.clone(),
@@ -1217,7 +1247,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 // `decompose_pointee_fields`).  The viewed type (pointee) is part
                 // of the key so reinterpret casts (e.g. `LeafNode` → `InternalNode`)
                 // resolve to the right field view.
-                if let Some(base_val) = self.current_frame.locals.get(&place.local) {
+                if let Some(base_val) = self.local_value(place.local) {
                     if let Some(alloc_id) = base_val.provenance_alloc_id() {
                         let view_ty = crate::helpers::mir_utils::pointee_ty(base_val.ty)
                             .unwrap_or(base_val.ty);
@@ -1232,7 +1262,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         // Handle Deref + Field projections: follow the dereference chain to
         // get the pointee base, then apply field offsets.
         // E.g. `(*self).ptr` → Deref then Field(0).
-        let mut base = self.current_frame.locals.get(&place.local)?.clone();
+        let mut base = self.local_value(place.local)?.clone();
         for proj in place.projection.iter() {
             match proj.kind() {
                 ProjectionElem::Deref => {
@@ -1285,7 +1315,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             };
                             let elem_sz = self.size_of_ty(inner_ty) as usize;
                             let step = elem_sz.max(1);
-                            if let Some(index_val) = self.current_frame.locals.get(local) {
+                            if let Some(index_val) = self.local_value(*local) {
                                 // `arr[i]` = the byte at `i * size_of(elem)`; the array
                                 // model resolves symbolic indices via `select` directly.
                                 let offset = Int::mul(

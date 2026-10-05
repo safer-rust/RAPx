@@ -129,7 +129,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         self.current_frame.current_def_id = callee;
 
         for (i, arg) in arg_locals.iter().enumerate() {
-            if let Some(v) = frame.locals.get(&Local::from_usize(*arg)).cloned() {
+            if let Some(v) = self.frame_local_value(&frame, Local::from_usize(*arg)).cloned() {
                 self.set_local(Local::from_usize(i + 1), v);
             }
         }
@@ -144,7 +144,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// Exit an inlined callee: capture the callee's return value, restore the
     /// caller context, and write the return value to the caller's destination.
     fn handle_callee_exit(&mut self, dest: usize) {
-        let ret = self.current_frame.locals.get(&Local::from_usize(0)).cloned();
+        let ret = self.local_value(Local::from_usize(0)).cloned();
         let ret_fields: Vec<(Vec<usize>, VmValue<'z3, 'tcx>)> = self
             .field_paths(Local::from_usize(0))
             .into_iter()
@@ -191,7 +191,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         // Pre-allocate ALL locals and set initial values
         for local_idx in 1..local_count {
             let local = Local::from_usize(local_idx);
-            if self.current_frame.locals.contains_key(&local) {
+            if self.current_frame.local_alloc.contains_key(&local) {
                 continue;
             }
             let decl = &self.body().local_decls[local];
@@ -870,10 +870,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         _ => None,
                     });
                     if let Some(src_local) = src {
-                        if let Some(src_val) = self.current_frame.locals.get(&src_local) {
+                        if let Some(src_val) = self.local_value(src_local) {
                             let has_better_prov = src_val.is_pointer()
                                 && src_val.invariants.non_null
-                                && self.current_frame.locals.get(&dest_local).is_none_or(|d| {
+                                && self.local_value(dest_local).is_none_or(|d| {
                                     d.provenance.is_none() || !d.invariants.non_null
                                 });
                             if has_better_prov {
@@ -1478,7 +1478,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     // reference/reborrow temp) back to the local it points at,
                     // matching its address term against the known local
                     // addresses.
-                    let pointed = self.current_frame.locals.get(&place.local).cloned();
+                    let pointed = self.local_value(place.local).cloned();
                     if let Some(pointed) = pointed {
                         if let Some(referent) = self.find_local_by_address(&pointed.z3_term) {
                             let mut write_value = value;
@@ -1510,8 +1510,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         // Prefer the value's provenance (pointee alloc) over slots
         // (reference alloc) for ref/ptr parameters.
         let Some(alloc_id) = self
-            .current_frame.locals
-            .get(&place.local)
+            .local_value(place.local)
             .and_then(|v| v.provenance_alloc_id())
             .or_else(|| self.current_frame.local_alloc.get(&place.local).copied())
         else {
@@ -1596,8 +1595,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
         let has_index_with_concrete = place.projection.iter().any(|p| {
             if let rustc_middle::mir::ProjectionElem::Index(local) = p {
-                self.current_frame.locals
-                    .get(&local)
+                self.local_value(local)
                     .and_then(|v| v.z3_term.simplify().as_u64())
                     .is_some()
             } else {
@@ -1744,8 +1742,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     let src_in_bounds = if is_slice_ref && is_from_raw_parts_like && has_deref {
                         addr.is_pointer()
                     } else {
-                        self.current_frame.locals
-                            .get(&place.local)
+                        self.local_value(place.local)
                             .is_some_and(|v| v.invariants.in_bounds)
                     };
                     // An empty slice (`&[]` from `align_to`'s `offset > len` /
@@ -1818,8 +1815,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         .map(|p| self.alloc(p.alloc_id).align.clone())
                         .filter(|a| a.simplify().as_u64() != Some(1));
                     let source_in_bounds = self
-                        .current_frame.locals
-                        .get(&place.local)
+                        .local_value(place.local)
                         .is_some_and(|v| v.invariants.in_bounds);
                     VmValue {
                         z3_term: addr.z3_term,
@@ -2090,9 +2086,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 // base local's own stack slot, so byte values land on the real
                 // buffer (e.g. `((*_8).1).0 = [a, b, 0]` writes into the box).
                 let dest_alloc_id = self
-                    .current_frame
-                    .locals
-                    .get(&dest_local)
+                    .local_value(dest_local)
                     .and_then(|v| v.provenance_alloc_id())
                     .or_else(|| self.current_frame.local_alloc.get(&dest_local).copied());
                 let is_byte_array = crate::helpers::mir_utils::is_u8_array_or_slice(dest_ty);
@@ -2989,7 +2983,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         pk: &PlaceKey,
     ) -> Option<(Option<PlaceKey>, Option<PlaceKey>, rustc_middle::mir::BinOp)> {
         let local = pk.local()?;
-        let val = self.current_frame.locals.get(&local)?;
+        let val = self.local_value(local)?;
         val.source
             .operands()
             .map(|(l, r, o)| (l.clone(), r.clone(), o))
@@ -3028,7 +3022,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     // generic `T`), so `align = mask + 1`.
                     rustc_middle::mir::BinOp::BitAnd => {
                         if let Some(rhs_local) = div_rhs.as_ref().and_then(|pk| pk.local()) {
-                            if let Some(rhs_val) = self.current_frame.locals.get(&rhs_local) {
+                            if let Some(rhs_val) = self.local_value(rhs_local) {
                                 let one = Int::from_u64(self.z3_ctx, 1);
                                 let align = Int::add(self.z3_ctx, &[&rhs_val.z3_term, &one]);
                                 self.mark_align_n(&div_lhs, align);
@@ -3044,7 +3038,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     fn mark_align_n(&mut self, src_pk: &Option<PlaceKey>, align: Int<'z3>) {
         if let Some(src_pk) = src_pk {
             if let Some(local) = src_pk.local() {
-                if let Some(mut val) = self.current_frame.locals.get(&local).cloned() {
+                if let Some(mut val) = self.local_value(local).cloned() {
                     val.invariants.align_n = Some(align);
                     self.set_local(local, val);
                 }
@@ -3095,7 +3089,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     fn mark_guard_pointer(&mut self, lhs: &Option<PlaceKey>, rhs: &Option<PlaceKey>) {
         for pk in [lhs, rhs].into_iter().flatten() {
             if let Some(local) = pk.local() {
-                if let Some(mut val) = self.current_frame.locals.get(&local).cloned() {
+                if let Some(mut val) = self.local_value(local).cloned() {
                     val.invariants.non_null = true;
                     self.set_local(local, val);
                 }
@@ -3268,7 +3262,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 // at the byte buffer it owns).
                 let id = self.contract_alloc_id_field_aware(property).or_else(|| {
                     let local = self.contract_target_local(property)?;
-                    self.current_frame.locals.get(&local)?.provenance_alloc_id()
+                    self.local_value(local)?.provenance_alloc_id()
                 });
                 if let Some(id) = id {
                     self.alloc_mut(id).dead = false;
@@ -3431,7 +3425,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             let Some(local) = self.contract_target_local(property) else {
                 return;
             };
-            let Some(val) = self.current_frame.locals.get(&local).cloned() else {
+            let Some(val) = self.local_value(local).cloned() else {
                 return;
             };
             if let Some(alloc_id) = val.provenance_alloc_id() {
@@ -3445,7 +3439,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             };
             if field_path.is_empty() {
                 // Whole pointer parameter: exact size.
-                let Some(val) = self.current_frame.locals.get(&local).cloned() else {
+                let Some(val) = self.local_value(local).cloned() else {
                     return;
                 };
                 if self.mark_alloc_live_keep(&val, elem_ty) {
@@ -3543,7 +3537,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     fn contract_target_value(&mut self, property: &Property<'tcx>) -> Option<VmValue<'z3, 'tcx>> {
         let (local, path) = self.contract_field_path(property)?;
         if path.is_empty() {
-            self.current_frame.locals.get(&local).cloned()
+            self.local_value(local).cloned()
         } else {
             self.field_value(local, &path).cloned()
         }
@@ -3578,7 +3572,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             }
         }
         if field_path.is_empty() {
-            self.current_frame.locals.get(&local)?.provenance_alloc_id()
+            self.local_value(local)?.provenance_alloc_id()
         } else {
             self.field_value(local, &field_path)?.provenance_alloc_id()
         }
@@ -3806,7 +3800,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// `interpreter_iter_len` can express `len = initial_len - offset`
     /// instead of nested `(end - (ptr + sz + sz + ...)) / sz`.
     fn track_iter_ptr_update(&mut self, local: Local) {
-        let local_val = match self.current_frame.locals.get(&local) {
+        let local_val = match self.local_value(local) {
             Some(v) => v,
             None => return,
         };
@@ -3858,7 +3852,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let Some(fe_local) = fe_place.base.try_to_local() else {
             return;
         };
-        let fe_val = match self.current_frame.locals.get(&fe_local).cloned() {
+        let fe_val = match self.local_value(fe_local).cloned() {
             Some(v) => v,
             None => return,
         };
@@ -3880,7 +3874,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             Some(PropertyArg::Expr(ContractExpr::Place(cp))) => cp.base.try_to_local(),
             _ => None,
         };
-        let slice_val = slice_local.and_then(|loc| self.current_frame.locals.get(&loc));
+        let slice_val = slice_local.and_then(|loc| self.local_value(loc));
         let slice_alloc_id = slice_val.and_then(|sl_val| sl_val.provenance_alloc_id());
         let data_size = slice_alloc_id.map(|da_id| self.alloc(da_id).size.clone());
         let elem_sz = slice_alloc_id
@@ -3930,8 +3924,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return;
         };
         let Some(da_id) = self
-            .current_frame.locals
-            .get(&slice_local)
+            .local_value(slice_local)
             .and_then(|v| v.provenance_alloc_id())
         else {
             return;
@@ -4135,7 +4128,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
         if let Some((local, path)) = self.contract_field_path(property) {
             let existing = if path.is_empty() {
-                self.current_frame.locals.get(&local).cloned()
+                self.local_value(local).cloned()
             } else {
                 self.field_value(local, &path).cloned()
             };

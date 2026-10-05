@@ -23,8 +23,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             // provenance. For Box/Vec parameters, the value tracks the heap
             // allocation while slots tracks the stack location.
             let provenance = self
-                .current_frame.locals
-                .get(&place.local)
+                .local_value(place.local)
                 .and_then(|v| v.provenance.clone())
                 .or_else(|| {
                     self.current_frame.local_alloc
@@ -72,7 +71,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     _ => current_ty,
                 };
                 let elem_sz = Int::from_u64(self.z3_ctx, self.size_of_ty(elem_ty).max(1));
-                if let Some(val) = self.current_frame.locals.get(&local) {
+                if let Some(val) = self.local_value(local) {
                     if let Some(idx) = val.z3_term.simplify().as_u64() {
                         let scaled = Int::mul(self.z3_ctx, &[&Int::from_u64(self.z3_ctx, idx), &elem_sz]);
                         term = Int::add(self.z3_ctx, &[&term, &scaled]);
@@ -153,7 +152,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 }
                 ProjectionElem::Deref => {
                     field_path.clear();
-                    let pointed = self.current_frame.locals.get(&place.local)?;
+                    let pointed = self.local_value(place.local)?;
                     term = pointed.z3_term.clone();
                     provenance = pointed.provenance.clone();
                     // For fat pointers (aggregates without provenance),
