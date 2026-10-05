@@ -71,7 +71,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         // Prefer parameters (arg_count) over temporaries.
         let mut best: Option<VmOrigin> = None;
 
-        for (local, val) in &self.current_frame.local_values {
+        for (local, val) in &self.current_frame.locals {
             let Some(val_prov) = &val.provenance else {
                 continue;
             };
@@ -192,7 +192,7 @@ fn flow_xor_violation<'z3, 'tcx>(
         false,
     );
     let body = vm_state.body();
-    for (local, val) in &vm_state.current_frame.local_values {
+    for (local, val) in &vm_state.current_frame.locals {
         if *local == origin_local {
             continue;
         }

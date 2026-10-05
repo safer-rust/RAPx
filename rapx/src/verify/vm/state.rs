@@ -273,6 +273,11 @@ pub(crate) struct Allocation<'z3, 'tcx> {
     /// `x.iter()` for_each invariants (`Typed`/`Align`/`Allocated`).
     pub for_each: ForEachFacts<'z3, 'tcx>,
 
+    /// Whether this allocation was asserted valid C string via a `ValidCStr`
+    /// contract fact / struct invariant (the "no interior NUL + terminal NUL"
+    /// trust marker).
+    pub cstr_trusted: bool,
+
     // ── Relationships (Option) ──
     /// The allocation a sub-view was derived from: a slice view created by
     /// `s[i..j]` / `s.get(range)`, `split_at` / `align_to` / `as_chunks`, or
@@ -312,6 +317,7 @@ impl<'z3, 'tcx> Allocation<'z3, 'tcx> {
             initialized: false,
             liveness: None,
             for_each: ForEachFacts::default(),
+            cstr_trusted: false,
             parent: None,
             slice_data: None,
         }
@@ -499,10 +505,6 @@ pub(crate) struct Memory<'z3, 'tcx> {
     /// from unwritten offsets within that range.
     pub(crate) byte_max: FxHashMap<AllocId, usize>,
 
-    /// Allocations asserted valid C strings via a `ValidCStr` contract fact /
-    /// struct invariant (the "no interior NUL + terminal NUL" trust marker).
-    pub(crate) cstr_trusted: FxHashSet<AllocId>,
-
     /// The typed-value (Value) layer: (alloc_id, viewed_type, field_indices) →
     /// value, i.e. the value of a field *within an allocation* viewed as
     /// `viewed_type`.  The `viewed_type` distinguishes reinterprets of the same
@@ -590,8 +592,10 @@ pub(crate) struct FrameState<'z3, 'tcx> {
     /// [`VmState::body`]).
     pub(crate) current_def_id: DefId,
 
-    /// Current value bound to each MIR local (rvalue).
-    pub(crate) local_values: FxHashMap<Local, VmValue<'z3, 'tcx>>,
+    /// Current whole value bound to each MIR local (its rvalue). This is the
+    /// Local layer's name → value binding; the per-field values live in the
+    /// Value layer ([`Memory::values`]).
+    pub(crate) locals: FxHashMap<Local, VmValue<'z3, 'tcx>>,
 
     /// The stack allocation backing each local's place (lvalue identity). A
     /// local's field values live *in* that allocation (see [`Memory::values`],
@@ -666,7 +670,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             tcx,
             current_frame: FrameState {
                 current_def_id: caller_def_id,
-                local_values: FxHashMap::default(),
+                locals: FxHashMap::default(),
                 local_alloc: FxHashMap::default(),
             },
             caller_frames: Vec::default(),
@@ -694,7 +698,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     pub(crate) fn save_frame(&mut self) -> FrameState<'z3, 'tcx> {
         FrameState {
             current_def_id: self.current_frame.current_def_id,
-            local_values: std::mem::take(&mut self.current_frame.local_values),
+            locals: std::mem::take(&mut self.current_frame.locals),
             local_alloc: std::mem::take(&mut self.current_frame.local_alloc),
         }
     }
@@ -706,12 +710,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
     /// Look up the value bound to a MIR local.
     pub(crate) fn local_value(&self, local: Local) -> Option<&VmValue<'z3, 'tcx>> {
-        self.current_frame.local_values.get(&local)
+        self.current_frame.locals.get(&local)
     }
 
     /// Bind a value to a MIR local.
     pub(crate) fn set_local(&mut self, local: Local, value: VmValue<'z3, 'tcx>) {
-        self.current_frame.local_values.insert(local, value);
+        self.current_frame.locals.insert(local, value);
     }
 
     /// Get the symbolic address of a MIR local (its stack allocation's base).
@@ -798,7 +802,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// Whether `id` was asserted a valid C string via a `ValidCStr` contract
     /// fact / struct invariant.
     pub(crate) fn is_cstr_trusted(&self, id: AllocId) -> bool {
-        self.memory.cstr_trusted.contains(&id)
+        self.alloc(id).cstr_trusted
     }
 
     /// The ultimate root allocation, following `parent` chains (sub-allocations
@@ -993,15 +997,15 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             }
         }
 
-        for (_local, value) in self.current_frame.local_values.iter() {
+        for (_local, value) in self.current_frame.locals.iter() {
             self.assert_value_constraints(solver, value);
         }
         // Field values live in the memory-contents layer; assert the constraints
         // of the *current frame's* fields (keyed by each local's allocation and
         // declared view type) — the M1 translation of the old frame-scoped
         // `field_values` iteration.
-        let locals: Vec<Local> = self.current_frame.local_alloc.keys().copied().collect();
-        for local in locals {
+        let local_ids: Vec<Local> = self.current_frame.local_alloc.keys().copied().collect();
+        for local in local_ids {
             for path in self.field_paths(local) {
                 if let Some(value) = self.field_value(local, &path) {
                     self.assert_value_constraints(solver, value);
@@ -1043,7 +1047,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 impl std::fmt::Debug for VmState<'_, '_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("VmState")
-            .field("locals_count", &self.current_frame.local_values.len())
+            .field("locals_count", &self.current_frame.locals.len())
             .field("allocations_count", &self.memory.allocations.len())
             .field("assertions", &self.constraints.assertions.len())
             .finish()
@@ -1125,7 +1129,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// Look up the value stored at a MIR place.
     pub(crate) fn value_of_place(&self, place: &Place<'tcx>) -> Option<VmValue<'z3, 'tcx>> {
         if place.projection.is_empty() {
-            return self.current_frame.local_values.get(&place.local).cloned();
+            return self.current_frame.locals.get(&place.local).cloned();
         }
         let place_ty = place.ty(self.body(), self.tcx).ty;
 
@@ -1163,7 +1167,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 // to field accesses. This handles pointer-wrapper types (Box,
                 // Unique, NonNull) where accessing inner pointer fields yields
                 // the same provenance as the container.
-                if let Some(base_val) = self.current_frame.local_values.get(&place.local) {
+                if let Some(base_val) = self.current_frame.locals.get(&place.local) {
                     if let Some(ref prov) = base_val.provenance {
                         return Some(VmValue {
                             z3_term: base_val.z3_term.clone(),
@@ -1213,7 +1217,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 // `decompose_pointee_fields`).  The viewed type (pointee) is part
                 // of the key so reinterpret casts (e.g. `LeafNode` → `InternalNode`)
                 // resolve to the right field view.
-                if let Some(base_val) = self.current_frame.local_values.get(&place.local) {
+                if let Some(base_val) = self.current_frame.locals.get(&place.local) {
                     if let Some(alloc_id) = base_val.provenance_alloc_id() {
                         let view_ty = crate::helpers::mir_utils::pointee_ty(base_val.ty)
                             .unwrap_or(base_val.ty);
@@ -1228,7 +1232,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         // Handle Deref + Field projections: follow the dereference chain to
         // get the pointee base, then apply field offsets.
         // E.g. `(*self).ptr` → Deref then Field(0).
-        let mut base = self.current_frame.local_values.get(&place.local)?.clone();
+        let mut base = self.current_frame.locals.get(&place.local)?.clone();
         for proj in place.projection.iter() {
             match proj.kind() {
                 ProjectionElem::Deref => {
@@ -1281,7 +1285,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             };
                             let elem_sz = self.size_of_ty(inner_ty) as usize;
                             let step = elem_sz.max(1);
-                            if let Some(index_val) = self.current_frame.local_values.get(local) {
+                            if let Some(index_val) = self.current_frame.locals.get(local) {
                                 // `arr[i]` = the byte at `i * size_of(elem)`; the array
                                 // model resolves symbolic indices via `select` directly.
                                 let offset = Int::mul(

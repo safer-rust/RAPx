@@ -115,7 +115,7 @@ impl PropertyChecker {
                 }
             }
         }
-        for (local, _val) in &vm_state.current_frame.local_values {
+        for (local, _val) in &vm_state.current_frame.locals {
             if Some(*local) == dest_local {
                 continue;
             }

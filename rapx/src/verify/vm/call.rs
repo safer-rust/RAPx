@@ -702,7 +702,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         args: &[Spanned<Operand<'tcx>>],
         destination: Local,
     ) {
-        if let Some(mut dv) = self.current_frame.local_values.get(&destination).cloned() {
+        if let Some(mut dv) = self.current_frame.locals.get(&destination).cloned() {
             let dest_ty = dv.ty;
             let pointee_is_byte_like = match dest_ty.kind() {
                 rustc_middle::ty::TyKind::RawPtr(inner, _)
@@ -857,7 +857,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         self.inline_execute_body();
 
         // ── Capture return value and its per-field values ──
-        let return_val = self.current_frame.local_values.get(&Local::from_usize(0)).cloned();
+        let return_val = self.current_frame.locals.get(&Local::from_usize(0)).cloned();
         crate::rap_debug!(
             "exec_inline_call: callee={:?} return_val={:?}",
             callee_def_id,
@@ -1767,7 +1767,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             }
             CallEffect::ReturnNonZero => {
                 let zero = Int::from_u64(self.z3_ctx, 0);
-                if let Some(mut existing) = self.current_frame.local_values.get(&dest).cloned() {
+                if let Some(mut existing) = self.current_frame.locals.get(&dest).cloned() {
                     existing.invariants.non_null = true;
                     // Record the non-zero fact as a path condition so that a
                     // downstream `ValidNum(result != 0)` obligation (e.g.
@@ -1821,7 +1821,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 }
             }
             CallEffect::ReturnAligned => {
-                if let Some(mut existing) = self.current_frame.local_values.get(&dest).cloned() {
+                if let Some(mut existing) = self.current_frame.locals.get(&dest).cloned() {
                     // `as_ptr`/`as_mut_ptr`/`into_raw` expose a pointer aligned to
                     // the *pointee* type, so record the symbolic alignment for the
                     // downstream `raw-ptr-deref`/`from_raw_parts` `Align` check.
@@ -2012,7 +2012,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 // (field 1); `len = end_or_len - ptr`.
                 if let Some(iter_ref) = caller_arg_locals.get(*self_arg).copied().flatten() {
                     let iter_local = self
-                        .current_frame.local_values
+                        .current_frame.locals
                         .get(&iter_ref)
                         .and_then(|v| v.provenance_alloc_id())
                         .and_then(|alloc| {
@@ -2818,7 +2818,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         let alloc_id = indices_val.provenance_alloc_id().or_else(|| {
                             // Slicer may have dropped the &indices
                             // assignment, losing provenance.  Fall back
-                            self.current_frame.local_values.values().find_map(|v| {
+                            self.current_frame.locals.values().find_map(|v| {
                                 if v.ty == arr_ty {
                                     v.provenance_alloc_id()
                                 } else {
