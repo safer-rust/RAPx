@@ -11,7 +11,7 @@ use rustc_middle::{
 };
 use z3::{
     Context,
-    ast::{Ast, Bool, Int},
+    ast::{Array, Ast, Bool, Int},
 };
 
 use crate::compat::{FxHashMap, FxHashSet};
@@ -269,11 +269,6 @@ pub(crate) struct Allocation<'z3, 'tcx> {
     pub liveness: Option<Region<'tcx>>,
 
     // ── Content semantics ──
-    /// Whether the allocation is known to be a null-terminated byte buffer (a
-    /// valid C string), asserted via a `ValidCStr` contract fact or struct
-    /// invariant.
-    pub nul_terminated: bool,
-
     /// Uniform facts about this allocation's pointer elements, established by
     /// `x.iter()` for_each invariants (`Typed`/`Align`/`Allocated`).
     pub for_each: ForEachFacts<'z3, 'tcx>,
@@ -316,7 +311,6 @@ impl<'z3, 'tcx> Allocation<'z3, 'tcx> {
             dead: false,
             initialized: false,
             liveness: None,
-            nul_terminated: false,
             for_each: ForEachFacts::default(),
             parent: None,
             slice_data: None,
@@ -372,17 +366,6 @@ pub(crate) struct PathFacts {
     /// Set once the path evaluated an `Iterator::next` discriminant whose
     /// variant was known symbolically.
     pub saw_next_discriminant: bool,
-}
-
-/// Per-byte symbolic state at a concrete offset in an allocation.
-#[derive(Clone, Debug, Default)]
-pub(crate) struct ByteInfo<'z3> {
-    /// Symbolic value, if tracked.
-    pub value: Option<Int<'z3>>,
-    /// Whether the byte has been explicitly written.
-    pub init: bool,
-    /// NUL knowledge: `Some(true)` known NUL, `Some(false)` known non-NUL.
-    pub nul: Option<bool>,
 }
 
 /// Scratch state for the *recursive* inlined-callee mechanism
@@ -504,10 +487,20 @@ pub(crate) struct Memory<'z3, 'tcx> {
     /// All known allocations, indexed by `AllocId`.
     pub(crate) allocations: Vec<Allocation<'z3, 'tcx>>,
 
-    /// Per-byte symbolic state: (alloc_id, concrete_byte_offset) → ByteInfo.
-    /// Populated by aggregate initialisation, pointer stores, and write call
-    /// effects. Enables byte-level reasoning for properties like ValidCStr.
-    pub(crate) bytes: FxHashMap<(AllocId, usize), ByteInfo<'z3>>,
+    /// Per-allocation byte value function: `byte[i] = select(array, i)` for any
+    /// (possibly symbolic) offset `i`.  Unwritten offsets read back the `UNINIT`
+    /// sentinel, so `init`/`nul` are derived from `select`, not stored per byte.
+    pub(crate) byte_arrays: FxHashMap<AllocId, Array<'z3>>,
+
+    /// The highest concrete byte offset written to each allocation.  Z3 arrays
+    /// cannot enumerate their stored indices, so this bounds the `0..=max` range
+    /// the byte-level checkers iterate; `select != UNINIT` distinguishes written
+    /// from unwritten offsets within that range.
+    pub(crate) byte_max: FxHashMap<AllocId, usize>,
+
+    /// Allocations asserted valid C strings via a `ValidCStr` contract fact /
+    /// struct invariant (the "no interior NUL + terminal NUL" trust marker).
+    pub(crate) cstr_trusted: FxHashSet<AllocId>,
 
     /// Per-allocation field tracking: (alloc_id, viewed_type, field_indices) →
     /// value, i.e. the value of a field *within an allocation* viewed as
@@ -578,6 +571,11 @@ pub(crate) struct TermCaches<'z3, 'tcx> {
     /// (`base_len - offset`) instead of a deeply-nested `((base + S) + S) …`
     /// pointer chain that Z3's NIA cannot reason about.
     pub(crate) iter_ptr_offset: FxHashMap<AllocId, (Int<'z3>, Option<Int<'z3>>)>,
+
+    /// `UNINIT` sentinel byte value (≥ 256, outside the `u8` value range).
+    /// The default element of every byte array; `select(array, i) != UNINIT`
+    /// is how "byte `i` was written" is decided.
+    pub(crate) uninit_byte: Option<Int<'z3>>,
 }
 
 /// The frame-scoped subset of [`VmState`]: everything keyed by MIR `Local` /
@@ -653,6 +651,15 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         // Derive the one path fact the checker needs after `run` (whether the
         // path re-enters a block); the raw `Path` itself is not kept.
         let reenter = path.reenters();
+        // The `UNINIT` sentinel is created once and shared by every byte array:
+        // an unwritten offset reads it back, so `select != UNINIT` decides
+        // whether a byte was written.
+        let mut constraints = Constraints::default();
+        let uninit = Int::fresh_const(z3_ctx, "uninit_byte");
+        constraints.term_caches.uninit_byte = Some(uninit.clone());
+        constraints
+            .assertions
+            .push(uninit.ge(&Int::from_u64(z3_ctx, 256)));
         Self {
             z3_ctx,
             tcx,
@@ -665,7 +672,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             caller_frames: Vec::default(),
             memory: Memory::default(),
             inline: InlineCtx::default(),
-            constraints: Constraints::default(),
+            constraints,
             path_facts: PathFacts {
                 reenter,
                 ..PathFacts::default()
@@ -787,6 +794,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// Mutable indexed access to an allocation by its `AllocId`.
     pub(crate) fn alloc_mut(&mut self, id: AllocId) -> &mut Allocation<'z3, 'tcx> {
         &mut self.memory.allocations[id.0]
+    }
+
+    /// Whether `id` was asserted a valid C string via a `ValidCStr` contract
+    /// fact / struct invariant.
+    pub(crate) fn is_cstr_trusted(&self, id: AllocId) -> bool {
+        self.memory.cstr_trusted.contains(&id)
     }
 
     /// The ultimate root allocation, following `parent` chains (sub-allocations
@@ -1170,8 +1183,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 if prefix_is_deref {
                     if let Some(ref prov) = base.provenance {
                         let alloc_id = prov.alloc_id;
-                        let byte_vals: Vec<_> = self.alloc_byte_values(alloc_id);
-                        if !byte_vals.is_empty() {
+                        // Byte-level tracking only exists once some byte of the
+                        // allocation has been written; otherwise fall back to the base.
+                        if self.memory.byte_arrays.contains_key(&alloc_id) {
                             let inner_ty = {
                                 // The base's type may have been overwritten to the
                                 // element type by the Deref strip above; recover the
@@ -1193,35 +1207,20 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             let elem_sz = self.size_of_ty(inner_ty) as usize;
                             let step = elem_sz.max(1);
                             if let Some(index_val) = self.current_frame.local_values.get(local) {
-                                if let Some(concrete_idx) = index_val.z3_term.as_u64() {
-                                    let offset = concrete_idx as usize * step;
-                                    let term = self
-                                        .get_byte_value(alloc_id, offset)
-                                        .cloned()
-                                        .unwrap_or_else(|| self.fresh_int("arr_elem"));
-                                    return Some(VmValue {
-                                        z3_term: term,
-                                        ty: place_ty,
-                                        provenance: None,
-                                        invariants: ValueInvariants::default(),
-                                        source: ValueSource::None,
-                                    });
-                                } else {
-                                    let mut chain = self.fresh_int("arr_elem");
-                                    for (offset, term) in byte_vals.iter().rev() {
-                                        let vidx = offset / step;
-                                        let idx_term = Int::from_u64(self.z3_ctx, vidx as u64);
-                                        let cond = index_val.z3_term._eq(&idx_term);
-                                        chain = Bool::ite(&cond, term, &chain);
-                                    }
-                                    return Some(VmValue {
-                                        z3_term: chain,
-                                        ty: place_ty,
-                                        provenance: None,
-                                        invariants: ValueInvariants::default(),
-                                        source: ValueSource::None,
-                                    });
-                                }
+                                // `arr[i]` = the byte at `i * size_of(elem)`; the array
+                                // model resolves symbolic indices via `select` directly.
+                                let offset = Int::mul(
+                                    self.z3_ctx,
+                                    &[&index_val.z3_term, &Int::from_u64(self.z3_ctx, step as u64)],
+                                );
+                                let term = self.byte_read(alloc_id, &offset);
+                                return Some(VmValue {
+                                    z3_term: term,
+                                    ty: place_ty,
+                                    provenance: None,
+                                    invariants: ValueInvariants::default(),
+                                    source: ValueSource::None,
+                                });
                             }
                         }
                     }

@@ -3283,18 +3283,27 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     self.alloc_mut(id).dead = false;
                     self.alloc_mut(id).liveness = Some(self.tcx.lifetimes.re_static);
                     self.alloc_mut(id).initialized = true;
-                    self.alloc_mut(id).nul_terminated = true;
+                    self.memory.cstr_trusted.insert(id);
                     // `ValidCStr(p, n)` carries the byte length of the
                     // nul-terminated buffer.  Assert the allocation covers `n`
                     // bytes so downstream `from_raw_parts(p, n)` / InBound
                     // obligations can be discharged from the exact length
-                    // (rather than a conservative `1` placeholder).
+                    // (rather than a conservative `1` placeholder), and
+                    // materialize the terminal NUL as a byte-level fact
+                    // (`byte[n] == 0`).  A `Const` length (`from_ptr`'s `1`
+                    // placeholder) is ignored — the true length is
+                    // `strlen(ptr) + 1`.
                     if let Some(n) = property
                         .args()
                         .get(1)
-                        .and_then(|a| self.resolve_contract_count(a))
+                        .and_then(|a| match a {
+                            PropertyArg::Expr(ContractExpr::Const(_)) => None,
+                            a => self.resolve_contract_count(a),
+                        })
                     {
                         self.constraints.assertions.push(self.alloc(id).size.ge(&n));
+                        let zero = Int::from_u64(self.z3_ctx, 0);
+                        self.byte_write(id, &n, &zero);
                     }
                 }
             }
@@ -3866,11 +3875,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             Some(id) => id,
             None => return,
         };
-        let byte_vals: Vec<(usize, Int<'z3>)> = self
-            .alloc_byte_values(fe_alloc_id)
-            .into_iter()
-            .map(|(off, term)| (off, term.clone()))
-            .collect();
+        let byte_vals: Vec<(usize, Int<'z3>)> = self.alloc_byte_values(fe_alloc_id);
         if byte_vals.is_empty() {
             return;
         }

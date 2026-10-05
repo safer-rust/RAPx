@@ -116,7 +116,7 @@ impl PropertyChecker {
             while let Some(parent_id) = vm_state.alloc(root_id).parent {
                 root_id = parent_id;
             }
-            if vm_state.alloc(alloc_id).nul_terminated || vm_state.alloc(root_id).nul_terminated {
+            if vm_state.is_cstr_trusted(alloc_id) || vm_state.is_cstr_trusted(root_id) {
                 return CheckResult::ProvedByRule;
             }
 
@@ -280,19 +280,19 @@ impl PropertyChecker {
             return None; // symbolic-size allocations need different handling
         }
 
-        for &(nul_off, nul_term) in &byte_pairs {
+        for (nul_off, nul_term) in &byte_pairs {
             // A valid C string's NUL is the *last* byte; an interior NUL at an
             // earlier offset is a violation, not a candidate terminator.
             if let Some(size) = size_u64 {
-                if nul_off + 1 != size as usize {
+                if *nul_off + 1 != size as usize {
                     continue;
                 }
             }
             solver.push();
             solver.assert(&nul_term._eq(&zero));
 
-            for &(off, term) in &byte_pairs {
-                if off < nul_off {
+            for (off, term) in &byte_pairs {
+                if *off < *nul_off {
                     solver.assert(&term._eq(&zero).not());
                 }
             }
@@ -302,8 +302,8 @@ impl PropertyChecker {
 
             if r == z3::SatResult::Sat {
                 let mut interior_safe = true;
-                for &(off, term) in &byte_pairs {
-                    if off < nul_off {
+                for (off, term) in &byte_pairs {
+                    if *off < *nul_off {
                         solver.push();
                         solver.assert(&term._eq(&zero));
                         let inner = solver.check();
@@ -322,7 +322,7 @@ impl PropertyChecker {
 
         // If no valid NUL position found, check if the last byte is tracked
         // and no NUL exists among tracked bytes
-        let has_nul_in_tracked = byte_pairs.iter().any(|&(_, term)| {
+        let has_nul_in_tracked = byte_pairs.iter().any(|(_, term)| {
             solver.push();
             solver.assert(&term._eq(&zero));
             let r = solver.check();
@@ -343,15 +343,15 @@ impl PropertyChecker {
         // NUL — a confirmed interior-NUL violation (a counterexample where that
         // byte is 0), not an incomplete proof.
         if let Some(size) = size_u64 {
-            if let Some(&(last_off, last_term)) = byte_pairs.last() {
-                if last_off + 1 == size as usize {
+            if let Some((last_off, last_term)) = byte_pairs.last() {
+                if *last_off + 1 == size as usize {
                     solver.push();
                     solver.assert(&last_term._eq(&zero).not());
                     let last_not_nul = solver.check();
                     solver.pop(1);
                     if last_not_nul == z3::SatResult::Unsat {
-                        for &(off, term) in &byte_pairs {
-                            if off < last_off {
+                        for (off, term) in &byte_pairs {
+                            if *off < *last_off {
                                 solver.push();
                                 solver.assert(&term._eq(&zero));
                                 let r = solver.check();

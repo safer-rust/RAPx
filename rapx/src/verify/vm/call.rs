@@ -2660,14 +2660,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 // buffer so byte-level checkers (`ValidCStr`/`ValidString`) can
                 // reason over the copied contents.
                 if let Some(box_alloc) = args.first().and_then(|v| v.provenance_alloc_id()) {
-                    let pairs: Vec<(usize, Int<'z3>)> = self
-                        .alloc_byte_values(box_alloc)
-                        .into_iter()
-                        .map(|(off, t)| (off, t.clone()))
-                        .collect();
-                    for (off, term) in pairs {
-                        self.record_byte_value(alloc_id, off, term);
-                    }
+                    self.copy_byte_tracking(box_alloc, 0, alloc_id);
                 }
                 let dest_alloc_id = self.current_frame.local_alloc.get(&dest).copied();
                 if let Some(ref dest_alloc_id) = dest_alloc_id {
@@ -2846,11 +2839,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         if let Some(alloc_id) = alloc_id {
                             self.path_facts.has_checked_bounds = true;
                             let zero = Int::from_u64(self.z3_ctx, 0);
-                            let mut byte_offsets: Vec<(usize, Int)> = self
-                                .alloc_byte_values(alloc_id)
-                                .into_iter()
-                                .map(|(off, term)| (off, term.clone()))
-                                .collect();
+                            let mut byte_offsets: Vec<(usize, Int)> =
+                                self.alloc_byte_values(alloc_id);
                             byte_offsets.sort_by_key(|(off, _)| *off);
                             for (_, term) in &byte_offsets {
                                 self.constraints.assertions.push(term.ge(&zero));

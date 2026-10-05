@@ -6,9 +6,9 @@ use rustc_middle::{
     mir::{Local, Place, ProjectionElem},
     ty::{Ty, TyKind},
 };
-use z3::ast::{Ast, Int};
+use z3::{Sort, ast::{Array, Ast, Int}};
 
-use super::state::{AllocId, AllocKind, Allocation, ByteInfo, Provenance, ValueInvariants, ValueSource, VmState, VmValue};
+use super::state::{AllocId, AllocKind, Allocation, Provenance, ValueInvariants, ValueSource, VmState, VmValue};
 
 impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     pub(crate) fn address_of_place(&mut self, place: &Place<'tcx>) -> Option<VmValue<'z3, 'tcx>> {
@@ -472,118 +472,135 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         Some(total)
     }
 
-    // ── Per-byte state (`Memory::bytes`) ────────────────────────────────
+    // ── Per-byte state (`Memory::byte_arrays`) ────────────────────────
+
+    /// The shared `UNINIT` sentinel (≥ 256, outside the `u8` range).
+    fn uninit_byte(&self) -> Int<'z3> {
+        self.constraints
+            .term_caches
+            .uninit_byte
+            .clone()
+            .expect("uninit_byte is initialized in VmState::new")
+    }
+
+    /// A fresh `Array<Int, Int>` whose every offset reads `UNINIT`.
+    fn fresh_byte_array(&self) -> Array<'z3> {
+        // `const_array(domain, value)` takes the *index* sort; the array sort is
+        // inferred as `Array<domain, value_sort>` (here `Array<Int, Int>`).
+        Array::const_array(self.z3_ctx, &Sort::int(self.z3_ctx), &self.uninit_byte())
+    }
+
+    /// Read `byte[i]` at a (possibly symbolic) offset; unwritten offsets read `UNINIT`.
+    pub(crate) fn byte_read(&self, alloc_id: AllocId, i: &Int<'z3>) -> Int<'z3> {
+        match self.memory.byte_arrays.get(&alloc_id) {
+            Some(arr) => arr.select(i).as_int().expect("byte array range is Int"),
+            None => self.uninit_byte(),
+        }
+    }
+
+    /// Write `byte[i] = v`.
+    pub(crate) fn byte_write(&mut self, alloc_id: AllocId, i: &Int<'z3>, v: &Int<'z3>) {
+        let arr = self.memory.byte_arrays.get(&alloc_id).cloned();
+        let updated = match arr {
+            Some(a) => a.store(i, v),
+            None => self.fresh_byte_array().store(i, v),
+        };
+        self.memory.byte_arrays.insert(alloc_id, updated);
+        if let Some(off) = i.as_u64() {
+            let off = off as usize;
+            self.memory
+                .byte_max
+                .entry(alloc_id)
+                .and_modify(|m| *m = (*m).max(off))
+                .or_insert(off);
+        }
+    }
 
     /// Record a per-byte symbolic value at a concrete offset in an allocation.
     pub(crate) fn record_byte_value(&mut self, alloc_id: AllocId, offset: usize, term: Int<'z3>) {
-        let byte = self.memory.bytes.entry((alloc_id, offset)).or_default();
-        byte.value = Some(term);
-        byte.init = true;
+        self.byte_write(alloc_id, &Int::from_u64(self.z3_ctx, offset as u64), &term);
     }
 
-    /// Mark a byte as initialized without changing its value.
+    /// Mark a byte as initialized (written) with an unknown value.
     pub(crate) fn mark_byte_init(&mut self, alloc_id: AllocId, offset: usize) {
-        self.memory.bytes.entry((alloc_id, offset)).or_default().init = true;
+        let unknown = self.fresh_int("byte_unknown");
+        self.byte_write(alloc_id, &Int::from_u64(self.z3_ctx, offset as u64), &unknown);
     }
 
     /// Mark a byte as known NUL (0x00).
-    pub(crate) fn mark_byte_nul(&mut self, alloc_id: AllocId, offset: usize) {
-        self.memory.bytes.entry((alloc_id, offset)).or_default().nul = Some(true);
-    }
+    ///
+    /// In the array model the byte *value* already encodes NUL-ness
+    /// (`is_byte_nul` reads `select == 0`), and `record_byte_value` always runs
+    /// alongside this marker, so there is nothing extra to record.
+    pub(crate) fn mark_byte_nul(&mut self, _alloc_id: AllocId, _offset: usize) {}
 
     /// Mark a byte as known non-NUL (!= 0x00).
-    pub(crate) fn mark_byte_non_nul(&mut self, alloc_id: AllocId, offset: usize) {
-        self.memory.bytes.entry((alloc_id, offset)).or_default().nul = Some(false);
-    }
+    ///
+    /// See [`Self::mark_byte_nul`]: the value already encodes non-NUL-ness.
+    pub(crate) fn mark_byte_non_nul(&mut self, _alloc_id: AllocId, _offset: usize) {}
 
-    /// Look up a per-byte Z3 term for a concrete offset in an allocation.
-    pub(crate) fn get_byte_value(&self, alloc_id: AllocId, offset: usize) -> Option<&Int<'z3>> {
-        self.memory.bytes
-            .get(&(alloc_id, offset))
-            .and_then(|b| b.value.as_ref())
-    }
-
-    /// Check whether a byte at a concrete offset is known to be initialized.
+    /// Whether a byte at a concrete offset was written (`select != UNINIT`).
     pub(crate) fn is_byte_init(&self, alloc_id: AllocId, offset: usize) -> bool {
-        self.memory.bytes.get(&(alloc_id, offset)).is_some_and(|b| b.init)
+        let v = self.byte_read(alloc_id, &Int::from_u64(self.z3_ctx, offset as u64));
+        !v.simplify().eq(&self.uninit_byte())
     }
 
-    /// Check whether a byte at a concrete offset is known to be NUL.
+    /// Whether a byte at a concrete offset is known NUL.
     pub(crate) fn is_byte_nul(&self, alloc_id: AllocId, offset: usize) -> bool {
-        self.memory.bytes
-            .get(&(alloc_id, offset))
-            .is_some_and(|b| b.nul == Some(true))
+        self.byte_read(alloc_id, &Int::from_u64(self.z3_ctx, offset as u64))
+            .simplify()
+            .as_u64()
+            == Some(0)
     }
 
-    /// Check whether a byte at a concrete offset is known to be non-NUL.
+    /// Whether a byte at a concrete offset is known non-NUL.
     pub(crate) fn is_byte_non_nul(&self, alloc_id: AllocId, offset: usize) -> bool {
-        self.memory.bytes
-            .get(&(alloc_id, offset))
-            .is_some_and(|b| b.nul == Some(false))
+        self.byte_read(alloc_id, &Int::from_u64(self.z3_ctx, offset as u64))
+            .simplify()
+            .as_u64()
+            .is_some_and(|v| v != 0)
     }
 
-    /// Return all known (offset, term) pairs for an allocation, sorted by offset.
-    pub(crate) fn alloc_byte_values(&self, alloc_id: AllocId) -> Vec<(usize, &Int<'z3>)> {
-        let mut pairs: Vec<_> = self
-            .memory.bytes
-            .iter()
-            .filter_map(|((aid, off), byte)| {
-                if *aid == alloc_id {
-                    byte.value.as_ref().map(|term| (*off, term))
-                } else {
-                    None
-                }
-            })
-            .collect();
-        pairs.sort_by_key(|(off, _)| *off);
-        pairs
+    /// Enumerate `(offset, term)` pairs for the *written* bytes of an allocation,
+    /// over the range `[0, byte_max]` (unwritten offsets read `UNINIT`).
+    pub(crate) fn alloc_byte_values(&self, alloc_id: AllocId) -> Vec<(usize, Int<'z3>)> {
+        let Some(&max) = self.memory.byte_max.get(&alloc_id) else {
+            return Vec::new();
+        };
+        (0..=max)
+            .filter(|off| self.is_byte_init(alloc_id, *off))
+            .map(|off| (off, self.byte_read(alloc_id, &Int::from_u64(self.z3_ctx, off as u64))))
+            .collect()
     }
 
-    /// Collect all offsets known to be NUL in an allocation.
+    /// Offsets known to be NUL.
     pub(crate) fn alloc_nul_offsets(&self, alloc_id: AllocId) -> Vec<usize> {
-        self.memory.bytes
-            .iter()
-            .filter_map(|((aid, off), byte)| {
-                if *aid == alloc_id && byte.nul == Some(true) {
-                    Some(*off)
-                } else {
-                    None
-                }
-            })
-            .collect()
+        let Some(&max) = self.memory.byte_max.get(&alloc_id) else {
+            return Vec::new();
+        };
+        (0..=max).filter(|&off| self.is_byte_nul(alloc_id, off)).collect()
     }
 
-    /// Collect all offsets known to be non-NUL in an allocation.
+    /// Offsets known to be non-NUL.
     pub(crate) fn alloc_non_nul_offsets(&self, alloc_id: AllocId) -> Vec<usize> {
-        self.memory.bytes
-            .iter()
-            .filter_map(|((aid, off), byte)| {
-                if *aid == alloc_id && byte.nul == Some(false) {
-                    Some(*off)
-                } else {
-                    None
-                }
-            })
-            .collect()
+        let Some(&max) = self.memory.byte_max.get(&alloc_id) else {
+            return Vec::new();
+        };
+        (0..=max).filter(|&off| self.is_byte_non_nul(alloc_id, off)).collect()
     }
 
-    /// Copy all per-byte tracking (value, init, NUL knowledge) from one
-    /// allocation to another.
+    /// Copy the per-byte state (values + written-offset bound) of one allocation
+    /// to another, shifting by `src_offset` so `dst[i] = src[i + src_offset]`.
     pub(crate) fn copy_byte_tracking(&mut self, src: AllocId, src_offset: usize, dst: AllocId) {
-        let infos: Vec<(usize, ByteInfo<'z3>)> = self
-            .memory.bytes
-            .iter()
-            .filter(|((aid, _), _)| *aid == src)
-            .map(|((_, off), byte)| (*off, byte.clone()))
+        let Some(&max) = self.memory.byte_max.get(&src) else {
+            return;
+        };
+        let written: Vec<usize> = (src_offset..=max)
+            .filter(|off| self.is_byte_init(src, *off))
             .collect();
-        for (off, byte) in infos {
-            // The destination allocation starts at `src_offset` into the source,
-            // so shift each tracked byte by that offset (`src[off]` → `dst[off -
-            // src_offset]`).  Bytes before `src_offset` lie outside the sub-slice
-            // and are dropped.
-            if off >= src_offset {
-                self.memory.bytes.insert((dst, off - src_offset), byte);
-            }
+        for off in written {
+            let v = self.byte_read(src, &Int::from_u64(self.z3_ctx, off as u64));
+            self.byte_write(dst, &Int::from_u64(self.z3_ctx, (off - src_offset) as u64), &v);
         }
     }
 
