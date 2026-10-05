@@ -1213,58 +1213,40 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 // still match `[T]` vs `T`.
                 let dest_ty = self.body().local_decls[dest].ty;
                 let mut val = args.get(*arg).cloned().unwrap_or_else(|| VmValue::new(self.fresh_int("replaced"), dest_ty));
-                let arg_local = caller_arg_locals.get(*arg).copied().flatten();
-                let pointee = arg_local.and_then(|l| self.field_value(l, &[]).cloned());
-                // `path == []` now holds the whole value, which for a `&mut`
-                // argument is the *reference*, not the pointee.  Adopt it only
-                // when it is the actual pointee value (a non-reference type); a
-                // reference value means `propagate_field_values_to_ref` never
-                // materialized the empty-path field (e.g. the `*self` reborrow
-                // whose source has no materialized fields), so fall through to
-                // the field-map recovery below.
-                let mut adopted = false;
-                if let Some(p) = pointee {
-                    if !matches!(
-                        p.ty.kind(),
-                        rustc_middle::ty::TyKind::Ref(..) | rustc_middle::ty::TyKind::RawPtr(..)
-                    ) {
-                        val = p;
-                        adopted = true;
-                    }
-                }
-                if !adopted {
-                    if let Some(search) = self.memory.values
-                        .values()
-                        .find(|v| v.ty == dest_ty && v.is_pointer())
-                        .cloned()
-                    {
-                        // The `&mut self.field` reborrow was pruned by the forward
-                        // slicer, so the field value was not propagated to the
-                        // reference. Recover the old field value (e.g. `self.v:
-                        // *mut [T]`) from the materialized field values by type +
-                        // provenance, keeping the parent chain intact.
-                        val = search;
-                    } else if let Some(elem) = crate::helpers::mir_utils::pointee_ty(dest_ty) {
-                        let is_slice = matches!(elem.kind(), rustc_middle::ty::TyKind::Slice(_));
-                        if is_slice {
-                            let elem_align = self.align_sym(elem);
-                            let (alloc_id, base) = self.allocate_external(
-                                Int::from_u64(self.z3_ctx, i64::MAX as u64),
-                                elem_align,
-                                Some(elem),
-                            );
-                            val = VmValue {
-                                z3_term: base,
-                                ty: dest_ty,
-                                provenance: Some(Provenance {
-                                    alloc_id,
-                                    offset: Int::from_u64(self.z3_ctx, 0),
-                                    offset_kind: None,
-                                }),
-                                invariants: ValueInvariants::default(),
-                                source: ValueSource::None,
-                            };
-                        }
+                // `mem::replace(&mut dest, src)` returns `*dest`: the pointee
+                // value, not the `&mut` reference.  With M2 the reference's
+                // `path == []` holds its *address* (whole value), so the pointee
+                // is recovered from the materialized field maps by type +
+                // provenance (e.g. `self.v: *mut [T]`), or — when the borrow
+                // chain was dropped by the slicer and no field value is
+                // recoverable — modeled as a fresh external allocation so a
+                // downstream `Allocated`/`InBound` can still match `[T]` vs `T`.
+                if let Some(search) = self.memory.values
+                    .values()
+                    .find(|v| v.ty == dest_ty && v.is_pointer())
+                    .cloned()
+                {
+                    val = search;
+                } else if let Some(elem) = crate::helpers::mir_utils::pointee_ty(dest_ty) {
+                    let is_slice = matches!(elem.kind(), rustc_middle::ty::TyKind::Slice(_));
+                    if is_slice {
+                        let elem_align = self.align_sym(elem);
+                        let (alloc_id, base) = self.allocate_external(
+                            Int::from_u64(self.z3_ctx, i64::MAX as u64),
+                            elem_align,
+                            Some(elem),
+                        );
+                        val = VmValue {
+                            z3_term: base,
+                            ty: dest_ty,
+                            provenance: Some(Provenance {
+                                alloc_id,
+                                offset: Int::from_u64(self.z3_ctx, 0),
+                                offset_kind: None,
+                            }),
+                            invariants: ValueInvariants::default(),
+                            source: ValueSource::None,
+                        };
                     }
                 }
                 val.ty = dest_ty;

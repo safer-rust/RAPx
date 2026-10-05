@@ -1338,13 +1338,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 }
                 match proj.kind() {
                     ProjectionElem::Deref => {
-                        // A `*dest` load of a reference created from a field
-                        // (`let r = &mut self.v`) should yield the field's
-                        // *value* (materialized by `propagate_field_values_to_ref`
-                        // at the empty field path), not the field's address.
-                        if let Some(v) = self.field_value(place.local, &[]).cloned() {
-                            return Some(v);
-                        }
+                        // `*dest` yields the pointee value.  With M2 the
+                        // reference's `path == []` holds the *address* (its
+                        // whole value), so there is no empty-path field to read;
+                        // fall back to the dereferenced base with the pointee
+                        // type (the pointee value itself is recovered by the
+                        // provenance-resolution paths that follow).
                         let mut val = base.clone();
                         val.ty = place_ty;
                         return Some(val);
