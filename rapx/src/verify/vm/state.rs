@@ -379,11 +379,12 @@ pub(crate) struct PathFacts {
 ///
 /// # Deferring `&mut` writes across the inline frame
 ///
-/// While the callee runs, the caller's `field_values` is parked in the saved
-/// [`FrameState`], so a write through a `&mut` argument cannot land in it
-/// immediately.  `arg_referents` pre-resolves (before `save_frame`) which caller
-/// local each `&mut` argument points at, and `deferred_field_writes` collects
-/// the writes to replay once the caller is restored:
+/// While the callee runs, the caller's `local_alloc` (the name → allocation
+/// binding) is parked in the saved [`FrameState`], so a write through a `&mut`
+/// argument cannot resolve the caller referent local by address and land in its
+/// field values immediately.  `arg_referents` pre-resolves (before `save_frame`)
+/// which caller local each `&mut` argument points at, and `deferred_field_writes`
+/// collects the writes to replay once the caller is restored:
 ///
 /// ```text
 /// struct Foo { field: i32 }
@@ -411,11 +412,11 @@ pub(crate) struct InlineCtx<'z3, 'tcx> {
     /// self` reborrow temp back to the caller's referent.
     pub arg_referents: Vec<Option<Local>>,
     /// Field writes through a `&mut` argument collected during
-    /// `exec_inline_call`, replayed against the caller's `field_values` after
-    /// `restore_frame` (the caller's field map is parked while the callee runs).
-    /// Each entry is `(caller_local, field_path, value)`, where `caller_local`
-    /// comes from `arg_referents` — the caller local the `&mut` argument points
-    /// at, not the argument itself.
+    /// `exec_inline_call`, replayed against the caller's field values after
+    /// `restore_frame` (the caller's address map is parked while the callee
+    /// runs).  Each entry is `(caller_local, field_path, value)`, where
+    /// `caller_local` comes from `arg_referents` — the caller local the `&mut`
+    /// argument points at, not the argument itself.
     pub deferred_field_writes: Vec<(Local, Vec<usize>, VmValue<'z3, 'tcx>)>,
 }
 
@@ -502,13 +503,16 @@ pub(crate) struct Memory<'z3, 'tcx> {
     /// struct invariant (the "no interior NUL + terminal NUL" trust marker).
     pub(crate) cstr_trusted: FxHashSet<AllocId>,
 
-    /// Per-allocation field tracking: (alloc_id, viewed_type, field_indices) →
+    /// The typed-value (Value) layer: (alloc_id, viewed_type, field_indices) →
     /// value, i.e. the value of a field *within an allocation* viewed as
     /// `viewed_type`.  The `viewed_type` distinguishes reinterprets of the same
     /// allocation under different ADTs (e.g. `LeafNode` vs `InternalNode` cast
     /// views), so field index `1` resolves to `parent_idx` under `LeafNode` and
-    /// `edges` under `InternalNode` without colliding.
-    pub(crate) fields: FxHashMap<(AllocId, Ty<'tcx>, Vec<usize>), VmValue<'z3, 'tcx>>,
+    /// `edges` under `InternalNode` without colliding.  This is the alloc-keyed
+    /// counterpart to the byte-level [`Self::byte_arrays`]; the Local-keyed
+    /// `field_value`/`set_field_value` resolve a local's backing allocation and
+    /// then read/write this layer.
+    pub(crate) values: FxHashMap<(AllocId, Ty<'tcx>, Vec<usize>), VmValue<'z3, 'tcx>>,
 }
 
 /// Accumulated solver state for the current path.
@@ -589,13 +593,10 @@ pub(crate) struct FrameState<'z3, 'tcx> {
     /// Current value bound to each MIR local (rvalue).
     pub(crate) local_values: FxHashMap<Local, VmValue<'z3, 'tcx>>,
 
-    /// Field-level value tracking for aggregates: (local, field_indices) → value.
-    /// Example: `(local_3, [0])` is `local_3.0`, `(local_3, [0, 1])` is `local_3.0.1`.
-    /// This is the binding-value layer; see [`Memory::fields`] for the
-    /// alloc-keyed memory-contents layer (pointee decomposition).
-    pub(crate) field_values: FxHashMap<(Local, Vec<usize>), VmValue<'z3, 'tcx>>,
-
-    /// The stack allocation backing each local's place (lvalue identity).
+    /// The stack allocation backing each local's place (lvalue identity). A
+    /// local's field values live *in* that allocation (see [`Memory::values`],
+    /// keyed `(AllocId, view_ty, path)` with the local's declared type as the
+    /// view type), so there is no local-keyed field table here.
     pub(crate) local_alloc: FxHashMap<Local, AllocId>,
 }
 
@@ -666,7 +667,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             current_frame: FrameState {
                 current_def_id: caller_def_id,
                 local_values: FxHashMap::default(),
-                field_values: FxHashMap::default(),
                 local_alloc: FxHashMap::default(),
             },
             caller_frames: Vec::default(),
@@ -695,7 +695,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         FrameState {
             current_def_id: self.current_frame.current_def_id,
             local_values: std::mem::take(&mut self.current_frame.local_values),
-            field_values: std::mem::take(&mut self.current_frame.field_values),
             local_alloc: std::mem::take(&mut self.current_frame.local_alloc),
         }
     }
@@ -827,8 +826,68 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     }
 
     /// Get the value of a specific field within an aggregate local.
+    ///
+    /// Field values live in the allocation backing the local (the
+    /// memory-contents layer [`Memory::values`]), keyed by the local's declared
+    /// type as the view type.  Returns `None` if the local has no allocation
+    /// (the field was never materialized).
     pub(crate) fn field_value(&self, local: Local, path: &[usize]) -> Option<&VmValue<'z3, 'tcx>> {
-        self.current_frame.field_values.get(&(local, path.to_vec()))
+        let alloc_id = *self.current_frame.local_alloc.get(&local)?;
+        let view_ty = self.body().local_decls[local].ty;
+        self.load_value(alloc_id, view_ty, path)
+    }
+
+    /// Enumerate the field paths materialized for a local: every `path` for
+    /// which [`Self::field_value`] currently returns a value (the local's
+    /// allocation's fields under its declared view type).
+    pub(crate) fn field_paths(&self, local: Local) -> Vec<Vec<usize>> {
+        let Some(&alloc_id) = self.current_frame.local_alloc.get(&local) else {
+            return Vec::new();
+        };
+        let view_ty = self.body().local_decls[local].ty;
+        self.memory
+            .values
+            .keys()
+            .filter(|(a, t, _)| *a == alloc_id && *t == view_ty)
+            .map(|(_, _, p)| p.clone())
+            .collect()
+    }
+
+    /// The declared type of `local` in `frame`'s body.
+    fn frame_local_ty(&self, frame: &FrameState<'z3, 'tcx>, local: Local) -> Ty<'tcx> {
+        self.tcx.optimized_mir(frame.current_def_id).local_decls[local].ty
+    }
+
+    /// Enumerate the field paths materialized for `local` in a saved caller
+    /// `frame`. Field values live in the path-scoped [`Memory::values`], so they
+    /// are read via `frame`'s `local_alloc` and declared type.
+    pub(crate) fn frame_field_paths(
+        &self,
+        frame: &FrameState<'z3, 'tcx>,
+        local: Local,
+    ) -> Vec<Vec<usize>> {
+        let Some(&alloc_id) = frame.local_alloc.get(&local) else {
+            return Vec::new();
+        };
+        let view_ty = self.frame_local_ty(frame, local);
+        self.memory
+            .values
+            .keys()
+            .filter(|(a, t, _)| *a == alloc_id && *t == view_ty)
+            .map(|(_, _, p)| p.clone())
+            .collect()
+    }
+
+    /// Read a field of `local` in a saved caller `frame`.
+    pub(crate) fn frame_field_value(
+        &self,
+        frame: &FrameState<'z3, 'tcx>,
+        local: Local,
+        path: &[usize],
+    ) -> Option<&VmValue<'z3, 'tcx>> {
+        let alloc_id = *frame.local_alloc.get(&local)?;
+        let view_ty = self.frame_local_ty(frame, local);
+        self.load_value(alloc_id, view_ty, path)
     }
 
     /// The buffer an `Iter`/`IterMut` at `local` walks: the provenance of its
@@ -848,10 +907,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// (the end offset doubles as the byte length when the element is `u8`).
     pub(crate) fn iter_utf8_buffer(&self, local: Local) -> Option<(AllocId, Int<'z3>)> {
         let mut best: Option<(usize, AllocId, Int<'z3>)> = None;
-        for ((l, path), v) in &self.current_frame.field_values {
-            if *l != local || path.last() != Some(&1) {
+        for path in self.field_paths(local) {
+            if path.last() != Some(&1) {
                 continue;
             }
+            let Some(v) = self.field_value(local, &path) else {
+                continue;
+            };
             let Some(prov) = v.provenance.as_ref() else {
                 continue;
             };
@@ -869,11 +931,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         self.field_value(local, &[0, 0])
             .filter(|v| v.provenance_alloc_id().is_some())
             .or_else(|| {
-                self.current_frame
-                    .field_values
+                self.field_paths(local)
                     .iter()
-                    .find(|((l, _), v)| *l == local && v.provenance_alloc_id().is_some())
-                    .map(|(_, v)| v)
+                    .find_map(|path| {
+                        self.field_value(local, path)
+                            .filter(|v| v.provenance_alloc_id().is_some())
+                    })
             })
     }
 
@@ -881,34 +944,37 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// whole-place move), so a later `Owning` check does not treat it as a
     /// second owner of the heap allocation it no longer owns.
     pub(crate) fn invalidate_owner_field(&mut self, local: Local) {
-        let owner_path = if self
+        // Only the canonical `[0, 0]` owner field (`Box`/`Vec`/`String`'s heap
+        // pointer) is invalidated on a move.  The previous fallback that
+        // scanned *any* field with provenance wrongly matched non-owning
+        // pointer fields (e.g. `IterMut`'s `ptr`/`end`, which view a slice
+        // rather than own it) and clobbered their provenance.
+        if self
             .field_value(local, &[0, 0])
             .is_some_and(|v| v.provenance_alloc_id().is_some())
         {
-            Some(vec![0, 0])
-        } else {
-            self.current_frame
-                .field_values
-                .iter()
-                .find(|((l, _), v)| *l == local && v.provenance_alloc_id().is_some())
-                .map(|((_, path), _)| path.clone())
-        };
-        if let Some(path) = owner_path {
-            if let Some(mut fv) = self.field_value(local, &path).cloned() {
+            if let Some(mut fv) = self.field_value(local, &[0, 0]).cloned() {
                 fv.provenance = None;
-                self.set_field_value(local, path, fv);
+                self.set_field_value(local, vec![0, 0], fv);
             }
         }
     }
 
     /// Set the value of a specific field within an aggregate local.
+    ///
+    /// Ensures the local has a backing allocation, then stores into the
+    /// memory-contents layer ([`Memory::values`]) keyed by the local's declared
+    /// type as the view type.
     pub(crate) fn set_field_value(
         &mut self,
         local: Local,
         path: Vec<usize>,
         value: VmValue<'z3, 'tcx>,
     ) {
-        self.current_frame.field_values.insert((local, path), value);
+        let view_ty = self.body().local_decls[local].ty;
+        self.ensure_local_allocation(local);
+        let alloc_id = self.current_frame.local_alloc[&local];
+        self.store_value(alloc_id, view_ty, path, value);
     }
 
     /// Assert path conditions and invariant constraints into a solver.
@@ -930,8 +996,17 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         for (_local, value) in self.current_frame.local_values.iter() {
             self.assert_value_constraints(solver, value);
         }
-        for value in self.current_frame.field_values.values() {
-            self.assert_value_constraints(solver, value);
+        // Field values live in the memory-contents layer; assert the constraints
+        // of the *current frame's* fields (keyed by each local's allocation and
+        // declared view type) — the M1 translation of the old frame-scoped
+        // `field_values` iteration.
+        let locals: Vec<Local> = self.current_frame.local_alloc.keys().copied().collect();
+        for local in locals {
+            for path in self.field_paths(local) {
+                if let Some(value) = self.field_value(local, &path) {
+                    self.assert_value_constraints(solver, value);
+                }
+            }
         }
     }
 
@@ -1067,8 +1142,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         // If we have a pure field path (only Field / Downcast projections),
         // look up in the per-field value map first.  For `Option`/`ControlFlow`,
         // the variant's data is stored under the same field index as the enum
-        // field (the discriminant is tracked separately, not in field_values),
-        // so `(x as Some).0` resolves to `field_values[x][0]`.
+        // field (the discriminant is tracked separately, not in the field map),
+        // so `(x as Some).0` resolves to `x`'s field `[0]`.
         let is_pure_field = place.projection.iter().all(|p| {
             matches!(
                 p.kind(),
@@ -1108,7 +1183,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
 
         // For Deref+Field chains (e.g. (*self).ptr), strip the leading Deref
-        // projection(s) and look up field_values with the remaining field path.
+        // projection(s) and look up the field values with the remaining path.
         if !field_path.is_empty()
             && field_path.len() < place.projection.len()
             && place
@@ -1142,7 +1217,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     if let Some(alloc_id) = base_val.provenance_alloc_id() {
                         let view_ty = crate::helpers::mir_utils::pointee_ty(base_val.ty)
                             .unwrap_or(base_val.ty);
-                        if let Some(val) = self.load_field(alloc_id, view_ty, &field_path).cloned() {
+                        if let Some(val) = self.load_value(alloc_id, view_ty, &field_path).cloned() {
                             return Some(val);
                         }
                     }

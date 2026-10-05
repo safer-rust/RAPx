@@ -126,10 +126,10 @@ impl PropertyChecker {
             if !ty.needs_drop(vm_state.tcx, typing_env) {
                 continue;
             }
-            for ((l, _path), val) in &vm_state.current_frame.field_values {
-                if *l != *local {
+            for path in vm_state.field_paths(*local) {
+                let Some(val) = vm_state.field_value(*local, &path) else {
                     continue;
-                }
+                };
                 if val.provenance_alloc_id() != Some(alloc_id) {
                     continue;
                 }

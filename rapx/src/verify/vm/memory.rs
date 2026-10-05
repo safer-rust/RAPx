@@ -128,7 +128,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             // `&(*leaf).keys` keeps `len = N` for downstream InBound.
                             let alloc = provenance.as_ref().map(|p| p.alloc_id);
                             alloc.and_then(|a| {
-                                self.memory.fields
+                                self.memory.values
                                     .get(&(a, view_ty, field_path.clone()))
                                     .and_then(|fv| {
                                         fv.provenance.clone().map(|p| (fv.z3_term.clone(), p))
@@ -604,24 +604,38 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
     }
 
-    // ── Per-allocation fields (`Memory::fields`) ─────────────────────────
+    // ── Per-allocation fields (`Memory::values`) ─────────────────────────
 
     /// The value at a field offset *within an allocation* viewed as `view_ty`.
     ///
-    /// This is the memory-contents layer ([`Memory::fields`]), the counterpart
-    /// to [`Self::field_value`]'s binding-value layer ([`FrameState::field_values`]):
-    /// `field_value` asks "what value does the aggregate bound to `local` hold
-    /// at field `path`?", while `load_field` asks "what value sits at
-    /// `base(alloc_id) + offset(path)` interpreted as `view_ty`?".  The viewed
-    /// type is part of the key so reinterpret casts (`LeafNode` ↔
-    /// `InternalNode`) resolve to the right field view.
-    pub(crate) fn load_field(
+    /// This is the memory-contents (typed-value) layer ([`Memory::values`]): the
+    /// single source of truth for field values. [`Self::field_value`] is the
+    /// local-facing wrapper that resolves a MIR local's backing allocation and
+    /// declared type, then reads this same layer. The viewed type is part of the
+    /// key so reinterpret casts (`LeafNode` ↔ `InternalNode`) resolve to the
+    /// right field view.
+    pub(crate) fn load_value(
         &self,
         alloc_id: AllocId,
         view_ty: Ty<'tcx>,
         path: &[usize],
     ) -> Option<&VmValue<'z3, 'tcx>> {
-        self.memory.fields.get(&(alloc_id, view_ty, path.to_vec()))
+        self.memory.values.get(&(alloc_id, view_ty, path.to_vec()))
+    }
+
+    /// Store a value at a field offset *within an allocation* viewed as `view_ty`.
+    ///
+    /// This is the write counterpart to [`Self::load_value`] on the same
+    /// memory-contents layer ([`Memory::values`]); the viewed type is part of the
+    /// key so reinterpret casts resolve to the right field view.
+    pub(crate) fn store_value(
+        &mut self,
+        alloc_id: AllocId,
+        view_ty: Ty<'tcx>,
+        path: Vec<usize>,
+        value: VmValue<'z3, 'tcx>,
+    ) {
+        self.memory.values.insert((alloc_id, view_ty, path), value);
     }
 }
 

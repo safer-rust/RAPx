@@ -243,7 +243,19 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let dest_ty = self.body().local_decls[destination].ty;
         let is_slice = matches!(dest_ty.kind(), TyKind::Ref(_, inner, _)
             if matches!(inner.kind(), TyKind::Slice(_)));
-        if !is_slice {
+        // A range index (`s[..]` / `s[0..]` / …) yields a `&[T]` / `&mut [T]`,
+        // but in generic MIR the destination type may be left as an
+        // un-normalized `Index`/`IndexMut::Output` projection.  Fall back to the
+        // *index* argument's range kind: a range indexes a slice, a `usize`
+        // indexes a single element (which this handler does not model).
+        let range_kind = arg_values.get(1).and_then(|v| match v.ty.kind() {
+            TyKind::Adt(adt_def, _) => Some(crate::helpers::mir_utils::range_kind(
+                self.tcx,
+                adt_def.did(),
+            )),
+            _ => None,
+        });
+        if !is_slice && range_kind.is_none() {
             return false;
         }
         let Some(prov) = arg_values[0].provenance.clone() else {
@@ -279,13 +291,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             .size
             .clone()
             .div(&Int::from_u64(self.z3_ctx, elem_size));
-        let range_kind = arg_values.get(1).and_then(|v| match v.ty.kind() {
-            TyKind::Adt(adt_def, _) => Some(crate::helpers::mir_utils::range_kind(
-                self.tcx,
-                adt_def.did(),
-            )),
-            _ => None,
-        });
         let (start, len) = match range_kind {
             Some(crate::helpers::mir_utils::RangeKind::RangeTo) => (
                 zero.clone(),
@@ -820,9 +825,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             self.set_local(callee_local, arg_val.clone());
         }
 
-        // Propagate field_values from caller arg locals into the callee
-        // context so that inline body can access struct fields (e.g.
-        // Iter::ptr / end_or_len for len/is_empty computations).
+        // Propagate the caller arg locals' field values into the callee context
+        // so that the inline body can access struct fields (e.g. Iter::ptr /
+        // end_or_len for len/is_empty computations).
         for (i, caller_arg_opt) in caller_arg_locals.iter().enumerate() {
             let callee_param = Local::from_usize(i + 1);
             let Some(caller_arg) = caller_arg_opt else {
@@ -839,14 +844,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 }
             }
             for src in source_locals {
-                let caller_field_keys: Vec<Vec<usize>> = frame
-                    .field_values
-                    .keys()
-                    .filter(|(l, _)| *l == src)
-                    .map(|(_, f)| f.clone())
-                    .collect();
+                let caller_field_keys: Vec<Vec<usize>> = self.frame_field_paths(&frame, src);
                 for fields in caller_field_keys {
-                    if let Some(fv) = frame.field_values.get(&(src, fields.clone())).cloned() {
+                    if let Some(fv) = self.frame_field_value(&frame, src, &fields).cloned() {
                         self.set_field_value(callee_param, fields, fv);
                     }
                 }
@@ -866,11 +866,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 .map(|v| (v.z3_term.to_string(), v.invariants.non_null))
         );
         let return_fields: Vec<(Vec<usize>, VmValue<'z3, 'tcx>)> = self
-            .current_frame
-            .field_values
-            .iter()
-            .filter(|((l, _), _)| *l == Local::from_usize(0))
-            .map(|((_, path), val)| (path.clone(), val.clone()))
+            .field_paths(Local::from_usize(0))
+            .into_iter()
+            .filter_map(|path| {
+                self.field_value(Local::from_usize(0), &path)
+                    .cloned()
+                    .map(|val| (path, val))
+            })
             .collect();
 
         // ── Restore caller context ──
@@ -878,7 +880,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
         // Apply deferred field writes (`(*self).field = val` through a
         // `&mut self` reborrow) collected during the callee's execution, now
-        // that the caller's `field_values` is live again.
+        // that the caller's frame (and its address map) is live again.
         for (local, path, value) in std::mem::take(&mut self.inline.deferred_field_writes) {
             self.set_field_value(local, path, value);
         }
@@ -1202,7 +1204,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             CallEffect::ReturnDerefArg { arg } => {
                 // `mem::replace(dest, src)` returns `*dest`: the pointee value,
                 // not the `&mut` reference. Prefer the materialized pointee
-                // (`field_values` at the empty path, set by
+                // (the empty-path field value, set by
                 // `propagate_field_values_to_ref` for `&mut self.field`); then
                 // recover the old field value from the materialized field maps;
                 // finally, when the borrow chain was dropped by the slicer and no
@@ -1212,15 +1214,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 let dest_ty = self.body().local_decls[dest].ty;
                 let mut val = args.get(*arg).cloned().unwrap_or_else(|| VmValue::new(self.fresh_int("replaced"), dest_ty));
                 let arg_local = caller_arg_locals.get(*arg).copied().flatten();
-                let pointee =
-                    arg_local.and_then(|l| self.current_frame.field_values.get(&(l, Vec::new())).cloned());
+                let pointee = arg_local.and_then(|l| self.field_value(l, &[]).cloned());
                 if let Some(p) = pointee {
                     val = p;
-                } else if let Some(search) = self
-                    .current_frame
-                    .field_values
+                } else if let Some(search) = self.memory.values
                     .values()
-                    .chain(self.memory.fields.values())
                     .find(|v| v.ty == dest_ty && v.is_pointer())
                     .cloned()
                 {
@@ -1262,18 +1260,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     // pointee field values (ManuallyDrop.value → MaybeDangling.0)
                     // and expose them as the deref result's pointee fields.
                     if let Some(arg_local) = caller_arg_locals.get(*arg).copied().flatten() {
-                        let keys: Vec<Vec<usize>> = self
-                            .current_frame
-                            .field_values
-                            .keys()
-                            .filter(|(l, _)| *l == arg_local)
-                            .map(|(_, p)| p.clone())
-                            .collect();
+                        let keys: Vec<Vec<usize>> = self.field_paths(arg_local);
                         for path in keys {
                             if path.len() > *peel && path[..*peel].iter().all(|&f| f == 0) {
-                                if let Some(v) =
-                                    self.current_frame.field_values.get(&(arg_local, path.clone())).cloned()
-                                {
+                                if let Some(v) = self.field_value(arg_local, &path).cloned() {
                                     self.set_field_value(dest, path[*peel..].to_vec(), v);
                                 }
                             }
@@ -2414,9 +2404,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 // read `(_1.0).0` and cast it to `*const`/`*mut T` — inherit the
                 // heap pointer's provenance (rustc 1.95 lowers `&raw **b` to
                 // exactly this field read + transmute).  Record it both on the
-                // local (`field_values`, for direct `_1.0.0` reads) and on the
-                // heap allocation (`memory.fields`, for `(*&box).0.0`
-                // deref-reads through a reborrow).
+                // local's stack slot (`set_field_value`, for direct `_1.0.0`
+                // reads) and on the heap allocation (`memory.values`, for
+                // `(*&box).0.0` deref-reads through a reborrow).
                 let nn_field = VmValue {
                     z3_term: base.clone(),
                     ty: dest_ty,
@@ -2429,7 +2419,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     source: ValueSource::None,
                 };
                 self.set_field_value(dest, vec![0, 0], nn_field.clone());
-                self.memory.fields
+                self.memory.values
                     .insert((alloc_id, dest_ty, vec![0, 0]), nn_field);
                 self.set_local(
                     dest,
@@ -2762,7 +2752,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         if api_classify::is_std_box(adt.did()) {
                             self.set_field_value(dest, vec![0, 0], val.clone());
                             if let Some(prov) = &val.provenance {
-                                self.memory.fields
+                                self.memory.values
                                     .insert((prov.alloc_id, val.ty, vec![0, 0]), val.clone());
                             }
                         }
@@ -3270,8 +3260,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
         // Any local that already materializes the field (covers the receiver
         // parameter / shared reborrow that the mutable reborrow does not copy).
-        for (l, _) in self.current_frame.field_values.keys() {
-            candidates.push(*l);
+        for l in self.current_frame.local_alloc.keys() {
+            if !self.field_paths(*l).is_empty() {
+                candidates.push(*l);
+            }
         }
         let mut found: Option<VmValue<'z3, 'tcx>> = None;
         for l in candidates {

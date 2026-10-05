@@ -105,22 +105,16 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 }
             }
             for (src, prefix) in source_locals {
-                let keys: Vec<Vec<usize>> = frame
-                    .field_values
-                    .keys()
-                    .filter(|(l, f)| {
-                        *l == src
-                            && (prefix.is_empty()
-                                || (f.len() >= prefix.len() && f[..prefix.len()] == prefix[..]))
+                let keys: Vec<Vec<usize>> = self
+                    .frame_field_paths(&frame, src)
+                    .into_iter()
+                    .filter(|f| {
+                        prefix.is_empty()
+                            || (f.len() >= prefix.len() && f[..prefix.len()] == prefix[..])
                     })
-                    .map(|(_, f)| f.clone())
                     .collect();
                 for fields in keys {
-                    if let Some(fv) = frame
-                        .field_values
-                        .get(&(src, fields.clone()))
-                        .cloned()
-                    {
+                    if let Some(fv) = self.frame_field_value(&frame, src, &fields).cloned() {
                         let stripped = if prefix.is_empty() {
                             fields
                         } else {
@@ -152,11 +146,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     fn handle_callee_exit(&mut self, dest: usize) {
         let ret = self.current_frame.local_values.get(&Local::from_usize(0)).cloned();
         let ret_fields: Vec<(Vec<usize>, VmValue<'z3, 'tcx>)> = self
-            .current_frame
-            .field_values
-            .iter()
-            .filter(|((l, _), _)| *l == Local::from_usize(0))
-            .map(|((_, f), v)| (f.clone(), v.clone()))
+            .field_paths(Local::from_usize(0))
+            .into_iter()
+            .filter_map(|f| {
+                self.field_value(Local::from_usize(0), &f)
+                    .cloned()
+                    .map(|v| (f, v))
+            })
             .collect();
         if let Some(frame) = self.caller_frames.pop() {
             self.restore_frame(frame);
@@ -1197,7 +1193,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 let (fa, _fb) = self.allocate_external(max_size, field_align, Some(pointee));
                 self.alloc_mut(fa).initialized = true;
                 let term = self.fresh_int(&format!("pointee_nn_{}_{}", local_idx, idx));
-                self.memory.fields.insert(
+                self.memory.values.insert(
                     (alloc_id, root_ty, path.clone()),
                     VmValue {
                         z3_term: term,
@@ -1236,7 +1232,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 TyKind::Uint(_) | TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char
             ) {
                 let field_term = self.fresh_int(&format!("pointee_field_{}_{}", local_idx, idx));
-                self.memory.fields.insert(
+                self.memory.values.insert(
                     (alloc_id, root_ty, path.clone()),
                     VmValue {
                         z3_term: field_term,
@@ -1267,7 +1263,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     Some(*elem_ty),
                 );
                 self.alloc_mut(fa).initialized = true;
-                self.memory.fields.insert(
+                self.memory.values.insert(
                     (alloc_id, root_ty, path.clone()),
                     VmValue {
                         z3_term: fb,
@@ -1402,13 +1398,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     )
                 });
                 if only_field || (only_field_deref && has_deref_src) {
-                    let keys: Vec<Vec<usize>> = self
-                        .current_frame
-                        .field_values
-                        .keys()
-                        .filter(|(l, _)| *l == sp.local)
-                        .map(|(_, f)| f.clone())
-                        .collect();
+                    let keys: Vec<Vec<usize>> = self.field_paths(sp.local);
                     for k in keys {
                         let rest = if field_prefix.is_empty() {
                             Some(k.clone())
@@ -1428,7 +1418,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 }
             }
         } else if !has_deref {
-            // Field projection (no Deref): update field_values for the base local.
+            // Field projection (no Deref): update the base local's field values.
             let field_indices: Vec<usize> = place
                 .projection
                 .iter()
@@ -1471,8 +1461,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     // `&mut self` (and other reference parameters) materialize
                     // their pointee's scalar fields keyed by the *reference*
                     // local itself, so a `(*self).field = val` write must land
-                    // in `field_values[(self, field)]` directly.  (This is what
-                    // makes a struct-invariant re-proof see `self.len += 1`.)
+                    // in the reference local's own field values directly.  (This
+                    // is what makes a struct-invariant re-proof see
+                    // `self.len += 1`.)
                     if self.field_value(place.local, &field_indices).is_some() {
                         let is_iter_field = field_indices == [0];
                         let mut write_value = value;
@@ -1497,7 +1488,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             // Inline frame: the caller's address map is saved
                             // away, so resolve through the precomputed
                             // `&mut self` referent and defer the write until the
-                            // caller's `field_values` is restored.
+                            // caller's frame is restored.
                             if let Some(referent) =
                                 self.inline.arg_referents.get(arg_idx).copied().flatten()
                             {
@@ -1924,10 +1915,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     }
                 }
                 // For tuple-returning binary ops (AddWithOverflow, MulWithOverflow),
-                // populate field_values so that .0 (result) and .1 (overflow flag)
-                // are properly tracked. Without this, field access falls through
-                // to cloning the base term, mixing the arithmetic result with the
-                // boolean overflow flag and corrupting path conditions.
+                // populate the field values so that .0 (result) and .1 (overflow
+                // flag) are properly tracked. Without this, field access falls
+                // through to cloning the base term, mixing the arithmetic result
+                // with the boolean overflow flag and corrupting path conditions.
                 if let rustc_middle::ty::TyKind::Tuple(fields) = dest_ty.kind() {
                     if fields.len() == 2 {
                         let result_val = VmValue {
@@ -2139,11 +2130,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         if let Some(op_place) = operand.place() {
                             if op_place.projection.is_empty() {
                                 let nested: Vec<(Vec<usize>, VmValue<'z3, 'tcx>)> = self
-                                    .current_frame
-                                    .field_values
-                                    .iter()
-                                    .filter(|((l, _), _)| *l == op_place.local)
-                                    .map(|((_, p), v)| (p.clone(), v.clone()))
+                                    .field_paths(op_place.local)
+                                    .into_iter()
+                                    .filter_map(|p| {
+                                        self.field_value(op_place.local, &p)
+                                            .cloned()
+                                            .map(|v| (p, v))
+                                    })
                                     .collect();
                                 for (nested_path, nested_val) in nested {
                                     let mut full = vec![i];
@@ -2527,7 +2520,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// Resolve a `len` field on `ty`, recursing into ADT sub-fields when there is
     /// no direct `len` (e.g. `String { vec: Vec { ptr, len, cap } }` resolves
     /// `String.len()` to `vec.len`).  `root_ty` stays fixed as the allocation's
-    /// element type, which is how `decompose_pointee_fields` keys `memory.fields`.
+    /// element type, which is how `decompose_pointee_fields` keys `memory.values`.
     fn try_adt_len_field_at(
         &self,
         alloc_id: AllocId,
@@ -2550,9 +2543,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         {
             let mut path = prefix.to_vec();
             path.push(len_idx);
-            return self
-                .memory
-                .fields
+            return self.memory.values
                 .get(&(alloc_id, root_ty, path))
                 .map(|v| v.z3_term.clone());
         }
@@ -2585,12 +2576,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let alloc_id = val.provenance_alloc_id()?;
         let view_ty = crate::helpers::mir_utils::pointee_ty(val.ty).unwrap_or(val.ty);
         let start = self
-            .memory.fields
+            .memory.values
             .get(&(alloc_id, view_ty, vec![0]))?
             .z3_term
             .clone();
         let end = self
-            .memory.fields
+            .memory.values
             .get(&(alloc_id, view_ty, vec![1]))?
             .z3_term
             .clone();
@@ -2648,7 +2639,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             .fields
             .iter()
             .position(|f| f.ident(self.tcx).name.to_string() == "len")?;
-        self.memory.fields
+        self.memory.values
             .get(&(alloc_id, pointee, vec![len_idx]))
             .map(|v| v.z3_term.clone())
     }
@@ -3671,12 +3662,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             // Deref+Field: the base local is a reference whose pointee
                             // fields live in the per-allocation map (e.g. the
                             // `ValidNum(len <= CAPACITY)` invariant on `&LeafNode`
-                            // reads `(*leaf).len` through `memory.fields`).
+                            // reads `(*leaf).len` through `memory.values`).
                             let base_val = self.local_value(local)?;
                             let alloc_id = base_val.provenance_alloc_id()?;
                             let view_ty = crate::helpers::mir_utils::pointee_ty(base_val.ty)
                                 .unwrap_or(base_val.ty);
-                            self.memory.fields
+                            self.memory.values
                                 .get(&(alloc_id, view_ty, path.clone()))
                                 .map(|v| v.z3_term.clone())
                         })
@@ -4026,7 +4017,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     }
 
     /// Evaluate a `ValidNum` predicate against a pointee allocation (not a MIR
-    /// local): field places resolve through `memory.fields` keyed by the
+    /// local): field places resolve through `memory.values` keyed by the
     /// pointee type.
     fn eval_pointee_predicate_as_bool(
         &self,
@@ -4053,7 +4044,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             ContractExpr::AlignOf(ty) => Some(self.align_sym_read(*ty)),
             ContractExpr::Place(cp) => {
                 let path = cp.plain_field_path()?;
-                self.memory.fields
+                self.memory.values
                     .get(&(alloc_id, view_ty, path))
                     .map(|v| v.z3_term.clone())
             }
@@ -4089,7 +4080,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return None;
         };
         let path = cp.plain_field_path()?;
-        self.memory.fields
+        self.memory.values
             .get(&(alloc_id, view_ty, path))
             .cloned()
     }
@@ -4441,13 +4432,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         // plain scalar fields (e.g. array elements) must not leak into the
         // reference or they can corrupt downstream InBound reasoning.
         let empty_proj = source_place.projection.is_empty();
-        let keys: Vec<Vec<usize>> = self
-            .current_frame
-            .field_values
-            .keys()
-            .filter(|(l, _)| *l == source_place.local)
-            .map(|(_, p)| p.clone())
-            .collect();
+        let keys: Vec<Vec<usize>> = self.field_paths(source_place.local);
         for path in keys {
             let matches_prefix = field_prefix.is_empty()
                 || (path.len() >= field_prefix.len()
@@ -4458,12 +4443,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 } else {
                     path[field_prefix.len()..].to_vec()
                 };
-                if let Some(v) = self
-                    .current_frame
-                    .field_values
-                    .get(&(source_place.local, path.clone()))
-                    .cloned()
-                {
+                if let Some(v) = self.field_value(source_place.local, &path).cloned() {
                     if empty_proj && v.provenance.is_none() {
                         continue;
                     }
