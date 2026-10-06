@@ -1352,16 +1352,27 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             );
                             // Byte-level tracking only exists once some byte of the
                             // allocation has been written; otherwise fall through to
-                            // the field→byte materialization below.
+                            // the field→byte materialization below.  Even when the
+                            // allocation has a byte array, the byte may still read
+                            // `UNINIT` (e.g. a struct whose fields were written in
+                            // the value layer only), so also fall through to the
+                            // field→byte materialization in that case.
                             if self.memory.byte_arrays.contains_key(&alloc_id) {
                                 let term = self.byte_read(alloc_id, &offset);
-                                return Some(VmValue {
-                                    z3_term: term,
-                                    ty: place_ty,
-                                    provenance: None,
-                                    invariants: ValueInvariants::default(),
-                                    source: ValueSource::None,
-                                });
+                                let is_uninit = offset
+                                    .simplify()
+                                    .as_u64()
+                                    .map(|off| !self.is_byte_init(alloc_id, off as usize))
+                                    .unwrap_or(false);
+                                if !is_uninit {
+                                    return Some(VmValue {
+                                        z3_term: term,
+                                        ty: place_ty,
+                                        provenance: None,
+                                        invariants: ValueInvariants::default(),
+                                        source: ValueSource::None,
+                                    });
+                                }
                             }
                             // Field→byte direction of the cast cross-view
                             // materialization: the buffer was reinterpreted from a
