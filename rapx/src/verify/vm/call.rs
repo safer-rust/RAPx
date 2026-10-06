@@ -898,7 +898,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     if prov.offset.as_u64() == Some(0) {
                         val.invariants.non_null = true;
                         val.invariants.init = true;
-                        self.alloc_mut(prov.alloc_id).initialized = true;
+                        self.alloc_mut(prov.alloc_id).facts.initialized = true;
                     }
                 }
                 self.set_local(dest, val);
@@ -914,7 +914,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 // no provenance: a later `&raw const (*&field)` + `ptr::read`
                 // must be able to discharge `Init` against the field.
                 if let Some(dest_alloc_id) = self.current_frame.local_alloc.get(&dest).copied() {
-                    self.alloc_mut(dest_alloc_id).initialized = true;
+                    self.alloc_mut(dest_alloc_id).facts.initialized = true;
                 }
             }
             None => {
@@ -1346,7 +1346,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             let remaining = Int::sub(self.z3_ctx, &[&src_bytes, &mid_bytes]);
                             self.constraints.assertions.push(field_size._eq(&remaining));
                         }
-                        self.alloc_mut(alloc_id).initialized = true;
+                        self.alloc_mut(alloc_id).facts.initialized = true;
                         if let Some(ref source_prov) = self_val.provenance {
                             self.alloc_mut(alloc_id).parent = Some(source_prov.alloc_id);
                         }
@@ -1550,7 +1550,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         f_align.clone(),
                         f_elem_ty,
                     );
-                    self.alloc_mut(alloc_id).initialized = true;
+                    self.alloc_mut(alloc_id).facts.initialized = true;
                     self.alloc_mut(alloc_id).parent = Some(src_prov.alloc_id);
                     if let Some(ref_dest_alloc_id) = self.current_frame.local_alloc.get(&dest).copied() {
                         self.alloc_mut(ref_dest_alloc_id).slice_data = Some(alloc_id);
@@ -2205,7 +2205,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                 .unwrap_or_else(|| Int::from_u64(self.z3_ctx, 1));
                             if let Some(old_data) = self.alloc(prov.alloc_id).slice_data {
                                 // Subsequent mutation: invalidate old heap data.
-                                self.alloc_mut(old_data).dead = true;
+                                self.alloc_mut(old_data).facts.dead = true;
                             }
                             let max_size = Int::from_u64(self.z3_ctx, i64::MAX as u64);
                             let (data_alloc, _) =
@@ -2220,7 +2220,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             .or_else(|| prov.offset.simplify().as_u64());
                         if let Some(off) = off_u64 {
                             if off == 0 {
-                                self.alloc_mut(prov.alloc_id).initialized = true;
+                                self.alloc_mut(prov.alloc_id).facts.initialized = true;
                             }
                             let elem_size = match arg_val.ty.kind() {
                                 rustc_middle::ty::TyKind::Ref(_, inner, _) => {
@@ -2254,7 +2254,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                     }
                                 }
                                 _ => {
-                                    self.alloc_mut(prov.alloc_id).initialized = true;
+                                    self.alloc_mut(prov.alloc_id).facts.initialized = true;
                                 }
                             }
                         }
@@ -2303,8 +2303,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     }
                     // Propagate init status and byte-level tracking from the source pointer.
                     if let Some(ref source_prov) = ptr_val.provenance {
-                        if !self.alloc(source_prov.alloc_id).dead {
-                            self.alloc_mut(alloc_id).initialized = true;
+                        if !self.alloc(source_prov.alloc_id).facts.dead {
+                            self.alloc_mut(alloc_id).facts.initialized = true;
                             self.alloc_mut(alloc_id).parent = Some(source_prov.alloc_id);
                         }
                         // Copy byte-level tracking (value, init, NUL knowledge),
@@ -2390,7 +2390,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     .map(|ty| self.align_sym(ty))
                     .unwrap_or_else(|| Int::from_u64(self.z3_ctx, 1));
                 let (alloc_id, base) = self.allocate(size, align, pointee);
-                self.alloc_mut(alloc_id).initialized = true;
+                self.alloc_mut(alloc_id).facts.initialized = true;
                 let align_n = pointee.map(|ty| self.align_sym(ty));
                 let heap_prov = Provenance {
                     alloc_id,
@@ -2449,7 +2449,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         Some(u8_ty),
                     );
                     self.alloc_mut(alloc_id).set_slice_len(size_val.z3_term.clone());
-                    self.alloc_mut(alloc_id).initialized = true;
+                    self.alloc_mut(alloc_id).facts.initialized = true;
                     self.set_local(
                         dest,
                         VmValue {
@@ -2496,7 +2496,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     if let Some(dest_alloc_id) = dest_alloc_id {
                         self.alloc_mut(dest_alloc_id).slice_data = Some(alloc_id);
                     }
-                    self.alloc_mut(alloc_id).initialized = true;
+                    self.alloc_mut(alloc_id).facts.initialized = true;
                     let vec_base = base.clone();
                     let vec_len = size_val.z3_term.clone();
                     self.set_local(
@@ -2564,7 +2564,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     if let Some(dest_alloc_id) = dest_alloc_id {
                         self.alloc_mut(dest_alloc_id).slice_data = Some(alloc_id);
                     }
-                    self.alloc_mut(alloc_id).initialized = true;
+                    self.alloc_mut(alloc_id).facts.initialized = true;
                     let vec_base = base.clone();
                     let vec_cap = cap_val.z3_term.clone();
                     self.set_local(
@@ -2654,7 +2654,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 if let Some(ref dest_alloc_id) = dest_alloc_id {
                     self.alloc_mut(*dest_alloc_id).slice_data = Some(alloc_id);
                 }
-                self.alloc_mut(alloc_id).initialized = true;
+                self.alloc_mut(alloc_id).facts.initialized = true;
                 let vec_base = base.clone();
                 self.set_local(
                     dest,
@@ -2735,7 +2735,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             CallEffect::OwnsInitMemory { arg } => {
                 if let Some(arg_val) = args.get(*arg) {
                     if let Some(prov) = &arg_val.provenance {
-                        self.alloc_mut(prov.alloc_id).initialized = true;
+                        self.alloc_mut(prov.alloc_id).facts.initialized = true;
                     }
                     let mut val = arg_val.clone();
                     val.ty = self.body().local_decls[dest].ty;
@@ -2779,7 +2779,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         arg_val.provenance_alloc_id()
                     };
                     if let Some(alloc_id) = alloc_id {
-                        self.alloc_mut(alloc_id).dead = true;
+                        self.alloc_mut(alloc_id).facts.dead = true;
                     }
                 }
             }
@@ -2913,7 +2913,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     self.mark_byte_non_nul(alloc_id, off);
                 }
             }
-            self.alloc_mut(alloc_id).initialized = true;
+            self.alloc_mut(alloc_id).facts.initialized = true;
         }
     }
 

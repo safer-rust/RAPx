@@ -704,7 +704,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
 
 // ── property helpers ──────────────────────────────────────────────────
 
-/// Whether a property's checker reads allocation liveness (`alloc.dead`), so
+/// Whether a property's checker reads allocation liveness (`alloc.facts.dead`), so
 /// the backward slice must keep `StorageDead`/`StorageLive`/`Drop` unconditionally
 /// (the allocation owner may not be reachable from the pointer target, e.g. a
 /// raw pointer into a separately-owned Vec/Box buffer).

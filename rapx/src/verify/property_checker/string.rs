@@ -18,7 +18,7 @@ impl PropertyChecker {
         solver: &Solver<'z3>,
         alloc_id: crate::verify::vm::state::AllocId,
     ) -> CheckResult {
-        if vm_state.alloc(alloc_id).dead {
+        if vm_state.alloc(alloc_id).facts.dead {
             return CheckResult::Failed;
         }
         let byte_pairs = vm_state.alloc_byte_values(alloc_id);

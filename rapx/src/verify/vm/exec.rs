@@ -166,7 +166,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 if prov.offset.as_u64() == Some(0) {
                     v.invariants.non_null = true;
                     v.invariants.init = true;
-                    self.alloc_mut(prov.alloc_id).initialized = true;
+                    self.alloc_mut(prov.alloc_id).facts.initialized = true;
                 }
             }
             self.set_local(Local::from_usize(dest), v);
@@ -174,7 +174,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             // destination stack slot is initialized.
             if let Some(dest_alloc_id) = self.current_frame.local_alloc.get(&Local::from_usize(dest)).copied()
             {
-                self.alloc_mut(dest_alloc_id).initialized = true;
+                self.alloc_mut(dest_alloc_id).facts.initialized = true;
             }
         }
         for (fields, fv) in ret_fields {
@@ -234,7 +234,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         };
                         invariants.non_null = true;
                         invariants.init = true;
-                        self.alloc_mut(heap_alloc_id).initialized = true;
+                        self.alloc_mut(heap_alloc_id).facts.initialized = true;
                         // Also expose the box's inner `Unique<T>.pointer` field
                         // (a `NonNull<T>` at path [0, 0]) so that inlined bodies
                         // like `Box::into_non_null_with_allocator` — which reads
@@ -498,7 +498,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         let (data_alloc_id, data_base) =
                             self.allocate_slice(len, elem_size_sym, elem_align, Some(*elem_ty));
                         if !pointee_is_maybe_uninit {
-                            self.alloc_mut(data_alloc_id).initialized = true;
+                            self.alloc_mut(data_alloc_id).facts.initialized = true;
                         }
                         // Record placeholder per-byte symbols for the first few
                         // elements so byte-level checkers (`ValidCStr` interior-NUL,
@@ -540,7 +540,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     let (pointee_alloc_id, pointee_base) =
                         self.allocate(pointee_size_term, pointee_align, Some(pointee_ty));
                     if !pointee_is_maybe_uninit {
-                        self.alloc_mut(pointee_alloc_id).initialized = true;
+                        self.alloc_mut(pointee_alloc_id).facts.initialized = true;
                     }
                     self.set_local(
                         local,
@@ -766,7 +766,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         self.allocate_external(max_size, align, Some(*elem_ty))
                     };
                     self.alloc_mut(alloc_id).set_slice_len(n_term);
-                    self.alloc_mut(alloc_id).initialized = true;
+                    self.alloc_mut(alloc_id).facts.initialized = true;
                     self.current_frame.local_alloc.insert(local, alloc_id);
                     if let Some(n) = n {
                         for i in 0..n {
@@ -934,9 +934,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let align = self.align_sym(elem_ty);
         let max_size = Int::from_u64(self.z3_ctx, i64::MAX as u64);
         let (alloc_id, base) = self.allocate_external(max_size, align, Some(elem_ty));
-        self.alloc_mut(alloc_id).initialized = true;
+        self.alloc_mut(alloc_id).facts.initialized = true;
         if let Some(region) = alive_region {
-            self.alloc_mut(alloc_id).liveness = Some(region);
+            self.alloc_mut(alloc_id).facts.liveness = Some(region);
         }
         self.set_field_value(
             local,
@@ -1191,7 +1191,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 let field_align = self.align_sym(pointee);
                 let max_size = Int::from_u64(self.z3_ctx, i64::MAX as u64);
                 let (fa, _fb) = self.allocate_external(max_size, field_align, Some(pointee));
-                self.alloc_mut(fa).initialized = true;
+                self.alloc_mut(fa).facts.initialized = true;
                 let term = self.fresh_int(&format!("pointee_nn_{}_{}", local_idx, idx));
                 self.memory.values.insert(
                     (alloc_id, root_ty, path.clone()),
@@ -1262,7 +1262,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     arr_align,
                     Some(*elem_ty),
                 );
-                self.alloc_mut(fa).initialized = true;
+                self.alloc_mut(fa).facts.initialized = true;
                 self.memory.values.insert(
                     (alloc_id, root_ty, path.clone()),
                     VmValue {
@@ -1563,7 +1563,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
 
         if concrete && value_size > 0 {
-            self.alloc_mut(alloc_id).initialized = true;
+            self.alloc_mut(alloc_id).facts.initialized = true;
 
             let is_u8_write = matches!(
                 value_ty.kind(),
@@ -1609,7 +1609,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             if let Some(ref prov) = addr.provenance {
                 let alloc_id = prov.alloc_id;
                 let byte_offset = prov.offset.as_u64().map(|v| v as usize).unwrap_or(0);
-                self.alloc_mut(alloc_id).initialized = true;
+                self.alloc_mut(alloc_id).facts.initialized = true;
                 self.record_byte_value(alloc_id, byte_offset, value.z3_term.clone());
                 if let Some(term_val) = value.z3_term.as_u64() {
                     if term_val == 0 {
@@ -2070,7 +2070,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     let dest_local = dest_place.local;
                     self.set_field_value(dest_local, vec![0], field_val.clone());
                     if let Some(alloc_id) = self.current_frame.local_alloc.get(&dest_local).copied() {
-                        self.alloc_mut(alloc_id).initialized = true;
+                        self.alloc_mut(alloc_id).facts.initialized = true;
                     }
                     return VmValue {
                         z3_term: field_val.z3_term,
@@ -2141,7 +2141,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         }
                     }
                     if let Some(alloc_id) = dest_alloc_id {
-                        self.alloc_mut(alloc_id).initialized = true;
+                        self.alloc_mut(alloc_id).facts.initialized = true;
                         if is_byte_array && field_sz == 1 {
                             self.record_byte_value(alloc_id, byte_offset, field_term.clone());
                         }
@@ -2826,23 +2826,23 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     fn exec_storage_live(&mut self, local: Local) {
         self.ensure_local_allocation(local);
         let alloc_id = self.current_frame.local_alloc[&local];
-        self.alloc_mut(alloc_id).dead = false;
+        self.alloc_mut(alloc_id).facts.dead = false;
     }
 
     fn exec_storage_dead(&mut self, local: Local) {
         if let Some(alloc_id) = self.current_frame.local_alloc.get(&local).copied() {
-            self.alloc_mut(alloc_id).dead = true;
+            self.alloc_mut(alloc_id).facts.dead = true;
         }
     }
 
     pub(crate) fn exec_drop(&mut self, place: &Place<'tcx>) {
         if let Some(alloc_id) = self.current_frame.local_alloc.get(&place.local).copied() {
-            self.alloc_mut(alloc_id).dead = true;
+            self.alloc_mut(alloc_id).facts.dead = true;
             // Cascade to heap data allocations (see exec_storage_dead).
             let mut worklist: Vec<AllocId> = vec![alloc_id];
             while let Some(id) = worklist.pop() {
                 if let Some(data_id) = self.alloc(id).slice_data {
-                    self.alloc_mut(data_id).dead = true;
+                    self.alloc_mut(data_id).facts.dead = true;
                     worklist.push(data_id);
                 }
             }
@@ -3186,7 +3186,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     // struct invariants against the struct, function `requires`
                     // against the function.
                     if let Some(PropertyArg::Region(region)) = property.args().get(1) {
-                        self.alloc_mut(id).liveness = Some(*region);
+                        self.alloc_mut(id).facts.liveness = Some(*region);
                     }
                 }
             }
@@ -3230,7 +3230,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             // discharge `Typed(ptr, T)` soundly (the fact comes
                             // from the invariant, not from the pointer type).
                             if property.for_each().is_some() {
-                                self.alloc_mut(alloc_id).for_each.target_ty = Some(expected_ty);
+                                self.alloc_mut(alloc_id).facts.for_each.target_ty = Some(expected_ty);
                             }
                             // Only record the type invariant when the allocation
                             // has no element type yet.  `Init ⇒ Typed` (and other
@@ -3265,10 +3265,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     self.local_value(local)?.provenance_alloc_id()
                 });
                 if let Some(id) = id {
-                    self.alloc_mut(id).dead = false;
-                    self.alloc_mut(id).liveness = Some(self.tcx.lifetimes.re_static);
-                    self.alloc_mut(id).initialized = true;
-                    self.alloc_mut(id).cstr_trusted = true;
+                    self.alloc_mut(id).facts.dead = false;
+                    self.alloc_mut(id).facts.liveness = Some(self.tcx.lifetimes.re_static);
+                    self.alloc_mut(id).facts.initialized = true;
+                    self.alloc_mut(id).facts.cstr_trusted = true;
                     // `ValidCStr(p, n)` carries the byte length of the
                     // nul-terminated buffer.  Assert the allocation covers `n`
                     // bytes so downstream `from_raw_parts(p, n)` / InBound
@@ -3328,12 +3328,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let Some(alloc_id) = val.provenance_alloc_id() else {
             return false;
         };
-        self.alloc_mut(alloc_id).dead = false;
+        self.alloc_mut(alloc_id).facts.dead = false;
         // An `Allocated(p, T, n)` contract on a raw-pointer parameter means the
         // caller guarantees the memory is allocated and outlives the call, so
         // it is alive for the function's execution region.
         if self.alloc(alloc_id).is_external() {
-            self.alloc_mut(alloc_id).liveness = Some(self.tcx.lifetimes.re_static);
+            self.alloc_mut(alloc_id).facts.liveness = Some(self.tcx.lifetimes.re_static);
         }
         if self.alloc(alloc_id).element_ty.is_generic() {
             self.alloc_mut(alloc_id).element_ty = ContentTy::Typed(elem_ty);
@@ -3367,7 +3367,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             let total = Int::mul(self.z3_ctx, &[&count, &elem_sz]);
             self.allocate_external(total, heap_align, Some(elem_ty))
         };
-        self.alloc_mut(heap_id).initialized = true;
+        self.alloc_mut(heap_id).facts.initialized = true;
         VmValue {
             z3_term: heap_base,
             ty: val_ty,
@@ -3429,7 +3429,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 return;
             };
             if let Some(alloc_id) = val.provenance_alloc_id() {
-                self.alloc_mut(alloc_id).dead = false;
+                self.alloc_mut(alloc_id).facts.dead = false;
             }
             let v = self.materialize_external_alloc(elem_ty, count_term, val.ty, false);
             self.set_local(local, v);
@@ -3475,10 +3475,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         // mark it live; re-materializing would orphan an `Align`
                         // path condition recorded against the earlier term.
                         if self.alloc(alloc_id).size.as_u64().is_some() {
-                            self.alloc_mut(alloc_id).dead = false;
+                            self.alloc_mut(alloc_id).facts.dead = false;
                             return;
                         }
-                        self.alloc_mut(alloc_id).dead = false;
+                        self.alloc_mut(alloc_id).facts.dead = false;
                     }
                     let mut v = self.materialize_external_alloc(elem_ty, count_term, val.ty, true);
                     // The size materialization must not clobber a *stronger*
@@ -3498,10 +3498,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     };
                     if let Some(alloc_id) = val.provenance_alloc_id() {
                         if self.alloc(alloc_id).size.as_u64().is_some() {
-                            self.alloc_mut(alloc_id).dead = false;
+                            self.alloc_mut(alloc_id).facts.dead = false;
                             return;
                         }
-                        self.alloc_mut(alloc_id).dead = false;
+                        self.alloc_mut(alloc_id).facts.dead = false;
                     }
                     let mut v = self.materialize_external_alloc(elem_ty, count_term, val.ty, false);
                     if v.invariants.align_n.is_none() {
@@ -4124,7 +4124,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return;
         }
         if let Some(prov) = &val.provenance {
-            self.alloc_mut(prov.alloc_id).initialized = true;
+            self.alloc_mut(prov.alloc_id).facts.initialized = true;
         }
         if let Some((local, path)) = self.contract_field_path(property) {
             let existing = if path.is_empty() {
@@ -4135,7 +4135,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             if let Some(mut existing) = existing {
                 existing.invariants.init = true;
                 if let Some(prov) = &existing.provenance {
-                    self.alloc_mut(prov.alloc_id).initialized = true;
+                    self.alloc_mut(prov.alloc_id).facts.initialized = true;
                 }
                 if path.is_empty() {
                     self.set_local(local, existing);
@@ -4149,7 +4149,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// Set owning invariant on the target value.
     fn set_owning_for_value(&mut self, val: VmValue<'z3, 'tcx>) {
         if let Some(prov) = &val.provenance {
-            self.alloc_mut(prov.alloc_id).initialized = true;
+            self.alloc_mut(prov.alloc_id).facts.initialized = true;
         }
     }
 
@@ -4170,7 +4170,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         else {
             return;
         };
-        self.alloc_mut(alloc_id).for_each.aligned_ty = Some(ty);
+        self.alloc_mut(alloc_id).facts.for_each.aligned_ty = Some(ty);
     }
 
     /// Record the `Allocated(container.iter(), T, n)` for_each fact: every
@@ -4194,7 +4194,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         else {
             return;
         };
-        self.alloc_mut(alloc_id).for_each.allocated = Some((ty, count));
+        self.alloc_mut(alloc_id).facts.for_each.allocated = Some((ty, count));
     }
 
     /// Record the `Owning(container.iter())` for_each fact: every element
@@ -4208,7 +4208,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         else {
             return;
         };
-        self.alloc_mut(alloc_id).for_each.owning = true;
+        self.alloc_mut(alloc_id).facts.for_each.owning = true;
     }
 
     /// Extract the pointee type if `ty` is a `#[repr(transparent)]`
@@ -4305,10 +4305,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         let size = z3::ast::Int::from_u64(self.z3_ctx, bytes.len() as u64);
                         let align = self.align_sym(pointee_ty);
                         let (alloc_id, base) = self.allocate(size, align, Some(pointee_ty));
-                        self.alloc_mut(alloc_id).initialized = true;
+                        self.alloc_mut(alloc_id).facts.initialized = true;
                         // A const/static byte materialization lives for the
                         // whole program (`'static`), so it is always alive.
-                        self.alloc_mut(alloc_id).liveness =
+                        self.alloc_mut(alloc_id).facts.liveness =
                             Some(self.tcx.lifetimes.re_static);
                         for (i, &b) in bytes.iter().enumerate() {
                             self.record_byte_value(

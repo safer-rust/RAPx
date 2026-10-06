@@ -102,7 +102,7 @@ impl PropertyChecker {
             // track the heap buffer rather than the container struct's stack
             // allocation.
             let alloc_id = vm_state.alloc(alloc_id).slice_data.unwrap_or(alloc_id);
-            if vm_state.alloc(alloc_id).dead {
+            if vm_state.alloc(alloc_id).facts.dead {
                 return CheckResult::Failed;
             }
 

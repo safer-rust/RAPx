@@ -125,7 +125,7 @@ impl PropertyChecker {
         // aligned to `align_of(T)`, so a pointer loaded from the container
         // (whose provenance names the container allocation) is T-aligned.
         if let Some(prov) = &value.provenance {
-            if let Some(aligned_ty) = vm_state.alloc(prov.alloc_id).for_each.aligned_ty {
+            if let Some(aligned_ty) = vm_state.alloc(prov.alloc_id).facts.for_each.aligned_ty {
                 let fa = vm_state.align_sym_read(aligned_ty);
                 if let (Some(fa_u64), Some(align_u64)) =
                     (fa.simplify().as_u64(), align.simplify().as_u64())
@@ -416,7 +416,7 @@ impl PropertyChecker {
             return CheckResult::Unknown;
         };
 
-        if vm_state.alloc(alloc_id).dead {
+        if vm_state.alloc(alloc_id).facts.dead {
             let reenter = vm_state.path_facts.reenter;
             // A `ManuallyDrop::drop` frees the slot's allocation at *this*
             // checkpoint, so its `ValidPtr`/`Allocated` precondition concerns
@@ -453,7 +453,7 @@ impl PropertyChecker {
         // backs `>= n` `T` elements, so a pointer loaded from the container
         // (whose provenance names the container allocation) satisfies
         // `Allocated(cur, T, n)`.
-        if let Some((t, n)) = &vm_state.alloc(alloc_id).for_each.allocated {
+        if let Some((t, n)) = &vm_state.alloc(alloc_id).facts.for_each.allocated {
             let resolved_t = self.instantiate_callsite_ty(vm_state, checkpoint, *t);
             if Some(resolved_t) == required_ty {
                 let req_count = property
@@ -719,10 +719,10 @@ impl PropertyChecker {
             rap_debug!(
                 "check_init: alloc={} init_set={} access={:?}",
                 id.0,
-                vm_state.alloc(id).initialized,
+                vm_state.alloc(id).facts.initialized,
                 access.as_ref().and_then(|a| a.as_u64())
             );
-            if vm_state.alloc(id).dead {
+            if vm_state.alloc(id).facts.dead {
                 // `assume_init_drop` (and other MaybeUninit drop/read ops)
                 // legitimately consume an initialized element from storage that
                 // may be going out of scope; the `Init` requirement concerns
@@ -745,7 +745,7 @@ impl PropertyChecker {
                     }
                 }
             }
-            if vm_state.alloc(id).initialized {
+            if vm_state.alloc(id).facts.initialized {
                 if let Some(ref access_term) = access {
                     let size = vm_state.allocation_size(id);
                     if let (Some(access_val), Some(size_val)) =
@@ -769,7 +769,7 @@ impl PropertyChecker {
                 && value.invariants.non_null
                 && Self::is_value_aligned(vm_state, &value)
                 && matches!(value.ty.kind(), TyKind::RawPtr(..))
-                && !vm_state.alloc(id).dead
+                && !vm_state.alloc(id).facts.dead
             {
                 if crate::verify::api_classify::is_mem_copy_or_write(checkpoint.callee) {
                     return CheckResult::ProvedByRule;
@@ -794,7 +794,7 @@ impl PropertyChecker {
         if let Some(origin_op) = checkpoint.args.first() {
             let origin_val = vm_state.value_of_operand(origin_op);
             if let Some(prov) = &origin_val.provenance {
-                if vm_state.alloc(prov.alloc_id).initialized {
+                if vm_state.alloc(prov.alloc_id).facts.initialized {
                     if let Some(ref access_term) = access {
                         let size = vm_state.allocation_size(prov.alloc_id);
                         if let (Some(access_val), Some(size_val)) =
@@ -813,7 +813,7 @@ impl PropertyChecker {
             }
             if let Operand::Copy(place) | Operand::Move(place) = origin_op {
                 for alloc_id in self.trace_alloc_ids(vm_state, place.local) {
-                    if vm_state.alloc(alloc_id).initialized {
+                    if vm_state.alloc(alloc_id).facts.initialized {
                         if let Some(ref access_term) = access {
                             let size = vm_state.allocation_size(alloc_id);
                             if let (Some(access_val), Some(size_val)) =
@@ -835,7 +835,7 @@ impl PropertyChecker {
             // proof.
             if let Operand::Copy(place) | Operand::Move(place) = origin_op {
                 let allocs = self.trace_alloc_ids(vm_state, place.local);
-                if !allocs.is_empty() && allocs.iter().all(|id| !vm_state.alloc(*id).initialized) {
+                if !allocs.is_empty() && allocs.iter().all(|id| !vm_state.alloc(*id).facts.initialized) {
                     return CheckResult::Failed;
                 }
             }
@@ -934,7 +934,7 @@ impl PropertyChecker {
             };
         };
 
-        if vm_state.alloc(id).dead {
+        if vm_state.alloc(id).facts.dead {
             if let Some(origin) = vm_state.resolve_origin(&value) {
                 let is_param = origin.local.as_usize() <= vm_state.body().arg_count
                     && origin.local != Local::from_usize(0);
@@ -964,15 +964,15 @@ impl PropertyChecker {
             // A non-external allocation (stack local, owned heap, or const
             // materialization) is a real allocation whose liveness is tracked by
             // `dead`, so "not dead" means alive.
-            if !vm_state.alloc(root_id).is_external() && !vm_state.alloc(root_id).dead {
+            if !vm_state.alloc(root_id).is_external() && !vm_state.alloc(root_id).facts.dead {
                 return CheckResult::ProvedByRule;
             }
             // An external allocation is a placeholder for arbitrary external
             // memory (raw-pointer params/fields) and carries no liveness
             // guarantee; it is alive only if explicitly assumed (`Alive`
             // precondition / struct invariant), or grounded in a live reference.
-            if !vm_state.alloc(root_id).dead {
-                match &vm_state.alloc(root_id).liveness {
+            if !vm_state.alloc(root_id).facts.dead {
+                match &vm_state.alloc(root_id).facts.liveness {
                     Some(src_region) => {
                         // The `Alive(p, 'r)` check demands the memory alive for
                         // `'r`, while the assumption only guarantees `'a`; the

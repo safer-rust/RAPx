@@ -223,6 +223,45 @@ pub(crate) struct ForEachFacts<'z3, 'tcx> {
     pub owning: bool,
 }
 
+/// Per-allocation facts (the allocation-level slice of the Facts layer).
+///
+/// These are the allocation's *cross-cutting* facts, kept apart from its shape
+/// metadata (`base`/`size`/`align`/`element_ty`/`kind`) and its relationships
+/// (`parent`/`slice_data`) so the byte-level Alloc layer and the Facts layer are
+/// separated at the type level, not just by comment.  They live on
+/// [`Allocation::facts`] so a fact stays anchored to the allocation it is about.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct AllocFacts<'z3, 'tcx> {
+    /// Whether the allocation has been freed (StorageDead / Drop).
+    pub dead: bool,
+
+    /// Whether the allocation's contents hold an initialized (readable) value:
+    /// a heap constructor (`Box::new`, `Vec`), a reference parameter's referent,
+    /// a callee return, a `write`, `ValidCStr`, or const/static byte data.
+    /// Stays `false` for uninitialized memory (`Box::new_uninit`,
+    /// `MaybeUninit::uninit`).
+    pub initialized: bool,
+
+    /// The region this external allocation is assumed alive for, via an
+    /// `Alive(p, 'a)` contract/invariant (or `'static` for `ValidCStr`/`Allocated`
+    /// params/`'static` data).  Only consulted for *external* allocations, whose
+    /// memory is owned by the caller (so `dead` carries no liveness guarantee):
+    /// the checker rejects a use that demands a longer region than this.  `None`
+    /// means no assumption — an external allocation then fails `Alive` unless
+    /// grounded in a live reference; a VM-owned allocation is alive while
+    /// `!dead` and never sets this.
+    pub liveness: Option<Region<'tcx>>,
+
+    /// Uniform facts about this allocation's pointer elements, established by
+    /// `x.iter()` for_each invariants (`Typed`/`Align`/`Allocated`).
+    pub for_each: ForEachFacts<'z3, 'tcx>,
+
+    /// Whether this allocation was asserted valid C string via a `ValidCStr`
+    /// contract fact / struct invariant (the "no interior NUL + terminal NUL"
+    /// trust marker).
+    pub cstr_trusted: bool,
+}
+
 /// A memory allocation: a stack local, a heap object (`Box`/`Vec`), or an
 /// external raw-pointer placeholder.
 ///
@@ -247,36 +286,10 @@ pub(crate) struct Allocation<'z3, 'tcx> {
     /// The allocation shape (object vs slice vs external).
     pub kind: AllocKind<'z3>,
 
-    // ── Lifecycle ──
-    /// Whether the allocation has been freed (StorageDead / Drop).
-    pub dead: bool,
-
-    /// Whether the allocation's contents hold an initialized (readable) value:
-    /// a heap constructor (`Box::new`, `Vec`), a reference parameter's referent,
-    /// a callee return, a `write`, `ValidCStr`, or const/static byte data.
-    /// Stays `false` for uninitialized memory (`Box::new_uninit`,
-    /// `MaybeUninit::uninit`).
-    pub initialized: bool,
-
-    /// The region this external allocation is assumed alive for, via an
-    /// `Alive(p, 'a)` contract/invariant (or `'static` for `ValidCStr`/`Allocated`
-    /// params/`'static` data).  Only consulted for *external* allocations, whose
-    /// memory is owned by the caller (so `dead` carries no liveness guarantee):
-    /// the checker rejects a use that demands a longer region than this.  `None`
-    /// means no assumption — an external allocation then fails `Alive` unless
-    /// grounded in a live reference; a VM-owned allocation is alive while
-    /// `!dead` and never sets this.
-    pub liveness: Option<Region<'tcx>>,
-
-    // ── Content semantics ──
-    /// Uniform facts about this allocation's pointer elements, established by
-    /// `x.iter()` for_each invariants (`Typed`/`Align`/`Allocated`).
-    pub for_each: ForEachFacts<'z3, 'tcx>,
-
-    /// Whether this allocation was asserted valid C string via a `ValidCStr`
-    /// contract fact / struct invariant (the "no interior NUL + terminal NUL"
-    /// trust marker).
-    pub cstr_trusted: bool,
+    // ── Facts (the allocation-level slice of the Facts layer) ──
+    /// Cross-cutting per-allocation facts (`dead`/`initialized`/`liveness`/
+    /// `for_each`/`cstr_trusted`), kept apart from the shape metadata above.
+    pub facts: AllocFacts<'z3, 'tcx>,
 
     // ── Relationships (Option) ──
     /// The allocation a sub-view was derived from: a slice view created by
@@ -313,11 +326,7 @@ impl<'z3, 'tcx> Allocation<'z3, 'tcx> {
             align,
             element_ty: element_ty.into(),
             kind,
-            dead: false,
-            initialized: false,
-            liveness: None,
-            for_each: ForEachFacts::default(),
-            cstr_trusted: false,
+            facts: AllocFacts::default(),
             parent: None,
             slice_data: None,
         }
@@ -804,7 +813,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// Whether `id` was asserted a valid C string via a `ValidCStr` contract
     /// fact / struct invariant.
     pub(crate) fn is_cstr_trusted(&self, id: AllocId) -> bool {
-        self.alloc(id).cstr_trusted
+        self.alloc(id).facts.cstr_trusted
     }
 
     /// The ultimate root allocation, following `parent` chains (sub-allocations
