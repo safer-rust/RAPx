@@ -145,9 +145,9 @@ impl<'z3, 'tcx> VmValue<'z3, 'tcx> {
     }
 }
 
-/// The shape of an allocation. Replaces the implicit `slice_len` / `is_external`
-/// combination that previously encoded the kind. `element_ty` (typed vs untyped)
-/// and `parent`/`slice_data` (sub-view / slice-ref edges) stay separate fields.
+/// The shape of an allocation: a single object, a slice/array buffer, or an
+/// external raw-pointer parameter.  `element_ty` (typed vs untyped) and
+/// `parent`/`slice_data` (sub-view / slice-ref edges) stay separate fields.
 #[derive(Clone, Debug)]
 pub(crate) enum AllocKind<'z3> {
     /// A single object: a `Box<T>` heap object, a struct, a scalar, or an
@@ -163,12 +163,11 @@ pub(crate) enum AllocKind<'z3> {
 
 /// The type of an allocation's contents.
 ///
-/// This replaces the previous `Option<Ty>` (whose `None` conflated two distinct
-/// cases): `Typed` carries a concrete `Ty` — the element type of a slice, the
-/// object type of a `Box<T>`/struct, or `u8` for a raw byte buffer — while
-/// `Generic` marks a symbolic element type whose concrete `Ty` cannot be
-/// determined (e.g. `from_raw_parts::<T>`; its `size` uses the shared symbolic
-/// `sizeof_T` and its length must be materialized via `set_slice_len`).
+/// `Typed` carries a concrete `Ty` — the element type of a slice, the object
+/// type of a `Box<T>`/struct, or `u8` for a raw byte buffer — while `Generic`
+/// marks a symbolic element type whose concrete `Ty` cannot be determined
+/// (e.g. `from_raw_parts::<T>`; its `size` uses the shared symbolic `sizeof_T`
+/// and its length must be materialized via `set_slice_len`).
 #[derive(Clone, Debug)]
 pub(crate) enum ContentTy<'tcx> {
     Typed(Ty<'tcx>),
@@ -491,13 +490,12 @@ impl<'z3> ValueSource<'z3> {
 }
 
 /// The object space: every allocation plus the per-allocation contents that are
-/// keyed purely by `AllocId` (fields and byte state).
+/// keyed purely by `AllocId` (typed values and byte state).
 ///
 /// This is the *address/place* layer — the memory that values live in — kept
 /// separate from [`FrameState`], which binds MIR locals (names) to stack
-/// allocations. An
-/// `AllocId` doubles as the index into `allocations` (a fresh id is
-/// `allocations.len()`), so the `AllocId`-keyed field/byte tables stay
+/// allocations. An `AllocId` doubles as the index into `allocations` (a fresh
+/// id is `allocations.len()`), so the `AllocId`-keyed value/byte tables stay
 /// consistent with the allocation vector.
 #[derive(Default)]
 pub(crate) struct Memory<'z3, 'tcx> {
@@ -515,15 +513,16 @@ pub(crate) struct Memory<'z3, 'tcx> {
     /// from unwritten offsets within that range.
     pub(crate) byte_max: FxHashMap<AllocId, usize>,
 
-    /// The typed-value (Value) layer: (alloc_id, viewed_type, field_indices) →
-    /// value, i.e. the value of a field *within an allocation* viewed as
-    /// `viewed_type`.  The `viewed_type` distinguishes reinterprets of the same
-    /// allocation under different ADTs (e.g. `LeafNode` vs `InternalNode` cast
-    /// views), so field index `1` resolves to `parent_idx` under `LeafNode` and
-    /// `edges` under `InternalNode` without colliding.  This is the alloc-keyed
-    /// counterpart to the byte-level [`Self::byte_arrays`]; the Local-keyed
-    /// `field_value`/`set_field_value` resolve a local's backing allocation and
-    /// then read/write this layer.
+    /// The typed-value (Value) layer: (alloc_id, viewed_type, path) → value.
+    /// `path == []` is the allocation's *whole* value (the rvalue bound to a
+    /// local) and `path == [i, ..]` is field `i`, both viewed as `viewed_type`.
+    /// The `viewed_type` distinguishes reinterprets of the same allocation under
+    /// different ADTs (e.g. `LeafNode` vs `InternalNode` cast views), so field
+    /// index `1` resolves to `parent_idx` under `LeafNode` and `edges` under
+    /// `InternalNode` without colliding.  This is the alloc-keyed counterpart to
+    /// the byte-level [`Self::byte_arrays`]; the Local-keyed
+    /// `local_value`/`set_local`/`field_value`/`set_field_value` resolve a
+    /// local's backing allocation and then read/write this layer.
     pub(crate) values: FxHashMap<(AllocId, Ty<'tcx>, Vec<usize>), VmValue<'z3, 'tcx>>,
 }
 
@@ -594,8 +593,8 @@ pub(crate) struct TermCaches<'z3, 'tcx> {
     pub(crate) uninit_byte: Option<Int<'z3>>,
 }
 
-/// The frame-scoped subset of [`VmState`]: everything keyed by MIR `Local` /
-/// `PlaceKey`, which the callee reuses, so it must be swapped out for the
+/// The frame-scoped subset of [`VmState`]: the name → allocation binding keyed
+/// by MIR `Local`, which the callee reuses, so it must be swapped out for the
 /// duration of an inlined callee and swapped back afterwards.
 pub(crate) struct FrameState {
     /// The function whose body we execute (the MIR is derived via
@@ -612,9 +611,9 @@ pub(crate) struct FrameState {
 
 /// The full symbolic execution state at a program point.
 ///
-/// Accumulates locals, allocations, and solver constraints as the VM steps
-/// through retained MIR items. The Z3 context is borrowed so a single context
-/// can be reused across property checks.
+/// Accumulates the name → allocation bindings, allocations, and solver
+/// constraints as the VM steps through retained MIR items. The Z3 context is
+/// borrowed so a single context can be reused across property checks.
 pub(crate) struct VmState<'z3, 'tcx> {
     // ── Shared handles (passed in at run start; not execution state, but
     //    needed to create terms and query types during checking)
@@ -636,7 +635,8 @@ pub(crate) struct VmState<'z3, 'tcx> {
     /// moves the current frame here, exiting restores it.
     pub(crate) caller_frames: Vec<FrameState>,
 
-    /// The object space: allocations, per-byte state, and per-allocation fields.
+    /// The object space: allocations, per-byte state, and per-allocation typed
+    /// values (whole values and fields).
     pub(crate) memory: Memory<'z3, 'tcx>,
 
     /// Solver constraints and term caches accumulated along the current path.
