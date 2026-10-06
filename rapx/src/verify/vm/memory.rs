@@ -490,9 +490,14 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     }
 
     /// Read `byte[i]` at a (possibly symbolic) offset; unwritten offsets read `UNINIT`.
+    ///
+    /// The result is simplified so a `select(store(…), i)` chain (built up by
+    /// repeated `byte_write` / `copy_byte_tracking`) collapses to its constant
+    /// byte value when `i` is concrete, rather than leaking the nested
+    /// `select`/`store` expression into downstream SMT obligations.
     pub(crate) fn byte_read(&self, alloc_id: AllocId, i: &Int<'z3>) -> Int<'z3> {
         match self.memory.byte_arrays.get(&alloc_id) {
-            Some(arr) => arr.select(i).as_int().expect("byte array range is Int"),
+            Some(arr) => arr.select(i).as_int().expect("byte array range is Int").simplify(),
             None => self.uninit_byte(),
         }
     }
