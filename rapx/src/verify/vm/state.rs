@@ -1165,6 +1165,30 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
     }
 
+    /// Read the byte at `offset` within a `repr(C)`-style ADT from its
+    /// materialized scalar field values — the field→byte direction of the cast
+    /// cross-view materialization.  Returns `None` when `offset` does not land
+    /// inside a concrete scalar field (so the caller falls back to the base).
+    fn byte_from_field(&self, alloc_id: AllocId, ty: Ty<'tcx>, offset: usize) -> Option<Int<'z3>> {
+        let rustc_middle::ty::TyKind::Adt(adt_def, substs) = ty.kind() else {
+            return None;
+        };
+        let variant = adt_def.non_enum_variant();
+        for (idx, field_def) in variant.fields.iter().enumerate() {
+            let field_ty = crate::helpers::mir_utils::field_ty(self.tcx, field_def, substs);
+            let field_off = self.field_offset_in_bytes(ty, idx) as usize;
+            let field_size = self.size_of_ty(field_ty) as usize;
+            if offset >= field_off && offset < field_off + field_size {
+                let fv = self.load_value(alloc_id, ty, &[idx])?;
+                let byte_idx = offset - field_off;
+                let divisor = Int::from_u64(self.z3_ctx, 1u64 << (byte_idx * 8));
+                let modulus = Int::from_u64(self.z3_ctx, 256);
+                return Some(fv.z3_term.div(&divisor).rem(&modulus));
+            }
+        }
+        None
+    }
+
     /// Look up the value stored at a MIR place.
     pub(crate) fn value_of_place(&self, place: &Place<'tcx>) -> Option<VmValue<'z3, 'tcx>> {
         if place.projection.is_empty() {
@@ -1301,36 +1325,35 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 if prefix_is_deref {
                     if let Some(ref prov) = base.provenance {
                         let alloc_id = prov.alloc_id;
-                        // Byte-level tracking only exists once some byte of the
-                        // allocation has been written; otherwise fall back to the base.
-                        if self.memory.byte_arrays.contains_key(&alloc_id) {
-                            let inner_ty = {
-                                // The base's type may have been overwritten to the
-                                // element type by the Deref strip above; recover the
-                                // pointee element type from the base local's declared
-                                // type (`&[u8]` → `u8`, `&[T; N]` → `T`).
-                                let decl_ty = self.body().local_decls[place.local].ty;
-                                match decl_ty.kind() {
-                                    rustc_middle::ty::TyKind::Array(inner, _) => *inner,
-                                    rustc_middle::ty::TyKind::Ref(_, inner, _) => {
-                                        match inner.kind() {
-                                            rustc_middle::ty::TyKind::Slice(e) => *e,
-                                            _ => return Some(base.clone()),
-                                        }
-                                    }
+                        // The base's type may have been overwritten to the
+                        // element type by the Deref strip above; recover the
+                        // pointee element type from the base local's declared
+                        // type (`&[u8]` → `u8`, `&[T; N]` → `T`).
+                        let decl_ty = self.body().local_decls[place.local].ty;
+                        let inner_ty = match decl_ty.kind() {
+                            rustc_middle::ty::TyKind::Array(inner, _) => *inner,
+                            rustc_middle::ty::TyKind::Ref(_, inner, _) => {
+                                match inner.kind() {
                                     rustc_middle::ty::TyKind::Slice(e) => *e,
                                     _ => return Some(base.clone()),
                                 }
-                            };
-                            let elem_sz = self.size_of_ty(inner_ty) as usize;
-                            let step = elem_sz.max(1);
-                            if let Some(index_val) = self.local_value(*local) {
-                                // `arr[i]` = the byte at `i * size_of(elem)`; the array
-                                // model resolves symbolic indices via `select` directly.
-                                let offset = Int::mul(
-                                    self.z3_ctx,
-                                    &[&index_val.z3_term, &Int::from_u64(self.z3_ctx, step as u64)],
-                                );
+                            }
+                            rustc_middle::ty::TyKind::Slice(e) => *e,
+                            _ => return Some(base.clone()),
+                        };
+                        let elem_sz = self.size_of_ty(inner_ty) as usize;
+                        let step = elem_sz.max(1);
+                        if let Some(index_val) = self.local_value(*local) {
+                            // `arr[i]` = the byte at `i * size_of(elem)`; the array
+                            // model resolves symbolic indices via `select` directly.
+                            let offset = Int::mul(
+                                self.z3_ctx,
+                                &[&index_val.z3_term, &Int::from_u64(self.z3_ctx, step as u64)],
+                            );
+                            // Byte-level tracking only exists once some byte of the
+                            // allocation has been written; otherwise fall through to
+                            // the field→byte materialization below.
+                            if self.memory.byte_arrays.contains_key(&alloc_id) {
                                 let term = self.byte_read(alloc_id, &offset);
                                 return Some(VmValue {
                                     z3_term: term,
@@ -1339,6 +1362,23 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                     invariants: ValueInvariants::default(),
                                     source: ValueSource::None,
                                 });
+                            }
+                            // Field→byte direction of the cast cross-view
+                            // materialization: the buffer was reinterpreted from a
+                            // struct whose scalar fields were written in the value
+                            // layer, so read the byte back out of the field value.
+                            if let Some(off) = offset.simplify().as_u64() {
+                                if let Some(ty) = self.alloc(alloc_id).element_ty.as_ty() {
+                                    if let Some(b) = self.byte_from_field(alloc_id, ty, off as usize) {
+                                        return Some(VmValue {
+                                            z3_term: b,
+                                            ty: place_ty,
+                                            provenance: None,
+                                            invariants: ValueInvariants::default(),
+                                            source: ValueSource::None,
+                                        });
+                                    }
+                                }
                             }
                         }
                     }

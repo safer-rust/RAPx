@@ -850,3 +850,9 @@ fn thread_safe_generic_unsound_cases() {
     assert_contain(&output, "unsafe impl Sync for MyRcGeneric");
     assert_contain(&output, "RefSend(MyRcGeneric<T>) => FAILED");
 }
+
+#[test]
+fn cast_reinterpret_sound() {
+    let output = run_with_args("verify_units/cast_reinterpret_sound_1", CMD_VERIFY_TARGETED);
+    assert_function_result(&output, "roundtrip", "SOUND");
+}

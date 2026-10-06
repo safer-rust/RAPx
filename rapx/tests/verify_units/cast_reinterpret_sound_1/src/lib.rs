@@ -2,11 +2,13 @@
 #![register_tool(rapx)]
 #![allow(unused)]
 
-// Regression: writing a byte through a `u8` pointer and then reinterpreting the
-// buffer as a `repr(C)` struct must round-trip the byte into the struct field.
-// Before the cast cross-view materialization, `decompose_pointee_fields` minted
-// a *fresh* symbolic value for `len`, so `buf.add(len)`'s InBound obligation
-// (`len < 16`) could not be discharged and the function reported UNSOUND.
+// Cast cross-view materialization (byte → field).
+//
+// Writing a byte through a `u8` pointer and then reinterpreting the buffer as a
+// `repr(C)` struct must round-trip the byte into the struct field.  Before the
+// materialization, `decompose_pointee_fields` minted a *fresh* symbolic value
+// for `len`, so `buf.add(len)`'s InBound obligation (`len < 16`) could not be
+// discharged and the function reported UNSOUND.
 #[repr(C)]
 struct Header {
     len: u8,
