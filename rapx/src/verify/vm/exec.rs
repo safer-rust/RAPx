@@ -1067,6 +1067,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 pointee,
                 local_idx,
                 0,
+                0,
             );
             // A `NonNull`/`Box` pointee is a valid value of `pointee`, so its
             // struct invariants (`ValidNum(len <= CAPACITY)` on `LeafNode`)
@@ -1158,11 +1159,50 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
     }
 
+    /// Read a scalar field's value back out of the byte layer over
+    /// `[offset, offset + size)` (little-endian).  Returns `None` when the byte
+    /// layer does not cover the whole field (a hole, or no byte written), so
+    /// the caller falls back to a fresh symbol.
+    ///
+    /// This is the byte→field direction of the cast cross-view materialization:
+    /// when bytes are written first (`*buf = 3`) and the buffer is then
+    /// reinterpreted as a `repr(C)` struct, the field value is those bytes, not
+    /// an unrelated fresh symbol.
+    fn field_term_from_bytes(
+        &self,
+        alloc_id: AllocId,
+        offset: usize,
+        size: usize,
+    ) -> Option<Int<'z3>> {
+        if size == 0 {
+            return Some(Int::from_u64(self.z3_ctx, 0));
+        }
+        let max = *self.memory.byte_max.get(&alloc_id)?;
+        if max < offset + size - 1 {
+            return None;
+        }
+        let mut term = Int::from_u64(self.z3_ctx, 0);
+        for j in 0..size {
+            let off = offset + j;
+            if !self.is_byte_init(alloc_id, off) {
+                return None;
+            }
+            let b = self.byte_read(alloc_id, &Int::from_u64(self.z3_ctx, off as u64));
+            let weight = Int::from_u64(self.z3_ctx, 1u64 << (j * 8));
+            term = Int::add(self.z3_ctx, &[&term, &Int::mul(self.z3_ctx, &[&b, &weight])]);
+        }
+        Some(term)
+    }
+
     /// Recursively decompose a pointee ADT's fields into per-allocation field
     /// tracking, mirroring [`decompose_adt_fields`](Self::decompose_adt_fields)
     /// but keyed by allocation instead of local. This is what lets a
     /// `&*NonNull<LeafNode>` dereference resolve `(*leaf).len` to the actual
     /// `len` field value rather than the raw pointer term.
+    ///
+    /// `byte_offset` is the running byte offset of the field being decomposed,
+    /// used for the byte→field cross-view materialization (see
+    /// [`Self::field_term_from_bytes`]).
     fn decompose_pointee_fields(
         &mut self,
         alloc_id: AllocId,
@@ -1171,6 +1211,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         root_ty: Ty<'tcx>,
         local_idx: usize,
         depth: usize,
+        byte_offset: usize,
     ) {
         use rustc_middle::ty::TyKind;
         if depth > 4 {
@@ -1185,6 +1226,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let variant = adt_def.non_enum_variant();
         for (idx, field_def) in variant.fields.iter().enumerate() {
             let field_ty = crate::helpers::mir_utils::field_ty(self.tcx, field_def, substs);
+            let field_off = byte_offset + self.field_offset_in_bytes(ty, idx) as usize;
             let mut path = prefix.clone();
             path.push(idx);
             if let Some(pointee) = self.find_nn_pointee(field_ty) {
@@ -1217,6 +1259,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     pointee,
                     local_idx,
                     depth + 1,
+                    0,
                 );
             } else if let TyKind::Adt(_, _) = field_ty.kind() {
                 self.decompose_pointee_fields(
@@ -1226,12 +1269,20 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     root_ty,
                     local_idx,
                     depth + 1,
+                    field_off,
                 );
             } else if matches!(
                 field_ty.kind(),
                 TyKind::Uint(_) | TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Char
             ) {
-                let field_term = self.fresh_int(&format!("pointee_field_{}_{}", local_idx, idx));
+                // Cross-view materialization: if the backing bytes were already
+                // written (e.g. `*buf = 3` before `buf as *mut Header`), read
+                // the field's value back out of the byte layer instead of a
+                // fresh symbol, so a byte→struct reinterpret round-trips.
+                let field_size = self.size_of_ty(field_ty) as usize;
+                let field_term = self
+                    .field_term_from_bytes(alloc_id, field_off, field_size)
+                    .unwrap_or_else(|| self.fresh_int(&format!("pointee_field_{}_{}", local_idx, idx)));
                 self.memory.values.insert(
                     (alloc_id, root_ty, path.clone()),
                     VmValue {
@@ -1990,6 +2041,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                     Vec::new(),
                                     *target_ty,
                                     *target_ty,
+                                    0,
                                     0,
                                     0,
                                 );

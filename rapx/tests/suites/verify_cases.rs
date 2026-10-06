@@ -332,3 +332,10 @@ fn free_list_allocator() {
     let output = run_with_args("verify_cases/free_list_allocator", CMD_VERIFY_TARGETED);
     assert_not_contain(&output, "result: UNSOUND");
 }
+
+// ================ Byte-to-field cast round-trip ================
+#[test]
+fn byte_to_field() {
+    let output = run_with_args("verify_cases/byte_to_field", CMD_VERIFY_TARGETED);
+    assert_function_result(&output, "roundtrip", "SOUND");
+}
