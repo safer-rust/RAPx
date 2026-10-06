@@ -855,4 +855,5 @@ fn thread_safe_generic_unsound_cases() {
 fn cast_reinterpret_sound() {
     let output = run_with_args("verify_units/cast_reinterpret_sound_1", CMD_VERIFY_TARGETED);
     assert_function_result(&output, "roundtrip", "SOUND");
+    assert_function_result(&output, "field_to_byte", "SOUND");
 }
