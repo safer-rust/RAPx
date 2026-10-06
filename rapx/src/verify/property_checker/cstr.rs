@@ -98,10 +98,10 @@ impl PropertyChecker {
 
         // If we have provenace, check liveness and byte-level tracking
         if let Some(alloc_id) = value.provenance_alloc_id() {
-            // A `Vec`/boxed buffer exposes its byte data through `slice_data`;
-            // track the heap buffer rather than the container struct's stack
-            // allocation.
-            let alloc_id = vm_state.alloc(alloc_id).slice_data.unwrap_or(alloc_id);
+            // A `Vec`/boxed buffer exposes its byte data through the container's
+            // owning pointer field (or a slice view's parent chain); track the
+            // heap buffer rather than the container struct's stack allocation.
+            let alloc_id = vm_state.data_alloc_of(alloc_id, value.ty).unwrap_or(alloc_id);
             if vm_state.alloc(alloc_id).facts.dead {
                 return CheckResult::Failed;
             }

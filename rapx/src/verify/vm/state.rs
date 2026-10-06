@@ -146,8 +146,8 @@ impl<'z3, 'tcx> VmValue<'z3, 'tcx> {
 }
 
 /// The shape of an allocation: a single object, a slice/array buffer, or an
-/// external raw-pointer parameter.  `element_ty` (typed vs untyped) and
-/// `parent`/`slice_data` (sub-view / slice-ref edges) stay separate fields.
+/// external raw-pointer parameter.  `element_ty` (typed vs untyped) and the
+/// `parent` sub-view edge stay separate fields.
 #[derive(Clone, Debug)]
 pub(crate) enum AllocKind<'z3> {
     /// A single object: a `Box<T>` heap object, a struct, a scalar, or an
@@ -225,8 +225,8 @@ pub(crate) struct ForEachFacts<'z3, 'tcx> {
 /// Per-allocation facts (the allocation-level slice of the Facts layer).
 ///
 /// These are the allocation's *cross-cutting* facts, kept apart from its shape
-/// metadata (`base`/`size`/`align`/`element_ty`/`kind`) and its relationships
-/// (`parent`/`slice_data`) so the byte-level Alloc layer and the Facts layer are
+/// metadata (`base`/`size`/`align`/`element_ty`/`kind`) and its `parent`
+/// sub-view edge so the byte-level Alloc layer and the Facts layer are
 /// separated at the type level, not just by comment.  They live on
 /// [`Allocation::facts`] so a fact stays anchored to the allocation it is about.
 #[derive(Clone, Debug, Default)]
@@ -299,14 +299,6 @@ pub(crate) struct Allocation<'z3, 'tcx> {
     /// pointer term (`parent_term + offset`) and provenance `offset`, not in
     /// base arithmetic.
     pub parent: Option<AllocId>,
-
-    /// The *data* allocation of a two-part value, reached from the *header*
-    /// allocation whose provenance the value carries. A `Vec`/`String`/`CString`
-    /// value's provenance names its struct's stack slot, not the heap buffer it
-    /// owns, so `as_ptr()`/`into_boxed_slice`/`drop`/mutation follow this edge
-    /// to the buffer. A `&[T]` fat pointer's provenance already names the slice
-    /// data, so this is redundant there.
-    pub slice_data: Option<AllocId>,
 }
 
 impl<'z3, 'tcx> Allocation<'z3, 'tcx> {
@@ -327,7 +319,6 @@ impl<'z3, 'tcx> Allocation<'z3, 'tcx> {
             kind,
             facts: AllocFacts::default(),
             parent: None,
-            slice_data: None,
         }
     }
 

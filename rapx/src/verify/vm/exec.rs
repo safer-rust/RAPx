@@ -2890,12 +2890,16 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     pub(crate) fn exec_drop(&mut self, place: &Place<'tcx>) {
         if let Some(alloc_id) = self.current_frame.local_alloc.get(&place.local).copied() {
             self.alloc_mut(alloc_id).facts.dead = true;
-            // Cascade to heap data allocations (see exec_storage_dead).
-            let mut worklist: Vec<AllocId> = vec![alloc_id];
-            while let Some(id) = worklist.pop() {
-                if let Some(data_id) = self.alloc(id).slice_data {
+            // Cascade to the container's heap data allocation (the owning field's
+            // provenance), so dropping a locally-created Vec/String/CString kills
+            // its buffer. A *parameter*'s data buffer is owned by the caller (it
+            // is an external allocation), so dropping the parameter here does not
+            // free it.
+            let is_param = place.local.as_usize() <= self.body().arg_count;
+            if !is_param {
+                let ty = self.body().local_decls[place.local].ty;
+                if let Some(data_id) = self.container_data_alloc(alloc_id, ty) {
                     self.alloc_mut(data_id).facts.dead = true;
-                    worklist.push(data_id);
                 }
             }
         }
@@ -4315,6 +4319,293 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             },
             _ => None,
         }
+    }
+
+    pub(crate) fn container_ptr_field(&self, ty: Ty<'tcx>) -> Option<(Vec<usize>, Ty<'tcx>)> {
+        self.container_ptr_field_inner(ty, Vec::new(), 0)
+    }
+
+    fn container_ptr_field_inner(
+        &self,
+        ty: Ty<'tcx>,
+        prefix: Vec<usize>,
+        depth: usize,
+    ) -> Option<(Vec<usize>, Ty<'tcx>)> {
+        use rustc_middle::ty::TyKind;
+        if depth > 4 {
+            return None;
+        }
+        match ty.kind() {
+            TyKind::Adt(adt, substs) => {
+                if adt.is_enum() {
+                    return None;
+                }
+                for (idx, field_def) in adt.non_enum_variant().fields.iter().enumerate() {
+                    let field_ty =
+                        crate::helpers::mir_utils::field_ty(self.tcx, field_def, substs);
+                    let mut path = prefix.clone();
+                    path.push(idx);
+                    if let TyKind::RawPtr(inner, _) = field_ty.kind() {
+                        return Some((path, *inner));
+                    }
+                    if let Some(pointee) = self.find_nn_pointee(field_ty) {
+                        return Some((path, pointee));
+                    }
+                    if self.is_scalar_ptr_wrapper(field_ty) {
+                        if let Some(pointee) = self.ptr_wrapper_pointee(field_ty) {
+                            return Some((path, pointee));
+                        }
+                    }
+                    if let Some(found) =
+                        self.container_ptr_field_inner(field_ty, path, depth + 1)
+                    {
+                        return Some(found);
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    fn is_scalar_ptr_wrapper(&self, ty: Ty<'tcx>) -> bool {
+        let Some(layout) = crate::helpers::mir_utils::layout_of_ty(
+            self.tcx,
+            self.current_frame.current_def_id,
+            ty,
+        ) else {
+            return false;
+        };
+        matches!(
+            layout.backend_repr,
+            rustc_abi::BackendRepr::Scalar(s)
+                if matches!(s.primitive(), rustc_abi::Primitive::Pointer(_))
+        )
+    }
+
+    fn ptr_wrapper_pointee(&self, ty: Ty<'tcx>) -> Option<Ty<'tcx>> {
+        use rustc_middle::ty::TyKind;
+        match ty.kind() {
+            TyKind::RawPtr(inner, _) => Some(*inner),
+            TyKind::Adt(adt, substs) if !adt.is_enum() => {
+                if let Some(pointee) = self.find_nn_pointee(ty) {
+                    return Some(pointee);
+                }
+                for field_def in adt.non_enum_variant().fields.iter() {
+                    let field_ty =
+                        crate::helpers::mir_utils::field_ty(self.tcx, field_def, substs);
+                    if let Some(pointee) = self.ptr_wrapper_pointee(field_ty) {
+                        return Some(pointee);
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    /// Resolve a container's `(ptr, cap, len)` field paths generically from its
+    /// type (no hard-coded `Vec` layout):
+    ///   * `ptr` = the owning raw-pointer field ([`Self::container_ptr_field`]),
+    ///   * `len` = the outermost ADT's first `usize`-sized scalar field,
+    ///   * `cap` = the pointer's *parent* layer's first `usize` scalar (nested
+    ///     `{ buf, len }`), or the outer layer's second one (flat `{ptr,len,cap}`).
+    pub(crate) fn container_field_paths(
+        &self,
+        ty: Ty<'tcx>,
+    ) -> Option<(Vec<usize>, Vec<usize>, Vec<usize>)> {
+        let (ptr_path, _) = self.container_ptr_field(ty)?;
+        let len_path = self.usize_field_path(ty, &[])?;
+        let cap_path = if ptr_path.len() > 1 {
+            // Nested (`{ buf: RawVec { .. ptr, cap }, len }`): cap sits next to
+            // the pointer inside its parent layer.
+            let parent_path = &ptr_path[..ptr_path.len() - 1];
+            let parent_ty = self.path_ty(ty, parent_path)?;
+            self.usize_field_path(parent_ty, parent_path)?
+        } else {
+            // Flat (`{ ptr, len, cap }`): cap is the second usize scalar, after
+            // len.
+            self.usize_field_path_after(ty, &[], &len_path)?
+        };
+        Some((ptr_path, cap_path, len_path))
+    }
+
+    /// The first `usize`-sized scalar field of `ty`, as a path under `prefix`.
+    fn usize_field_path(&self, ty: Ty<'tcx>, prefix: &[usize]) -> Option<Vec<usize>> {
+        let rustc_middle::ty::TyKind::Adt(adt, substs) = ty.kind() else {
+            return None;
+        };
+        if adt.is_enum() {
+            return None;
+        }
+        for (idx, field_def) in adt.non_enum_variant().fields.iter().enumerate() {
+            let field_ty = crate::helpers::mir_utils::field_ty(self.tcx, field_def, substs);
+            if self.is_usize_scalar(field_ty) {
+                let mut path = prefix.to_vec();
+                path.push(idx);
+                return Some(path);
+            }
+        }
+        None
+    }
+
+    /// Like [`Self::usize_field_path`], but skips the field named by `skip` (a
+    /// path of length `prefix.len() + 1`) so the *second* `usize` scalar is
+    /// found (flat `{ ptr, len, cap }`).
+    fn usize_field_path_after(
+        &self,
+        ty: Ty<'tcx>,
+        prefix: &[usize],
+        skip: &[usize],
+    ) -> Option<Vec<usize>> {
+        let rustc_middle::ty::TyKind::Adt(adt, substs) = ty.kind() else {
+            return None;
+        };
+        if adt.is_enum() {
+            return None;
+        }
+        let skip_idx = skip.last().copied()?;
+        for (idx, field_def) in adt.non_enum_variant().fields.iter().enumerate() {
+            if idx <= skip_idx {
+                continue;
+            }
+            let field_ty = crate::helpers::mir_utils::field_ty(self.tcx, field_def, substs);
+            if self.is_usize_scalar(field_ty) {
+                let mut path = prefix.to_vec();
+                path.push(idx);
+                return Some(path);
+            }
+        }
+        None
+    }
+
+    /// The type of the field addressed by `path` under `ty`.
+    fn path_ty(&self, ty: Ty<'tcx>, path: &[usize]) -> Option<Ty<'tcx>> {
+        let mut cur = ty;
+        for &idx in path {
+            let rustc_middle::ty::TyKind::Adt(adt, substs) = cur.kind() else {
+                return None;
+            };
+            let field_def = adt.non_enum_variant().fields.iter().nth(idx)?;
+            cur = crate::helpers::mir_utils::field_ty(self.tcx, field_def, substs);
+        }
+        Some(cur)
+    }
+
+    /// Whether `ty` is a `usize`-sized integer scalar (a `len`/`cap`-like field).
+    fn is_usize_scalar(&self, ty: Ty<'tcx>) -> bool {
+        let Some(layout) = crate::helpers::mir_utils::layout_of_ty(
+            self.tcx,
+            self.current_frame.current_def_id,
+            ty,
+        ) else {
+            return false;
+        };
+        matches!(
+            layout.backend_repr,
+            rustc_abi::BackendRepr::Scalar(s)
+                if matches!(s.primitive(), rustc_abi::Primitive::Int(_, _))
+        )
+    }
+
+    pub(crate) fn container_data_alloc(
+        &self,
+        header: AllocId,
+        ty: Ty<'tcx>,
+    ) -> Option<AllocId> {
+        use rustc_middle::ty::TyKind;
+        let view_ty = match ty.kind() {
+            TyKind::Ref(_, inner, _) | TyKind::RawPtr(inner, _) => *inner,
+            _ => ty,
+        };
+        if !matches!(view_ty.kind(), TyKind::Adt(..)) {
+            return None;
+        }
+        let (path, _) = self.container_ptr_field(view_ty)?;
+        self.load_value(header, view_ty, &path)?.provenance_alloc_id()
+    }
+
+    /// The data allocation behind a container header or a slice view's header.
+    /// Tries the type-driven owning field first, then falls back to scanning the
+    /// header's materialized fields for the first owning pointer (covers slice
+    /// views whose header `AllocId` no longer carries a type key).
+    pub(crate) fn data_alloc_of(&self, header: AllocId, ty: Ty<'tcx>) -> Option<AllocId> {
+        self.container_data_alloc(header, ty).or_else(|| {
+            // The header → data fallback is only for local (non-external) slice
+            // views. An external parameter's header carries an `i64::MAX`
+            // "unbounded" size that already discharges `Allocated`, so do not
+            // redirect it to the (symbolic-sized) pointee.
+            if self.alloc(header).is_external() {
+                None
+            } else {
+                self.header_data_alloc(header)
+            }
+        })
+    }
+
+    /// Scan a header allocation's materialized fields for the owning pointer
+    /// (its provenance names the data allocation). This is the header → data
+    /// fallback for slice views (whose provenance names the container header,
+    /// not the data), replacing the old `slice_data` edge.
+    ///
+    /// Returns the provenance only when the header has *exactly one* owning
+    /// pointer field. A multi-owning-pointer header (e.g. a linked list's
+    /// `head`/`tail`) is ambiguous, so fall back to `None` rather than guess.
+    fn header_data_alloc(&self, header: AllocId) -> Option<AllocId> {
+        let mut result = None;
+        for ((a, _, p), v) in self.memory.values.iter() {
+            if *a != header || p.is_empty() {
+                continue;
+            }
+            let Some(prov) = v.provenance_alloc_id() else {
+                continue;
+            };
+            if result.is_some() {
+                return None;
+            }
+            result = Some(prov);
+        }
+        result
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn set_container_data_field(
+        &mut self,
+        header: AllocId,
+        ty: Ty<'tcx>,
+        data_alloc: AllocId,
+        base: Int<'z3>,
+        elem_ty: Ty<'tcx>,
+    ) -> bool {
+        use rustc_middle::ty::TyKind;
+        let view_ty = match ty.kind() {
+            TyKind::Ref(_, inner, _) | TyKind::RawPtr(inner, _) => *inner,
+            _ => ty,
+        };
+        if !matches!(view_ty.kind(), TyKind::Adt(..)) {
+            return false;
+        }
+        let Some((path, _)) = self.container_ptr_field(view_ty) else {
+            return false;
+        };
+        let ptr_field = VmValue {
+            z3_term: base,
+            ty: elem_ty,
+            provenance: Some(Provenance {
+                alloc_id: data_alloc,
+                offset: Int::from_u64(self.z3_ctx, 0),
+                offset_kind: None,
+            }),
+            invariants: ValueInvariants {
+                non_null: true,
+                init: true,
+                in_bounds: true,
+                ..ValueInvariants::default()
+            },
+            source: ValueSource::None,
+        };
+        self.store_value(header, view_ty, path, ptr_field);
+        true
     }
 
     /// If `operand` is a constant reference to a byte array (e.g. `b"hello\0"`),

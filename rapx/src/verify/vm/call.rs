@@ -1350,9 +1350,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         if let Some(ref source_prov) = self_val.provenance {
                             self.alloc_mut(alloc_id).parent = Some(source_prov.alloc_id);
                         }
-                        if let Some(ref_dest_alloc_id) = self.current_frame.local_alloc.get(&dest).copied() {
-                            self.alloc_mut(ref_dest_alloc_id).slice_data = Some(alloc_id);
-                        }
 
                         let field_offset = Int::from_u64(self.z3_ctx, 0);
 
@@ -1552,9 +1549,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     );
                     self.alloc_mut(alloc_id).facts.initialized = true;
                     self.alloc_mut(alloc_id).parent = Some(src_prov.alloc_id);
-                    if let Some(ref_dest_alloc_id) = self.current_frame.local_alloc.get(&dest).copied() {
-                        self.alloc_mut(ref_dest_alloc_id).slice_data = Some(alloc_id);
-                    }
                     let field_val = VmValue {
                         z3_term: f_ptr,
                         ty: f_ty,
@@ -1604,12 +1598,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     if matches!(dest_ty.kind(), rustc_middle::ty::TyKind::RawPtr(..)) {
                         val.invariants.init = true;
                     }
-                    // For heap-backed containers (Vec/CString/String): redirect
-                    // as_ptr() from the struct allocation to the heap data
-                    // allocation. `slice_data` is the type-driven signal — only
-                    // such containers set it, so no name matching is needed.
+                    // For heap-backed containers (Vec/CString/String) and slice
+                    // views: redirect as_ptr() from the struct/slice allocation
+                    // to the heap data allocation.
                     if let Some(ref prov) = val.provenance {
-                        if let Some(data_alloc) = self.alloc(prov.alloc_id).slice_data {
+                        if let Some(data_alloc) = self.data_alloc_of(prov.alloc_id, arg_val.ty) {
                             val.z3_term = self.allocation_base(data_alloc).clone();
                             val.provenance = Some(Provenance {
                                 alloc_id: data_alloc,
@@ -2203,14 +2196,26 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             let heap_align = elem_ty
                                 .map(|ty| self.align_sym(ty))
                                 .unwrap_or_else(|| Int::from_u64(self.z3_ctx, 1));
-                            if let Some(old_data) = self.alloc(prov.alloc_id).slice_data {
+                            if let Some(old_data) =
+                                self.container_data_alloc(prov.alloc_id, arg_val.ty)
+                            {
                                 // Subsequent mutation: invalidate old heap data.
                                 self.alloc_mut(old_data).facts.dead = true;
                             }
                             let max_size = Int::from_u64(self.z3_ctx, i64::MAX as u64);
-                            let (data_alloc, _) =
+                            let (data_alloc, data_base) =
                                 self.allocate_external(max_size, heap_align, elem_ty);
-                            self.alloc_mut(prov.alloc_id).slice_data = Some(data_alloc);
+                            let container_ty = match arg_val.ty.kind() {
+                                TyKind::Ref(_, inner, _) | TyKind::RawPtr(inner, _) => *inner,
+                                _ => arg_val.ty,
+                            };
+                            self.set_container_data_field(
+                                prov.alloc_id,
+                                arg_val.ty,
+                                data_alloc,
+                                data_base,
+                                elem_ty.unwrap_or(container_ty),
+                            );
                         }
                         // When offset is concrete, only mark the bytes actually
                         // written. For symbolic offsets, mark entire allocation.
@@ -2297,10 +2302,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         offset: Int::from_u64(self.z3_ctx, 0),
                         offset_kind: None,
                     };
-                    // If return is a reference, register slice/pointee data
-                    if let Some(ref dest_alloc_id) = self.current_frame.local_alloc.get(&dest).copied() {
-                        self.alloc_mut(*dest_alloc_id).slice_data = Some(alloc_id);
-                    }
                     // Propagate init status and byte-level tracking from the source pointer.
                     if let Some(ref source_prov) = ptr_val.provenance {
                         if !self.alloc(source_prov.alloc_id).facts.dead {
@@ -2493,9 +2494,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     let (alloc_id, base) = self.allocate_external(total, heap_align, elem_ty);
                     self.alloc_mut(alloc_id).set_slice_len(size_val.z3_term.clone());
                     let dest_alloc_id = self.current_frame.local_alloc.get(&dest).copied();
-                    if let Some(dest_alloc_id) = dest_alloc_id {
-                        self.alloc_mut(dest_alloc_id).slice_data = Some(alloc_id);
-                    }
                     self.alloc_mut(alloc_id).facts.initialized = true;
                     let vec_base = base.clone();
                     let vec_len = size_val.z3_term.clone();
@@ -2561,9 +2559,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         .unwrap_or_else(|| Int::from_u64(self.z3_ctx, 1));
                     let (alloc_id, base) = self.allocate_external(total, heap_align, elem_ty);
                     let dest_alloc_id = self.current_frame.local_alloc.get(&dest).copied();
-                    if let Some(dest_alloc_id) = dest_alloc_id {
-                        self.alloc_mut(dest_alloc_id).slice_data = Some(alloc_id);
-                    }
                     self.alloc_mut(alloc_id).facts.initialized = true;
                     let vec_base = base.clone();
                     let vec_cap = cap_val.z3_term.clone();
@@ -2651,9 +2646,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     self.copy_byte_tracking(box_alloc, 0, alloc_id);
                 }
                 let dest_alloc_id = self.current_frame.local_alloc.get(&dest).copied();
-                if let Some(ref dest_alloc_id) = dest_alloc_id {
-                    self.alloc_mut(*dest_alloc_id).slice_data = Some(alloc_id);
-                }
                 self.alloc_mut(alloc_id).facts.initialized = true;
                 let vec_base = base.clone();
                 self.set_local(
@@ -2706,7 +2698,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             CallEffect::ReturnBoxFromVec { arg } => {
                 if let Some(vec_val) = args.get(*arg) {
                     if let Some(ref prov) = vec_val.provenance {
-                        if let Some(heap_alloc_id) = self.alloc(prov.alloc_id).slice_data {
+                        if let Some(heap_alloc_id) =
+                            self.container_data_alloc(prov.alloc_id, vec_val.ty)
+                        {
                             let heap_base = self.allocation_base(heap_alloc_id).clone();
                             let dest_ty = self.body().local_decls[dest].ty;
                             self.set_local(
@@ -3192,7 +3186,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     fn set_len_from_alloc(&mut self, arg_val: &VmValue<'z3, 'tcx>, dest: Local) -> bool {
         let effective_alloc_id = arg_val
             .provenance_alloc_id()
-            .and_then(|pid| self.alloc(pid).slice_data)
+            .and_then(|pid| self.data_alloc_of(pid, arg_val.ty))
             .or_else(|| arg_val.provenance_alloc_id());
         let Some(alloc_id) = effective_alloc_id else {
             return false;
@@ -3365,16 +3359,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// std-challenge suites.
     fn vec_field_paths(&self, local: Local) -> (Vec<usize>, Vec<usize>, Vec<usize>) {
         let ty = self.body().local_decls[local].ty;
-        let TyKind::Adt(adt, _) = ty.kind() else {
-            return (vec![0, 0], vec![0, 1], vec![1]);
-        };
-        if adt.non_enum_variant().fields.len() >= 3 {
-            // flat `{ ptr, len, cap }`: ptr=[0], len=[1], cap=[2].
-            (vec![0], vec![2], vec![1])
-        } else {
-            // std `{ buf: RawVec { ptr, cap }, len }`: ptr=[0,0], cap=[0,1], len=[1].
-            (vec![0, 0], vec![0, 1], vec![1])
-        }
+        self.container_field_paths(ty)
+            .unwrap_or((vec![0, 0], vec![0, 1], vec![1]))
     }
 
     /// Materialize the `{ptr, cap, len}` field values of a `Vec<T>` aggregate
