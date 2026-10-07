@@ -14,7 +14,95 @@
       {
         "tag": "NonNull",
         "args": [
-          "$self.0"
+          "$self.pointer"
+        ]
+      }
+    ]
+  },
+  "alloc::vec::Vec": {
+    "invariants": [
+      {
+        "tag": "NonNull",
+        "args": [
+          "$self.buf.inner.ptr"
+        ]
+      },
+      {
+        "tag": "Allocated",
+        "args": [
+          "$self.buf.inner.ptr",
+          "$elem",
+          "$self.buf.inner.cap"
+        ]
+      },
+      {
+        "tag": "ValidNum",
+        "args": [
+          "0 <= $self.len"
+        ]
+      },
+      {
+        "tag": "ValidNum",
+        "args": [
+          "$self.len <= $self.buf.inner.cap"
+        ]
+      }
+    ]
+  },
+  "alloc::string::String": {
+    "invariants": [
+      {
+        "tag": "NonNull",
+        "args": [
+          "$self.vec.buf.inner.ptr"
+        ]
+      },
+      {
+        "tag": "Allocated",
+        "args": [
+          "$self.vec.buf.inner.ptr",
+          "u8",
+          "$self.vec.buf.inner.cap"
+        ]
+      },
+      {
+        "tag": "ValidNum",
+        "args": [
+          "0 <= $self.vec.len"
+        ]
+      },
+      {
+        "tag": "ValidNum",
+        "args": [
+          "$self.vec.len <= $self.vec.buf.inner.cap"
+        ]
+      }
+    ]
+  },
+  "alloc::boxed::Box": {
+    "invariants": [
+      {
+        "tag": "NonNull",
+        "args": [
+          "$self.0.pointer"
+        ]
+      },
+      {
+        "tag": "Allocated",
+        "args": [
+          "$self.0.pointer",
+          "$elem",
+          "1"
+        ]
+      }
+    ]
+  },
+  "alloc::ffi::c_str::CString": {
+    "invariants": [
+      {
+        "tag": "NonNull",
+        "args": [
+          "$self.inner.0.pointer"
         ]
       }
     ]

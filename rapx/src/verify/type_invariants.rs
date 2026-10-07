@@ -290,7 +290,7 @@ fn is_numeric_field_access(s: &str) -> bool {
 /// type's `Debug` representation.
 fn type_path_key<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> (String, Option<Ty<'tcx>>) {
     match ty.kind() {
-        rustc_middle::ty::TyKind::Adt(adt_def, _) => {
+        rustc_middle::ty::TyKind::Adt(adt_def, substs) => {
             // Build the canonical `crate::module::Type` path from the *defining*
             // crate, so the key is stable regardless of whether the type is
             // referenced through a `std` / `alloc` re-export (`def_path_str`
@@ -302,7 +302,11 @@ fn type_path_key<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> (String, Option<Ty<'t
                 .to_string_no_crate_verbose()
                 .trim_start_matches("::")
                 .to_string();
-            (format!("{crate_name}::{path}"), None)
+            // The first type argument is the element type for containers
+            // (`Vec<T>`/`String`); `$elem` in a container invariant resolves to
+            // it (unused by non-container entries like `NonNull`).
+            let elem_ty = substs.first().and_then(|s| s.as_type());
+            (format!("{crate_name}::{path}"), elem_ty)
         }
         rustc_middle::ty::TyKind::Ref(_, inner, _) => match inner.kind() {
             rustc_middle::ty::TyKind::Slice(elem) => ("[T]".to_string(), Some(*elem)),

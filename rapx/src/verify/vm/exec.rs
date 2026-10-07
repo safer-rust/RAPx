@@ -259,15 +259,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                 source: ValueSource::None,
                             },
                         );
-                        // For Vec: materialize `buf.cap` ([0, 1]) and `len`
-                        // ([1]) as fresh symbolic fields with `0 <= len <= cap`,
-                        // so `len()`/`capacity()` become plain field reads rather
-                        // than recomputing `size / elem_size` from the external
-                        // (unbounded) buffer allocation.
+                        // For Vec: assert `0 <= len <= cap` and
+                        // `cap * elem_size <= isize::MAX` as path conditions
+                        // (the backing allocation's slice length tracks `len`).
                         if is_vec {
                             let cap = self.fresh_int(&format!("vec_cap_{}", local_idx));
                             let len = self.fresh_int(&format!("vec_len_{}", local_idx));
-                            self.materialize_vec_len_cap(local, cap, len, heap_size);
+                            self.materialize_vec_len_cap(cap, len, heap_size);
                         }
                         self.set_local(
                             local,
@@ -4402,110 +4400,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             }
             _ => None,
         }
-    }
-
-    /// Resolve a container's `(ptr, cap, len)` field paths generically from its
-    /// type (no hard-coded `Vec` layout):
-    ///   * `ptr` = the owning raw-pointer field ([`Self::container_ptr_field`]),
-    ///   * `len` = the outermost ADT's first `usize`-sized scalar field,
-    ///   * `cap` = the pointer's *parent* layer's first `usize` scalar (nested
-    ///     `{ buf, len }`), or the outer layer's second one (flat `{ptr,len,cap}`).
-    pub(crate) fn container_field_paths(
-        &self,
-        ty: Ty<'tcx>,
-    ) -> Option<(Vec<usize>, Vec<usize>, Vec<usize>)> {
-        let (ptr_path, _) = self.container_ptr_field(ty)?;
-        let len_path = self.usize_field_path(ty, &[])?;
-        let cap_path = if ptr_path.len() > 1 {
-            // Nested (`{ buf: RawVec { .. ptr, cap }, len }`): cap sits next to
-            // the pointer inside its parent layer.
-            let parent_path = &ptr_path[..ptr_path.len() - 1];
-            let parent_ty = self.path_ty(ty, parent_path)?;
-            self.usize_field_path(parent_ty, parent_path)?
-        } else {
-            // Flat (`{ ptr, len, cap }`): cap is the second usize scalar, after
-            // len.
-            self.usize_field_path_after(ty, &[], &len_path)?
-        };
-        Some((ptr_path, cap_path, len_path))
-    }
-
-    /// The first `usize`-sized scalar field of `ty`, as a path under `prefix`.
-    fn usize_field_path(&self, ty: Ty<'tcx>, prefix: &[usize]) -> Option<Vec<usize>> {
-        let rustc_middle::ty::TyKind::Adt(adt, substs) = ty.kind() else {
-            return None;
-        };
-        if adt.is_enum() {
-            return None;
-        }
-        for (idx, field_def) in adt.non_enum_variant().fields.iter().enumerate() {
-            let field_ty = crate::helpers::mir_utils::field_ty(self.tcx, field_def, substs);
-            if self.is_usize_scalar(field_ty) {
-                let mut path = prefix.to_vec();
-                path.push(idx);
-                return Some(path);
-            }
-        }
-        None
-    }
-
-    /// Like [`Self::usize_field_path`], but skips the field named by `skip` (a
-    /// path of length `prefix.len() + 1`) so the *second* `usize` scalar is
-    /// found (flat `{ ptr, len, cap }`).
-    fn usize_field_path_after(
-        &self,
-        ty: Ty<'tcx>,
-        prefix: &[usize],
-        skip: &[usize],
-    ) -> Option<Vec<usize>> {
-        let rustc_middle::ty::TyKind::Adt(adt, substs) = ty.kind() else {
-            return None;
-        };
-        if adt.is_enum() {
-            return None;
-        }
-        let skip_idx = skip.last().copied()?;
-        for (idx, field_def) in adt.non_enum_variant().fields.iter().enumerate() {
-            if idx <= skip_idx {
-                continue;
-            }
-            let field_ty = crate::helpers::mir_utils::field_ty(self.tcx, field_def, substs);
-            if self.is_usize_scalar(field_ty) {
-                let mut path = prefix.to_vec();
-                path.push(idx);
-                return Some(path);
-            }
-        }
-        None
-    }
-
-    /// The type of the field addressed by `path` under `ty`.
-    fn path_ty(&self, ty: Ty<'tcx>, path: &[usize]) -> Option<Ty<'tcx>> {
-        let mut cur = ty;
-        for &idx in path {
-            let rustc_middle::ty::TyKind::Adt(adt, substs) = cur.kind() else {
-                return None;
-            };
-            let field_def = adt.non_enum_variant().fields.iter().nth(idx)?;
-            cur = crate::helpers::mir_utils::field_ty(self.tcx, field_def, substs);
-        }
-        Some(cur)
-    }
-
-    /// Whether `ty` is a `usize`-sized integer scalar (a `len`/`cap`-like field).
-    fn is_usize_scalar(&self, ty: Ty<'tcx>) -> bool {
-        let Some(layout) = crate::helpers::mir_utils::layout_of_ty(
-            self.tcx,
-            self.current_frame.current_def_id,
-            ty,
-        ) else {
-            return false;
-        };
-        matches!(
-            layout.backend_repr,
-            rustc_abi::BackendRepr::Scalar(s)
-                if matches!(s.primitive(), rustc_abi::Primitive::Int(_, _))
-        )
     }
 
     pub(crate) fn container_data_alloc(
