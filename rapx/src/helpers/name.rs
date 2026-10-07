@@ -1,15 +1,13 @@
 use rustc_hir::def_id::DefId;
+use rustc_middle::ty::print::with_no_trimmed_paths;
 use rustc_middle::ty::{GenericArgKind, Ty, TyCtxt, TyKind};
 use serde_json::Value;
 use std::sync::OnceLock;
 use syn::Expr;
 
-/// Clean a `DefId` debug representation into a human-readable path.
-///
-/// The raw `{:?}` output of `DefId` includes crate hashes and
-/// generic-parameter brackets.  This function normalises the leading
-/// crate name (`core` / `std` / `alloc`) and replaces mangled generic
-/// sections with the implementing struct name (via `get_struct_name`).
+/// The internal `crate::module::…` path of a `DefId` (e.g. `alloc::rcs::rc::Rc`),
+/// normalised from its `def_path_str` debug form.  Used for display/debug and as
+/// the fallback in [`public_def_path`] for items without a `Ty`.
 pub fn get_cleaned_def_path_name(tcx: TyCtxt<'_>, def_id: DefId) -> String {
     let def_id_str = format!("{:?}", def_id);
     let mut parts: Vec<&str> = def_id_str.split("::").collect();
@@ -78,6 +76,63 @@ fn get_struct_name(tcx: TyCtxt<'_>, def_id: DefId) -> Option<String> {
     None
 }
 
+/// The public path of a type (re-exports resolved: `alloc::rc::Rc`), with the
+/// crate prefix and generic args stripped.  `public_def_path` re-adds the crate.
+fn public_ty_path<'tcx>(ty: Ty<'tcx>) -> String {
+    // Disable "good path" trimming, which depends on the current crate's imports.
+    let full = with_no_trimmed_paths!(ty.to_string());
+    let base = full.split('<').next().unwrap_or(&full);
+    base.split("::").skip(1).collect::<Vec<_>>().join("::")
+}
+
+/// The canonical std JSON asset key for a `DefId`, prefixed by its defining
+/// crate.  Types resolve re-exports; inherent methods keep the `module::method`
+/// shape, except that the private `alloc::rcs` module (Rust 1.96+) is mapped
+/// back to the public `rc`/`sync`.
+pub fn public_def_path<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> String {
+    let defining_crate = tcx.crate_name(def_id.krate).to_string();
+    match tcx.def_kind(def_id) {
+        rustc_hir::def::DefKind::Struct
+        | rustc_hir::def::DefKind::Enum
+        | rustc_hir::def::DefKind::Union
+        | rustc_hir::def::DefKind::TyAlias => {
+            let path = public_ty_path(tcx.type_of(def_id).skip_binder());
+            if path.is_empty() {
+                defining_crate
+            } else {
+                format!("{defining_crate}::{path}")
+            }
+        }
+        rustc_hir::def::DefKind::AssocFn => {
+            let assoc_item = tcx.associated_item(def_id);
+            let name = assoc_item.name();
+            // Trait methods key by the trait; inherent methods by the self type.
+            if let Some(trait_item) = assoc_item.trait_item_def_id() {
+                let trait_path = get_cleaned_def_path_name(tcx, tcx.parent(trait_item));
+                format!("{trait_path}::{name}")
+            } else if let Some(impl_id) = assoc_item.impl_container(tcx) {
+                let self_ty = tcx.type_of(impl_id).skip_binder();
+                let def_path = get_cleaned_def_path_name(tcx, def_id);
+                // Map the private `alloc::rcs` module back to `rc`/`sync`.
+                if matches!(self_ty.kind(), TyKind::Adt(..)) && def_path.contains("::rcs::") {
+                    let type_path = public_ty_path(self_ty);
+                    let module = type_path.rsplit_once("::").map(|(m, _)| m).unwrap_or("");
+                    if module.is_empty() {
+                        def_path
+                    } else {
+                        format!("{defining_crate}::{module}::{name}")
+                    }
+                } else {
+                    def_path
+                }
+            } else {
+                get_cleaned_def_path_name(tcx, def_id)
+            }
+        }
+        _ => get_cleaned_def_path_name(tcx, def_id),
+    }
+}
+
 /// Return the resolved `self` type for a method whose `DefId` points to an
 /// associated item that lives inside an `impl` block returning an ADT, or for
 /// a struct/enum DefId directly (needed for parsing struct-invariant annotations).
@@ -113,11 +168,11 @@ fn get_std_api_signature_json() -> &'static Value {
 
 /// Look up known argument names for standard-library APIs.
 ///
-/// The lookup key is the cleaned `DefId` path (see
-/// `get_cleaned_def_path_name`).  When no names are recorded the list is
-/// filled with numeric defaults (`"0"`, `"1"`, …).
+/// The lookup key is the public `DefId` path (see [`public_def_path`]).  When
+/// no names are recorded the list is filled with numeric defaults (`"0"`,
+/// `"1"`, …).
 fn get_known_std_names<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Option<Vec<String>> {
-    let std_func_name = get_cleaned_def_path_name(tcx, def_id);
+    let std_func_name = public_def_path(tcx, def_id);
     let json_data = get_std_api_signature_json();
 
     if let Some(arg_info) = json_data.get(&std_func_name) {

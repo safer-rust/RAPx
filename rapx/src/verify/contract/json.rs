@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 use syn::Expr;
 
-use crate::helpers::name::get_cleaned_def_path_name;
+use crate::helpers::name::public_def_path;
 
 use super::types::{Property, PropertyKind};
 
@@ -91,7 +91,7 @@ pub(crate) fn get_std_contracts_from_json(
     def_id: DefId,
 ) -> Option<&'static [JsonProperty]> {
     let lookup_def_id = resolve_trait_method(tcx, def_id);
-    let cleaned_path_name = get_cleaned_def_path_name(tcx, lookup_def_id);
+    let cleaned_path_name = public_def_path(tcx, lookup_def_id);
     let db = load_std_contracts_json();
 
     // Exact match first.

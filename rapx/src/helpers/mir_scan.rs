@@ -90,7 +90,7 @@ pub fn check_safety(tcx: TyCtxt<'_>, def_id: DefId) -> Safety {
 }
 
 /// Helper checking if a [`Place`] involves raw pointer dereference.
-pub fn place_has_raw_deref<'tcx>(body: &Body<'tcx>, place: &Place<'tcx>) -> bool {
+fn place_has_raw_deref<'tcx>(body: &Body<'tcx>, place: &Place<'tcx>) -> bool {
     let local = place.local;
     for proj in place.projection.iter() {
         if let ProjectionElem::Deref = proj.kind() {

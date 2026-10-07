@@ -231,7 +231,7 @@ impl<'tcx> ShowMir<'tcx> {
     }
 }
 
-pub fn generate_mir_cfg_dot<'tcx>(
+fn generate_mir_cfg_dot<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
     alias_sets: &Vec<FxHashSet<usize>>,

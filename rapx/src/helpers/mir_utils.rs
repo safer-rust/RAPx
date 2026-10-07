@@ -80,7 +80,7 @@ pub(crate) fn is_drop_in_place(def_id: DefId) -> bool {
 
 /// Whether `def_id` is a diverging call target: a `panic*` lang item or the
 /// `unreachable`/`abort` intrinsics.
-pub(crate) fn is_diverging_call(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
+fn is_diverging_call(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
     tcx.is_lang_item(def_id, LangItem::Panic)
         || tcx.is_lang_item(def_id, LangItem::PanicNounwind)
         || tcx.is_lang_item(def_id, LangItem::PanicFmt)

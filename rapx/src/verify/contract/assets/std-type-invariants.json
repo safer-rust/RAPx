@@ -1,5 +1,5 @@
 {
-  "core::num::nonzero::NonZero": {
+  "core::num::NonZero": {
     "invariants": [
       {
         "tag": "ValidNum",
@@ -9,7 +9,7 @@
       }
     ]
   },
-  "core::ptr::non_null::NonNull": {
+  "core::ptr::NonNull": {
     "invariants": [
       {
         "tag": "NonNull",
@@ -97,12 +97,32 @@
       }
     ]
   },
-  "alloc::ffi::c_str::CString": {
+  "alloc::ffi::CString": {
     "invariants": [
       {
         "tag": "NonNull",
         "args": [
           "$self.inner.0.pointer"
+        ]
+      }
+    ]
+  },
+  "alloc::rc::Rc": {
+    "invariants": [
+      {
+        "tag": "NonNull",
+        "args": [
+          "$self.ptr"
+        ]
+      }
+    ]
+  },
+  "alloc::sync::Arc": {
+    "invariants": [
+      {
+        "tag": "NonNull",
+        "args": [
+          "$self.ptr"
         ]
       }
     ]
