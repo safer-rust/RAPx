@@ -958,19 +958,26 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         best.map(|(_, id, off)| (id, off))
     }
 
-    /// The field carrying an owned value's heap pointer (`Box.0.0`/`Vec.0.0`,
-    /// and for nested owners like `String` the deeper data field). Prefer the
-    /// canonical `[0, 0]`; fall back to the first field with heap provenance.
+    /// The field carrying an owned value's heap pointer (`Box`/`Vec`/`String`'s
+    /// owning pointer field), located generically via
+    /// [`Self::container_ptr_field`] (e.g. `Box` → `[0, 0]`, `Vec` → `[0, 0, 0]`).
+    /// Falls back to the first materialized field with heap provenance for
+    /// owners whose deep `NonNull` leaf was not explicitly materialized (e.g. a
+    /// `Box` produced by `into_boxed_slice`, which only records the whole value).
     pub(crate) fn owner_ptr_field(&self, local: Local) -> Option<&VmValue<'z3, 'tcx>> {
-        self.field_value(local, &[0, 0])
-            .filter(|v| v.provenance_alloc_id().is_some())
-            .or_else(|| {
-                self.field_paths(local)
-                    .iter()
-                    .find_map(|path| {
-                        self.field_value(local, path)
-                            .filter(|v| v.provenance_alloc_id().is_some())
-                    })
+        let ty = self.body().local_decls[local].ty;
+        if let Some((path, _)) = self.container_ptr_field(ty) {
+            if let Some(v) = self.field_value(local, &path) {
+                if v.provenance_alloc_id().is_some() {
+                    return Some(v);
+                }
+            }
+        }
+        self.field_paths(local)
+            .iter()
+            .find_map(|path| {
+                self.field_value(local, path)
+                    .filter(|v| v.provenance_alloc_id().is_some())
             })
     }
 
@@ -978,19 +985,16 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// whole-place move), so a later `Owning` check does not treat it as a
     /// second owner of the heap allocation it no longer owns.
     pub(crate) fn invalidate_owner_field(&mut self, local: Local) {
-        // Only the canonical `[0, 0]` owner field (`Box`/`Vec`/`String`'s heap
-        // pointer) is invalidated on a move.  The previous fallback that
-        // scanned *any* field with provenance wrongly matched non-owning
-        // pointer fields (e.g. `IterMut`'s `ptr`/`end`, which view a slice
-        // rather than own it) and clobbered their provenance.
-        if self
-            .field_value(local, &[0, 0])
-            .is_some_and(|v| v.provenance_alloc_id().is_some())
-        {
-            if let Some(mut fv) = self.field_value(local, &[0, 0]).cloned() {
-                fv.provenance = None;
-                self.set_field_value(local, vec![0, 0], fv);
-            }
+        let ty = self.body().local_decls[local].ty;
+        let Some((path, _)) = self.container_ptr_field(ty) else {
+            return;
+        };
+        let Some(mut fv) = self.field_value(local, &path).cloned() else {
+            return;
+        };
+        if fv.provenance_alloc_id().is_some() {
+            fv.provenance = None;
+            self.set_field_value(local, path, fv);
         }
     }
 

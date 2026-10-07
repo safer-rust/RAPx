@@ -22,7 +22,7 @@ use super::super::{
     },
     path_extractor::{Path, PathStep},
 };
-use crate::helpers::mir_scan::{Checkpoint, CheckpointLocation};
+use crate::helpers::mir_scan::{Checkpoint, CheckpointKind, CheckpointLocation};
 
 use crate::analysis::path::{PathNode, PathTree};
 
@@ -190,11 +190,22 @@ impl<'tcx> BackwardSlicer<'tcx> {
                 bind_callsite_roots(visitor.tcx, &mut relevant, cs);
             }
             let mut items = Vec::new();
-            items.push(RelevantItem::Terminator {
-                def_id: caller,
-                block: checkpoint_block,
-                switch_succ: None,
-            });
+            // The block's *terminator* is the checkpoint for an unsafe call, but
+            // for a statement-level checkpoint (raw-ptr-deref / static-mut-access)
+            // the terminator executes *after* the checked statement, so it must not
+            // be part of the slice: a `drop(box)` in the same block would otherwise
+            // mark the heap dead before the deref's `Allocated` check reads it.
+            let is_statement_checkpoint = matches!(
+                bind_checkpoint.map(|c| c.kind),
+                Some(CheckpointKind::RawPtrDeref) | Some(CheckpointKind::StaticMutAccess)
+            );
+            if !is_statement_checkpoint {
+                items.push(RelevantItem::Terminator {
+                    def_id: caller,
+                    block: checkpoint_block,
+                    switch_succ: None,
+                });
+            }
             // Pass 1: normal processing.
             for (si, stmt) in block_data.statements.iter().enumerate().rev() {
                 visitor.visit_statement(

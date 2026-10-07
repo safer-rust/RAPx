@@ -2417,9 +2417,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     },
                     source: ValueSource::None,
                 };
-                self.set_field_value(dest, vec![0, 0], nn_field.clone());
+                let nn_path = self
+                    .container_ptr_field(dest_ty)
+                    .map(|(p, _)| p)
+                    .expect("Box has no owning pointer field");
+                self.set_field_value(dest, nn_path.clone(), nn_field.clone());
                 self.memory.values
-                    .insert((alloc_id, dest_ty, vec![0, 0]), nn_field);
+                    .insert((alloc_id, dest_ty, nn_path), nn_field);
                 self.set_local(
                     dest,
                     VmValue {
@@ -2742,10 +2746,14 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     // without this the re-derived pointer loses provenance.
                     if let rustc_middle::ty::TyKind::Adt(adt, _) = val.ty.kind() {
                         if api_classify::is_std_box(adt.did()) {
-                            self.set_field_value(dest, vec![0, 0], val.clone());
+                            let nn_path = self
+                                .container_ptr_field(val.ty)
+                                .map(|(p, _)| p)
+                                .expect("Box has no owning pointer field");
+                            self.set_field_value(dest, nn_path.clone(), val.clone());
                             if let Some(prov) = &val.provenance {
                                 self.memory.values
-                                    .insert((prov.alloc_id, val.ty, vec![0, 0]), val.clone());
+                                    .insert((prov.alloc_id, val.ty, nn_path), val.clone());
                             }
                         }
                     }
@@ -3377,7 +3385,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let ty = self.body().local_decls[local].ty;
         let (ptr_path, _) = self
             .container_ptr_field(ty)
-            .unwrap_or((vec![0, 0], ty));
+            .expect("materialize_vec_fields: container has no owning pointer field");
         self.set_field_value(local, ptr_path, ptr);
         self.materialize_vec_len_cap(cap, len, elem_size);
     }

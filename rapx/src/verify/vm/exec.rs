@@ -235,14 +235,19 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         invariants.non_null = true;
                         invariants.init = true;
                         self.alloc_mut(heap_alloc_id).facts.initialized = true;
-                        // Also expose the box's inner `Unique<T>.pointer` field
-                        // (a `NonNull<T>` at path [0, 0]) so that inlined bodies
-                        // like `Box::into_non_null_with_allocator` — which reads
+                        // Also expose the container's owning pointer field (Box's
+                        // inner `Unique<T>.pointer` → `NonNull<T>`, Vec's
+                        // `buf.ptr.pointer`) so that inlined bodies like
+                        // `Box::into_non_null_with_allocator` — which reads
                         // `(_1.0).0` and transmutes it to `NonNull<T>` — inherit
                         // the heap pointer's non-null/aligned/allocated facts.
+                        let owner_path = self
+                            .container_ptr_field(ty)
+                            .map(|(p, _)| p)
+                            .expect("container parameter has no owning pointer field");
                         self.set_field_value(
                             local,
-                            vec![0, 0],
+                            owner_path,
                             VmValue {
                                 z3_term: heap_base.clone(),
                                 ty,
@@ -1378,9 +1383,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             let mut value = value;
             value.invariants.init = true;
             self.set_local(place.local, value);
-            // On a whole-place move (`_3 = move _4`), ownership moves to `dest`:
-            // invalidate `source`'s owner-field provenance so a later `Owning`
-            // check does not treat the moved-out source as a second owner.
+            // On a whole-place move (`_3 = move _4`), the destination is a fresh
+            // container slot: re-point its whole-value provenance from the source's
+            // stack slot to its own, so `container_data_alloc` later reads the
+            // destination's owning field (copied below) rather than the moved-out
+            // source's (which is invalidated after the propagation).
             let moved_from = match rvalue {
                 #[cfg(rapx_rvalue_use_with_retag)]
                 Rvalue::Use(operand, _) => match operand {
@@ -1395,7 +1402,19 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 _ => None,
             };
             if let Some(src) = moved_from {
-                self.invalidate_owner_field(src);
+                if let Some(&src_alloc) = self.current_frame.local_alloc.get(&src) {
+                    if let Some(mut wv) = self.local_value(place.local).cloned() {
+                        if wv.provenance.as_ref().is_some_and(|p| p.alloc_id == src_alloc) {
+                            let dest_alloc = self.current_frame.local_alloc[&place.local];
+                            wv.provenance = Some(Provenance {
+                                alloc_id: dest_alloc,
+                                offset: Int::from_u64(self.z3_ctx, 0),
+                                offset_kind: None,
+                            });
+                            self.set_local(place.local, wv);
+                        }
+                    }
+                }
             }
             // Propagate field values for aggregate copies (e.g. `_4 = copy _1`)
             // so downstream field accesses (NonZero::get -> self.0) resolve to
@@ -1465,6 +1484,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         }
                     }
                 }
+            }
+            // Invalidate the moved-out source's owner-field provenance *after*
+            // the field propagation, so a later `Owning` check does not treat the
+            // source as a second owner while the destination kept the pointer.
+            if let Some(src) = moved_from {
+                self.invalidate_owner_field(src);
             }
         } else if !has_deref {
             // Field projection (no Deref): update the base local's field values.
@@ -2261,7 +2286,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     // `NonNull` (rustc 1.95 lowers `as_ptr` to that field read).
                     let box_prov = if let rustc_middle::ty::TyKind::Adt(adt, _) = dest_ty.kind() {
                         if api_classify::is_std_box(adt.did()) {
-                            self.field_value(dest_local, &[0, 0])
+                            self.container_ptr_field(dest_ty)
+                                .and_then(|(path, _)| self.field_value(dest_local, &path))
                                 .and_then(|v| v.provenance.clone())
                         } else {
                             None
@@ -4349,51 +4375,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     if let Some(pointee) = self.find_nn_pointee(field_ty) {
                         return Some((path, pointee));
                     }
-                    if self.is_scalar_ptr_wrapper(field_ty) {
-                        if let Some(pointee) = self.ptr_wrapper_pointee(field_ty) {
-                            return Some((path, pointee));
-                        }
-                    }
                     if let Some(found) =
                         self.container_ptr_field_inner(field_ty, path, depth + 1)
                     {
                         return Some(found);
-                    }
-                }
-                None
-            }
-            _ => None,
-        }
-    }
-
-    fn is_scalar_ptr_wrapper(&self, ty: Ty<'tcx>) -> bool {
-        let Some(layout) = crate::helpers::mir_utils::layout_of_ty(
-            self.tcx,
-            self.current_frame.current_def_id,
-            ty,
-        ) else {
-            return false;
-        };
-        matches!(
-            layout.backend_repr,
-            rustc_abi::BackendRepr::Scalar(s)
-                if matches!(s.primitive(), rustc_abi::Primitive::Pointer(_))
-        )
-    }
-
-    fn ptr_wrapper_pointee(&self, ty: Ty<'tcx>) -> Option<Ty<'tcx>> {
-        use rustc_middle::ty::TyKind;
-        match ty.kind() {
-            TyKind::RawPtr(inner, _) => Some(*inner),
-            TyKind::Adt(adt, substs) if !adt.is_enum() => {
-                if let Some(pointee) = self.find_nn_pointee(ty) {
-                    return Some(pointee);
-                }
-                for field_def in adt.non_enum_variant().fields.iter() {
-                    let field_ty =
-                        crate::helpers::mir_utils::field_ty(self.tcx, field_def, substs);
-                    if let Some(pointee) = self.ptr_wrapper_pointee(field_ty) {
-                        return Some(pointee);
                     }
                 }
                 None
@@ -4408,10 +4393,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         ty: Ty<'tcx>,
     ) -> Option<AllocId> {
         use rustc_middle::ty::TyKind;
-        let view_ty = match ty.kind() {
-            TyKind::Ref(_, inner, _) | TyKind::RawPtr(inner, _) => *inner,
-            _ => ty,
-        };
+        let mut view_ty = ty;
+        loop {
+            match view_ty.kind() {
+                TyKind::Ref(_, inner, _) | TyKind::RawPtr(inner, _) => view_ty = *inner,
+                _ => break,
+            }
+        }
         if !matches!(view_ty.kind(), TyKind::Adt(..)) {
             return None;
         }
@@ -4472,10 +4460,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         elem_ty: Ty<'tcx>,
     ) -> bool {
         use rustc_middle::ty::TyKind;
-        let view_ty = match ty.kind() {
-            TyKind::Ref(_, inner, _) | TyKind::RawPtr(inner, _) => *inner,
-            _ => ty,
-        };
+        let mut view_ty = ty;
+        loop {
+            match view_ty.kind() {
+                TyKind::Ref(_, inner, _) | TyKind::RawPtr(inner, _) => view_ty = *inner,
+                _ => break,
+            }
+        }
         if !matches!(view_ty.kind(), TyKind::Adt(..)) {
             return false;
         }
