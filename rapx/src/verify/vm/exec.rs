@@ -1441,19 +1441,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         _ => None,
                     })
                     .collect();
-                let only_field = sp
-                    .projection
-                    .iter()
-                    .all(|p| matches!(p.kind(), rustc_middle::mir::ProjectionElem::Field(..)));
                 // Also propagate for a leading `Deref` (`_3 = copy (*_1)`): the
                 // source is the pointee of a reference, whose per-field values
                 // are keyed by the reference local itself, so copying the pointee
                 // value into a fresh local must carry those field values along
                 // (otherwise `into_leaf(self)`'s `self.node` provenance is lost).
-                let has_deref_src = sp
-                    .projection
-                    .iter()
-                    .any(|p| matches!(p.kind(), rustc_middle::mir::ProjectionElem::Deref));
                 let only_field_deref = sp.projection.iter().all(|p| {
                     matches!(
                         p.kind(),
@@ -1461,7 +1453,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             | rustc_middle::mir::ProjectionElem::Deref
                     )
                 });
-                if only_field || (only_field_deref && has_deref_src) {
+                if only_field_deref {
                     let keys: Vec<Vec<usize>> = self.field_paths(sp.local);
                     for k in keys {
                         let rest = if field_prefix.is_empty() {
@@ -3546,15 +3538,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         return;
                     };
                     if let Some(alloc_id) = val.provenance_alloc_id() {
-                        // Already has a *known* (concrete) size — a preceding
-                        // `Allocated`/`InBound` fact just materialized it.  Only
-                        // mark it live; re-materializing would orphan an `Align`
-                        // path condition recorded against the earlier term.
+                        self.alloc_mut(alloc_id).facts.dead = false;
                         if self.alloc(alloc_id).size.as_u64().is_some() {
-                            self.alloc_mut(alloc_id).facts.dead = false;
                             return;
                         }
-                        self.alloc_mut(alloc_id).facts.dead = false;
                     }
                     let mut v = self.materialize_external_alloc(elem_ty, count_term, val.ty, true);
                     // The size materialization must not clobber a *stronger*
@@ -3573,11 +3560,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         return;
                     };
                     if let Some(alloc_id) = val.provenance_alloc_id() {
+                        self.alloc_mut(alloc_id).facts.dead = false;
                         if self.alloc(alloc_id).size.as_u64().is_some() {
-                            self.alloc_mut(alloc_id).facts.dead = false;
                             return;
                         }
-                        self.alloc_mut(alloc_id).facts.dead = false;
                     }
                     let mut v = self.materialize_external_alloc(elem_ty, count_term, val.ty, false);
                     if v.invariants.align_n.is_none() {
