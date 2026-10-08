@@ -226,8 +226,8 @@ pub(crate) struct ForEachFacts<'z3, 'tcx> {
 ///
 /// These are the allocation's *cross-cutting* facts, kept apart from its shape
 /// metadata (`base`/`size`/`align`/`element_ty`/`kind`) and its `parent`
-/// sub-view edge so the byte-level Alloc layer and the Facts layer are
-/// separated at the type level, not just by comment.  They live on
+/// sub-view edge so the allocation's identity/layout layer and the Facts layer
+/// are separated at the type level, not just by comment.  They live on
 /// [`Allocation::facts`] so a fact stays anchored to the allocation it is about.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct AllocFacts<'z3, 'tcx> {
@@ -264,8 +264,8 @@ pub(crate) struct AllocFacts<'z3, 'tcx> {
 /// A memory allocation: a stack local, a heap object (`Box`/`Vec`), or an
 /// external raw-pointer placeholder.
 ///
-/// The allocation is stored in [`Memory::allocations`] at index `AllocId.0`
-/// (an `AllocId` is a monotonic counter that doubles as the vector index).
+/// The allocation is stored in a [`MemoryUnit`] at index `AllocId.0` (an
+/// `AllocId` is a monotonic counter that doubles as the vector index).
 #[derive(Clone, Debug)]
 pub(crate) struct Allocation<'z3, 'tcx> {
     // ── Shape (always present) ──
@@ -480,43 +480,45 @@ impl<'z3> ValueSource<'z3> {
     }
 }
 
-/// The object space: every allocation plus the per-allocation contents that are
-/// keyed purely by `AllocId` (typed values and byte state).
-///
-/// This is the *address/place* layer — the memory that values live in — kept
-/// separate from [`FrameState`], which binds MIR locals (names) to stack
-/// allocations. An `AllocId` doubles as the index into `allocations` (a fresh
-/// id is `allocations.len()`), so the `AllocId`-keyed value/byte tables stay
-/// consistent with the allocation vector.
+/// A single allocation: its shape metadata ([`Allocation`]) plus its contents
+/// ([`MemoryContent`]).  Splitting the two keeps the identity/layout facts apart
+/// from the mutable memory the values live in, while colocating them in one
+/// unit so no parallel table can drift out of sync.
+pub(crate) struct MemoryUnit<'z3, 'tcx> {
+    /// The allocation's shape and facts.
+    pub(crate) allocation: Allocation<'z3, 'tcx>,
+    /// The allocation's contents (byte layer + typed-value layer).
+    pub(crate) content: MemoryContent<'z3, 'tcx>,
+}
+
+/// The per-allocation contents: the byte layer and the typed-value layer.
 #[derive(Default)]
-pub(crate) struct Memory<'z3, 'tcx> {
-    /// All known allocations, indexed by `AllocId`.
-    pub(crate) allocations: Vec<Allocation<'z3, 'tcx>>,
+pub(crate) struct MemoryContent<'z3, 'tcx> {
+    /// Byte value function: `byte[i] = select(array, i)` for any (possibly
+    /// symbolic) offset `i`.  `None` when no byte has been written.  Unwritten
+    /// offsets read back the `UNINIT` sentinel, so `init`/`nul` are derived
+    /// from `select`, not stored per byte.
+    pub(crate) byte_array: Option<Array<'z3>>,
 
-    /// Per-allocation byte value function: `byte[i] = select(array, i)` for any
-    /// (possibly symbolic) offset `i`.  Unwritten offsets read back the `UNINIT`
-    /// sentinel, so `init`/`nul` are derived from `select`, not stored per byte.
-    pub(crate) byte_arrays: FxHashMap<AllocId, Array<'z3>>,
-
-    /// The concrete byte offsets written to each allocation.  Z3 arrays cannot
+    /// The concrete byte offsets written to this allocation.  Z3 arrays cannot
     /// enumerate their stored indices, so the byte-level checkers iterate this
     /// set directly instead of scanning the allocation's (possibly symbolic or
     /// huge) `size` range.  Only *concrete* writes are recorded: a symbolic
     /// `byte_write` (e.g. a symbolic `ValidCStr` length) still updates the byte
     /// array but not this set.
-    pub(crate) byte_written: FxHashMap<AllocId, FxHashSet<usize>>,
+    pub(crate) byte_written: FxHashSet<usize>,
 
-    /// The typed-value (Value) layer: (alloc_id, viewed_type, path) → value.
-    /// `path == []` is the allocation's *whole* value (the rvalue bound to a
-    /// local) and `path == [i, ..]` is field `i`, both viewed as `viewed_type`.
-    /// The `viewed_type` distinguishes reinterprets of the same allocation under
+    /// The typed-value (Value) layer: (viewed_type, path) → value.  `path == []`
+    /// is the allocation's *whole* value (the rvalue bound to a local) and
+    /// `path == [i, ..]` is field `i`, both viewed as `viewed_type`.  The
+    /// `viewed_type` distinguishes reinterprets of the same allocation under
     /// different ADTs (e.g. `LeafNode` vs `InternalNode` cast views), so field
     /// index `1` resolves to `parent_idx` under `LeafNode` and `edges` under
     /// `InternalNode` without colliding.  This is the alloc-keyed counterpart to
-    /// the byte-level [`Self::byte_arrays`]; the Local-keyed
+    /// the byte-level [`Self::byte_array`]; the Local-keyed
     /// `local_value`/`set_local`/`field_value`/`set_field_value` resolve a
     /// local's backing allocation and then read/write this layer.
-    pub(crate) values: FxHashMap<(AllocId, Ty<'tcx>, Vec<usize>), VmValue<'z3, 'tcx>>,
+    pub(crate) values: FxHashMap<(Ty<'tcx>, Vec<usize>), VmValue<'z3, 'tcx>>,
 }
 
 /// Accumulated solver state for the current path.
@@ -596,7 +598,7 @@ pub(crate) struct FrameState {
 
     /// The stack allocation backing each local's place (lvalue identity). A
     /// local's whole value lives at `path == []` and its field values at
-    /// `path == [i, ..]` in that allocation (see [`Memory::values`], keyed
+    /// `path == [i, ..]` in that allocation (see [`MemoryContent::values`], keyed
     /// `(AllocId, view_ty, path)` with the local's declared type as the view
     /// type), so there is no local-keyed value table here.
     pub(crate) local_alloc: FxHashMap<Local, AllocId>,
@@ -628,9 +630,10 @@ pub(crate) struct VmState<'z3, 'tcx> {
     /// moves the current frame here, exiting restores it.
     pub(crate) caller_frames: Vec<FrameState>,
 
-    /// The object space: allocations, per-byte state, and per-allocation typed
-    /// values (whole values and fields).
-    pub(crate) memory: Memory<'z3, 'tcx>,
+    /// The object space: one [`MemoryUnit`] per allocation, indexed by
+    /// `AllocId`.  Each unit carries its shape ([`Allocation`]) and its contents
+    /// (per-byte state + per-allocation typed values).
+    pub(crate) units: Vec<MemoryUnit<'z3, 'tcx>>,
 
     /// Solver constraints and term caches accumulated along the current path.
     pub(crate) constraints: Constraints<'z3, 'tcx>,
@@ -672,7 +675,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 local_alloc: FxHashMap::default(),
             },
             caller_frames: Vec::default(),
-            memory: Memory::default(),
+            units: Vec::default(),
             inline: InlineCtx::default(),
             constraints,
             path_facts: PathFacts {
@@ -726,7 +729,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     pub(crate) fn local_address(&mut self, local: Local) -> Int<'z3> {
         self.ensure_local_allocation(local);
         let id = self.current_frame.local_alloc[&local];
-        self.memory.allocations[id.0].base.clone()
+        self.units[id.0].allocation.base.clone()
     }
 
     /// Allocate a fresh symbolic object and return its ID and base address.
@@ -775,7 +778,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         element_ty: Option<Ty<'tcx>>,
         kind: AllocKind<'z3>,
     ) -> (AllocId, Int<'z3>) {
-        let id = AllocId(self.memory.allocations.len());
+        let id = AllocId(self.units.len());
         let base = {
             let name = format!(
                 "{}_{}",
@@ -789,18 +792,21 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             Int::new_const(self.z3_ctx, name.as_str())
         };
         let alloc = Allocation::new(base.clone(), size, align, element_ty, kind);
-        self.memory.allocations.push(alloc);
+        self.units.push(MemoryUnit {
+            allocation: alloc,
+            content: MemoryContent::default(),
+        });
         (id, base)
     }
 
     /// Indexed access to an allocation by its `AllocId` (the id is the index).
     pub(crate) fn alloc(&self, id: AllocId) -> &Allocation<'z3, 'tcx> {
-        &self.memory.allocations[id.0]
+        &self.units[id.0].allocation
     }
 
     /// Mutable indexed access to an allocation by its `AllocId`.
     pub(crate) fn alloc_mut(&mut self, id: AllocId) -> &mut Allocation<'z3, 'tcx> {
-        &mut self.memory.allocations[id.0]
+        &mut self.units[id.0].allocation
     }
 
     /// Whether `id` was asserted a valid C string via a `ValidCStr` contract
@@ -820,7 +826,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             guard += 1;
             // A parent chain longer than the total allocation count means a
             // cycle; stop rather than loop forever.
-            if guard > self.memory.allocations.len() {
+            if guard > self.units.len() {
                 break;
             }
         }
@@ -836,7 +842,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// Get the value of a specific field within an aggregate local.
     ///
     /// Field values live in the allocation backing the local (the
-    /// memory-contents layer [`Memory::values`]), keyed by the local's declared
+    /// memory-contents layer [`MemoryContent::values`]), keyed by the local's declared
     /// type as the view type.  Returns `None` if the local has no allocation
     /// (the field was never materialized).
     pub(crate) fn field_value(&self, local: Local, path: &[usize]) -> Option<&VmValue<'z3, 'tcx>> {
@@ -856,11 +862,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return Vec::new();
         };
         let view_ty = self.body().local_decls[local].ty;
-        self.memory
+        self.units[alloc_id.0]
+            .content
             .values
             .keys()
-            .filter(|(a, t, p)| *a == alloc_id && *t == view_ty && !p.is_empty())
-            .map(|(_, _, p)| p.clone())
+            .filter(|(t, p)| *t == view_ty && !p.is_empty())
+            .map(|(_, p)| p.clone())
             .collect()
     }
 
@@ -870,7 +877,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     }
 
     /// Enumerate the field paths materialized for `local` in a saved caller
-    /// `frame`. Field values live in the path-scoped [`Memory::values`], so they
+    /// `frame`. Field values live in the path-scoped [`MemoryContent::values`], so they
     /// are read via `frame`'s `local_alloc` and declared type.
     pub(crate) fn frame_field_paths(
         &self,
@@ -881,11 +888,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return Vec::new();
         };
         let view_ty = self.frame_local_ty(frame, local);
-        self.memory
+        self.units[alloc_id.0]
+            .content
             .values
             .keys()
-            .filter(|(a, t, p)| *a == alloc_id && *t == view_ty && !p.is_empty())
-            .map(|(_, _, p)| p.clone())
+            .filter(|(t, p)| *t == view_ty && !p.is_empty())
+            .map(|(_, p)| p.clone())
             .collect()
     }
 
@@ -902,7 +910,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     }
 
     /// Read the whole value of `local` in a saved caller `frame` (its
-    /// `path == []` slot). The value lives in the path-scoped [`Memory::values`],
+    /// `path == []` slot). The value lives in the path-scoped [`MemoryContent::values`],
     /// while the name → allocation binding lives in the saved `frame`.
     pub(crate) fn frame_local_value(
         &self,
@@ -1003,7 +1011,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// Set the value of a specific field within an aggregate local.
     ///
     /// Ensures the local has a backing allocation, then stores into the
-    /// memory-contents layer ([`Memory::values`]) keyed by the local's declared
+    /// memory-contents layer ([`MemoryContent::values`]) keyed by the local's declared
     /// type as the view type.
     pub(crate) fn set_field_value(
         &mut self,
@@ -1023,7 +1031,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             solver.assert(cond);
         }
         let zero = Int::from_u64(self.z3_ctx, 0);
-        for alloc in &self.memory.allocations {
+        for unit in &self.units {
+            let alloc = &unit.allocation;
             if !alloc.is_external() {
                 solver.assert(&alloc.base._eq(&zero).not());
             }
@@ -1084,7 +1093,7 @@ impl std::fmt::Debug for VmState<'_, '_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("VmState")
             .field("locals_count", &self.current_frame.local_alloc.len())
-            .field("allocations_count", &self.memory.allocations.len())
+            .field("allocations_count", &self.units.len())
             .field("assertions", &self.constraints.assertions.len())
             .finish()
     }
@@ -1354,7 +1363,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             // `UNINIT` (e.g. a struct whose fields were written in
                             // the value layer only), so also fall through to the
                             // field→byte materialization in that case.
-                            if self.memory.byte_arrays.contains_key(&alloc_id) {
+                            if self.units[alloc_id.0].content.byte_array.is_some() {
                                 let term = self.byte_read(alloc_id, &offset);
                                 let is_uninit = offset
                                     .simplify()

@@ -1221,8 +1221,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 // chain was dropped by the slicer and no field value is
                 // recoverable — modeled as a fresh external allocation so a
                 // downstream `Allocated`/`InBound` can still match `[T]` vs `T`.
-                if let Some(search) = self.memory.values
-                    .values()
+                if let Some(search) = self
+                    .units
+                    .iter()
+                    .flat_map(|u| u.content.values.values())
                     .find(|v| v.ty == dest_ty && v.is_pointer())
                     .cloned()
                 {
@@ -2404,7 +2406,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 // heap pointer's provenance (rustc 1.95 lowers `&raw **b` to
                 // exactly this field read + transmute).  Record it both on the
                 // local's stack slot (`set_field_value`, for direct `_1.0.0`
-                // reads) and on the heap allocation (`memory.values`, for
+                // reads) and on the heap allocation (`MemoryContent::values`, for
                 // `(*&box).0.0` deref-reads through a reborrow).
                 let nn_field = VmValue {
                     z3_term: base.clone(),
@@ -2422,8 +2424,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     .map(|(p, _)| p)
                     .expect("Box has no owning pointer field");
                 self.set_field_value(dest, nn_path.clone(), nn_field.clone());
-                self.memory.values
-                    .insert((alloc_id, dest_ty, nn_path), nn_field);
+                self.units[alloc_id.0]
+                    .content
+                    .values
+                    .insert((dest_ty, nn_path), nn_field);
                 self.set_local(
                     dest,
                     VmValue {
@@ -2752,8 +2756,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                 .expect("Box has no owning pointer field");
                             self.set_field_value(dest, nn_path.clone(), val.clone());
                             if let Some(prov) = &val.provenance {
-                                self.memory.values
-                                    .insert((prov.alloc_id, val.ty, nn_path), val.clone());
+                                self.units[prov.alloc_id.0]
+                                    .content
+                                    .values
+                                    .insert((val.ty, nn_path), val.clone());
                             }
                         }
                     }
@@ -3047,7 +3053,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// the materialized field values.
     pub(crate) fn find_local_by_address(&self, term: &Int<'z3>) -> Option<Local> {
         for (local, id) in &self.current_frame.local_alloc {
-            if self.memory.allocations[id.0].base == *term {
+            if self.units[id.0].allocation.base == *term {
                 return Some(*local);
             }
         }

@@ -8,7 +8,7 @@ use rustc_middle::{
 };
 use z3::{Sort, ast::{Array, Ast, Int}};
 
-use super::state::{AllocId, AllocKind, Allocation, Provenance, ValueInvariants, ValueSource, VmState, VmValue};
+use super::state::{AllocId, AllocKind, Allocation, MemoryContent, MemoryUnit, Provenance, ValueInvariants, ValueSource, VmState, VmValue};
 
 impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     pub(crate) fn address_of_place(&mut self, place: &Place<'tcx>) -> Option<VmValue<'z3, 'tcx>> {
@@ -127,8 +127,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             // `&(*leaf).keys` keeps `len = N` for downstream InBound.
                             let alloc = provenance.as_ref().map(|p| p.alloc_id);
                             alloc.and_then(|a| {
-                                self.memory.values
-                                    .get(&(a, view_ty, field_path.clone()))
+                                self.units[a.0].content.values
+                                    .get(&(view_ty, field_path.clone()))
                                     .and_then(|fv| {
                                         fv.provenance.clone().map(|p| (fv.z3_term.clone(), p))
                                     })
@@ -196,7 +196,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         // `Allocation::base` now; `local_address` reads it back from there).
         let name = format!("addr__{}", local.as_usize());
         let base = Int::new_const(self.z3_ctx, name.as_str());
-        let id = AllocId(self.memory.allocations.len());
+        let id = AllocId(self.units.len());
         // For arrays, track the element type (not the array type) so that
         // len() computes `size / elem_size` correctly.  When the element size
         // is unknown (a generic `T`), `size_of::<[T; N]>()` collapses to 0, so
@@ -232,7 +232,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         if let Some(len) = slice_len {
             alloc.set_slice_len(len);
         }
-        self.memory.allocations.push(alloc);
+        self.units.push(MemoryUnit {
+            allocation: alloc,
+            content: MemoryContent::default(),
+        });
         self.current_frame.local_alloc.insert(local, id);
     }
 
@@ -471,7 +474,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         Some(total)
     }
 
-    // ── Per-byte state (`Memory::byte_arrays`) ────────────────────────
+    // ── Per-byte state (`MemoryContent::byte_array`) ───────────────────
 
     /// The shared `UNINIT` sentinel (≥ 256, outside the `u8` range).
     fn uninit_byte(&self) -> Int<'z3> {
@@ -496,7 +499,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// byte value when `i` is concrete, rather than leaking the nested
     /// `select`/`store` expression into downstream SMT obligations.
     pub(crate) fn byte_read(&self, alloc_id: AllocId, i: &Int<'z3>) -> Int<'z3> {
-        match self.memory.byte_arrays.get(&alloc_id) {
+        match &self.units[alloc_id.0].content.byte_array {
             Some(arr) => arr.select(i).as_int().expect("byte array range is Int").simplify(),
             None => self.uninit_byte(),
         }
@@ -504,18 +507,15 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
     /// Write `byte[i] = v`.
     pub(crate) fn byte_write(&mut self, alloc_id: AllocId, i: &Int<'z3>, v: &Int<'z3>) {
-        let arr = self.memory.byte_arrays.get(&alloc_id).cloned();
+        let arr = self.units[alloc_id.0].content.byte_array.clone();
         let updated = match arr {
             Some(a) => a.store(i, v),
             None => self.fresh_byte_array().store(i, v),
         };
-        self.memory.byte_arrays.insert(alloc_id, updated);
+        let unit = &mut self.units[alloc_id.0];
+        unit.content.byte_array = Some(updated);
         if let Some(off) = i.as_u64() {
-            self.memory
-                .byte_written
-                .entry(alloc_id)
-                .or_default()
-                .insert(off as usize);
+            unit.content.byte_written.insert(off as usize);
         }
     }
 
@@ -567,10 +567,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// Enumerate `(offset, term)` pairs for the *written* bytes of an allocation,
     /// in ascending offset order.
     pub(crate) fn alloc_byte_values(&self, alloc_id: AllocId) -> Vec<(usize, Int<'z3>)> {
-        let Some(offsets) = self.memory.byte_written.get(&alloc_id) else {
-            return Vec::new();
-        };
-        let mut offs: Vec<usize> = offsets.iter().copied().collect();
+        let mut offs: Vec<usize> = self.units[alloc_id.0]
+            .content
+            .byte_written
+            .iter()
+            .copied()
+            .collect();
         offs.sort_unstable();
         offs.into_iter()
             .map(|off| (off, self.byte_read(alloc_id, &Int::from_u64(self.z3_ctx, off as u64))))
@@ -579,10 +581,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
     /// Offsets known to be NUL.
     pub(crate) fn alloc_nul_offsets(&self, alloc_id: AllocId) -> Vec<usize> {
-        let Some(offsets) = self.memory.byte_written.get(&alloc_id) else {
-            return Vec::new();
-        };
-        let mut offs: Vec<usize> = offsets
+        let mut offs: Vec<usize> = self.units[alloc_id.0]
+            .content
+            .byte_written
             .iter()
             .copied()
             .filter(|&off| self.is_byte_nul(alloc_id, off))
@@ -593,10 +594,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
     /// Offsets known to be non-NUL.
     pub(crate) fn alloc_non_nul_offsets(&self, alloc_id: AllocId) -> Vec<usize> {
-        let Some(offsets) = self.memory.byte_written.get(&alloc_id) else {
-            return Vec::new();
-        };
-        let mut offs: Vec<usize> = offsets
+        let mut offs: Vec<usize> = self.units[alloc_id.0]
+            .content
+            .byte_written
             .iter()
             .copied()
             .filter(|&off| self.is_byte_non_nul(alloc_id, off))
@@ -608,10 +608,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// Copy the per-byte state (values + written-offset bound) of one allocation
     /// to another, shifting by `src_offset` so `dst[i] = src[i + src_offset]`.
     pub(crate) fn copy_byte_tracking(&mut self, src: AllocId, src_offset: usize, dst: AllocId) {
-        let Some(offsets) = self.memory.byte_written.get(&src) else {
-            return;
-        };
-        let written: Vec<usize> = offsets
+        let written: Vec<usize> = self.units[src.0]
+            .content
+            .byte_written
             .iter()
             .copied()
             .filter(|&off| off >= src_offset)
@@ -622,11 +621,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
     }
 
-    // ── Per-allocation fields (`Memory::values`) ─────────────────────────
+    // ── Per-allocation fields (`MemoryContent::values`) ──────────────────
 
     /// The value at a field offset *within an allocation* viewed as `view_ty`.
     ///
-    /// This is the memory-contents (typed-value) layer ([`Memory::values`]): the
+    /// This is the memory-contents (typed-value) layer ([`MemoryContent::values`]): the
     /// single source of truth for field values. [`Self::field_value`] is the
     /// local-facing wrapper that resolves a MIR local's backing allocation and
     /// declared type, then reads this same layer. The viewed type is part of the
@@ -638,13 +637,16 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         view_ty: Ty<'tcx>,
         path: &[usize],
     ) -> Option<&VmValue<'z3, 'tcx>> {
-        self.memory.values.get(&(alloc_id, view_ty, path.to_vec()))
+        self.units[alloc_id.0]
+            .content
+            .values
+            .get(&(view_ty, path.to_vec()))
     }
 
     /// Store a value at a field offset *within an allocation* viewed as `view_ty`.
     ///
     /// This is the write counterpart to [`Self::load_value`] on the same
-    /// memory-contents layer ([`Memory::values`]); the viewed type is part of the
+    /// memory-contents layer ([`MemoryContent::values`]); the viewed type is part of the
     /// key so reinterpret casts resolve to the right field view.
     pub(crate) fn store_value(
         &mut self,
@@ -653,7 +655,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         path: Vec<usize>,
         value: VmValue<'z3, 'tcx>,
     ) {
-        self.memory.values.insert((alloc_id, view_ty, path), value);
+        self.units[alloc_id.0]
+            .content
+            .values
+            .insert((view_ty, path), value);
     }
 }
 

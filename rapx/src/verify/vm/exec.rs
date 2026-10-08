@@ -1234,8 +1234,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 let (fa, _fb) = self.allocate_external(max_size, field_align, Some(pointee));
                 self.alloc_mut(fa).facts.initialized = true;
                 let term = self.fresh_int(&format!("pointee_nn_{}_{}", local_idx, idx));
-                self.memory.values.insert(
-                    (alloc_id, root_ty, path.clone()),
+                self.units[alloc_id.0].content.values.insert(
+                    (root_ty, path.clone()),
                     VmValue {
                         z3_term: term,
                         ty: field_ty,
@@ -1282,8 +1282,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 let field_term = self
                     .field_term_from_bytes(alloc_id, field_off, field_size)
                     .unwrap_or_else(|| self.fresh_int(&format!("pointee_field_{}_{}", local_idx, idx)));
-                self.memory.values.insert(
-                    (alloc_id, root_ty, path.clone()),
+                self.units[alloc_id.0].content.values.insert(
+                    (root_ty, path.clone()),
                     VmValue {
                         z3_term: field_term,
                         ty: field_ty,
@@ -1313,8 +1313,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     Some(*elem_ty),
                 );
                 self.alloc_mut(fa).facts.initialized = true;
-                self.memory.values.insert(
-                    (alloc_id, root_ty, path.clone()),
+                self.units[alloc_id.0].content.values.insert(
+                    (root_ty, path.clone()),
                     VmValue {
                         z3_term: fb,
                         ty: field_ty,
@@ -2586,7 +2586,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// Resolve a `len` field on `ty`, recursing into ADT sub-fields when there is
     /// no direct `len` (e.g. `String { vec: Vec { ptr, len, cap } }` resolves
     /// `String.len()` to `vec.len`).  `root_ty` stays fixed as the allocation's
-    /// element type, which is how `decompose_pointee_fields` keys `memory.values`.
+    /// element type, which is how `decompose_pointee_fields` keys `MemoryContent::values`.
     fn try_adt_len_field_at(
         &self,
         alloc_id: AllocId,
@@ -2609,8 +2609,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         {
             let mut path = prefix.to_vec();
             path.push(len_idx);
-            return self.memory.values
-                .get(&(alloc_id, root_ty, path))
+            return self.units[alloc_id.0].content.values
+                .get(&(root_ty, path))
                 .map(|v| v.z3_term.clone());
         }
         // Recurse into ADT sub-fields (e.g. `String.vec.len`).
@@ -2642,13 +2642,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let alloc_id = val.provenance_alloc_id()?;
         let view_ty = crate::helpers::mir_utils::pointee_ty(val.ty).unwrap_or(val.ty);
         let start = self
-            .memory.values
-            .get(&(alloc_id, view_ty, vec![0]))?
+            .units[alloc_id.0].content.values
+            .get(&(view_ty, vec![0]))?
             .z3_term
             .clone();
         let end = self
-            .memory.values
-            .get(&(alloc_id, view_ty, vec![1]))?
+            .units[alloc_id.0].content.values
+            .get(&(view_ty, vec![1]))?
             .z3_term
             .clone();
         Some(Int::sub(self.z3_ctx, &[&end, &start]))
@@ -2705,8 +2705,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             .fields
             .iter()
             .position(|f| f.ident(self.tcx).name.to_string() == "len")?;
-        self.memory.values
-            .get(&(alloc_id, pointee, vec![len_idx]))
+        self.units[alloc_id.0].content.values
+            .get(&(pointee, vec![len_idx]))
             .map(|v| v.z3_term.clone())
     }
 
@@ -3732,13 +3732,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             // Deref+Field: the base local is a reference whose pointee
                             // fields live in the per-allocation map (e.g. the
                             // `ValidNum(len <= CAPACITY)` invariant on `&LeafNode`
-                            // reads `(*leaf).len` through `memory.values`).
+                            // reads `(*leaf).len` through `MemoryContent::values`).
                             let base_val = self.local_value(local)?;
                             let alloc_id = base_val.provenance_alloc_id()?;
                             let view_ty = crate::helpers::mir_utils::pointee_ty(base_val.ty)
                                 .unwrap_or(base_val.ty);
-                            self.memory.values
-                                .get(&(alloc_id, view_ty, path.clone()))
+                            self.units[alloc_id.0].content.values
+                                .get(&(view_ty, path.clone()))
                                 .map(|v| v.z3_term.clone())
                         })
                 }
@@ -4086,7 +4086,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     }
 
     /// Evaluate a `ValidNum` predicate against a pointee allocation (not a MIR
-    /// local): field places resolve through `memory.values` keyed by the
+    /// local): field places resolve through `MemoryContent::values` keyed by the
     /// pointee type.
     fn eval_pointee_predicate_as_bool(
         &self,
@@ -4113,8 +4113,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             ContractExpr::AlignOf(ty) => Some(self.align_sym_read(*ty)),
             ContractExpr::Place(cp) => {
                 let path = cp.plain_field_path()?;
-                self.memory.values
-                    .get(&(alloc_id, view_ty, path))
+                self.units[alloc_id.0].content.values
+                    .get(&(view_ty, path))
                     .map(|v| v.z3_term.clone())
             }
             ContractExpr::Binary { op, lhs, rhs } => {
@@ -4149,8 +4149,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return None;
         };
         let path = cp.plain_field_path()?;
-        self.memory.values
-            .get(&(alloc_id, view_ty, path))
+        self.units[alloc_id.0].content.values
+            .get(&(view_ty, path))
             .cloned()
     }
 
@@ -4431,8 +4431,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// `head`/`tail`) is ambiguous, so fall back to `None` rather than guess.
     fn header_data_alloc(&self, header: AllocId) -> Option<AllocId> {
         let mut result = None;
-        for ((a, _, p), v) in self.memory.values.iter() {
-            if *a != header || p.is_empty() {
+        for ((_, p), v) in self.units[header.0].content.values.iter() {
+            if p.is_empty() {
                 continue;
             }
             let Some(prov) = v.provenance_alloc_id() else {
