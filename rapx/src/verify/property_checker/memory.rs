@@ -92,7 +92,7 @@ impl PropertyChecker {
         {
             crate::helpers::mir_utils::pointee_ty(value.ty).map(|ty| vm_state.align_sym_read(ty))
         } else {
-            value.invariants.align_n.clone()
+            value.facts.align_n.clone()
         };
         if let Some(known_align) = effective_align_n {
             // Concrete fast-path: both alignments are powers of two, so
@@ -191,7 +191,7 @@ impl PropertyChecker {
                 local.assert(&alloc.base.rem(&alloc.align)._eq(&zero));
             }
         }
-        if let Some(known_align) = value.invariants.align_n.as_ref() {
+        if let Some(known_align) = value.facts.align_n.as_ref() {
             local.assert(&value.z3_term.rem(known_align)._eq(&zero));
         }
         for cond in &vm_state.constraints.assertions {
@@ -209,7 +209,7 @@ impl PropertyChecker {
             rap_debug!(
                 "align=Failed vterm={} align_n={:?} off={}",
                 value.z3_term.to_string(),
-                value.invariants.align_n,
+                value.facts.align_n,
                 value
                     .provenance
                     .as_ref()
@@ -229,7 +229,7 @@ impl PropertyChecker {
             return true;
         }
         if let Some(n) = value
-            .invariants
+            .facts
             .align_n
             .as_ref()
             .and_then(|n| n.simplify().as_u64())
@@ -272,10 +272,10 @@ impl PropertyChecker {
         let Some(value) = self.target_value(vm_state, checkpoint, property) else {
             return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
-        if value.invariants.non_null {
+        if value.facts.non_null {
             return CheckResult::ProvedByRule;
         }
-        if value.invariants.in_bounds {
+        if value.facts.in_bounds {
             return CheckResult::ProvedByRule;
         }
         // Pointers with non-external provenance point into known stack/heap
@@ -329,7 +329,7 @@ impl PropertyChecker {
         vm_state: &VmState<'z3, 'tcx>,
         value: &VmValue<'z3, 'tcx>,
     ) -> bool {
-        value.invariants.align_n.is_some()
+        value.facts.align_n.is_some()
             || value.provenance.as_ref().is_some_and(|p| {
                 p.offset_kind.is_none()
                     && vm_state.alloc(p.alloc_id).align.simplify().as_u64() != Some(1)
@@ -347,8 +347,8 @@ impl PropertyChecker {
         value: &VmValue<'z3, 'tcx>,
         alloc_id: AllocId,
     ) -> bool {
-        value.invariants.init
-            && value.invariants.non_null
+        value.facts.init
+            && value.facts.non_null
             && Self::is_value_aligned(vm_state, value)
             && (matches!(value.ty.kind(), TyKind::RawPtr(..))
                 || matches!(value.ty.kind(), TyKind::Ref(_, inner, _)
@@ -762,8 +762,8 @@ impl PropertyChecker {
                 return CheckResult::ProvedByRule;
             }
             // as_ptr/as_mut_ptr on MaybeUninit → write operations don't need pre-init.
-            if value.invariants.init
-                && value.invariants.non_null
+            if value.facts.init
+                && value.facts.non_null
                 && Self::is_value_aligned(vm_state, &value)
                 && matches!(value.ty.kind(), TyKind::RawPtr(..))
                 && !vm_state.alloc(id).facts.dead
@@ -924,7 +924,7 @@ impl PropertyChecker {
             return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
         let Some(id) = value.provenance_alloc_id() else {
-            return if value.invariants.non_null || value.invariants.init {
+            return if value.facts.non_null || value.facts.init {
                 CheckResult::ProvedByRule
             } else {
                 CheckResult::Unknown(UnknownReason::Unimplemented)

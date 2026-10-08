@@ -56,14 +56,19 @@ pub(crate) struct Provenance<'z3> {
     pub offset_kind: Option<OffsetKind<'z3>>,
 }
 
-/// Known invariants about a symbolic value.
+/// Value-level facts about a single symbolic value (nullness, alignment,
+/// bounds, and whether it has been written).  These travel *with* the value — a
+/// [`VmValue`] leaves its allocation when passed as an operand or stashed in
+/// `InlineCtx::deferred_field_writes` — so they live on the value, not the
+/// allocation.  The allocation-level counterpart to `init` is
+/// [`ContentFacts::initialized`], kept in sync by [`VmState::mark_initialized`].
 ///
 /// `PartialEq`/`Eq` are deliberately *not* derived: `align_n` is a Z3 AST
 /// whose equality is structural (`Z3_is_eq_ast`), not semantic, so comparing
-/// two `ValueInvariants` would silently report semantically-equal values as
+/// two `ValueFacts` would silently report semantically-equal values as
 /// unequal.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct ValueInvariants<'z3> {
+pub(crate) struct ValueFacts<'z3> {
     pub non_null: bool,
     pub init: bool,
     pub in_bounds: bool,
@@ -96,7 +101,7 @@ pub(crate) struct VmValue<'z3, 'tcx> {
     /// Which allocation this pointer derives from and at what offset.
     pub provenance: Option<Provenance<'z3>>,
     /// Known constraints on this value.
-    pub invariants: ValueInvariants<'z3>,
+    pub facts: ValueFacts<'z3>,
     /// Extra semantics (field offset, discriminant, comparison, or binary-op
     /// source); see [`ValueSource`].
     pub source: ValueSource<'z3>,
@@ -108,7 +113,7 @@ impl<'z3, 'tcx> VmValue<'z3, 'tcx> {
             z3_term: term,
             ty,
             provenance: None,
-            invariants: ValueInvariants::default(),
+            facts: ValueFacts::default(),
             source: ValueSource::None,
         }
     }
@@ -161,7 +166,8 @@ pub(crate) enum AllocKind<'z3> {
     External,
 }
 
-/// The type of an allocation's contents.
+/// The element type of an allocation's contents, either a concrete [`Ty`] or
+/// symbolic (`Generic`).
 ///
 /// `Typed` carries a concrete `Ty` — the element type of a slice, the object
 /// type of a `Box<T>`/struct, or `u8` for a raw byte buffer — while `Generic`
@@ -169,31 +175,31 @@ pub(crate) enum AllocKind<'z3> {
 /// (e.g. `from_raw_parts::<T>`; its `size` uses the shared symbolic `sizeof_T`
 /// and its length must be materialized via `set_slice_len`).
 #[derive(Clone, Debug)]
-pub(crate) enum ContentTy<'tcx> {
+pub(crate) enum ElementTy<'tcx> {
     Typed(Ty<'tcx>),
     Generic,
 }
 
-impl<'tcx> ContentTy<'tcx> {
+impl<'tcx> ElementTy<'tcx> {
     /// The concrete type, if known.
     pub(crate) fn as_ty(&self) -> Option<Ty<'tcx>> {
         match self {
-            ContentTy::Typed(t) => Some(*t),
-            ContentTy::Generic => None,
+            ElementTy::Typed(t) => Some(*t),
+            ElementTy::Generic => None,
         }
     }
 
     /// Whether the element type is symbolic/unknown (no concrete `Ty`).
     pub(crate) fn is_generic(&self) -> bool {
-        matches!(self, ContentTy::Generic)
+        matches!(self, ElementTy::Generic)
     }
 }
 
-impl<'tcx> From<Option<Ty<'tcx>>> for ContentTy<'tcx> {
+impl<'tcx> From<Option<Ty<'tcx>>> for ElementTy<'tcx> {
     fn from(o: Option<Ty<'tcx>>) -> Self {
         match o {
-            Some(t) => ContentTy::Typed(t),
-            None => ContentTy::Generic,
+            Some(t) => ElementTy::Typed(t),
+            None => ElementTy::Generic,
         }
     }
 }
@@ -222,13 +228,10 @@ pub(crate) struct ForEachFacts<'z3, 'tcx> {
     pub owning: bool,
 }
 
-/// Per-allocation facts (the allocation-level slice of the Facts layer).
-///
-/// These are the allocation's *cross-cutting* facts, kept apart from its shape
-/// metadata (`base`/`size`/`align`/`element_ty`/`kind`) and its `parent`
-/// sub-view edge so the allocation's identity/layout layer and the Facts layer
-/// are separated at the type level, not just by comment.  They live on
-/// [`Allocation::facts`] so a fact stays anchored to the allocation it is about.
+/// Per-allocation *lifecycle* facts (`dead`/`liveness`/`for_each`), kept apart
+/// from the allocation's shape metadata and `parent` edge so identity/layout
+/// and facts are separated at the type level.  The *content* facts
+/// (readability, C-string/UTF-8 trust) live on [`ContentFacts`] instead.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct AllocFacts<'z3, 'tcx> {
     /// Whether the allocation has been freed (StorageDead / Drop).
@@ -250,9 +253,9 @@ pub(crate) struct AllocFacts<'z3, 'tcx> {
 }
 
 /// Per-allocation *content* facts: whether the allocation's contents are
-/// readable, and whether they were asserted to be a valid C string.  These live
-/// on [`MemoryContent`] (alongside the byte/value data they describe) rather
-/// than on [`AllocFacts`] (the lifecycle facts).
+/// readable, and whether they were asserted to be a valid C string / UTF-8.
+/// These describe the stored bytes/values, so they live on [`MemoryContent`]
+/// next to that data, rather than on [`AllocFacts`] (lifecycle).
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ContentFacts {
     /// Whether the allocation's contents hold an initialized (readable) value:
@@ -291,7 +294,7 @@ pub(crate) struct Allocation<'z3, 'tcx> {
     pub align: Int<'z3>,
 
     /// Type of the allocation's contents (concrete `Ty` or symbolic `Generic`).
-    pub element_ty: ContentTy<'tcx>,
+    pub element_ty: ElementTy<'tcx>,
 
     /// The allocation shape (object vs slice vs external).
     pub kind: AllocKind<'z3>,
@@ -494,11 +497,13 @@ impl<'z3> ValueSource<'z3> {
 /// A single allocation: its shape metadata ([`Allocation`]) plus its contents
 /// ([`MemoryContent`]).  Splitting the two keeps the identity/layout facts apart
 /// from the mutable memory the values live in, while colocating them in one
-/// unit so no parallel table can drift out of sync.
+/// unit so no parallel table can drift out of sync.  Facts live in three
+/// anchored layers — lifecycle ([`AllocFacts`]), content ([`ContentFacts`]),
+/// and value ([`ValueFacts`] on each [`VmValue`]) — see each type's doc.
 pub(crate) struct MemoryUnit<'z3, 'tcx> {
-    /// The allocation's shape and facts.
+    /// The allocation's shape and lifecycle facts.
     pub(crate) allocation: Allocation<'z3, 'tcx>,
-    /// The allocation's contents (byte layer + typed-value layer).
+    /// The allocation's contents (byte layer + typed-value layer) and content facts.
     pub(crate) content: MemoryContent<'z3, 'tcx>,
 }
 
@@ -532,8 +537,8 @@ pub(crate) struct MemoryContent<'z3, 'tcx> {
     /// local's backing allocation and then read/write this layer.
     pub(crate) values: FxHashMap<(Ty<'tcx>, Vec<usize>), VmValue<'z3, 'tcx>>,
 
-    /// Content facts: `initialized` (readable value) and `cstr_trusted` (valid C
-    /// string trust marker).
+    /// Content facts (`initialized`/`cstr_trusted`/`utf8_trusted`); value-level
+    /// facts live on each [`VmValue::facts`].
     pub(crate) facts: ContentFacts,
 }
 
@@ -739,6 +744,20 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let alloc_id = self.current_frame.local_alloc[&local];
         let view_ty = self.body().local_decls[local].ty;
         self.store_value(alloc_id, view_ty, vec![], value);
+    }
+
+    /// Mark a value as initialized (written), and sync its backing allocation's
+    /// [`ContentFacts::initialized`] fact.
+    ///
+    /// This is the single entry point that keeps the value-level
+    /// [`ValueFacts::init`] and the allocation-level [`ContentFacts::initialized`]
+    /// in sync; callers must set the pair through here rather than by hand so
+    /// the two facts cannot drift apart.
+    pub(crate) fn mark_initialized(&mut self, value: &mut VmValue<'z3, 'tcx>) {
+        value.facts.init = true;
+        if let Some(prov) = &value.provenance {
+            self.content_mut(prov.alloc_id).facts.initialized = true;
+        }
     }
 
     /// Get the symbolic address of a MIR local (its stack allocation's base).
@@ -1093,7 +1112,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// Assert a single symbolic value's known invariant constraints.
     fn assert_value_constraints(&self, solver: &z3::Solver<'z3>, value: &VmValue<'z3, 'tcx>) {
         let zero = Int::from_u64(self.z3_ctx, 0);
-        if value.invariants.non_null {
+        if value.facts.non_null {
             solver.assert(&value.z3_term._eq(&zero).not());
         }
         if let Some(ref prov) = value.provenance {
@@ -1186,7 +1205,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     z3_term: term,
                     ty,
                     provenance: None,
-                    invariants: ValueInvariants::default(),
+                    facts: ValueFacts::default(),
                     source: if field_offset {
                         ValueSource::FieldOffset
                     } else {
@@ -1278,7 +1297,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             z3_term: base_val.z3_term.clone(),
                             ty: place_ty,
                             provenance: Some(prov.clone()),
-                            invariants: base_val.invariants.clone(),
+                            facts: base_val.facts.clone(),
                             source: ValueSource::None,
                         });
                     }
@@ -1412,7 +1431,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                     z3_term: term,
                                     ty: place_ty,
                                     provenance: None,
-                                    invariants: ValueInvariants::default(),
+                                    facts: ValueFacts::default(),
                                     source: ValueSource::None,
                                 });
                             }
@@ -1428,7 +1447,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                         z3_term: b,
                                         ty: place_ty,
                                         provenance: None,
-                                        invariants: ValueInvariants::default(),
+                                        facts: ValueFacts::default(),
                                         source: ValueSource::None,
                                     });
                                 }

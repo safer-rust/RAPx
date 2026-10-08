@@ -2,9 +2,9 @@
 
 use std::fmt;
 
-use super::state::ValueInvariants;
+use super::state::ValueFacts;
 
-impl fmt::Display for ValueInvariants<'_> {
+impl fmt::Display for ValueFacts<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut flags = Vec::new();
         if self.non_null {

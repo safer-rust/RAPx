@@ -142,7 +142,7 @@ impl PropertyChecker {
                         z3_term: base_val.z3_term.clone(),
                         ty: inner_ty,
                         provenance: base_val.provenance.clone(),
-                        invariants: base_val.invariants,
+                        facts: base_val.facts,
                         source: base_val.source.field_offset_only(),
                     });
                 }
@@ -158,7 +158,7 @@ impl PropertyChecker {
                                 z3_term: base_val.z3_term.clone(),
                                 ty: base_val.ty,
                                 provenance: base_val.provenance.clone(),
-                                invariants: base_val.invariants.clone(),
+                                facts: base_val.facts.clone(),
                                 source: base_val.source.field_offset_only(),
                             });
                         }
@@ -201,7 +201,7 @@ impl PropertyChecker {
                     z3_term: base_val.z3_term.clone(),
                     ty: base_val.ty,
                     provenance: Some(prov.clone()),
-                    invariants: base_val.invariants.clone(),
+                    facts: base_val.facts.clone(),
                     source: base_val.source.field_offset_only(),
                 });
             }
@@ -228,7 +228,7 @@ impl PropertyChecker {
                     if heap_field.is_pointer() {
                         value.z3_term = heap_field.z3_term.clone();
                         value.provenance = heap_field.provenance.clone();
-                        value.invariants = heap_field.invariants.clone();
+                        value.facts = heap_field.facts.clone();
                     }
                 }
             }
@@ -306,7 +306,7 @@ impl PropertyChecker {
                 // carries no provenance, or its provenance is an external
                 // placeholder (a raw-pointer field/param), which does not imply
                 // non-nullness.
-                if !v.invariants.non_null {
+                if !v.facts.non_null {
                     let possibly_null = match &v.provenance {
                         None => true,
                         Some(prov) => vm_state.alloc(prov.alloc_id).is_external(),

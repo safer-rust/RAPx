@@ -24,7 +24,7 @@ use crate::{
 };
 
 use super::state::{
-    AllocId, ContentTy, ValueSource, OffsetKind, Provenance, ValueInvariants, VmState,
+    AllocId, ElementTy, ValueSource, OffsetKind, Provenance, ValueFacts, VmState,
     VmValue,
 };
 
@@ -160,14 +160,15 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         if let Some(mut v) = ret {
             let dest_ty = self.body().local_decls[Local::from_usize(dest)].ty;
             v.ty = dest_ty;
-            // Infer invariants: a non-null provenance with offset 0 means the
+            // Infer facts: a non-null provenance with offset 0 means the
             // return value is valid and initialized.
-            if let Some(ref prov) = v.provenance {
-                if prov.offset.as_u64() == Some(0) {
-                    v.invariants.non_null = true;
-                    v.invariants.init = true;
-                    self.content_mut(prov.alloc_id).facts.initialized = true;
-                }
+            let at_base = v
+                .provenance
+                .as_ref()
+                .is_some_and(|p| p.offset.as_u64() == Some(0));
+            if at_base {
+                v.facts.non_null = true;
+                self.mark_initialized(&mut v);
             }
             self.set_local(Local::from_usize(dest), v);
             // The callee returned a fully-constructed value, so the caller's
@@ -199,7 +200,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
             self.ensure_local_allocation(local);
 
-            let mut invariants = ValueInvariants::default();
+            let mut invariants = ValueFacts::default();
             if local_idx <= arg_count {
                 // ── Box / Vec parameter: heap-allocated pointee ──
                 if let rustc_middle::ty::TyKind::Adt(adt_def, _) = ty.kind() {
@@ -256,7 +257,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                     offset: Int::from_u64(self.z3_ctx, 0),
                                     offset_kind: None,
                                 }),
-                                invariants: ValueInvariants {
+                                facts: ValueFacts {
                                     non_null: true,
                                     init: true,
                                     ..Default::default()
@@ -282,7 +283,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                     offset: Int::from_u64(self.z3_ctx, 0),
                                     offset_kind: None,
                                 }),
-                                invariants,
+                                facts: invariants,
                                 source: ValueSource::None,
                             },
                         );
@@ -300,7 +301,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                 z3_term: term,
                                 ty,
                                 provenance: None,
-                                invariants,
+                                facts: invariants,
                                 source: ValueSource::None,
                             },
                         );
@@ -323,7 +324,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                     z3_term: f0.z3_term,
                                     ty,
                                     provenance: prov,
-                                    invariants: ValueInvariants {
+                                    facts: ValueFacts {
                                         init: true,
                                         ..Default::default()
                                     },
@@ -340,7 +341,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             z3_term: term,
                             ty,
                             provenance: None,
-                            invariants: ValueInvariants {
+                            facts: ValueFacts {
                                 init: true,
                                 ..Default::default()
                             },
@@ -451,7 +452,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                     offset: Int::from_u64(self.z3_ctx, 0),
                                     offset_kind: None,
                                 }),
-                                invariants,
+                                facts: invariants,
                                 source: ValueSource::None,
                             },
                         );
@@ -480,7 +481,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                 offset: Int::from_u64(self.z3_ctx, 0),
                                 offset_kind: None,
                             }),
-                            invariants,
+                            facts: invariants,
                             source: ValueSource::None,
                         },
                     );
@@ -598,7 +599,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                             z3_term: field_term,
                                             ty: field_ty,
                                             provenance: None,
-                                            invariants: ValueInvariants {
+                                            facts: ValueFacts {
                                                 init: true,
                                                 ..Default::default()
                                             },
@@ -627,7 +628,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             z3_term: val,
                             ty,
                             provenance: None,
-                            invariants,
+                            facts: invariants,
                             source: ValueSource::None,
                         },
                     );
@@ -653,7 +654,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                 offset: Int::from_u64(self.z3_ctx, 0),
                                 offset_kind: None,
                             }),
-                            invariants,
+                            facts: invariants,
                             source: ValueSource::None,
                         },
                     );
@@ -725,7 +726,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                 offset: Int::from_u64(self.z3_ctx, 0),
                                 offset_kind: None,
                             }),
-                            invariants: ValueInvariants {
+                            facts: ValueFacts {
                                 init: true,
                                 ..invariants
                             },
@@ -742,7 +743,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         z3_term: term,
                         ty,
                         provenance: None,
-                        invariants,
+                        facts: invariants,
                         source: ValueSource::None,
                     },
                 );
@@ -765,7 +766,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     z3_term: term,
                     ty,
                     provenance: None,
-                    invariants,
+                    facts: invariants,
                     source: ValueSource::None,
                 },
             );
@@ -800,9 +801,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     if let Some(src_local) = src {
                         if let Some(src_val) = self.local_value(src_local) {
                             let has_better_prov = src_val.is_pointer()
-                                && src_val.invariants.non_null
+                                && src_val.facts.non_null
                                 && self.local_value(dest_local).is_none_or(|d| {
-                                    d.provenance.is_none() || !d.invariants.non_null
+                                    d.provenance.is_none() || !d.facts.non_null
                                 });
                             if has_better_prov {
                                 self.set_local(
@@ -811,7 +812,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                         z3_term: src_val.z3_term.clone(),
                                         ty: dest.ty(self.body(), self.tcx).ty,
                                         provenance: src_val.provenance.clone(),
-                                        invariants: src_val.invariants.clone(),
+                                        facts: src_val.facts.clone(),
                                         source: ValueSource::None,
                                     },
                                 );
@@ -877,7 +878,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     offset: Int::from_u64(self.z3_ctx, 0),
                     offset_kind: None,
                 }),
-                invariants: ValueInvariants {
+                facts: ValueFacts {
                     non_null: true,
                     init: true,
                     ..Default::default()
@@ -910,9 +911,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let invariants = if is_raw_ptr {
             // A raw pointer carries no non-null / init / align guarantee; those
             // facts must come from the struct's own `#[rapx::invariant]`s.
-            ValueInvariants::default()
+            ValueFacts::default()
         } else {
-            ValueInvariants {
+            ValueFacts {
                 init: true,
                 align_n: Some(self.align_sym(pointee)),
                 ..Default::default()
@@ -954,7 +955,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         offset: prost_offset.clone(),
                         offset_kind: Some(OffsetKind::Element(len_term.clone())),
                     }),
-                    invariants,
+                    facts: invariants,
                     source: ValueSource::None,
                 },
             );
@@ -1015,7 +1016,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         offset: Int::from_u64(self.z3_ctx, 0),
                         offset_kind: None,
                     }),
-                    invariants,
+                    facts: invariants,
                     source: ValueSource::None,
                 },
             );
@@ -1080,7 +1081,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     z3_term: field_term,
                     ty: field_ty,
                     provenance: None,
-                    invariants: ValueInvariants {
+                    facts: ValueFacts {
                         init: true,
                         ..Default::default()
                     },
@@ -1172,7 +1173,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             offset: Int::from_u64(self.z3_ctx, 0),
                             offset_kind: None,
                         }),
-                        invariants: ValueInvariants {
+                        facts: ValueFacts {
                             init: true,
                             ..Default::default()
                         },
@@ -1216,7 +1217,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         z3_term: field_term,
                         ty: field_ty,
                         provenance: None,
-                        invariants: ValueInvariants {
+                        facts: ValueFacts {
                             init: true,
                             ..Default::default()
                         },
@@ -1251,7 +1252,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             offset: Int::from_u64(self.z3_ctx, 0),
                             offset_kind: None,
                         }),
-                        invariants: ValueInvariants {
+                        facts: ValueFacts {
                             init: true,
                             ..Default::default()
                         },
@@ -1305,7 +1306,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
         if place.projection.is_empty() {
             let mut value = value;
-            value.invariants.init = true;
+            value.facts.init = true;
             self.set_local(place.local, value);
             // On a whole-place move (`_3 = move _4`), the destination is a fresh
             // container slot: re-point its whole-value provenance from the source's
@@ -1421,7 +1422,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 // Track cumulative ptr offset for Iter/IterMut before moving value.
                 let track_iter = field_indices == [0];
                 let mut write_value = value;
-                write_value.invariants.init = true;
+                write_value.facts.init = true;
                 self.set_field_value(place.local, field_indices, write_value);
                 if track_iter {
                     self.track_iter_ptr_update(place.local);
@@ -1457,7 +1458,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     if self.field_value(place.local, &field_indices).is_some() {
                         let is_iter_field = field_indices == [0];
                         let mut write_value = value;
-                        write_value.invariants.init = true;
+                        write_value.facts.init = true;
                         self.set_field_value(place.local, field_indices, write_value);
                         if is_iter_field {
                             self.track_iter_ptr_update(place.local);
@@ -1472,7 +1473,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     if let Some(pointed) = pointed {
                         if let Some(referent) = self.find_local_by_address(&pointed.z3_term) {
                             let mut write_value = value;
-                            write_value.invariants.init = true;
+                            write_value.facts.init = true;
                             self.set_field_value(referent, field_indices, write_value);
                         } else if let Some(arg_idx) = place.local.as_usize().checked_sub(1) {
                             // Inline frame: the caller's address map is saved
@@ -1723,7 +1724,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         addr.is_pointer()
                     } else {
                         self.local_value(place.local)
-                            .is_some_and(|v| v.invariants.in_bounds)
+                            .is_some_and(|v| v.facts.in_bounds)
                     };
                     // An empty slice (`&[]` from `align_to`'s `offset > len` /
                     // ZST branch) is built as `&*dangling`: the dangling raw
@@ -1753,7 +1754,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         z3_term: addr.z3_term,
                         ty: dest_ty,
                         provenance: addr.provenance,
-                        invariants: ValueInvariants {
+                        facts: ValueFacts {
                             non_null: true,
                             init: true,
                             in_bounds: src_in_bounds,
@@ -1778,7 +1779,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         z3_term: term,
                         ty: dest_ty,
                         provenance: None,
-                        invariants: ValueInvariants {
+                        facts: ValueFacts {
                             non_null: true,
                             init: true,
                             ..Default::default()
@@ -1792,12 +1793,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     let alloc_align = self.alloc_align_of(&addr);
                     let source_in_bounds = self
                         .local_value(place.local)
-                        .is_some_and(|v| v.invariants.in_bounds);
+                        .is_some_and(|v| v.facts.in_bounds);
                     VmValue {
                         z3_term: addr.z3_term,
                         ty: dest_ty,
                         provenance: addr.provenance,
-                        invariants: ValueInvariants {
+                        facts: ValueFacts {
                             non_null: true,
                             in_bounds: source_in_bounds,
                             align_n: alloc_align,
@@ -1811,7 +1812,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         z3_term: term,
                         ty: dest_ty,
                         provenance: None,
-                        invariants: ValueInvariants {
+                        facts: ValueFacts {
                             non_null: true,
                             ..Default::default()
                         },
@@ -1825,7 +1826,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 let rhs = self.value_of_operand(rhs_op);
                 let term = self.eval_binary_op(*op, &lhs.z3_term, &rhs.z3_term);
                 let provenance = self.provenance_for_binary_op(*op, &lhs, &rhs);
-                let invariants = self.invariants_for_binary_op(*op, &lhs, &rhs, &provenance);
+                let invariants = self.facts_for_binary_op(*op, &lhs, &rhs, &provenance);
                 let lhs_pk = crate::helpers::mir_utils::operand_place(lhs_op);
                 let rhs_pk = crate::helpers::mir_utils::operand_place(rhs_op);
                 // Carry the direct boolean condition alongside the ite-encoded
@@ -1897,7 +1898,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             z3_term: term.clone(),
                             ty: fields[0],
                             provenance: provenance.clone(),
-                            invariants: invariants.clone(),
+                            facts: invariants.clone(),
                             source: ValueSource::None,
                         };
                         self.set_field_value(dest_place.local, vec![0], result_val);
@@ -1910,7 +1911,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     z3_term: term,
                     ty: dest_ty,
                     provenance,
-                    invariants,
+                    facts: invariants,
                     source: match cmp_cond {
                         Some(cond) => ValueSource::Comparison {
                             lhs: lhs_pk,
@@ -1944,7 +1945,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     z3_term: term,
                     ty: dest_ty,
                     provenance: val.provenance,
-                    invariants: val.invariants,
+                    facts: val.facts,
                     source: ValueSource::None,
                 }
             }
@@ -1995,7 +1996,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 if src_is_ptr && dest_is_int {
                     let zero = Int::from_u64(self.z3_ctx, 0);
                     self.constraints.assertions.push(term.ge(&zero));
-                    if src_val.invariants.non_null {
+                    if src_val.facts.non_null {
                         self.constraints.assertions.push(term._eq(&zero).not());
                     }
                 }
@@ -2003,16 +2004,16 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     z3_term: term,
                     ty: *cast_ty,
                     provenance: src_val.provenance,
-                    invariants: ValueInvariants {
-                        non_null: src_val.invariants.non_null,
-                        init: src_val.invariants.init,
-                        in_bounds: src_val.invariants.in_bounds,
+                    facts: ValueFacts {
+                        non_null: src_val.facts.non_null,
+                        init: src_val.facts.init,
+                        in_bounds: src_val.facts.in_bounds,
                         align_n: if crate::helpers::mir_utils::pointee_ty(src_ty)
                             .is_some_and(|t| t.is_unit())
                         {
                             None
                         } else {
-                            src_val.invariants.align_n
+                            src_val.facts.align_n
                         },
                     },
                     source: src_val.source.field_offset_only(),
@@ -2053,7 +2054,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         z3_term: field_val.z3_term,
                         ty: dest_ty,
                         provenance: field_val.provenance,
-                        invariants: field_val.invariants,
+                        facts: field_val.facts,
                         source: ValueSource::None,
                     };
                 }
@@ -2076,8 +2077,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             matches!(field_val.ty.kind(), rustc_middle::ty::TyKind::Ref(..));
                         let dst_is_raw =
                             matches!(field_ty.kind(), rustc_middle::ty::TyKind::RawPtr(..));
-                        if dst_is_raw && (src_is_ref || field_val.invariants.non_null) {
-                            field_val.invariants.in_bounds = true;
+                        if dst_is_raw && (src_is_ref || field_val.facts.non_null) {
+                            field_val.facts.in_bounds = true;
                             field_val.ty = *field_ty;
                         }
                     }
@@ -2196,7 +2197,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     z3_term: result_term,
                     ty: dest_ty,
                     provenance: result_prov,
-                    invariants: ValueInvariants::default(),
+                    facts: ValueFacts::default(),
                     source: ValueSource::None,
                 }
             }
@@ -2246,7 +2247,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     z3_term: val.z3_term,
                     ty: dest_ty,
                     provenance: val.provenance,
-                    invariants: val.invariants,
+                    facts: val.facts,
                     source: ValueSource::None,
                 }
             }
@@ -2289,7 +2290,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     z3_term: term,
                     ty: dest_ty,
                     provenance: None,
-                    invariants: ValueInvariants {
+                    facts: ValueFacts {
                         non_null: true,
                         ..Default::default()
                     },
@@ -2702,22 +2703,22 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
     }
 
-    /// Compute invariants for a binary operation.
+    /// Compute facts for a binary operation.
     /// Propagates non_null from pointer arithmetic and align_n from compatible ops.
-    fn invariants_for_binary_op(
+    fn facts_for_binary_op(
         &self,
         op: BinOp,
         lhs: &VmValue<'z3, 'tcx>,
         rhs: &VmValue<'z3, 'tcx>,
         provenance: &Option<Provenance<'z3>>,
-    ) -> ValueInvariants<'z3> {
+    ) -> ValueFacts<'z3> {
         // A bitwise AND may clear the low bits entirely (`ptr & mask == 0` for a
         // small/aligned-to-zero pointer), so the result is not guaranteed
         // non-null even when the lhs pointer is.  Other pointer arithmetic
         // (`add`/`sub`/`offset`) preserves non-nullness under the VM's
         // no-wrap assumption.
         let non_null =
-            !matches!(op, BinOp::BitAnd) && provenance.is_some() && lhs.invariants.non_null;
+            !matches!(op, BinOp::BitAnd) && provenance.is_some() && lhs.facts.non_null;
 
         let align_n = match op {
             BinOp::Add
@@ -2728,7 +2729,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             | BinOp::SubUnchecked
             | BinOp::Offset => {
                 // If both LHS and RHS are known to be n-aligned, sum/diff is n-aligned
-                match (&lhs.invariants.align_n, &rhs.invariants.align_n) {
+                match (&lhs.facts.align_n, &rhs.facts.align_n) {
                     (Some(a), Some(b)) if a == b => Some(a.clone()),
                     // LHS has alignment, RHS is a constant multiple of it
                     (Some(a), None) => match a.simplify().as_u64() {
@@ -2759,10 +2760,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     .and_then(pow2_factor)
                     .map(|p| Int::from_u64(self.z3_ctx, p)),
             },
-            _ => lhs.invariants.align_n.clone(),
+            _ => lhs.facts.align_n.clone(),
         };
 
-        ValueInvariants {
+        ValueFacts {
             non_null,
             align_n,
             ..Default::default()
@@ -2775,7 +2776,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         // If both the value's align_n and `align` are concrete, compare directly.
         if let Some(au) = align.simplify().as_u64() {
             if let Some(a) = val
-                .invariants
+                .facts
                 .align_n
                 .as_ref()
                 .and_then(|a| a.simplify().as_u64())
@@ -3016,7 +3017,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         if let Some(src_pk) = src_pk {
             if let Some(local) = src_pk.local() {
                 if let Some(mut val) = self.local_value(local).cloned() {
-                    val.invariants.align_n = Some(align);
+                    val.facts.align_n = Some(align);
                     self.set_local(local, val);
                 }
             }
@@ -3067,7 +3068,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         for pk in [lhs, rhs].into_iter().flatten() {
             if let Some(local) = pk.local() {
                 if let Some(mut val) = self.local_value(local).cloned() {
-                    val.invariants.non_null = true;
+                    val.facts.non_null = true;
                     self.set_local(local, val);
                 }
             }
@@ -3217,7 +3218,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             // which must not clobber the original element type —
                             // doing so makes `len()` fall back to the byte size.
                             if self.alloc(alloc_id).element_ty.is_generic() {
-                                self.alloc_mut(alloc_id).element_ty = ContentTy::Typed(expected_ty);
+                                self.alloc_mut(alloc_id).element_ty = ElementTy::Typed(expected_ty);
                             }
                         }
                     }
@@ -3332,7 +3333,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             self.alloc_mut(alloc_id).facts.liveness = Some(self.tcx.lifetimes.re_static);
         }
         if self.alloc(alloc_id).element_ty.is_generic() {
-            self.alloc_mut(alloc_id).element_ty = ContentTy::Typed(elem_ty);
+            self.alloc_mut(alloc_id).element_ty = ElementTy::Typed(elem_ty);
         }
         true
     }
@@ -3372,7 +3373,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 offset: Int::from_u64(self.z3_ctx, 0),
                 offset_kind: None,
             }),
-            invariants: ValueInvariants {
+            facts: ValueFacts {
                 non_null: true,
                 init: true,
                 in_bounds: true,
@@ -3476,8 +3477,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     // alignment fact already on the field (e.g. `Align(ptr,
                     // usize)` set `align_n = 8`, but `Allocated(ptr, u8, n)`
                     // re-materializes with `u8`'s align of 1 → `align_n = None`).
-                    if v.invariants.align_n.is_none() {
-                        v.invariants.align_n = val.invariants.align_n.clone();
+                    if v.facts.align_n.is_none() {
+                        v.facts.align_n = val.facts.align_n.clone();
                     }
                     self.set_field_value(local, field_path, v);
                 } else {
@@ -3494,8 +3495,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         }
                     }
                     let mut v = self.materialize_external_alloc(elem_ty, count_term, val.ty, false);
-                    if v.invariants.align_n.is_none() {
-                        v.invariants.align_n = val.invariants.align_n.clone();
+                    if v.facts.align_n.is_none() {
+                        v.facts.align_n = val.facts.align_n.clone();
                     }
                     self.set_field_value(local, field_path, v);
                 }
@@ -3837,12 +3838,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
     /// Set non_null invariant on the target value.
     fn set_non_null_for_value(&mut self, property: &Property<'tcx>, mut val: VmValue<'z3, 'tcx>) {
-        val.invariants.non_null = true;
+        val.facts.non_null = true;
         self.set_contract_target_value(property, val);
     }
 
     fn set_in_bounds_for_value(&mut self, property: &Property<'tcx>, mut val: VmValue<'z3, 'tcx>) {
-        val.invariants.in_bounds = true;
+        val.facts.in_bounds = true;
         self.set_contract_target_value(property, val);
     }
 
@@ -4069,7 +4070,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             let align = self.align_sym(*ty);
             let align_u64 = align.simplify().as_u64();
             if align_u64 != Some(1) {
-                val.invariants.align_n = Some(align.clone());
+                val.facts.align_n = Some(align.clone());
                 // For a *concrete* alignment, also record `term % align == 0` as a
                 // path condition.  `align_n` is a value invariant that pointer
                 // arithmetic (`ptr.add(n)`) drops, but the alignment fact itself
@@ -4119,10 +4120,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 self.field_value(local, &path).cloned()
             };
             if let Some(mut existing) = existing {
-                existing.invariants.init = true;
-                if let Some(prov) = &existing.provenance {
-                    self.content_mut(prov.alloc_id).facts.initialized = true;
-                }
+                self.mark_initialized(&mut existing);
                 if path.is_empty() {
                     self.set_local(local, existing);
                 } else {
@@ -4387,11 +4385,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 offset: Int::from_u64(self.z3_ctx, 0),
                 offset_kind: None,
             }),
-            invariants: ValueInvariants {
+            facts: ValueFacts {
                 non_null: true,
                 init: true,
                 in_bounds: true,
-                ..ValueInvariants::default()
+                ..ValueFacts::default()
             },
             source: ValueSource::None,
         };
@@ -4457,7 +4455,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             offset: z3::ast::Int::from_u64(self.z3_ctx, 0),
                             offset_kind: None,
                         });
-                        val.invariants = ValueInvariants {
+                        val.facts = ValueFacts {
                             non_null: true,
                             init: true,
                             in_bounds: false,

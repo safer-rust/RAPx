@@ -56,7 +56,7 @@ impl PropertyChecker {
         // `in_bounds` records "points at a valid element" (established by a
         // single-element deref/contract), so it only discharges a single-element
         // InBound.  A `count > 1` check still needs the byte-range proof below.
-        if value.invariants.in_bounds {
+        if value.facts.in_bounds {
             let count_one = property
                 .args()
                 .get(2)

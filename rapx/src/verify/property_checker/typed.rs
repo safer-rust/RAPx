@@ -112,7 +112,7 @@ impl PropertyChecker {
                                 );
                                 if field_ty == expected_ty {
                                     if off_u64 == Some(accum) {
-                                        if value.invariants.init {
+                                        if value.facts.init {
                                             return CheckResult::ProvedByRule;
                                         }
                                         return CheckResult::Failed;
@@ -181,14 +181,14 @@ impl PropertyChecker {
                         return CheckResult::Failed;
                     }
                     // ADT type with no matching field and no init → Failed.
-                    if !value.invariants.init {
+                    if !value.facts.init {
                         return CheckResult::Failed;
                     }
                 }
             }
 
             // No provenance: fall back to init and size checks.
-            if value.invariants.init {
+            if value.facts.init {
                 if vm_state.size_of_ty(value_elem_ty) > 0
                     && vm_state.size_of_ty(expected_ty) > 0
                     && vm_state.size_of_ty(value_elem_ty) == vm_state.size_of_ty(expected_ty)
