@@ -1114,7 +1114,7 @@ fn check_read_memory_alias<'z3, 'tcx>(
     // If the enclosing function accepted the structural-alias hazard via its
     // contract (e.g. `any(Trait(T, Copy), Alias(self, ret))`), the read is the
     // accepted hazard rather than a violation.
-    if vm_state.path_facts.alias_hazard_accepted {
+    if vm_state.path_facts.alias_hazard_declared {
         return VmAliasResult::Proved;
     }
 

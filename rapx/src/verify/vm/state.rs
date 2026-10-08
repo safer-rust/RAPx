@@ -367,9 +367,7 @@ impl<'z3, 'tcx> Allocation<'z3, 'tcx> {
 /// Most flags are latched at most once during path execution (a contract fact
 /// or a recognized discriminant / bounds check); `reenter` is instead derived
 /// from the input path in [`VmState::new`].  They are per-path state, not
-/// per-step: once set they are never cleared within a path.  (`has_checked_bounds`
-/// is additionally accumulated *across checkpoints* by the engine, which reads
-/// it back into the next path's flags.)
+/// per-step: once set they are never cleared within a path.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct PathFacts {
     /// Whether the current path re-enters a block (loop-unrolled), which lets
@@ -377,11 +375,8 @@ pub(crate) struct PathFacts {
     pub reenter: bool,
     /// Whether a SplitTransmute contract was asserted by the caller.
     pub split_transmute_asserted: bool,
-    /// Whether an `Alias` hazard was accepted via the caller's contract.
-    pub alias_hazard_accepted: bool,
-    /// Whether a ChecksIndexBoundsDisjoint call was processed in any
-    /// checkpoint of this function (accumulated across checkpoints).
-    pub has_checked_bounds: bool,
+    /// Whether the caller's contract declared an `Alias` hazard.
+    pub alias_hazard_declared: bool,
     /// Set once the path evaluated an `Iterator::next` discriminant whose
     /// variant was known symbolically.
     pub saw_next_discriminant: bool,

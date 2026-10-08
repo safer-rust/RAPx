@@ -2818,7 +2818,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             })
                         });
                         if let Some(alloc_id) = alloc_id {
-                            self.path_facts.has_checked_bounds = true;
                             let zero = Int::from_u64(self.z3_ctx, 0);
                             let byte_offsets: Vec<(usize, Int)> =
                                 self.alloc_byte_values(alloc_id);

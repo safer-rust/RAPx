@@ -3083,7 +3083,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         // structurally aliases the source are then treated as the accepted
         // hazard rather than a hard failure.
         if contains_hazard(property) {
-            self.path_facts.alias_hazard_accepted = true;
+            self.path_facts.alias_hazard_declared = true;
         }
         match property {
             Property::Atom(atom) => {
@@ -3174,7 +3174,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 }
                 if let Some(fe_place) = property.for_each() {
                     self.assert_in_bound_for_each(property, fe_place);
-                    self.path_facts.has_checked_bounds = true;
                 } else {
                     self.assert_in_bound_single(property);
                 }

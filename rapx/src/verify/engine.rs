@@ -77,11 +77,6 @@ impl<'tcx> VerifyEngine<'tcx> {
 
         let z3_ctx = Self::new_z3_context();
 
-        // Accumulate checked-bounds facts across checkpoints.
-        // A ChecksIndexBoundsDisjoint call in an earlier checkpoint
-        // can discharge InBound checks in a later checkpoint.
-        let mut accumulated_has_checked: bool = false;
-
         // Map (def_id, local block) -> global block(s), computed once and reused
         // by `inject_inline_boundaries` for every checkpoint.  A callee inlined
         // at several call sites (e.g. `as_mut_ptr` called twice) contributes one
@@ -123,14 +118,6 @@ impl<'tcx> VerifyEngine<'tcx> {
             };
 
             let vm_state = self.vm.run(&z3_ctx, self.tcx, wrapped);
-
-            // Accumulate checked bounds/disjointness facts across
-            // checkpoints so that a validator called in one checkpoint
-            // can discharge InBound checks in a later checkpoint.
-            accumulated_has_checked =
-                accumulated_has_checked || vm_state.path_facts.has_checked_bounds;
-            let mut vm_state = vm_state;
-            vm_state.path_facts.has_checked_bounds = accumulated_has_checked;
 
             let result = self.checker.check(&vm_state, checkpoint, &bound_property);
             results.push((result, path_desc));

@@ -28,11 +28,6 @@ impl PropertyChecker {
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
-        // Fast-path: if a prior ChecksIndexBoundsDisjoint call already
-        // validated bounds for this function, the InBound holds.
-        if vm_state.path_facts.has_checked_bounds {
-            return CheckResult::ProvedByRule;
-        }
         // Fast-path: contract with for_each guarantees all elements
         // of the index array are in bounds.
         if property.for_each().is_some() {
