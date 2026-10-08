@@ -31,12 +31,7 @@ impl PropertyChecker {
         };
         let expected = Self::ty_arg(property, 1);
         if let Some(expected_ty) = expected {
-            let resolved = self.instantiate_callsite_ty(vm_state, checkpoint, expected_ty);
-            let expected_ty = if resolved != expected_ty {
-                resolved
-            } else {
-                expected_ty
-            };
+            let expected_ty = self.instantiate_callsite_ty(vm_state, checkpoint, expected_ty);
 
             let value_elem_ty = match value.ty.kind() {
                 TyKind::RawPtr(inner, _) | TyKind::Ref(_, inner, _) => *inner,
@@ -135,7 +130,7 @@ impl PropertyChecker {
                                                 && wrap_substs.first().and_then(|s| s.as_type())
                                                     == Some(expected_ty)
                                             {
-                                                if vm_state.alloc(alloc_id).facts.initialized {
+                                                if vm_state.content(alloc_id).facts.initialized {
                                                     return CheckResult::ProvedByRule;
                                                 }
                                                 return CheckResult::Failed;

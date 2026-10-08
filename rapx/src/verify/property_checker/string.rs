@@ -4,7 +4,7 @@ use crate::helpers::mir_scan::Checkpoint;
 use crate::verify::contract::Property;
 use crate::verify::report::CheckResult;
 use crate::verify::vm::state::VmState;
-use z3::{SatResult, Solver, ast::Int};
+use z3::{SatResult, Solver};
 
 use super::PropertyChecker;
 
@@ -21,12 +21,12 @@ impl PropertyChecker {
         if vm_state.alloc(alloc_id).facts.dead {
             return CheckResult::Failed;
         }
-        let byte_pairs = vm_state.alloc_byte_values(alloc_id);
-        if byte_pairs.is_empty() {
-            return CheckResult::ProvedByRule; // no byte-level info → trust
+        if vm_state.is_utf8_trusted(alloc_id) {
+            return CheckResult::ProvedByRule;
         }
-        let bytes: Vec<Int<'z3>> = byte_pairs.iter().map(|(_, t)| (*t).clone()).collect();
-        let valid = super::utf8_validity(vm_state.z3_ctx, &bytes);
+        let Some(valid) = vm_state.utf8_validity(alloc_id) else {
+            return CheckResult::ProvedByRule; // no byte-level info → trust
+        };
 
         solver.push();
         solver.assert(&valid);

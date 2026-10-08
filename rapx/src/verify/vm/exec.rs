@@ -166,7 +166,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 if prov.offset.as_u64() == Some(0) {
                     v.invariants.non_null = true;
                     v.invariants.init = true;
-                    self.alloc_mut(prov.alloc_id).facts.initialized = true;
+                    self.content_mut(prov.alloc_id).facts.initialized = true;
                 }
             }
             self.set_local(Local::from_usize(dest), v);
@@ -174,7 +174,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             // destination stack slot is initialized.
             if let Some(dest_alloc_id) = self.current_frame.local_alloc.get(&Local::from_usize(dest)).copied()
             {
-                self.alloc_mut(dest_alloc_id).facts.initialized = true;
+                self.content_mut(dest_alloc_id).facts.initialized = true;
             }
         }
         for (fields, fv) in ret_fields {
@@ -234,7 +234,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         };
                         invariants.non_null = true;
                         invariants.init = true;
-                        self.alloc_mut(heap_alloc_id).facts.initialized = true;
+                        self.content_mut(heap_alloc_id).facts.initialized = true;
                         // Also expose the container's owning pointer field (Box's
                         // inner `Unique<T>.pointer` → `NonNull<T>`, Vec's
                         // `buf.ptr.pointer`) so that inlined bodies like
@@ -501,7 +501,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         let (data_alloc_id, data_base) =
                             self.allocate_slice(len, elem_size_sym, elem_align, Some(*elem_ty));
                         if !pointee_is_maybe_uninit {
-                            self.alloc_mut(data_alloc_id).facts.initialized = true;
+                            self.content_mut(data_alloc_id).facts.initialized = true;
                         }
                         // Record placeholder per-byte symbols for the first few
                         // elements so byte-level checkers (`ValidCStr` interior-NUL,
@@ -543,7 +543,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     let (pointee_alloc_id, pointee_base) =
                         self.allocate(pointee_size_term, pointee_align, Some(pointee_ty));
                     if !pointee_is_maybe_uninit {
-                        self.alloc_mut(pointee_alloc_id).facts.initialized = true;
+                        self.content_mut(pointee_alloc_id).facts.initialized = true;
                     }
                     self.set_local(
                         local,
@@ -769,7 +769,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         self.allocate_external(max_size, align, Some(*elem_ty))
                     };
                     self.alloc_mut(alloc_id).set_slice_len(n_term);
-                    self.alloc_mut(alloc_id).facts.initialized = true;
+                    self.content_mut(alloc_id).facts.initialized = true;
                     self.current_frame.local_alloc.insert(local, alloc_id);
                     if let Some(n) = n {
                         for i in 0..n {
@@ -937,7 +937,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let align = self.align_sym(elem_ty);
         let max_size = Int::from_u64(self.z3_ctx, i64::MAX as u64);
         let (alloc_id, base) = self.allocate_external(max_size, align, Some(elem_ty));
-        self.alloc_mut(alloc_id).facts.initialized = true;
+        self.content_mut(alloc_id).facts.initialized = true;
         if let Some(region) = alive_region {
             self.alloc_mut(alloc_id).facts.liveness = Some(region);
         }
@@ -1232,7 +1232,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 let field_align = self.align_sym(pointee);
                 let max_size = Int::from_u64(self.z3_ctx, i64::MAX as u64);
                 let (fa, _fb) = self.allocate_external(max_size, field_align, Some(pointee));
-                self.alloc_mut(fa).facts.initialized = true;
+                self.content_mut(fa).facts.initialized = true;
                 let term = self.fresh_int(&format!("pointee_nn_{}_{}", local_idx, idx));
                 self.units[alloc_id.0].content.values.insert(
                     (root_ty, path.clone()),
@@ -1312,7 +1312,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     arr_align,
                     Some(*elem_ty),
                 );
-                self.alloc_mut(fa).facts.initialized = true;
+                self.content_mut(fa).facts.initialized = true;
                 self.units[alloc_id.0].content.values.insert(
                     (root_ty, path.clone()),
                     VmValue {
@@ -1625,7 +1625,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
 
         if concrete && value_size > 0 {
-            self.alloc_mut(alloc_id).facts.initialized = true;
+            self.content_mut(alloc_id).facts.initialized = true;
 
             let is_u8_write = matches!(
                 value_ty.kind(),
@@ -1634,13 +1634,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
             if is_u8_write {
                 self.record_byte_value(alloc_id, byte_offset, value.z3_term.clone());
-                if let Some(term_val) = value.z3_term.as_u64() {
-                    if term_val == 0 {
-                        self.mark_byte_nul(alloc_id, byte_offset);
-                    } else {
-                        self.mark_byte_non_nul(alloc_id, byte_offset);
-                    }
-                }
             }
         }
     }
@@ -1671,15 +1664,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             if let Some(ref prov) = addr.provenance {
                 let alloc_id = prov.alloc_id;
                 let byte_offset = prov.offset.as_u64().map(|v| v as usize).unwrap_or(0);
-                self.alloc_mut(alloc_id).facts.initialized = true;
+                self.content_mut(alloc_id).facts.initialized = true;
                 self.record_byte_value(alloc_id, byte_offset, value.z3_term.clone());
-                if let Some(term_val) = value.z3_term.as_u64() {
-                    if term_val == 0 {
-                        self.mark_byte_nul(alloc_id, byte_offset);
-                    } else {
-                        self.mark_byte_non_nul(alloc_id, byte_offset);
-                    }
-                }
             }
         }
     }
@@ -2133,7 +2119,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     let dest_local = dest_place.local;
                     self.set_field_value(dest_local, vec![0], field_val.clone());
                     if let Some(alloc_id) = self.current_frame.local_alloc.get(&dest_local).copied() {
-                        self.alloc_mut(alloc_id).facts.initialized = true;
+                        self.content_mut(alloc_id).facts.initialized = true;
                     }
                     return VmValue {
                         z3_term: field_val.z3_term,
@@ -2204,7 +2190,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         }
                     }
                     if let Some(alloc_id) = dest_alloc_id {
-                        self.alloc_mut(alloc_id).facts.initialized = true;
+                        self.content_mut(alloc_id).facts.initialized = true;
                         if is_byte_array && field_sz == 1 {
                             self.record_byte_value(alloc_id, byte_offset, field_term.clone());
                         }
@@ -2213,7 +2199,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         {
                             if field_sz == 1 {
                                 if int_val == 0 {
-                                    self.mark_byte_nul(alloc_id, byte_offset);
                                     if !is_byte_array {
                                         self.record_byte_value(
                                             alloc_id,
@@ -2222,7 +2207,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                         );
                                     }
                                 } else {
-                                    self.mark_byte_non_nul(alloc_id, byte_offset);
                                     if !is_byte_array {
                                         self.record_byte_value(
                                             alloc_id,
@@ -2236,11 +2220,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             for b in 0..field_sz.min(8) {
                                 let byte_off = byte_offset + b;
                                 let byte_val = (int_val >> (b * 8)) & 0xFF;
-                                if byte_val == 0 {
-                                    self.mark_byte_nul(alloc_id, byte_off);
-                                } else {
-                                    self.mark_byte_non_nul(alloc_id, byte_off);
-                                }
                                 self.record_byte_value(
                                     alloc_id,
                                     byte_off,
@@ -3335,8 +3314,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 if let Some(id) = id {
                     self.alloc_mut(id).facts.dead = false;
                     self.alloc_mut(id).facts.liveness = Some(self.tcx.lifetimes.re_static);
-                    self.alloc_mut(id).facts.initialized = true;
-                    self.alloc_mut(id).facts.cstr_trusted = true;
+                    self.content_mut(id).facts.initialized = true;
+                    self.content_mut(id).facts.cstr_trusted = true;
                     // `ValidCStr(p, n)` carries the byte length of the
                     // nul-terminated buffer.  Assert the allocation covers `n`
                     // bytes so downstream `from_raw_parts(p, n)` / InBound
@@ -3358,6 +3337,25 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         let zero = Int::from_u64(self.z3_ctx, 0);
                         self.byte_write(id, &n, &zero);
                     }
+                }
+            }
+            PropertyKind::ValidString => {
+                // A `ValidString` fact guarantees the target's bytes form a
+                // valid UTF-8 sequence.  Mark the backing allocation so the
+                // checker can trust it instead of re-running the byte-level
+                // DFA.  Unlike `ValidCStr`, UTF-8 validity is a content
+                // property, so only content facts are set.
+                let id = self.contract_alloc_id_field_aware(property).or_else(|| {
+                    // Iterator form (`ValidString(bytes)` with `bytes: &mut I`):
+                    // trace the iterator to its backing byte buffer.
+                    let local = self.contract_target_local(property)?;
+                    let val = self.local_value(local)?.clone();
+                    let iter_local = self.find_local_by_address(&val.z3_term)?;
+                    self.iter_utf8_buffer(iter_local).map(|(id, _)| id)
+                });
+                if let Some(id) = id {
+                    self.content_mut(id).facts.initialized = true;
+                    self.content_mut(id).facts.utf8_trusted = true;
                 }
             }
             PropertyKind::ValidNum => {
@@ -3435,7 +3433,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             let total = Int::mul(self.z3_ctx, &[&count, &elem_sz]);
             self.allocate_external(total, heap_align, Some(elem_ty))
         };
-        self.alloc_mut(heap_id).facts.initialized = true;
+        self.content_mut(heap_id).facts.initialized = true;
         VmValue {
             z3_term: heap_base,
             ty: val_ty,
@@ -4186,7 +4184,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return;
         }
         if let Some(prov) = &val.provenance {
-            self.alloc_mut(prov.alloc_id).facts.initialized = true;
+            self.content_mut(prov.alloc_id).facts.initialized = true;
         }
         if let Some((local, path)) = self.contract_field_path(property) {
             let existing = if path.is_empty() {
@@ -4197,7 +4195,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             if let Some(mut existing) = existing {
                 existing.invariants.init = true;
                 if let Some(prov) = &existing.provenance {
-                    self.alloc_mut(prov.alloc_id).facts.initialized = true;
+                    self.content_mut(prov.alloc_id).facts.initialized = true;
                 }
                 if path.is_empty() {
                     self.set_local(local, existing);
@@ -4211,7 +4209,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// Set owning invariant on the target value.
     fn set_owning_for_value(&mut self, val: VmValue<'z3, 'tcx>) {
         if let Some(prov) = &val.provenance {
-            self.alloc_mut(prov.alloc_id).facts.initialized = true;
+            self.content_mut(prov.alloc_id).facts.initialized = true;
         }
     }
 
@@ -4515,7 +4513,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         let size = z3::ast::Int::from_u64(self.z3_ctx, bytes.len() as u64);
                         let align = self.align_sym(pointee_ty);
                         let (alloc_id, base) = self.allocate(size, align, Some(pointee_ty));
-                        self.alloc_mut(alloc_id).facts.initialized = true;
+                        self.content_mut(alloc_id).facts.initialized = true;
                         // A const/static byte materialization lives for the
                         // whole program (`'static`), so it is always alive.
                         self.alloc_mut(alloc_id).facts.liveness =
@@ -4526,11 +4524,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                 i,
                                 z3::ast::Int::from_u64(self.z3_ctx, b as u64),
                             );
-                            if b == 0 {
-                                self.mark_byte_nul(alloc_id, i);
-                            } else {
-                                self.mark_byte_non_nul(alloc_id, i);
-                            }
                         }
                         val.z3_term = base;
                         val.provenance = Some(super::state::Provenance {

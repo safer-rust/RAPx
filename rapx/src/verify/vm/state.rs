@@ -234,13 +234,6 @@ pub(crate) struct AllocFacts<'z3, 'tcx> {
     /// Whether the allocation has been freed (StorageDead / Drop).
     pub dead: bool,
 
-    /// Whether the allocation's contents hold an initialized (readable) value:
-    /// a heap constructor (`Box::new`, `Vec`), a reference parameter's referent,
-    /// a callee return, a `write`, `ValidCStr`, or const/static byte data.
-    /// Stays `false` for uninitialized memory (`Box::new_uninit`,
-    /// `MaybeUninit::uninit`).
-    pub initialized: bool,
-
     /// The region this external allocation is assumed alive for, via an
     /// `Alive(p, 'a)` contract/invariant (or `'static` for `ValidCStr`/`Allocated`
     /// params/`'static` data).  Only consulted for *external* allocations, whose
@@ -254,11 +247,29 @@ pub(crate) struct AllocFacts<'z3, 'tcx> {
     /// Uniform facts about this allocation's pointer elements, established by
     /// `x.iter()` for_each invariants (`Typed`/`Align`/`Allocated`).
     pub for_each: ForEachFacts<'z3, 'tcx>,
+}
+
+/// Per-allocation *content* facts: whether the allocation's contents are
+/// readable, and whether they were asserted to be a valid C string.  These live
+/// on [`MemoryContent`] (alongside the byte/value data they describe) rather
+/// than on [`AllocFacts`] (the lifecycle facts).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ContentFacts {
+    /// Whether the allocation's contents hold an initialized (readable) value:
+    /// a heap constructor (`Box::new`, `Vec`), a reference parameter's referent,
+    /// a callee return, a `write`, `ValidCStr`, or const/static byte data.
+    /// Stays `false` for uninitialized memory (`Box::new_uninit`,
+    /// `MaybeUninit::uninit`).
+    pub initialized: bool,
 
     /// Whether this allocation was asserted valid C string via a `ValidCStr`
     /// contract fact / struct invariant (the "no interior NUL + terminal NUL"
     /// trust marker).
     pub cstr_trusted: bool,
+
+    /// Whether this allocation was asserted valid UTF-8 via a `ValidString`
+    /// contract fact (the "bytes form a valid UTF-8 sequence" trust marker).
+    pub utf8_trusted: bool,
 }
 
 /// A memory allocation: a stack local, a heap object (`Box`/`Vec`), or an
@@ -286,8 +297,8 @@ pub(crate) struct Allocation<'z3, 'tcx> {
     pub kind: AllocKind<'z3>,
 
     // ── Facts (the allocation-level slice of the Facts layer) ──
-    /// Cross-cutting per-allocation facts (`dead`/`initialized`/`liveness`/
-    /// `for_each`/`cstr_trusted`), kept apart from the shape metadata above.
+    /// Cross-cutting per-allocation facts (`dead`/`liveness`/`for_each`), kept
+    /// apart from the shape metadata above.
     pub facts: AllocFacts<'z3, 'tcx>,
 
     // ── Relationships (Option) ──
@@ -491,7 +502,8 @@ pub(crate) struct MemoryUnit<'z3, 'tcx> {
     pub(crate) content: MemoryContent<'z3, 'tcx>,
 }
 
-/// The per-allocation contents: the byte layer and the typed-value layer.
+/// The per-allocation contents: the byte layer, the typed-value layer, and the
+/// content facts.
 #[derive(Default)]
 pub(crate) struct MemoryContent<'z3, 'tcx> {
     /// Byte value function: `byte[i] = select(array, i)` for any (possibly
@@ -519,6 +531,10 @@ pub(crate) struct MemoryContent<'z3, 'tcx> {
     /// `local_value`/`set_local`/`field_value`/`set_field_value` resolve a
     /// local's backing allocation and then read/write this layer.
     pub(crate) values: FxHashMap<(Ty<'tcx>, Vec<usize>), VmValue<'z3, 'tcx>>,
+
+    /// Content facts: `initialized` (readable value) and `cstr_trusted` (valid C
+    /// string trust marker).
+    pub(crate) facts: ContentFacts,
 }
 
 /// Accumulated solver state for the current path.
@@ -809,10 +825,25 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         &mut self.units[id.0].allocation
     }
 
+    /// Indexed access to an allocation's contents by its `AllocId`.
+    pub(crate) fn content(&self, id: AllocId) -> &MemoryContent<'z3, 'tcx> {
+        &self.units[id.0].content
+    }
+
+    /// Mutable indexed access to an allocation's contents by its `AllocId`.
+    pub(crate) fn content_mut(&mut self, id: AllocId) -> &mut MemoryContent<'z3, 'tcx> {
+        &mut self.units[id.0].content
+    }
+
     /// Whether `id` was asserted a valid C string via a `ValidCStr` contract
     /// fact / struct invariant.
     pub(crate) fn is_cstr_trusted(&self, id: AllocId) -> bool {
-        self.alloc(id).facts.cstr_trusted
+        self.content(id).facts.cstr_trusted
+    }
+
+    /// Whether `id` was asserted valid UTF-8 via a `ValidString` contract fact.
+    pub(crate) fn is_utf8_trusted(&self, id: AllocId) -> bool {
+        self.content(id).facts.utf8_trusted
     }
 
     /// The ultimate root allocation, following `parent` chains (sub-allocations

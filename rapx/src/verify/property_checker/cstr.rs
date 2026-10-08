@@ -190,9 +190,10 @@ impl PropertyChecker {
         start_offset: usize,
     ) -> Option<CheckResult> {
         // Collect all concrete offsets where we know what the byte is
-        let known_offsets: Vec<usize> = vm_state
-            .alloc_nul_offsets(alloc_id)
-            .into_iter()
+        let nul_offsets_all = vm_state.alloc_nul_offsets(alloc_id);
+        let known_offsets: Vec<usize> = nul_offsets_all
+            .iter()
+            .copied()
             .chain(vm_state.alloc_non_nul_offsets(alloc_id))
             .collect();
 
@@ -203,10 +204,9 @@ impl PropertyChecker {
         let max_known = known_offsets.iter().max().copied().unwrap_or(0);
 
         // Find the NUL byte at or after start_offset
-        let nul_offsets: Vec<usize> = vm_state
-            .alloc_nul_offsets(alloc_id)
+        let nul_offsets: Vec<usize> = nul_offsets_all
             .into_iter()
-            .filter(|off| *off >= start_offset && *off <= max_known)
+            .filter(|off| *off >= start_offset)
             .collect();
 
         if nul_offsets.is_empty() {

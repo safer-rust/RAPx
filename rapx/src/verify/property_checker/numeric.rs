@@ -82,7 +82,6 @@ impl PropertyChecker {
                 solver.pop(1);
                 return r;
             }
-            return CheckResult::ProvedByRule;
         }
         CheckResult::ProvedByRule
     }

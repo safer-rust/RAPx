@@ -6,7 +6,7 @@ use rustc_middle::{
     mir::{Local, Place, ProjectionElem},
     ty::{Ty, TyKind},
 };
-use z3::{Sort, ast::{Array, Ast, Int}};
+use z3::{Context, Sort, ast::{Array, Ast, Bool, Int}};
 
 use super::state::{AllocId, AllocKind, Allocation, MemoryContent, MemoryUnit, Provenance, ValueInvariants, ValueSource, VmState, VmValue};
 
@@ -530,18 +530,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         self.byte_write(alloc_id, &Int::from_u64(self.z3_ctx, offset as u64), &unknown);
     }
 
-    /// Mark a byte as known NUL (0x00).
-    ///
-    /// In the array model the byte *value* already encodes NUL-ness
-    /// (`is_byte_nul` reads `select == 0`), and `record_byte_value` always runs
-    /// alongside this marker, so there is nothing extra to record.
-    pub(crate) fn mark_byte_nul(&mut self, _alloc_id: AllocId, _offset: usize) {}
-
-    /// Mark a byte as known non-NUL (!= 0x00).
-    ///
-    /// See [`Self::mark_byte_nul`]: the value already encodes non-NUL-ness.
-    pub(crate) fn mark_byte_non_nul(&mut self, _alloc_id: AllocId, _offset: usize) {}
-
     /// Whether a byte at a concrete offset was written (`select != UNINIT`).
     pub(crate) fn is_byte_init(&self, alloc_id: AllocId, offset: usize) -> bool {
         let v = self.byte_read(alloc_id, &Int::from_u64(self.z3_ctx, offset as u64));
@@ -660,6 +648,95 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             .values
             .insert((view_ty, path), value);
     }
+
+    /// Encode the UTF-8 validity DFA over this allocation's tracked bytes.
+    /// Returns `None` when no bytes are tracked (validity is trivially
+    /// satisfied), so callers can short-circuit to "proved".
+    pub(crate) fn utf8_validity(&self, alloc_id: AllocId) -> Option<Bool<'z3>> {
+        let byte_pairs = self.alloc_byte_values(alloc_id);
+        if byte_pairs.is_empty() {
+            return None;
+        }
+        let bytes: Vec<Int<'z3>> = byte_pairs.into_iter().map(|(_, t)| t).collect();
+        Some(utf8_validity_dfa(self.z3_ctx, &bytes))
+    }
+}
+
+/// Build the boolean expression "`bytes` form a valid UTF-8 sequence".
+///
+/// Encodes the UTF-8 DFA over the per-byte Z3 terms: every byte is ASCII, a
+/// continuation byte, or a valid lead byte, and a `k`-byte lead must be
+/// followed by exactly `k-1` continuation bytes.  Value-range refinements
+/// reject overlong encodings, surrogates (U+D800..=U+DFFF), and code points
+/// above U+10FFFF.
+fn utf8_validity_dfa<'z3>(z3_ctx: &'z3 Context, bytes: &[Int<'z3>]) -> Bool<'z3> {
+    let zero = Int::from_u64(z3_ctx, 0);
+    let one = Int::from_u64(z3_ctx, 1);
+    let two = Int::from_u64(z3_ctx, 2);
+    let three = Int::from_u64(z3_ctx, 3);
+
+    let c_0x80 = Int::from_u64(z3_ctx, 0x80);
+    let c_0xc0 = Int::from_u64(z3_ctx, 0xC0);
+    let c_0xc2 = Int::from_u64(z3_ctx, 0xC2);
+    let c_0xe0 = Int::from_u64(z3_ctx, 0xE0);
+    let c_0xf0 = Int::from_u64(z3_ctx, 0xF0);
+    let c_0xf5 = Int::from_u64(z3_ctx, 0xF5);
+    let c_0xa0 = Int::from_u64(z3_ctx, 0xA0);
+    let c_0x90 = Int::from_u64(z3_ctx, 0x90);
+    let c_0xed = Int::from_u64(z3_ctx, 0xED);
+    let c_0xf4 = Int::from_u64(z3_ctx, 0xF4);
+
+    let mut valid = Bool::from_bool(z3_ctx, true);
+    let mut state = zero.clone();
+    let mut lead = zero.clone();
+
+    for b in bytes {
+        let is_ascii = b.lt(&c_0x80);
+        let is_cont = b.ge(&c_0x80) & b.lt(&c_0xc0);
+        let is_2lead = b.ge(&c_0xc2) & b.lt(&c_0xe0);
+        let is_3lead = b.ge(&c_0xe0) & b.lt(&c_0xf0);
+        let is_4lead = b.ge(&c_0xf0) & b.lt(&c_0xf5);
+
+        let refine_3 =
+            (lead._eq(&c_0xe0).not() | b.ge(&c_0xa0)) & (lead._eq(&c_0xed).not() | b.lt(&c_0xa0));
+        let refine_4 =
+            (lead._eq(&c_0xf0).not() | b.ge(&c_0x90)) & (lead._eq(&c_0xf4).not() | b.lt(&c_0x90));
+
+        let valid_s0 = is_ascii.clone() | is_2lead.clone() | is_3lead.clone() | is_4lead.clone();
+        let valid_s1 = is_cont.clone();
+        let valid_s2 = is_cont.clone() & refine_3;
+        let valid_s3 = is_cont.clone() & refine_4;
+
+        let state0 = state._eq(&zero);
+        let state1 = state._eq(&one);
+        let state2 = state._eq(&two);
+
+        let byte_valid = Bool::ite(
+            &state0,
+            &valid_s0,
+            &Bool::ite(
+                &state1,
+                &valid_s1,
+                &Bool::ite(&state2, &valid_s2, &valid_s3),
+            ),
+        );
+
+        let new_state_s0 = Bool::ite(
+            &is_ascii,
+            &zero,
+            &Bool::ite(&is_2lead, &one, &Bool::ite(&is_3lead, &two, &three)),
+        );
+        let new_state_cont = Bool::ite(&state1, &zero, &Bool::ite(&state2, &one, &two));
+        let new_state = Bool::ite(&state0, &new_state_s0, &new_state_cont);
+
+        valid = valid & byte_valid;
+        let is_lead34 = is_3lead | is_4lead;
+        lead = Bool::ite(&(state0 & is_lead34), b, &lead);
+        state = new_state;
+    }
+
+    valid = valid & state._eq(&zero);
+    valid
 }
 
 /// Peel a slice type `[T]` to its element `T` (other types unchanged).

@@ -719,7 +719,7 @@ impl PropertyChecker {
             rap_debug!(
                 "check_init: alloc={} init_set={} access={:?}",
                 id.0,
-                vm_state.alloc(id).facts.initialized,
+                vm_state.content(id).facts.initialized,
                 access.as_ref().and_then(|a| a.as_u64())
             );
             if vm_state.alloc(id).facts.dead {
@@ -745,7 +745,7 @@ impl PropertyChecker {
                     }
                 }
             }
-            if vm_state.alloc(id).facts.initialized {
+            if vm_state.content(id).facts.initialized {
                 if let Some(ref access_term) = access {
                     let size = vm_state.allocation_size(id);
                     if let (Some(access_val), Some(size_val)) =
@@ -757,9 +757,6 @@ impl PropertyChecker {
                         if size_val > 0 && access_val > size_val {
                             return CheckResult::Failed;
                         }
-                    }
-                    if access_term.as_u64().is_some() && size.as_u64().is_some() {
-                        return CheckResult::ProvedByRule;
                     }
                 }
                 return CheckResult::ProvedByRule;
@@ -794,7 +791,7 @@ impl PropertyChecker {
         if let Some(origin_op) = checkpoint.args.first() {
             let origin_val = vm_state.value_of_operand(origin_op);
             if let Some(prov) = &origin_val.provenance {
-                if vm_state.alloc(prov.alloc_id).facts.initialized {
+                if vm_state.content(prov.alloc_id).facts.initialized {
                     if let Some(ref access_term) = access {
                         let size = vm_state.allocation_size(prov.alloc_id);
                         if let (Some(access_val), Some(size_val)) =
@@ -813,7 +810,7 @@ impl PropertyChecker {
             }
             if let Operand::Copy(place) | Operand::Move(place) = origin_op {
                 for alloc_id in self.trace_alloc_ids(vm_state, place.local) {
-                    if vm_state.alloc(alloc_id).facts.initialized {
+                    if vm_state.content(alloc_id).facts.initialized {
                         if let Some(ref access_term) = access {
                             let size = vm_state.allocation_size(alloc_id);
                             if let (Some(access_val), Some(size_val)) =
@@ -835,7 +832,7 @@ impl PropertyChecker {
             // proof.
             if let Operand::Copy(place) | Operand::Move(place) = origin_op {
                 let allocs = self.trace_alloc_ids(vm_state, place.local);
-                if !allocs.is_empty() && allocs.iter().all(|id| !vm_state.alloc(*id).facts.initialized) {
+                if !allocs.is_empty() && allocs.iter().all(|id| !vm_state.content(*id).facts.initialized) {
                     return CheckResult::Failed;
                 }
             }
