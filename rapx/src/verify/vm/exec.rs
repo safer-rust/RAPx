@@ -291,7 +291,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 }
                 // ── Struct/tuple/enum parameter (non-Box/Vec ADT) ──
                 // Decompose into per-field symbolic values for field-level checking.
-                if let rustc_middle::ty::TyKind::Adt(adt_def, substs) = ty.kind() {
+                if let rustc_middle::ty::TyKind::Adt(adt_def, _) = ty.kind() {
                     if adt_def.is_enum() {
                         let term = self.fresh_int(&format!("param_{}", local_idx));
                         self.set_local(
@@ -306,84 +306,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         );
                         continue;
                     }
-                    let variant = adt_def.non_enum_variant();
                     let mut elem_alloc: FxHashMap<Ty<'tcx>, (AllocId, Int<'z3>)> =
                         FxHashMap::default();
-                    for (idx, field_def) in variant.fields.iter().enumerate() {
-                        let field_ty: Ty<'tcx> =
-                            crate::helpers::mir_utils::field_ty(self.tcx, field_def, substs);
-                        if let rustc_middle::ty::TyKind::RawPtr(inner, _) = field_ty.kind() {
-                            self.init_ptr_field(
-                                local,
-                                vec![idx],
-                                field_ty,
-                                *inner,
-                                local_idx,
-                                idx,
-                                &mut elem_alloc,
-                                true,
-                                "field_nn",
-                            );
-                        } else if let Some(pointee) = self.find_nn_pointee(field_ty) {
-                            self.init_ptr_field(
-                                local,
-                                vec![idx],
-                                field_ty,
-                                pointee,
-                                local_idx,
-                                idx,
-                                &mut elem_alloc,
-                                false,
-                                "field_nn",
-                            );
-                        } else if let rustc_middle::ty::TyKind::Adt(inner_adt, _) = field_ty.kind()
-                        {
-                            if !inner_adt.is_enum() {
-                                self.decompose_adt_fields(
-                                    local,
-                                    vec![idx],
-                                    field_ty,
-                                    local_idx,
-                                    &mut elem_alloc,
-                                    1,
-                                );
-                            } else {
-                                let field_term =
-                                    self.fresh_int(&format!("field_{}_{}", local_idx, idx));
-                                self.set_field_value(
-                                    local,
-                                    vec![idx],
-                                    VmValue {
-                                        z3_term: field_term,
-                                        ty: field_ty,
-                                        provenance: None,
-                                        invariants: ValueInvariants {
-                                            init: true,
-                                            ..Default::default()
-                                        },
-                                        source: ValueSource::None,
-                                    },
-                                );
-                            }
-                        } else {
-                            let field_term =
-                                self.fresh_int(&format!("field_{}_{}", local_idx, idx));
-                            self.set_field_value(
-                                local,
-                                vec![idx],
-                                VmValue {
-                                    z3_term: field_term,
-                                    ty: field_ty,
-                                    provenance: None,
-                                    invariants: ValueInvariants {
-                                        init: true,
-                                        ..Default::default()
-                                    },
-                                    source: ValueSource::None,
-                                },
-                            );
-                        }
-                    }
+                    self.decompose_adt_fields(local, vec![], ty, local_idx, &mut elem_alloc, 0);
                     // A single-raw-pointer wrapper (e.g. `NonNull<T>`) *is* its
                     // pointer, so carry the field's provenance onto the whole local —
                     // otherwise alias/ownership reasoning can't trace a deref of
@@ -982,11 +907,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     ) {
         // A `NonNull<T>` guarantees its inner pointer is aligned to `T`; a raw
         // pointer carries no such guarantee.
-        let align_n = if is_raw_ptr {
-            None
-        } else {
-            Some(self.align_sym(pointee))
-        };
         let invariants = if is_raw_ptr {
             // A raw pointer carries no non-null / init / align guarantee; those
             // facts must come from the struct's own `#[rapx::invariant]`s.
@@ -994,7 +914,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         } else {
             ValueInvariants {
                 init: true,
-                align_n,
+                align_n: Some(self.align_sym(pointee)),
                 ..Default::default()
             }
         };
@@ -1136,29 +1056,37 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 self.init_ptr_field(
                     local, path, field_ty, *inner, local_idx, idx, elem_alloc, true, "field_nn",
                 );
-            } else if let Some(pointee) = self.find_nn_pointee(field_ty) {
+                continue;
+            }
+            if let Some(pointee) = self.find_nn_pointee(field_ty) {
                 self.init_ptr_field(
                     local, path, field_ty, pointee, local_idx, idx, elem_alloc, false, "field_nn",
                 );
-            } else if matches!(field_ty.kind(), rustc_middle::ty::TyKind::Adt(_, _)) {
-                self.decompose_adt_fields(local, path, field_ty, local_idx, elem_alloc, depth + 1);
-            } else {
-                let field_term = self.fresh_int(&format!("field_{}_{}", local_idx, idx));
-                self.set_field_value(
-                    local,
-                    path.clone(),
-                    VmValue {
-                        z3_term: field_term,
-                        ty: field_ty,
-                        provenance: None,
-                        invariants: ValueInvariants {
-                            init: true,
-                            ..Default::default()
-                        },
-                        source: ValueSource::None,
-                    },
-                );
+                continue;
             }
+            if let rustc_middle::ty::TyKind::Adt(inner_adt, _) = field_ty.kind() {
+                if !inner_adt.is_enum() {
+                    self.decompose_adt_fields(
+                        local, path, field_ty, local_idx, elem_alloc, depth + 1,
+                    );
+                    continue;
+                }
+            }
+            let field_term = self.fresh_int(&format!("field_{}_{}", local_idx, idx));
+            self.set_field_value(
+                local,
+                path,
+                VmValue {
+                    z3_term: field_term,
+                    ty: field_ty,
+                    provenance: None,
+                    invariants: ValueInvariants {
+                        init: true,
+                        ..Default::default()
+                    },
+                    source: ValueSource::None,
+                },
+            );
         }
     }
 
@@ -2522,18 +2450,14 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
     }
 
-    /// Compute the slice length for a `&[T]` / `&mut [T]` value: the allocation
-    /// size divided by the element size. Reuses the allocation's size term so
-    /// it agrees with InBound/`alloc.size` checks.  Uses the symbolic element
-    /// size (`size_sym_read`) so `len = (len·S) / S` cancels to `len` for a
-    /// generic element type — mirroring `set_len_from_alloc`.
-    pub(crate) fn slice_len_from_value(&self, val: &VmValue<'z3, 'tcx>) -> Option<Int<'z3>> {
-        let alloc_id = val.provenance_alloc_id()?;
+    /// The slice/array element count for an allocation: the materialized
+    /// `slice_len`, or `size / elem_size` as a fallback for allocations created
+    /// before materialization (e.g. some call effects).  Uses the symbolic
+    /// element size (`size_sym_read`) so `len = (len·S) / S` cancels to `len`
+    /// for a generic element type — mirroring `set_len_from_alloc`.  Returns
+    /// `None` when the element type is unknown.
+    pub(crate) fn slice_len_of_alloc(&self, alloc_id: AllocId) -> Option<Int<'z3>> {
         let alloc = self.alloc(alloc_id);
-        // The length is materialized on the data allocation (the fat pointer's
-        // metadata word); `size` is `slice_len * sizeof_T`.  Fall back to the
-        // `size / elem_size` derivation for allocations created before the
-        // materialization was introduced (e.g. some call effects).
         if let Some(len) = alloc.slice_len() {
             return Some(len.clone());
         }
@@ -2543,6 +2467,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return Some(alloc.size.clone());
         }
         Some(alloc.size.div(&elem_term))
+    }
+
+    /// The slice length of a `&[T]` / `&mut [T]` value, resolved through its
+    /// provenance allocation (see [`Self::slice_len_of_alloc`]).
+    pub(crate) fn slice_len_from_value(&self, val: &VmValue<'z3, 'tcx>) -> Option<Int<'z3>> {
+        self.slice_len_of_alloc(val.provenance_alloc_id()?)
     }
 
     /// Resolve `x.len()` for a pointer whose pointee ADT carries a `len` field
@@ -3991,18 +3921,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         };
         // Prefer the materialized slice length; fall back to `size / elem_size`
         // for allocations that never got a materialized `slice_len`.
-        let alloc = self.alloc(da_id);
-        let len = match alloc.slice_len() {
-            Some(len) => len.clone(),
-            None => {
-                let elem_sz_term = alloc
-                    .element_ty
-                    .as_ty()
-                    .map(|ty| self.size_sym_read(ty))
-                    .unwrap_or_else(|| Int::from_u64(self.z3_ctx, 1));
-                alloc.size.div(&elem_sz_term)
-            }
-        };
+        let len = self
+            .slice_len_of_alloc(da_id)
+            .unwrap_or_else(|| self.alloc(da_id).size.clone());
         let Some(index_term) = self.eval_contract_expr_simple(index) else {
             return;
         };
