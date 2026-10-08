@@ -523,10 +523,7 @@ impl PropertyChecker {
         vm_state: &VmState<'z3, 'tcx>,
         ty: Ty<'tcx>,
     ) -> bool {
-        match ty.kind() {
-            TyKind::Param(_) | TyKind::Alias(..) | TyKind::Error(_) => false,
-            _ => vm_state.size_of_ty(ty) == 0,
-        }
+        !self.is_generic_ty(ty) && vm_state.size_of_ty(ty) == 0
     }
 
     pub(super) fn is_generic_ty<'tcx>(&self, ty: Ty<'tcx>) -> bool {

@@ -1667,6 +1667,14 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         self.constraints.assertions.push(lhs._eq(&rhs));
     }
 
+    /// The provenance allocation's alignment, when it is non-trivial (≠ 1).
+    fn alloc_align_of(&self, val: &VmValue<'z3, 'tcx>) -> Option<Int<'z3>> {
+        val.provenance
+            .as_ref()
+            .map(|p| self.alloc(p.alloc_id).align.clone())
+            .filter(|a| a.simplify().as_u64() != Some(1))
+    }
+
     /// Evaluate an Rvalue into a VmValue.
     fn eval_rvalue(
         &mut self,
@@ -1694,11 +1702,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             }
             Rvalue::Ref(_, _borrow_kind, place) => {
                 if let Some(addr) = self.address_of_place(place) {
-                    let alloc_align = addr
-                        .provenance
-                        .as_ref()
-                        .map(|p| self.alloc(p.alloc_id).align.clone())
-                        .filter(|a| a.simplify().as_u64() != Some(1));
+                    let alloc_align = self.alloc_align_of(&addr);
                     // Inherit in_bounds. For &[T] created via Deref of a
                     // fat raw ptr (inlined from_raw_parts), set in_bounds
                     // like ReturnFreshAllocation does in builtin_models.
@@ -1785,11 +1789,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             }
             Rvalue::RawPtr(_, place) => {
                 if let Some(addr) = self.address_of_place(place) {
-                    let alloc_align = addr
-                        .provenance
-                        .as_ref()
-                        .map(|p| self.alloc(p.alloc_id).align.clone())
-                        .filter(|a| a.simplify().as_u64() != Some(1));
+                    let alloc_align = self.alloc_align_of(&addr);
                     let source_in_bounds = self
                         .local_value(place.local)
                         .is_some_and(|v| v.invariants.in_bounds);
@@ -3611,11 +3611,29 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         Some(self.relop_to_bool(pred.op, &lhs, &rhs))
     }
 
+    /// Evaluate a numeric binary operation over two symbolic terms.
+    fn eval_numeric_binary(
+        &self,
+        l: &Int<'z3>,
+        r: &Int<'z3>,
+        op: crate::verify::contract::NumericBinOp,
+    ) -> Option<Int<'z3>> {
+        use crate::verify::contract::NumericBinOp;
+        Some(match op {
+            NumericBinOp::Add => Int::add(self.z3_ctx, &[l, r]),
+            NumericBinOp::Sub => Int::sub(self.z3_ctx, &[l, r]),
+            NumericBinOp::Mul => Int::mul(self.z3_ctx, &[l, r]),
+            NumericBinOp::Div => l.div(r),
+            NumericBinOp::Rem => l.rem(r),
+            _ => return None,
+        })
+    }
+
     fn eval_contract_expr_simple(
         &self,
         expr: &crate::verify::contract::ContractExpr<'tcx>,
     ) -> Option<Int<'z3>> {
-        use crate::verify::contract::{ContractExpr, NumericBinOp};
+        use crate::verify::contract::ContractExpr;
         match expr {
             ContractExpr::SizeOf(ty) => {
                 // Symbolic-aware: a generic `T` yields the shared `sizeof_T`
@@ -3682,13 +3700,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             ContractExpr::Binary { op, lhs, rhs } => {
                 let l = self.eval_contract_expr_simple(lhs)?;
                 let r = self.eval_contract_expr_simple(rhs)?;
-                Some(match op {
-                    NumericBinOp::Mul => Int::mul(self.z3_ctx, &[&l, &r]),
-                    NumericBinOp::Add => Int::add(self.z3_ctx, &[&l, &r]),
-                    NumericBinOp::Sub => Int::sub(self.z3_ctx, &[&l, &r]),
-                    NumericBinOp::Div => l.div(&r),
-                    _ => return None,
-                })
+                self.eval_numeric_binary(&l, &r, *op)
             }
             ContractExpr::Const(n) => Some(Int::from_u64(self.z3_ctx, *n as u64)),
             _ => None,
@@ -4011,7 +4023,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         view_ty: Ty<'tcx>,
         expr: &ContractExpr<'tcx>,
     ) -> Option<Int<'z3>> {
-        use crate::verify::contract::NumericBinOp;
         match expr {
             ContractExpr::Const(v) => Some(Int::from_u64(self.z3_ctx, *v as u64)),
             ContractExpr::SizeOf(ty) => Some(self.size_sym_read(*ty)),
@@ -4025,14 +4036,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             ContractExpr::Binary { op, lhs, rhs } => {
                 let l = self.eval_pointee_expr(alloc_id, view_ty, lhs)?;
                 let r = self.eval_pointee_expr(alloc_id, view_ty, rhs)?;
-                Some(match op {
-                    NumericBinOp::Add => Int::add(self.z3_ctx, &[&l, &r]),
-                    NumericBinOp::Sub => Int::sub(self.z3_ctx, &[&l, &r]),
-                    NumericBinOp::Mul => Int::mul(self.z3_ctx, &[&l, &r]),
-                    NumericBinOp::Div => l.div(&r),
-                    NumericBinOp::Rem => l.rem(&r),
-                    _ => return None,
-                })
+                self.eval_numeric_binary(&l, &r, *op)
             }
             ContractExpr::Len(inner) => {
                 let val = self.eval_pointee_expr_value(alloc_id, view_ty, inner)?;
@@ -4063,7 +4067,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     fn set_align_for_value(&mut self, property: &Property<'tcx>, mut val: VmValue<'z3, 'tcx>) {
         if let Some(PropertyArg::Ty(ty)) = property.args().get(1) {
             let align = self.align_sym(*ty);
-            if align.simplify().as_u64() != Some(1) {
+            let align_u64 = align.simplify().as_u64();
+            if align_u64 != Some(1) {
                 val.invariants.align_n = Some(align.clone());
                 // For a *concrete* alignment, also record `term % align == 0` as a
                 // path condition.  `align_n` is a value invariant that pointer
@@ -4073,7 +4078,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 // prove `p % align == 0`.  (A symbolic `align_T` is skipped — the
                 // non-linear `% align_T` is not decidable, so `align_n` alone is
                 // used for that case.)
-                if align.simplify().as_u64().is_some() {
+                if align_u64.is_some() {
                     self.constraints.assertions.push(
                         val.z3_term
                             .rem(&align)

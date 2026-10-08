@@ -54,6 +54,15 @@ impl Contains {
             (Contains::No, Contains::No) => Contains::No,
         }
     }
+
+    /// Map the three-valued verdict to a [`CheckResult`].
+    fn to_check(self) -> CheckResult {
+        match self {
+            Contains::Yes => CheckResult::Failed,
+            Contains::Maybe => CheckResult::Unknown(UnknownReason::Unimplemented),
+            Contains::No => CheckResult::ProvedByRule,
+        }
+    }
 }
 
 impl PropertyChecker {
@@ -163,11 +172,7 @@ pub(crate) fn contain_no_type_check<'tcx>(
     for name in negatives {
         defs.extend_from_slice(crate::def_id::negative_type_defs(name));
     }
-    match type_structurally_contains(tcx, ty, &defs, impl_def_id, is_sync) {
-        Contains::Yes => CheckResult::Failed,
-        Contains::Maybe => CheckResult::Unknown(UnknownReason::Unimplemented),
-        Contains::No => CheckResult::ProvedByRule,
-    }
+    type_structurally_contains(tcx, ty, &defs, impl_def_id, is_sync).to_check()
 }
 
 /// Type-level `NoRawPtr` obligation check (no VM state required).
@@ -177,11 +182,7 @@ pub(crate) fn no_raw_ptr_check<'tcx>(
     impl_def_id: DefId,
     is_sync: bool,
 ) -> CheckResult {
-    match find_raw_ptr(tcx, ty, impl_def_id, is_sync) {
-        Contains::Yes => CheckResult::Failed,
-        Contains::Maybe => CheckResult::Unknown(UnknownReason::Unimplemented),
-        Contains::No => CheckResult::ProvedByRule,
-    }
+    find_raw_ptr(tcx, ty, impl_def_id, is_sync).to_check()
 }
 
 /// Type-level `NoInternalMut` obligation check (no VM state required): `Failed`
@@ -288,11 +289,7 @@ pub(crate) fn ref_send_check<'tcx>(
     impl_def_id: DefId,
     is_sync: bool,
 ) -> CheckResult {
-    match find_unsynchronized_mutation(tcx, ty, impl_def_id, is_sync) {
-        Contains::Yes => CheckResult::Failed,
-        Contains::Maybe => CheckResult::Unknown(UnknownReason::Unimplemented),
-        Contains::No => CheckResult::ProvedByRule,
-    }
+    find_unsynchronized_mutation(tcx, ty, impl_def_id, is_sync).to_check()
 }
 
 /// Whether `ty` implements `Clone` (which copies any raw-pointer field, aliasing

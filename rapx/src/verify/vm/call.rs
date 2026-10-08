@@ -1628,15 +1628,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             } => {
                 let stride = *stride;
                 if let (Some(base), Some(offset)) = (args.get(*base_arg), args.get(*offset_arg)) {
-                    let stride_term = match stride {
-                        Some(s) => Int::from_u64(self.z3_ctx, s),
-                        None => {
-                            let dest_ty = self.body().local_decls[dest].ty;
-                            let pointee =
-                                crate::helpers::mir_utils::pointee_ty(dest_ty).unwrap_or(dest_ty);
-                            self.size_sym(pointee)
-                        }
-                    };
+                    let stride_term = self.pointer_stride_term(dest, stride);
                     let adjusted_offset = if stride == Some(1) {
                         offset.z3_term.clone()
                     } else {
@@ -1704,15 +1696,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             } => {
                 let stride = *stride;
                 if let (Some(base), Some(offset)) = (args.get(*base_arg), args.get(*offset_arg)) {
-                    let stride_term = match stride {
-                        Some(s) => Int::from_u64(self.z3_ctx, s),
-                        None => {
-                            let dest_ty = self.body().local_decls[dest].ty;
-                            let pointee =
-                                crate::helpers::mir_utils::pointee_ty(dest_ty).unwrap_or(dest_ty);
-                            self.size_sym(pointee)
-                        }
-                    };
+                    let stride_term = self.pointer_stride_term(dest, stride);
                     let scaled = if stride == Some(1) {
                         offset.z3_term.clone()
                     } else {
@@ -2884,6 +2868,19 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return Some(base_align.clone());
         }
         None
+    }
+
+    /// The byte stride for a pointer add/sub: the fixed `stride`, or the pointee's
+    /// symbolic size when the stride is element-sized (a generic `T`).
+    fn pointer_stride_term(&mut self, dest: Local, stride: Option<u64>) -> Int<'z3> {
+        match stride {
+            Some(s) => Int::from_u64(self.z3_ctx, s),
+            None => {
+                let dest_ty = self.body().local_decls[dest].ty;
+                let pointee = crate::helpers::mir_utils::pointee_ty(dest_ty).unwrap_or(dest_ty);
+                self.size_sym(pointee)
+            }
+        }
     }
 
     pub(crate) fn propagate_const_bytes_to_tracked(&mut self, args: &[Spanned<Operand<'tcx>>]) {
