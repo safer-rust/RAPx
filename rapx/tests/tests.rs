@@ -1,7 +1,6 @@
 #![allow(clippy::bool_assert_comparison)]
 use fs4::fs_std::FileExt;
 use std::ffi::OsString;
-use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -34,23 +33,33 @@ fn path_count_for(output: &str, fn_name: &str) -> usize {
 }
 
 struct LockGuard {
-    file: std::fs::File,
-    path: PathBuf,
+    // Held for its flock; dropped (fd closed) when the guard goes out of scope.
+    _file: std::fs::File,
 }
 
 impl LockGuard {
     fn new(path: PathBuf) -> Self {
-        let file = File::create(&path).expect("Failed to create lock file");
+        // A per-fixture lock keyed by the fixture path, kept in the system temp
+        // dir and never deleted.  Deleting it would open the classic
+        // inode-switch race: a waiter holds a lock on the (now-unlinked) inode
+        // while a newcomer creates and locks a fresh inode, so both proceed.
+        let lock_name = format!("rapx-test-{:016x}.lock", hash_path(&path));
+        let lock_path = std::env::temp_dir().join(lock_name);
+        let file = std::fs::File::options()
+            .create(true)
+            .write(true)
+            .open(&lock_path)
+            .expect("Failed to open lock file");
         file.lock_exclusive().expect("Failed to acquire lock");
-        Self { file, path }
+        Self { _file: file }
     }
 }
 
-impl Drop for LockGuard {
-    fn drop(&mut self) {
-        let _ = self.file.unlock();
-        let _ = std::fs::remove_file(&self.path);
-    }
+fn hash_path(path: &Path) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    path.hash(&mut hasher);
+    hasher.finish()
 }
 
 #[inline(always)]
