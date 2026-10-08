@@ -13,7 +13,7 @@ use crate::verify::api_classify::is_as_ptr;
 use crate::verify::vm::state::{AllocId, VmState};
 use crate::verify::{
     contract::{ContractExpr, Property, PropertyArg},
-    report::CheckResult,
+    report::{CheckResult, UnknownReason},
 };
 
 use super::PropertyChecker;
@@ -93,7 +93,7 @@ impl PropertyChecker {
                     .and_then(|d| vm_state.local_value(d).cloned())
             });
         let Some(value) = value else {
-            return CheckResult::Unknown;
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
 
         // If we have provenace, check liveness and byte-level tracking
@@ -172,7 +172,7 @@ impl PropertyChecker {
         let is_strict =
             crate::verify::api_classify::is_cstr_unchecked_constructor(checkpoint.callee);
         if is_strict {
-            CheckResult::Unknown
+            CheckResult::Unknown(UnknownReason::Unimplemented)
         } else {
             CheckResult::ProvedByRule
         }

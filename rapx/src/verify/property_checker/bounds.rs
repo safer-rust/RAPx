@@ -9,7 +9,7 @@ use crate::verify::api_classify;
 use crate::verify::contract::{
     ContractExpr, NumericBinOp, PlaceBase, Property, PropertyArg, RelOp,
 };
-use crate::verify::report::CheckResult;
+use crate::verify::report::{CheckResult, UnknownReason};
 use crate::verify::vm::state::{OffsetKind, VmState, VmValue};
 use rustc_middle::mir::{Local, Operand, Rvalue, StatementKind};
 use rustc_middle::ty::{Ty, TyKind};
@@ -51,7 +51,7 @@ impl PropertyChecker {
         }
 
         let Some(value) = self.target_value(vm_state, checkpoint, property) else {
-            return CheckResult::Unknown;
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
         // `in_bounds` records "points at a valid element" (established by a
         // single-element deref/contract), so it only discharges a single-element
@@ -91,7 +91,7 @@ impl PropertyChecker {
         }
         let access = self.access_bytes(vm_state, property, 1, 2, checkpoint, &value);
         let Some(alloc_id) = value.provenance_alloc_id() else {
-            return CheckResult::Unknown;
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
         let base = vm_state.allocation_base(alloc_id).clone();
         let size = vm_state.allocation_size(alloc_id).clone();
@@ -146,7 +146,7 @@ impl PropertyChecker {
                 let r = match solver.check() {
                     SatResult::Unsat => CheckResult::ProvedBySmt,
                     SatResult::Sat => CheckResult::Failed,
-                    _ => CheckResult::Unknown,
+                    _ => CheckResult::Unknown(UnknownReason::SmtTimeout),
                 };
                 solver.pop(1);
                 return r;
@@ -179,7 +179,7 @@ impl PropertyChecker {
             let r = match solver.check() {
                 SatResult::Unsat => CheckResult::ProvedBySmt,
                 SatResult::Sat => CheckResult::Failed,
-                _ => CheckResult::Unknown,
+                _ => CheckResult::Unknown(UnknownReason::SmtTimeout),
             };
             solver.pop(1);
             return r;
@@ -203,7 +203,7 @@ impl PropertyChecker {
         if let Some(s) = vm_state.generic_elem_size(alloc_id) {
             solver.pop(1);
             let on_sat = if fallback_for_generic {
-                CheckResult::Unknown
+                CheckResult::Unknown(UnknownReason::Unimplemented)
             } else {
                 CheckResult::Failed
             };
@@ -214,9 +214,11 @@ impl PropertyChecker {
         let sat_result = solver.check();
         let r = match sat_result {
             SatResult::Unsat => CheckResult::ProvedBySmt,
-            SatResult::Sat if fallback_for_generic => CheckResult::Unknown,
+            SatResult::Sat if fallback_for_generic => {
+                CheckResult::Unknown(UnknownReason::Unimplemented)
+            }
             SatResult::Sat => CheckResult::Failed,
-            _ => CheckResult::Unknown,
+            _ => CheckResult::Unknown(UnknownReason::SmtTimeout),
         };
         solver.pop(1);
         r
@@ -297,7 +299,7 @@ impl PropertyChecker {
 
         let slice_val = match slice_arg_idx.and_then(|idx| checkpoint.args.get(idx)) {
             Some(op) => vm_state.value_of_operand(op),
-            None => return CheckResult::Unknown,
+            None => return CheckResult::Unknown(UnknownReason::Unimplemented),
         };
         let (index_val, is_range) = match index_arg_idx.and_then(|idx| checkpoint.args.get(idx)) {
             Some(op) => {
@@ -307,12 +309,12 @@ impl PropertyChecker {
                     (vm_state.value_of_operand(op), false)
                 }
             }
-            None => return CheckResult::Unknown,
+            None => return CheckResult::Unknown(UnknownReason::Unimplemented),
         };
 
         let data_alloc_id = slice_val.provenance_alloc_id();
         let Some(data_alloc_id) = data_alloc_id else {
-            return CheckResult::Unknown;
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
 
         // Prefer the materialized slice length; fall back to `size / elem_size`
@@ -343,7 +345,7 @@ impl PropertyChecker {
         let r = match solver.check() {
             SatResult::Unsat => CheckResult::ProvedBySmt,
             SatResult::Sat => CheckResult::Failed,
-            _ => CheckResult::Unknown,
+            _ => CheckResult::Unknown(UnknownReason::SmtTimeout),
         };
         solver.pop(1);
         r
@@ -417,7 +419,7 @@ impl PropertyChecker {
         property: &Property<'tcx>,
     ) -> CheckResult {
         let Some(v1) = self.target_value(vm_state, checkpoint, property) else {
-            return CheckResult::Unknown;
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
         // Get the second pointer from the property args (not from checkpoint directly).
         // The property may reference the two pointers in any order (e.g. dst at args[0]).
@@ -446,7 +448,7 @@ impl PropertyChecker {
             });
         let Some(v2) = v2 else {
             // Without a second pointer we cannot prove non-overlap.
-            return CheckResult::Unknown;
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
         // Only discharge non-overlap when both pointers carry provenance into
         // distinct allocations. `Option` comparison here is unsound: a `None`
@@ -482,7 +484,7 @@ impl PropertyChecker {
                 let r = match solver.check() {
                     SatResult::Unsat => CheckResult::ProvedBySmt,
                     SatResult::Sat => CheckResult::Failed,
-                    _ => CheckResult::Unknown,
+                    _ => CheckResult::Unknown(UnknownReason::SmtTimeout),
                 };
                 solver.pop(1);
                 return r;
@@ -496,7 +498,7 @@ impl PropertyChecker {
         let r = match solver.check() {
             SatResult::Unsat => CheckResult::ProvedBySmt,
             SatResult::Sat => CheckResult::Failed,
-            _ => CheckResult::Unknown,
+            _ => CheckResult::Unknown(UnknownReason::SmtTimeout),
         };
         solver.pop(1);
         r

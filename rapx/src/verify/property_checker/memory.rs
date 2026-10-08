@@ -8,7 +8,7 @@
 use crate::helpers::mir_scan::Checkpoint;
 use crate::verify::api_classify;
 use crate::verify::contract::{ContractExpr, Property, PropertyArg};
-use crate::verify::report::CheckResult;
+use crate::verify::report::{CheckResult, UnknownReason};
 use crate::verify::vm::state::{AllocId, OffsetKind, VmState, VmValue};
 use rustc_hash::FxHashSet;
 use rustc_middle::mir::{Local, Operand, Rvalue, StatementKind};
@@ -29,7 +29,7 @@ impl PropertyChecker {
         property: &Property<'tcx>,
     ) -> CheckResult {
         let Some(value) = self.target_value(vm_state, checkpoint, property) else {
-            return CheckResult::Unknown;
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
 
         if self.zst_guard(vm_state, checkpoint, property) {
@@ -202,7 +202,7 @@ impl PropertyChecker {
         let r = match local.check() {
             z3::SatResult::Sat => CheckResult::Failed,
             z3::SatResult::Unsat => CheckResult::ProvedBySmt,
-            z3::SatResult::Unknown => CheckResult::Unknown,
+            z3::SatResult::Unknown => CheckResult::Unknown(UnknownReason::SmtTimeout),
         };
         local.pop(1);
         if matches!(r, CheckResult::Failed) {
@@ -270,7 +270,7 @@ impl PropertyChecker {
         property: &Property<'tcx>,
     ) -> CheckResult {
         let Some(value) = self.target_value(vm_state, checkpoint, property) else {
-            return CheckResult::Unknown;
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
         if value.invariants.non_null {
             return CheckResult::ProvedByRule;
@@ -313,7 +313,7 @@ impl PropertyChecker {
             Some(PropertyArg::Expr(ContractExpr::Place(p))) => Some(p),
             _ => None,
         }) else {
-            return CheckResult::Unknown;
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
         if self.is_null(vm_state, checkpoint, place) {
             CheckResult::ProvedByRule
@@ -374,7 +374,7 @@ impl PropertyChecker {
         property: &Property<'tcx>,
     ) -> CheckResult {
         let Some(value) = self.target_value(vm_state, checkpoint, property) else {
-            return CheckResult::Unknown;
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
         let value = self.resolve_pointer_provenance(vm_state, value);
 
@@ -413,7 +413,7 @@ impl PropertyChecker {
             if value.z3_term.to_string().contains("const_") {
                 return CheckResult::Failed;
             }
-            return CheckResult::Unknown;
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
 
         if vm_state.alloc(alloc_id).facts.dead {
@@ -571,7 +571,7 @@ impl PropertyChecker {
             let r = match solver.check() {
                 SatResult::Unsat => CheckResult::ProvedBySmt,
                 SatResult::Sat => CheckResult::Failed,
-                _ => CheckResult::Unknown,
+                _ => CheckResult::Unknown(UnknownReason::SmtTimeout),
             };
             solver.pop(1);
             return r;
@@ -614,7 +614,7 @@ impl PropertyChecker {
                 &access,
                 &base,
                 &size,
-                CheckResult::Unknown,
+                CheckResult::Unknown(UnknownReason::Unimplemented),
                 elem_size.as_ref(),
             );
         }
@@ -661,7 +661,7 @@ impl PropertyChecker {
         let r = match solver.check() {
             SatResult::Unsat => CheckResult::ProvedBySmt,
             SatResult::Sat => on_sat,
-            _ => CheckResult::Unknown,
+            _ => CheckResult::Unknown(UnknownReason::SmtTimeout),
         };
         solver.pop(1);
         r
@@ -677,7 +677,7 @@ impl PropertyChecker {
             return CheckResult::ProvedByRule;
         }
         let Some(value) = self.target_value(vm_state, checkpoint, property) else {
-            return CheckResult::Unknown;
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
         if self.is_concrete_zst(vm_state, value.ty) {
             return CheckResult::ProvedByRule;
@@ -857,7 +857,7 @@ impl PropertyChecker {
             }
             local.pop(1);
         }
-        CheckResult::Unknown
+        CheckResult::Unknown(UnknownReason::Unimplemented)
     }
 
     pub(super) fn trace_alloc_ids<'z3, 'tcx>(
@@ -924,13 +924,13 @@ impl PropertyChecker {
         property: &Property<'tcx>,
     ) -> CheckResult {
         let Some(value) = self.target_value(vm_state, checkpoint, property) else {
-            return CheckResult::Unknown;
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
         let Some(id) = value.provenance_alloc_id() else {
             return if value.invariants.non_null || value.invariants.init {
                 CheckResult::ProvedByRule
             } else {
-                CheckResult::Unknown
+                CheckResult::Unknown(UnknownReason::Unimplemented)
             };
         };
 

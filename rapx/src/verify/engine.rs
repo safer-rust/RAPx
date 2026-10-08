@@ -15,7 +15,7 @@ use crate::analysis::path::PathTree;
 
 use super::{
     contract::{AndProperty, AtomProperty, OrProperty, Property},
-    report::CheckResult,
+    report::{CheckResult, UnknownReason},
     slicer::{BackwardSlicer, RelevantItem},
 };
 use crate::helpers::mir_scan::{Checkpoint, CheckpointLocation};
@@ -153,7 +153,7 @@ impl<'tcx> VerifyEngine<'tcx> {
         checkpoint: &Checkpoint<'tcx>,
     ) -> Vec<(CheckResult, String)> {
         let Some(slot) = self.drop_referent_local(checkpoint) else {
-            return vec![(CheckResult::Unknown, String::new())];
+            return vec![(CheckResult::Unknown(UnknownReason::Unimplemented), String::new())];
         };
         let caller = checkpoint.caller;
         let target = checkpoint.block.as_usize();

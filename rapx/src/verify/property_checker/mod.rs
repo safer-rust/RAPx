@@ -13,7 +13,7 @@ use crate::helpers::mir_scan::Checkpoint;
 use crate::verify::vm::state::VmState;
 use crate::verify::{
     contract::{Property, PropertyKind},
-    report::CheckResult,
+    report::{CheckResult, UnknownReason},
 };
 
 mod alias;
@@ -129,7 +129,7 @@ impl PropertyChecker {
                     self.check_ref_send(vm_state, checkpoint, property)
                 }
 
-                _ => CheckResult::Unknown,
+                _ => CheckResult::Unknown(UnknownReason::Unimplemented),
             },
         }
     }

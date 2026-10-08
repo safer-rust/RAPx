@@ -498,11 +498,13 @@ pub(crate) struct Memory<'z3, 'tcx> {
     /// sentinel, so `init`/`nul` are derived from `select`, not stored per byte.
     pub(crate) byte_arrays: FxHashMap<AllocId, Array<'z3>>,
 
-    /// The highest concrete byte offset written to each allocation.  Z3 arrays
-    /// cannot enumerate their stored indices, so this bounds the `0..=max` range
-    /// the byte-level checkers iterate; `select != UNINIT` distinguishes written
-    /// from unwritten offsets within that range.
-    pub(crate) byte_max: FxHashMap<AllocId, usize>,
+    /// The concrete byte offsets written to each allocation.  Z3 arrays cannot
+    /// enumerate their stored indices, so the byte-level checkers iterate this
+    /// set directly instead of scanning the allocation's (possibly symbolic or
+    /// huge) `size` range.  Only *concrete* writes are recorded: a symbolic
+    /// `byte_write` (e.g. a symbolic `ValidCStr` length) still updates the byte
+    /// array but not this set.
+    pub(crate) byte_written: FxHashMap<AllocId, FxHashSet<usize>>,
 
     /// The typed-value (Value) layer: (alloc_id, viewed_type, path) → value.
     /// `path == []` is the allocation's *whole* value (the rvalue bound to a

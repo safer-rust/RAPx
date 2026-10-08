@@ -5,7 +5,7 @@
 
 use crate::helpers::mir_scan::Checkpoint;
 use crate::verify::contract::Property;
-use crate::verify::report::CheckResult;
+use crate::verify::report::{CheckResult, UnknownReason};
 use crate::verify::vm::state::VmState;
 
 use super::PropertyChecker;
@@ -19,7 +19,9 @@ impl PropertyChecker {
         match crate::verify::vm::alias::check_alias_vm(vm_state, checkpoint) {
             crate::verify::vm::alias::VmAliasResult::Proved => CheckResult::ProvedByRule,
             crate::verify::vm::alias::VmAliasResult::Failed(_msg) => CheckResult::Failed,
-            crate::verify::vm::alias::VmAliasResult::Unknown => CheckResult::Unknown,
+            crate::verify::vm::alias::VmAliasResult::Unknown => {
+                CheckResult::Unknown(UnknownReason::Unimplemented)
+            }
         }
     }
 
@@ -30,7 +32,7 @@ impl PropertyChecker {
         property: &Property<'tcx>,
     ) -> CheckResult {
         let Some(value) = self.target_value(vm_state, checkpoint, property) else {
-            return CheckResult::Unknown;
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
         let value = self.resolve_pointer_provenance(vm_state, value);
         // `p` may be a pointer just derived from an owner (`Box::into_raw` /

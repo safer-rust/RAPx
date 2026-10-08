@@ -36,7 +36,7 @@ use super::{
     engine::VerifyEngine,
     loop_sensitivity::{LoopSensitivityAnalyzer, RepeatStrategy},
     path_extractor::{CallGroup, PathExtractor},
-    report::{CheckResult, PropertyCheckResult, VerificationReport},
+    report::{CheckResult, PropertyCheckResult, UnknownReason, VerificationReport},
     slicer::RelevantItem,
     target::{
         FunctionTarget, MarkerTraitKind, TraitEnsurance, TraitEnsuranceKind, VerifyTargetCollector,
@@ -180,7 +180,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
             ),
             Property::And(and) => {
                 self.combine_check_paths(view, &and.conjuncts, CheckResult::and, |r| {
-                    matches!(r, CheckResult::Failed | CheckResult::Unknown)
+                    matches!(r, CheckResult::Failed | CheckResult::Unknown(_))
                 })
             }
             Property::Or(or) => {
@@ -306,7 +306,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
             if !has_failed {
                 report
                     .results
-                    .retain(|r| !matches!(r.result, CheckResult::Unknown));
+                    .retain(|r| !matches!(r.result, CheckResult::Unknown(_)));
             }
         }
 
@@ -348,7 +348,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
         if !has_failed {
             report
                 .results
-                .retain(|r| !matches!(r.result, CheckResult::Unknown));
+                .retain(|r| !matches!(r.result, CheckResult::Unknown(_)));
         }
 
         report
@@ -968,11 +968,11 @@ impl<'tcx> VerifyRun<'tcx> {
                 let verdict = match result {
                     CheckResult::ProvedByRule | CheckResult::ProvedBySmt => "PROVED",
                     CheckResult::Failed => "FAILED",
-                    CheckResult::Unknown => "UNKNOWN",
+                    CheckResult::Unknown(_) => "UNKNOWN",
                 };
                 rap_info!("  - {label} => {verdict}");
                 any_failed |= matches!(result, CheckResult::Failed);
-                any_unknown |= matches!(result, CheckResult::Unknown);
+                any_unknown |= matches!(result, CheckResult::Unknown(_));
             }
 
             let verdict = if any_failed {
@@ -1004,7 +1004,7 @@ impl<'tcx> VerifyRun<'tcx> {
                         PropertyArg::Ty(t) => Some(*t),
                         _ => None,
                     }) else {
-                        return CheckResult::Unknown;
+                        return CheckResult::Unknown(UnknownReason::Unimplemented);
                     };
                     let negatives: Vec<String> = atom.args[1..]
                         .iter()
@@ -1020,7 +1020,7 @@ impl<'tcx> VerifyRun<'tcx> {
                         PropertyArg::Ty(t) => Some(*t),
                         _ => None,
                     }) else {
-                        return CheckResult::Unknown;
+                        return CheckResult::Unknown(UnknownReason::Unimplemented);
                     };
                     no_raw_ptr_check(self.tcx, ty, impl_def_id, is_sync)
                 }
@@ -1029,7 +1029,7 @@ impl<'tcx> VerifyRun<'tcx> {
                         PropertyArg::Ty(t) => Some(*t),
                         _ => None,
                     }) else {
-                        return CheckResult::Unknown;
+                        return CheckResult::Unknown(UnknownReason::Unimplemented);
                     };
                     no_internal_mut_check(self.tcx, ty)
                 }
@@ -1038,7 +1038,7 @@ impl<'tcx> VerifyRun<'tcx> {
                         PropertyArg::Ty(t) => Some(*t),
                         _ => None,
                     }) else {
-                        return CheckResult::Unknown;
+                        return CheckResult::Unknown(UnknownReason::Unimplemented);
                     };
                     uni_internal_mut_check(self.tcx, ty)
                 }
@@ -1049,7 +1049,7 @@ impl<'tcx> VerifyRun<'tcx> {
                     // the field named in the property) and that it verified.
                     let adt_def_id = match self_ty.kind() {
                         rustc_middle::ty::TyKind::Adt(adt_def, _) => adt_def.did(),
-                        _ => return CheckResult::Unknown,
+                        _ => return CheckResult::Unknown(UnknownReason::Unimplemented),
                     };
                     let field = atom.args.first().and_then(|a| {
                         crate::verify::contract::place::field_name_from_arg(self.tcx, adt_def_id, a)
@@ -1067,7 +1067,7 @@ impl<'tcx> VerifyRun<'tcx> {
                         PropertyArg::Ty(t) => Some(*t),
                         _ => None,
                     }) else {
-                        return CheckResult::Unknown;
+                        return CheckResult::Unknown(UnknownReason::Unimplemented);
                     };
                     atomic_update_check(self.tcx, ty, impl_def_id, is_sync)
                 }
@@ -1076,11 +1076,11 @@ impl<'tcx> VerifyRun<'tcx> {
                         PropertyArg::Ty(t) => Some(*t),
                         _ => None,
                     }) else {
-                        return CheckResult::Unknown;
+                        return CheckResult::Unknown(UnknownReason::Unimplemented);
                     };
                     ref_send_check(self.tcx, ty, impl_def_id, is_sync)
                 }
-                _ => CheckResult::Unknown,
+                _ => CheckResult::Unknown(UnknownReason::Unimplemented),
             },
             Property::And(and) => {
                 let mut overall = CheckResult::ProvedByRule;

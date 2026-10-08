@@ -358,7 +358,7 @@ pub(crate) fn emit_results_counts_and_checkpoints<'tcx>(
         .iter()
         .filter(|r| {
             r.property.contract_kind() != ContractKind::Option_
-                && r.result == CheckResult::Unknown
+                && matches!(r.result, CheckResult::Unknown(_))
         })
         .count();
 

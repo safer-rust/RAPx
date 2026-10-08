@@ -10,7 +10,7 @@ use crate::verify::contract::{
     ContractExpr, NumericBinOp, PlaceBase, Property, PropertyArg, RelOp,
 };
 use crate::verify::def_use::PlaceKey;
-use crate::verify::report::CheckResult;
+use crate::verify::report::{CheckResult, UnknownReason};
 use crate::verify::vm::state::VmState;
 use rustc_hash::FxHashSet;
 use rustc_middle::mir::Operand;
@@ -46,7 +46,7 @@ impl PropertyChecker {
             return CheckResult::ProvedByRule;
         }
         let Some(value) = self.target_value(vm_state, checkpoint, property) else {
-            return CheckResult::Unknown;
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
         let ty = Self::ty_arg(property, 1);
         if let Some(ty) = ty {
@@ -63,7 +63,7 @@ impl PropertyChecker {
                     let r = match solver.check() {
                         SatResult::Unsat => CheckResult::ProvedBySmt,
                         SatResult::Sat => CheckResult::Failed,
-                        _ => CheckResult::Unknown,
+                        _ => CheckResult::Unknown(UnknownReason::SmtTimeout),
                     };
                     solver.pop(1);
                     return r;
@@ -77,7 +77,7 @@ impl PropertyChecker {
                 let r = match solver.check() {
                     SatResult::Unsat => CheckResult::ProvedBySmt,
                     SatResult::Sat => CheckResult::Failed,
-                    _ => CheckResult::Unknown,
+                    _ => CheckResult::Unknown(UnknownReason::SmtTimeout),
                 };
                 solver.pop(1);
                 return r;

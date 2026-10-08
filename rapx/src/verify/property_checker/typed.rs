@@ -6,7 +6,7 @@
 
 use crate::helpers::mir_scan::Checkpoint;
 use crate::verify::contract::{ContractExpr, Property, PropertyArg};
-use crate::verify::report::CheckResult;
+use crate::verify::report::{CheckResult, UnknownReason};
 use crate::verify::vm::state::VmState;
 #[cfg(rapx_has_attr_ir)]
 use rustc_attr_ir::LangItem;
@@ -27,7 +27,7 @@ impl PropertyChecker {
         property: &Property<'tcx>,
     ) -> CheckResult {
         let Some(value) = self.target_value(vm_state, checkpoint, property) else {
-            return CheckResult::Unknown;
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
         let expected = Self::ty_arg(property, 1);
         if let Some(expected_ty) = expected {
@@ -232,7 +232,7 @@ impl PropertyChecker {
                 return CheckResult::Failed;
             }
         }
-        CheckResult::Unknown
+        CheckResult::Unknown(UnknownReason::Unimplemented)
     }
 
     pub(super) fn ty_is_maybe_uninit(ty: Ty<'_>) -> bool {
@@ -250,7 +250,7 @@ impl PropertyChecker {
             _ => None,
         }) {
             Some(t) => t,
-            None => return CheckResult::Unknown,
+            None => return CheckResult::Unknown(UnknownReason::Unimplemented),
         };
         // Resolve a generic `T` to the call-site concrete type (e.g. `Box<i32>`
         // for `drop_in_place::<Box<i32>>`), so `Size(T, 0)` is decided rather
@@ -276,12 +276,12 @@ impl PropertyChecker {
             }
             Some(PropertyArg::Ident(id)) if id == "unsized" => match ty.kind() {
                 TyKind::Slice(_) | TyKind::Str | TyKind::Dynamic(..) => CheckResult::ProvedByRule,
-                _ => CheckResult::Unknown,
+                _ => CheckResult::Unknown(UnknownReason::Unimplemented),
             },
             Some(PropertyArg::Expr(ContractExpr::Const(c))) => {
                 let ty = resolved_ty;
                 if self.is_generic_ty(ty) {
-                    return CheckResult::Unknown;
+                    return CheckResult::Unknown(UnknownReason::Unimplemented);
                 }
                 if vm_state.size_of_ty(ty) as u128 == *c {
                     CheckResult::ProvedByRule
@@ -289,7 +289,7 @@ impl PropertyChecker {
                     CheckResult::Failed
                 }
             }
-            _ => CheckResult::Unknown,
+            _ => CheckResult::Unknown(UnknownReason::Unimplemented),
         }
     }
 
@@ -303,13 +303,13 @@ impl PropertyChecker {
             PropertyArg::Ty(t) => Some(*t),
             _ => None,
         }) else {
-            return CheckResult::Unknown;
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
         let ty = self.instantiate_callsite_ty(vm_state, checkpoint, ty);
         match self.type_has_no_padding(vm_state, ty) {
             Some(true) => CheckResult::ProvedByRule,
             Some(false) => CheckResult::Failed,
-            None => CheckResult::Unknown,
+            None => CheckResult::Unknown(UnknownReason::Unimplemented),
         }
     }
 

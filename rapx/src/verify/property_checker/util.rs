@@ -9,7 +9,7 @@ use crate::verify::contract::{
     ContractExpr, ContractPlace, ContractProjection, NumericBinOp, PlaceBase, Property,
     PropertyArg, RelOp,
 };
-use crate::verify::report::CheckResult;
+use crate::verify::report::{CheckResult, UnknownReason};
 use crate::verify::vm::state::{VmState, VmValue};
 use rustc_middle::mir::{Local, Operand, Rvalue, StatementKind, TerminatorKind};
 #[cfg(rapx_const_ext)]
@@ -336,7 +336,7 @@ impl PropertyChecker {
         let r = match solver.check() {
             SatResult::Unsat => CheckResult::ProvedBySmt,
             SatResult::Sat => CheckResult::Failed,
-            SatResult::Unknown => CheckResult::Unknown,
+            SatResult::Unknown => CheckResult::Unknown(UnknownReason::SmtTimeout),
         };
         solver.pop(1);
         r
@@ -373,7 +373,7 @@ impl PropertyChecker {
         match (r_zst, r_non_zst) {
             (SatResult::Unsat, SatResult::Unsat) => CheckResult::ProvedBySmt,
             (SatResult::Sat, _) | (_, SatResult::Sat) => on_sat,
-            _ => CheckResult::Unknown,
+            _ => CheckResult::Unknown(UnknownReason::SmtTimeout),
         }
     }
 

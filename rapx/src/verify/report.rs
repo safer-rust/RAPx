@@ -9,6 +9,33 @@ use rustc_hir::def_id::DefId;
 use super::contract::Property;
 use crate::helpers::mir_scan::CheckpointLocation;
 
+/// Why a [`CheckResult::Unknown`] could not be discharged.
+///
+/// Carried by the `Unknown` variant so the report can distinguish a solver
+/// timeout (the common case under the fixed per-query budget) from a structural
+/// "no rule for this shape" gap.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UnknownReason {
+    /// The SMT solver returned `unknown` — with the fixed per-query timeout
+    /// this is effectively a timeout on a query it could not decide in time.
+    SmtTimeout,
+    /// The checker has no rule for this shape (unsupported property, unannotated
+    /// callee, unresolvable operand, undecidable generic, …).
+    Unimplemented,
+}
+
+impl UnknownReason {
+    /// Merge two reasons, keeping the more diagnostic one.
+    fn merge(self, other: UnknownReason) -> UnknownReason {
+        match (self, other) {
+            (UnknownReason::SmtTimeout, _) | (_, UnknownReason::SmtTimeout) => {
+                UnknownReason::SmtTimeout
+            }
+            _ => UnknownReason::Unimplemented,
+        }
+    }
+}
+
 /// Verification status for one required property on one path.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum CheckResult {
@@ -22,8 +49,9 @@ pub(crate) enum CheckResult {
     ProvedBySmt,
     /// The verifier found a possible violation for this path.
     Failed,
-    /// The verifier has not implemented or completed the proof for this path.
-    Unknown,
+    /// The verifier has not implemented or completed the proof for this path;
+    /// the reason is carried in the payload.
+    Unknown(UnknownReason),
 }
 
 impl CheckResult {
@@ -34,12 +62,14 @@ impl CheckResult {
 
     /// The user-facing label for this result.  `ProvedByRule` and `ProvedBySmt`
     /// both report as `"Proved"` — the rule/SMT distinction is an internal
-    /// audit signal, not part of the report.
+    /// audit signal, not part of the report.  An `Unknown` result is suffixed
+    /// with its reason when it is not the generic unimplemented case.
     pub(crate) fn label(&self) -> &'static str {
         match self {
             CheckResult::ProvedByRule | CheckResult::ProvedBySmt => "Proved",
             CheckResult::Failed => "Failed",
-            CheckResult::Unknown => "Unknown",
+            CheckResult::Unknown(UnknownReason::SmtTimeout) => "Unknown (timeout)",
+            CheckResult::Unknown(UnknownReason::Unimplemented) => "Unknown",
         }
     }
 
@@ -49,7 +79,10 @@ impl CheckResult {
     pub(crate) fn and(self, other: CheckResult) -> CheckResult {
         match (self, other) {
             (CheckResult::Failed, _) | (_, CheckResult::Failed) => CheckResult::Failed,
-            (CheckResult::Unknown, _) | (_, CheckResult::Unknown) => CheckResult::Unknown,
+            (CheckResult::Unknown(a), CheckResult::Unknown(b)) => {
+                CheckResult::Unknown(a.merge(b))
+            }
+            (CheckResult::Unknown(a), _) | (_, CheckResult::Unknown(a)) => CheckResult::Unknown(a),
             (CheckResult::ProvedByRule, CheckResult::ProvedByRule) => CheckResult::ProvedByRule,
             _ => CheckResult::ProvedBySmt,
         }
@@ -66,7 +99,10 @@ impl CheckResult {
                 CheckResult::ProvedBySmt
             }
             (CheckResult::Failed, CheckResult::Failed) => CheckResult::Failed,
-            _ => CheckResult::Unknown,
+            (CheckResult::Unknown(a), CheckResult::Unknown(b)) => {
+                CheckResult::Unknown(a.merge(b))
+            }
+            (CheckResult::Unknown(a), _) | (_, CheckResult::Unknown(a)) => CheckResult::Unknown(a),
         }
     }
 }

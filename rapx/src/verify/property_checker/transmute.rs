@@ -6,7 +6,7 @@ use crate::helpers::mir_scan::Checkpoint;
 use crate::verify::vm::state::VmState;
 use crate::verify::{
     contract::{Property, PropertyArg},
-    report::CheckResult,
+    report::{CheckResult, UnknownReason},
 };
 
 use super::PropertyChecker;
@@ -53,11 +53,11 @@ impl PropertyChecker {
     ) -> CheckResult {
         let ty = match property.args().first() {
             Some(PropertyArg::Ty(ty)) => *ty,
-            _ => return CheckResult::Unknown,
+            _ => return CheckResult::Unknown(UnknownReason::Unimplemented),
         };
         let trait_name = match property.args().get(1) {
             Some(PropertyArg::Ident(name)) => name.as_str(),
-            _ => return CheckResult::Unknown,
+            _ => return CheckResult::Unknown(UnknownReason::Unimplemented),
         };
 
         let tcx = vm_state.tcx;
@@ -107,7 +107,7 @@ impl PropertyChecker {
         if trait_name == "Copy" {
             return CheckResult::Failed;
         }
-        CheckResult::Unknown
+        CheckResult::Unknown(UnknownReason::Unimplemented)
     }
 
     // ── check_split_transmute ──────────────────────────────────

@@ -1180,10 +1180,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         if size == 0 {
             return Some(Int::from_u64(self.z3_ctx, 0));
         }
-        let max = *self.memory.byte_max.get(&alloc_id)?;
-        if max < offset + size - 1 {
-            return None;
-        }
         let mut term = Int::from_u64(self.z3_ctx, 0);
         for j in 0..size {
             let off = offset + j;

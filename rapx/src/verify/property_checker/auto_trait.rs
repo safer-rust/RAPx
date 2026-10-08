@@ -29,7 +29,7 @@ use crate::helpers::mir_scan::{Checkpoint, has_atomic_call, has_raw_ptr_write};
 use crate::verify::vm::state::VmState;
 use crate::verify::{
     contract::{Property, PropertyArg, PropertyKind},
-    report::CheckResult,
+    report::{CheckResult, UnknownReason},
     target::get_struct_invariants_from_annotation,
 };
 
@@ -66,7 +66,7 @@ impl PropertyChecker {
         property: &Property<'tcx>,
     ) -> CheckResult {
         let Some(ty) = Self::ty_arg(property, 0) else {
-            return CheckResult::Unknown;
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
         let negatives: Vec<String> = property.args()[1..]
             .iter()
@@ -76,7 +76,7 @@ impl PropertyChecker {
             })
             .collect();
         if negatives.is_empty() {
-            return CheckResult::Unknown;
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
         }
         contain_no_type_check(vm_state.tcx, ty, &negatives, checkpoint.caller, false)
     }
@@ -89,7 +89,7 @@ impl PropertyChecker {
         property: &Property<'tcx>,
     ) -> CheckResult {
         let Some(ty) = Self::ty_arg(property, 0) else {
-            return CheckResult::Unknown;
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
         no_raw_ptr_check(vm_state.tcx, ty, checkpoint.caller, false)
     }
@@ -101,7 +101,7 @@ impl PropertyChecker {
         property: &Property<'tcx>,
     ) -> CheckResult {
         let Some(ty) = Self::ty_arg(property, 0) else {
-            return CheckResult::Unknown;
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
         no_internal_mut_check(vm_state.tcx, ty)
     }
@@ -114,7 +114,7 @@ impl PropertyChecker {
         property: &Property<'tcx>,
     ) -> CheckResult {
         let Some(ty) = Self::ty_arg(property, 0) else {
-            return CheckResult::Unknown;
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
         uni_internal_mut_check(vm_state.tcx, ty)
     }
@@ -129,7 +129,7 @@ impl PropertyChecker {
         property: &Property<'tcx>,
     ) -> CheckResult {
         let Some(ty) = Self::ty_arg(property, 0) else {
-            return CheckResult::Unknown;
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
         atomic_update_check(vm_state.tcx, ty, checkpoint.caller, false)
     }
@@ -143,7 +143,7 @@ impl PropertyChecker {
         property: &Property<'tcx>,
     ) -> CheckResult {
         let Some(ty) = Self::ty_arg(property, 0) else {
-            return CheckResult::Unknown;
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
         ref_send_check(vm_state.tcx, ty, checkpoint.caller, true)
     }
@@ -165,7 +165,7 @@ pub(crate) fn contain_no_type_check<'tcx>(
     }
     match type_structurally_contains(tcx, ty, &defs, impl_def_id, is_sync) {
         Contains::Yes => CheckResult::Failed,
-        Contains::Maybe => CheckResult::Unknown,
+        Contains::Maybe => CheckResult::Unknown(UnknownReason::Unimplemented),
         Contains::No => CheckResult::ProvedByRule,
     }
 }
@@ -179,7 +179,7 @@ pub(crate) fn no_raw_ptr_check<'tcx>(
 ) -> CheckResult {
     match find_raw_ptr(tcx, ty, impl_def_id, is_sync) {
         Contains::Yes => CheckResult::Failed,
-        Contains::Maybe => CheckResult::Unknown,
+        Contains::Maybe => CheckResult::Unknown(UnknownReason::Unimplemented),
         Contains::No => CheckResult::ProvedByRule,
     }
 }
@@ -225,7 +225,7 @@ pub(crate) fn atomic_update_check<'tcx>(
 ) -> CheckResult {
     match find_unsynchronized_mutation(tcx, ty, impl_def_id, is_sync) {
         Contains::No => CheckResult::ProvedByRule,
-        Contains::Maybe => CheckResult::Unknown,
+        Contains::Maybe => CheckResult::Unknown(UnknownReason::Unimplemented),
         Contains::Yes => {
             if has_atomic_ptr_updates(tcx, ty) {
                 CheckResult::ProvedByRule
@@ -290,7 +290,7 @@ pub(crate) fn ref_send_check<'tcx>(
 ) -> CheckResult {
     match find_unsynchronized_mutation(tcx, ty, impl_def_id, is_sync) {
         Contains::Yes => CheckResult::Failed,
-        Contains::Maybe => CheckResult::Unknown,
+        Contains::Maybe => CheckResult::Unknown(UnknownReason::Unimplemented),
         Contains::No => CheckResult::ProvedByRule,
     }
 }

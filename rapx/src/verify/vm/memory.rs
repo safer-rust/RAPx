@@ -511,12 +511,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         };
         self.memory.byte_arrays.insert(alloc_id, updated);
         if let Some(off) = i.as_u64() {
-            let off = off as usize;
             self.memory
-                .byte_max
+                .byte_written
                 .entry(alloc_id)
-                .and_modify(|m| *m = (*m).max(off))
-                .or_insert(off);
+                .or_default()
+                .insert(off as usize);
         }
     }
 
@@ -566,41 +565,56 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     }
 
     /// Enumerate `(offset, term)` pairs for the *written* bytes of an allocation,
-    /// over the range `[0, byte_max]` (unwritten offsets read `UNINIT`).
+    /// in ascending offset order.
     pub(crate) fn alloc_byte_values(&self, alloc_id: AllocId) -> Vec<(usize, Int<'z3>)> {
-        let Some(&max) = self.memory.byte_max.get(&alloc_id) else {
+        let Some(offsets) = self.memory.byte_written.get(&alloc_id) else {
             return Vec::new();
         };
-        (0..=max)
-            .filter(|off| self.is_byte_init(alloc_id, *off))
+        let mut offs: Vec<usize> = offsets.iter().copied().collect();
+        offs.sort_unstable();
+        offs.into_iter()
             .map(|off| (off, self.byte_read(alloc_id, &Int::from_u64(self.z3_ctx, off as u64))))
             .collect()
     }
 
     /// Offsets known to be NUL.
     pub(crate) fn alloc_nul_offsets(&self, alloc_id: AllocId) -> Vec<usize> {
-        let Some(&max) = self.memory.byte_max.get(&alloc_id) else {
+        let Some(offsets) = self.memory.byte_written.get(&alloc_id) else {
             return Vec::new();
         };
-        (0..=max).filter(|&off| self.is_byte_nul(alloc_id, off)).collect()
+        let mut offs: Vec<usize> = offsets
+            .iter()
+            .copied()
+            .filter(|&off| self.is_byte_nul(alloc_id, off))
+            .collect();
+        offs.sort_unstable();
+        offs
     }
 
     /// Offsets known to be non-NUL.
     pub(crate) fn alloc_non_nul_offsets(&self, alloc_id: AllocId) -> Vec<usize> {
-        let Some(&max) = self.memory.byte_max.get(&alloc_id) else {
+        let Some(offsets) = self.memory.byte_written.get(&alloc_id) else {
             return Vec::new();
         };
-        (0..=max).filter(|&off| self.is_byte_non_nul(alloc_id, off)).collect()
+        let mut offs: Vec<usize> = offsets
+            .iter()
+            .copied()
+            .filter(|&off| self.is_byte_non_nul(alloc_id, off))
+            .collect();
+        offs.sort_unstable();
+        offs
     }
 
     /// Copy the per-byte state (values + written-offset bound) of one allocation
     /// to another, shifting by `src_offset` so `dst[i] = src[i + src_offset]`.
     pub(crate) fn copy_byte_tracking(&mut self, src: AllocId, src_offset: usize, dst: AllocId) {
-        let Some(&max) = self.memory.byte_max.get(&src) else {
+        let Some(offsets) = self.memory.byte_written.get(&src) else {
             return;
         };
-        let written: Vec<usize> = (src_offset..=max)
-            .filter(|off| self.is_byte_init(src, *off))
+        let written: Vec<usize> = offsets
+            .iter()
+            .copied()
+            .filter(|&off| off >= src_offset)
             .collect();
         for off in written {
             let v = self.byte_read(src, &Int::from_u64(self.z3_ctx, off as u64));
