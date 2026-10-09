@@ -1,5 +1,6 @@
 //! Transmute / trait / size property checking for the symbolic VM.
 
+use crate::helpers::mir_utils;
 use rustc_middle::ty::{GenericArgKind, Ty, TyKind};
 
 use crate::helpers::mir_scan::Checkpoint;
@@ -211,7 +212,7 @@ impl PropertyChecker {
         // Fallback 1: try with the monomorphized environment.
         let typing_env =
             rustc_middle::ty::TypingEnv::post_analysis(vm_state.tcx, vm_state.current_frame.current_def_id);
-        let sz = crate::helpers::mir_utils::catch_panic(|| {
+        let sz = mir_utils::catch_panic(|| {
             vm_state
                 .tcx
                 .layout_of(rustc_middle::ty::PseudoCanonicalInput {
@@ -227,7 +228,7 @@ impl PropertyChecker {
             return sz;
         }
         // Fallback 2: for generic type params, enumerate impl sizes.
-        let generic_sz = crate::helpers::mir_utils::size_of_generic_param(
+        let generic_sz = mir_utils::size_of_generic_param(
             vm_state.tcx,
             vm_state.current_frame.current_def_id,
             ty,

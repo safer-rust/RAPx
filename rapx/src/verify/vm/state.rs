@@ -4,6 +4,7 @@
 //! values and their invariants, memory allocations, and the full execution
 //! state at a program point.
 
+use crate::helpers::mir_utils;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{Body, Local, Operand, Place, ProjectionElem},
@@ -1159,13 +1160,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         return VmValue::new(term, constant.const_.ty());
                     }
                 }
-                let int_val = crate::helpers::mir_utils::eval_const_scalar_int(
+                let int_val = mir_utils::eval_const_scalar_int(
                     self.tcx,
                     &constant.const_,
                     &text,
                 );
                 let field_offset = int_val.is_none()
-                    && crate::helpers::mir_utils::offset_of_container(self.tcx, &constant.const_)
+                    && mir_utils::offset_of_container(self.tcx, &constant.const_)
                         .is_some();
                 let term = if let Some(v) = int_val {
                     if v < 0 {
@@ -1210,7 +1211,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         };
         let variant = adt_def.non_enum_variant();
         for (idx, field_def) in variant.fields.iter().enumerate() {
-            let field_ty = crate::helpers::mir_utils::field_ty(self.tcx, field_def, substs);
+            let field_ty = mir_utils::field_ty(self.tcx, field_def, substs);
             let field_off = self.field_offset_in_bytes(ty, idx) as usize;
             let field_size = self.size_of_ty(field_ty) as usize;
             if offset >= field_off && offset < field_off + field_size {
@@ -1322,7 +1323,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 // resolve to the right field view.
                 if let Some(base_val) = self.local_value(place.local) {
                     if let Some(alloc_id) = base_val.provenance_alloc_id() {
-                        let view_ty = crate::helpers::mir_utils::pointee_ty(base_val.ty)
+                        let view_ty = mir_utils::pointee_ty(base_val.ty)
                             .unwrap_or(base_val.ty);
                         if let Some(val) = self.load_value(alloc_id, view_ty, &field_path).cloned() {
                             return Some(val);

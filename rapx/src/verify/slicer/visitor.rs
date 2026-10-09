@@ -5,6 +5,7 @@
 //! the path-level control flow decisions: calls, SCC exits, and path-condition
 //! branches.
 
+use crate::helpers::mir_utils;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::Body;
 use rustc_middle::mir::{BasicBlock, Local, Operand, Rvalue, StatementKind, TerminatorKind};
@@ -579,7 +580,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
             StatementKind::Assign(assign) => {
                 let (place, _) = &**assign;
                 let ty = place.ty(self.tcx.optimized_mir(def_id), self.tcx).ty;
-                crate::helpers::mir_utils::is_u8_array_or_slice(ty)
+                mir_utils::is_u8_array_or_slice(ty)
             }
             _ => false,
         };
@@ -641,7 +642,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
             // detect a later use / second drop.
             if let TerminatorKind::Call { func, args, .. } = &terminator.kind {
                 let is_drop_call =
-                    crate::helpers::mir_utils::dep_callee_def_id(func).is_some_and(|c| {
+                    mir_utils::dep_callee_def_id(func).is_some_and(|c| {
                         crate::verify::api_classify::is_manually_drop_drop(Some(c))
                             || crate::verify::api_classify::is_std_drop(Some(c))
                     });

@@ -4,6 +4,7 @@
 //! to approximate its effects: pointer-arithmetic wrappers, `from_raw_parts`
 //! wrappers, argument-to-return dataflow, and index-disjointness validators.
 
+use crate::helpers::mir_utils;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use rustc_hir::def_id::DefId;
@@ -18,6 +19,7 @@ use rustc_middle::{
 use crate::analysis::dataflow::{DataflowAnalysis, default::DataflowAnalyzer};
 use crate::analysis::path::graph::{PathEnumerator, PathGraph};
 use crate::compat::Spanned;
+use crate::def_id;
 use crate::helpers::mir_utils as helpers;
 use crate::limit::{
     FIELD_LOAD_EFFECT_BLOCK_LIMIT, FROM_RAW_PARTS_WRAPPER_BLOCK_LIMIT,
@@ -717,7 +719,7 @@ pub(crate) fn try_branch_effect(tcx: TyCtxt<'_>, callee: DefId) -> Option<CallEf
     let TyKind::Adt(ret_adt, _) = ret_ty.kind() else {
         return None;
     };
-    if !crate::def_id::control_flow_types().contains(&ret_adt.did()) {
+    if !def_id::control_flow_types().contains(&ret_adt.did()) {
         return None;
     }
     Some(CallEffect::ReturnBranchPayload { arg: 0 })
@@ -1027,7 +1029,7 @@ fn detect_pre_dec_end_offset<'tcx>(
         let Some(callee) = helpers::dep_callee_def_id(func) else {
             continue;
         };
-        if !crate::helpers::mir_utils::is_pre_dec_end(tcx, callee) {
+        if !mir_utils::is_pre_dec_end(tcx, callee) {
             continue;
         }
         // Receiver is arg 0 (the iterator), offset is arg 1.
@@ -1336,7 +1338,7 @@ fn switch_discriminant_concrete(
 /// Recognize the standard-library `get_disjoint_check_valid` helper as a
 /// trusted index-disjoint validator by `DefId`.
 pub(super) fn named_index_disjoint_validator(callee: Option<DefId>) -> Option<(usize, usize)> {
-    if callee.is_some_and(|d| crate::def_id::get_disjoint_check_valid_fns().contains(&d)) {
+    if callee.is_some_and(|d| def_id::get_disjoint_check_valid_fns().contains(&d)) {
         Some((0, 1))
     } else {
         None

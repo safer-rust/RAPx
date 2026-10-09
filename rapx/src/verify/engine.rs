@@ -3,6 +3,7 @@
 //! Uses a semantic MIR executor to build symbolic state,
 //! then checks safety properties with a unified property checker.
 
+use crate::helpers::mir_utils;
 use z3::Config;
 
 use std::collections::HashMap;
@@ -193,7 +194,7 @@ impl<'tcx> VerifyEngine<'tcx> {
     /// (`&mut (*_8)`) back to the ultimate referent.
     fn drop_referent_local(&self, checkpoint: &Checkpoint<'tcx>) -> Option<Local> {
         let arg = checkpoint.args.first()?;
-        let place = crate::helpers::mir_utils::operand_mir_place(arg)?;
+        let place = mir_utils::operand_mir_place(arg)?;
         let mut cur = place.local;
         let body = self.tcx.optimized_mir(checkpoint.caller);
         let mut seen = std::collections::HashSet::new();
@@ -232,7 +233,7 @@ impl<'tcx> VerifyEngine<'tcx> {
                 if target.local == local {
                     return true;
                 }
-                if crate::helpers::mir_utils::rvalue_any_place_matching(rvalue, &mut |p| {
+                if mir_utils::rvalue_any_place_matching(rvalue, &mut |p| {
                     p.local == local
                 }) {
                     return true;

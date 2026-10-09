@@ -1,3 +1,4 @@
+use crate::helpers::mir_utils;
 use crate::compat::FxHashMap;
 use crate::compat::Spanned;
 use rustc_hir::def_id::DefId;
@@ -255,7 +256,7 @@ impl<'tcx> PlaceInfo {
             // For ADTs (structs/enums), create fields
             ty::Adt(adt_def, substs) => {
                 for (field_idx, field) in adt_def.all_fields().enumerate() {
-                    let field_ty = crate::helpers::mir_utils::field_ty(tcx, field, substs);
+                    let field_ty = mir_utils::field_ty(tcx, field, substs);
                     let field_place = base_place.project_field(field_idx);
 
                     // Check if field may/need drop

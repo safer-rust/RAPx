@@ -11,12 +11,14 @@
 //! 1. **Matchers** — [`crate::verify::api_classify`] `DefId` classifiers.
 //! 2. **Effect functions** — produce the `Vec<CallEffect>` for a single API.
 
+use crate::helpers::mir_utils;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::Operand;
 use rustc_middle::ty::{Ty, TyCtxt};
 
 use super::from_raw_parts_elem_size;
 use super::{CallEffect, CallEffectSummary};
+use crate::def_id;
 use crate::helpers::mir_utils::{destination_stride, pointee_alignment, pointee_ty, type_layout};
 use crate::verify::api_classify;
 
@@ -512,7 +514,7 @@ fn dest_is_pointer(tcx: TyCtxt<'_>, caller: DefId, dest: Option<rustc_middle::mi
 }
 
 fn layout_call_ty<'tcx>(func: &Operand<'tcx>) -> Option<Ty<'tcx>> {
-    crate::helpers::mir_utils::fn_def_first_type_arg(func)
+    mir_utils::fn_def_first_type_arg(func)
 }
 
 fn layout_constant_effect<'tcx>(
@@ -529,21 +531,21 @@ fn layout_constant_effect<'tcx>(
     if align == 0 && size == 0 {
         return None;
     }
-    let Some(callee) = crate::helpers::mir_utils::dep_callee_def_id(func) else {
+    let Some(callee) = mir_utils::dep_callee_def_id(func) else {
         return None;
     };
-    if crate::def_id::contains(
+    if def_id::contains(
         &[
-            crate::def_id::mem_align_of(),
-            crate::def_id::intrinsics_align_of(),
+            def_id::mem_align_of(),
+            def_id::intrinsics_align_of(),
         ],
         callee,
     ) {
         Some(CallEffect::ReturnConst { value: align })
-    } else if crate::def_id::contains(
+    } else if def_id::contains(
         &[
-            crate::def_id::mem_size_of(),
-            crate::def_id::intrinsics_size_of(),
+            def_id::mem_size_of(),
+            def_id::intrinsics_size_of(),
         ],
         callee,
     ) {

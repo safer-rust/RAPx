@@ -25,7 +25,7 @@ use rustc_middle::{
 
 use crate::compat::FxHashMap;
 use crate::helpers::mir_utils;
-use crate::verify::api_classify::is_std_vec;
+use crate::verify::api_classify::{is_branch, is_std_vec};
 
 /// Caller constraints that affect a callee's path feasibility, propagated down
 /// the call chain during must-write summarization. Only concrete literal
@@ -344,7 +344,7 @@ pub(crate) fn dependency_summary<'tcx>(
         // `Continue` payload is the input's `Some` payload, so the return value
         // depends on the input.  Matched by `DefId` (the trait method's `self`
         // type is generic, so the type check below is skipped here).
-        if crate::verify::api_classify::is_branch(Some(callee)) {
+        if is_branch(Some(callee)) {
             return CallDependencySummary {
                 return_depends_on_args: vec![0],
                 must_write_args: Vec::new(),
@@ -473,7 +473,7 @@ pub(crate) fn effect_summary<'tcx>(
 ///   * `ManuallyDrop<T> { value: MaybeDangling<T> }` → 2 (`value` → `MaybeDangling.0`)
 ///   * `MaybeDangling<P>(P)` → 1.
 fn transparent_deref_peel<'tcx>(tcx: TyCtxt<'tcx>, func: &Operand<'tcx>) -> Option<usize> {
-    let self_ty = crate::helpers::mir_utils::fn_def_first_type_arg(func)?;
+    let self_ty = mir_utils::fn_def_first_type_arg(func)?;
     let TyKind::Adt(adt_def, _) = self_ty.kind() else {
         return None;
     };

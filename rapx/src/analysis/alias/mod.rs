@@ -1,6 +1,7 @@
 pub mod default;
 pub mod mfp;
 pub mod observer;
+use crate::helpers::mir_utils;
 use crate::utils::source::get_fn_name_byid;
 
 use super::super::Analysis;
@@ -168,7 +169,7 @@ fn resolve_field_origin_inner<'tcx>(
     for &idx in fields {
         let adt = tcx.adt_def(struct_def_id);
         let field = adt.all_fields().nth(idx)?;
-        let field_ty = crate::helpers::mir_utils::field_ty(tcx, field, args);
+        let field_ty = mir_utils::field_ty(tcx, field, args);
         if matches!(field_ty.kind(), TyKind::RawPtr(..)) {
             return Some(FieldOrigin {
                 struct_def_id,

@@ -10,6 +10,7 @@
 //! needs the rustc type context.  The arithmetic / call / if / constant layers
 //! are converted directly from the pest tree.
 
+use crate::helpers::mir_utils;
 use pest::Parser;
 use pest::iterators::Pair;
 use rustc_hir::def_id::DefId;
@@ -423,7 +424,7 @@ fn conv_base<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, base_text: &str) -> Contrac
                 // Fall back to a `const` item (e.g. `CAPACITY` in
                 // `ValidNum(len <= CAPACITY)`).
                 if let Some(value) =
-                    crate::helpers::mir_utils::resolve_const_item_value(tcx, base_text)
+                    mir_utils::resolve_const_item_value(tcx, base_text)
                 {
                     return ContractExpr::Const(value);
                 }

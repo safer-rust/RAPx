@@ -1,9 +1,12 @@
+use crate::helpers::mir_utils;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::print::with_no_trimmed_paths;
 use rustc_middle::ty::{GenericArgKind, Ty, TyCtxt, TyKind};
 use serde_json::Value;
 use std::sync::OnceLock;
 use syn::Expr;
+
+use crate::def_id;
 
 /// The internal `crate::module::…` path of a `DefId` (e.g. `alloc::rcs::rc::Rc`),
 /// normalised from its `def_path_str` debug form.  Used for display/debug and as
@@ -376,7 +379,7 @@ pub fn match_ty_with_ident<'tcx>(
 fn match_std_type<'tcx>(tcx: TyCtxt<'tcx>, type_ident: &str) -> Option<Ty<'tcx>> {
     match type_ident {
         "Char" | "AsciiChar" => {
-            let did = *crate::def_id::ascii_char_types().first()?;
+            let did = *def_id::ascii_char_types().first()?;
             let adt = tcx.adt_def(did);
             Some(Ty::new_adt(
                 tcx,
@@ -502,7 +505,7 @@ fn find_generic_in_ty<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>, type_ident: &str) -
                 return Some(ty);
             }
             for field in adt_def.all_fields() {
-                let field_ty = crate::helpers::mir_utils::field_ty(tcx, field, substs);
+                let field_ty = mir_utils::field_ty(tcx, field, substs);
                 if let Some(found) = find_generic_in_ty(tcx, field_ty, type_ident) {
                     return Some(found);
                 }

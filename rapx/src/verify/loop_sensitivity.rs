@@ -32,6 +32,7 @@
 //! both hint kinds into the `PathEnumerator`'s `allow_repeat` budget and picks
 //! the maximum, so detector-specific details stay inside this module.
 
+use crate::helpers::mir_utils;
 use crate::analysis::path::graph::PathGraph;
 use crate::compat::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
@@ -694,7 +695,7 @@ fn collect_entry_lower_bounds(
         let TerminatorKind::SwitchInt { discr, targets } = &terminator.kind else {
             continue;
         };
-        let Some(discr_local) = crate::helpers::mir_utils::extract_local(discr) else {
+        let Some(discr_local) = mir_utils::extract_local(discr) else {
             continue;
         };
         let discr_local = resolve_local_copy(discr_local, copy_sources);
@@ -1102,7 +1103,7 @@ fn numeric_term_from_operand<'tcx>(
     def_id: DefId,
     operand: &Operand<'tcx>,
 ) -> Option<NumericTerm> {
-    crate::helpers::mir_utils::extract_local(operand)
+    mir_utils::extract_local(operand)
         .map(NumericTerm::Local)
         .or_else(|| operand_const_i128(tcx, def_id, operand).map(NumericTerm::Const))
 }
@@ -1137,8 +1138,8 @@ fn increment_source_and_step<'tcx>(
     let Rvalue::BinaryOp(op, operands) = rvalue else {
         return None;
     };
-    let lhs_local = crate::helpers::mir_utils::extract_local(&operands.0);
-    let rhs_local = crate::helpers::mir_utils::extract_local(&operands.1);
+    let lhs_local = mir_utils::extract_local(&operands.0);
+    let rhs_local = mir_utils::extract_local(&operands.1);
     let lhs_const = operand_const_i128(tcx, def_id, &operands.0);
     let rhs_const = operand_const_i128(tcx, def_id, &operands.1);
 

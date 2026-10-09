@@ -1,3 +1,4 @@
+use crate::helpers::mir_utils;
 #[cfg(all(rapx_has_attr_ir, not(rapx_box_deref_transmute)))]
 use rustc_attr_ir::LangItem;
 #[cfg(all(not(rapx_has_attr_ir), not(rapx_ge_100), not(rapx_box_deref_transmute)))]
@@ -286,7 +287,7 @@ pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<C
         // Normalize a trait-method callee to the concrete impl method so that
         // inline `#[rapx::requires]` contracts (which live on the impl, not the
         // trait declaration) are found during contract lookup.
-        let resolved_callee = crate::helpers::mir_utils::resolve_callee_impl(
+        let resolved_callee = mir_utils::resolve_callee_impl(
             tcx,
             def_id,
             *callee_def_id,

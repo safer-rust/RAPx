@@ -5,6 +5,7 @@
 //! each local's value points to; this module traces that provenance
 //! back to the originating parameter/local.
 
+use crate::helpers::mir_utils;
 use super::alias_hazard::{self, AliasProducer, HazardKind};
 use crate::analysis::alias::FieldOrigin;
 use crate::helpers::mir_scan::Checkpoint;
@@ -274,7 +275,7 @@ pub(crate) fn check_alias_vm<'z3, 'tcx>(
                     );
                     if dest_escapes
                         && let Some(mir_place) =
-                            crate::helpers::mir_utils::operand_mir_place(origin_arg)
+                            mir_utils::operand_mir_place(origin_arg)
                     {
                         let (root, fields) = crate::verify::vm::alias_tree::AliasTree::build(
                             vm_state.tcx,
@@ -320,7 +321,7 @@ pub(crate) fn check_alias_vm<'z3, 'tcx>(
                     );
                     if dest_escapes
                         && let Some(mir_place) =
-                            crate::helpers::mir_utils::operand_mir_place(origin_arg)
+                            mir_utils::operand_mir_place(origin_arg)
                     {
                         let (root, fields) = crate::verify::vm::alias_tree::AliasTree::build(
                             vm_state.tcx,
@@ -492,7 +493,7 @@ pub(crate) fn check_alias_vm<'z3, 'tcx>(
     // An escaping `&` (as_ref) is only a *possible* hazard → Unknown.
     if api_classify::is_nonnull_as_ref_as_mut(Some(callee)) {
         let ret_ty = vm_state.body().local_decls[rustc_middle::mir::RETURN_PLACE].ty;
-        if crate::helpers::mir_utils::type_contains_reference(ret_ty) {
+        if mir_utils::type_contains_reference(ret_ty) {
             if api_classify::is_nonnull_as_mut(Some(callee)) {
                 return VmAliasResult::Failed(
                     "escaping `&mut` derived from a raw pointer without borrow information"
@@ -552,7 +553,7 @@ fn check_view_alias<'z3, 'tcx>(
     let origin_place = alias_hazard::operand_place(origin_arg).unwrap_or_else(|| {
         // Fallback: extract from the origin value's type
         PlaceKey::from_origin(
-            crate::helpers::mir_utils::extract_local(origin_arg)
+            mir_utils::extract_local(origin_arg)
                 .map(|l| l.as_usize())
                 .unwrap_or(1),
             vec![],
@@ -915,7 +916,7 @@ fn infer_self_field_from_type<'tcx>(
     let mut raw_ptr_fields: Vec<(usize, String)> = Vec::new();
     let variant = adt.non_enum_variant();
     for (idx, field) in variant.fields.iter().enumerate() {
-        let field_ty = crate::helpers::mir_utils::field_ty(
+        let field_ty = mir_utils::field_ty(
             tcx,
             field,
             rustc_middle::ty::GenericArgs::identity_for_item(tcx, adt_def),
@@ -974,7 +975,7 @@ fn is_self_field_shared_ref(
     }
     let adt = tcx.adt_def(adt_def);
     let field = adt.all_fields().nth(origin.field_index)?;
-    let field_ty = crate::helpers::mir_utils::field_ty(tcx, field, args);
+    let field_ty = mir_utils::field_ty(tcx, field, args);
     Some(matches!(
         field_ty.kind(),
         rustc_middle::ty::TyKind::Ref(_, _, rustc_middle::ty::Mutability::Not)

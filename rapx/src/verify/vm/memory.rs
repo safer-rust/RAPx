@@ -1,5 +1,6 @@
 //! Symbolic memory model for the VM.
 
+use crate::helpers::mir_utils;
 #[cfg(rapx_const_ext)]
 use rustc_middle::ty::consts::ConstExt;
 use rustc_middle::{
@@ -105,7 +106,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             variant
                                 .fields
                                 .get(rustc_abi::FieldIdx::from_usize(fidx))
-                                .map(|f| crate::helpers::mir_utils::field_ty(self.tcx, f, substs))
+                                .map(|f| mir_utils::field_ty(self.tcx, f, substs))
                                 .unwrap_or(current_ty)
                         }
                         _ => current_ty,
@@ -240,7 +241,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     }
 
     pub(crate) fn field_offset_in_bytes(&self, ty: Ty<'tcx>, field_idx: usize) -> u64 {
-        crate::helpers::mir_utils::field_offset_in_bytes(
+        mir_utils::field_offset_in_bytes(
             self.tcx,
             self.current_frame.current_def_id,
             ty,
@@ -249,13 +250,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     }
 
     pub(crate) fn size_of_ty(&self, ty: Ty<'tcx>) -> u64 {
-        crate::helpers::mir_utils::layout_of_ty(self.tcx, self.current_frame.current_def_id, ty)
+        mir_utils::layout_of_ty(self.tcx, self.current_frame.current_def_id, ty)
             .map(|l| l.size.bytes())
             .unwrap_or(0)
     }
 
     pub(crate) fn align_of_ty(&self, ty: Ty<'tcx>) -> u64 {
-        crate::helpers::mir_utils::layout_of_ty(self.tcx, self.current_frame.current_def_id, ty)
+        mir_utils::layout_of_ty(self.tcx, self.current_frame.current_def_id, ty)
             .map(|l| l.align.abi.bytes())
             .unwrap_or(1)
     }
@@ -290,7 +291,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     pub(crate) fn size_sym(&mut self, ty: Ty<'tcx>) -> Int<'z3> {
         let ty = peel_slice_elem(ty);
         let size = self.size_of_ty(ty);
-        if size > 0 || !crate::helpers::mir_utils::ty_has_type_param(ty) {
+        if size > 0 || !mir_utils::ty_has_type_param(ty) {
             return Int::from_u64(self.z3_ctx, size);
         }
         if let Some(s) = self.constraints.term_caches.sizes.get(&ty) {
@@ -341,7 +342,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// known constant and no case split is needed.
     pub(crate) fn generic_elem_size(&self, alloc_id: AllocId) -> Option<Int<'z3>> {
         let elem_ty = self.alloc(alloc_id).element_ty.as_ty()?;
-        if !crate::helpers::mir_utils::ty_has_type_param(elem_ty) {
+        if !mir_utils::ty_has_type_param(elem_ty) {
             return None;
         }
         let s = self.size_sym_read(elem_ty);
@@ -366,7 +367,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return self.align_sym(*elem);
         }
         let align = self.align_of_ty(ty);
-        if align > 1 || !crate::helpers::mir_utils::ty_has_type_param(ty) {
+        if align > 1 || !mir_utils::ty_has_type_param(ty) {
             return Int::from_u64(self.z3_ctx, align);
         }
         if let Some(a) = self.constraints.term_caches.aligns.get(&ty) {
@@ -380,7 +381,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         // Lower bound from the trait bounds (0 for an unconstrained `T`): any
         // implementor is at least this aligned.
         let min_a =
-            crate::helpers::mir_utils::min_align_of_generic_param(self.tcx, self.current_frame.current_def_id, ty);
+            mir_utils::min_align_of_generic_param(self.tcx, self.current_frame.current_def_id, ty);
         if min_a > 1 {
             self.constraints.assertions
                 .push(a.ge(&Int::from_u64(self.z3_ctx, min_a)));
@@ -389,7 +390,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         // implementor is at most this aligned, which is what lets a cross-cast
         // from a *more* aligned source (`&[U]` -> `*const T`) be discharged.
         let max_a =
-            crate::helpers::mir_utils::max_align_of_generic_param(self.tcx, self.current_frame.current_def_id, ty);
+            mir_utils::max_align_of_generic_param(self.tcx, self.current_frame.current_def_id, ty);
         if max_a > 0 {
             self.constraints.assertions
                 .push(a.le(&Int::from_u64(self.z3_ctx, max_a)));
@@ -401,7 +402,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             if !adt_def.is_enum() {
                 let variant = adt_def.non_enum_variant();
                 for field in variant.fields.iter() {
-                    let field_ty = crate::helpers::mir_utils::field_ty(self.tcx, field, substs);
+                    let field_ty = mir_utils::field_ty(self.tcx, field, substs);
                     let field_align = self.align_sym(field_ty);
                     self.constraints.assertions.push(a.rem(&field_align)._eq(&zero));
                 }
@@ -442,7 +443,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return a.clone();
         }
         let min_a =
-            crate::helpers::mir_utils::min_align_of_generic_param(self.tcx, self.current_frame.current_def_id, ty);
+            mir_utils::min_align_of_generic_param(self.tcx, self.current_frame.current_def_id, ty);
         Int::from_u64(self.z3_ctx, min_a.max(1))
     }
 
@@ -465,7 +466,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let variant = adt_def.non_enum_variant();
         let mut total = Int::from_u64(self.z3_ctx, 0);
         for field in variant.fields.iter() {
-            let field_ty = crate::helpers::mir_utils::field_ty(self.tcx, field, substs);
+            let field_ty = mir_utils::field_ty(self.tcx, field, substs);
             let field_size = self
                 .struct_size_sym(field_ty)
                 .unwrap_or_else(|| self.size_sym(field_ty));

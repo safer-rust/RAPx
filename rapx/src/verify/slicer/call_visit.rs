@@ -5,6 +5,7 @@
 //! which arguments flow through to the destination and whether the call may
 //! modify relevant state.
 
+use crate::helpers::mir_utils;
 use crate::compat::{FxHashMap, Spanned};
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{BasicBlock, Body, Operand, Place};
@@ -98,10 +99,10 @@ pub(crate) fn visit<'tcx>(
     // same origin, add the destination to relevance so the length term
     // is available for the contract obligation.
     if !relevant.need_len.is_empty() {
-        let callee = crate::helpers::mir_utils::dep_callee_def_id(func);
+        let callee = mir_utils::dep_callee_def_id(func);
         if crate::verify::api_classify::is_len(callee) {
             if let Some(first) = args.first() {
-                let arg_place = crate::helpers::mir_utils::operand_place(&first.node);
+                let arg_place = mir_utils::operand_place(&first.node);
                 if let Some(arg_key) = arg_place {
                     let matches = relevant.need_len.contains(&arg_key)
                         || relevant.need_len.iter().any(|nl| {
@@ -130,7 +131,7 @@ pub(crate) fn visit<'tcx>(
 fn call_context_from_args(args: &[Spanned<Operand<'_>>]) -> call_summary::CallContext {
     let mut concrete = FxHashMap::default();
     for (i, arg) in args.iter().enumerate() {
-        if let Some(v) = crate::helpers::mir_utils::operand_const_u64(&arg.node) {
+        if let Some(v) = mir_utils::operand_const_u64(&arg.node) {
             concrete.insert(i, v as i128);
         }
     }

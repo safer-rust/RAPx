@@ -31,6 +31,7 @@ use super::state::{
     VmValue,
 };
 
+use crate::helpers::mir_utils;
 use crate::verify::api_classify;
 
 impl<'z3, 'tcx> VmState<'z3, 'tcx> {
@@ -318,7 +319,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     // otherwise alias/ownership reasoning can't trace a deref of
                     // `self.pointer` back to "owned" (the local's provenance would
                     // be `None`).
-                    if crate::helpers::mir_utils::is_raw_ptr_wrapper(self.tcx, adt_def.did()) {
+                    if mir_utils::is_raw_ptr_wrapper(self.tcx, adt_def.did()) {
                         if let Some(f0) = self.field_value(local, &[0]).cloned() {
                             let prov = f0.provenance.clone();
                             self.set_local(
@@ -407,7 +408,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         let elem_sz = if elem_size > 0 {
                             elem_size
                         } else {
-                            crate::helpers::mir_utils::size_of_generic_param(
+                            mir_utils::size_of_generic_param(
                                 self.tcx,
                                 self.current_frame.current_def_id,
                                 *elem_ty,
@@ -502,7 +503,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             let mut elem_alloc: FxHashMap<Ty<'tcx>, (AllocId, Int<'z3>)> =
                                 FxHashMap::default();
                             for (idx, field_def) in variant.fields.iter().enumerate() {
-                                let field_ty: Ty<'tcx> = crate::helpers::mir_utils::field_ty(
+                                let field_ty: Ty<'tcx> = mir_utils::field_ty(
                                     self.tcx, field_def, substs,
                                 );
                                 if let rustc_middle::ty::TyKind::RawPtr(inner, _) = field_ty.kind()
@@ -669,7 +670,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 // can record the alloc_id and property checker can match it later.
                 if let rustc_middle::ty::TyKind::Array(elem_ty, const_len) = ty.kind() {
                     let n: Option<usize> =
-                        crate::helpers::mir_utils::eval_array_len(self.tcx, const_len)
+                        mir_utils::eval_array_len(self.tcx, const_len)
                             .map(|v| v as usize);
                     let elem_size = self.size_of_ty(*elem_ty);
                     let step = (elem_size.max(1)) as usize;
@@ -1053,7 +1054,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let variant = adt_def.non_enum_variant();
         for (idx, field_def) in variant.fields.iter().enumerate() {
             let field_ty: Ty<'tcx> =
-                crate::helpers::mir_utils::field_ty(self.tcx, field_def, substs);
+                mir_utils::field_ty(self.tcx, field_def, substs);
             let mut path = prefix.clone();
             path.push(idx);
             if let rustc_middle::ty::TyKind::RawPtr(inner, _) = field_ty.kind() {
@@ -1156,7 +1157,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
         let variant = adt_def.non_enum_variant();
         for (idx, field_def) in variant.fields.iter().enumerate() {
-            let field_ty = crate::helpers::mir_utils::field_ty(self.tcx, field_def, substs);
+            let field_ty = mir_utils::field_ty(self.tcx, field_def, substs);
             let field_off = byte_offset + self.field_offset_in_bytes(ty, idx) as usize;
             let mut path = prefix.clone();
             path.push(idx);
@@ -1230,7 +1231,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             } else if let TyKind::Array(elem_ty, const_len) = field_ty.kind() {
                 // Array field: allocate its contents so `.len()` / `as_slice()`
                 // resolve to the concrete array length.
-                let n = crate::helpers::mir_utils::eval_array_len(self.tcx, const_len).unwrap_or(0)
+                let n = mir_utils::eval_array_len(self.tcx, const_len).unwrap_or(0)
                     as u64;
                 let arr_align = self.align_sym(*elem_ty);
                 let arr_elem_size = self.size_sym(*elem_ty);
@@ -1529,7 +1530,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         if !adt_def.is_enum() {
                             let variant = adt_def.non_enum_variant();
                             if let Some(field_def) = variant.fields.get(field_idx) {
-                                cur_ty = crate::helpers::mir_utils::field_ty(
+                                cur_ty = mir_utils::field_ty(
                                     self.tcx, field_def, substs,
                                 );
                             }
@@ -1606,7 +1607,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     fn inject_layout_constraints(&mut self, operand: &Operand<'tcx>, val: &VmValue<'z3, 'tcx>) {
         if let Operand::Constant(constant) = operand {
             let text = format!("{:?}", constant.const_);
-            if crate::helpers::mir_utils::const_int_from_debug(&text).is_none() {
+            if mir_utils::const_int_from_debug(&text).is_none() {
                 let is_align_or_size = text.starts_with("AlignOf(") || text.starts_with("SizeOf(");
                 if is_align_or_size {
                     let one = Int::from_u64(self.z3_ctx, 1);
@@ -1642,7 +1643,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let body = self.tcx.mir_for_ctfe(uneval.def);
         let is_gcd = body.basic_blocks.iter().any(|bb| {
             if let rustc_middle::mir::TerminatorKind::Call { func, .. } = &bb.terminator().kind {
-                if let Some(did) = crate::helpers::mir_utils::dep_callee_def_id(func) {
+                if let Some(did) = mir_utils::dep_callee_def_id(func) {
                     return api_classify::is_gcd(Some(did));
                 }
             }
@@ -1830,8 +1831,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 let term = self.eval_binary_op(*op, &lhs.z3_term, &rhs.z3_term);
                 let provenance = self.provenance_for_binary_op(*op, &lhs, &rhs);
                 let invariants = self.facts_for_binary_op(*op, &lhs, &rhs, &provenance);
-                let lhs_pk = crate::helpers::mir_utils::operand_place(lhs_op);
-                let rhs_pk = crate::helpers::mir_utils::operand_place(rhs_op);
+                let lhs_pk = mir_utils::operand_place(lhs_op);
+                let rhs_pk = mir_utils::operand_place(rhs_op);
                 // Carry the direct boolean condition alongside the ite-encoded
                 // result so `switchInt`/`Assert` can record a precise path
                 // condition (e.g. `offset <= len - 16`) instead of
@@ -1981,7 +1982,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 // Transmute-like casts of single-field newtypes (e.g.
                 // NonZero::get's `_0 = copy _1 as T`) yield the underlying
                 // field value, not the wrapper's own term.
-                let term = crate::helpers::mir_utils::extract_local(operand)
+                let term = mir_utils::extract_local(operand)
                     .and_then(|l| self.field_value(l, &[0]).map(|v| v.z3_term.clone()))
                     .unwrap_or(src_val.z3_term);
                 // A pointer→integer cast (`ptr as usize`) yields the (always
@@ -2011,7 +2012,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         non_null: src_val.facts.non_null,
                         init: src_val.facts.init,
                         in_bounds: src_val.facts.in_bounds,
-                        align_n: if crate::helpers::mir_utils::pointee_ty(src_ty)
+                        align_n: if mir_utils::pointee_ty(src_ty)
                             .is_some_and(|t| t.is_unit())
                         {
                             None
@@ -2070,7 +2071,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     .local_value(dest_local)
                     .and_then(|v| v.provenance_alloc_id())
                     .or_else(|| self.current_frame.local_alloc.get(&dest_local).copied());
-                let is_byte_array = crate::helpers::mir_utils::is_u8_array_or_slice(dest_ty);
+                let is_byte_array = mir_utils::is_u8_array_or_slice(dest_ty);
                 let field_types: Vec<_> = self.aggregate_field_tys(dest_ty);
                 let mut byte_offset = 0usize;
                 for (i, operand) in operands.iter().enumerate() {
@@ -2127,7 +2128,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             self.record_byte_value(alloc_id, byte_offset, field_term.clone());
                         }
                         // Record known_nul / known_non_nul from constant operands
-                        if let Some(int_val) = crate::helpers::mir_utils::operand_const_u64(operand)
+                        if let Some(int_val) = mir_utils::operand_const_u64(operand)
                         {
                             if field_sz == 1 {
                                 if int_val == 0 {
@@ -2513,7 +2514,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
         // Recurse into ADT sub-fields (e.g. `String.vec.len`).
         for (idx, field_def) in variant.fields.iter().enumerate() {
-            let field_ty = crate::helpers::mir_utils::field_ty(self.tcx, field_def, substs);
+            let field_ty = mir_utils::field_ty(self.tcx, field_def, substs);
             if matches!(field_ty.kind(), rustc_middle::ty::TyKind::Adt(_, _)) {
                 let mut path = prefix.to_vec();
                 path.push(idx);
@@ -2537,7 +2538,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return None;
         }
         let alloc_id = val.provenance_alloc_id()?;
-        let view_ty = crate::helpers::mir_utils::pointee_ty(val.ty).unwrap_or(val.ty);
+        let view_ty = mir_utils::pointee_ty(val.ty).unwrap_or(val.ty);
         let start = self
             .units[alloc_id.0].content.values
             .get(&(view_ty, vec![0]))?
@@ -2583,7 +2584,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let variant = adt_def.non_enum_variant();
         let mut found: Option<(usize, Ty<'tcx>)> = None;
         for (idx, field_def) in variant.fields.iter().enumerate() {
-            let fty = crate::helpers::mir_utils::field_ty(self.tcx, field_def, substs);
+            let fty = mir_utils::field_ty(self.tcx, field_def, substs);
             if let Some(pointee) = self.find_nn_pointee(fty) {
                 found = Some((idx, pointee));
                 break;
@@ -2617,7 +2618,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             };
             let variant = adt_def.non_enum_variant();
             let field_def = variant.fields.get(rustc_abi::FieldIdx::from_usize(idx))?;
-            ty = crate::helpers::mir_utils::field_ty(self.tcx, field_def, substs);
+            ty = mir_utils::field_ty(self.tcx, field_def, substs);
         }
         Some(ty)
     }
@@ -3541,7 +3542,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         (matches!(val.ty.kind(), rustc_middle::ty::TyKind::RawPtr(..))
                             || matches!(val.ty.kind(), rustc_middle::ty::TyKind::Adt(adt, _)
                                 if api_classify::is_std_nonnull(adt.did())
-                                    || crate::helpers::mir_utils::is_raw_ptr_wrapper(self.tcx, adt.did())))
+                                    || mir_utils::is_raw_ptr_wrapper(self.tcx, adt.did())))
                             && (elem_ty.is_primitive()
                                 || matches!(elem_ty.kind(), rustc_middle::ty::TyKind::Param(_)))
                     })
@@ -3752,7 +3753,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             // reads `(*leaf).len` through `MemoryContent::values`).
                             let base_val = self.local_value(local)?;
                             let alloc_id = base_val.provenance_alloc_id()?;
-                            let view_ty = crate::helpers::mir_utils::pointee_ty(base_val.ty)
+                            let view_ty = mir_utils::pointee_ty(base_val.ty)
                                 .unwrap_or(base_val.ty);
                             self.units[alloc_id.0].content.values
                                 .get(&(view_ty, path.clone()))
@@ -3998,7 +3999,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             if let rustc_middle::ty::TyKind::Adt(adt_def, _) =
                 self.body().local_decls[index_local].ty.kind()
             {
-                if crate::helpers::mir_utils::is_range_type(self.tcx, adt_def.did()) {
+                if mir_utils::is_range_type(self.tcx, adt_def.did()) {
                     return;
                 }
             }
@@ -4320,7 +4321,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return None;
         }
         let field = adt_def.non_enum_variant().fields.iter().next()?;
-        let field_ty = crate::helpers::mir_utils::field_ty(self.tcx, field, substs);
+        let field_ty = mir_utils::field_ty(self.tcx, field, substs);
         match field_ty.kind() {
             rustc_middle::ty::TyKind::RawPtr(pointee, _) => Some(*pointee),
             // NonNull's field is a pattern type `*const T is !null` on newer
@@ -4354,7 +4355,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 }
                 for (idx, field_def) in adt.non_enum_variant().fields.iter().enumerate() {
                     let field_ty =
-                        crate::helpers::mir_utils::field_ty(self.tcx, field_def, substs);
+                        mir_utils::field_ty(self.tcx, field_def, substs);
                     let mut path = prefix.clone();
                     path.push(idx);
                     if let TyKind::RawPtr(inner, _) = field_ty.kind() {
@@ -4515,7 +4516,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 );
                 if is_byte {
                     let bytes_opt =
-                        crate::helpers::mir_utils::const_operand_bytes(self.tcx, operand)
+                        mir_utils::const_operand_bytes(self.tcx, operand)
                             .or_else(|| self.trace_to_const_bytes(operand));
                     if let Some(bytes) = bytes_opt {
                         let size = z3::ast::Int::from_u64(self.z3_ctx, bytes.len() as u64);
@@ -4578,12 +4579,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     match rvalue {
                         #[cfg(rapx_rvalue_use_with_retag)]
                         Rvalue::Use(op, _) => {
-                            return crate::helpers::mir_utils::const_operand_bytes(self.tcx, op)
+                            return mir_utils::const_operand_bytes(self.tcx, op)
                                 .or_else(|| self.trace_to_const_bytes(op));
                         }
                         #[cfg(not(rapx_rvalue_use_with_retag))]
                         Rvalue::Use(op) => {
-                            return crate::helpers::mir_utils::const_operand_bytes(self.tcx, op)
+                            return mir_utils::const_operand_bytes(self.tcx, op)
                                 .or_else(|| self.trace_to_const_bytes(op));
                         }
                         Rvalue::Ref(_, _, p) => {
@@ -4701,7 +4702,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 variant
                     .fields
                     .iter()
-                    .map(|f| crate::helpers::mir_utils::field_ty(self.tcx, f, substs))
+                    .map(|f| mir_utils::field_ty(self.tcx, f, substs))
                     .collect()
             }
             _ => vec![],

@@ -12,6 +12,7 @@
 //! chain (`flow_xor_violation` in `vm/alias.rs`), so this static forest is not
 //! consulted for live-value grouping.
 
+use crate::helpers::mir_utils;
 use rustc_hash::FxHashMap;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{Local, Operand, Rvalue, StatementKind};
@@ -87,7 +88,7 @@ impl AliasTree {
                     // (`addr_of!(x)`), cast (`&mut → *mut`, `*mut → *const`) and
                     // field read (`(*self).next`).
                     _ => {
-                        if let Some(place) = crate::helpers::mir_utils::rvalue_source_place(rvalue)
+                        if let Some(place) = mir_utils::rvalue_source_place(rvalue)
                             && let Some(parent) = tree.tag_of_local.get(&place.local).copied()
                         {
                             let ty = body.local_decls[target.local].ty;

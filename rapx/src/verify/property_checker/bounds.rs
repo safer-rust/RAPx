@@ -5,6 +5,7 @@
 //! `NonOverlap` uses provenance-distinctness and range-overlap reasoning.
 
 use crate::helpers::mir_scan::Checkpoint;
+use crate::helpers::mir_utils;
 use crate::verify::api_classify;
 use crate::verify::contract::{
     ContractExpr, NumericBinOp, PlaceBase, Property, PropertyArg, RelOp,
@@ -167,7 +168,7 @@ impl PropertyChecker {
             .as_ref()
             .is_some_and(|prov| matches!(prov.offset_kind, Some(OffsetKind::Field)))
         {
-            let field_size = crate::helpers::mir_utils::pointee_ty(value.ty)
+            let field_size = mir_utils::pointee_ty(value.ty)
                 .map(|ty| vm_state.size_sym_read(ty))
                 .unwrap_or_else(|| Int::from_u64(vm_state.z3_ctx, 1));
             solver.assert(&access.le(&field_size).not());
@@ -242,7 +243,7 @@ impl PropertyChecker {
             return false;
         };
         let Some(container) =
-            crate::helpers::mir_utils::offset_of_container(vm_state.tcx, &c.const_)
+            mir_utils::offset_of_container(vm_state.tcx, &c.const_)
         else {
             return false;
         };
@@ -256,7 +257,7 @@ impl PropertyChecker {
             return false;
         }
         // The allocation must be the same container the offset was computed on.
-        crate::helpers::mir_utils::pointee_ty(value.ty).is_some_and(|pointee| pointee == container)
+        mir_utils::pointee_ty(value.ty).is_some_and(|pointee| pointee == container)
     }
 
     pub(super) fn resolve_index_access_args(
@@ -368,18 +369,18 @@ impl PropertyChecker {
         // store `(start, end)` (end at field 1), while `RangeTo` stores just `end`
         // (field 0). `RangeFrom`/`RangeFull`/`RangeToInclusive` have no usable end
         // field here and fall back to the single-index path.
-        let end_idx = match crate::helpers::mir_utils::range_kind(vm_state.tcx, adt_def.did()) {
-            crate::helpers::mir_utils::RangeKind::RangeTo => {
+        let end_idx = match mir_utils::range_kind(vm_state.tcx, adt_def.did()) {
+            mir_utils::RangeKind::RangeTo => {
                 Some(rustc_abi::FieldIdx::from_usize(0))
             }
-            crate::helpers::mir_utils::RangeKind::Range
-            | crate::helpers::mir_utils::RangeKind::RangeInclusive => {
+            mir_utils::RangeKind::Range
+            | mir_utils::RangeKind::RangeInclusive => {
                 Some(rustc_abi::FieldIdx::from_usize(1))
             }
-            crate::helpers::mir_utils::RangeKind::Other => {
+            mir_utils::RangeKind::Other => {
                 // `core::ops::IndexRange` is a private `{ start, end }` struct
                 // (no lang item); its `end` lives at field 1 like `Range`.
-                if crate::verify::api_classify::is_index_range(adt_def.did()) {
+                if api_classify::is_index_range(adt_def.did()) {
                     Some(rustc_abi::FieldIdx::from_usize(1))
                 } else {
                     None
@@ -570,7 +571,7 @@ impl PropertyChecker {
             return false;
         };
         let Some(arg_idx) =
-            crate::helpers::mir_utils::callee_param_index_for_local(vm_state.tcx, callee, local)
+            mir_utils::callee_param_index_for_local(vm_state.tcx, callee, local)
         else {
             return false;
         };

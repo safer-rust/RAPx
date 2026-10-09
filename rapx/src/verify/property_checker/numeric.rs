@@ -4,6 +4,7 @@
 //! `assert_all` plus Euclidean-division (NIA) axioms injected for both the
 //! contract expression and the VM's computed terms.
 
+use crate::helpers::mir_utils;
 use crate::helpers::mir_scan::Checkpoint;
 use crate::verify::api_classify;
 use crate::verify::contract::{
@@ -429,7 +430,7 @@ impl PropertyChecker {
             PlaceBase::Arg(n) => checkpoint.args.get(n)?,
             PlaceBase::Local(n) => {
                 let callee = checkpoint.callee?;
-                let idx = crate::helpers::mir_utils::callee_param_index_for_local(
+                let idx = mir_utils::callee_param_index_for_local(
                     vm_state.tcx,
                     callee,
                     n,

@@ -9,6 +9,7 @@
 //! orchestrates the overall alias check, calling into this module for the
 //! underlying MIR scanning.
 
+use crate::helpers::mir_utils;
 use std::collections::{HashMap, HashSet};
 
 use rustc_hir::{Safety, def::DefKind, def_id::DefId};
@@ -595,7 +596,7 @@ fn local_traces_to_self_field(
             if target.local != local {
                 continue;
             }
-            let Some(source) = crate::helpers::mir_utils::rvalue_source_place(rvalue) else {
+            let Some(source) = mir_utils::rvalue_source_place(rvalue) else {
                 continue;
             };
             let source_key = PlaceKey::from_mir_place(source);
@@ -638,7 +639,7 @@ fn method_exposes_self_field(
     }
 
     let ret_ty = body.local_decls[Local::from_usize(0)].ty;
-    if !crate::helpers::mir_utils::type_contains_raw_ptr(tcx, ret_ty) {
+    if !mir_utils::type_contains_raw_ptr(tcx, ret_ty) {
         return false;
     }
 
@@ -690,7 +691,7 @@ fn rvalue_mentions_local(
     local: Local,
     aliases: &HashMap<Local, PlaceKey>,
 ) -> bool {
-    crate::helpers::mir_utils::rvalue_any_place_matching(rvalue, &mut |place| {
+    mir_utils::rvalue_any_place_matching(rvalue, &mut |place| {
         // A deref of `local` reads the pointee rather than flowing `local`'s
         // value toward the return place, so it does not count as a copy.
         let has_deref = place
@@ -756,7 +757,7 @@ fn local_hazard_violation_with(
             } = &terminator.kind
             {
                 if crate::verify::api_classify::is_split_at(
-                    crate::helpers::mir_utils::dep_callee_def_id(func),
+                    mir_utils::dep_callee_def_id(func),
                 ) {
                     hazard_locals.insert(call_dest.local);
                 }
@@ -812,7 +813,7 @@ fn local_hazard_violation_with(
                     if !hazard_locals.is_empty()
                         && !hazard_locals.contains(&target.local)
                         && raw_access_conflicts(kind, RawAccessKind::Read)
-                        && !crate::helpers::mir_utils::rvalue_source_place(rvalue)
+                        && !mir_utils::rvalue_source_place(rvalue)
                             .is_some_and(|place| hazard_locals.contains(&place.local))
                         && !rvalue_reads_like_view(rvalue, tcx, caller, &origins, &tree)
                         && rvalue_reads_any_origin(rvalue, &origins, &tree, &body.local_decls)
@@ -878,7 +879,7 @@ fn local_hazard_violation_with(
                     ..
                 } = &terminator.kind
                 {
-                    let callee = crate::helpers::mir_utils::dep_callee_def_id(func);
+                    let callee = mir_utils::dep_callee_def_id(func);
                     if crate::verify::api_classify::is_from_raw_parts(callee) && args.len() >= 1 {
                         if let Some(ptr_place) = operand_place(&args[0].node) {
                             let offset_eq = is_ptr_add_offset_eq(
@@ -1181,7 +1182,7 @@ fn rvalue_reads_like_view(
     origins: &[PlaceKey],
     tree: &crate::verify::vm::alias_tree::AliasTree,
 ) -> bool {
-    let Some(place) = crate::helpers::mir_utils::rvalue_source_place(rvalue) else {
+    let Some(place) = mir_utils::rvalue_source_place(rvalue) else {
         return false;
     };
     if !place
@@ -1217,7 +1218,7 @@ fn terminator_writes_origin<'tcx>(
     let TerminatorKind::Call { func, args, .. } = terminator else {
         return false;
     };
-    let callee = crate::helpers::mir_utils::dep_callee_def_id(func);
+    let callee = mir_utils::dep_callee_def_id(func);
     if !crate::verify::api_classify::is_ptr_write(callee) {
         return false;
     }
@@ -1252,7 +1253,7 @@ fn terminator_is_benign_origin_use<'tcx>(
     let TerminatorKind::Call { func, .. } = terminator else {
         return true;
     };
-    crate::verify::api_classify::is_benign_origin_use(crate::helpers::mir_utils::dep_callee_def_id(
+    crate::verify::api_classify::is_benign_origin_use(mir_utils::dep_callee_def_id(
         func,
     ))
 }
@@ -1266,7 +1267,7 @@ fn terminator_invalidates_vec_owner<'tcx>(
         return false;
     };
     if !crate::verify::api_classify::is_vec_invalidating_method(
-        crate::helpers::mir_utils::dep_callee_def_id(func),
+        mir_utils::dep_callee_def_id(func),
     ) {
         return false;
     }
@@ -1303,7 +1304,7 @@ fn find_as_ptr_receivers(
         else {
             continue;
         };
-        if !crate::verify::api_classify::is_as_ptr(crate::helpers::mir_utils::dep_callee_def_id(
+        if !crate::verify::api_classify::is_as_ptr(mir_utils::dep_callee_def_id(
             func,
         )) {
             continue;
@@ -1362,7 +1363,7 @@ fn is_ptr_add_offset_eq(
                 continue;
             }
             if crate::verify::api_classify::is_pointer_add(
-                crate::helpers::mir_utils::dep_callee_def_id(func),
+                mir_utils::dep_callee_def_id(func),
             ) && args.len() >= 2
             {
                 if let Some(offset_place) = operand_place(&args[1].node) {
@@ -1387,7 +1388,7 @@ fn is_ptr_from_ptr_add(tcx: TyCtxt<'_>, caller: DefId, ptr_place: &PlaceKey) -> 
                 continue;
             }
             return crate::verify::api_classify::is_pointer_add(
-                crate::helpers::mir_utils::dep_callee_def_id(func),
+                mir_utils::dep_callee_def_id(func),
             );
         }
     }
@@ -1556,7 +1557,7 @@ fn places_holding_transferred_pointer(
             let target_defines_holder =
                 !killed.contains(&target.local) && holders.iter().any(|h| target_key.overlaps(h));
 
-            let source_place = crate::helpers::mir_utils::rvalue_source_place(rvalue);
+            let source_place = mir_utils::rvalue_source_place(rvalue);
 
             if target_defines_holder {
                 if let Some(source) = source_place
@@ -1606,7 +1607,7 @@ fn places_holding_transferred_pointer(
                 && holders.iter().any(|h| destination_key.overlaps(h))
             {
                 if crate::verify::api_classify::is_as_ptr(
-                    crate::helpers::mir_utils::dep_callee_def_id(func),
+                    mir_utils::dep_callee_def_id(func),
                 ) && let Some(arg) = args.first()
                     && let Operand::Copy(place) | Operand::Move(place) = &arg.node
                     && !killed.contains(&place.local)
@@ -1683,7 +1684,7 @@ fn place_is_raw_access_to_live_origin(place: &Place<'_>, live_origins: &[PlaceKe
 }
 
 fn rvalue_copies_live_origin_value(rvalue: &Rvalue<'_>, live_origins: &[PlaceKey]) -> bool {
-    let Some(place) = crate::helpers::mir_utils::rvalue_source_place(rvalue) else {
+    let Some(place) = mir_utils::rvalue_source_place(rvalue) else {
         return false;
     };
     if place
@@ -1718,7 +1719,7 @@ fn terminator_returns_ownership(
         return false;
     };
     if !crate::verify::api_classify::is_ownership_return(
-        crate::helpers::mir_utils::dep_callee_def_id(func),
+        mir_utils::dep_callee_def_id(func),
     ) {
         return false;
     }
@@ -1760,9 +1761,9 @@ fn pre_existing_view_on_origin(
         }
         let terminator = data.terminator();
         if let TerminatorKind::Call { func, args, .. } = &terminator.kind {
-            let callee_name = crate::helpers::mir_utils::call_name(tcx, func);
+            let callee_name = mir_utils::call_name(tcx, func);
             if crate::verify::api_classify::is_nonnull_as_ref_as_mut(
-                crate::helpers::mir_utils::dep_callee_def_id(func),
+                mir_utils::dep_callee_def_id(func),
             ) {
                 if let Some(arg) = args.first()
                     && let Some(place) = operand_mir_place(&arg.node)
@@ -1913,7 +1914,7 @@ fn local_callsites(tcx: TyCtxt<'_>, callee: DefId) -> Vec<LocalCallsite<'_>> {
             else {
                 continue;
             };
-            let Some(target) = crate::helpers::mir_utils::dep_callee_def_id(func) else {
+            let Some(target) = mir_utils::dep_callee_def_id(func) else {
                 continue;
             };
             if target != callee {

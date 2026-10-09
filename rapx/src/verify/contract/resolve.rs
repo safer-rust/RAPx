@@ -5,6 +5,7 @@
 //! here: places (via `place.rs`), const generics, builtin integer bounds, the
 //! `x.len()` sugar, tag argument types/targets, and `ValidNum` predicates.
 
+use crate::helpers::mir_utils;
 use quote::ToTokens;
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
@@ -58,7 +59,7 @@ pub(crate) fn parse_contract_expr<'tcx>(
     if let Expr::Path(expr_path) = expr
         && let Some(ident) = expr_path.path.get_ident()
         && let Some(value) =
-            crate::helpers::mir_utils::resolve_const_item_value(tcx, &ident.to_string())
+            mir_utils::resolve_const_item_value(tcx, &ident.to_string())
     {
         return ContractExpr::Const(value);
     }

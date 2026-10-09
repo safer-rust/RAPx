@@ -7,6 +7,8 @@ use rustc_span::{kw, sym};
 use std::{collections::HashSet, fmt::Debug, hash::Hash};
 use syn::Expr;
 
+use crate::def_id;
+
 pub use super::mir_scan::check_safety;
 pub use super::name::get_cleaned_def_path_name;
 
@@ -222,7 +224,7 @@ pub fn get_all_std_fns_by_rustc_public(tcx: TyCtxt) -> Vec<DefId> {
     all_std_fn_def.append(&mut alloc_fn_def);
 
     for fn_def in &all_std_fn_def {
-        let def_id = crate::def_id::to_internal(fn_def, tcx);
+        let def_id = def_id::to_internal(fn_def, tcx);
         results.push(def_id);
     }
     results

@@ -15,6 +15,8 @@ use rustc_middle::ty::{Ty, TyKind};
 use z3::ast::{Ast, Bool, Int};
 
 use crate::compat::{FxHashMap, FxHashSet, Spanned};
+use crate::def_id;
+use crate::helpers::mir_utils;
 use crate::limit::MAX_INLINE_DEPTH;
 use crate::verify::api_classify;
 use crate::verify::call_summary::{self, CallEffect};
@@ -41,7 +43,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             .collect();
 
         let callee =
-            crate::helpers::mir_utils::dep_callee_resolved_def_id(self.tcx, caller_def_id, func);
+            mir_utils::dep_callee_resolved_def_id(self.tcx, caller_def_id, func);
         let caller_arg_locals: Vec<Option<Local>> = args
             .iter()
             .map(|a| a.node.place().map(|p| p.local))
@@ -51,7 +53,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         // operand's bytes are the tracked operand's content on the true path.
         // Write them into the tracked allocation so a later `ValidCStr` can see
         // the NUL terminator.
-        if crate::helpers::mir_utils::is_eq_call(self.tcx, func) {
+        if mir_utils::is_eq_call(self.tcx, func) {
             self.propagate_const_bytes_to_tracked(args);
         }
 
@@ -96,7 +98,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         // so the ptr update would otherwise be lost.
         if let Some(c) = callee {
             if self.tcx.is_mir_available(c) {
-                if crate::helpers::mir_utils::is_iter_ptr_adj(self.tcx, c) && arg_values.len() >= 2
+                if mir_utils::is_iter_ptr_adj(self.tcx, c) && arg_values.len() >= 2
                 {
                     self.apply_iter_ptr_update(c, &arg_values);
                     // Continue to normal handling (return value is () , ignored).
@@ -241,7 +243,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         destination: Local,
     ) -> bool {
         let is_index =
-            callee.is_some_and(|c| crate::helpers::mir_utils::is_index_method(self.tcx, c));
+            callee.is_some_and(|c| mir_utils::is_index_method(self.tcx, c));
         if !is_index || arg_values.len() < 2 {
             return false;
         }
@@ -254,7 +256,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         // *index* argument's range kind: a range indexes a slice, a `usize`
         // indexes a single element (which this handler does not model).
         let range_kind = arg_values.get(1).and_then(|v| match v.ty.kind() {
-            TyKind::Adt(adt_def, _) => Some(crate::helpers::mir_utils::range_kind(
+            TyKind::Adt(adt_def, _) => Some(mir_utils::range_kind(
                 self.tcx,
                 adt_def.did(),
             )),
@@ -297,20 +299,20 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             .clone()
             .div(&Int::from_u64(self.z3_ctx, elem_size));
         let (start, len) = match range_kind {
-            Some(crate::helpers::mir_utils::RangeKind::RangeTo) => (
+            Some(mir_utils::RangeKind::RangeTo) => (
                 zero.clone(),
                 range_field(0).unwrap_or_else(|| total_len.clone()),
             ),
-            Some(crate::helpers::mir_utils::RangeKind::RangeFrom) => {
+            Some(mir_utils::RangeKind::RangeFrom) => {
                 let s = range_field(0).unwrap_or_else(|| zero.clone());
                 (s.clone(), Int::sub(self.z3_ctx, &[&total_len, &s]))
             }
-            Some(crate::helpers::mir_utils::RangeKind::Range) => {
+            Some(mir_utils::RangeKind::Range) => {
                 let s = range_field(0).unwrap_or_else(|| zero.clone());
                 let e = range_field(1).unwrap_or_else(|| total_len.clone());
                 (s.clone(), Int::sub(self.z3_ctx, &[&e, &s]))
             }
-            Some(crate::helpers::mir_utils::RangeKind::RangeInclusive) => {
+            Some(mir_utils::RangeKind::RangeInclusive) => {
                 let s = range_field(0).unwrap_or_else(|| zero.clone());
                 let e = range_field(1).unwrap_or_else(|| total_len.clone());
                 let l = Int::sub(self.z3_ctx, &[&e, &s]);
@@ -420,27 +422,27 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             .clone()
             .div(&Int::from_u64(self.z3_ctx, elem_size));
         let range_kind = arg_values.get(1).and_then(|v| match v.ty.kind() {
-            TyKind::Adt(adt_def, _) => Some(crate::helpers::mir_utils::range_kind(
+            TyKind::Adt(adt_def, _) => Some(mir_utils::range_kind(
                 self.tcx,
                 adt_def.did(),
             )),
             _ => None,
         });
         let (start, len) = match range_kind {
-            Some(crate::helpers::mir_utils::RangeKind::RangeTo) => (
+            Some(mir_utils::RangeKind::RangeTo) => (
                 zero.clone(),
                 range_field(0).unwrap_or_else(|| total_len.clone()),
             ),
-            Some(crate::helpers::mir_utils::RangeKind::RangeFrom) => {
+            Some(mir_utils::RangeKind::RangeFrom) => {
                 let s = range_field(0).unwrap_or_else(|| zero.clone());
                 (s.clone(), Int::sub(self.z3_ctx, &[&total_len, &s]))
             }
-            Some(crate::helpers::mir_utils::RangeKind::Range) => {
+            Some(mir_utils::RangeKind::Range) => {
                 let s = range_field(0).unwrap_or_else(|| zero.clone());
                 let e = range_field(1).unwrap_or_else(|| total_len.clone());
                 (s.clone(), Int::sub(self.z3_ctx, &[&e, &s]))
             }
-            Some(crate::helpers::mir_utils::RangeKind::RangeInclusive) => {
+            Some(mir_utils::RangeKind::RangeInclusive) => {
                 let s = range_field(0).unwrap_or_else(|| zero.clone());
                 let e = range_field(1).unwrap_or_else(|| total_len.clone());
                 let l = Int::sub(self.z3_ctx, &[&e, &s]);
@@ -498,7 +500,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     ) -> bool {
         let is_len = api_classify::is_iter_len(callee);
         let is_empty = api_classify::is_iter_is_empty(callee);
-        if !(is_len || is_empty) || arg_values.len() < 1 {
+        if !(is_len || is_empty) || arg_values.is_empty() {
             return false;
         }
         let receiver_local = args.first().and_then(|a| a.node.place()).map(|p| p.local);
@@ -507,24 +509,19 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         };
         // len() = (end_or_len - ptr) / sizeof(T)   (non-ZST)
         // is_empty() = ptr == end_or_len           (non-ZST)
-        let (Some(ptr), Some(end)) = (self.field_value(local, &[0]), self.field_value(local, &[1]))
-        else {
+        let Some((ptr, end)) = self.iter_ptr_end(local) else {
             return false;
         };
-        let (Some(pp), Some(ep)) = (&ptr.provenance, &end.provenance) else {
-            return false;
-        };
-        if pp.alloc_id != ep.alloc_id {
-            return false;
-        }
         let dest_ty = self.body().local_decls[destination].ty;
         if is_len {
-            let diff = Int::sub(self.z3_ctx, &[&ep.offset, &pp.offset]);
-            let sz = self.iter_elem_size(ptr);
-            let val = VmValue::new(diff.div(&sz), dest_ty);
-            self.set_local(destination, val);
+            let len = self
+                .iter_len_from_ptrs(&ptr, &end)
+                .expect("iter_ptr_end guarantees same-alloc provenance");
+            self.set_local(destination, VmValue::new(len, dest_ty));
         } else {
             // is_empty(): ptr == end_or_len  (non-ZST branch)
+            let pp = ptr.provenance.as_ref().unwrap();
+            let ep = end.provenance.as_ref().unwrap();
             let eq = pp.offset._eq(&ep.offset);
             let zero = Int::from_u64(self.z3_ctx, 0);
             let one = Int::from_u64(self.z3_ctx, 1);
@@ -595,23 +592,18 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         arg_values: &[VmValue<'z3, 'tcx>],
         destination: Local,
     ) -> bool {
-        if !api_classify::is_iter_next(callee) || arg_values.len() < 1 {
+        if !api_classify::is_iter_next(callee) || arg_values.is_empty() {
             return false;
         }
         let self_val = &arg_values[0];
         let Some(local) = self.find_iter_self_local(self_val) else {
             return false;
         };
-        let (Some(ptr), Some(end)) = (self.field_value(local, &[0]), self.field_value(local, &[1]))
-        else {
+        let Some((ptr, end)) = self.iter_ptr_end(local) else {
             return false;
         };
-        let (Some(pp), Some(ep)) = (&ptr.provenance, &end.provenance) else {
-            return false;
-        };
-        if pp.alloc_id != ep.alloc_id {
-            return false;
-        }
+        let pp = ptr.provenance.as_ref().unwrap();
+        let ep = end.provenance.as_ref().unwrap();
         let buffer = ep.alloc_id;
         let ep_elem = match &ep.offset_kind {
             Some(OffsetKind::Element(e)) => Some(e.clone()),
@@ -619,17 +611,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         };
         let dest_ty = self.body().local_decls[destination].ty;
         // Compute is_empty from fields/tracked offset (same as is_empty()).
-        let sz = self.iter_elem_size(ptr);
+        let sz = self.iter_elem_size(&ptr);
         let ep_offset = ep.offset.clone();
-        let remaining = if let Some((off, _)) = self.constraints.term_caches.iter_ptr_offset.get(&buffer) {
-            let base_len = ep_offset.div(&sz);
-            let zero = Int::from_u64(self.z3_ctx, 0);
-            off.gt(&base_len)
-                .ite(&zero, &Int::sub(self.z3_ctx, &[&base_len, off]))
-        } else {
-            let diff = Int::sub(self.z3_ctx, &[&ep_offset, &pp.offset]);
-            diff.div(&sz)
-        };
+        let remaining = self
+            .iter_remaining_len_from_ptrs(&ptr, &end)
+            .expect("iter_ptr_end guarantees same-alloc provenance");
         let is_empty = remaining._eq(&Int::from_u64(self.z3_ctx, 0));
         // The returned element is the *current* position: the tracked element
         // index (iter_ptr_offset) scaled by the element stride, or the base
@@ -840,7 +826,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     bb.terminator().kind,
                     rustc_middle::mir::TerminatorKind::SwitchInt { .. }
                 )
-                && !crate::helpers::mir_utils::switch_is_debug_assert(self.tcx, callee_body, idx)
+                && !mir_utils::switch_is_debug_assert(self.tcx, callee_body, idx)
         });
         if arg_values.len() > 4 || n_return > 1 || has_switch
         {
@@ -988,7 +974,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         body: &rustc_middle::mir::Body<'tcx>,
         discr: &Operand<'tcx>,
     ) -> Option<u64> {
-        if let Some(v) = crate::helpers::mir_utils::operand_const_u64(discr) {
+        if let Some(v) = mir_utils::operand_const_u64(discr) {
             return Some(v);
         }
         let (Operand::Copy(p) | Operand::Move(p)) = discr else {
@@ -1003,7 +989,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 if dest != p {
                     continue;
                 }
-                return crate::helpers::mir_utils::rvalue_runtime_checks_value(rvalue);
+                return mir_utils::rvalue_runtime_checks_value(rvalue);
             }
         }
         None
@@ -1070,7 +1056,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     // A `debug_assert!`/`assert!` switch or a drop-flag dispatch
                     // has its non-otherwise edges dead on the normal path, so
                     // follow only `otherwise`.
-                    let trivial = crate::helpers::mir_utils::switch_targets_unreachable(
+                    let trivial = mir_utils::switch_targets_unreachable(
                         self.tcx,
                         self.body(),
                         targets,
@@ -1142,23 +1128,23 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// `sizeof_T` / `align_T` so it agrees with `size_sym`/`align_sym`.  Returns
     /// `true` when handled.  Concrete layouts are left to `eff_layout_const`.
     fn try_size_align_effect(&mut self, func: &Operand<'tcx>, destination: Local) -> bool {
-        let Some(ty) = crate::helpers::mir_utils::fn_def_first_type_arg(func) else {
+        let Some(ty) = mir_utils::fn_def_first_type_arg(func) else {
             return false;
         };
-        let Some(callee) = crate::helpers::mir_utils::dep_callee_def_id(func) else {
+        let Some(callee) = mir_utils::dep_callee_def_id(func) else {
             return false;
         };
-        let is_size = crate::def_id::contains(
+        let is_size = def_id::contains(
             &[
-                crate::def_id::mem_size_of(),
-                crate::def_id::intrinsics_size_of(),
+                def_id::mem_size_of(),
+                def_id::intrinsics_size_of(),
             ],
             callee,
         );
-        let is_align = crate::def_id::contains(
+        let is_align = def_id::contains(
             &[
-                crate::def_id::mem_align_of(),
-                crate::def_id::intrinsics_align_of(),
+                def_id::mem_align_of(),
+                def_id::intrinsics_align_of(),
             ],
             callee,
         );
@@ -1169,7 +1155,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         // `eff_layout_const`; only the generic (symbolic) case needs binding here.
         // `type_layout` reports `(0, 0)` for a generic `T`, so a zero alignment
         // (not a zero *size*, which is a legal ZST) marks the unknown case.
-        if crate::helpers::mir_utils::type_layout(self.tcx, self.current_frame.current_def_id, ty)
+        if mir_utils::type_layout(self.tcx, self.current_frame.current_def_id, ty)
             .is_some_and(|(align, _)| align > 0)
         {
             return false;
@@ -1284,7 +1270,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     .cloned()
                 {
                     val = search;
-                } else if let Some(elem) = crate::helpers::mir_utils::pointee_ty(dest_ty) {
+                } else if let Some(elem) = mir_utils::pointee_ty(dest_ty) {
                     let is_slice = matches!(elem.kind(), rustc_middle::ty::TyKind::Slice(_));
                     if is_slice {
                         let elem_align = self.align_sym(elem);
@@ -1354,7 +1340,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             // whose borrow the slicer dropped): fall back to the
                             // slice pointee type so `InBound`/`Allocated` can
                             // still match `[T]` against the element `T`.
-                            let pointee = crate::helpers::mir_utils::pointee_ty(self_val.ty);
+                            let pointee = mir_utils::pointee_ty(self_val.ty);
                             let sz = self.size_sym_read(pointee.unwrap_or(self_val.ty));
                             (pointee, sz, Int::from_u64(self.z3_ctx, 1))
                         });
@@ -1860,7 +1846,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     // downstream `raw-ptr-deref`/`from_raw_parts` `Align` check.
                     if existing.facts.align_n.is_none() {
                         let dest_ty = self.body().local_decls[dest].ty;
-                        if let Some(pointee) = crate::helpers::mir_utils::pointee_ty(dest_ty) {
+                        if let Some(pointee) = mir_utils::pointee_ty(dest_ty) {
                             let a = self.align_sym(pointee);
                             if a.simplify().as_u64() != Some(1) {
                                 existing.facts.align_n = Some(a);
@@ -1937,7 +1923,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     // `(ptr + offset*elem) % align == 0` with `0 <= offset < align`
                     // so a downstream `*(ptr.add(offset) as *const U)` can
                     // discharge `Align`.
-                    let elem = crate::helpers::mir_utils::pointee_ty(ptr_val.ty)
+                    let elem = mir_utils::pointee_ty(ptr_val.ty)
                         .map(|pointee| self.size_sym(pointee))
                         .unwrap_or_else(|| Int::from_u64(self.z3_ctx, 1));
                     let byte_off = Int::mul(self.z3_ctx, &[&offset, &elem]);
@@ -2225,7 +2211,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         // For locally-created Vec-like types: create a heap data
                         // allocation on first mutation. (Param Vecs already have
                         // an external allocation set by init_parameters.)
-                        let is_vec = crate::verify::api_classify::is_vec_push_or_reserve(callee);
+                        let is_vec = api_classify::is_vec_push_or_reserve(callee);
                         let is_external = self.alloc(prov.alloc_id).is_external();
                         if is_vec && !is_external {
                             let elem_ty = match arg_val.ty.kind() {
@@ -2414,7 +2400,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 // first generic argument so the heap allocation is sized to the
                 // pointee and (below) the inner `Unique<T>.pointer` field can be
                 // exposed.
-                let pointee = crate::helpers::mir_utils::pointee_ty(dest_ty).or_else(|| {
+                let pointee = mir_utils::pointee_ty(dest_ty).or_else(|| {
                     if let rustc_middle::ty::TyKind::Adt(adt, substs) = dest_ty.kind() {
                         if api_classify::is_std_box(adt.did()) {
                             substs.first().and_then(|s| s.as_type())
@@ -2931,7 +2917,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             Some(s) => Int::from_u64(self.z3_ctx, s),
             None => {
                 let dest_ty = self.body().local_decls[dest].ty;
-                let pointee = crate::helpers::mir_utils::pointee_ty(dest_ty).unwrap_or(dest_ty);
+                let pointee = mir_utils::pointee_ty(dest_ty).unwrap_or(dest_ty);
                 self.size_sym(pointee)
             }
         }
@@ -2945,7 +2931,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         for (i, arg) in args.iter().enumerate() {
             let arg_val = self.value_of_operand(&arg.node);
             if const_bytes.is_none() {
-                let bytes_opt = crate::helpers::mir_utils::const_operand_bytes(self.tcx, &arg.node)
+                let bytes_opt = mir_utils::const_operand_bytes(self.tcx, &arg.node)
                     .or_else(|| self.trace_to_const_bytes(&arg.node));
                 if let Some(bytes) = bytes_opt {
                     const_bytes = Some((bytes, i));
@@ -2968,6 +2954,20 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             }
             self.content_mut(alloc_id).facts.initialized = true;
         }
+    }
+
+    /// The two pointer fields of an Iter/IterMut local (`[0]` = ptr, `[1]` =
+    /// end_or_len), which share the same allocation.  Returns `None` when
+    /// either field is missing or the two point into different allocations.
+    fn iter_ptr_end(&self, local: Local) -> Option<(VmValue<'z3, 'tcx>, VmValue<'z3, 'tcx>)> {
+        let ptr = self.field_value(local, &[0])?.clone();
+        let end = self.field_value(local, &[1])?.clone();
+        let same_alloc = ptr
+            .provenance
+            .as_ref()
+            .zip(end.provenance.as_ref())
+            .is_some_and(|(pp, ep)| pp.alloc_id == ep.alloc_id);
+        same_alloc.then_some((ptr, end))
     }
 
     /// Element size of the type iterated by an Iter/IterMut pointer, symbolic
@@ -3013,18 +3013,16 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         Some(diff.div(&sz))
     }
 
-    /// Remaining element count of the Iter/IterMut backed by `local`
-    /// (fields `[0]` = ptr, `[1]` = end_or_len).  When a tracked pointer
-    /// offset exists (`iter_ptr_offset`), prefers the compact
-    /// `base_len - offset` form; otherwise falls back to
+    /// Remaining element count of an Iter/IterMut from its two pointer fields.
+    /// When a tracked pointer offset exists (`iter_ptr_offset`), prefers the
+    /// compact `base_len - offset` form; otherwise falls back to
     /// `(end.offset - ptr.offset) / elem_size`.
-    fn iter_remaining_len(&self, local: Local) -> Option<Int<'z3>> {
-        let ptr = self.field_value(local, &[0])?;
-        let end = self.field_value(local, &[1])?;
+    fn iter_remaining_len_from_ptrs(
+        &self,
+        ptr: &VmValue<'z3, 'tcx>,
+        end: &VmValue<'z3, 'tcx>,
+    ) -> Option<Int<'z3>> {
         let ep = end.provenance.as_ref()?;
-        if ptr.provenance.as_ref().map(|p| p.alloc_id) != Some(ep.alloc_id) {
-            return None;
-        }
         let sz = self.iter_elem_size(ptr);
         if let Some((offset, _)) = self.constraints.term_caches.iter_ptr_offset.get(&ep.alloc_id) {
             let base_len = ep.offset.div(&sz);
@@ -3037,6 +3035,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         } else {
             self.iter_len_from_ptrs(ptr, end)
         }
+    }
+
+    /// Remaining element count of the Iter/IterMut backed by `local`
+    /// (fields `[0]` = ptr, `[1]` = end_or_len).
+    fn iter_remaining_len(&self, local: Local) -> Option<Int<'z3>> {
+        let (ptr, end) = self.iter_ptr_end(local)?;
+        self.iter_remaining_len_from_ptrs(&ptr, &end)
     }
 
     /// For Iter/IterMut types, compute len from struct fields directly
@@ -3064,7 +3069,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         callee: DefId,
         arg_values: &[VmValue<'z3, 'tcx>],
     ) {
-        let is_inc = crate::helpers::mir_utils::is_post_inc_start(self.tcx, callee);
+        let is_inc = mir_utils::is_post_inc_start(self.tcx, callee);
         if !is_inc {
             return;
         } // pre_dec_end not yet supported
@@ -3381,7 +3386,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 .fields
                 .iter()
                 .nth(idx)
-                .map(|f| crate::helpers::mir_utils::field_ty(self.tcx, f, substs))
+                .map(|f| mir_utils::field_ty(self.tcx, f, substs))
                 .unwrap_or(dest_ty)
         };
 

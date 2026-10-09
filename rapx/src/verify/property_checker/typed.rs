@@ -4,6 +4,7 @@
 //! offset) against the expected type; `Size` checks `sized`/`unsized`/exact
 //! size assertions.
 
+use crate::helpers::mir_utils;
 use crate::helpers::mir_scan::Checkpoint;
 use crate::verify::contract::{ContractExpr, Property, PropertyArg};
 use crate::verify::report::{CheckResult, UnknownReason};
@@ -105,7 +106,7 @@ impl PropertyChecker {
                                 if i > 0 && field_off == 0 {
                                     accum = 0;
                                 }
-                                let field_ty: Ty<'tcx> = crate::helpers::mir_utils::field_ty(
+                                let field_ty: Ty<'tcx> = mir_utils::field_ty(
                                     vm_state.tcx,
                                     field_def,
                                     substs,
@@ -347,7 +348,7 @@ impl PropertyChecker {
                 let mut sum = 0u64;
                 for field_def in variant.fields.iter() {
                     let field_ty: Ty<'tcx> =
-                        crate::helpers::mir_utils::field_ty(tcx, field_def, substs);
+                        mir_utils::field_ty(tcx, field_def, substs);
                     match self.type_has_no_padding(vm_state, field_ty) {
                         Some(true) => sum += vm_state.size_of_ty(field_ty),
                         Some(false) => return Some(false),

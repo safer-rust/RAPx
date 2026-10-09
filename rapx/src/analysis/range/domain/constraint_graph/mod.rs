@@ -2,6 +2,7 @@ pub mod debug;
 pub mod graph;
 pub mod solver;
 
+use crate::helpers::mir_utils;
 use crate::analysis::range::Range;
 use crate::analysis::range::domain::domain::*;
 
@@ -190,7 +191,7 @@ where
 
                 // Return the field's type as the result of this match arm.
                 // (The "let field_ty =" is removed from this line)
-                crate::helpers::mir_utils::field_ty(self.tcx, field_def, substs)
+                mir_utils::field_ty(self.tcx, field_def, substs)
             }
             _ => {
                 panic!("get_field_place expected an ADT, but found {:?}", adt_ty);

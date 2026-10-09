@@ -6,6 +6,7 @@
 //! struct invariants) and delegates the actual backward/forward/SMT work to
 //! the shared `VerifyEngine`.
 
+use crate::helpers::mir_utils;
 use crate::analysis::Analysis;
 use crate::analysis::path::{
     PathTree,
@@ -668,7 +669,7 @@ impl<'tcx> VerifyRun<'tcx> {
     ) -> Option<String> {
         for &repeat in repeat_rounds {
             let driver = VerifyDriver::new_with_repeat(self.tcx, target, repeat);
-            match crate::helpers::mir_utils::catch_panic(|| driver.verify_function()) {
+            match mir_utils::catch_panic(|| driver.verify_function()) {
                 Ok(report) => {
                     rap_debug!("{}", report.describe());
                     all_results.extend(report.results);
@@ -766,7 +767,7 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
             // Phase 2: struct invariant verification
             if !target.struct_invariants.is_empty() && !self.skip_invariant {
                 let driver = VerifyDriver::new_with_repeat(self.tcx, target, planned_repeat);
-                match crate::helpers::mir_utils::catch_panic(|| driver.verify_struct_invariants()) {
+                match mir_utils::catch_panic(|| driver.verify_struct_invariants()) {
                     Ok(struct_report) => {
                         rap_debug!("{}", struct_report.describe());
                         all_results.extend(struct_report.results.clone());
@@ -797,7 +798,7 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
             // Phase 3: built-in type invariant verification
             if !target.type_invariants.is_empty() && !self.skip_invariant {
                 let driver = VerifyDriver::new_with_repeat(self.tcx, target, planned_repeat);
-                match crate::helpers::mir_utils::catch_panic(|| driver.verify_type_invariants()) {
+                match mir_utils::catch_panic(|| driver.verify_type_invariants()) {
                     Ok(type_report) => {
                         rap_debug!("{}", type_report.describe());
                         all_results.extend(type_report.results.clone());

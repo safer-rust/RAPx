@@ -5,6 +5,7 @@
 //! `in_bounds`, `non_null`) with fast paths, falling back to SMT over
 //! `value.z3_term` and allocation base/size.
 
+use crate::helpers::mir_utils;
 use crate::helpers::mir_scan::Checkpoint;
 use crate::verify::api_classify;
 use crate::verify::contract::{ContractExpr, Property, PropertyArg};
@@ -90,7 +91,7 @@ impl PropertyChecker {
             .as_ref()
             .is_some_and(|prov| matches!(prov.offset_kind, Some(OffsetKind::Field)))
         {
-            crate::helpers::mir_utils::pointee_ty(value.ty).map(|ty| vm_state.align_sym_read(ty))
+            mir_utils::pointee_ty(value.ty).map(|ty| vm_state.align_sym_read(ty))
         } else {
             value.facts.align_n.clone()
         };
@@ -522,7 +523,7 @@ impl PropertyChecker {
         // over a union), so `Allocated(p, T, n)` holds regardless of the provenance
         // the VM recorded for an iterator-deref pointer (`array_try_from_fn_ext`).
         if let Some(req_ty) = required_ty {
-            let val_pointee = crate::helpers::mir_utils::pointee_ty(value.ty);
+            let val_pointee = mir_utils::pointee_ty(value.ty);
             if val_pointee.and_then(maybe_uninit_inner) == Some(req_ty)
                 || maybe_uninit_inner(req_ty) == val_pointee
             {
@@ -555,7 +556,7 @@ impl PropertyChecker {
             .as_ref()
             .is_some_and(|prov| matches!(prov.offset_kind, Some(OffsetKind::Field)))
         {
-            let field_size = crate::helpers::mir_utils::pointee_ty(value.ty)
+            let field_size = mir_utils::pointee_ty(value.ty)
                 .map(|ty| vm_state.size_sym_read(ty))
                 .unwrap_or_else(|| Int::from_u64(vm_state.z3_ctx, 1));
             let solver = Solver::new(vm_state.z3_ctx);
@@ -928,7 +929,7 @@ impl PropertyChecker {
         // shared with a live reference parameter.
         let is_raw_ptr = matches!(value.ty.kind(), TyKind::RawPtr(..))
             || matches!(value.ty.kind(), TyKind::Adt(adt_def, _)
-                if crate::helpers::mir_utils::is_raw_ptr_wrapper(vm_state.tcx, adt_def.did()));
+                if mir_utils::is_raw_ptr_wrapper(vm_state.tcx, adt_def.did()));
 
         if is_raw_ptr {
             let mut root_id = id;

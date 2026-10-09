@@ -1,3 +1,4 @@
+use crate::helpers::mir_utils;
 use rustc_middle::ty::{self, Ty, TyCtxt};
 
 #[derive(PartialEq, Debug, Copy, Clone)]
@@ -69,7 +70,7 @@ pub fn is_not_drop<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> bool {
         // For ADTs (structs, enums), check all fields.
         ty::Adt(adtdef, substs) => {
             for field in adtdef.all_fields() {
-                let fty = crate::helpers::mir_utils::field_ty(tcx, field, substs);
+                let fty = mir_utils::field_ty(tcx, field, substs);
                 if !is_not_drop(tcx, fty) {
                     return false;
                 }

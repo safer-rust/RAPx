@@ -1,5 +1,7 @@
 use super::PathTree;
 use crate::compat::{FxHashMap, FxHashSet};
+use crate::def_id;
+use crate::helpers::mir_utils;
 use crate::graphs::{
     cfg::{CfgBlock, ControlFlowGraph},
     scc::{Scc, SccInfo},
@@ -415,12 +417,12 @@ fn build_function_info(
                 ..
             } = terminator.kind
             {
-                if let Some(did) = crate::helpers::mir_utils::dep_callee_def_id(func) {
-                    if crate::def_id::known_nonnull_fns().contains(&did) {
+                if let Some(did) = mir_utils::dep_callee_def_id(func) {
+                    if def_id::known_nonnull_fns().contains(&did) {
                         info.known_nonnull_locals
                             .insert(local_base + destination.local.as_usize());
                     }
-                    if crate::def_id::null_ptr_fns().contains(&did) {
+                    if def_id::null_ptr_fns().contains(&did) {
                         info.constants
                             .insert(local_base + destination.local.as_usize(), 0);
                     }
@@ -632,14 +634,14 @@ impl<'tcx> PathGraph<'tcx> {
                 // callees are resolved to the concrete impl so a user trait
                 // method (e.g. `<MyIter as Iterator>::next`) inlines against its
                 // actual MIR.
-                let Some(base_callee) = crate::helpers::mir_utils::dep_callee_def_id(func) else {
+                let Some(base_callee) = mir_utils::dep_callee_def_id(func) else {
                     continue;
                 };
                 let cross_crate = base_callee.as_local().is_none();
                 let callee = if cross_crate {
                     base_callee
                 } else {
-                    crate::helpers::mir_utils::dep_callee_resolved_def_id(
+                    mir_utils::dep_callee_resolved_def_id(
                         tcx,
                         self.cfg.block(i).def_id,
                         func,

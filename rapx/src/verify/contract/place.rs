@@ -7,6 +7,7 @@
 //! and the pest-based expression converter (`pest_conv.rs`) can share it
 //! without a dependency cycle.
 
+use crate::helpers::mir_utils;
 use rustc_abi::FieldIdx;
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
@@ -213,7 +214,7 @@ fn resolve_next_field<'tcx>(
         let variant = adt_def.non_enum_variant();
         if let Ok(field_idx) = field_name.parse::<usize>() {
             if field_idx < variant.fields.len() {
-                let field_ty = crate::helpers::mir_utils::field_ty(
+                let field_ty = mir_utils::field_ty(
                     tcx,
                     &variant.fields[FieldIdx::from_usize(field_idx)],
                     arg_list,
@@ -227,7 +228,7 @@ fn resolve_next_field<'tcx>(
             .enumerate()
             .find(|(_, f)| f.ident(tcx).name.to_string() == field_name)
         {
-            let field_ty = crate::helpers::mir_utils::field_ty(
+            let field_ty = mir_utils::field_ty(
                 tcx,
                 &variant.fields[FieldIdx::from_usize(idx)],
                 arg_list,

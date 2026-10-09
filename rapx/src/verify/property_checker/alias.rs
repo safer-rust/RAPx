@@ -3,6 +3,7 @@
 //! `Alias` delegates to [`crate::verify::vm::alias::check_alias_vm`]; `Owning`
 //! is a simple liveness check on the target allocation.
 
+use crate::helpers::mir_utils;
 use crate::helpers::mir_scan::Checkpoint;
 use crate::verify::contract::Property;
 use crate::verify::report::{CheckResult, UnknownReason};
@@ -72,7 +73,7 @@ impl PropertyChecker {
             crate::verify::contract::PlaceBase::Arg(n) => checkpoint
                 .args
                 .get(n)
-                .and_then(|op| crate::helpers::mir_utils::operand_mir_place(op).map(|p| p.local)),
+                .and_then(|op| mir_utils::operand_mir_place(op).map(|p| p.local)),
             crate::verify::contract::PlaceBase::Local(n) => {
                 Some(rustc_middle::mir::Local::from_usize(n))
             }

@@ -4,6 +4,8 @@
 //! `smt_check` "negate and prove" primitive, and size/byte-width utilities used
 //! by every checker family.
 
+use crate::helpers::mir_utils;
+use crate::def_id;
 use crate::helpers::mir_scan::Checkpoint;
 use crate::verify::contract::{
     ContractExpr, ContractPlace, ContractProjection, NumericBinOp, PlaceBase, Property,
@@ -31,7 +33,7 @@ pub(super) fn local_param_operand<'a, 'z3, 'tcx>(
     n: usize,
 ) -> Option<&'a Operand<'tcx>> {
     let callee = ck.callee?;
-    let idx = crate::helpers::mir_utils::callee_param_index_for_local(vm_state.tcx, callee, n)?;
+    let idx = mir_utils::callee_param_index_for_local(vm_state.tcx, callee, n)?;
     ck.args.get(idx)
 }
 
@@ -122,7 +124,7 @@ impl PropertyChecker {
                                 let variant = &adt_def.variants()
                                     [rustc_abi::VariantIdx::from_usize(*variant_index)];
                                 if !variant.fields.is_empty() {
-                                    Some(crate::helpers::mir_utils::field_ty(
+                                    Some(mir_utils::field_ty(
                                         vm_state.tcx,
                                         &variant.fields[rustc_abi::FieldIdx::from_usize(0)],
                                         substs,
@@ -462,7 +464,7 @@ impl PropertyChecker {
                 // Two-argument form (`Init(self, n)`, no `T`): derive the
                 // element type from the target's pointee, peeling `[T]` /
                 // `[T; N]` down to `T` so `n * sizeof(elem)` is computed.
-                crate::helpers::mir_utils::pointee_ty(value.ty).map(|ty| match ty.kind() {
+                mir_utils::pointee_ty(value.ty).map(|ty| match ty.kind() {
                     rustc_middle::ty::TyKind::Slice(e) | rustc_middle::ty::TyKind::Array(e, _) => {
                         *e
                     }
@@ -594,7 +596,7 @@ impl PropertyChecker {
                 .try_to_target_usize(vm_state.tcx)
                 .map(|value| value as u128)
                 .or_else(|| {
-                    crate::helpers::mir_utils::const_int_from_debug(&format!("{actual_const:?}"))
+                    mir_utils::const_int_from_debug(&format!("{actual_const:?}"))
                         .map(|v| v as u128)
                 }),
             _ => None,
@@ -651,7 +653,7 @@ impl PropertyChecker {
             ContractExpr::SizeOf(ty) => {
                 let mut size = vm_state.size_of_ty(*ty);
                 if size == 0 && matches!(ty.kind(), rustc_middle::ty::TyKind::Param(_)) {
-                    size = crate::helpers::mir_utils::size_of_generic_param(
+                    size = mir_utils::size_of_generic_param(
                         vm_state.tcx,
                         vm_state.current_frame.current_def_id,
                         *ty,
@@ -928,7 +930,7 @@ impl PropertyChecker {
                         }
                     }
                 }
-                crate::helpers::mir_utils::const_int_from_debug(&const_text)
+                mir_utils::const_int_from_debug(&const_text)
                     .map(|v| Int::from_u64(vm_state.z3_ctx, v))
             }
             Operand::Copy(p) | Operand::Move(p) if p.projection.is_empty() => {
@@ -1029,7 +1031,7 @@ pub(super) fn smart_pointer_pointee(ty: Ty<'_>) -> Option<Ty<'_>> {
                 || crate::verify::api_classify::is_std_vec(did)
                 || crate::verify::api_classify::is_std_nonnull(did)
                 || crate::verify::api_classify::is_std_cstring(did)
-                || crate::def_id::rc_types().contains(&did)
+                || def_id::rc_types().contains(&did)
             {
                 args.types().next()
             } else {
