@@ -457,7 +457,7 @@ impl<'tcx> PathGraph<'tcx> {
             };
 
             match terminator.kind.clone() {
-                TerminatorKind::Goto { ref target } => {
+                TerminatorKind::Goto { ref target, .. } => {
                     cfg_block.add_next(target.as_usize());
                 }
                 TerminatorKind::SwitchInt {
@@ -754,7 +754,7 @@ impl<'tcx> PathGraph<'tcx> {
             };
             if let Some(term) = &bb.terminator {
                 match &term.kind {
-                    TerminatorKind::Goto { target: t } => {
+                    TerminatorKind::Goto { target: t, .. } => {
                         cb.add_next(base + t.as_usize());
                     }
                     TerminatorKind::SwitchInt { targets, .. } => {

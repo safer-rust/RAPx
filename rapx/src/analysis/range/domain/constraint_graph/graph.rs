@@ -586,7 +586,7 @@ where
                 self.add_call_op(destination, args, terminator, func, block);
             }
             TerminatorKind::Return => {}
-            TerminatorKind::Goto { target } => {
+            TerminatorKind::Goto { target, .. } => {
                 rap_trace!(
                     "TerminatorKind::Goto in block {:?} targeting block {:?}\n",
                     block,

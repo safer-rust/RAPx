@@ -40,7 +40,7 @@ impl<'tcx> NodeOrder<'tcx> {
         for (block, data) in bbs.iter().enumerate() {
             let mut result: Vec<usize> = vec![];
             match &data.terminator().kind {
-                TerminatorKind::Goto { target } => result.push(target.as_usize()),
+                TerminatorKind::Goto { target, .. } => result.push(target.as_usize()),
                 TerminatorKind::SwitchInt { targets, .. } => {
                     for bb in targets.all_targets() {
                         result.push(bb.as_usize());

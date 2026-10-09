@@ -729,7 +729,7 @@ fn apply_terminator_effect<'tcx, 'mir>(
 
         TerminatorKind::Assert { target, .. } => TerminatorEdges::Single(*target),
 
-        TerminatorKind::Goto { target } => TerminatorEdges::Single(*target),
+        TerminatorKind::Goto { target, .. } => TerminatorEdges::Single(*target),
 
         TerminatorKind::Return => TerminatorEdges::None,
 

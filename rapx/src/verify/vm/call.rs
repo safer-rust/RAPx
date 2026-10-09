@@ -78,6 +78,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return;
         }
 
+        // Range::next() / RangeInclusive::next(): return `start` and advance it,
+        // asserting `start < end` so the loop variable carries its range bound.
+        if self.try_range_next(callee, &arg_values, destination) {
+            return;
+        }
+
         // NonNull::new(ptr): the safe constructor returns Some(ptr) iff ptr is
         // non-null. Its body branches on `ptr.is_null()`, so the branch-free
         // inline path rejects it; model the null-check directly.
@@ -697,6 +703,69 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         true
     }
 
+    /// `Range<A>::next` / `RangeInclusive<A>::next`: return the current `start`
+    /// and advance it by one, asserting `start < end` on the `Some` path. This
+    /// carries the loop-variable bound (`0 <= i < N` for `for i in 0..N`) so a
+    /// downstream `InBound(arr, i)` can be discharged from `i < N` directly.
+    fn try_range_next(
+        &mut self,
+        callee: Option<DefId>,
+        arg_values: &[VmValue<'z3, 'tcx>],
+        destination: Local,
+    ) -> bool {
+        if !api_classify::is_range_next(callee) || arg_values.is_empty() {
+            return false;
+        }
+        let self_val = &arg_values[0];
+        // `self` is `&mut Range<A>` / `&mut RangeInclusive<A>`.
+        let TyKind::Ref(_, pointee, _) = self_val.ty.kind() else {
+            return false;
+        };
+        let TyKind::Adt(adt_def, _) = pointee.kind() else {
+            return false;
+        };
+        let Some(alloc_id) = self_val.provenance_alloc_id() else {
+            return false;
+        };
+        // The aggregate's fields are stored under the *monomorphized* view type
+        // (e.g. `Range<usize>`), not the generic `Range<A>` carried by `self`.
+        let range_view_ty = self.units[alloc_id.0]
+            .content
+            .values
+            .keys()
+            .map(|(t, _)| *t)
+            .find(|t| matches!(t.kind(), TyKind::Adt(adt, _) if adt.did() == adt_def.did()));
+        let Some(range_view_ty) = range_view_ty else {
+            return false;
+        };
+        let Some(start) = self.load_value(alloc_id, range_view_ty, &[0]).cloned() else {
+            return false;
+        };
+        let Some(end) = self.load_value(alloc_id, range_view_ty, &[1]).cloned() else {
+            return false;
+        };
+        let dest_ty = self.body().local_decls[destination].ty;
+        let zero = Int::from_u64(self.z3_ctx, 0);
+        let one = Int::from_u64(self.z3_ctx, 1);
+        let start_term = start.z3_term.clone();
+        let end_term = end.z3_term.clone();
+        // `None` when `start >= end`; the `Some` path therefore has `start < end`.
+        let is_empty = start_term.ge(&end_term);
+        let result_val = VmValue {
+            z3_term: is_empty.ite(&zero, &start_term),
+            ty: dest_ty,
+            provenance: None,
+            facts: ValueFacts::default(),
+            source: ValueSource::Discriminant(is_empty.ite(&zero, &one)),
+        };
+        self.set_local(destination, result_val);
+        // Advance `start` by one for the next iteration.
+        let mut advanced = start;
+        advanced.z3_term = Int::add(self.z3_ctx, &[&start_term, &one]);
+        self.store_value(alloc_id, range_view_ty, vec![0], advanced);
+        true
+    }
+
     fn materialize_const_bytes_after_call(
         &mut self,
         args: &[Spanned<Operand<'tcx>>],
@@ -977,7 +1046,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             let terminator = bb_data.terminator();
 
             match &terminator.kind {
-                TerminatorKind::Goto { target } => {
+                TerminatorKind::Goto { target, .. } => {
                     queue.push(*target);
                 }
                 TerminatorKind::Return => {

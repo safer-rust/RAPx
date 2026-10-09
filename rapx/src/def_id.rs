@@ -469,6 +469,7 @@ struct Methods {
     slice_get_unchecked: Vec<DefId>,
     sliceindex_get_unchecked: Vec<DefId>,
     slice_range_fns: Vec<DefId>,
+    range_next: Vec<DefId>,
 }
 
 fn init_methods(tcx: TyCtxt) -> Methods {
@@ -501,6 +502,7 @@ fn init_methods(tcx: TyCtxt) -> Methods {
         slice_get_unchecked: Vec::new(),
         sliceindex_get_unchecked: Vec::new(),
         slice_range_fns: Vec::new(),
+        range_next: Vec::new(),
     };
 
     for krate in std::iter::once(rustc_public::local_crate())
@@ -647,6 +649,17 @@ fn init_methods(tcx: TyCtxt) -> Methods {
             }
             if name.ends_with("slice::index::range") || name.ends_with("::slice::range") {
                 methods.slice_range_fns.push(did);
+            }
+            // `Range::next` / `RangeInclusive::next` and their `spec_next` impls:
+            // the loop variable of `for i in 0..N` is produced by these, so the
+            // VM models them to carry the `0 <= i < N` bound.
+            if (name.ends_with("::next") || name.ends_with("::spec_next"))
+                && (name.contains("RangeIteratorImpl")
+                    || name.contains("RangeInclusiveIteratorImpl")
+                    || name.contains("Iterator for core::ops::range::Range<")
+                    || name.contains("Iterator for core::ops::range::RangeInclusive<"))
+            {
+                methods.range_next.push(did);
             }
         }
     }
@@ -850,6 +863,12 @@ pub fn slice_range_fns() -> &'static [DefId] {
         .get()
         .expect("Method DefIds haven't been initialized.")
         .slice_range_fns
+}
+pub fn range_next_fns() -> &'static [DefId] {
+    &METHODS
+        .get()
+        .expect("Method DefIds haven't been initialized.")
+        .range_next
 }
 
 fn init_inner(tcx: TyCtxt) -> Intrinsics {

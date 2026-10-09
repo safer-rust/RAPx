@@ -119,7 +119,7 @@ pub(crate) fn switch_targets_unreachable<'tcx>(
                     };
                     return is_diverging_call(tcx, callee);
                 }
-                TerminatorKind::Goto { target: next } => {
+                TerminatorKind::Goto { target: next, .. } => {
                     cur = *next;
                 }
                 // A bare `return` with no statements is a drop-flag skip (dead

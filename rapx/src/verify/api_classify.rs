@@ -760,6 +760,13 @@ pub fn is_sliceindex_get_unchecked(callee: Option<DefId>) -> bool {
     any_fn(callee, crate::def_id::sliceindex_get_unchecked_fns())
 }
 
+/// Whether `callee` is `Range::next` / `RangeInclusive::next` (or their
+/// `spec_next` impls). Distinct from the slice-side getters above: the receiver
+/// is `&mut Range<A>`, and the returned element is the current `start`.
+pub fn is_range_next(callee: Option<DefId>) -> bool {
+    any_fn(callee, crate::def_id::range_next_fns())
+}
+
 /// Whether `callee` is `slice::range(range, bounds)` — the range normalizer that
 /// returns `Range { start, end }` with `0 <= start <= end <= bounds.end`.
 pub fn is_slice_range(callee: Option<DefId>) -> bool {
