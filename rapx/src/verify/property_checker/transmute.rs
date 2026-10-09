@@ -118,13 +118,29 @@ impl PropertyChecker {
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
-        if vm_state.path_facts.split_transmute_asserted {
-            return CheckResult::ProvedByRule;
-        }
         let src = Self::ty_arg(property, 0);
         let dst = Self::ty_arg(property, 1);
         let src = src.map(|ty| self.instantiate_callsite_ty(vm_state, checkpoint, ty));
         let dst = dst.map(|ty| self.instantiate_callsite_ty(vm_state, checkpoint, ty));
+        // A `SplitTransmute([T], [U])` contract declared by the caller licenses
+        // the receiver slice's data allocation to be re-interpreted as `U`.  The
+        // license is anchored to that allocation (`split_transmute_to`), so find
+        // it through the receiver's provenance.
+        let licensed = checkpoint
+            .args
+            .first()
+            .map(|op| vm_state.value_of_operand(op))
+            .and_then(|receiver| receiver.provenance)
+            .and_then(|prov| vm_state.content(prov.alloc_id).facts.split_transmute_to);
+        if let (Some(licensed), Some(d)) = (licensed, dst) {
+            let d_elem = match d.kind() {
+                TyKind::Slice(e) => *e,
+                _ => d,
+            };
+            if licensed == d_elem {
+                return CheckResult::ProvedByRule;
+            }
+        }
         match (src, dst) {
             (Some(mut s), Some(mut d)) => {
                 // If the type is a slice (e.g. `[T]` from contract parsing), unwrap

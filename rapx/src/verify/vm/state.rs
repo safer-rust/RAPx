@@ -253,11 +253,12 @@ pub(crate) struct AllocFacts<'z3, 'tcx> {
 }
 
 /// Per-allocation *content* facts: whether the allocation's contents are
-/// readable, and whether they were asserted to be a valid C string / UTF-8.
+/// readable (initialized), whether they were asserted to be a valid C string /
+/// UTF-8, and whether they were licensed for `SplitTransmute` re-interpretation.
 /// These describe the stored bytes/values, so they live on [`MemoryContent`]
 /// next to that data, rather than on [`AllocFacts`] (lifecycle).
 #[derive(Clone, Debug, Default)]
-pub(crate) struct ContentFacts {
+pub(crate) struct ContentFacts<'tcx> {
     /// Whether the allocation's contents hold an initialized (readable) value:
     /// a heap constructor (`Box::new`, `Vec`), a reference parameter's referent,
     /// a callee return, a `write`, `ValidCStr`, or const/static byte data.
@@ -273,6 +274,13 @@ pub(crate) struct ContentFacts {
     /// Whether this allocation was asserted valid UTF-8 via a `ValidString`
     /// contract fact (the "bytes form a valid UTF-8 sequence" trust marker).
     pub utf8_trusted: bool,
+
+    /// The destination element type this allocation was licensed to be
+    /// re-interpreted into via a `SplitTransmute([T], [U])` contract declared by
+    /// the caller.  Anchored to the allocation (the slice's data buffer, reached
+    /// through the slice value's provenance) because the transmute re-interprets
+    /// *this* allocation's bytes; `None` means no such license.
+    pub split_transmute_to: Option<Ty<'tcx>>,
 }
 
 /// A memory allocation: a stack local, a heap object (`Box`/`Vec`), or an
@@ -369,8 +377,6 @@ impl<'z3, 'tcx> Allocation<'z3, 'tcx> {
 /// per-step: once set they are never cleared within a path.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct PathFacts {
-    /// Whether a SplitTransmute contract was asserted by the caller.
-    pub split_transmute_asserted: bool,
     /// Whether the caller's contract declared an `Alias` hazard.
     pub alias_hazard_declared: bool,
 }
@@ -525,9 +531,9 @@ pub(crate) struct MemoryContent<'z3, 'tcx> {
     /// local's backing allocation and then read/write this layer.
     pub(crate) values: FxHashMap<(Ty<'tcx>, Vec<usize>), VmValue<'z3, 'tcx>>,
 
-    /// Content facts (`initialized`/`cstr_trusted`/`utf8_trusted`); value-level
-    /// facts live on each [`VmValue::facts`].
-    pub(crate) facts: ContentFacts,
+    /// Content facts (`initialized`/`cstr_trusted`/`utf8_trusted`/
+    /// `split_transmute_to`); value-level facts live on each [`VmValue::facts`].
+    pub(crate) facts: ContentFacts<'tcx>,
 }
 
 /// Accumulated solver state for the current path.

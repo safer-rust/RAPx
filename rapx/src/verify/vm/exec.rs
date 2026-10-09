@@ -3217,7 +3217,51 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 }
             }
             PropertyKind::SplitTransmute => {
-                self.path_facts.split_transmute_asserted = true;
+                // Anchor the license on the slice's data allocation: the
+                // transmute re-interprets *that* allocation's bytes into the
+                // destination element type, so `check_split_transmute` finds the
+                // license through the receiver slice's provenance.
+                let src = property.args().first().and_then(|a| {
+                    if let PropertyArg::Ty(ty) = a {
+                        Some(*ty)
+                    } else {
+                        None
+                    }
+                });
+                let dst = property.args().get(1).and_then(|a| {
+                    if let PropertyArg::Ty(ty) = a {
+                        Some(*ty)
+                    } else {
+                        None
+                    }
+                });
+                if let (Some(src), Some(dst)) = (src, dst) {
+                    // `SplitTransmute([T], [U])` licenses re-interpretation into
+                    // the *element* type `U` (the `[U]` slice wrapper unwraps).
+                    let dst_elem = match dst.kind() {
+                        rustc_middle::ty::TyKind::Slice(e) => *e,
+                        _ => dst,
+                    };
+                    // Find the entry parameter whose pointee slice is `src`
+                    // (e.g. `slice: &[T]` for `SplitTransmute([T], [U])`) and
+                    // mark its data allocation.
+                    let arg_count = self.body().arg_count;
+                    for local_idx in 1..=arg_count {
+                        let local = Local::from_usize(local_idx);
+                        if let Some(val) = self.local_value(local).cloned() {
+                            let is_match = match val.ty.kind() {
+                                rustc_middle::ty::TyKind::Ref(_, inner, _) => *inner == src,
+                                _ => false,
+                            };
+                            if is_match
+                                && let Some(prov) = &val.provenance
+                            {
+                                self.content_mut(prov.alloc_id).facts.split_transmute_to =
+                                    Some(dst_elem);
+                            }
+                        }
+                    }
+                }
             }
             PropertyKind::ValidCStr => {
                 // A `ValidCStr(p, n)` fact guarantees `p` points to a live,
