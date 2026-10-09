@@ -15,7 +15,7 @@ use z3::{
 };
 
 use crate::compat::{FxHashMap, FxHashSet};
-use crate::verify::{def_use::PlaceKey, path_extractor::Path};
+use crate::verify::def_use::PlaceKey;
 
 /// Unique identifier for a heap or stack allocation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -365,14 +365,10 @@ impl<'z3, 'tcx> Allocation<'z3, 'tcx> {
 /// Per-path facts, read afterwards by the property checker.
 ///
 /// Most flags are latched at most once during path execution (a contract fact
-/// or a recognized discriminant / bounds check); `reenter` is instead derived
-/// from the input path in [`VmState::new`].  They are per-path state, not
+/// or a recognized discriminant / bounds check).  They are per-path state, not
 /// per-step: once set they are never cleared within a path.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct PathFacts {
-    /// Whether the current path re-enters a block (loop-unrolled), which lets
-    /// the checker exempt the unrolled iteration's "second drop".
-    pub reenter: bool,
     /// Whether a SplitTransmute contract was asserted by the caller.
     pub split_transmute_asserted: bool,
     /// Whether the caller's contract declared an `Alias` hazard.
@@ -668,12 +664,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     pub(crate) fn new(
         z3_ctx: &'z3 Context,
         tcx: TyCtxt<'tcx>,
-        path: &Path,
         caller_def_id: DefId,
     ) -> Self {
-        // Derive the one path fact the checker needs after `run` (whether the
-        // path re-enters a block); the raw `Path` itself is not kept.
-        let reenter = path.reenters();
         // The `UNINIT` sentinel is created once and shared by every byte array:
         // an unwritten offset reads it back, so `select != UNINIT` decides
         // whether a byte was written.
@@ -694,10 +686,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             units: Vec::default(),
             inline: InlineCtx::default(),
             constraints,
-            path_facts: PathFacts {
-                reenter,
-                ..PathFacts::default()
-            },
+            path_facts: PathFacts::default(),
         }
     }
 

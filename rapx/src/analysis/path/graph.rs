@@ -66,7 +66,7 @@ pub struct SccPath {
 /// stored together so they can be read with a single index lookup.
 #[derive(Clone, Debug, Default)]
 pub struct BlockConstantInfo {
-    pub assigned_locals: FxHashSet<usize>,
+    pub assigned_locals: Vec<usize>,
     pub constants: FxHashMap<usize, usize>,
     pub constraint_copies: FxHashMap<usize, usize>,
     /// Maps a local assigned by `AddWithOverflow(src, const)` to `(src, const)`.
@@ -217,7 +217,9 @@ fn build_function_info(
                     .iter()
                     .any(|p| matches!(p, ProjectionElem::Deref));
                 if !is_deref {
-                    info.assigned_locals.insert(dest);
+                    if !info.assigned_locals.contains(&dest) {
+                        info.assigned_locals.push(dest);
+                    }
                 }
                 match rvalue {
                     Rvalue::Use(Operand::Constant(c), ..) => {

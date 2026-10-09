@@ -417,16 +417,10 @@ impl PropertyChecker {
         };
 
         if vm_state.alloc(alloc_id).facts.dead {
-            let reenter = vm_state.path_facts.reenter;
-            // A `ManuallyDrop::drop` frees the slot's allocation at *this*
-            // checkpoint, so its `ValidPtr`/`Allocated` precondition concerns
-            // the pre-drop (still-live) state.  A double free — an
-            // already-dead allocation reaching a *second* drop — must still
-            // fail, so the exemption is lifted (unless the repeated block is
-            // only a loop-unrolled iteration).
-            let dropped_here =
-                crate::verify::api_classify::is_manually_drop_drop(checkpoint.callee) && reenter;
-            if !dropped_here && !Self::is_maybe_uninit_ptr(vm_state, &value, alloc_id) {
+            // An already-dead allocation reaching a second drop is a double
+            // free; only `MaybeUninit` pointers (whose storage is not itself
+            // dropped) are exempt.
+            if !Self::is_maybe_uninit_ptr(vm_state, &value, alloc_id) {
                 let is_param_ref = vm_state.resolve_origin(&value).is_some_and(|origin| {
                     origin.local.as_usize() <= vm_state.body().arg_count
                         && origin.local != Local::from_usize(0)

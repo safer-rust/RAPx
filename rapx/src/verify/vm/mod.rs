@@ -48,7 +48,7 @@ impl SymbolicVm {
         tcx: TyCtxt<'tcx>,
         goal: ProofGoal<'tcx>,
     ) -> VmState<'z3, 'tcx> {
-        let mut state = VmState::new(z3_ctx, tcx, &goal.path, goal.path.target.caller);
+        let mut state = VmState::new(z3_ctx, tcx, goal.path.target.caller);
         state.execute_items(&goal.items);
         state
     }

@@ -53,13 +53,6 @@ impl PropertyChecker {
         if vm_state.alloc(alloc_id).facts.for_each.owning {
             return CheckResult::ProvedByRule;
         }
-        // A loop-unrolled path repeats the same block (the SCC body), so its
-        // second `DropMemory` is an unrolled iteration rather than a genuine
-        // same-iteration double free. Only the non-unrolled path distinguishes
-        // them (uaf_10 drops twice in one iteration; uaf_false_2 drops once).
-        if vm_state.path_facts.reenter {
-            return CheckResult::ProvedByRule;
-        }
         // Owning(p): p is the sole carrier of *p's ownership. A live `needs_drop`
         // owner whose buffer aliases `alloc_id` means a second owner will drop the
         // same allocation — a double free. The reconstructed owner (the call's

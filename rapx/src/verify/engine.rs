@@ -147,19 +147,6 @@ impl<'tcx> VerifyEngine<'tcx> {
 
         let mut results: Vec<(CheckResult, String)> = Vec::new();
         for path in tree.iter() {
-            // A loop-unrolled path repeats the same caller block (the SCC body);
-            // its later drop occurrence is an unrolled iteration, not a genuine
-            // same-path use-after-drop. Only non-unrolled paths distinguish them
-            // (uaf_5 uses `slot` after the drop; uaf_false_2 drops once in a loop
-            // and never uses `slot` again).
-            let mut seen = std::collections::HashSet::new();
-            let unrolled = path.iter().any(|&g| {
-                tree.block_fn_of(g)
-                    .is_some_and(|(def, local)| def == caller && !seen.insert(local))
-            });
-            if unrolled {
-                continue;
-            }
             let mut used = false;
             let mut reaches = false;
             for (pos, &g) in path.iter().enumerate() {
