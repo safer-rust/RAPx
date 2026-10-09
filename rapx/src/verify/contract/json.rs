@@ -143,11 +143,10 @@ pub(crate) fn std_contracts_has_entry(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
 /// If `def_id` is a trait-method implementation, returns the corresponding
 /// trait method's [`DefId`]; otherwise returns `def_id` unchanged.
 fn resolve_trait_method(tcx: TyCtxt<'_>, def_id: DefId) -> DefId {
-    if let Some(assoc_item) = tcx.opt_associated_item(def_id) {
-        if let Some(trait_def_id) = assoc_item.trait_item_def_id() {
+    if let Some(assoc_item) = tcx.opt_associated_item(def_id)
+        && let Some(trait_def_id) = assoc_item.trait_item_def_id() {
             return trait_def_id;
         }
-    }
     def_id
 }
 

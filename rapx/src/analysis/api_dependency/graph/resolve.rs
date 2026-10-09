@@ -292,17 +292,16 @@ impl<'tcx> ApiDependencyGraph<'tcx> {
                 for mono in mono_set.monos {
                     let fn_sig = utils::fn_sig_with_generic_args(*fn_did, &mono.value, tcx);
                     let output_ty = fn_sig.output();
-                    if generic_map.entry(*fn_did).or_default().insert(mono) {
-                        if !output_ty.is_unit() && ty_complexity(output_ty) <= MAX_TY_COMPLX {
+                    if generic_map.entry(*fn_did).or_default().insert(mono)
+                        && !output_ty.is_unit() && ty_complexity(output_ty) <= MAX_TY_COMPLX {
                             current_tys.insert(output_ty);
                         }
-                    }
                 }
             }
 
             let mut changed = false;
             for ty in current_tys {
-                changed = changed | type_candidates.insert_all(ty);
+                changed |= type_candidates.insert_all(ty);
             }
 
             if !changed {
@@ -406,7 +405,7 @@ impl<'tcx> ApiDependencyGraph<'tcx> {
         // transform into reserved map
         for (fn_did, mono_set) in generic_map {
             let entry = reserved_map.entry(*fn_did).or_default();
-            mono_set.into_iter().for_each(|mono| {
+            mono_set.iter().for_each(|mono| {
                 let args = self.tcx.mk_args(&mono.value);
                 entry.push((args, false));
             });
@@ -441,11 +440,10 @@ impl<'tcx> ApiDependencyGraph<'tcx> {
         // initialize reserved
         // all non-generic API should be reserved
         for idx in self.graph.node_indices() {
-            if let DepNode::Api(fn_did, _) = self.graph[idx] {
-                if !utils::fn_requires_monomorphization(fn_did, self.tcx) {
+            if let DepNode::Api(fn_did, _) = self.graph[idx]
+                && !utils::fn_requires_monomorphization(fn_did, self.tcx) {
                     reserved[idx.index()] = true;
                 }
-            }
         }
 
         // minimal set cover strategy

@@ -302,8 +302,7 @@ pub(crate) fn dependency_summary<'tcx>(
             return CallDependencySummary::unknown(arg_count);
         }
         if let Some(must_write_args) = interprocedural::local_must_write_args(tcx, callee, context)
-        {
-            if !must_write_args.is_empty() {
+            && !must_write_args.is_empty() {
                 return CallDependencySummary {
                     return_depends_on_args: Vec::new(),
                     must_write_args: must_write_args
@@ -313,33 +312,28 @@ pub(crate) fn dependency_summary<'tcx>(
                     unsupported: false,
                 };
             }
-        }
         // A memchr/decode-style callee's return payload is bounded by a slice
         // argument's length, so the return value depends on that slice argument.
         // The dataflow analyzer can't see this through the loop, so detect it
         // from the MIR shape and keep the slice argument relevant.
-        if let Some(effect) = interprocedural::try_slice_bounded_return_effect(tcx, callee) {
-            if let CallEffect::ReturnOptionSomeIndexLtArgLen { arg } = effect {
-                if arg < arg_count {
+        if let Some(effect) = interprocedural::try_slice_bounded_return_effect(tcx, callee)
+            && let CallEffect::ReturnOptionSomeIndexLtArgLen { arg } = effect
+                && arg < arg_count {
                     return CallDependencySummary {
                         return_depends_on_args: vec![arg],
                         must_write_args: Vec::new(),
                         unsupported: false,
                     };
                 }
-            }
-        }
-        if let Some(effect) = interprocedural::try_decode_length_return_effect(tcx, callee) {
-            if let CallEffect::ReturnOptionSomeTupleFieldLeArgLen { arg, .. } = effect {
-                if arg < arg_count {
+        if let Some(effect) = interprocedural::try_decode_length_return_effect(tcx, callee)
+            && let CallEffect::ReturnOptionSomeTupleFieldLeArgLen { arg, .. } = effect
+                && arg < arg_count {
                     return CallDependencySummary {
                         return_depends_on_args: vec![arg],
                         must_write_args: Vec::new(),
                         unsupported: false,
                     };
                 }
-            }
-        }
         // `Try::branch` (`Option<T>` -> `ControlFlow<Option<!>, T>`): the
         // `Continue` payload is the input's `Some` payload, so the return value
         // depends on the input.  Matched by `DefId` (the trait method's `self`
@@ -496,7 +490,7 @@ fn transparent_deref_peel<'tcx>(tcx: TyCtxt<'tcx>, func: &Operand<'tcx>) -> Opti
 fn is_maybe_dangling(tcx: TyCtxt<'_>, did: DefId) -> bool {
     #[cfg(rapx_has_maybe_dangling_lang_item)]
     {
-        return tcx.is_lang_item(did, LangItem::MaybeDangling);
+        tcx.is_lang_item(did, LangItem::MaybeDangling)
     }
     #[cfg(not(rapx_has_maybe_dangling_lang_item))]
     {
@@ -511,11 +505,10 @@ fn is_maybe_dangling(tcx: TyCtxt<'_>, did: DefId) -> bool {
 
 /// Element type of a `Vec<T>`, if `ty` is a `Vec`.
 pub(crate) fn vec_elem_ty<'tcx>(_tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<Ty<'tcx>> {
-    if let TyKind::Adt(adt_def, substs) = ty.kind() {
-        if is_std_vec(adt_def.did()) {
+    if let TyKind::Adt(adt_def, substs) = ty.kind()
+        && is_std_vec(adt_def.did()) {
             return substs.first().and_then(|s| s.as_type());
         }
-    }
     None
 }
 

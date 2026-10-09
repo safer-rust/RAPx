@@ -31,11 +31,11 @@ impl<'tcx> TyWrapper<'tcx> {
     pub fn transform(&self, kind: TransformKind, tcx: TyCtxt<'tcx>) -> TyWrapper<'tcx> {
         match kind {
             TransformKind::Ref(mutability) => {
-                let ty = match mutability {
+                
+                match mutability {
                     ty::Mutability::Not => self.into_ref(tcx),
                     ty::Mutability::Mut => self.into_ref_mut(tcx),
-                };
-                ty
+                }
             }
             _ => {
                 todo!();
@@ -50,9 +50,9 @@ impl<'tcx> From<Ty<'tcx>> for TyWrapper<'tcx> {
     }
 }
 
-impl<'tcx> Into<Ty<'tcx>> for TyWrapper<'tcx> {
-    fn into(self) -> Ty<'tcx> {
-        self.ty
+impl<'tcx> From<TyWrapper<'tcx>> for Ty<'tcx> {
+    fn from(val: TyWrapper<'tcx>) -> Self {
+        val.ty
     }
 }
 
@@ -128,7 +128,7 @@ fn traverse_ty_with_lifetime<'tcx, F: Fn(ty::Region, usize)>(ty: Ty<'tcx>, no: &
             for arg in generic_arg.iter() {
                 match arg.kind() {
                     ty::GenericArgKind::Lifetime(lt) => {
-                        *no = *no + 1;
+                        *no += 1;
                         f(lt, *no);
                     }
                     ty::GenericArgKind::Type(ty) => {
@@ -144,7 +144,7 @@ fn traverse_ty_with_lifetime<'tcx, F: Fn(ty::Region, usize)>(ty: Ty<'tcx>, no: &
         }
 
         ty::TyKind::Ref(region, inner_ty, mutability) => {
-            *no = *no + 1;
+            *no += 1;
             f(*region, *no);
             traverse_ty_with_lifetime(*inner_ty, no, f);
         }
@@ -175,7 +175,7 @@ fn hash_ty<'tcx, H: std::hash::Hasher>(ty: Ty<'tcx>, state: &mut H, no: &mut usi
             for arg in generic_arg.iter() {
                 match arg.kind() {
                     ty::GenericArgKind::Lifetime(lt) => {
-                        *no = *no + 1;
+                        *no += 1;
                         no.hash(state);
                     }
                     ty::GenericArgKind::Type(ty) => {
@@ -194,7 +194,7 @@ fn hash_ty<'tcx, H: std::hash::Hasher>(ty: Ty<'tcx>, state: &mut H, no: &mut usi
         }
         ty::TyKind::Ref(_, inner_ty, mutability) => {
             mutability.hash(state);
-            *no = *no + 1;
+            *no += 1;
             no.hash(state);
             hash_ty(*inner_ty, state, no);
         }
@@ -223,7 +223,7 @@ pub fn desc_ty_str<'tcx>(ty: Ty<'tcx>, no: &mut usize, tcx: TyCtxt<'tcx>) -> Str
                     .map(|arg| match arg.kind() {
                         ty::GenericArgKind::Lifetime(lt) => {
                             let current_no = *no;
-                            *no = *no + 1;
+                            *no += 1;
                             format!("'#{:?}", current_no)
                         }
                         ty::GenericArgKind::Type(ty) => desc_ty_str(ty, no, tcx),
@@ -245,7 +245,7 @@ pub fn desc_ty_str<'tcx>(ty: Ty<'tcx>, no: &mut usize, tcx: TyCtxt<'tcx>) -> Str
         }
         ty::TyKind::Ref(_, inner_ty, mutability) => {
             let current_no = *no;
-            *no = *no + 1;
+            *no += 1;
             format!(
                 "&'#{} {}{}",
                 current_no,

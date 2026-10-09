@@ -31,13 +31,12 @@ fn find_upside_reservation(graph: &Graph, node_idx: Local) -> Option<Local> {
         &mut |graph: &Graph, idx: Local| {
             let node = &graph.nodes[idx];
             for op in node.ops.iter() {
-                if let NodeOp::Call(def_id) = op {
-                    if *def_id == def_paths.vec_with_capacity.last_def_id()
-                        || *def_id == def_paths.vec_reserve.last_def_id()
+                if let NodeOp::Call(def_id) = op
+                    && (*def_id == def_paths.vec_with_capacity.last_def_id()
+                        || *def_id == def_paths.vec_reserve.last_def_id())
                     {
                         return true;
                     }
-                }
             }
             false
         },
@@ -58,11 +57,10 @@ impl OptCheck for UnreservedVecCheck {
                 if node_matches_call(node, &[def_paths.vec_new.last_def_id()]) {
                     self.record.push(node.span);
                 }
-                if node_matches_call(node, &[def_paths.vec_push.last_def_id()]) {
-                    if find_upside_reservation(graph, node_idx).is_none() {
+                if node_matches_call(node, &[def_paths.vec_push.last_def_id()])
+                    && find_upside_reservation(graph, node_idx).is_none() {
                         self.record.push(node.span);
                     }
-                }
             }
         }
 
@@ -74,11 +72,10 @@ impl OptCheck for UnreservedVecCheck {
         intravisit::walk_body(&mut loop_finder, body);
         for (_, push_record) in loop_finder.into_record() {
             for push_span in push_record {
-                if let Some((node_idx, _)) = graph.query_node_by_span(push_span, false) {
-                    if find_upside_reservation(graph, node_idx).is_none() {
+                if let Some((node_idx, _)) = graph.query_node_by_span(push_span, false)
+                    && find_upside_reservation(graph, node_idx).is_none() {
                         self.record.push(push_span);
                     }
-                }
             }
         }
     }

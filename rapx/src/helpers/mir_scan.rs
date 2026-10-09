@@ -172,35 +172,31 @@ pub fn get_rawptr_deref(tcx: TyCtxt<'_>, def_id: DefId) -> HashSet<Local> {
                     }
                     if let Rvalue::Use(op, ..) = rhs {
                         match op {
-                            Operand::Copy(place) | Operand::Move(place) => {
-                                if place_has_raw_deref(body, place) {
+                            Operand::Copy(place) | Operand::Move(place)
+                                if place_has_raw_deref(body, place) => {
                                     raw_ptrs.insert(place.local);
                                 }
-                            }
                             _ => {}
                         }
                     }
-                    if let Rvalue::Ref(_, _, place) = rhs {
-                        if place_has_raw_deref(body, place) {
+                    if let Rvalue::Ref(_, _, place) = rhs
+                        && place_has_raw_deref(body, place) {
                             raw_ptrs.insert(place.local);
                         }
-                    }
                 }
             }
-            if let Some(terminator) = &bb.terminator {
-                if let rustc_middle::mir::TerminatorKind::Call { args, .. } = &terminator.kind {
+            if let Some(terminator) = &bb.terminator
+                && let rustc_middle::mir::TerminatorKind::Call { args, .. } = &terminator.kind {
                     for arg in args {
                         match arg.node {
-                            Operand::Copy(place) | Operand::Move(place) => {
-                                if place_has_raw_deref(body, &place) {
+                            Operand::Copy(place) | Operand::Move(place)
+                                if place_has_raw_deref(body, &place) => {
                                     raw_ptrs.insert(place.local);
                                 }
-                            }
                             _ => {}
                         }
                     }
                 }
-            }
         }
     }
     raw_ptrs
@@ -221,11 +217,10 @@ pub fn collect_global_local_pairs(tcx: TyCtxt<'_>, def_id: DefId) -> HashMap<Def
         for stmt in &bb.statements {
             if let StatementKind::Assign(assign) = &stmt.kind {
                 let (lhs, rhs) = &**assign;
-                if let Rvalue::Use(Operand::Constant(c), ..) = rhs {
-                    if let Some(static_def_id) = c.check_static_ptr(tcx) {
+                if let Rvalue::Use(Operand::Constant(c), ..) = rhs
+                    && let Some(static_def_id) = c.check_static_ptr(tcx) {
                         globals.entry(static_def_id).or_default().push(lhs.local);
                     }
-                }
             }
         }
     }
@@ -239,13 +234,11 @@ pub fn get_unsafe_callees(tcx: TyCtxt<'_>, def_id: DefId) -> HashSet<DefId> {
     if tcx.is_mir_available(def_id) {
         let body = tcx.optimized_mir(def_id);
         for bb in body.basic_blocks.iter() {
-            if let TerminatorKind::Call { func, .. } = &bb.terminator().kind {
-                if let Some(callee_def_id) = dep_callee_def_id(func) {
-                    if check_safety(tcx, callee_def_id) == Safety::Unsafe {
+            if let TerminatorKind::Call { func, .. } = &bb.terminator().kind
+                && let Some(callee_def_id) = dep_callee_def_id(func)
+                    && check_safety(tcx, callee_def_id) == Safety::Unsafe {
                         unsafe_callees.insert(callee_def_id);
                     }
-                }
-            }
         }
     }
     unsafe_callees
@@ -376,7 +369,7 @@ fn is_box_deref_cast(tcx: TyCtxt<'_>, body: &Body<'_>, rvalue: &Rvalue<'_>) -> b
     #[cfg(rapx_box_deref_transmute)]
     {
         let _ = (tcx, body);
-        return matches!(rvalue, Rvalue::Cast(CastKind::BoxDerefTransmute, _, _));
+        matches!(rvalue, Rvalue::Cast(CastKind::BoxDerefTransmute, _, _))
     }
     #[cfg(not(rapx_box_deref_transmute))]
     {
@@ -543,9 +536,9 @@ pub fn collect_static_mut_access_info<'tcx>(
         for stmt in &data.statements {
             if let StatementKind::Assign(assign) = &stmt.kind {
                 let (_lhs, rhs) = &**assign;
-                if let Rvalue::Use(op @ Operand::Constant(c), ..) = rhs {
-                    if let Some(static_id) = c.check_static_ptr(tcx) {
-                        if matches!(tcx.static_mutability(static_id), Some(m) if m.is_mut()) {
+                if let Rvalue::Use(op @ Operand::Constant(c), ..) = rhs
+                    && let Some(static_id) = c.check_static_ptr(tcx)
+                        && matches!(tcx.static_mutability(static_id), Some(m) if m.is_mut()) {
                             let ty = tcx.type_of(static_id).skip_binder();
                             infos.push(StaticMutAccessInfo {
                                 block: bb,
@@ -553,17 +546,15 @@ pub fn collect_static_mut_access_info<'tcx>(
                                 ptr_operand: op.clone(),
                             });
                         }
-                    }
-                }
             }
         }
 
-        if let Some(terminator) = &data.terminator {
-            if let TerminatorKind::Call { args, .. } = &terminator.kind {
+        if let Some(terminator) = &data.terminator
+            && let TerminatorKind::Call { args, .. } = &terminator.kind {
                 for arg in args {
-                    if let op @ Operand::Constant(c) = &arg.node {
-                        if let Some(static_id) = c.check_static_ptr(tcx) {
-                            if matches!(tcx.static_mutability(static_id), Some(m) if m.is_mut())
+                    if let op @ Operand::Constant(c) = &arg.node
+                        && let Some(static_id) = c.check_static_ptr(tcx)
+                            && matches!(tcx.static_mutability(static_id), Some(m) if m.is_mut())
                             {
                                 let ty = tcx.type_of(static_id).skip_binder();
                                 infos.push(StaticMutAccessInfo {
@@ -572,11 +563,8 @@ pub fn collect_static_mut_access_info<'tcx>(
                                     ptr_operand: op.clone(),
                                 });
                             }
-                        }
-                    }
                 }
             }
-        }
     }
 
     infos

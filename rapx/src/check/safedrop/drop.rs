@@ -60,7 +60,7 @@ impl DropRecord {
         DropRecord {
             value_index,
             is_dropped: record.is_dropped,
-            drop_spot: record.drop_spot.clone(),
+            drop_spot: record.drop_spot,
             prop_chain: record.prop_chain.clone(),
             has_dropped_field: record.has_dropped_field,
         }

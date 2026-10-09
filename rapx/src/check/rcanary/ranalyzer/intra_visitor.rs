@@ -77,7 +77,7 @@ impl<'tcx, 'z3, 'a> IntraFlowAnalysis<'tcx, 'z3, 'a> {
         solver: &'z3 z3::Solver<'z3>,
         body: &'tcx Body<'tcx>,
     ) {
-        let topo: Vec<usize> = self.graph.get_topo().iter().map(|id| *id).collect();
+        let topo: Vec<usize> = self.graph.get_topo().to_vec();
         for bidx in topo {
             let data = &body.basic_blocks[BasicBlock::from(bidx)];
             self.visit_block_data(z3_ctx, goal, solver, data, bidx);
@@ -177,9 +177,9 @@ impl<'tcx, 'z3, 'a> IntraFlowAnalysis<'tcx, 'z3, 'a> {
 
                 let mut unsupported = false;
                 // for one variable in all pre basic blocks
-                for idx in 0..v_pre_collect.len() {
+                for item in &v_pre_collect {
                     // merge: ty = ty, len = len
-                    let var = &v_pre_collect[idx].var()[var_idx];
+                    let var = &item.var()[var_idx];
                     if var.is_declared() {
                         continue;
                     }
@@ -193,8 +193,8 @@ impl<'tcx, 'z3, 'a> IntraFlowAnalysis<'tcx, 'z3, 'a> {
                     // for now the len must not be zero and the var must not be decl/un..
                     let var_bv = var.extract();
                     if ty == TyWithIndex(None) {
-                        ty = v_pre_collect[idx].ty()[var_idx].clone();
-                        len = v_pre_collect[idx].len()[var_idx];
+                        ty = item.ty()[var_idx].clone();
+                        len = item.len()[var_idx];
 
                         ans_icx_slice.ty_mut()[var_idx] = ty.clone();
                         ans_icx_slice.len_mut()[var_idx] = len;
@@ -202,7 +202,7 @@ impl<'tcx, 'z3, 'a> IntraFlowAnalysis<'tcx, 'z3, 'a> {
                         using_for_and_bv = Some(var_bv.clone());
                     }
 
-                    if ty != v_pre_collect[idx].ty()[var_idx] {
+                    if ty != item.ty()[var_idx] {
                         unsupported = true;
                         ans_icx_slice.len_mut()[var_idx] = 0;
                         ans_icx_slice.var_mut()[var_idx] = IntraVar::Unsupported;
@@ -212,7 +212,7 @@ impl<'tcx, 'z3, 'a> IntraFlowAnalysis<'tcx, 'z3, 'a> {
                     // use bv and to generate new bv
                     let bv_and = using_for_and_bv.unwrap().bvand(&var_bv);
                     using_for_and_bv = Some(bv_and);
-                    ans_icx_slice.taint_merge(&v_pre_collect[idx], var_idx);
+                    ans_icx_slice.taint_merge(item, var_idx);
                 }
 
                 if unsupported || using_for_and_bv.is_none() {
@@ -232,7 +232,7 @@ impl<'tcx, 'z3, 'a> IntraFlowAnalysis<'tcx, 'z3, 'a> {
                 *self.icx_slice_mut() = ans_icx_slice.clone();
             }
         } else {
-            if pre.len() == 0 {
+            if pre.is_empty() {
                 rap_error!("The pre node is empty, check the logic is safe to launch.");
             }
             self.icx_mut().derive_from_pre_node(pre[0], bidx);
@@ -2012,7 +2012,7 @@ impl<'tcx, 'z3, 'a> IntraFlowAnalysis<'tcx, 'z3, 'a> {
     ) -> (bool, Vec<usize>) {
         let mut ans: (bool, Vec<usize>) = (false, Vec::new());
 
-        if args.len() == 0 {
+        if args.is_empty() {
             return ans;
         }
 
@@ -2060,8 +2060,8 @@ impl<'tcx, 'z3, 'a> IntraFlowAnalysis<'tcx, 'z3, 'a> {
         dest: &Place<'tcx>,
         bidx: usize,
     ) {
-        if let Operand::Constant(constant) = func {
-            if let ty::FnDef(id, ..) = constant.ty().kind() {
+        if let Operand::Constant(constant) = func
+            && let ty::FnDef(id, ..) = constant.ty().kind() {
                 //rap_debug!("{:?}", id);
                 //rap_debug!("{:?}", mir_body(self.tcx, *id));
                 if id.index.as_usize() == 2171 {
@@ -2079,7 +2079,6 @@ impl<'tcx, 'z3, 'a> IntraFlowAnalysis<'tcx, 'z3, 'a> {
                     }
                 }
             }
-        }
 
         // for return value
         let llocal = dest.local;
@@ -2234,12 +2233,11 @@ impl<'tcx, 'z3, 'a> IntraFlowAnalysis<'tcx, 'z3, 'a> {
                                 // if the aplace is a instance (i => Copy)
                                 // for Instance Copy => No need to change
 
-                                if is_a_ptr {
-                                    if recovery_flag.0 && recovery_flag.1.contains(&au) {
+                                if is_a_ptr
+                                    && recovery_flag.0 && recovery_flag.1.contains(&au) {
                                         self.handle_drop(z3_ctx, goal, solver, &aplace, bidx, true);
                                         continue;
                                     }
-                                }
 
                                 let a_name = new_local_name(au, bidx, 0).add("_param_pass");
                                 let a_new_bv = ast::BV::new_const(z3_ctx, a_name, alen as u32);
@@ -2870,13 +2868,13 @@ impl<'tcx, 'z3, 'a> IntraFlowAnalysis<'tcx, 'z3, 'a> {
 }
 
 fn new_local_name(local: usize, bidx: usize, sidx: usize) -> String {
-    let s = bidx
+    
+    bidx
         .to_string()
         .add("_")
         .add(&sidx.to_string())
         .add("_")
-        .add(&local.to_string());
-    s
+        .add(&local.to_string())
 }
 
 fn is_place_containing_ptr(ty: &Ty) -> bool {
@@ -2896,6 +2894,7 @@ fn is_place_containing_ptr(ty: &Ty) -> bool {
 }
 
 #[derive(Debug)]
+#[derive(Default)]
 struct ProjectionSupport<'tcx> {
     pf_vec: Vec<(usize, Ty<'tcx>)>,
     deref: bool,
@@ -2903,16 +2902,6 @@ struct ProjectionSupport<'tcx> {
     unsupport: bool,
 }
 
-impl<'tcx> Default for ProjectionSupport<'tcx> {
-    fn default() -> Self {
-        Self {
-            pf_vec: Vec::default(),
-            deref: false,
-            downcast: None,
-            unsupport: false,
-        }
-    }
-}
 
 impl<'tcx> ProjectionSupport<'tcx> {
     pub fn pf_push(&mut self, index: usize, ty: Ty<'tcx>) {
@@ -2924,7 +2913,7 @@ impl<'tcx> ProjectionSupport<'tcx> {
     }
 
     pub fn has_field(&self) -> bool {
-        self.pf_vec.len() > 0
+        !self.pf_vec.is_empty()
     }
 
     pub fn has_downcast(&self) -> bool {
@@ -2941,14 +2930,10 @@ impl<'tcx> ProjectionSupport<'tcx> {
 }
 
 fn has_projection(place: &Place) -> bool {
-    if place.projection.len() > 0 {
-        true
-    } else {
-        false
-    }
+    !place.projection.is_empty()
 }
 
-fn heap_layout_to_rustbv(layout: &Vec<HeapOwnership>) -> Vec<bool> {
+fn heap_layout_to_rustbv(layout: &[HeapOwnership]) -> Vec<bool> {
     let mut v = Vec::default();
     for item in layout.iter() {
         match item {
@@ -2960,7 +2945,7 @@ fn heap_layout_to_rustbv(layout: &Vec<HeapOwnership>) -> Vec<bool> {
     v
 }
 
-fn reverse_heap_layout_to_rustbv(layout: &Vec<HeapOwnership>) -> Vec<bool> {
+fn reverse_heap_layout_to_rustbv(layout: &[HeapOwnership]) -> Vec<bool> {
     let mut v = Vec::default();
     for item in layout.iter() {
         match item {
@@ -2972,7 +2957,7 @@ fn reverse_heap_layout_to_rustbv(layout: &Vec<HeapOwnership>) -> Vec<bool> {
     v
 }
 
-fn rustbv_merge(a: &Vec<bool>, b: &Vec<bool>) -> Vec<bool> {
+fn rustbv_merge(a: &[bool], b: &[bool]) -> Vec<bool> {
     assert_eq!(a.len(), b.len());
     let mut bv = Vec::new();
     for idx in 0..a.len() {
@@ -2984,17 +2969,17 @@ fn rustbv_merge(a: &Vec<bool>, b: &Vec<bool>) -> Vec<bool> {
 // Create an unsigned integer from bit bit-vector.
 // The bit-vector has n bits
 // the i'th bit (counting from 0 to n-1) is 1 if ans div 2^i mod 2 is 1.
-fn rustbv_to_int(bv: &Vec<bool>) -> u64 {
+fn rustbv_to_int(bv: &[bool]) -> u64 {
     let mut ans = 0;
     let mut base = 1;
     for tf in bv.iter() {
-        ans = ans + base * (*tf as u64);
-        base = base * 2;
+        ans += base * (*tf as u64);
+        base *= 2;
     }
     ans
 }
 
-fn help_debug_goal_stmt<'tcx, 'z3>(
+fn help_debug_goal_stmt<'z3>(
     z3_ctx: &'z3 z3::Context,
     goal: &'z3 z3::Goal<'z3>,
     bidx: usize,
@@ -3005,7 +2990,7 @@ fn help_debug_goal_stmt<'tcx, 'z3>(
     goal.assert(&dbg_bool);
 }
 
-fn help_debug_goal_term<'tcx, 'z3>(
+fn help_debug_goal_term<'z3>(
     z3_ctx: &'z3 z3::Context,
     goal: &'z3 z3::Goal<'z3>,
     bidx: usize,

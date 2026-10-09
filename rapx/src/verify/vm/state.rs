@@ -991,7 +991,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             let Some(prov) = v.provenance.as_ref() else {
                 continue;
             };
-            if best.as_ref().map_or(true, |(depth, _, _)| path.len() < *depth) {
+            if best.as_ref().is_none_or(|(depth, _, _)| path.len() < *depth) {
                 best = Some((path.len(), prov.alloc_id, prov.offset.clone()));
             }
         }
@@ -1006,13 +1006,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// `Box` produced by `into_boxed_slice`, which only records the whole value).
     pub(crate) fn owner_ptr_field(&self, local: Local) -> Option<&VmValue<'z3, 'tcx>> {
         let ty = self.body().local_decls[local].ty;
-        if let Some((path, _)) = self.container_ptr_field(ty) {
-            if let Some(v) = self.field_value(local, &path) {
-                if v.provenance_alloc_id().is_some() {
+        if let Some((path, _)) = self.container_ptr_field(ty)
+            && let Some(v) = self.field_value(local, &path)
+                && v.provenance_alloc_id().is_some() {
                     return Some(v);
                 }
-            }
-        }
         self.field_paths(local)
             .iter()
             .find_map(|path| {
@@ -1271,8 +1269,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 // to field accesses. This handles pointer-wrapper types (Box,
                 // Unique, NonNull) where accessing inner pointer fields yields
                 // the same provenance as the container.
-                if let Some(base_val) = self.local_value(place.local) {
-                    if let Some(ref prov) = base_val.provenance {
+                if let Some(base_val) = self.local_value(place.local)
+                    && let Some(ref prov) = base_val.provenance {
                         return Some(VmValue {
                             z3_term: base_val.z3_term.clone(),
                             ty: place_ty,
@@ -1281,7 +1279,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             source: ValueSource::None,
                         });
                     }
-                }
                 return None;
             }
             // A Downcast without a materialized field falls through to the
@@ -1321,15 +1318,14 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 // `decompose_pointee_fields`).  The viewed type (pointee) is part
                 // of the key so reinterpret casts (e.g. `LeafNode` → `InternalNode`)
                 // resolve to the right field view.
-                if let Some(base_val) = self.local_value(place.local) {
-                    if let Some(alloc_id) = base_val.provenance_alloc_id() {
+                if let Some(base_val) = self.local_value(place.local)
+                    && let Some(alloc_id) = base_val.provenance_alloc_id() {
                         let view_ty = mir_utils::pointee_ty(base_val.ty)
                             .unwrap_or(base_val.ty);
                         if let Some(val) = self.load_value(alloc_id, view_ty, &field_path).cloned() {
                             return Some(val);
                         }
                     }
-                }
             }
         }
 
@@ -1344,11 +1340,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 }
                 ProjectionElem::Field(_field_idx, _) => {
                     // Try to get the field value from the VM's field tracking
-                    if !field_path.is_empty() {
-                        if let Some(val) = self.field_value(place.local, &field_path).cloned() {
+                    if !field_path.is_empty()
+                        && let Some(val) = self.field_value(place.local, &field_path).cloned() {
                             return Some(val);
                         }
-                    }
                     // Fallback: return the base with updated type info
                     base.ty = place_ty;
                 }
@@ -1364,8 +1359,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             .iter()
             .all(|p| matches!(p.kind(), ProjectionElem::Deref));
         if let ProjectionElem::Index(local) = proj {
-            if prefix_is_deref {
-                if let Some(ref prov) = base.provenance {
+            if prefix_is_deref
+                && let Some(ref prov) = base.provenance {
                     let alloc_id = prov.alloc_id;
                     // The base's type may have been overwritten to the
                     // element type by the Deref strip above; recover the
@@ -1420,9 +1415,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         // materialization: the buffer was reinterpreted from a
                         // struct whose scalar fields were written in the value
                         // layer, so read the byte back out of the field value.
-                        if let Some(off) = offset.simplify().as_u64() {
-                            if let Some(ty) = self.alloc(alloc_id).element_ty.as_ty() {
-                                if let Some(b) = self.byte_from_field(alloc_id, ty, off as usize) {
+                        if let Some(off) = offset.simplify().as_u64()
+                            && let Some(ty) = self.alloc(alloc_id).element_ty.as_ty()
+                                && let Some(b) = self.byte_from_field(alloc_id, ty, off as usize) {
                                     return Some(VmValue {
                                         z3_term: b,
                                         ty: place_ty,
@@ -1431,11 +1426,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                         source: ValueSource::None,
                                     });
                                 }
-                            }
-                        }
                     }
                 }
-            }
             return Some(base.clone());
         }
         // Any other trailing projection (Deref/Field/Downcast/…): the loop above

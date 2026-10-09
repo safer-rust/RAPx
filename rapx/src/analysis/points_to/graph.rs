@@ -555,14 +555,11 @@ impl PtsGraph {
     pub fn get_place_source(&self, place: &PlaceKey) -> Option<PlaceKey> {
         let mut slot = Self::place_key_to_slot(place);
         loop {
-            if let Some(idx) = self.slot_index.get(&slot) {
-                if let Some(first_loc) = self.points_to.get(*idx).and_then(|set| set.iter().next())
-                {
-                    if let AbstractLoc::Slot(target) = first_loc {
+            if let Some(idx) = self.slot_index.get(&slot)
+                && let Some(first_loc) = self.points_to.get(*idx).and_then(|set| set.iter().next())
+                    && let AbstractLoc::Slot(target) = first_loc {
                         return Some(Self::slot_to_place_key(target));
                     }
-                }
-            }
             if slot.fields.is_empty() {
                 return None;
             }

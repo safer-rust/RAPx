@@ -255,11 +255,10 @@ pub(super) fn destination_flows_to_return(
                 continue;
             };
             let (target, rvalue) = assign.as_ref();
-            if target.local.as_usize() == 0 {
-                if rvalue_mentions_local(rvalue, destination, &aliases) {
+            if target.local.as_usize() == 0
+                && rvalue_mentions_local(rvalue, destination, &aliases) {
                     return true;
                 }
-            }
             if rvalue_mentions_local(rvalue, destination, &aliases) {
                 aliases.insert(target.local, aliases[&destination].clone());
             }
@@ -426,10 +425,7 @@ fn public_raw_field(tcx: TyCtxt<'_>, origin: &FieldOrigin) -> bool {
 
 fn impls_for_struct(tcx: TyCtxt<'_>, struct_def_id: DefId) -> Vec<DefId> {
     let mut impls = tcx
-        .inherent_impls(struct_def_id)
-        .iter()
-        .copied()
-        .collect::<Vec<_>>();
+        .inherent_impls(struct_def_id).to_vec();
 
     for item_id in tcx.hir_crate_items(()).free_items() {
         let item = tcx.hir_item(item_id);
@@ -749,20 +745,17 @@ fn local_hazard_violation_with(
     let mut hazard_locals: HashSet<Local> = destination.into_iter().collect();
     expand_hazard_alias_locals(tcx, caller, &mut hazard_locals);
     for data in body.basic_blocks.iter() {
-        if let Some(terminator) = &data.terminator {
-            if let TerminatorKind::Call {
+        if let Some(terminator) = &data.terminator
+            && let TerminatorKind::Call {
                 func,
                 destination: call_dest,
                 ..
             } = &terminator.kind
-            {
-                if crate::verify::api_classify::is_split_at(
+                && crate::verify::api_classify::is_split_at(
                     mir_utils::dep_callee_def_id(func),
                 ) {
                     hazard_locals.insert(call_dest.local);
                 }
-            }
-        }
     }
     origins.retain(|origin| !origin.local().is_some_and(|l| hazard_locals.contains(&l)));
     let vec_owners = find_as_ptr_receivers(tcx, caller, &origins, &tree, true);
@@ -871,8 +864,8 @@ fn local_hazard_violation_with(
                     kind
                 ));
             }
-            if view_len_place.is_some() {
-                if let TerminatorKind::Call {
+            if view_len_place.is_some()
+                && let TerminatorKind::Call {
                     func,
                     args,
                     destination: call_dest,
@@ -880,8 +873,8 @@ fn local_hazard_violation_with(
                 } = &terminator.kind
                 {
                     let callee = mir_utils::dep_callee_def_id(func);
-                    if crate::verify::api_classify::is_from_raw_parts(callee) && args.len() >= 1 {
-                        if let Some(ptr_place) = operand_place(&args[0].node) {
+                    if crate::verify::api_classify::is_from_raw_parts(callee) && !args.is_empty()
+                        && let Some(ptr_place) = operand_place(&args[0].node) {
                             let offset_eq = is_ptr_add_offset_eq(
                                 tcx,
                                 caller,
@@ -894,9 +887,7 @@ fn local_hazard_violation_with(
                                 continue;
                             }
                         }
-                    }
                 }
-            }
         }
     }
 
@@ -906,7 +897,7 @@ fn local_hazard_violation_with(
 fn reverse_postorder_blocks<'a, 'tcx>(
     body: &'a rustc_middle::mir::Body<'tcx>,
 ) -> impl Iterator<Item = (BasicBlock, &'a rustc_middle::mir::BasicBlockData<'tcx>)> {
-    rustc_middle::mir::traversal::reverse_postorder(body).map(|(block, data)| (block, data))
+    rustc_middle::mir::traversal::reverse_postorder(body)
 }
 
 /// Compute the set of locals that are live (between `StorageLive` and
@@ -948,11 +939,10 @@ pub(crate) fn live_locals_at(
                     // A move out of a local (`std::mem::forget(data)` inlined as
                     // `_x = move data`) consumes it even without a `StorageDead`.
                     let (_, rvalue) = &**assign;
-                    if let rustc_middle::mir::Rvalue::Use(operand, ..) = rvalue {
-                        if let Operand::Move(place) = operand {
+                    if let rustc_middle::mir::Rvalue::Use(operand, ..) = rvalue
+                        && let Operand::Move(place) = operand {
                             live.remove(&place.local);
                         }
-                    }
                 }
                 _ => {}
             }
@@ -962,15 +952,14 @@ pub(crate) fn live_locals_at(
         }
         // A call that *moves* a local out (`Box::into_raw(value)`) consumes it,
         // even though its `StorageDead` may only appear at the end of the body.
-        if track_moves {
-            if let TerminatorKind::Call { args, .. } = &data.terminator().kind {
+        if track_moves
+            && let TerminatorKind::Call { args, .. } = &data.terminator().kind {
                 for arg in args {
                     if let Operand::Move(place) = &arg.node {
                         live.remove(&place.local);
                     }
                 }
             }
-        }
     }
     live
 }
@@ -1365,12 +1354,10 @@ fn is_ptr_add_offset_eq(
             if crate::verify::api_classify::is_pointer_add(
                 mir_utils::dep_callee_def_id(func),
             ) && args.len() >= 2
-            {
-                if let Some(offset_place) = operand_place(&args[1].node) {
+                && let Some(offset_place) = operand_place(&args[1].node) {
                     let offset_root = offset_place.local().map(|l| tree.resolve_local_to_root(l));
                     return offset_root == view_len_root;
                 }
-            }
         }
     }
     false
@@ -1605,8 +1592,7 @@ fn places_holding_transferred_pointer(
             let destination_key = PlaceKey::from_mir_place(call_destination);
             if !killed.contains(&call_destination.local)
                 && holders.iter().any(|h| destination_key.overlaps(h))
-            {
-                if crate::verify::api_classify::is_as_ptr(
+                && crate::verify::api_classify::is_as_ptr(
                     mir_utils::dep_callee_def_id(func),
                 ) && let Some(arg) = args.first()
                     && let Operand::Copy(place) | Operand::Move(place) = &arg.node
@@ -1617,7 +1603,6 @@ fn places_holding_transferred_pointer(
                         holders.push(key);
                     }
                 }
-            }
             killed.insert(call_destination.local);
         }
     }
@@ -1764,8 +1749,8 @@ fn pre_existing_view_on_origin(
             let callee_name = mir_utils::call_name(tcx, func);
             if crate::verify::api_classify::is_nonnull_as_ref_as_mut(
                 mir_utils::dep_callee_def_id(func),
-            ) {
-                if let Some(arg) = args.first()
+            )
+                && let Some(arg) = args.first()
                     && let Some(place) = operand_mir_place(&arg.node)
                 {
                     let arg_resolved = resolve_via_tree(
@@ -1785,7 +1770,6 @@ fn pre_existing_view_on_origin(
                         ));
                     }
                 }
-            }
         }
 
         for statement in &data.statements {

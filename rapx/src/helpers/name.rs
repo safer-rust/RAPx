@@ -60,8 +60,8 @@ pub fn get_cleaned_def_path_name(tcx: TyCtxt<'_>, def_id: DefId) -> String {
 /// Extract the implementing struct name from a `DefId` that belongs to an
 /// associated item (method / associated function).
 fn get_struct_name(tcx: TyCtxt<'_>, def_id: DefId) -> Option<String> {
-    if let Some(assoc_item) = tcx.opt_associated_item(def_id) {
-        if let Some(impl_id) = assoc_item.impl_container(tcx) {
+    if let Some(assoc_item) = tcx.opt_associated_item(def_id)
+        && let Some(impl_id) = assoc_item.impl_container(tcx) {
             let ty = tcx.type_of(impl_id).skip_binder();
             let type_name = ty.to_string();
             let struct_name = type_name
@@ -75,7 +75,6 @@ fn get_struct_name(tcx: TyCtxt<'_>, def_id: DefId) -> Option<String> {
 
             return Some(struct_name);
         }
-    }
     None
 }
 
@@ -178,8 +177,8 @@ fn get_known_std_names<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Option<Vec<Str
     let std_func_name = public_def_path(tcx, def_id);
     let json_data = get_std_api_signature_json();
 
-    if let Some(arg_info) = json_data.get(&std_func_name) {
-        if let Some(args_name) = arg_info.as_array() {
+    if let Some(arg_info) = json_data.get(&std_func_name)
+        && let Some(args_name) = arg_info.as_array() {
             if args_name.is_empty() {
                 return Some(vec!["0".to_string()]);
             }
@@ -191,7 +190,6 @@ fn get_known_std_names<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Option<Vec<Str
             }
             return Some(result);
         }
-    }
     None
 }
 
@@ -240,7 +238,7 @@ fn parse_local_signature<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> (Vec<String>
 /// numeric indices (`"0"`, `"1"`, …).
 fn parse_outside_signature<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> (Vec<String>, Vec<Ty<'tcx>>) {
     let sig = tcx.fn_sig(def_id).skip_binder();
-    let param_tys: Vec<Ty<'tcx>> = sig.inputs().skip_binder().iter().copied().collect();
+    let param_tys: Vec<Ty<'tcx>> = sig.inputs().skip_binder().to_vec();
 
     if let Some(args_name) = get_known_std_names(tcx, def_id) {
         return (args_name, param_tys);
@@ -285,7 +283,7 @@ fn parse_trait_fn_sig<'tcx>(
         }
     };
     let sig = tcx.fn_sig(def_id).skip_binder();
-    let param_tys: Vec<Ty<'tcx>> = sig.inputs().skip_binder().iter().copied().collect();
+    let param_tys: Vec<Ty<'tcx>> = sig.inputs().skip_binder().to_vec();
     if names.len() == param_tys.len() {
         Some((names, param_tys))
     } else {
@@ -455,11 +453,10 @@ fn find_generic_param<'tcx>(
         }
     }
 
-    if let Some(struct_ty) = get_struct_self_ty(tcx, def_id) {
-        if let Some(found) = find_generic_in_ty(tcx, struct_ty, type_ident) {
+    if let Some(struct_ty) = get_struct_self_ty(tcx, def_id)
+        && let Some(found) = find_generic_in_ty(tcx, struct_ty, type_ident) {
             return Some(found);
         }
-    }
 
     // Search the return type as well, so generic types that only appear there
     // (e.g. `NonZero<T>` / `Option<NonZero<T>>` in a generic fn) resolve to the
@@ -511,11 +508,10 @@ fn find_generic_in_ty<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>, type_ident: &str) -
                 }
             }
             for subst in substs.iter() {
-                if let GenericArgKind::Type(subst_ty) = subst.kind() {
-                    if let Some(found) = find_generic_in_ty(tcx, subst_ty, type_ident) {
+                if let GenericArgKind::Type(subst_ty) = subst.kind()
+                    && let Some(found) = find_generic_in_ty(tcx, subst_ty, type_ident) {
                         return Some(found);
                     }
-                }
             }
         }
         _ => {}

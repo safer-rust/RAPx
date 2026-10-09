@@ -45,9 +45,9 @@ impl<'tcx> MirDisplay for TerminatorKind<'tcx> {
             TerminatorKind::UnwindResume => s += "UnwindResume",
             TerminatorKind::UnwindTerminate(..) => s += "UnwindTerminate",
             TerminatorKind::CoroutineDrop => s += "CoroutineDrop",
-            TerminatorKind::Call { func, .. } => if let Operand::Constant(constant) = func { if let ty::FnDef(id, ..) = constant.ty().kind() {
+            TerminatorKind::Call { func, .. } => if let Operand::Constant(constant) = func && let ty::FnDef(id, ..) = constant.ty().kind() {
                 s += format!("Call: FnDid: {}", id.index.as_usize()).as_str()
-            } },
+            },
             TerminatorKind::TailCall { .. } => todo!(),
         };
         s

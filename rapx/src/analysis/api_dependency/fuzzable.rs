@@ -45,8 +45,7 @@ fn is_fuzzable_std_ty<'tcx>(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>, depth: usize) -> bo
 
 fn is_non_fuzzable_std_ty<'tcx>(ty: Ty<'tcx>, _tcx: TyCtxt<'tcx>) -> bool {
     let name = format!("{}", ty);
-    if name.as_str() == "core::alloc::LayoutError" { return true }
-    false
+    name.as_str() == "core::alloc::LayoutError"
 }
 
 fn ty_contains_region<'tcx>(ty: Ty<'tcx>) -> bool {

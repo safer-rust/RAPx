@@ -94,6 +94,12 @@ impl DataflowNode {
     }
 }
 
+impl Default for DataflowNode {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Clone)]
 pub struct DataflowGraph {
     pub def_id: DefId,
@@ -182,19 +188,11 @@ impl DataflowGraph {
     }
 
     pub fn get_upside_idx(&self, node_idx: Local, order: usize) -> Option<Local> {
-        if let Some(edge_idx) = self.nodes[node_idx].in_edges.get(order) {
-            Some(self.edges[*edge_idx].src)
-        } else {
-            None
-        }
+        self.nodes[node_idx].in_edges.get(order).map(|edge_idx| self.edges[*edge_idx].src)
     }
 
     pub fn get_downside_idx(&self, node_idx: Local, order: usize) -> Option<Local> {
-        if let Some(edge_idx) = self.nodes[node_idx].out_edges.get(order) {
-            Some(self.edges[*edge_idx].dst)
-        } else {
-            None
-        }
+        self.nodes[node_idx].out_edges.get(order).map(|edge_idx| self.edges[*edge_idx].dst)
     }
 
     pub fn is_connected(&self, idx_1: Local, idx_2: Local) -> bool {
@@ -233,13 +231,13 @@ impl DataflowGraph {
 
     pub fn param_return_deps(&self) -> IndexVec<Local, bool> {
         let ret_local = Local::from_usize(0);
-        let deps = (0..self.argc + 1)
+        
+        (0..self.argc + 1)
             .map(|i| {
                 let arg_local = Local::from_usize(i);
                 self.is_connected(arg_local, ret_local)
             })
-            .collect();
-        deps
+            .collect()
     }
 
     pub fn dfs<F, G>(

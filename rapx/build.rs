@@ -24,10 +24,17 @@ fn main() {
     emit_check_cfg("rapx_alias_ty_structured_kind");
     emit_check_cfg("rapx_has_deeply_resolve_ignoring_regions");
     emit_check_cfg("rapx_has_compiler_entrypoint");
+    emit_check_cfg("rapx_defkind_const_struct");
 
     emit_cfg("rapx_ge_95", minor >= 95);
     emit_cfg("rapx_ge_99", minor >= 99);
     emit_cfg("rapx_ge_100", minor >= 100);
+    // `DefKind::Const`/`AssocConst` were struct variants (with `is_type_const`)
+    // between 1.96 and 1.99 inclusive; unit variants before and after.
+    emit_cfg(
+        "rapx_defkind_const_struct",
+        rustc_src_contains_path("compiler/rustc_hir/src/def.rs", "is_type_const"),
+    );
     emit_cfg(
         "rapx_has_public_adts",
         rustc_src_contains_path("compiler/rustc_public/src/lib.rs", "pub fn adts"),

@@ -62,21 +62,17 @@ impl PropertyChecker {
         // (`align_of::<Box<i32>>() = 8`).  Require a provenance so a pointer
         // local whose value fell back to its own stack-address default (and is
         // really some unaligned offset) is not mistaken for a stack borrow.
-        if value.is_pointer() {
-            if let Some(local) = vm_state.find_local_by_address(&value.z3_term) {
+        if value.is_pointer()
+            && let Some(local) = vm_state.find_local_by_address(&value.z3_term) {
                 let local_ty = vm_state.body().local_decls[local].ty;
                 let local_align = vm_state.align_sym_read(local_ty);
-                if let Some(local_align_u64) = local_align.simplify().as_u64() {
-                    if local_align_u64 != 1 {
-                        if let Some(align_u64) = align.simplify().as_u64() {
-                            if local_align_u64 >= align_u64 {
+                if let Some(local_align_u64) = local_align.simplify().as_u64()
+                    && local_align_u64 != 1
+                        && let Some(align_u64) = align.simplify().as_u64()
+                            && local_align_u64 >= align_u64 {
                                 return CheckResult::ProvedByRule;
                             }
-                        }
-                    }
-                }
             }
-        }
         // Symbolic fast-path: if the value is known to be at least `align`-aligned
         // (its effective alignment satisfies `align_n >= align`, both powers of
         // two), the check holds without a modulo query — Z3 cannot discharge
@@ -101,11 +97,9 @@ impl PropertyChecker {
             // structurally, no solver query.
             if let (Some(known_u64), Some(align_u64)) =
                 (known_align.simplify().as_u64(), align.simplify().as_u64())
-            {
-                if known_u64 >= align_u64 {
+                && known_u64 >= align_u64 {
                     return CheckResult::ProvedByRule;
                 }
-            }
             let solver = Solver::new(vm_state.z3_ctx);
             solver.push();
             vm_state.assert_all(&solver);
@@ -125,18 +119,15 @@ impl PropertyChecker {
         // `Align(container.iter(), T)` for_each: every element pointer is
         // aligned to `align_of(T)`, so a pointer loaded from the container
         // (whose provenance names the container allocation) is T-aligned.
-        if let Some(prov) = &value.provenance {
-            if let Some(aligned_ty) = vm_state.alloc(prov.alloc_id).facts.for_each.aligned_ty {
+        if let Some(prov) = &value.provenance
+            && let Some(aligned_ty) = vm_state.alloc(prov.alloc_id).facts.for_each.aligned_ty {
                 let fa = vm_state.align_sym_read(aligned_ty);
                 if let (Some(fa_u64), Some(align_u64)) =
                     (fa.simplify().as_u64(), align.simplify().as_u64())
-                {
-                    if fa_u64 >= align_u64 {
+                    && fa_u64 >= align_u64 {
                         return CheckResult::ProvedByRule;
                     }
-                }
             }
-        }
         // Check allocation base alignment with concrete offset
         if let Some(ref prov) = value.provenance {
             let alloc = vm_state.alloc(prov.alloc_id);
@@ -148,8 +139,8 @@ impl PropertyChecker {
                 off_u64,
                 align.simplify().as_u64(),
                 alloc.align.simplify().as_u64(),
-            ) {
-                if alloc_align_u64 >= align_u64 {
+            )
+                && alloc_align_u64 >= align_u64 {
                     if off % align_u64 == 0 {
                         return CheckResult::ProvedByRule;
                     }
@@ -157,7 +148,6 @@ impl PropertyChecker {
                         return CheckResult::Failed;
                     }
                 }
-            }
         }
         // Packed-struct fast-path: if the allocation is less aligned than
         // required, the concrete offset alone determines alignment.
@@ -165,15 +155,11 @@ impl PropertyChecker {
             let alloc = vm_state.alloc(prov.alloc_id);
             if let (Some(alloc_align_u64), Some(align_u64)) =
                 (alloc.align.simplify().as_u64(), align.simplify().as_u64())
-            {
-                if alloc_align_u64 < align_u64 {
-                    if let Some(off) = prov.offset.as_u64() {
-                        if off % align_u64 != 0 {
+                && alloc_align_u64 < align_u64
+                    && let Some(off) = prov.offset.as_u64()
+                        && off % align_u64 != 0 {
                             return CheckResult::Failed;
                         }
-                    }
-                }
-            }
         }
         let align_term = align;
         let zero = Int::from_u64(vm_state.z3_ctx, 0);
@@ -234,11 +220,9 @@ impl PropertyChecker {
             .align_n
             .as_ref()
             .and_then(|n| n.simplify().as_u64())
-        {
-            if n >= align && n % align == 0 {
+            && n >= align && n % align == 0 {
                 return true;
             }
-        }
         let solver = Solver::new(vm_state.z3_ctx);
         solver.push();
         let zero = Int::from_u64(vm_state.z3_ctx, 0);
@@ -282,11 +266,10 @@ impl PropertyChecker {
         // Pointers with non-external provenance point into known stack/heap
         // allocations whose base addresses are never zero.  Raw-pointer
         // parameters get external provenance which may be null.
-        if let Some(ref prov) = value.provenance {
-            if !vm_state.alloc(prov.alloc_id).is_external() {
+        if let Some(ref prov) = value.provenance
+            && !vm_state.alloc(prov.alloc_id).is_external() {
                 return CheckResult::ProvedByRule;
             }
-        }
         // For an external pointer, check nullability against the *path
         // conditions* only.  `assert_all` also asserts every live value's
         // derived `non_null` flag, but the `&T` produced by this very deref
@@ -693,11 +676,10 @@ impl PropertyChecker {
         // `ty_is_maybe_uninit` fast-path in `check_typed`; this is what lets a
         // `&[MaybeUninit<T>]` slice satisfy `Init` without its contents being
         // initialized.
-        if let Some(required_ty) = Self::ty_arg(property, 1) {
-            if Self::ty_is_maybe_uninit(required_ty) {
+        if let Some(required_ty) = Self::ty_arg(property, 1)
+            && Self::ty_is_maybe_uninit(required_ty) {
                 return CheckResult::ProvedByRule;
             }
-        }
 
         // Compute the required init range: count * sizeof(T) bytes.  The
         // two-argument form `Init(self, n)` carries no `T`; `access_bytes`
@@ -728,9 +710,9 @@ impl PropertyChecker {
                 }
             }
             // Verify the entire access range is covered
-            if let Some(ref access_term) = access {
-                if let (Some(access_val), Some(prov)) = (access_term.as_u64(), &value.provenance) {
-                    if let Some(prov_off) = prov.offset.as_u64() {
+            if let Some(ref access_term) = access
+                && let (Some(access_val), Some(prov)) = (access_term.as_u64(), &value.provenance)
+                    && let Some(prov_off) = prov.offset.as_u64() {
                         let end = prov_off + access_val;
                         let all_init = (prov_off as usize..end as usize)
                             .all(|off| vm_state.is_byte_init(id, off));
@@ -738,8 +720,6 @@ impl PropertyChecker {
                             return CheckResult::ProvedByRule;
                         }
                     }
-                }
-            }
             if vm_state.content(id).facts.initialized {
                 if let Some(ref access_term) = access {
                     let size = vm_state.allocation_size(id);
@@ -762,11 +742,9 @@ impl PropertyChecker {
                 && Self::is_value_aligned(vm_state, &value)
                 && matches!(value.ty.kind(), TyKind::RawPtr(..))
                 && !vm_state.alloc(id).facts.dead
-            {
-                if crate::verify::api_classify::is_mem_copy_or_write(checkpoint.callee) {
+                && crate::verify::api_classify::is_mem_copy_or_write(checkpoint.callee) {
                     return CheckResult::ProvedByRule;
                 }
-            }
             // Check byte-level init: if all bytes in range are initialized
             let size = vm_state.allocation_size(id).clone();
             if let Some(size_val) = size.as_u64() {
@@ -785,9 +763,9 @@ impl PropertyChecker {
         // Check field-level init for aggregate types
         if let Some(origin_op) = checkpoint.args.first() {
             let origin_val = vm_state.value_of_operand(origin_op);
-            if let Some(prov) = &origin_val.provenance {
-                if vm_state.content(prov.alloc_id).facts.initialized {
-                    if let Some(ref access_term) = access {
+            if let Some(prov) = &origin_val.provenance
+                && vm_state.content(prov.alloc_id).facts.initialized
+                    && let Some(ref access_term) = access {
                         let size = vm_state.allocation_size(prov.alloc_id);
                         if let (Some(access_val), Some(size_val)) =
                             (access_term.as_u64(), size.as_u64())
@@ -801,12 +779,10 @@ impl PropertyChecker {
                         }
                     }
                     // access=None: can't verify size, fall through
-                }
-            }
             if let Operand::Copy(place) | Operand::Move(place) = origin_op {
                 for alloc_id in self.trace_alloc_ids(vm_state, place.local) {
-                    if vm_state.content(alloc_id).facts.initialized {
-                        if let Some(ref access_term) = access {
+                    if vm_state.content(alloc_id).facts.initialized
+                        && let Some(ref access_term) = access {
                             let size = vm_state.allocation_size(alloc_id);
                             if let (Some(access_val), Some(size_val)) =
                                 (access_term.as_u64(), size.as_u64())
@@ -818,7 +794,6 @@ impl PropertyChecker {
                                 return CheckResult::ProvedByRule;
                             }
                         }
-                    }
                 }
             }
             // No path proved init.  If the value traces to a known allocation
@@ -877,14 +852,13 @@ impl PropertyChecker {
                             Rvalue::RawPtr(_, p) if p.projection.is_empty() => Some(p.local),
                             _ => None,
                         };
-                        if let Some(src) = src_local {
-                            if visited.insert(src) {
+                        if let Some(src) = src_local
+                            && visited.insert(src) {
                                 if let Some(id) = vm_state.current_frame.local_alloc.get(&src) {
                                     result.push(*id);
                                 }
                                 worklist.push(src);
                             }
-                        }
                     }
                 }
             }
@@ -946,61 +920,57 @@ impl PropertyChecker {
             // memory (raw-pointer params/fields) and carries no liveness
             // guarantee; it is alive only if explicitly assumed (`Alive`
             // precondition / struct invariant), or grounded in a live reference.
-            if !vm_state.alloc(root_id).facts.dead {
-                match &vm_state.alloc(root_id).facts.liveness {
-                    Some(src_region) => {
-                        // The `Alive(p, 'r)` check demands the memory alive for
-                        // `'r`, while the assumption only guarantees `'a`; the
-                        // assumption covers the demand only when `'a: 'r`.
-                        //
-                        // A struct invariant / function `requires` binds its
-                        // region at parse time (`PropertyArg::Region`); a callee
-                        // contract carries either `'static` (concrete) or the
-                        // callee's *generic* return lifetime (`Ident`), which is
-                        // instantiated from the caller's return reference region.
-                        let check_region = property.args().get(1).and_then(|a| match a {
-                            PropertyArg::Region(r) => Some(*r),
-                            PropertyArg::Ident(name)
-                                if name == "static" || name == "static_lifetime" =>
-                            {
-                                Some(vm_state.tcx.lifetimes.re_static)
-                            }
-                            PropertyArg::Ident(_) => crate::verify::vm::region::fn_return_region(
-                                vm_state.tcx,
-                                checkpoint.caller,
-                            ),
-                            _ => None,
-                        });
-                        if let Some(r) = check_region {
-                            let outlives = crate::verify::vm::region::region_outlives(
-                                vm_state.tcx,
-                                checkpoint.caller,
-                                *src_region,
-                                r,
-                            );
-                            // A reference parameter `&'r Self<'a>` implies
-                            // `'a: 'r` through its type (not a where-clause).
-                            let implied = crate::verify::vm::region::fn_arg_ty(
-                                vm_state.tcx,
-                                checkpoint.caller,
-                                0,
-                            )
-                            .is_some_and(|self_ty| {
-                                crate::verify::vm::region::region_outlives_implied(
-                                    vm_state.tcx,
-                                    *src_region,
-                                    self_ty,
-                                )
-                            });
-                            if !outlives && !implied {
-                                return CheckResult::Failed;
-                            }
+            if !vm_state.alloc(root_id).facts.dead
+                && let Some(src_region) = &vm_state.alloc(root_id).facts.liveness {
+                    // The `Alive(p, 'r)` check demands the memory alive for
+                    // `'r`, while the assumption only guarantees `'a`; the
+                    // assumption covers the demand only when `'a: 'r`.
+                    //
+                    // A struct invariant / function `requires` binds its
+                    // region at parse time (`PropertyArg::Region`); a callee
+                    // contract carries either `'static` (concrete) or the
+                    // callee's *generic* return lifetime (`Ident`), which is
+                    // instantiated from the caller's return reference region.
+                    let check_region = property.args().get(1).and_then(|a| match a {
+                        PropertyArg::Region(r) => Some(*r),
+                        PropertyArg::Ident(name)
+                            if name == "static" || name == "static_lifetime" =>
+                        {
+                            Some(vm_state.tcx.lifetimes.re_static)
                         }
-                        return CheckResult::ProvedByRule;
+                        PropertyArg::Ident(_) => crate::verify::vm::region::fn_return_region(
+                            vm_state.tcx,
+                            checkpoint.caller,
+                        ),
+                        _ => None,
+                    });
+                    if let Some(r) = check_region {
+                        let outlives = crate::verify::vm::region::region_outlives(
+                            vm_state.tcx,
+                            checkpoint.caller,
+                            *src_region,
+                            r,
+                        );
+                        // A reference parameter `&'r Self<'a>` implies
+                        // `'a: 'r` through its type (not a where-clause).
+                        let implied = crate::verify::vm::region::fn_arg_ty(
+                            vm_state.tcx,
+                            checkpoint.caller,
+                            0,
+                        )
+                        .is_some_and(|self_ty| {
+                            crate::verify::vm::region::region_outlives_implied(
+                                vm_state.tcx,
+                                *src_region,
+                                self_ty,
+                            )
+                        });
+                        if !outlives && !implied {
+                            return CheckResult::Failed;
+                        }
                     }
-                    None => {}
+                    return CheckResult::ProvedByRule;
                 }
-            }
             // A raw pointer derived from a live reference or owned (Box/Vec)
             // parameter is alive: the reference / ownership guarantees liveness.
             let body = vm_state.body();

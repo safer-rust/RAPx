@@ -224,7 +224,7 @@ where
                 let dir_path = PathBuf::from("cg_dot");
                 fs::create_dir_all(dir_path.clone()).unwrap();
                 let safe_filename = format!("{}_cg.dot", function_name);
-                let output_path = dir_path.join(format!("{}", safe_filename));
+                let output_path = dir_path.join(&safe_filename);
                 let mut file = File::create(&output_path).expect("cannot create file");
                 file.write_all(dot_output.as_bytes())
                     .expect("Could not write to file");

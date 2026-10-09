@@ -35,7 +35,7 @@ where
 
         let node = VarNode::new(v);
         let node_ref: &mut VarNode<'tcx, T> = self.vars.entry(v).or_insert(node);
-        self.usemap.entry(v).or_insert(HashSet::new());
+        self.usemap.entry(v).or_default();
 
         let ty = local_decls[v.local].ty;
         let place_ty = v.ty(local_decls, self.tcx);
@@ -59,7 +59,7 @@ where
                 for source in v_op.get_sources() {
                     self.usemap
                         .entry(source)
-                        .or_insert(HashSet::new())
+                        .or_default()
                         .insert(self.oprs.len());
                 }
 
@@ -77,12 +77,12 @@ where
         rvalue: &'tcx Rvalue<'tcx>,
     ) -> &mut VarNode<'tcx, T> {
         if !self.vars.contains_key(v) {
-            let place_ctx: Vec<&Place<'tcx>> = self.vars.keys().map(|p| *p).collect();
+            let place_ctx: Vec<&Place<'tcx>> = self.vars.keys().copied().collect();
             let node = VarNode::new_symb(v, SymbExpr::from_rvalue(rvalue, place_ctx.clone()));
             rap_debug!("use node:{:?}", node);
 
             self.vars.insert(v, node);
-            self.usemap.entry(v).or_insert(HashSet::new());
+            self.usemap.entry(v).or_default();
 
             if !(v.projection.is_empty() || self.defmap.contains_key(v)) {
                 let matches: Vec<_> = self
@@ -99,7 +99,7 @@ where
                     for source in v_op.get_sources() {
                         self.usemap
                             .entry(source)
-                            .or_insert(HashSet::new())
+                            .or_default()
                             .insert(self.oprs.len());
                     }
 
@@ -117,7 +117,7 @@ where
         v: &'tcx Place<'tcx>,
         rvalue: &'tcx Rvalue<'tcx>,
     ) -> &mut VarNode<'tcx, T> {
-        let place_ctx: Vec<&Place<'tcx>> = self.vars.keys().map(|p| *p).collect();
+        let place_ctx: Vec<&Place<'tcx>> = self.vars.keys().copied().collect();
 
         let local_decls = &self.body.local_decls;
         let node = VarNode::new_symb(v, SymbExpr::from_rvalue(rvalue, place_ctx.clone()));
@@ -127,7 +127,7 @@ where
             .entry(v)
             .and_modify(|old| *old = node.clone())
             .or_insert(node);
-        self.usemap.entry(v).or_insert(HashSet::new());
+        self.usemap.entry(v).or_default();
 
         let ty = local_decls[v.local].ty;
         let place_ty = v.ty(local_decls, self.tcx);
@@ -151,7 +151,7 @@ where
                 for source in v_op.get_sources() {
                     self.usemap
                         .entry(source)
-                        .or_insert(HashSet::new())
+                        .or_default()
                         .insert(self.oprs.len());
                 }
 
@@ -165,7 +165,7 @@ where
     pub fn resolve_all_symexpr(&mut self) {
         let lookup_context = self.vars.clone();
         let mut nodes: Vec<&mut VarNode<'tcx, T>> = self.vars.values_mut().collect();
-        nodes.sort_by(|a, b| a.v.local.as_usize().cmp(&b.v.local.as_usize()));
+        nodes.sort_by_key(|a| a.v.local.as_usize());
         for node in nodes {
             if let IntervalType::Basic(basic) = &mut node.interval {
                 rap_debug!("======{}=====", node.v.local.as_usize());
@@ -217,13 +217,11 @@ where
     pub fn build_value_maps(&mut self, body: &'tcx Body<'tcx>) {
         for bb in body.basic_blocks.indices() {
             let block_data = &body[bb];
-            if let Some(terminator) = &block_data.terminator {
-                if let TerminatorKind::SwitchInt { discr, targets } = &terminator.kind {
-                    if targets.iter().count() == 1 {
+            if let Some(terminator) = &block_data.terminator
+                && let TerminatorKind::SwitchInt { discr, targets } = &terminator.kind
+                    && targets.iter().count() == 1 {
                         self.build_value_branch_map(body, discr, targets, bb, block_data);
                     }
-                }
-            }
         }
     }
 
@@ -267,8 +265,8 @@ where
         switch_block: BasicBlock,
         block_data: &'tcx BasicBlockData<'tcx>,
     ) {
-        if let Operand::Copy(place) | Operand::Move(place) = discr {
-            if let Some((op1, op2, cmp_op)) = self.extract_condition(place, block_data) {
+        if let Operand::Copy(place) | Operand::Move(place) = discr
+            && let Some((op1, op2, cmp_op)) = self.extract_condition(place, block_data) {
                 rap_debug!(
                     "extract_condition op1:{:?} op2:{:?} cmp_op:{:?}\n",
                     op1,
@@ -320,13 +318,13 @@ where
                             return;
                         };
                         let const_range =
-                            Range::new(value.clone(), value.clone(), RangeType::Unknown);
+                            Range::new(value, value, RangeType::Unknown);
                         rap_trace!("cmp_op {:?}\n", cmp_op);
                         rap_trace!("const_in_left {:?}\n", const_in_left);
                         let mut true_range =
-                            self.apply_comparison(value.clone(), cmp_op, true, const_in_left);
+                            self.apply_comparison(value, cmp_op, true, const_in_left);
                         let mut false_range =
-                            self.apply_comparison(value.clone(), cmp_op, false, const_in_left);
+                            self.apply_comparison(value, cmp_op, false, const_in_left);
                         true_range.set_regular();
                         false_range.set_regular();
                         let target_vec = targets.all_targets();
@@ -411,7 +409,6 @@ where
                     }
                 }
             };
-        }
     }
 
     pub fn flipped_binop(op: BinOp) -> Option<BinOp> {
@@ -524,19 +521,18 @@ where
                 }
             }
 
-            _ => Range::new(constant.clone(), constant.clone(), RangeType::Empty),
+            _ => Range::new(constant, constant, RangeType::Empty),
         }
     }
 
     pub fn build_symbolic_intersect_map(&mut self) {
         for i in 0..self.oprs.len() {
-            if let BasicOpKind::Essa(essaop) = &self.oprs[i] {
-                if let IntervalType::Symb(symbi) = essaop.get_intersect() {
+            if let BasicOpKind::Essa(essaop) = &self.oprs[i]
+                && let IntervalType::Symb(symbi) = essaop.get_intersect() {
                     let v = symbi.get_bound();
-                    self.symbmap.entry(v).or_insert_with(HashSet::new).insert(i);
+                    self.symbmap.entry(v).or_default().insert(i);
                     rap_trace!("symbmap insert {:?} {:?}\n", v, essaop);
                 }
-            }
         }
     }
 
@@ -895,8 +891,8 @@ where
 
                 if let Some(value) = T::from_const(&c.const_) {
                     sink_node.set_range(Range::new(
-                        value.clone(),
-                        value.clone(),
+                        value,
+                        value,
                         RangeType::Regular,
                     ));
                     rap_trace!("set_const {:?} value: {:?}\n", sink_node, value);
@@ -1026,8 +1022,8 @@ where
                     let sink_node = self.def_add_varnode_sym(sink, rvalue);
                     if let Some(value) = T::from_const(&c.const_) {
                         sink_node.set_range(Range::new(
-                            value.clone(),
-                            value.clone(),
+                            value,
+                            value,
                             RangeType::Regular,
                         ));
                         rap_trace!("set_const {:?} value: {:?}\n", sink_node, value);
@@ -1171,7 +1167,7 @@ where
             source1_place, // This is guaranteed to be the Place (if one exists)
             source2_place,
             const_val,
-            bin_op.clone(),
+            bin_op,
         );
 
         self.oprs.push(BasicOpKind::Binary(bop));

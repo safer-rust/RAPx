@@ -52,16 +52,16 @@ where
     }
 
     pub fn exact(value: T) -> Self {
-        Self::new(value.clone(), value, RangeType::Regular)
+        Self::new(value, value, RangeType::Regular)
     }
 
     pub fn get_lower(&self) -> T {
-        self.range.lower().unwrap().clone()
+        *self.range.lower().unwrap()
     }
 
     // Getter for upper bound
     pub fn get_upper(&self) -> T {
-        self.range.upper().unwrap().clone()
+        *self.range.upper().unwrap()
     }
 
     // Check if the range type is unknown
@@ -130,10 +130,10 @@ where
     }
 
     pub fn mul(&self, other: &Range<T>) -> Range<T> {
-        let candidates = [self.get_lower().clone() * other.get_lower().clone(),
-            self.get_lower().clone() * other.get_upper().clone(),
-            self.get_upper().clone() * other.get_lower().clone(),
-            self.get_upper().clone() * other.get_upper().clone()];
+        let candidates = [self.get_lower() * other.get_lower(),
+            self.get_lower() * other.get_upper(),
+            self.get_upper() * other.get_lower(),
+            self.get_upper() * other.get_upper()];
         let min = candidates
             .iter()
             .cloned()
@@ -150,14 +150,14 @@ where
     pub fn intersectwith(&self, other: &Range<T>) -> Range<T> {
         if self.is_unknown() {
             Range::new(
-                other.get_lower().clone(),
-                other.get_upper().clone(),
+                other.get_lower(),
+                other.get_upper(),
                 RangeType::Regular,
             )
         } else if other.is_unknown() {
             Range::new(
-                self.get_lower().clone(),
-                self.get_upper().clone(),
+                self.get_lower(),
+                self.get_upper(),
                 RangeType::Regular,
             )
         } else {
@@ -176,14 +176,14 @@ where
     pub fn unionwith(&self, other: &Range<T>) -> Range<T> {
         if self.is_unknown() {
             Range::new(
-                other.get_lower().clone(),
-                other.get_upper().clone(),
+                other.get_lower(),
+                other.get_upper(),
                 RangeType::Regular,
             )
         } else if other.is_unknown() {
             Range::new(
-                self.get_lower().clone(),
-                self.get_upper().clone(),
+                self.get_lower(),
+                self.get_upper(),
                 RangeType::Regular,
             )
         } else {
@@ -193,7 +193,7 @@ where
             let right = std::cmp::max_by(self.get_upper(), other.get_upper(), |a, b| {
                 a.partial_cmp(b).unwrap()
             });
-            Range::new(left.clone(), right.clone(), RangeType::Regular)
+            Range::new(left, right, RangeType::Regular)
         }
     }
 }
@@ -219,9 +219,9 @@ where
         if b_lower < a_lower && b_upper > a_upper {
             Range::top()
         } else if b_lower < a_lower {
-            Range::new(T::min_value(), a_upper.clone(), RangeType::Regular)
+            Range::new(T::min_value(), a_upper, RangeType::Regular)
         } else if b_upper > a_upper {
-            Range::new(a_lower.clone(), T::max_value(), RangeType::Regular)
+            Range::new(a_lower, T::max_value(), RangeType::Regular)
         } else {
             self.clone()
         }
@@ -234,19 +234,19 @@ where
         let b_upper = other.get_upper();
 
         let final_lower = if a_lower == T::min_value() && b_lower > T::min_value() {
-            b_lower.clone()
+            b_lower
         } else if a_lower <= b_lower {
-            b_lower.clone()
+            b_lower
         } else {
-            a_lower.clone()
+            a_lower
         };
 
         let final_upper = if a_upper == T::max_value() && b_upper < T::max_value() {
-            b_upper.clone()
+            b_upper
         } else if a_upper >= b_upper {
-            b_upper.clone()
+            b_upper
         } else {
-            a_upper.clone()
+            a_upper
         };
 
         Range::new(final_lower, final_upper, RangeType::Regular)

@@ -22,11 +22,10 @@ fn extract_ancestor_set_if_is_str_from(
 ) -> Option<HashSet<Local>> {
     let def_paths = DEFPATHS.get().unwrap();
     for op in node.ops.iter() {
-        if let NodeOp::Call(def_id) = op {
-            if *def_id == def_paths.str_from_utf8.last_def_id() {
+        if let NodeOp::Call(def_id) = op
+            && *def_id == def_paths.str_from_utf8.last_def_id() {
                 return Some(graph.collect_ancestor_locals(node_idx, false));
             }
-        }
     }
     None
 }

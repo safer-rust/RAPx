@@ -35,7 +35,7 @@ impl<'tcx, 'a> FlowAnalysis<'tcx, 'a> {
 
 impl<'tcx> NodeOrder<'tcx> {
     /// !Note: this function does not collect the edges that belongs to unwind paths.
-    pub(crate) fn collect_edges(&mut self, lev: &mut Vec<usize>) {
+    pub(crate) fn collect_edges(&mut self, lev: &mut [usize]) {
         let bbs = &self.body().basic_blocks;
         for (block, data) in bbs.iter().enumerate() {
             let mut result: Vec<usize> = vec![];
@@ -68,14 +68,14 @@ impl<'tcx> NodeOrder<'tcx> {
             }
             // Update the lev for generating topo order.
             for index in result.iter() {
-                lev[*index] = lev[*index] + 1;
+                lev[*index] += 1;
                 self.graph_mut().get_pre_mut()[*index].push(block);
             }
             self.graph_mut().get_edges_mut()[block] = result;
         }
     }
 
-    pub(crate) fn topo_order(&mut self, lev: &mut Vec<usize>) {
+    pub(crate) fn topo_order(&mut self, lev: &mut [usize]) {
         let mut q: BinaryHeap<usize> = BinaryHeap::new();
         q.push(0);
         while !q.is_empty() {
@@ -83,7 +83,7 @@ impl<'tcx> NodeOrder<'tcx> {
             self.graph_mut().get_topo_mut().push(top);
             for cnt in 0..self.graph().e[top].len() {
                 let next = self.graph().e[top][cnt];
-                lev[next] = lev[next] - 1;
+                lev[next] -= 1;
                 if lev[next] == 0 {
                     q.push(next);
                 }

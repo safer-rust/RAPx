@@ -46,12 +46,11 @@ impl<'tcx> SafeDropGraph<'tcx> {
                 path.pop();
                 return Err(());
             }
-            if should_check(self.alias_graph.def_id()) {
-                if let Some(&last) = path.last() {
+            if should_check(self.alias_graph.def_id())
+                && let Some(&last) = path.last() {
                     let cfg_block = self.alias_graph.cfg_block(last).clone();
                     self.dp_check(cfg_block.is_cleanup);
                 }
-            }
         }
 
         for child in &node.children {
@@ -84,7 +83,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
                     if !self.drop_heap_item_check(place) {
                         return;
                     }
-                    let value_idx = self.alias_graph.projection(place.clone());
+                    let value_idx = self.alias_graph.projection(*place);
                     checks::sync_drop_record(&self.alias_graph, &mut self.drop_record);
                     self.add_to_drop_record(value_idx, bb_idx, is_cleanup);
                 }
@@ -112,7 +111,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
                         if !self.drop_heap_item_check(&place) {
                             return;
                         }
-                        let local = self.alias_graph.projection(place.clone());
+                        let local = self.alias_graph.projection(place);
                         checks::sync_drop_record(&self.alias_graph, &mut self.drop_record);
                         self.add_to_drop_record(local, bb_idx, is_cleanup);
                     }
@@ -136,11 +135,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
                         Some(vdx) => vdx.index(),
                         None => 0,
                     };
-                    if owenr_unit[idx].0.is_onheap() || owenr_unit[idx].1.contains(&true) {
-                        true
-                    } else {
-                        false
-                    }
+                    owenr_unit[idx].0.is_onheap() || owenr_unit[idx].1.contains(&true)
                 }
             },
             _ => true,
@@ -165,11 +160,10 @@ impl<'tcx> SafeDropGraph<'tcx> {
             self.bug_records.uaf_bugs
         );
         let filename = get_filename(self.alias_graph.tcx(), self.alias_graph.def_id());
-        if let Some(filename) = filename {
-            if filename.contains(".cargo") {
+        if let Some(filename) = filename
+            && filename.contains(".cargo") {
                 return;
             }
-        }
         if self.bug_records.is_bug_free() {
             return;
         }
@@ -223,7 +217,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
         let bug = checks::make_bug(
             &self.drop_record[value_idx],
             LocalSpot::new(bb_idx, local),
-            span.clone(),
+            span,
             confidence,
             t,
         );
@@ -232,8 +226,8 @@ impl<'tcx> SafeDropGraph<'tcx> {
         } else {
             &mut self.bug_records.df_bugs
         };
-        if !target_map.contains_key(&local) {
-            target_map.insert(local, bug);
+        if let std::collections::hash_map::Entry::Vacant(e) = target_map.entry(local) {
+            e.insert(bug);
             if flag_cleanup {
                 rap_info!(
                     "Find a double free bug {} during unwinding; add to records.",
@@ -265,7 +259,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
                 let bug = checks::make_bug(
                     &self.drop_record[0],
                     LocalSpot::from_local(0),
-                    self.alias_graph.span().clone(),
+                    self.alias_graph.span(),
                     confidence,
                     BugType::DanglingPointer,
                 );
@@ -291,7 +285,7 @@ impl<'tcx> SafeDropGraph<'tcx> {
         let bug = checks::make_bug(
             &self.drop_record[arg_idx],
             LocalSpot::from_local(arg_idx),
-            self.alias_graph.span().clone(),
+            self.alias_graph.span(),
             confidence,
             BugType::DanglingPointer,
         );

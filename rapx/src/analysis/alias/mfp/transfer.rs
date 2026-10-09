@@ -60,16 +60,14 @@ pub fn transfer_assign<'tcx>(
     state.remove_aliases_with_prefix(&lv_id, place_info);
 
     // Gen: add alias lv ≈ rv if rv is a place
-    if let Some(rv_id) = operand_to_place_id(rv) {
-        if let Some(rv_idx) = place_info.get_index(&rv_id) {
-            if place_info.may_drop(rv_idx) {
+    if let Some(rv_id) = operand_to_place_id(rv)
+        && let Some(rv_idx) = place_info.get_index(&rv_id)
+            && place_info.may_drop(rv_idx) {
                 state.union(lv_idx, rv_idx);
 
                 // Sync fields if both have fields
                 sync_fields(state, &lv_id, &rv_id, place_info);
             }
-        }
-    }
 }
 
 /// Transfer function for reference: lv = &rv
@@ -124,16 +122,14 @@ pub fn transfer_aggregate<'tcx>(
         if let Some(rv_id) = operand_to_place_id(operand) {
             let lv_field_id = lv_id.project_field(field_idx);
 
-            if let Some(lv_field_idx) = place_info.get_index(&lv_field_id) {
-                if let Some(rv_idx) = place_info.get_index(&rv_id) {
-                    if place_info.may_drop(lv_field_idx) && place_info.may_drop(rv_idx) {
+            if let Some(lv_field_idx) = place_info.get_index(&lv_field_id)
+                && let Some(rv_idx) = place_info.get_index(&rv_id)
+                    && place_info.may_drop(lv_field_idx) && place_info.may_drop(rv_idx) {
                         state.union(lv_field_idx, rv_idx);
 
                         // Sync nested fields
                         sync_fields(state, &lv_field_id, &rv_id, place_info);
                     }
-                }
-            }
         }
     }
 }
@@ -156,7 +152,7 @@ pub fn transfer_call<'tcx>(
 
 /// Synchronize field aliases
 /// If lv and rv are aliased, ensure all their corresponding fields are also aliased
-pub fn sync_fields<'tcx>(
+pub fn sync_fields(
     state: &mut AliasDomain,
     lv: &PlaceId,
     rv: &PlaceId,
@@ -168,7 +164,7 @@ pub fn sync_fields<'tcx>(
 }
 
 /// Recursive helper for field synchronization
-fn sync_fields_recursive<'tcx>(
+fn sync_fields_recursive(
     state: &mut AliasDomain,
     lv: &PlaceId,
     rv: &PlaceId,
@@ -192,8 +188,8 @@ fn sync_fields_recursive<'tcx>(
             place_info.get_index(&rv_field),
         ) {
             // Both fields exist and may drop, union them
-            if place_info.may_drop(lv_field_idx) && place_info.may_drop(rv_field_idx) {
-                if state.union(lv_field_idx, rv_field_idx) {
+            if place_info.may_drop(lv_field_idx) && place_info.may_drop(rv_field_idx)
+                && state.union(lv_field_idx, rv_field_idx) {
                     // If union succeeded (they weren't already aliased), recurse
                     sync_fields_recursive(
                         state,
@@ -204,7 +200,6 @@ fn sync_fields_recursive<'tcx>(
                         max_depth,
                     );
                 }
-            }
         } else {
             // If either field doesn't exist, no more fields to sync
             break;

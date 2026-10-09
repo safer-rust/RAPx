@@ -54,11 +54,10 @@ impl<'tcx> SafetyFlowAnalysis<'tcx> {
                     if chain.len() > 1 {
                         return true;
                     }
-                    if chain.len() == 1 {
-                        if check_safety(self.tcx, def_id) == Safety::Unsafe {
+                    if chain.len() == 1
+                        && check_safety(self.tcx, def_id) == Safety::Unsafe {
                             return true;
                         }
-                    }
                     false
                 })
                 .collect();

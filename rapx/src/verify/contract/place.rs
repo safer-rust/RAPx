@@ -25,25 +25,24 @@ pub(crate) fn parse_contract_place<'tcx>(
     expr: &Expr,
 ) -> Option<ContractPlace<'tcx>> {
     // Handle .iter() / .each_element() — iterate over slice elements.
-    if let Expr::MethodCall(expr_method) = expr {
-        if (expr_method.method == "iter" || expr_method.method == "each_element")
+    if let Expr::MethodCall(expr_method) = expr
+        && (expr_method.method == "iter" || expr_method.method == "each_element")
             && expr_method.args.is_empty()
         {
             let mut place = parse_contract_place(tcx, def_id, &expr_method.receiver)?;
             place.projections.push(ContractProjection::ForEach);
             return Some(place);
         }
-    }
 
     // Handle .unwrap_some() method call — downcast to the Some variant.
-    if let Expr::MethodCall(expr_method) = expr {
-        if expr_method.method == "unwrap_some" && expr_method.args.is_empty() {
-            if let Some((base, fields, recv_ty)) =
+    if let Expr::MethodCall(expr_method) = expr
+        && expr_method.method == "unwrap_some" && expr_method.args.is_empty()
+            && let Some((base, fields, recv_ty)) =
                 parse_expr_into_local_and_ty(tcx, def_id, &expr_method.receiver)
             {
                 let peeled_ty = recv_ty.peel_refs();
-                if let TyKind::Adt(adt_def, _) = peeled_ty.kind() {
-                    if adt_def.is_enum() {
+                if let TyKind::Adt(adt_def, _) = peeled_ty.kind()
+                    && adt_def.is_enum() {
                         let some_variant =
                             adt_def.variants().iter_enumerated().find_map(|(vidx, v)| {
                                 if v.name.to_string() == "Some" {
@@ -60,10 +59,7 @@ pub(crate) fn parse_contract_place<'tcx>(
                             return Some(place);
                         }
                     }
-                }
             }
-        }
-    }
 
     if let Some((base, fields, _ty)) = parse_expr_into_local_and_ty(tcx, def_id, expr) {
         return Some(ContractPlace::local(base, fields));
@@ -86,14 +82,13 @@ fn parse_named_place<'tcx>(expr: &Expr) -> Option<ContractPlace<'tcx>> {
             projections: Vec::new(),
         });
     }
-    if let Expr::Path(expr_path) = expr {
-        if let Some(ident) = expr_path.path.get_ident() {
+    if let Expr::Path(expr_path) = expr
+        && let Some(ident) = expr_path.path.get_ident() {
             let s = ident.to_string();
-            if let Some(num_str) = s.strip_prefix("Arg_") {
-                if let Ok(idx) = num_str.parse::<usize>() {
+            if let Some(num_str) = s.strip_prefix("Arg_")
+                && let Ok(idx) = num_str.parse::<usize>() {
                     return Some(ContractPlace::arg(idx));
                 }
-            }
             if s == "return" {
                 return Some(ContractPlace {
                     base: PlaceBase::Return,
@@ -101,7 +96,6 @@ fn parse_named_place<'tcx>(expr: &Expr) -> Option<ContractPlace<'tcx>> {
                 });
             }
         }
-    }
     None
 }
 
@@ -125,8 +119,8 @@ pub(crate) fn resolve_place_from_ident<'tcx>(
     fields: &[String],
 ) -> Option<(usize, Vec<(usize, Ty<'tcx>)>, Ty<'tcx>)> {
     let (param_names, param_tys) = parse_signature(tcx, def_id);
-    if param_names[0] != "0" {
-        if let Some(param_index) = param_names.iter().position(|name| name == base_ident) {
+    if param_names[0] != "0"
+        && let Some(param_index) = param_names.iter().position(|name| name == base_ident) {
             return resolve_projection_from_base_ident(
                 tcx,
                 fields.to_vec(),
@@ -134,7 +128,6 @@ pub(crate) fn resolve_place_from_ident<'tcx>(
                 param_tys[param_index],
             );
         }
-    }
 
     if let Some(struct_ty) = get_struct_self_ty(tcx, def_id) {
         return resolve_projection_from_struct_ident(
@@ -212,8 +205,8 @@ fn resolve_next_field<'tcx>(
             return None;
         }
         let variant = adt_def.non_enum_variant();
-        if let Ok(field_idx) = field_name.parse::<usize>() {
-            if field_idx < variant.fields.len() {
+        if let Ok(field_idx) = field_name.parse::<usize>()
+            && field_idx < variant.fields.len() {
                 let field_ty = mir_utils::field_ty(
                     tcx,
                     &variant.fields[FieldIdx::from_usize(field_idx)],
@@ -221,7 +214,6 @@ fn resolve_next_field<'tcx>(
                 );
                 return Some((field_idx, field_ty));
             }
-        }
         if let Some((idx, _)) = variant
             .fields
             .iter()
@@ -242,8 +234,8 @@ fn resolve_next_field<'tcx>(
 /// Strip `ForEach` from a property arg and return the container place
 /// (without the projection) if `ForEach` was present.
 pub(crate) fn strip_for_each<'tcx>(arg: &mut PropertyArg<'tcx>) -> Option<ContractPlace<'tcx>> {
-    if let PropertyArg::Expr(ContractExpr::Place(place)) = arg {
-        if place
+    if let PropertyArg::Expr(ContractExpr::Place(place)) = arg
+        && place
             .projections
             .iter()
             .any(|p| matches!(p, ContractProjection::ForEach))
@@ -257,7 +249,6 @@ pub(crate) fn strip_for_each<'tcx>(arg: &mut PropertyArg<'tcx>) -> Option<Contra
                 .retain(|p| !matches!(p, ContractProjection::ForEach));
             return Some(container);
         }
-    }
     None
 }
 
@@ -279,14 +270,13 @@ pub(crate) fn detect_array_for_each<'tcx>(
         _ => return None,
     };
     let fn_sig = tcx.fn_sig(def_id).instantiate_identity().skip_binder();
-    if let Some(arg_ty) = fn_sig.inputs().get(param_idx) {
-        if matches!(arg_ty.kind(), TyKind::Array(..)) {
+    if let Some(arg_ty) = fn_sig.inputs().get(param_idx)
+        && matches!(arg_ty.kind(), TyKind::Array(..)) {
             return Some(ContractPlace {
                 base: PlaceBase::Arg(param_idx),
                 projections: vec![],
             });
         }
-    }
     None
 }
 

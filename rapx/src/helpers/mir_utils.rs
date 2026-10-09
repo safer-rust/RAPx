@@ -292,9 +292,7 @@ pub(crate) fn resolve_callee_impl<'tcx>(
     callee_args: GenericArgsRef<'tcx>,
 ) -> Option<DefId> {
     let assoc = tcx.opt_associated_item(callee_def_id)?;
-    if assoc.trait_container(tcx).is_none() {
-        return None;
-    }
+    assoc.trait_container(tcx)?;
     let typing_env = TypingEnv::post_analysis(tcx, caller_def_id);
     let instance =
         rustc_middle::ty::Instance::try_resolve(tcx, typing_env, callee_def_id, callee_args)
@@ -610,7 +608,12 @@ pub(crate) fn resolve_const_item_value<'tcx>(tcx: TyCtxt<'tcx>, name: &str) -> O
         if item_name.as_str() != name {
             continue;
         }
+        #[cfg(rapx_defkind_const_struct)]
         if !matches!(tcx.def_kind(def_id), rustc_hir::def::DefKind::Const { .. }) {
+            continue;
+        }
+        #[cfg(not(rapx_defkind_const_struct))]
+        if !matches!(tcx.def_kind(def_id), rustc_hir::def::DefKind::Const) {
             continue;
         }
         let instance = rustc_middle::ty::Instance::mono(tcx, def_id);
@@ -714,7 +717,7 @@ pub(crate) fn offset_of_container<'tcx>(
 /// Whether a `DefId` is a const-like item that `mir_for_ctfe` accepts.
 fn is_const_def_kind(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
     use rustc_hir::def::DefKind;
-    #[cfg(rapx_ge_99)]
+    #[cfg(rapx_defkind_const_struct)]
     let base = matches!(
         tcx.def_kind(def_id),
         DefKind::Const { .. }
@@ -722,7 +725,7 @@ fn is_const_def_kind(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
             | DefKind::AssocConst { .. }
             | DefKind::AnonConst
     );
-    #[cfg(not(rapx_ge_99))]
+    #[cfg(not(rapx_defkind_const_struct))]
     let base = matches!(
         tcx.def_kind(def_id),
         DefKind::Const | DefKind::Static { .. } | DefKind::AssocConst | DefKind::AnonConst
@@ -970,11 +973,11 @@ pub(crate) fn eval_array_len<'tcx>(
         let def_id = {
             use rustc_middle::ty::AliasConstKind;
             match alias_const.kind {
-                AliasConstKind::Projection { def_id } => def_id.into(),
-                AliasConstKind::InherentSelf { def_id } => def_id.into(),
-                AliasConstKind::InherentImpl { def_id } => def_id.into(),
-                AliasConstKind::Free { def_id } => def_id.into(),
-                AliasConstKind::Anon { def_id } => def_id.into(),
+                AliasConstKind::Projection { def_id } => def_id,
+                AliasConstKind::InherentSelf { def_id } => def_id,
+                AliasConstKind::InherentImpl { def_id } => def_id,
+                AliasConstKind::Free { def_id } => def_id,
+                AliasConstKind::Anon { def_id } => def_id,
             }
         };
         def_id
@@ -991,11 +994,10 @@ pub(crate) fn eval_array_len<'tcx>(
         instance,
         promoted: None,
     };
-    if let Ok(val) = tcx.const_eval_global_id(TypingEnv::fully_monomorphized(), cid, DUMMY_SP) {
-        if let Some(scalar) = val.try_to_scalar_int() {
+    if let Ok(val) = tcx.const_eval_global_id(TypingEnv::fully_monomorphized(), cid, DUMMY_SP)
+        && let Some(scalar) = val.try_to_scalar_int() {
             return Some(scalar.to_target_usize(tcx));
         }
-    }
     None
 }
 
@@ -1321,8 +1323,8 @@ pub fn collect_all_const_bytes_worklist<'tcx>(
         }
 
         for data in body.basic_blocks.iter() {
-            if let Some(terminator) = &data.terminator {
-                if let TerminatorKind::Call {
+            if let Some(terminator) = &data.terminator
+                && let TerminatorKind::Call {
                     destination,
                     func,
                     args,
@@ -1366,7 +1368,6 @@ pub fn collect_all_const_bytes_worklist<'tcx>(
                         worklist.push(p.local);
                     }
                 }
-            }
         }
     }
 
@@ -1423,9 +1424,9 @@ fn collect_as_ptr_const_bytes<'tcx>(
     results: &mut Vec<Vec<u8>>,
 ) {
     for data in body.basic_blocks.iter() {
-        if let Some(terminator) = &data.terminator {
-            if let TerminatorKind::Call { func, args, .. } = &terminator.kind {
-                if dep_callee_def_id(func)
+        if let Some(terminator) = &data.terminator
+            && let TerminatorKind::Call { func, args, .. } = &terminator.kind
+                && dep_callee_def_id(func)
                     .is_some_and(|d| def_id::as_ptr_like_fns().contains(&d))
                 {
                     for arg in args {
@@ -1434,8 +1435,6 @@ fn collect_as_ptr_const_bytes<'tcx>(
                         }
                     }
                 }
-            }
-        }
     }
 }
 
@@ -1464,8 +1463,8 @@ fn const_bytes_from_call_dest<'tcx>(
     local: Local,
 ) -> Option<Vec<u8>> {
     for data in body.basic_blocks.iter() {
-        if let Some(terminator) = &data.terminator {
-            if let TerminatorKind::Call {
+        if let Some(terminator) = &data.terminator
+            && let TerminatorKind::Call {
                 destination,
                 func,
                 args,
@@ -1485,7 +1484,6 @@ fn const_bytes_from_call_dest<'tcx>(
                     }
                 }
             }
-        }
     }
     None
 }
@@ -1528,13 +1526,11 @@ pub fn const_bytes_for_local<'tcx>(
                 }
             }
             if let Rvalue::Cast(_, operand, _) = rvalue {
-                if let Operand::Copy(p) | Operand::Move(p) = operand {
-                    if p.projection.is_empty() {
-                        if let Some(bytes) = const_bytes_for_local(tcx, body, p.local) {
+                if let Operand::Copy(p) | Operand::Move(p) = operand
+                    && p.projection.is_empty()
+                        && let Some(bytes) = const_bytes_for_local(tcx, body, p.local) {
                             return Some(bytes);
                         }
-                    }
-                }
                 continue;
             }
             return rvalue_const_bytes(tcx, rvalue);
@@ -1557,16 +1553,13 @@ fn aggregate_op_is_nonzero<'tcx>(
     match operand {
         Operand::Copy(p) | Operand::Move(p) if p.projection.is_empty() => {
             for data in body.basic_blocks.iter() {
-                if let Some(terminator) = &data.terminator {
-                    if let TerminatorKind::Call {
+                if let Some(terminator) = &data.terminator
+                    && let TerminatorKind::Call {
                         destination, func, ..
                     } = &terminator.kind
-                    {
-                        if destination.local == p.local && destination.projection.is_empty() {
+                        && destination.local == p.local && destination.projection.is_empty() {
                             return fn_always_returns_nonzero(tcx, func);
                         }
-                    }
-                }
             }
             false
         }
@@ -1587,11 +1580,10 @@ fn fn_always_returns_nonzero<'tcx>(tcx: TyCtxt<'tcx>, func: &Operand<'tcx>) -> b
 
     let mut has_return = false;
     for bb_data in callee_body.basic_blocks.iter() {
-        if let Some(terminator) = &bb_data.terminator {
-            if matches!(terminator.kind, TerminatorKind::Return) {
+        if let Some(terminator) = &bb_data.terminator
+            && matches!(terminator.kind, TerminatorKind::Return) {
                 has_return = true;
             }
-        }
         for stmt in &bb_data.statements {
             let StatementKind::Assign(assign) = &stmt.kind else {
                 continue;

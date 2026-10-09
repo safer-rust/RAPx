@@ -276,11 +276,10 @@ pub(crate) fn field_invariant_check<'tcx>(
     }
 
     // The invariant must actually hold, not just be annotated.
-    if let Some(result) = invariant_results.get(&adt_def_id) {
-        if *result != CheckResult::ProvedByRule {
+    if let Some(result) = invariant_results.get(&adt_def_id)
+        && *result != CheckResult::ProvedByRule {
             return CheckResult::Failed;
         }
-    }
     CheckResult::ProvedByRule
 }
 
@@ -326,15 +325,12 @@ fn param_bound_is_satisfied(
     #[cfg(rapx_ge_100)]
     let iter = predicates.clauses.iter();
     for (pred, _) in iter {
-        if let ClauseKind::Trait(trait_ref) = pred.kind().skip_binder() {
-            if trait_ref.def_id() == trait_did {
-                if let TyKind::Param(p) = trait_ref.self_ty().kind() {
-                    if p.index == param_ty.index {
+        if let ClauseKind::Trait(trait_ref) = pred.kind().skip_binder()
+            && trait_ref.def_id() == trait_did
+                && let TyKind::Param(p) = trait_ref.self_ty().kind()
+                    && p.index == param_ty.index {
                         return true;
                     }
-                }
-            }
-        }
     }
     false
 }

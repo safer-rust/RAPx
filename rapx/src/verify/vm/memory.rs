@@ -72,8 +72,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     _ => current_ty,
                 };
                 let elem_sz = Int::from_u64(self.z3_ctx, self.size_of_ty(elem_ty).max(1));
-                if let Some(val) = self.local_value(local) {
-                    if let Some(idx) = val.z3_term.simplify().as_u64() {
+                if let Some(val) = self.local_value(local)
+                    && let Some(idx) = val.z3_term.simplify().as_u64() {
                         let scaled = Int::mul(self.z3_ctx, &[&Int::from_u64(self.z3_ctx, idx), &elem_sz]);
                         term = Int::add(self.z3_ctx, &[&term, &scaled]);
                         if let Some(ref mut prov) = provenance {
@@ -81,7 +81,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         }
                         handled = true;
                     }
-                }
                 if !handled {
                     let idx = self.fresh_int("idx");
                     let scaled = Int::mul(self.z3_ctx, &[&idx, &elem_sz]);
@@ -158,11 +157,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     provenance = pointed.provenance.clone();
                     // For fat pointers (aggregates without provenance),
                     // use the first field's provenance (the data pointer).
-                    if provenance.is_none() && matches!(pointed.ty.kind(), TyKind::RawPtr(..)) {
-                        if let Some(field0) = self.field_value(place.local, &[0]) {
+                    if provenance.is_none() && matches!(pointed.ty.kind(), TyKind::RawPtr(..))
+                        && let Some(field0) = self.field_value(place.local, &[0]) {
                             provenance = field0.provenance.clone();
                         }
-                    }
                     if let TyKind::Ref(_, deref_ty, _) = current_ty.kind() {
                         current_ty = *deref_ty;
                     } else if let TyKind::RawPtr(deref_ty, _) = current_ty.kind() {
@@ -398,8 +396,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         // A struct's alignment is a multiple of each field's alignment (both
         // are powers of two).  Pointer fields have a *concrete* alignment, so
         // this terminates even for recursively-defined containers.
-        if let TyKind::Adt(adt_def, substs) = ty.kind() {
-            if !adt_def.is_enum() {
+        if let TyKind::Adt(adt_def, substs) = ty.kind()
+            && !adt_def.is_enum() {
                 let variant = adt_def.non_enum_variant();
                 for field in variant.fields.iter() {
                     let field_ty = mir_utils::field_ty(self.tcx, field, substs);
@@ -417,7 +415,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     self.constraints.assertions.push(size.ge(&sum));
                 }
             }
-        }
         // Layout invariant: a type's size is a multiple of its alignment.
         let size = self.size_sym(ty);
         self.constraints.assertions.push(size.rem(&a)._eq(&zero));
@@ -730,13 +727,13 @@ fn utf8_validity_dfa<'z3>(z3_ctx: &'z3 Context, bytes: &[Int<'z3>]) -> Bool<'z3>
         let new_state_cont = Bool::ite(&state1, &zero, &Bool::ite(&state2, &one, &two));
         let new_state = Bool::ite(&state0, &new_state_s0, &new_state_cont);
 
-        valid = valid & byte_valid;
+        valid &= byte_valid;
         let is_lead34 = is_3lead | is_4lead;
         lead = Bool::ite(&(state0 & is_lead34), b, &lead);
         state = new_state;
     }
 
-    valid = valid & state._eq(&zero);
+    valid &= state._eq(&zero);
     valid
 }
 

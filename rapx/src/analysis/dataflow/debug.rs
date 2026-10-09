@@ -13,7 +13,7 @@ fn escaped_string(s: String) -> String {
 }
 
 impl DataflowEdge {
-    pub fn to_dot_graph<'tcx>(&self) -> String {
+    pub fn to_dot_graph(&self) -> String {
         let mut attr = String::new();
         let mut dot = String::new();
         write!(
@@ -135,7 +135,7 @@ impl DataflowGraph {
         let mut dot = String::new();
         let name = tcx.def_path_str(self.def_id);
 
-        writeln!(dot, "digraph \"{}\" {{", &name).unwrap();
+        writeln!(dot, "digraph \"{}\" {{", name).unwrap();
         writeln!(dot, "    node [shape=record];").unwrap();
         for (local, node) in self.nodes.iter_enumerated() {
             let node_dot = if local <= Local::from_usize(self.argc) {

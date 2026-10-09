@@ -29,11 +29,10 @@ pub fn span_to_trimmed_span(span: Span) -> Span {
 
 pub fn span_to_filename(span: Span) -> String {
     let filename = get_source_map().unwrap().span_to_filename(span);
-    if let FileName::Real(realname) = filename {
-        if let Some(path) = realname.local_path() {
+    if let FileName::Real(realname) = filename
+        && let Some(path) = realname.local_path() {
             return path.to_string_lossy().into();
         }
-    }
     "<unknown>".to_string()
 }
 
@@ -46,11 +45,10 @@ pub fn get_variable_name<'tcx>(body: &Body<'tcx>, local_index: usize) -> Option<
     let target_local = rustc_middle::mir::Local::from_usize(local_index);
 
     for info in &body.var_debug_info {
-        if let VarDebugInfoContents::Place(place) = info.value {
-            if place.local == target_local && place.projection.is_empty() {
+        if let VarDebugInfoContents::Place(place) = info.value
+            && place.local == target_local && place.projection.is_empty() {
                 return Some(info.name.to_string());
             }
-        }
     }
 
     None

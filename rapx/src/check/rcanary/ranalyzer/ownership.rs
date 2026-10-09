@@ -6,17 +6,11 @@ use rustc_middle::ty::Ty;
 use crate::analysis::heap_ownership::default::TyWithIndex;
 
 #[derive(Clone, Debug)]
+#[derive(Default)]
 pub struct Taint<'tcx> {
     set: HashSet<TyWithIndex<'tcx>>,
 }
 
-impl<'tcx> Default for Taint<'tcx> {
-    fn default() -> Self {
-        Self {
-            set: HashSet::default(),
-        }
-    }
-}
 
 impl<'tcx> Taint<'tcx> {
     pub fn is_untainted(&self) -> bool {
@@ -41,17 +35,14 @@ impl<'tcx> Taint<'tcx> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Default)]
 pub enum IntraVar<'z3> {
+    #[default]
     Declared,
     Init(ast::BV<'z3>),
     Unsupported,
 }
 
-impl<'z3> Default for IntraVar<'z3> {
-    fn default() -> Self {
-        Self::Declared
-    }
-}
 
 impl<'z3> IntraVar<'z3> {
     pub fn is_declared(&self) -> bool {
@@ -75,8 +66,10 @@ impl<'z3> IntraVar<'z3> {
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Default)]
 pub enum ContextTypeOwner<'tcx> {
     Owned { kind: OwnerKind, ty: Ty<'tcx> },
+    #[default]
     Unowned,
 }
 
@@ -87,11 +80,6 @@ pub enum OwnerKind {
     Pointer,
 }
 
-impl<'tcx> Default for ContextTypeOwner<'tcx> {
-    fn default() -> Self {
-        Self::Unowned
-    }
-}
 
 impl<'tcx> ContextTypeOwner<'tcx> {
     pub fn is_owned(&self) -> bool {

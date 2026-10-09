@@ -38,11 +38,9 @@ impl PropertyChecker {
             for pred in predicates {
                 if let Some(r) =
                     self.eval_numeric_predicate(vm_state, solver, Some(checkpoint), pred)
-                {
-                    if !r.is_proved() {
+                    && !r.is_proved() {
                         return r;
                     }
-                }
             }
             return CheckResult::ProvedByRule;
         }
@@ -147,7 +145,7 @@ impl PropertyChecker {
         // predicate's LHS (typically the loop counter `i` in position).
         // At the assert_unchecked(i < n) point, tracked_offset == i + 1
         // because post_inc_start(1) was just called before the check.
-        for (_, (off, _)) in vm_state.constraints.term_caches.iter_ptr_offset.iter() {
+        for (off, _) in vm_state.constraints.term_caches.iter_ptr_offset.values() {
             let one = Int::from_u64(vm_state.z3_ctx, 1);
             solver.assert(&off._eq(&Int::add(vm_state.z3_ctx, &[&lhs, &one])));
         }
@@ -155,16 +153,13 @@ impl PropertyChecker {
         // inject a lower-bound: the field-based len is >= 1 when the
         // struct's entry contract contains !self.is_empty().
         // Without this, Z3 cannot deduce (end-ptr)/sz >= 1 from != 0.
-        if matches!(pred.op, RelOp::Le) {
-            if let Some(term) = self.try_get_iter_len_term(vm_state, &pred.rhs) {
-                if let Some(one) = lhs.as_u64().or(rhs.as_u64()) {
-                    if one == 1 {
+        if matches!(pred.op, RelOp::Le)
+            && let Some(term) = self.try_get_iter_len_term(vm_state, &pred.rhs)
+                && let Some(one) = lhs.as_u64().or(rhs.as_u64())
+                    && one == 1 {
                         let one_term = Int::from_u64(vm_state.z3_ctx, 1);
                         solver.assert(&term.ge(&one_term));
                     }
-                }
-            }
-        }
         // NIA helper: inject Euclidean division identity for div operands
         // to help Z3 prove (X/N)*N <= X via X = (X/N)*N + X%N, X%N >= 0.
         self.inject_nia_axioms(vm_state, solver, checkpoint, &pred.lhs);
@@ -287,11 +282,10 @@ impl PropertyChecker {
         let op_sources: Vec<(Option<PlaceKey>, Option<PlaceKey>)> = {
             let mut src: Vec<(Option<PlaceKey>, Option<PlaceKey>)> = Vec::new();
             for (_, val) in vm_state.all_local_values() {
-                if let Some((lhs, rhs, _)) = val.source.operands() {
-                    if val.z3_term == *target {
+                if let Some((lhs, rhs, _)) = val.source.operands()
+                    && val.z3_term == *target {
                         src.push((lhs.clone(), rhs.clone()));
                     }
-                }
             }
             src
         };
@@ -406,11 +400,9 @@ impl PropertyChecker {
                 }
                 if let (Some(ptr), Some(end)) =
                     (vm_state.field_value(l, &[0]), vm_state.field_value(l, &[1]))
-                {
-                    if let Some(len) = vm_state.iter_len_from_ptrs(ptr, end) {
+                    && let Some(len) = vm_state.iter_len_from_ptrs(ptr, end) {
                         return Some(len);
                     }
-                }
             }
         }
         None
@@ -459,11 +451,10 @@ impl PropertyChecker {
         if let (Some(ptr), Some(end)) = (
             vm_state.field_value(local, &[0]),
             vm_state.field_value(local, &[1]),
-        ) {
-            if let Some(len) = vm_state.iter_len_from_ptrs(ptr, end) {
+        )
+            && let Some(len) = vm_state.iter_len_from_ptrs(ptr, end) {
                 return Some(len);
             }
-        }
         // Fallback: scan all locals for one with same struct alloc.
         let target_alloc = local_val.provenance_alloc_id()?;
         for (scan_local, scan_val) in vm_state.all_local_values() {
@@ -473,11 +464,10 @@ impl PropertyChecker {
             if let (Some(ptr), Some(end)) = (
                 vm_state.field_value(scan_local, &[0]),
                 vm_state.field_value(scan_local, &[1]),
-            ) {
-                if let Some(len) = vm_state.iter_len_from_ptrs(ptr, end) {
+            )
+                && let Some(len) = vm_state.iter_len_from_ptrs(ptr, end) {
                     return Some(len);
                 }
-            }
         }
         None
     }

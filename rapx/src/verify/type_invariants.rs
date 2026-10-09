@@ -92,15 +92,14 @@ fn collect_type_invariants<'tcx>(
     // Also try with common alloc/std prefixes
     for prefix in ["alloc::", "std::"] {
         let prefixed = format!("{prefix}{type_path}");
-        if prefixed != type_path {
-            if let Some(entry) = db.get(&prefixed) {
+        if prefixed != type_path
+            && let Some(entry) = db.get(&prefixed) {
                 for prop_entry in &entry.invariants {
                     results.extend(instantiate_type_invariant(
                         tcx, def_id, prop_entry, param_name, elem_ty,
                     ));
                 }
             }
-        }
     }
 }
 

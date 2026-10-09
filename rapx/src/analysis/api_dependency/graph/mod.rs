@@ -160,8 +160,8 @@ impl<'tcx> ApiDependencyGraph<'tcx> {
         if let Some(node_index) = self.node_indices.get(&node) {
             *node_index
         } else {
-            let node_index = self.graph.add_node(node.clone());
-            self.node_indices.insert(node.clone(), node_index);
+            let node_index = self.graph.add_node(node);
+            self.node_indices.insert(node, node_index);
             match node {
                 DepNode::Api(..) => {
                     self.api_nodes.push(node_index);
@@ -185,7 +185,7 @@ impl<'tcx> ApiDependencyGraph<'tcx> {
     }
 
     pub fn get_index(&self, node: DepNode<'tcx>) -> Option<NodeIndex> {
-        self.node_indices.get(&node).map(|index| *index)
+        self.node_indices.get(&node).copied()
     }
 
     pub fn add_edge(&mut self, src: NodeIndex, dst: NodeIndex, edge: DepEdge) {
@@ -379,7 +379,7 @@ impl<'tcx> ApiDependencyGraph<'tcx> {
         self.api_nodes.clear();
         for idx in self.graph.node_indices() {
             let node = &self.graph[idx];
-            self.node_indices.insert(node.clone(), idx);
+            self.node_indices.insert(*node, idx);
             match node {
                 DepNode::Api(..) => self.api_nodes.push(idx),
                 DepNode::Ty(..) => self.ty_nodes.push(idx),

@@ -237,14 +237,13 @@ impl DataflowGraph {
             }
             match func {
                 Operand::Constant(boxed_cnst) => {
-                    if let Const::Val(_, ty) = boxed_cnst.const_ {
-                        if let TyKind::FnDef(def_id, _) = ty.kind() {
+                    if let Const::Val(_, ty) = boxed_cnst.const_
+                        && let TyKind::FnDef(def_id, _) = ty.kind() {
                             for op in args.iter() {
                                 self.add_operand(&op.node, dst, block, stmt_idx);
                             }
                             self.nodes[dst].ops[seq] = NodeOp::Call(*def_id);
                         }
-                    }
                 }
                 Operand::Move(_) => {
                     self.add_operand(func, dst, block, stmt_idx);

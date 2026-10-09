@@ -142,9 +142,7 @@ fn group_by_callee<'tcx>(
     for cs in checkpoints {
         groups.entry(cs.callee).or_default().push(cs);
     }
-    groups
-        .into_iter()
-        .map(|(_callee, checkpoints)| CallGroup {
+    groups.into_values().map(|checkpoints| CallGroup {
             tree: tree.clone(),
             checkpoints,
         })

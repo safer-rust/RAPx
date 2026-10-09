@@ -285,8 +285,8 @@ pub(crate) fn parse_target_arg<'tcx>(
     // For simple identifiers that aren't local variables (e.g., lifetime param
     // 'a parsed as ident `a`), store as Ident rather than Expr (which would
     // become Unknown).
-    if let Expr::Path(expr_path) = expr {
-        if let Some(ident) = expr_path.path.get_ident() {
+    if let Expr::Path(expr_path) = expr
+        && let Some(ident) = expr_path.path.get_ident() {
             let s = ident.to_string();
             if s != "return"
                 && !s.starts_with("Arg_")
@@ -295,7 +295,6 @@ pub(crate) fn parse_target_arg<'tcx>(
                 return PropertyArg::Ident(s);
             }
         }
-    }
     place::parse_contract_place(tcx, def_id, expr)
         .map(|p| PropertyArg::Expr(ContractExpr::Place(p)))
         .unwrap_or_else(|| PropertyArg::Expr(parse_contract_expr(tcx, def_id, expr, "target")))

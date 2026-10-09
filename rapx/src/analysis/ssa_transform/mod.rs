@@ -42,14 +42,13 @@ impl<'tcx> SSATrans<'tcx> {
             if matches!(
                 self.tcx.def_kind(local_def_id),
                 DefKind::Fn | DefKind::AssocFn
-            ) {
-                if self.tcx.hir_maybe_body_owned_by(local_def_id).is_some() {
-                    if let Some(def_id) = self
+            )
+                && self.tcx.hir_maybe_body_owned_by(local_def_id).is_some()
+                    && let Some(def_id) = self
                         .tcx
                         .hir_body_owners()
                         .find(|id| self.tcx.def_path_str(*id) == "main")
-                    {
-                        if let Some(ssa_def_id) =
+                        && let Some(ssa_def_id) =
                             self.tcx.hir_crate_items(()).free_items().find(|id| {
                                 let hir_id = id.hir_id();
                                 if let Some(ident_name) = self.tcx.hir_opt_name(hir_id) {
@@ -74,9 +73,6 @@ impl<'tcx> SSATrans<'tcx> {
                                 self.analyze_mir(self.tcx, def_id, ssa_def_id, essa_def_id);
                             }
                         }
-                    }
-                }
-            }
         }
     }
     fn analyze_mir(
@@ -149,7 +145,7 @@ pub fn print_mir_graph<'tcx>(tcx: TyCtxt<'tcx>, body: &Body<'tcx>, def_id: DefId
     let dot_graph = mir_to_dot(tcx, body);
     let function_name = tcx.def_path_str(def_id);
     let safe_filename = format!("{}_after_rename_mir.dot", function_name);
-    let output_path = dir_path.join(format!("{}", safe_filename));
+    let output_path = dir_path.join(&safe_filename);
 
     let mut file = File::create(&output_path).expect("cannot create file");
     let _ = file.write_all(dot_graph.as_bytes());
@@ -214,8 +210,8 @@ impl<'tcx> PassRunner<'tcx> {
         let mut buffer2 = Cursor::new(Vec::new());
         let writer = pretty::MirWriter::new(self.tcx);
         writer.write_mir_fn(body, &mut buffer2).unwrap();
-        let after_mir = String::from_utf8(buffer2.into_inner()).unwrap();
-        after_mir
+        
+        String::from_utf8(buffer2.into_inner()).unwrap()
     }
 
     pub fn run_pass(&mut self, body: &mut Body<'tcx>, ssa_def_id: DefId, essa_def_id: DefId) {

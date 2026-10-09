@@ -260,7 +260,7 @@ fn pointer_arith_wrapper_probe<'tcx>(
             });
         }
 
-        let base_arg = trace_to_callee_arg(body, &args.get(0)?.node)?;
+        let base_arg = trace_to_callee_arg(body, &args.first()?.node)?;
         let offset_arg = trace_to_callee_arg(body, &args.get(1)?.node)?;
         let stride = if crate::verify::api_classify::is_byte_ptr_arith(callee_id) {
             Some(1)
@@ -375,7 +375,7 @@ pub(super) fn try_from_raw_parts_wrapper_effect<'tcx>(
         }
 
         // Trace from_raw_parts args to callee args
-        let pointer_arg = trace_to_callee_arg(body, &args.get(0)?.node)?;
+        let pointer_arg = trace_to_callee_arg(body, &args.first()?.node)?;
         let size_arg = trace_to_callee_arg(body, &args.get(1)?.node)?;
 
         // Determine element size from return type (slice or Vec).
@@ -510,9 +510,9 @@ pub(crate) fn try_ptr_field_return_effect(tcx: TyCtxt<'_>, callee: DefId) -> Opt
                 // `(*arg).field` — a raw-pointer field of the receiver.
                 if src.local.as_usize() >= 1 && src.local.as_usize() <= body.arg_count {
                     let mut proj = src.projection.iter();
-                    if matches!(proj.next().map(|p| p.kind()), Some(ProjectionElem::Deref)) {
-                        if let Some(ProjectionElem::Field(idx, _)) = proj.next().map(|p| p.kind()) {
-                            if proj.next().is_none() {
+                    if matches!(proj.next().map(|p| p.kind()), Some(ProjectionElem::Deref))
+                        && let Some(ProjectionElem::Field(idx, _)) = proj.next().map(|p| p.kind())
+                            && proj.next().is_none() {
                                 let arg = src.local.as_usize() - 1;
                                 let field = idx.as_usize();
                                 return match pre_dec_offset {
@@ -522,8 +522,6 @@ pub(crate) fn try_ptr_field_return_effect(tcx: TyCtxt<'_>, callee: DefId) -> Opt
                                     _ => Some(CallEffect::ReturnFieldOfArg { arg, field }),
                                 };
                             }
-                        }
-                    }
                 }
                 // Otherwise keep tracing through the source local.
                 if src.projection.is_empty() && seen.insert(src.local) {
@@ -1116,11 +1114,10 @@ fn iter_ctor_reads_slice_len<'tcx>(tcx: TyCtxt<'tcx>, callee: DefId, depth: usiz
     if body_reads_slice_len(body) {
         return true;
     }
-    if depth > 0 {
-        if let Some(target) = single_call_wrapper_target(tcx, callee) {
+    if depth > 0
+        && let Some(target) = single_call_wrapper_target(tcx, callee) {
             return iter_ctor_reads_slice_len(tcx, target, depth - 1);
         }
-    }
     false
 }
 
@@ -1485,11 +1482,10 @@ fn write_args_on_path<'tcx>(
                 continue;
             };
             let dest = &assign.0;
-            if dest.projection.first() == Some(&ProjectionElem::Deref) {
-                if let Some(arg) = helpers::arg_of_local(dest.local, body.arg_count) {
+            if dest.projection.first() == Some(&ProjectionElem::Deref)
+                && let Some(arg) = helpers::arg_of_local(dest.local, body.arg_count) {
                     writes.insert(arg);
                 }
-            }
         }
 
         let Some(terminator) = data.terminator.as_ref() else {
@@ -1520,11 +1516,10 @@ fn write_args_on_path<'tcx>(
                 must_write_args_rec(tcx, nested, depth + 1, &nested_context, memo)
             {
                 for (i, arg) in args.iter().enumerate() {
-                    if nested_writes.contains(&i) {
-                        if let Some(outer) = trace_to_callee_arg(body, &arg.node) {
+                    if nested_writes.contains(&i)
+                        && let Some(outer) = trace_to_callee_arg(body, &arg.node) {
                             writes.insert(outer);
                         }
-                    }
                 }
             }
         }
@@ -1547,11 +1542,10 @@ fn nested_call_context<'tcx>(
     for (i, arg) in args.iter().enumerate() {
         if let Some(v) = helpers::operand_const_u64(&arg.node) {
             nested_context.concrete.insert(i, v as i128);
-        } else if let Some(outer) = trace_to_callee_arg(body, &arg.node) {
-            if let Some(v) = context.concrete.get(&outer) {
+        } else if let Some(outer) = trace_to_callee_arg(body, &arg.node)
+            && let Some(v) = context.concrete.get(&outer) {
                 nested_context.concrete.insert(i, *v);
             }
-        }
     }
     nested_context
 }
@@ -1582,12 +1576,11 @@ fn call_result_reaches_return<'tcx>(
                     Rvalue::Use(Operand::Copy(place), ..)
                     | Rvalue::Use(Operand::Move(place), ..)
                     | Rvalue::Cast(_, Operand::Copy(place), _)
-                    | Rvalue::Cast(_, Operand::Move(place), _) => {
-                        if place.local == current {
+                    | Rvalue::Cast(_, Operand::Move(place), _)
+                        if place.local == current => {
                             queue.push_back(dest);
                             seen.insert(dest);
                         }
-                    }
                     _ => {}
                 }
             }

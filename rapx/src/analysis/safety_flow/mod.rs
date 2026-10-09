@@ -209,7 +209,7 @@ impl<'tcx> SafetyFlowAnalysis<'tcx> {
 
             let module_data = modules_data
                 .entry(module_name)
-                .or_insert_with(SafetyFlowGraph::new);
+                .or_default();
 
             module_data.add_node(self.tcx, unit.caller, None);
 

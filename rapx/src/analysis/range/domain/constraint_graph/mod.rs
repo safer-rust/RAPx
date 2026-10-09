@@ -201,11 +201,11 @@ where
         let mut new_projection = adt_place.projection.to_vec();
         new_projection.push(ProjectionElem::Field(field_index, field_ty));
 
-        let new_place = Place {
+        
+        Place {
             local: adt_place.local,
             projection: self.tcx.mk_place_elems(&new_projection),
-        };
-        new_place
+        }
     }
 
     pub fn start_analyze_path_constraints(
@@ -214,8 +214,8 @@ where
         tree: &PathTree,
     ) -> HashMap<Vec<usize>, Vec<(Place<'tcx>, Place<'tcx>, BinOp)>> {
         self.build_value_maps(body);
-        let result = self.analyze_path_constraints(body, tree);
-        result
+        
+        self.analyze_path_constraints(body, tree)
     }
 
     pub fn analyze_path_constraints(
@@ -271,9 +271,9 @@ where
                                     IntervalType::Basic(basic_interval) => {}
                                     IntervalType::Symb(symb_interval) => {
                                         current_path_constraints.push((
-                                            constraint_place_1.clone(),
-                                            constraint_place_2.clone(),
-                                            symb_interval.get_operation().clone(),
+                                            constraint_place_1,
+                                            constraint_place_2,
+                                            symb_interval.get_operation(),
                                         ));
                                     }
                                 }

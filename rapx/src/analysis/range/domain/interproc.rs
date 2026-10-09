@@ -70,7 +70,7 @@ impl<'tcx, T: IntervalArithmetic + ConstConvert + Debug> CallOp<'tcx, T> {
                                 );
                                 T::max_value()
                             });
-                        result = Range::exact(len.clone());
+                        result = Range::exact(len);
                     }
                     Some(Operand::Constant(c)) => {}
                     None => {}
@@ -181,8 +181,8 @@ impl<'tcx, T: IntervalArithmetic + ConstConvert + Debug> CallOp<'tcx, T> {
                                 self.def_id
                             );
                             let callee_arg_local = rustc_middle::mir::Local::from_usize(i + 1);
-                            if let Some(const_value) = T::from_const(&const_operand.const_) {
-                                if let Some(callee_arg_node) =
+                            if let Some(const_value) = T::from_const(&const_operand.const_)
+                                && let Some(callee_arg_node) =
                                     callee_cg.vars.values_mut().find(|v| {
                                         v.v.local == callee_arg_local && v.v.projection.is_empty()
                                     })
@@ -190,8 +190,8 @@ impl<'tcx, T: IntervalArithmetic + ConstConvert + Debug> CallOp<'tcx, T> {
                                     // Get the range from the caller's variable and set it for the callee's argument.
 
                                     let arg_range = Range::new(
-                                        const_value.clone(),
-                                        const_value.clone(),
+                                        const_value,
+                                        const_value,
                                         RangeType::Regular,
                                     );
                                     callee_arg_node.set_range(arg_range.clone());
@@ -204,7 +204,6 @@ impl<'tcx, T: IntervalArithmetic + ConstConvert + Debug> CallOp<'tcx, T> {
                                         callee_arg_node.get_range()
                                     );
                                 }
-                            }
                             // Find the corresponding Place and VarNode in the callee.
                         }
                         #[cfg(rapx_ge_95)]

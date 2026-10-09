@@ -106,18 +106,16 @@ fn apply_conservative_alias_for_call<'tcx>(
     }
 
     // Union with all may_drop arguments
-    for (_i, arg) in args.iter().enumerate() {
-        if let Some(arg_id) = transfer::operand_to_place_id(&arg.node) {
-            if let Some(arg_idx) = place_info.get_index(&arg_id) {
-                if place_info.may_drop(arg_idx) {
+    for arg in args.iter() {
+        if let Some(arg_id) = transfer::operand_to_place_id(&arg.node)
+            && let Some(arg_idx) = place_info.get_index(&arg_id)
+                && place_info.may_drop(arg_idx) {
                     // Create conservative alias
                     state.union(dest_idx, arg_idx);
 
                     // Sync fields for more precision
                     transfer::sync_fields(state, &dest_id, &arg_id, place_info);
                 }
-            }
-        }
     }
 }
 
@@ -464,11 +462,10 @@ impl AliasDomain {
         let mut indices_to_remove = Vec::new();
 
         for idx in 0..self.parent.len() {
-            if let Some(pid) = place_info.get_place(idx) {
-                if pid.has_prefix(place_id) {
+            if let Some(pid) = place_info.get_place(idx)
+                && pid.has_prefix(place_id) {
                     indices_to_remove.push(idx);
                 }
-            }
         }
 
         // Remove aliases for all collected indices
@@ -658,7 +655,7 @@ fn apply_statement_effect<'tcx>(
                 transfer::transfer_assign(state, *lv, operand, &analyzer.place_info);
             }
             Rvalue::Aggregate(_, operands) => {
-                let operand_slice: Vec<_> = operands.iter().map(|op| op.clone()).collect();
+                let operand_slice: Vec<_> = operands.iter().cloned().collect();
                 transfer::transfer_aggregate(state, *lv, &operand_slice, &analyzer.place_info);
             }
             #[cfg(not(rapx_ge_99))]
@@ -692,8 +689,8 @@ fn apply_terminator_effect<'tcx, 'mir>(
                 .collect();
             transfer::transfer_call(state, *destination, &analyzer.place_info);
 
-            if let Operand::Constant(c) = func {
-                if let ty::FnDef(callee_def_id, _) = c.ty().kind() {
+            if let Operand::Constant(c) = func
+                && let ty::FnDef(callee_def_id, _) = c.ty().kind() {
                     let fn_summaries = analyzer.fn_summaries.borrow();
                     if let Some(summary) = fn_summaries.get(callee_def_id) {
                         apply_function_summary(
@@ -713,7 +710,6 @@ fn apply_terminator_effect<'tcx, 'mir>(
                         );
                     }
                 }
-            }
 
             if let Some(target_bb) = target {
                 TerminatorEdges::Single(*target_bb)

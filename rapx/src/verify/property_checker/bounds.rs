@@ -35,7 +35,7 @@ impl PropertyChecker {
             return CheckResult::ProvedByRule;
         }
 
-        if let Some(PropertyArg::Expr(ContractExpr::IndexAccess { index: _, .. })) =
+        if let Some(PropertyArg::Expr(ContractExpr::IndexAccess { .. })) =
             property.args().first()
         {
             return self.check_in_bound_slice(vm_state, solver, checkpoint, property);
@@ -65,13 +65,11 @@ impl PropertyChecker {
         if matches!(value.ty.kind(), TyKind::Ref(..)) {
             return CheckResult::ProvedByRule;
         }
-        if value.is_pointer() {
-            if let TyKind::Adt(adt_def, _) = value.ty.kind() {
-                if api_classify::is_std_nonnull(adt_def.did()) {
+        if value.is_pointer()
+            && let TyKind::Adt(adt_def, _) = value.ty.kind()
+                && api_classify::is_std_nonnull(adt_def.did()) {
                     return CheckResult::ProvedByRule;
                 }
-            }
-        }
         // `byte_add(offset_of!(Container, field))` always keeps the pointer
         // within the container allocation, because the byte offset of a field
         // never exceeds `size_of::<Container>()`.  This covers patterns such
@@ -93,11 +91,10 @@ impl PropertyChecker {
         let size = vm_state.allocation_size(alloc_id).clone();
 
         let alloc = vm_state.alloc(alloc_id);
-        if let (Some(alloc_elem_ty), Some(req_ty)) = (alloc.element_ty.as_ty(), required_ty) {
-            if self.alloc_elem_is_array_of(alloc_elem_ty, req_ty) {
+        if let (Some(alloc_elem_ty), Some(req_ty)) = (alloc.element_ty.as_ty(), required_ty)
+            && self.alloc_elem_is_array_of(alloc_elem_ty, req_ty) {
                 return CheckResult::ProvedByRule;
             }
-        }
 
         // An external allocation whose size is the `i64::MAX` "unbounded"
         // sentinel (a Vec/slice buffer, or a materialized `Allocated` fact)
@@ -116,8 +113,8 @@ impl PropertyChecker {
         // `sub` walks *backwards* (`[value - access, value)`), so this forward
         // form would mis-classify `end.sub(n)` as out of bounds; the `sub`-aware
         // byte-range proof below handles that direction.
-        if !api_classify::is_pointer_sub(checkpoint.callee) {
-            if let (Some(len), Some(k)) = (
+        if !api_classify::is_pointer_sub(checkpoint.callee)
+            && let (Some(len), Some(k)) = (
                 alloc.slice_len().cloned(),
                 value
                     .provenance
@@ -147,7 +144,6 @@ impl PropertyChecker {
                 solver.pop(1);
                 return r;
             }
-        }
 
         let alloc_elem_is_generic = vm_state
             .alloc(alloc_id)
@@ -393,13 +389,11 @@ impl PropertyChecker {
             for stmt in &block.statements {
                 if let StatementKind::Assign(assign) = &stmt.kind {
                     let (dest, rvalue) = &**assign;
-                    if dest.local == range_local && dest.projection.is_empty() {
-                        if let Rvalue::Aggregate(_kind, operands) = rvalue {
-                            if let Some(end_op) = operands.get(end_idx) {
+                    if dest.local == range_local && dest.projection.is_empty()
+                        && let Rvalue::Aggregate(_kind, operands) = rvalue
+                            && let Some(end_op) = operands.get(end_idx) {
                                 return Some(self.trace_value(vm_state, end_op));
                             }
-                        }
-                    }
                 }
             }
         }
@@ -449,11 +443,10 @@ impl PropertyChecker {
         // distinct allocations. `Option` comparison here is unsound: a `None`
         // (unknown) provenance would compare unequal to any concrete `AllocId`
         // and spuriously report the pointers as non-overlapping.
-        if let (Some(a), Some(b)) = (v1.provenance_alloc_id(), v2.provenance_alloc_id()) {
-            if a != b {
+        if let (Some(a), Some(b)) = (v1.provenance_alloc_id(), v2.provenance_alloc_id())
+            && a != b {
                 return CheckResult::ProvedByRule;
             }
-        }
 
         // Try range-based overlap detection when count and element size are available.
         if let Some(count_term) = checkpoint

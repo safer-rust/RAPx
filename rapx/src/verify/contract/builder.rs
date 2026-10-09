@@ -111,14 +111,13 @@ impl<'tcx> Property<'tcx> {
                 let Some(ty) = super::resolve::parse_type(tcx, def_id, ty_expr, "Size") else {
                     return Self::new_simple(PropertyKind::Unknown);
                 };
-                if let Some((ident, _)) = access_ident_recursive(const_expr) {
-                    if ident == "sized" || ident == "unsized" {
+                if let Some((ident, _)) = access_ident_recursive(const_expr)
+                    && (ident == "sized" || ident == "unsized") {
                         return Self::new_atom(
                             PropertyKind::Size,
                             vec![PropertyArg::Ty(ty), PropertyArg::Ident(ident)],
                         );
                     }
-                }
                 let c = super::resolve::expr_to_pest(tcx, def_id, const_expr);
                 Self::new_atom(
                     PropertyKind::Size,
@@ -360,8 +359,8 @@ impl<'tcx> Property<'tcx> {
             vec![Self::new(tcx, def_id, name, exprs)]
         };
         for prop in &mut props {
-            if let Property::Atom(atom) = prop {
-                if atom.for_each.is_none() {
+            if let Property::Atom(atom) = prop
+                && atom.for_each.is_none() {
                     for arg in &mut atom.args {
                         atom.for_each = super::place::strip_for_each(arg);
                         if atom.for_each.is_some() {
@@ -369,7 +368,6 @@ impl<'tcx> Property<'tcx> {
                         }
                     }
                 }
-            }
         }
         props
     }

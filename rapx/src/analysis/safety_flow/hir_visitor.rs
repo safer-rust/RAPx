@@ -62,13 +62,11 @@ pub struct ContainsLit {
 
 impl<'tcx> Visitor<'tcx> for ContainsLit {
     fn visit_expr(&mut self, expr: &'tcx rustc_hir::Expr<'tcx>) {
-        if let ExprKind::Struct(ref qpath, _, _) = expr.kind {
-            if let QPath::Resolved(_, path) = qpath {
-                if let Some(ident) = path.segments.last().map(|segment| segment.ident) {
+        if let ExprKind::Struct(ref qpath, _, _) = expr.kind
+            && let QPath::Resolved(_, path) = qpath
+                && let Some(ident) = path.segments.last().map(|segment| segment.ident) {
                     self.structs_used.insert(ident.to_string());
                 }
-            }
-        }
         intravisit::walk_expr(self, expr);
     }
 }

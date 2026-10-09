@@ -83,12 +83,11 @@ impl<'tcx> DataflowAnalyzer<'tcx> {
     pub fn build_graphs(&mut self) {
         for local_def_id in self.tcx.iter_local_def_id() {
             let def_kind = self.tcx.def_kind(local_def_id);
-            if matches!(def_kind, DefKind::Fn) || matches!(def_kind, DefKind::AssocFn) {
-                if self.tcx.hir_maybe_body_owned_by(local_def_id).is_some() {
+            if (matches!(def_kind, DefKind::Fn) || matches!(def_kind, DefKind::AssocFn))
+                && self.tcx.hir_maybe_body_owned_by(local_def_id).is_some() {
                     let def_id = local_def_id.to_def_id();
                     self.build_graph(def_id);
                 }
-            }
         }
     }
 
@@ -108,26 +107,26 @@ impl<'tcx> DataflowAnalyzer<'tcx> {
         let dir_name = "DataflowGraph";
 
         Command::new("rm")
-            .args(&["-rf", dir_name])
+            .args(["-rf", dir_name])
             .output()
             .expect("Failed to remove directory.");
 
         Command::new("mkdir")
-            .args(&[dir_name])
+            .args([dir_name])
             .output()
             .expect("Failed to create directory.");
 
         for (def_id, graph) in self.graphs.iter() {
             let name = self.tcx.def_path_str(*def_id);
-            let dot_file_name = format!("DataflowGraph/{}.dot", &name);
-            let png_file_name = format!("DataflowGraph/{}.png", &name);
+            let dot_file_name = format!("DataflowGraph/{}.dot", name);
+            let png_file_name = format!("DataflowGraph/{}.png", name);
             let mut file = File::create(&dot_file_name).expect("Unable to create file.");
             let dot = graph.to_dot_graph(&self.tcx);
             file.write_all(dot.as_bytes())
                 .expect("Unable to write data.");
 
             Command::new("dot")
-                .args(&["-Tpng", &dot_file_name, "-o", &png_file_name])
+                .args(["-Tpng", &dot_file_name, "-o", &png_file_name])
                 .output()
                 .expect("Failed to execute Graphviz dot command.");
         }

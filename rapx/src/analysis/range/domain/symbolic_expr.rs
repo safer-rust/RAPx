@@ -179,9 +179,9 @@ impl<'tcx> SymbExpr<'tcx> {
         }
 
         rap_trace!("symexpr {}", self);
-        if let SymbExpr::Place(place) = self {
-            if let Some(node) = vars.get(place) {
-                if let IntervalType::Basic(basic) = &node.interval {
+        if let SymbExpr::Place(place) = self
+            && let Some(node) = vars.get(place)
+                && let IntervalType::Basic(basic) = &node.interval {
                     rap_trace!("node {:?}", *node);
 
                     let target_expr = if basic.lower == basic.upper {
@@ -195,21 +195,18 @@ impl<'tcx> SymbExpr<'tcx> {
 
                     match target_expr {
                         SymbExpr::Unknown => *self = SymbExpr::Unknown,
-                        SymbExpr::Constant(c) => *self = SymbExpr::Constant(c.clone()),
+                        SymbExpr::Constant(c) => *self = SymbExpr::Constant(*c),
                         expr => {
-                            if let SymbExpr::Place(target_place) = expr {
-                                if target_place == place {
+                            if let SymbExpr::Place(target_place) = expr
+                                && target_place == place {
                                     return;
                                 }
-                            }
 
                             *self = expr.clone();
                             self.resolve_recursive(vars, depth + 1, mode);
                         }
                     }
                 }
-            }
-        }
     }
     pub fn simplify(&mut self) {
         match self {
@@ -245,11 +242,10 @@ impl<'tcx> SymbExpr<'tcx> {
                 BinOp::Add | BinOp::AddUnchecked | BinOp::AddWithOverflow => {
                     if let SymbExpr::Binary(inner_op, inner_lhs, inner_rhs) = lhs.as_ref() {
                         match inner_op {
-                            BinOp::Sub | BinOp::SubUnchecked | BinOp::SubWithOverflow => {
-                                if inner_rhs == rhs {
+                            BinOp::Sub | BinOp::SubUnchecked | BinOp::SubWithOverflow
+                                if inner_rhs == rhs => {
                                     *self = *inner_lhs.clone();
                                 }
-                            }
                             _ => {}
                         }
                     }
@@ -409,11 +405,11 @@ impl<'tcx, T: IntervalArithmetic + ConstConvert + Debug> SymbInterval<'tcx, T> {
         bound: &VarNode<'tcx, T>,
         sink: &VarNode<'tcx, T>,
     ) -> Range<T> {
-        let l = bound.get_range().get_lower().clone();
-        let u = bound.get_range().get_upper().clone();
+        let l = bound.get_range().get_lower();
+        let u = bound.get_range().get_upper();
 
-        let lower = sink.get_range().get_lower().clone();
-        let upper = sink.get_range().get_upper().clone();
+        let lower = sink.get_range().get_lower();
+        let upper = sink.get_range().get_upper();
 
         match self.predicate {
             BinOp::Eq => Range::new(l, u, RangeType::Regular),

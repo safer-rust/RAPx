@@ -31,7 +31,7 @@ impl<'b, 'tcx> CallGraphVisitor<'b, 'tcx> {
     fn add_fn_call(&mut self, callee_def_id: DefId, terminator: &'tcx mir::Terminator<'tcx>) {
         self.call_graph_info.register_fn(callee_def_id);
         self.call_graph_info.add_funciton_call(
-            self.def_id.clone(),
+            self.def_id,
             callee_def_id,
             Some(terminator),
         );
@@ -95,16 +95,16 @@ impl<'b, 'tcx> CallGraphVisitor<'b, 'tcx> {
 
     pub fn visit(&mut self) {
         self.call_graph_info.register_fn(self.def_id);
-        for (_, data) in self.body.basic_blocks.iter().enumerate() {
+        for data in self.body.basic_blocks.iter() {
             let terminator = data.terminator();
             self.visit_terminator(terminator);
         }
     }
 
     fn visit_terminator(&mut self, terminator: &'tcx mir::Terminator<'tcx>) {
-        if let mir::TerminatorKind::Call { func, .. } = &terminator.kind {
-            if let mir::Operand::Constant(constant) = func {
-                if let FnDef(callee_def_id, callee_substs) = constant.const_.ty().kind() {
+        if let mir::TerminatorKind::Call { func, .. } = &terminator.kind
+            && let mir::Operand::Constant(constant) = func
+                && let FnDef(callee_def_id, callee_substs) = constant.const_.ty().kind() {
                     let ty_env = TypingEnv::post_analysis(self.tcx, self.def_id);
                     #[cfg(rapx_ge_99)]
                     let callee_substs = callee_substs.skip_binder();
@@ -188,7 +188,5 @@ impl<'b, 'tcx> CallGraphVisitor<'b, 'tcx> {
                         self.handle_fn_call(*callee_def_id, false, terminator);
                     }
                 }
-            }
-        }
     }
 }

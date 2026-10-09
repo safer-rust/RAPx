@@ -254,3 +254,9 @@ impl SafetyFlowGraph {
         dot_str
     }
 }
+
+impl Default for SafetyFlowGraph {
+    fn default() -> Self {
+        Self::new()
+    }
+}

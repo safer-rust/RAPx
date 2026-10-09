@@ -126,11 +126,10 @@ impl<'tcx> AliasGraph<'tcx> {
             if i == e {
                 continue;
             }
-            if let Some(i_slot) = self.value_to_slot_idx(i) {
-                if self.pts_graph.may_alias(e_slot, i_slot) {
+            if let Some(i_slot) = self.value_to_slot_idx(i)
+                && self.pts_graph.may_alias(e_slot, i_slot) {
                     result.push(i);
                 }
-            }
         }
         if result.len() > 1 { Some(result) } else { None }
     }

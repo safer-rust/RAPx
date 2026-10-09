@@ -41,8 +41,8 @@ impl<'tcx> HeapOwnershipAnalysis for HeapOwnershipAnalyzer<'tcx> {
 pub(crate) fn copy_ty_context(tc: &TyContext) -> TyContext {
     match tc {
         TyContext::LocalDecl { local, source_info } => TyContext::LocalDecl {
-            local: local.clone(),
-            source_info: source_info.clone(),
+            local: *local,
+            source_info: *source_info,
         },
         _ => unreachable!(),
     }
@@ -127,7 +127,7 @@ impl<'tcx> HeapOwnershipAnalyzer<'tcx> {
         #[inline(always)]
         fn start_channel<M>(mut method: M, v_did: &Vec<DefId>)
         where
-            M: FnMut(DefId) -> (),
+            M: FnMut(DefId),
         {
             for did in v_did {
                 method(*did);
@@ -164,7 +164,7 @@ impl<'tcx> HeapOwnershipAnalyzer<'tcx> {
             }
         }
 
-        let dids: Vec<DefId> = self.adt_recorder.iter().map(|did| *did).collect();
+        let dids: Vec<DefId> = self.adt_recorder.iter().copied().collect();
 
         start_channel(|did| self.extract_raw_generic(did), &dids);
         start_channel(|did| self.extract_raw_generic_prop(did), &dids);
@@ -392,12 +392,11 @@ impl<'tcx> Visitor<'tcx> for HeapOwnershipAnalyzer<'tcx> {
 
     fn visit_basic_block_data(&mut self, _block: BasicBlock, data: &BasicBlockData<'tcx>) {
         let term = data.terminator();
-        if let TerminatorKind::Call { func, .. } = &term.kind { if let Operand::Constant(constant) = func { if let ty::FnDef(def_id, ..) = constant.ty().kind() {
-            if self.tcx.is_mir_available(*def_id) && self.fn_set_mut().insert(*def_id) {
+        if let TerminatorKind::Call { func, .. } = &term.kind && let Operand::Constant(constant) = func && let ty::FnDef(def_id, ..) = constant.ty().kind()
+            && self.tcx.is_mir_available(*def_id) && self.fn_set_mut().insert(*def_id) {
                 let body = self.tcx.instance_mir(Item(*def_id));
                 self.visit_body(body);
             }
-        } } }
     }
 
     fn visit_ty(&mut self, ty: Ty<'tcx>, ty_context: TyContext) {
@@ -491,7 +490,7 @@ impl<'tcx, 'a> TypeVisitor<TyCtxt<'tcx>> for IsolatedParamPropagation<'tcx, 'a> 
     fn visit_ty(&mut self, ty: Ty<'tcx>) -> Self::Result {
         match ty.kind() {
             TyKind::Adt(adtdef, substs) => {
-                if substs.len() == 0 {
+                if substs.is_empty() {
                     return ControlFlow::Break(());
                 }
 
@@ -524,7 +523,7 @@ impl<'tcx, 'a> TypeVisitor<TyCtxt<'tcx>> for IsolatedParamPropagation<'tcx, 'a> 
                 }
 
                 let get_ans = self.heap().get(&adtdef.did()).unwrap();
-                if get_ans.len() == 0 {
+                if get_ans.is_empty() {
                     return ControlFlow::Break(());
                 }
                 let get_ans = get_ans[0].clone();
@@ -576,7 +575,7 @@ impl<'tcx, 'a> TypeVisitor<TyCtxt<'tcx>> for HeapPropagation<'tcx, 'a> {
                 }
 
                 let get_ans = self.heap_res().get(&adtdef.did()).unwrap();
-                if get_ans.len() == 0 {
+                if get_ans.is_empty() {
                     return ControlFlow::Break(());
                 }
                 let get_ans = get_ans[0].clone();
@@ -661,7 +660,7 @@ impl<'tcx, 'a> TypeVisitor<TyCtxt<'tcx>> for DefaultOwnership<'tcx, 'a> {
                 let get_ans = self.heap().get(&adtdef.did()).unwrap();
 
                 // handle the secene of Zero Sized Types
-                if get_ans.len() == 0 {
+                if get_ans.is_empty() {
                     return ControlFlow::Break(());
                 }
                 let (unit_res, generic_list) = get_ans[0].clone();
@@ -853,7 +852,7 @@ struct IsolatedParamFieldSubst {
     parameters: HashSet<usize>,
 }
 
-impl<'tcx> IsolatedParamFieldSubst {
+impl IsolatedParamFieldSubst {
     pub fn new() -> Self {
         Self {
             parameters: HashSet::new(),
@@ -1209,5 +1208,11 @@ impl OwnershipLayoutResult {
         self.layout_mut().push(default_heap.get_res());
 
         self.set_param(default_heap.get_param());
+    }
+}
+
+impl Default for OwnershipLayoutResult {
+    fn default() -> Self {
+        Self::new()
     }
 }

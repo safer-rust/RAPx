@@ -250,13 +250,10 @@ fn call_arg_to_outer_param(
     body: &rustc_middle::mir::Body<'_>,
 ) -> Option<usize> {
     let local = match op {
-        rustc_middle::mir::Operand::Copy(p) | rustc_middle::mir::Operand::Move(p) => {
-            if p.projection.is_empty() {
+        rustc_middle::mir::Operand::Copy(p) | rustc_middle::mir::Operand::Move(p)
+            if p.projection.is_empty() => {
                 p.local
-            } else {
-                return None;
             }
-        }
         _ => return None,
     };
     let mut queue = VecDeque::from([local]);
@@ -316,11 +313,10 @@ fn rebind_property_to_args<'tcx>(
                     ok = false;
                 }
             }
-            if let Some(place) = &mut atom.for_each {
-                if !rebind_place(place, args, body) {
+            if let Some(place) = &mut atom.for_each
+                && !rebind_place(place, args, body) {
                     ok = false;
                 }
-            }
             ok
         }
         Property::And(and) => {
@@ -430,11 +426,10 @@ fn rebind_ty<'tcx>(
     ty: &mut rustc_middle::ty::Ty<'tcx>,
     callee_args: &rustc_middle::ty::GenericArgs<'tcx>,
 ) {
-    if let rustc_middle::ty::TyKind::Param(param) = ty.kind() {
-        if let Some(actual) = callee_args.get(param.index as usize).and_then(|a| a.as_type()) {
+    if let rustc_middle::ty::TyKind::Param(param) = ty.kind()
+        && let Some(actual) = callee_args.get(param.index as usize).and_then(|a| a.as_type()) {
             *ty = actual;
         }
-    }
 }
 
 fn rebind_place<'tcx>(
@@ -493,8 +488,8 @@ fn resolve_chain_contracts<'tcx>(
         let Some(terminator) = &bb.terminator else {
             continue;
         };
-        if let rustc_middle::mir::TerminatorKind::Call { func, args, .. } = &terminator.kind {
-            if let rustc_middle::mir::Operand::Constant(c) = func {
+        if let rustc_middle::mir::TerminatorKind::Call { func, args, .. } = &terminator.kind
+            && let rustc_middle::mir::Operand::Constant(c) = func {
                 let rustc_middle::ty::TyKind::FnDef(sub_def_id, callee_args) =
                     c.const_.ty().kind()
                 else {
@@ -540,7 +535,6 @@ fn resolve_chain_contracts<'tcx>(
 
                 contracts.extend(reqs);
             }
-        }
     }
 
     contracts
@@ -875,11 +869,10 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
                 if crate_name.as_str() == *filter {
                     return true;
                 }
-                if let Ok(pkg_name) = std::env::var("CARGO_PKG_NAME") {
-                    if pkg_name == *filter {
+                if let Ok(pkg_name) = std::env::var("CARGO_PKG_NAME")
+                    && pkg_name == *filter {
                         return true;
                     }
-                }
                 false
             }
         }
@@ -900,35 +893,31 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
         // Try matching filter after stripping the crate prefix.
         // e.g. filter "slice" matches def_path "core::slice::raw::from_raw_parts"
         // after stripping "core::".
-        if let Some(inner) = filter.strip_prefix(&crate_prefix) {
-            if def_path == inner || def_path.starts_with(&format!("{}::", inner)) {
+        if let Some(inner) = filter.strip_prefix(&crate_prefix)
+            && (def_path == inner || def_path.starts_with(&format!("{}::", inner))) {
                 return true;
             }
-        }
 
         // Try matching def_path after stripping the crate prefix.
         // e.g. filter "core::slice" matches def_path "slice::raw::from_raw_parts"
         // after stripping "core::" from the filter.
-        if let Some(inner) = def_path.strip_prefix(&crate_prefix) {
-            if inner == *filter || inner.starts_with(&format!("{}::", filter)) {
+        if let Some(inner) = def_path.strip_prefix(&crate_prefix)
+            && (inner == *filter || inner.starts_with(&format!("{}::", filter))) {
                 return true;
             }
-        }
 
         false
     }
 
     pub(crate) fn check_module_filter_result(&self) {
-        if let Some(ref filter) = self.crate_filter {
-            if !self.crate_filter_matched {
+        if let Some(ref filter) = self.crate_filter
+            && !self.crate_filter_matched {
                 rap_warn!("[rapx::verify] --crate \"{filter}\" matched no targets");
             }
-        }
-        if let Some(ref filter) = self.module_filter {
-            if !self.module_filter_matched {
+        if let Some(ref filter) = self.module_filter
+            && !self.module_filter_matched {
                 rap_warn!("[rapx::verify] --module \"{filter}\" matched no functions in the crate");
             }
-        }
     }
 }
 
@@ -1053,14 +1042,13 @@ impl<'tcx> Visitor<'tcx> for VerifyTargetCollector<'tcx> {
             }
         }
 
-        if !matches!(self.mode, VerifyMode::Targeted) {
-            if !hir_contains_unsafe(self.tcx, body_id)
+        if !matches!(self.mode, VerifyMode::Targeted)
+            && !hir_contains_unsafe(self.tcx, body_id)
                 && !function_has_struct_invariant(self.tcx, def_id)
                 && !function_has_trait_ensurance(self.tcx, def_id)
             {
                 return;
             }
-        }
 
         if !self.crate_name_matches(def_id) {
             return;
@@ -1417,7 +1405,7 @@ impl<'tcx> PrepareTargets<'tcx> {
 
                     path_map
                         .entry(callee_def_id)
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push((block_idx, path_strings));
                 }
             }

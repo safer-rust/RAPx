@@ -13,17 +13,14 @@ use crate::{Analysis, utils::source::get_fn_name_byid};
 
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Default)]
 pub enum HeapOwnership {
     False = 0,
     True = 1,
+    #[default]
     Unknown = 2,
 }
 
-impl Default for HeapOwnership {
-    fn default() -> Self {
-        Self::Unknown
-    }
-}
 
 impl HeapOwnership {
     pub fn is_onheap(&self) -> bool {

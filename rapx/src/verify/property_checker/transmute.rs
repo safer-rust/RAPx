@@ -91,14 +91,13 @@ impl PropertyChecker {
         #[cfg(rapx_ge_100)]
         let pred_iter = predicates.clauses.iter();
         for (predicate, _span) in pred_iter {
-            if let rustc_middle::ty::ClauseKind::Trait(trait_ref) = predicate.kind().skip_binder() {
-                if trait_ref.self_ty() == ty {
+            if let rustc_middle::ty::ClauseKind::Trait(trait_ref) = predicate.kind().skip_binder()
+                && trait_ref.self_ty() == ty {
                     let short_name = crate::helpers::name::short_fn_name(tcx, trait_ref.def_id());
                     if short_name == trait_name {
                         return CheckResult::ProvedByRule;
                     }
                 }
-            }
         }
 
         // A `Copy` obligation that none of the fast-paths discharged is a
@@ -163,16 +162,14 @@ impl PropertyChecker {
 
                 // If the destination is a SIMD vector with a matching lane type,
                 // the transmute is valid by the standard library contract.
-                if Self::is_simd_vector(vm_state, d) {
-                    if let TyKind::Adt(_, args) = d.kind() {
-                        if args
+                if Self::is_simd_vector(vm_state, d)
+                    && let TyKind::Adt(_, args) = d.kind()
+                        && args
                             .iter()
                             .any(|a| matches!(a.kind(), GenericArgKind::Type(t) if t == s))
                         {
                             return CheckResult::ProvedByRule;
                         }
-                    }
-                }
 
                 let src_sz = Self::ty_size(vm_state, s);
                 let dst_sz = Self::ty_size(vm_state, d);

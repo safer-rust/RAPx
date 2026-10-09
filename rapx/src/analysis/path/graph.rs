@@ -218,11 +218,10 @@ fn build_function_info(
                     .projection
                     .iter()
                     .any(|p| matches!(p, ProjectionElem::Deref));
-                if !is_deref {
-                    if !info.assigned_locals.contains(&dest) {
+                if !is_deref
+                    && !info.assigned_locals.contains(&dest) {
                         info.assigned_locals.push(dest);
                     }
-                }
                 match rvalue {
                     Rvalue::Use(Operand::Constant(c), ..) => {
                         let typing_env = TypingEnv::post_analysis(tcx, def_id);
@@ -251,12 +250,12 @@ fn build_function_info(
                     Rvalue::Discriminant(rv_place) => {
                         let src_local = local_base + rv_place.local.as_usize();
                         disc_info.source_of.insert(dest, src_local);
-                        if !disc_info.variant_count_of.contains_key(&src_local) {
+                        if let std::collections::hash_map::Entry::Vacant(e) = disc_info.variant_count_of.entry(src_local) {
                             let src_ty = body.local_decls[rv_place.local].ty;
                             if let TyKind::Adt(adt_def, _) = src_ty.kind() {
                                 let num = adt_def.variants().len();
                                 if num > 0 {
-                                    disc_info.variant_count_of.insert(src_local, num);
+                                    e.insert(num);
                                 }
                             }
                         }
@@ -278,12 +277,12 @@ fn build_function_info(
                         };
                         if let Some(discr) = discr {
                             info.constants.insert(dest, discr);
-                            if !disc_info.variant_count_of.contains_key(&dest) {
+                            if let std::collections::hash_map::Entry::Vacant(e) = disc_info.variant_count_of.entry(dest) {
                                 let dest_ty = body.local_decls[place.local].ty;
                                 if let TyKind::Adt(adt_def, _) = dest_ty.kind() {
                                     let num = adt_def.variants().len();
                                     if num > 0 {
-                                        disc_info.variant_count_of.insert(dest, num);
+                                        e.insert(num);
                                     }
                                 }
                             }
@@ -380,11 +379,10 @@ fn build_function_info(
                                 }
                                 _ => None,
                             };
-                            if let Some(divisor) = divisor {
-                                if divisor != 0 {
+                            if let Some(divisor) = divisor
+                                && divisor != 0 {
                                     info.remainders.insert(dest, (lhs_local, divisor));
                                 }
-                            }
                         }
                     }
                     Rvalue::UnaryOp(unop, operand) => {
@@ -410,14 +408,13 @@ fn build_function_info(
             }
         }
 
-        if let Some(terminator) = &bb.terminator {
-            if let TerminatorKind::Call {
+        if let Some(terminator) = &bb.terminator
+            && let TerminatorKind::Call {
                 destination,
                 ref func,
                 ..
             } = terminator.kind
-            {
-                if let Some(did) = mir_utils::dep_callee_def_id(func) {
+                && let Some(did) = mir_utils::dep_callee_def_id(func) {
                     if def_id::known_nonnull_fns().contains(&did) {
                         info.known_nonnull_locals
                             .insert(local_base + destination.local.as_usize());
@@ -427,8 +424,6 @@ fn build_function_info(
                             .insert(local_base + destination.local.as_usize(), 0);
                     }
                 }
-            }
-        }
 
         block_info.push(info);
     }
@@ -990,11 +985,10 @@ impl<'tcx> PathGraph<'tcx> {
         }
 
         let successors = &self.cfg.block(cur).next;
-        if !successors.contains(&next) {
-            if !self.is_unwind_target(cur, next) {
+        if !successors.contains(&next)
+            && !self.is_unwind_target(cur, next) {
                 return false;
             }
-        }
 
         if !self.check_switch_transition(cur, next, constraints) {
             return false;
@@ -1058,8 +1052,8 @@ impl<'tcx> PathGraph<'tcx> {
             {
                 return Some(val);
             }
-            if let Some(cmp) = info.comparison_sources.get(&local) {
-                if matches!(cmp.op, BinOp::Eq | BinOp::Ne) {
+            if let Some(cmp) = info.comparison_sources.get(&local)
+                && matches!(cmp.op, BinOp::Eq | BinOp::Ne) {
                     let is_eq = matches!(cmp.op, BinOp::Eq);
                     if cmp.rhs_is_constant {
                         if let Some(lhs_val) = self.resolve_local_value(cmp.lhs_local, constraints)
@@ -1090,7 +1084,6 @@ impl<'tcx> PathGraph<'tcx> {
                         }
                     }
                 }
-            }
         }
         None
     }
@@ -1198,15 +1191,14 @@ impl<'tcx> PathGraph<'tcx> {
                     return true;
                 }
 
-                if let Some(local) = constraint_local {
-                    if let Some(&known_val) = constraints.get(&local) {
+                if let Some(local) = constraint_local
+                    && let Some(&known_val) = constraints.get(&local) {
                         let expected = resolve_switch_target(targets, known_val as u128);
                         if next != base + expected {
                             return false;
                         }
                         return true;
                     }
-                }
 
                 // Try to infer the discriminant from a comparison source
                 // (e.g. `_X = Ne(ptr, 0)`) when we know whether `ptr` is null.
@@ -1335,9 +1327,9 @@ impl<'tcx> PathGraph<'tcx> {
 
                 // No prior constraint — conservatively allow any valid target
                 // and record the newly learned constraint from the taken branch.
-                if next == targets.otherwise().as_usize() {
-                    if let Some(local) = constraint_local {
-                        if let Some(num_variants) =
+                if next == targets.otherwise().as_usize()
+                    && let Some(local) = constraint_local
+                        && let Some(num_variants) =
                             self.get_variant_count(local, self.cfg.block(cur).def_id)
                         {
                             let all_covered = (0..num_variants)
@@ -1346,8 +1338,6 @@ impl<'tcx> PathGraph<'tcx> {
                                 return false;
                             }
                         }
-                    }
-                }
 
                 self.learn_constraint_with_backprop(
                     cur,
@@ -1425,11 +1415,10 @@ impl<'tcx> PathGraph<'tcx> {
             if !seen.insert(cur) {
                 continue;
             }
-            if let Some(&val) = constraints.get(&cur) {
-                if val != usize::MAX {
+            if let Some(&val) = constraints.get(&cur)
+                && val != usize::MAX {
                     return Some(val);
                 }
-            }
             for info in &self.block_info {
                 if let Some(&src) = info.constraint_copies.get(&cur) {
                     stack.push(src);
@@ -1484,8 +1473,8 @@ impl<'tcx> PathGraph<'tcx> {
                 }
                 // Follow remainder: cur = rem_src % rem_div.
                 // Resolve rem_src recursively, compute remainder, then apply offset.
-                if let Some(&(rem_src, rem_div)) = info.remainders.get(&cur) {
-                    if let Some(src_val) = self.resolve_local_value(rem_src, constraints) {
+                if let Some(&(rem_src, rem_div)) = info.remainders.get(&cur)
+                    && let Some(src_val) = self.resolve_local_value(rem_src, constraints) {
                         let rem = src_val % rem_div;
                         let result = if offset >= 0 {
                             Some(rem + offset as usize)
@@ -1496,21 +1485,19 @@ impl<'tcx> PathGraph<'tcx> {
                             return Some(v);
                         }
                     }
-                }
             }
             // Follow global cast chains.
             if let Some(&cast_src) = self.cast_chains.get(&cur) {
                 stack.push((cast_src, offset));
             }
             // Follow field projection -> aggregate source.
-            if let Some(&encoded) = self.field_projection_source.get(&cur) {
-                if let Some((agg_local, field_idx)) = decode_aggregate_field(encoded) {
+            if let Some(&encoded) = self.field_projection_source.get(&cur)
+                && let Some((agg_local, field_idx)) = decode_aggregate_field(encoded) {
                     let key = encode_aggregate_field(agg_local, field_idx);
                     if let Some(&source) = self.aggregate_field_sources.get(&key) {
                         stack.push((source, offset));
                     }
                 }
-            }
         }
         None
     }
@@ -1839,8 +1826,8 @@ impl<'g, 'tcx> PathEnumerator<'g, 'tcx> {
             return;
         }
 
-        if cur == scc.enter && path.len() > 1 {
-            if !check_postfix_segment(path, scc.enter, segment_counts, postfix_repeat) {
+        if cur == scc.enter && path.len() > 1
+            && !check_postfix_segment(path, scc.enter, segment_counts, postfix_repeat) {
                 if (postfix_repeat > 0 || segment_counts.len() > 1)
                     && scc.exits.iter().any(|e| e.exit == cur)
                 {
@@ -1848,7 +1835,6 @@ impl<'g, 'tcx> PathEnumerator<'g, 'tcx> {
                 }
                 return;
             }
-        }
 
         if scc.exits.iter().any(|e| e.exit == cur) {
             self.record_unique_path(path, scc, out, seen_paths);

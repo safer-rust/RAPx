@@ -96,22 +96,20 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         // update as a side effect, then fall through to normal handling.
         // These callees have SwitchInt (ZST branch) exceeding inline limits,
         // so the ptr update would otherwise be lost.
-        if let Some(c) = callee {
-            if self.tcx.is_mir_available(c) {
-                if mir_utils::is_iter_ptr_adj(self.tcx, c) && arg_values.len() >= 2
+        if let Some(c) = callee
+            && self.tcx.is_mir_available(c)
+                && mir_utils::is_iter_ptr_adj(self.tcx, c) && arg_values.len() >= 2
                 {
                     self.apply_iter_ptr_update(c, &arg_values);
                     // Continue to normal handling (return value is () , ignored).
                 }
-            }
-        }
 
         // Try inline for callees with available MIR, unless builtin_models
         // has a precise summary (memory allocation, intrinsics, known ptr
         // arithmetic, etc.). The summary path handles these with
         // hand-crafted invariants that are more precise than BFS inline.
-        if let Some(c) = callee {
-            if self.tcx.is_mir_available(c) {
+        if let Some(c) = callee
+            && self.tcx.is_mir_available(c) {
                 // MIR-derived field load (`(*self).field` getter shape, e.g.
                 // `Vec::len`): recognized from the callee's MIR, not by name.
                 if let Some(effect) =
@@ -163,14 +161,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     destination,
                 )
                 .is_some();
-                if !has_fn_sim {
-                    if self.exec_inline_call(c, &arg_values, &caller_arg_locals, destination) {
+                if !has_fn_sim
+                    && self.exec_inline_call(c, &arg_values, &caller_arg_locals, destination) {
                         self.materialize_const_bytes_after_call(args, destination);
                         return;
                     }
-                }
             }
-        }
 
         let mut concrete = FxHashMap::default();
         for (i, arg) in arg_values.iter().enumerate() {
@@ -205,14 +201,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         } else {
             let dest_ty = self.body().local_decls[destination].ty;
             let term = self.fresh_int(&format!("callret_{}", destination.as_usize()));
-            if let TyKind::Adt(adt_def, _) = dest_ty.kind() {
-                if api_classify::is_std_ordering(adt_def.did()) {
+            if let TyKind::Adt(adt_def, _) = dest_ty.kind()
+                && api_classify::is_std_ordering(adt_def.did()) {
                     let minus_one = Int::from_i64(self.z3_ctx, -1);
                     let one = Int::from_i64(self.z3_ctx, 1);
                     self.constraints.assertions.push(term.ge(&minus_one));
                     self.constraints.assertions.push(term.le(&one));
                 }
-            }
             // bool return (bool, Result::ok/err, etc.) — constrain to {0, 1}
             if dest_ty.is_bool() {
                 let zero = Int::from_u64(self.z3_ctx, 0);
@@ -878,11 +873,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             // propagate the referent's fields so `self.ptr` resolves in the
             // callee (Iter::next).  Excludes field reborrows.
             let mut source_locals = vec![*caller_arg];
-            if let Some(r) = reborrow_referents.get(i).copied().flatten() {
-                if r != *caller_arg {
+            if let Some(r) = reborrow_referents.get(i).copied().flatten()
+                && r != *caller_arg {
                     source_locals.push(r);
                 }
-            }
             for src in source_locals {
                 let caller_field_keys: Vec<Vec<usize>> = self.frame_field_paths(&frame, src);
                 for fields in caller_field_keys {
@@ -1304,11 +1298,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     if let Some(arg_local) = caller_arg_locals.get(*arg).copied().flatten() {
                         let keys: Vec<Vec<usize>> = self.field_paths(arg_local);
                         for path in keys {
-                            if path.len() > *peel && path[..*peel].iter().all(|&f| f == 0) {
-                                if let Some(v) = self.field_value(arg_local, &path).cloned() {
+                            if path.len() > *peel && path[..*peel].iter().all(|&f| f == 0)
+                                && let Some(v) = self.field_value(arg_local, &path).cloned() {
                                     self.set_field_value(dest, path[*peel..].to_vec(), v);
                                 }
-                            }
                         }
                     }
                 }
@@ -1644,8 +1637,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     // For heap-backed containers (Vec/CString/String) and slice
                     // views: redirect as_ptr() from the struct/slice allocation
                     // to the heap data allocation.
-                    if let Some(ref prov) = val.provenance {
-                        if let Some(data_alloc) = self.data_alloc_of(prov.alloc_id, arg_val.ty) {
+                    if let Some(ref prov) = val.provenance
+                        && let Some(data_alloc) = self.data_alloc_of(prov.alloc_id, arg_val.ty) {
                             val.z3_term = self.allocation_base(data_alloc).clone();
                             val.provenance = Some(Provenance {
                                 alloc_id: data_alloc,
@@ -1653,7 +1646,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                 offset_kind: None,
                             });
                         }
-                    }
                     if src_non_null {
                         let zero = Int::from_u64(self.z3_ctx, 0);
                         self.constraints.assertions.push(val.z3_term._eq(&zero).not());
@@ -1815,8 +1807,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             }
             CallEffect::ReturnTupleFieldNonZero { field } => {
                 let dest_ty = self.body().local_decls[dest].ty;
-                if let TyKind::Tuple(elem_tys) = dest_ty.kind() {
-                    if let Some(field_ty) = elem_tys.get(*field) {
+                if let TyKind::Tuple(elem_tys) = dest_ty.kind()
+                    && let Some(field_ty) = elem_tys.get(*field) {
                         let zero = Int::from_u64(self.z3_ctx, 0);
                         let term =
                             self.fresh_int(&format!("ret_tup_nz_{}_{}", dest.as_usize(), field));
@@ -1837,7 +1829,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             },
                         );
                     }
-                }
             }
             CallEffect::ReturnAligned => {
                 if let Some(mut existing) = self.local_value(dest).cloned() {
@@ -1883,11 +1874,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 // Field-read `len` (e.g. `Vec::len`) is handled by
                 // `ReturnFieldOfArg`; here fall back to `size / elem_size`
                 // (slices, `&str`, and legacy Vec values).
-                if let Some(arg_val) = args.get(*arg) {
-                    if self.set_len_from_alloc(arg_val, dest) {
+                if let Some(arg_val) = args.get(*arg)
+                    && self.set_len_from_alloc(arg_val, dest) {
                         return;
                     }
-                }
                 let dest_ty = self.body().local_decls[dest].ty;
                 let term = self.fresh_int(&format!("len_{}", dest.as_usize()));
                 let val = VmValue::new(term, dest_ty);
@@ -2065,11 +2055,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 // to the `ControlFlow` result's `Continue` payload (field 0),
                 // preserving its provenance so a `?`-operator unwrap survives.
                 let arg_local = caller_arg_locals.get(*arg).copied().flatten();
-                if let Some(l) = arg_local {
-                    if let Some(payload) = self.field_value(l, &[0]).cloned() {
+                if let Some(l) = arg_local
+                    && let Some(payload) = self.field_value(l, &[0]).cloned() {
                         self.set_field_value(dest, vec![0], payload);
                     }
-                }
             }
             CallEffect::ReturnOptionSomeIndexLtArgLen { arg } => {
                 // `memchr(x, bytes)`/`memrchr(x, bytes)`-style search returns
@@ -2079,8 +2068,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 // caller can re-prove `finger <= finger_back` after
                 // `finger += i + 1` (forward) or `finger_back = finger + i`
                 // (reverse).
-                if let Some(slice) = args.get(*arg) {
-                    if let Some(len) = self.slice_len_from_value(slice) {
+                if let Some(slice) = args.get(*arg)
+                    && let Some(len) = self.slice_len_from_value(slice) {
                         let payload = self.fresh_int(&format!("scan_idx_{}", dest.as_usize()));
                         self.constraints.assertions.push(payload.lt(&len));
                         let zero = Int::from_u64(self.z3_ctx, 0);
@@ -2096,7 +2085,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             VmValue::new(payload, payload_ty),
                         );
                     }
-                }
             }
             CallEffect::ReturnOptionSomeTupleFieldLeArgLen { field, arg } => {
                 // UTF-8 decoder returns `Option<(.., len, ..)>` whose length
@@ -2104,8 +2092,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 // `[0, field]` (the `Some` payload tuple's field) and record
                 // `len <= arg.len()` so a caller can re-prove
                 // `finger <= finger_back` after `finger += len`.
-                if let Some(slice) = args.get(*arg) {
-                    if let Some(arg_len) = self.slice_len_from_value(slice) {
+                if let Some(slice) = args.get(*arg)
+                    && let Some(arg_len) = self.slice_len_from_value(slice) {
                         let len = self.fresh_int(&format!("decode_len_{}", dest.as_usize()));
                         self.constraints.assertions.push(len.le(&arg_len));
                         let dest_ty = self.body().local_decls[dest].ty;
@@ -2123,7 +2111,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             VmValue::new(len, field_ty),
                         );
                     }
-                }
             }
             CallEffect::ReturnScanLength => {
                 // `strlen(ptr)` returns the byte length before the NUL
@@ -2186,8 +2173,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 );
             }
             CallEffect::WriteMemory { pointer_arg } => {
-                if let Some(arg_val) = args.get(*pointer_arg) {
-                    if let Some(prov) = &arg_val.provenance {
+                if let Some(arg_val) = args.get(*pointer_arg)
+                    && let Some(prov) = &arg_val.provenance {
                         // Writing a non-`u8` value through a byte buffer reinterprets
                         // it (e.g. `*mut FreeBlock` cast from a `Vec<u8>` buffer):
                         // update the allocation's element type so a later `Typed`
@@ -2202,11 +2189,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                     rustc_middle::ty::TyKind::Uint(rustc_middle::ty::UintTy::U8)
                                 )
                             };
-                            if let Some(c) = cur {
-                                if is_u8(c) && !is_u8(*inner) {
+                            if let Some(c) = cur
+                                && is_u8(c) && !is_u8(*inner) {
                                     self.alloc_mut(prov.alloc_id).element_ty = ElementTy::Typed(*inner);
                                 }
-                            }
                         }
                         // For locally-created Vec-like types: create a heap data
                         // allocation on first mutation. (Param Vecs already have
@@ -2291,7 +2277,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             }
                         }
                     }
-                }
             }
             CallEffect::ReturnFreshAllocation {
                 pointer_arg,
@@ -2374,8 +2359,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     );
                     // Materialize `{ptr, cap, len}` fields for a Vec destination
                     // (`from_raw_parts` sets cap == len).
-                    if let rustc_middle::ty::TyKind::Adt(adt_def, _) = dest_ty.kind() {
-                        if api_classify::is_std_vec(adt_def.did()) {
+                    if let rustc_middle::ty::TyKind::Adt(adt_def, _) = dest_ty.kind()
+                        && api_classify::is_std_vec(adt_def.did()) {
                             let ptr_field = VmValue {
                                 z3_term: vec_base,
                                 ty: ptr_val.ty,
@@ -2391,7 +2376,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             };
                             self.materialize_vec_fields(dest, ptr_field, vec_len.clone(), vec_len);
                         }
-                    }
                 }
             }
             CallEffect::ReturnBoxAllocation => {
@@ -2551,8 +2535,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     );
                     // `Vec::from_elem`/`from_elem`-style constructors set
                     // len == cap == count.
-                    if let rustc_middle::ty::TyKind::Adt(adt_def, _) = dest_ty.kind() {
-                        if api_classify::is_std_vec(adt_def.did()) {
+                    if let rustc_middle::ty::TyKind::Adt(adt_def, _) = dest_ty.kind()
+                        && api_classify::is_std_vec(adt_def.did()) {
                             let ptr_field = VmValue {
                                 z3_term: vec_base,
                                 ty: elem_ty.unwrap_or(dest_ty),
@@ -2571,7 +2555,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             };
                             self.materialize_vec_fields(dest, ptr_field, vec_len.clone(), vec_len);
                         }
-                    }
                 }
             }
             CallEffect::ReturnNewAllocationFromCap { cap_arg, elem_size } => {
@@ -2615,8 +2598,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         },
                     );
                     // `Vec::with_capacity(n)`: len == 0, cap == n.
-                    if let rustc_middle::ty::TyKind::Adt(adt_def, _) = dest_ty.kind() {
-                        if api_classify::is_std_vec(adt_def.did()) {
+                    if let rustc_middle::ty::TyKind::Adt(adt_def, _) = dest_ty.kind()
+                        && api_classify::is_std_vec(adt_def.did()) {
                             let ptr_field = VmValue {
                                 z3_term: vec_base,
                                 ty: elem_ty.unwrap_or(dest_ty),
@@ -2636,7 +2619,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             let zero = Int::from_u64(self.z3_ctx, 0);
                             self.materialize_vec_fields(dest, ptr_field, vec_cap, zero);
                         }
-                    }
                 }
             }
             CallEffect::ReturnNewAllocationFromBox => {
@@ -2703,8 +2685,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 // `into_vec` / `box_assume_init_into_vec_unsafe`: the Vec's
                 // length equals the source boxed slice's length (symbolic);
                 // cap == len (no spare capacity).
-                if let rustc_middle::ty::TyKind::Adt(adt_def, _) = dest_ty.kind() {
-                    if api_classify::is_std_vec(adt_def.did()) {
+                if let rustc_middle::ty::TyKind::Adt(adt_def, _) = dest_ty.kind()
+                    && api_classify::is_std_vec(adt_def.did()) {
                         let ptr_field = VmValue {
                             z3_term: vec_base,
                             ty: elem_ty.unwrap_or(dest_ty),
@@ -2726,12 +2708,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             .unwrap_or_else(|| self.fresh_int(&format!("vec_len_{}", dest.as_usize())));
                         self.materialize_vec_fields(dest, ptr_field, len_term.clone(), len_term);
                     }
-                }
             }
             CallEffect::ReturnBoxFromVec { arg } => {
-                if let Some(vec_val) = args.get(*arg) {
-                    if let Some(ref prov) = vec_val.provenance {
-                        if let Some(heap_alloc_id) =
+                if let Some(vec_val) = args.get(*arg)
+                    && let Some(ref prov) = vec_val.provenance
+                        && let Some(heap_alloc_id) =
                             self.container_data_alloc(prov.alloc_id, vec_val.ty)
                         {
                             let heap_base = self.allocation_base(heap_alloc_id).clone();
@@ -2756,8 +2737,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                 },
                             );
                         }
-                    }
-                }
             }
             CallEffect::OwnsInitMemory { arg } => {
                 if let Some(arg_val) = args.get(*arg) {
@@ -2773,8 +2752,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     // carry the same provenance: rustc 1.95 lowers `Box::as_ptr`
                     // (`&raw **b`) to a `(_1.0).0` field read + transmute, so
                     // without this the re-derived pointer loses provenance.
-                    if let rustc_middle::ty::TyKind::Adt(adt, _) = val.ty.kind() {
-                        if api_classify::is_std_box(adt.did()) {
+                    if let rustc_middle::ty::TyKind::Adt(adt, _) = val.ty.kind()
+                        && api_classify::is_std_box(adt.did()) {
                             let nn_path = self
                                 .container_ptr_field(val.ty)
                                 .map(|(p, _)| p)
@@ -2787,7 +2766,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                     .insert((val.ty, nn_path), val.clone());
                             }
                         }
-                    }
                     self.set_local(dest, val);
                 }
             }
@@ -2937,14 +2915,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     const_bytes = Some((bytes, i));
                 }
             }
-            if tracked_alloc.is_none() {
-                if let Some(alloc_id) = arg_val.provenance_alloc_id() {
+            if tracked_alloc.is_none()
+                && let Some(alloc_id) = arg_val.provenance_alloc_id() {
                     tracked_alloc = Some(alloc_id);
                     if let Some(ref prov) = arg_val.provenance {
                         tracked_offset = prov.offset.as_u64().map(|v| v as usize).unwrap_or(0);
                     }
                 }
-            }
         }
 
         if let (Some((bytes, _)), Some(alloc_id)) = (const_bytes, tracked_alloc) {
@@ -3125,15 +3102,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             for stmt in &bb.statements {
                 if let StatementKind::Assign(assign) = &stmt.kind {
                     let (dest, rvalue) = &**assign;
-                    if dest.local == local && dest.projection.is_empty() {
-                        if let Rvalue::Ref(_, _, place) | Rvalue::RawPtr(_, place) = rvalue {
-                            if place.projection.len() == 1
+                    if dest.local == local && dest.projection.is_empty()
+                        && let Rvalue::Ref(_, _, place) | Rvalue::RawPtr(_, place) = rvalue
+                            && place.projection.len() == 1
                                 && matches!(place.projection[0].kind(), ProjectionElem::Deref)
                             {
                                 return Some(place.local);
                             }
-                        }
-                    }
                 }
             }
         }
@@ -3151,8 +3126,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             for stmt in &bb.statements {
                 if let StatementKind::Assign(assign) = &stmt.kind {
                     let (dest, rvalue) = &**assign;
-                    if dest.local == local && dest.projection.is_empty() {
-                        if let Rvalue::Ref(_, _, place) | Rvalue::RawPtr(_, place) = rvalue {
+                    if dest.local == local && dest.projection.is_empty()
+                        && let Rvalue::Ref(_, _, place) | Rvalue::RawPtr(_, place) = rvalue {
                             let mut proj = place.projection.iter();
                             if !matches!(proj.next().map(|p| p.kind()), Some(ProjectionElem::Deref))
                             {
@@ -3171,7 +3146,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                 return Some((place.local, fields));
                             }
                         }
-                    }
                 }
             }
         }
@@ -3352,13 +3326,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         // values; reconstruct the length from the backing allocation
         // (`size / elem_size`), as `ReturnLengthOfArg` does.
         let dest_ty = self.body().local_decls[dest].ty;
-        if matches!(dest_ty.kind(), TyKind::Uint(_) | TyKind::Int(_)) {
-            if let Some(arg_val) = args.get(arg) {
-                if self.set_len_from_alloc(arg_val, dest) {
+        if matches!(dest_ty.kind(), TyKind::Uint(_) | TyKind::Int(_))
+            && let Some(arg_val) = args.get(arg)
+                && self.set_len_from_alloc(arg_val, dest) {
                     return;
                 }
-            }
-        }
         let term = self.fresh_int(&format!("field_{}", dest.as_usize()));
         let val = VmValue::new(term, dest_ty);
         self.set_local(dest, val);
@@ -3394,11 +3366,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         // field 0 of the `RangeTo<usize>` argument, falling back to the
         // argument's own term.
         let mut len_term = None;
-        if let Some(l) = caller_arg_locals.get(bounds_arg).copied().flatten() {
-            if let Some(fv) = self.field_value(l, &[0]) {
+        if let Some(l) = caller_arg_locals.get(bounds_arg).copied().flatten()
+            && let Some(fv) = self.field_value(l, &[0]) {
                 len_term = Some(fv.z3_term.clone());
             }
-        }
         let len_term = len_term.or_else(|| args.get(bounds_arg).map(|v| v.z3_term.clone()));
         let Some(len_term) = len_term else {
             return;

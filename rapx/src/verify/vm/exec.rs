@@ -319,8 +319,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     // otherwise alias/ownership reasoning can't trace a deref of
                     // `self.pointer` back to "owned" (the local's provenance would
                     // be `None`).
-                    if mir_utils::is_raw_ptr_wrapper(self.tcx, adt_def.did()) {
-                        if let Some(f0) = self.field_value(local, &[0]).cloned() {
+                    if mir_utils::is_raw_ptr_wrapper(self.tcx, adt_def.did())
+                        && let Some(f0) = self.field_value(local, &[0]).cloned() {
                             let prov = f0.provenance.clone();
                             self.set_local(
                                 local,
@@ -337,7 +337,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             );
                             continue;
                         }
-                    }
                     let term = self.fresh_int(&format!("param_{}", local_idx));
                     self.set_local(
                         local,
@@ -492,8 +491,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
                     // Decompose struct fields for pointer-field access.
                     // E.g. &RawBuf → (*self).ptr should yield a valid raw ptr.
-                    if let rustc_middle::ty::TyKind::Adt(adt_def, substs) = pointee_ty.kind() {
-                        if !adt_def.is_enum() {
+                    if let rustc_middle::ty::TyKind::Adt(adt_def, substs) = pointee_ty.kind()
+                        && !adt_def.is_enum() {
                             let variant = adt_def.non_enum_variant();
                             // Track the first data allocation per element type.
                             // Subsequent RawPtr / NonNull fields with the same
@@ -564,10 +563,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                     // the pointee allocation so field access (e.g.
                                     // `self.buckets.iter()`) resolves to the *data*
                                     // elements, not the whole struct.
-                                    if api_classify::is_std_box(adt.did())
-                                        || api_classify::is_std_vec(adt.did())
-                                    {
-                                        if let Some(pointee) =
+                                    if (api_classify::is_std_box(adt.did())
+                                        || api_classify::is_std_vec(adt.did()))
+                                        && let Some(pointee) =
                                             substs.first().and_then(|s| s.as_type())
                                         {
                                             let elem_ty = match pointee.kind() {
@@ -578,7 +576,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                                 local, idx, field_ty, elem_ty, None,
                                             );
                                         }
-                                    }
                                 } else if matches!(
                                     field_ty.kind(),
                                     rustc_middle::ty::TyKind::Uint(_)
@@ -613,7 +610,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                 }
                             }
                         }
-                    }
                     continue;
                 }
                 // ── Scalar parameter ──
@@ -802,8 +798,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         }
                         _ => None,
                     });
-                    if let Some(src_local) = src {
-                        if let Some(src_val) = self.local_value(src_local) {
+                    if let Some(src_local) = src
+                        && let Some(src_val) = self.local_value(src_local) {
                             let has_better_prov = src_val.is_pointer()
                                 && src_val.facts.non_null
                                 && self.local_value(dest_local).is_none_or(|d| {
@@ -822,7 +818,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                 );
                             }
                         }
-                    }
                 }
             }
         }
@@ -1069,14 +1064,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 );
                 continue;
             }
-            if let rustc_middle::ty::TyKind::Adt(inner_adt, _) = field_ty.kind() {
-                if !inner_adt.is_enum() {
+            if let rustc_middle::ty::TyKind::Adt(inner_adt, _) = field_ty.kind()
+                && !inner_adt.is_enum() {
                     self.decompose_adt_fields(
                         local, path, field_ty, local_idx, elem_alloc, depth + 1,
                     );
                     continue;
                 }
-            }
             let field_term = self.fresh_int(&format!("field_{}_{}", local_idx, idx));
             self.set_field_value(
                 local,
@@ -1231,8 +1225,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             } else if let TyKind::Array(elem_ty, const_len) = field_ty.kind() {
                 // Array field: allocate its contents so `.len()` / `as_slice()`
                 // resolve to the concrete array length.
-                let n = mir_utils::eval_array_len(self.tcx, const_len).unwrap_or(0)
-                    as u64;
+                let n = mir_utils::eval_array_len(self.tcx, const_len).unwrap_or(0);
                 let arr_align = self.align_sym(*elem_ty);
                 let arr_elem_size = self.size_sym(*elem_ty);
                 // Materialize the array length (via `allocate_slice`) so `len()`
@@ -1330,10 +1323,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 },
                 _ => None,
             };
-            if let Some(src) = moved_from {
-                if let Some(&src_alloc) = self.current_frame.local_alloc.get(&src) {
-                    if let Some(mut wv) = self.local_value(place.local).cloned() {
-                        if wv.provenance.as_ref().is_some_and(|p| p.alloc_id == src_alloc) {
+            if let Some(src) = moved_from
+                && let Some(&src_alloc) = self.current_frame.local_alloc.get(&src)
+                    && let Some(mut wv) = self.local_value(place.local).cloned()
+                        && wv.provenance.as_ref().is_some_and(|p| p.alloc_id == src_alloc) {
                             let dest_alloc = self.current_frame.local_alloc[&place.local];
                             wv.provenance = Some(Provenance {
                                 alloc_id: dest_alloc,
@@ -1342,9 +1335,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             });
                             self.set_local(place.local, wv);
                         }
-                    }
-                }
-            }
             // Propagate field values for aggregate copies (e.g. `_4 = copy _1`)
             // so downstream field accesses (NonZero::get -> self.0) resolve to
             // the same symbolic field terms.  A projected source (`_11 = move
@@ -1398,11 +1388,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         } else {
                             None
                         };
-                        if let Some(rest) = rest {
-                            if let Some(fv) = self.field_value(sp.local, &k).cloned() {
+                        if let Some(rest) = rest
+                            && let Some(fv) = self.field_value(sp.local, &k).cloned() {
                                 self.set_field_value(place.local, rest, fv);
                             }
-                        }
                     }
                 }
             }
@@ -1526,8 +1515,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 rustc_middle::mir::ProjectionElem::Field(field_idx, _) => {
                     let off = self.field_offset_in_bytes(cur_ty, field_idx.as_usize()) as usize;
                     byte_offset += off;
-                    if let rustc_middle::ty::TyKind::Adt(adt_def, substs) = cur_ty.kind() {
-                        if !adt_def.is_enum() {
+                    if let rustc_middle::ty::TyKind::Adt(adt_def, substs) = cur_ty.kind()
+                        && !adt_def.is_enum() {
                             let variant = adt_def.non_enum_variant();
                             if let Some(field_def) = variant.fields.get(field_idx) {
                                 cur_ty = mir_utils::field_ty(
@@ -1535,7 +1524,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                 );
                             }
                         }
-                    }
                 }
                 rustc_middle::mir::ProjectionElem::Deref => {
                     if let rustc_middle::ty::TyKind::Ref(_, inner, _) = cur_ty.kind() {
@@ -1593,14 +1581,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         if !has_index_with_concrete {
             return;
         }
-        if let Some(addr) = self.address_of_place(place) {
-            if let Some(ref prov) = addr.provenance {
+        if let Some(addr) = self.address_of_place(place)
+            && let Some(ref prov) = addr.provenance {
                 let alloc_id = prov.alloc_id;
                 let byte_offset = prov.offset.as_u64().map(|v| v as usize).unwrap_or(0);
                 self.content_mut(alloc_id).facts.initialized = true;
                 self.record_byte_value(alloc_id, byte_offset, value.z3_term.clone());
             }
-        }
     }
 
     /// Inject layout constraints (>= 1) for generic AlignOf/SizeOf constants.
@@ -1642,11 +1629,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
         let body = self.tcx.mir_for_ctfe(uneval.def);
         let is_gcd = body.basic_blocks.iter().any(|bb| {
-            if let rustc_middle::mir::TerminatorKind::Call { func, .. } = &bb.terminator().kind {
-                if let Some(did) = mir_utils::dep_callee_def_id(func) {
+            if let rustc_middle::mir::TerminatorKind::Call { func, .. } = &bb.terminator().kind
+                && let Some(did) = mir_utils::dep_callee_def_id(func) {
                     return api_classify::is_gcd(Some(did));
                 }
-            }
             false
         });
         if !is_gcd || uneval.args.len() < 2 {
@@ -1896,8 +1882,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 // flag) are properly tracked. Without this, field access falls
                 // through to cloning the base term, mixing the arithmetic result
                 // with the boolean overflow flag and corrupting path conditions.
-                if let rustc_middle::ty::TyKind::Tuple(fields) = dest_ty.kind() {
-                    if fields.len() == 2 {
+                if let rustc_middle::ty::TyKind::Tuple(fields) = dest_ty.kind()
+                    && fields.len() == 2 {
                         let result_val = VmValue {
                             z3_term: term.clone(),
                             ty: fields[0],
@@ -1910,7 +1896,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         let overflow_val = VmValue::new(overflow_term, fields[1]);
                         self.set_field_value(dest_place.local, vec![1], overflow_val);
                     }
-                }
                 VmValue {
                     z3_term: term,
                     ty: dest_ty,
@@ -1962,10 +1947,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 // the target ADT's field view (keyed by type) so a later
                 // `(*cast_ptr).field` resolves to the right field instead of the
                 // original view's field at the same index.
-                if let rustc_middle::ty::TyKind::RawPtr(target_ty, _) = cast_ty.kind() {
-                    if let rustc_middle::ty::TyKind::Adt(adt_def, _) = target_ty.kind() {
-                        if adt_def.is_struct() {
-                            if let Some(alloc_id) = src_val.provenance_alloc_id() {
+                if let rustc_middle::ty::TyKind::RawPtr(target_ty, _) = cast_ty.kind()
+                    && let rustc_middle::ty::TyKind::Adt(adt_def, _) = target_ty.kind()
+                        && adt_def.is_struct()
+                            && let Some(alloc_id) = src_val.provenance_alloc_id() {
                                 self.decompose_pointee_fields(
                                     alloc_id,
                                     Vec::new(),
@@ -1976,9 +1961,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                     0,
                                 );
                             }
-                        }
-                    }
-                }
                 // Transmute-like casts of single-field newtypes (e.g.
                 // NonZero::get's `_0 = copy _1 as T`) yield the underlying
                 // field value, not the wrapper's own term.
@@ -2102,9 +2084,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     // Only flatten the data-carrying variant (`Ok`/`Some`); on
                     // `Err`/`None` paths there is no `Self` and the nested place
                     // should resolve to `Unknown` instead.
-                    if data_variant != Some(false) {
-                        if let Some(op_place) = operand.place() {
-                            if op_place.projection.is_empty() {
+                    if data_variant != Some(false)
+                        && let Some(op_place) = operand.place()
+                            && op_place.projection.is_empty() {
                                 let nested: Vec<(Vec<usize>, VmValue<'z3, 'tcx>)> = self
                                     .field_paths(op_place.local)
                                     .into_iter()
@@ -2120,8 +2102,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                     self.set_field_value(dest_local, full, nested_val);
                                 }
                             }
-                        }
-                    }
                     if let Some(alloc_id) = dest_alloc_id {
                         self.content_mut(alloc_id).facts.initialized = true;
                         if is_byte_array && field_sz == 1 {
@@ -2221,9 +2201,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 // the discriminant index equals the repr value + 1.
                 // Connect the fresh discriminant term to the ADT value so
                 // that SwitchInt constraints propagate to the stored value.
-                if let Some(ref pv) = place_val {
-                    if let rustc_middle::ty::TyKind::Adt(adt_def, _) = pv.ty.kind() {
-                        if api_classify::is_std_ordering(adt_def.did()) && adt_def.is_enum() {
+                if let Some(ref pv) = place_val
+                    && let rustc_middle::ty::TyKind::Adt(adt_def, _) = pv.ty.kind()
+                        && api_classify::is_std_ordering(adt_def.did()) && adt_def.is_enum() {
                             let one = Int::from_u64(self.z3_ctx, 1);
                             let discr_minus_one = Int::sub(self.z3_ctx, &[&term, &one]);
                             self.constraints.assertions.push(pv.z3_term._eq(&discr_minus_one));
@@ -2233,8 +2213,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             self.constraints.assertions.push(term.ge(&zero));
                             self.constraints.assertions.push(term.le(&two));
                         }
-                    }
-                }
                 VmValue::new(term, dest_ty)
             }
             #[cfg(not(rapx_ge_99))]
@@ -2326,10 +2304,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 // (`us_len * sizeof_U`) stays degree-2 rather than the
                 // degree-3 `div * us * sizeof_U` that Z3's NIA cannot rewrite.
                 if let Some((div_lhs, div_rhs)) = self.constraints.term_caches.div_roots.get(lhs)
-                {
-                    if let Some(us_dividend) = self.constraints.term_caches.exact_div_roots.get(rhs)
-                    {
-                        if let Some(ts_dividend) = self.constraints.term_caches.exact_div_roots.get(div_rhs)
+                    && let Some(us_dividend) = self.constraints.term_caches.exact_div_roots.get(rhs)
+                        && let Some(ts_dividend) = self.constraints.term_caches.exact_div_roots.get(div_rhs)
                         {
                             let us_len = self.fresh_int("us_len");
                             self.constraints
@@ -2340,8 +2316,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             self.constraints.assertions.push(byte_len.le(&byte_bound));
                             return us_len;
                         }
-                    }
-                }
                 Int::mul(self.z3_ctx, &[lhs, rhs])
             }
             BinOp::Div => {
@@ -2776,17 +2750,14 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 .align_n
                 .as_ref()
                 .and_then(|a| a.simplify().as_u64())
-            {
-                if a >= au && a % au == 0 {
+                && a >= au && a % au == 0 {
                     return true;
                 }
-            }
             // If the value is a constant, check directly
-            if let Some(c) = val.z3_term.as_u64() {
-                if c % au == 0 {
+            if let Some(c) = val.z3_term.as_u64()
+                && c % au == 0 {
                     return true;
                 }
-            }
         }
         false
     }
@@ -2986,22 +2957,20 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 match inner_op {
                     // `x % n == 0`: div_rhs is the concrete divisor constant.
                     rustc_middle::mir::BinOp::Rem => {
-                        if let Some(divisor) = resolve_u64_from_place_key(&div_rhs, self) {
-                            if divisor > 0 {
+                        if let Some(divisor) = resolve_u64_from_place_key(&div_rhs, self)
+                            && divisor > 0 {
                                 self.mark_align_n(&div_lhs, Int::from_u64(self.z3_ctx, divisor));
                             }
-                        }
                     }
                     // `x & (align-1) == 0`: the mask is `align-1` (symbolic for a
                     // generic `T`), so `align = mask + 1`.
                     rustc_middle::mir::BinOp::BitAnd => {
-                        if let Some(rhs_local) = div_rhs.as_ref().and_then(|pk| pk.local()) {
-                            if let Some(rhs_val) = self.local_value(rhs_local) {
+                        if let Some(rhs_local) = div_rhs.as_ref().and_then(|pk| pk.local())
+                            && let Some(rhs_val) = self.local_value(rhs_local) {
                                 let one = Int::from_u64(self.z3_ctx, 1);
                                 let align = Int::add(self.z3_ctx, &[&rhs_val.z3_term, &one]);
                                 self.mark_align_n(&div_lhs, align);
                             }
-                        }
                     }
                     _ => {}
                 }
@@ -3010,14 +2979,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     }
 
     fn mark_align_n(&mut self, src_pk: &Option<PlaceKey>, align: Int<'z3>) {
-        if let Some(src_pk) = src_pk {
-            if let Some(local) = src_pk.local() {
-                if let Some(mut val) = self.local_value(local).cloned() {
+        if let Some(src_pk) = src_pk
+            && let Some(local) = src_pk.local()
+                && let Some(mut val) = self.local_value(local).cloned() {
                     val.facts.align_n = Some(align);
                     self.set_local(local, val);
                 }
-            }
-        }
     }
 
     /// Infer non_null invariants from branch guards.
@@ -3062,12 +3029,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
     fn mark_guard_pointer(&mut self, lhs: &Option<PlaceKey>, rhs: &Option<PlaceKey>) {
         for pk in [lhs, rhs].into_iter().flatten() {
-            if let Some(local) = pk.local() {
-                if let Some(mut val) = self.local_value(local).cloned() {
+            if let Some(local) = pk.local()
+                && let Some(mut val) = self.local_value(local).cloned() {
                     val.facts.non_null = true;
                     self.set_local(local, val);
                 }
-            }
         }
     }
 
@@ -3233,9 +3199,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 self.record_for_each_allocated(property);
             }
             PropertyKind::Typed => {
-                if let Some(val) = self.contract_target_value(property) {
-                    if let Some(alloc_id) = val.provenance_alloc_id() {
-                        if let Some(expected_ty) = property.args().get(1).and_then(|a| {
+                if let Some(val) = self.contract_target_value(property)
+                    && let Some(alloc_id) = val.provenance_alloc_id()
+                        && let Some(expected_ty) = property.args().get(1).and_then(|a| {
                             if let PropertyArg::Ty(ty) = a {
                                 Some(*ty)
                             } else {
@@ -3262,8 +3228,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                 self.alloc_mut(alloc_id).element_ty = ElementTy::Typed(expected_ty);
                             }
                         }
-                    }
-                }
             }
             PropertyKind::SplitTransmute => {
                 // Anchor the license on the slice's data allocation: the
@@ -3763,23 +3727,20 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             }
             ContractExpr::Len(inner) => {
                 // Try field-based len for Iter/IterMut first.
-                if let Some(val) = self.eval_contract_expr_simple_value(inner) {
-                    if let Some(term) = self.try_simple_iter_len(&val) {
+                if let Some(val) = self.eval_contract_expr_simple_value(inner)
+                    && let Some(term) = self.try_simple_iter_len(&val) {
                         return Some(term);
                     }
-                }
                 // A struct (e.g. `NodeRef`) whose `len()` reads `(*x.field).len`
                 // through a `NonNull` field.
-                if let ContractExpr::Place(cp) = &**inner {
-                    if let Some(path) = cp.plain_field_path() {
+                if let ContractExpr::Place(cp) = &**inner
+                    && let Some(path) = cp.plain_field_path() {
                         let local = cp.base.to_local();
-                        if let Some(ty) = self.field_type_at(local, &path) {
-                            if let Some(term) = self.try_struct_nn_len_field(local, &path, ty) {
+                        if let Some(ty) = self.field_type_at(local, &path)
+                            && let Some(term) = self.try_struct_nn_len_field(local, &path, ty) {
                                 return Some(term);
                             }
-                        }
                     }
-                }
                 let val = self.eval_contract_expr_simple_value(inner)?;
                 self.len_from_value(&val)
             }
@@ -3998,11 +3959,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             let index_local = index_place.base.to_local();
             if let rustc_middle::ty::TyKind::Adt(adt_def, _) =
                 self.body().local_decls[index_local].ty.kind()
-            {
-                if mir_utils::is_range_type(self.tcx, adt_def.did()) {
+                && mir_utils::is_range_type(self.tcx, adt_def.did()) {
                     return;
                 }
-            }
         }
         let slice_local = match slice.as_ref() {
             ContractExpr::Place(cp) => cp.base.try_to_local(),
@@ -4297,13 +4256,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 if self
                     .tcx
                     .is_diagnostic_item(rustc_span::sym::Option, adt_def.did())
-                {
-                    if let Some(inner) = substs.first().and_then(|s| s.as_type()) {
-                        if let TyKind::Adt(ia, is_) = inner.kind() {
+                    && let Some(inner) = substs.first().and_then(|s| s.as_type())
+                        && let TyKind::Adt(ia, is_) = inner.kind() {
                             return self.transparent_ptr_pointee(ia, is_);
                         }
-                    }
-                }
                 None
             }
             _ => None,

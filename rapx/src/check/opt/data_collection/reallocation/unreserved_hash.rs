@@ -27,14 +27,13 @@ fn find_downside_hash_insert_node(graph: &Graph, node_idx: Local) -> Option<Loca
         &mut |graph: &Graph, idx: Local| {
             let node = &graph.nodes[idx];
             for op in node.ops.iter() {
-                if let NodeOp::Call(def_id) = op {
-                    if *def_id == def_paths.hashmap_insert.last_def_id()
+                if let NodeOp::Call(def_id) = op
+                    && (*def_id == def_paths.hashmap_insert.last_def_id()
                         || *def_id == def_paths.hashset_insert.last_def_id()
-                        || *def_id == def_paths.entry.last_def_id()
+                        || *def_id == def_paths.entry.last_def_id())
                     {
                         return true;
                     }
-                }
             }
             false
         },
@@ -56,12 +55,11 @@ impl OptCheck for UnreservedHashCheck {
                     def_paths.hashmap_new.last_def_id(),
                     def_paths.hashset_new.last_def_id(),
                 ],
-            ) {
-                if let Some(insert_idx) = find_downside_hash_insert_node(graph, node_idx) {
+            )
+                && let Some(insert_idx) = find_downside_hash_insert_node(graph, node_idx) {
                     let insert_node = &graph.nodes[insert_idx];
                     self.record.push((node.span, insert_node.span));
                 }
-            }
         }
     }
 

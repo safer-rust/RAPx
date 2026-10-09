@@ -471,13 +471,11 @@ pub(crate) fn check_alias_vm<'z3, 'tcx>(
                     }
                     let resolved = PlaceKey::from_origin(root, fields);
                     let sfo = alias_hazard::self_field_origin(tcx, caller, &resolved);
-                    if let Some(sfo) = sfo {
-                        if let Some(is_shared) = is_self_field_shared_ref(tcx, caller, &sfo) {
-                            if is_shared {
+                    if let Some(sfo) = sfo
+                        && let Some(is_shared) = is_self_field_shared_ref(tcx, caller, &sfo)
+                            && is_shared {
                                 return VmAliasResult::Proved;
                             }
-                        }
-                    }
                 }
             }
             return VmAliasResult::Unknown;
@@ -574,14 +572,13 @@ fn check_view_alias<'z3, 'tcx>(
         .args
         .first()
         .and_then(|a| alias_hazard::operand_mir_place(a));
-    if let Some(place) = mir_place_from_arg {
-        if !place.projection.is_empty() && place.local == Local::from_usize(1) {
+    if let Some(place) = mir_place_from_arg
+        && !place.projection.is_empty() && place.local == Local::from_usize(1) {
             let field_key = PlaceKey::from_mir_place(place);
             if !field_key.fields.is_empty() && !origins.contains(&field_key) {
                 origins.push(field_key);
             }
         }
-    }
 
     // Try VM provenance tracing for fast-path checks
     if let Some(origin) = vm_state.resolve_origin(&origin_val) {
@@ -737,22 +734,19 @@ fn check_view_alias<'z3, 'tcx>(
         // for a raw pointer field.
         if let Some(sfo) = infer_self_field_from_type(tcx, caller, checkpoint)
             .or_else(|| find_struct_field_origin_for_param(tcx, caller, checkpoint))
-        {
-            if alias_hazard::escaped_self_field_violation(tcx, caller, &sfo).is_none() {
+            && alias_hazard::escaped_self_field_violation(tcx, caller, &sfo).is_none() {
                 return VmAliasResult::Proved;
             }
-        }
         let body = tcx.optimized_mir(caller);
         if body.arg_count >= 1 {
             let self_ty = body.local_decls[Local::from_usize(1)].ty;
             // A `NonNull<T>` consumed by value (e.g. `NonNull::as_uninit_mut(self)`)
             // transfers exclusive ownership of its pointer, so producing a unique
             // view is safe even though the receiver is not a `&mut self`.
-            if let rustc_middle::ty::TyKind::Adt(adt_def, _) = self_ty.kind() {
-                if api_classify::is_std_nonnull(adt_def.did()) {
+            if let rustc_middle::ty::TyKind::Adt(adt_def, _) = self_ty.kind()
+                && api_classify::is_std_nonnull(adt_def.did()) {
                     return VmAliasResult::Proved;
                 }
-            }
         }
         return VmAliasResult::Failed(format!(
             "returned unique view escapes while the original pointer is not owned by a private self field [origin={:?}]",
@@ -948,15 +942,14 @@ fn infer_self_field_from_type<'tcx>(
                 _ => None,
             })
             .collect();
-        if let Some(&idx) = fields.first() {
-            if let Some(field) = adt.all_fields().nth(idx) {
+        if let Some(&idx) = fields.first()
+            && let Some(field) = adt.all_fields().nth(idx) {
                 return Some(FieldOrigin {
                     struct_def_id: adt_def,
                     field_index: idx,
                     field_name: field.name.to_string(),
                 });
             }
-        }
     }
 
     None

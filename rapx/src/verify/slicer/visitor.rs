@@ -439,8 +439,8 @@ impl<'tcx> BackwardSlicer<'tcx> {
 
         // Keep the definition of a `needs_drop` local (an owner's construction
         // chain) so `Owning` can trace its field provenance.
-        if keep_owner {
-            if let StatementKind::Assign(assign) = &statement.kind {
+        if keep_owner
+            && let StatementKind::Assign(assign) = &statement.kind {
                 let (place, _) = &**assign;
                 let body = self.tcx.optimized_mir(def_id);
                 let ty = body.local_decls[place.local].ty;
@@ -460,7 +460,6 @@ impl<'tcx> BackwardSlicer<'tcx> {
                     return;
                 }
             }
-        }
 
         let mut defs = RelevantPlaces::new();
         match &statement.kind {

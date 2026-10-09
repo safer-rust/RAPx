@@ -266,22 +266,20 @@ struct Subst<'a> {
 
 impl VisitMut for Subst<'_> {
     fn visit_expr_mut(&mut self, node: &mut Expr) {
-        if let Expr::Path(path) = node {
-            if path.qself.is_none()
+        if let Expr::Path(path) = node
+            && path.qself.is_none()
                 && path.path.leading_colon.is_none()
                 && path.path.segments.len() == 1
             {
                 let ident = path.path.segments[0].ident.to_string();
-                if let Some(i) = self.params.iter().position(|n| *n == ident) {
-                    if let Some(arg) = self.args.get(i) {
+                if let Some(i) = self.params.iter().position(|n| *n == ident)
+                    && let Some(arg) = self.args.get(i) {
                         // The substituted argument comes from the call site and
                         // never refers to this compound's formals, so stop recursing.
                         *node = arg.clone();
                         return;
                     }
-                }
             }
-        }
         visit_mut::visit_expr_mut(self, node);
     }
 }
@@ -455,8 +453,8 @@ pub(crate) fn subsumption_closure<'tcx>(atom: &AtomProperty<'tcx>) -> Vec<AtomPr
         if !seen.insert((tag.clone(), args.clone())) {
             continue;
         }
-        if let Some(kind) = super::spec::find_spec(&tag).map(|s| s.kind) {
-            if let Some(resolved) = resolve_subsumption_args(&args, atom) {
+        if let Some(kind) = super::spec::find_spec(&tag).map(|s| s.kind)
+            && let Some(resolved) = resolve_subsumption_args(&args, atom) {
                 out.push(AtomProperty {
                     kind,
                     args: resolved,
@@ -465,7 +463,6 @@ pub(crate) fn subsumption_closure<'tcx>(atom: &AtomProperty<'tcx>) -> Vec<AtomPr
                     origin: None,
                 });
             }
-        }
         // Enqueue this tag's own consequences, substituting its params with the
         // actual `args` passed to it (kept relative to `atom`).
         if let Some(spec) = builtin_subsumptions_map().get(&tag) {
@@ -496,9 +493,9 @@ fn resolve_subsumption_args<'tcx>(
     let mut resolved: Vec<PropertyArg<'tcx>> = Vec::with_capacity(args.len());
     for a in args {
         match a {
-            CompoundArg::Param(i) => match atom.args.get(*i) {
-                Some(pa) => resolved.push(pa.clone()),
-                None => return None,
+            CompoundArg::Param(i) => {
+                let pa = atom.args.get(*i)?;
+                resolved.push(pa.clone())
             },
             CompoundArg::Lit(s) => {
                 rap_warn!("subsumption body literal `{s}` unsupported; skipping");

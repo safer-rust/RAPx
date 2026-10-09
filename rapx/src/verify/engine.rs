@@ -207,12 +207,11 @@ impl<'tcx> VerifyEngine<'tcx> {
                 for stmt in &bb.statements {
                     if let StatementKind::Assign(assign) = &stmt.kind {
                         let (target, rvalue) = assign.as_ref();
-                        if target.local == cur && target.projection.is_empty() {
-                            if let Rvalue::Ref(_, _, referent) = rvalue {
+                        if target.local == cur && target.projection.is_empty()
+                            && let Rvalue::Ref(_, _, referent) = rvalue {
                                 next = Some(referent.local);
                                 break 'outer;
                             }
-                        }
                     }
                 }
             }
@@ -264,11 +263,10 @@ impl<'tcx> VerifyEngine<'tcx> {
                     #[cfg(rapx_ge_95)]
                     Operand::RuntimeChecks(_) => {}
                 },
-                TerminatorKind::Drop { place, .. } => {
-                    if place.local == local {
+                TerminatorKind::Drop { place, .. }
+                    if place.local == local => {
                         return true;
                     }
-                }
                 _ => {}
             }
         }
@@ -316,8 +314,8 @@ impl<'tcx> VerifyEngine<'tcx> {
             };
 
             if let Some(cur) = cur_def_id {
-                if let Some(prev) = prev_def_id {
-                    if prev != cur {
+                if let Some(prev) = prev_def_id
+                    && prev != cur {
                         if cur == caller {
                             // Returning to the root caller: pop *every* still-active
                             // frame. Nested inlined callees whose return blocks
@@ -401,7 +399,7 @@ impl<'tcx> VerifyEngine<'tcx> {
 
                                 // The frame `cur` connects to, and the inlined
                                 // callees skipped between it and `cur`.
-                                let eff = cur_entry.map(&eff_parent).unwrap_or(caller);
+                                let eff = cur_entry.map(eff_parent).unwrap_or(caller);
                                 let mut skipped: Vec<(DefId, usize)> = Vec::new();
                                 {
                                     let mut p = cur_entry.and_then(|g| tree.inline_parent(g));
@@ -453,7 +451,6 @@ impl<'tcx> VerifyEngine<'tcx> {
                             }
                         }
                     }
-                }
                 prev_def_id = Some(cur);
             }
 
@@ -648,7 +645,7 @@ impl<'tcx> VerifyEngine<'tcx> {
 
             if !entry_facts.is_empty() {
                 let mut items: Vec<RelevantItem<'tcx>> = entry_facts.to_vec();
-                items.extend(backward.items.drain(..));
+                items.append(&mut backward.items);
                 backward.items = items;
             }
 

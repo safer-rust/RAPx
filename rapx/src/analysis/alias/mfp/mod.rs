@@ -36,11 +36,10 @@ impl<'tcx> MfpAliasAnalyzer<'tcx> {
             return None;
         }
         // Skip const contexts (only applicable to local functions)
-        if let Some(local_def_id) = def_id.as_local() {
-            if self.tcx.hir_body_const_context(local_def_id).is_some() {
+        if let Some(local_def_id) = def_id.as_local()
+            && self.tcx.hir_body_const_context(local_def_id).is_some() {
                 return None;
             }
-        }
         let body = self.tcx.optimized_mir(def_id);
         Some(body.arg_count)
     }
@@ -59,11 +58,10 @@ impl<'tcx> MfpAliasAnalyzer<'tcx> {
         }
 
         // Skip const contexts (only applicable to local functions)
-        if let Some(local_def_id) = def_id.as_local() {
-            if self.tcx.hir_body_const_context(local_def_id).is_some() {
+        if let Some(local_def_id) = def_id.as_local()
+            && self.tcx.hir_body_const_context(local_def_id).is_some() {
                 return;
             }
-        }
 
         // Skip dummy functions
         if fn_name.contains("__raw_ptr_deref_dummy") {
@@ -121,16 +119,13 @@ impl<'tcx> MfpAliasAnalyzer<'tcx> {
         // Traverse all basic blocks in the MIR body
         let body = self.tcx.optimized_mir(def_id);
         for bb_data in body.basic_blocks.iter() {
-            if let Some(terminator) = &bb_data.terminator {
-                if let TerminatorKind::Call { func, .. } = &terminator.kind {
-                    if let Operand::Constant(c) = func {
-                        if let ty::FnDef(callee_def_id, _) = c.ty().kind() {
+            if let Some(terminator) = &bb_data.terminator
+                && let TerminatorKind::Call { func, .. } = &terminator.kind
+                    && let Operand::Constant(c) = func
+                        && let ty::FnDef(callee_def_id, _) = c.ty().kind() {
                             // Recursively collect called functions
                             self.collect_reachable_functions(*callee_def_id, reachable);
                         }
-                    }
-                }
-            }
         }
     }
 }

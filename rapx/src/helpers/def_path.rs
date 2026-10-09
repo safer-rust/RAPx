@@ -16,7 +16,7 @@ pub fn path_str_def_id<'tcx>(tcx: TyCtxt<'tcx>, path_str: &str) -> DefId {
 fn def_path_last_def_id<'tcx>(tcx: &TyCtxt<'tcx>, path: &[&str]) -> DefId {
     def_path_def_ids(tcx, path)
         .last()
-        .expect(&format!("can not resolve {:?}", path))
+        .unwrap_or_else(|| panic!("can not resolve {:?}", path))
 }
 
 pub struct DefPath {
@@ -28,7 +28,7 @@ impl DefPath {
     pub fn new(raw: &str, tcx: &TyCtxt<'_>) -> Self {
         let path: Vec<&str> = raw.split("::").collect();
         let def_ids: Vec<DefId> = def_path_def_ids(tcx, &path).collect();
-        if def_ids.len() == 0 {
+        if def_ids.is_empty() {
             panic!("Fail to parse def path {}", raw);
         }
         DefPath { def_ids }

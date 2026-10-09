@@ -202,11 +202,10 @@ pub(crate) fn bind_callsite_roots(
             .filter_map(|place| argument_index_of_place(tcx, checkpoint, place))
             .collect();
         for (root, index) in need_len_roots {
-            if let Some(operand) = checkpoint.args.get(index) {
-                if let Some(place) = bind_operand_place(operand, &root.fields) {
+            if let Some(operand) = checkpoint.args.get(index)
+                && let Some(place) = bind_operand_place(operand, &root.fields) {
                     relevance.need_len.insert(place);
                 }
-            }
         }
     }
 }

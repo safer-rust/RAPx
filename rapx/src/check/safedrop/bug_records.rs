@@ -254,6 +254,12 @@ impl BugRecords {
     }
 }
 
+impl Default for BugRecords {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 fn df_uaf_detail(
     bug: &TyBug,
     drop_local: &str,

@@ -18,11 +18,10 @@ pub struct VecRemoveCheck {
 
 fn is_0_usize(node: &GraphNode) -> bool {
     for op in node.ops.iter() {
-        if let NodeOp::Const(desc, _) = op {
-            if desc.eq("0_usize") {
+        if let NodeOp::Const(desc, _) = op
+            && desc.eq("0_usize") {
                 return true;
             }
-        }
     }
     false
 }

@@ -77,24 +77,19 @@ impl PropertyChecker {
                     }
                     // MaybeUninit<T> accessed via raw pointer from as_mut_ptr:
                     // treat as T for write ops where caller will initialize it.
-                    if let TyKind::Adt(adt_def, substs) = elem_ty.kind() {
-                        if crate::verify::api_classify::is_maybe_uninit_type(adt_def.did())
+                    if let TyKind::Adt(adt_def, substs) = elem_ty.kind()
+                        && crate::verify::api_classify::is_maybe_uninit_type(adt_def.did())
                             && matches!(value.ty.kind(), TyKind::RawPtr(..))
-                        {
-                            if let Some(inner) = substs.first().and_then(|s| s.as_type()) {
-                                if inner == expected_ty {
-                                    if crate::verify::api_classify::is_mem_copy_or_write(
+                            && let Some(inner) = substs.first().and_then(|s| s.as_type())
+                                && inner == expected_ty
+                                    && crate::verify::api_classify::is_mem_copy_or_write(
                                         checkpoint.callee,
                                     ) {
                                         return CheckResult::ProvedByRule;
                                     }
-                                }
-                            }
-                        }
-                    }
                     // Struct/enum field: check if expected_ty matches a field at the provenance offset.
-                    if let TyKind::Adt(adt_def, substs) = elem_ty.kind() {
-                        if !adt_def.is_enum() {
+                    if let TyKind::Adt(adt_def, substs) = elem_ty.kind()
+                        && !adt_def.is_enum() {
                             let off_u64 = value
                                 .provenance
                                 .as_ref()
@@ -120,9 +115,9 @@ impl PropertyChecker {
                                     }
                                 } else if off_u64 == Some(accum) {
                                     // Unwrap ManuallyDrop<T> → T for unions like MaybeUninit.
-                                    if let TyKind::Adt(wrap_adt, wrap_substs) = field_ty.kind() {
-                                        if !wrap_adt.is_enum() {
-                                            if (vm_state.tcx.is_lang_item(
+                                    if let TyKind::Adt(wrap_adt, wrap_substs) = field_ty.kind()
+                                        && !wrap_adt.is_enum()
+                                            && (vm_state.tcx.is_lang_item(
                                                 wrap_adt.did(),
                                                 LangItem::ManuallyDrop,
                                             ) || vm_state
@@ -136,33 +131,27 @@ impl PropertyChecker {
                                                 }
                                                 return CheckResult::Failed;
                                             }
-                                        }
-                                    }
                                 }
                                 accum += vm_state.size_of_ty(field_ty).max(1);
                             }
                         }
-                    }
                     // ForEach (`buckets.iter()`): the allocation stores pointers
                     // (`*mut T`), but the invariant applies to the pointee (`T`).
                     // Unwrap *const/*mut to match.
-                    if property.for_each().is_some() {
-                        if let TyKind::RawPtr(inner, _) = elem_ty.kind() {
-                            if *inner == expected_ty {
+                    if property.for_each().is_some()
+                        && let TyKind::RawPtr(inner, _) = elem_ty.kind()
+                            && *inner == expected_ty {
                                 return CheckResult::ProvedByRule;
                             }
-                        }
-                    }
                     // A single pointer loaded from a container whose
                     // `Typed(container.iter(), T)` invariant established the
                     // element target type (`let cur = buckets[i]`). The fact comes
                     // from the invariant, so this does not bless dangling pointers
                     // in containers that carry no such invariant.
-                    if let Some(target) = vm_state.alloc(alloc_id).facts.for_each.target_ty {
-                        if target == expected_ty {
+                    if let Some(target) = vm_state.alloc(alloc_id).facts.for_each.target_ty
+                        && target == expected_ty {
                             return CheckResult::ProvedByRule;
                         }
-                    }
                     // Transmute to an all-bit-valid destination type
                     // (integers, floats, raw pointers): any byte pattern is
                     // a valid value, so a reinterpretation from a
@@ -189,27 +178,25 @@ impl PropertyChecker {
             }
 
             // No provenance: fall back to init and size checks.
-            if value.facts.init {
-                if vm_state.size_of_ty(value_elem_ty) > 0
+            if value.facts.init
+                && vm_state.size_of_ty(value_elem_ty) > 0
                     && vm_state.size_of_ty(expected_ty) > 0
                     && vm_state.size_of_ty(value_elem_ty) == vm_state.size_of_ty(expected_ty)
                 {
                     return CheckResult::ProvedByRule;
                 }
-            }
 
             // For ForEach (for_each) properties, the invariant applies to
             // individual elements loaded from a container. The VM may not track
             // provenance through memory loads from heap allocations. When sizes
             // match, trust the type.
-            if property.for_each().is_some() {
-                if vm_state.size_of_ty(value_elem_ty) > 0
+            if property.for_each().is_some()
+                && vm_state.size_of_ty(value_elem_ty) > 0
                     && vm_state.size_of_ty(expected_ty) > 0
                     && vm_state.size_of_ty(value_elem_ty) == vm_state.size_of_ty(expected_ty)
                 {
                     return CheckResult::ProvedByRule;
                 }
-            }
 
             // When we have provenance but the element type doesn't match and
             // sizes match, assume the type is correct. This handles pointers
@@ -218,11 +205,9 @@ impl PropertyChecker {
             let es = vm_state.size_of_ty(expected_ty);
             if let Some(alloc_id) = value.provenance_alloc_id()
                 && vs == es
-            {
-                if !vm_state.alloc(alloc_id).element_ty.is_generic() {
+                && !vm_state.alloc(alloc_id).element_ty.is_generic() {
                     return CheckResult::ProvedByRule;
                 }
-            }
 
             if vs > 0 && es > 0 && vs != es {
                 return CheckResult::Failed;

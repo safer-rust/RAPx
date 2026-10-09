@@ -25,7 +25,7 @@ where
         writeln!(&mut dot, "\n    // Variable Nodes").unwrap();
         writeln!(&mut dot, "    subgraph cluster_vars {{").unwrap();
         writeln!(&mut dot, "        rank=same;").unwrap();
-        for (place, _var_node) in &self.vars {
+        for place in self.vars.keys() {
             let place_id = format!("{:?}", place);
             let label = format!("{:?}", place);
             writeln!(

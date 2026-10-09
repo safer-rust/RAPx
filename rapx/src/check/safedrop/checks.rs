@@ -71,7 +71,7 @@ pub fn uaf_check(
         let bug = make_bug(
             &drop_record[value_idx],
             LocalSpot::new(bb_idx, local),
-            span.clone(),
+            span,
             confidence,
             t,
         );
@@ -141,15 +141,14 @@ pub fn push_drop_info(
 
 fn push_drop_through_move(
     graph: &AliasGraph,
-    drop_record: &mut Vec<DropRecord>,
+    drop_record: &mut [DropRecord],
     value_idx: usize,
     drop_spot: LocalSpot,
 ) {
-    if let Some(&src) = graph.owner_transfers.get(&value_idx) {
-        if !drop_record[src].is_dropped {
+    if let Some(&src) = graph.owner_transfers.get(&value_idx)
+        && !drop_record[src].is_dropped {
             drop_record[src] = DropRecord::new(src, true, drop_spot);
         }
-    }
     for (&dest, &src) in graph.owner_transfers.iter() {
         if src == value_idx && !drop_record[dest].is_dropped {
             drop_record[dest] = DropRecord::new(dest, true, drop_spot);
@@ -159,7 +158,7 @@ fn push_drop_through_move(
 
 fn push_drop_bottom_up(
     graph: &AliasGraph,
-    drop_record: &mut Vec<DropRecord>,
+    drop_record: &mut [DropRecord],
     value_idx: usize,
     drop_spot: LocalSpot,
 ) {
@@ -234,15 +233,14 @@ fn fetch_drop_from_pointee(
                     Some(s.local)
                 } else {
                     for (v, _) in graph.values.iter().enumerate() {
-                        if let Some(v_slot) = graph.value_to_slot_idx(v) {
-                            if graph
+                        if let Some(v_slot) = graph.value_to_slot_idx(v)
+                            && graph
                                 .pts_graph
                                 .get_slot(v_slot)
                                 .is_some_and(|vs| vs.local == s.local && vs.fields == s.fields)
                             {
                                 return Some(v);
                             }
-                        }
                     }
                     None
                 }
@@ -270,12 +268,8 @@ fn fetch_drop_from_bottom(graph: &AliasGraph, drop_record: &mut Vec<DropRecord>,
         rap_debug!("{:?}", drop_record[field_value_id]);
         fetch_drop_from_alias(graph, drop_record, field_value_id);
         if drop_record[field_value_id].is_dropped {
-            push_drop_bottom_up(
-                graph,
-                drop_record,
-                field_value_id,
-                drop_record[field_value_id].drop_spot,
-            );
+            let drop_spot = drop_record[field_value_id].drop_spot;
+            push_drop_bottom_up(graph, drop_record, field_value_id, drop_spot);
             rap_debug!("{:?}", drop_record[value_idx]);
             break;
         }
@@ -289,7 +283,7 @@ fn fetch_drop_from_bottom(graph: &AliasGraph, drop_record: &mut Vec<DropRecord>,
 
 fn fetch_drop_from_pts_fields(
     graph: &AliasGraph,
-    drop_record: &mut Vec<DropRecord>,
+    drop_record: &mut [DropRecord],
     value_idx: usize,
 ) {
     let Some(slot_idx) = graph.value_to_slot_idx(value_idx) else {
@@ -316,14 +310,13 @@ fn fetch_drop_from_pts_fields(
             if !dr.is_dropped {
                 continue;
             }
-            if let Some(drop_slot) = graph.value_to_slot_idx(v) {
-                if graph.pts_graph.may_alias(i, drop_slot) {
+            if let Some(drop_slot) = graph.value_to_slot_idx(v)
+                && graph.pts_graph.may_alias(i, drop_slot) {
                     drop_record[value_idx].has_dropped_field = true;
-                    drop_record[value_idx].drop_spot = drop_record[v].drop_spot.clone();
+                    drop_record[value_idx].drop_spot = drop_record[v].drop_spot;
                     found = true;
                     break;
                 }
-            }
         }
         if found {
             break;
@@ -351,7 +344,7 @@ fn fetch_drop_from_top(graph: &AliasGraph, drop_record: &mut Vec<DropRecord>, va
     }
 }
 
-fn fetch_drop_from_alias(graph: &AliasGraph, drop_record: &mut Vec<DropRecord>, value_idx: usize) {
+fn fetch_drop_from_alias(graph: &AliasGraph, drop_record: &mut [DropRecord], value_idx: usize) {
     rap_debug!("fetch_drop_from_alias: value_idx = {}", value_idx);
     if let Some(aliases) = get_alias_set(graph, value_idx) {
         for idx in aliases {
@@ -366,7 +359,7 @@ fn fetch_drop_from_alias(graph: &AliasGraph, drop_record: &mut Vec<DropRecord>, 
 
 // ── drop clearing ──
 
-fn clear_father_drop(graph: &AliasGraph, drop_record: &mut Vec<DropRecord>, value_idx: usize) {
+fn clear_father_drop(graph: &AliasGraph, drop_record: &mut [DropRecord], value_idx: usize) {
     rap_debug!("clear_drop_father: value_idx = {}", value_idx);
     let mut father = graph.values[value_idx].father.clone();
     while let Some(father_info) = father {

@@ -22,7 +22,7 @@ use super::PropertyChecker;
 /// The root local of the checkpoint's first argument, when it is a plain
 /// `Copy`/`Move` operand with no projection.
 fn first_arg_local<'tcx>(checkpoint: &Checkpoint<'tcx>) -> Option<Local> {
-    checkpoint.args.get(0).and_then(|op| match op {
+    checkpoint.args.first().and_then(|op| match op {
         Operand::Copy(p) | Operand::Move(p) if p.projection.is_empty() => Some(p.local),
         _ => None,
     })
@@ -152,13 +152,12 @@ impl PropertyChecker {
             }
 
             // 2. Try byte_value-based symbolic check via SMT
-            if let Some(size) = buffer_size {
-                if let Some(r) =
+            if let Some(size) = buffer_size
+                && let Some(r) =
                     self.check_valid_cstr_from_byte_values(vm_state, solver, alloc_id, &size)
                 {
                     return r;
                 }
-            }
         }
 
         // 3. MIR-level fallback: scan the body for constant byte assignments
@@ -213,11 +212,10 @@ impl PropertyChecker {
         if nul_offsets.is_empty() {
             // No NUL in tracked range — might be in untracked region.
             let size = vm_state.allocation_size(alloc_id);
-            if let Some(size_val) = size.as_u64() {
-                if max_known + 1 < size_val as usize {
+            if let Some(size_val) = size.as_u64()
+                && max_known + 1 < size_val as usize {
                     return None;
                 }
-            }
             return Some(CheckResult::Failed);
         }
 
@@ -284,11 +282,10 @@ impl PropertyChecker {
         for (nul_off, nul_term) in &byte_pairs {
             // A valid C string's NUL is the *last* byte; an interior NUL at an
             // earlier offset is a violation, not a candidate terminator.
-            if let Some(size) = size_u64 {
-                if *nul_off + 1 != size as usize {
+            if let Some(size) = size_u64
+                && *nul_off + 1 != size as usize {
                     continue;
                 }
-            }
             solver.push();
             solver.assert(&nul_term._eq(&zero));
 
@@ -333,19 +330,18 @@ impl PropertyChecker {
 
         if !has_nul_in_tracked {
             let last_off = byte_pairs.last().map(|(off, _)| *off).unwrap_or(0);
-            if let Some(size) = size_u64 {
-                if last_off + 1 >= size as usize {
+            if let Some(size) = size_u64
+                && last_off + 1 >= size as usize {
                     return Some(CheckResult::Failed);
                 }
-            }
         }
 
         // The final byte is definitely NUL, but some *interior* byte may also be
         // NUL — a confirmed interior-NUL violation (a counterexample where that
         // byte is 0), not an incomplete proof.
-        if let Some(size) = size_u64 {
-            if let Some((last_off, last_term)) = byte_pairs.last() {
-                if *last_off + 1 == size as usize {
+        if let Some(size) = size_u64
+            && let Some((last_off, last_term)) = byte_pairs.last()
+                && *last_off + 1 == size as usize {
                     solver.push();
                     solver.assert(&last_term._eq(&zero).not());
                     let last_not_nul = solver.check();
@@ -364,8 +360,6 @@ impl PropertyChecker {
                         }
                     }
                 }
-            }
-        }
 
         None
     }
@@ -415,11 +409,10 @@ impl PropertyChecker {
                     if let Rvalue::Use(Operand::Copy(p) | Operand::Move(p)) = rvalue {
                         work.push(p.local);
                     }
-                    if let Rvalue::Cast(_, Operand::Copy(p) | Operand::Move(p), _) = rvalue {
-                        if p.projection.is_empty() {
+                    if let Rvalue::Cast(_, Operand::Copy(p) | Operand::Move(p), _) = rvalue
+                        && p.projection.is_empty() {
                             work.push(p.local);
                         }
-                    }
                 }
             }
         }

@@ -24,11 +24,10 @@ impl OptCheck for VecInitCheck {
         let def_paths = &DEFPATHS.get_or_init(|| DefPaths::new(tcx));
         for node in graph.nodes.iter() {
             for op in node.ops.iter() {
-                if let NodeOp::Call(def_id) = op {
-                    if *def_id == def_paths.vec_from_elem.last_def_id() {
+                if let NodeOp::Call(def_id) = op
+                    && *def_id == def_paths.vec_from_elem.last_def_id() {
                         self.record.push(node.span);
                     }
-                }
             }
         }
     }

@@ -854,7 +854,7 @@ fn init_inner(tcx: TyCtxt) -> Intrinsics {
 
     let mut loaded_crates = std::collections::HashSet::new();
     for krate in std::iter::once(rustc_public::local_crate())
-        .chain(rustc_public::external_crates().into_iter())
+        .chain(rustc_public::external_crates())
         .filter(|krate| CRATES.iter().any(|name| *name == krate.name))
     {
         loaded_crates.insert(krate.name.clone());

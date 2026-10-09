@@ -57,15 +57,15 @@ impl<'tcx> CallGraphAnalyzer<'tcx> {
                     DefKind::Fn | DefKind::AssocFn | DefKind::Closure => {
                         self.tcx.optimized_mir(def_id)
                     }
-                    #[cfg(rapx_ge_99)]
+                    #[cfg(rapx_defkind_const_struct)]
                     DefKind::Const { .. }
                     | DefKind::Static { .. }
                     | DefKind::AssocConst { .. }
                     | DefKind::AnonConst => {
                         // NOTE: safer fallback for constants
-                        &self.tcx.mir_for_ctfe(def_id)
+                        self.tcx.mir_for_ctfe(def_id)
                     }
-                    #[cfg(not(rapx_ge_99))]
+                    #[cfg(not(rapx_defkind_const_struct))]
                     DefKind::Const
                     | DefKind::Static { .. }
                     | DefKind::AssocConst
@@ -125,7 +125,7 @@ impl<'tcx> CallGraph<'tcx> {
         callee_id: DefId,
         terminator_stmt: Option<&'tcx mir::Terminator<'tcx>>,
     ) {
-        let entry = self.fn_calls.entry(caller_id).or_insert_with(Vec::new);
+        let entry = self.fn_calls.entry(caller_id).or_default();
         entry.push((callee_id, terminator_stmt));
     }
 }
@@ -183,7 +183,7 @@ impl<'tcx> CallGraph<'tcx> {
             for (callee_id, terminator) in calls_vec {
                 callers_map
                     .entry(*callee_id)
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push((caller_id, *terminator));
             }
         }

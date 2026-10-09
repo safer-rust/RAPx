@@ -396,7 +396,7 @@ impl<'tcx, T: IntervalArithmetic + ConstConvert + Debug> AggregateOp<'tcx, T> {
                 let mut upper = T::max_value();
                 match self.operands.first() {
                     Some(AggregateOperand::Place(place)) => {
-                        lower = vars[*place].get_range().get_lower().clone();
+                        lower = vars[*place].get_range().get_lower();
                     }
                     Some(AggregateOperand::Const(c)) => {
                         lower = T::from_const(c).unwrap_or(T::min_value());
@@ -405,7 +405,7 @@ impl<'tcx, T: IntervalArithmetic + ConstConvert + Debug> AggregateOp<'tcx, T> {
                 }
                 match self.operands.last() {
                     Some(AggregateOperand::Place(place)) => {
-                        upper = vars[*place].get_range().get_upper().clone();
+                        upper = vars[*place].get_range().get_upper();
                     }
                     Some(AggregateOperand::Const(c)) => {
                         upper = T::from_const(c).unwrap_or(T::max_value());
@@ -453,8 +453,7 @@ impl<'tcx, T: IntervalArithmetic + ConstConvert + Debug> UseOp<'tcx, T> {
             let mut result = Range::bottom();
             if range.is_regular() {
                 result = range
-            } else {
-            }
+            } 
             result
         } else {
             // If no source is provided, return the intersect range

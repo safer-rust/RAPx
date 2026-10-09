@@ -9,8 +9,8 @@ pub fn get_fn_name(tcx: TyCtxt<'_>, def_id: DefId) -> Option<String> {
 
 pub fn get_fn_name_byid(def_id: &DefId) -> String {
     let s = format!("{:?}", *def_id);
-    if let Some(start) = s.find("DefId") {
-        if let Some(end) = s.find("]::") {
+    if let Some(start) = s.find("DefId")
+        && let Some(end) = s.find("]::") {
             let s1 = s.replace(&s[start..end + 3], "").to_string();
             if let Some(start) = s1.find(")") {
                 let result = s1.replace(&s1[start..start + 1], "").to_string();
@@ -18,12 +18,11 @@ pub fn get_fn_name_byid(def_id: &DefId) -> String {
             }
             return s1;
         }
-    }
     s.clone()
 }
 pub fn get_name(tcx: TyCtxt<'_>, def_id: DefId) -> Option<Symbol> {
-    if def_id.is_local() {
-        if let Some(node) = tcx.hir_get_if_local(def_id) {
+    if def_id.is_local()
+        && let Some(node) = tcx.hir_get_if_local(def_id) {
             match node {
                 Item(item) => {
                     let ident = tcx.hir_ident(item.hir_id());
@@ -46,7 +45,6 @@ pub fn get_name(tcx: TyCtxt<'_>, def_id: DefId) -> Option<Symbol> {
                 }
             }
         }
-    }
     None
 }
 
@@ -91,12 +89,11 @@ pub fn get_adt_name(tcx: TyCtxt<'_>, def_id: DefId) -> String {
         }
         _ => {}
     }
-    if let Some(assoc_item) = tcx.opt_associated_item(def_id) {
-        if let Some(impl_id) = assoc_item.impl_container(tcx) {
+    if let Some(assoc_item) = tcx.opt_associated_item(def_id)
+        && let Some(impl_id) = assoc_item.impl_container(tcx) {
             let ty = tcx.type_of(impl_id).skip_binder();
             return strip_generic_args(&ty.to_string());
         }
-    }
     "Free_Functions".to_string()
 }
 

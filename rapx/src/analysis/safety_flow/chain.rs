@@ -55,11 +55,10 @@ fn find_unsafe_callees_in_function(tcx: TyCtxt, def_id: DefId) -> Vec<(DefId, St
 
     if let Some(body) = try_get_mir(tcx, def_id) {
         for bb in body.basic_blocks.iter() {
-            if let Some(terminator) = &bb.terminator {
-                if let Some((callee_def_id, callee_name)) = extract_unsafe_callee(tcx, terminator) {
+            if let Some(terminator) = &bb.terminator
+                && let Some((callee_def_id, callee_name)) = extract_unsafe_callee(tcx, terminator) {
                     callees.push((callee_def_id, callee_name));
                 }
-            }
         }
     }
 
@@ -67,14 +66,12 @@ fn find_unsafe_callees_in_function(tcx: TyCtxt, def_id: DefId) -> Vec<(DefId, St
 }
 
 fn extract_unsafe_callee(tcx: TyCtxt<'_>, terminator: &Terminator<'_>) -> Option<(DefId, String)> {
-    if let TerminatorKind::Call { func, .. } = &terminator.kind {
-        if let Some(callee_def_id) = dep_callee_def_id(func) {
-            if check_safety(tcx, callee_def_id) == Safety::Unsafe {
+    if let TerminatorKind::Call { func, .. } = &terminator.kind
+        && let Some(callee_def_id) = dep_callee_def_id(func)
+            && check_safety(tcx, callee_def_id) == Safety::Unsafe {
                 let func_name = get_cleaned_def_path_name(tcx, callee_def_id);
                 return Some((callee_def_id, func_name));
             }
-        }
-    }
     None
 }
 

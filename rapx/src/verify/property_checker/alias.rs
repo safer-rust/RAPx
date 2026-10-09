@@ -97,8 +97,8 @@ impl PropertyChecker {
         // report a second owner directly, without needing its field provenance.
         // A moved-out source still has the same term but its owner-field
         // provenance has been invalidated, so it is not counted as an owner.
-        if let Some(owner) = vm_state.find_local_by_address(&value.z3_term) {
-            if live.contains(&owner)
+        if let Some(owner) = vm_state.find_local_by_address(&value.z3_term)
+            && live.contains(&owner)
                 && Some(owner) != dest_local
                 && Some(owner) != raw_local
                 && vm_state
@@ -110,7 +110,6 @@ impl PropertyChecker {
                     return CheckResult::Failed;
                 }
             }
-        }
         for local in vm_state.current_frame.local_alloc.keys() {
             if Some(*local) == dest_local {
                 continue;

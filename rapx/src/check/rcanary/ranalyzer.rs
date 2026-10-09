@@ -25,21 +25,13 @@ pub type ToPo = Vec<usize>;
 pub type Edges = Vec<Vec<usize>>;
 
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct Graph {
     e: Edges,
     pre: Edges,
     topo: ToPo,
 }
 
-impl Default for Graph {
-    fn default() -> Self {
-        Self {
-            e: Vec::default(),
-            pre: Vec::default(),
-            topo: Vec::default(),
-        }
-    }
-}
 
 impl Graph {
     pub fn new(len: usize) -> Self {
@@ -243,7 +235,7 @@ pub struct IntraFlowContext<'tcx, 'z3> {
     layout: IOPairForGraph<Vec<HeapOwnership>>,
 }
 
-impl<'tcx, 'z3, 'icx> IntraFlowContext<'tcx, 'z3> {
+impl<'tcx, 'z3> IntraFlowContext<'tcx, 'z3> {
     pub fn new(b_len: usize, v_len: usize) -> Self {
         Self {
             taint: IOPairForGraph::new(b_len, v_len),

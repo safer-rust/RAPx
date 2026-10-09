@@ -91,12 +91,10 @@ pub fn get_type(tcx: TyCtxt<'_>, def_id: DefId) -> FnKind {
             if adt_def.is_enum()
                 && (tcx.is_diagnostic_item(sym::Option, adt_def.did())
                     || tcx.is_diagnostic_item(sym::Result, adt_def.did())
-                    || tcx.is_diagnostic_item(kw::Box, adt_def.did())) =>
-        {
-            if is_self_ty(tcx, &assoc_item, substs.type_at(0)) {
+                    || tcx.is_diagnostic_item(kw::Box, adt_def.did()))
+            && is_self_ty(tcx, &assoc_item, substs.type_at(0)) => {
                 return FnKind::Constructor;
             }
-        }
         _ => {}
     }
     FnKind::Fn
@@ -196,11 +194,10 @@ fn public_field_indices(tcx: TyCtxt<'_>, adt_def: ty::AdtDef<'_>) -> HashSet<usi
 
 /// parse expr into number.
 pub fn parse_expr_into_number(expr: &Expr) -> Option<usize> {
-    if let Expr::Lit(expr_lit) = expr {
-        if let syn::Lit::Int(lit_int) = &expr_lit.lit {
+    if let Expr::Lit(expr_lit) = expr
+        && let syn::Lit::Int(lit_int) = &expr_lit.lit {
             return lit_int.base10_parse::<usize>().ok();
         }
-    }
     None
 }
 
@@ -319,7 +316,7 @@ pub fn get_mutated_fields(tcx: TyCtxt<'_>, def_id: DefId) -> Vec<usize> {
     let body = tcx.optimized_mir(def_id);
     let mut fields = Vec::new();
 
-    for (_, data) in body.basic_blocks.iter().enumerate() {
+    for data in body.basic_blocks.iter() {
         for statement in &data.statements {
             if let StatementKind::Assign(assign) = &statement.kind {
                 let (place, _) = &**assign;

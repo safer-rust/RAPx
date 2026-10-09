@@ -243,15 +243,13 @@ impl<'tcx> Property<'tcx> {
                 self.args().first(),
                 Some(PropertyArg::Expr(ContractExpr::IndexAccess { .. }))
             )
-        {
-            if let Some(PropertyArg::Expr(ContractExpr::IndexAccess { slice, index })) =
+            && let Some(PropertyArg::Expr(ContractExpr::IndexAccess { slice, index })) =
                 self.args().first()
             {
                 let slice_str = display_expr_user_friendly(slice, tcx, struct_def_id, fn_def_id);
                 let index_str = display_expr_user_friendly(index, tcx, struct_def_id, fn_def_id);
                 return format!("{}({}, {})", kind_str, slice_str, index_str);
             }
-        }
 
         if matches!(self.kind(), Some(PropertyKind::ValidNum))
             && let Some(PropertyArg::Predicates(preds)) = self.args().first()
@@ -261,7 +259,7 @@ impl<'tcx> Property<'tcx> {
                 .map(|pred| pred.display_user_friendly(tcx, struct_def_id, fn_def_id))
                 .collect();
             if inner.is_empty() {
-                return format!("{}", kind_str);
+                return kind_str.to_string();
             }
             return format!("{}({})", kind_str, inner.join(", "));
         }

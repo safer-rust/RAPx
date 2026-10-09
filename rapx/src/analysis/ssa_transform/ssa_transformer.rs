@@ -99,16 +99,14 @@ impl<'tcx> SSATransformer<'tcx> {
                     }
                 }
             }
-            if let Some(terminator) = &block_data.terminator {
-                if let TerminatorKind::Call { destination, .. } = &terminator.kind {
-                    if let Some(local) = destination.as_local() {
+            if let Some(terminator) = &block_data.terminator
+                && let TerminatorKind::Call { destination, .. } = &terminator.kind
+                    && let Some(local) = destination.as_local() {
                         if local.as_u32() == 0 {
                             continue; // Skip the return place
                         }
                         local_to_block_map.entry(local).or_insert(bb);
                     }
-                }
-            }
         }
 
         local_to_block_map
@@ -154,7 +152,7 @@ impl<'tcx> SSATransformer<'tcx> {
                     }
                     local_to_blocks
                         .entry(local)
-                        .or_insert_with(HashSet::new)
+                        .or_default()
                         .insert(bb);
                 }
             }
@@ -162,7 +160,7 @@ impl<'tcx> SSATransformer<'tcx> {
         for arg in body.args_iter() {
             local_to_blocks
                 .entry(arg)
-                .or_insert_with(HashSet::new)
+                .or_default()
                 .insert(BasicBlock::from_u32(0)); // Assuming arg block is 0
         }
         local_to_blocks
@@ -249,16 +247,14 @@ impl<'tcx> SSATransformer<'tcx> {
 
         if let StatementKind::Assign(assign) = &statement.kind {
             let (_, rvalue) = &**assign;
-            if let Rvalue::Aggregate(_, operands) = rvalue {
-                if let Some(last_op) = operands.into_iter().last() {
-                    if let Operand::Constant(c_box) = last_op {
+            if let Rvalue::Aggregate(_, operands) = rvalue
+                && let Some(last_op) = operands.into_iter().last()
+                    && let Operand::Constant(c_box) = last_op {
                         let ConstOperand { const_: c, .. } = &**c_box;
                         if let Some(val) = self.try_const_to_usize(c) {
                             return Some(BasicBlock::from_usize(val as usize));
                         }
                     }
-                }
-            }
         }
         None
     }

@@ -75,8 +75,8 @@ pub fn extract_summary<'tcx>(
 
     // Find all Return terminators and extract aliases at those points
     for (block_id, block_data) in body.basic_blocks.iter_enumerated() {
-        if let Some(terminator) = &block_data.terminator {
-            if matches!(terminator.kind, TerminatorKind::Return) {
+        if let Some(terminator) = &block_data.terminator
+            && matches!(terminator.kind, TerminatorKind::Return) {
                 // Seek to the end of this block (before the terminator)
                 results.seek_to_block_end(block_id);
 
@@ -99,11 +99,10 @@ pub fn extract_summary<'tcx>(
                 // Index 0 is return value, indices 1..=arg_count are arguments
                 let mut relevant_places = HashSet::new();
                 for idx in 0..place_info.num_places() {
-                    if let Some(place) = place_info.get_place(idx) {
-                        if place.root_local() <= arg_count {
+                    if let Some(place) = place_info.get_place(idx)
+                        && place.root_local() <= arg_count {
                             relevant_places.insert(idx);
                         }
-                    }
                 }
 
                 // Step 3: Expand relevant_places using transitive closure
@@ -287,7 +286,6 @@ pub fn extract_summary<'tcx>(
                     summary.add_alias(alias);
                 }
             }
-        }
     }
 
     summary
@@ -349,11 +347,10 @@ fn filter_redundant_aliases(
         }
 
         // Rule 2: Check for prefix subsumption with other aliases
-        for j in 0..aliases_vec.len() {
+        for (j, alias_b) in aliases_vec.iter().enumerate() {
             if i == j {
                 continue;
             }
-            let alias_b = &aliases_vec[j];
 
             // Skip if already marked for removal
             if to_remove.contains(alias_b) {

@@ -184,11 +184,10 @@ where
                 }
                 essaop.mark_resolved();
             }
-            if let Some(var_node) = self.vars.get(place) {
-                if !var_node.get_range().is_unknown() {
+            if let Some(var_node) = self.vars.get(place)
+                && !var_node.get_range().is_unknown() {
                     entry_points.insert(place);
                 }
-            }
         }
     }
 
@@ -224,11 +223,10 @@ where
                     } else {
                         rap_trace!("propagate_to_next_scc: sink {:?} not in vars\n", sink);
                     }
-                    if let BasicOpKind::Essa(essaop) = op_kind {
-                        if essaop.get_intersect().get_range().is_unknown() {
+                    if let BasicOpKind::Essa(essaop) = op_kind
+                        && essaop.get_intersect().get_range().is_unknown() {
                             essaop.mark_unresolved();
                         }
-                    }
                 }
             }
         }
@@ -263,7 +261,7 @@ where
         varnodes_vec.push(RefCell::new(old_vars));
     }
 
-    pub fn reset_vars(&mut self, varnodes_vec: &mut Vec<RefCell<VarNodes<'tcx, T>>>) {
+    pub fn reset_vars(&mut self, varnodes_vec: &mut [RefCell<VarNodes<'tcx, T>>]) {
         rap_trace!("Resetting vars\n");
         self.vars = varnodes_vec[0].borrow_mut().clone();
     }
