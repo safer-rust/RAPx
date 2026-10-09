@@ -1643,7 +1643,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let is_gcd = body.basic_blocks.iter().any(|bb| {
             if let rustc_middle::mir::TerminatorKind::Call { func, .. } = &bb.terminator().kind {
                 if let Some(did) = crate::helpers::mir_utils::dep_callee_def_id(func) {
-                    return self.tcx.def_path_str(did).ends_with("::gcd");
+                    return api_classify::is_gcd(Some(did));
                 }
             }
             false
@@ -2533,8 +2533,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let rustc_middle::ty::TyKind::Adt(adt_def, _) = val.ty.kind() else {
             return None;
         };
-        let name = self.tcx.def_path_str(adt_def.did());
-        if !(name.ends_with("::IndexRange") || name == "IndexRange") {
+        if !api_classify::is_index_range(adt_def.did()) {
             return None;
         }
         let alloc_id = val.provenance_alloc_id()?;

@@ -415,18 +415,15 @@ fn build_function_info(
                 ..
             } = terminator.kind
             {
-                let name = crate::helpers::mir_utils::call_name(tcx, func);
-                if name.contains("::into_raw")
-                    || (name.contains("::new") && name.contains("Box"))
-                    || name.contains("::as_mut_ptr")
-                    || name.contains("::as_ptr")
-                {
-                    info.known_nonnull_locals
-                        .insert(local_base + destination.local.as_usize());
-                }
-                if name.contains("null_mut") || (name.contains("null") && name.contains("ptr::")) {
-                    info.constants
-                        .insert(local_base + destination.local.as_usize(), 0);
+                if let Some(did) = crate::helpers::mir_utils::dep_callee_def_id(func) {
+                    if crate::def_id::known_nonnull_fns().contains(&did) {
+                        info.known_nonnull_locals
+                            .insert(local_base + destination.local.as_usize());
+                    }
+                    if crate::def_id::null_ptr_fns().contains(&did) {
+                        info.constants
+                            .insert(local_base + destination.local.as_usize(), 0);
+                    }
                 }
             }
         }

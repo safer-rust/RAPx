@@ -694,8 +694,7 @@ pub(crate) fn try_slice_bounded_return_effect(
 /// The `Continue` payload (field 0) equals the `Some` payload (field 0), so a
 /// `?`-operator `if let Some(..) = expr?` unwrap keeps the payload's provenance.
 pub(crate) fn try_branch_effect(tcx: TyCtxt<'_>, callee: DefId) -> Option<CallEffect> {
-    let name = tcx.def_path_str(callee);
-    if !name.ends_with("::branch") {
+    if !crate::verify::api_classify::is_branch(Some(callee)) {
         return None;
     }
     if !tcx.is_mir_available(callee) {
@@ -718,7 +717,7 @@ pub(crate) fn try_branch_effect(tcx: TyCtxt<'_>, callee: DefId) -> Option<CallEf
     let TyKind::Adt(ret_adt, _) = ret_ty.kind() else {
         return None;
     };
-    if !tcx.def_path_str(ret_adt.did()).contains("ControlFlow") {
+    if !crate::def_id::control_flow_types().contains(&ret_adt.did()) {
         return None;
     }
     Some(CallEffect::ReturnBranchPayload { arg: 0 })
@@ -1335,15 +1334,9 @@ fn switch_discriminant_concrete(
 }
 
 /// Recognize the standard-library `get_disjoint_check_valid` helper as a
-/// trusted index-disjoint validator by name.
-pub(super) fn named_index_disjoint_validator(name: &str) -> Option<(usize, usize)> {
-    let base = name
-        .split('<')
-        .next()
-        .unwrap_or(name)
-        .trim_end_matches("::");
-    if base.ends_with("get_disjoint_check_valid") || base.ends_with("get_disjoint_check_valid_ext")
-    {
+/// trusted index-disjoint validator by `DefId`.
+pub(super) fn named_index_disjoint_validator(callee: Option<DefId>) -> Option<(usize, usize)> {
+    if callee.is_some_and(|d| crate::def_id::get_disjoint_check_valid_fns().contains(&d)) {
         Some((0, 1))
     } else {
         None

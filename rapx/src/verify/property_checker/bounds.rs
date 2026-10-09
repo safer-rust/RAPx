@@ -379,8 +379,7 @@ impl PropertyChecker {
             crate::helpers::mir_utils::RangeKind::Other => {
                 // `core::ops::IndexRange` is a private `{ start, end }` struct
                 // (no lang item); its `end` lives at field 1 like `Range`.
-                let name = vm_state.tcx.def_path_str(adt_def.did());
-                if name.ends_with("::IndexRange") || name == "IndexRange" {
+                if crate::verify::api_classify::is_index_range(adt_def.did()) {
                     Some(rustc_abi::FieldIdx::from_usize(1))
                 } else {
                     None

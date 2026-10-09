@@ -767,6 +767,38 @@ pub fn is_range_next(callee: Option<DefId>) -> bool {
     any_fn(callee, crate::def_id::range_next_fns())
 }
 
+/// Whether `callee` is a slice iterator's `next` (`Iter::next` /
+/// `IterMut::next`, or the `Iterator::next` trait method they forward to).
+pub fn is_iter_next(callee: Option<DefId>) -> bool {
+    any_fn(callee, crate::def_id::iter_next_fns())
+}
+
+/// Whether `callee` is a slice iterator's `len` (`Iter::len` / `IterMut::len`).
+pub fn is_iter_len(callee: Option<DefId>) -> bool {
+    any_fn(callee, crate::def_id::iter_len_fns())
+}
+
+/// Whether `callee` is a slice iterator's `is_empty`
+/// (`Iter::is_empty` / `IterMut::is_empty`).
+pub fn is_iter_is_empty(callee: Option<DefId>) -> bool {
+    any_fn(callee, crate::def_id::iter_is_empty_fns())
+}
+
+/// Whether `callee` is `<Option<T> as Try>::branch`.
+pub fn is_branch(callee: Option<DefId>) -> bool {
+    any_fn(callee, crate::def_id::branch_fns())
+}
+
+/// Whether `callee` is a `gcd` const fn.
+pub fn is_gcd(callee: Option<DefId>) -> bool {
+    any_fn(callee, crate::def_id::gcd_fns())
+}
+
+/// Whether `def_id` is `core::range::IndexRange` (or a local re-implementation).
+pub fn is_index_range(def_id: DefId) -> bool {
+    crate::def_id::index_range_types().contains(&def_id)
+}
+
 /// Whether `callee` is `slice::range(range, bounds)` — the range normalizer that
 /// returns `Range { start, end }` with `0 <= start <= end <= bounds.end`.
 pub fn is_slice_range(callee: Option<DefId>) -> bool {

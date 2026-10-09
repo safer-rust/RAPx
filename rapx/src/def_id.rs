@@ -68,6 +68,8 @@ struct Types {
     iter_types: Vec<DefId>,
     rc_types: Vec<DefId>,
     sync_primitive_types: Vec<DefId>,
+    index_range_types: Vec<DefId>,
+    control_flow_types: Vec<DefId>,
     /// `alloc::alloc::exchange_malloc` (`Box::new`'s lang item on toolchains
     /// that lower `Box::new` to it) — resolved by name scan, since it has no
     /// lang item on newer toolchains.
@@ -108,6 +110,8 @@ fn init_types(tcx: TyCtxt) -> Types {
         iter_types: Vec::new(),
         rc_types: Vec::new(),
         sync_primitive_types: Vec::new(),
+        index_range_types: Vec::new(),
+        control_flow_types: Vec::new(),
         exchange_malloc: None,
         negative_types: IndexMap::new(),
     };
@@ -120,6 +124,10 @@ fn init_types(tcx: TyCtxt) -> Types {
         .extend(tcx.get_diagnostic_item(sym::cstring_type));
     types.vec_types.extend(tcx.get_diagnostic_item(sym::Vec));
     types.rc_types.extend(tcx.get_diagnostic_item(sym::Rc));
+    // `core::ops::ControlFlow` is `#[rustc_diagnostic_item = "ControlFlow"]`.
+    types
+        .control_flow_types
+        .extend(tcx.get_diagnostic_item(sym::ControlFlow));
     // `core::cmp::Ordering` is `#[lang = "Ordering"]`.
     types
         .ordering_types
@@ -206,36 +214,7 @@ fn init_types(tcx: TyCtxt) -> Types {
             continue;
         }
         let name = tcx.def_path_str(did);
-        if name.ends_with("::Vec") || name == "Vec" {
-            types.vec_types.push(did);
-        }
-        if name.ends_with("::Iter")
-            || name == "Iter"
-            || name.ends_with("::IterMut")
-            || name == "IterMut"
-        {
-            types.iter_types.push(did);
-        }
-        if name.ends_with("::NonNull") || name == "NonNull" {
-            types.nonnull_types.push(did);
-        }
-        if name.ends_with("::MaybeUninit") || name == "MaybeUninit" {
-            types.maybe_uninit_types.push(did);
-        }
-        if name.ends_with("::Rc") || name == "Rc" {
-            types.rc_types.push(did);
-        }
-        let short = name.rsplit("::").next().unwrap_or(&name);
-        if is_sync_primitive_short_name(short) {
-            types.sync_primitive_types.push(did);
-        }
-        if let Some(neg) = negative_type_name(short) {
-            types
-                .negative_types
-                .entry(neg.into())
-                .or_default()
-                .push(did);
-        }
+        collect_type_by_name(&mut types, &name, did);
     }
 
     // External std ADTs with neither a lang nor a diagnostic item: `NonNull`
@@ -250,53 +229,60 @@ fn init_types(tcx: TyCtxt) -> Types {
         {
             for adt in krate.adts() {
                 let name = adt.name();
-                if name.ends_with("::NonNull") {
-                    types
-                        .nonnull_types
-                        .push(rustc_internal::internal(tcx, adt.def_id()));
-                }
-                if name.ends_with("::MaybeUninit") {
-                    types
-                        .maybe_uninit_types
-                        .push(rustc_internal::internal(tcx, adt.def_id()));
-                }
-                if name.ends_with("::AsciiChar")
-                    || name.ends_with("::Char")
-                    || name == "AsciiChar"
-                    || name == "Char"
-                {
-                    types
-                        .ascii_char_types
-                        .push(rustc_internal::internal(tcx, adt.def_id()));
-                }
-                if name.ends_with("::Iter") || name.ends_with("::IterMut") {
-                    types
-                        .iter_types
-                        .push(rustc_internal::internal(tcx, adt.def_id()));
-                }
-                if name.ends_with("::Rc") || name == "Rc" {
-                    types
-                        .rc_types
-                        .push(rustc_internal::internal(tcx, adt.def_id()));
-                }
-                let short = name.rsplit("::").next().unwrap_or(&name);
-                if is_sync_primitive_short_name(short) {
-                    types
-                        .sync_primitive_types
-                        .push(rustc_internal::internal(tcx, adt.def_id()));
-                }
-                if let Some(neg) = negative_type_name(short) {
-                    types
-                        .negative_types
-                        .entry(neg.into())
-                        .or_default()
-                        .push(rustc_internal::internal(tcx, adt.def_id()));
-                }
+                let did = rustc_internal::internal(tcx, adt.def_id());
+                collect_type_by_name(&mut types, &name, did);
             }
         }
     }
 
     types
+}
+
+/// Collect `did` into the matching well-known type group by name.  Shared by the
+/// local-crate scan (`iter_local_def_id`) and the external std scan (`adts()`),
+/// which collect the *same* groups from different crates (std originals vs the
+/// std-challenge suites' re-implementations).
+fn collect_type_by_name(types: &mut Types, name: &str, did: DefId) {
+    if name.ends_with("::Vec") || name == "Vec" {
+        types.vec_types.push(did);
+    }
+    if name.ends_with("::Iter")
+        || name == "Iter"
+        || name.ends_with("::IterMut")
+        || name == "IterMut"
+    {
+        types.iter_types.push(did);
+    }
+    if name.ends_with("::NonNull") || name == "NonNull" {
+        types.nonnull_types.push(did);
+    }
+    if name.ends_with("::MaybeUninit") || name == "MaybeUninit" {
+        types.maybe_uninit_types.push(did);
+    }
+    if name.ends_with("::IndexRange") || name == "IndexRange" {
+        types.index_range_types.push(did);
+    }
+    if name.ends_with("::AsciiChar")
+        || name.ends_with("::Char")
+        || name == "AsciiChar"
+        || name == "Char"
+    {
+        types.ascii_char_types.push(did);
+    }
+    if name.ends_with("::Rc") || name == "Rc" {
+        types.rc_types.push(did);
+    }
+    let short = name.rsplit("::").next().unwrap_or(name);
+    if is_sync_primitive_short_name(short) {
+        types.sync_primitive_types.push(did);
+    }
+    if let Some(neg) = negative_type_name(short) {
+        types
+            .negative_types
+            .entry(neg.into())
+            .or_default()
+            .push(did);
+    }
 }
 
 /// Whether a type's short name denotes a synchronization primitive that guards
@@ -323,53 +309,50 @@ fn is_sync_primitive_method(name: &str) -> bool {
         || name.contains("::Atomic")
 }
 
-/// `alloc::boxed::Box` (and any local `Box` re-implementation).
-pub fn box_types() -> &'static [DefId] {
-    &TYPES
-        .get()
-        .expect("Type DefIds haven't been initialized.")
-        .box_types
+macro_rules! type_defs {
+    ($( $(#[$attr:meta])* $name:ident ,)+) => {
+        $(
+            $(#[$attr])*
+            pub fn $name() -> &'static [DefId] {
+                &TYPES
+                    .get()
+                    .expect("Type DefIds haven't been initialized.")
+                    .$name
+            }
+        )+
+    };
 }
 
-/// `alloc::ffi::CString` (and any local `CString` re-implementation).
-pub fn cstring_types() -> &'static [DefId] {
-    &TYPES
-        .get()
-        .expect("Type DefIds haven't been initialized.")
-        .cstring_types
-}
-
-/// `alloc::vec::Vec` (and any local `Vec` re-implementation).
-pub fn vec_types() -> &'static [DefId] {
-    &TYPES
-        .get()
-        .expect("Type DefIds haven't been initialized.")
-        .vec_types
-}
-
-/// `core::ptr::NonNull` (and any local `NonNull` re-implementation).
-pub fn nonnull_types() -> &'static [DefId] {
-    &TYPES
-        .get()
-        .expect("Type DefIds haven't been initialized.")
-        .nonnull_types
-}
-
-/// `core::mem::MaybeUninit` (and any local re-implementation).
-pub fn maybe_uninit_types() -> &'static [DefId] {
-    &TYPES
-        .get()
-        .expect("Type DefIds haven't been initialized.")
-        .maybe_uninit_types
-}
-
-/// `core::ascii::Char` (`AsciiChar`, the `u8` newtype; and any local
-/// re-implementation).
-pub fn ascii_char_types() -> &'static [DefId] {
-    &TYPES
-        .get()
-        .expect("Type DefIds haven't been initialized.")
-        .ascii_char_types
+type_defs! {
+    /// `alloc::boxed::Box` (and any local `Box` re-implementation).
+    box_types,
+    /// `alloc::ffi::CString` (and any local `CString` re-implementation).
+    cstring_types,
+    /// `alloc::vec::Vec` (and any local `Vec` re-implementation).
+    vec_types,
+    /// `core::ptr::NonNull` (and any local `NonNull` re-implementation).
+    nonnull_types,
+    /// `core::mem::MaybeUninit` (and any local re-implementation).
+    maybe_uninit_types,
+    /// `core::ascii::Char` (`AsciiChar`, the `u8` newtype; and any local
+    /// re-implementation).
+    ascii_char_types,
+    /// `core::cmp::Ordering`.
+    ordering_types,
+    /// `core::slice::Iter` / `core::slice::IterMut` (the two-field `ptr`/`end`
+    /// slice iterators, plus any local re-implementation).
+    iter_types,
+    /// `alloc::rc::Rc` (and any local `Rc` re-implementation) — the non-atomic
+    /// reference-counted smart pointer, a `!Send`/`!Sync` negative type.
+    rc_types,
+    /// Synchronization primitives (`Mutex`/`RwLock`/`OnceLock`/`OnceCell`/`Atomic*`,
+    /// plus any local re-implementation) that guard their interior mutability, used
+    /// to discharge the `RefSend` auto-trait obligation.
+    sync_primitive_types,
+    /// `core::range::IndexRange` (and any local re-implementation).
+    index_range_types,
+    /// `core::ops::ControlFlow` (via `#[rustc_diagnostic_item = "ControlFlow"]`).
+    control_flow_types,
 }
 
 /// `alloc::alloc::exchange_malloc`, if present on this toolchain.
@@ -378,42 +361,6 @@ pub fn exchange_malloc() -> Option<DefId> {
         .get()
         .expect("Type DefIds haven't been initialized.")
         .exchange_malloc
-}
-
-/// `core::cmp::Ordering`.
-pub fn ordering_types() -> &'static [DefId] {
-    &TYPES
-        .get()
-        .expect("Type DefIds haven't been initialized.")
-        .ordering_types
-}
-
-/// `core::slice::Iter` / `core::slice::IterMut` (the two-field `ptr`/`end`
-/// slice iterators, plus any local re-implementation).
-pub fn iter_types() -> &'static [DefId] {
-    &TYPES
-        .get()
-        .expect("Type DefIds haven't been initialized.")
-        .iter_types
-}
-
-/// `alloc::rc::Rc` (and any local `Rc` re-implementation) — the non-atomic
-/// reference-counted smart pointer, a `!Send`/`!Sync` negative type.
-pub fn rc_types() -> &'static [DefId] {
-    &TYPES
-        .get()
-        .expect("Type DefIds haven't been initialized.")
-        .rc_types
-}
-
-/// Synchronization primitives (`Mutex`/`RwLock`/`OnceLock`/`OnceCell`/`Atomic*`,
-/// plus any local re-implementation) that guard their interior mutability, used
-/// to discharge the `RefSend` auto-trait obligation.
-pub fn sync_primitive_types() -> &'static [DefId] {
-    &TYPES
-        .get()
-        .expect("Type DefIds haven't been initialized.")
-        .sync_primitive_types
 }
 
 /// Resolve a negative-type name (as written in `std-trait-ensures.json`) to its
@@ -470,6 +417,18 @@ struct Methods {
     sliceindex_get_unchecked: Vec<DefId>,
     slice_range_fns: Vec<DefId>,
     range_next: Vec<DefId>,
+    iter_next: Vec<DefId>,
+    iter_len: Vec<DefId>,
+    iter_is_empty: Vec<DefId>,
+    as_ptr_like: Vec<DefId>,
+    ptr_add: Vec<DefId>,
+    branch: Vec<DefId>,
+    gcd: Vec<DefId>,
+    iter_post_inc_start: Vec<DefId>,
+    iter_pre_dec_end: Vec<DefId>,
+    known_nonnull: Vec<DefId>,
+    null_ptr: Vec<DefId>,
+    get_disjoint_check_valid: Vec<DefId>,
 }
 
 fn init_methods(tcx: TyCtxt) -> Methods {
@@ -503,6 +462,18 @@ fn init_methods(tcx: TyCtxt) -> Methods {
         sliceindex_get_unchecked: Vec::new(),
         slice_range_fns: Vec::new(),
         range_next: Vec::new(),
+        iter_next: Vec::new(),
+        iter_len: Vec::new(),
+        iter_is_empty: Vec::new(),
+        as_ptr_like: Vec::new(),
+        ptr_add: Vec::new(),
+        branch: Vec::new(),
+        gcd: Vec::new(),
+        iter_post_inc_start: Vec::new(),
+        iter_pre_dec_end: Vec::new(),
+        known_nonnull: Vec::new(),
+        null_ptr: Vec::new(),
+        get_disjoint_check_valid: Vec::new(),
     };
 
     for krate in std::iter::once(rustc_public::local_crate())
@@ -661,69 +632,117 @@ fn init_methods(tcx: TyCtxt) -> Methods {
             {
                 methods.range_next.push(did);
             }
+            // `Iter::next` / `IterMut::next` (and the `Iterator::next` trait
+            // method they forward to): the slice-iterator element accessor.
+            if name.ends_with("::next")
+                && (name.starts_with("Iter::")
+                    || name.starts_with("IterMut::")
+                    || name.contains("::Iter::")
+                    || name.contains("::IterMut::")
+                    || name.contains("::Iter<")
+                    || name.contains("::IterMut<")
+                    || name.contains("::Iterator::next"))
+            {
+                methods.iter_next.push(did);
+            }
+            // `Iter::len` / `IterMut::len` (the slice-iterator length query,
+            // computed from the ptr/end_or_len fields).
+            if name.ends_with("::len")
+                && (name.contains("::Iter<")
+                    || name.contains("::IterMut<")
+                    || name.ends_with("::Iter::len")
+                    || name.ends_with("::IterMut::len"))
+            {
+                methods.iter_len.push(did);
+            }
+            // `Iter::is_empty` / `IterMut::is_empty`.
+            if name.ends_with("::is_empty")
+                && (name.contains("::Iter<")
+                    || name.contains("::IterMut<")
+                    || name.ends_with("::Iter::is_empty")
+                    || name.ends_with("::IterMut::is_empty"))
+            {
+                methods.iter_is_empty.push(did);
+            }
+            // `as_ptr`/`as_mut_ptr`/`as_ref`/`as_mut` (and other `as_*` casts)
+            // that re-expose the pointee; used by const-byte tracing.
+            if name.contains("as_ptr") || name.contains("::as_") {
+                methods.as_ptr_like.push(did);
+            }
+            // Pointer `add` (any `::add` method).
+            if name.contains("::add") {
+                methods.ptr_add.push(did);
+            }
+            // `<Option<T> as Try>::branch`.
+            if name.ends_with("::branch") {
+                methods.branch.push(did);
+            }
+            // `gcd` const fn (const-eval integer GCD).
+            if name.ends_with("::gcd") {
+                methods.gcd.push(did);
+            }
+            // Slice-iterator internal pointer-advance helpers.
+            if name.ends_with("::post_inc_start") {
+                methods.iter_post_inc_start.push(did);
+            }
+            if name.ends_with("::pre_dec_end") {
+                methods.iter_pre_dec_end.push(did);
+            }
+            // Known non-null-returning pointer methods (`into_raw` / `Box::new`
+            // / `as_ptr` / `as_mut_ptr`), used by path analysis.
+            if name.contains("::into_raw")
+                || (name.contains("::new") && name.contains("Box"))
+                || name.contains("::as_mut_ptr")
+                || name.contains("::as_ptr")
+            {
+                methods.known_nonnull.push(did);
+            }
+            // Null-returning pointer methods (`null` / `null_mut`).
+            if name.contains("null_mut") || (name.contains("null") && name.contains("ptr::")) {
+                methods.null_ptr.push(did);
+            }
+            // Index-disjoint validator helpers.
+            if name.contains("get_disjoint_check_valid") {
+                methods.get_disjoint_check_valid.push(did);
+            }
         }
     }
 
     methods
 }
 
-/// `len` query methods (`slice::len`, `str::len`, `Vec::len`, `String::len`,
-/// pointer-slice `len`, and any local re-implementation).
-pub fn len_fns() -> &'static [DefId] {
-    &METHODS
-        .get()
-        .expect("Method DefIds haven't been initialized.")
-        .len_fns
+macro_rules! method_fns {
+    ($( $(#[$attr:meta])* $name:ident => $field:ident ,)+) => {
+        $(
+            $(#[$attr])*
+            pub fn $name() -> &'static [DefId] {
+                &METHODS
+                    .get()
+                    .expect("Method DefIds haven't been initialized.")
+                    .$field
+            }
+        )+
+    };
 }
 
-/// `capacity` query methods (`Vec::capacity` and local re-implementations).
-pub fn capacity_fns() -> &'static [DefId] {
-    &METHODS
-        .get()
-        .expect("Method DefIds haven't been initialized.")
-        .capacity_fns
-}
-
-/// `from_raw_parts` constructors (`slice`/`str`/`ptr`/`NonNull`/`Vec`/`String`
-/// and local re-implementations).
-pub fn from_raw_parts_fns() -> &'static [DefId] {
-    &METHODS
-        .get()
-        .expect("Method DefIds haven't been initialized.")
-        .from_raw_parts_fns
-}
-
-/// `from_raw_parts_mut` constructors (`slice`/`ptr`/`NonNull` and local
-/// re-implementations).
-pub fn from_raw_parts_mut_fns() -> &'static [DefId] {
-    &METHODS
-        .get()
-        .expect("Method DefIds haven't been initialized.")
-        .from_raw_parts_mut_fns
-}
-
-/// `Vec::with_capacity` (and local re-implementations).
-pub fn with_capacity_fns() -> &'static [DefId] {
-    &METHODS
-        .get()
-        .expect("Method DefIds haven't been initialized.")
-        .with_capacity_fns
-}
-
-/// `Box::new` / `new_in` / `new_uninit` / `new_uninit_in` (and `try_` variants).
-pub fn box_alloc_ctors() -> &'static [DefId] {
-    &METHODS
-        .get()
-        .expect("Method DefIds haven't been initialized.")
-        .box_alloc_ctors
-}
-
-/// `Vec::from_raw_parts` / `Vec::from_parts` (ownership transfer into a `Vec`).
-pub fn vec_ownership_transfer_fns() -> &'static [DefId] {
-    &METHODS
-        .get()
-        .expect("Method DefIds haven't been initialized.")
-        .vec_ownership_transfer_fns
+method_fns! {
+    /// `len` query methods (`slice::len`, `str::len`, `Vec::len`, `String::len`,
+    /// pointer-slice `len`, and any local re-implementation).
+    len_fns => len_fns,
+    /// `capacity` query methods (`Vec::capacity` and local re-implementations).
+    capacity_fns => capacity_fns,
+    /// `from_raw_parts` constructors (`slice`/`str`/`ptr`/`NonNull`/`Vec`/`String`
+    /// and local re-implementations).
+    from_raw_parts_fns => from_raw_parts_fns,
+    /// `from_raw_parts_mut` constructors (`slice`/`ptr`/`NonNull` and local
+    /// re-implementations).
+    from_raw_parts_mut_fns => from_raw_parts_mut_fns,
+    /// `Vec::with_capacity` (and local re-implementations).
+    with_capacity_fns => with_capacity_fns,
+    /// `Box::new` / `new_in` / `new_uninit` / `new_uninit_in` (and `try_` variants).
+    box_alloc_ctors => box_alloc_ctors,
+    /// `Vec::from_raw_parts` / `Vec::from_parts` (ownership transfer into a `Vec`).
+    vec_ownership_transfer_fns => vec_ownership_transfer_fns,
 }
 
 /// The ADT `DefId` that `def_id`'s associated function belongs to (the impl's
@@ -738,137 +757,54 @@ fn assoc_self_adt_did(tcx: TyCtxt, def_id: DefId) -> Option<DefId> {
     }
 }
 
-pub fn min_like_fns() -> &'static [DefId] {
-    &METHODS
-        .get()
-        .expect("Method DefIds haven't been initialized.")
-        .min_like
-}
-pub fn max_fns() -> &'static [DefId] {
-    &METHODS
-        .get()
-        .expect("Method DefIds haven't been initialized.")
-        .max
-}
-pub fn clamp_fns() -> &'static [DefId] {
-    &METHODS
-        .get()
-        .expect("Method DefIds haven't been initialized.")
-        .clamp
-}
-pub fn abs_fns() -> &'static [DefId] {
-    &METHODS
-        .get()
-        .expect("Method DefIds haven't been initialized.")
-        .abs
-}
-pub fn neg_fns() -> &'static [DefId] {
-    &METHODS
-        .get()
-        .expect("Method DefIds haven't been initialized.")
-        .neg
-}
-pub fn sat_unchecked_add_fns() -> &'static [DefId] {
-    &METHODS
-        .get()
-        .expect("Method DefIds haven't been initialized.")
-        .sat_unchecked_add
-}
-pub fn sat_unchecked_mul_fns() -> &'static [DefId] {
-    &METHODS
-        .get()
-        .expect("Method DefIds haven't been initialized.")
-        .sat_unchecked_mul
-}
-pub fn checked_add_fns() -> &'static [DefId] {
-    &METHODS
-        .get()
-        .expect("Method DefIds haven't been initialized.")
-        .checked_add
-}
-pub fn checked_mul_fns() -> &'static [DefId] {
-    &METHODS
-        .get()
-        .expect("Method DefIds haven't been initialized.")
-        .checked_mul
-}
-pub fn overflowing_nz_fns() -> &'static [DefId] {
-    &METHODS
-        .get()
-        .expect("Method DefIds haven't been initialized.")
-        .overflowing_nz
-}
-pub fn bit_preserving_nz_fns() -> &'static [DefId] {
-    &METHODS
-        .get()
-        .expect("Method DefIds haven't been initialized.")
-        .bit_preserving_nz
-}
-pub fn checked_nonzero_iff_fns() -> &'static [DefId] {
-    &METHODS
-        .get()
-        .expect("Method DefIds haven't been initialized.")
-        .checked_nonzero_iff
-}
-pub fn checked_next_pow2_fns() -> &'static [DefId] {
-    &METHODS
-        .get()
-        .expect("Method DefIds haven't been initialized.")
-        .checked_next_pow2
-}
-pub fn layout_align_fns() -> &'static [DefId] {
-    &METHODS
-        .get()
-        .expect("Method DefIds haven't been initialized.")
-        .layout_align
-}
-pub fn split_at_fns() -> &'static [DefId] {
-    &METHODS
-        .get()
-        .expect("Method DefIds haven't been initialized.")
-        .split_at
-}
-pub fn align_to_local_fns() -> &'static [DefId] {
-    &METHODS
-        .get()
-        .expect("Method DefIds haven't been initialized.")
-        .align_to_local
-}
-pub fn iter_position_fns() -> &'static [DefId] {
-    &METHODS
-        .get()
-        .expect("Method DefIds haven't been initialized.")
-        .iter_position
-}
-pub fn strlen_fns() -> &'static [DefId] {
-    &METHODS
-        .get()
-        .expect("Method DefIds haven't been initialized.")
-        .strlen
-}
-pub fn slice_get_unchecked_fns() -> &'static [DefId] {
-    &METHODS
-        .get()
-        .expect("Method DefIds haven't been initialized.")
-        .slice_get_unchecked
-}
-pub fn sliceindex_get_unchecked_fns() -> &'static [DefId] {
-    &METHODS
-        .get()
-        .expect("Method DefIds haven't been initialized.")
-        .sliceindex_get_unchecked
-}
-pub fn slice_range_fns() -> &'static [DefId] {
-    &METHODS
-        .get()
-        .expect("Method DefIds haven't been initialized.")
-        .slice_range_fns
-}
-pub fn range_next_fns() -> &'static [DefId] {
-    &METHODS
-        .get()
-        .expect("Method DefIds haven't been initialized.")
-        .range_next
+method_fns! {
+    min_like_fns => min_like,
+    max_fns => max,
+    clamp_fns => clamp,
+    abs_fns => abs,
+    neg_fns => neg,
+    sat_unchecked_add_fns => sat_unchecked_add,
+    sat_unchecked_mul_fns => sat_unchecked_mul,
+    checked_add_fns => checked_add,
+    checked_mul_fns => checked_mul,
+    overflowing_nz_fns => overflowing_nz,
+    bit_preserving_nz_fns => bit_preserving_nz,
+    checked_nonzero_iff_fns => checked_nonzero_iff,
+    checked_next_pow2_fns => checked_next_pow2,
+    layout_align_fns => layout_align,
+    split_at_fns => split_at,
+    align_to_local_fns => align_to_local,
+    iter_position_fns => iter_position,
+    strlen_fns => strlen,
+    slice_get_unchecked_fns => slice_get_unchecked,
+    sliceindex_get_unchecked_fns => sliceindex_get_unchecked,
+    slice_range_fns => slice_range_fns,
+    range_next_fns => range_next,
+    /// `Iter::next` / `IterMut::next` (and the `Iterator::next` trait method).
+    iter_next_fns => iter_next,
+    /// `Iter::len` / `IterMut::len`.
+    iter_len_fns => iter_len,
+    /// `Iter::is_empty` / `IterMut::is_empty`.
+    iter_is_empty_fns => iter_is_empty,
+    /// `as_ptr`/`as_mut_ptr`/`as_ref`/`as_mut` (and other `as_*` casts).
+    as_ptr_like_fns => as_ptr_like,
+    /// Pointer `add` methods.
+    ptr_add_fns => ptr_add,
+    /// `<Option<T> as Try>::branch`.
+    branch_fns => branch,
+    /// `gcd` const functions.
+    gcd_fns => gcd,
+    /// `post_inc_start` (slice-iterator pointer increment).
+    iter_post_inc_start_fns => iter_post_inc_start,
+    /// `pre_dec_end` (slice-iterator end decrement).
+    iter_pre_dec_end_fns => iter_pre_dec_end,
+    /// Known non-null-returning pointer methods (`into_raw` / `Box::new` /
+    /// `as_ptr` / `as_mut_ptr`).
+    known_nonnull_fns => known_nonnull,
+    /// Null-returning pointer methods (`null` / `null_mut`).
+    null_ptr_fns => null_ptr,
+    /// Index-disjoint validator helpers.
+    get_disjoint_check_valid_fns => get_disjoint_check_valid,
 }
 
 fn init_inner(tcx: TyCtxt) -> Intrinsics {

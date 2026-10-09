@@ -342,9 +342,9 @@ pub(crate) fn dependency_summary<'tcx>(
         }
         // `Try::branch` (`Option<T>` -> `ControlFlow<Option<!>, T>`): the
         // `Continue` payload is the input's `Some` payload, so the return value
-        // depends on the input.  Detect by name (the trait method's `self` type
-        // is generic, so the type check below is skipped here).
-        if mir_utils::call_name(tcx, func).ends_with("::branch") {
+        // depends on the input.  Matched by `DefId` (the trait method's `self`
+        // type is generic, so the type check below is skipped here).
+        if crate::verify::api_classify::is_branch(Some(callee)) {
             return CallDependencySummary {
                 return_depends_on_args: vec![0],
                 must_write_args: Vec::new(),
@@ -375,7 +375,6 @@ pub(crate) fn effect_summary<'tcx>(
     context: &CallContext,
 ) -> CallEffectSummary {
     let callee = mir_utils::dep_callee_def_id(func);
-    let name = mir_utils::call_name(tcx, func);
 
     if let Some(summary) =
         builtin_models::lookup_effect(tcx, caller, callee, func, destination)
@@ -435,7 +434,7 @@ pub(crate) fn effect_summary<'tcx>(
         }
         if let Some((indices_arg, len_arg)) =
             interprocedural::detect_index_disjoint_validator(tcx, callee)
-                .or_else(|| interprocedural::named_index_disjoint_validator(&name))
+                .or_else(|| interprocedural::named_index_disjoint_validator(Some(callee)))
         {
             return CallEffectSummary {
                 effects: vec![CallEffect::ChecksIndexBoundsDisjoint {

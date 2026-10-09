@@ -264,23 +264,19 @@ pub(crate) fn is_index_method(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
 /// Whether `def_id` is `slice::Iter`/`IterMut`'s private `post_inc_start`
 /// helper (a pointer-advancing side effect that cannot be inlined because of
 /// its ZST `SwitchInt` branch).
-pub(crate) fn is_post_inc_start(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
-    let name = tcx.item_name(def_id);
-    name.as_str() == "post_inc_start"
+pub(crate) fn is_post_inc_start(_tcx: TyCtxt<'_>, def_id: DefId) -> bool {
+    crate::def_id::iter_post_inc_start_fns().contains(&def_id)
 }
 
 /// Whether `def_id` is `pre_dec_end` (the end-decrementing sibling of
 /// `post_inc_start`).
-pub(crate) fn is_pre_dec_end(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
-    let name = tcx.item_name(def_id);
-    name.as_str() == "pre_dec_end"
+pub(crate) fn is_pre_dec_end(_tcx: TyCtxt<'_>, def_id: DefId) -> bool {
+    crate::def_id::iter_pre_dec_end_fns().contains(&def_id)
 }
 
 /// Whether `def_id` is one of `post_inc_start` / `pre_dec_end`.
 pub(crate) fn is_iter_ptr_adj(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
-    let name = tcx.item_name(def_id);
-    let n = name.as_str();
-    n == "post_inc_start" || n == "pre_dec_end"
+    is_post_inc_start(tcx, def_id) || is_pre_dec_end(tcx, def_id)
 }
 
 /// Resolve a (possibly trait-method) callee to the concrete impl method that
@@ -1258,10 +1254,6 @@ fn operand_scalar_int(operand: &Operand<'_>) -> Option<u128> {
         .or_else(|| const_int_from_debug(&format!("{:?}", constant.const_)).map(|v| v as u128))
 }
 
-fn is_as_ptr_or_as_method(name: &str) -> bool {
-    name.contains("as_ptr") || name.contains("::as_")
-}
-
 fn rvalue_const_bytes<'tcx>(tcx: TyCtxt<'tcx>, rvalue: &Rvalue<'tcx>) -> Option<Vec<u8>> {
     let constant = match rvalue {
         Rvalue::Use(Operand::Constant(constant), ..)
@@ -1343,8 +1335,8 @@ pub fn collect_all_const_bytes_worklist<'tcx>(
                     if !destination.projection.is_empty() {
                         continue;
                     }
-                    let name = call_name(tcx, func);
-                    if is_as_ptr_or_as_method(&name) {
+                    let did = dep_callee_def_id(func);
+                    if did.is_some_and(|d| crate::def_id::as_ptr_like_fns().contains(&d)) {
                         for arg in args {
                             if let Some(bytes) =
                                 trace_const_bytes_from_operand(tcx, body, &arg.node)
@@ -1353,29 +1345,24 @@ pub fn collect_all_const_bytes_worklist<'tcx>(
                             }
                         }
                     }
-                    if name.contains("::add") {
-                        if let Some(offset) = args.get(1).and_then(|a| operand_scalar_int(&a.node))
-                        {
-                            if let Some(base) = args.first() {
-                                if let Some(bytes) =
-                                    trace_const_bytes_from_operand(tcx, body, &base.node)
-                                {
-                                    let start = offset as usize;
-                                    if start < bytes.len() {
-                                        results.push(bytes[start..].to_vec());
-                                    }
-                                }
-                            }
+                    if did.is_some_and(|d| crate::def_id::ptr_add_fns().contains(&d))
+                        && let Some(offset) =
+                            args.get(1).and_then(|a| operand_scalar_int(&a.node))
+                        && let Some(base) = args.first()
+                        && let Some(bytes) = trace_const_bytes_from_operand(tcx, body, &base.node)
+                    {
+                        let start = offset as usize;
+                        if start < bytes.len() {
+                            results.push(bytes[start..].to_vec());
                         }
                     }
-                    if name.contains("box_assume_init_into_vec_unsafe") {
-                        if let Some(box_op) = args.first() {
-                            if let Operand::Copy(p) | Operand::Move(p) = &box_op.node {
-                                if p.projection.is_empty() {
-                                    worklist.push(p.local);
-                                }
-                            }
-                        }
+                    #[cfg(rapx_ge_99)]
+                    if did.is_some_and(|d| crate::def_id::box_assume_init_into_vec_unsafe() == Some(d))
+                        && let Some(box_op) = args.first()
+                        && let Operand::Copy(p) | Operand::Move(p) = &box_op.node
+                        && p.projection.is_empty()
+                    {
+                        worklist.push(p.local);
                     }
                 }
             }
@@ -1437,8 +1424,9 @@ fn collect_as_ptr_const_bytes<'tcx>(
     for data in body.basic_blocks.iter() {
         if let Some(terminator) = &data.terminator {
             if let TerminatorKind::Call { func, args, .. } = &terminator.kind {
-                let name = call_name(tcx, func);
-                if is_as_ptr_or_as_method(&name) {
+                if dep_callee_def_id(func)
+                    .is_some_and(|d| crate::def_id::as_ptr_like_fns().contains(&d))
+                {
                     for arg in args {
                         if let Some(bytes) = trace_const_bytes_from_operand(tcx, body, &arg.node) {
                             results.push(bytes);
@@ -1486,8 +1474,9 @@ fn const_bytes_from_call_dest<'tcx>(
                 if destination.local != local || !destination.projection.is_empty() {
                     continue;
                 }
-                let name = call_name(tcx, func);
-                if is_as_ptr_or_as_method(&name) {
+                if dep_callee_def_id(func)
+                    .is_some_and(|d| crate::def_id::as_ptr_like_fns().contains(&d))
+                {
                     for arg in args {
                         if let Some(bytes) = trace_const_bytes_from_operand(tcx, body, &arg.node) {
                             return Some(bytes);

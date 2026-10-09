@@ -40,7 +40,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             .map(|arg| self.value_of_operand(&arg.node))
             .collect();
 
-        let name = crate::helpers::mir_utils::call_name(self.tcx, func);
         let callee =
             crate::helpers::mir_utils::dep_callee_resolved_def_id(self.tcx, caller_def_id, func);
         let caller_arg_locals: Vec<Option<Local>> = args
@@ -69,12 +68,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
 
         // Iter::len() / Iter::is_empty(): compute from struct fields.
-        if self.try_iter_len_is_empty(&name, &arg_values, args, destination) {
+        if self.try_iter_len_is_empty(callee, &arg_values, args, destination) {
             return;
         }
 
         // Iter::next() / IterMut::next(): advance ptr by 1 and return old.
-        if self.try_iter_next(&name, &arg_values, destination) {
+        if self.try_iter_next(callee, &arg_values, destination) {
             return;
         }
 
@@ -492,20 +491,14 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// wrong for generic T.
     fn try_iter_len_is_empty(
         &mut self,
-        name: &str,
+        callee: Option<DefId>,
         arg_values: &[VmValue<'z3, 'tcx>],
         args: &[Spanned<Operand<'tcx>>],
         destination: Local,
     ) -> bool {
-        if !((name.contains("::Iter<")
-            || name.contains("::IterMut<")
-            || name.ends_with("::Iter::len")
-            || name.ends_with("::IterMut::len")
-            || name.ends_with("::Iter::is_empty")
-            || name.ends_with("::IterMut::is_empty"))
-            && (name.ends_with("::len") || name.ends_with("::is_empty"))
-            && arg_values.len() >= 1)
-        {
+        let is_len = api_classify::is_iter_len(callee);
+        let is_empty = api_classify::is_iter_is_empty(callee);
+        if !(is_len || is_empty) || arg_values.len() < 1 {
             return false;
         }
         let receiver_local = args.first().and_then(|a| a.node.place()).map(|p| p.local);
@@ -525,7 +518,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return false;
         }
         let dest_ty = self.body().local_decls[destination].ty;
-        if name.ends_with("::len") {
+        if is_len {
             let diff = Int::sub(self.z3_ctx, &[&ep.offset, &pp.offset]);
             let sz = self.iter_elem_size(ptr);
             let val = VmValue::new(diff.div(&sz), dest_ty);
@@ -593,24 +586,16 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     }
 
     /// `Iter::next()` / `IterMut::next()`: advance ptr by 1 and return old.
-    /// The MIR calls the `Iterator::next` trait method, so also match the
-    /// trait path (`std::iter::Iterator::next`) in addition to the concrete
-    /// `Iter`/`IterMut` method names.
+    /// The MIR calls the `Iterator::next` trait method, so `def_id` also
+    /// collects the trait path (`std::iter::Iterator::next`) in addition to the
+    /// concrete `Iter`/`IterMut` method names.
     fn try_iter_next(
         &mut self,
-        name: &str,
+        callee: Option<DefId>,
         arg_values: &[VmValue<'z3, 'tcx>],
         destination: Local,
     ) -> bool {
-        let is_next = name.ends_with("::next")
-            && (name.starts_with("Iter::")
-                || name.starts_with("IterMut::")
-                || name.contains("::Iter::")
-                || name.contains("::IterMut::")
-                || name.contains("::Iter<")
-                || name.contains("::IterMut<")
-                || name.contains("::Iterator::next"));
-        if !is_next || arg_values.len() < 1 {
+        if !api_classify::is_iter_next(callee) || arg_values.len() < 1 {
             return false;
         }
         let self_val = &arg_values[0];
