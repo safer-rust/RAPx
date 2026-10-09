@@ -2213,13 +2213,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     .as_ref()
                     .and_then(|v| v.discriminant().cloned())
                     .unwrap_or_else(|| self.fresh_int("discriminant"));
-                if place_val
-                    .as_ref()
-                    .map(|v| v.discriminant().is_some())
-                    .unwrap_or(false)
-                {
-                    self.path_facts.saw_next_discriminant = true;
-                }
                 // For Ordering (repr i8, values: Less=-1 Equal=0 Greater=1),
                 // the discriminant index equals the repr value + 1.
                 // Connect the fresh discriminant term to the ADT value so

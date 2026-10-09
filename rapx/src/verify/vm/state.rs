@@ -373,9 +373,6 @@ pub(crate) struct PathFacts {
     pub split_transmute_asserted: bool,
     /// Whether the caller's contract declared an `Alias` hazard.
     pub alias_hazard_declared: bool,
-    /// Set once the path evaluated an `Iterator::next` discriminant whose
-    /// variant was known symbolically.
-    pub saw_next_discriminant: bool,
 }
 
 /// Scratch state for the *recursive* inlined-callee mechanism

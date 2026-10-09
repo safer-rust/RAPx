@@ -831,23 +831,6 @@ impl PropertyChecker {
                 }
             }
         }
-        // A path that evaluated an `Iterator::next` discriminant may be
-        // infeasible when the iterator was empty (e.g. `assume_init_drop` on the
-        // `Some` branch of `next()` that returned `None`). Check feasibility
-        // only for such paths so unrelated over-constrained paths aren't
-        // spuriously marked sound.
-        if vm_state.path_facts.saw_next_discriminant {
-            let local = Solver::new(vm_state.z3_ctx);
-            local.push();
-            for cond in &vm_state.constraints.assertions {
-                local.assert(cond);
-            }
-            if local.check() == SatResult::Unsat {
-                local.pop(1);
-                return CheckResult::ProvedByRule;
-            }
-            local.pop(1);
-        }
         CheckResult::Unknown(UnknownReason::Unimplemented)
     }
 
