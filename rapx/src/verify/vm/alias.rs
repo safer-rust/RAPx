@@ -809,9 +809,7 @@ fn find_struct_field_origin_for_param<'tcx>(
     let (adt_def, _) = self_adt(tcx, caller)?;
 
     // Try to resolve the checkpoint's first arg to determine which field
-    let Some(arg0) = checkpoint.args.first() else {
-        return None;
-    };
+    let arg0 = checkpoint.args.first()?;
     let arg_place = match arg0 {
         Operand::Copy(p) | Operand::Move(p) => p,
         _ => return None,
@@ -853,15 +851,9 @@ fn find_struct_field_origin_for_param<'tcx>(
                 }
                 let source = match rvalue {
                     #[cfg(rapx_rvalue_use_with_retag)]
-                    Rvalue::Use(operand, _) => match operand {
-                        Operand::Copy(p) | Operand::Move(p) => p,
-                        _ => continue,
-                    },
+                    Rvalue::Use(Operand::Copy(p) | Operand::Move(p), _) => p,
                     #[cfg(not(rapx_rvalue_use_with_retag))]
-                    Rvalue::Use(operand) => match operand {
-                        Operand::Copy(p) | Operand::Move(p) => p,
-                        _ => continue,
-                    },
+                    Rvalue::Use(Operand::Copy(p) | Operand::Move(p)) => p,
                     Rvalue::CopyForDeref(p) => p,
                     _ => continue,
                 };
@@ -902,9 +894,7 @@ fn infer_self_field_from_type<'tcx>(
     caller: DefId,
     checkpoint: &Checkpoint<'tcx>,
 ) -> Option<FieldOrigin> {
-    let Some((adt_def, _)) = self_adt(tcx, caller) else {
-        return None;
-    };
+    let (adt_def, _) = self_adt(tcx, caller)?;
 
     let adt = tcx.adt_def(adt_def);
     let mut raw_ptr_fields: Vec<(usize, String)> = Vec::new();

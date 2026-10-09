@@ -804,14 +804,11 @@ impl<'tcx> Replacer<'tcx> {
         // }
         let mut r = self.ssatransformer.reaching_def[local];
         let mut dominate_bool = true;
-        if r.is_some() {
-            let def_bb = self.ssatransformer.local_defination_block[&r.unwrap()];
-        }
 
         while !(r.is_none() || dominate_bool) {
             r = self.ssatransformer.reaching_def[&r.unwrap()];
-            if r.is_some() {
-                let def_bb = self.ssatransformer.local_defination_block[&r.unwrap()];
+            if let Some(r) = r {
+                let def_bb = self.ssatransformer.local_defination_block[&r];
 
                 dominate_bool = self.dominates_(&def_bb, bb);
             }

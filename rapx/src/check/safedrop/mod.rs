@@ -4,7 +4,6 @@ pub mod corner_case;
 pub mod drop;
 pub mod graph;
 pub mod observer;
-pub mod safedrop;
 
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
@@ -93,9 +92,7 @@ pub fn query_safedrop<'tcx>(
         rap_debug!("safedrop graph (scc): {}", safedrop_graph);
         safedrop_graph.process_function_paths_opt(paths, fn_map);
         let visit_times = safedrop_graph.alias_graph.visit_times();
-        if visit_times <= SAFEDROP_VISIT_LIMIT {
-            safedrop_graph.report_bugs();
-        } else if !safedrop_graph.bug_records.is_bug_free() {
+        if visit_times <= SAFEDROP_VISIT_LIMIT || !safedrop_graph.bug_records.is_bug_free() {
             safedrop_graph.report_bugs();
         }
     }

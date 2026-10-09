@@ -6,7 +6,7 @@ pub mod domain;
 use crate::{
     analysis::{
         Analysis,
-        range::domain::domain::{ConstConvert, IntervalArithmetic},
+        range::domain::core::{ConstConvert, IntervalArithmetic},
     },
     utils::source::get_fn_name_byid,
 };

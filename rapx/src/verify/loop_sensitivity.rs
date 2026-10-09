@@ -852,8 +852,7 @@ fn repeat_for_backedges(needed_backedges: usize) -> usize {
     } else {
         needed_backedges
             .saturating_sub(1)
-            .max(MIN_DATAFLOW_REPEAT)
-            .min(MAX_AUTO_REPEAT)
+            .clamp(MIN_DATAFLOW_REPEAT, MAX_AUTO_REPEAT)
     }
 }
 

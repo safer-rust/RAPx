@@ -1407,10 +1407,7 @@ fn collect_aggregate_const_bytes<'tcx>(
             }
             if all_nonzero {
                 let len = operands.len();
-                let mut bytes = Vec::with_capacity(len);
-                for _ in 0..len - 1 {
-                    bytes.push(b'x');
-                }
+                let mut bytes = vec![b'x'; len - 1];
                 bytes.push(0);
                 results.push(bytes);
             }

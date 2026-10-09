@@ -651,9 +651,7 @@ fn find_cycle_in(start: &str, table: &HashMap<String, CompoundSpec>) -> Option<V
         if done.contains(name) {
             return None;
         }
-        let Some(compound) = table.get(name) else {
-            return None;
-        };
+        let compound = table.get(name)?;
         path.push(name.to_string());
         for tag in compound_refs(&compound.body) {
             if let Some(cycle) = dfs(&tag, table, path, done) {

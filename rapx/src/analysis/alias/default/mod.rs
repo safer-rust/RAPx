@@ -119,6 +119,9 @@ impl MopFnAliasPairs {
     pub fn len(&self) -> usize {
         self.alias_set.len()
     }
+    pub fn is_empty(&self) -> bool {
+        self.alias_set.is_empty()
+    }
     pub fn sort_alias_index(&mut self) {
         let alias_set = std::mem::take(&mut self.alias_set);
         let mut new = HashSet::with_capacity(alias_set.len());
@@ -150,7 +153,7 @@ impl<'tcx> Analysis for AliasAnalyzer<'tcx> {
         for (fn_id, fn_alias) in &mut self.fn_map {
             let fn_name = get_fn_name(self.tcx, *fn_id);
             fn_alias.sort_alias_index();
-            if fn_alias.len() > 0 {
+            if !fn_alias.is_empty() {
                 rap_debug!("Alias found in {:?}: {}", fn_name, fn_alias);
             }
         }

@@ -15,6 +15,15 @@ use super::report::PropertyCheckResult;
 use crate::helpers::mir_scan::CheckpointLocation;
 use crate::verify::contract::render::display_expr_user_friendly;
 
+type CountEntry = (
+    Option<crate::verify::contract::PropertyKind>,
+    Option<String>,
+    bool,
+    bool,
+    super::report::CheckResult,
+    usize,
+);
+
 pub(crate) fn fmt_fn_with_params(path: &str, arg_names: &[String], ret_ty: Option<&str>) -> String {
     let args = arg_names.join(", ");
     match ret_ty {
@@ -452,14 +461,7 @@ pub(crate) fn emit_property_rows<'tcx>(_tcx: TyCtxt<'tcx>, results: &[&PropertyC
     for (path_desc, props) in &path_groups {
         rap_info!("        path {path_desc}:");
         // Count identical (kind, origin, hazard, result) groups for dedup.
-        let mut counts: Vec<(
-            Option<crate::verify::contract::PropertyKind>,
-            Option<String>,
-            bool,
-            bool,
-            super::report::CheckResult,
-            usize,
-        )> = Vec::new();
+        let mut counts: Vec<CountEntry> = Vec::new();
         for r in props.iter() {
             let result = r.result.clone();
             if let Some(on) = r.property.origin().map(|o| o.name.as_str()) {

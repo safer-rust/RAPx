@@ -4,7 +4,7 @@ pub mod solver;
 
 use crate::helpers::mir_utils;
 use crate::analysis::range::Range;
-use crate::analysis::range::domain::domain::*;
+use crate::analysis::range::domain::core::*;
 
 use crate::analysis::path::PathTree;
 use crate::analysis::range::domain::symbolic_expr::*;

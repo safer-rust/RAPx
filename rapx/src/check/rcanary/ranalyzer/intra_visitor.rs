@@ -349,6 +349,7 @@ impl<'tcx, 'z3, 'a> IntraFlowAnalysis<'tcx, 'z3, 'a> {
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn visit_assign(
         &mut self,
         z3_ctx: &'z3 z3::Context,
@@ -585,6 +586,7 @@ impl<'tcx, 'z3, 'a> IntraFlowAnalysis<'tcx, 'z3, 'a> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn handle_copy(
         &mut self,
         z3_ctx: &'z3 z3::Context,
@@ -720,6 +722,7 @@ impl<'tcx, 'z3, 'a> IntraFlowAnalysis<'tcx, 'z3, 'a> {
         self.handle_taint(lu, ru);
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn handle_move(
         &mut self,
         z3_ctx: &'z3 z3::Context,
@@ -845,6 +848,7 @@ impl<'tcx, 'z3, 'a> IntraFlowAnalysis<'tcx, 'z3, 'a> {
         self.handle_taint(lu, ru);
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn handle_copy_from_field(
         &mut self,
         z3_ctx: &'z3 z3::Context,
@@ -1035,6 +1039,7 @@ impl<'tcx, 'z3, 'a> IntraFlowAnalysis<'tcx, 'z3, 'a> {
         self.handle_taint(lu, ru);
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn handle_move_from_field(
         &mut self,
         z3_ctx: &'z3 z3::Context,
@@ -1218,6 +1223,7 @@ impl<'tcx, 'z3, 'a> IntraFlowAnalysis<'tcx, 'z3, 'a> {
         self.icx_slice_mut().var_mut()[ru] = IntraVar::Init(r_new_bv);
         self.handle_taint(lu, ru);
     }
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn handle_aggregate_init(
         &mut self,
         z3_ctx: &'z3 z3::Context,
@@ -1258,6 +1264,7 @@ impl<'tcx, 'z3, 'a> IntraFlowAnalysis<'tcx, 'z3, 'a> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn handle_copy_to_field(
         &mut self,
         z3_ctx: &'z3 z3::Context,
@@ -1447,6 +1454,7 @@ impl<'tcx, 'z3, 'a> IntraFlowAnalysis<'tcx, 'z3, 'a> {
         self.handle_taint(lu, ru);
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn handle_move_to_field(
         &mut self,
         z3_ctx: &'z3 z3::Context,
@@ -1616,6 +1624,7 @@ impl<'tcx, 'z3, 'a> IntraFlowAnalysis<'tcx, 'z3, 'a> {
         self.handle_taint(lu, ru);
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn handle_copy_field_to_field(
         &mut self,
         z3_ctx: &'z3 z3::Context,
@@ -1802,6 +1811,7 @@ impl<'tcx, 'z3, 'a> IntraFlowAnalysis<'tcx, 'z3, 'a> {
         self.handle_taint(lu, ru);
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn handle_move_field_to_field(
         &mut self,
         z3_ctx: &'z3 z3::Context,
@@ -1976,7 +1986,7 @@ impl<'tcx, 'z3, 'a> IntraFlowAnalysis<'tcx, 'z3, 'a> {
     pub(crate) fn check_fn_source(
         &mut self,
         //args: &Vec<Operand<'tcx>>,
-        args: &Box<[Spanned<Operand<'tcx>>]>,
+        args: &[Spanned<Operand<'tcx>>],
         dest: &Place<'tcx>,
     ) -> bool {
         if args.len() != 1 {
@@ -2007,7 +2017,7 @@ impl<'tcx, 'z3, 'a> IntraFlowAnalysis<'tcx, 'z3, 'a> {
     pub(crate) fn check_fn_recovery(
         &mut self,
         //args: &Vec<Operand<'tcx>>,
-        args: &Box<[Spanned<Operand<'tcx>>]>,
+        args: &[Spanned<Operand<'tcx>>],
         dest: &Place<'tcx>,
     ) -> (bool, Vec<usize>) {
         let mut ans: (bool, Vec<usize>) = (false, Vec::new());
@@ -2048,6 +2058,7 @@ impl<'tcx, 'z3, 'a> IntraFlowAnalysis<'tcx, 'z3, 'a> {
         ans
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn handle_call(
         &mut self,
         z3_ctx: &'z3 z3::Context,
@@ -2056,7 +2067,7 @@ impl<'tcx, 'z3, 'a> IntraFlowAnalysis<'tcx, 'z3, 'a> {
         term: Terminator<'tcx>,
         func: &Operand<'tcx>,
         //args: &Vec<Operand<'tcx>>,
-        args: &Box<[Spanned<Operand<'tcx>>]>,
+        args: &[Spanned<Operand<'tcx>>],
         dest: &Place<'tcx>,
         bidx: usize,
     ) {
@@ -2481,8 +2492,8 @@ impl<'tcx, 'z3, 'a> IntraFlowAnalysis<'tcx, 'z3, 'a> {
         if is_z3_goal_verbose() {
             let g = format!("{}", goal);
             rap_trace!("{}\n", g);
-            if model.is_some() {
-                rap_trace!("{}", format!("{}", model.unwrap()));
+            if let Some(model) = model {
+                rap_trace!("{}", format!("{}", model));
             }
         }
 
@@ -2817,13 +2828,13 @@ impl<'tcx, 'z3, 'a> IntraFlowAnalysis<'tcx, 'z3, 'a> {
         // If the ProjectionElem finds the variant is not Field, stop and exit!
         // This method is used for field sensitivity analysis only!
         let mut prj: ProjectionSupport<'tcx> = ProjectionSupport::default();
-        if aggre.is_some() {
+        if let Some(aggre) = aggre {
             // if the 'Aggregate' is Some, that means ProjectionSupport is used for a local constructor.
             // Therefore, we do not need to record the ty of such field, instead, the projection
             // records the ty of the place, it is correct, because for local constructor, we do
             // not use the type information of the filed, but only need the index to init them one by one.
             let ty = place.ty(&self.body.local_decls, self.tcx());
-            prj.pf_vec.push((aggre.unwrap(), ty.ty));
+            prj.pf_vec.push((aggre, ty.ty));
             return prj;
         }
         for (idx, each_pj) in place.projection.iter().enumerate() {

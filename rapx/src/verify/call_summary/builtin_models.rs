@@ -531,9 +531,7 @@ fn layout_constant_effect<'tcx>(
     if align == 0 && size == 0 {
         return None;
     }
-    let Some(callee) = mir_utils::dep_callee_def_id(func) else {
-        return None;
-    };
+    let callee = mir_utils::dep_callee_def_id(func)?;
     if def_id::contains(
         &[
             def_id::mem_align_of(),

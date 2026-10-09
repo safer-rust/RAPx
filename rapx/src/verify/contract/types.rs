@@ -301,7 +301,7 @@ pub(crate) struct AtomProperty<'tcx> {
 /// A conjunction: every [`conjuncts`](Self::conjuncts) member must hold.
 #[derive(Clone, Debug)]
 pub(crate) struct AndProperty<'tcx> {
-    pub conjuncts: Vec<Box<Property<'tcx>>>,
+    pub conjuncts: Vec<Property<'tcx>>,
     pub contract_kind: ContractKind,
     /// Display metadata when this property was expanded from a compound property.
     pub origin: Option<ContractOrigin>,
@@ -310,7 +310,7 @@ pub(crate) struct AndProperty<'tcx> {
 /// A disjunction: at least one [`disjuncts`](Self::disjuncts) member must hold.
 #[derive(Clone, Debug)]
 pub(crate) struct OrProperty<'tcx> {
-    pub disjuncts: Vec<Box<Property<'tcx>>>,
+    pub disjuncts: Vec<Property<'tcx>>,
     pub contract_kind: ContractKind,
     /// Display metadata when this property was expanded from a compound property.
     pub origin: Option<ContractOrigin>,
@@ -331,7 +331,7 @@ impl<'tcx> Property<'tcx> {
     /// Build a conjunction (`And`) of already-expanded conjuncts.
     pub(crate) fn new_and(conjuncts: Vec<Property<'tcx>>) -> Self {
         Self::And(AndProperty {
-            conjuncts: conjuncts.into_iter().map(Box::new).collect(),
+            conjuncts,
             contract_kind: ContractKind::Precond,
             origin: None,
         })
@@ -340,7 +340,7 @@ impl<'tcx> Property<'tcx> {
     /// Build a disjunction (`Or`) of already-expanded disjuncts.
     pub(crate) fn new_or(disjuncts: Vec<Property<'tcx>>) -> Self {
         Self::Or(OrProperty {
-            disjuncts: disjuncts.into_iter().map(Box::new).collect(),
+            disjuncts,
             contract_kind: ContractKind::Precond,
             origin: None,
         })
@@ -387,7 +387,7 @@ impl<'tcx> Property<'tcx> {
     }
 
     /// The conjuncts of an `And` property (`Atom`/`Or` have none).
-    pub(crate) fn conjuncts(&self) -> &[Box<Property<'tcx>>] {
+    pub(crate) fn conjuncts(&self) -> &[Property<'tcx>] {
         match self {
             Property::And(a) => &a.conjuncts,
             Property::Atom(_) | Property::Or(_) => &[],
@@ -395,7 +395,7 @@ impl<'tcx> Property<'tcx> {
     }
 
     /// The disjuncts of an `Or` property (`Atom`/`And` have none).
-    pub(crate) fn disjuncts(&self) -> &[Box<Property<'tcx>>] {
+    pub(crate) fn disjuncts(&self) -> &[Property<'tcx>] {
         match self {
             Property::Or(o) => &o.disjuncts,
             Property::Atom(_) | Property::And(_) => &[],

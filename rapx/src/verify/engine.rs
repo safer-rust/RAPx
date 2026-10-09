@@ -514,7 +514,6 @@ impl<'tcx> VerifyEngine<'tcx> {
                         .conjuncts
                         .iter()
                         .map(|p| Self::bind_property_to_checkpoint(p, checkpoint))
-                        .map(Box::new)
                         .collect(),
                     contract_kind: and.contract_kind,
                     origin: None,
@@ -526,7 +525,6 @@ impl<'tcx> VerifyEngine<'tcx> {
                         .disjuncts
                         .iter()
                         .map(|p| Self::bind_property_to_checkpoint(p, checkpoint))
-                        .map(Box::new)
                         .collect(),
                     contract_kind: or.contract_kind,
                     origin: None,

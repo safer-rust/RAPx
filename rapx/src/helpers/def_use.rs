@@ -292,7 +292,7 @@ pub fn rvalue_operands<'tcx>(rvalue: &'tcx Rvalue<'tcx>) -> Vec<&'tcx Operand<'t
         Rvalue::Aggregate(_, aggregate_operands) => {
             operands.extend(aggregate_operands.iter());
         }
-        Rvalue::Discriminant(_) | Rvalue::CopyForDeref(_) | Rvalue::ThreadLocalRef(_) | _ => {}
+        _ => {}
     }
     operands
 }

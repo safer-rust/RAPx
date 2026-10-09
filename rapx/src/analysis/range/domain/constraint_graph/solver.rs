@@ -1,5 +1,5 @@
 use crate::analysis::range::Range;
-use crate::analysis::range::domain::domain::*;
+use crate::analysis::range::domain::core::*;
 
 use crate::analysis::range::domain::symbolic_expr::*;
 use crate::compat::FxHashMap;
@@ -88,6 +88,7 @@ where
         self.step_range(op, cg_map, vars_map, "NARROW", |old, est| old.narrow(est))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn run_worklist(
         &mut self,
         comp_use_map: &HashMap<&'tcx Place<'tcx>, HashSet<usize>>,

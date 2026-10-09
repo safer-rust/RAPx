@@ -1,4 +1,4 @@
-use crate::analysis::range::domain::domain::*;
+use crate::analysis::range::domain::core::*;
 use crate::analysis::range::{Range, RangeType};
 
 use crate::analysis::range::domain::symbolic_expr::*;
@@ -694,11 +694,10 @@ where
         0
     }
     /// Adds a function call operation to the graph.
-
     fn add_call_op(
         &mut self,
         sink: &'tcx Place<'tcx>,
-        args: &'tcx Box<[Spanned<Operand<'tcx>>]>,
+        args: &'tcx [Spanned<Operand<'tcx>>],
         terminator: &'tcx Terminator<'tcx>,
         func: &'tcx Operand<'tcx>,
         block: BasicBlock,

@@ -32,6 +32,13 @@ use super::{
     types::{ProofGoal, RelevantItem},
 };
 
+type LeafItem<'tcx> = (
+    Vec<usize>,
+    Vec<RelevantItem<'tcx>>,
+    RelevantPlaces,
+    Vec<(DefId, Vec<usize>, RelevantPlaces)>,
+);
+
 /// Entry point for backward path visiting.
 pub(crate) struct BackwardSlicer<'tcx> {
     tcx: TyCtxt<'tcx>,
@@ -154,6 +161,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
     /// Post-order recursion: returns one `(block_path, backward_items,
     /// relevant_before_block, parked_caller_relevant)` per checkpoint leaf.
     /// Each leaf is independent — no merging, no HashMap collision.
+    #[allow(clippy::too_many_arguments)]
     fn build_leaf_items(
         visitor: &Self,
         tree: &PathTree,
@@ -165,12 +173,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
         caller: DefId,
         bodies: &HashMap<DefId, &'tcx Body<'tcx>>,
         flows: &HashMap<DefId, DataflowGraph>,
-    ) -> Vec<(
-        Vec<usize>,
-        Vec<RelevantItem<'tcx>>,
-        RelevantPlaces,
-        Vec<(DefId, Vec<usize>, RelevantPlaces)>,
-    )> {
+    ) -> Vec<LeafItem<'tcx>> {
         let (def_id, local_index) = tree.block_fn_of(node.block).unwrap_or((caller, node.block));
         let body = &bodies[&def_id];
         let flow = &flows[&def_id];
@@ -374,6 +377,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
     /// After the first backward pass, re-visit statements whose defs
     /// became relevant because of discoveries made during that pass
     /// (tracked in `RelevantPlaces::just_added`).
+    #[allow(clippy::too_many_arguments)]
     fn re_visit_newly_added(
         visitor: &Self,
         def_id: DefId,
@@ -411,6 +415,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
     }
 
     /// Visit one MIR statement against the current relevance frontier.
+    #[allow(clippy::too_many_arguments)]
     fn visit_statement(
         &self,
         def_id: DefId,
@@ -617,6 +622,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
     }
 
     /// Visit one MIR terminator against the current relevance frontier.
+    #[allow(clippy::too_many_arguments)]
     fn visit_terminator(
         &self,
         def_id: DefId,

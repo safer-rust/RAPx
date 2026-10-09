@@ -113,9 +113,7 @@ impl PropertyChecker {
                         .field_value(base_local, &field_path)
                         .cloned()
                         .or_else(|| vm_state.local_value(base_local).cloned());
-                    let Some(base_val) = base_val else {
-                        return None;
-                    };
+                    let base_val = base_val?;
 
                     let enum_ty = last_field_ty.unwrap_or(base_val.ty);
                     let inner_ty = match enum_ty.kind() {

@@ -195,7 +195,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
     fn combine_check_paths(
         &self,
         view: &CheckpointCheckView<'_, '_, 'tcx>,
-        children: &[Box<Property<'tcx>>],
+        children: &[Property<'tcx>],
         fold: fn(CheckResult, CheckResult) -> CheckResult,
         replace_desc_on: fn(&CheckResult) -> bool,
     ) -> Vec<(CheckResult, String)> {

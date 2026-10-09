@@ -1,7 +1,7 @@
 use super::checks;
 use super::graph::*;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
 pub struct LocalSpot {
     pub bb: Option<usize>,
     pub local: Option<usize>,
@@ -18,12 +18,6 @@ impl LocalSpot {
         LocalSpot {
             bb: None,
             local: Some(local),
-        }
-    }
-    pub fn default() -> Self {
-        LocalSpot {
-            bb: None,
-            local: None,
         }
     }
 }

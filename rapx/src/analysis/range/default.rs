@@ -9,7 +9,7 @@ use crate::{
             Range, RangeAnalysis,
             domain::{
                 ConstraintGraph,
-                domain::{ConstConvert, IntervalArithmetic, VarNodes},
+                core::{ConstConvert, IntervalArithmetic, VarNodes},
             },
         },
         // SSA / ESSA transformation passes

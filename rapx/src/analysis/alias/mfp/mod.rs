@@ -225,7 +225,7 @@ impl<'tcx> RapxAnalysis for MfpAliasAnalyzer<'tcx> {
         for (fn_id, fn_alias) in &mut self.fn_map {
             let fn_name = self.tcx.def_path_str(*fn_id);
             fn_alias.sort_alias_index();
-            if fn_alias.len() > 0 {
+            if !fn_alias.is_empty() {
                 rap_trace!("Alias found in {:?}: {}", fn_name, fn_alias);
             }
         }

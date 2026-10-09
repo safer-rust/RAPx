@@ -1,5 +1,5 @@
 pub mod constraint_graph;
-pub mod domain;
+pub mod core;
 pub mod interproc;
 pub mod range;
 pub mod symbolic_expr;

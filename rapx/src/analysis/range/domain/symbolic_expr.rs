@@ -7,7 +7,7 @@
 use rust_intervals::NothingBetween;
 
 use crate::analysis::range::domain::ConstraintGraph;
-use crate::analysis::range::domain::domain::{ConstConvert, IntervalArithmetic, VarNode, VarNodes};
+use crate::analysis::range::domain::core::{ConstConvert, IntervalArithmetic, VarNode, VarNodes};
 use crate::analysis::range::{Range, RangeType};
 use crate::compat::FxHashMap;
 use crate::{rap_debug, rap_trace};
@@ -226,16 +226,16 @@ impl<'tcx> SymbExpr<'tcx> {
         if let SymbExpr::Binary(op, lhs, rhs) = self {
             match op {
                 BinOp::Sub | BinOp::SubUnchecked | BinOp::SubWithOverflow => {
-                    if let SymbExpr::Binary(inner_op, inner_lhs, inner_rhs) = lhs.as_ref() {
-                        match inner_op {
-                            BinOp::Add | BinOp::AddUnchecked | BinOp::AddWithOverflow => {
-                                if inner_lhs == rhs {
-                                    *self = *inner_rhs.clone();
-                                } else if inner_rhs == rhs {
-                                    *self = *inner_lhs.clone();
-                                }
-                            }
-                            _ => {}
+                    if let SymbExpr::Binary(
+                        BinOp::Add | BinOp::AddUnchecked | BinOp::AddWithOverflow,
+                        inner_lhs,
+                        inner_rhs,
+                    ) = lhs.as_ref()
+                    {
+                        if inner_lhs == rhs {
+                            *self = *inner_rhs.clone();
+                        } else if inner_rhs == rhs {
+                            *self = *inner_lhs.clone();
                         }
                     }
                 }
@@ -340,7 +340,10 @@ impl<'tcx, T: IntervalArithmetic + ConstConvert + Debug> BasicInterval<'tcx, T> 
             upper,
         }
     }
-    pub fn default() -> Self {
+}
+
+impl<'tcx, T: IntervalArithmetic + ConstConvert + Debug> Default for BasicInterval<'tcx, T> {
+    fn default() -> Self {
         Self {
             range: Range::bottom(),
             lower: SymbExpr::Unknown,

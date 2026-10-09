@@ -89,16 +89,13 @@ impl<'tcx> AliasGraph<'tcx> {
                 }
                 obs.on_value_assign(self, lv_val);
             }
-            Rvalue::Cast(_, operand, _) => match operand {
-                Operand::Copy(rv_place) | Operand::Move(rv_place) => {
-                    if let Some((rv_val, rv_pts)) = self.resolve_operand(rv_place) {
-                        obs.on_value_use(self, rv_val, span, false);
-                        self.pts_graph.assign_value(lv_pts, rv_pts);
-                        obs.on_value_assign(self, lv_val);
-                    }
+            Rvalue::Cast(_, Operand::Copy(rv_place) | Operand::Move(rv_place), _) => {
+                if let Some((rv_val, rv_pts)) = self.resolve_operand(rv_place) {
+                    obs.on_value_use(self, rv_val, span, false);
+                    self.pts_graph.assign_value(lv_pts, rv_pts);
+                    obs.on_value_assign(self, lv_val);
                 }
-                _ => {}
-            },
+            }
             Rvalue::Aggregate(kind, operands) => {
                 match kind.as_ref() {
                     AggregateKind::Tuple | AggregateKind::Adt(..) => {

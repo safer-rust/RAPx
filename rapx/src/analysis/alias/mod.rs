@@ -69,6 +69,10 @@ impl FnAliasPairs {
         self.alias_set.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.alias_set.is_empty()
+    }
+
     pub fn sort_alias_index(&mut self) {
         let alias_set = std::mem::take(&mut self.alias_set);
         let mut new_alias_set = HashSet::with_capacity(alias_set.len());
@@ -177,9 +181,7 @@ fn resolve_field_origin_inner<'tcx>(
                 field_name: field.name.to_string(),
             });
         }
-        let Some((did, a)) = adt_from_ty(field_ty) else {
-            return None;
-        };
+        let (did, a) = adt_from_ty(field_ty)?;
         struct_def_id = did;
         args = a;
     }

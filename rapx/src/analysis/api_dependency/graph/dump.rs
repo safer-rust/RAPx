@@ -65,10 +65,10 @@ impl<'tcx> ApiDependencyGraph<'tcx> {
 }
 
 impl<'tcx> DepNode<'tcx> {
-    fn to_node_info(&self, resolver: &PathResolver<'tcx>) -> NodeInfo {
+    fn to_node_info(self, resolver: &PathResolver<'tcx>) -> NodeInfo {
         match self {
             DepNode::Api(def_id, args) => NodeInfo::Api {
-                path: resolver.path_str_with_args(*def_id, ty::GenericArgs::empty()),
+                path: resolver.path_str_with_args(def_id, ty::GenericArgs::empty()),
                 generic_args: args
                     .iter()
                     .map(|arg| resolver.generic_arg_str(arg))
@@ -82,11 +82,11 @@ impl<'tcx> DepNode<'tcx> {
 }
 
 impl DepEdge {
-    fn to_edge_info(&self, from: usize, to: usize) -> EdgeInfo {
+    fn to_edge_info(self, from: usize, to: usize) -> EdgeInfo {
         EdgeInfo {
             from,
             to,
-            kind: *self,
+            kind: self,
         }
     }
 }

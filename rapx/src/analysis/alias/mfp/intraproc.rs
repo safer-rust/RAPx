@@ -163,7 +163,7 @@ impl PlaceId {
 }
 
 /// Information about all places in a function
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct PlaceInfo {
     /// Mapping from PlaceId to index
     place_to_index: FxHashMap<PlaceId, usize>,
@@ -178,20 +178,9 @@ pub struct PlaceInfo {
 }
 
 impl<'tcx> PlaceInfo {
-    /// Create a new PlaceInfo with initial capacity
-    pub fn new() -> Self {
-        PlaceInfo {
-            place_to_index: FxHashMap::default(),
-            index_to_place: Vec::new(),
-            may_drop: Vec::new(),
-            need_drop: Vec::new(),
-            num_places: 0,
-        }
-    }
-
     /// Build PlaceInfo from MIR body
     pub fn build(tcx: TyCtxt<'tcx>, def_id: DefId, body: &'tcx Body<'tcx>) -> Self {
-        let mut info = Self::new();
+        let mut info = Self::default();
         let ty_env = TypingEnv::post_analysis(tcx, def_id);
 
         // Register all locals first

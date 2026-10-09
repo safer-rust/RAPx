@@ -246,9 +246,7 @@ impl PtsGraph {
     pub fn conservative_call_merge(&mut self, arg_slots: &[usize]) {
         let mut pointer_args: Vec<usize> = Vec::new();
         for &idx in arg_slots {
-            if !self.points_to[idx].is_empty() {
-                pointer_args.push(idx);
-            } else if self.may_drop(idx) {
+            if !self.points_to[idx].is_empty() || self.may_drop(idx) {
                 pointer_args.push(idx);
             }
         }
@@ -572,10 +570,7 @@ impl PtsGraph {
     pub fn resolve_place(&self, place: &PlaceKey) -> PlaceKey {
         let mut cur = place.clone();
         let mut seen: Vec<PlaceKey> = vec![cur.clone()];
-        loop {
-            let Some(next) = self.get_place_source(&cur) else {
-                break;
-            };
+        while let Some(next) = self.get_place_source(&cur) {
             if seen.iter().any(|p| p == &next) {
                 break;
             }

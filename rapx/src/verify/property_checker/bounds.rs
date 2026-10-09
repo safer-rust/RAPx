@@ -384,7 +384,7 @@ impl PropertyChecker {
             }
             _ => None,
         };
-        let Some(end_idx) = end_idx else { return None };
+        let end_idx = end_idx?;
         for block in vm_state.body().basic_blocks.iter() {
             for stmt in &block.statements {
                 if let StatementKind::Assign(assign) = &stmt.kind {

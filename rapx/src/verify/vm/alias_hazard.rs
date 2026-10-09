@@ -728,6 +728,7 @@ pub(super) fn local_hazard_violation(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn local_hazard_violation_with(
     tcx: TyCtxt<'_>,
     caller: DefId,
@@ -1779,12 +1780,11 @@ fn pre_existing_view_on_origin(
             let (_target, rvalue) = assign.as_ref();
             let src_place: Option<&Place<'_>> = match rvalue {
                 Rvalue::Ref(_, _, place) => Some(place),
-                Rvalue::Cast(rustc_middle::mir::CastKind::PtrToPtr, operand, _) => {
-                    match operand {
-                        Operand::Copy(place) | Operand::Move(place) => Some(place),
-                        _ => None,
-                    }
-                }
+                Rvalue::Cast(
+                    rustc_middle::mir::CastKind::PtrToPtr,
+                    Operand::Copy(place) | Operand::Move(place),
+                    _,
+                ) => Some(place),
                 _ => None,
             };
             let Some(place) = src_place else {

@@ -21,6 +21,7 @@ use super::super::{
 use super::types::RelevantItem;
 
 /// Visit a call terminator using an interprocedural dependency summary.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn visit<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,

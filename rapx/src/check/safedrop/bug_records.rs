@@ -159,6 +159,7 @@ impl BugRecords {
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn emit_bug_reports<'tcx, F>(
         &self,
         body: &Body<'tcx>,

@@ -1,6 +1,6 @@
 use super::ConstraintGraph;
-use crate::analysis::range::domain::domain::BasicOpKind;
-use crate::analysis::range::domain::domain::{ConstConvert, IntervalArithmetic};
+use crate::analysis::range::domain::core::BasicOpKind;
+use crate::analysis::range::domain::core::{ConstConvert, IntervalArithmetic};
 use crate::analysis::range::domain::symbolic_expr::IntervalTypeTrait;
 use rustc_middle::mir::Place;
 use std::collections::{HashMap, HashSet};

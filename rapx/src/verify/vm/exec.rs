@@ -1129,6 +1129,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// `byte_offset` is the running byte offset of the field being decomposed,
     /// used for the byte→field cross-view materialization (see
     /// [`Self::field_term_from_bytes`]).
+    #[allow(clippy::too_many_arguments)]
     fn decompose_pointee_fields(
         &mut self,
         alloc_id: AllocId,
@@ -1343,15 +1344,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             // field's provenance alive across `NodeRef` moves.
             let src_place: Option<&Place<'tcx>> = match rvalue {
                 #[cfg(rapx_rvalue_use_with_retag)]
-                Rvalue::Use(operand, _) => match operand {
-                    Operand::Copy(p) | Operand::Move(p) => Some(p),
-                    _ => None,
-                },
+                Rvalue::Use(Operand::Copy(p) | Operand::Move(p), _) => Some(p),
                 #[cfg(not(rapx_rvalue_use_with_retag))]
-                Rvalue::Use(operand) => match operand {
-                    Operand::Copy(p) | Operand::Move(p) => Some(p),
-                    _ => None,
-                },
+                Rvalue::Use(Operand::Copy(p) | Operand::Move(p)) => Some(p),
                 Rvalue::CopyForDeref(p) => Some(p),
                 _ => None,
             };
@@ -3072,10 +3067,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 // A general `Or` without such a guard disjunct is left to the
                 // checker (only one disjunct holds, so no fact is sound to
                 // assert unconditionally).
-                let is_guard = |d: &Box<Property<'tcx>>| {
-                    matches!(d.as_ref(), Property::Atom(a) if a.kind == PropertyKind::Null || a.kind == PropertyKind::Size)
+                let is_guard = |d: &Property<'tcx>| {
+                    matches!(d, Property::Atom(a) if a.kind == PropertyKind::Null || a.kind == PropertyKind::Size)
                 };
-                if !or.disjuncts.iter().any(&is_guard) {
+                if !or.disjuncts.iter().any(is_guard) {
                     return;
                 }
                 for disj in &or.disjuncts {
@@ -4339,11 +4334,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     ) -> Option<AllocId> {
         use rustc_middle::ty::TyKind;
         let mut view_ty = ty;
-        loop {
-            match view_ty.kind() {
-                TyKind::Ref(_, inner, _) | TyKind::RawPtr(inner, _) => view_ty = *inner,
-                _ => break,
-            }
+        while let TyKind::Ref(_, inner, _) | TyKind::RawPtr(inner, _) = view_ty.kind() {
+            view_ty = *inner;
         }
         if !matches!(view_ty.kind(), TyKind::Adt(..)) {
             return None;
@@ -4406,11 +4398,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     ) -> bool {
         use rustc_middle::ty::TyKind;
         let mut view_ty = ty;
-        loop {
-            match view_ty.kind() {
-                TyKind::Ref(_, inner, _) | TyKind::RawPtr(inner, _) => view_ty = *inner,
-                _ => break,
-            }
+        while let TyKind::Ref(_, inner, _) | TyKind::RawPtr(inner, _) = view_ty.kind() {
+            view_ty = *inner;
         }
         if !matches!(view_ty.kind(), TyKind::Adt(..)) {
             return false;

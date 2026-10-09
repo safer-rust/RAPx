@@ -92,8 +92,8 @@ impl OptCheck for UsedAsImmutableCheck {
                         rustc_middle::ty::TypingEnv::post_analysis(*tcx, def_id),
                         rustc_type_ir::Unnormalized::dummy(callee_fn_sig),
                     );
-                    if fn_sig.is_ok() {
-                        let fn_sig = fn_sig.unwrap().skip_binder();
+                    if let Ok(fn_sig) = fn_sig {
+                        let fn_sig = fn_sig.skip_binder();
                         let ty = fn_sig.inputs().get(index).unwrap();
                         if let TyKind::Ref(_, _, Mutability::Mut) = ty.kind() {
                             break;

@@ -1558,9 +1558,7 @@ fn build_type_atom<'tcx>(
                     if spec.param_tys.get(i).map(|s| s.as_str()) != Some("Ptr") {
                         return None;
                     }
-                    let Some(field) = extract_tamed_field(tcx, def_id) else {
-                        return None;
-                    };
+                    let field = extract_tamed_field(tcx, def_id)?;
                     let Ok(e) = syn::parse_str::<syn::Expr>(&field) else {
                         return None;
                     };

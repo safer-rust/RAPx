@@ -15,7 +15,7 @@ use crate::{
     rap_trace,
 };
 
-use super::domain::*;
+use super::core::*;
 
 impl<T> Range<T>
 where
@@ -233,17 +233,13 @@ where
         let b_lower = other.get_lower();
         let b_upper = other.get_upper();
 
-        let final_lower = if a_lower == T::min_value() && b_lower > T::min_value() {
-            b_lower
-        } else if a_lower <= b_lower {
+        let final_lower = if (a_lower == T::min_value() && b_lower > T::min_value()) || a_lower <= b_lower {
             b_lower
         } else {
             a_lower
         };
 
-        let final_upper = if a_upper == T::max_value() && b_upper < T::max_value() {
-            b_upper
-        } else if a_upper >= b_upper {
+        let final_upper = if (a_upper == T::max_value() && b_upper < T::max_value()) || a_upper >= b_upper {
             b_upper
         } else {
             a_upper

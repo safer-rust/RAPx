@@ -2352,7 +2352,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                 init: true,
                                 in_bounds: true,
                                 align_n: result_align_n.clone(),
-                                ..ValueFacts::default()
                             },
                             source: ValueSource::None,
                         },
@@ -2370,7 +2369,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                     init: true,
                                     in_bounds: true,
                                     align_n: result_align_n,
-                                    ..ValueFacts::default()
                                 },
                                 source: ValueSource::None,
                             };
@@ -2644,11 +2642,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         // slice length; its element count is `size / elem_size`.
                         let elem_size = elem_ty.map(|t| self.size_of_ty(t)).unwrap_or(1);
                         let n = alloc.size.as_u64()?;
-                        if elem_size > 0 {
-                            Some(Int::from_u64(self.z3_ctx, n / elem_size))
-                        } else {
-                            None
-                        }
+                        Some(Int::from_u64(self.z3_ctx, n.checked_div(elem_size)?))
                     });
                 let size = known_len
                     .clone()
@@ -2879,9 +2873,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         // concrete stride, so drop it here (the `check_align` SMT query
         // re-derives alignment from the allocation's align and the
         // `sizeof_T % align_T == 0` layout constraint).
-        let Some(n) = base_align.simplify().as_u64() else {
-            return None;
-        };
+        let n = base_align.simplify().as_u64()?;
         if stride_bytes > 0 && stride_bytes.is_multiple_of(n) {
             return Some(base_align.clone());
         }

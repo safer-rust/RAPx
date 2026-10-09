@@ -250,14 +250,14 @@ impl PathTree {
     /// into its children), so the callback receives the path from the root
     /// up to and including `target_block`.
     ///
-    /// Returns `Ok(())` if the walk completed, or `Err(())` if `f` returned
+    /// Returns `Some(())` if the walk completed, or `None` if `f` returned
     /// `false` to request early termination.
-    pub fn walk_prefixes<F>(&self, target_block: usize, f: &mut F) -> Result<(), ()>
+    pub fn walk_prefixes<F>(&self, target_block: usize, f: &mut F) -> Option<()>
     where
         F: FnMut(&[usize]) -> bool,
     {
         let Some(root) = self.root.as_ref() else {
-            return Ok(());
+            return Some(());
         };
         let mut path = Vec::new();
         Self::walk_prefixes_impl(root, &mut path, target_block, false, f)
@@ -266,12 +266,12 @@ impl PathTree {
     /// Like [`walk_prefixes`] but continues past the target block into
     /// children, finding ALL occurrences (e.g. multiple iterations of the
     /// same checkpoint block in a loop).
-    pub fn walk_all_prefixes<F>(&self, target_block: usize, f: &mut F) -> Result<(), ()>
+    pub fn walk_all_prefixes<F>(&self, target_block: usize, f: &mut F) -> Option<()>
     where
         F: FnMut(&[usize]) -> bool,
     {
         let Some(root) = self.root.as_ref() else {
-            return Ok(());
+            return Some(());
         };
         let mut path = Vec::new();
         Self::walk_prefixes_impl(root, &mut path, target_block, true, f)
@@ -283,7 +283,7 @@ impl PathTree {
         target_block: usize,
         continue_past_target: bool,
         f: &mut F,
-    ) -> Result<(), ()>
+    ) -> Option<()>
     where
         F: FnMut(&[usize]) -> bool,
     {
@@ -292,18 +292,18 @@ impl PathTree {
             let cont = f(path);
             if !cont {
                 path.pop();
-                return Err(());
+                return None;
             }
             if !continue_past_target {
                 path.pop();
-                return Ok(());
+                return Some(());
             }
         }
         for child in &node.children {
             Self::walk_prefixes_impl(child, path, target_block, continue_past_target, f)?;
         }
         path.pop();
-        Ok(())
+        Some(())
     }
 }
 

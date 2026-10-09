@@ -1,6 +1,6 @@
 use crate::analysis::range::domain::ConstraintGraph;
-use crate::analysis::range::domain::domain::CallOp;
-use crate::analysis::range::domain::domain::{ConstConvert, IntervalArithmetic, VarNodes};
+use crate::analysis::range::domain::core::CallOp;
+use crate::analysis::range::domain::core::{ConstConvert, IntervalArithmetic, VarNodes};
 use crate::analysis::range::{Range, RangeType};
 use crate::compat::FxHashMap;
 use rustc_hir::def_id::DefId;

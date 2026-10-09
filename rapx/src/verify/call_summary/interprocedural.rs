@@ -128,6 +128,8 @@ enum WrapperEffectMemo {
     Done(Option<CallEffect>),
 }
 
+type Recurse<'a> = dyn FnMut(DefId) -> Option<CallEffect> + 'a;
+
 /// Resolve `callee`'s wrapper effect by walking nested wrapper calls, with
 /// cycle detection and memoization. `probe` inspects `callee`'s body and, for
 /// a nested call it follows, invokes `recurse`, which routes back through this
@@ -140,7 +142,7 @@ fn resolve_wrapper_effect<'tcx>(
     probe: &dyn Fn(
         TyCtxt<'tcx>,
         DefId,
-        &mut (dyn FnMut(DefId) -> Option<CallEffect> + '_),
+        &mut Recurse<'_>,
     ) -> Option<CallEffect>,
 ) -> Option<CallEffect> {
     if let Some(state) = memo.get(&callee) {
@@ -176,7 +178,7 @@ pub(super) fn try_pointer_arith_wrapper_effect<'tcx>(
 fn pointer_arith_wrapper_probe<'tcx>(
     tcx: TyCtxt<'tcx>,
     callee: DefId,
-    recurse: &mut (dyn FnMut(DefId) -> Option<CallEffect> + '_),
+    recurse: &mut Recurse<'_>,
 ) -> Option<CallEffect> {
     if !tcx.is_mir_available(callee) {
         return None;
@@ -778,12 +780,9 @@ pub(crate) fn try_decode_length_return_effect(
     let TyKind::Tuple(tys) = inner.kind() else {
         return None;
     };
-    let Some(field) = tys
+    let field = tys
         .iter()
-        .position(|t| matches!(t.kind(), TyKind::Uint(rustc_middle::ty::UintTy::Usize)))
-    else {
-        return None;
-    };
+        .position(|t| matches!(t.kind(), TyKind::Uint(rustc_middle::ty::UintTy::Usize)))?;
 
     // Collect `Some((.., L))` returns with constant or computed length `L`.
     let mut returns: Vec<(BasicBlock, u64)> = Vec::new();
@@ -860,9 +859,7 @@ pub(crate) fn try_decode_length_return_effect(
             continue;
         }
         let k = len.checked_sub(1)?;
-        let Some(&(get_bb, _)) = gets.iter().find(|(_, kk)| *kk == k) else {
-            return None;
-        };
+        let &(get_bb, _) = gets.iter().find(|(_, kk)| *kk == k)?;
         if !block_dominates(body, get_bb, *bb) {
             return None;
         }
@@ -1053,9 +1050,7 @@ pub(super) fn try_iter_constructor_effect<'tcx>(
         return None;
     };
     let inputs = fn_sig.inputs().skip_binder();
-    let Some(arg0) = inputs.first() else {
-        return None;
-    };
+    let arg0 = inputs.first()?;
     let TyKind::Ref(_, inner, _) = arg0.kind() else {
         return None;
     };
@@ -1156,9 +1151,7 @@ fn single_call_wrapper_target<'tcx>(tcx: TyCtxt<'tcx>, callee: DefId) -> Option<
         if destination.local.as_usize() != 0 {
             continue;
         }
-        let Some(c) = helpers::dep_callee_def_id(func) else {
-            return None;
-        };
+        let c = helpers::dep_callee_def_id(func)?;
         match found {
             Some(f) if f != c => return None,
             _ => found = Some(c),

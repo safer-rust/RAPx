@@ -349,6 +349,10 @@ where
     pub fn len(&self) -> usize {
         self.i.len()
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.i.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, Default)]

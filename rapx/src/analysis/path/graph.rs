@@ -288,7 +288,7 @@ fn build_function_info(
                             }
                         }
                     }
-                    Rvalue::BinaryOp(op, operands) if matches!(op, BinOp::AddWithOverflow) => {
+                    Rvalue::BinaryOp(BinOp::AddWithOverflow, operands) => {
                         let (lhs, rhs): (&Operand<'_>, &Operand<'_>) =
                             (&operands.0, &operands.1);
                         if let Some(lhs_local) = match lhs {
@@ -363,7 +363,7 @@ fn build_function_info(
                             }
                         }
                     }
-                    Rvalue::BinaryOp(op, operands) if matches!(op, BinOp::Rem) => {
+                    Rvalue::BinaryOp(BinOp::Rem, operands) => {
                         let (lhs, rhs): (&Operand<'_>, &Operand<'_>) =
                             (&operands.0, &operands.1);
                         if let Some(lhs_local) = match lhs {
