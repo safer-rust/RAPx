@@ -370,17 +370,6 @@ impl<'z3, 'tcx> Allocation<'z3, 'tcx> {
     }
 }
 
-/// Per-path facts, read afterwards by the property checker.
-///
-/// Most flags are latched at most once during path execution (a contract fact
-/// or a recognized discriminant / bounds check).  They are per-path state, not
-/// per-step: once set they are never cleared within a path.
-#[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct PathFacts {
-    /// Whether the caller's contract declared an `Alias` hazard.
-    pub alias_hazard_declared: bool,
-}
-
 /// Scratch state for the *recursive* inlined-callee mechanism
 /// ([`crate::verify::vm::call::exec_inline_call`]), which unwinds via the Rust
 /// call stack, is bounded by `inline_depth`, and stashes its per-call bindings
@@ -657,9 +646,12 @@ pub(crate) struct VmState<'z3, 'tcx> {
     /// pushed/popped on inline entry/exit).
     pub(crate) inline: InlineCtx<'z3, 'tcx>,
 
-    /// Per-path facts (latched while stepping, or derived in [`Self::new`]),
-    /// read by the property checker.
-    pub(crate) path_facts: PathFacts,
+    /// Root allocations of the `Alias` sources the caller's contract declares
+    /// (a hazard like `Alias(self, ret)`, or a `Ptr2Ref` precondition like
+    /// `Alias(self.0)`).  `check_read_memory_alias`/`check_view_alias` discharge
+    /// an alias hazard only when the checked origin resolves to one of these —
+    /// not for every alias, which a single boolean would wrongly license.
+    pub(crate) alias_hazard_allocs: FxHashSet<AllocId>,
 }
 
 impl<'z3, 'tcx> VmState<'z3, 'tcx> {
@@ -689,7 +681,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             units: Vec::default(),
             inline: InlineCtx::default(),
             constraints,
-            path_facts: PathFacts::default(),
+            alias_hazard_allocs: FxHashSet::default(),
         }
     }
 

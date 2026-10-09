@@ -9,7 +9,6 @@ use super::alias_hazard::{self, AliasProducer, HazardKind};
 use crate::analysis::alias::FieldOrigin;
 use crate::helpers::mir_scan::Checkpoint;
 use crate::verify::api_classify;
-use crate::verify::contract::{Property, PropertyKind};
 use crate::verify::def_use::PlaceKey;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{Local, Operand, ProjectionElem, Rvalue, StatementKind};
@@ -145,24 +144,14 @@ pub(crate) enum VmAliasResult {
     Unknown,
 }
 
-/// Whether a contract property tree contains an `Alias` atom (used to detect a
-/// caller-declared `Alias`/`Ptr2Ref` precondition).
-fn property_contains_alias(property: &Property<'_>) -> bool {
-    match property {
-        Property::Atom(a) => a.kind == PropertyKind::Alias,
-        Property::And(and) => and.conjuncts.iter().any(|p| property_contains_alias(p)),
-        Property::Or(or) => or.disjuncts.iter().any(|p| property_contains_alias(p)),
-    }
-}
-
-/// Whether the caller declares an `Alias` assumption in its `#[rapx::requires]`
-/// (directly or via a compound like `Ptr2Ref`). Such a function relies on its
-/// caller-guaranteed precondition rather than on field encapsulation, so the
-/// field-encapsulation escape check must not fire on it.
-fn fn_has_alias_requires(tcx: rustc_middle::ty::TyCtxt<'_>, def_id: DefId) -> bool {
-    crate::verify::target::get_contract_from_annotation(tcx, def_id)
-        .iter()
-        .any(property_contains_alias)
+fn origin_alias_hazard_accepted<'z3, 'tcx>(
+    vm_state: &VmState<'z3, 'tcx>,
+    origin_val: &VmValue<'z3, 'tcx>,
+) -> bool {
+    origin_val
+        .provenance_alloc_id()
+        .map(|alloc_id| vm_state.alias_hazard_allocs.contains(&vm_state.root_alloc(alloc_id)))
+        .unwrap_or(false)
 }
 
 /// Flow-sensitive shared-XOR-mutable check for a view-producing checkpoint.
@@ -264,15 +253,15 @@ pub(crate) fn check_alias_vm<'z3, 'tcx>(
                 // discharges the hazard, the deref must not violate shared-XOR-mutable
                 // against a live alias of the opposite mutability (tree-based,
                 // grouped by root or allocation).
-                if !fn_has_alias_requires(vm_state.tcx, checkpoint.caller) {
-                    if let Some(reason) = flow_xor_violation(
+                if !origin_alias_hazard_accepted(vm_state, &origin_val)
+                    && let Some(reason) = flow_xor_violation(
                         vm_state,
                         checkpoint,
                         checkpoint.is_mut_ref,
                         checkpoint.statement_index,
-                    ) {
-                        return VmAliasResult::Failed(reason);
-                    }
+                    )
+                {
+                    return VmAliasResult::Failed(reason);
                 }
                 if origin.is_mut_ref() {
                     // A mut view produced through a raw field of a reference
@@ -349,7 +338,7 @@ pub(crate) fn check_alias_vm<'z3, 'tcx>(
                                 // precondition (e.g. `Ptr2Ref`) relies on its
                                 // caller rather than field encapsulation, so the
                                 // encapsulation check must not fire there.
-                                if !fn_has_alias_requires(vm_state.tcx, checkpoint.caller) {
+                                if !origin_alias_hazard_accepted(vm_state, &origin_val) {
                                     return check_escaped_field(
                                         vm_state.tcx,
                                         checkpoint.caller,
@@ -390,7 +379,7 @@ pub(crate) fn check_alias_vm<'z3, 'tcx>(
                 if matches!(origin.kind, VmOriginKind::RawPtr)
                     && origin.local.as_usize() <= vm_state.body().arg_count
                 {
-                    if fn_has_alias_requires(vm_state.tcx, checkpoint.caller) {
+                    if origin_alias_hazard_accepted(vm_state, &origin_val) {
                         return VmAliasResult::Proved;
                     }
                     let escapes = alias_hazard::destination_flows_to_return(
@@ -548,15 +537,15 @@ fn check_view_alias<'z3, 'tcx>(
     // without checking — e.g. two raw pointers split from one owned `Vec`, then
     // `&` and `&mut` views of each while the first is still live. An
     // `Alias`/`Ptr2Ref` precondition discharges the obligation.
-    if !fn_has_alias_requires(vm_state.tcx, checkpoint.caller) {
-        if let Some(reason) = flow_xor_violation(
+    if !origin_alias_hazard_accepted(vm_state, &origin_val)
+        && let Some(reason) = flow_xor_violation(
             vm_state,
             checkpoint,
             kind == HazardKind::UniqueView,
             usize::MAX,
-        ) {
-            return VmAliasResult::Failed(reason);
-        }
+        )
+    {
+        return VmAliasResult::Failed(reason);
     }
 
     // Resolve origin PlaceKey from the checkpoint argument
@@ -1111,10 +1100,14 @@ fn check_read_memory_alias<'z3, 'tcx>(
 
     let origin_val = vm_state.value_of_operand(origin_arg);
 
-    // If the enclosing function accepted the structural-alias hazard via its
-    // contract (e.g. `any(Trait(T, Copy), Alias(self, ret))`), the read is the
-    // accepted hazard rather than a violation.
-    if vm_state.path_facts.alias_hazard_declared {
+    // If the enclosing function accepted the structural-alias hazard for *this*
+    // origin's allocation (via `Alias(self, ret)` in its contract), the read is
+    // the accepted hazard rather than a violation.
+    if let Some(alloc_id) = origin_val.provenance_alloc_id()
+        && vm_state
+            .alias_hazard_allocs
+            .contains(&vm_state.root_alloc(alloc_id))
+    {
         return VmAliasResult::Proved;
     }
 

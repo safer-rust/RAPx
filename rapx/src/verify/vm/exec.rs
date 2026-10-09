@@ -17,7 +17,10 @@ use z3::ast::{Ast, Bool, Int};
 use crate::{
     compat::{FxHashMap, FxHashSet},
     verify::{
-        contract::{ContractExpr, ContractKind, PlaceBase, Property, PropertyArg, PropertyKind},
+        contract::{
+            ContractExpr, ContractKind, ContractPlace, ContractProjection, PlaceBase, Property,
+            PropertyArg, PropertyKind,
+        },
         def_use::PlaceKey,
         slicer::RelevantItem,
     },
@@ -3070,14 +3073,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
     /// Assert a contract fact as VM state invariants.
     fn assert_contract_fact(&mut self, property: &Property<'tcx>) {
-        // A precondition with a hazard component records that the caller
-        // accepts that hazard (e.g. `any(Trait(T, Copy), Alias(self, ret))` on
-        // `NonNull::read`).  Inlined read/copy intrinsics whose result
-        // structurally aliases the source are then treated as the accepted
-        // hazard rather than a hard failure.
-        if contains_hazard(property) {
-            self.path_facts.alias_hazard_declared = true;
-        }
+        // Record the allocations named by every `Alias` atom (hazard like
+        // `Alias(self, ret)`, or a `Ptr2Ref` precondition like `Alias(self.0)`),
+        // so the alias checker discharges only those — not every alias.
+        let mut allocs = FxHashSet::default();
+        self.collect_alias_hazard_allocs(property, &mut allocs);
+        self.alias_hazard_allocs.extend(allocs);
         match property {
             Property::Atom(atom) => {
                 if atom.contract_kind == ContractKind::Hazard {
@@ -3119,6 +3120,54 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 }
             }
         }
+    }
+
+    fn collect_alias_hazard_allocs(
+        &self,
+        property: &Property<'tcx>,
+        out: &mut FxHashSet<AllocId>,
+    ) {
+        match property {
+            Property::Atom(atom) => {
+                if atom.kind != PropertyKind::Alias {
+                    return;
+                }
+                let Some(PropertyArg::Expr(ContractExpr::Place(cp))) = atom.args.first() else {
+                    return;
+                };
+                if let Some(alloc_id) = self.place_root_alloc(cp) {
+                    out.insert(alloc_id);
+                }
+            }
+            Property::And(and) => {
+                for conj in &and.conjuncts {
+                    self.collect_alias_hazard_allocs(conj, out);
+                }
+            }
+            Property::Or(or) => {
+                for disj in &or.disjuncts {
+                    self.collect_alias_hazard_allocs(disj, out);
+                }
+            }
+        }
+    }
+
+    fn place_root_alloc(&self, cp: &ContractPlace<'tcx>) -> Option<AllocId> {
+        let local = cp.base.to_local();
+        let mut field_path: Vec<usize> = Vec::new();
+        for proj in &cp.projections {
+            match proj {
+                ContractProjection::Field { index, .. } => field_path.push(*index),
+                _ => return None,
+            }
+        }
+        let val = if field_path.is_empty() {
+            self.local_value(local).cloned()
+        } else {
+            self.field_value(local, &field_path).cloned()
+        };
+        val.and_then(|v| v.provenance_alloc_id())
+            .map(|id| self.root_alloc(id))
     }
 
     /// Apply a single atom's direct effect (its `match kind` arm), without
@@ -4658,19 +4707,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             }
             _ => vec![],
         }
-    }
-}
-
-/// Whether any atom in this (possibly compound) property is a hazard
-/// (`ContractKind::Hazard`), which the caller explicitly opts into.
-fn contains_hazard<'tcx>(property: &Property<'tcx>) -> bool {
-    if property.contract_kind() == ContractKind::Hazard {
-        return true;
-    }
-    match property {
-        Property::And(and) => and.conjuncts.iter().any(|p| contains_hazard(p)),
-        Property::Or(or) => or.disjuncts.iter().any(|p| contains_hazard(p)),
-        Property::Atom(_) => false,
     }
 }
 
