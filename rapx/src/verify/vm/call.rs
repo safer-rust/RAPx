@@ -20,7 +20,6 @@ use crate::helpers::mir_utils;
 use crate::limit::MAX_INLINE_DEPTH;
 use crate::verify::api_classify;
 use crate::verify::call_summary::{self, CallEffect};
-use crate::verify::call_summary::interprocedural;
 use super::state::{AllocId, ElementTy, OffsetKind, Provenance, ValueFacts, ValueSource, VmState, VmValue};
 
 /// Hand-specialized slice/iterator/range call shapes recognized by
@@ -137,15 +136,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             }
         }
 
-        // With MIR available: try precise MIR-derived effects first, then
-        // BFS-inline unless builtin_models has a precise summary (memory
-        // allocation, intrinsics, known ptr arithmetic, etc.).
+        // With MIR available: BFS-inline unless builtin_models has a precise
+        // summary (memory allocation, intrinsics, known ptr arithmetic, etc.).
         if let Some(c) = callee && self.tcx.is_mir_available(c) {
-            if let Some(effect) = interprocedural::try_mir_derived_effect(self.tcx, c) {
-                self.apply_call_effect(&effect, &arg_values, &caller_arg_locals, destination, callee);
-                self.materialize_const_bytes_after_call(args, destination);
-                return;
-            }
             let has_fn_sim = crate::verify::call_summary::builtin_models::lookup_effect(
                 self.tcx,
                 caller_def_id,
@@ -1831,9 +1824,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         return;
                     }
                 }
-                // Field-read `len` (e.g. `Vec::len`) is handled by
-                // `ReturnFieldOfArg`; here fall back to `size / elem_size`
-                // (slices, `&str`, and legacy Vec values).
+                // Field-read `len` (e.g. `Vec::len`): fall back to
+                // `size / elem_size` (slices, `&str`, and legacy Vec values).
                 if let Some(arg_val) = args.get(*arg)
                     && self.set_len_from_alloc(arg_val, dest) {
                         return;
@@ -1842,9 +1834,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 let term = self.fresh_int(&format!("len_{}", dest.as_usize()));
                 let val = VmValue::new(term, dest_ty);
                 self.set_local(dest, val);
-            }
-            CallEffect::ReturnFieldOfArg { arg, field } => {
-                self.apply_field_of_arg_effect(*arg, *field, args, caller_arg_locals, dest);
             }
             CallEffect::ReturnConst { value } => {
                 let dest_ty = self.body().local_decls[dest].ty;
@@ -2008,32 +1997,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 if let Some(l) = arg_local
                     && let Some(payload) = self.field_value(l, &[0]).cloned() {
                         self.set_field_value(dest, vec![0], payload);
-                    }
-            }
-            CallEffect::ReturnOptionSomeTupleFieldLeArgLen { field, arg } => {
-                // UTF-8 decoder returns `Option<(.., len, ..)>` whose length
-                // field satisfies `len <= slice.len()`.  Store the length under
-                // `[0, field]` (the `Some` payload tuple's field) and record
-                // `len <= arg.len()` so a caller can re-prove
-                // `finger <= finger_back` after `finger += len`.
-                if let Some(slice) = args.get(*arg)
-                    && let Some(arg_len) = self.slice_len_from_value(slice) {
-                        let len = self.fresh_int(&format!("decode_len_{}", dest.as_usize()));
-                        self.constraints.assertions.push(len.le(&arg_len));
-                        let dest_ty = self.body().local_decls[dest].ty;
-                        let payload_ty = match dest_ty.kind() {
-                            TyKind::Adt(adt, substs) if adt.is_enum() => substs.type_at(0),
-                            _ => dest_ty,
-                        };
-                        let field_ty = match payload_ty.kind() {
-                            TyKind::Tuple(tys) => tys.get(*field).copied().unwrap_or(payload_ty),
-                            _ => payload_ty,
-                        };
-                        self.set_field_value(
-                            dest,
-                            vec![0, *field],
-                            VmValue::new(len, field_ty),
-                        );
                     }
             }
             CallEffect::ReturnScanLength => {
@@ -3137,9 +3100,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     }
 
     /// Derive an element count from the backing allocation (`size / elem_size`).
-    /// Used by `ReturnLengthOfArg` and the fallback in `ReturnFieldOfArg`
-    /// (slices, `&str`, and Vec values whose `{buf{ptr,cap}, len}` field was not
-    /// materialized). Returns true when a value was produced.
+    /// Used by `ReturnLengthOfArg` (slices, `&str`, and Vec values whose
+    /// `{buf{ptr,cap}, len}` field was not materialized). Returns true when a
+    /// value was produced.
     fn set_len_from_alloc(&mut self, arg_val: &VmValue<'z3, 'tcx>, dest: Local) -> bool {
         let effective_alloc_id = arg_val
             .provenance_alloc_id()
@@ -3171,71 +3134,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let val = VmValue::new(size.clone(), dest_ty);
         self.set_local(dest, val);
         true
-    }
-
-    /// Apply a `ReturnFieldOfArg` effect: read the materialized field `field`
-    /// of the receiver's pointee and return it, preserving the field's own
-    /// type/provenance.
-    ///
-    /// The receiver of a `&self` getter is a reborrow temp (`_t = &data`) whose
-    /// local carries no field values, while the fields were materialized on the
-    /// referent (`data`). Resolve the referent by matching the receiver value's
-    /// address term against the known local addresses; fall back to the direct
-    /// arg local.
-    fn apply_field_of_arg_effect(
-        &mut self,
-        arg: usize,
-        field: usize,
-        args: &[VmValue<'z3, 'tcx>],
-        caller_arg_locals: &[Option<Local>],
-        dest: Local,
-    ) {
-        // Candidate locals that may carry the materialized field, in order of
-        // preference. A `&mut self` receiver is often a mutable reborrow
-        // (`_t = &mut (*self)`) whose local does not carry the field values,
-        // while the parameter and the shared reborrow (`_t = &(*self)`) do.
-        let mut candidates: Vec<Local> = Vec::new();
-        if let Some(l) = args
-            .get(arg)
-            .and_then(|v| self.find_local_by_address(&v.z3_term))
-        {
-            candidates.push(l);
-        }
-        if let Some(l) = caller_arg_locals.get(arg).copied().flatten() {
-            candidates.push(l);
-        }
-        // Any local that already materializes the field (covers the receiver
-        // parameter / shared reborrow that the mutable reborrow does not copy).
-        for l in self.current_frame.local_alloc.keys() {
-            if !self.field_paths(*l).is_empty() {
-                candidates.push(*l);
-            }
-        }
-        let mut found: Option<VmValue<'z3, 'tcx>> = None;
-        for l in candidates {
-            if let Some(fv) = self.field_value(l, &[field]) {
-                found = Some(fv.clone());
-                break;
-            }
-        }
-        if let Some(mut v) = found {
-            v.ty = self.body().local_decls[dest].ty;
-            self.set_local(dest, v);
-            return;
-        }
-        // Fallback: for an integer result (e.g. `len`/`capacity`), the
-        // receiver is often a reborrow temp whose referent carries no field
-        // values; reconstruct the length from the backing allocation
-        // (`size / elem_size`), as `ReturnLengthOfArg` does.
-        let dest_ty = self.body().local_decls[dest].ty;
-        if matches!(dest_ty.kind(), TyKind::Uint(_) | TyKind::Int(_))
-            && let Some(arg_val) = args.get(arg)
-                && self.set_len_from_alloc(arg_val, dest) {
-                    return;
-                }
-        let term = self.fresh_int(&format!("field_{}", dest.as_usize()));
-        let val = VmValue::new(term, dest_ty);
-        self.set_local(dest, val);
     }
 
     /// Apply a `ReturnRange` effect: model `slice::range(range, bounds)`

@@ -131,10 +131,6 @@ pub(crate) const POINTER_ARITH_WRAPPER_BLOCK_LIMIT: usize = 16;
 /// `from_raw_parts` wrapper summary.
 pub(crate) const FROM_RAW_PARTS_WRAPPER_BLOCK_LIMIT: usize = 8;
 
-/// Max basic-block count for a local callee to be recognized as a pure
-/// field-load (`_0 = (*_1).field`) summary.
-pub(crate) const FIELD_LOAD_EFFECT_BLOCK_LIMIT: usize = 4;
-
 // ─────────────────────────────────────────────────────────────────────────────
 // API dependency
 // ─────────────────────────────────────────────────────────────────────────────

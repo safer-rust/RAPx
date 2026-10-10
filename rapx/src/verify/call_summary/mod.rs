@@ -130,10 +130,6 @@ pub(crate) enum CallEffect {
     ReturnExchangeMalloc { size_arg: usize },
     /// The return value is the length of an aggregate argument.
     ReturnLengthOfArg { arg: usize },
-    /// The return value is field `field` of the pointee of argument `arg`
-    /// (models `Vec::len` and any `(*self).field` getter; the field index is
-    /// derived straight from the callee's MIR).
-    ReturnFieldOfArg { arg: usize, field: usize },
     /// The return value is `min(lhs_arg, rhs_arg)`, satisfying
     /// `return <= lhs_arg` and `return <= rhs_arg`.
     ReturnMin { lhs_arg: usize, rhs_arg: usize },
@@ -219,10 +215,6 @@ pub(crate) enum CallEffect {
     /// `Iterator::find`): `Some(i)` satisfies `0 <= i < self.len()` where
     /// `self` is the Iter/IterMut struct produced by `into_iter`/`iter`.
     ReturnOptionSomeScanIndex { self_arg: usize },
-    /// The call returns `Option<(.., usize, ..)>` whose tuple field `field` (a
-    /// byte length) is `<= args[arg].len()`.  Detected from a UTF-8-decoder
-    /// shape: each `Some((.., len))` return is guarded by `slice.get(len - 1)?`.
-    ReturnOptionSomeTupleFieldLeArgLen { field: usize, arg: usize },
     /// The call is `Try::branch`: `Option<T>` -> `ControlFlow<Option<!>, T>`,
     /// so the result's `Continue` payload (field 0) equals the input's `Some`
     /// payload (field 0).  Models the `?` operator's `if let Some(..) = expr?`
@@ -296,19 +288,6 @@ pub(crate) fn dependency_summary<'tcx>(
                     unsupported: false,
                 };
             }
-        // A decode-style callee's return payload is bounded by a slice
-        // argument's length, so the return value depends on that slice argument.
-        // The dataflow analyzer can't see this through the loop, so detect it
-        // from the MIR shape and keep the slice argument relevant.
-        if let Some(effect) = interprocedural::try_decode_length_return_effect(tcx, callee)
-            && let CallEffect::ReturnOptionSomeTupleFieldLeArgLen { arg, .. } = effect
-                && arg < arg_count {
-                    return CallDependencySummary {
-                        return_depends_on_args: vec![arg],
-                        must_write_args: Vec::new(),
-                        unsupported: false,
-                    };
-                }
         // `Try::branch` (`Option<T>` -> `ControlFlow<Option<!>, T>`): the
         // `Continue` payload is the input's `Some` payload, so the return value
         // depends on the input.  Matched by `DefId` (the trait method's `self`
