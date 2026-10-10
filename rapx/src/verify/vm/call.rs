@@ -68,43 +68,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         } else if let Some(c) = callee && self.tcx.is_mir_available(c) {
             self.exec_inline_call(c, &arg_values, &caller_arg_locals, destination);
         }
-
-        self.materialize_const_bytes_after_call(args, destination);
-    }
-
-    fn materialize_const_bytes_after_call(
-        &mut self,
-        args: &[Spanned<Operand<'tcx>>],
-        destination: Local,
-    ) {
-        if let Some(mut dv) = self.local_value(destination).cloned() {
-            let dest_ty = dv.ty;
-            let pointee_is_byte_like = match dest_ty.kind() {
-                rustc_middle::ty::TyKind::RawPtr(inner, _)
-                | rustc_middle::ty::TyKind::Ref(_, inner, _) => match inner.kind() {
-                    rustc_middle::ty::TyKind::Uint(rustc_middle::ty::UintTy::U8)
-                    | rustc_middle::ty::TyKind::Int(rustc_middle::ty::IntTy::I8) => true,
-                    rustc_middle::ty::TyKind::Array(elem_ty, _)
-                    | rustc_middle::ty::TyKind::Slice(elem_ty) => {
-                        matches!(
-                            elem_ty.kind(),
-                            rustc_middle::ty::TyKind::Uint(rustc_middle::ty::UintTy::U8)
-                        )
-                    }
-                    _ => false,
-                },
-                _ => false,
-            };
-            if pointee_is_byte_like {
-                for arg in args {
-                    self.try_materialize_const_bytes(&mut dv, &arg.node);
-                    if dv.is_pointer() {
-                        self.set_local(destination, dv);
-                        break;
-                    }
-                }
-            }
-        }
     }
 
     /// Recursively execute a callee's MIR body inline.
