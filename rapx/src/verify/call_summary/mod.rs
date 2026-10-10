@@ -322,21 +322,10 @@ pub(crate) fn dependency_summary<'tcx>(
     CallDependencySummary::unknown(arg_count)
 }
 
-/// Return effect information for a MIR call terminator.
-pub(crate) fn effect_summary<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    caller: DefId,
-    func: &Operand<'tcx>,
-    destination: Local,
-) -> CallEffectSummary {
-    let callee = mir_utils::dep_callee_resolved_def_id(tcx, caller, func);
-
-    if let Some(summary) =
-        builtin_models::lookup_effect(tcx, caller, callee, func, destination)
-    {
-        return summary;
-    }
-
+/// Non-registry effect fallback for a MIR call terminator: the
+/// transparent-wrapper deref, otherwise unknown. The registry lookup itself runs
+/// earlier in `exec_call` so it can also gate inlining.
+pub(crate) fn effect_summary<'tcx>(tcx: TyCtxt<'tcx>, func: &Operand<'tcx>) -> CallEffectSummary {
     // Transparent-wrapper deref: `<ManuallyDrop<T> as Deref>::deref` /
     // `deref_mut` (and `MaybeDangling::as_ref`/`as_mut`) return a reference to
     // the inner value at the same address.  The std MIR for these is

@@ -59,29 +59,24 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             self.apply_iter_ptr_update(callee, &arg_values);
         }
 
-        // With MIR available: BFS-inline unless builtin_models has a precise
-        // summary (memory allocation, intrinsics, known ptr arithmetic, etc.).
-        if let Some(c) = callee && self.tcx.is_mir_available(c) {
-            let has_fn_sim = crate::verify::call_summary::builtin_models::lookup_effect(
-                self.tcx,
-                caller_def_id,
-                callee,
-                func,
-                destination,
-            ).is_some();
-            if !has_fn_sim
-                && self.exec_inline_call(c, &arg_values, &caller_arg_locals, destination) {
-                    self.materialize_const_bytes_after_call(args, destination);
-                    return;
-                }
-        }
-
-        let summary = call_summary::effect_summary(
+        // REGISTRY summary, looked up once so it can gate inlining below.
+        let registry_summary = crate::verify::call_summary::builtin_models::lookup_effect(
             self.tcx,
             caller_def_id,
+            callee,
             func,
             destination,
         );
+
+        // No registry summary and MIR available: BFS-inline the callee.
+        if registry_summary.is_none()
+            && let Some(c) = callee
+            && self.tcx.is_mir_available(c)
+            && self.exec_inline_call(c, &arg_values, &caller_arg_locals, destination)
+        {
+            self.materialize_const_bytes_after_call(args, destination);
+            return;
+        }
 
         // A `size_of::<T>()` / `align_of::<T>()` on a *generic* `T` has no
         // concrete layout, so `eff_layout_const` produces no effect and the
@@ -92,6 +87,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             self.materialize_const_bytes_after_call(args, destination);
             return;
         }
+
+        let summary = registry_summary
+            .unwrap_or_else(|| call_summary::effect_summary(self.tcx, func));
 
         if !summary.unsupported {
             for effect in &summary.effects {
