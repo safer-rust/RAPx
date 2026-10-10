@@ -135,10 +135,6 @@ pub(crate) const FROM_RAW_PARTS_WRAPPER_BLOCK_LIMIT: usize = 8;
 /// field-load (`_0 = (*_1).field`) summary.
 pub(crate) const FIELD_LOAD_EFFECT_BLOCK_LIMIT: usize = 4;
 
-/// Max basic-block count for a local callee to be recognized as a
-/// slice-bounded return summary.
-pub(crate) const SLICE_BOUNDED_RETURN_BLOCK_LIMIT: usize = 12;
-
 // ─────────────────────────────────────────────────────────────────────────────
 // API dependency
 // ─────────────────────────────────────────────────────────────────────────────

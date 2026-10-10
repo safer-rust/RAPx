@@ -2010,32 +2010,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         self.set_field_value(dest, vec![0], payload);
                     }
             }
-            CallEffect::ReturnOptionSomeIndexLtArgLen { arg } => {
-                // `memchr(x, bytes)`/`memrchr(x, bytes)`-style search returns
-                // `Option<usize>` whose `Some(i)` payload satisfies
-                // `0 <= i < bytes.len()`.  Store the payload under field 0 (so
-                // `if let Some(i)` resolves to it) and record both bounds so a
-                // caller can re-prove `finger <= finger_back` after
-                // `finger += i + 1` (forward) or `finger_back = finger + i`
-                // (reverse).
-                if let Some(slice) = args.get(*arg)
-                    && let Some(len) = self.slice_len_from_value(slice) {
-                        let payload = self.fresh_int(&format!("scan_idx_{}", dest.as_usize()));
-                        self.constraints.assertions.push(payload.lt(&len));
-                        let zero = Int::from_u64(self.z3_ctx, 0);
-                        self.constraints.assertions.push(payload.ge(&zero));
-                        let dest_ty = self.body().local_decls[dest].ty;
-                        let payload_ty = match dest_ty.kind() {
-                            TyKind::Adt(adt, substs) if adt.is_enum() => substs.type_at(0),
-                            _ => dest_ty,
-                        };
-                        self.set_field_value(
-                            dest,
-                            vec![0],
-                            VmValue::new(payload, payload_ty),
-                        );
-                    }
-            }
             CallEffect::ReturnOptionSomeTupleFieldLeArgLen { field, arg } => {
                 // UTF-8 decoder returns `Option<(.., len, ..)>` whose length
                 // field satisfies `len <= slice.len()`.  Store the length under

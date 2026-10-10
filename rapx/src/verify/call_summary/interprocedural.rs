@@ -22,7 +22,7 @@ use crate::def_id;
 use crate::helpers::mir_utils as helpers;
 use crate::limit::{
     FIELD_LOAD_EFFECT_BLOCK_LIMIT, FROM_RAW_PARTS_WRAPPER_BLOCK_LIMIT,
-    POINTER_ARITH_WRAPPER_BLOCK_LIMIT, SLICE_BOUNDED_RETURN_BLOCK_LIMIT,
+    POINTER_ARITH_WRAPPER_BLOCK_LIMIT,
 };
 
 use super::{CallContext, CallEffect};
@@ -393,7 +393,7 @@ pub(super) fn try_from_raw_parts_wrapper_effect<'tcx>(
 }
 
 /// MIR-derived effects recognized from the callee's body shape (field load,
-/// slice-bounded return, decode-length). These run
+/// decode-length). These run
 /// before inline because the recognized shape yields a more precise effect
 /// than BFS-inlining the body.
 pub(crate) fn try_mir_derived_effect(
@@ -401,7 +401,6 @@ pub(crate) fn try_mir_derived_effect(
     callee: DefId,
 ) -> Option<CallEffect> {
     try_field_load_effect(tcx, callee)
-        .or_else(|| try_slice_bounded_return_effect(tcx, callee))
         .or_else(|| try_decode_length_return_effect(tcx, callee))
 }
 
@@ -461,163 +460,6 @@ pub(crate) fn try_field_load_effect(tcx: TyCtxt<'_>, callee: DefId) -> Option<Ca
                 StatementKind::StorageLive(_) | StatementKind::StorageDead(_) => {}
                 _ => return None,
             }
-        }
-    }
-    None
-}
-
-/// Trace a local back through `x = copy y` / `x = move y` assignments to its
-/// copy root (the original loop variable before MIR temporaries).
-fn copy_root(body: &rustc_middle::mir::Body<'_>, mut local: Local) -> Local {
-    let mut seen = HashSet::new();
-    loop {
-        if !seen.insert(local) {
-            break;
-        }
-        let mut next = None;
-        for bb in body.basic_blocks.iter() {
-            for stmt in &bb.statements {
-                let StatementKind::Assign(assign) = &stmt.kind else {
-                    continue;
-                };
-                let (dest, rvalue) = &**assign;
-                if dest.local != local || !dest.projection.is_empty() {
-                    continue;
-                }
-                let Rvalue::Use(op, ..) = rvalue else {
-                    continue;
-                };
-                let (Operand::Copy(p) | Operand::Move(p)) = op else {
-                    continue;
-                };
-                if p.projection.is_empty() {
-                    next = Some(p.local);
-                }
-            }
-        }
-        match next {
-            Some(n) => local = n,
-            None => break,
-        }
-    }
-    local
-}
-
-/// Detect a `memchr`-style search function: it returns `Option<usize>` whose
-/// `Some(i)` payload is an index guarded by a loop condition `i < arg.len()`
-/// (where `arg` is a slice argument).  The summary lets a caller re-prove a
-/// numeric invariant like `finger <= finger_back` after `finger += i + 1`.
-pub(crate) fn try_slice_bounded_return_effect(
-    tcx: TyCtxt<'_>,
-    callee: DefId,
-) -> Option<CallEffect> {
-    if !tcx.is_mir_available(callee) {
-        return None;
-    }
-    let body = tcx.optimized_mir(callee);
-    if body.basic_blocks.len() > SLICE_BOUNDED_RETURN_BLOCK_LIMIT || body.arg_count < 1 {
-        return None;
-    }
-
-    // (1) Find `_0 = Some(payload)` and record the payload's copy root.
-    let mut payload_root: Option<Local> = None;
-    for bb in body.basic_blocks.iter() {
-        for stmt in &bb.statements {
-            let StatementKind::Assign(assign) = &stmt.kind else {
-                continue;
-            };
-            let (place, rvalue) = &**assign;
-            if place.local.as_usize() != 0 || !place.projection.is_empty() {
-                continue;
-            }
-            let Rvalue::Aggregate(kind, operands) = rvalue else {
-                continue;
-            };
-            let rustc_middle::mir::AggregateKind::Adt(adt, variant_idx, ..) = &**kind else {
-                continue;
-            };
-            if !tcx.is_diagnostic_item(rustc_span::sym::Option, *adt) {
-                continue;
-            }
-            if variant_idx.as_usize() != 1 {
-                continue; // not `Some`
-            }
-            let Some(payload) = operands.iter().next() else {
-                continue;
-            };
-            let (Operand::Copy(p) | Operand::Move(p)) = payload else {
-                continue;
-            };
-            if p.projection.is_empty() {
-                payload_root = Some(copy_root(body, p.local));
-            }
-        }
-    }
-    let payload_root = payload_root?;
-
-    // (2) Find `tmp = PtrMetadata(arg)` — the slice argument's length.
-    let mut len_defs: Vec<(Local, usize)> = Vec::new();
-    for bb in body.basic_blocks.iter() {
-        for stmt in &bb.statements {
-            let StatementKind::Assign(assign) = &stmt.kind else {
-                continue;
-            };
-            let (place, rvalue) = &**assign;
-            if !place.projection.is_empty() {
-                continue;
-            }
-            let Rvalue::UnaryOp(op, operand) = rvalue else {
-                continue;
-            };
-            if !matches!(op, rustc_middle::mir::UnOp::PtrMetadata) {
-                continue;
-            }
-            let (Operand::Copy(p) | Operand::Move(p)) = operand else {
-                continue;
-            };
-            if p.projection.is_empty()
-                && p.local.as_usize() >= 1
-                && p.local.as_usize() <= body.arg_count
-            {
-                len_defs.push((place.local, p.local.as_usize() - 1));
-            }
-        }
-    }
-
-    // (3) Find `x = Lt(payload, tmp)` (or `Le`) where `tmp` is a length temp.
-    for bb in body.basic_blocks.iter() {
-        for stmt in &bb.statements {
-            let StatementKind::Assign(assign) = &stmt.kind else {
-                continue;
-            };
-            let (_, rvalue) = &**assign;
-            let Rvalue::BinaryOp(op, pair) = rvalue else {
-                continue;
-            };
-            if !matches!(op, BinOp::Lt | BinOp::Le) {
-                continue;
-            }
-            let (a, b) = &**pair;
-            let a_root = match a {
-                Operand::Copy(p) | Operand::Move(p) if p.projection.is_empty() => {
-                    copy_root(body, p.local)
-                }
-                _ => continue,
-            };
-            if a_root != payload_root {
-                continue;
-            }
-            let b_local = match b {
-                Operand::Copy(p) | Operand::Move(p) if p.projection.is_empty() => Some(p.local),
-                _ => None,
-            };
-            let Some(&(_, arg)) = len_defs.iter().find(|(tmp, _)| Some(*tmp) == b_local) else {
-                continue;
-            };
-            return match op {
-                BinOp::Lt => Some(CallEffect::ReturnOptionSomeIndexLtArgLen { arg }),
-                _ => None,
-            };
         }
     }
     None
