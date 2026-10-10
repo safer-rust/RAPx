@@ -1844,17 +1844,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 self.set_local(dest, val);
             }
             CallEffect::ReturnFieldOfArg { arg, field } => {
-                self.apply_field_of_arg_effect(*arg, *field, None, args, caller_arg_locals, dest);
-            }
-            CallEffect::ReturnFieldOfArgSub { arg, field, offset } => {
-                self.apply_field_of_arg_effect(
-                    *arg,
-                    *field,
-                    Some(*offset),
-                    args,
-                    caller_arg_locals,
-                    dest,
-                );
+                self.apply_field_of_arg_effect(*arg, *field, args, caller_arg_locals, dest);
             }
             CallEffect::ReturnConst { value } => {
                 let dest_ty = self.body().local_decls[dest].ty;
@@ -3209,11 +3199,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         true
     }
 
-    /// Apply a `ReturnFieldOfArg`/`ReturnFieldOfArgSub` effect: read the
-    /// materialized field `field` of the receiver's pointee and return it,
-    /// preserving the field's own type/provenance. For `ReturnFieldOfArgSub`,
-    /// subtract `sub_offset` elements from the field pointer (`next_back_unchecked`
-    /// after `pre_dec_end`).
+    /// Apply a `ReturnFieldOfArg` effect: read the materialized field `field`
+    /// of the receiver's pointee and return it, preserving the field's own
+    /// type/provenance.
     ///
     /// The receiver of a `&self` getter is a reborrow temp (`_t = &data`) whose
     /// local carries no field values, while the fields were materialized on the
@@ -3224,7 +3212,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         &mut self,
         arg: usize,
         field: usize,
-        sub_offset: Option<u64>,
         args: &[VmValue<'z3, 'tcx>],
         caller_arg_locals: &[Option<Local>],
         dest: Local,
@@ -3258,20 +3245,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             }
         }
         if let Some(mut v) = found {
-            if let Some(offset) = sub_offset {
-                // `field - offset` elements: subtract the element stride from
-                // both the address term and the provenance offset.
-                let stride = self.pointee_elem_size(v.ty).max(1);
-                let scaled = Int::from_u64(self.z3_ctx, offset * stride);
-                v.z3_term = Int::sub(self.z3_ctx, &[&v.z3_term, &scaled]);
-                if let Some(prov) = &v.provenance {
-                    v.provenance = Some(Provenance {
-                        alloc_id: prov.alloc_id,
-                        offset: Int::sub(self.z3_ctx, &[&prov.offset, &scaled]),
-                        offset_kind: None,
-                    });
-                }
-            }
             v.ty = self.body().local_decls[dest].ty;
             self.set_local(dest, v);
             return;
