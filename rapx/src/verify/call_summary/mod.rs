@@ -260,6 +260,27 @@ pub(crate) enum CallEffect {
     /// The call *frees* the heap allocation behind `pointer_arg` (a `&mut`
     /// reference to a `Box`/`Vec`/`String` pointee). Models `ManuallyDrop::drop`.
     DropMemory { pointer_arg: usize },
+    /// `<[T]>::index(range)` / `::index_mut(range)` returns a sub-slice whose
+    /// length is the range's extent. Modelled as a sub-allocation of the array
+    /// so downstream `into_iter`/`next()` see the correct element count.
+    ReturnSliceRangeIndex,
+    /// `<[T]>::get(range)` / `::get_mut(range)` returns `Option<&[T]>` whose
+    /// `Some` payload is a sub-slice with the range's extent.
+    ReturnSliceRangeGet,
+    /// `Iter::len()` / `Iter::is_empty()` computed from the iterator's pointer
+    /// fields (`ptr` + `end_or_len` sharing the same allocation).
+    ReturnIterLen { is_len: bool },
+    /// `NonNull::<T>::new(ptr) -> Option<NonNull<T>>`: the safe constructor,
+    /// returning `Some(ptr)` when the pointer is provably non-null and an
+    /// unconstrained `Option` otherwise.
+    ReturnNonNullNew,
+    /// `Iter::next()` / `IterMut::next()`: return the current element pointer
+    /// and advance the iterator's tracked offset by one.
+    ReturnIterNext,
+    /// `Range<A>::next` / `RangeInclusive<A>::next`: return the current
+    /// `start` and advance it by one, carrying the `start < end` bound so a
+    /// downstream `InBound(arr, i)` can be discharged.
+    ReturnRangeNext,
 }
 
 /// Return dependency information for a MIR call terminator.
@@ -322,7 +343,7 @@ pub(crate) fn effect_summary<'tcx>(
     destination: Local,
     context: &CallContext,
 ) -> CallEffectSummary {
-    let callee = mir_utils::dep_callee_def_id(func);
+    let callee = mir_utils::dep_callee_resolved_def_id(tcx, caller, func);
 
     if let Some(summary) =
         builtin_models::lookup_effect(tcx, caller, callee, func, destination)

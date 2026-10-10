@@ -22,50 +22,7 @@ use crate::verify::api_classify;
 use crate::verify::call_summary::{self, CallEffect};
 use super::state::{AllocId, ElementTy, OffsetKind, Provenance, ValueFacts, ValueSource, VmState, VmValue};
 
-/// Hand-specialized slice/iterator/range call shapes recognized by
-/// [`VmState::exec_call`] before generic summary/inline handling.
-enum CallCase {
-    Eq,
-    Branch,
-    SliceIndex,
-    SliceGet,
-    IterLenIsEmpty { is_len: bool },
-    NonNullNew,
-    IterNext,
-    RangeNext,
-    IterPtrAdj,
-}
-
 impl<'z3, 'tcx> VmState<'z3, 'tcx> {
-    /// Classify a callee into one of the hand-specialized call shapes, based
-    /// only on its identity.  Runtime structure (argument count, types,
-    /// provenance) is checked separately by the corresponding `apply_*`.
-    fn classify_call(&self, callee: Option<DefId>) -> Option<CallCase> {
-        if api_classify::is_eq_call(callee) {
-            Some(CallCase::Eq)
-        } else if api_classify::is_branch(callee) {
-            Some(CallCase::Branch)
-        } else if api_classify::is_index_method(callee) {
-            Some(CallCase::SliceIndex)
-        } else if api_classify::is_slice_get(callee) {
-            Some(CallCase::SliceGet)
-        } else if api_classify::is_iter_len(callee) {
-            Some(CallCase::IterLenIsEmpty { is_len: true })
-        } else if api_classify::is_iter_is_empty(callee) {
-            Some(CallCase::IterLenIsEmpty { is_len: false })
-        } else if api_classify::is_nonnull_checked_new(callee) {
-            Some(CallCase::NonNullNew)
-        } else if api_classify::is_iter_next(callee) {
-            Some(CallCase::IterNext)
-        } else if api_classify::is_range_next(callee) {
-            Some(CallCase::RangeNext)
-        } else if api_classify::is_iter_ptr_adj(callee) {
-            Some(CallCase::IterPtrAdj)
-        } else {
-            None
-        }
-    }
-
     /// Execute a call terminator.
     ///
     /// Dispatch priority: hand-specialized handlers first, then precise
@@ -91,49 +48,15 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             .map(|a| a.node.place().map(|p| p.local))
             .collect();
 
-        // Hand-specialized call shapes, recognized by callee identity. `Eq`
-        // and `IterPtrAdj` are side effects that fall through to inline/summary;
-        // the rest fully handle the call and return.
-        if let Some(case) = self.classify_call(callee) {
-            match case {
-                CallCase::Eq => self.propagate_const_bytes_to_tracked(args),
-                CallCase::IterPtrAdj => self.apply_iter_ptr_update(callee, &arg_values),
-                CallCase::Branch => {
-                    if self.apply_branch(&arg_values, &caller_arg_locals, args, destination, callee) {
-                        return;
-                    }
-                }
-                CallCase::SliceIndex => {
-                    if self.apply_slice_index(&arg_values, args, destination) {
-                        return;
-                    }
-                }
-                CallCase::SliceGet => {
-                    if self.apply_slice_get(&arg_values, args, destination) {
-                        return;
-                    }
-                }
-                CallCase::IterLenIsEmpty { is_len } => {
-                    if self.apply_iter_len_is_empty(is_len, &arg_values, args, destination) {
-                        return;
-                    }
-                }
-                CallCase::NonNullNew => {
-                    if self.apply_nonnull_new(&arg_values, destination) {
-                        return;
-                    }
-                }
-                CallCase::IterNext => {
-                    if self.apply_iter_next(&arg_values, destination) {
-                        return;
-                    }
-                }
-                CallCase::RangeNext => {
-                    if self.apply_range_next(&arg_values, destination) {
-                        return;
-                    }
-                }
-            }
+        // Pre-inline side effects, recognized by callee identity. `Eq`
+        // propagates const bytes into tracked allocations; `IterPtrAdj`
+        // advances the iterator's tracked offset. Both fall through to
+        // inline/summary for the return value.
+        if api_classify::is_eq_call(callee) {
+            self.propagate_const_bytes_to_tracked(args);
+        }
+        if api_classify::is_iter_ptr_adj(callee) {
+            self.apply_iter_ptr_update(callee, &arg_values);
         }
 
         // With MIR available: BFS-inline unless builtin_models has a precise
@@ -207,513 +130,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
 
         self.materialize_const_bytes_after_call(args, destination);
-    }
-
-    /// Slice range indexing `<[T]>::index(range)` / `::index_mut(range)`:
-    /// returns a sub-slice whose length is the range's extent. Model it as a
-    /// sub-allocation of the array so downstream `into_iter`/`next()` see the
-    /// correct element count (empty for `..0`). Single-element indexing
-    /// (`index(usize)`) has a non-slice destination and keeps the plain
-    /// alias behaviour from the summary table.
-    fn apply_slice_index(
-        &mut self,
-        arg_values: &[VmValue<'z3, 'tcx>],
-        args: &[Spanned<Operand<'tcx>>],
-        destination: Local,
-    ) -> bool {
-        if arg_values.len() < 2 {
-            return false;
-        }
-        let dest_ty = self.body().local_decls[destination].ty;
-        let is_slice = matches!(dest_ty.kind(), TyKind::Ref(_, inner, _)
-            if matches!(inner.kind(), TyKind::Slice(_)));
-        // A range index (`s[..]` / `s[0..]` / …) yields a `&[T]` / `&mut [T]`,
-        // but in generic MIR the destination type may be left as an
-        // un-normalized `Index`/`IndexMut::Output` projection.  Fall back to the
-        // *index* argument's range kind: a range indexes a slice, a `usize`
-        // indexes a single element (which this handler does not model).
-        let range_kind = arg_values.get(1).and_then(|v| match v.ty.kind() {
-            TyKind::Adt(adt_def, _) => Some(mir_utils::range_kind(
-                self.tcx,
-                adt_def.did(),
-            )),
-            _ => None,
-        });
-        if !is_slice && range_kind.is_none() {
-            return false;
-        }
-        let Some(prov) = arg_values[0].provenance.clone() else {
-            return false;
-        };
-        let array_term = arg_values[0].z3_term.clone();
-        let (elem_ty, elem_size) = match arg_values[0].ty.kind() {
-            TyKind::Ref(_, inner, _) => match inner.kind() {
-                TyKind::Array(e, _) | TyKind::Slice(e) => (*e, self.size_of_ty(*e).max(1)),
-                _ => (arg_values[0].ty, 1),
-            },
-            _ => (arg_values[0].ty, 1),
-        };
-        let elem_align = self.align_sym(elem_ty);
-        // The range argument is an aggregate whose field layout determines the
-        // slice extent (start element offset and element count):
-        //   RangeTo { end }        -> start = 0, len = end
-        //   RangeFrom { start }    -> start,     len = total - start
-        //   Range { start, end }   -> start,     len = end - start
-        //   RangeInclusive { .. }  -> start,     len = end - start + 1
-        //   otherwise              -> start = 0, len = total
-        let range_local = args.get(1).and_then(|a| match &a.node {
-            Operand::Copy(p) | Operand::Move(p) => Some(p.local),
-            _ => None,
-        });
-        let range_field = |idx: usize| -> Option<Int<'z3>> {
-            range_local.and_then(|l| self.field_value(l, &[idx]).map(|v| v.z3_term.clone()))
-        };
-        let zero = Int::from_u64(self.z3_ctx, 0);
-        let one = Int::from_u64(self.z3_ctx, 1);
-        let total_len = self
-            .alloc(prov.alloc_id)
-            .size
-            .clone()
-            .div(&Int::from_u64(self.z3_ctx, elem_size));
-        let (start, len) = match range_kind {
-            Some(mir_utils::RangeKind::RangeTo) => (
-                zero.clone(),
-                range_field(0).unwrap_or_else(|| total_len.clone()),
-            ),
-            Some(mir_utils::RangeKind::RangeFrom) => {
-                let s = range_field(0).unwrap_or_else(|| zero.clone());
-                (s.clone(), Int::sub(self.z3_ctx, &[&total_len, &s]))
-            }
-            Some(mir_utils::RangeKind::Range) => {
-                let s = range_field(0).unwrap_or_else(|| zero.clone());
-                let e = range_field(1).unwrap_or_else(|| total_len.clone());
-                (s.clone(), Int::sub(self.z3_ctx, &[&e, &s]))
-            }
-            Some(mir_utils::RangeKind::RangeInclusive) => {
-                let s = range_field(0).unwrap_or_else(|| zero.clone());
-                let e = range_field(1).unwrap_or_else(|| total_len.clone());
-                let l = Int::sub(self.z3_ctx, &[&e, &s]);
-                (s.clone(), Int::add(self.z3_ctx, &[&l, &one]))
-            }
-            _ => (zero.clone(), total_len.clone()),
-        };
-        let elem_size_term = Int::from_u64(self.z3_ctx, elem_size);
-        let start_bytes = if elem_size == 1 {
-            start.clone()
-        } else {
-            Int::mul(self.z3_ctx, &[&start, &elem_size_term])
-        };
-        let size_bytes = if elem_size == 1 {
-            len.clone()
-        } else {
-            Int::mul(self.z3_ctx, &[&len, &elem_size_term])
-        };
-        let dest_term = Int::add(self.z3_ctx, &[&array_term, &start_bytes]);
-        let (alloc_id, _) = self.allocate(size_bytes, elem_align, Some(elem_ty));
-        self.alloc_mut(alloc_id).parent = Some(prov.alloc_id);
-        self.set_local(
-            destination,
-            VmValue {
-                z3_term: dest_term,
-                ty: dest_ty,
-                provenance: Some(Provenance {
-                    alloc_id,
-                    offset: Int::from_u64(self.z3_ctx, 0),
-                    offset_kind: None,
-                }),
-                facts: ValueFacts {
-                    non_null: true,
-                    init: true,
-                    in_bounds: true,
-                    ..Default::default()
-                },
-                source: ValueSource::None,
-            },
-        );
-        true
-    }
-
-    /// Slice range `get` `<[T]>::get(range)` / `::get_mut(range)`: returns
-    /// `Option<&[T]>` whose `Some` payload is a sub-slice with the range's
-    /// extent.  Mirrors [`apply_slice_index`](Self::apply_slice_index), but stores
-    /// the sub-slice under field 0 (the `Some` payload) so a downstream
-    /// `slice.len()` / `memchr(x, subslice)` sees the correct element count and
-    /// provenance.
-    fn apply_slice_get(
-        &mut self,
-        arg_values: &[VmValue<'z3, 'tcx>],
-        args: &[Spanned<Operand<'tcx>>],
-        destination: Local,
-    ) -> bool {
-        if arg_values.len() < 2 {
-            return false;
-        }
-        let dest_ty = self.body().local_decls[destination].ty;
-        let TyKind::Adt(adt, substs) = dest_ty.kind() else {
-            return false;
-        };
-        if !self
-            .tcx
-            .is_diagnostic_item(rustc_span::sym::Option, adt.did())
-        {
-            return false;
-        }
-        let payload_ty = substs.type_at(0);
-        let TyKind::Ref(_, slice_ty, _) = payload_ty.kind() else {
-            return false;
-        };
-        if !matches!(slice_ty.kind(), TyKind::Slice(_)) {
-            return false;
-        }
-        let Some(prov) = arg_values[0].provenance.clone() else {
-            return false;
-        };
-        let array_term = arg_values[0].z3_term.clone();
-        let (elem_ty, elem_size) = match arg_values[0].ty.kind() {
-            TyKind::Ref(_, inner, _) => match inner.kind() {
-                TyKind::Array(e, _) | TyKind::Slice(e) => (*e, self.size_of_ty(*e).max(1)),
-                _ => (arg_values[0].ty, 1),
-            },
-            _ => (arg_values[0].ty, 1),
-        };
-        let elem_align = self.align_sym(elem_ty);
-        let range_local = args.get(1).and_then(|a| match &a.node {
-            Operand::Copy(p) | Operand::Move(p) => Some(p.local),
-            _ => None,
-        });
-        let range_field = |idx: usize| -> Option<Int<'z3>> {
-            range_local.and_then(|l| self.field_value(l, &[idx]).map(|v| v.z3_term.clone()))
-        };
-        let zero = Int::from_u64(self.z3_ctx, 0);
-        let one = Int::from_u64(self.z3_ctx, 1);
-        let total_len = self
-            .alloc(prov.alloc_id)
-            .size
-            .clone()
-            .div(&Int::from_u64(self.z3_ctx, elem_size));
-        let range_kind = arg_values.get(1).and_then(|v| match v.ty.kind() {
-            TyKind::Adt(adt_def, _) => Some(mir_utils::range_kind(
-                self.tcx,
-                adt_def.did(),
-            )),
-            _ => None,
-        });
-        let (start, len) = match range_kind {
-            Some(mir_utils::RangeKind::RangeTo) => (
-                zero.clone(),
-                range_field(0).unwrap_or_else(|| total_len.clone()),
-            ),
-            Some(mir_utils::RangeKind::RangeFrom) => {
-                let s = range_field(0).unwrap_or_else(|| zero.clone());
-                (s.clone(), Int::sub(self.z3_ctx, &[&total_len, &s]))
-            }
-            Some(mir_utils::RangeKind::Range) => {
-                let s = range_field(0).unwrap_or_else(|| zero.clone());
-                let e = range_field(1).unwrap_or_else(|| total_len.clone());
-                (s.clone(), Int::sub(self.z3_ctx, &[&e, &s]))
-            }
-            Some(mir_utils::RangeKind::RangeInclusive) => {
-                let s = range_field(0).unwrap_or_else(|| zero.clone());
-                let e = range_field(1).unwrap_or_else(|| total_len.clone());
-                let l = Int::sub(self.z3_ctx, &[&e, &s]);
-                (s.clone(), Int::add(self.z3_ctx, &[&l, &one]))
-            }
-            _ => (zero.clone(), total_len.clone()),
-        };
-        let elem_size_term = Int::from_u64(self.z3_ctx, elem_size);
-        let start_bytes = if elem_size == 1 {
-            start.clone()
-        } else {
-            Int::mul(self.z3_ctx, &[&start, &elem_size_term])
-        };
-        let size_bytes = if elem_size == 1 {
-            len.clone()
-        } else {
-            Int::mul(self.z3_ctx, &[&len, &elem_size_term])
-        };
-        let dest_term = Int::add(self.z3_ctx, &[&array_term, &start_bytes]);
-        let (alloc_id, _) = self.allocate(size_bytes, elem_align, Some(elem_ty));
-        self.alloc_mut(alloc_id).parent = Some(prov.alloc_id);
-        self.set_field_value(
-            destination,
-            vec![0],
-            VmValue {
-                z3_term: dest_term,
-                ty: payload_ty,
-                provenance: Some(Provenance {
-                    alloc_id,
-                    offset: Int::from_u64(self.z3_ctx, 0),
-                    offset_kind: None,
-                }),
-                facts: ValueFacts {
-                    non_null: true,
-                    init: true,
-                    in_bounds: true,
-                    ..Default::default()
-                },
-                source: ValueSource::None,
-            },
-        );
-        true
-    }
-
-    /// `Iter::len()` / `Iter::is_empty()`: compute from struct fields
-    /// (ptr + end_or_len share the same allocation with per-field offsets).
-    /// The generic builtin_models would return sizeof(Iter)/sizeof(T), which is
-    /// wrong for generic T.
-    fn apply_iter_len_is_empty(
-        &mut self,
-        is_len: bool,
-        arg_values: &[VmValue<'z3, 'tcx>],
-        args: &[Spanned<Operand<'tcx>>],
-        destination: Local,
-    ) -> bool {
-        if arg_values.is_empty() {
-            return false;
-        }
-        let receiver_local = args.first().and_then(|a| a.node.place()).map(|p| p.local);
-        let Some(local) = receiver_local else {
-            return false;
-        };
-        // len() = (end_or_len - ptr) / sizeof(T)   (non-ZST)
-        // is_empty() = ptr == end_or_len           (non-ZST)
-        let Some((ptr, end)) = self.iter_ptr_end(local) else {
-            return false;
-        };
-        let dest_ty = self.body().local_decls[destination].ty;
-        if is_len {
-            let len = self
-                .iter_len_from_ptrs(&ptr, &end)
-                .expect("iter_ptr_end guarantees same-alloc provenance");
-            self.set_local(destination, VmValue::new(len, dest_ty));
-        } else {
-            // is_empty(): ptr == end_or_len  (non-ZST branch)
-            let pp = ptr.provenance.as_ref().unwrap();
-            let ep = end.provenance.as_ref().unwrap();
-            let eq = pp.offset._eq(&ep.offset);
-            let zero = Int::from_u64(self.z3_ctx, 0);
-            let one = Int::from_u64(self.z3_ctx, 1);
-            let val = VmValue {
-                z3_term: eq.ite(&one, &zero),
-                ty: dest_ty,
-                provenance: None,
-                facts: ValueFacts::default(),
-                source: ValueSource::None,
-            };
-            self.set_local(destination, val);
-        }
-        true
-    }
-
-    /// `<Option<T> as Try>::branch`: the `?` operator on `Option`. The
-    /// `ControlFlow::Continue` payload equals the `Some` payload, so an
-    /// `if let Some(..) = expr?` unwrap keeps provenance.
-    fn apply_branch(
-        &mut self,
-        arg_values: &[VmValue<'z3, 'tcx>],
-        caller_arg_locals: &[Option<Local>],
-        args: &[Spanned<Operand<'tcx>>],
-        destination: Local,
-        callee: Option<DefId>,
-    ) -> bool {
-        let effect = CallEffect::ReturnBranchPayload { arg: 0 };
-        self.apply_call_effect(&effect, arg_values, caller_arg_locals, destination, callee);
-        self.materialize_const_bytes_after_call(args, destination);
-        true
-    }
-
-    /// `NonNull::<T>::new(ptr) -> Option<NonNull<T>>`: the safe constructor
-    /// returns `Some` iff `ptr` is non-null. Its body branches on
-    /// `ptr.is_null()`, so `exec_inline_call` (branch-free only) cannot inline
-    /// it. Model the null-check directly from provenance, mirroring
-    /// `check_non_null`: internal provenance or a set `non_null`/`in_bounds`
-    /// invariant means the pointer is definitely non-null (`Some(ptr)`), and
-    /// otherwise the `Option` is left symbolic (it may be `None`).
-    fn apply_nonnull_new(
-        &mut self,
-        arg_values: &[VmValue<'z3, 'tcx>],
-        destination: Local,
-    ) -> bool {
-        let Some(ptr) = arg_values.first() else {
-            return false;
-        };
-        let dest_ty = self.body().local_decls[destination].ty;
-        let definitely_non_null = ptr.facts.non_null
-            || ptr.facts.in_bounds
-            || ptr
-                .provenance
-                .as_ref()
-                .is_some_and(|p| !self.alloc(p.alloc_id).is_external());
-        if definitely_non_null {
-            // Some(NonNull(ptr)): the Option data payload is the non-null pointer.
-            let mut val = ptr.clone();
-            val.ty = dest_ty;
-            val.facts.non_null = true;
-            let zero = Int::from_u64(self.z3_ctx, 0);
-            self.constraints.assertions.push(ptr.z3_term._eq(&zero).not());
-            self.set_local(destination, val);
-        } else {
-            // ptr may be null, so the Option may be None — keep it symbolic.
-            let term = self.fresh_int(&format!("nn_new_{}", destination.as_usize()));
-            self.set_local(
-                destination,
-                VmValue::new(term, dest_ty),
-            );
-        }
-        true
-    }
-
-    /// `Iter::next()` / `IterMut::next()`: advance ptr by 1 and return old.
-    /// The MIR calls the `Iterator::next` trait method, so `def_id` also
-    /// collects the trait path (`std::iter::Iterator::next`) in addition to the
-    /// concrete `Iter`/`IterMut` method names.
-    fn apply_iter_next(
-        &mut self,
-        arg_values: &[VmValue<'z3, 'tcx>],
-        destination: Local,
-    ) -> bool {
-        if arg_values.is_empty() {
-            return false;
-        }
-        let self_val = &arg_values[0];
-        let Some(local) = self.find_iter_self_local(self_val) else {
-            return false;
-        };
-        let Some((ptr, end)) = self.iter_ptr_end(local) else {
-            return false;
-        };
-        let pp = ptr.provenance.as_ref().unwrap();
-        let ep = end.provenance.as_ref().unwrap();
-        let buffer = ep.alloc_id;
-        let ep_elem = match &ep.offset_kind {
-            Some(OffsetKind::Element(e)) => Some(e.clone()),
-            _ => None,
-        };
-        let dest_ty = self.body().local_decls[destination].ty;
-        // Compute is_empty from fields/tracked offset (same as is_empty()).
-        let sz = self.iter_elem_size(&ptr);
-        let ep_offset = ep.offset.clone();
-        let remaining = self
-            .iter_remaining_len_from_ptrs(&ptr, &end)
-            .expect("iter_ptr_end guarantees same-alloc provenance");
-        let is_empty = remaining._eq(&Int::from_u64(self.z3_ctx, 0));
-        // The returned element is the *current* position: the tracked element
-        // index (iter_ptr_offset) scaled by the element stride, or the base
-        // ptr offset on the first call.
-        let zero = Int::from_u64(self.z3_ctx, 0);
-        let cur_off = match self.constraints.term_caches.iter_ptr_offset.get(&buffer) {
-            Some((prev, _)) => Int::mul(self.z3_ctx, &[prev, &sz]),
-            None => pp.offset.clone(),
-        };
-        let old_ptr_val = VmValue {
-            z3_term: cur_off.clone(),
-            ty: ptr.ty,
-            provenance: Some(Provenance {
-                alloc_id: pp.alloc_id,
-                offset: cur_off,
-                offset_kind: None,
-            }),
-            facts: ValueFacts {
-                non_null: true,
-                init: true,
-                ..Default::default()
-            },
-            source: ValueSource::None,
-        };
-        // Advance ptr when not empty
-        let one_term = Int::from_u64(self.z3_ctx, 1);
-        let (new_offset, base_len_elem) = match self.constraints.term_caches.iter_ptr_offset.get(&buffer) {
-            Some((prev, base)) => (Int::add(self.z3_ctx, &[prev, &one_term]), base.clone()),
-            None => (one_term.clone(), ep_elem),
-        };
-        // Assert !is_empty as path condition (remaining > 0)
-        self.constraints.assertions.push(remaining.gt(&zero));
-        // Push: base_len >= tracked_offset
-        let base_len = ep_offset.div(&sz);
-        self.constraints.assertions.push(new_offset.le(&base_len));
-        self.constraints
-            .term_caches
-            .iter_ptr_offset
-            .insert(buffer, (new_offset, base_len_elem));
-        // Return None or old ptr
-        let result_val = VmValue {
-            z3_term: is_empty.ite(&zero, &old_ptr_val.z3_term),
-            ty: dest_ty,
-            provenance: if is_empty.as_bool().unwrap_or(false) {
-                None
-            } else {
-                old_ptr_val.provenance.clone()
-            },
-            facts: ValueFacts::default(),
-            // Tie the Option's discriminant to the emptiness condition so
-            // `switchInt(discriminant(_n))` only takes the `Some` branch when
-            // the iterator was non-empty (and the `None` branch when empty).
-            source: ValueSource::Discriminant(is_empty.ite(&zero, &one_term)),
-        };
-        self.set_local(destination, result_val);
-        true
-    }
-
-    /// `Range<A>::next` / `RangeInclusive<A>::next`: return the current `start`
-    /// and advance it by one, asserting `start < end` on the `Some` path. This
-    /// carries the loop-variable bound (`0 <= i < N` for `for i in 0..N`) so a
-    /// downstream `InBound(arr, i)` can be discharged from `i < N` directly.
-    fn apply_range_next(
-        &mut self,
-        arg_values: &[VmValue<'z3, 'tcx>],
-        destination: Local,
-    ) -> bool {
-        if arg_values.is_empty() {
-            return false;
-        }
-        let self_val = &arg_values[0];
-        // `self` is `&mut Range<A>` / `&mut RangeInclusive<A>`.
-        let TyKind::Ref(_, pointee, _) = self_val.ty.kind() else {
-            return false;
-        };
-        let TyKind::Adt(adt_def, _) = pointee.kind() else {
-            return false;
-        };
-        let Some(alloc_id) = self_val.provenance_alloc_id() else {
-            return false;
-        };
-        // The aggregate's fields are stored under the *monomorphized* view type
-        // (e.g. `Range<usize>`), not the generic `Range<A>` carried by `self`.
-        let range_view_ty = self.units[alloc_id.0]
-            .content
-            .values
-            .keys()
-            .map(|(t, _)| *t)
-            .find(|t| matches!(t.kind(), TyKind::Adt(adt, _) if adt.did() == adt_def.did()));
-        let Some(range_view_ty) = range_view_ty else {
-            return false;
-        };
-        let Some(start) = self.load_value(alloc_id, range_view_ty, &[0]).cloned() else {
-            return false;
-        };
-        let Some(end) = self.load_value(alloc_id, range_view_ty, &[1]).cloned() else {
-            return false;
-        };
-        let dest_ty = self.body().local_decls[destination].ty;
-        let zero = Int::from_u64(self.z3_ctx, 0);
-        let one = Int::from_u64(self.z3_ctx, 1);
-        let start_term = start.z3_term.clone();
-        let end_term = end.z3_term.clone();
-        // `None` when `start >= end`; the `Some` path therefore has `start < end`.
-        let is_empty = start_term.ge(&end_term);
-        let result_val = VmValue {
-            z3_term: is_empty.ite(&zero, &start_term),
-            ty: dest_ty,
-            provenance: None,
-            facts: ValueFacts::default(),
-            source: ValueSource::Discriminant(is_empty.ite(&zero, &one)),
-        };
-        self.set_local(destination, result_val);
-        // Advance `start` by one for the next iteration.
-        let mut advanced = start;
-        advanced.z3_term = Int::add(self.z3_ctx, &[&start_term, &one]);
-        self.store_value(alloc_id, range_view_ty, vec![0], advanced);
-        true
     }
 
     fn materialize_const_bytes_after_call(
@@ -2740,6 +2156,402 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     dest,
                     VmValue::new(term, dest_ty),
                 );
+            }
+            CallEffect::ReturnSliceRangeIndex => {
+                if args.len() < 2 {
+                    return;
+                }
+                let dest_ty = self.body().local_decls[dest].ty;
+                let is_slice = matches!(dest_ty.kind(), TyKind::Ref(_, inner, _)
+                    if matches!(inner.kind(), TyKind::Slice(_)));
+                let range_kind = args.get(1).and_then(|v| match v.ty.kind() {
+                    TyKind::Adt(adt_def, _) => Some(mir_utils::range_kind(
+                        self.tcx,
+                        adt_def.did(),
+                    )),
+                    _ => None,
+                });
+                if !is_slice && range_kind.is_none() {
+                    return;
+                }
+                let Some(prov) = args[0].provenance.clone() else {
+                    return;
+                };
+                let array_term = args[0].z3_term.clone();
+                let (elem_ty, elem_size) = match args[0].ty.kind() {
+                    TyKind::Ref(_, inner, _) => match inner.kind() {
+                        TyKind::Array(e, _) | TyKind::Slice(e) => (*e, self.size_of_ty(*e).max(1)),
+                        _ => (args[0].ty, 1),
+                    },
+                    _ => (args[0].ty, 1),
+                };
+                let elem_align = self.align_sym(elem_ty);
+                let range_local = caller_arg_locals.get(1).copied().flatten();
+                let range_field = |idx: usize| -> Option<Int<'z3>> {
+                    range_local.and_then(|l| self.field_value(l, &[idx]).map(|v| v.z3_term.clone()))
+                };
+                let zero = Int::from_u64(self.z3_ctx, 0);
+                let one = Int::from_u64(self.z3_ctx, 1);
+                let total_len = self
+                    .alloc(prov.alloc_id)
+                    .size
+                    .clone()
+                    .div(&Int::from_u64(self.z3_ctx, elem_size));
+                let (start, len) = match range_kind {
+                    Some(mir_utils::RangeKind::RangeTo) => (
+                        zero.clone(),
+                        range_field(0).unwrap_or_else(|| total_len.clone()),
+                    ),
+                    Some(mir_utils::RangeKind::RangeFrom) => {
+                        let s = range_field(0).unwrap_or_else(|| zero.clone());
+                        (s.clone(), Int::sub(self.z3_ctx, &[&total_len, &s]))
+                    }
+                    Some(mir_utils::RangeKind::Range) => {
+                        let s = range_field(0).unwrap_or_else(|| zero.clone());
+                        let e = range_field(1).unwrap_or_else(|| total_len.clone());
+                        (s.clone(), Int::sub(self.z3_ctx, &[&e, &s]))
+                    }
+                    Some(mir_utils::RangeKind::RangeInclusive) => {
+                        let s = range_field(0).unwrap_or_else(|| zero.clone());
+                        let e = range_field(1).unwrap_or_else(|| total_len.clone());
+                        let l = Int::sub(self.z3_ctx, &[&e, &s]);
+                        (s.clone(), Int::add(self.z3_ctx, &[&l, &one]))
+                    }
+                    _ => (zero.clone(), total_len.clone()),
+                };
+                let elem_size_term = Int::from_u64(self.z3_ctx, elem_size);
+                let start_bytes = if elem_size == 1 {
+                    start.clone()
+                } else {
+                    Int::mul(self.z3_ctx, &[&start, &elem_size_term])
+                };
+                let size_bytes = if elem_size == 1 {
+                    len.clone()
+                } else {
+                    Int::mul(self.z3_ctx, &[&len, &elem_size_term])
+                };
+                let dest_term = Int::add(self.z3_ctx, &[&array_term, &start_bytes]);
+                let (alloc_id, _) = self.allocate(size_bytes, elem_align, Some(elem_ty));
+                self.alloc_mut(alloc_id).parent = Some(prov.alloc_id);
+                self.set_local(
+                    dest,
+                    VmValue {
+                        z3_term: dest_term,
+                        ty: dest_ty,
+                        provenance: Some(Provenance {
+                            alloc_id,
+                            offset: Int::from_u64(self.z3_ctx, 0),
+                            offset_kind: None,
+                        }),
+                        facts: ValueFacts {
+                            non_null: true,
+                            init: true,
+                            in_bounds: true,
+                            ..Default::default()
+                        },
+                        source: ValueSource::None,
+                    },
+                );
+            }
+            CallEffect::ReturnSliceRangeGet => {
+                if args.len() < 2 {
+                    return;
+                }
+                let dest_ty = self.body().local_decls[dest].ty;
+                let TyKind::Adt(adt, substs) = dest_ty.kind() else {
+                    return;
+                };
+                if !self
+                    .tcx
+                    .is_diagnostic_item(rustc_span::sym::Option, adt.did())
+                {
+                    return;
+                }
+                let payload_ty = substs.type_at(0);
+                let TyKind::Ref(_, slice_ty, _) = payload_ty.kind() else {
+                    return;
+                };
+                if !matches!(slice_ty.kind(), TyKind::Slice(_)) {
+                    return;
+                }
+                let Some(prov) = args[0].provenance.clone() else {
+                    return;
+                };
+                let array_term = args[0].z3_term.clone();
+                let (elem_ty, elem_size) = match args[0].ty.kind() {
+                    TyKind::Ref(_, inner, _) => match inner.kind() {
+                        TyKind::Array(e, _) | TyKind::Slice(e) => (*e, self.size_of_ty(*e).max(1)),
+                        _ => (args[0].ty, 1),
+                    },
+                    _ => (args[0].ty, 1),
+                };
+                let elem_align = self.align_sym(elem_ty);
+                let range_local = caller_arg_locals.get(1).copied().flatten();
+                let range_field = |idx: usize| -> Option<Int<'z3>> {
+                    range_local.and_then(|l| self.field_value(l, &[idx]).map(|v| v.z3_term.clone()))
+                };
+                let zero = Int::from_u64(self.z3_ctx, 0);
+                let one = Int::from_u64(self.z3_ctx, 1);
+                let total_len = self
+                    .alloc(prov.alloc_id)
+                    .size
+                    .clone()
+                    .div(&Int::from_u64(self.z3_ctx, elem_size));
+                let range_kind = args.get(1).and_then(|v| match v.ty.kind() {
+                    TyKind::Adt(adt_def, _) => Some(mir_utils::range_kind(
+                        self.tcx,
+                        adt_def.did(),
+                    )),
+                    _ => None,
+                });
+                let (start, len) = match range_kind {
+                    Some(mir_utils::RangeKind::RangeTo) => (
+                        zero.clone(),
+                        range_field(0).unwrap_or_else(|| total_len.clone()),
+                    ),
+                    Some(mir_utils::RangeKind::RangeFrom) => {
+                        let s = range_field(0).unwrap_or_else(|| zero.clone());
+                        (s.clone(), Int::sub(self.z3_ctx, &[&total_len, &s]))
+                    }
+                    Some(mir_utils::RangeKind::Range) => {
+                        let s = range_field(0).unwrap_or_else(|| zero.clone());
+                        let e = range_field(1).unwrap_or_else(|| total_len.clone());
+                        (s.clone(), Int::sub(self.z3_ctx, &[&e, &s]))
+                    }
+                    Some(mir_utils::RangeKind::RangeInclusive) => {
+                        let s = range_field(0).unwrap_or_else(|| zero.clone());
+                        let e = range_field(1).unwrap_or_else(|| total_len.clone());
+                        let l = Int::sub(self.z3_ctx, &[&e, &s]);
+                        (s.clone(), Int::add(self.z3_ctx, &[&l, &one]))
+                    }
+                    _ => (zero.clone(), total_len.clone()),
+                };
+                let elem_size_term = Int::from_u64(self.z3_ctx, elem_size);
+                let start_bytes = if elem_size == 1 {
+                    start.clone()
+                } else {
+                    Int::mul(self.z3_ctx, &[&start, &elem_size_term])
+                };
+                let size_bytes = if elem_size == 1 {
+                    len.clone()
+                } else {
+                    Int::mul(self.z3_ctx, &[&len, &elem_size_term])
+                };
+                let dest_term = Int::add(self.z3_ctx, &[&array_term, &start_bytes]);
+                let (alloc_id, _) = self.allocate(size_bytes, elem_align, Some(elem_ty));
+                self.alloc_mut(alloc_id).parent = Some(prov.alloc_id);
+                self.set_field_value(
+                    dest,
+                    vec![0],
+                    VmValue {
+                        z3_term: dest_term,
+                        ty: payload_ty,
+                        provenance: Some(Provenance {
+                            alloc_id,
+                            offset: Int::from_u64(self.z3_ctx, 0),
+                            offset_kind: None,
+                        }),
+                        facts: ValueFacts {
+                            non_null: true,
+                            init: true,
+                            in_bounds: true,
+                            ..Default::default()
+                        },
+                        source: ValueSource::None,
+                    },
+                );
+            }
+            CallEffect::ReturnIterLen { is_len } => {
+                if args.is_empty() {
+                    return;
+                }
+                let Some(local) = caller_arg_locals.first().copied().flatten() else {
+                    return;
+                };
+                let Some((ptr, end)) = self.iter_ptr_end(local) else {
+                    return;
+                };
+                let dest_ty = self.body().local_decls[dest].ty;
+                if *is_len {
+                    let len = self
+                        .iter_len_from_ptrs(&ptr, &end)
+                        .expect("iter_ptr_end guarantees same-alloc provenance");
+                    self.set_local(dest, VmValue::new(len, dest_ty));
+                } else {
+                    // is_empty(): ptr == end_or_len  (non-ZST branch)
+                    let pp = ptr.provenance.as_ref().unwrap();
+                    let ep = end.provenance.as_ref().unwrap();
+                    let eq = pp.offset._eq(&ep.offset);
+                    let zero = Int::from_u64(self.z3_ctx, 0);
+                    let one = Int::from_u64(self.z3_ctx, 1);
+                    let val = VmValue {
+                        z3_term: eq.ite(&one, &zero),
+                        ty: dest_ty,
+                        provenance: None,
+                        facts: ValueFacts::default(),
+                        source: ValueSource::None,
+                    };
+                    self.set_local(dest, val);
+                }
+            }
+            CallEffect::ReturnNonNullNew => {
+                let Some(ptr) = args.first() else {
+                    return;
+                };
+                let dest_ty = self.body().local_decls[dest].ty;
+                let definitely_non_null = ptr.facts.non_null
+                    || ptr.facts.in_bounds
+                    || ptr
+                        .provenance
+                        .as_ref()
+                        .is_some_and(|p| !self.alloc(p.alloc_id).is_external());
+                if definitely_non_null {
+                    // Some(NonNull(ptr)): the Option data payload is the non-null pointer.
+                    let mut val = ptr.clone();
+                    val.ty = dest_ty;
+                    val.facts.non_null = true;
+                    let zero = Int::from_u64(self.z3_ctx, 0);
+                    self.constraints.assertions.push(ptr.z3_term._eq(&zero).not());
+                    self.set_local(dest, val);
+                } else {
+                    // ptr may be null, so the Option may be None — keep it symbolic.
+                    let term = self.fresh_int(&format!("nn_new_{}", dest.as_usize()));
+                    self.set_local(dest, VmValue::new(term, dest_ty));
+                }
+            }
+            CallEffect::ReturnIterNext => {
+                if args.is_empty() {
+                    return;
+                }
+                let self_val = &args[0];
+                let Some(local) = self.find_iter_self_local(self_val) else {
+                    return;
+                };
+                let Some((ptr, end)) = self.iter_ptr_end(local) else {
+                    return;
+                };
+                let pp = ptr.provenance.as_ref().unwrap();
+                let ep = end.provenance.as_ref().unwrap();
+                let buffer = ep.alloc_id;
+                let ep_elem = match &ep.offset_kind {
+                    Some(OffsetKind::Element(e)) => Some(e.clone()),
+                    _ => None,
+                };
+                let dest_ty = self.body().local_decls[dest].ty;
+                // Compute is_empty from fields/tracked offset (same as is_empty()).
+                let sz = self.iter_elem_size(&ptr);
+                let ep_offset = ep.offset.clone();
+                let remaining = self
+                    .iter_remaining_len_from_ptrs(&ptr, &end)
+                    .expect("iter_ptr_end guarantees same-alloc provenance");
+                let is_empty = remaining._eq(&Int::from_u64(self.z3_ctx, 0));
+                // The returned element is the *current* position: the tracked element
+                // index (iter_ptr_offset) scaled by the element stride, or the base
+                // ptr offset on the first call.
+                let zero = Int::from_u64(self.z3_ctx, 0);
+                let cur_off = match self.constraints.term_caches.iter_ptr_offset.get(&buffer) {
+                    Some((prev, _)) => Int::mul(self.z3_ctx, &[prev, &sz]),
+                    None => pp.offset.clone(),
+                };
+                let old_ptr_val = VmValue {
+                    z3_term: cur_off.clone(),
+                    ty: ptr.ty,
+                    provenance: Some(Provenance {
+                        alloc_id: pp.alloc_id,
+                        offset: cur_off,
+                        offset_kind: None,
+                    }),
+                    facts: ValueFacts {
+                        non_null: true,
+                        init: true,
+                        ..Default::default()
+                    },
+                    source: ValueSource::None,
+                };
+                // Advance ptr when not empty
+                let one_term = Int::from_u64(self.z3_ctx, 1);
+                let (new_offset, base_len_elem) =
+                    match self.constraints.term_caches.iter_ptr_offset.get(&buffer) {
+                        Some((prev, base)) => (Int::add(self.z3_ctx, &[prev, &one_term]), base.clone()),
+                        None => (one_term.clone(), ep_elem),
+                    };
+                // Assert !is_empty as path condition (remaining > 0)
+                self.constraints.assertions.push(remaining.gt(&zero));
+                // Push: base_len >= tracked_offset
+                let base_len = ep_offset.div(&sz);
+                self.constraints.assertions.push(new_offset.le(&base_len));
+                self.constraints
+                    .term_caches
+                    .iter_ptr_offset
+                    .insert(buffer, (new_offset, base_len_elem));
+                // Return None or old ptr
+                let result_val = VmValue {
+                    z3_term: is_empty.ite(&zero, &old_ptr_val.z3_term),
+                    ty: dest_ty,
+                    provenance: if is_empty.as_bool().unwrap_or(false) {
+                        None
+                    } else {
+                        old_ptr_val.provenance.clone()
+                    },
+                    facts: ValueFacts::default(),
+                    // Tie the Option's discriminant to the emptiness condition so
+                    // `switchInt(discriminant(_n))` only takes the `Some` branch when
+                    // the iterator was non-empty (and the `None` branch when empty).
+                    source: ValueSource::Discriminant(is_empty.ite(&zero, &one_term)),
+                };
+                self.set_local(dest, result_val);
+            }
+            CallEffect::ReturnRangeNext => {
+                if args.is_empty() {
+                    return;
+                }
+                let self_val = &args[0];
+                // `self` is `&mut Range<A>` / `&mut RangeInclusive<A>`.
+                let TyKind::Ref(_, pointee, _) = self_val.ty.kind() else {
+                    return;
+                };
+                let TyKind::Adt(adt_def, _) = pointee.kind() else {
+                    return;
+                };
+                let Some(alloc_id) = self_val.provenance_alloc_id() else {
+                    return;
+                };
+                // The aggregate's fields are stored under the *monomorphized* view type
+                // (e.g. `Range<usize>`), not the generic `Range<A>` carried by `self`.
+                let range_view_ty = self.units[alloc_id.0]
+                    .content
+                    .values
+                    .keys()
+                    .map(|(t, _)| *t)
+                    .find(|t| matches!(t.kind(), TyKind::Adt(adt, _) if adt.did() == adt_def.did()));
+                let Some(range_view_ty) = range_view_ty else {
+                    return;
+                };
+                let Some(start) = self.load_value(alloc_id, range_view_ty, &[0]).cloned() else {
+                    return;
+                };
+                let Some(end) = self.load_value(alloc_id, range_view_ty, &[1]).cloned() else {
+                    return;
+                };
+                let dest_ty = self.body().local_decls[dest].ty;
+                let zero = Int::from_u64(self.z3_ctx, 0);
+                let one = Int::from_u64(self.z3_ctx, 1);
+                let start_term = start.z3_term.clone();
+                let end_term = end.z3_term.clone();
+                // `None` when `start >= end`; the `Some` path therefore has `start < end`.
+                let is_empty = start_term.ge(&end_term);
+                let result_val = VmValue {
+                    z3_term: is_empty.ite(&zero, &start_term),
+                    ty: dest_ty,
+                    provenance: None,
+                    facts: ValueFacts::default(),
+                    source: ValueSource::Discriminant(is_empty.ite(&zero, &one)),
+                };
+                self.set_local(dest, result_val);
+                // Advance `start` by one for the next iteration.
+                let mut advanced = start;
+                advanced.z3_term = Int::add(self.z3_ctx, &[&start_term, &one]);
+                self.store_value(alloc_id, range_view_ty, vec![0], advanced);
             }
         }
     }

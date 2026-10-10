@@ -36,19 +36,54 @@ pub(crate) struct EffCtx<'a, 'tcx> {
 struct Entry {
     matches: fn(Option<DefId>) -> bool,
     effects: fn(&EffCtx<'_, '_>) -> Vec<CallEffect>,
+    /// Whether the path graph keeps this call opaque (does not inline its CFG).
+    /// `true` when the VM's effect is strictly more precise than the inlined
+    /// body; `false` for hand-specialized shapes that still need their body
+    /// inlined by the path graph to carry loop/range bounds into downstream
+    /// checkpoints.
+    opaque: bool,
 }
 
-/// `DefId`-based matcher row (`fn(Option<DefId>) -> bool`).
+/// `DefId`-based matcher row (`fn(Option<DefId>) -> bool`), opaque to the path
+/// graph (the VM's effect replaces the inlined body).
 macro_rules! ED {
     ($m:expr, $e:ident) => {
         Entry {
             matches: $m,
             effects: $e,
+            opaque: true,
+        }
+    };
+}
+
+/// Matcher row whose body the path graph still inlines (the VM's effect only
+/// handles execution-time semantics; the inlined CFG carries the bounds).
+macro_rules! ED_INLINE {
+    ($m:expr, $e:ident) => {
+        Entry {
+            matches: $m,
+            effects: $e,
+            opaque: false,
         }
     };
 }
 
 static REGISTRY: &[Entry] = &[
+    // ── Hand-specialized VM shapes (formerly `classify_call`) ────────
+    // These have MIR available but a branchy / field-walking body that the VM
+    // models more precisely with a dedicated `apply_call_effect` branch.  The
+    // path graph still inlines their bodies (`opaque: false`) so loop/range
+    // bounds reach downstream checkpoints.  Listed *first* so their precise
+    // handler wins over the generic def-path matchers below (e.g. `Iter::len`
+    // must not fall through to `is_len`).
+    ED_INLINE!(api_classify::is_branch, eff_branch),
+    ED_INLINE!(api_classify::is_index_method, eff_slice_range_index),
+    ED_INLINE!(api_classify::is_slice_get, eff_slice_range_get),
+    ED_INLINE!(api_classify::is_iter_len, eff_iter_len),
+    ED_INLINE!(api_classify::is_iter_is_empty, eff_iter_is_empty),
+    ED_INLINE!(api_classify::is_nonnull_checked_new, eff_nonnull_new),
+    ED_INLINE!(api_classify::is_iter_next, eff_iter_next),
+    ED_INLINE!(api_classify::is_range_next, eff_range_next),
     // ── Intrinsics — no MIR body ────────────────────────────────────
     // Compiler intrinsics (`core::intrinsics::*`) have no MIR to inline, so the
     // hand-written effect is the *only* model. `mem::size_of`/`align_of` are
@@ -168,9 +203,8 @@ static REGISTRY: &[Entry] = &[
     // ── MIR available — deliberately opaque ─────────────────────────
     // `eff_none` stubs: no symbolic effect, but staying registered keeps
     // `is_modeled` true so the path graph does not inline their branchy bodies
-    // (`NonNull::new`'s `is_null`, `MaybeUninit::uninit`/`assume_init`).
+    // (`MaybeUninit::uninit`/`assume_init`).
     // `MaybeUninit::write` marks the slot initialized (`WriteMemory`).
-    ED!(api_classify::is_nonnull_checked_new, eff_none),
     ED!(api_classify::is_nonnull_new_unchecked, eff_new_unchecked),
     ED!(api_classify::is_maybe_uninit_uninit, eff_none),
     ED!(api_classify::is_maybe_uninit_assume_init, eff_none),
@@ -181,7 +215,7 @@ static REGISTRY: &[Entry] = &[
 /// graph uses this to keep such calls opaque (it must not inline their branchy
 /// CFG when the VM models their semantics more precisely).
 pub(crate) fn is_modeled(callee: Option<DefId>) -> bool {
-    REGISTRY.iter().any(|e| (e.matches)(callee))
+    REGISTRY.iter().any(|e| e.opaque && (e.matches)(callee))
 }
 
 pub(crate) fn lookup_effect<'tcx>(
@@ -504,6 +538,38 @@ fn eff_layout_const(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     layout_constant_effect(ctx.tcx, ctx.caller, ctx.func)
         .into_iter()
         .collect()
+}
+
+fn eff_branch(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnBranchPayload { arg: 0 }]
+}
+
+fn eff_slice_range_index(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnSliceRangeIndex]
+}
+
+fn eff_slice_range_get(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnSliceRangeGet]
+}
+
+fn eff_iter_len(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnIterLen { is_len: true }]
+}
+
+fn eff_iter_is_empty(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnIterLen { is_len: false }]
+}
+
+fn eff_nonnull_new(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnNonNullNew]
+}
+
+fn eff_iter_next(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnIterNext]
+}
+
+fn eff_range_next(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnRangeNext]
 }
 
 // ── Layout helpers (used by effect builders) ─────────────────────────
