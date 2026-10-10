@@ -589,34 +589,29 @@ fn layout_constant_effect<'tcx>(
     func: &Operand<'tcx>,
 ) -> Option<CallEffect> {
     let ty = layout_call_ty(func)?;
-    let (align, size) = type_layout(tcx, caller, ty)?;
-    // `type_layout` reports `(0, 0)` for a generic `T` (layout unknown).  Leave
-    // that case to the VM's `try_size_align_effect`, which binds the shared
-    // symbolic `sizeof_T` / `align_T` (and keeps `align_of::<T>() >= 1`, so a
-    // cast like `align as *const T` in `NonNull::dangling` is non-null).
-    if align == 0 && size == 0 {
+    let callee = mir_utils::dep_callee_def_id(func)?;
+    let is_align = def_id::contains(
+        &[def_id::mem_align_of(), def_id::intrinsics_align_of()],
+        callee,
+    );
+    let is_size = def_id::contains(
+        &[def_id::mem_size_of(), def_id::intrinsics_size_of()],
+        callee,
+    );
+    if !is_size && !is_align {
         return None;
     }
-    let callee = mir_utils::dep_callee_def_id(func)?;
-    if def_id::contains(
-        &[
-            def_id::mem_align_of(),
-            def_id::intrinsics_align_of(),
-        ],
-        callee,
-    ) {
-        Some(CallEffect::ReturnConst { value: align })
-    } else if def_id::contains(
-        &[
-            def_id::mem_size_of(),
-            def_id::intrinsics_size_of(),
-        ],
-        callee,
-    ) {
-        Some(CallEffect::ReturnConst { value: size })
-    } else {
-        None
+    let (align, size) = type_layout(tcx, caller, ty)?;
+    // `type_layout` reports `(0, 0)` for a generic `T` (layout unknown): bind
+    // the shared symbolic `sizeof_T` / `align_T` at apply time (the
+    // `align_of::<T>() >= 1` bound keeps a cast like `align as *const T` in
+    // `NonNull::dangling` non-null).
+    if align == 0 && size == 0 {
+        return Some(CallEffect::ReturnLayoutSymbolic { is_size });
     }
+    Some(CallEffect::ReturnConst {
+        value: if is_align { align } else { size },
+    })
 }
 
 fn eff_box_from_vec(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {

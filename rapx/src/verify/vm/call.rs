@@ -15,7 +15,6 @@ use rustc_middle::ty::{Ty, TyKind};
 use z3::ast::{Ast, Bool, Int};
 
 use crate::compat::{FxHashSet, Spanned};
-use crate::def_id;
 use crate::helpers::mir_utils;
 use crate::limit::MAX_INLINE_DEPTH;
 use crate::verify::api_classify;
@@ -52,9 +51,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         if api_classify::is_eq_call(callee) {
             self.propagate_const_bytes_to_tracked(args);
         }
-        if self.is_size_align_generic(func) {
-            self.apply_size_align(func, destination);
-        }
 
         // Registry summary, else the transparent-deref / unknown fallback.
         let summary = crate::verify::call_summary::builtin_models::lookup_effect(
@@ -67,7 +63,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
         if !summary.unsupported {
             for effect in &summary.effects {
-                self.apply_call_effect(effect, &arg_values, &caller_arg_locals, destination, callee);
+                self.apply_call_effect(effect, &arg_values, &caller_arg_locals, destination, callee, func);
             }
         } else if let Some(c) = callee && self.tcx.is_mir_available(c) {
             self.exec_inline_call(c, &arg_values, &caller_arg_locals, destination);
@@ -430,53 +426,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         self.set_local(dest, val);
     }
 
-    /// Whether `func` is a generic `size_of::<T>()` / `align_of::<T>()` — the
-    /// case where `T` has no concrete layout, so `eff_layout_const` cannot
-    /// produce a `ReturnConst` and the shared symbolic binding is needed.
-    fn is_size_align_generic(&self, func: &Operand<'tcx>) -> bool {
-        let Some(ty) = mir_utils::fn_def_first_type_arg(func) else {
-            return false;
-        };
-        let Some(callee) = mir_utils::dep_callee_def_id(func) else {
-            return false;
-        };
-        let is_size = def_id::contains(
-            &[def_id::mem_size_of(), def_id::intrinsics_size_of()],
-            callee,
-        );
-        let is_align = def_id::contains(
-            &[def_id::mem_align_of(), def_id::intrinsics_align_of()],
-            callee,
-        );
-        if !is_size && !is_align {
-            return false;
-        }
-        // A concrete layout is already modelled as `ReturnConst` by
-        // `eff_layout_const`; only the generic (symbolic) case needs binding here.
-        // `type_layout` reports `(0, 0)` for a generic `T`, so a zero alignment
-        // (not a zero *size*, which is a legal ZST) marks the unknown case.
-        !mir_utils::type_layout(self.tcx, self.current_frame.current_def_id, ty)
-            .is_some_and(|(align, _)| align > 0)
-    }
-
-    /// Bind `destination` to the shared `sizeof_T` / `align_T` for the generic
-    /// `size_of::<T>()` / `align_of::<T>()` case.
-    fn apply_size_align(&mut self, func: &Operand<'tcx>, destination: Local) {
-        let ty = mir_utils::fn_def_first_type_arg(func).expect("is_size_align_generic checked");
-        let callee = mir_utils::dep_callee_def_id(func).expect("is_size_align_generic checked");
-        let is_size = def_id::contains(
-            &[def_id::mem_size_of(), def_id::intrinsics_size_of()],
-            callee,
-        );
-        let term = if is_size {
-            self.size_sym(ty)
-        } else {
-            self.align_sym(ty)
-        };
-        let dest_ty = self.body().local_decls[destination].ty;
-        self.set_local(destination, VmValue::new(term, dest_ty));
-    }
-
     /// Apply a binary numeric effect: compute `f(lhs.z3_term, rhs.z3_term)` and store
     /// it as the destination's fresh scalar value.
     fn apply_binary_num(
@@ -516,8 +465,20 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         caller_arg_locals: &[Option<Local>],
         dest: Local,
         callee: Option<DefId>,
+        func: &Operand<'tcx>,
     ) {
         match effect {
+            CallEffect::ReturnLayoutSymbolic { is_size } => {
+                let ty = mir_utils::fn_def_first_type_arg(func)
+                    .expect("layout effect built from a FnDef");
+                let term = if *is_size {
+                    self.size_sym(ty)
+                } else {
+                    self.align_sym(ty)
+                };
+                let dest_ty = self.body().local_decls[dest].ty;
+                self.set_local(dest, VmValue::new(term, dest_ty));
+            }
             CallEffect::ReturnAliasArg { arg } => {
                 if let Some(arg_val) = args.get(*arg) {
                     self.set_dest_as_heap_ptr(arg_val, dest);
