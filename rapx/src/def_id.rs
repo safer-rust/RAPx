@@ -75,7 +75,6 @@ struct Types {
     rc_types: Vec<DefId>,
     sync_primitive_types: Vec<DefId>,
     index_range_types: Vec<DefId>,
-    control_flow_types: Vec<DefId>,
     /// `alloc::alloc::exchange_malloc` (`Box::new`'s lang item on toolchains
     /// that lower `Box::new` to it) — resolved by name scan, since it has no
     /// lang item on newer toolchains.
@@ -117,7 +116,6 @@ fn init_types(tcx: TyCtxt) -> Types {
         rc_types: Vec::new(),
         sync_primitive_types: Vec::new(),
         index_range_types: Vec::new(),
-        control_flow_types: Vec::new(),
         exchange_malloc: None,
         negative_types: IndexMap::new(),
     };
@@ -130,10 +128,6 @@ fn init_types(tcx: TyCtxt) -> Types {
         .extend(tcx.get_diagnostic_item(sym::cstring_type));
     types.vec_types.extend(tcx.get_diagnostic_item(sym::Vec));
     types.rc_types.extend(tcx.get_diagnostic_item(sym::Rc));
-    // `core::ops::ControlFlow` is `#[rustc_diagnostic_item = "ControlFlow"]`.
-    types
-        .control_flow_types
-        .extend(tcx.get_diagnostic_item(sym::ControlFlow));
     // `core::cmp::Ordering` is `#[lang = "Ordering"]`.
     types
         .ordering_types
@@ -357,8 +351,6 @@ type_defs! {
     sync_primitive_types,
     /// `core::range::IndexRange` (and any local re-implementation).
     index_range_types,
-    /// `core::ops::ControlFlow` (via `#[rustc_diagnostic_item = "ControlFlow"]`).
-    control_flow_types,
 }
 
 /// `alloc::alloc::exchange_malloc`, if present on this toolchain.
@@ -711,8 +703,10 @@ fn init_methods(tcx: TyCtxt) -> Methods {
             if name.contains("::add") {
                 methods.ptr_add.push(did);
             }
-            // `<Option<T> as Try>::branch`.
-            if name.ends_with("::branch") {
+            // `<Option<T> as Try>::branch` (the `?` operator on `Option`).
+            // `branch` has no lang/diagnostic item; `Option` disambiguates it
+            // from `<Result<T, E> as Try>::branch`.
+            if name.ends_with("::branch") && name.contains("Option") {
                 methods.branch.push(did);
             }
             // `gcd` const fn (const-eval integer GCD).

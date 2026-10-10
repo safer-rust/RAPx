@@ -402,7 +402,7 @@ pub(crate) fn try_mir_derived_effect(
 ) -> Option<CallEffect> {
     try_field_load_effect(tcx, callee)
         .or_else(|| try_ptr_field_return_effect(tcx, callee))
-        .or_else(|| try_branch_effect(tcx, callee))
+        .or_else(|| try_branch_effect(callee))
         .or_else(|| try_slice_bounded_return_effect(tcx, callee))
         .or_else(|| try_decode_length_return_effect(tcx, callee))
 }
@@ -709,31 +709,8 @@ pub(crate) fn try_slice_bounded_return_effect(
 /// Detect `<Option<T> as Try>::branch`: `Option<T>` -> `ControlFlow<Option<!>, T>`.
 /// The `Continue` payload (field 0) equals the `Some` payload (field 0), so a
 /// `?`-operator `if let Some(..) = expr?` unwrap keeps the payload's provenance.
-pub(crate) fn try_branch_effect(tcx: TyCtxt<'_>, callee: DefId) -> Option<CallEffect> {
+pub(crate) fn try_branch_effect(callee: DefId) -> Option<CallEffect> {
     if !crate::verify::api_classify::is_branch(Some(callee)) {
-        return None;
-    }
-    if !tcx.is_mir_available(callee) {
-        return None;
-    }
-    let body = tcx.optimized_mir(callee);
-    if body.arg_count != 1 {
-        return None;
-    }
-    // Input is `Option<T>` (the `self` argument).
-    let arg_ty = body.local_decls[Local::from_usize(1)].ty;
-    let TyKind::Adt(arg_adt, _) = arg_ty.kind() else {
-        return None;
-    };
-    if !tcx.is_diagnostic_item(rustc_span::sym::Option, arg_adt.did()) {
-        return None;
-    }
-    // Output is `ControlFlow<..>`.
-    let ret_ty = body.local_decls[Local::from_usize(0)].ty;
-    let TyKind::Adt(ret_adt, _) = ret_ty.kind() else {
-        return None;
-    };
-    if !def_id::control_flow_types().contains(&ret_adt.did()) {
         return None;
     }
     Some(CallEffect::ReturnBranchPayload { arg: 0 })
