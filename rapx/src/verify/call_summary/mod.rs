@@ -203,13 +203,6 @@ pub(crate) enum CallEffect {
     /// to by the indicated argument (e.g. `Box::from_raw(p)` owns one initialized
     /// `T` element reached through `p`).
     OwnsInitMemory { arg: usize },
-    /// The call validates that every element of the array argument `indices_arg`
-    /// is `< args[len_arg]` and that the elements are pairwise distinct, returning
-    /// `Err` otherwise.  On the `Ok` continuation the caller may assume
-    /// `InBound(slice_of(len_arg), indices_arg)` and
-    /// `NonOverlap(indices_arg)`.  (A trusted interprocedural summary, like the
-    /// std-primitive summaries — the validator's body is not re-proved here.)
-    ChecksIndexBoundsDisjoint { indices_arg: usize, len_arg: usize },
     /// The call returns `Option<usize>` whose `Some` payload is a scan index
     /// into the iterator argument `self_arg` (models `Iterator::position` /
     /// `Iterator::find`): `Some(i)` satisfies `0 <= i < self.len()` where
@@ -238,12 +231,6 @@ pub(crate) enum CallEffect {
     /// and records `(ptr + offset) % align_of::<U>() == 0` so downstream
     /// `ptr.add(offset - k)` dereferences can discharge `Align`.
     ReturnAlignTo { receiver_arg: usize },
-    /// `IntoIterator::into_iter` on `&[T]` / `&mut [T]` returns an
-    /// `Iter`/`IterMut` whose `ptr` (field 0) and `end_or_len` (field 1) share
-    /// the source slice's allocation. Models the constructor by materializing
-    /// those two pointer fields so downstream `Iterator::next` / `len` /
-    /// `is_empty` can resolve the iterator's provenance and element type.
-    ReturnIter { receiver_arg: usize },
     /// `<ManuallyDrop<T> as Deref>::deref` / `MaybeDangling::as_ref` return a
     /// reference to the inner value at the *same* address (transparent
     /// wrappers).  The return aliases `arg` (a `&T` pointing at `arg`'s
@@ -341,7 +328,6 @@ pub(crate) fn effect_summary<'tcx>(
     caller: DefId,
     func: &Operand<'tcx>,
     destination: Local,
-    context: &CallContext,
 ) -> CallEffectSummary {
     let callee = mir_utils::dep_callee_resolved_def_id(tcx, caller, func);
 
@@ -360,77 +346,6 @@ pub(crate) fn effect_summary<'tcx>(
             effects: vec![CallEffect::ReturnTransparentDeref { arg: 0, peel }],
             unsupported: false,
         };
-    }
-
-    // Interprocedural fallback for local callees.
-    if let Some(callee) = callee {
-        if tcx.intrinsic(callee).is_some() || mir_utils::is_drop_in_place(callee) {
-            return CallEffectSummary::unknown();
-        }
-        if let Some(must_write_args) = interprocedural::local_must_write_args(tcx, callee, context) {
-            let effects: Vec<_> = must_write_args
-                .into_iter()
-                .map(|arg| CallEffect::WriteMemory { pointer_arg: arg })
-                .collect();
-            if !effects.is_empty() {
-                return CallEffectSummary {
-                    effects,
-                    unsupported: false,
-                };
-            }
-        }
-        if let Some(effect) =
-            interprocedural::try_pointer_arith_wrapper_effect(tcx, callee)
-        {
-            return CallEffectSummary {
-                effects: vec![effect],
-                unsupported: false,
-            };
-        }
-        if let Some(effect) =
-            interprocedural::try_from_raw_parts_wrapper_effect(tcx, callee)
-        {
-            return CallEffectSummary {
-                effects: vec![effect],
-                unsupported: false,
-            };
-        }
-        if let Some(effect) = interprocedural::try_iter_constructor_effect(tcx, callee) {
-            return CallEffectSummary {
-                effects: vec![effect],
-                unsupported: false,
-            };
-        }
-        if let Some((indices_arg, len_arg)) =
-            interprocedural::detect_index_disjoint_validator(tcx, callee)
-                .or_else(|| interprocedural::named_index_disjoint_validator(Some(callee)))
-        {
-            return CallEffectSummary {
-                effects: vec![CallEffect::ChecksIndexBoundsDisjoint {
-                    indices_arg,
-                    len_arg,
-                }],
-                unsupported: false,
-            };
-        }
-        if let Some(return_deps) = interprocedural::local_return_dependencies(tcx, callee) {
-            // If the callee does pointer arithmetic, don't produce ReturnAliasArg
-            // since the offset might have been changed (e.g. wrapping_add(1)).
-            if !interprocedural::callee_contains_pointer_arithmetic(tcx, callee) {
-                // If the callee transitively calls functions that may write
-                // through &mut args, ReturnAliasArg alone is insufficient —
-                // the writes are lost. Mark as unsupported so the VM falls
-                // back to `exec_inline_call`, which inlines the full body.
-                let has_nested_calls = interprocedural::callee_calls_other_local(tcx, callee);
-                return CallEffectSummary {
-                    effects: return_deps
-                        .into_iter()
-                        .map(|arg| CallEffect::ReturnAliasArg { arg })
-                        .collect(),
-                    unsupported: has_nested_calls,
-                };
-            }
-        }
     }
 
     CallEffectSummary::unknown()

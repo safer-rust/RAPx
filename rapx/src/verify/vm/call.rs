@@ -14,7 +14,7 @@ use rustc_middle::mir::{BasicBlock, Local, Operand, TerminatorKind};
 use rustc_middle::ty::{Ty, TyKind};
 use z3::ast::{Ast, Bool, Int};
 
-use crate::compat::{FxHashMap, FxHashSet, Spanned};
+use crate::compat::{FxHashSet, Spanned};
 use crate::def_id;
 use crate::helpers::mir_utils;
 use crate::limit::MAX_INLINE_DEPTH;
@@ -76,20 +76,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 }
         }
 
-        let mut concrete = FxHashMap::default();
-        for (i, arg) in arg_values.iter().enumerate() {
-            if let Some(v) = arg.z3_term.simplify().as_u64() {
-                concrete.insert(i, v as i128);
-            }
-        }
-        let context = call_summary::CallContext { concrete };
-
         let summary = call_summary::effect_summary(
             self.tcx,
             caller_def_id,
             func,
             destination,
-            &context,
         );
 
         // A `size_of::<T>()` / `align_of::<T>()` on a *generic* `T` has no
@@ -779,86 +770,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         self.set_field_value(dest, vec![f], field_val);
                     }
                 }
-            }
-            CallEffect::ReturnIter { receiver_arg } => {
-                let Some(self_val) = args.get(*receiver_arg).cloned() else {
-                    return;
-                };
-                let Some(src_prov) = self_val.provenance.clone() else {
-                    return;
-                };
-                // `array[..i]` may be a `from_raw_parts` sub-allocation of the
-                // array's backing storage. Follow the sub-allocation chain to the
-                // root so the iterator's `ptr`/`end_or_len` fields point at live,
-                // init-tracked storage (the array itself), not the transient
-                // slice allocation.
-                let root_alloc_id = {
-                    let mut id = src_prov.alloc_id;
-                    while let Some(parent) = self.alloc(id).parent {
-                        id = parent;
-                    }
-                    id
-                };
-                let slice_len = self.alloc(src_prov.alloc_id).size.clone();
-
-                // The Iter/IterMut struct has `ptr` (field 0) and `end_or_len`
-                // (field 1), both raw pointers into the source slice allocation.
-                // Derive the pointee type so `next()` can compute the stride.
-                let field_ty = match self_val.ty.kind() {
-                    TyKind::Ref(_, inner, _) => match inner.kind() {
-                        TyKind::Slice(t) => *t,
-                        _ => self_val.ty,
-                    },
-                    _ => self_val.ty,
-                };
-
-                let start_off = Int::from_u64(self.z3_ctx, 0);
-                let end_term = Int::add(self.z3_ctx, &[&self_val.z3_term, &slice_len]);
-
-                // `&[T]` / `&mut [T]` data pointers are aligned to the element
-                // type `T`, so the iterator's `ptr` / `end_or_len` fields inherit
-                // that alignment.  This lets the `raw-ptr-deref` `Align` check in
-                // `Iterator::next`/`next_back` discharge against the tracked
-                // `align_n` instead of falling back to the (unprovable) modulo.
-                let elem_align_n = {
-                    let a = self.align_sym(field_ty);
-                    (a.simplify().as_u64() != Some(1)).then_some(a)
-                };
-
-                let start_val = VmValue {
-                    z3_term: self_val.z3_term.clone(),
-                    ty: field_ty,
-                    provenance: Some(Provenance {
-                        alloc_id: root_alloc_id,
-                        offset: start_off,
-                        offset_kind: None,
-                    }),
-                    facts: ValueFacts {
-                        init: true,
-                        non_null: true,
-                        align_n: elem_align_n.clone(),
-                        ..Default::default()
-                    },
-                    source: ValueSource::None,
-                };
-                let end_val = VmValue {
-                    z3_term: end_term,
-                    ty: field_ty,
-                    provenance: Some(Provenance {
-                        alloc_id: root_alloc_id,
-                        offset: slice_len,
-                        offset_kind: None,
-                    }),
-                    facts: ValueFacts {
-                        init: true,
-                        non_null: true,
-                        align_n: elem_align_n,
-                        ..Default::default()
-                    },
-                    source: ValueSource::None,
-                };
-                self.set_field_value(dest, vec![0], start_val);
-                self.set_field_value(dest, vec![1], end_val);
             }
             CallEffect::ReturnRange { bounds_arg } => {
                 self.apply_range_effect(*bounds_arg, args, caller_arg_locals, dest);
@@ -2104,54 +2015,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 let term = self.fresh_int(&format!("layout_align_{}", dest.as_usize()));
                 let zero = Int::from_u64(self.z3_ctx, 0);
                 self.constraints.assertions.push(term.gt(&zero));
-                self.set_local(
-                    dest,
-                    VmValue::new(term, dest_ty),
-                );
-            }
-            CallEffect::ChecksIndexBoundsDisjoint {
-                indices_arg,
-                len_arg,
-            } => {
-                let indices = args.get(*indices_arg);
-                let len_val = args.get(*len_arg);
-                if let (Some(indices_val), Some(len_val)) = (indices, len_val) {
-                    let arr_ty = match indices_val.ty.kind() {
-                        rustc_middle::ty::TyKind::Ref(_, inner, _) => *inner,
-                        _ => indices_val.ty,
-                    };
-                    if let rustc_middle::ty::TyKind::Array(_elem_ty, _const_len) = arr_ty.kind() {
-                        let alloc_id = indices_val.provenance_alloc_id().or_else(|| {
-                            // Slicer may have dropped the &indices
-                            // assignment, losing provenance.  Fall back
-                            self.all_local_values().into_iter().find_map(|(_, v)| {
-                                if v.ty == arr_ty {
-                                    v.provenance_alloc_id()
-                                } else {
-                                    None
-                                }
-                            })
-                        });
-                        if let Some(alloc_id) = alloc_id {
-                            let zero = Int::from_u64(self.z3_ctx, 0);
-                            let byte_offsets: Vec<(usize, Int)> =
-                                self.alloc_byte_values(alloc_id);
-                            for (_, term) in &byte_offsets {
-                                self.constraints.assertions.push(term.ge(&zero));
-                                self.constraints.assertions.push(term.lt(&len_val.z3_term));
-                            }
-                            for i in 0..byte_offsets.len() {
-                                for j in (i + 1)..byte_offsets.len() {
-                                    let ti = &byte_offsets[i].1;
-                                    let tj = &byte_offsets[j].1;
-                                    self.constraints.assertions.push(ti._eq(tj).not());
-                                }
-                            }
-                        }
-                    }
-                }
-                let dest_ty = self.body().local_decls[dest].ty;
-                let term = self.fresh_int(&format!("ck_ok_{}", dest.as_usize()));
                 self.set_local(
                     dest,
                     VmValue::new(term, dest_ty),

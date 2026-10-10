@@ -120,18 +120,6 @@ pub(crate) const ALIAS_VISIT_LIMIT: usize = 80;
 pub(crate) const SAFEDROP_VISIT_LIMIT: usize = 1000;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Call-summary recognition (interprocedural)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Max basic-block count for a local callee to be recognized as a
-/// pointer-arithmetic (add/sub) wrapper summary.
-pub(crate) const POINTER_ARITH_WRAPPER_BLOCK_LIMIT: usize = 16;
-
-/// Max basic-block count for a local callee to be recognized as a
-/// `from_raw_parts` wrapper summary.
-pub(crate) const FROM_RAW_PARTS_WRAPPER_BLOCK_LIMIT: usize = 8;
-
-// ─────────────────────────────────────────────────────────────────────────────
 // API dependency
 // ─────────────────────────────────────────────────────────────────────────────
 

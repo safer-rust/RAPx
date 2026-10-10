@@ -266,11 +266,6 @@ pub fn is_pointer_sub(callee: Option<DefId>) -> bool {
     is_element_ptr_sub(callee) || is_byte_ptr_sub(callee)
 }
 
-/// Any byte-granular pointer arithmetic (stride 1), regardless of direction.
-pub fn is_byte_ptr_arith(callee: Option<DefId>) -> bool {
-    is_byte_ptr_add(callee) || is_byte_ptr_sub(callee)
-}
-
 // ── Layout constants ──────────────────────────────────────────────
 
 /// Whether `callee` is the compile-time layout constant `size_of::<T>()` or

@@ -427,7 +427,6 @@ struct Methods {
     iter_pre_dec_end: Vec<DefId>,
     known_nonnull: Vec<DefId>,
     null_ptr: Vec<DefId>,
-    get_disjoint_check_valid: Vec<DefId>,
     index_fns: Vec<DefId>,
     eq_fns: Vec<DefId>,
 }
@@ -475,7 +474,6 @@ fn init_methods(tcx: TyCtxt) -> Methods {
         iter_pre_dec_end: Vec::new(),
         known_nonnull: Vec::new(),
         null_ptr: Vec::new(),
-        get_disjoint_check_valid: Vec::new(),
         index_fns: Vec::new(),
         eq_fns: Vec::new(),
     };
@@ -733,10 +731,6 @@ fn init_methods(tcx: TyCtxt) -> Methods {
             if name.contains("null_mut") || (name.contains("null") && name.contains("ptr::")) {
                 methods.null_ptr.push(did);
             }
-            // Index-disjoint validator helpers.
-            if name.contains("get_disjoint_check_valid") {
-                methods.get_disjoint_check_valid.push(did);
-            }
         }
     }
 
@@ -836,8 +830,6 @@ method_fns! {
     known_nonnull_fns => known_nonnull,
     /// Null-returning pointer methods (`null` / `null_mut`).
     null_ptr_fns => null_ptr,
-    /// Index-disjoint validator helpers.
-    get_disjoint_check_valid_fns => get_disjoint_check_valid,
     /// `Index::index` / `IndexMut::index_mut` (the `a[b]` indexing sugar).
     index_fns => index_fns,
     /// `PartialEq::eq` (the `a == b` comparison).
