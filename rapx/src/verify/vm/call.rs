@@ -23,12 +23,15 @@ use crate::verify::call_summary::{self, CallEffect};
 use super::state::{AllocId, ElementTy, OffsetKind, Provenance, ValueFacts, ValueSource, VmState, VmValue};
 
 impl<'z3, 'tcx> VmState<'z3, 'tcx> {
-    /// Execute a call terminator.
+    /// Execute a call terminator, dispatching by precision:
     ///
-    /// Dispatch priority: hand-specialized handlers first, then precise
-    /// MIR-derived effects and BFS inline (when MIR is available and there
-    /// is no more precise builtin summary), then builtin/interprocedural
-    /// effect summaries, and finally an unconstrained "unsupported call".
+    ///  1. pre-inline side effects (`Eq` const-byte propagation, `IterPtrAdj`
+    ///     iterator-offset tracking) — always run and fall through;
+    ///  2. a registry / transparent-deref summary effect;
+    ///  3. BFS inline of the callee's MIR when there is no summary.
+    ///
+    /// A call with neither a summary nor inlinable MIR leaves `destination`
+    /// unset.
     pub(crate) fn exec_call(
         &mut self,
         func: &Operand<'tcx>,
@@ -40,82 +43,37 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             .iter()
             .map(|arg| self.value_of_operand(&arg.node))
             .collect();
-
-        let callee = mir_utils::dep_callee_resolved_def_id(self.tcx, caller_def_id, func);
-
         let caller_arg_locals: Vec<Option<Local>> = args
             .iter()
             .map(|a| a.node.place().map(|p| p.local))
             .collect();
+        let callee = mir_utils::dep_callee_resolved_def_id(self.tcx, caller_def_id, func);
 
-        // Pre-inline side effects, recognized by callee identity. `Eq`
-        // propagates const bytes into tracked allocations; `IterPtrAdj`
-        // advances the iterator's tracked offset. Both fall through to
-        // inline/summary for the return value.
         if api_classify::is_eq_call(callee) {
             self.propagate_const_bytes_to_tracked(args);
         }
         if api_classify::is_iter_ptr_adj(callee) {
             self.apply_iter_ptr_update(callee, &arg_values);
         }
+        if self.is_size_align_generic(func) {
+            self.apply_size_align(func, destination);
+        }
 
-        // REGISTRY summary, looked up once so it can gate inlining below.
-        let registry_summary = crate::verify::call_summary::builtin_models::lookup_effect(
+        // Registry summary, else the transparent-deref / unknown fallback.
+        let summary = crate::verify::call_summary::builtin_models::lookup_effect(
             self.tcx,
             caller_def_id,
             callee,
             func,
             destination,
-        );
-
-        // No registry summary and MIR available: BFS-inline the callee.
-        if registry_summary.is_none()
-            && let Some(c) = callee
-            && self.tcx.is_mir_available(c)
-            && self.exec_inline_call(c, &arg_values, &caller_arg_locals, destination)
-        {
-            self.materialize_const_bytes_after_call(args, destination);
-            return;
-        }
-
-        // A `size_of::<T>()` / `align_of::<T>()` on a *generic* `T` has no
-        // concrete layout, so `eff_layout_const` produces no effect and the
-        // result would otherwise be an unrelated fresh value.  Bind it to the
-        // shared symbolic `sizeof_T` / `align_T` so it agrees with allocation
-        // sizes and pointer strides.
-        if self.try_size_align_effect(func, destination) {
-            self.materialize_const_bytes_after_call(args, destination);
-            return;
-        }
-
-        let summary = registry_summary
-            .unwrap_or_else(|| call_summary::effect_summary(self.tcx, func));
+        ).unwrap_or_else(|| call_summary::effect_summary(self.tcx, func));
 
         if !summary.unsupported {
             for effect in &summary.effects {
                 self.apply_call_effect(effect, &arg_values, &caller_arg_locals, destination, callee);
             }
-        } else {
-            let dest_ty = self.body().local_decls[destination].ty;
-            let term = self.fresh_int(&format!("callret_{}", destination.as_usize()));
-            if let TyKind::Adt(adt_def, _) = dest_ty.kind()
-                && api_classify::is_std_ordering(adt_def.did()) {
-                    let minus_one = Int::from_i64(self.z3_ctx, -1);
-                    let one = Int::from_i64(self.z3_ctx, 1);
-                    self.constraints.assertions.push(term.ge(&minus_one));
-                    self.constraints.assertions.push(term.le(&one));
-                }
-            // bool return (bool, Result::ok/err, etc.) — constrain to {0, 1}
-            if dest_ty.is_bool() {
-                let zero = Int::from_u64(self.z3_ctx, 0);
-                let one = Int::from_u64(self.z3_ctx, 1);
-                self.constraints.assertions.push(term.ge(&zero));
-                self.constraints.assertions.push(term.le(&one));
-            }
-            self.set_local(
-                destination,
-                VmValue::new(term, dest_ty),
-            );
+        } else if let Some(c) = callee && self.tcx.is_mir_available(c) {
+            self.exec_inline_call(c, &arg_values, &caller_arg_locals, destination);
         }
 
         self.materialize_const_bytes_after_call(args, destination);
@@ -475,11 +433,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         self.set_local(dest, val);
     }
 
-    /// For a `size_of::<T>()` / `align_of::<T>()` call whose `T` is generic (no
-    /// concrete layout), bind the destination to the shared symbolic
-    /// `sizeof_T` / `align_T` so it agrees with `size_sym`/`align_sym`.  Returns
-    /// `true` when handled.  Concrete layouts are left to `eff_layout_const`.
-    fn try_size_align_effect(&mut self, func: &Operand<'tcx>, destination: Local) -> bool {
+    /// Whether `func` is a generic `size_of::<T>()` / `align_of::<T>()` — the
+    /// case where `T` has no concrete layout, so `eff_layout_const` cannot
+    /// produce a `ReturnConst` and the shared symbolic binding is needed.
+    fn is_size_align_generic(&self, func: &Operand<'tcx>) -> bool {
         let Some(ty) = mir_utils::fn_def_first_type_arg(func) else {
             return false;
         };
@@ -487,17 +444,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return false;
         };
         let is_size = def_id::contains(
-            &[
-                def_id::mem_size_of(),
-                def_id::intrinsics_size_of(),
-            ],
+            &[def_id::mem_size_of(), def_id::intrinsics_size_of()],
             callee,
         );
         let is_align = def_id::contains(
-            &[
-                def_id::mem_align_of(),
-                def_id::intrinsics_align_of(),
-            ],
+            &[def_id::mem_align_of(), def_id::intrinsics_align_of()],
             callee,
         );
         if !is_size && !is_align {
@@ -507,22 +458,26 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         // `eff_layout_const`; only the generic (symbolic) case needs binding here.
         // `type_layout` reports `(0, 0)` for a generic `T`, so a zero alignment
         // (not a zero *size*, which is a legal ZST) marks the unknown case.
-        if mir_utils::type_layout(self.tcx, self.current_frame.current_def_id, ty)
+        !mir_utils::type_layout(self.tcx, self.current_frame.current_def_id, ty)
             .is_some_and(|(align, _)| align > 0)
-        {
-            return false;
-        }
+    }
+
+    /// Bind `destination` to the shared `sizeof_T` / `align_T` for the generic
+    /// `size_of::<T>()` / `align_of::<T>()` case.
+    fn apply_size_align(&mut self, func: &Operand<'tcx>, destination: Local) {
+        let ty = mir_utils::fn_def_first_type_arg(func).expect("is_size_align_generic checked");
+        let callee = mir_utils::dep_callee_def_id(func).expect("is_size_align_generic checked");
+        let is_size = def_id::contains(
+            &[def_id::mem_size_of(), def_id::intrinsics_size_of()],
+            callee,
+        );
         let term = if is_size {
             self.size_sym(ty)
         } else {
             self.align_sym(ty)
         };
         let dest_ty = self.body().local_decls[destination].ty;
-        self.set_local(
-            destination,
-            VmValue::new(term, dest_ty),
-        );
-        true
+        self.set_local(destination, VmValue::new(term, dest_ty));
     }
 
     /// Apply a binary numeric effect: compute `f(lhs.z3_term, rhs.z3_term)` and store
