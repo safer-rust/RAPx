@@ -752,6 +752,23 @@ pub fn is_slice_get_unchecked(callee: Option<DefId>) -> bool {
     any_fn(callee, def_id::slice_get_unchecked_fns())
 }
 
+/// Whether `callee` is `<[T]>::get` / `<[T]>::get_mut` (the slice-side range
+/// getters returning `Option<&[T]>`).
+pub fn is_slice_get(callee: Option<DefId>) -> bool {
+    any_fn(callee, def_id::slice_get_fns())
+}
+
+/// Whether `callee` is the `Index::index` / `IndexMut::index_mut` trait method
+/// (the `a[b]` indexing sugar).
+pub fn is_index_method(callee: Option<DefId>) -> bool {
+    any_fn(callee, def_id::index_fns())
+}
+
+/// Whether `callee` is the `PartialEq::eq` comparison method.
+pub fn is_eq_call(callee: Option<DefId>) -> bool {
+    any_fn(callee, def_id::eq_fns())
+}
+
 /// Whether `callee` is `SliceIndex::get_unchecked`/`get_unchecked_mut` (the
 /// trait method, whose receiver is the *index* and whose first argument is the
 /// slice pointer). Distinct from [`is_slice_get_unchecked`] (the slice-side
@@ -783,6 +800,23 @@ pub fn is_iter_len(callee: Option<DefId>) -> bool {
 /// (`Iter::is_empty` / `IterMut::is_empty`).
 pub fn is_iter_is_empty(callee: Option<DefId>) -> bool {
     any_fn(callee, def_id::iter_is_empty_fns())
+}
+
+/// Whether `callee` is `slice::Iter`/`IterMut`'s private `post_inc_start`
+/// (a pointer-advancing side effect).
+pub fn is_post_inc_start(callee: Option<DefId>) -> bool {
+    any_fn(callee, def_id::iter_post_inc_start_fns())
+}
+
+/// Whether `callee` is `pre_dec_end` (the end-decrementing sibling of
+/// `post_inc_start`).
+pub fn is_pre_dec_end(callee: Option<DefId>) -> bool {
+    any_fn(callee, def_id::iter_pre_dec_end_fns())
+}
+
+/// Whether `callee` is one of `post_inc_start` / `pre_dec_end`.
+pub fn is_iter_ptr_adj(callee: Option<DefId>) -> bool {
+    is_post_inc_start(callee) || is_pre_dec_end(callee)
 }
 
 /// Whether `callee` is `<Option<T> as Try>::branch`.

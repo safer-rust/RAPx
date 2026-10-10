@@ -35,6 +35,12 @@
 //!   simply yields `None`.
 
 use indexmap::IndexMap;
+#[cfg(rapx_has_attr_ir)]
+use rustc_attr_ir::LangItem;
+#[cfg(all(not(rapx_has_attr_ir), not(rapx_ge_100)))]
+use rustc_hir::LangItem;
+#[cfg(all(not(rapx_has_attr_ir), rapx_ge_100))]
+use rustc_hir::attrs::lang_items::LangItem;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 use rustc_public::{CrateDef, rustc_internal};
@@ -414,6 +420,7 @@ struct Methods {
     iter_position: Vec<DefId>,
     strlen: Vec<DefId>,
     slice_get_unchecked: Vec<DefId>,
+    slice_get: Vec<DefId>,
     sliceindex_get_unchecked: Vec<DefId>,
     slice_range_fns: Vec<DefId>,
     range_next: Vec<DefId>,
@@ -429,6 +436,8 @@ struct Methods {
     known_nonnull: Vec<DefId>,
     null_ptr: Vec<DefId>,
     get_disjoint_check_valid: Vec<DefId>,
+    index_fns: Vec<DefId>,
+    eq_fns: Vec<DefId>,
 }
 
 fn init_methods(tcx: TyCtxt) -> Methods {
@@ -459,6 +468,7 @@ fn init_methods(tcx: TyCtxt) -> Methods {
         iter_position: Vec::new(),
         strlen: Vec::new(),
         slice_get_unchecked: Vec::new(),
+        slice_get: Vec::new(),
         sliceindex_get_unchecked: Vec::new(),
         slice_range_fns: Vec::new(),
         range_next: Vec::new(),
@@ -474,6 +484,8 @@ fn init_methods(tcx: TyCtxt) -> Methods {
         known_nonnull: Vec::new(),
         null_ptr: Vec::new(),
         get_disjoint_check_valid: Vec::new(),
+        index_fns: Vec::new(),
+        eq_fns: Vec::new(),
     };
 
     for krate in std::iter::once(rustc_public::local_crate())
@@ -483,6 +495,25 @@ fn init_methods(tcx: TyCtxt) -> Methods {
         for fn_def in krate.fn_defs() {
             let name = fn_def.name();
             let did = rustc_internal::internal(tcx, fn_def.def_id());
+
+            // `Index::index` / `IndexMut::index_mut` (the `a[b]` indexing
+            // sugar): matched by lang-item trait container, not by def_path.
+            if let Some(assoc) = tcx.opt_associated_item(did)
+                && let Some(trait_id) = assoc.trait_container(tcx)
+                && (tcx.is_lang_item(trait_id, LangItem::Index)
+                    && assoc.name().as_str() == "index"
+                    || tcx.is_lang_item(trait_id, LangItem::IndexMut)
+                        && assoc.name().as_str() == "index_mut")
+            {
+                methods.index_fns.push(did);
+            }
+
+            // `PartialEq::eq` (the `a == b` comparison): matched by def_path,
+            // since blanket impls (`<impl PartialEq<&B> for &A>::eq`) have no
+            // `trait_container` (their assoc is not a trait-method item).
+            if name.contains("PartialEq") && name.ends_with("::eq") {
+                methods.eq_fns.push(did);
+            }
 
             if name.ends_with("::len") {
                 methods.len_fns.push(did);
@@ -612,6 +643,13 @@ fn init_methods(tcx: TyCtxt) -> Methods {
                     || name.contains("::const_ptr::get_unchecked"))
             {
                 methods.slice_get_unchecked.push(did);
+            }
+            if (name.ends_with("::get") || name.ends_with("::get_mut"))
+                && (name.contains("::<impl [T]>::get")
+                    || name.contains("::<impl *mut [T]>::get")
+                    || name.contains("::<impl *const [T]>::get"))
+            {
+                methods.slice_get.push(did);
             }
             if (name.contains("::get_unchecked") || name.contains("::get_unchecked_mut"))
                 && name.contains("::SliceIndex")
@@ -777,6 +815,7 @@ method_fns! {
     iter_position_fns => iter_position,
     strlen_fns => strlen,
     slice_get_unchecked_fns => slice_get_unchecked,
+    slice_get_fns => slice_get,
     sliceindex_get_unchecked_fns => sliceindex_get_unchecked,
     slice_range_fns => slice_range_fns,
     range_next_fns => range_next,
@@ -805,6 +844,10 @@ method_fns! {
     null_ptr_fns => null_ptr,
     /// Index-disjoint validator helpers.
     get_disjoint_check_valid_fns => get_disjoint_check_valid,
+    /// `Index::index` / `IndexMut::index_mut` (the `a[b]` indexing sugar).
+    index_fns => index_fns,
+    /// `PartialEq::eq` (the `a == b` comparison).
+    eq_fns => eq_fns,
 }
 
 fn init_inner(tcx: TyCtxt) -> Intrinsics {

@@ -4,7 +4,6 @@
 //! to approximate its effects: pointer-arithmetic wrappers, `from_raw_parts`
 //! wrappers, argument-to-return dataflow, and index-disjointness validators.
 
-use crate::helpers::mir_utils;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use rustc_hir::def_id::DefId;
@@ -393,6 +392,21 @@ pub(super) fn try_from_raw_parts_wrapper_effect<'tcx>(
     None
 }
 
+/// MIR-derived effects recognized from the callee's body shape (field load,
+/// ptr field return, branch, slice-bounded return, decode-length). These run
+/// before inline because the recognized shape yields a more precise effect
+/// than BFS-inlining the body.
+pub(crate) fn try_mir_derived_effect(
+    tcx: TyCtxt<'_>,
+    callee: DefId,
+) -> Option<CallEffect> {
+    try_field_load_effect(tcx, callee)
+        .or_else(|| try_ptr_field_return_effect(tcx, callee))
+        .or_else(|| try_branch_effect(tcx, callee))
+        .or_else(|| try_slice_bounded_return_effect(tcx, callee))
+        .or_else(|| try_decode_length_return_effect(tcx, callee))
+}
+
 /// Detect a field-getter callee from its MIR: a function whose body is
 /// (essentially) `(*self).field` — a single `Deref` + `Field` load returned as
 /// the function's result. Produces a `ReturnFieldOfArg` effect so the
@@ -483,7 +497,7 @@ pub(crate) fn try_ptr_field_return_effect(tcx: TyCtxt<'_>, callee: DefId) -> Opt
     // In that case the returned pointer is `field - offset` elements past the
     // stored field value; returning the un-adjusted field would point one past
     // the last element. Record the offset so the effect can be adjusted.
-    let pre_dec_offset = detect_pre_dec_end_offset(tcx, body);
+    let pre_dec_offset = detect_pre_dec_end_offset(body);
     // Trace backward from the return local through Copy/Move/Cast/CopyForDeref
     // assignments until a `(*arg).field` load of the receiver is reached. This
     // handles the optimized-MIR form where the field is first copied into a
@@ -1011,7 +1025,6 @@ fn operand_is_ptr_metadata<'tcx>(
 /// returning the `end_or_len` field, so the returned pointer must be adjusted
 /// by `offset` elements.
 fn detect_pre_dec_end_offset<'tcx>(
-    tcx: TyCtxt<'tcx>,
     body: &rustc_middle::mir::Body<'tcx>,
 ) -> Option<u64> {
     for bb in body.basic_blocks.iter() {
@@ -1024,7 +1037,7 @@ fn detect_pre_dec_end_offset<'tcx>(
         let Some(callee) = helpers::dep_callee_def_id(func) else {
             continue;
         };
-        if !mir_utils::is_pre_dec_end(tcx, callee) {
+        if !crate::verify::api_classify::is_pre_dec_end(Some(callee)) {
             continue;
         }
         // Receiver is arg 0 (the iterator), offset is arg 1.

@@ -55,25 +55,6 @@ pub(crate) fn dep_callee_def_id(func: &Operand<'_>) -> Option<DefId> {
     Some(*def_id)
 }
 
-/// Whether `func` is a call to `PartialEq::eq` (the equality comparison),
-/// determined from its `DefId` rather than by string-matching the callee path.
-pub(crate) fn is_eq_call(tcx: TyCtxt<'_>, func: &Operand<'_>) -> bool {
-    let Some(def_id) = dep_callee_def_id(func) else {
-        return false;
-    };
-    let Some(assoc) = tcx.opt_associated_item(def_id) else {
-        return false;
-    };
-    if assoc.name().as_str() != "eq" {
-        return false;
-    }
-    // Must be a trait method (`PartialEq::eq`), not an inherent `eq`.
-    let Some(trait_id) = assoc.trait_container(tcx) else {
-        return false;
-    };
-    tcx.def_path_str(trait_id).ends_with("PartialEq")
-}
-
 /// Whether `def_id` is `core::ptr::drop_in_place`.
 pub(crate) fn is_drop_in_place(def_id: DefId) -> bool {
     def_id::drop_in_place() == Some(def_id)
@@ -244,40 +225,6 @@ pub(crate) fn is_range_type(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
     !matches!(range_kind(tcx, def_id), RangeKind::Other)
         || tcx.is_lang_item(def_id, LangItem::RangeToInclusive)
         || tcx.is_lang_item(def_id, LangItem::RangeFull)
-}
-
-/// Whether `def_id` is the `Index::index` / `IndexMut::index_mut` trait method.
-pub(crate) fn is_index_method(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
-    let Some(assoc) = tcx.opt_associated_item(def_id) else {
-        return false;
-    };
-    let name = assoc.name();
-    if name.as_str() != "index" && name.as_str() != "index_mut" {
-        return false;
-    }
-    let Some(trait_id) = assoc.trait_container(tcx) else {
-        return false;
-    };
-    (tcx.is_lang_item(trait_id, LangItem::Index) && name.as_str() == "index")
-        || (tcx.is_lang_item(trait_id, LangItem::IndexMut) && name.as_str() == "index_mut")
-}
-
-/// Whether `def_id` is `slice::Iter`/`IterMut`'s private `post_inc_start`
-/// helper (a pointer-advancing side effect that cannot be inlined because of
-/// its ZST `SwitchInt` branch).
-pub(crate) fn is_post_inc_start(_tcx: TyCtxt<'_>, def_id: DefId) -> bool {
-    def_id::iter_post_inc_start_fns().contains(&def_id)
-}
-
-/// Whether `def_id` is `pre_dec_end` (the end-decrementing sibling of
-/// `post_inc_start`).
-pub(crate) fn is_pre_dec_end(_tcx: TyCtxt<'_>, def_id: DefId) -> bool {
-    def_id::iter_pre_dec_end_fns().contains(&def_id)
-}
-
-/// Whether `def_id` is one of `post_inc_start` / `pre_dec_end`.
-pub(crate) fn is_iter_ptr_adj(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
-    is_post_inc_start(tcx, def_id) || is_pre_dec_end(tcx, def_id)
 }
 
 /// Resolve a (possibly trait-method) callee to the concrete impl method that

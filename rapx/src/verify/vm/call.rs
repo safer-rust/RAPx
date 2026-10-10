@@ -20,16 +20,56 @@ use crate::helpers::mir_utils;
 use crate::limit::MAX_INLINE_DEPTH;
 use crate::verify::api_classify;
 use crate::verify::call_summary::{self, CallEffect};
+use crate::verify::call_summary::interprocedural;
 use super::state::{AllocId, ElementTy, OffsetKind, Provenance, ValueFacts, ValueSource, VmState, VmValue};
 
+/// Hand-specialized slice/iterator/range call shapes recognized by
+/// [`VmState::exec_call`] before generic summary/inline handling.
+enum CallCase {
+    Eq,
+    SliceIndex,
+    SliceGet,
+    IterLenIsEmpty { is_len: bool },
+    NonNullNew,
+    IterNext,
+    RangeNext,
+    IterPtrAdj,
+}
+
 impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+    /// Classify a callee into one of the hand-specialized call shapes, based
+    /// only on its identity.  Runtime structure (argument count, types,
+    /// provenance) is checked separately by the corresponding `apply_*`.
+    fn classify_call(&self, callee: Option<DefId>) -> Option<CallCase> {
+        if api_classify::is_eq_call(callee) {
+            Some(CallCase::Eq)
+        } else if api_classify::is_index_method(callee) {
+            Some(CallCase::SliceIndex)
+        } else if api_classify::is_slice_get(callee) {
+            Some(CallCase::SliceGet)
+        } else if api_classify::is_iter_len(callee) {
+            Some(CallCase::IterLenIsEmpty { is_len: true })
+        } else if api_classify::is_iter_is_empty(callee) {
+            Some(CallCase::IterLenIsEmpty { is_len: false })
+        } else if api_classify::is_nonnull_checked_new(callee) {
+            Some(CallCase::NonNullNew)
+        } else if api_classify::is_iter_next(callee) {
+            Some(CallCase::IterNext)
+        } else if api_classify::is_range_next(callee) {
+            Some(CallCase::RangeNext)
+        } else if api_classify::is_iter_ptr_adj(callee) {
+            Some(CallCase::IterPtrAdj)
+        } else {
+            None
+        }
+    }
+
     /// Execute a call terminator.
     ///
-    /// Dispatch priority: hand-specialized handlers first, then builtin_models
-    /// summaries (whose hand-crafted invariants are more precise than inline),
-    /// then inline execution of the callee's MIR (including dependency
-    /// crates), then interprocedural/effect summaries, and finally an
-    /// unconstrained "unsupported call" result.
+    /// Dispatch priority: hand-specialized handlers first, then precise
+    /// MIR-derived effects and BFS inline (when MIR is available and there
+    /// is no more precise builtin summary), then builtin/interprocedural
+    /// effect summaries, and finally an unconstrained "unsupported call".
     pub(crate) fn exec_call(
         &mut self,
         func: &Operand<'tcx>,
@@ -42,131 +82,74 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             .map(|arg| self.value_of_operand(&arg.node))
             .collect();
 
-        let callee =
-            mir_utils::dep_callee_resolved_def_id(self.tcx, caller_def_id, func);
+        let callee = mir_utils::dep_callee_resolved_def_id(self.tcx, caller_def_id, func);
         let caller_arg_locals: Vec<Option<Local>> = args
             .iter()
             .map(|a| a.node.place().map(|p| p.local))
             .collect();
 
-        // `<[u8]>::eq` comparison: the result is just a bool, but its *literal*
-        // operand's bytes are the tracked operand's content on the true path.
-        // Write them into the tracked allocation so a later `ValidCStr` can see
-        // the NUL terminator.
-        if mir_utils::is_eq_call(self.tcx, func) {
-            self.propagate_const_bytes_to_tracked(args);
-        }
-
-        // Slice range indexing: `<[T]>::index(range)` / `::index_mut(range)`
-        // returns a sub-slice whose length is the range's extent.
-        if self.try_slice_index(callee, &arg_values, args, destination) {
-            return;
-        }
-
-        // Slice range `get`: `<[T]>::get(range)` returns `Option<&[T]>` whose
-        // `Some` payload is the sub-slice.
-        if self.try_slice_get(callee, &arg_values, args, destination) {
-            return;
-        }
-
-        // Iter::len() / Iter::is_empty(): compute from struct fields.
-        if self.try_iter_len_is_empty(callee, &arg_values, args, destination) {
-            return;
-        }
-
-        // Iter::next() / IterMut::next(): advance ptr by 1 and return old.
-        if self.try_iter_next(callee, &arg_values, destination) {
-            return;
-        }
-
-        // Range::next() / RangeInclusive::next(): return `start` and advance it,
-        // asserting `start < end` so the loop variable carries its range bound.
-        if self.try_range_next(callee, &arg_values, destination) {
-            return;
-        }
-
-        // NonNull::new(ptr): the safe constructor returns Some(ptr) iff ptr is
-        // non-null. Its body branches on `ptr.is_null()`, so the branch-free
-        // inline path rejects it; model the null-check directly.
-        if self.try_nonnull_new(callee, &arg_values, destination) {
-            return;
-        }
-
-        // post_inc_start / pre_dec_end on Iter/IterMut: apply the ptr/end
-        // update as a side effect, then fall through to normal handling.
-        // These callees have SwitchInt (ZST branch) exceeding inline limits,
-        // so the ptr update would otherwise be lost.
-        if let Some(c) = callee
-            && self.tcx.is_mir_available(c)
-                && mir_utils::is_iter_ptr_adj(self.tcx, c) && arg_values.len() >= 2
-                {
-                    self.apply_iter_ptr_update(c, &arg_values);
-                    // Continue to normal handling (return value is () , ignored).
-                }
-
-        // Try inline for callees with available MIR, unless builtin_models
-        // has a precise summary (memory allocation, intrinsics, known ptr
-        // arithmetic, etc.). The summary path handles these with
-        // hand-crafted invariants that are more precise than BFS inline.
-        if let Some(c) = callee
-            && self.tcx.is_mir_available(c) {
-                // MIR-derived field load (`(*self).field` getter shape, e.g.
-                // `Vec::len`): recognized from the callee's MIR, not by name.
-                if let Some(effect) =
-                    crate::verify::call_summary::interprocedural::try_field_load_effect(self.tcx, c)
-                {
-                    self.apply_call_effect(&effect, &arg_values, &caller_arg_locals, destination, callee);
-                    self.materialize_const_bytes_after_call(args, destination);
-                    return;
-                }
-                if let Some(effect) =
-                    crate::verify::call_summary::interprocedural::try_ptr_field_return_effect(
-                        self.tcx, c,
-                    )
-                {
-                    self.apply_call_effect(&effect, &arg_values, &caller_arg_locals, destination, callee);
-                    self.materialize_const_bytes_after_call(args, destination);
-                    return;
-                }
-                if let Some(effect) =
-                    crate::verify::call_summary::interprocedural::try_branch_effect(self.tcx, c)
-                {
-                    self.apply_call_effect(&effect, &arg_values, &caller_arg_locals, destination, callee);
-                    self.materialize_const_bytes_after_call(args, destination);
-                    return;
-                }
-                if let Some(effect) =
-                    crate::verify::call_summary::interprocedural::try_slice_bounded_return_effect(
-                        self.tcx, c,
-                    )
-                {
-                    self.apply_call_effect(&effect, &arg_values, &caller_arg_locals, destination, callee);
-                    self.materialize_const_bytes_after_call(args, destination);
-                    return;
-                }
-                if let Some(effect) =
-                    crate::verify::call_summary::interprocedural::try_decode_length_return_effect(
-                        self.tcx, c,
-                    )
-                {
-                    self.apply_call_effect(&effect, &arg_values, &caller_arg_locals, destination, callee);
-                    self.materialize_const_bytes_after_call(args, destination);
-                    return;
-                }
-                let has_fn_sim = crate::verify::call_summary::builtin_models::lookup_effect(
-                    self.tcx,
-                    caller_def_id,
-                    callee,
-                    func,
-                    destination,
-                )
-                .is_some();
-                if !has_fn_sim
-                    && self.exec_inline_call(c, &arg_values, &caller_arg_locals, destination) {
-                        self.materialize_const_bytes_after_call(args, destination);
+        // Hand-specialized call shapes, recognized by callee identity. `Eq`
+        // and `IterPtrAdj` are side effects that fall through to inline/summary;
+        // the rest fully handle the call and return.
+        if let Some(case) = self.classify_call(callee) {
+            match case {
+                CallCase::Eq => self.propagate_const_bytes_to_tracked(args),
+                CallCase::IterPtrAdj => self.apply_iter_ptr_update(callee, &arg_values),
+                CallCase::SliceIndex => {
+                    if self.apply_slice_index(&arg_values, args, destination) {
                         return;
                     }
+                }
+                CallCase::SliceGet => {
+                    if self.apply_slice_get(&arg_values, args, destination) {
+                        return;
+                    }
+                }
+                CallCase::IterLenIsEmpty { is_len } => {
+                    if self.apply_iter_len_is_empty(is_len, &arg_values, args, destination) {
+                        return;
+                    }
+                }
+                CallCase::NonNullNew => {
+                    if self.apply_nonnull_new(&arg_values, destination) {
+                        return;
+                    }
+                }
+                CallCase::IterNext => {
+                    if self.apply_iter_next(&arg_values, destination) {
+                        return;
+                    }
+                }
+                CallCase::RangeNext => {
+                    if self.apply_range_next(&arg_values, destination) {
+                        return;
+                    }
+                }
             }
+        }
+
+        // With MIR available: try precise MIR-derived effects first, then
+        // BFS-inline unless builtin_models has a precise summary (memory
+        // allocation, intrinsics, known ptr arithmetic, etc.).
+        if let Some(c) = callee && self.tcx.is_mir_available(c) {
+            if let Some(effect) = interprocedural::try_mir_derived_effect(self.tcx, c) {
+                self.apply_call_effect(&effect, &arg_values, &caller_arg_locals, destination, callee);
+                self.materialize_const_bytes_after_call(args, destination);
+                return;
+            }
+            let has_fn_sim = crate::verify::call_summary::builtin_models::lookup_effect(
+                self.tcx,
+                caller_def_id,
+                callee,
+                func,
+                destination,
+            ).is_some();
+            if !has_fn_sim
+                && self.exec_inline_call(c, &arg_values, &caller_arg_locals, destination) {
+                    self.materialize_const_bytes_after_call(args, destination);
+                    return;
+                }
+        }
 
         let mut concrete = FxHashMap::default();
         for (i, arg) in arg_values.iter().enumerate() {
@@ -230,16 +213,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// correct element count (empty for `..0`). Single-element indexing
     /// (`index(usize)`) has a non-slice destination and keeps the plain
     /// alias behaviour from the summary table.
-    fn try_slice_index(
+    fn apply_slice_index(
         &mut self,
-        callee: Option<DefId>,
         arg_values: &[VmValue<'z3, 'tcx>],
         args: &[Spanned<Operand<'tcx>>],
         destination: Local,
     ) -> bool {
-        let is_index =
-            callee.is_some_and(|c| mir_utils::is_index_method(self.tcx, c));
-        if !is_index || arg_values.len() < 2 {
+        if arg_values.len() < 2 {
             return false;
         }
         let dest_ty = self.body().local_decls[destination].ty;
@@ -353,24 +333,17 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
     /// Slice range `get` `<[T]>::get(range)` / `::get_mut(range)`: returns
     /// `Option<&[T]>` whose `Some` payload is a sub-slice with the range's
-    /// extent.  Mirrors [`try_slice_index`](Self::try_slice_index), but stores
+    /// extent.  Mirrors [`apply_slice_index`](Self::apply_slice_index), but stores
     /// the sub-slice under field 0 (the `Some` payload) so a downstream
     /// `slice.len()` / `memchr(x, subslice)` sees the correct element count and
     /// provenance.
-    fn try_slice_get(
+    fn apply_slice_get(
         &mut self,
-        callee: Option<DefId>,
         arg_values: &[VmValue<'z3, 'tcx>],
         args: &[Spanned<Operand<'tcx>>],
         destination: Local,
     ) -> bool {
-        let Some(c) = callee else {
-            return false;
-        };
-        let Some(assoc) = self.tcx.opt_associated_item(c) else {
-            return false;
-        };
-        if !matches!(assoc.name().as_str(), "get" | "get_mut") || arg_values.len() < 2 {
+        if arg_values.len() < 2 {
             return false;
         }
         let dest_ty = self.body().local_decls[destination].ty;
@@ -486,16 +459,14 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// (ptr + end_or_len share the same allocation with per-field offsets).
     /// The generic builtin_models would return sizeof(Iter)/sizeof(T), which is
     /// wrong for generic T.
-    fn try_iter_len_is_empty(
+    fn apply_iter_len_is_empty(
         &mut self,
-        callee: Option<DefId>,
+        is_len: bool,
         arg_values: &[VmValue<'z3, 'tcx>],
         args: &[Spanned<Operand<'tcx>>],
         destination: Local,
     ) -> bool {
-        let is_len = api_classify::is_iter_len(callee);
-        let is_empty = api_classify::is_iter_is_empty(callee);
-        if !(is_len || is_empty) || arg_values.is_empty() {
+        if arg_values.is_empty() {
             return false;
         }
         let receiver_local = args.first().and_then(|a| a.node.place()).map(|p| p.local);
@@ -539,15 +510,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// `check_non_null`: internal provenance or a set `non_null`/`in_bounds`
     /// invariant means the pointer is definitely non-null (`Some(ptr)`), and
     /// otherwise the `Option` is left symbolic (it may be `None`).
-    fn try_nonnull_new(
+    fn apply_nonnull_new(
         &mut self,
-        callee: Option<DefId>,
         arg_values: &[VmValue<'z3, 'tcx>],
         destination: Local,
     ) -> bool {
-        if !api_classify::is_nonnull_checked_new(callee) {
-            return false;
-        }
         let Some(ptr) = arg_values.first() else {
             return false;
         };
@@ -581,13 +548,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// The MIR calls the `Iterator::next` trait method, so `def_id` also
     /// collects the trait path (`std::iter::Iterator::next`) in addition to the
     /// concrete `Iter`/`IterMut` method names.
-    fn try_iter_next(
+    fn apply_iter_next(
         &mut self,
-        callee: Option<DefId>,
         arg_values: &[VmValue<'z3, 'tcx>],
         destination: Local,
     ) -> bool {
-        if !api_classify::is_iter_next(callee) || arg_values.is_empty() {
+        if arg_values.is_empty() {
             return false;
         }
         let self_val = &arg_values[0];
@@ -673,13 +639,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// and advance it by one, asserting `start < end` on the `Some` path. This
     /// carries the loop-variable bound (`0 <= i < N` for `for i in 0..N`) so a
     /// downstream `InBound(arr, i)` can be discharged from `i < N` directly.
-    fn try_range_next(
+    fn apply_range_next(
         &mut self,
-        callee: Option<DefId>,
         arg_values: &[VmValue<'z3, 'tcx>],
         destination: Local,
     ) -> bool {
-        if !api_classify::is_range_next(callee) || arg_values.is_empty() {
+        if arg_values.is_empty() {
             return false;
         }
         let self_val = &arg_values[0];
@@ -3035,10 +3000,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// `base_len - offset` via interpreter_iter_len.
     fn apply_iter_ptr_update(
         &mut self,
-        callee: DefId,
+        callee: Option<DefId>,
         arg_values: &[VmValue<'z3, 'tcx>],
     ) {
-        let is_inc = mir_utils::is_post_inc_start(self.tcx, callee);
+        if arg_values.len() < 2 {
+            return;
+        }
+        let is_inc = api_classify::is_post_inc_start(callee);
         if !is_inc {
             return;
         } // pre_dec_end not yet supported
