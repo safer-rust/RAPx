@@ -423,8 +423,6 @@ struct Methods {
     ptr_add: Vec<DefId>,
     branch: Vec<DefId>,
     gcd: Vec<DefId>,
-    iter_post_inc_start: Vec<DefId>,
-    iter_pre_dec_end: Vec<DefId>,
     known_nonnull: Vec<DefId>,
     null_ptr: Vec<DefId>,
     index_fns: Vec<DefId>,
@@ -470,8 +468,6 @@ fn init_methods(tcx: TyCtxt) -> Methods {
         ptr_add: Vec::new(),
         branch: Vec::new(),
         gcd: Vec::new(),
-        iter_post_inc_start: Vec::new(),
-        iter_pre_dec_end: Vec::new(),
         known_nonnull: Vec::new(),
         null_ptr: Vec::new(),
         index_fns: Vec::new(),
@@ -711,13 +707,6 @@ fn init_methods(tcx: TyCtxt) -> Methods {
             if name.ends_with("::gcd") {
                 methods.gcd.push(did);
             }
-            // Slice-iterator internal pointer-advance helpers.
-            if name.ends_with("::post_inc_start") {
-                methods.iter_post_inc_start.push(did);
-            }
-            if name.ends_with("::pre_dec_end") {
-                methods.iter_pre_dec_end.push(did);
-            }
             // Known non-null-returning pointer methods (`into_raw` / `Box::new`
             // / `as_ptr` / `as_mut_ptr`), used by path analysis.
             if name.contains("::into_raw")
@@ -821,10 +810,6 @@ method_fns! {
     branch_fns => branch,
     /// `gcd` const functions.
     gcd_fns => gcd,
-    /// `post_inc_start` (slice-iterator pointer increment).
-    iter_post_inc_start_fns => iter_post_inc_start,
-    /// `pre_dec_end` (slice-iterator end decrement).
-    iter_pre_dec_end_fns => iter_pre_dec_end,
     /// Known non-null-returning pointer methods (`into_raw` / `Box::new` /
     /// `as_ptr` / `as_mut_ptr`).
     known_nonnull_fns => known_nonnull,

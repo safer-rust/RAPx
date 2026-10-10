@@ -52,9 +52,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         if api_classify::is_eq_call(callee) {
             self.propagate_const_bytes_to_tracked(args);
         }
-        if api_classify::is_iter_ptr_adj(callee) {
-            self.apply_iter_ptr_update(callee, &arg_values);
-        }
         if self.is_size_align_generic(func) {
             self.apply_size_align(func, destination);
         }
@@ -2541,47 +2538,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let dest_ty = self.body().local_decls[dest].ty;
         self.set_local(dest, VmValue::new(len_term, dest_ty));
         true
-    }
-
-    /// Apply the side effect of post_inc_start / pre_dec_end on Iter/IterMut.
-    /// Only updates the tracked offset (not field values), so that the
-    /// precondition check (which runs before the call executes) sees the
-    /// pre-update state, while subsequent len()/is_empty() calls use
-    /// `base_len - offset` via interpreter_iter_len.
-    fn apply_iter_ptr_update(
-        &mut self,
-        callee: Option<DefId>,
-        arg_values: &[VmValue<'z3, 'tcx>],
-    ) {
-        if arg_values.len() < 2 {
-            return;
-        }
-        let is_inc = api_classify::is_post_inc_start(callee);
-        if !is_inc {
-            return;
-        } // pre_dec_end not yet supported
-        let self_val = &arg_values[0];
-        let some_local = self.find_iter_self_local(self_val);
-        let Some(local) = some_local else { return };
-        let Some(buffer) = self.iter_buffer(local) else { return };
-        let offset_term = arg_values
-            .get(1)
-            .map(|v| v.z3_term.clone())
-            .unwrap_or_else(|| Int::from_u64(self.z3_ctx, 1));
-        let (new_offset, base_len) = match self.constraints.term_caches.iter_ptr_offset.get(&buffer) {
-            Some((prev, base)) => (Int::add(self.z3_ctx, &[prev, &offset_term]), base.clone()),
-            None => {
-                let base = self
-                    .field_value(local, &[1])
-                    .and_then(|end| end.provenance.as_ref())
-                    .and_then(|ep| match &ep.offset_kind {
-                        Some(OffsetKind::Element(e)) => Some(e.clone()),
-                        _ => None,
-                    });
-                (offset_term, base)
-            }
-        };
-        self.constraints.term_caches.iter_ptr_offset.insert(buffer, (new_offset, base_len));
     }
 
     /// Find the local whose symbolic address matches `term` (the address a
