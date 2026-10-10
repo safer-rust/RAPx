@@ -403,7 +403,7 @@ impl<'z3, 'tcx> Allocation<'z3, 'tcx> {
 ///    address (the caller's address map is gone), so it pushes `(x, [0], 1)`.
 /// 3. Exit `bar`: `restore_frame` brings `main`'s local_alloc back, then the deferred
 ///    write is replayed, giving `x.field == 1`.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct InlineCtx<'z3, 'tcx> {
     /// Current inlining depth (nested inlined callees), bounded by
     /// `MAX_INLINE_DEPTH`.
@@ -484,6 +484,7 @@ impl<'z3> ValueSource<'z3> {
 /// unit so no parallel table can drift out of sync.  Facts live in three
 /// anchored layers — lifecycle ([`AllocFacts`]), content ([`ContentFacts`]),
 /// and value ([`ValueFacts`] on each [`VmValue`]) — see each type's doc.
+#[derive(Clone)]
 pub(crate) struct MemoryUnit<'z3, 'tcx> {
     /// The allocation's shape and lifecycle facts.
     pub(crate) allocation: Allocation<'z3, 'tcx>,
@@ -493,7 +494,7 @@ pub(crate) struct MemoryUnit<'z3, 'tcx> {
 
 /// The per-allocation contents: the byte layer, the typed-value layer, and the
 /// content facts.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct MemoryContent<'z3, 'tcx> {
     /// Byte value function: `byte[i] = select(array, i)` for any (possibly
     /// symbolic) offset `i`.  `None` when no byte has been written.  Unwritten
@@ -532,7 +533,7 @@ pub(crate) struct MemoryContent<'z3, 'tcx> {
 /// per-phenomenon term-provenance caches that keep expressions compact and
 /// linear.  Everything is path-scoped and monotonic: it accumulates as the VM
 /// steps and is never reset within a path (or across inlined frames).
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct Constraints<'z3, 'tcx> {
     /// Accumulated solver constraints along the current path: branch/guard
     /// constraints (`SwitchInt`/`Assert`), API preconditions, and symbolic
@@ -552,7 +553,7 @@ pub(crate) struct Constraints<'z3, 'tcx> {
 /// symbol (what it divides, which iterator it indexes, …) and uses that
 /// provenance later to emit a compact, degree-≤2 term instead.  Each cache is
 /// independent — they share only the path-scoped, monotonic lifetime.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct TermCaches<'z3, 'tcx> {
     /// `sizeof_T` for each generic type, one symbolic constant per type.  Keeps
     /// `ptr.add` strides, `access_bytes` element sizes, and allocation sizes
@@ -596,6 +597,7 @@ pub(crate) struct TermCaches<'z3, 'tcx> {
 /// The frame-scoped subset of [`VmState`]: the name → allocation binding keyed
 /// by MIR `Local`, which the callee reuses, so it must be swapped out for the
 /// duration of an inlined callee and swapped back afterwards.
+#[derive(Clone)]
 pub(crate) struct FrameState {
     /// The function whose body we execute (the MIR is derived via
     /// [`VmState::body`]).
@@ -614,6 +616,7 @@ pub(crate) struct FrameState {
 /// Accumulates the name → allocation bindings, allocations, and solver
 /// constraints as the VM steps through retained MIR items. The Z3 context is
 /// borrowed so a single context can be reused across property checks.
+#[derive(Clone)]
 pub(crate) struct VmState<'z3, 'tcx> {
     // ── Shared handles (passed in at run start; not execution state, but
     //    needed to create terms and query types during checking)

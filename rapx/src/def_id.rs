@@ -657,8 +657,8 @@ fn init_methods(tcx: TyCtxt) -> Methods {
             if (name.ends_with("::next") || name.ends_with("::spec_next"))
                 && (name.contains("RangeIteratorImpl")
                     || name.contains("RangeInclusiveIteratorImpl")
-                    || name.contains("Iterator for core::ops::range::Range<")
-                    || name.contains("Iterator for core::ops::range::RangeInclusive<"))
+                    || (name.contains("Iterator for") && name.contains("Range<"))
+                    || (name.contains("Iterator for") && name.contains("RangeInclusive<")))
             {
                 methods.range_next.push(did);
             }

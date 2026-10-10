@@ -115,60 +115,6 @@ pub(crate) fn switch_targets_unreachable<'tcx>(
     })
 }
 
-/// Whether a block's `SwitchInt` is a `debug_assert!`-style dispatch (all
-/// non-`otherwise` targets are `panic`/`unreachable`), or has a constant /
-/// runtime-check discriminant that folds to a single live edge.  Such a switch
-/// is dead on the normal path and is safe to ignore when inlining.
-pub(crate) fn switch_is_debug_assert<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    body: &Body<'tcx>,
-    bb: BasicBlock,
-) -> bool {
-    let TerminatorKind::SwitchInt { discr, targets } = &body.basic_blocks[bb].terminator().kind
-    else {
-        return false;
-    };
-    // A constant discriminant (e.g. `_3 = const true` for a no-drop flag) folds
-    // to a single live edge; the other edges are dead and can be ignored when
-    // inlining.  This includes a `move _3` whose `_3` is assigned a constant
-    // earlier in the body.
-    let discr_is_const = match discr {
-        Operand::Constant(_) => true,
-        // `ub_checks` lowers to `Operand::RuntimeChecks` on newer rustc: it is a
-        // compile-time runtime-check flag, not a semantic branch, so it can be
-        // folded to the no-check edge when inlining (mirroring
-        // `rvalue_runtime_checks_value` below).
-        #[cfg(rapx_ge_95)]
-        Operand::RuntimeChecks(_) => true,
-        Operand::Copy(p) | Operand::Move(p) => {
-            body.basic_blocks.iter().any(|bbd| {
-                bbd.statements.iter().any(|stmt| {
-                    let StatementKind::Assign(assign) = &stmt.kind else {
-                        return false;
-                    };
-                    let (dest, rvalue) = &**assign;
-                    if dest != p {
-                        return false;
-                    }
-                    match rvalue {
-                        #[cfg(rapx_rvalue_use_with_retag)]
-                        Rvalue::Use(Operand::Constant(_), _) => true,
-                        #[cfg(not(rapx_rvalue_use_with_retag))]
-                        Rvalue::Use(Operand::Constant(_)) => true,
-                        _ => rvalue_runtime_checks_value(rvalue).is_some(),
-                    }
-                })
-            })
-        }
-        #[allow(unreachable_patterns)]
-        _ => false,
-    };
-    if discr_is_const {
-        return true;
-    }
-    switch_targets_unreachable(tcx, body, targets)
-}
-
 /// Resolve a `cfg!`-style runtime-check flag (`UbChecks`, `ContractChecks`,
 /// `OverflowChecks`) to a constant `u64`. We fold to the *no-check* edge (`0`):
 /// the check only panics on a violated precondition, and its branchy body would

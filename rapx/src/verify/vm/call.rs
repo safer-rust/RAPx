@@ -27,6 +27,7 @@ use super::state::{AllocId, ElementTy, OffsetKind, Provenance, ValueFacts, Value
 /// [`VmState::exec_call`] before generic summary/inline handling.
 enum CallCase {
     Eq,
+    Branch,
     SliceIndex,
     SliceGet,
     IterLenIsEmpty { is_len: bool },
@@ -43,6 +44,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     fn classify_call(&self, callee: Option<DefId>) -> Option<CallCase> {
         if api_classify::is_eq_call(callee) {
             Some(CallCase::Eq)
+        } else if api_classify::is_branch(callee) {
+            Some(CallCase::Branch)
         } else if api_classify::is_index_method(callee) {
             Some(CallCase::SliceIndex)
         } else if api_classify::is_slice_get(callee) {
@@ -83,6 +86,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             .collect();
 
         let callee = mir_utils::dep_callee_resolved_def_id(self.tcx, caller_def_id, func);
+
         let caller_arg_locals: Vec<Option<Local>> = args
             .iter()
             .map(|a| a.node.place().map(|p| p.local))
@@ -95,6 +99,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             match case {
                 CallCase::Eq => self.propagate_const_bytes_to_tracked(args),
                 CallCase::IterPtrAdj => self.apply_iter_ptr_update(callee, &arg_values),
+                CallCase::Branch => {
+                    if self.apply_branch(&arg_values, &caller_arg_locals, args, destination, callee) {
+                        return;
+                    }
+                }
                 CallCase::SliceIndex => {
                     if self.apply_slice_index(&arg_values, args, destination) {
                         return;
@@ -503,6 +512,23 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         true
     }
 
+    /// `<Option<T> as Try>::branch`: the `?` operator on `Option`. The
+    /// `ControlFlow::Continue` payload equals the `Some` payload, so an
+    /// `if let Some(..) = expr?` unwrap keeps provenance.
+    fn apply_branch(
+        &mut self,
+        arg_values: &[VmValue<'z3, 'tcx>],
+        caller_arg_locals: &[Option<Local>],
+        args: &[Spanned<Operand<'tcx>>],
+        destination: Local,
+        callee: Option<DefId>,
+    ) -> bool {
+        let effect = CallEffect::ReturnBranchPayload { arg: 0 };
+        self.apply_call_effect(&effect, arg_values, caller_arg_locals, destination, callee);
+        self.materialize_const_bytes_after_call(args, destination);
+        true
+    }
+
     /// `NonNull::<T>::new(ptr) -> Option<NonNull<T>>`: the safe constructor
     /// returns `Some` iff `ptr` is non-null. Its body branches on
     /// `ptr.is_null()`, so `exec_inline_call` (branch-free only) cannot inline
@@ -751,48 +777,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
         self.inline.inline_depth += 1;
 
-        // Only inline branch-free functions. `inline_execute_body` follows
-        // every `SwitchInt` target without forking state, so a real branch
-        // (e.g. a `match` that returns different pointers per arm) would have
-        // its arms merged and lose precision — which silently marks unsound
-        // callers sound. A branch-free body of *any* size is safe to inline
-        // (block count is not a soundness gate), so the filters are the
-        // semantic branch (`has_switch`), multi-return (`n_return > 1`), and
-        // arity (`arg_values > 4`) checks. This keeps the `Box` construction
-        // helpers (`from_new_internal`, 9 blocks) reachable so the fresh heap
-        // allocation's provenance reaches the returned `NonNull`.
-        let callee_body = self.tcx.optimized_mir(callee_def_id);
-        let n_return = callee_body
-            .basic_blocks
-            .iter()
-            .filter(|bb| {
-                matches!(
-                    bb.terminator().kind,
-                    rustc_middle::mir::TerminatorKind::Return
-                )
-            })
-            .count();
-        // Reject a *semantic* branch (a `SwitchInt` reachable on the normal
-        // path): `inline_execute_body` merges its arms and loses precision.
-        // A `SwitchInt` that only appears in a cleanup block (the drop-flag
-        // dispatch) is dead on the normal path and is safe to ignore.
-        // Likewise, a `debug_assert!`/`assert!`-style `SwitchInt` whose every
-        // non-otherwise target leads to `panic`/`unreachable` is dead on the
-        // normal path — inlining it and taking only the `otherwise` edge keeps
-        // the field-level provenance of wrapper casts (`cast_to_internal_unchecked`).
-        let has_switch = callee_body.basic_blocks.iter_enumerated().any(|(idx, bb)| {
-            !bb.is_cleanup
-                && matches!(
-                    bb.terminator().kind,
-                    rustc_middle::mir::TerminatorKind::SwitchInt { .. }
-                )
-                && !mir_utils::switch_is_debug_assert(self.tcx, callee_body, idx)
-        });
-        if arg_values.len() > 4 || n_return > 1 || has_switch
-        {
-            self.inline.inline_depth -= 1;
-            return false;
-        }
+        // Path extraction already inlines callee CFGs (covering their branches),
+        // so inline here need not reject branchy callees: the old branch/return/
+        // arity filters are gone. `inline_execute_body` folds `UbChecks` to the
+        // no-check edge (release semantics) and follows only the live edge for
+        // constant/trivial switches.
 
         // ── Save caller context ──
         // Resolve each arg's referent local (for `&self`/`&mut self` reborrow
@@ -935,6 +924,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     ) -> Option<u64> {
         if let Some(v) = mir_utils::operand_const_u64(discr) {
             return Some(v);
+        }
+        // A `UbChecks`/`ContractChecks`/`OverflowChecks` discriminant folds to
+        // the no-check edge (`0` = false), mirroring release-mode const-folding.
+        #[cfg(rapx_ge_95)]
+        if let Operand::RuntimeChecks(_) = discr {
+            return Some(0);
         }
         let (Operand::Copy(p) | Operand::Move(p)) = discr else {
             return None;

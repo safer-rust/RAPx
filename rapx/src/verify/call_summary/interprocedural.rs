@@ -393,7 +393,7 @@ pub(super) fn try_from_raw_parts_wrapper_effect<'tcx>(
 }
 
 /// MIR-derived effects recognized from the callee's body shape (field load,
-/// ptr field return, branch, slice-bounded return, decode-length). These run
+/// ptr field return, slice-bounded return, decode-length). These run
 /// before inline because the recognized shape yields a more precise effect
 /// than BFS-inlining the body.
 pub(crate) fn try_mir_derived_effect(
@@ -402,7 +402,6 @@ pub(crate) fn try_mir_derived_effect(
 ) -> Option<CallEffect> {
     try_field_load_effect(tcx, callee)
         .or_else(|| try_ptr_field_return_effect(tcx, callee))
-        .or_else(|| try_branch_effect(callee))
         .or_else(|| try_slice_bounded_return_effect(tcx, callee))
         .or_else(|| try_decode_length_return_effect(tcx, callee))
 }
@@ -704,16 +703,6 @@ pub(crate) fn try_slice_bounded_return_effect(
         }
     }
     None
-}
-
-/// Detect `<Option<T> as Try>::branch`: `Option<T>` -> `ControlFlow<Option<!>, T>`.
-/// The `Continue` payload (field 0) equals the `Some` payload (field 0), so a
-/// `?`-operator `if let Some(..) = expr?` unwrap keeps the payload's provenance.
-pub(crate) fn try_branch_effect(callee: DefId) -> Option<CallEffect> {
-    if !crate::verify::api_classify::is_branch(Some(callee)) {
-        return None;
-    }
-    Some(CallEffect::ReturnBranchPayload { arg: 0 })
 }
 
 /// Whether block `a` dominates block `b` (every path from the entry to `b`
