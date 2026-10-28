@@ -64,6 +64,27 @@ impl OptReport {
     }
 
     pub fn emit(&self) {
+        if std::env::var_os("RAPX_OPT_EVIDENCE_DIR").is_some() {
+            let annotations: Vec<_> = self
+                .annotations
+                .iter()
+                .map(|(_, span, label)| {
+                    serde_json::json!({
+                        "file": span_to_filename(*span),
+                        "line": span_to_line_number(*span),
+                        "range": relative_pos_range(self.rel_span, *span),
+                        "label": label,
+                    })
+                })
+                .collect();
+            super::evidence::emit(serde_json::json!({
+                "type": "finding", "title": self.title,
+                "file": self.filename, "line_start": self.line_start,
+                "source": self.code_source, "annotations": annotations,
+                "static_advice": self.footer,
+                "static_status": "optimization_candidate",
+            }));
+        }
         let mut snippet = Snippet::source(&self.code_source)
             .line_start(self.line_start)
             .origin(&self.filename)

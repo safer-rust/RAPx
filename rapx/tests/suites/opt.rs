@@ -22,3 +22,11 @@ fn opt_hash_key_cloning() {
     assert_contain(&output, "Potential optimizations detected");
     assert_contain(&output, "Cloning: 1");
 }
+
+#[test]
+fn opt_ai_demo_front_removal() {
+    let output = run_with_args("opt/ai_demo", &["opt"]);
+    assert_not_contain(&output, "RAPx|ERROR|");
+    assert_contain(&output, "Potential optimizations detected");
+    assert_contain(&output, "Suboptimal: 1");
+}

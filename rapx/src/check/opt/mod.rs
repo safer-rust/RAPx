@@ -1,6 +1,7 @@
 pub mod check_utils;
 pub mod checking;
 pub mod data_collection;
+pub mod evidence;
 pub mod loop_visitors;
 pub mod memory_cloning;
 pub mod report;
@@ -60,6 +61,7 @@ impl<'tcx> Opt<'tcx> {
     }
 
     pub fn start(&mut self) {
+        evidence::begin(self.tcx.crate_name(rustc_hir::def_id::LOCAL_CRATE).as_str());
         let mut dataflow = DataflowAnalyzer::new(self.tcx, false);
         dataflow.build_graphs();
         {
@@ -70,6 +72,7 @@ impl<'tcx> Opt<'tcx> {
         }
         if !has_crate(self.tcx, "core") {
             //core it self
+            evidence::finish([0; 6]);
             return;
         }
 
@@ -117,6 +120,7 @@ impl<'tcx> Opt<'tcx> {
         });
 
         let bug_cnt: usize = statistics.iter().sum();
+        evidence::finish(statistics);
         if bug_cnt > 0 {
             rap_warn!("Potential optimizations detected.");
             rap_info!(

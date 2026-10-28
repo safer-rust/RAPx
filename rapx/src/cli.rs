@@ -1,10 +1,12 @@
 mod analyze;
 mod check;
+mod opt_ai;
 mod verify;
 
 pub use analyze::*;
 pub use check::*;
 use clap::{Args, Subcommand};
+pub use opt_ai::*;
 pub use verify::PostfixRepeat;
 pub use verify::*;
 
@@ -33,6 +35,9 @@ pub enum Commands {
     Check(CheckArgs),
     /// detect code optimization opportunities
     Opt,
+    /// review opt findings with AI and generate JSON/Markdown reports
+    #[command(name = "opt-ai", visible_alias = "optAI")]
+    OptAi(OptAiArgs),
     /// verify annotated functions in the crate, e.g., identify #[rapx::verify] targets
     Verify(VerifyArgs),
 }

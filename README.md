@@ -262,6 +262,16 @@ unsafe fn read_byte(ptr: *const u8, len: usize) -> u8 { unsafe { *ptr } }
 
 The verifier is exercised against real-world safe abstractions built on top of unsafe code — for example `core::slice`-style methods such as `split_at`, `as_chunks`/`as_rchunks`, `as_flattened`, `binary_search`, `partition_dedup`, and `get_disjoint_mut` — where RAPx proves that the internal unsafe operations cannot cause undefined behavior. Each SMT query is bounded by a per-query timeout so that undecidable nonlinear goals return `unknown` instead of hanging.
 
+### AI review for opt
+
+`cargo rapx opt-ai --offline` exports opt findings, source context, and review prompts.
+`cargo rapx opt-ai` (alias `optAI`) uses `RAPX_AI_URL`, `RAPX_AI_MODEL`, and
+`RAPX_AI_API_KEY` to produce JSON/Markdown review reports while retaining every
+static finding. Requires Python 3.10+; does not rewrite source or prove speedups.
+See the [usage and protocol](docs/opt-ai.zh-CN.md),
+[opt review skill](skills/rapx-opt-review/SKILL.md), and
+[two-page opt demo notes](docs/opt-ai-demo.zh-CN.md).
+
 ### Environment Variables (values are case insensitive)
 
 | var             | default when absent | possible values     | description                  |
