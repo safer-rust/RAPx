@@ -22,7 +22,7 @@ jobs:
     - name: Build
       run: ./install.sh
     - name: Test
-      run: cd rapx && cargo test -- --test-threads=1 --skip std_challenge_02 --skip std_challenge_05 --skip std_challenge_10 --skip std_challenge_18 --skip std_challenge_20
+      run: cd rapx && cargo test -- --test-threads=1
 
   asterinas:
     runs-on: ubuntu-22.04
@@ -37,7 +37,7 @@ jobs:
     - name: Build
       run: ./install.sh
     - name: Test
-      run: cd rapx && cargo test -- --test-threads=1 --skip std_challenge_02 --skip std_challenge_05 --skip std_challenge_10 --skip std_challenge_18 --skip std_challenge_20
+      run: cd rapx && cargo test -- --test-threads=1
 
   verify-std:
     runs-on: ubuntu-22.04
@@ -53,7 +53,7 @@ jobs:
     - name: Build
       run: ./install.sh
     - name: Test
-      run: cd rapx && cargo test -- --test-threads=1 --skip std_challenge_02 --skip std_challenge_05 --skip std_challenge_10 --skip std_challenge_18 --skip std_challenge_20
+      run: cd rapx && cargo test -- --test-threads=1
     - name: Verify core::slice against rapx-verify-rust-std
       run: |
         set -o pipefail

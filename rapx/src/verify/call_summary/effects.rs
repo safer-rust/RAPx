@@ -76,9 +76,10 @@ static REGISTRY: &[Entry] = &[
     ED!(api_classify::is_vec_alloc_constructor, eff_new_allocation),
     ED!(api_classify::is_box_alloc_ctor, eff_box_alloc),
     ED!(api_classify::is_exchange_malloc, eff_exchange_malloc),
+    ED!(nomir_api::is_global_alloc_shim, eff_nullable_allocation),
+    ED!(nomir_api::is_alloc_shim_marker, eff_no_effect),
     ED!(api_classify::is_vec_from_box, eff_vec_from_box),
     ED!(nomir_api::is_slice_to_vec, eff_vec_from_box),
-    ED!(api_classify::is_vec_with_capacity, eff_new_allocation_from_cap),
     ED!(api_classify::is_into_boxed_slice, eff_box_from_vec),
     ED!(api_classify::is_vec_push_or_reserve, eff_write_mem),
     // ── MIR available — precise symbolic summary ────────────────────
@@ -399,12 +400,15 @@ fn eff_exchange_malloc(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     vec![CallEffect::ReturnExchangeMalloc { size_arg: 0 }]
 }
 
-fn eff_new_allocation_from_cap(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    let elem = from_raw_parts_elem_size(ctx.tcx, ctx.caller, ctx.dest);
-    vec![CallEffect::ReturnNewAllocationFromCap {
-        cap_arg: 0,
-        elem_size: elem,
+fn eff_nullable_allocation(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnNullableAllocation {
+        size_arg: 0,
+        align_arg: 1,
     }]
+}
+
+fn eff_no_effect(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    Vec::new()
 }
 
 fn eff_vec_from_box(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {

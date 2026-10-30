@@ -10,7 +10,7 @@ use rustc_hir::attrs::InlineAttr;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{BasicBlock, Body, Operand, Terminator, TerminatorKind},
-    ty::{EarlyBinder, Instance, InstanceKind, TyCtxt, TypingEnv},
+    ty::{EarlyBinder, Instance, InstanceKind, TyCtxt, TyKind, TypingEnv},
 };
 
 /// Maps callsites to callee block identities and argument bindings.
@@ -224,7 +224,12 @@ impl<'tcx> CallSiteIndex<'tcx> {
                 let instantiate = self.tcx.is_mir_available(callee)
                     && ((cross_crate
                         && crate::def_ids::other_api::is_slice_get(Some(base_callee)))
-                        || self.tcx.optimized_mir(callee).basic_blocks.len() == 1);
+                        || self.tcx.optimized_mir(callee).basic_blocks.len() == 1
+                        || (self.tcx.optimized_mir(callee).basic_blocks.len() == 2
+                            && matches!(
+                                self.tcx.fn_sig(callee).skip_binder().output().skip_binder().kind(),
+                                TyKind::Adt(..)
+                            )));
                 let instance = instantiate
                     .then(|| mir_utils::resolve_callee_instance(self.tcx, caller, func))
                     .flatten()

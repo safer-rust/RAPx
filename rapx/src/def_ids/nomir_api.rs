@@ -9,7 +9,7 @@ use rustc_public::{CrateDef, rustc_internal};
 
 use super::intrinsic_api;
 
-const PATHS: [&[&str]; 5] = [
+const PATHS: [&[&str]; 7] = [
     &[
         "std::ops::FnMut::call_mut",
         "core::ops::FnMut::call_mut",
@@ -33,10 +33,15 @@ const PATHS: [&[&str]; 5] = [
         "std::slice::<impl [T]>::to_vec_in::ConvertVec::to_vec",
         "alloc::slice::<impl [T]>::to_vec_in::ConvertVec::to_vec",
     ],
+    &["alloc::alloc::__rust_alloc", "std::alloc::__rust_alloc"],
+    &[
+        "alloc::alloc::__rust_no_alloc_shim_is_unstable_v2",
+        "std::alloc::__rust_no_alloc_shim_is_unstable_v2",
+    ],
 ];
 
 struct NoMirIds {
-    known: [Option<DefId>; 5],
+    known: [Option<DefId>; 7],
     unavailable: HashSet<DefId>,
 }
 
@@ -44,7 +49,7 @@ static IDS: OnceLock<NoMirIds> = OnceLock::new();
 
 pub fn init(tcx: TyCtxt<'_>) {
     IDS.get_or_init(|| {
-        let mut known = [None; 5];
+        let mut known = [None; 7];
         let mut unavailable = HashSet::new();
         for krate in std::iter::once(rustc_public::local_crate())
             .chain(rustc_public::external_crates())
@@ -113,4 +118,12 @@ pub fn slice_to_vec() -> Option<DefId> {
 
 pub fn is_slice_to_vec(callee: Option<DefId>) -> bool {
     is_no_mir(callee) && callee == slice_to_vec()
+}
+
+pub fn is_global_alloc_shim(callee: Option<DefId>) -> bool {
+    is_no_mir(callee) && callee == known(5)
+}
+
+pub fn is_alloc_shim_marker(callee: Option<DefId>) -> bool {
+    is_no_mir(callee) && callee == known(6)
 }

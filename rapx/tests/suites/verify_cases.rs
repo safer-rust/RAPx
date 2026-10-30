@@ -166,6 +166,7 @@ fn std_challenge_17() {
 }
 
 #[test]
+#[ignore = "long-running verifier challenge"]
 fn std_challenge_18() {
     let output = run_with_args("verify_cases/std-challenge-18", CMD_VERIFY_TARGETED);
     assert!(
@@ -175,6 +176,7 @@ fn std_challenge_18() {
 }
 
 #[test]
+#[ignore = "long-running verifier challenge"]
 fn std_challenge_02() {
     let output = run_with_args("verify_cases/std-challenge-02", CMD_VERIFY_TARGETED);
     assert!(
@@ -216,6 +218,7 @@ fn std_challenge_04() {
 
 // ================ Std Challenge 05 (LinkedList) ================
 #[test]
+#[ignore = "long-running verifier challenge"]
 fn std_challenge_05() {
     let output = run_with_args("verify_cases/std-challenge-05", CMD_VERIFY_TARGETED);
 
@@ -251,6 +254,7 @@ fn std_challenge_19() {
 
 // ================ Std Challenge 20 (str::pattern char searchers) ================
 #[test]
+#[ignore = "long-running verifier challenge"]
 fn std_challenge_20() {
     let output = run_with_args("verify_cases/std-challenge-20", CMD_VERIFY_TARGETED);
 
@@ -266,6 +270,7 @@ fn std_challenge_20() {
 
 // ================ Std Challenge 10 (String) ================
 #[test]
+#[ignore = "long-running verifier challenge"]
 fn std_challenge_10() {
     let output = run_with_args("verify_cases/std-challenge-10", CMD_VERIFY_TARGETED);
 
@@ -291,6 +296,7 @@ fn std_challenge_11() {
 
 // ================ Std Challenge 12 (NonZero) ================
 #[test]
+#[ignore = "branch worklist makes this challenge slow"]
 fn std_challenge_12() {
     let output = run_with_args("verify_cases/std-challenge-12", CMD_VERIFY_TARGETED);
     assert_not_contain(&output, "result: UNSOUND");

@@ -23,6 +23,14 @@ use crate::limit::MAX_INLINE_DEPTH;
 use crate::verify::api_classify;
 use crate::verify::call_summary;
 
+type InlineWorkItem<'z3, 'tcx> = (VmState<'z3, 'tcx>, BasicBlock, FxHashSet<BasicBlock>);
+
+enum InlineStep<'z3, 'tcx> {
+    Complete(bool),
+    Fork(Vec<InlineWorkItem<'z3, 'tcx>>),
+    Incomplete,
+}
+
 impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     pub(crate) fn eval_contract_method(
         &self,
@@ -248,9 +256,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         } else if let Some(c) = callee
             && self.tcx.is_mir_available(c)
         {
-            let instance = (self.has_instantiated_root()
-                && mir_utils::dep_callee_def_id(func)
-                    == crate::def_ids::nomir_api::clone())
+            let instance = self.frame_body.is_some()
                 .then(|| mir_utils::resolve_callee_instance(self.tcx, caller_def_id, func))
                 .flatten()
                 .filter(|instance| {
@@ -258,7 +264,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         && instance.def_id() == c
                         && instance.args.types().all(|ty| !mir_utils::ty_has_type_param(ty))
                 });
-            self.exec_inline_call(c, instance, &arg_values, &caller_arg_locals, destination);
+            self.exec_inline_call(c, instance, args, &arg_values, &caller_arg_locals, destination);
         } else if let Some(c) = callee {
             // `assert!` panic exits contain this diverging call. It cannot
             // change the caller's state before the unwind invariant check.
@@ -274,7 +280,16 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             self.assert_call_postconditions(callee, &caller_arg_locals, destination);
         }
         let result = self.local_value(destination).cloned();
-        self.finish_method_call(method_call, result.as_ref());
+        self.finish_method_call(method_call.clone(), result.as_ref());
+        let mut alternatives = std::mem::take(&mut self.inline.pending_states);
+        for state in &mut alternatives {
+            if let Some(callee) = callee {
+                state.assert_call_postconditions(callee, &caller_arg_locals, destination);
+            }
+            let result = state.local_value(destination).cloned();
+            state.finish_method_call(method_call.clone(), result.as_ref());
+        }
+        self.inline.pending_states = alternatives;
     }
 
     /// Recursively execute a callee's MIR body inline.
@@ -282,12 +297,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// Binds the caller's argument values to the callee's parameters,
     /// executes the callee's MIR, and writes the return value to
     /// the caller's destination local. Returns `false` if inline
-    /// is not possible (e.g., recursion limit reached, callee has
-    /// branches, or the callee is too large).
+    /// is not possible (e.g., recursion limit reached or a branch cannot
+    /// be resolved).
     fn exec_inline_call(
         &mut self,
         callee_def_id: DefId,
         instance: Option<Instance<'tcx>>,
+        call_args: &[Spanned<Operand<'tcx>>],
         arg_values: &[VmValue<'z3, 'tcx>],
         caller_arg_locals: &[Option<Local>],
         dest: Local,
@@ -344,6 +360,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             let callee_local = Local::from_usize(i + 1);
             self.ensure_local_allocation(callee_local);
             self.set_local(callee_local, arg_val.clone());
+            if let Some(Operand::Constant(constant)) = call_args.get(i).map(|arg| &arg.node) {
+                self.materialize_const_adt(callee_local, &constant.const_);
+            }
         }
 
         // Propagate the caller arg locals' field values into the callee context
@@ -390,7 +409,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             mir_utils::dep_callee_resolved_def_id(self.tcx, callee_def_id, func)
                 == Some(callee_def_id)
         });
-        if !self.inline_execute_body(&pre_uninit) {
+        let returns = self.inline_execute_body(&pre_uninit);
+        if returns.as_ref().is_none_or(|states| {
+            states.len() > 1 && before_inline.inline.inline_depth == 0
+                || states
+                    .iter()
+                    .any(|state| state.local_value(Local::from_usize(0)).is_none())
+        }) {
             let witnessed = self.possible_uninit_allocs.clone();
             *self = before_inline;
             self.possible_uninit_allocs.extend(witnessed);
@@ -426,64 +451,51 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             self.unsupported_mir |= unknown_effect;
             return false;
         }
-
-        let return_val = self.local_value(Local::from_usize(0)).cloned();
-        crate::rap_debug!(
-            "exec_inline_call: callee={:?} return_val={:?}",
-            callee_def_id,
-            return_val
+        let mut completed = Vec::new();
+        for mut state in returns.unwrap() {
+            let return_val = state.local_value(Local::from_usize(0)).cloned();
+            let return_fields: Vec<_> = state
+                .field_paths(Local::from_usize(0))
+                .into_iter()
+                .filter_map(|path| {
+                    state.field_value(Local::from_usize(0), &path)
+                        .cloned()
+                        .map(|val| (path, val))
+                })
+                .collect();
+            state.restore_frame(frame.clone());
+            let writes = std::mem::take(&mut state.inline.deferred_field_writes);
+            state.inline.arg_referents = saved_inline_arg_referents.clone();
+            state.inline.deferred_field_writes = saved_deferred_field_writes.clone();
+            state.replay_deferred_writes(writes);
+            let mut val = return_val.unwrap();
+            let dest_ty = state.body().local_decls[dest].ty;
+            val.ty = dest_ty;
+            if val
+                .provenance
                 .as_ref()
-                .map(|v| (v.z3_term.to_string(), v.facts.non_null))
-        );
-        let return_fields: Vec<(Vec<usize>, VmValue<'z3, 'tcx>)> = self
-            .field_paths(Local::from_usize(0))
-            .into_iter()
-            .filter_map(|path| {
-                self.field_value(Local::from_usize(0), &path)
-                    .cloned()
-                    .map(|val| (path, val))
-            })
-            .collect();
-
-        self.restore_frame(frame);
-
-        let writes = std::mem::take(&mut self.inline.deferred_field_writes);
-        self.inline.arg_referents = saved_inline_arg_referents;
-        self.inline.deferred_field_writes = saved_deferred_field_writes;
-        self.replay_deferred_writes(writes);
-
-        let dest_ty = self.body().local_decls[dest].ty;
-        match return_val {
-            Some(mut val) => {
-                val.ty = dest_ty;
-                let at_base = val
-                    .provenance
-                    .as_ref()
-                    .is_some_and(|p| p.offset.as_u64() == Some(0));
-                if at_base {
-                    val.facts.non_null = true;
-                    self.mark_initialized(&mut val);
-                }
-                self.set_local(dest, val);
-                for (path, fv) in return_fields {
-                    self.set_field_value(dest, path, fv);
-                }
-                // The callee returned a fully-constructed value, so the
-                // caller's destination stack slot is initialized.  This matters
-                // for ADT returns (struct/enum) whose aggregate value carries
-                // no provenance: a later `&raw const (*&field)` + `ptr::read`
-                // must be able to discharge `Init` against the field.
-                if let Some(dest_alloc_id) = self.current_frame.local_alloc.get(&dest).copied() {
-                    self.content_mut(dest_alloc_id).facts.initialized = true;
-                }
+                .is_some_and(|p| p.offset.as_u64() == Some(0))
+            {
+                val.facts.non_null = true;
+                state.mark_initialized(&mut val);
             }
-            None => {
-                self.inline.inline_depth -= 1;
-                return false;
+            state.set_local(dest, val);
+            for (path, fv) in return_fields {
+                state.set_field_value(dest, path, fv);
             }
+            if let Some(dest_alloc_id) = state.current_frame.local_alloc.get(&dest).copied() {
+                state.content_mut(dest_alloc_id).facts.initialized = true;
+            }
+            state.inline.inline_depth -= 1;
+            completed.push(state);
         }
-
-        self.inline.inline_depth -= 1;
+        if completed.is_empty() {
+            *self = before_inline;
+            self.path_infeasible = true;
+            return true;
+        }
+        *self = completed.remove(0);
+        self.inline.pending_states.extend(completed.into_iter().map(Box::new));
         true
     }
 
@@ -585,72 +597,195 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     }
 
     /// Execute the callee's MIR body.
-    fn inline_execute_body(&mut self, pre_uninit: &[AllocId]) -> bool {
-        let mut visited = FxHashSet::default();
-        let mut queue: Vec<BasicBlock> = Vec::new();
-        queue.push(BasicBlock::from_usize(0));
+    fn inline_execute_body(&mut self, pre_uninit: &[AllocId]) -> Option<Vec<Self>> {
+        match self.inline_execute_single() {
+            InlineStep::Complete(true) => Some(vec![self.clone()]),
+            InlineStep::Complete(false) => Some(Vec::new()),
+            InlineStep::Fork(pending) => self.inline_execute_branches(pre_uninit, pending),
+            InlineStep::Incomplete => None,
+        }
+    }
 
+    fn inline_execute_single(&mut self) -> InlineStep<'z3, 'tcx> {
+        let mut visited = FxHashSet::default();
+        let mut queue = vec![BasicBlock::from_usize(0)];
+        let mut returned = false;
         while let Some(block) = queue.pop() {
-            if !visited.insert(block) {
+            if self.path_infeasible || !visited.insert(block) {
                 continue;
             }
-
             let bb_data = &self.body().basic_blocks[block];
-
-            for stmt in bb_data.statements.iter() {
+            for stmt in &bb_data.statements {
                 crate::verify::vm::rules::exec_statement(self, stmt);
             }
-
             let terminator = bb_data.terminator();
-
             match &terminator.kind {
-                TerminatorKind::Goto { target, .. } => {
-                    queue.push(*target);
-                }
-                TerminatorKind::Return => {}
+                TerminatorKind::Goto { target, .. } => queue.push(*target),
+                TerminatorKind::Return => returned = true,
                 TerminatorKind::Assert { target, .. } => {
                     crate::verify::vm::rules::exec_terminator(self, terminator, None);
                     queue.push(*target);
                 }
                 TerminatorKind::SwitchInt { discr, targets } => {
-                    if let Some(v) = self.switch_discr_const(self.body(), discr) {
-                        let t = targets
+                    if let Some(value) = self.switch_discr_const(self.body(), discr) {
+                        let target = targets
                             .iter()
-                            .find(|(val, _)| *val == v as u128)
-                            .map(|(_, t)| t)
+                            .find(|(candidate, _)| *candidate == value as u128)
+                            .map(|(_, target)| target)
                             .unwrap_or_else(|| targets.otherwise());
-                        queue.push(t);
+                        queue.push(target);
                         continue;
                     }
-                    // A `debug_assert!`/`assert!` switch or a drop-flag dispatch
-                    // has its non-otherwise edges dead on the normal path, so
-                    // follow only `otherwise`.
-                    let trivial =
-                        mir_utils::switch_targets_unreachable(self.tcx, self.body(), targets);
-                    if trivial {
+                    if mir_utils::switch_targets_unreachable(self.tcx, self.body(), targets) {
                         queue.push(targets.otherwise());
                         continue;
                     }
-                    self.possible_uninit_allocs
-                        .extend(self.find_uninit_witness(terminator, pre_uninit));
-                    return false;
+                    let mut feasible = Vec::new();
+                    for target in targets.all_targets().iter().copied() {
+                        let mut candidate = self.clone();
+                        crate::verify::vm::rules::exec_terminator(
+                            &mut candidate,
+                            terminator,
+                            Some(target),
+                        );
+                        if candidate.path_infeasible {
+                            continue;
+                        }
+                        let solver = Solver::new(self.z3_ctx);
+                        candidate.assert_all(&solver);
+                        match solver.check() {
+                            SatResult::Sat => feasible.push((target, candidate)),
+                            SatResult::Unknown => return InlineStep::Incomplete,
+                            SatResult::Unsat => {}
+                        }
+                    }
+                    if feasible.is_empty() {
+                        return InlineStep::Complete(false);
+                    }
+                    if feasible.len() > 1 {
+                        return InlineStep::Fork(feasible
+                            .into_iter()
+                            .map(|(target, state)| (state, target, visited.clone()))
+                            .collect());
+                    }
+                    let (target, state) = feasible.pop().unwrap();
+                    *self = state;
+                    queue.push(target);
                 }
                 TerminatorKind::Call { target, .. } => {
                     crate::verify::vm::rules::exec_terminator(self, terminator, None);
-                    if let Some(t) = target {
-                        queue.push(*t);
+                    if !self.inline.pending_states.is_empty() {
+                        let Some(target) = target else {
+                            return InlineStep::Complete(false);
+                        };
+                        let mut states = std::mem::take(&mut self.inline.pending_states)
+                            .into_iter()
+                            .map(|state| (*state, *target, visited.clone()))
+                            .collect::<Vec<_>>();
+                        states.push((self.clone(), *target, visited));
+                        return InlineStep::Fork(states);
+                    }
+                    if let Some(target) = target {
+                        queue.push(*target);
                     }
                 }
                 TerminatorKind::Drop { target, .. } => {
                     crate::verify::vm::rules::exec_terminator(self, terminator, None);
                     queue.push(*target);
                 }
-                _ => {
-                    crate::verify::vm::rules::exec_terminator(self, terminator, None);
-                }
+                _ => crate::verify::vm::rules::exec_terminator(self, terminator, None),
             }
         }
-        true
+        InlineStep::Complete(returned)
+    }
+
+    fn inline_execute_branches(
+        &mut self,
+        pre_uninit: &[AllocId],
+        mut pending: Vec<InlineWorkItem<'z3, 'tcx>>,
+    ) -> Option<Vec<Self>> {
+        let mut returns = Vec::new();
+        while let Some((mut state, block, mut visited)) = pending.pop() {
+            if state.path_infeasible || !visited.insert(block) {
+                continue;
+            }
+            let bb_data = &state.body().basic_blocks[block];
+            for stmt in &bb_data.statements {
+                crate::verify::vm::rules::exec_statement(&mut state, stmt);
+            }
+            let terminator = bb_data.terminator();
+            match &terminator.kind {
+                TerminatorKind::Goto { target, .. } => pending.push((state, *target, visited)),
+                TerminatorKind::Return => {
+                    let solver = Solver::new(self.z3_ctx);
+                    state.assert_all(&solver);
+                    match solver.check() {
+                        SatResult::Sat => returns.push(state),
+                        SatResult::Unknown => return None,
+                        SatResult::Unsat => {}
+                    }
+                }
+                TerminatorKind::Assert { target, .. } => {
+                    crate::verify::vm::rules::exec_terminator(&mut state, terminator, None);
+                    pending.push((state, *target, visited));
+                }
+                TerminatorKind::SwitchInt { discr, targets } => {
+                    if let Some(v) = state.switch_discr_const(state.body(), discr) {
+                        let target = targets
+                            .iter()
+                            .find(|(val, _)| *val == v as u128)
+                            .map(|(_, target)| target)
+                            .unwrap_or_else(|| targets.otherwise());
+                        pending.push((state, target, visited));
+                        continue;
+                    }
+                    if mir_utils::switch_targets_unreachable(state.tcx, state.body(), targets) {
+                        pending.push((state, targets.otherwise(), visited));
+                        continue;
+                    }
+                    for target in targets.all_targets().iter().copied() {
+                        let mut candidate = state.clone();
+                        crate::verify::vm::rules::exec_terminator(
+                            &mut candidate,
+                            terminator,
+                            Some(target),
+                        );
+                        if candidate.path_infeasible {
+                            continue;
+                        }
+                        let solver = Solver::new(self.z3_ctx);
+                        candidate.assert_all(&solver);
+                        match solver.check() {
+                            SatResult::Sat => pending.push((candidate, target, visited.clone())),
+                            SatResult::Unknown => return None,
+                            SatResult::Unsat => {}
+                        }
+                    }
+                    if pre_uninit.iter().any(|id| !state.content(*id).facts.initialized) {
+                        let witness = state.find_uninit_witness(terminator, pre_uninit);
+                        if !witness.is_empty() {
+                            self.possible_uninit_allocs.extend(witness);
+                            return None;
+                        }
+                    }
+                }
+                TerminatorKind::Call { target, .. } => {
+                    crate::verify::vm::rules::exec_terminator(&mut state, terminator, None);
+                    if let Some(target) = target {
+                        for alternative in std::mem::take(&mut state.inline.pending_states) {
+                            pending.push((*alternative, *target, visited.clone()));
+                        }
+                        pending.push((state, *target, visited));
+                    }
+                }
+                TerminatorKind::Drop { target, .. } => {
+                    crate::verify::vm::rules::exec_terminator(&mut state, terminator, None);
+                    pending.push((state, *target, visited));
+                }
+                _ => crate::verify::vm::rules::exec_terminator(&mut state, terminator, None),
+            }
+        }
+        Some(returns)
     }
 
     fn find_uninit_witness(

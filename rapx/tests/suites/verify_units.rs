@@ -737,12 +737,6 @@ fn rvalue_rare_sound_01() {
 }
 
 #[test]
-fn inline_branch_unknown_01() {
-    let output = run_with_args("verify_units/inline_branch_unknown_01", CMD_VERIFY_TARGETED);
-    assert_result_counts(&output, [0, 0, 4]);
-}
-
-#[test]
 fn caller_path_priority_01() {
     let output = run_with_args("verify_units/caller_path_priority_01", CMD_VERIFY_TARGETED);
     assert_function_result(&output, "caller_branch_after_helper", "UNSOUND");

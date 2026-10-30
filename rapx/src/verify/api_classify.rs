@@ -426,11 +426,6 @@ pub fn is_vec_from_box(callee: Option<DefId>) -> bool {
 pub fn is_exchange_malloc(callee: Option<DefId>) -> bool {
     callee.is_some_and(|c| other_api::exchange_malloc() == Some(c))
 }
-/// `Vec::with_capacity` — matched by `DefId` via
-/// [`crate::def_ids::other_api::with_capacity_fns`].
-pub fn is_vec_with_capacity(callee: Option<DefId>) -> bool {
-    any_def(callee, other_api::with_capacity_fns())
-}
 /// `Box::new` / `new_in` / `new_uninit` / `new_uninit_in` (and `try_` variants)
 /// — fresh heap allocation constructors.
 pub fn is_box_alloc_ctor(callee: Option<DefId>) -> bool {

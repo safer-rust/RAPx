@@ -262,7 +262,25 @@ pub(crate) fn eval_binary_op<'z3, 'tcx>(
             source: ValueSource::None,
         };
         state.set_field_value(dest_place.local, vec![0], result_val);
-        let overflow_term = state.fresh_int("overflow_flag");
+        let overflow_term = if matches!(op, BinOp::MulWithOverflow)
+            && (lhs.z3_term.simplify().as_u64().is_some_and(|n| n <= 1)
+                || rhs.z3_term.simplify().as_u64().is_some_and(|n| n <= 1))
+        {
+            Int::from_u64(state.z3_ctx, 0)
+        } else if matches!(
+            op,
+            BinOp::AddWithOverflow | BinOp::SubWithOverflow | BinOp::MulWithOverflow
+        )
+            && let Some((min, max, _, _)) = state.integer_limits(lhs.ty)
+        {
+            let overflow = z3::ast::Bool::or(state.z3_ctx, &[&term.lt(&min), &term.gt(&max)]);
+            overflow.ite(
+                &Int::from_u64(state.z3_ctx, 1),
+                &Int::from_u64(state.z3_ctx, 0),
+            )
+        } else {
+            state.fresh_int("overflow_flag")
+        };
         let overflow_val = VmValue::new(overflow_term, fields[1]);
         state.set_field_value(dest_place.local, vec![1], overflow_val);
     }

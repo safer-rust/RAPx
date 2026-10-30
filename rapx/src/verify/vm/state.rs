@@ -431,6 +431,7 @@ pub(crate) struct InlineCtx<'z3, 'tcx> {
     /// element offset), so only the directly-dependent properties are affected.
     pub inline_truncated_terms: FxHashSet<Int<'z3>>,
     pub inline_branch_terms: FxHashSet<Int<'z3>>,
+    pub pending_states: Vec<Box<VmState<'z3, 'tcx>>>,
     pub opaque_intrinsic_terms: FxHashSet<Int<'z3>>,
     /// During `exec_inline_call`, maps each callee argument index to the
     /// *caller* local its value points at (resolved from the reference's
@@ -804,10 +805,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         } else {
             self.tcx.optimized_mir(def_id)
         }
-    }
-
-    pub(crate) fn has_instantiated_root(&self) -> bool {
-        self.instance_body.is_some()
     }
 
     pub(crate) fn root_body(&self) -> &rustc_middle::mir::Body<'tcx> {

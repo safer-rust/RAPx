@@ -76,6 +76,7 @@ pub(crate) enum CallEffect {
     /// `alloc::alloc::exchange_malloc(size, align)` — a fresh allocation of
     /// `size_arg` bytes, returned as `*mut u8`.
     ReturnExchangeMalloc { size_arg: usize },
+    ReturnNullableAllocation { size_arg: usize, align_arg: usize },
     /// The return value is `min(lhs_arg, rhs_arg)`, satisfying
     /// `return <= lhs_arg` and `return <= rhs_arg`.
     ReturnMin { lhs_arg: usize, rhs_arg: usize },
@@ -113,19 +114,12 @@ pub(crate) enum CallEffect {
     ReturnNewAllocation { size_arg: usize, elem_size: u64 },
     /// `Box::new` / `Box::new_in` / `Box::new_uninit` / `Box::new_uninit_in`
     /// (and `try_` variants): allocate a fresh heap buffer of `size_of::<T>()`
-    /// bytes and return a `Box` whose pointer field backs it.  These have MIR
-    /// available but carry a `match` on the allocator's `Result`, which the
-    /// inline heuristic rejects as a semantic branch, so a direct effect is the
-    /// only way the fresh allocation's provenance reaches the `NonNull`.
+    /// bytes and return a `Box` whose pointer field backs it.
     ReturnBoxAllocation,
     /// Like ReturnNewAllocation but the length is carried by the argument
     /// itself (a Box fat pointer) rather than a separate count argument.
     /// Used for `into_vec` / `box_assume_init_into_vec_unsafe`.
     ReturnNewAllocationFromBox,
-    /// Like `ReturnNewAllocation`, but the argument is the *capacity*: the
-    /// returned Vec starts empty (`len == 0`) with `cap == cap_arg` (models
-    /// `Vec::with_capacity`).
-    ReturnNewAllocationFromCap { cap_arg: usize, elem_size: u64 },
     /// The return value is a non-zero power of two (models `Layout::align`).
     ReturnPowerOfTwo,
     /// The call transfers a Vec's backing allocation into a Box (e.g.
