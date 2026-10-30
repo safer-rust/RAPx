@@ -950,10 +950,6 @@ known_items! {
         "std::rc::Rc::<T, A>::as_ptr",
         "alloc::rc::Rc::<T, A>::as_ptr"
     ],
-    vec_from_elem: &[
-        "std::vec::from_elem",
-        "alloc::vec::from_elem"
-    ],
     vec_into_boxed_slice: &[
         "std::vec::Vec::<T, A>::into_boxed_slice",
         "alloc::vec::Vec::<T, A>::into_boxed_slice"

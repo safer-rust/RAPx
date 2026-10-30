@@ -13,51 +13,65 @@ use super::state::{ValueFacts, ValueSource, VmState, VmValue};
 
 impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// Execute all retained MIR items in path order.
-    pub(crate) fn execute_items(&mut self, items: &[RelevantItem<'tcx>]) {
+    pub(crate) fn execute_items(mut self, items: &[RelevantItem<'tcx>]) -> Vec<Self> {
         self.init_parameters();
-
+        let mut states = vec![self];
         for item in items {
-            if self.path_infeasible {
-                break;
+            let mut next = Vec::new();
+            for mut state in states {
+                if !state.path_infeasible {
+                    state.execute_item(item);
+                    next.extend(
+                        std::mem::take(&mut state.inline.pending_states)
+                            .into_iter()
+                            .map(|state| *state),
+                    );
+                }
+                next.push(state);
             }
-            match item {
-                RelevantItem::Statement {
-                    def_id,
-                    block,
+            states = next;
+        }
+        states
+    }
+
+    fn execute_item(&mut self, item: &RelevantItem<'tcx>) {
+        match item {
+            RelevantItem::Statement {
+                def_id,
+                block,
+                statement_index,
+            } => {
+                self.active_mir_location = Some(format!(
+                    "{} bb{} statement {}",
+                    self.tcx.def_path_str(*def_id),
+                    block.as_usize(),
                     statement_index,
-                } => {
-                    self.active_mir_location = Some(format!(
-                        "{} bb{} statement {}",
-                        self.tcx.def_path_str(*def_id),
-                        block.as_usize(),
-                        statement_index,
-                    ));
-                    let body = self.body_for(*def_id);
-                    let statement = &body.basic_blocks[*block].statements[*statement_index];
-                    crate::verify::vm::rules::exec_statement(self, statement);
-                }
-                RelevantItem::Terminator { def_id, block, switch_succ } => {
-                    self.active_mir_location = Some(format!(
-                        "{} bb{} terminator",
-                        self.tcx.def_path_str(*def_id),
-                        block.as_usize(),
-                    ));
-                    let body = self.body_for(*def_id);
-                    let terminator = body.basic_blocks[*block].terminator();
-                    crate::verify::vm::rules::exec_terminator(self, terminator, *switch_succ);
-                }
-                RelevantItem::CalleeEntry { callee, body, args, consts, field_offsets } => {
-                    self.active_mir_location = None;
-                    self.handle_callee_entry(*callee, *body, args, consts, field_offsets);
-                }
-                RelevantItem::CalleeExit { dest } => {
-                    self.active_mir_location = None;
-                    self.handle_callee_exit(*dest);
-                }
-                RelevantItem::ContractFact { property } => {
-                    self.active_mir_location = None;
-                    self.assert_contract_fact(property);
-                }
+                ));
+                let body = self.body_for(*def_id);
+                let statement = &body.basic_blocks[*block].statements[*statement_index];
+                crate::verify::vm::rules::exec_statement(self, statement);
+            }
+            RelevantItem::Terminator { def_id, block, switch_succ } => {
+                self.active_mir_location = Some(format!(
+                    "{} bb{} terminator",
+                    self.tcx.def_path_str(*def_id),
+                    block.as_usize(),
+                ));
+                let body = self.body_for(*def_id);
+                let terminator = body.basic_blocks[*block].terminator();
+                crate::verify::vm::rules::exec_terminator(self, terminator, *switch_succ);
+            }
+            RelevantItem::CalleeEntry { callee, body, args, consts, field_offsets } => {
+                self.active_mir_location = None;
+                self.handle_callee_entry(*callee, *body, args, consts, field_offsets);
+            }
+            RelevantItem::CalleeExit { dest } => {
+                self.active_mir_location = None;
+                self.handle_callee_exit(*dest);
+            }
+            RelevantItem::ContractFact { property } => {
+                self.active_mir_location = None;
+                self.assert_contract_fact(property);
             }
         }
     }
@@ -78,26 +92,29 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 .and_then(|receiver| self.begin_method_call(callee, receiver, Some(Local::from_usize(*arg))))
         });
         self.active_method_calls.push(method_call);
-        let mut locals = arg_locals.iter();
         let param_count = body
             .map(|body| body.arg_count)
             .unwrap_or_else(|| self.tcx.optimized_mir(callee).arg_count);
+        let mut locals = arg_locals.iter();
+        let param_sources: Vec<Option<Local>> = (1..=param_count)
+            .map(|param| {
+                if arg_consts.iter().any(|(index, _)| *index == param)
+                    || arg_field_offsets.contains(&param)
+                {
+                    None
+                } else {
+                    locals.next().map(|local| Local::from_usize(*local))
+                }
+            })
+            .collect();
         self.inline.path_postconditions.push((
             callee,
-            (0..param_count)
-                .map(|index| {
-                    if arg_consts.iter().any(|(param, _)| *param == index + 1) {
-                        None
-                    } else {
-                        locals.next().map(|local| Local::from_usize(*local))
-                    }
-                })
-                .collect(),
+            param_sources.clone(),
         ));
-        let arg_referents: Vec<Option<Local>> = arg_locals
+        let arg_referents: Vec<Option<Local>> = param_sources
             .iter()
             .map(|arg| {
-                let arg_local = Local::from_usize(*arg);
+                let arg_local = (*arg)?;
                 self.local_value(arg_local).and_then(|value| {
                     self.find_local_by_address(&value.z3_term).or_else(|| {
                         self.find_whole_reborrow_referent(arg_local)
@@ -130,8 +147,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         // materialized the fields is found.
         let mut arg_fields: Vec<(usize, Vec<usize>, VmValue<'z3, 'tcx>)> = Vec::new();
         let mut bound_fields: FxHashSet<(usize, Vec<usize>)> = FxHashSet::default();
-        for (i, arg) in arg_locals.iter().enumerate() {
-            let caller_local = Local::from_usize(*arg);
+        for (i, caller_local) in param_sources.iter().enumerate() {
+            let Some(caller_local) = caller_local else {
+                continue;
+            };
+            let caller_local = *caller_local;
             let mut source_locals: Vec<(Local, Vec<usize>)> = Vec::new();
             let mut seen: FxHashSet<(Local, Vec<usize>)> = FxHashSet::default();
             let mut stack = vec![(caller_local, Vec::new())];
@@ -178,8 +198,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
         self.current_frame.current_def_id = callee;
 
-        for (i, arg) in arg_locals.iter().enumerate() {
-            if let Some(v) = self.frame_local_value(&frame, Local::from_usize(*arg)).cloned() {
+        for (i, arg) in param_sources.iter().enumerate() {
+            if let Some(v) = arg.and_then(|local| self.frame_local_value(&frame, local)).cloned() {
                 self.set_local(Local::from_usize(i + 1), v);
             }
         }

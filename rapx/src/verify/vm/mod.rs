@@ -44,8 +44,6 @@ pub(crate) fn execute_goal<'z3, 'tcx>(
     caller_def_id: DefId,
     instance_body: Option<&'tcx Body<'tcx>>,
     goal: ProofGoal<'tcx>,
-) -> VmState<'z3, 'tcx> {
-    let mut state = VmState::new(z3_ctx, tcx, caller_def_id, instance_body);
-    state.execute_items(&goal.items);
-    state
+) -> Vec<VmState<'z3, 'tcx>> {
+    VmState::new(z3_ctx, tcx, caller_def_id, instance_body).execute_items(&goal.items)
 }

@@ -76,7 +76,7 @@ pub(crate) enum CallEffect {
     /// `alloc::alloc::exchange_malloc(size, align)` — a fresh allocation of
     /// `size_arg` bytes, returned as `*mut u8`.
     ReturnExchangeMalloc { size_arg: usize },
-    ReturnNullableAllocation { size_arg: usize, align_arg: usize },
+    ReturnNullableAllocation { size_arg: usize, align_arg: usize, zeroed: bool },
     /// The return value is `min(lhs_arg, rhs_arg)`, satisfying
     /// `return <= lhs_arg` and `return <= rhs_arg`.
     ReturnMin { lhs_arg: usize, rhs_arg: usize },
@@ -107,17 +107,11 @@ pub(crate) enum CallEffect {
     /// A specific field of the returned tuple carries the length of a given
     /// argument (e.g. split_at(mid) returns (left, right) where left.len() == mid).
     ReturnTupleFieldLength { field: usize, from_arg: usize },
-    /// The return value is a pointer backed by a fresh heap allocation of
-    /// `size_arg` elements × `elem_size` bytes. Unlike ReturnFreshAllocation
-    /// this does not require a pointer argument — used for constructors like
-    /// `Vec::from_elem(init, count)` that allocate fresh memory.
-    ReturnNewAllocation { size_arg: usize, elem_size: u64 },
     /// `Box::new` / `Box::new_in` / `Box::new_uninit` / `Box::new_uninit_in`
     /// (and `try_` variants): allocate a fresh heap buffer of `size_of::<T>()`
     /// bytes and return a `Box` whose pointer field backs it.
     ReturnBoxAllocation,
-    /// Like ReturnNewAllocation but the length is carried by the argument
-    /// itself (a Box fat pointer) rather than a separate count argument.
+    /// The length is carried by the argument itself (a Box fat pointer).
     /// Used for `into_vec` / `box_assume_init_into_vec_unsafe`.
     ReturnNewAllocationFromBox,
     /// The return value is a non-zero power of two (models `Layout::align`).

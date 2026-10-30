@@ -9,7 +9,7 @@ use rustc_public::{CrateDef, rustc_internal};
 
 use super::intrinsic_api;
 
-const PATHS: [&[&str]; 7] = [
+const PATHS: [&[&str]; 8] = [
     &[
         "std::ops::FnMut::call_mut",
         "core::ops::FnMut::call_mut",
@@ -38,10 +38,11 @@ const PATHS: [&[&str]; 7] = [
         "alloc::alloc::__rust_no_alloc_shim_is_unstable_v2",
         "std::alloc::__rust_no_alloc_shim_is_unstable_v2",
     ],
+    &["alloc::alloc::__rust_alloc_zeroed", "std::alloc::__rust_alloc_zeroed"],
 ];
 
 struct NoMirIds {
-    known: [Option<DefId>; 7],
+    known: [Option<DefId>; 8],
     unavailable: HashSet<DefId>,
 }
 
@@ -49,7 +50,7 @@ static IDS: OnceLock<NoMirIds> = OnceLock::new();
 
 pub fn init(tcx: TyCtxt<'_>) {
     IDS.get_or_init(|| {
-        let mut known = [None; 7];
+        let mut known = [None; 8];
         let mut unavailable = HashSet::new();
         for krate in std::iter::once(rustc_public::local_crate())
             .chain(rustc_public::external_crates())
@@ -126,4 +127,8 @@ pub fn is_global_alloc_shim(callee: Option<DefId>) -> bool {
 
 pub fn is_alloc_shim_marker(callee: Option<DefId>) -> bool {
     is_no_mir(callee) && callee == known(6)
+}
+
+pub fn is_global_alloc_zeroed_shim(callee: Option<DefId>) -> bool {
+    is_no_mir(callee) && callee == known(7)
 }

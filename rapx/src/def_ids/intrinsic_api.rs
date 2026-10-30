@@ -80,6 +80,7 @@ intrinsic_apis! {
     is_select_unpredictable => "select_unpredictable",
     is_unlikely => "unlikely",
     is_likely => "likely",
+    is_cold_path => "cold_path",
     is_add_with_overflow => "add_with_overflow",
     is_sub_with_overflow => "sub_with_overflow",
     is_mul_with_overflow => "mul_with_overflow",

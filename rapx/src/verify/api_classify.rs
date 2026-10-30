@@ -403,9 +403,6 @@ pub fn is_vec_push_or_reserve(callee: Option<DefId>) -> bool {
         ],
     )
 }
-pub fn is_vec_alloc_constructor(callee: Option<DefId>) -> bool {
-    other_api::matches_any(callee, &[other_api::vec_from_elem()])
-}
 pub fn is_vec_from_box(callee: Option<DefId>) -> bool {
     other_api::matches_any(
         callee,

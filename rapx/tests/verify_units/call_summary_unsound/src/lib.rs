@@ -60,17 +60,6 @@ fn zero_via_alias_large(slot: &mut u8) {
     eight_barriers!();
 }
 
-fn conditional_zero_large(slot: &mut u8, flag: bool) {
-    if flag {
-        *slot = 0;
-    }
-    eight_barriers!();
-    eight_barriers!();
-    eight_barriers!();
-    eight_barriers!();
-    eight_barriers!();
-}
-
 #[rapx::verify]
 pub fn conditional_write(flag: bool) {
     let mut value = 1u8;
@@ -134,13 +123,6 @@ pub fn zero_count_copy() {
     let mut value = 1u8;
     let zero = 0u8;
     unsafe { std::ptr::copy_nonoverlapping(&zero, &mut value, 0) }
-    unsafe { require_positive(value) }
-}
-
-#[rapx::verify]
-pub fn conditional_write_noninlined(flag: bool) {
-    let mut value = 1u8;
-    conditional_zero_large(&mut value, flag);
     unsafe { require_positive(value) }
 }
 

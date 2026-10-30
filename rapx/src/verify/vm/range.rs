@@ -2,7 +2,7 @@
 
 use rustc_middle::mir::Local;
 use rustc_middle::ty::{Ty, TyKind};
-use z3::ast::Int;
+use z3::ast::{Ast, Bool, Int};
 
 use crate::helpers::mir_utils;
 use crate::verify::api_classify;
@@ -185,7 +185,26 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let one = Int::from_u64(self.z3_ctx, 1);
         let start_term = start.z3_term.clone();
         let end_term = end.z3_term.clone();
-        let is_empty = start_term.ge(&end_term);
+        let inclusive = matches!(
+            mir_utils::range_kind(self.tcx, adt_def.did()),
+            mir_utils::RangeKind::RangeInclusive
+        );
+        let is_empty = if inclusive {
+            let exhausted = self
+                .load_value(alloc_id, range_view_ty, &[2])
+                .map(|value| value.z3_term._eq(&one))
+                .unwrap_or_else(|| {
+                    let term = self.fresh_int("range_inclusive_exhausted");
+                    self.constraints.assertions.push(Bool::or(
+                        self.z3_ctx,
+                        &[&term._eq(&zero), &term._eq(&one)],
+                    ));
+                    term._eq(&one)
+                });
+            Bool::or(self.z3_ctx, &[&start_term.gt(&end_term), &exhausted])
+        } else {
+            start_term.ge(&end_term)
+        };
         let result_val = VmValue {
             z3_term: is_empty.ite(&zero, &start_term),
             ty: dest_ty,
@@ -197,7 +216,19 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         self.set_field_value(dest, vec![0], start.clone());
         let mut advanced = start;
         let next = Int::add(self.z3_ctx, &[&start_term, &one]);
-        advanced.z3_term = is_empty.ite(&start_term, &next);
+        if inclusive {
+            let last = start_term.ge(&end_term);
+            let exhausted = Bool::or(self.z3_ctx, &[&is_empty, &last]);
+            self.store_value(
+                alloc_id,
+                range_view_ty,
+                vec![2],
+                VmValue::new(exhausted.ite(&one, &zero), self.tcx.types.bool),
+            );
+            advanced.z3_term = exhausted.ite(&start_term, &next);
+        } else {
+            advanced.z3_term = is_empty.ite(&start_term, &next);
+        }
         self.store_value(alloc_id, range_view_ty, vec![0], advanced);
     }
     pub(crate) fn apply_slice_range_index_effect(

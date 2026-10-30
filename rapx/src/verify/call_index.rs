@@ -223,7 +223,11 @@ impl<'tcx> CallSiteIndex<'tcx> {
                 }
                 let instantiate = self.tcx.is_mir_available(callee)
                     && ((cross_crate
-                        && crate::def_ids::other_api::is_slice_get(Some(base_callee)))
+                    && (crate::def_ids::other_api::is_slice_get(Some(base_callee))
+                        || (matches!(
+                            self.tcx.fn_sig(callee).skip_binder().output().skip_binder().kind(),
+                            TyKind::Adt(..)
+                        ) && mir_utils::has_unmodeled_generic_call(self.tcx, callee))))
                         || self.tcx.optimized_mir(callee).basic_blocks.len() == 1
                         || (self.tcx.optimized_mir(callee).basic_blocks.len() == 2
                             && matches!(

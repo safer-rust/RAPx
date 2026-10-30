@@ -53,6 +53,7 @@ static REGISTRY: &[Entry] = &[
     ED!(api_classify::is_layout_constant, eff_layout_const),
     ED!(intrinsic_api::is_select_unpredictable, eff_select_unpredictable),
     ED!(api_classify::is_intrinsic_branch_hint, eff_alias_arg0),
+    ED!(intrinsic_api::is_cold_path, eff_no_effect),
     ED!(api_classify::is_intrinsic_ptr_offset_from, eff_ptr_offset_from),
     ED!(intrinsic_api::is_arith_offset, eff_arith_offset),
     ED!(intrinsic_api::is_black_box, eff_return_arg_value),
@@ -73,10 +74,10 @@ static REGISTRY: &[Entry] = &[
     ED!(intrinsic_api::is_size_of_val, eff_size_of_val),
     ED!(api_classify::is_intrinsic_pure_opaque, eff_opaque_return),
     // ── Allocation and capacity effects ─────────────────────────────
-    ED!(api_classify::is_vec_alloc_constructor, eff_new_allocation),
     ED!(api_classify::is_box_alloc_ctor, eff_box_alloc),
     ED!(api_classify::is_exchange_malloc, eff_exchange_malloc),
     ED!(nomir_api::is_global_alloc_shim, eff_nullable_allocation),
+    ED!(nomir_api::is_global_alloc_zeroed_shim, eff_nullable_zeroed_allocation),
     ED!(nomir_api::is_alloc_shim_marker, eff_no_effect),
     ED!(api_classify::is_vec_from_box, eff_vec_from_box),
     ED!(nomir_api::is_slice_to_vec, eff_vec_from_box),
@@ -383,14 +384,6 @@ fn eff_from_raw_parts(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     eff
 }
 
-fn eff_new_allocation(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    let elem = from_raw_parts_elem_size(ctx.tcx, ctx.caller, ctx.dest);
-    vec![CallEffect::ReturnNewAllocation {
-        size_arg: 1,
-        elem_size: elem,
-    }]
-}
-
 fn eff_box_alloc(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     vec![CallEffect::ReturnBoxAllocation]
 }
@@ -403,6 +396,15 @@ fn eff_nullable_allocation(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     vec![CallEffect::ReturnNullableAllocation {
         size_arg: 0,
         align_arg: 1,
+        zeroed: false,
+    }]
+}
+
+fn eff_nullable_zeroed_allocation(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnNullableAllocation {
+        size_arg: 0,
+        align_arg: 1,
+        zeroed: true,
     }]
 }
 

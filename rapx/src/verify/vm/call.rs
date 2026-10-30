@@ -411,10 +411,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         });
         let returns = self.inline_execute_body(&pre_uninit);
         if returns.as_ref().is_none_or(|states| {
-            states.len() > 1 && before_inline.inline.inline_depth == 0
-                || states
-                    .iter()
-                    .any(|state| state.local_value(Local::from_usize(0)).is_none())
+            states
+                .iter()
+                .any(|state| state.local_value(Local::from_usize(0)).is_none())
         }) {
             let witnessed = self.possible_uninit_allocs.clone();
             *self = before_inline;

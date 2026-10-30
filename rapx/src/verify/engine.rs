@@ -712,7 +712,7 @@ impl<'tcx> VerifyEngine<'tcx> {
 
         goals
             .into_iter()
-            .map(|mut goal| {
+            .flat_map(|mut goal| {
                 let path_blocks: HashSet<usize> = goal.path.blocks.iter().copied().collect();
                 let path_desc = goal.path.describe_caller_indices(tree);
                 if !entry_facts.is_empty() {
@@ -729,16 +729,24 @@ impl<'tcx> VerifyEngine<'tcx> {
                     &path_blocks,
                     checkpoint.caller,
                 );
-                let vm_state = super::vm::execute_goal(
+                super::vm::execute_goal(
                     &z3_ctx,
                     self.tcx,
                     self.caller_def_id,
                     self.instance_body,
                     goal,
-                );
-                let result =
-                    PropertyChecker.check(&vm_state, checkpoint, property, tree.is_structural());
-                (result, path_desc)
+                )
+                .into_iter()
+                .map(|vm_state| {
+                    let result = PropertyChecker.check(
+                        &vm_state,
+                        checkpoint,
+                        property,
+                        tree.is_structural(),
+                    );
+                    (result, path_desc.clone())
+                })
+                .collect::<Vec<_>>()
             })
             .collect()
     }

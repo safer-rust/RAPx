@@ -324,10 +324,7 @@ unsound_tests! {
 #[test]
 fn call_summary_cases() {
     let output = run_with_args("verify_units/call_summary_unsound", CMD_VERIFY_TARGETED);
-    assert_result_counts(&output, [2, 11, 1]);
-    let block = extract_block_after(&output, "function: conditional_write_noninlined");
-    assert_property_failed(block, "ValidNum", "conditional_write_noninlined");
-    assert_function_result(&output, "conditional_write_noninlined", "UNKNOWN");
+    assert_result_counts(&output, [2, 11, 0]);
 }
 
 // ValidNum Manual

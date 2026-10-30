@@ -1182,20 +1182,18 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     );
                 }
             }
-            CallEffect::ReturnNullableAllocation { size_arg, align_arg } => {
+            CallEffect::ReturnNullableAllocation { size_arg, align_arg, zeroed } => {
                 if let Some(size) = args.get(*size_arg) {
-                    let align = caller_arg_locals
+                    let align = args
                         .get(*align_arg)
-                        .copied()
-                        .flatten()
-                        .and_then(|local| {
-                            self.field_value(local, &[0, 0])
-                                .or_else(|| self.field_value(local, &[0]))
-                        })
                         .map(|value| value.z3_term.clone())
                         .unwrap_or_else(|| Int::from_u64(self.z3_ctx, 1));
                     let (alloc_id, base) =
                         self.allocate_external(size.z3_term.clone(), align, Some(self.tcx.types.u8));
+                    self.alloc_mut(alloc_id).facts.owning = Some(base.clone());
+                    if *zeroed {
+                        self.content_mut(alloc_id).facts.initialized = true;
+                    }
                     let dest_ty = self.body().local_decls[dest].ty;
                     self.set_local(
                         dest,
@@ -1211,14 +1209,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             source: ValueSource::None,
                         },
                     );
-                }
-            }
-            CallEffect::ReturnNewAllocation {
-                size_arg,
-                elem_size,
-            } => {
-                if let Some(count) = args.get(*size_arg) {
-                    self.apply_vec_allocation(dest, count, *elem_size);
                 }
             }
             CallEffect::ReturnNewAllocationFromBox => {
@@ -1471,31 +1461,4 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         })
     }
 
-    fn apply_vec_allocation(
-        &mut self,
-        dest: Local,
-        count: &VmValue<'z3, 'tcx>,
-        elem_size: u64,
-    ) {
-        let dest_ty = self.body().local_decls[dest].ty;
-        let elem_ty = crate::verify::call_summary::effects::vec_elem_ty(dest_ty);
-        let elem_sz = if elem_size == 0 {
-            self.size_sym(elem_ty.unwrap_or(dest_ty))
-        } else {
-            Int::from_u64(self.z3_ctx, elem_size)
-        };
-        let total = Int::mul(self.z3_ctx, &[&count.z3_term, &elem_sz]);
-        let heap_align = elem_ty
-            .map(|ty| self.align_sym(ty))
-            .unwrap_or_else(|| Int::from_u64(self.z3_ctx, 1));
-        let (alloc_id, base) = self.allocate_external(total, heap_align, elem_ty);
-        self.alloc_mut(alloc_id)
-            .set_slice_len(count.z3_term.clone());
-        let vec_count = count.z3_term.clone();
-        if let Some(ptr_field) =
-            self.set_external_container_result(dest, alloc_id, base, elem_ty)
-        {
-            self.materialize_vec_fields(dest, ptr_field, vec_count.clone(), vec_count);
-        }
-    }
 }
