@@ -3,15 +3,15 @@ use super::corner_case::*;
 use super::observer::SafeDropObserver;
 use super::{bug_records::*, drop::*};
 use crate::analysis::{
-    alias::default::graph::AliasGraph,
     alias::default::MopFnAliasMap,
+    alias::default::graph::AliasGraph,
     heap_ownership::HeapOwnershipResultMap,
     path::graph::PathGraph,
     path::{PathNode, PathTree},
 };
 use crate::def_ids::other_api::is_drop_fn;
 use crate::limit::SAFEDROP_VISIT_LIMIT;
-use crate::utils::source::{get_filename, get_name};
+use crate::utils::source::get_name;
 use rustc_middle::mir::{Operand, Place, TerminatorKind};
 use rustc_middle::ty::{self, TyCtxt};
 use rustc_span::{Span, Symbol, def_id::DefId};
@@ -25,6 +25,8 @@ pub struct SafeDropGraph<'tcx> {
     pub drop_record: Vec<DropRecord>,
     // analysis of heap item
     pub adt_owner: HeapOwnershipResultMap,
+    pub export_path: Option<Vec<usize>>,
+    pub analysis_incomplete: bool,
 }
 
 impl<'tcx> SafeDropGraph<'tcx> {
@@ -33,14 +35,20 @@ impl<'tcx> SafeDropGraph<'tcx> {
         def_id: DefId,
         path_graph: PathGraph<'tcx>,
         adt_owner: HeapOwnershipResultMap,
+        exporting: bool,
     ) -> Self {
         Self::from_alias_graph(
             AliasGraph::from_path_graph(tcx, def_id, path_graph),
             adt_owner,
+            exporting,
         )
     }
 
-    fn from_alias_graph(alias_graph: AliasGraph<'tcx>, adt_owner: HeapOwnershipResultMap) -> Self {
+    fn from_alias_graph(
+        alias_graph: AliasGraph<'tcx>,
+        adt_owner: HeapOwnershipResultMap,
+        exporting: bool,
+    ) -> Self {
         let mut drop_record = Vec::<DropRecord>::new();
         for v in &alias_graph.values {
             drop_record.push(DropRecord::false_record(v.index));
@@ -50,6 +58,8 @@ impl<'tcx> SafeDropGraph<'tcx> {
             bug_records: BugRecords::new(),
             drop_record,
             adt_owner,
+            export_path: exporting.then(Vec::new),
+            analysis_incomplete: false,
         }
     }
 }
@@ -70,11 +80,15 @@ impl<'tcx> SafeDropGraph<'tcx> {
         fn_map: &MopFnAliasMap,
     ) -> Result<(), ()> {
         path.push(node.block);
+        if let Some(export_path) = &mut self.export_path {
+            export_path.clone_from(path);
+        }
         {
             let mut obs = SafeDropObserver {
                 drop_record: &mut self.drop_record,
                 bug_records: &mut self.bug_records,
                 current_bb: node.block,
+                export_path: self.export_path.as_deref(),
             };
             self.alias_graph.alias_bb(node.block, &mut obs);
             self.alias_graph.alias_bbcall(node.block, fn_map, &mut obs);
@@ -93,10 +107,11 @@ impl<'tcx> SafeDropGraph<'tcx> {
                 return Err(());
             }
             if should_check(self.alias_graph.def_id())
-                && let Some(&last) = path.last() {
-                    let cfg_block = self.alias_graph.cfg_block(last).clone();
-                    self.dp_check(cfg_block.is_cleanup);
-                }
+                && let Some(&last) = path.last()
+            {
+                let cfg_block = self.alias_graph.cfg_block(last).clone();
+                self.dp_check(cfg_block.is_cleanup);
+            }
         }
 
         for child in &node.children {
@@ -195,9 +210,12 @@ impl<'tcx> SafeDropGraph<'tcx> {
     ) {
         self.alias_graph.init_pts_graph();
         let paths = precomputed_paths.unwrap_or_else(|| self.alias_graph.enumerate_paths());
-        let Some(root) = paths.root() else { return };
+        let Some(root) = paths.root() else {
+            self.analysis_incomplete = true;
+            return;
+        };
         let mut path = Vec::new();
-        let _ = self.dfs_safedrop(root, &mut path, fn_map);
+        self.analysis_incomplete = self.dfs_safedrop(root, &mut path, fn_map).is_err();
     }
     pub fn report_bugs(&self) {
         rap_debug!(
@@ -205,11 +223,6 @@ impl<'tcx> SafeDropGraph<'tcx> {
             self.alias_graph.def_id(),
             self.bug_records.uaf_bugs
         );
-        let filename = get_filename(self.alias_graph.tcx(), self.alias_graph.def_id());
-        if let Some(filename) = filename
-            && filename.contains(".cargo") {
-                return;
-            }
         if self.bug_records.is_bug_free() {
             return;
         }
@@ -260,13 +273,16 @@ impl<'tcx> SafeDropGraph<'tcx> {
             return true;
         };
 
-        let bug = checks::make_bug(
+        let mut bug = checks::make_bug(
             &self.drop_record[value_idx],
             LocalSpot::new(bb_idx, local),
             span,
             confidence,
             t,
         );
+        bug.witness = self.export_path.as_deref().map(|path| {
+            super::capture::witness(&self.alias_graph, &self.drop_record, value_idx, path)
+        });
         let target_map = if flag_cleanup {
             &mut self.bug_records.df_bugs_unwind
         } else {
@@ -302,13 +318,16 @@ impl<'tcx> SafeDropGraph<'tcx> {
                 return;
             };
             if !self.bug_records.dp_bugs.contains_key(&0) {
-                let bug = checks::make_bug(
+                let mut bug = checks::make_bug(
                     &self.drop_record[0],
                     LocalSpot::from_local(0),
                     self.alias_graph.span(),
                     confidence,
                     BugType::DanglingPointer,
                 );
+                bug.witness = self.export_path.as_deref().map(|path| {
+                    super::capture::witness(&self.alias_graph, &self.drop_record, 0, path)
+                });
                 self.bug_records.dp_bugs.insert(0, bug);
                 rap_info!("Find a dangling pointer 0; add to record.");
             }
@@ -328,13 +347,16 @@ impl<'tcx> SafeDropGraph<'tcx> {
         else {
             return;
         };
-        let bug = checks::make_bug(
+        let mut bug = checks::make_bug(
             &self.drop_record[arg_idx],
             LocalSpot::from_local(arg_idx),
             self.alias_graph.span(),
             confidence,
             BugType::DanglingPointer,
         );
+        bug.witness = self.export_path.as_deref().map(|path| {
+            super::capture::witness(&self.alias_graph, &self.drop_record, arg_idx, path)
+        });
         if flag_cleanup {
             if !self.bug_records.dp_bugs_unwind.contains_key(&arg_idx) {
                 let drop_spot = self.drop_record[arg_idx].drop_spot;

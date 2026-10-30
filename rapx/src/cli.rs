@@ -39,10 +39,10 @@ pub enum Commands {
 
 impl RapxArgs {
     pub fn init_env(&self) {
-        let Commands::Check(CheckArgs {
-            uaf: Some(level), ..
-        }) = &self.command
-        else {
+        let Commands::Check(CheckArgs { uaf, f_ai, .. }) = &self.command else {
+            return;
+        };
+        let Some(level) = (*uaf).or((*f_ai).then_some(1)) else {
             return;
         };
         unsafe {

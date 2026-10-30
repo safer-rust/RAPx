@@ -11,6 +11,7 @@ pub struct SafeDropObserver<'a> {
     pub drop_record: &'a mut Vec<DropRecord>,
     pub bug_records: &'a mut BugRecords,
     pub current_bb: usize,
+    pub export_path: Option<&'a [usize]>,
 }
 
 impl AliasObserver for SafeDropObserver<'_> {
@@ -24,6 +25,7 @@ impl AliasObserver for SafeDropObserver<'_> {
             self.current_bb,
             span,
             in_call,
+            self.export_path,
         );
     }
 
