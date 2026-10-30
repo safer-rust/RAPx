@@ -10,21 +10,28 @@ use rustc_middle::mir::{Body, HasLocalDecls, Local};
 
 use super::drop::LocalSpot;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BugType {
-    UseAfterFree,
-    DoubleFree,
-    DanglingPointer,
-    UseAfterFreeAndDoubleFree,
-}
+pub use super::report::BugType;
 
-#[derive(Debug)]
 pub struct TyBug {
     pub drop_spot: LocalSpot,
     pub trigger_info: LocalSpot,
     pub span: Span,
     pub confidence: usize,
     pub bug_type: BugType,
+    pub witness: Option<super::report::SafeDropWitness>,
+}
+
+// Keep compiler logs compact and preserve the existing textual diagnostic.
+impl std::fmt::Debug for TyBug {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TyBug")
+            .field("drop_spot", &self.drop_spot)
+            .field("trigger_info", &self.trigger_info)
+            .field("span", &self.span)
+            .field("confidence", &self.confidence)
+            .field("bug_type", &self.bug_type)
+            .finish()
+    }
 }
 
 /*
@@ -310,12 +317,7 @@ fn df_uaf_detail(
     }
 }
 
-fn dp_detail(
-    bug: &TyBug,
-    drop_local: &str,
-    trigger_local: &str,
-    drop_bb: &str,
-) -> String {
+fn dp_detail(bug: &TyBug, drop_local: &str, trigger_local: &str, drop_bb: &str) -> String {
     format!(
         "Dangling pointer (confidence {}%): Location in file {} line {}.\n    | MIR detail: Value {} and {} are alias.\n    | MIR detail: {} is dropped at {}; {} became dangling.",
         bug.confidence,

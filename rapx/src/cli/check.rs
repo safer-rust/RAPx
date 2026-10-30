@@ -15,4 +15,8 @@ pub struct CheckArgs {
     /// detect memory leakage
     #[arg(short = 'm', long)]
     pub mleak: bool,
+
+    /// Run SafeDrop with AI review context
+    #[arg(short = 'F', long, conflicts_with_all = ["uaf", "mleak"])]
+    pub f_ai: bool,
 }

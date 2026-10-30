@@ -110,6 +110,7 @@ Usage: cargo rapx check [OPTIONS]
 Options:
   -f, --uaf [<UAF>]    detect use-after-free/double-free (optional level, default 1)
   -m, --mleak          detect memory leakage
+  -F, --f-ai           run SafeDrop with AI review context
   -h, --help           Print help
 ```
 

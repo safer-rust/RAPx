@@ -85,7 +85,7 @@ fn main() {
             }
             phase_cargo_rap()
         }
-        arg if arg.ends_with("rustc") => phase_rustc_wrapper(),
+        arg if arg.ends_with("rustc") || arg.ends_with("rustc.exe") => phase_rustc_wrapper(),
         _ => rap_error_and_exit(
             "rapx must be called with either `rap` or `rustc` as first argument.",
         ),

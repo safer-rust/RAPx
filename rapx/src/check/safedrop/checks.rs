@@ -46,6 +46,7 @@ pub fn uaf_check(
     bb_idx: usize,
     span: Span,
     is_fncall: bool,
+    export_path: Option<&[usize]>,
 ) {
     let local = graph.values[value_idx].local;
     rap_debug!(
@@ -68,13 +69,15 @@ pub fn uaf_check(
     }
     let drop_spot = drop_record[value_idx].drop_spot;
     if let Some(t) = bug_records.try_merge_pair(drop_spot, bb_idx, BugType::UseAfterFree) {
-        let bug = make_bug(
+        let mut bug = make_bug(
             &drop_record[value_idx],
             LocalSpot::new(bb_idx, local),
             span,
             confidence,
             t,
         );
+        bug.witness =
+            export_path.map(|path| super::capture::witness(graph, drop_record, value_idx, path));
         rap_warn!("Find a use-after-free bug {:?}; add to records", bug);
         bug_records.uaf_bugs.insert(local, bug);
     }
@@ -123,6 +126,7 @@ pub fn make_bug(
         span,
         confidence,
         bug_type,
+        witness: None,
     }
 }
 
@@ -146,9 +150,10 @@ fn push_drop_through_move(
     drop_spot: LocalSpot,
 ) {
     if let Some(&src) = graph.owner_transfers.get(&value_idx)
-        && !drop_record[src].is_dropped {
-            drop_record[src] = DropRecord::new(src, true, drop_spot);
-        }
+        && !drop_record[src].is_dropped
+    {
+        drop_record[src] = DropRecord::new(src, true, drop_spot);
+    }
     for (&dest, &src) in graph.owner_transfers.iter() {
         if src == value_idx && !drop_record[dest].is_dropped {
             drop_record[dest] = DropRecord::new(dest, true, drop_spot);
@@ -238,9 +243,9 @@ fn fetch_drop_from_pointee(
                                 .pts_graph
                                 .get_slot(v_slot)
                                 .is_some_and(|vs| vs.local == s.local && vs.fields == s.fields)
-                            {
-                                return Some(v);
-                            }
+                        {
+                            return Some(v);
+                        }
                     }
                     None
                 }
@@ -311,12 +316,13 @@ fn fetch_drop_from_pts_fields(
                 continue;
             }
             if let Some(drop_slot) = graph.value_to_slot_idx(v)
-                && graph.pts_graph.may_alias(i, drop_slot) {
-                    drop_record[value_idx].has_dropped_field = true;
-                    drop_record[value_idx].drop_spot = drop_record[v].drop_spot;
-                    found = true;
-                    break;
-                }
+                && graph.pts_graph.may_alias(i, drop_slot)
+            {
+                drop_record[value_idx].has_dropped_field = true;
+                drop_record[value_idx].drop_spot = drop_record[v].drop_spot;
+                found = true;
+                break;
+            }
         }
         if found {
             break;

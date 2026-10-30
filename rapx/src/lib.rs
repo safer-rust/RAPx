@@ -163,9 +163,9 @@ impl Callbacks for RapCallback {
 /// Start the analysis with the features enabled.
 pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
     match &callback.args.command {
-        Commands::Check(CheckArgs { uaf, mleak }) => {
-            if uaf.is_some() {
-                SafeDrop::new(tcx).start();
+        Commands::Check(CheckArgs { uaf, mleak, f_ai }) => {
+            if uaf.is_some() || *f_ai {
+                SafeDrop::new(tcx).start(*f_ai);
             }
             if *mleak {
                 let mut heap = HeapOwnershipAnalyzer::new(tcx);
