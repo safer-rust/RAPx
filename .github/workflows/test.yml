@@ -28,6 +28,12 @@ jobs:
         export LD_LIBRARY_PATH="$(rustc --print sysroot)/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
         export RAPX_TEST_CARGO_RAPX="$(command -v cargo-rapx)"
         python3 -m unittest discover -s tools/mir -p test_mir_stats.py -v
+    - name: Test opt AI pipeline and demo
+      run: |
+        export LD_LIBRARY_PATH="$(rustc --print sysroot)/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+        export RAPX_TEST_CARGO_RAPX="$(command -v cargo-rapx)"
+        python3 -m unittest discover -s tools/opt -p test_opt_ai.py -v
+        python3 tools/opt/demo_opt_ai.py --cargo-rapx "$RAPX_TEST_CARGO_RAPX"
 
   asterinas:
     runs-on: ubuntu-22.04
@@ -47,23 +53,33 @@ jobs:
   verify-std:
     runs-on: ubuntu-22.04
     continue-on-error: true
+    env:
+      RUSTUP_TOOLCHAIN: nightly-2026-09-25
     steps:
     - uses: actions/checkout@v4
     - name: Setup toolchain
       run: |
-        rustup toolchain install nightly-2026-09-25 --profile minimal
-        rustup component add rustc-dev rust-src llvm-tools-preview rustfmt --toolchain nightly-2026-09-25
-        rustup override set nightly-2026-09-25
+        rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+        rustup component add rustc-dev rust-src llvm-tools-preview rustfmt --toolchain "$RUSTUP_TOOLCHAIN"
         rustc --version
     - name: Build
       run: ./install.sh
     - name: Test
       run: cd rapx && cargo test -- --test-threads=1 --skip std_challenge_02 --skip std_challenge_05 --skip std_challenge_10 --skip std_challenge_18 --skip std_challenge_20
+    # Keep the standard library paired with the toolchain and 38 SOUND baseline.
+    - name: Checkout compatible standard library
+      uses: actions/checkout@v4
+      with:
+        repository: safer-rust/rapx-verify-rust-std
+        ref: 6f9972eecad82ec29f36d96ea8997eeb9c24bf74
+        path: rapx-verify-rust-std
+        persist-credentials: false
     - name: Verify core::slice against rapx-verify-rust-std
       run: |
         set -o pipefail
-        git clone https://github.com/safer-rust/rapx-verify-rust-std.git
         cd rapx-verify-rust-std
+        git rev-parse HEAD
+        rustc --version
         export RAPX_SYSROOT=$(rustc --print sysroot)
         export LD_LIBRARY_PATH="$RAPX_SYSROOT/lib"
         export RUSTFLAGS="--cfg=rapx -Zcrate-attr=feature(register_tool) -Zcrate-attr=register_tool(rapx)"

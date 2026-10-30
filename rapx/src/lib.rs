@@ -178,6 +178,9 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
         Commands::Opt => {
             Opt::new(tcx, 1).start();
         }
+        Commands::OptAi(_) => {
+            crate::utils::log::rap_error_and_exit("opt-ai must be run via cargo rapx opt-ai");
+        }
 
         Commands::Analyze { kind } => match kind {
             AnalysisKind::Alias { strategy } => {
