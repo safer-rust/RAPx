@@ -114,12 +114,6 @@ pub fn is_as_ptr(callee: Option<DefId>) -> bool {
     )
 }
 
-/// `str::as_bytes`: reinterprets `&str` as `&[u8]` — same data pointer and
-/// byte length, so the result aliases the argument.
-pub fn is_str_as_bytes(callee: Option<DefId>) -> bool {
-    other_api::matches_any(callee, &[other_api::str_as_bytes()])
-}
-
 // ── Pointer arithmetic ────────────────────────────────────────────
 // Direction (`add` vs `sub`) and granularity (`element` vs `byte`) are two
 // orthogonal axes. Each of the four combinations is a first-class classifier
