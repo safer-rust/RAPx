@@ -31,6 +31,9 @@ check_not_contain_test!(check_uaf_false_16, "check/uaf_false_16", CMD_CHECK_UAF,
 check_not_contain_test!(check_uaf_false_17, "check/uaf_false_17", CMD_CHECK_UAF, "detected");
 check_not_contain_test!(check_uaf_false_18, "check/uaf_false_18", CMD_CHECK_UAF, "detected");
 
+// Async closures: their synthetic bodies have no HIR node
+check_not_contain_test!(check_async_closure_01, "check/async_closure_1", CMD_CHECK_UAF, "panicked");
+
 // Memory leak detection
 check_contain_test!(check_memleak_01, "check/memleak_1", CMD_CHECK_MEMLEAK, "Memory Leak detected in function main");
 check_contain_test!(check_memleak_02, "check/memleak_2", CMD_CHECK_MEMLEAK, "Memory Leak detected in function main");
