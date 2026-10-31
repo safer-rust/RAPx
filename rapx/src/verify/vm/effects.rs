@@ -869,32 +869,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 }
             }
             CallEffect::ReturnIterLen => self.apply_iter_len_effect(args, caller_arg_locals, dest),
-            CallEffect::ReturnNonNullNew => {
-                let Some(ptr) = args.first() else {
-                    return;
-                };
-                let dest_ty = self.body().local_decls[dest].ty;
-                let zero = Int::from_u64(self.z3_ctx, 0);
-                let one = Int::from_u64(self.z3_ctx, 1);
-                let definitely_non_null = ptr.facts.non_null
-                    || ptr.facts.in_bounds
-                    || ptr
-                        .provenance
-                        .as_ref()
-                        .is_some_and(|p| !self.alloc(p.alloc_id).is_external());
-                let discr = if definitely_non_null {
-                    self.constraints
-                        .assertions
-                        .push(ptr.z3_term._eq(&zero).not());
-                    one
-                } else {
-                    ptr.z3_term._eq(&zero).ite(&zero, &one)
-                };
-                let mut result = VmValue::new(self.fresh_int("nn_new"), dest_ty);
-                result.source = ValueSource::Discriminant(discr);
-                self.set_local(dest, result);
-                self.set_field_value(dest, vec![0], ptr.clone());
-            }
             CallEffect::ReturnIterNext => self.apply_iter_next_effect(args, dest),
             CallEffect::ReturnRangeNext => self.apply_range_next_effect(args, dest),
         }

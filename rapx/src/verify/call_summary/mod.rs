@@ -107,13 +107,9 @@ pub(crate) enum CallEffect {
     /// The call *frees* the heap allocation behind `pointer_arg` (a `&mut`
     /// reference to a `Box`/`Vec`/`String` pointee). Models `ManuallyDrop::drop`.
     DropMemory { pointer_arg: usize },
-    /// `Iter::len()` / `Iter::is_empty()` computed from the iterator's pointer
+    /// `Iter::len()` computed from the iterator's pointer
     /// fields (`ptr` + `end_or_len` sharing the same allocation).
     ReturnIterLen,
-    /// `NonNull::<T>::new(ptr) -> Option<NonNull<T>>`: the safe constructor,
-    /// returning `Some(ptr)` when the pointer is provably non-null and an
-    /// unconstrained `Option` otherwise.
-    ReturnNonNullNew,
     /// `Iter::next()` / `IterMut::next()`: return the current element pointer
     /// and advance the iterator's tracked offset by one.
     ReturnIterNext,

@@ -607,12 +607,6 @@ known_items! {
         "std::ptr::non_null::NonNull::<T>::as_mut",
         "core::ptr::non_null::NonNull::<T>::as_mut"
     ],
-    nonnull_new: &[
-        "std::ptr::NonNull::<T>::new",
-        "core::ptr::NonNull::<T>::new",
-        "std::ptr::non_null::NonNull::<T>::new",
-        "core::ptr::non_null::NonNull::<T>::new"
-    ],
     const_ptr_align_offset: &[
         "std::ptr::const_ptr::<impl *const T>::align_offset",
         "core::ptr::const_ptr::<impl *const T>::align_offset"

@@ -412,11 +412,6 @@ pub fn is_vec_ownership_transfer(callee: Option<DefId>) -> bool {
     any_def(callee, other_api::vec_ownership_transfer_fns())
 }
 
-/// Whether `callee` is `NonNull::new` (the null-checked constructor).
-pub(crate) fn is_nonnull_checked_new(callee: Option<DefId>) -> bool {
-    other_api::matches_any(callee, &[other_api::nonnull_new()])
-}
-
 /// Whether `callee` is `NonNull::as_ref` or `NonNull::as_mut`.
 pub fn is_nonnull_as_ref_as_mut(callee: Option<DefId>) -> bool {
     other_api::matches_any(
