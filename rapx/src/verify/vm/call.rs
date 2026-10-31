@@ -286,9 +286,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         } else if let Some(c) = callee
             && self.tcx.is_mir_available(c)
         {
-            let instance = self.frame_body.is_some()
-                .then(|| mir_utils::resolve_callee_instance(self.tcx, caller_def_id, func))
-                .flatten()
+            let instance = mir_utils::resolve_callee_instance(self.tcx, caller_def_id, func)
                 .or_else(|| {
                     let Operand::Constant(constant) = func else {
                         return None;
@@ -396,7 +394,22 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         // caller's referent while the callee executes.
         let inline_arg_referents: Vec<Option<Local>> = arg_values
             .iter()
-            .map(|v| self.find_local_by_address(&v.z3_term))
+            .enumerate()
+            .map(|(index, value)| {
+                self.find_local_by_address(&value.z3_term).or_else(|| {
+                    let local = caller_arg_locals.get(index).copied().flatten()?;
+                    local
+                        .as_usize()
+                        .checked_sub(1)
+                        .and_then(|index| self.inline.arg_referents.get(index))
+                        .copied()
+                        .flatten()?;
+                    let provenance = value.provenance_alloc_id()?;
+                    (self.local_value(local).and_then(VmValue::provenance_alloc_id)
+                        == Some(provenance))
+                        .then_some(local)
+                })
+            })
             .collect();
         let caller_referents = inline_arg_referents.clone();
         // Whole-place reborrow referents, resolved from the *caller's* MIR

@@ -126,6 +126,19 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                     })
                                 }) && self.field_value(*root, &[0]).is_some()
                             })
+                    }).or_else(|| {
+                        let outer = arg_local
+                            .as_usize()
+                            .checked_sub(1)
+                            .and_then(|index| self.inline.arg_referents.get(index))
+                            .copied()
+                            .flatten()?;
+                        let parent_alloc = self
+                            .caller_frames
+                            .last()?
+                            .local_alloc
+                            .get(&outer)?;
+                        (value.provenance_alloc_id() == Some(*parent_alloc)).then_some(arg_local)
                     })
                 })
             })

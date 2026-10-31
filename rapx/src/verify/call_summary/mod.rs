@@ -107,10 +107,6 @@ pub(crate) enum CallEffect {
     /// The call *frees* the heap allocation behind `pointer_arg` (a `&mut`
     /// reference to a `Box`/`Vec`/`String` pointee). Models `ManuallyDrop::drop`.
     DropMemory { pointer_arg: usize },
-    /// `Range<A>::next` / `RangeInclusive<A>::next`: return the current
-    /// `start` and advance it by one, carrying the `start < end` bound so a
-    /// downstream `InBound(arr, i)` can be discharged.
-    ReturnRangeNext,
     /// `size_of::<T>()` / `align_of::<T>()` for a *generic* `T` (no concrete
     /// layout): the result is the shared symbolic `sizeof_T` / `align_T`, bound
     /// at apply time from `func`'s type argument.

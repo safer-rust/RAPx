@@ -340,6 +340,25 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         true
     }
 
+    pub(crate) fn read_field_allocation(
+        &self,
+        pointer: &VmValue<'z3, 'tcx>,
+        pointee_ty: Ty<'tcx>,
+    ) -> Option<VmValue<'z3, 'tcx>> {
+        let provenance = pointer.provenance.as_ref()?;
+        let offset = provenance.offset.simplify().as_u64()?;
+        let root_ty = self
+            .current_frame
+            .local_alloc
+            .iter()
+            .find_map(|(local, id)| {
+                (*id == provenance.alloc_id).then(|| self.body().local_decls[*local].ty)
+            })
+            .or_else(|| self.alloc(provenance.alloc_id).element_ty.as_ty())?;
+        let path = self.field_path_at_offset(root_ty, offset, pointee_ty)?;
+        self.load_value(provenance.alloc_id, root_ty, &path).cloned()
+    }
+
     fn field_path_at_offset(
         &self,
         ty: Ty<'tcx>,

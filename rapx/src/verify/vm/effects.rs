@@ -868,7 +868,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     }
                 }
             }
-            CallEffect::ReturnRangeNext => self.apply_range_next_effect(args, dest),
         }
     }
 

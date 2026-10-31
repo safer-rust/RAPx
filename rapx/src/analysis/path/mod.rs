@@ -63,8 +63,8 @@ pub struct PathTree {
     block_fn: Vec<(DefId, usize)>,
     /// Argument and return bindings for callee entry blocks.
     call_bindings: FxHashMap<usize, CallBinding>,
-    /// Parent function of each callee entry block.
-    call_parents: FxHashMap<usize, DefId>,
+    /// Parent entry block of each callee entry block.
+    call_parents: FxHashMap<usize, usize>,
     /// Caller blocks whose callee paths were composed into the tree.
     expanded_call_blocks: FxHashSet<usize>,
     /// Set when enumeration stopped at a path or depth limit, so the tree
@@ -147,7 +147,7 @@ impl PathTree {
         &mut self,
         map: Vec<(DefId, usize)>,
         bindings: FxHashMap<usize, CallBinding>,
-        parents: FxHashMap<usize, DefId>,
+        parents: FxHashMap<usize, usize>,
         expanded_calls: FxHashSet<usize>,
     ) {
         self.block_fn = map;
@@ -172,8 +172,8 @@ impl PathTree {
         self.call_bindings.get(&block)
     }
 
-    /// Parent function of a callee entry block.
-    pub fn call_parent(&self, block: usize) -> Option<DefId> {
+    /// Parent entry block of a callee entry block.
+    pub fn call_parent_entry(&self, block: usize) -> Option<usize> {
         self.call_parents.get(&block).copied()
     }
 

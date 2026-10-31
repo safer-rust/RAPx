@@ -357,15 +357,15 @@ impl<'tcx> VerifyEngine<'tcx> {
 
                             // Skip ancestors with no retained slice items.
                             let eff_parent = |g: usize| -> DefId {
-                                let mut p = tree.call_parent(g);
-                                while let Some(pd) = p {
+                                let mut entry = tree.call_parent_entry(g);
+                                while let Some(parent_entry) = entry {
+                                    let Some((pd, _)) = tree.block_fn_of(parent_entry) else {
+                                        break;
+                                    };
                                     if pd == caller || active.iter().any(|(d, _, _)| *d == pd) {
                                         return pd;
                                     }
-                                    p = local_to_global
-                                        .get(&(pd, 0))
-                                        .and_then(|gs| gs.first().copied())
-                                        .and_then(|pe| tree.call_parent(pe));
+                                    entry = tree.call_parent_entry(parent_entry);
                                 }
                                 caller
                             };
@@ -425,20 +425,16 @@ impl<'tcx> VerifyEngine<'tcx> {
                             let eff = cur_entry.map(eff_parent).unwrap_or(caller);
                             let mut skipped: Vec<(DefId, usize)> = Vec::new();
                             {
-                                let mut p = cur_entry.and_then(|g| tree.call_parent(g));
-                                while let Some(pd) = p {
+                                let mut entry = cur_entry.and_then(|g| tree.call_parent_entry(g));
+                                while let Some(parent_entry) = entry {
+                                    let Some((pd, _)) = tree.block_fn_of(parent_entry) else {
+                                        break;
+                                    };
                                     if pd == eff {
                                         break;
                                     }
-                                    if let Some(pe) = local_to_global
-                                        .get(&(pd, 0))
-                                        .and_then(|gs| gs.first().copied())
-                                    {
-                                        skipped.push((pd, pe));
-                                        p = tree.call_parent(pe);
-                                    } else {
-                                        break;
-                                    }
+                                    skipped.push((pd, parent_entry));
+                                    entry = tree.call_parent_entry(parent_entry);
                                 }
                             }
 

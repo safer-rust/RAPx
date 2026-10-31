@@ -1842,6 +1842,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             )
         {
             let pointer = self.local_value(place.local)?;
+            if let Some(value) = self.read_field_allocation(pointer, place_ty) {
+                return Some(value);
+            }
             if let Some(provenance) = &pointer.provenance
                 && provenance.offset.simplify().as_u64() == Some(0)
                 && let Some(value) = self.load_value(provenance.alloc_id, place_ty, &[])

@@ -2,12 +2,12 @@
 
 use rustc_middle::mir::Local;
 use rustc_middle::ty::TyKind;
-use z3::ast::{Ast, Bool, Int};
+use z3::ast::Int;
 
 use crate::helpers::mir_utils;
 use crate::verify::api_classify;
 
-use super::state::{ValueFacts, ValueSource, VmState, VmValue};
+use super::state::{ValueSource, VmState, VmValue};
 
 impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     pub(crate) fn try_simulate_builtin_index(
@@ -175,84 +175,4 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         true
     }
 
-    pub(crate) fn apply_range_next_effect(&mut self, args: &[VmValue<'z3, 'tcx>], dest: Local) {
-        if args.is_empty() {
-            return;
-        }
-        let self_val = &args[0];
-        let TyKind::Ref(_, pointee, _) = self_val.ty.kind() else {
-            return;
-        };
-        let TyKind::Adt(adt_def, _) = pointee.kind() else {
-            return;
-        };
-        let Some(alloc_id) = self_val.provenance_alloc_id() else {
-            return;
-        };
-        let range_view_ty = self.units[alloc_id.0]
-            .content
-            .values
-            .keys()
-            .map(|(t, _)| *t)
-            .find(|t| matches!(t.kind(), TyKind::Adt(adt, _) if adt.did() == adt_def.did()));
-        let Some(range_view_ty) = range_view_ty else {
-            return;
-        };
-        let Some(start) = self.load_value(alloc_id, range_view_ty, &[0]).cloned() else {
-            return;
-        };
-        let Some(end) = self.load_value(alloc_id, range_view_ty, &[1]).cloned() else {
-            return;
-        };
-        let dest_ty = self.body().local_decls[dest].ty;
-        let zero = Int::from_u64(self.z3_ctx, 0);
-        let one = Int::from_u64(self.z3_ctx, 1);
-        let start_term = start.z3_term.clone();
-        let end_term = end.z3_term.clone();
-        let inclusive = matches!(
-            mir_utils::range_kind(self.tcx, adt_def.did()),
-            mir_utils::RangeKind::RangeInclusive
-        );
-        let is_empty = if inclusive {
-            let exhausted = self
-                .load_value(alloc_id, range_view_ty, &[2])
-                .map(|value| value.z3_term._eq(&one))
-                .unwrap_or_else(|| {
-                    let term = self.fresh_int("range_inclusive_exhausted");
-                    self.constraints.assertions.push(Bool::or(
-                        self.z3_ctx,
-                        &[&term._eq(&zero), &term._eq(&one)],
-                    ));
-                    term._eq(&one)
-                });
-            Bool::or(self.z3_ctx, &[&start_term.gt(&end_term), &exhausted])
-        } else {
-            start_term.ge(&end_term)
-        };
-        let result_val = VmValue {
-            z3_term: is_empty.ite(&zero, &start_term),
-            ty: dest_ty,
-            provenance: None,
-            facts: ValueFacts::default(),
-            source: ValueSource::Discriminant(is_empty.ite(&zero, &one)),
-        };
-        self.set_local(dest, result_val);
-        self.set_field_value(dest, vec![0], start.clone());
-        let mut advanced = start;
-        let next = Int::add(self.z3_ctx, &[&start_term, &one]);
-        if inclusive {
-            let last = start_term.ge(&end_term);
-            let exhausted = Bool::or(self.z3_ctx, &[&is_empty, &last]);
-            self.store_value(
-                alloc_id,
-                range_view_ty,
-                vec![2],
-                VmValue::new(exhausted.ite(&one, &zero), self.tcx.types.bool),
-            );
-            advanced.z3_term = exhausted.ite(&start_term, &next);
-        } else {
-            advanced.z3_term = is_empty.ite(&start_term, &next);
-        }
-        self.store_value(alloc_id, range_view_ty, vec![0], advanced);
-    }
 }

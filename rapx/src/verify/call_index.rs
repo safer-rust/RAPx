@@ -56,7 +56,7 @@ impl<'tcx> CallSiteIndex<'tcx> {
     pub(crate) fn attach_metadata(self, tree: &mut PathTree) {
         let mut parents = FxHashMap::default();
         for (&call_block, entries) in &self.entries {
-            let parent = self.blocks[call_block].0;
+            let parent = call_block - self.blocks[call_block].1;
             for &entry in entries {
                 parents.insert(entry, parent);
             }
@@ -237,9 +237,7 @@ impl<'tcx> CallSiteIndex<'tcx> {
                             && (cross_crate || is_trait_method)
                             && (mir_utils::has_unmodeled_generic_call(self.tcx, callee)
                                 || generic_const_call))
-                        || self.tcx.optimized_mir(callee).basic_blocks.len() == 1
-                        || (self.tcx.optimized_mir(callee).basic_blocks.len() == 2
-                            && returns_adt));
+                        || self.tcx.optimized_mir(callee).basic_blocks.len() == 1);
                 let instance = instantiate
                     .then(|| mir_utils::resolve_callee_instance(self.tcx, caller, func))
                     .flatten()
@@ -261,7 +259,12 @@ impl<'tcx> CallSiteIndex<'tcx> {
                     continue;
                 }
                 let cross_crate_trait_default =
-                    cross_crate && is_trait_method && self.tcx.is_mir_available(base_callee);
+                    cross_crate
+                        && is_trait_method
+                        && self.tcx.is_mir_available(base_callee)
+                        && (callee == base_callee
+                            || self.tcx.fn_sig(base_callee).skip_binder().safety()
+                                != rustc_hir::Safety::Unsafe);
                 if crate::def_ids::intrinsic_api::is_intrinsic(self.tcx, callee)
                     || !self.tcx.is_mir_available(callee)
                     || expanded.contains(&callee)
@@ -269,6 +272,13 @@ impl<'tcx> CallSiteIndex<'tcx> {
                         && !crate::verify::options::force_inline_constructor(self.tcx, callee))
                     || crate::verify::target::has_slice_offset_ensures(self.tcx, callee)
                     || crate::def_ids::other_api::is_ub_check(self.tcx, callee)
+                    || (crate::verify::api_classify::is_range_next(Some(callee))
+                        && mir_utils::blocks_reachable_after_call(
+                            self.tcx,
+                            actual_caller,
+                            BasicBlock::from(self.blocks[block].1),
+                        )
+                        .contains(&BasicBlock::from(self.blocks[block].1)))
                     || cross_crate_trait_default
                 {
                     continue;
