@@ -277,53 +277,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     );
                 }
             }
-            CallEffect::ReturnDerefArg { arg } => {
-                let dest_ty = self.body().local_decls[dest].ty;
-                let mut val = args
-                    .get(*arg)
-                    .cloned()
-                    .unwrap_or_else(|| VmValue::new(self.fresh_int("replaced"), dest_ty));
-                // `mem::replace(&mut dest, src)` returns `*dest`: the pointee
-                // value, not the `&mut` reference.  With M2 the reference's
-                // `path == []` holds its *address* (whole value), so the pointee
-                // is recovered from the materialized field maps by type +
-                // provenance (e.g. `self.v: *mut [T]`), or — when the borrow
-                // chain was dropped by the slicer and no field value is
-                // recoverable — modeled as a fresh external allocation so a
-                // downstream `Allocated`/`InBound` can still match `[T]` vs `T`.
-                if let Some(search) = self
-                    .units
-                    .iter()
-                    .flat_map(|u| u.content.values.values())
-                    .find(|v| v.ty == dest_ty && v.is_pointer())
-                    .cloned()
-                {
-                    val = search;
-                } else if let Some(elem) = mir_utils::pointee_ty(dest_ty) {
-                    let is_slice = matches!(elem.kind(), rustc_middle::ty::TyKind::Slice(_));
-                    if is_slice {
-                        let elem_align = self.align_sym(elem);
-                        let (alloc_id, base) = self.allocate_external(
-                            Int::from_u64(self.z3_ctx, i64::MAX as u64),
-                            elem_align,
-                            Some(elem),
-                        );
-                        val = VmValue {
-                            z3_term: base,
-                            ty: dest_ty,
-                            provenance: Some(Provenance {
-                                alloc_id,
-                                offset: Int::from_u64(self.z3_ctx, 0),
-                                offset_kind: None,
-                            }),
-                            facts: ValueFacts::default(),
-                            source: ValueSource::None,
-                        };
-                    }
-                }
-                val.ty = dest_ty;
-                self.set_local(dest, val);
-            }
             CallEffect::ReturnTransparentDeref { arg, peel } => {
                 if let Some(arg_val) = args.get(*arg) {
                     self.set_dest_as_heap_ptr(arg_val, dest);

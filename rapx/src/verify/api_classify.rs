@@ -635,9 +635,3 @@ pub fn is_gcd(callee: Option<DefId>) -> bool {
 pub fn is_index_range(def_id: DefId) -> bool {
     type_ids::index_range_types().contains(&def_id)
 }
-
-/// Whether `callee` is `mem::replace(dest, src)` — returns `*dest` (the old
-/// value), so the summary must deref the reference argument.
-pub fn is_mem_replace(callee: Option<DefId>) -> bool {
-    other_api::matches_any(callee, &[other_api::replace()])
-}

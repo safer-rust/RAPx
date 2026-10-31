@@ -685,12 +685,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 } else {
                     path[field_prefix.len()..].to_vec()
                 };
-                // `rest == []` means the pointee *is* `source_place` itself
-                // (e.g. `&mut self.v`).  Do not mirror it into the reference's
-                // `path == []`: that slot now holds the reference's whole value
-                // (see M2), so writing the pointee there would clobber it.  The
-                // pointee value stays on the *source* field and is recovered by
-                // `ReturnDerefArg`'s field-map fallback instead.
                 if rest.is_empty() {
                     continue;
                 }
