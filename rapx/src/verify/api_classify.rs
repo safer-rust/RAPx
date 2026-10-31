@@ -10,12 +10,12 @@
 //! Every classifier takes a `DefId` — `fn(Option<DefId>) -> bool` for callee
 //! matching, or `fn(DefId) -> bool` for ADT *type* matching — and answers via
 //! exact identities from [`crate::def_ids::intrinsic_api`],
-//! [`crate::def_ids::nomir_api`], [`crate::def_ids::other_api`], and
+//! [`crate::def_ids::nomir_ffi`], [`crate::def_ids::other_api`], and
 //! [`crate::def_ids::type_ids`]. Some standard-library method sets in
 //! `other_api` are collected by name patterns before being matched by `DefId`.
 
 use crate::def_ids::intrinsic_api;
-use crate::def_ids::nomir_api;
+use crate::def_ids::nomir_ffi;
 use crate::def_ids::other_api;
 use crate::def_ids::type_ids;
 use rustc_hir::def_id::DefId;
@@ -38,13 +38,13 @@ pub fn is_ownership_reconstruction(callee: Option<DefId>) -> bool {
         callee,
         &[
             other_api::box_from_raw(),
-            nomir_api::cstring_from_raw(),
+            nomir_ffi::cstring_from_raw(),
             other_api::arc_from_raw(),
             other_api::rc_from_raw(),
             other_api::box_from_raw_in(),
             other_api::arc_from_raw_in(),
             other_api::rc_from_raw_in(),
-            nomir_api::cstring_from_vec_with_nul_unchecked(),
+            nomir_ffi::cstring_from_vec_with_nul_unchecked(),
         ],
     )
 }
@@ -386,7 +386,7 @@ pub fn is_cstr_unchecked_constructor(callee: Option<DefId>) -> bool {
         callee,
         &[
             other_api::cstr_from_bytes_with_nul_unchecked(),
-            nomir_api::cstring_from_vec_with_nul_unchecked(),
+            nomir_ffi::cstring_from_vec_with_nul_unchecked(),
         ],
     )
 }
@@ -413,10 +413,6 @@ pub fn is_vec_from_box(callee: Option<DefId>) -> bool {
         ],
     )
 }
-/// `alloc::alloc::exchange_malloc` (`Box::new`'s allocator on some toolchains).
-pub fn is_exchange_malloc(callee: Option<DefId>) -> bool {
-    callee.is_some_and(|c| other_api::exchange_malloc() == Some(c))
-}
 pub fn is_into_boxed_slice(callee: Option<DefId>) -> bool {
     other_api::matches_any(callee, &[other_api::vec_into_boxed_slice()])
 }
@@ -432,7 +428,7 @@ pub fn is_into_boxed_slice(callee: Option<DefId>) -> bool {
 pub fn is_ownership_transfer(callee: Option<DefId>) -> bool {
     let Some(callee) = callee else { return false };
     is_ownership_reconstruction(Some(callee))
-        && !other_api::contains(&[nomir_api::cstring_from_vec_with_nul_unchecked()], callee)
+        && !other_api::contains(&[nomir_ffi::cstring_from_vec_with_nul_unchecked()], callee)
 }
 
 pub fn is_vec_ownership_transfer(callee: Option<DefId>) -> bool {

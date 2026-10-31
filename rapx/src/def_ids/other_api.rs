@@ -108,14 +108,6 @@ struct Methods {
     known_nonnull: Vec<DefId>,
     null_ptr: Vec<DefId>,
     index_fns: Vec<DefId>,
-    exchange_malloc: Option<DefId>,
-}
-
-pub fn exchange_malloc() -> Option<DefId> {
-    METHODS
-        .get()
-        .expect("Method IDs have not been initialized")
-        .exchange_malloc
 }
 
 fn init_methods(tcx: TyCtxt) -> Methods {
@@ -145,7 +137,6 @@ fn init_methods(tcx: TyCtxt) -> Methods {
         known_nonnull: Vec::new(),
         null_ptr: Vec::new(),
         index_fns: Vec::new(),
-        exchange_malloc: None,
     };
 
     for krate in std::iter::once(rustc_public::local_crate())
@@ -162,9 +153,6 @@ fn init_methods(tcx: TyCtxt) -> Methods {
                     })
             }) {
                 methods.iterator_next_trait.push(did);
-            }
-            if name.contains("exchange_malloc") {
-                methods.exchange_malloc.get_or_insert(did);
             }
 
             // `Index::index` / `IndexMut::index_mut` (the `a[b]` indexing

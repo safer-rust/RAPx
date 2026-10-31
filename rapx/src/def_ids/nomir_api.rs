@@ -9,7 +9,7 @@ use rustc_public::{CrateDef, rustc_internal};
 
 use super::intrinsic_api;
 
-const PATHS: [&[&str]; 8] = [
+const PATHS: [&[&str]; 6] = [
     &[
         "std::ops::FnMut::call_mut",
         "core::ops::FnMut::call_mut",
@@ -17,18 +17,6 @@ const PATHS: [&[&str]; 8] = [
         "core::ops::function::FnMut::call_mut",
     ],
     &["std::clone::Clone::clone", "core::clone::Clone::clone"],
-    &[
-        "std::ffi::CString::from_raw",
-        "alloc::ffi::CString::from_raw",
-        "std::ffi::c_str::CString::from_raw",
-        "alloc::ffi::c_str::CString::from_raw",
-    ],
-    &[
-        "std::ffi::CString::from_vec_with_nul_unchecked",
-        "alloc::ffi::CString::from_vec_with_nul_unchecked",
-        "std::ffi::c_str::CString::from_vec_with_nul_unchecked",
-        "alloc::ffi::c_str::CString::from_vec_with_nul_unchecked",
-    ],
     &[
         "std::slice::<impl [T]>::to_vec_in::ConvertVec::to_vec",
         "alloc::slice::<impl [T]>::to_vec_in::ConvertVec::to_vec",
@@ -42,7 +30,7 @@ const PATHS: [&[&str]; 8] = [
 ];
 
 struct NoMirIds {
-    known: [Option<DefId>; 8],
+    known: [Option<DefId>; 6],
     unavailable: HashSet<DefId>,
 }
 
@@ -50,7 +38,7 @@ static IDS: OnceLock<NoMirIds> = OnceLock::new();
 
 pub fn init(tcx: TyCtxt<'_>) {
     IDS.get_or_init(|| {
-        let mut known = [None; 8];
+        let mut known = [None; 6];
         let mut unavailable = HashSet::new();
         for krate in std::iter::once(rustc_public::local_crate())
             .chain(rustc_public::external_crates())
@@ -105,16 +93,8 @@ pub fn clone() -> Option<DefId> {
     known(1)
 }
 
-pub fn cstring_from_raw() -> Option<DefId> {
-    known(2)
-}
-
-pub fn cstring_from_vec_with_nul_unchecked() -> Option<DefId> {
-    known(3)
-}
-
 pub fn slice_to_vec() -> Option<DefId> {
-    known(4)
+    known(2)
 }
 
 pub fn is_slice_to_vec(callee: Option<DefId>) -> bool {
@@ -122,13 +102,13 @@ pub fn is_slice_to_vec(callee: Option<DefId>) -> bool {
 }
 
 pub fn is_global_alloc_shim(callee: Option<DefId>) -> bool {
-    is_no_mir(callee) && callee == known(5)
+    is_no_mir(callee) && callee == known(3)
 }
 
 pub fn is_alloc_shim_marker(callee: Option<DefId>) -> bool {
-    is_no_mir(callee) && callee == known(6)
+    is_no_mir(callee) && callee == known(4)
 }
 
 pub fn is_global_alloc_zeroed_shim(callee: Option<DefId>) -> bool {
-    is_no_mir(callee) && callee == known(7)
+    is_no_mir(callee) && callee == known(5)
 }

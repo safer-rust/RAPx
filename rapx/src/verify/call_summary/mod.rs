@@ -73,9 +73,6 @@ pub(crate) enum CallEffect {
         size_arg: usize,
         elem_size: u64,
     },
-    /// `alloc::alloc::exchange_malloc(size, align)` — a fresh allocation of
-    /// `size_arg` bytes, returned as `*mut u8`.
-    ReturnExchangeMalloc { size_arg: usize },
     ReturnNullableAllocation { size_arg: usize, align_arg: usize, zeroed: bool },
     /// The return value is `min(lhs_arg, rhs_arg)`, satisfying
     /// `return <= lhs_arg` and `return <= rhs_arg`.

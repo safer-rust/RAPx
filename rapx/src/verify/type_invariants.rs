@@ -172,18 +172,12 @@ fn instantiate_entry<'tcx>(
             uses_elem = true;
             substituted = substituted.replace("$elem", SLICE_ELEM_PLACEHOLDER);
         }
-        // Substitute struct field references like "0" → "param_name.0"
-        let resolved = if is_numeric_field_access(&substituted) {
-            format!("{}.{}", param_name, substituted)
-        } else {
-            substituted
-        };
-        match syn::parse_str::<syn::Expr>(&resolved) {
+        match syn::parse_str::<syn::Expr>(&substituted) {
             Ok(expr) => exprs.push(expr),
             Err(_) => {
                 rap_debug!(
                     "  [type-invariant] failed to parse arg '{}' for tag {}",
-                    resolved,
+                    substituted,
                     entry.tag
                 );
                 return Vec::new();
@@ -272,15 +266,6 @@ fn replace_expr_ty<'tcx>(expr: &mut ContractExpr<'tcx>, ty: Ty<'tcx>) {
         }
         _ => {}
     }
-}
-
-/// Check if a string looks like a numeric field access (e.g. "0").
-fn is_numeric_field_access(s: &str) -> bool {
-    let trimmed = s.trim();
-    !trimmed.is_empty()
-        && trimmed
-            .split('.')
-            .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
 }
 
 /// Generate a normalised type path key for lookups in the type-invariants DB,

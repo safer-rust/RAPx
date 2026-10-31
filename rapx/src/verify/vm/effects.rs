@@ -1070,39 +1070,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     }
                 }
             }
-            CallEffect::ReturnExchangeMalloc { size_arg } => {
-                if let Some(size_val) = args.get(*size_arg) {
-                    let dest_ty = self.body().local_decls[dest].ty;
-                    let u8_ty = self.tcx.types.u8;
-                    let (alloc_id, base) = self.allocate_external(
-                        size_val.z3_term.clone(),
-                        Int::from_u64(self.z3_ctx, 1),
-                        Some(u8_ty),
-                    );
-                    self.alloc_mut(alloc_id)
-                        .set_slice_len(size_val.z3_term.clone());
-                    self.content_mut(alloc_id).facts.initialized = true;
-                    self.set_local(
-                        dest,
-                        VmValue {
-                            z3_term: base,
-                            ty: dest_ty,
-                            provenance: Some(Provenance {
-                                alloc_id,
-                                offset: Int::from_u64(self.z3_ctx, 0),
-                                offset_kind: None,
-                            }),
-                            facts: ValueFacts {
-                                non_null: true,
-                                init: true,
-                                in_bounds: true,
-                                ..ValueFacts::default()
-                            },
-                            source: ValueSource::None,
-                        },
-                    );
-                }
-            }
             CallEffect::ReturnNullableAllocation { size_arg, align_arg, zeroed } => {
                 if let Some(size) = args.get(*size_arg) {
                     let align = args

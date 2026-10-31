@@ -89,9 +89,32 @@
   ],
   "alloc::ffi::CString": [
     {
-      "tag": "NonNull",
+      "tag": "ValidPtr",
+      "args": [
+        "$self.inner.0.pointer",
+        "u8",
+        "1"
+      ]
+    },
+    {
+      "tag": "Allocated",
+      "args": [
+        "$self.inner.0.pointer",
+        "u8",
+        "1"
+      ]
+    },
+    {
+      "tag": "Owning",
       "args": [
         "$self.inner.0.pointer"
+      ]
+    },
+    {
+      "tag": "ValidCStr",
+      "args": [
+        "$self.inner.0.pointer",
+        "1"
       ]
     }
   ],

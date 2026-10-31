@@ -74,7 +74,6 @@ static REGISTRY: &[Entry] = &[
     ED!(intrinsic_api::is_size_of_val, eff_size_of_val),
     ED!(api_classify::is_intrinsic_pure_opaque, eff_opaque_return),
     // ── Allocation and capacity effects ─────────────────────────────
-    ED!(api_classify::is_exchange_malloc, eff_exchange_malloc),
     ED!(nomir_api::is_global_alloc_shim, eff_nullable_allocation),
     ED!(nomir_api::is_global_alloc_zeroed_shim, eff_nullable_zeroed_allocation),
     ED!(nomir_api::is_alloc_shim_marker, eff_no_effect),
@@ -381,10 +380,6 @@ fn eff_from_raw_parts(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
         eff.push(CallEffect::ReturnAligned);
     }
     eff
-}
-
-fn eff_exchange_malloc(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![CallEffect::ReturnExchangeMalloc { size_arg: 0 }]
 }
 
 fn eff_nullable_allocation(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {

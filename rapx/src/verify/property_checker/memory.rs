@@ -902,6 +902,12 @@ impl PropertyChecker {
             if vm_state.alloc(root_id).facts.locally_allocated
                 && !vm_state.alloc(root_id).facts.dead
             {
+                if value.facts.non_null
+                    && value.provenance.as_ref().is_some_and(|p| p.offset.as_u64() == Some(0))
+                    && value.z3_term == vm_state.alloc(root_id).base
+                {
+                    return CheckResult::ProvedByRule;
+                }
                 let solver = Solver::new(vm_state.z3_ctx);
                 vm_state.assert_path_constraints(&solver);
                 let zero = Int::from_u64(vm_state.z3_ctx, 0);
