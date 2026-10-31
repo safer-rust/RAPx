@@ -319,7 +319,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 let base = args.get(*base_arg).cloned();
                 let count = match (ptr.as_ref(), base.as_ref()) {
                     (Some(p), Some(b)) => self
-                        .iter_remaining_len_from_ptrs(b, p, None)
+                        .iter_len_from_ptrs(b, p)
                         .unwrap_or_else(|| {
                             self.fresh_int(&format!("ptr_offset_from_{}", dest.as_usize()))
                         }),
@@ -868,7 +868,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     }
                 }
             }
-            CallEffect::ReturnIterNext => self.apply_iter_next_effect(args, dest),
             CallEffect::ReturnRangeNext => self.apply_range_next_effect(args, dest),
         }
     }

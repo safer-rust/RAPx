@@ -246,13 +246,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             crate::verify::target::has_slice_offset_ensures(self.tcx, id)
         }) {
             Some(Vec::new())
-        } else if callee
-            .is_some_and(|id| crate::def_ids::other_api::iterator_next_trait_fns().contains(&id))
-            && arg_values
-                .first()
-                .is_some_and(|value| self.is_slice_iter_next_receiver(value))
-        {
-            Some(vec![call_summary::CallEffect::ReturnIterNext])
         } else {
             crate::verify::call_summary::effects::lookup_effect(
                 self.tcx,

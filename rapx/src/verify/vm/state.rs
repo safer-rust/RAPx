@@ -1602,7 +1602,16 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 let field_offset = int_val.is_none()
                     && mir_utils::offset_of_container(self.tcx, &constant.const_).is_some();
                 let enum_variant = mir_utils::const_destructure(self.tcx, &constant.const_)
-                    .and_then(|(variant, _)| variant);
+                    .and_then(|(variant, _)| variant)
+                    .or_else(|| {
+                        let TyKind::Adt(adt, args) = constant.const_.ty().kind() else {
+                            return None;
+                        };
+                        (int_val == Some(0)
+                            && self.tcx.is_diagnostic_item(rustc_span::sym::Option, adt.did())
+                            && matches!(args.type_at(0).kind(), TyKind::Ref(..)))
+                        .then_some(0)
+                    });
                 let term = if let Some(v) = int_val {
                     if v < 0 {
                         Int::from_i64(self.z3_ctx, v as i64)

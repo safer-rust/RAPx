@@ -539,7 +539,6 @@ fn nonoverlap_indices() {
     ] {
         assert_function_result(&output, function, "UNSOUND");
     }
-    assert_contain(&output, "MIR unavailable: std::cmp::PartialEq::eq");
 }
 
 #[test]

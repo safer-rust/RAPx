@@ -232,10 +232,11 @@ impl<'tcx> CallSiteIndex<'tcx> {
                         TyKind::Adt(..)
                     );
                 let instantiate = self.tcx.is_mir_available(callee)
-                    && ((cross_crate
-                    && (crate::def_ids::other_api::is_slice_get(Some(base_callee))
-                        || (returns_adt && (mir_utils::has_unmodeled_generic_call(self.tcx, callee)
-                            || generic_const_call))))
+                    && ((cross_crate && crate::def_ids::other_api::is_slice_get(Some(base_callee)))
+                        || (returns_adt
+                            && (cross_crate || is_trait_method)
+                            && (mir_utils::has_unmodeled_generic_call(self.tcx, callee)
+                                || generic_const_call))
                         || self.tcx.optimized_mir(callee).basic_blocks.len() == 1
                         || (self.tcx.optimized_mir(callee).basic_blocks.len() == 2
                             && returns_adt));
@@ -246,7 +247,12 @@ impl<'tcx> CallSiteIndex<'tcx> {
                         matches!(instance.def, InstanceKind::Item(_))
                             && instance.def_id() == callee
                             && !instance.args.is_empty()
-                            && instance.args.types().all(|ty| !mir_utils::ty_has_type_param(ty))
+                            && instance.args.types().all(|ty| {
+                                !mir_utils::ty_has_type_param(ty)
+                                    || (cross_crate
+                                        && returns_adt
+                                        && matches!(ty.kind(), TyKind::Adt(..)))
+                            })
                             && instance.args.consts().all(|c| {
                                 !matches!(c.kind(), rustc_middle::ty::ConstKind::Param(_))
                             })

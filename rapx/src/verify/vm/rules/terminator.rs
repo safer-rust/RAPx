@@ -13,13 +13,16 @@ pub(crate) fn exec_switch_int<'z3, 'tcx>(
     switch_succ: Option<BasicBlock>,
 ) {
     let discr_val = state.value_of_operand(discr);
+    let known_value = match &discr_val.source {
+        ValueSource::Comparison { cond, .. } => cond.simplify().as_bool().map(u64::from),
+        ValueSource::CallsiteConst | ValueSource::KnownDiscriminant(_) => {
+            discr_val.z3_term.simplify().as_u64()
+        }
+        _ => None,
+    };
     if !state.unsupported_mir
         && !state.incomplete_inline_branch
-        && matches!(
-            discr_val.source,
-            ValueSource::CallsiteConst | ValueSource::KnownDiscriminant(_)
-        )
-        && let Some(value) = discr_val.z3_term.simplify().as_u64()
+        && let Some(value) = known_value
         && let Some(chosen) = switch_succ
     {
         let actual = targets
