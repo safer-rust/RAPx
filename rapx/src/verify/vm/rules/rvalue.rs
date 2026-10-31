@@ -394,7 +394,7 @@ pub(crate) fn eval_cast<'z3, 'tcx>(
         && (matches!(src_ty.kind(), TyKind::Int(_) | TyKind::Uint(_))
             || matches!(
                 src_val.source,
-                ValueSource::Discriminant(_) | ValueSource::KnownDiscriminant(_)
+                ValueSource::KnownDiscriminant(_)
             ))
         && (matches!(cast_ty.kind(), TyKind::RawPtr(..))
             || matches!(cast_ty.kind(), TyKind::Adt(adt, _) if api_classify::is_std_nonnull(adt.did())));

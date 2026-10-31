@@ -454,47 +454,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     self.set_field_value(dest, vec![0], VmValue::new(term, lhs.ty));
                 }
             }
-            CallEffect::ReturnBranchPayload { arg } => {
-                let dest_ty = self.body().local_decls[dest].ty;
-                if let Some(value) = args.get(*arg)
-                    && let Some(discr) = value.discriminant()
-                    && let TyKind::Adt(adt, _) = value.ty.kind()
-                {
-                    let branch_discr = if self
-                        .tcx
-                        .is_diagnostic_item(rustc_span::sym::Option, adt.did())
-                    {
-                        let one = Int::from_u64(self.z3_ctx, 1);
-                        Some(Int::sub(self.z3_ctx, &[&one, discr]))
-                    } else if self
-                        .tcx
-                        .is_diagnostic_item(rustc_span::sym::Result, adt.did())
-                    {
-                        Some(discr.clone())
-                    } else {
-                        None
-                    };
-                    if let Some(branch_discr) = branch_discr {
-                        let term = self.fresh_int("try_branch");
-                        self.set_local(
-                            dest,
-                            VmValue {
-                                z3_term: term,
-                                ty: dest_ty,
-                                provenance: None,
-                                facts: ValueFacts::default(),
-                                source: ValueSource::Discriminant(branch_discr),
-                            },
-                        );
-                    }
-                }
-                let arg_local = caller_arg_locals.get(*arg).copied().flatten();
-                if let Some(l) = arg_local
-                    && let Some(payload) = self.field_value(l, &[0]).cloned()
-                {
-                    self.set_field_value(dest, vec![0], payload);
-                }
-            }
             CallEffect::ReturnNonZeroIff { arg } => {
                 if let Some(a) = args.get(*arg) {
                     let dest_ty = self.body().local_decls[dest].ty;

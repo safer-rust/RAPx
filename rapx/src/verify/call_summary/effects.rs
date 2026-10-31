@@ -39,9 +39,6 @@ macro_rules! ED {
 }
 
 static REGISTRY: &[Entry] = &[
-    // ── Hand-specialized VM shapes ──────────────────────────────────
-    // Listed first so they win over the generic def-path matchers below.
-    ED!(api_classify::is_branch, eff_branch),
     // ── Layout and intrinsic effects ───────────────────────────────
     ED!(api_classify::is_layout_constant, eff_layout_const),
     ED!(intrinsic_api::is_select_unpredictable, eff_select_unpredictable),
@@ -316,10 +313,6 @@ fn eff_vec_from_slice(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 
 fn eff_layout_const(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     layout_constant_effect(ctx.tcx, ctx.caller, ctx.func).map_or_else(Vec::new, |e| vec![e])
-}
-
-fn eff_branch(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![CallEffect::ReturnBranchPayload { arg: 0 }]
 }
 
 // ── Layout helpers (used by effect builders) ─────────────────────────

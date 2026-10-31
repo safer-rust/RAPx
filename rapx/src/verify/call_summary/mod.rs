@@ -87,11 +87,6 @@ pub(crate) enum CallEffect {
     ReturnLeadingZeros { arg: usize },
     /// The slice-to-Vec conversion creates a new allocation with the source length.
     ReturnVecFromSlice,
-    /// The call is `Try::branch`: `Option<T>` -> `ControlFlow<Option<!>, T>`,
-    /// so the result's `Continue` payload (field 0) equals the input's `Some`
-    /// payload (field 0).  Models the `?` operator's `if let Some(..) = expr?`
-    /// unwrap so the payload's provenance survives the branch.
-    ReturnBranchPayload { arg: usize },
     /// `ptr.align_offset(align)` returns an offset such that
     /// `(ptr + offset) % align == 0` and `0 <= offset < align` (or `usize::MAX`
     /// when no such offset exists). Models `*const T::align_offset` /
