@@ -39,6 +39,7 @@ pub(crate) struct VerifyEngine<'tcx> {
     caller_def_id: DefId,
     instance_body: Option<&'tcx Body<'tcx>>,
     callee_bodies: CalleeBodies<'tcx>,
+    assume_struct_invariants: bool,
 }
 
 impl<'tcx> VerifyEngine<'tcx> {
@@ -48,6 +49,7 @@ impl<'tcx> VerifyEngine<'tcx> {
         caller_def_id: DefId,
         instance_body: Option<&'tcx Body<'tcx>>,
         callee_bodies: CalleeBodies<'tcx>,
+        assume_struct_invariants: bool,
     ) -> Self {
         Self {
             tcx,
@@ -55,6 +57,7 @@ impl<'tcx> VerifyEngine<'tcx> {
             caller_def_id,
             instance_body,
             callee_bodies,
+            assume_struct_invariants,
         }
     }
 
@@ -734,6 +737,7 @@ impl<'tcx> VerifyEngine<'tcx> {
                     self.tcx,
                     self.caller_def_id,
                     self.instance_body,
+                    self.assume_struct_invariants,
                     goal,
                 )
                 .into_iter()

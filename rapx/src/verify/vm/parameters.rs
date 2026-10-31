@@ -11,6 +11,80 @@ use crate::verify::api_classify;
 use super::state::{AllocId, Provenance, ValueFacts, ValueSource, VmState, VmValue};
 
 impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+    pub(crate) fn materialize_constructor_result(
+        &mut self,
+        destination: Local,
+        args: &[VmValue<'z3, 'tcx>],
+        callee: rustc_hir::def_id::DefId,
+        has_invariant: bool,
+    ) {
+        let ty = self.body().local_decls[destination].ty;
+        if !has_invariant {
+            self.set_local(destination, VmValue::new(self.fresh_int("ctor_unknown"), ty));
+            return;
+        }
+        if let TyKind::Adt(adt, substs) = ty.kind()
+            && api_classify::is_std_nonnull(adt.did())
+            && self.tcx.item_name(callee).as_str() == "dangling"
+        {
+            let field_ty = mir_utils::field_ty(
+                self.tcx,
+                adt.non_enum_variant().fields.iter().next().unwrap(),
+                substs,
+            );
+            let value = VmValue {
+                z3_term: self.fresh_int("dangling_ptr"),
+                ty,
+                provenance: None,
+                facts: ValueFacts {
+                    non_null: true,
+                    dangling: true,
+                    ..Default::default()
+                },
+                source: ValueSource::None,
+            };
+            let mut field = value.clone();
+            field.ty = field_ty;
+            self.set_field_value(destination, vec![0], field);
+            self.set_local(destination, value);
+            return;
+        }
+        if let TyKind::Adt(adt, substs) = ty.kind()
+            && mir_utils::is_raw_ptr_wrapper(self.tcx, adt.did())
+            && let [pointer] = args
+            && matches!(pointer.ty.kind(), TyKind::RawPtr(..))
+        {
+            let field_ty = mir_utils::field_ty(
+                self.tcx,
+                adt.non_enum_variant().fields.iter().next().unwrap(),
+                substs,
+            );
+            let mut field = pointer.clone();
+            field.ty = field_ty;
+            self.set_field_value(destination, vec![0], field);
+            let mut value = pointer.clone();
+            value.ty = ty;
+            self.set_local(destination, value);
+            return;
+        }
+        let mut facts = ValueFacts::default();
+        if self.init_box_vec_param(destination, ty, destination.as_usize(), &mut facts)
+            || self.init_struct_param(destination, ty, destination.as_usize(), &mut facts)
+        {
+            return;
+        }
+        self.set_local(
+            destination,
+            VmValue {
+                z3_term: self.fresh_int("ctor_result"),
+                ty,
+                provenance: None,
+                facts,
+                source: ValueSource::None,
+            },
+        );
+    }
+
     pub(crate) fn init_parameters(&mut self) {
         let arg_count = self.body().arg_count;
         let local_count = self.body().local_decls.len();

@@ -308,7 +308,7 @@ pub fn get_ptr_deref_dummy_def_id(tcx: TyCtxt<'_>) -> Option<DefId> {
 /// Return field indices that a `&mut self` method writes to.
 ///
 /// Scans the MIR body for assignments to `(*self).field_n` and returns the
-/// set of field indices that are modified.  Used by --skip-invariant mode to know which
+/// set of field indices that are modified.  Used by --no-invariant-target mode to know which
 /// constructor-inherited invariants are invalidated by a mutator.
 pub fn get_mutated_fields(tcx: TyCtxt<'_>, def_id: DefId) -> Vec<usize> {
     use rustc_middle::mir::{ProjectionElem, StatementKind};

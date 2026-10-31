@@ -184,6 +184,9 @@ impl<'tcx> CallSiteIndex<'tcx> {
                 } else {
                     base_callee
                 };
+                if !crate::verify::options::should_inline_constructor(self.tcx, callee) {
+                    continue;
+                }
                 // An instantiated root can resolve Clone at this callsite.
                 // Leave the call in the path so the VM executes that exact MIR.
                 if self.bodies.contains_key(&0)
@@ -263,7 +266,8 @@ impl<'tcx> CallSiteIndex<'tcx> {
                 if crate::def_ids::intrinsic_api::is_intrinsic(self.tcx, callee)
                     || !self.tcx.is_mir_available(callee)
                     || expanded.contains(&callee)
-                    || crate::verify::call_summary::effects::has_registry_entry(Some(callee))
+                    || (crate::verify::call_summary::effects::has_registry_entry(Some(callee))
+                        && !crate::verify::options::force_inline_constructor(self.tcx, callee))
                     || crate::verify::target::has_slice_offset_ensures(self.tcx, callee)
                     || crate::def_ids::other_api::is_ub_check(self.tcx, callee)
                     || cross_crate_trait_default

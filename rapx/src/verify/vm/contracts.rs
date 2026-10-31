@@ -20,6 +20,58 @@ use crate::verify::api_classify;
 use crate::helpers::mir_utils;
 
 impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+    pub(crate) fn assert_call_result_invariants(
+        &mut self,
+        destination: Local,
+    ) {
+        if !self.assume_struct_invariants {
+            return;
+        }
+        let Some(result) = self.local_value(destination) else {
+            return;
+        };
+        if self.inline.inline_truncated_terms.contains(&result.z3_term) {
+            return;
+        }
+        let ty = result.ty;
+        let rustc_middle::ty::TyKind::Adt(adt_def, _) = ty.kind() else {
+            return;
+        };
+        let invariants = crate::verify::target::get_struct_invariants_from_annotation(
+            self.tcx,
+            adt_def.did(),
+            adt_def.did(),
+        );
+        for invariant in invariants {
+            let mut bound = invariant;
+            rebind_property_place(&mut bound, destination);
+            self.assert_contract_fact(&bound);
+        }
+    }
+
+    pub(crate) fn assert_summary_result_type_invariants(
+        &mut self,
+        callee: rustc_hir::def_id::DefId,
+        destination: Local,
+    ) {
+        let Some(result) = self.local_value(destination) else {
+            return;
+        };
+        if self.inline.inline_truncated_terms.contains(&result.z3_term) {
+            return;
+        }
+        let ty = result.ty;
+        let invariants = crate::verify::type_invariants::build_type_invariants_for_ty(
+            self.tcx,
+            callee,
+            ty,
+        );
+        for mut invariant in invariants {
+            rebind_property_place(&mut invariant, destination);
+            self.assert_contract_fact(&invariant);
+        }
+    }
+
     pub(crate) fn assert_call_postconditions(
         &mut self,
         callee: rustc_hir::def_id::DefId,

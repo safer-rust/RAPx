@@ -268,9 +268,9 @@ const CMD_VERIFY_TARGETED: &[&str] = &["verify", "--mode", "targeted"];
 const CMD_VERIFY_REPEAT_0: &[&str] = &["verify", "--mode", "targeted", "--postfix-repeat", "0"];
 const CMD_VERIFY_REPEAT_1: &[&str] = &["verify", "--mode", "targeted", "--postfix-repeat", "1"];
 const CMD_VERIFY_REPEAT_2: &[&str] = &["verify", "--mode", "targeted", "--postfix-repeat", "2"];
-const CMD_VERIFY_SKIP_INVARIANT: &[&str] = &["verify", "--skip-invariant"];
+const CMD_VERIFY_SKIP_INVARIANT: &[&str] = &["verify", "--no-invariant-target"];
 const CMD_VERIFY_TARGETED_SKIP_INVARIANT: &[&str] =
-    &["verify", "--mode", "targeted", "--skip-invariant"];
+    &["verify", "--mode", "targeted", "--no-invariant-target"];
 
 macro_rules! verify_sound {
     ($dir:literal, $func:literal) => {{

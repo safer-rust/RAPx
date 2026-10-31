@@ -130,7 +130,8 @@ Options:
       --prepare-targets            identify #[rapx::verify] functions and list their safety contracts
       --postfix-repeat <N|auto>  number of extra SCC postfix repetitions during path enumeration; `auto` enables automatic loop-depth detection (default auto)
       --mode <MODE>               verification mode: scan, targeted (default scan)
-      --skip-invariant            skip struct invariant checks and derive safety via constructor-mutator-method chains
+      --no-invariant-target       skip struct invariant checks and derive safety via constructor-mutator-method chains
+      --inline-ctor <MODE>        constructor inlining: true, false, default (default default)
       --debug-contracts          print expanded contract assertions for debug purposes
       --crate <CRATE>             filter verification targets to a specific crate (Rust crate name or Cargo package name)
       --module <MODULE_PATH>     filter verification targets to a specific module path within the crate
@@ -142,7 +143,8 @@ Verification modes:
 - `targeted` — only verify functions annotated with `#[rapx::verify]`
 
 Options:
-- `--skip-invariant` — works with both modes; skips struct invariant checks and instead derives safety requirements automatically from constructor-mutator-method chains
+- `--no-invariant-target` — works with both modes; skips struct invariant checks and instead derives safety requirements automatically from constructor-mutator-method chains
+- `--inline-ctor` — `true` inlines constructors, `false` never inlines them, and `default` inlines only when the returned struct has no source or JSON invariant
 
 **Filtering targets:** `--crate` and `--module` work in any mode and can be combined. When analyzing standard-library workspaces or sub-workspaces:
 

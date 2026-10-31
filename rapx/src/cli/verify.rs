@@ -8,6 +8,14 @@ pub enum VerifyMode {
     Targeted,
 }
 
+#[derive(Debug, Clone, Copy, Default, clap::ValueEnum)]
+pub enum InlineCtor {
+    True,
+    False,
+    #[default]
+    Default,
+}
+
 /// Postfix repeat count: `auto` (default) enables automatic loop-depth
 /// detection; a number N ≥ 0 sets a fixed repeat count.
 #[derive(Debug, Clone)]
@@ -54,8 +62,11 @@ pub struct VerifyArgs {
     pub mode: VerifyMode,
     /// Skip struct invariant checks and derive safety via constructor-mutator-method chains.
     /// Works with both `scan` and `targeted` modes.
-    #[arg(long)]
+    #[arg(long = "no-invariant-target")]
     pub skip_invariant: bool,
+    /// Constructor inlining: true always, false never, default only without a struct invariant.
+    #[arg(long, default_value = "default")]
+    pub inline_ctor: InlineCtor,
     /// Filter verification targets to only those within the specified crate
     /// (Rust crate name or Cargo package name, e.g. `std`, `core`, `my-crate`).
     /// Useful for standard-library workspaces and sub-workspaces.

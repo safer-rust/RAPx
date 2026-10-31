@@ -283,6 +283,7 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
             postfix_repeat,
             mode,
             skip_invariant,
+            inline_ctor,
             crate_name,
             module,
             debug_contracts,
@@ -290,6 +291,13 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
             trait_impl_limit,
             ..
         }) => {
+            crate::verify::options::set_inline_ctor(if *skip_invariant
+                && matches!(*inline_ctor, crate::cli::InlineCtor::Default)
+            {
+                crate::cli::InlineCtor::True
+            } else {
+                *inline_ctor
+            });
             if let Some(n) = path_limit {
                 crate::limit::set_path_limit(*n);
             }

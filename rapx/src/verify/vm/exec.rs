@@ -293,6 +293,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             && self.local_value(Local::from_usize(dest)).is_some()
         {
             self.assert_call_postconditions(callee, &args, Local::from_usize(dest));
+            self.assert_call_result_invariants(Local::from_usize(dest));
         }
         self.finish_method_call(method_call, ret.as_ref());
     }

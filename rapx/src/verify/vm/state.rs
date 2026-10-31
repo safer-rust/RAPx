@@ -686,6 +686,7 @@ pub(crate) struct VmState<'z3, 'tcx> {
     pub(crate) tcx: TyCtxt<'tcx>,
     root_def_id: DefId,
     instance_body: Option<&'tcx Body<'tcx>>,
+    pub(crate) assume_struct_invariants: bool,
     /// MIR for the active frame when it was instantiated at a callsite.
     pub(crate) frame_body: Option<&'tcx Body<'tcx>>,
 
@@ -751,6 +752,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         tcx: TyCtxt<'tcx>,
         caller_def_id: DefId,
         instance_body: Option<&'tcx Body<'tcx>>,
+        assume_struct_invariants: bool,
     ) -> Self {
         // The `UNINIT` sentinel is created once and shared by every byte array:
         // an unwritten offset reads it back, so `select != UNINIT` decides
@@ -766,6 +768,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             tcx,
             root_def_id: caller_def_id,
             instance_body,
+            assume_struct_invariants,
             frame_body: instance_body,
             current_frame: FrameState {
                 current_def_id: caller_def_id,

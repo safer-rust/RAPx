@@ -31,6 +31,14 @@
       ]
     },
     {
+      "tag": "Init",
+      "args": [
+        "$self.buf.inner.ptr",
+        "$elem",
+        "$self.len"
+      ]
+    },
+    {
       "tag": "ValidNum",
       "args": [
         "0 <= $self.len"
@@ -69,6 +77,14 @@
       "args": [
         "$self.vec.len <= $self.vec.buf.inner.cap.0"
       ]
+    },
+    {
+      "tag": "ValidString",
+      "args": [
+        "$self.vec.buf.inner.ptr",
+        "u8",
+        "$self.vec.len"
+      ]
     }
   ],
   "alloc::boxed::Box": [
@@ -84,6 +100,12 @@
         "$self.0.pointer",
         "$elem",
         "1"
+      ]
+    },
+    {
+      "tag": "Owning",
+      "args": [
+        "$self.0.pointer"
       ]
     }
   ],

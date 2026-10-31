@@ -43,7 +43,15 @@ pub(crate) fn execute_goal<'z3, 'tcx>(
     tcx: TyCtxt<'tcx>,
     caller_def_id: DefId,
     instance_body: Option<&'tcx Body<'tcx>>,
+    assume_struct_invariants: bool,
     goal: ProofGoal<'tcx>,
 ) -> Vec<VmState<'z3, 'tcx>> {
-    VmState::new(z3_ctx, tcx, caller_def_id, instance_body).execute_items(&goal.items)
+    VmState::new(
+        z3_ctx,
+        tcx,
+        caller_def_id,
+        instance_body,
+        assume_struct_invariants,
+    )
+    .execute_items(&goal.items)
 }

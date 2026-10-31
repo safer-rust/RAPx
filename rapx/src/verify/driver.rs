@@ -84,6 +84,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
         tcx: TyCtxt<'tcx>,
         target: &'target FunctionTarget<'tcx>,
         allow_repeat: usize,
+        assume_struct_invariants: bool,
     ) -> Self {
         let checkpoints: Vec<_> = target.all_checkpoints().cloned().collect();
         let locations = checkpoints
@@ -100,7 +101,13 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
             target,
             path_tree,
             checkpoints,
-            engine: VerifyEngine::new(tcx, target.def_id, target.body, callee_bodies),
+            engine: VerifyEngine::new(
+                tcx,
+                target.def_id,
+                target.body,
+                callee_bodies,
+                assume_struct_invariants,
+            ),
         }
     }
 
@@ -575,7 +582,7 @@ impl<'tcx> VerifyRun<'tcx> {
         }
     }
 
-    /// With `--skip-invariant`, generate verification sequences for each read method
+    /// With `--no-invariant-target`, generate verification sequences for each read method
     /// that chain through constructors and mutators.
     ///
     /// Produces sequences like:
@@ -666,7 +673,8 @@ impl<'tcx> VerifyRun<'tcx> {
         all_results: &mut Vec<PropertyCheckResult<'tcx>>,
     ) -> Option<String> {
         for &repeat in repeat_rounds {
-            let driver = VerifyDriver::new_with_repeat(self.tcx, target, repeat);
+            let driver =
+                VerifyDriver::new_with_repeat(self.tcx, target, repeat, !self.skip_invariant);
             match mir_utils::catch_panic(|| driver.verify_function()) {
                 Ok(report) => {
                     rap_debug!("{}", report.describe());
@@ -768,7 +776,12 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
             );
 
             if !target.struct_invariants.is_empty() && !self.skip_invariant {
-                let driver = VerifyDriver::new_with_repeat(self.tcx, target, planned_repeat);
+                let driver = VerifyDriver::new_with_repeat(
+                    self.tcx,
+                    target,
+                    planned_repeat,
+                    !self.skip_invariant,
+                );
                 match mir_utils::catch_panic(|| driver.verify_struct_invariants()) {
                     Ok(struct_report) => {
                         rap_debug!("{}", struct_report.describe());
@@ -795,7 +808,12 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
             }
 
             if !target.type_invariants.is_empty() && !self.skip_invariant {
-                let driver = VerifyDriver::new_with_repeat(self.tcx, target, planned_repeat);
+                let driver = VerifyDriver::new_with_repeat(
+                    self.tcx,
+                    target,
+                    planned_repeat,
+                    !self.skip_invariant,
+                );
                 match mir_utils::catch_panic(|| driver.verify_type_invariants()) {
                     Ok(type_report) => {
                         rap_debug!("{}", type_report.describe());
@@ -872,7 +890,7 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                 continue;
             }
 
-            // When --skip-invariant is set, skip standalone emission for methods that
+            // When --no-invariant-target is set, skip standalone emission for methods that
             // have constructors — sequences will generate dedicated entries.
             if self.skip_invariant && !get_cons(self.tcx, def_id).is_empty() {
                 continue;
@@ -953,7 +971,12 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                     let mut results = Vec::new();
                     let mut crashed = None;
                     for repeat in repeats {
-                        let driver = VerifyDriver::new_with_repeat(self.tcx, &target, repeat);
+                        let driver = VerifyDriver::new_with_repeat(
+                            self.tcx,
+                            &target,
+                            repeat,
+                            !self.skip_invariant,
+                        );
                         match mir_utils::catch_panic(|| {
                             driver.verify_postconditions(&postconditions)
                         }) {

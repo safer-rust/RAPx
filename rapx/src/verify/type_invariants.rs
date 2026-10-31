@@ -53,12 +53,33 @@ pub(crate) fn build_type_invariants_from_params<'tcx>(
         );
     }
 
-    if !output.is_unit() && !output.is_primitive() {
-        let (type_path, elem_ty) = type_path_key(tcx, output);
-        collect_type_invariants(tcx, def_id, db, &type_path, "return", elem_ty, &mut results);
-    }
+    results.extend(build_type_invariants_for_ty(tcx, def_id, output));
 
     results
+}
+
+pub(crate) fn build_type_invariants_for_ty<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def_id: DefId,
+    ty: Ty<'tcx>,
+) -> Vec<Property<'tcx>> {
+    if ty.is_unit() || ty.is_primitive() {
+        return Vec::new();
+    }
+    let db = crate::verify::contract::json::get_std_type_invariants();
+    let (type_path, elem_ty) = type_path_key(tcx, ty);
+    let mut results = Vec::new();
+    collect_type_invariants(tcx, def_id, db, &type_path, "return", elem_ty, &mut results);
+    results
+}
+
+pub(crate) fn has_type_invariants_for_ty<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> bool {
+    let db = crate::verify::contract::json::get_std_type_invariants();
+    let (key, _) = type_path_key(tcx, ty);
+    db.contains_key(&key)
+        || ["alloc::", "std::"]
+            .iter()
+            .any(|prefix| db.contains_key(&format!("{prefix}{key}")))
 }
 
 /// Look up the type path in the DB and add instantiated invariants to `results`.

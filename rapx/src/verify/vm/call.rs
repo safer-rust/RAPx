@@ -172,6 +172,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         destination: Local,
         caller_def_id: DefId,
     ) {
+        let prior_result = self.local_value(destination).map(|value| value.z3_term.clone());
         let arg_values: Vec<VmValue<'z3, 'tcx>> = args
             .iter()
             .map(|arg| self.value_of_operand(&arg.node))
@@ -230,6 +231,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
         // Registry summary, else the transparent-deref / unknown fallback.
         let summary = if callee.is_some_and(|id| {
+            crate::verify::options::force_inline_constructor(self.tcx, id)
+                && self.tcx.is_mir_available(id)
+        }) {
+            None
+        } else if callee.is_some_and(|id| {
             crate::verify::target::has_slice_offset_ensures(self.tcx, id)
         }) {
             Some(Vec::new())
@@ -250,6 +256,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             )
             .or_else(|| call_summary::effects::effect_summary(self.tcx, func))
         };
+        let ctor_summarized = summary.is_none()
+            && callee.is_some_and(|id| {
+                !crate::verify::options::should_inline_constructor(self.tcx, id)
+            });
+        let summary_used = summary.as_ref().is_some_and(|effects| !effects.is_empty())
+            || ctor_summarized;
 
         if let Some(effects) = summary {
             for effect in &effects {
@@ -262,6 +274,16 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     func,
                 );
             }
+        } else if ctor_summarized {
+            let callee = callee.unwrap();
+            let has_invariant =
+                crate::verify::options::constructor_has_invariant(self.tcx, callee);
+            self.materialize_constructor_result(
+                destination,
+                &arg_values,
+                callee,
+                has_invariant,
+            );
         } else if let Some(c) = callee
             && self.tcx.is_mir_available(c)
         {
@@ -304,6 +326,14 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
         if let Some(callee) = callee {
             self.assert_call_postconditions(callee, &caller_arg_locals, destination);
+            if self.local_value(destination).is_some_and(|value| {
+                prior_result.as_ref() != Some(&value.z3_term)
+            }) {
+                self.assert_call_result_invariants(destination);
+                if summary_used {
+                    self.assert_summary_result_type_invariants(callee, destination);
+                }
+            }
         }
         let result = self.local_value(destination).cloned();
         self.finish_method_call(method_call.clone(), result.as_ref());
@@ -311,6 +341,14 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         for state in &mut alternatives {
             if let Some(callee) = callee {
                 state.assert_call_postconditions(callee, &caller_arg_locals, destination);
+                if state.local_value(destination).is_some_and(|value| {
+                    prior_result.as_ref() != Some(&value.z3_term)
+                }) {
+                    state.assert_call_result_invariants(destination);
+                    if summary_used {
+                        state.assert_summary_result_type_invariants(callee, destination);
+                    }
+                }
             }
             let result = state.local_value(destination).cloned();
             state.finish_method_call(method_call.clone(), result.as_ref());
