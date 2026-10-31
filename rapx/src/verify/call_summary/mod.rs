@@ -85,9 +85,8 @@ pub(crate) enum CallEffect {
     /// `0` and non-zero to non-zero).
     ReturnNonZeroIff { arg: usize },
     ReturnLeadingZeros { arg: usize },
-    /// The length is carried by the argument itself (a Box fat pointer).
-    /// Used for `into_vec` / `box_assume_init_into_vec_unsafe`.
-    ReturnNewAllocationFromBox,
+    /// The slice-to-Vec conversion creates a new allocation with the source length.
+    ReturnVecFromSlice,
     /// The return value is a non-zero power of two (models `Layout::align`).
     ReturnPowerOfTwo,
     /// The call is `Try::branch`: `Option<T>` -> `ControlFlow<Option<!>, T>`,

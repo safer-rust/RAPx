@@ -394,16 +394,6 @@ pub fn is_vec_push_or_reserve(callee: Option<DefId>) -> bool {
         ],
     )
 }
-pub fn is_vec_from_box(callee: Option<DefId>) -> bool {
-    other_api::matches_any(
-        callee,
-        &[
-            other_api::slice_into_vec(),
-            #[cfg(rapx_ge_99)]
-            other_api::box_assume_init_into_vec_unsafe(),
-        ],
-    )
-}
 // ── Alias-hazard classification ───────────────────────────────────
 // These are the single home for "what does this raw-pointer API do" used by the
 // alias/hazard scanner. `is_ownership_transfer` is the raw-pointer subset of

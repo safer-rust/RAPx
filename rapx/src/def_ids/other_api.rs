@@ -894,10 +894,6 @@ known_items! {
         "std::rc::Rc::<T, A>::as_ptr",
         "alloc::rc::Rc::<T, A>::as_ptr"
     ],
-    slice_into_vec: &[
-        "std::slice::<impl [T]>::into_vec",
-        "alloc::slice::<impl [T]>::into_vec"
-    ],
     #[cfg(rapx_ge_99)]
     box_assume_init_into_vec_unsafe: &[
         "std::boxed::box_assume_init_into_vec_unsafe",

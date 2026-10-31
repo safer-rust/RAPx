@@ -886,11 +886,27 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
     /// Bind a whole value to a MIR local (store it at `path == []` in the
     /// allocation backing the local, allocating that stack slot on demand).
-    pub(crate) fn set_local(&mut self, local: Local, value: VmValue<'z3, 'tcx>) {
+    pub(crate) fn set_local(&mut self, local: Local, mut value: VmValue<'z3, 'tcx>) {
         self.ensure_local_allocation(local);
         let alloc_id = self.current_frame.local_alloc[&local];
         self.possible_uninit_allocs.remove(&alloc_id);
         let view_ty = self.body().local_decls[local].ty;
+        if matches!(view_ty.kind(), TyKind::Adt(def, _)
+            if crate::verify::api_classify::is_std_vec(def.did()))
+            && value.provenance.as_ref().is_none_or(|prov| {
+                let source = self.alloc(prov.alloc_id);
+                matches!(source.kind, AllocKind::Object)
+                    && matches!(source.element_ty.as_ty(), Some(ty)
+                        if matches!(ty.kind(), TyKind::Adt(source_def, _)
+                            if crate::verify::api_classify::is_std_vec(source_def.did())))
+            })
+        {
+            value.provenance = Some(Provenance {
+                alloc_id,
+                offset: Int::from_u64(self.z3_ctx, 0),
+                offset_kind: None,
+            });
+        }
         if matches!(view_ty.kind(), TyKind::Adt(def, _)
             if crate::verify::api_classify::is_maybe_uninit_type(def.did()))
         {

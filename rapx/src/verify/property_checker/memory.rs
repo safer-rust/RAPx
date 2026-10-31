@@ -893,6 +893,17 @@ impl PropertyChecker {
         let is_raw_ptr = matches!(value.ty.kind(), TyKind::RawPtr(..))
             || matches!(value.ty.kind(), TyKind::Adt(adt_def, _)
                 if mir_utils::is_raw_ptr_wrapper(vm_state.tcx, adt_def.did()));
+        let check_region = property.args().get(1).and_then(|arg| match arg {
+            PropertyArg::Region(region) => Some(*region),
+            PropertyArg::Ident(name) if is_static_lifetime_ident(name) => {
+                Some(vm_state.tcx.lifetimes.re_static)
+            }
+            PropertyArg::Ident(_) => crate::verify::vm::region::fn_return_region(
+                vm_state.tcx,
+                checkpoint.caller,
+            ),
+            _ => None,
+        });
 
         if is_raw_ptr {
             let mut root_id = id;
@@ -902,6 +913,18 @@ impl PropertyChecker {
             if vm_state.alloc(root_id).facts.locally_allocated
                 && !vm_state.alloc(root_id).facts.dead
             {
+                if check_region == Some(vm_state.tcx.lifetimes.re_static) {
+                    let owned_here = vm_state.current_frame.local_alloc.iter().any(|(local, &id)| {
+                        !vm_state.alloc(id).facts.dead
+                            && vm_state.container_data_alloc(id, vm_state.body().local_decls[*local].ty)
+                                == Some(root_id)
+                    });
+                    return if owned_here {
+                        CheckResult::Failed
+                    } else {
+                        CheckResult::Unknown(UnknownReason::Unimplemented)
+                    };
+                }
                 if value.facts.non_null
                     && value.provenance.as_ref().is_some_and(|p| p.offset.as_u64() == Some(0))
                     && value.z3_term == vm_state.alloc(root_id).base
@@ -918,27 +941,6 @@ impl PropertyChecker {
             }
             if !vm_state.alloc(root_id).facts.dead
                 && let Some(src_region) = &vm_state.alloc(root_id).facts.liveness {
-                    // The `Alive(p, 'r)` check demands the memory alive for
-                    // `'r`, while the assumption only guarantees `'a`; the
-                    // assumption covers the demand only when `'a: 'r`.
-                    //
-                    // A struct invariant / function `requires` binds its
-                    // region at parse time (`PropertyArg::Region`); a callee
-                    // contract carries either `'static` (concrete) or the
-                    // callee's *generic* return lifetime (`Ident`), which is
-                    // instantiated from the caller's return reference region.
-                    let check_region = property.args().get(1).and_then(|a| match a {
-                        PropertyArg::Region(r) => Some(*r),
-                        PropertyArg::Ident(name) if is_static_lifetime_ident(name) =>
-                        {
-                            Some(vm_state.tcx.lifetimes.re_static)
-                        }
-                        PropertyArg::Ident(_) => crate::verify::vm::region::fn_return_region(
-                            vm_state.tcx,
-                            checkpoint.caller,
-                        ),
-                        _ => None,
-                    });
                     if let Some(r) = check_region {
                         let outlives = crate::verify::vm::region::region_outlives(
                             vm_state.tcx,

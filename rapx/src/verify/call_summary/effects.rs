@@ -78,8 +78,7 @@ static REGISTRY: &[Entry] = &[
     ED!(nomir_api::is_global_alloc_zeroed_shim, eff_nullable_zeroed_allocation),
     ED!(nomir_api::is_alloc_shim_marker, eff_no_effect),
     ED!(nomir_ffi::is_cstr_runtime_strlen, eff_opaque_return),
-    ED!(api_classify::is_vec_from_box, eff_vec_from_box),
-    ED!(nomir_api::is_slice_to_vec, eff_vec_from_box),
+    ED!(nomir_api::is_slice_to_vec, eff_vec_from_slice),
     ED!(api_classify::is_vec_push_or_reserve, eff_write_mem),
     // ── MIR available — precise symbolic summary ────────────────────
     ED!(api_classify::is_manually_drop_drop, eff_drop_memory),
@@ -318,8 +317,8 @@ fn eff_no_effect(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     Vec::new()
 }
 
-fn eff_vec_from_box(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![CallEffect::ReturnNewAllocationFromBox]
+fn eff_vec_from_slice(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnVecFromSlice]
 }
 
 fn eff_layout_align(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {

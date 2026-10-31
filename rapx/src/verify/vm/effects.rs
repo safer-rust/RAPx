@@ -773,7 +773,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     );
                 }
             }
-            CallEffect::ReturnNewAllocationFromBox => {
+            CallEffect::ReturnVecFromSlice => {
                 self.ensure_local_allocation(dest);
                 let dest_ty = self.body().local_decls[dest].ty;
                 let elem_ty = crate::verify::call_summary::effects::vec_elem_ty(dest_ty);
