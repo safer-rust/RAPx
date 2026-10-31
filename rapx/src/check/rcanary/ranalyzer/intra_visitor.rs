@@ -15,6 +15,7 @@ use std::ops::Add;
 use z3::ast::{self, Ast};
 
 use super::super::{IcxMut, IcxSliceMut, Rcx, RcxMut};
+use super::super::{SOLVER_TIMEOUT_MS, capture, report::AnalysisReport};
 use super::is_z3_goal_verbose;
 use super::ownership::IntraVar;
 use super::{FlowAnalysis, IcxSliceFroBlock, IntraFlowAnalysis};
@@ -42,7 +43,7 @@ pub enum AsgnKind {
 }
 
 impl<'tcx, 'a> FlowAnalysis<'tcx, 'a> {
-    pub fn intra_run(&mut self) {
+    pub(crate) fn intra_run(&mut self, mut report: Option<&mut AnalysisReport>) {
         let tcx = self.tcx();
         let mir_keys = tcx.mir_keys(());
 
@@ -50,21 +51,60 @@ impl<'tcx, 'a> FlowAnalysis<'tcx, 'a> {
             let def_id = each_mir.to_def_id();
             let body = tcx.instance_mir(Item(def_id));
             if graph::is_cyclic(&body.basic_blocks) {
+                if let Some(report) = report.as_deref_mut() {
+                    report.skipped_functions += 1;
+                    report
+                        .limitations
+                        .push(format!("{}: cyclic_cfg_skipped", tcx.def_path_str(def_id)));
+                }
                 continue;
             }
             if format!("{:?}", def_id).contains("syscall_dispatch") {
+                if let Some(report) = report.as_deref_mut() {
+                    report.skipped_functions += 1;
+                    report.limitations.push(format!(
+                        "{}: syscall_dispatch_skipped",
+                        tcx.def_path_str(def_id)
+                    ));
+                }
                 continue;
             }
 
             let mut cfg = z3::Config::new();
             cfg.set_model_generation(true);
-            cfg.set_timeout_msec(1000);
+            cfg.set_timeout_msec(SOLVER_TIMEOUT_MS);
             let z3_ctx = z3::Context::new(&cfg);
             let goal = z3::Goal::new(&z3_ctx, true, false, false);
             let solver = z3::Solver::new(&z3_ctx);
 
-            let mut intra_visitor = IntraFlowAnalysis::new(self.rcx, def_id);
+            let mut intra_visitor = IntraFlowAnalysis::new(self.rcx, def_id, report.is_some());
             intra_visitor.visit_body(&z3_ctx, &goal, &solver, body);
+            if let Some(report) = report.as_deref_mut() {
+                let captured = intra_visitor
+                    .capture
+                    .take()
+                    .expect("rCanary capture was enabled");
+                let function = tcx.def_path_str(def_id);
+                report.analyzed_functions += 1;
+                report.checked_returns += captured.checked_returns;
+                if captured.checked_returns == 0 {
+                    report
+                        .limitations
+                        .push(format!("{function}: no_return_checked"));
+                }
+                report.limitations.extend(
+                    captured
+                        .limitations
+                        .into_iter()
+                        .map(|reason| format!("{function}: {reason}")),
+                );
+                if !captured.findings.is_empty() {
+                    report
+                        .functions
+                        .insert(function, capture::function_context(tcx, body));
+                    report.findings.extend(captured.findings);
+                }
+            }
         }
     }
 }
@@ -184,6 +224,11 @@ impl<'tcx, 'z3, 'a> IntraFlowAnalysis<'tcx, 'z3, 'a> {
                         continue;
                     }
                     if var.is_unsupported() {
+                        if let Some(captured) = &mut self.capture {
+                            captured
+                                .limitations
+                                .insert(format!("unsupported_merge_local _{var_idx} at BB{bidx}"));
+                        }
                         unsupported = true;
                         ans_icx_slice.len_mut()[var_idx] = 0;
                         ans_icx_slice.var_mut()[var_idx] = IntraVar::Unsupported;
@@ -203,6 +248,11 @@ impl<'tcx, 'z3, 'a> IntraFlowAnalysis<'tcx, 'z3, 'a> {
                     }
 
                     if ty != item.ty()[var_idx] {
+                        if let Some(captured) = &mut self.capture {
+                            captured
+                                .limitations
+                                .insert(format!("incompatible_merge_local _{var_idx} at BB{bidx}"));
+                        }
                         unsupported = true;
                         ans_icx_slice.len_mut()[var_idx] = 0;
                         ans_icx_slice.var_mut()[var_idx] = IntraVar::Unsupported;
@@ -2103,7 +2153,7 @@ impl<'tcx, 'z3, 'a> IntraFlowAnalysis<'tcx, 'z3, 'a> {
         // we will take the heap of the args if the arg is a pointer
         let recovery_flag = self.check_fn_recovery(args, dest);
         if source_flag {
-            self.add_taint(term);
+            self.add_taint(bidx, term);
         }
 
         for arg in args {
@@ -2489,6 +2539,18 @@ impl<'tcx, 'z3, 'a> IntraFlowAnalysis<'tcx, 'z3, 'a> {
         let result = solver.check();
         let model = solver.get_model();
 
+        if let Some(captured) = &mut self.capture {
+            captured.checked_returns += 1;
+            if result == z3::SatResult::Unknown {
+                captured.limitations.insert(format!(
+                    "solver_unknown at BB{bidx}: {}",
+                    solver
+                        .get_reason_unknown()
+                        .unwrap_or_else(|| "reason unavailable".into())
+                ));
+            }
+        }
+
         if is_z3_goal_verbose() {
             let g = format!("{}", goal);
             rap_trace!("{}\n", g);
@@ -2503,6 +2565,18 @@ impl<'tcx, 'z3, 'a> IntraFlowAnalysis<'tcx, 'z3, 'a> {
         // rap_debug!("{}\n", g.color(Color::LightGray).bold());
 
         if result == z3::SatResult::Unsat && self.taint_flag {
+            if self.capture.is_some() {
+                let finding = capture::finding(
+                    self.tcx(),
+                    self.body,
+                    self.def_id,
+                    bidx,
+                    &self.taint_source,
+                    self.icx_slice(),
+                    solver,
+                );
+                self.capture.as_mut().unwrap().findings.push(finding);
+            }
             let fn_name = get_name(self.tcx(), self.def_id)
                 .unwrap_or_else(|| Symbol::intern("no symbol available"));
 
@@ -2514,7 +2588,7 @@ impl<'tcx, 'z3, 'a> IntraFlowAnalysis<'tcx, 'z3, 'a> {
                 .origin(&file)
                 .fold(false);
 
-            for source in self.taint_source.iter() {
+            for (_, source) in self.taint_source.iter() {
                 if are_spans_in_same_file(self.body.span, source.source_info.span) {
                     snippet = snippet.annotation(
                         Level::Warning
@@ -2654,6 +2728,11 @@ impl<'tcx, 'z3, 'a> IntraFlowAnalysis<'tcx, 'z3, 'a> {
     }
 
     pub(crate) fn handle_intra_var_unsupported(&mut self, idx: usize) {
+        if let Some(captured) = &mut self.capture {
+            captured
+                .limitations
+                .insert(format!("unsupported_local _{idx}"));
+        }
         match self.icx_slice_mut().var_mut()[idx] {
             IntraVar::Unsupported => (),
             IntraVar::Declared | IntraVar::Init(_) => {

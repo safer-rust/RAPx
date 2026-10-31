@@ -1,4 +1,7 @@
+mod capture;
+pub mod output;
 pub mod ranalyzer;
+pub mod report;
 
 use crate::analysis::{
     Analysis,
@@ -8,7 +11,11 @@ use crate::analysis::{
 };
 use ranalyzer::{FlowAnalysis, IcxSliceFroBlock, IntraFlowContext, MirGraph};
 use rustc_middle::ty::TyCtxt;
-use std::collections::HashMap;
+use std::{collections::HashMap, env, process::Command};
+
+use report::{AnalysisReport, RCanaryProfile, RunStatus};
+
+pub(crate) const SOLVER_TIMEOUT_MS: u64 = 1000;
 
 #[allow(non_camel_case_types)]
 #[derive(Clone)]
@@ -27,14 +34,67 @@ impl<'tcx> rCanary<'tcx> {
         }
     }
 
-    pub fn start(&mut self) {
+    pub fn start(&mut self, exporting: bool) {
+        let output = if exporting {
+            let rustc_args: Vec<_> = env::args().collect();
+            let unit = crate::check::driver::unit_name(&rustc_args)
+                .unwrap_or_else(|err| panic!("Cannot identify rCanary compilation unit: {err}"));
+            let Some(directory) = output::create_unit_directory(&unit)
+                .unwrap_or_else(|err| panic!("Cannot create rCanary unit directory: {err}"))
+            else {
+                return;
+            };
+            Some((unit, directory))
+        } else {
+            None
+        };
+        let mut report = exporting.then(AnalysisReport::default);
         let mut heap = HeapOwnershipAnalyzer::new(self.tcx);
         heap.run();
         let adt_owner = heap.get_all_items();
         let rcx_boxed = Box::new(rCanary::new(self.tcx, adt_owner));
         // Leak to create a 'static reference needed for FlowAnalysis lifetime.
         let rcx = Box::leak(rcx_boxed);
-        FlowAnalysis::new(rcx).start();
+        FlowAnalysis::new(rcx).start(report.as_mut());
+        if let Some((unit, directory)) = output {
+            let mut report = report.expect("rCanary report collection was enabled");
+            let status = if report.analyzed_functions == 0 {
+                report.limitations.push("no_functions_analyzed".into());
+                RunStatus::Skipped
+            } else if report.limitations.is_empty() {
+                RunStatus::Completed
+            } else {
+                RunStatus::Partial
+            };
+            let finding_count = report.findings.len();
+            let profile = RCanaryProfile {
+                unit,
+                rapx_version: env!("CARGO_PKG_VERSION").into(),
+                rustc_version: Command::new("rustc")
+                    .arg("--version")
+                    .output()
+                    .ok()
+                    .filter(|out| out.status.success())
+                    .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_owned()),
+                working_directory: env::current_dir()
+                    .expect("Current working directory invalid.")
+                    .to_string_lossy()
+                    .into_owned(),
+                status,
+                analyzed_functions: report.analyzed_functions,
+                skipped_functions: report.skipped_functions,
+                checked_returns: report.checked_returns,
+                finding_count,
+                solver_timeout_ms: SOLVER_TIMEOUT_MS,
+                limitations: std::mem::take(&mut report.limitations),
+            };
+            output::write_reports(&directory, profile, report)
+                .unwrap_or_else(|err| panic!("Failed to export rCanary context: {err}"));
+            rap_info!(
+                "rCanary profile: {} ({finding_count} findings)",
+                directory.join("profile.json").display()
+            );
+        }
     }
 
     pub fn tcx(&self) -> TyCtxt<'tcx> {

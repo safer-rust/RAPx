@@ -163,23 +163,28 @@ impl Callbacks for RapCallback {
 /// Start the analysis with the features enabled.
 pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
     match &callback.args.command {
-        Commands::Check(CheckArgs { uaf, mleak, f_ai }) => {
+        Commands::Check(CheckArgs {
+            uaf,
+            mleak,
+            f_ai,
+            m_ai,
+        }) => {
             if uaf.is_some() || *f_ai {
                 SafeDrop::new(tcx).start(*f_ai);
             }
-            if *mleak {
+            if *mleak || *m_ai {
                 let mut heap = HeapOwnershipAnalyzer::new(tcx);
                 heap.run();
                 let adt_owner = heap.get_all_items();
-                rCanary::new(tcx, adt_owner).start();
+                rCanary::new(tcx, adt_owner).start(*m_ai);
             }
         }
 
         Commands::Opt => {
-            Opt::new(tcx, 1).start();
+            Opt::new(tcx, 1).start(false);
         }
-        Commands::OptAi(_) => {
-            crate::utils::log::rap_error_and_exit("opt-ai must be run via cargo rapx opt-ai");
+        Commands::OptAi => {
+            Opt::new(tcx, 1).start(true);
         }
 
         Commands::Analyze { kind } => match kind {
