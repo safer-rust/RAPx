@@ -87,8 +87,6 @@ pub(crate) enum CallEffect {
     ReturnLeadingZeros { arg: usize },
     /// The slice-to-Vec conversion creates a new allocation with the source length.
     ReturnVecFromSlice,
-    /// The return value is a non-zero power of two (models `Layout::align`).
-    ReturnPowerOfTwo,
     /// The call is `Try::branch`: `Option<T>` -> `ControlFlow<Option<!>, T>`,
     /// so the result's `Continue` payload (field 0) equals the input's `Some`
     /// payload (field 0).  Models the `?` operator's `if let Some(..) = expr?`

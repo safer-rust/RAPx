@@ -564,9 +564,6 @@ pub fn is_std_ordering(def_id: DefId) -> bool {
 pub fn is_integer_wrapping_sub_method(callee: Option<DefId>) -> bool {
     any_def(callee, other_api::integer_wrapping_sub_fns())
 }
-pub fn is_layout_align(callee: Option<DefId>) -> bool {
-    any_def(callee, other_api::layout_align_fns())
-}
 pub fn is_split_at(callee: Option<DefId>) -> bool {
     any_def(callee, other_api::split_at_fns())
 }

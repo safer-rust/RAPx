@@ -868,21 +868,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     }
                 }
             }
-            CallEffect::ReturnPowerOfTwo => {
-                // `Layout::align()` returns the layout's alignment, which is a
-                // non-zero power of two. `Layout::align` inlines to
-                // `self.align.as_usize()`, whose transmute-based body drops the
-                // `NonZero` provenance; re-establish the non-zero fact (and the
-                // power-of-two fact) with a fresh symbol so downstream
-                // `from_size_align_unchecked` can discharge `align != 0` (its
-                // `(align & (align - 1)) == 0` check is otherwise vacuously
-                // proved, since contract-level `BitAnd` is unsupported).
-                let dest_ty = self.body().local_decls[dest].ty;
-                let term = self.fresh_int(&format!("layout_align_{}", dest.as_usize()));
-                let zero = Int::from_u64(self.z3_ctx, 0);
-                self.constraints.assertions.push(term.gt(&zero));
-                self.set_local(dest, VmValue::new(term, dest_ty));
-            }
             CallEffect::ReturnSliceRangeIndex => {
                 self.apply_slice_range_index_effect(args, caller_arg_locals, dest)
             }

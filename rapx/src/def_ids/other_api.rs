@@ -88,7 +88,6 @@ struct Methods {
     from_raw_parts_mut_fns: Vec<DefId>,
     integer_wrapping_sub_fns: Vec<DefId>,
     vec_ownership_transfer_fns: Vec<DefId>,
-    layout_align: Vec<DefId>,
     split_at: Vec<DefId>,
     slice_get_unchecked: Vec<DefId>,
     slice_get: Vec<DefId>,
@@ -113,7 +112,6 @@ fn init_methods(tcx: TyCtxt) -> Methods {
         from_raw_parts_mut_fns: Vec::new(),
         integer_wrapping_sub_fns: Vec::new(),
         vec_ownership_transfer_fns: Vec::new(),
-        layout_align: Vec::new(),
         split_at: Vec::new(),
         slice_get_unchecked: Vec::new(),
         slice_get: Vec::new(),
@@ -177,9 +175,6 @@ fn init_methods(tcx: TyCtxt) -> Methods {
                 methods.vec_ownership_transfer_fns.push(did);
             }
 
-            if name.ends_with("Layout::align") {
-                methods.layout_align.push(did);
-            }
             if name.contains("::split_at") {
                 methods.split_at.push(did);
             }
@@ -335,7 +330,6 @@ method_fns! {
 }
 
 method_fns! {
-    layout_align_fns => layout_align,
     split_at_fns => split_at,
     slice_get_fns => slice_get,
     range_next_fns => range_next,

@@ -85,7 +85,6 @@ static REGISTRY: &[Entry] = &[
     ED!(api_classify::is_std_drop, eff_drop_memory),
     ED!(api_classify::is_drop_in_place, eff_drop_memory),
     ED!(api_classify::is_align_offset, eff_align_offset),
-    ED!(api_classify::is_layout_align, eff_layout_align),
     // ── MIR available — summarized instead of inlined ───────────────
     ED!(api_classify::is_maybe_uninit_uninit, eff_uninit_wrapper),
     ED!(api_classify::is_maybe_uninit_assume_init, eff_return_arg_value),
@@ -319,10 +318,6 @@ fn eff_no_effect(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 
 fn eff_vec_from_slice(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     vec![CallEffect::ReturnVecFromSlice]
-}
-
-fn eff_layout_align(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![CallEffect::ReturnPowerOfTwo]
 }
 
 fn eff_layout_const(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
