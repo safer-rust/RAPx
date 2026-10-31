@@ -897,12 +897,14 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     let heap_align = elem_ty
                         .map(|ty| self.align_sym(ty))
                         .unwrap_or_else(|| Int::from_u64(self.z3_ctx, 1));
-                    let (alloc_id, base) = self.allocate_slice(
+                    let (alloc_id, _) = self.allocate_slice(
                         size_val.z3_term.clone(),
                         elem_sz_term.clone(),
                         heap_align,
                         elem_ty,
                     );
+                    let base = ptr_val.z3_term.clone();
+                    self.alloc_mut(alloc_id).base = base.clone();
                     let prov = Provenance {
                         alloc_id,
                         offset: Int::from_u64(self.z3_ctx, 0),

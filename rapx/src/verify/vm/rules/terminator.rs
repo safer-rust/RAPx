@@ -15,7 +15,10 @@ pub(crate) fn exec_switch_int<'z3, 'tcx>(
     let discr_val = state.value_of_operand(discr);
     if !state.unsupported_mir
         && !state.incomplete_inline_branch
-        && matches!(discr_val.source, ValueSource::CallsiteConst)
+        && matches!(
+            discr_val.source,
+            ValueSource::CallsiteConst | ValueSource::KnownDiscriminant(_)
+        )
         && let Some(value) = discr_val.z3_term.simplify().as_u64()
         && let Some(chosen) = switch_succ
     {

@@ -388,7 +388,10 @@ pub(crate) fn eval_cast<'z3, 'tcx>(
         && mir_utils::is_std_crate_def_id(state.tcx, state.current_frame.current_def_id)
         && src_val.provenance.is_none()
         && (matches!(src_ty.kind(), TyKind::Int(_) | TyKind::Uint(_))
-            || matches!(src_val.source, ValueSource::Discriminant(_)))
+            || matches!(
+                src_val.source,
+                ValueSource::Discriminant(_) | ValueSource::KnownDiscriminant(_)
+            ))
         && (matches!(cast_ty.kind(), TyKind::RawPtr(..))
             || matches!(cast_ty.kind(), TyKind::Adt(adt, _) if api_classify::is_std_nonnull(adt.did())));
     // A raw-pointer cast to a *different* ADT pointee reinterprets the
@@ -687,7 +690,7 @@ pub(crate) fn eval_aggregate<'z3, 'tcx>(
         rustc_middle::mir::AggregateKind::Adt(did, variant_idx, ..)
             if state.tcx.adt_def(*did).is_enum() =>
         {
-            ValueSource::Discriminant(Int::from_u64(state.z3_ctx, variant_idx.as_usize() as u64))
+            ValueSource::KnownDiscriminant(Int::from_u64(state.z3_ctx, variant_idx.as_usize() as u64))
         }
         _ => ValueSource::None,
     };
@@ -737,7 +740,11 @@ pub(crate) fn eval_discriminant<'z3, 'tcx>(
         state.constraints.assertions.push(term.ge(&zero));
         state.constraints.assertions.push(term.le(&two));
     }
-    VmValue::new(term, dest_ty)
+    let mut value = VmValue::new(term, dest_ty);
+    if place_val.is_some_and(|value| matches!(value.source, ValueSource::KnownDiscriminant(_))) {
+        value.source = ValueSource::KnownDiscriminant(value.z3_term.clone());
+    }
+    value
 }
 
 #[cfg(not(rapx_ge_99))]

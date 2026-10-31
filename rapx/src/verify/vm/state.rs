@@ -132,7 +132,7 @@ impl<'z3, 'tcx> VmValue<'z3, 'tcx> {
     /// Symbolic enum discriminant, if known.
     pub(crate) fn discriminant(&self) -> Option<&Int<'z3>> {
         match &self.source {
-            ValueSource::Discriminant(d) => Some(d),
+            ValueSource::Discriminant(d) | ValueSource::KnownDiscriminant(d) => Some(d),
             _ => None,
         }
     }
@@ -478,6 +478,8 @@ pub(crate) enum ValueSource<'z3> {
     FieldOffset,
     /// A symbolic enum discriminant (variant index).
     Discriminant(Int<'z3>),
+    /// A discriminant from a directly constructed enum variant.
+    KnownDiscriminant(Int<'z3>),
     /// A comparison result (`Eq`/`Ne`/`Le`/`Lt`/`Ge`/`Gt`): the operands and
     /// the direct boolean condition (`offset <= len`) carried alongside the
     /// ite-encoded term.
@@ -1601,7 +1603,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     provenance: None,
                     facts: ValueFacts::default(),
                     source: if let Some(v) = enum_variant {
-                        ValueSource::Discriminant(Int::from_u64(self.z3_ctx, v))
+                        ValueSource::KnownDiscriminant(Int::from_u64(self.z3_ctx, v))
                     } else if field_offset {
                         ValueSource::FieldOffset
                     } else {
