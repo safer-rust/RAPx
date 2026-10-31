@@ -868,9 +868,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     }
                 }
             }
-            CallEffect::ReturnIterLen { is_len } => {
-                self.apply_iter_len_effect(args, caller_arg_locals, dest, *is_len)
-            }
+            CallEffect::ReturnIterLen => self.apply_iter_len_effect(args, caller_arg_locals, dest),
             CallEffect::ReturnNonNullNew => {
                 let Some(ptr) = args.first() else {
                     return;

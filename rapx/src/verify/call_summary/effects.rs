@@ -43,7 +43,6 @@ static REGISTRY: &[Entry] = &[
     // Listed first so they win over the generic def-path matchers below.
     ED!(api_classify::is_branch, eff_branch),
     ED!(api_classify::is_iter_len, eff_iter_len),
-    ED!(api_classify::is_iter_is_empty, eff_iter_is_empty),
     ED!(api_classify::is_nonnull_checked_new, eff_nonnull_new),
     ED!(api_classify::is_iter_next, eff_iter_next),
     ED!(api_classify::is_range_next, eff_range_next),
@@ -328,11 +327,7 @@ fn eff_branch(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 }
 
 fn eff_iter_len(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![CallEffect::ReturnIterLen { is_len: true }]
-}
-
-fn eff_iter_is_empty(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![CallEffect::ReturnIterLen { is_len: false }]
+    vec![CallEffect::ReturnIterLen]
 }
 
 fn eff_nonnull_new(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {

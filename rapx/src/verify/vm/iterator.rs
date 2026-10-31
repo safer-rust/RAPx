@@ -381,7 +381,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         args: &[VmValue<'z3, 'tcx>],
         caller_arg_locals: &[Option<Local>],
         dest: Local,
-        is_len: bool,
     ) {
         if args.is_empty() {
             return;
@@ -393,26 +392,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return;
         };
         let dest_ty = self.body().local_decls[dest].ty;
-        if is_len {
-            let len = self
-                .iter_len_from_ptrs(&ptr, &end)
-                .expect("iter_ptr_end guarantees same-alloc provenance");
-            self.set_local(dest, VmValue::new(len, dest_ty));
-        } else {
-            let pp = ptr.provenance.as_ref().unwrap();
-            let ep = end.provenance.as_ref().unwrap();
-            let eq = pp.offset._eq(&ep.offset);
-            let zero = Int::from_u64(self.z3_ctx, 0);
-            let one = Int::from_u64(self.z3_ctx, 1);
-            let val = VmValue {
-                z3_term: eq.ite(&one, &zero),
-                ty: dest_ty,
-                provenance: None,
-                facts: ValueFacts::default(),
-                source: ValueSource::None,
-            };
-            self.set_local(dest, val);
-        }
+        let len = self
+            .iter_len_from_ptrs(&ptr, &end)
+            .expect("iter_ptr_end guarantees same-alloc provenance");
+        self.set_local(dest, VmValue::new(len, dest_ty));
     }
 
     pub(crate) fn apply_iter_next_effect(&mut self, args: &[VmValue<'z3, 'tcx>], dest: Local) {

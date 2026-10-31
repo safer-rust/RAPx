@@ -109,7 +109,7 @@ pub(crate) enum CallEffect {
     DropMemory { pointer_arg: usize },
     /// `Iter::len()` / `Iter::is_empty()` computed from the iterator's pointer
     /// fields (`ptr` + `end_or_len` sharing the same allocation).
-    ReturnIterLen { is_len: bool },
+    ReturnIterLen,
     /// `NonNull::<T>::new(ptr) -> Option<NonNull<T>>`: the safe constructor,
     /// returning `Some(ptr)` when the pointer is provably non-null and an
     /// unconstrained `Option` otherwise.

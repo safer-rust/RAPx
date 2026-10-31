@@ -590,12 +590,6 @@ pub fn is_iter_len(callee: Option<DefId>) -> bool {
     any_def(callee, other_api::iter_len_fns())
 }
 
-/// Whether `callee` is a slice iterator's `is_empty`
-/// (`Iter::is_empty` / `IterMut::is_empty`).
-pub fn is_iter_is_empty(callee: Option<DefId>) -> bool {
-    any_def(callee, other_api::iter_is_empty_fns())
-}
-
 /// Whether `callee` is `<Option<T> as Try>::branch`.
 pub fn is_branch(callee: Option<DefId>) -> bool {
     any_def(callee, other_api::branch_fns())
