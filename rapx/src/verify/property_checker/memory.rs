@@ -899,6 +899,14 @@ impl PropertyChecker {
             while let Some(parent_id) = vm_state.alloc(root_id).parent {
                 root_id = parent_id;
             }
+            if vm_state.alloc(root_id).facts.locally_allocated
+                && !vm_state.alloc(root_id).facts.dead
+            {
+                let solver = Solver::new(vm_state.z3_ctx);
+                vm_state.assert_path_constraints(&solver);
+                let zero = Int::from_u64(vm_state.z3_ctx, 0);
+                return self.smt_check(&solver, &vm_state.alloc(root_id).base._eq(&zero));
+            }
             if !vm_state.alloc(root_id).is_external() && !vm_state.alloc(root_id).facts.dead {
                 return CheckResult::ProvedByRule;
             }

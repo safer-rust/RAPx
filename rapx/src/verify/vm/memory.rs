@@ -10,7 +10,7 @@ use rustc_middle::{
 };
 use z3::{Context, Sort, ast::{Array, Ast, Bool, Int}};
 
-use super::state::{AllocId, AllocKind, Allocation, MemoryContent, MemoryUnit, Provenance, ValueFacts, ValueSource, VmState, VmValue};
+use super::state::{AllocId, AllocKind, Allocation, ElementTy, MemoryContent, MemoryUnit, Provenance, ValueFacts, ValueSource, VmState, VmValue};
 
 impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     pub(crate) fn copy_memory_values(
@@ -249,12 +249,20 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return false;
         }
         self.clear_write_evidence(prov.alloc_id);
+        let written_ty = value.ty;
+        let local_allocation = self.alloc(prov.alloc_id).facts.locally_allocated;
+        if local_allocation {
+            self.alloc_mut(prov.alloc_id).element_ty = ElementTy::Typed(written_ty);
+        }
         let content = self.content_mut(prov.alloc_id);
         content.values.clear();
         content.indexed_elements.clear();
         content.indexed_elements_modified = true;
         content.clear_byte_writes();
         self.store_value(prov.alloc_id, value.ty, Vec::new(), value);
+        if local_allocation {
+            self.content_mut(prov.alloc_id).facts.written_pointee_ty = Some(written_ty);
+        }
         true
     }
 
@@ -449,10 +457,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         if place.projection.is_empty() {
             let base_addr = self.local_address(place.local);
             let ty = self.body().local_decls[place.local].ty;
-            // Prefer the local's value provenance over the stack-allocation
-            // provenance. For Box/Vec parameters, the value tracks the heap
-            // allocation while slots tracks the stack location.
-            let provenance = (!matches!(ty.kind(), TyKind::Array(..)))
+            let is_manually_drop = matches!(ty.kind(), TyKind::Adt(def, _)
+                if self.tcx.is_lang_item(def.did(), crate::def_ids::lang_api::LangItem::ManuallyDrop));
+            let provenance = (!matches!(ty.kind(), TyKind::Array(..)) && !is_manually_drop)
                 .then(|| self.local_value(place.local).and_then(|v| v.provenance.clone()))
                 .flatten()
                 .or_else(|| {
@@ -718,6 +725,22 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         self.constraints.term_caches.sizes.insert(ty, s.clone());
         let zero = Int::from_u64(self.z3_ctx, 0);
         self.constraints.assertions.push(s.ge(&zero));
+        if let TyKind::Adt(def, args) = ty.kind()
+            && (def.is_struct() || def.is_union())
+        {
+            let min_size = def
+                .non_enum_variant()
+                .fields
+                .iter()
+                .map(|field| self.size_of_ty(mir_utils::field_ty(self.tcx, field, args)))
+                .max()
+                .unwrap_or(0);
+            if min_size > 0 {
+                self.constraints
+                    .assertions
+                    .push(s.ge(&Int::from_u64(self.z3_ctx, min_size)));
+            }
+        }
         s
     }
 

@@ -221,13 +221,16 @@ impl<'tcx> CallSiteIndex<'tcx> {
                         continue;
                     }
                 }
+                let generic_const_call = cross_crate
+                    && mir_utils::has_generic_const_call_argument(self.tcx, callee);
                 let instantiate = self.tcx.is_mir_available(callee)
                     && ((cross_crate
                     && (crate::def_ids::other_api::is_slice_get(Some(base_callee))
                         || (matches!(
                             self.tcx.fn_sig(callee).skip_binder().output().skip_binder().kind(),
                             TyKind::Adt(..)
-                        ) && mir_utils::has_unmodeled_generic_call(self.tcx, callee))))
+                        ) && (mir_utils::has_unmodeled_generic_call(self.tcx, callee)
+                            || generic_const_call))))
                         || self.tcx.optimized_mir(callee).basic_blocks.len() == 1
                         || (self.tcx.optimized_mir(callee).basic_blocks.len() == 2
                             && matches!(
@@ -246,6 +249,15 @@ impl<'tcx> CallSiteIndex<'tcx> {
                                 !matches!(c.kind(), rustc_middle::ty::ConstKind::Param(_))
                             })
                     });
+                if generic_const_call
+                    && instance.is_none()
+                    && matches!(
+                        self.tcx.fn_sig(callee).skip_binder().output().skip_binder().kind(),
+                        TyKind::Adt(..)
+                    )
+                {
+                    continue;
+                }
                 let cross_crate_trait_default =
                     cross_crate && is_trait_method && self.tcx.is_mir_available(base_callee);
                 if crate::def_ids::intrinsic_api::is_intrinsic(self.tcx, callee)

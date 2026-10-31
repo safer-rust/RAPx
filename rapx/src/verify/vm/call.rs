@@ -181,6 +181,15 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             .map(|a| a.node.place().map(|p| p.local))
             .collect();
         let callee = mir_utils::dep_callee_resolved_def_id(self.tcx, caller_def_id, func);
+        if callee.is_some_and(|c| {
+            matches!(
+                self.tcx.fn_sig(c).skip_binder().output().skip_binder().kind(),
+                TyKind::Never
+            )
+        }) {
+            self.path_infeasible = true;
+            return;
+        }
         let method_call = callee.and_then(|method| {
             arg_values.first().and_then(|receiver| {
                 self.begin_method_call(
@@ -259,10 +268,27 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             let instance = self.frame_body.is_some()
                 .then(|| mir_utils::resolve_callee_instance(self.tcx, caller_def_id, func))
                 .flatten()
+                .or_else(|| {
+                    let Operand::Constant(constant) = func else {
+                        return None;
+                    };
+                    let TyKind::FnDef(def_id, args) = constant.const_.ty().kind() else {
+                        return None;
+                    };
+                    #[cfg(rapx_ge_99)]
+                    let args = args.skip_binder();
+                    (*def_id == c && self.tcx.trait_of_assoc(c).is_none())
+                    .then_some(Instance {
+                        def: InstanceKind::Item(c),
+                        args,
+                    })
+                })
                 .filter(|instance| {
                     matches!(instance.def, InstanceKind::Item(_))
                         && instance.def_id() == c
-                        && instance.args.types().all(|ty| !mir_utils::ty_has_type_param(ty))
+                        && (instance.args.types().all(|ty| !mir_utils::ty_has_type_param(ty))
+                            || self.inline.symbolic_generic_const_inline
+                            || mir_utils::has_generic_const_call_argument(self.tcx, c))
                 });
             self.exec_inline_call(c, instance, args, &arg_values, &caller_arg_locals, destination);
         } else if let Some(c) = callee {
@@ -322,6 +348,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
         let before_inline = self.clone();
         self.inline.inline_depth += 1;
+        self.inline.symbolic_generic_const_inline |= instance.as_ref().is_some_and(|instance| {
+            instance.args.types().any(mir_utils::ty_has_type_param)
+                && mir_utils::has_generic_const_call_argument(self.tcx, callee_def_id)
+        });
 
         // Resolve each arg's referent local (for `&self`/`&mut self` reborrow
         // temps) *before* the caller's address map is saved away, so that
@@ -476,7 +506,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 .is_some_and(|p| p.offset.as_u64() == Some(0))
             {
                 val.facts.non_null = true;
-                state.mark_initialized(&mut val);
             }
             state.set_local(dest, val);
             for (path, fv) in return_fields {
@@ -486,6 +515,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 state.content_mut(dest_alloc_id).facts.initialized = true;
             }
             state.inline.inline_depth -= 1;
+            state.inline.symbolic_generic_const_inline =
+                before_inline.inline.symbolic_generic_const_inline;
             completed.push(state);
         }
         if completed.is_empty() {
@@ -651,7 +682,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             continue;
                         }
                         let solver = Solver::new(self.z3_ctx);
-                        candidate.assert_all(&solver);
+                        if candidate.inline.symbolic_generic_const_inline {
+                            candidate.assert_path_constraints(&solver);
+                        } else {
+                            candidate.assert_all(&solver);
+                        }
                         match solver.check() {
                             SatResult::Sat => feasible.push((target, candidate)),
                             SatResult::Unknown => return InlineStep::Incomplete,
@@ -717,7 +752,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 TerminatorKind::Goto { target, .. } => pending.push((state, *target, visited)),
                 TerminatorKind::Return => {
                     let solver = Solver::new(self.z3_ctx);
-                    state.assert_all(&solver);
+                    if state.inline.symbolic_generic_const_inline {
+                        state.assert_path_constraints(&solver);
+                    } else {
+                        state.assert_all(&solver);
+                    }
                     match solver.check() {
                         SatResult::Sat => returns.push(state),
                         SatResult::Unknown => return None,
@@ -753,7 +792,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             continue;
                         }
                         let solver = Solver::new(self.z3_ctx);
-                        candidate.assert_all(&solver);
+                        if candidate.inline.symbolic_generic_const_inline {
+                            candidate.assert_path_constraints(&solver);
+                        } else {
+                            candidate.assert_all(&solver);
+                        }
                         match solver.check() {
                             SatResult::Sat => pending.push((candidate, target, visited.clone())),
                             SatResult::Unknown => return None,

@@ -88,7 +88,6 @@ struct Methods {
     from_raw_parts_mut_fns: Vec<DefId>,
     with_metadata_of_fns: Vec<DefId>,
     integer_wrapping_sub_fns: Vec<DefId>,
-    box_alloc_ctors: Vec<DefId>,
     vec_ownership_transfer_fns: Vec<DefId>,
     checked_next_pow2: Vec<DefId>,
     layout_align: Vec<DefId>,
@@ -126,7 +125,6 @@ fn init_methods(tcx: TyCtxt) -> Methods {
         from_raw_parts_mut_fns: Vec::new(),
         with_metadata_of_fns: Vec::new(),
         integer_wrapping_sub_fns: Vec::new(),
-        box_alloc_ctors: Vec::new(),
         vec_ownership_transfer_fns: Vec::new(),
         checked_next_pow2: Vec::new(),
         layout_align: Vec::new(),
@@ -195,16 +193,6 @@ fn init_methods(tcx: TyCtxt) -> Methods {
             }
             if name.ends_with("::wrapping_sub") && name.contains("::num::<impl ") {
                 methods.integer_wrapping_sub_fns.push(did);
-            }
-            if name.contains("::Box::")
-                && (name.ends_with("::new")
-                    || name.ends_with("::new_in")
-                    || name.ends_with("::new_uninit")
-                    || name.ends_with("::new_uninit_in")
-                    || name.ends_with("::try_new_uninit")
-                    || name.ends_with("::try_new_uninit_in"))
-            {
-                methods.box_alloc_ctors.push(did);
             }
             if (name.ends_with("::from_raw_parts") || name.ends_with("::from_parts"))
                 && (name.contains("Vec") || name.contains("vec::"))
@@ -380,8 +368,6 @@ method_fns! {
     /// `byte_add`/`byte_offset`).
     with_metadata_of_fns => with_metadata_of_fns,
     integer_wrapping_sub_fns => integer_wrapping_sub_fns,
-    /// `Box::new` / `new_in` / `new_uninit` / `new_uninit_in` (and `try_` variants).
-    box_alloc_ctors => box_alloc_ctors,
     /// `Vec::from_raw_parts` / `Vec::from_parts` (ownership transfer into a `Vec`).
     vec_ownership_transfer_fns => vec_ownership_transfer_fns,
 }

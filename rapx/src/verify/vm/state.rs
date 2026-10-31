@@ -241,6 +241,7 @@ pub(crate) struct AllocFacts<'z3, 'tcx> {
     /// Whether the allocation has been freed (StorageDead / Drop).
     pub dead: bool,
     pub owning: Option<Int<'z3>>,
+    pub locally_allocated: bool,
 
     /// The region this external allocation is assumed alive for, via an
     /// `Alive(p, 'a)` contract/invariant (or `'static` for `ValidCStr`/`Allocated`
@@ -422,6 +423,7 @@ pub(crate) struct InlineCtx<'z3, 'tcx> {
     /// Current inlining depth (nested inlined callees), bounded by
     /// `MAX_INLINE_DEPTH`.
     pub inline_depth: usize,
+    pub symbolic_generic_const_inline: bool,
     /// The symbolic terms introduced for a callee rejected for hitting
     /// `MAX_INLINE_DEPTH`.  A property whose target value (or a checkpoint
     /// argument it reads, or a pointer provenance offset) is one of these terms
@@ -1614,6 +1616,23 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         local: Local,
         constant: &rustc_middle::mir::Const<'tcx>,
     ) {
+        if let rustc_middle::mir::Const::Unevaluated(uneval, _) = constant
+            && mir_utils::is_sized_type_property(self.tcx, uneval.def, "LAYOUT")
+            && !uneval.args.is_empty()
+            && let TyKind::Adt(layout_def, layout_args) = constant.ty().kind()
+        {
+            let ty = uneval.args.type_at(0);
+            for (index, field) in layout_def.non_enum_variant().fields.iter().enumerate() {
+                let term = match field.name.as_str() {
+                    "size" => self.size_sym(ty),
+                    "align" => self.align_sym(ty),
+                    _ => continue,
+                };
+                let field_ty = mir_utils::field_ty(self.tcx, field, layout_args);
+                self.set_field_value(local, vec![index], VmValue::new(term, field_ty));
+            }
+            return;
+        }
         let Some((_variant, fields)) = mir_utils::const_destructure(self.tcx, constant) else {
             return;
         };

@@ -273,15 +273,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         if let Some(mut v) = ret.clone() {
             let dest_ty = self.body().local_decls[Local::from_usize(dest)].ty;
             v.ty = dest_ty;
-            // Infer facts: a non-null provenance with offset 0 means the
-            // return value is valid and initialized.
             let at_base = v
                 .provenance
                 .as_ref()
                 .is_some_and(|p| p.offset.as_u64() == Some(0));
             if at_base {
                 v.facts.non_null = true;
-                self.mark_initialized(&mut v);
             }
             self.set_local(Local::from_usize(dest), v);
             if let Some(dest_alloc_id) = self.current_frame.local_alloc.get(&Local::from_usize(dest)).copied()

@@ -1070,85 +1070,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     }
                 }
             }
-            CallEffect::ReturnBoxAllocation => {
-                let dest_ty = self.body().local_decls[dest].ty;
-                // `pointee_ty` doesn't unwrap `Box`; extract its `T` from the
-                // first generic argument so the heap allocation is sized to the
-                // pointee and (below) the inner `Unique<T>.pointer` field can be
-                // exposed.
-                let pointee = mir_utils::pointee_ty(dest_ty).or_else(|| {
-                    if let rustc_middle::ty::TyKind::Adt(adt, substs) = dest_ty.kind() {
-                        if api_classify::is_std_box(adt.did()) {
-                            substs.first().and_then(|s| s.as_type())
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                });
-                let size = pointee
-                    .map(|ty| self.size_sym(ty))
-                    .unwrap_or_else(|| Int::from_u64(self.z3_ctx, 1));
-                let align = pointee
-                    .map(|ty| self.align_sym(ty))
-                    .unwrap_or_else(|| Int::from_u64(self.z3_ctx, 1));
-                let (alloc_id, base) = self.allocate(size, align, pointee);
-                self.content_mut(alloc_id).facts.initialized = true;
-                let align_n = pointee.map(|ty| self.align_sym(ty));
-                let heap_prov = Provenance {
-                    alloc_id,
-                    offset: Int::from_u64(self.z3_ctx, 0),
-                    offset_kind: None,
-                };
-                // Expose `Box`'s inner `Unique<T>.pointer` (`NonNull<T>` at path
-                // `[0, 0]`) so inlined `Box::as_ptr`/`as_mut_ptr` bodies — which
-                // read `(_1.0).0` and cast it to `*const`/`*mut T` — inherit the
-                // heap pointer's provenance (rustc 1.95 lowers `&raw **b` to
-                // exactly this field read + transmute).  Record it both on the
-                // local's stack slot (`set_field_value`, for direct `_1.0.0`
-                // reads) and on the heap allocation (`MemoryContent::values`, for
-                // `(*&box).0.0` deref-reads through a reborrow).
-                let nn_field = VmValue {
-                    z3_term: base.clone(),
-                    ty: dest_ty,
-                    provenance: Some(heap_prov.clone()),
-                    facts: ValueFacts {
-                        non_null: true,
-                        init: true,
-                        ..Default::default()
-                    },
-                    source: ValueSource::None,
-                };
-                let nn_path = self
-                    .container_ptr_field(dest_ty)
-                    .expect("Box has no owning pointer field");
-                self.set_field_value(dest, nn_path.clone(), nn_field.clone());
-                self.units[alloc_id.0]
-                    .content
-                    .values
-                    .insert((dest_ty, nn_path), nn_field);
-                self.set_local(
-                    dest,
-                    VmValue {
-                        z3_term: base.clone(),
-                        ty: dest_ty,
-                        provenance: Some(Provenance {
-                            alloc_id,
-                            offset: Int::from_u64(self.z3_ctx, 0),
-                            offset_kind: None,
-                        }),
-                        facts: ValueFacts {
-                            non_null: true,
-                            init: true,
-                            in_bounds: true,
-                            align_n,
-                            dangling: false,
-                        },
-                        source: ValueSource::None,
-                    },
-                );
-            }
             CallEffect::ReturnExchangeMalloc { size_arg } => {
                 if let Some(size_val) = args.get(*size_arg) {
                     let dest_ty = self.body().local_decls[dest].ty;
@@ -1191,6 +1112,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     let (alloc_id, base) =
                         self.allocate_external(size.z3_term.clone(), align, Some(self.tcx.types.u8));
                     self.alloc_mut(alloc_id).facts.owning = Some(base.clone());
+                    self.alloc_mut(alloc_id).facts.locally_allocated = true;
                     if *zeroed {
                         self.content_mut(alloc_id).facts.initialized = true;
                     }
@@ -1236,6 +1158,24 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             _ => source_ty,
                         };
                         let TyKind::Array(_, count) = array_ty.kind() else {
+                            return None;
+                        };
+                        Some(self.const_len_term(count))
+                    })
+                    .or_else(|| {
+                        let TyKind::Adt(box_def, box_args) = args.first()?.ty.kind() else {
+                            return None;
+                        };
+                        if !api_classify::is_std_box(box_def.did()) {
+                            return None;
+                        }
+                        let mut source_ty = box_args.first()?.as_type()?;
+                        if let TyKind::Adt(def, args) = source_ty.kind()
+                            && api_classify::is_maybe_uninit_type(def.did())
+                        {
+                            source_ty = args.first()?.as_type()?;
+                        }
+                        let TyKind::Array(_, count) = source_ty.kind() else {
                             return None;
                         };
                         Some(self.const_len_term(count))

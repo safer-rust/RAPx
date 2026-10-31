@@ -107,10 +107,6 @@ pub(crate) enum CallEffect {
     /// A specific field of the returned tuple carries the length of a given
     /// argument (e.g. split_at(mid) returns (left, right) where left.len() == mid).
     ReturnTupleFieldLength { field: usize, from_arg: usize },
-    /// `Box::new` / `Box::new_in` / `Box::new_uninit` / `Box::new_uninit_in`
-    /// (and `try_` variants): allocate a fresh heap buffer of `size_of::<T>()`
-    /// bytes and return a `Box` whose pointer field backs it.
-    ReturnBoxAllocation,
     /// The length is carried by the argument itself (a Box fat pointer).
     /// Used for `into_vec` / `box_assume_init_into_vec_unsafe`.
     ReturnNewAllocationFromBox,

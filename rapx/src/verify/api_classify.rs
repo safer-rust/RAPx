@@ -417,11 +417,6 @@ pub fn is_vec_from_box(callee: Option<DefId>) -> bool {
 pub fn is_exchange_malloc(callee: Option<DefId>) -> bool {
     callee.is_some_and(|c| other_api::exchange_malloc() == Some(c))
 }
-/// `Box::new` / `new_in` / `new_uninit` / `new_uninit_in` (and `try_` variants)
-/// — fresh heap allocation constructors.
-pub fn is_box_alloc_ctor(callee: Option<DefId>) -> bool {
-    any_def(callee, other_api::box_alloc_ctors())
-}
 pub fn is_into_boxed_slice(callee: Option<DefId>) -> bool {
     other_api::matches_any(callee, &[other_api::vec_into_boxed_slice()])
 }

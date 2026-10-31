@@ -17,7 +17,8 @@ use rustc_middle::{
     },
     ty::{
         ConstKind, FieldDef, GenericArgKind, GenericArgs, GenericArgsRef, GenericParamDefKind,
-        Instance, InstanceKind, PseudoCanonicalInput, ScalarInt, Ty, TyCtxt, TyKind, TypingEnv,
+        Instance, InstanceKind, PseudoCanonicalInput, ScalarInt, Ty, TyCtxt, TyKind,
+        TypeVisitableExt, TypingEnv,
     },
 };
 use rustc_span::{DUMMY_SP, Symbol};
@@ -362,6 +363,27 @@ pub(crate) fn enumerate_mono_instances<'tcx>(
 pub(crate) fn has_unmodeled_generic_call<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> bool {
     let mut visited = HashSet::default();
     has_unmodeled_generic_call_rec(tcx, def_id, &mut visited)
+}
+
+pub(crate) fn has_generic_const_call_argument(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
+    if !tcx.is_mir_available(def_id) {
+        return false;
+    }
+    tcx.optimized_mir(def_id).basic_blocks.iter().any(|bb| {
+        let TerminatorKind::Call { args, .. } = &bb.terminator().kind else {
+            return false;
+        };
+        args.iter().any(|arg| {
+            let Operand::Constant(constant) = &arg.node else {
+                return false;
+            };
+            match constant.const_ {
+                rustc_middle::mir::Const::Ty(_, value) => value.has_param(),
+                rustc_middle::mir::Const::Unevaluated(value, _) => value.args.has_param(),
+                _ => false,
+            }
+        })
+    })
 }
 
 /// A callee may need its own MIR instantiated when an immediate trait call
