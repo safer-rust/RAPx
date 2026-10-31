@@ -112,6 +112,12 @@ pub(crate) fn exec_assign<'z3, 'tcx>(
 
     if place.projection.is_empty() {
         state.set_local(place.local, value);
+        if !uninit_source
+            && !inner_uninit_source
+            && let Some(&id) = state.current_frame.local_alloc.get(&place.local)
+        {
+            state.content_mut(id).facts.initialized = true;
+        }
         if uninit_source && let Some(id) = state.current_frame.local_alloc.get(&place.local) {
             state.possible_uninit_allocs.insert(*id);
         }
