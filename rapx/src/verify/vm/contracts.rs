@@ -385,38 +385,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 }
             }
             PropertyKind::ValidCStr => {
-                //
-                // For a `&CStr`-style target the field projection (`inner`)
-                // may not be materialised for a DST, so fall back to the base
-                // local's own provenance (a `&CStr` reference points directly
-                // at the byte buffer it owns).
-                let id = self.contract_alloc_id_field_aware(property).or_else(|| {
-                    let local = self.contract_target_local(property)?;
-                    self.local_value(local)?.provenance_alloc_id()
-                });
-                if let Some(id) = id {
-                    self.alloc_mut(id).facts.dead = false;
-                    self.alloc_mut(id).facts.liveness = Some(self.tcx.lifetimes.re_static);
-                    self.content_mut(id).facts.initialized = true;
-                    self.content_mut(id).facts.cstr_trusted = true;
-                    // `ValidCStr(p, n)` carries the byte length of the
-                    // nul-terminated buffer.  Assert the allocation covers `n`
-                    // bytes so downstream `from_raw_parts(p, n)` / InBound
-                    // obligations can be discharged from the exact length
-                    // (rather than a conservative `1` placeholder), and
-                    // materialize the terminal NUL as a byte-level fact
-                    // (`byte[n] == 0`).  A `Const` length (`from_ptr`'s `1`
-                    // placeholder) is ignored — the true length is
-                    // `strlen(ptr) + 1`.
-                    if let Some(n) = property.args().get(1).and_then(|a| match a {
-                        PropertyArg::Expr(ContractExpr::Const(_)) => None,
-                        a => self.resolve_contract_count(a),
-                    }) {
-                        self.constraints.assertions.push(self.alloc(id).size.ge(&n));
-                        let zero = Int::from_u64(self.z3_ctx, 0);
-                        self.byte_write(id, &n, &zero);
-                    }
-                }
+                self.assert_valid_cstr_fact(property);
             }
             PropertyKind::ValidString => {
                 let id = self.contract_alloc_id_field_aware(property).or_else(|| {
@@ -459,6 +428,52 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     fn contract_target_local(&self, property: &Property<'tcx>) -> Option<Local> {
         let cp = property.target_place()?;
         Some(cp.base.to_local())
+    }
+
+    fn assert_valid_cstr_fact(&mut self, property: &Property<'tcx>) {
+        let id = self.contract_alloc_id_field_aware(property).or_else(|| {
+            let local = self.contract_target_local(property)?;
+            self.local_value(local)?.provenance_alloc_id()
+        });
+        let Some(id) = id else { return };
+        self.alloc_mut(id).facts.dead = false;
+        let region = self
+            .contract_target_local(property)
+            .and_then(|local| {
+                let ty = if local.as_usize() > 0
+                    && local.as_usize() <= self.body().arg_count
+                {
+                    super::region::fn_arg_ty(
+                        self.tcx,
+                        self.current_frame.current_def_id,
+                        local.as_usize() - 1,
+                    )
+                } else {
+                    self.local_value(local).map(|value| value.ty)
+                }?;
+                match ty.kind() {
+                    rustc_middle::ty::TyKind::Ref(region, ..) => Some(*region),
+                    _ => None,
+                }
+            });
+        if let Some(region) = region
+            && !matches!(region.kind(), rustc_middle::ty::RegionKind::ReErased)
+        {
+            self.alloc_mut(id).facts.liveness = Some(region);
+        }
+        self.content_mut(id).facts.initialized = true;
+        self.content_mut(id).facts.cstr_trusted = true;
+        if let Some(n) = property.args().get(1).and_then(|a| match a {
+            PropertyArg::Expr(ContractExpr::Const(_)) => None,
+            a => self.resolve_contract_count(a),
+        }) {
+            let one = Int::from_u64(self.z3_ctx, 1);
+            self.constraints.assertions.push(n.ge(&one));
+            self.constraints.assertions.push(self.alloc(id).size.ge(&n));
+            let zero = Int::from_u64(self.z3_ctx, 0);
+            let terminal = Int::sub(self.z3_ctx, &[&n, &one]);
+            self.byte_write(id, &terminal, &zero);
+        }
     }
 
     /// Materialize a fresh external allocation for an `Allocated` contract

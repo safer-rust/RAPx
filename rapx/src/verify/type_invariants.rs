@@ -308,6 +308,11 @@ fn type_path_key<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> (String, Option<Ty<'t
         }
         rustc_middle::ty::TyKind::Ref(_, inner, _) => match inner.kind() {
             rustc_middle::ty::TyKind::Slice(elem) => ("[T]".to_string(), Some(*elem)),
+            rustc_middle::ty::TyKind::Adt(adt, _)
+                if crate::helpers::name::public_def_path(tcx, adt.did()) == "core::ffi::CStr" =>
+            {
+                ("core::ffi::CStr".to_string(), None)
+            }
             _ => (format!("{ty:?}"), None),
         },
         _ => (format!("{ty:?}"), None),

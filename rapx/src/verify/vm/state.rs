@@ -244,8 +244,9 @@ pub(crate) struct AllocFacts<'z3, 'tcx> {
     pub locally_allocated: bool,
 
     /// The region this external allocation is assumed alive for, via an
-    /// `Alive(p, 'a)` contract/invariant (or `'static` for `ValidCStr`/`Allocated`
-    /// params/`'static` data).  Only consulted for *external* allocations, whose
+    /// `Alive(p, 'a)` contract/invariant (or the source reference region for
+    /// `ValidCStr`, or `'static` for `Allocated` params and static data). Only
+    /// consulted for *external* allocations, whose
     /// memory is owned by the caller (so `dead` carries no liveness guarantee):
     /// the checker rejects a use that demands a longer region than this.  `None`
     /// means no assumption — an external allocation then fails `Alive` unless
