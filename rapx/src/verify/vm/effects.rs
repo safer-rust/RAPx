@@ -506,15 +506,38 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     self.set_local(dest, VmValue::new(term, dest_ty));
                 }
             }
-            CallEffect::ReturnOptionSomeNonZero => {
-                let zero = Int::from_u64(self.z3_ctx, 0);
-                let term = self.fresh_int(&format!("ret_opt_nz_{}", dest.as_usize()));
-                self.constraints.assertions.push(term._eq(&zero).not());
-                let payload_ty = args
-                    .first()
-                    .map(|a| a.ty)
-                    .unwrap_or(self.body().local_decls[dest].ty);
-                self.set_field_value(dest, vec![0], VmValue::new(term, payload_ty));
+            CallEffect::ReturnLeadingZeros { arg } => {
+                if let Some(value) = args.get(*arg) {
+                    let width = self.size_of_ty(value.ty) * 8;
+                    if width == 0
+                        || width > 128
+                        || !matches!(value.ty.kind(), TyKind::Uint(_))
+                    {
+                        self.record_unsupported("ctlz operand type");
+                    } else {
+                        let zero = Int::from_u64(self.z3_ctx, 0);
+                        let width_term = Int::from_u64(self.z3_ctx, width);
+                        let one = Int::from_u64(self.z3_ctx, 1);
+                        let two = Int::from_u64(self.z3_ctx, 2);
+                        let high_bit = (1..width).fold(one.clone(), |acc, _| {
+                            Int::mul(self.z3_ctx, &[&acc, &two]).simplify()
+                        });
+                        let term = self.fresh_int(&format!("ctlz_{}", dest.as_usize()));
+                        self.constraints.assertions.push(term.ge(&zero));
+                        self.constraints.assertions.push(term.le(&width_term));
+                        self.constraints.assertions.push(
+                            value.z3_term._eq(&zero).implies(&term._eq(&width_term)),
+                        );
+                        self.constraints.assertions.push(
+                            value.z3_term.lt(&high_bit).implies(&term.ge(&one)),
+                        );
+                        self.constraints.assertions.push(
+                            value.z3_term.ge(&high_bit).implies(&term._eq(&zero)),
+                        );
+                        let dest_ty = self.body().local_decls[dest].ty;
+                        self.set_local(dest, VmValue::new(term, dest_ty));
+                    }
+                }
             }
             CallEffect::CopyMemory {
                 source_arg,

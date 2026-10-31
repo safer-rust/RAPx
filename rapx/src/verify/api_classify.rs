@@ -574,9 +574,6 @@ pub fn is_std_ordering(def_id: DefId) -> bool {
 pub fn is_integer_wrapping_sub_method(callee: Option<DefId>) -> bool {
     any_def(callee, other_api::integer_wrapping_sub_fns())
 }
-pub fn is_checked_next_pow2(callee: Option<DefId>) -> bool {
-    any_def(callee, other_api::checked_next_pow2_fns())
-}
 pub fn is_layout_align(callee: Option<DefId>) -> bool {
     any_def(callee, other_api::layout_align_fns())
 }

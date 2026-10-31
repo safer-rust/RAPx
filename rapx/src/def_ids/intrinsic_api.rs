@@ -93,6 +93,7 @@ intrinsic_apis! {
     is_integer_max => "integer_max",
     is_bswap => "bswap",
     is_ctpop => "ctpop",
+    is_ctlz => "ctlz",
     is_bitreverse => "bitreverse",
     is_rotate_left => "rotate_left",
     is_rotate_right => "rotate_right",

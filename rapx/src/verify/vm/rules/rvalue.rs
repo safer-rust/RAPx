@@ -215,6 +215,13 @@ pub(crate) fn eval_binary_op<'z3, 'tcx>(
             .expect("pointer arithmetic must assign its destination");
     }
     let raw_term = state.eval_binary_op(op, &lhs.z3_term, &rhs.z3_term);
+    if matches!(op, BinOp::Shl | BinOp::ShlUnchecked)
+        && lhs.z3_term.simplify().as_u64() == Some(1)
+        && matches!(lhs.ty.kind(), TyKind::Uint(_) | TyKind::Int(_))
+    {
+        let zero = Int::from_u64(state.z3_ctx, 0);
+        state.constraints.assertions.push(raw_term._eq(&zero).not());
+    }
     let term = if op == BinOp::Sub
         && api_classify::is_integer_wrapping_sub_method(Some(state.current_frame.current_def_id))
     {

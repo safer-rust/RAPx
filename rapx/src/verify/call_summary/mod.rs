@@ -84,10 +84,7 @@ pub(crate) enum CallEffect {
     /// intrinsics like `bswap`/`bitreverse`/`ctpop`/`rotate_*`, which map `0` to
     /// `0` and non-zero to non-zero).
     ReturnNonZeroIff { arg: usize },
-    /// The call returns `Option<T>` whose `Some` payload is unconditionally
-    /// non-zero (models `checked_next_power_of_two`, where the next power of
-    /// two is always positive regardless of the argument).
-    ReturnOptionSomeNonZero,
+    ReturnLeadingZeros { arg: usize },
     /// The length is carried by the argument itself (a Box fat pointer).
     /// Used for `into_vec` / `box_assume_init_into_vec_unsafe`.
     ReturnNewAllocationFromBox,

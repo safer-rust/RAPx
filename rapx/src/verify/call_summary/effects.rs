@@ -68,6 +68,7 @@ static REGISTRY: &[Entry] = &[
     ED!(intrinsic_api::is_typed_swap_nonoverlapping, eff_swap_memory),
     ED!(intrinsic_api::is_write_bytes, eff_fill_bytes),
     ED!(api_classify::is_intrinsic_nonzero_preserving, eff_return_nonzero_iff),
+    ED!(intrinsic_api::is_ctlz, eff_leading_zeros),
     ED!(intrinsic_api::is_raw_eq, eff_raw_eq),
     ED!(intrinsic_api::is_exact_div, eff_exact_div),
     ED!(intrinsic_api::is_size_of_val, eff_size_of_val),
@@ -81,7 +82,6 @@ static REGISTRY: &[Entry] = &[
     ED!(nomir_api::is_slice_to_vec, eff_vec_from_box),
     ED!(api_classify::is_vec_push_or_reserve, eff_write_mem),
     // ── MIR available — precise symbolic summary ────────────────────
-    ED!(api_classify::is_checked_next_pow2, eff_return_option_some_nonzero),
     ED!(api_classify::is_manually_drop_drop, eff_drop_memory),
     ED!(api_classify::is_std_drop, eff_drop_memory),
     ED!(api_classify::is_drop_in_place, eff_drop_memory),
@@ -222,8 +222,8 @@ fn eff_return_nonzero_iff(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     vec![CallEffect::ReturnNonZeroIff { arg: 0 }]
 }
 
-fn eff_return_option_some_nonzero(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![CallEffect::ReturnOptionSomeNonZero]
+fn eff_leading_zeros(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnLeadingZeros { arg: 0 }]
 }
 
 fn eff_return_max(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {

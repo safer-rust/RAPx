@@ -88,7 +88,6 @@ struct Methods {
     from_raw_parts_mut_fns: Vec<DefId>,
     integer_wrapping_sub_fns: Vec<DefId>,
     vec_ownership_transfer_fns: Vec<DefId>,
-    checked_next_pow2: Vec<DefId>,
     layout_align: Vec<DefId>,
     split_at: Vec<DefId>,
     slice_get_unchecked: Vec<DefId>,
@@ -114,7 +113,6 @@ fn init_methods(tcx: TyCtxt) -> Methods {
         from_raw_parts_mut_fns: Vec::new(),
         integer_wrapping_sub_fns: Vec::new(),
         vec_ownership_transfer_fns: Vec::new(),
-        checked_next_pow2: Vec::new(),
         layout_align: Vec::new(),
         split_at: Vec::new(),
         slice_get_unchecked: Vec::new(),
@@ -179,9 +177,6 @@ fn init_methods(tcx: TyCtxt) -> Methods {
                 methods.vec_ownership_transfer_fns.push(did);
             }
 
-            if name.ends_with("::checked_next_power_of_two") {
-                methods.checked_next_pow2.push(did);
-            }
             if name.ends_with("Layout::align") {
                 methods.layout_align.push(did);
             }
@@ -340,7 +335,6 @@ method_fns! {
 }
 
 method_fns! {
-    checked_next_pow2_fns => checked_next_pow2,
     layout_align_fns => layout_align,
     split_at_fns => split_at,
     slice_get_fns => slice_get,
