@@ -376,28 +376,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             })
     }
 
-    pub(crate) fn apply_iter_len_effect(
-        &mut self,
-        args: &[VmValue<'z3, 'tcx>],
-        caller_arg_locals: &[Option<Local>],
-        dest: Local,
-    ) {
-        if args.is_empty() {
-            return;
-        }
-        let Some(local) = caller_arg_locals.first().copied().flatten() else {
-            return;
-        };
-        let Some((ptr, end)) = self.iter_ptr_end(local) else {
-            return;
-        };
-        let dest_ty = self.body().local_decls[dest].ty;
-        let len = self
-            .iter_len_from_ptrs(&ptr, &end)
-            .expect("iter_ptr_end guarantees same-alloc provenance");
-        self.set_local(dest, VmValue::new(len, dest_ty));
-    }
-
     pub(crate) fn apply_iter_next_effect(&mut self, args: &[VmValue<'z3, 'tcx>], dest: Local) {
         if args.is_empty() {
             return;

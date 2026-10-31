@@ -42,7 +42,6 @@ static REGISTRY: &[Entry] = &[
     // ── Hand-specialized VM shapes ──────────────────────────────────
     // Listed first so they win over the generic def-path matchers below.
     ED!(api_classify::is_branch, eff_branch),
-    ED!(api_classify::is_iter_len, eff_iter_len),
     ED!(api_classify::is_iter_next, eff_iter_next),
     ED!(api_classify::is_range_next, eff_range_next),
     // ── Layout and intrinsic effects ───────────────────────────────
@@ -323,10 +322,6 @@ fn eff_layout_const(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 
 fn eff_branch(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     vec![CallEffect::ReturnBranchPayload { arg: 0 }]
-}
-
-fn eff_iter_len(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![CallEffect::ReturnIterLen]
 }
 
 fn eff_iter_next(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {

@@ -868,7 +868,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     }
                 }
             }
-            CallEffect::ReturnIterLen => self.apply_iter_len_effect(args, caller_arg_locals, dest),
             CallEffect::ReturnIterNext => self.apply_iter_next_effect(args, dest),
             CallEffect::ReturnRangeNext => self.apply_range_next_effect(args, dest),
         }

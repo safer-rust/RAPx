@@ -580,11 +580,6 @@ pub fn is_iter_next(callee: Option<DefId>) -> bool {
     any_def(callee, other_api::iter_next_fns())
 }
 
-/// Whether `callee` is a slice iterator's `len` (`Iter::len` / `IterMut::len`).
-pub fn is_iter_len(callee: Option<DefId>) -> bool {
-    any_def(callee, other_api::iter_len_fns())
-}
-
 /// Whether `callee` is `<Option<T> as Try>::branch`.
 pub fn is_branch(callee: Option<DefId>) -> bool {
     any_def(callee, other_api::branch_fns())

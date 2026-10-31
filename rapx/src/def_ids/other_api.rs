@@ -93,7 +93,6 @@ struct Methods {
     range_next: Vec<DefId>,
     iter_next: Vec<DefId>,
     iterator_next_trait: Vec<DefId>,
-    iter_len: Vec<DefId>,
     as_ptr_like: Vec<DefId>,
     ptr_add: Vec<DefId>,
     branch: Vec<DefId>,
@@ -115,7 +114,6 @@ fn init_methods(tcx: TyCtxt) -> Methods {
         range_next: Vec::new(),
         iter_next: Vec::new(),
         iterator_next_trait: Vec::new(),
-        iter_len: Vec::new(),
         as_ptr_like: Vec::new(),
         ptr_add: Vec::new(),
         branch: Vec::new(),
@@ -193,7 +191,6 @@ fn init_methods(tcx: TyCtxt) -> Methods {
             {
                 match item.name().as_str() {
                     "next" => methods.iter_next.push(did),
-                    "len" => methods.iter_len.push(did),
                     _ => {}
                 }
             }
@@ -318,8 +315,6 @@ method_fns! {
     /// Slice `Iter::next` / `IterMut::next`.
     iter_next_fns => iter_next,
     iterator_next_trait_fns => iterator_next_trait,
-    /// `Iter::len` / `IterMut::len`.
-    iter_len_fns => iter_len,
     /// `Iter::is_empty` / `IterMut::is_empty`.
     /// Pointer accessors that retain the source bytes.
     as_ptr_like_fns => as_ptr_like,
