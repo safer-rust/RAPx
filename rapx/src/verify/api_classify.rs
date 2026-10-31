@@ -413,10 +413,6 @@ pub fn is_vec_from_box(callee: Option<DefId>) -> bool {
         ],
     )
 }
-pub fn is_into_boxed_slice(callee: Option<DefId>) -> bool {
-    other_api::matches_any(callee, &[other_api::vec_into_boxed_slice()])
-}
-
 // ── Alias-hazard classification ───────────────────────────────────
 // These are the single home for "what does this raw-pointer API do" used by the
 // alias/hazard scanner. `is_ownership_transfer` is the raw-pointer subset of

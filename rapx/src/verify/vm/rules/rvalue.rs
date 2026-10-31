@@ -360,7 +360,14 @@ pub(crate) fn eval_cast<'z3, 'tcx>(
     operand: &Operand<'tcx>,
     cast_ty: Ty<'tcx>,
 ) -> VmValue<'z3, 'tcx> {
-    let src_val = state.value_of_operand(operand);
+    let mut src_val = state.value_of_operand(operand);
+    #[cfg(rapx_box_deref_transmute)]
+    if matches!(kind, CastKind::BoxDerefTransmute)
+        && let Some(local) = mir_utils::extract_local(operand)
+        && let Some(pointer) = state.field_value(local, &[0]).cloned()
+    {
+        src_val = pointer;
+    }
     let src_ty = src_val.ty;
     let nonnull_to_raw = matches!(kind, CastKind::Transmute)
         && matches!(cast_ty.kind(), TyKind::RawPtr(..))
@@ -491,9 +498,22 @@ pub(crate) fn eval_aggregate<'z3, 'tcx>(
     if operands.len() == 1
         && (state.find_nn_pointee(dest_ty).is_some() || state.is_transparent_newtype(dest_ty))
     {
-        let field_val = state.value_of_operand(operands.iter().next().unwrap());
+        let operand = operands.iter().next().unwrap();
+        let field_val = state.value_of_operand(operand);
         let dest_local = dest_place.local;
         state.set_field_value(dest_local, vec![0], field_val.clone());
+        if let Some(source) = operand.place()
+            && source.projection.is_empty()
+        {
+            let nested = state.field_paths(source.local).into_iter().filter_map(|path| {
+                state.field_value(source.local, &path).cloned().map(|value| (path, value))
+            }).collect::<Vec<_>>();
+            for (path, value) in nested {
+                let mut dest_path = vec![0];
+                dest_path.extend(path);
+                state.set_field_value(dest_local, dest_path, value);
+            }
+        }
         if let Some(alloc_id) = state.current_frame.local_alloc.get(&dest_local).copied() {
             state.content_mut(alloc_id).facts.initialized = true;
         }

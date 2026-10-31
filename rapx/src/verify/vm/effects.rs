@@ -1171,35 +1171,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     self.materialize_vec_fields(dest, ptr_field, len_term.clone(), len_term);
                 }
             }
-            CallEffect::ReturnBoxFromVec { arg } => {
-                if let Some(vec_val) = args.get(*arg)
-                    && let Some(ref prov) = vec_val.provenance
-                    && let Some(heap_alloc_id) =
-                        self.container_data_alloc(prov.alloc_id, vec_val.ty)
-                {
-                    let heap_base = self.allocation_base(heap_alloc_id).clone();
-                    let dest_ty = self.body().local_decls[dest].ty;
-                    self.set_local(
-                        dest,
-                        VmValue {
-                            z3_term: heap_base,
-                            ty: dest_ty,
-                            provenance: Some(Provenance {
-                                alloc_id: heap_alloc_id,
-                                offset: Int::from_u64(self.z3_ctx, 0),
-                                offset_kind: None,
-                            }),
-                            facts: ValueFacts {
-                                non_null: true,
-                                init: true,
-                                in_bounds: true,
-                                ..ValueFacts::default()
-                            },
-                            source: ValueSource::None,
-                        },
-                    );
-                }
-            }
             CallEffect::DropMemory { pointer_arg } => {
                 // `ManuallyDrop::drop(slot)` / `drop_in_place(x)` frees the heap
                 // allocation behind the argument. A reference/raw-pointer

@@ -109,10 +109,6 @@ pub(crate) enum CallEffect {
     ReturnNewAllocationFromBox,
     /// The return value is a non-zero power of two (models `Layout::align`).
     ReturnPowerOfTwo,
-    /// The call transfers a Vec's backing allocation into a Box (e.g.
-    /// `Vec::into_boxed_slice`). Looks up the current heap allocation from the
-    /// argument's owning pointer field via its stack provenance.
-    ReturnBoxFromVec { arg: usize },
     /// The return value is known to own initialized memory of the type pointed
     /// to by the indicated argument (e.g. `Box::from_raw(p)` owns one initialized
     /// `T` element reached through `p`).

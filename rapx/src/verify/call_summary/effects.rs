@@ -84,7 +84,6 @@ static REGISTRY: &[Entry] = &[
     ED!(is_cstr_runtime_strlen, eff_opaque_return),
     ED!(api_classify::is_vec_from_box, eff_vec_from_box),
     ED!(nomir_api::is_slice_to_vec, eff_vec_from_box),
-    ED!(api_classify::is_into_boxed_slice, eff_box_from_vec),
     ED!(api_classify::is_vec_push_or_reserve, eff_write_mem),
     // ── MIR available — precise symbolic summary ────────────────────
     ED!(api_classify::is_checked_next_pow2, eff_return_option_some_nonzero),
@@ -463,10 +462,6 @@ fn layout_constant_effect<'tcx>(
     Some(CallEffect::ReturnConst {
         value: if is_align { align } else { size },
     })
-}
-
-fn eff_box_from_vec(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![CallEffect::ReturnBoxFromVec { arg: 0 }]
 }
 
 // ── Non-registry effect fallback ────────────────────────────────────
