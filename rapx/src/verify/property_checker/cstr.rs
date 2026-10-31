@@ -106,17 +106,7 @@ impl PropertyChecker {
                 return CheckResult::Failed;
             }
 
-            // The allocation was asserted to be a null-terminated C string via
-            // a `ValidCStr` contract fact / struct invariant. Any sub-slice of
-            // it is therefore nul-terminated (it ends at the same nul byte),
-            // so the property holds without further byte-level reasoning.
-            // Follow `parent` so a `from_raw_parts` / slice-index
-            // sub-allocation rooted in a nul-terminated buffer also passes.
-            let mut root_id = alloc_id;
-            while let Some(parent_id) = vm_state.alloc(root_id).parent {
-                root_id = parent_id;
-            }
-            if vm_state.is_cstr_trusted(alloc_id) || vm_state.is_cstr_trusted(root_id) {
+            if vm_state.is_cstr_trusted(alloc_id) {
                 return CheckResult::ProvedByRule;
             }
 
@@ -140,16 +130,19 @@ impl PropertyChecker {
             let start_offset = value
                 .provenance
                 .as_ref()
-                .and_then(|p| p.offset.as_u64())
-                .map(|v| v as usize)
-                .unwrap_or(0);
+                .and_then(|p| p.offset.simplify().as_u64())
+                .map(|v| v as usize);
 
-            if let Some(r) = self.check_valid_cstr_from_known_nul(vm_state, alloc_id, start_offset)
-            {
-                return r;
+            if let Some(start_offset) = start_offset {
+                if let Some(r) =
+                    self.check_valid_cstr_from_known_nul(vm_state, alloc_id, start_offset)
+                {
+                    return r;
+                }
             }
 
-            if let Some(size) = buffer_size
+            if start_offset == Some(0)
+                && let Some(size) = buffer_size
                 && let Some(r) =
                     self.check_valid_cstr_from_byte_values(vm_state, &solver, alloc_id, &size)
                 {

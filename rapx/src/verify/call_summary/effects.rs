@@ -4,13 +4,13 @@
 use crate::def_ids::lang_api::{self, LangItem};
 use crate::helpers::mir_utils;
 use rustc_hir::def_id::DefId;
-use rustc_middle::mir::{Local, Operand};
+use rustc_middle::mir::Operand;
 use rustc_middle::ty::{Ty, TyCtxt, TyKind};
 
 use super::{BoundedArithmeticOp, CallEffect, CallEffectSummary, OverflowOp};
 use crate::def_ids::other_api;
 use crate::def_ids::{intrinsic_api, nomir_api, nomir_ffi};
-use crate::helpers::mir_utils::{pointee_alignment, type_layout};
+use crate::helpers::mir_utils::type_layout;
 use crate::verify::api_classify;
 
 // ── Context for effect builders ────────────────────────────────────────
@@ -19,7 +19,6 @@ pub(crate) struct EffCtx<'a, 'tcx> {
     pub tcx: TyCtxt<'tcx>,
     pub caller: DefId,
     pub func: &'a Operand<'tcx>,
-    pub dest: Option<rustc_middle::mir::Local>,
 }
 
 // ── Registry table ─────────────────────────────────────────────────────
@@ -27,10 +26,6 @@ pub(crate) struct EffCtx<'a, 'tcx> {
 struct Entry {
     matches: fn(Option<DefId>) -> bool,
     effects: fn(&EffCtx<'_, '_>) -> Vec<CallEffect>,
-}
-
-fn is_cstr_runtime_strlen(callee: Option<DefId>) -> bool {
-    callee.is_some() && callee == nomir_ffi::cstr_runtime_strlen()
 }
 
 /// `DefId`-based matcher row (`fn(Option<DefId>) -> bool`).
@@ -81,7 +76,7 @@ static REGISTRY: &[Entry] = &[
     ED!(nomir_api::is_global_alloc_shim, eff_nullable_allocation),
     ED!(nomir_api::is_global_alloc_zeroed_shim, eff_nullable_zeroed_allocation),
     ED!(nomir_api::is_alloc_shim_marker, eff_no_effect),
-    ED!(is_cstr_runtime_strlen, eff_opaque_return),
+    ED!(nomir_ffi::is_cstr_runtime_strlen, eff_opaque_return),
     ED!(api_classify::is_vec_from_box, eff_vec_from_box),
     ED!(nomir_api::is_slice_to_vec, eff_vec_from_box),
     ED!(api_classify::is_vec_push_or_reserve, eff_write_mem),
@@ -90,8 +85,6 @@ static REGISTRY: &[Entry] = &[
     ED!(api_classify::is_manually_drop_drop, eff_drop_memory),
     ED!(api_classify::is_std_drop, eff_drop_memory),
     ED!(api_classify::is_drop_in_place, eff_drop_memory),
-    ED!(api_classify::is_from_raw_parts, eff_from_raw_parts),
-    ED!(api_classify::is_with_metadata_of, eff_return_pointer_arg),
     ED!(api_classify::is_align_offset, eff_align_offset),
     ED!(api_classify::is_slice_range, eff_slice_range),
     ED!(api_classify::is_mem_replace, eff_mem_replace),
@@ -120,16 +113,13 @@ pub(crate) fn lookup_effect<'tcx>(
     caller: DefId,
     callee: Option<DefId>,
     func: &Operand<'tcx>,
-    destination: rustc_middle::mir::Local,
 ) -> Option<CallEffectSummary> {
-    let dest = Some(destination);
     for e in REGISTRY {
         if (e.matches)(callee) {
             let ctx = EffCtx {
                 tcx,
                 caller,
                 func,
-                dest,
             };
             return Some((e.effects)(&ctx));
         }
@@ -139,12 +129,10 @@ pub(crate) fn lookup_effect<'tcx>(
             tcx,
             caller,
             func,
-            dest,
         }));
     }
     None
 }
-
 // ── Effect builders — one small function per API semantic ──────────────
 
 fn eff_uninit_wrapper(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
@@ -183,10 +171,6 @@ fn eff_select_unpredictable(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 
 fn eff_alias_arg0(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     vec![CallEffect::ReturnAliasArg { arg: 0 }]
-}
-
-fn eff_return_pointer_arg(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![CallEffect::ReturnPointerFromArg { arg: 0 }]
 }
 
 fn eff_ptr_offset_from(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
@@ -329,37 +313,6 @@ fn eff_mem_replace(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     vec![CallEffect::ReturnDerefArg { arg: 0 }]
 }
 
-fn eff_from_raw_parts(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    // The DST *pointer* constructor (`ptr::from_raw_parts`, used by
-    // `with_metadata_of` in `byte_add`/`byte_offset`) is a no-op cast for a
-    // *sized* pointee: preserve the pointer's provenance and non-nullness
-    // instead of materializing a fresh allocation.
-    if let Some(d) = ctx.dest {
-        let ty = ctx.tcx.optimized_mir(ctx.caller).local_decls[d].ty;
-        if let Some(pointee) = mir_utils::pointee_ty(ty)
-            && pointee.is_sized(
-                ctx.tcx,
-                rustc_middle::ty::TypingEnv::post_analysis(ctx.tcx, ctx.caller),
-            )
-        {
-            return vec![CallEffect::ReturnPointerFromArg { arg: 0 }];
-        }
-    }
-    let elem = from_raw_parts_elem_size(ctx.tcx, ctx.caller, ctx.dest);
-    let mut eff = vec![
-        CallEffect::ReturnFreshAllocation {
-            pointer_arg: 0,
-            size_arg: 1,
-            elem_size: elem,
-        },
-        CallEffect::ReturnNonZero,
-    ];
-    if pointee_alignment(ctx.tcx, ctx.caller, ctx.dest).is_some() {
-        eff.push(CallEffect::ReturnAligned);
-    }
-    eff
-}
-
 fn eff_nullable_allocation(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     vec![CallEffect::ReturnNullableAllocation {
         size_arg: 0,
@@ -492,39 +445,4 @@ pub(crate) fn vec_elem_ty<'tcx>(ty: Ty<'tcx>) -> Option<Ty<'tcx>> {
         return substs.first().and_then(|s| s.as_type());
     }
     None
-}
-
-/// Element type of a `from_raw_parts` result: `&[T]`/`*[T]`/`Vec<T>` yield `T`;
-/// other types (including `String`) return `None`.
-pub(crate) fn from_raw_parts_elem_ty<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    caller: DefId,
-    dest: Option<Local>,
-) -> Option<Ty<'tcx>> {
-    let d = dest?;
-    let ty = tcx.optimized_mir(caller).local_decls[d].ty;
-    match ty.kind() {
-        TyKind::Ref(_, inner, _) => match inner.kind() {
-            TyKind::Slice(e) => Some(*e),
-            _ => None,
-        },
-        TyKind::RawPtr(inner, _) => match inner.kind() {
-            TyKind::Slice(e) => Some(*e),
-            _ => None,
-        },
-        TyKind::Adt(..) => vec_elem_ty(ty),
-        _ => None,
-    }
-}
-
-/// Element size of a `from_raw_parts` result; `String`/unknown layouts fall
-/// back to 1 (`String`'s element is `u8`).
-pub(crate) fn from_raw_parts_elem_size<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    caller: DefId,
-    dest: Option<Local>,
-) -> u64 {
-    from_raw_parts_elem_ty(tcx, caller, dest)
-        .and_then(|e| mir_utils::type_layout(tcx, caller, e).map(|(_, s)| s))
-        .unwrap_or(1)
 }

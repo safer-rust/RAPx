@@ -97,14 +97,14 @@ fn intrinsic_dependency_summary<'tcx>(
     caller: DefId,
     callee: Option<DefId>,
     func: &Operand<'tcx>,
-    destination: Local,
+    _destination: Local,
     arg_count: usize,
 ) -> Option<CallDependencySummary> {
     let id = callee?;
     if !intrinsic_api::is_intrinsic(tcx, id) && !api_classify::is_ptr_copy(callee) {
         return None;
     }
-    let modeled = effects::lookup_effect(tcx, caller, callee, func, destination);
+    let modeled = effects::lookup_effect(tcx, caller, callee, func);
     if api_classify::is_ptr_copy(callee) && modeled.is_none() {
         return Some(CallDependencySummary {
             return_depends_on_args: (0..arg_count).collect(),

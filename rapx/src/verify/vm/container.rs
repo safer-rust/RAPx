@@ -10,6 +10,47 @@ use crate::verify::api_classify;
 use super::state::{AllocId, Provenance, ValueFacts, ValueSource, VmState, VmValue};
 
 impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+    pub(crate) fn materialize_slice_ref_return(&mut self, dest: Local) {
+        let Some(mut value) = self.local_value(dest).cloned() else {
+            return;
+        };
+        let TyKind::Ref(_, slice, _) = value.ty.kind() else {
+            return;
+        };
+        let TyKind::Slice(elem) = slice.kind() else {
+            return;
+        };
+        let ValueSource::SliceLen(len) = &value.source else {
+            return;
+        };
+        let Some(parent) = value.provenance.as_ref() else {
+            return;
+        };
+        let parent_id = parent.alloc_id;
+        let parent_offset = parent.offset.simplify().as_u64();
+        let len = len.clone();
+        let align = self.align_sym(*elem);
+        let size = self.size_sym(*elem);
+        let (view_id, _) = self.allocate_slice(len, size, align.clone(), Some(*elem));
+        self.alloc_mut(view_id).base = value.z3_term.clone();
+        self.alloc_mut(view_id).parent = Some(parent_id);
+        if !self.alloc(parent_id).facts.dead {
+            self.content_mut(view_id).facts.initialized = true;
+        }
+        if let Some(offset) = parent_offset {
+            self.copy_byte_tracking(parent_id, offset as usize, view_id);
+        }
+        value.provenance = Some(Provenance {
+            alloc_id: view_id,
+            offset: Int::from_u64(self.z3_ctx, 0),
+            offset_kind: None,
+        });
+        value.facts.non_null = true;
+        value.facts.in_bounds = true;
+        value.facts.align_n = Some(align);
+        self.set_local(dest, value);
+    }
+
     /// The slice/array element count for an allocation: the materialized
     /// `slice_len`, or `size / elem_size` as a fallback for allocations created
     /// before materialization (e.g. some call effects).  Uses the symbolic

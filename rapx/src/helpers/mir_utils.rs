@@ -1023,25 +1023,6 @@ pub(crate) fn ty_has_type_param(ty: Ty<'_>) -> bool {
     })
 }
 
-pub fn pointee_alignment<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    caller: DefId,
-    dest: Option<Local>,
-) -> Option<(u64, String)> {
-    let d = dest?;
-    let ty = tcx.optimized_mir(caller).local_decls[d].ty;
-    let pointee = pointee_ty(ty).or(Some(ty))?;
-    if let Some((a, _)) = type_layout(tcx, caller, pointee) {
-        return Some((a, format!("{pointee:?}")));
-    }
-    if let TyKind::Array(e, _) = pointee.kind()
-        && let Some((a, _)) = type_layout(tcx, caller, *e)
-    {
-        return Some((a, format!("{pointee:?}")));
-    }
-    Some((0, format!("{pointee:?}")))
-}
-
 // ── Constant scalar / byte-string extraction ───────────────────
 
 /// Parse an integer from a MIR constant's `Debug` text. Handles decimal,

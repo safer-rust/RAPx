@@ -289,6 +289,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         for (fields, fv) in ret_fields {
             self.set_field_value(Local::from_usize(dest), fields, fv);
         }
+        self.materialize_slice_ref_return(Local::from_usize(dest));
         if let Some((callee, args)) = self.inline.path_postconditions.pop()
             && self.local_value(Local::from_usize(dest)).is_some()
         {

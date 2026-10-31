@@ -23,6 +23,31 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             self.set_local(destination, VmValue::new(self.fresh_int("ctor_unknown"), ty));
             return;
         }
+        if let TyKind::Adt(adt, _) = ty.kind()
+            && (api_classify::is_std_vec(adt.did())
+                || api_classify::is_std_box(adt.did())
+                || api_classify::is_std_string(adt.did())
+                || api_classify::is_std_cstring(adt.did()))
+            && let Some((index, pointer)) = args.iter().enumerate().find(|(_, value)| {
+                value.provenance_alloc_id().is_some()
+                    && (matches!(value.ty.kind(), TyKind::RawPtr(..))
+                        || matches!(value.ty.kind(), TyKind::Adt(def, _) if api_classify::is_std_nonnull(def.did())))
+            })
+            && let Some(path) = self.container_ptr_field(ty)
+        {
+            let mut result = pointer.clone();
+            result.ty = ty;
+            result.facts.init = true;
+            self.set_local(destination, result);
+            self.set_field_value(destination, path, pointer.clone());
+            if api_classify::is_std_vec(adt.did())
+                && let Some(len) = args.get(index + 1)
+                && let Some(alloc_id) = pointer.provenance_alloc_id()
+            {
+                self.alloc_mut(alloc_id).set_slice_len(len.z3_term.clone());
+            }
+            return;
+        }
         if let TyKind::Adt(adt, substs) = ty.kind()
             && api_classify::is_std_nonnull(adt.did())
             && self.tcx.item_name(callee).as_str() == "dangling"

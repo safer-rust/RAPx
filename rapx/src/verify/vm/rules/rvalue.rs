@@ -46,9 +46,6 @@ pub(crate) fn eval_ref<'z3, 'tcx>(
     let dest_ty = dest_place.ty(state.body(), state.tcx).ty;
     if let Some(addr) = state.address_of_place(place) {
         let alloc_align = state.alloc_align_of(&addr);
-        // Inherit in_bounds. For &[T] created via Deref of a fat raw ptr
-        // (inlined from_raw_parts), set in_bounds like ReturnFreshAllocation does
-        // in builtin_models.
         let has_deref = place
             .projection
             .iter()
@@ -485,12 +482,15 @@ pub(crate) fn eval_aggregate<'z3, 'tcx>(
             val.ty = dest_ty;
             return val;
         }
-        if matches!(pointee_ty.kind(), TyKind::Slice(_))
-            && let Some(metadata) = operands.iter().nth(1)
-        {
+        if let Some(metadata) = operands.iter().nth(1) {
+            let metadata = state.value_of_operand(metadata);
             let mut val = state.value_of_operand(data_operand);
             val.ty = dest_ty;
-            val.source = ValueSource::SliceLen(state.value_of_operand(metadata).z3_term);
+            if matches!(pointee_ty.kind(), TyKind::Slice(_))
+                || metadata.ty == state.tcx.types.usize
+            {
+                val.source = ValueSource::SliceLen(metadata.z3_term);
+            }
             return val;
         }
     }

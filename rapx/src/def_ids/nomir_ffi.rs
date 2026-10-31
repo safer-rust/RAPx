@@ -65,3 +65,7 @@ pub fn cstr_runtime_strlen() -> Option<DefId> {
     IDS.get()
         .expect("No-MIR FFI API IDs have not been initialized")[2]
 }
+
+pub fn is_cstr_runtime_strlen(callee: Option<DefId>) -> bool {
+    callee.is_some() && callee == cstr_runtime_strlen()
+}

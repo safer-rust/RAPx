@@ -86,7 +86,6 @@ struct Methods {
     len_fns: Vec<DefId>,
     from_raw_parts_fns: Vec<DefId>,
     from_raw_parts_mut_fns: Vec<DefId>,
-    with_metadata_of_fns: Vec<DefId>,
     integer_wrapping_sub_fns: Vec<DefId>,
     vec_ownership_transfer_fns: Vec<DefId>,
     checked_next_pow2: Vec<DefId>,
@@ -115,7 +114,6 @@ fn init_methods(tcx: TyCtxt) -> Methods {
         len_fns: Vec::new(),
         from_raw_parts_fns: Vec::new(),
         from_raw_parts_mut_fns: Vec::new(),
-        with_metadata_of_fns: Vec::new(),
         integer_wrapping_sub_fns: Vec::new(),
         vec_ownership_transfer_fns: Vec::new(),
         checked_next_pow2: Vec::new(),
@@ -175,9 +173,6 @@ fn init_methods(tcx: TyCtxt) -> Methods {
             }
             if name.ends_with("::from_raw_parts_mut") {
                 methods.from_raw_parts_mut_fns.push(did);
-            }
-            if name.ends_with("::with_metadata_of") {
-                methods.with_metadata_of_fns.push(did);
             }
             if name.ends_with("::wrapping_sub") && name.contains("::num::<impl ") {
                 methods.integer_wrapping_sub_fns.push(did);
@@ -352,9 +347,6 @@ method_fns! {
     from_raw_parts_fns => from_raw_parts_fns,
     /// `from_raw_parts_mut` constructors (`slice`/`ptr`/`NonNull`).
     from_raw_parts_mut_fns => from_raw_parts_mut_fns,
-    /// `*const T::with_metadata_of` / `*mut T::with_metadata_of` (used by
-    /// `byte_add`/`byte_offset`).
-    with_metadata_of_fns => with_metadata_of_fns,
     integer_wrapping_sub_fns => integer_wrapping_sub_fns,
     /// `Vec::from_raw_parts` / `Vec::from_parts` (ownership transfer into a `Vec`).
     vec_ownership_transfer_fns => vec_ownership_transfer_fns,

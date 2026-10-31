@@ -252,7 +252,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 caller_def_id,
                 callee,
                 func,
-                destination,
             )
             .or_else(|| call_summary::effects::effect_summary(self.tcx, func))
         };
@@ -549,6 +548,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             for (path, fv) in return_fields {
                 state.set_field_value(dest, path, fv);
             }
+            state.materialize_slice_ref_return(dest);
             if let Some(dest_alloc_id) = state.current_frame.local_alloc.get(&dest).copied() {
                 state.content_mut(dest_alloc_id).facts.initialized = true;
             }

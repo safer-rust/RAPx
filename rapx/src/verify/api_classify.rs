@@ -360,15 +360,6 @@ pub fn is_from_raw_parts(callee: Option<DefId>) -> bool {
     any_def(callee, other_api::from_raw_parts_fns())
 }
 
-/// `*const T::with_metadata_of` / `*mut T::with_metadata_of` (used by
-/// `byte_add`/`byte_offset`): re-attaches metadata onto a data address.  For a
-/// sized pointee it is a no-op cast and must preserve the pointer's provenance
-/// and non-nullness (rather than going through `from_raw_parts`, whose
-/// fresh-allocation effect would reset them).
-pub fn is_with_metadata_of(callee: Option<DefId>) -> bool {
-    any_def(callee, other_api::with_metadata_of_fns())
-}
-
 /// Whether `callee` is a `from_raw_parts_mut` constructor.
 pub fn is_from_raw_parts_mut(callee: Option<DefId>) -> bool {
     any_def(callee, other_api::from_raw_parts_mut_fns())

@@ -51,13 +51,8 @@ pub(crate) enum CallEffect {
     /// since the boolean selector (`args[0]`) is unpredictable.
     SelectUnpredictable,
     /// The return value is a pointer extracted from an aggregate/reference arg.
-    ReturnPointerFromArg { arg: usize },
     ReturnWrappingPointerOffset { base_arg: usize, offset_arg: usize },
     ReturnPtrOffsetFrom { ptr_arg: usize, base_arg: usize },
-    /// The return value is known to be non-zero.
-    ReturnNonZero,
-    /// The return value is known to satisfy a concrete alignment.
-    ReturnAligned,
     /// The return value is a concrete layout/numeric constant.
     ReturnConst { value: u64 },
     /// The call writes one initialized element through a pointer argument.
@@ -65,14 +60,6 @@ pub(crate) enum CallEffect {
     CopyMemory { source_arg: usize, destination_arg: usize, count_arg: usize },
     SwapMemory { left_arg: usize, right_arg: usize },
     FillBytes { pointer_arg: usize, byte_arg: usize, count_arg: usize },
-    /// The return value is a pointer backed by a fresh allocation of
-    /// `size_arg` elements × `elem_size` bytes. The base address is taken
-    /// from `pointer_arg`. Used for `from_raw_parts(ptr, len)`.
-    ReturnFreshAllocation {
-        pointer_arg: usize,
-        size_arg: usize,
-        elem_size: u64,
-    },
     ReturnNullableAllocation { size_arg: usize, align_arg: usize, zeroed: bool },
     /// The return value is `min(lhs_arg, rhs_arg)`, satisfying
     /// `return <= lhs_arg` and `return <= rhs_arg`.

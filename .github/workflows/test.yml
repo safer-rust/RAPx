@@ -64,7 +64,7 @@ jobs:
         export RUSTFLAGS="--cfg=rapx -Zcrate-attr=feature(register_tool) -Zcrate-attr=register_tool(rapx)"
         export __CARGO_TESTS_ONLY_SRC_ROOT="$(pwd)/library"
         cd library/core
-        cargo rapx verify --module slice --mode targeted --path-limit "$VERIFY_PATH_LIMIT" 2>&1 | tee /tmp/rapx-verify-output.txt
+        cargo rapx verify --module slice --mode targeted --path-limit "$VERIFY_PATH_LIMIT" -- --release 2>&1 | tee /tmp/rapx-verify-output.txt
     - name: Check verification results
       run: |
         SOUND_COUNT=$(grep -c 'result: SOUND' /tmp/rapx-verify-output.txt || true)
