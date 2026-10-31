@@ -472,6 +472,8 @@ pub(crate) enum ValueSource<'z3> {
     SharedScalarReferent,
     /// Bytes carried by a constant byte-array reference through generic calls.
     ConstBytes(Vec<u8>),
+    /// Length metadata carried by a slice pointer or reference.
+    SliceLen(Int<'z3>),
     /// A compile-time `offset_of!` field offset.
     FieldOffset,
     /// A symbolic enum discriminant (variant index).

@@ -103,7 +103,12 @@ pub(crate) fn eval_ref<'z3, 'tcx>(
                 align_n: slice_elem_align.or(alloc_align),
                 dangling: false,
             },
-            source: ValueSource::None,
+            source: match state.local_value(place.local).map(|value| &value.source) {
+                Some(ValueSource::SliceLen(len)) if is_slice_ref && has_deref => {
+                    ValueSource::SliceLen(len.clone())
+                }
+                _ => ValueSource::None,
+            },
         };
         state.propagate_byte_values_to_ref(place, &val);
         state.propagate_field_values_to_ref(place, dest_place.local);
@@ -192,6 +197,13 @@ pub(crate) fn eval_binary_op<'z3, 'tcx>(
         // symbol that breaks `Allocated`'s byte-coverage query.
         let pointee = mir_utils::pointee_ty(lhs.ty);
         let stride = pointee.and_then(|p| {
+            if mir_utils::ty_has_type_param(p)
+                && let Some(alloc_id) = lhs.provenance_alloc_id()
+                && let Some(element) = state.alloc(alloc_id).element_ty.as_ty()
+                && !mir_utils::ty_has_type_param(element)
+            {
+                return Some(state.size_of_ty(element));
+            }
             let (_, s) = mir_utils::type_layout(state.tcx, state.current_frame.current_def_id, p)?;
             if s == 0 && mir_utils::ty_has_type_param(p) {
                 None
@@ -468,6 +480,14 @@ pub(crate) fn eval_aggregate<'z3, 'tcx>(
             let data_val = state.value_of_operand(data_operand);
             let mut val = data_val.clone();
             val.ty = dest_ty;
+            return val;
+        }
+        if matches!(pointee_ty.kind(), TyKind::Slice(_))
+            && let Some(metadata) = operands.iter().nth(1)
+        {
+            let mut val = state.value_of_operand(data_operand);
+            val.ty = dest_ty;
+            val.source = ValueSource::SliceLen(state.value_of_operand(metadata).z3_term);
             return val;
         }
     }

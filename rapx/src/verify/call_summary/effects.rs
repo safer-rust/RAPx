@@ -90,7 +90,6 @@ static REGISTRY: &[Entry] = &[
     ED!(api_classify::is_manually_drop_drop, eff_drop_memory),
     ED!(api_classify::is_std_drop, eff_drop_memory),
     ED!(api_classify::is_drop_in_place, eff_drop_memory),
-    ED!(api_classify::is_split_at, eff_split_at),
     ED!(api_classify::is_from_raw_parts, eff_from_raw_parts),
     ED!(api_classify::is_with_metadata_of, eff_return_pointer_arg),
     ED!(api_classify::is_align_offset, eff_align_offset),
@@ -320,16 +319,6 @@ fn eff_align_offset(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
         ptr_arg: 0,
         align_arg: 1,
     }]
-}
-
-fn eff_split_at(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![
-        CallEffect::ReturnAliasArg { arg: 0 },
-        CallEffect::ReturnTupleFieldLength {
-            field: 0,
-            from_arg: 1,
-        },
-    ]
 }
 
 fn eff_slice_range(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {

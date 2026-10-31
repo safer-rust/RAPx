@@ -101,9 +101,6 @@ pub(crate) enum CallEffect {
     /// non-zero (models `checked_next_power_of_two`, where the next power of
     /// two is always positive regardless of the argument).
     ReturnOptionSomeNonZero,
-    /// A specific field of the returned tuple carries the length of a given
-    /// argument (e.g. split_at(mid) returns (left, right) where left.len() == mid).
-    ReturnTupleFieldLength { field: usize, from_arg: usize },
     /// The length is carried by the argument itself (a Box fat pointer).
     /// Used for `into_vec` / `box_assume_init_into_vec_unsafe`.
     ReturnNewAllocationFromBox,

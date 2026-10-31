@@ -29,9 +29,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         Some(alloc.size.div(&elem_term))
     }
 
-    /// The slice length of a `&[T]` / `&mut [T]` value, resolved through its
-    /// provenance allocation (see [`Self::slice_len_of_alloc`]).
+    /// The slice length of a `&[T]` / `&mut [T]` value, from pointer metadata
+    /// when available or its provenance allocation otherwise.
     pub(crate) fn slice_len_from_value(&self, val: &VmValue<'z3, 'tcx>) -> Option<Int<'z3>> {
+        if let ValueSource::SliceLen(len) = &val.source {
+            return Some(len.clone());
+        }
         self.slice_len_of_alloc(val.provenance_alloc_id()?)
     }
 

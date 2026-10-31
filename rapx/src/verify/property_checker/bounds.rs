@@ -185,7 +185,16 @@ impl PropertyChecker {
         // `sub` walks *backwards* (`[value - access, value)`), so this forward
         // form would mis-classify `end.sub(n)` as out of bounds; the `sub`-aware
         // byte-range proof below handles that direction.
+        let matching_element_ty = property
+            .args()
+            .get(1)
+            .and_then(|arg| match arg {
+                PropertyArg::Ty(ty) => Some(vm_state.instantiate_callsite_ty(checkpoint, *ty)),
+                _ => None,
+            })
+            .is_none_or(|ty| Some(ty) == alloc.element_ty.as_ty());
         if !api_classify::is_pointer_sub(checkpoint.callee)
+            && matching_element_ty
             && let (Some(len), Some(k)) = (
                 alloc.slice_len().cloned(),
                 value
