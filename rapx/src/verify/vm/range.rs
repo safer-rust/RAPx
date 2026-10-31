@@ -1,7 +1,7 @@
 //! Range indexing and range effects in the symbolic VM.
 
 use rustc_middle::mir::Local;
-use rustc_middle::ty::{Ty, TyKind};
+use rustc_middle::ty::TyKind;
 use z3::ast::{Ast, Bool, Int};
 
 use crate::helpers::mir_utils;
@@ -105,50 +105,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let offset = VmValue::new(start, self.tcx.types.usize);
         self.apply_pointer_add(dest, base, &offset, None, base.facts.in_bounds);
         true
-    }
-
-    pub(crate) fn apply_range_effect(
-        &mut self,
-        bounds_arg: usize,
-        args: &[VmValue<'z3, 'tcx>],
-        caller_arg_locals: &[Option<Local>],
-        dest: Local,
-    ) {
-        let dest_ty = self.body().local_decls[dest].ty;
-        let TyKind::Adt(adt, substs) = dest_ty.kind() else {
-            return;
-        };
-        let variant = adt.non_enum_variant();
-        let field_ty = |idx: usize| -> Ty<'tcx> {
-            variant
-                .fields
-                .iter()
-                .nth(idx)
-                .map(|f| mir_utils::field_ty(self.tcx, f, substs))
-                .unwrap_or(dest_ty)
-        };
-        let mut len_term = None;
-        if let Some(l) = caller_arg_locals.get(bounds_arg).copied().flatten()
-            && let Some(fv) = self.field_value(l, &[0])
-        {
-            len_term = Some(fv.z3_term.clone());
-        }
-        let len_term = len_term.or_else(|| args.get(bounds_arg).map(|v| v.z3_term.clone()));
-        let Some(len_term) = len_term else {
-            return;
-        };
-
-        let start = self.fresh_int(&format!("range_start_{}", dest.as_usize()));
-        let end = self.fresh_int(&format!("range_end_{}", dest.as_usize()));
-        let zero = Int::from_u64(self.z3_ctx, 0);
-        self.constraints.assertions.push(start.ge(&zero));
-        self.constraints.assertions.push(start.le(&end));
-        self.constraints.assertions.push(end.le(&len_term));
-
-        let start_val = VmValue::new(start, field_ty(0));
-        let end_val = VmValue::new(end, field_ty(1));
-        self.set_field_value(dest, vec![0], start_val);
-        self.set_field_value(dest, vec![1], end_val);
     }
 
     pub(crate) fn apply_range_next_effect(&mut self, args: &[VmValue<'z3, 'tcx>], dest: Local) {

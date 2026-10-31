@@ -340,9 +340,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     }
                 }
             }
-            CallEffect::ReturnRange { bounds_arg } => {
-                self.apply_range_effect(*bounds_arg, args, caller_arg_locals, dest);
-            }
             CallEffect::ReturnWrappingPointerOffset {
                 base_arg,
                 offset_arg,
@@ -395,27 +392,28 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             CallEffect::ReturnAlignOffset { ptr_arg, align_arg } => {
                 let dest_ty = self.body().local_decls[dest].ty;
                 let offset = self.fresh_int(&format!("align_offset_{}", dest.as_usize()));
-                if let (Some(ptr_val), Some(align_val)) = (args.get(*ptr_arg), args.get(*align_arg))
-                {
-                    // `ptr.align_offset(align)` returns the offset in *elements* of
-                    // the pointee type (not bytes), so the aligned address is
-                    // `ptr + offset * size_of::<pointee>()`.  Record that
-                    // `(ptr + offset*elem) % align == 0` with `0 <= offset < align`
-                    // so a downstream `*(ptr.add(offset) as *const U)` can
-                    // discharge `Align`.
+                if let (Some(ptr_val), Some(align_val)) = (args.get(*ptr_arg), args.get(*align_arg)) {
                     let elem = mir_utils::pointee_ty(ptr_val.ty)
                         .map(|pointee| self.size_sym(pointee))
                         .unwrap_or_else(|| Int::from_u64(self.z3_ctx, 1));
                     let byte_off = Int::mul(self.z3_ctx, &[&offset, &elem]);
                     let ptr_plus_off = Int::add(self.z3_ctx, &[&ptr_val.z3_term, &byte_off]);
                     let zero = Int::from_u64(self.z3_ctx, 0);
-                    self.constraints
-                        .assertions
-                        .push(ptr_plus_off.rem(&align_val.z3_term)._eq(&zero));
-                    self.constraints.assertions.push(offset.ge(&zero));
-                    self.constraints
-                        .assertions
-                        .push(offset.lt(&align_val.z3_term));
+                    let pointer_bits = self.tcx.data_layout.pointer_size().bits();
+                    let max_value = if pointer_bits >= 64 {
+                        u64::MAX
+                    } else {
+                        (1u64 << pointer_bits) - 1
+                    };
+                    let max = Int::from_u64(self.z3_ctx, max_value);
+                    let aligned = ptr_plus_off.rem(&align_val.z3_term)._eq(&zero);
+                    let nonnegative = offset.ge(&zero);
+                    let bounded = offset.lt(&align_val.z3_term);
+                    let success = Bool::and(self.z3_ctx, &[&aligned, &nonnegative, &bounded]);
+                    self.constraints.assertions.push(Bool::or(
+                        self.z3_ctx,
+                        &[&offset._eq(&max), &success],
+                    ));
                 }
                 let val = VmValue::new(offset, dest_ty);
                 self.set_local(dest, val);

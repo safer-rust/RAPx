@@ -636,12 +636,6 @@ pub fn is_index_range(def_id: DefId) -> bool {
     type_ids::index_range_types().contains(&def_id)
 }
 
-/// Whether `callee` is `slice::range(range, bounds)` — the range normalizer that
-/// returns `Range { start, end }` with `0 <= start <= end <= bounds.end`.
-pub fn is_slice_range(callee: Option<DefId>) -> bool {
-    any_def(callee, other_api::slice_range_fns())
-}
-
 /// Whether `callee` is `mem::replace(dest, src)` — returns `*dest` (the old
 /// value), so the summary must deref the reference argument.
 pub fn is_mem_replace(callee: Option<DefId>) -> bool {

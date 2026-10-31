@@ -118,10 +118,6 @@ pub(crate) enum CallEffect {
     /// pointee) and its pointee field values are the argument's field values
     /// with the leading `peel` transparent field-0 hops stripped.
     ReturnTransparentDeref { arg: usize, peel: usize },
-    /// `slice::range(range, bounds)` returns `Range { start, end }` satisfying
-    /// `0 <= start <= end <= bounds.end`. Models the range normalizer whose
-    /// `start_bound`/`end_bound` trait dispatch cannot be inlined.
-    ReturnRange { bounds_arg: usize },
     /// `mem::replace(dest, src)` returns `*dest` (the old value), so the return
     /// is the *pointee* of the reference argument, not the reference itself.
     ReturnDerefArg { arg: usize },
