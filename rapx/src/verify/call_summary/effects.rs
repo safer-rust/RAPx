@@ -87,7 +87,6 @@ static REGISTRY: &[Entry] = &[
     ED!(api_classify::is_drop_in_place, eff_drop_memory),
     ED!(api_classify::is_align_offset, eff_align_offset),
     ED!(api_classify::is_layout_align, eff_layout_align),
-    ED!(api_classify::is_iter_position, eff_option_scan_index),
     // ── MIR available — summarized instead of inlined ───────────────
     ED!(api_classify::is_maybe_uninit_uninit, eff_uninit_wrapper),
     ED!(api_classify::is_maybe_uninit_assume_init, eff_return_arg_value),
@@ -290,10 +289,6 @@ fn eff_with_overflow(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 
 fn eff_drop_memory(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     vec![CallEffect::DropMemory { pointer_arg: 0 }]
-}
-
-fn eff_option_scan_index(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![CallEffect::ReturnOptionSomeScanIndex { self_arg: 0 }]
 }
 
 fn eff_align_offset(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {

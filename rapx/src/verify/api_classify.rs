@@ -588,9 +588,6 @@ pub fn is_split_at(callee: Option<DefId>) -> bool {
 // These match standard-library methods through the name-scanned `fn_defs()`
 // groups in [`crate::def_ids::other_api`].
 
-pub fn is_iter_position(callee: Option<DefId>) -> bool {
-    any_def(callee, other_api::iter_position_fns())
-}
 /// Whether `callee` is the `Index::index` / `IndexMut::index_mut` trait method
 /// (the `a[b]` indexing sugar).
 pub fn is_index_method(callee: Option<DefId>) -> bool {

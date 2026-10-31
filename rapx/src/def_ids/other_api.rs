@@ -91,7 +91,6 @@ struct Methods {
     checked_next_pow2: Vec<DefId>,
     layout_align: Vec<DefId>,
     split_at: Vec<DefId>,
-    iter_position: Vec<DefId>,
     slice_get_unchecked: Vec<DefId>,
     slice_get: Vec<DefId>,
     range_next: Vec<DefId>,
@@ -118,7 +117,6 @@ fn init_methods(tcx: TyCtxt) -> Methods {
         checked_next_pow2: Vec::new(),
         layout_align: Vec::new(),
         split_at: Vec::new(),
-        iter_position: Vec::new(),
         slice_get_unchecked: Vec::new(),
         slice_get: Vec::new(),
         range_next: Vec::new(),
@@ -189,12 +187,6 @@ fn init_methods(tcx: TyCtxt) -> Methods {
             }
             if name.contains("::split_at") {
                 methods.split_at.push(did);
-            }
-            if name.contains("Iterator::position")
-                || name.contains("Iterator::find")
-                || name.contains("Iterator::rposition")
-            {
-                methods.iter_position.push(did);
             }
             if (name.contains("::get_unchecked") || name.contains("::get_unchecked_mut"))
                 && (name.contains("::<impl [T]>::get_unchecked")
@@ -351,7 +343,6 @@ method_fns! {
     checked_next_pow2_fns => checked_next_pow2,
     layout_align_fns => layout_align,
     split_at_fns => split_at,
-    iter_position_fns => iter_position,
     slice_get_fns => slice_get,
     range_next_fns => range_next,
     /// Slice `Iter::next` / `IterMut::next`.

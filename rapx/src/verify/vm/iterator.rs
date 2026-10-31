@@ -514,38 +514,4 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         };
         self.set_field_value(local, ptr_path, next_ptr);
     }
-    pub(crate) fn apply_iter_scan_index_effect(
-        &mut self,
-        caller_arg_locals: &[Option<Local>],
-        dest: Local,
-        self_arg: usize,
-    ) {
-        if let Some(iter_ref) = caller_arg_locals.get(self_arg).copied().flatten() {
-            let iter_local = self
-                .local_value(iter_ref)
-                .and_then(|v| v.provenance_alloc_id())
-                .and_then(|alloc| {
-                    self.current_frame
-                        .local_alloc
-                        .iter()
-                        .find(|(_, a)| **a == alloc)
-                        .map(|(l, _)| *l)
-                });
-            let ptr_term =
-                iter_local.and_then(|l| self.field_value(l, &[0]).map(|v| v.z3_term.clone()));
-            let end_term =
-                iter_local.and_then(|l| self.field_value(l, &[1]).map(|v| v.z3_term.clone()));
-            if let (Some(ptr), Some(end)) = (ptr_term, end_term) {
-                let len = Int::sub(self.z3_ctx, &[&end, &ptr]);
-                let payload = self.fresh_int(&format!("scan_idx_{}", dest.as_usize()));
-                self.constraints.assertions.push(payload.lt(&len));
-                let dest_ty = self.body().local_decls[dest].ty;
-                let payload_ty = match dest_ty.kind() {
-                    TyKind::Adt(adt, substs) if adt.is_enum() => substs.type_at(0),
-                    _ => dest_ty,
-                };
-                self.set_field_value(dest, vec![0], VmValue::new(payload, payload_ty));
-            }
-        }
-    }
 }

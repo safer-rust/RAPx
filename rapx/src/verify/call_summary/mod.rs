@@ -93,14 +93,6 @@ pub(crate) enum CallEffect {
     ReturnNewAllocationFromBox,
     /// The return value is a non-zero power of two (models `Layout::align`).
     ReturnPowerOfTwo,
-    /// The return value is known to own initialized memory of the type pointed
-    /// to by the indicated argument (e.g. `Box::from_raw(p)` owns one initialized
-    /// `T` element reached through `p`).
-    /// The call returns `Option<usize>` whose `Some` payload is a scan index
-    /// into the iterator argument `self_arg` (models `Iterator::position` /
-    /// `Iterator::find`): `Some(i)` satisfies `0 <= i < self.len()` where
-    /// `self` is the Iter/IterMut struct produced by `into_iter`/`iter`.
-    ReturnOptionSomeScanIndex { self_arg: usize },
     /// The call is `Try::branch`: `Option<T>` -> `ControlFlow<Option<!>, T>`,
     /// so the result's `Continue` payload (field 0) equals the input's `Some`
     /// payload (field 0).  Models the `?` operator's `if let Some(..) = expr?`

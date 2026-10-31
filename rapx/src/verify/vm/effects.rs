@@ -454,9 +454,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     self.set_field_value(dest, vec![0], VmValue::new(term, lhs.ty));
                 }
             }
-            CallEffect::ReturnOptionSomeScanIndex { self_arg } => {
-                self.apply_iter_scan_index_effect(caller_arg_locals, dest, *self_arg)
-            }
             CallEffect::ReturnBranchPayload { arg } => {
                 let dest_ty = self.body().local_decls[dest].ty;
                 if let Some(value) = args.get(*arg)
