@@ -235,6 +235,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 && self.tcx.is_mir_available(id)
         }) {
             None
+        } else if self.try_simulate_builtin_index(
+            callee,
+            &arg_values,
+            &caller_arg_locals,
+            destination,
+        ) {
+            Some(Vec::new())
         } else if callee.is_some_and(|id| {
             crate::verify::target::has_slice_offset_ensures(self.tcx, id)
         }) {

@@ -868,9 +868,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     }
                 }
             }
-            CallEffect::ReturnSliceRangeIndex => {
-                self.apply_slice_range_index_effect(args, caller_arg_locals, dest)
-            }
             CallEffect::ReturnIterLen { is_len } => {
                 self.apply_iter_len_effect(args, caller_arg_locals, dest, *is_len)
             }

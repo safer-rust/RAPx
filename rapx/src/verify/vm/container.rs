@@ -17,9 +17,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let TyKind::Ref(_, slice, _) = value.ty.kind() else {
             return;
         };
-        let TyKind::Slice(elem) = slice.kind() else {
-            return;
-        };
         let ValueSource::SliceLen(len) = &value.source else {
             return;
         };
@@ -27,11 +24,19 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return;
         };
         let parent_id = parent.alloc_id;
+        let elem = match slice.kind() {
+            TyKind::Slice(elem) => *elem,
+            TyKind::Alias(..) => match self.alloc(parent_id).element_ty.as_ty() {
+                Some(elem) => elem,
+                None => return,
+            },
+            _ => return,
+        };
         let parent_offset = parent.offset.simplify().as_u64();
         let len = len.clone();
-        let align = self.align_sym(*elem);
-        let size = self.size_sym(*elem);
-        let (view_id, _) = self.allocate_slice(len, size, align.clone(), Some(*elem));
+        let align = self.align_sym(elem);
+        let size = self.size_sym(elem);
+        let (view_id, _) = self.allocate_slice(len, size, align.clone(), Some(elem));
         self.alloc_mut(view_id).base = value.z3_term.clone();
         self.alloc_mut(view_id).parent = Some(parent_id);
         if !self.alloc(parent_id).facts.dead {

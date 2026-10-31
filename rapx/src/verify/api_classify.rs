@@ -572,12 +572,6 @@ pub fn is_split_at(callee: Option<DefId>) -> bool {
 // These match standard-library methods through the name-scanned `fn_defs()`
 // groups in [`crate::def_ids::other_api`].
 
-/// Whether `callee` is the `Index::index` / `IndexMut::index_mut` trait method
-/// (the `a[b]` indexing sugar).
-pub fn is_index_method(callee: Option<DefId>) -> bool {
-    any_def(callee, other_api::index_fns())
-}
-
 /// Whether `callee` is `Range::next` / `RangeInclusive::next` (or their
 /// `spec_next` impls). Distinct from the slice-side getters above: the receiver
 /// is `&mut Range<A>`, and the returned element is the current `start`.

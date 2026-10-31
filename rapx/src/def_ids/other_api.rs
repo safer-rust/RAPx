@@ -30,7 +30,6 @@
 //!   (`rap_warn!`) instead of panicking, so an entry with no matching path
 //!   simply yields `None`.
 
-use super::lang_api::{self, LangItem};
 use indexmap::IndexMap;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
@@ -102,7 +101,6 @@ struct Methods {
     gcd: Vec<DefId>,
     known_nonnull: Vec<DefId>,
     null_ptr: Vec<DefId>,
-    index_fns: Vec<DefId>,
 }
 
 fn init_methods(tcx: TyCtxt) -> Methods {
@@ -126,7 +124,6 @@ fn init_methods(tcx: TyCtxt) -> Methods {
         gcd: Vec::new(),
         known_nonnull: Vec::new(),
         null_ptr: Vec::new(),
-        index_fns: Vec::new(),
     };
 
     for krate in std::iter::once(rustc_public::local_crate())
@@ -143,18 +140,6 @@ fn init_methods(tcx: TyCtxt) -> Methods {
                     })
             }) {
                 methods.iterator_next_trait.push(did);
-            }
-
-            // `Index::index` / `IndexMut::index_mut` (the `a[b]` indexing
-            // sugar): matched by lang-item trait container, not by def_path.
-            if let Some(assoc) = tcx.opt_associated_item(did)
-                && let Some(trait_id) = assoc.trait_container(tcx)
-                && (lang_api::matches(tcx, trait_id, LangItem::Index)
-                    && assoc.name().as_str() == "index"
-                    || lang_api::matches(tcx, trait_id, LangItem::IndexMut)
-                        && assoc.name().as_str() == "index_mut")
-            {
-                methods.index_fns.push(did);
             }
 
             if name.ends_with("::len") {
@@ -353,8 +338,6 @@ method_fns! {
     known_nonnull_fns => known_nonnull,
     /// Null-returning pointer methods (`null` / `null_mut`).
     null_ptr_fns => null_ptr,
-    /// `Index::index` / `IndexMut::index_mut` (the `a[b]` indexing sugar).
-    index_fns => index_fns,
 }
 
 fn init_inner(tcx: TyCtxt) -> KnownItems {

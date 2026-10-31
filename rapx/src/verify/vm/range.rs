@@ -7,9 +7,77 @@ use z3::ast::{Ast, Bool, Int};
 use crate::helpers::mir_utils;
 use crate::verify::api_classify;
 
-use super::state::{Provenance, ValueFacts, ValueSource, VmState, VmValue};
+use super::state::{ValueFacts, ValueSource, VmState, VmValue};
 
 impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+    pub(crate) fn try_simulate_builtin_index(
+        &mut self,
+        callee: Option<rustc_hir::def_id::DefId>,
+        args: &[VmValue<'z3, 'tcx>],
+        arg_locals: &[Option<Local>],
+        dest: Local,
+    ) -> bool {
+        use crate::def_ids::lang_api::{self, LangItem};
+
+        let Some(callee) = callee else {
+            return false;
+        };
+        let Some(trait_id) = self.tcx.trait_of_assoc(callee) else {
+            return false;
+        };
+        if !lang_api::matches(self.tcx, trait_id, LangItem::Index)
+            && !lang_api::matches(self.tcx, trait_id, LangItem::IndexMut)
+        {
+            return false;
+        }
+        let [base, index] = args else {
+            return false;
+        };
+        let TyKind::Ref(_, base_pointee, _) = base.ty.kind() else {
+            return false;
+        };
+        let (TyKind::Array(_, _) | TyKind::Slice(_)) = base_pointee.kind() else {
+            return false;
+        };
+        let TyKind::Ref(..) = self.body().local_decls[dest].ty.kind() else {
+            return false;
+        };
+        let is_scalar = matches!(index.ty.kind(), TyKind::Uint(rustc_middle::ty::UintTy::Usize));
+        let Some(index_local) = arg_locals.get(1).copied().flatten() else {
+            return false;
+        };
+        let Some(start) = self.slice_index_start(index, index_local) else {
+            return false;
+        };
+        let Some(base_len) = self.slice_len_from_value(base) else {
+            return false;
+        };
+        let output_len = if is_scalar {
+            None
+        } else {
+            let Some(len) = self.slice_index_output_len(base, index, index_local) else {
+                return false;
+            };
+            Some(len)
+        };
+        let zero = Int::from_u64(self.z3_ctx, 0);
+        self.constraints.assertions.push(start.ge(&zero));
+        if let Some(len) = output_len {
+            self.constraints.assertions.push(len.ge(&zero));
+            self.constraints.assertions.push((&start + &len).le(&base_len));
+            self.apply_slice_offset(dest, base, index, index_local);
+            if let Some(mut value) = self.local_value(dest).cloned() {
+                value.source = ValueSource::SliceLen(len);
+                self.set_local(dest, value);
+            }
+            self.materialize_slice_ref_return(dest);
+        } else {
+            self.constraints.assertions.push(start.lt(&base_len));
+            self.apply_slice_offset(dest, base, index, index_local);
+        }
+        true
+    }
+
     pub(crate) fn slice_index_start(
         &self,
         index: &VmValue<'z3, 'tcx>,
@@ -186,92 +254,5 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             advanced.z3_term = is_empty.ite(&start_term, &next);
         }
         self.store_value(alloc_id, range_view_ty, vec![0], advanced);
-    }
-    pub(crate) fn apply_slice_range_index_effect(
-        &mut self,
-        args: &[VmValue<'z3, 'tcx>],
-        caller_arg_locals: &[Option<Local>],
-        dest: Local,
-    ) {
-        if args.len() < 2 {
-            return;
-        }
-        let dest_ty = self.body().local_decls[dest].ty;
-        let is_slice = matches!(dest_ty.kind(), TyKind::Ref(_, inner, _)
-            if matches!(inner.kind(), TyKind::Slice(_)));
-        let range_kind = args.get(1).and_then(|v| match v.ty.kind() {
-            TyKind::Adt(adt_def, _) => Some(mir_utils::range_kind(self.tcx, adt_def.did())),
-            _ => None,
-        });
-        if !is_slice && range_kind.is_none() {
-            return;
-        }
-        let Some(prov) = args[0].provenance.clone() else {
-            return;
-        };
-        let array_term = args[0].z3_term.clone();
-        let elem_ty = match args[0].ty.kind() {
-            TyKind::Ref(_, inner, _) => match inner.kind() {
-                TyKind::Array(e, _) | TyKind::Slice(e) => *e,
-                _ => args[0].ty,
-            },
-            _ => args[0].ty,
-        };
-        let elem_align = self.align_sym(elem_ty);
-        let elem_size = self.size_sym(elem_ty);
-        let range_local = caller_arg_locals.get(1).copied().flatten();
-        let range_field = |idx: usize| -> Option<Int<'z3>> {
-            range_local.and_then(|l| self.field_value(l, &[idx]).map(|v| v.z3_term.clone()))
-        };
-        let zero = Int::from_u64(self.z3_ctx, 0);
-        let one = Int::from_u64(self.z3_ctx, 1);
-        let total_len = self
-            .slice_len_of_alloc(prov.alloc_id)
-            .unwrap_or_else(|| self.alloc(prov.alloc_id).size.div(&elem_size));
-        let (start, len) = match range_kind {
-            Some(mir_utils::RangeKind::RangeTo) => (
-                zero.clone(),
-                range_field(0).unwrap_or_else(|| total_len.clone()),
-            ),
-            Some(mir_utils::RangeKind::RangeFrom) => {
-                let s = range_field(0).unwrap_or_else(|| zero.clone());
-                (s.clone(), Int::sub(self.z3_ctx, &[&total_len, &s]))
-            }
-            Some(mir_utils::RangeKind::Range) => {
-                let s = range_field(0).unwrap_or_else(|| zero.clone());
-                let e = range_field(1).unwrap_or_else(|| total_len.clone());
-                (s.clone(), Int::sub(self.z3_ctx, &[&e, &s]))
-            }
-            Some(mir_utils::RangeKind::RangeInclusive) => {
-                let s = range_field(0).unwrap_or_else(|| zero.clone());
-                let e = range_field(1).unwrap_or_else(|| total_len.clone());
-                let l = Int::sub(self.z3_ctx, &[&e, &s]);
-                (s.clone(), Int::add(self.z3_ctx, &[&l, &one]))
-            }
-            _ => (zero.clone(), total_len.clone()),
-        };
-        let start_bytes = Int::mul(self.z3_ctx, &[&start, &elem_size]);
-        let dest_term = Int::add(self.z3_ctx, &[&array_term, &start_bytes]);
-        let (alloc_id, _) = self.allocate_slice(len, elem_size, elem_align, Some(elem_ty));
-        self.alloc_mut(alloc_id).parent = Some(prov.alloc_id);
-        self.set_local(
-            dest,
-            VmValue {
-                z3_term: dest_term,
-                ty: dest_ty,
-                provenance: Some(Provenance {
-                    alloc_id,
-                    offset: Int::from_u64(self.z3_ctx, 0),
-                    offset_kind: None,
-                }),
-                facts: ValueFacts {
-                    non_null: true,
-                    init: true,
-                    in_bounds: true,
-                    ..Default::default()
-                },
-                source: ValueSource::None,
-            },
-        );
     }
 }

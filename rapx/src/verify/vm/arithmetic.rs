@@ -399,7 +399,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     (TyKind::Param(_), TyKind::Param(_))
                 );
                 let pointee = match base_pointee.kind() {
-                    TyKind::Slice(element) => *element,
+                    TyKind::Array(element, _) | TyKind::Slice(element) => *element,
                     TyKind::Str => return Int::from_u64(self.z3_ctx, 1),
                     _ if generic_pointer => base_pointee,
                     _ => dest_pointee,
