@@ -1,4 +1,5 @@
 use crate::analysis::dataflow::*;
+use crate::check::opt::report::{OptReport, OptRule};
 use rustc_middle::{mir::Local, ty::TyCtxt};
 use rustc_span::Span;
 
@@ -24,10 +25,10 @@ fn extract_vec_if_is_string_from(graph: &Graph, node: &GraphNode) -> Option<Loca
         if let NodeOp::Call(def_id) = op
             && (*def_id == def_paths.string_from_utf8.last_def_id()
                 || *def_id == def_paths.string_from_utf8_lossy.last_def_id())
-            {
-                let in_edge = &graph.edges[node.in_edges[0]];
-                return Some(in_edge.src);
-            }
+        {
+            let in_edge = &graph.edges[node.in_edges[0]];
+            return Some(in_edge.src);
+        }
     }
     None
 }
@@ -43,9 +44,9 @@ fn find_upside_vec_new_node(graph: &Graph, node_idx: Local) -> Option<Local> {
                 if let NodeOp::Call(def_id) = op
                     && (*def_id == def_paths.vec_new.last_def_id()
                         || *def_id == def_paths.vec_with_capacity.last_def_id())
-                    {
-                        return true;
-                    }
+                {
+                    return true;
+                }
             }
             false
         },
@@ -62,9 +63,10 @@ fn find_downside_push_node(graph: &Graph, node_idx: Local) -> Vec<Local> {
             let node = &graph.nodes[idx];
             for op in node.ops.iter() {
                 if let NodeOp::Call(def_id) = op
-                    && *def_id == def_paths.vec_push.last_def_id() {
-                        return true;
-                    }
+                    && *def_id == def_paths.vec_push.last_def_id()
+                {
+                    return true;
+                }
             }
             false
         },
@@ -81,25 +83,27 @@ impl OptCheck for VecEncodingCheck {
         DEFPATHS.get_or_init(|| DefPaths::new(tcx));
         for node in graph.nodes.iter() {
             if let Some(vec_node_idx) = extract_vec_if_is_string_from(graph, node)
-                && let Some(vec_new_idx) = find_upside_vec_new_node(graph, vec_node_idx) {
-                    let vec_push_indice = find_downside_push_node(graph, vec_new_idx);
-                    for vec_push_idx in vec_push_indice {
-                        let pushed_value_edge = &graph.edges[graph.nodes[vec_push_idx].in_edges[1]]; // The second parameter
-                        let pushed_value_idx = pushed_value_edge.src;
-                        if !value_is_from_const(graph, pushed_value_idx) {
-                            self.record.clear();
-                            return;
-                        }
+                && let Some(vec_new_idx) = find_upside_vec_new_node(graph, vec_node_idx)
+            {
+                let vec_push_indice = find_downside_push_node(graph, vec_new_idx);
+                for vec_push_idx in vec_push_indice {
+                    let pushed_value_edge = &graph.edges[graph.nodes[vec_push_idx].in_edges[1]]; // The second parameter
+                    let pushed_value_idx = pushed_value_edge.src;
+                    if !value_is_from_const(graph, pushed_value_idx) {
+                        self.record.clear();
+                        return;
                     }
-                    self.record.push(node.span);
                 }
+                self.record.push(node.span);
+            }
         }
     }
 
-    fn report(&self, graph: &Graph) {
-        for span in self.record.iter() {
-            report_encoding_bug(graph, *span);
-        }
+    fn report(&self, graph: &Graph) -> Vec<OptReport> {
+        self.record
+            .iter()
+            .map(|span| report_encoding_bug(graph, *span, OptRule::VecEncoding))
+            .collect()
     }
 
     fn cnt(&self) -> usize {

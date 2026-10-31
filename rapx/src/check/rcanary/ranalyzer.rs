@@ -9,6 +9,7 @@ use rustc_middle::{
 use rustc_span::def_id::DefId;
 
 use super::{IcxMut, IcxSliceMut, Rcx, RcxMut, rCanary};
+use super::{capture::FunctionReport, report::AnalysisReport};
 use crate::analysis::heap_ownership::{
     HeapOwnership, HeapOwnershipResultMap, default::TyWithIndex,
 };
@@ -88,12 +89,12 @@ impl<'tcx, 'a> FlowAnalysis<'tcx, 'a> {
         self.rcx_mut().mir_graph_mut()
     }
 
-    pub fn start(&mut self) {
+    pub(crate) fn start(&mut self, report: Option<&mut AnalysisReport>) {
         // this phase determines the final order of all basic blocks for us to visit
         // Note: we will not visit the clean-up blocks (unwinding)
         self.order();
         // this phase will generate the Intra procedural visitor for us to visit the block
-        self.intra_run();
+        self.intra_run(report);
     }
 }
 
@@ -153,13 +154,15 @@ struct IntraFlowAnalysis<'tcx, 'z3, 'a> {
     pub body: &'a Body<'tcx>,
     pub graph: &'a Graph,
     taint_flag: bool,
-    taint_source: Vec<Terminator<'tcx>>,
+    taint_source: Vec<(usize, Terminator<'tcx>)>,
+    capture: Option<FunctionReport>,
 }
 
 impl<'tcx, 'z3, 'a> IntraFlowAnalysis<'tcx, 'z3, 'a> {
     pub fn new(
         rcx: &'a rCanary<'tcx>,
         def_id: DefId,
+        exporting: bool,
         //unique: &'a mut HashSet<DefId>,
     ) -> Self {
         let body = rcx.tcx.instance_mir(Item(def_id));
@@ -176,6 +179,7 @@ impl<'tcx, 'z3, 'a> IntraFlowAnalysis<'tcx, 'z3, 'a> {
             graph,
             taint_flag: false,
             taint_source: Vec::default(),
+            capture: exporting.then(FunctionReport::default),
         }
     }
 
@@ -183,8 +187,8 @@ impl<'tcx, 'z3, 'a> IntraFlowAnalysis<'tcx, 'z3, 'a> {
         self.rcx.adt_owner()
     }
 
-    pub fn add_taint(&mut self, terminator: Terminator<'tcx>) {
-        self.taint_source.push(terminator);
+    pub fn add_taint(&mut self, bidx: usize, terminator: Terminator<'tcx>) {
+        self.taint_source.push((bidx, terminator));
     }
 }
 

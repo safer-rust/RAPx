@@ -5,7 +5,7 @@ use annotate_snippets::Level;
 use rustc_span::Span;
 
 use crate::check::opt::check_utils::node_matches_call;
-use crate::check::opt::report::OptReport;
+use crate::check::opt::report::{OptReport, OptRule};
 
 crate::def_paths! {
     flat_map: "std::iter::Iterator::flat_map",
@@ -43,10 +43,11 @@ impl OptCheck for FlattenCollectCheck {
         }
     }
 
-    fn report(&self, graph: &Graph) {
-        for span in self.record.iter() {
-            report_flatten_collect(graph, *span);
-        }
+    fn report(&self, graph: &Graph) -> Vec<OptReport> {
+        self.record
+            .iter()
+            .map(|span| report_flatten_collect(graph, *span))
+            .collect()
     }
 
     fn cnt(&self) -> usize {
@@ -54,12 +55,11 @@ impl OptCheck for FlattenCollectCheck {
     }
 }
 
-fn report_flatten_collect(graph: &Graph, span: Span) {
-    OptReport::from_graph(graph)
+fn report_flatten_collect(graph: &Graph, span: Span) -> OptReport {
+    OptReport::from_graph(graph, OptRule::FlattenCollect)
         .file_name(span)
         .message_level(Level::Error)
         .title("Data collection inefficiency detected")
         .annotate(Level::Error, span, "Flatten then collect.")
         .footer("Use extend manually.")
-        .emit();
 }

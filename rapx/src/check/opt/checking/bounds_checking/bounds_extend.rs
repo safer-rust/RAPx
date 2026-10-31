@@ -7,7 +7,7 @@ use crate::{analysis::dataflow::*, helpers::def_path::DefPath};
 use annotate_snippets::Level;
 
 use crate::check::opt::check_utils::node_matches_call;
-use crate::check::opt::report::OptReport;
+use crate::check::opt::report::{OptReport, OptRule};
 
 use super::super::super::LEVEL;
 use super::super::super::NO_STD;
@@ -55,10 +55,11 @@ impl OptCheck for BoundsExtendCheck {
         }
     }
 
-    fn report(&self, graph: &Graph) {
-        for span in self.record.iter() {
-            report_extend_bug(graph, *span);
-        }
+    fn report(&self, graph: &Graph) -> Vec<OptReport> {
+        self.record
+            .iter()
+            .map(|span| report_extend_bug(graph, *span))
+            .collect()
     }
 
     fn cnt(&self) -> usize {
@@ -66,10 +67,9 @@ impl OptCheck for BoundsExtendCheck {
     }
 }
 
-fn report_extend_bug(graph: &Graph, span: Span) {
-    OptReport::from_graph(graph)
+fn report_extend_bug(graph: &Graph, span: Span) -> OptReport {
+    OptReport::from_graph(graph, OptRule::BoundsExtend)
         .title("Unnecessary bound checkings detected")
         .annotate(Level::Error, span, "Checked here.")
         .footer("Manipulate memory directly.")
-        .emit();
 }

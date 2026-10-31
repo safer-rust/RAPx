@@ -1,7 +1,7 @@
 use crate::{analysis::dataflow::*, check::opt::OptCheck};
 use annotate_snippets::Level;
 
-use crate::check::opt::report::OptReport;
+use crate::check::opt::report::{OptReport, OptRule};
 
 use super::super::LEVEL;
 use rustc_middle::{
@@ -115,10 +115,11 @@ impl OptCheck for UsedAsImmutableCheck {
         }
     }
 
-    fn report(&self, graph: &Graph) {
-        for (clone_span, use_span) in self.record.iter() {
-            report_used_as_immutable(graph, *clone_span, *use_span);
-        }
+    fn report(&self, graph: &Graph) -> Vec<OptReport> {
+        self.record
+            .iter()
+            .map(|(clone_span, use_span)| report_used_as_immutable(graph, *clone_span, *use_span))
+            .collect()
     }
 
     fn cnt(&self) -> usize {
@@ -126,12 +127,11 @@ impl OptCheck for UsedAsImmutableCheck {
     }
 }
 
-fn report_used_as_immutable(graph: &Graph, clone_span: Span, use_span: Span) {
-    OptReport::from_graph(graph)
+fn report_used_as_immutable(graph: &Graph, clone_span: Span, use_span: Span) -> OptReport {
+    OptReport::from_graph(graph, OptRule::UsedAsImmutable)
         .file_name(clone_span)
         .title("Unnecessary memory cloning detected")
         .annotate(Level::Error, clone_span, "Cloning happens here.")
         .annotate(Level::Error, use_span, "Used here")
         .footer("Use borrowings instead.")
-        .emit();
 }

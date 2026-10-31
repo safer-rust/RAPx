@@ -5,7 +5,7 @@ use rustc_span::Span;
 
 use annotate_snippets::Level;
 
-use crate::check::opt::report::OptReport;
+use crate::check::opt::report::{OptReport, OptRule};
 
 crate::def_paths! {
     string_new: "std::string::String::new",
@@ -22,10 +22,11 @@ fn extract_value_if_is_string_push(graph: &Graph, node: &GraphNode) -> Option<Lo
     let def_paths = DEFPATHS.get().unwrap();
     for op in node.ops.iter() {
         if let NodeOp::Call(def_id) = op
-            && *def_id == def_paths.string_push.last_def_id() {
-                let push_value_idx = graph.edges[node.in_edges[1]].src; //the secod parameter
-                return Some(push_value_idx);
-            }
+            && *def_id == def_paths.string_push.last_def_id()
+        {
+            let push_value_idx = graph.edges[node.in_edges[1]].src; //the secod parameter
+            return Some(push_value_idx);
+        }
     }
     None
 }
@@ -39,9 +40,10 @@ fn find_upside_string_new(graph: &Graph, node_idx: Local) -> Option<Local> {
             let node = &graph.nodes[idx];
             for op in node.ops.iter() {
                 if let NodeOp::Call(def_id) = op
-                    && *def_id == def_paths.string_new.last_def_id() {
-                        return true;
-                    }
+                    && *def_id == def_paths.string_new.last_def_id()
+                {
+                    return true;
+                }
             }
             false
         },
@@ -58,19 +60,22 @@ impl OptCheck for StringPushCheck {
         DEFPATHS.get_or_init(|| DefPaths::new(tcx));
         for (node_idx, node) in graph.nodes.iter_enumerated() {
             if let Some(pushed_value_idx) = extract_value_if_is_string_push(graph, node)
-                && find_upside_string_new(graph, node_idx).is_some() {
-                    if !value_is_from_const(graph, pushed_value_idx) {
-                        self.record.clear(); // Warning: Not rigorous, push of other string may cause clear
-                        return;
-                    }
-                    self.record.push(node.span);
+                && find_upside_string_new(graph, node_idx).is_some()
+            {
+                if !value_is_from_const(graph, pushed_value_idx) {
+                    self.record.clear(); // Warning: Not rigorous, push of other string may cause clear
+                    return;
                 }
+                self.record.push(node.span);
+            }
         }
     }
 
-    fn report(&self, graph: &Graph) {
-        if !self.record.is_empty() {
-            report_string_push_bug(graph, &self.record);
+    fn report(&self, graph: &Graph) -> Vec<OptReport> {
+        if self.record.is_empty() {
+            Vec::new()
+        } else {
+            vec![report_string_push_bug(graph, &self.record)]
         }
     }
 
@@ -79,10 +84,11 @@ impl OptCheck for StringPushCheck {
     }
 }
 
-fn report_string_push_bug(graph: &Graph, spans: &[Span]) {
-    let mut report = OptReport::from_graph(graph).title("Unnecessary encoding checkings detected");
+fn report_string_push_bug(graph: &Graph, spans: &[Span]) -> OptReport {
+    let mut report = OptReport::from_graph(graph, OptRule::StringPush)
+        .title("Unnecessary encoding checkings detected");
     for span in spans.iter() {
         report = report.annotate(Level::Error, *span, "Checked here.");
     }
-    report.footer("Use unsafe APIs instead.").emit();
+    report.footer("Use unsafe APIs instead.")
 }

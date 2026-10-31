@@ -16,7 +16,6 @@ use std::env;
 
 mod args;
 mod cargo_check;
-mod opt_ai;
 mod utils;
 
 fn phase_cargo_rap() {
@@ -79,10 +78,7 @@ fn main() {
 
     match args::get_arg(1).unwrap() {
         "rapx" => {
-            if let cli::Commands::OptAi(options) = &args::cargo_cli().args().command {
-                opt_ai::run(options);
-                return;
-            }
+            let _ = args::cargo_cli();
             phase_cargo_rap()
         }
         arg if arg.ends_with("rustc") || arg.ends_with("rustc.exe") => phase_rustc_wrapper(),

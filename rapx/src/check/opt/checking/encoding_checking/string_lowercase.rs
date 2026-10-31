@@ -8,7 +8,7 @@ use crate::analysis::dataflow::Graph;
 use crate::check::opt::OptCheck;
 use crate::check::opt::loop_visitors::MethodCallFinder;
 
-use crate::check::opt::report::OptReport;
+use crate::check::opt::report::{OptReport, OptRule};
 
 crate::def_paths! {
     string_to_lowercase: "str::to_lowercase",
@@ -34,10 +34,11 @@ impl OptCheck for StringLowercaseCheck {
         self.record = finder.into_record();
     }
 
-    fn report(&self, graph: &Graph) {
-        for contains_span in self.record.iter() {
-            report_string_ascii_bug(graph, *contains_span);
-        }
+    fn report(&self, graph: &Graph) -> Vec<OptReport> {
+        self.record
+            .iter()
+            .map(|contains_span| report_string_ascii_bug(graph, *contains_span))
+            .collect()
     }
 
     fn cnt(&self) -> usize {
@@ -45,10 +46,9 @@ impl OptCheck for StringLowercaseCheck {
     }
 }
 
-fn report_string_ascii_bug(graph: &Graph, contains_span: Span) {
-    OptReport::from_graph(graph)
+fn report_string_ascii_bug(graph: &Graph, contains_span: Span) -> OptReport {
+    OptReport::from_graph(graph, OptRule::StringLowercase)
         .title("Unnecessary encoding checkings detected.")
         .annotate(Level::Error, contains_span, "Checked here.")
         .footer("Use to_ascii_lowercase instead.")
-        .emit();
 }

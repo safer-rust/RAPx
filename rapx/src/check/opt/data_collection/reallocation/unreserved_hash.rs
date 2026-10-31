@@ -5,7 +5,7 @@ use annotate_snippets::Level;
 use rustc_span::Span;
 
 use crate::check::opt::check_utils::node_matches_call;
-use crate::check::opt::report::OptReport;
+use crate::check::opt::report::{OptReport, OptRule};
 
 crate::def_paths! {
     hashset_insert: "std::collections::HashSet::insert",
@@ -31,9 +31,9 @@ fn find_downside_hash_insert_node(graph: &Graph, node_idx: Local) -> Option<Loca
                     && (*def_id == def_paths.hashmap_insert.last_def_id()
                         || *def_id == def_paths.hashset_insert.last_def_id()
                         || *def_id == def_paths.entry.last_def_id())
-                    {
-                        return true;
-                    }
+                {
+                    return true;
+                }
             }
             false
         },
@@ -55,18 +55,21 @@ impl OptCheck for UnreservedHashCheck {
                     def_paths.hashmap_new.last_def_id(),
                     def_paths.hashset_new.last_def_id(),
                 ],
-            )
-                && let Some(insert_idx) = find_downside_hash_insert_node(graph, node_idx) {
-                    let insert_node = &graph.nodes[insert_idx];
-                    self.record.push((node.span, insert_node.span));
-                }
+            ) && let Some(insert_idx) = find_downside_hash_insert_node(graph, node_idx)
+            {
+                let insert_node = &graph.nodes[insert_idx];
+                self.record.push((node.span, insert_node.span));
+            }
         }
     }
 
-    fn report(&self, graph: &Graph) {
-        for (hash_span, insert_span) in self.record.iter() {
-            report_unreserved_hash_bug(graph, *hash_span, *insert_span);
-        }
+    fn report(&self, graph: &Graph) -> Vec<OptReport> {
+        self.record
+            .iter()
+            .map(|(hash_span, insert_span)| {
+                report_unreserved_hash_bug(graph, *hash_span, *insert_span)
+            })
+            .collect()
     }
 
     fn cnt(&self) -> usize {
@@ -74,12 +77,11 @@ impl OptCheck for UnreservedHashCheck {
     }
 }
 
-fn report_unreserved_hash_bug(graph: &Graph, hash_span: Span, insert_span: Span) {
-    OptReport::from_graph(graph)
+fn report_unreserved_hash_bug(graph: &Graph, hash_span: Span, insert_span: Span) -> OptReport {
+    OptReport::from_graph(graph, OptRule::UnreservedHash)
         .file_name(hash_span)
         .title("Improper data collection detected")
         .annotate(Level::Error, hash_span, "Space unreserved.")
         .annotate(Level::Info, insert_span, "Insertion happens here.")
         .footer("Reserve enough space.")
-        .emit();
 }

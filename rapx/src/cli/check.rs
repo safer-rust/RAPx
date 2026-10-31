@@ -17,6 +17,10 @@ pub struct CheckArgs {
     pub mleak: bool,
 
     /// Run SafeDrop with AI review context
-    #[arg(short = 'F', long, conflicts_with_all = ["uaf", "mleak"])]
+    #[arg(short = 'F', long, conflicts_with_all = ["uaf", "mleak", "m_ai"])]
     pub f_ai: bool,
+
+    /// Run rCanary with AI review context
+    #[arg(short = 'M', long, conflicts_with_all = ["uaf", "mleak", "f_ai"])]
+    pub m_ai: bool,
 }

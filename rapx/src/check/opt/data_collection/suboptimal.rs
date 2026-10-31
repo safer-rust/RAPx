@@ -1,3 +1,4 @@
+use crate::check::opt::report::OptReport;
 pub mod participant;
 pub mod slice_contains;
 pub mod vec_remove;
@@ -37,10 +38,15 @@ impl OptCheck for SuboptimalCheck {
         }
     }
 
-    fn report(&self, graph: &Graph) {
-        self.participant.report(graph);
-        self.slice_contains.report(graph);
-        self.vec_remove.report(graph);
+    fn report(&self, graph: &Graph) -> Vec<OptReport> {
+        [
+            self.participant.report(graph),
+            self.slice_contains.report(graph),
+            self.vec_remove.report(graph),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
     }
 
     fn cnt(&self) -> usize {

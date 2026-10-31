@@ -7,7 +7,7 @@ use crate::{analysis::dataflow::*, check::opt::OptCheck};
 
 use annotate_snippets::Level;
 
-use crate::check::opt::report::OptReport;
+use crate::check::opt::report::{OptReport, OptRule};
 
 use rustc_middle::{mir::Local, ty::TyCtxt};
 use rustc_span::Span;
@@ -41,11 +41,16 @@ impl OptCheck for EncodingCheck {
         self.string_lowercase.check(graph, tcx);
     }
 
-    fn report(&self, graph: &Graph) {
-        self.vec_encoding.report(graph);
-        self.array_encoding.report(graph);
-        self.string_push.report(graph);
-        self.string_lowercase.report(graph);
+    fn report(&self, graph: &Graph) -> Vec<OptReport> {
+        [
+            self.vec_encoding.report(graph),
+            self.array_encoding.report(graph),
+            self.string_push.report(graph),
+            self.string_lowercase.report(graph),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
     }
 
     fn cnt(&self) -> usize {
@@ -56,12 +61,11 @@ impl OptCheck for EncodingCheck {
     }
 }
 
-fn report_encoding_bug(graph: &Graph, span: Span) {
-    OptReport::from_graph(graph)
+fn report_encoding_bug(graph: &Graph, span: Span, rule: OptRule) -> OptReport {
+    OptReport::from_graph(graph, rule)
         .title("Unnecessary encoding checkings detected")
         .annotate(Level::Error, span, "Checked here.")
         .footer("Use unsafe APIs.")
-        .emit();
 }
 
 fn value_is_from_const(graph: &Graph, value_idx: Local) -> bool {

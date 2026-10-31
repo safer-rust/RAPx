@@ -7,7 +7,7 @@ use annotate_snippets::Level;
 use rustc_span::Span;
 
 use crate::check::opt::check_utils::node_matches_call;
-use crate::check::opt::report::OptReport;
+use crate::check::opt::report::{OptReport, OptRule};
 
 use super::super::super::LEVEL;
 use super::super::super::loop_visitors::LoopFinder;
@@ -34,9 +34,9 @@ fn find_upside_reservation(graph: &Graph, node_idx: Local) -> Option<Local> {
                 if let NodeOp::Call(def_id) = op
                     && (*def_id == def_paths.vec_with_capacity.last_def_id()
                         || *def_id == def_paths.vec_reserve.last_def_id())
-                    {
-                        return true;
-                    }
+                {
+                    return true;
+                }
             }
             false
         },
@@ -58,9 +58,10 @@ impl OptCheck for UnreservedVecCheck {
                     self.record.push(node.span);
                 }
                 if node_matches_call(node, &[def_paths.vec_push.last_def_id()])
-                    && find_upside_reservation(graph, node_idx).is_none() {
-                        self.record.push(node.span);
-                    }
+                    && find_upside_reservation(graph, node_idx).is_none()
+                {
+                    self.record.push(node.span);
+                }
             }
         }
 
@@ -73,17 +74,19 @@ impl OptCheck for UnreservedVecCheck {
         for (_, push_record) in loop_finder.into_record() {
             for push_span in push_record {
                 if let Some((node_idx, _)) = graph.query_node_by_span(push_span, false)
-                    && find_upside_reservation(graph, node_idx).is_none() {
-                        self.record.push(push_span);
-                    }
+                    && find_upside_reservation(graph, node_idx).is_none()
+                {
+                    self.record.push(push_span);
+                }
             }
         }
     }
 
-    fn report(&self, graph: &Graph) {
-        for span in self.record.iter() {
-            report_unreserved_vec_bug(graph, *span);
-        }
+    fn report(&self, graph: &Graph) -> Vec<OptReport> {
+        self.record
+            .iter()
+            .map(|span| report_unreserved_vec_bug(graph, *span))
+            .collect()
     }
 
     fn cnt(&self) -> usize {
@@ -91,11 +94,10 @@ impl OptCheck for UnreservedVecCheck {
     }
 }
 
-fn report_unreserved_vec_bug(graph: &Graph, span: Span) {
-    OptReport::from_graph(graph)
+fn report_unreserved_vec_bug(graph: &Graph, span: Span) -> OptReport {
+    OptReport::from_graph(graph, OptRule::UnreservedVec)
         .file_name(span)
         .title("Improper data collection detected")
         .annotate(Level::Error, span, "Space unreserved.")
         .footer("Reserve enough space.")
-        .emit();
 }

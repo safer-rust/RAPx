@@ -1,3 +1,4 @@
+use crate::check::opt::report::OptReport;
 pub mod flatten_collect;
 pub mod unreserved_hash;
 pub mod unreserved_vec;
@@ -32,10 +33,15 @@ impl OptCheck for ReservationCheck {
         self.flatten_collect.check(graph, tcx);
     }
 
-    fn report(&self, graph: &Graph) {
-        self.unreserved_hash.report(graph);
-        self.unreserved_vec.report(graph);
-        self.flatten_collect.report(graph);
+    fn report(&self, graph: &Graph) -> Vec<OptReport> {
+        [
+            self.unreserved_hash.report(graph),
+            self.unreserved_vec.report(graph),
+            self.flatten_collect.report(graph),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
     }
 
     fn cnt(&self) -> usize {

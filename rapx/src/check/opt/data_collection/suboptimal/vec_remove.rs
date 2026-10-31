@@ -5,7 +5,7 @@ use rustc_middle::ty::TyCtxt;
 use rustc_span::Span;
 
 use crate::check::opt::check_utils::node_matches_call;
-use crate::check::opt::report::OptReport;
+use crate::check::opt::report::{OptReport, OptRule};
 
 crate::def_paths! {
     vec_remove: "std::vec::Vec::remove",
@@ -19,9 +19,10 @@ pub struct VecRemoveCheck {
 fn is_0_usize(node: &GraphNode) -> bool {
     for op in node.ops.iter() {
         if let NodeOp::Const(desc, _) = op
-            && desc.eq("0_usize") {
-                return true;
-            }
+            && desc.eq("0_usize")
+        {
+            return true;
+        }
     }
     false
 }
@@ -50,10 +51,11 @@ impl OptCheck for VecRemoveCheck {
         }
     }
 
-    fn report(&self, graph: &Graph) {
-        for span in self.record.iter() {
-            report_vec_remove_bug(graph, *span);
-        }
+    fn report(&self, graph: &Graph) -> Vec<OptReport> {
+        self.record
+            .iter()
+            .map(|span| report_vec_remove_bug(graph, *span))
+            .collect()
     }
 
     fn cnt(&self) -> usize {
@@ -61,8 +63,8 @@ impl OptCheck for VecRemoveCheck {
     }
 }
 
-fn report_vec_remove_bug(graph: &Graph, span: Span) {
-    OptReport::from_graph(graph)
+fn report_vec_remove_bug(graph: &Graph, span: Span) -> OptReport {
+    OptReport::from_graph(graph, OptRule::VecRemove)
         .title("Improper data collection detected")
         .annotate(
             Level::Error,
@@ -70,5 +72,4 @@ fn report_vec_remove_bug(graph: &Graph, span: Span) {
             "Vec increasement / decreasement happens here.",
         )
         .footer("Use VecQueue instead of Vec.")
-        .emit();
 }
