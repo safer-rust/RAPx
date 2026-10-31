@@ -1200,37 +1200,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     );
                 }
             }
-            CallEffect::OwnsInitMemory { arg } => {
-                if let Some(arg_val) = args.get(*arg) {
-                    if let Some(prov) = &arg_val.provenance {
-                        self.content_mut(prov.alloc_id).facts.initialized = true;
-                    }
-                    let mut val = arg_val.clone();
-                    val.ty = self.body().local_decls[dest].ty;
-                    val.facts.init = true;
-                    val.facts.non_null = true;
-                    // `Box::from_raw`/`from_raw_in` reconstruct a Box whose
-                    // `Unique<T>.pointer` (`NonNull<T>` at path `[0, 0]`) must
-                    // carry the same provenance: rustc 1.95 lowers `Box::as_ptr`
-                    // (`&raw **b`) to a `(_1.0).0` field read + transmute, so
-                    // without this the re-derived pointer loses provenance.
-                    if let rustc_middle::ty::TyKind::Adt(adt, _) = val.ty.kind()
-                        && api_classify::is_std_box(adt.did())
-                    {
-                        let nn_path = self
-                            .container_ptr_field(val.ty)
-                            .expect("Box has no owning pointer field");
-                        self.set_field_value(dest, nn_path.clone(), val.clone());
-                        if let Some(prov) = &val.provenance {
-                            self.units[prov.alloc_id.0]
-                                .content
-                                .values
-                                .insert((val.ty, nn_path), val.clone());
-                        }
-                    }
-                    self.set_local(dest, val);
-                }
-            }
             CallEffect::DropMemory { pointer_arg } => {
                 // `ManuallyDrop::drop(slot)` / `drop_in_place(x)` frees the heap
                 // allocation behind the argument. A reference/raw-pointer

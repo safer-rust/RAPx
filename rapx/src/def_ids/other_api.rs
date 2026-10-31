@@ -365,7 +365,6 @@ method_fns! {
     layout_align_fns => layout_align,
     split_at_fns => split_at,
     iter_position_fns => iter_position,
-    slice_get_unchecked_fns => slice_get_unchecked,
     slice_get_fns => slice_get,
     slice_range_fns => slice_range_fns,
     range_next_fns => range_next,

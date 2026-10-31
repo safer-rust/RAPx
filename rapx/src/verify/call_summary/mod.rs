@@ -116,7 +116,6 @@ pub(crate) enum CallEffect {
     /// The return value is known to own initialized memory of the type pointed
     /// to by the indicated argument (e.g. `Box::from_raw(p)` owns one initialized
     /// `T` element reached through `p`).
-    OwnsInitMemory { arg: usize },
     /// The call returns `Option<usize>` whose `Some` payload is a scan index
     /// into the iterator argument `self_arg` (models `Iterator::position` /
     /// `Iterator::find`): `Some(i)` satisfies `0 <= i < self.len()` where

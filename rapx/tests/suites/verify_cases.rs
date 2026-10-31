@@ -112,28 +112,9 @@ fn std_challenge_01() {
         "expected exactly 1 UNSOUND function (filter_map_next_chunk_ext)\n{output}"
     );
 
-    // Regression: `filter_map_next_chunk_ext` exercises three RAPx fixes.
-    //
-    //   1. `is_slice_get_unchecked` must match `::<impl [T]>::get_unchecked_mut`.
-    //      Otherwise `get_unchecked_mut` is classified as unsupported and gets
-    //      inlined, so `MaybeUninit::write` loses the array's provenance and the
-    //      `assume_init_read` checkpoint degrades to `Init | Unknown`.
-    //   2. `ensure_local_allocation` must size `[MaybeUninit<T>; N]` by the
-    //      symbolic element count `N` (instead of collapsing to 1 byte), so
-    //      `len() = size / elem_size` stays equal to `N`.
-    //   3. `check_in_bound_slice` must assert the accumulated path conditions,
-    //      so the loop-carried `idx < N` guard discharges `idx + 1 <= N`.
-    //
-    // After these fixes the only remaining unproved obligations are the three
-    // first-iteration `InBound | Failed` reports, which correctly flag std's
-    // real soundness bug rust-lang/rust#153803 (buffer overrun when N == 0).
     let block = extract_block_after(&output, "function: filter_map_next_chunk_ext");
     assert_not_contain(&block, "Init | Unknown");
     assert_not_contain(&block, "Init | Failed");
-    // After the three fixes the only remaining unproved obligations are the
-    // three first-iteration `InBound | Failed` reports (N == 0 buffer overrun,
-    // std #153803). Count actual failures by summing the `(xN)` multiplicities
-    // rather than matching the folded row count.
     let in_bound_failed: usize = block
         .lines()
         .filter(|l| l.contains("InBound | Failed"))

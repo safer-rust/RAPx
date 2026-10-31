@@ -83,8 +83,6 @@ static REGISTRY: &[Entry] = &[
     ED!(api_classify::is_vec_push_or_reserve, eff_write_mem),
     // ── MIR available — precise symbolic summary ────────────────────
     ED!(api_classify::is_checked_next_pow2, eff_return_option_some_nonzero),
-    ED!(api_classify::is_slice_get_unchecked, eff_alias_ptr),
-    ED!(api_classify::is_ownership_reconstruction, eff_ownership_recon),
     ED!(api_classify::is_manually_drop_drop, eff_drop_memory),
     ED!(api_classify::is_std_drop, eff_drop_memory),
     ED!(api_classify::is_drop_in_place, eff_drop_memory),
@@ -179,10 +177,6 @@ fn eff_exact_div(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 
 fn eff_select_unpredictable(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     vec![CallEffect::SelectUnpredictable]
-}
-
-fn eff_alias_ptr(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![CallEffect::ReturnPointerFromArg { arg: 0 }]
 }
 
 fn eff_alias_arg0(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
@@ -308,14 +302,6 @@ fn eff_with_overflow(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
         rhs_arg: 1,
         op,
     }]
-}
-
-fn eff_ownership_recon(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![
-        CallEffect::ReturnAliasArg { arg: 0 },
-        CallEffect::ReturnNonZero,
-        CallEffect::OwnsInitMemory { arg: 0 },
-    ]
 }
 
 fn eff_drop_memory(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
