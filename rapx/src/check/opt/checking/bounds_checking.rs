@@ -1,3 +1,4 @@
+use crate::check::opt::report::OptReport;
 use rustc_middle::ty::TyCtxt;
 
 use crate::analysis::dataflow::Graph;
@@ -32,10 +33,15 @@ impl OptCheck for BoundsCheck {
         self.bounds_extend.check(graph, tcx);
     }
 
-    fn report(&self, graph: &Graph) {
-        self.bounds_len.report(graph);
-        self.bounds_loop_push.report(graph);
-        self.bounds_extend.report(graph);
+    fn report(&self, graph: &Graph) -> Vec<OptReport> {
+        [
+            self.bounds_len.report(graph),
+            self.bounds_loop_push.report(graph),
+            self.bounds_extend.report(graph),
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
     }
 
     fn cnt(&self) -> usize {

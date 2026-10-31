@@ -1,3 +1,4 @@
+use crate::check::opt::report::OptReport;
 pub mod local_set;
 pub mod vec_init;
 
@@ -31,9 +32,11 @@ impl OptCheck for InitializationCheck {
         }
     }
 
-    fn report(&self, graph: &Graph) {
-        self.local_set.report(graph);
-        self.vec_init.report(graph);
+    fn report(&self, graph: &Graph) -> Vec<OptReport> {
+        [self.local_set.report(graph), self.vec_init.report(graph)]
+            .into_iter()
+            .flatten()
+            .collect()
     }
 
     fn cnt(&self) -> usize {

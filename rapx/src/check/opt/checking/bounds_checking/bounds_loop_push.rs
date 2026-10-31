@@ -10,7 +10,7 @@ use crate::utils::span::{span_to_first_line, span_to_trimmed_span};
 
 use annotate_snippets::Level;
 
-use crate::check::opt::report::OptReport;
+use crate::check::opt::report::{OptReport, OptRule};
 
 use super::super::super::LEVEL;
 use super::super::super::NO_STD;
@@ -61,10 +61,11 @@ impl OptCheck for BoundsLoopPushCheck {
         }
     }
 
-    fn report(&self, _: &Graph) {
-        for (loop_span, push_record) in self.record.iter() {
-            report_loop_push_bug(*loop_span, push_record);
-        }
+    fn report(&self, _: &Graph) -> Vec<OptReport> {
+        self.record
+            .iter()
+            .map(|(loop_span, push_record)| report_loop_push_bug(*loop_span, push_record))
+            .collect()
     }
 
     fn cnt(&self) -> usize {
@@ -72,13 +73,13 @@ impl OptCheck for BoundsLoopPushCheck {
     }
 }
 
-fn report_loop_push_bug(loop_span: Span, push_record: &Vec<Span>) {
+fn report_loop_push_bug(loop_span: Span, push_record: &Vec<Span>) -> OptReport {
     let trimmed = span_to_trimmed_span(span_to_first_line(loop_span));
-    let mut report = OptReport::new(loop_span, loop_span)
+    let mut report = OptReport::new(loop_span, loop_span, OptRule::BoundsLoopPush)
         .title("Unnecessary bounds checkings detected")
         .annotate(Level::Info, trimmed, "A loop operation.");
     for push_span in push_record {
         report = report.annotate(Level::Error, *push_span, "Push happens here.");
     }
-    report.emit();
+    report
 }

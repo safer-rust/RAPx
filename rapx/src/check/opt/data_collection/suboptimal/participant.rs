@@ -5,7 +5,7 @@ use rustc_middle::ty::TyCtxt;
 use rustc_span::Span;
 
 use crate::check::opt::check_utils::node_matches_any_call;
-use crate::check::opt::report::OptReport;
+use crate::check::opt::report::{OptReport, OptRule};
 
 crate::def_paths! {
     hashset_new: "std::collections::HashSet::new",
@@ -41,10 +41,11 @@ impl OptCheck for ParticipantCheck {
         }
     }
 
-    fn report(&self, graph: &Graph) {
-        for span in self.record.iter() {
-            report_participant(graph, *span);
-        }
+    fn report(&self, graph: &Graph) -> Vec<OptReport> {
+        self.record
+            .iter()
+            .map(|span| report_participant(graph, *span))
+            .collect()
     }
 
     fn cnt(&self) -> usize {
@@ -52,11 +53,10 @@ impl OptCheck for ParticipantCheck {
     }
 }
 
-fn report_participant(graph: &Graph, span: Span) {
-    OptReport::from_graph(graph)
+fn report_participant(graph: &Graph, span: Span) -> OptReport {
+    OptReport::from_graph(graph, OptRule::Participant)
         .file_name(span)
         .title("Suboptimal data collection detected")
         .annotate(Level::Error, span, "Data collection created here")
         .footer("Use faster data collection or hash operators instead. Static container is also a choice")
-        .emit();
 }

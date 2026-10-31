@@ -5,7 +5,7 @@ use rustc_middle::{mir::Local, ty::TyCtxt};
 use rustc_span::Span;
 
 use crate::check::opt::check_utils::node_matches_any_call;
-use crate::check::opt::report::OptReport;
+use crate::check::opt::report::{OptReport, OptRule};
 
 crate::def_paths! {
     hashset_new: "std::collections::HashSet::new",
@@ -42,10 +42,11 @@ impl OptCheck for LocalSetCheck {
         }
     }
 
-    fn report(&self, graph: &Graph) {
-        for span in self.record.iter() {
-            report_local_set(graph, *span);
-        }
+    fn report(&self, graph: &Graph) -> Vec<OptReport> {
+        self.record
+            .iter()
+            .map(|span| report_local_set(graph, *span))
+            .collect()
     }
 
     fn cnt(&self) -> usize {
@@ -53,11 +54,10 @@ impl OptCheck for LocalSetCheck {
     }
 }
 
-fn report_local_set(graph: &Graph, span: Span) {
-    OptReport::from_graph(graph)
+fn report_local_set(graph: &Graph, span: Span) -> OptReport {
+    OptReport::from_graph(graph, OptRule::LocalSet)
         .file_name(span)
         .title("Unnecessary data collection initialization detected")
         .annotate(Level::Error, span, "Initialization happens here")
         .footer("Move it into parameter list and use hash table to save allocation.")
-        .emit();
 }

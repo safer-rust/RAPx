@@ -7,7 +7,7 @@ use rustc_hir::intravisit;
 use rustc_middle::ty::TyCtxt;
 use rustc_span::Span;
 
-use crate::check::opt::report::OptReport;
+use crate::check::opt::report::{OptReport, OptRule};
 
 crate::def_paths! {
     slice_contains: "slice::contains",
@@ -33,10 +33,11 @@ impl OptCheck for SliceContainsCheck {
         self.record = finder.into_record();
     }
 
-    fn report(&self, graph: &Graph) {
-        for contains_span in self.record.iter() {
-            report_slice_contains_bug(graph, *contains_span);
-        }
+    fn report(&self, graph: &Graph) -> Vec<OptReport> {
+        self.record
+            .iter()
+            .map(|contains_span| report_slice_contains_bug(graph, *contains_span))
+            .collect()
     }
 
     fn cnt(&self) -> usize {
@@ -44,10 +45,9 @@ impl OptCheck for SliceContainsCheck {
     }
 }
 
-fn report_slice_contains_bug(graph: &Graph, contains_span: Span) {
-    OptReport::from_graph(graph)
+fn report_slice_contains_bug(graph: &Graph, contains_span: Span) -> OptReport {
+    OptReport::from_graph(graph, OptRule::SliceContains)
         .title("Improper data collection detected")
         .annotate(Level::Error, contains_span, "Slice contains happens here.")
         .footer("Use Set instead of Slice.")
-        .emit();
 }

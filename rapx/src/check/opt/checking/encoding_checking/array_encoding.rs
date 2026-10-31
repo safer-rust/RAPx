@@ -1,3 +1,4 @@
+use crate::check::opt::report::{OptReport, OptRule};
 use std::collections::HashSet;
 
 use rustc_middle::{mir::Local, ty::TyCtxt};
@@ -23,9 +24,10 @@ fn extract_ancestor_set_if_is_str_from(
     let def_paths = DEFPATHS.get().unwrap();
     for op in node.ops.iter() {
         if let NodeOp::Call(def_id) = op
-            && *def_id == def_paths.str_from_utf8.last_def_id() {
-                return Some(graph.collect_ancestor_locals(node_idx, false));
-            }
+            && *def_id == def_paths.str_from_utf8.last_def_id()
+        {
+            return Some(graph.collect_ancestor_locals(node_idx, false));
+        }
     }
     None
 }
@@ -85,10 +87,11 @@ impl OptCheck for ArrayEncodingCheck {
         }
     }
 
-    fn report(&self, graph: &Graph) {
-        for span in self.record.iter() {
-            report_encoding_bug(graph, *span);
-        }
+    fn report(&self, graph: &Graph) -> Vec<OptReport> {
+        self.record
+            .iter()
+            .map(|span| report_encoding_bug(graph, *span, OptRule::ArrayEncoding))
+            .collect()
     }
 
     fn cnt(&self) -> usize {
