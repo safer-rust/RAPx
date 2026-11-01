@@ -22,7 +22,7 @@ pub(crate) fn is_static_lifetime_ident(name: &str) -> bool {
 
 /// The root of a contract place: a function's return value, an argument, or a
 /// raw MIR local.  `Return` ⇔ `Local(0)`; `Arg(n)` ⇔ `Local(n + 1)`.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum PlaceBase {
     /// The function's return value.
     Return,
@@ -56,7 +56,7 @@ impl PlaceBase {
 
 /// A step into a place, from the base down to the value a contract talks
 /// about (written as `.field`, `.unwrap_some()`, or `.iter()` in the DSL).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum ContractProjection<'tcx> {
     /// Select a struct/tuple field.
     Field { index: usize, ty: Option<Ty<'tcx>> },
@@ -68,7 +68,7 @@ pub(crate) enum ContractProjection<'tcx> {
 
 /// A place a contract refers to: a [`PlaceBase`] root plus a sequence of
 /// [`ContractProjection`] steps into it (e.g. `self.next.value`, `head.iter()`).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct ContractPlace<'tcx> {
     /// The root: return value, an argument, or a MIR local.
     pub base: PlaceBase,
@@ -124,7 +124,7 @@ impl<'tcx> ContractPlace<'tcx> {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum NumericBinOp {
     Add,
     Sub,
@@ -138,13 +138,13 @@ pub(crate) enum NumericBinOp {
     BitXor,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum NumericUnaryOp {
     Not,
     Neg,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum ContractExpr<'tcx> {
     Place(ContractPlace<'tcx>),
     Const(u128),
@@ -188,7 +188,7 @@ impl<'tcx> ContractExpr<'tcx> {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum RelOp {
     Eq,
     Ne,
@@ -198,7 +198,7 @@ pub(crate) enum RelOp {
     Ge,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct NumericPredicate<'tcx> {
     pub lhs: ContractExpr<'tcx>,
     pub op: RelOp,
@@ -258,7 +258,7 @@ pub(crate) enum PropertyKind {
 }
 
 /// One argument of a predicate call — what the property is applied to.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum PropertyArg<'tcx> {
     /// A type (e.g. `T` in `Align(ptr, T)`).
     Ty(Ty<'tcx>),
@@ -285,7 +285,7 @@ pub(crate) enum ContractKind {
 /// (`pred!`-style macro).  Purely presentational: it lets reports render a
 /// macro-expanded contract as a single `name(args)` entry with its doc-derived
 /// meaning, instead of the underlying primitives it expanded into.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct ContractOrigin {
     pub name: String,
     pub args: Vec<String>,
@@ -298,14 +298,14 @@ pub(crate) struct ContractOrigin {
 /// `And` (conjunction: all members hold), and `Or` (disjunction: at least one
 /// member holds).  `Box` breaks the recursion; the top level of a contract is
 /// simply a `Vec<Property>` (an implicit conjunction of requirements).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Property<'tcx> {
     Atom(AtomProperty<'tcx>),
     And(AndProperty<'tcx>),
     Or(OrProperty<'tcx>),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct AtomProperty<'tcx> {
     pub kind: PropertyKind,
     pub args: Vec<PropertyArg<'tcx>>,
@@ -320,7 +320,7 @@ pub(crate) struct AtomProperty<'tcx> {
 }
 
 /// A conjunction: every [`conjuncts`](Self::conjuncts) member must hold.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct AndProperty<'tcx> {
     pub conjuncts: Vec<Property<'tcx>>,
     pub contract_kind: ContractKind,
@@ -329,7 +329,7 @@ pub(crate) struct AndProperty<'tcx> {
 }
 
 /// A disjunction: at least one [`disjuncts`](Self::disjuncts) member must hold.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct OrProperty<'tcx> {
     pub disjuncts: Vec<Property<'tcx>>,
     pub contract_kind: ContractKind,

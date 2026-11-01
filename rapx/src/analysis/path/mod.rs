@@ -14,7 +14,7 @@ pub struct CallBinding {
     pub dest_local: usize,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum CallArg {
     Local(usize),
     Literal(u128),

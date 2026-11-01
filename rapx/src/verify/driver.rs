@@ -30,7 +30,7 @@ use super::{
         dedup_compound_props, emit_results_and_verdict, emit_verify_summary, fmt_contract_expanded,
         fmt_fn_path_with_bounds, fmt_fn_path_with_generics, fmt_fn_with_params,
     },
-    engine::VerifyEngine,
+    engine::{VerifyEngine, VmCache},
     loop_sensitivity::{LoopSensitivityAnalyzer, RepeatStrategy},
     path::PathExtractor,
     report::{
@@ -115,6 +115,8 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
     /// Run unsafe-checkpoint verification for the managed function target.
     pub(crate) fn verify_function(&self) -> VerificationReport<'tcx> {
         let mut report = VerificationReport::new(self.target.def_id);
+        let z3_ctx = VerifyEngine::new_z3_context();
+        let mut cache = VmCache::new(&z3_ctx);
 
         for view in self.iter_callsite_checks() {
             let unresolved_call = view.checkpoint.kind == CheckpointKind::UnsafeCall
@@ -154,7 +156,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
             }
 
             for (property_index, property) in view.properties.iter().enumerate() {
-                let bulk = self.check_property_paths(&view, property);
+                let bulk = self.check_property_paths(&mut cache, &view, property);
                 let path_count = bulk.len();
                 for (path_index, (result, path_desc)) in bulk.into_iter().enumerate() {
                     report.results.push(PropertyCheckResult {
@@ -197,6 +199,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
     /// preserving per-leaf slicing for precision.
     fn check_property_paths(
         &self,
+        cache: &mut VmCache<'_, 'tcx>,
         view: &CheckpointCheckView<'_, '_, 'tcx>,
         property: &Property<'tcx>,
     ) -> Vec<(CheckResult, String)> {
@@ -210,18 +213,21 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
                 self.engine.check_drop_from_tree(view.tree, view.checkpoint)
             }
             Property::Atom(_) => self.engine.check_callsite_from_tree(
+                cache,
                 view.tree,
                 view.checkpoint,
                 property,
                 &self.target.caller_requires,
             ),
             Property::And(and) => {
-                self.combine_check_paths(view, &and.conjuncts, CheckResult::and, |r| {
+                self.combine_check_paths(cache, view, &and.conjuncts, CheckResult::and, |r| {
                     matches!(r, CheckResult::Failed | CheckResult::Unknown(_))
                 })
             }
             Property::Or(or) => {
-                self.combine_check_paths(view, &or.disjuncts, CheckResult::or, |r| r.is_proved())
+                self.combine_check_paths(cache, view, &or.disjuncts, CheckResult::or, |r| {
+                    r.is_proved()
+                })
             }
         }
     }
@@ -230,6 +236,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
     /// description is replaced when `replace_desc_on` matches the child result.
     fn combine_check_paths(
         &self,
+        cache: &mut VmCache<'_, 'tcx>,
         view: &CheckpointCheckView<'_, '_, 'tcx>,
         children: &[Property<'tcx>],
         fold: fn(CheckResult, CheckResult) -> CheckResult,
@@ -237,7 +244,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
     ) -> Vec<(CheckResult, String)> {
         let mut per_path: Vec<Option<(CheckResult, String)>> = Vec::new();
         for child in children {
-            let bulk = self.check_property_paths(view, child);
+            let bulk = self.check_property_paths(cache, view, child);
             if per_path.is_empty() {
                 per_path.resize(bulk.len(), None);
             }
@@ -380,6 +387,8 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
         label: &str,
     ) -> Vec<PropertyCheckResult<'tcx>> {
         let mut results = Vec::new();
+        let z3_ctx = VerifyEngine::new_z3_context();
+        let mut cache = VmCache::new(&z3_ctx);
         for (checkpoint, tree) in self.build_invariant_trees(is_constructor, check_unwind) {
             rap_debug!(
                 "[rapx::verify] {label} invariant checkpoint bb{}: {} tree node(s)",
@@ -400,6 +409,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
                     continue;
                 }
                 let check_results = self.engine.check_invariant_from_tree(
+                    &mut cache,
                     self.target.def_id,
                     &tree,
                     checkpoint,

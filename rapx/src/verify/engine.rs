@@ -4,6 +4,7 @@
 //! then checks safety properties with a unified property checker.
 
 use crate::helpers::mir_utils;
+use std::cell::Cell;
 use z3::Config;
 
 use rustc_hir::def_id::DefId;
@@ -11,7 +12,8 @@ use rustc_middle::mir::Body;
 use rustc_middle::mir::{BasicBlock, Local, Operand, Rvalue, StatementKind};
 use rustc_middle::ty::TyCtxt;
 
-use crate::analysis::path::PathTree;
+use crate::analysis::path::{CallArg, PathTree};
+use crate::compat::FxHashMap;
 
 use super::{
     contract::{AndProperty, AtomProperty, OrProperty, Property},
@@ -23,11 +25,93 @@ use crate::verify::checkpoint::{Checkpoint, CheckpointLocation};
 use super::path::EntryBodies;
 use super::property_checker::PropertyChecker;
 use super::target::CalleeBodies;
+use super::vm::VmState;
 
 enum LocalAccess {
     None,
     Read,
     Reinitialized,
+}
+
+#[derive(Hash, PartialEq, Eq)]
+enum GoalItemKey<'tcx> {
+    Statement(DefId, BasicBlock, Option<usize>, usize),
+    Terminator(DefId, BasicBlock, Option<usize>, Option<BasicBlock>),
+    CalleeEntry(DefId, Option<usize>, Vec<CallArg>),
+    CalleeExit(usize),
+    ContractFact(Property<'tcx>),
+}
+
+/// Symbolic states shared by properties that retain the same MIR and entry facts.
+pub(crate) struct VmCache<'z3, 'tcx> {
+    context: &'z3 z3::Context,
+    states: FxHashMap<Vec<GoalItemKey<'tcx>>, CachedGoal<'z3, 'tcx>>,
+}
+
+struct CachedGoal<'z3, 'tcx> {
+    states: Vec<VmState<'z3, 'tcx>>,
+    reachability: Vec<Cell<Option<z3::SatResult>>>,
+}
+
+const VM_CACHE_MAX_ENTRIES: usize = 128;
+
+impl<'z3, 'tcx> VmCache<'z3, 'tcx> {
+    pub(crate) fn new(context: &'z3 z3::Context) -> Self {
+        Self {
+            context,
+            states: FxHashMap::default(),
+        }
+    }
+
+    fn states_for(
+        &mut self,
+        engine: &VerifyEngine<'tcx>,
+        goal: ProofGoal<'tcx>,
+    ) -> &CachedGoal<'z3, 'tcx> {
+        let key = goal_key(&goal.items);
+        if self.states.len() >= VM_CACHE_MAX_ENTRIES && !self.states.contains_key(&key) {
+            self.states.clear();
+        }
+        self.states.entry(key).or_insert_with(|| {
+            let states = super::vm::execute_goal(
+                self.context,
+                engine.tcx,
+                engine.caller_def_id,
+                engine.instance_body,
+                engine.assume_struct_invariants,
+                goal,
+            );
+            let reachability = states.iter().map(|_| Cell::new(None)).collect();
+            CachedGoal { states, reachability }
+        })
+    }
+}
+
+fn goal_key<'tcx>(items: &[RelevantItem<'tcx>]) -> Vec<GoalItemKey<'tcx>> {
+    items
+        .iter()
+        .map(|item| match item {
+            RelevantItem::Statement {
+                def_id,
+                block,
+                global_block,
+                statement_index,
+            } => GoalItemKey::Statement(*def_id, *block, *global_block, *statement_index),
+            RelevantItem::Terminator {
+                def_id,
+                block,
+                global_block,
+                switch_succ,
+            } => GoalItemKey::Terminator(*def_id, *block, *global_block, *switch_succ),
+            RelevantItem::CalleeEntry { callee, body, args } => GoalItemKey::CalleeEntry(
+                *callee,
+                body.map(|body| body as *const _ as usize),
+                args.clone(),
+            ),
+            RelevantItem::CalleeExit { dest } => GoalItemKey::CalleeExit(*dest),
+            RelevantItem::ContractFact { property } => GoalItemKey::ContractFact(property.clone()),
+        })
+        .collect()
 }
 
 /// The three verification stages: a backward [`BackwardSlicer`], symbolic MIR
@@ -71,9 +155,8 @@ impl<'tcx> VerifyEngine<'tcx> {
 
     /// Create a fresh Z3 context with a fixed 10s solver timeout.
     ///
-    /// A new context is created per top-level check so that each verification
-    /// runs in isolation (no shared solver state leaks between checks).
-    fn new_z3_context() -> z3::Context {
+    /// A new context is created per verification phase.
+    pub(crate) fn new_z3_context() -> z3::Context {
         let mut cfg = Config::new();
         cfg.set_timeout_msec(10000);
         z3::Context::new(&cfg)
@@ -86,6 +169,7 @@ impl<'tcx> VerifyEngine<'tcx> {
     /// Returns `(result, path_description)` pairs in forward MIR order.
     pub(crate) fn check_callsite_from_tree(
         &self,
+        cache: &mut VmCache<'_, 'tcx>,
         tree: &PathTree,
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
@@ -104,6 +188,7 @@ impl<'tcx> VerifyEngine<'tcx> {
             })
             .collect();
         self.check_goals(
+            cache,
             tree,
             goals.into_iter().rev(),
             checkpoint,
@@ -546,6 +631,7 @@ impl<'tcx> VerifyEngine<'tcx> {
     /// `(result, path_description)` pairs.
     pub(crate) fn check_invariant_from_tree(
         &self,
+        cache: &mut VmCache<'_, 'tcx>,
         def_id: DefId,
         tree: &PathTree,
         checkpoint: CheckpointLocation,
@@ -570,19 +656,19 @@ impl<'tcx> VerifyEngine<'tcx> {
             is_mut_ref: false,
             statement_index: 0,
         };
-        self.check_goals(tree, goals, &fake_checkpoint, invariant, entry_facts)
+        self.check_goals(cache, tree, goals, &fake_checkpoint, invariant, entry_facts)
     }
 
     /// Replay sliced paths and check one property, shared by callsite and invariant checks.
     fn check_goals(
         &self,
+        cache: &mut VmCache<'_, 'tcx>,
         tree: &PathTree,
         goals: impl IntoIterator<Item = ProofGoal<'tcx>>,
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
         entry_facts: &[RelevantItem<'tcx>],
     ) -> Vec<(CheckResult, String)> {
-        let z3_ctx = Self::new_z3_context();
         goals
             .into_iter()
             .flat_map(|mut goal| {
@@ -598,25 +684,22 @@ impl<'tcx> VerifyEngine<'tcx> {
                     goal.items,
                     tree,
                 );
-                super::vm::execute_goal(
-                    &z3_ctx,
-                    self.tcx,
-                    self.caller_def_id,
-                    self.instance_body,
-                    self.assume_struct_invariants,
-                    goal,
-                )
-                .into_iter()
-                .map(|vm_state| {
-                    let result = PropertyChecker.check(
-                        &vm_state,
-                        checkpoint,
-                        property,
-                        tree.is_structural(),
-                    );
-                    (result, path_desc.clone())
-                })
-                .collect::<Vec<_>>()
+                let cached = cache.states_for(self, goal);
+                cached
+                    .states
+                    .iter()
+                    .zip(&cached.reachability)
+                    .map(|(vm_state, reachability)| {
+                        let result = PropertyChecker.check(
+                            &vm_state,
+                            checkpoint,
+                            property,
+                            tree.is_structural(),
+                            reachability,
+                        );
+                        (result, path_desc.clone())
+                    })
+                    .collect::<Vec<_>>()
             })
             .collect()
     }

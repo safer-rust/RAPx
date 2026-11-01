@@ -214,6 +214,7 @@ impl PropertyChecker {
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
         structural: bool,
+        reachability_cache: &std::cell::Cell<Option<z3::SatResult>>,
     ) -> CheckResult {
         if vm_state.path_infeasible {
             return CheckResult::ProvedByRule;
@@ -249,9 +250,18 @@ impl PropertyChecker {
         if !structural || result.is_proved() {
             return result;
         }
-        let reachability = z3::Solver::new(vm_state.z3_ctx);
-        vm_state.assert_path_constraints(&reachability);
-        if reachability.check() == z3::SatResult::Unsat {
+        let reachable = if let Some(result) = reachability_cache.get() {
+            result
+        } else {
+            let reachability = z3::Solver::new(vm_state.z3_ctx);
+            vm_state.assert_path_constraints(&reachability);
+            let result = reachability.check();
+            if result != z3::SatResult::Unknown {
+                reachability_cache.set(Some(result));
+            }
+            result
+        };
+        if reachable == z3::SatResult::Unsat {
             CheckResult::ProvedBySmt
         } else {
             result
