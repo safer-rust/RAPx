@@ -1,7 +1,7 @@
 //! Backward relevance rules for MIR statements.
 
 use rustc_hir::def_id::DefId;
-use rustc_middle::mir::{BasicBlock, Local, Operand, Place, Rvalue};
+use rustc_middle::mir::{BasicBlock, Body, Local, Operand, Place, Rvalue};
 
 use crate::analysis::dataflow::types::DataflowGraph;
 use crate::helpers::def_use::{RelevantPlaces, operand_uses};
@@ -19,6 +19,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
         statement_index: usize,
         place: &Place<'tcx>,
         rvalue: &'tcx Rvalue<'tcx>,
+        body: &'tcx Body<'tcx>,
         flow: &DataflowGraph,
         relevant: &mut RelevantPlaces,
         items: &mut Vec<RelevantItem<'tcx>>,
@@ -29,12 +30,12 @@ impl<'tcx> BackwardSlicer<'tcx> {
         // Keep the definition of a `needs_drop` local (an owner's construction
         // chain) so `Owning` can trace its field provenance.
         if keep_owner {
-            let body = self.body_for(def_id);
             let ty = body.local_decls[place.local].ty;
             let typing_env = rustc_middle::ty::TypingEnv::non_body_analysis(self.tcx, def_id);
             if ty.needs_drop(self.tcx, typing_env) {
                 let uses = collect_assignment_uses(rvalue, block, statement_index, flow, &defs);
                 items.push(RelevantItem::Statement {
+                    global_block: None,
                     def_id,
                     block,
                     statement_index,
@@ -54,9 +55,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
         // `propagate_single_assign` fill-in.
         let is_provenance_carrier = {
             let dest_is_ptr = matches!(
-                self.body_for(def_id).local_decls[place.local]
-                    .ty
-                    .kind(),
+                body.local_decls[place.local].ty.kind(),
                 rustc_middle::ty::TyKind::RawPtr(..) | rustc_middle::ty::TyKind::Ref(..)
             );
             match rvalue {
@@ -87,24 +86,20 @@ impl<'tcx> BackwardSlicer<'tcx> {
         // The backward def-use graph is place-level (it cannot follow the
         // `Box`/`Vec` → buffer indirection), so this structural keep is what
         // preserves the byte-level dataflow.
-        let is_byte_write =
-            mir_utils::is_u8_array_or_slice(place.ty(self.body_for(def_id), self.tcx).ty);
+        let is_byte_write = mir_utils::is_u8_array_or_slice(place.ty(body, self.tcx).ty);
 
         let is_pointee_write = place
             .projection
             .first()
             .is_some_and(|p| matches!(p.kind(), rustc_middle::mir::ProjectionElem::Deref));
 
-        if defs.intersects(relevant)
-            || is_provenance_carrier
-            || is_byte_write
-            || is_pointee_write
-        {
+        if defs.intersects(relevant) || is_provenance_carrier || is_byte_write || is_pointee_write {
             let mut uses = collect_assignment_uses(rvalue, block, statement_index, flow, &defs);
             if is_pointee_write {
                 uses.insert_local(place.local);
             }
             items.push(RelevantItem::Statement {
+                global_block: None,
                 def_id,
                 block,
                 statement_index,
@@ -131,6 +126,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
             let uses = collect_flow_uses(flow, block, statement_index, &defs);
             if uses.intersects(relevant) {
                 items.push(RelevantItem::Statement {
+                    global_block: None,
                     def_id,
                     block,
                     statement_index,
@@ -153,6 +149,7 @@ pub(super) fn visit_storage_dead<'tcx>(
 ) {
     if keep_invalidations {
         items.push(RelevantItem::Statement {
+            global_block: None,
             def_id,
             block,
             statement_index,
@@ -164,6 +161,7 @@ pub(super) fn visit_storage_dead<'tcx>(
     if defs.intersects(relevant) {
         let mut uses = collect_flow_uses(flow, block, statement_index, &defs);
         items.push(RelevantItem::Statement {
+            global_block: None,
             def_id,
             block,
             statement_index,

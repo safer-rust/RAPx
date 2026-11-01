@@ -28,6 +28,7 @@ pub(crate) enum RelevantItem<'tcx> {
     Statement {
         def_id: DefId,
         block: BasicBlock,
+        global_block: Option<usize>,
         statement_index: usize,
     },
     /// A MIR terminator retained from a basic block.  For a `SwitchInt`, `block`
@@ -38,6 +39,7 @@ pub(crate) enum RelevantItem<'tcx> {
     Terminator {
         def_id: DefId,
         block: BasicBlock,
+        global_block: Option<usize>,
         switch_succ: Option<BasicBlock>,
     },
     /// Enter an inlined callee: bind the caller's argument locals to the callee
@@ -57,4 +59,18 @@ pub(crate) enum RelevantItem<'tcx> {
     /// A contract fact injected by the engine before the forward visit.
     /// Never produced by the backward visitor itself.
     ContractFact { property: contract::Property<'tcx> },
+}
+
+impl RelevantItem<'_> {
+    pub(crate) fn set_global_block(&mut self, global_block: usize) {
+        match self {
+            Self::Statement {
+                global_block: slot, ..
+            }
+            | Self::Terminator {
+                global_block: slot, ..
+            } => *slot = Some(global_block),
+            _ => {}
+        }
+    }
 }

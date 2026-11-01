@@ -6,11 +6,9 @@
 use crate::helpers::mir_utils;
 use z3::Config;
 
-use std::collections::{HashMap, HashSet};
-
 use rustc_hir::def_id::DefId;
-use rustc_middle::mir::{BasicBlock, Local, Operand, Rvalue, StatementKind};
 use rustc_middle::mir::Body;
+use rustc_middle::mir::{BasicBlock, Local, Operand, Rvalue, StatementKind};
 use rustc_middle::ty::TyCtxt;
 
 use crate::analysis::path::PathTree;
@@ -22,8 +20,8 @@ use super::{
 };
 use crate::verify::checkpoint::{Checkpoint, CheckpointLocation};
 
-use super::property_checker::PropertyChecker;
 use super::call_index::EntryBodies;
+use super::property_checker::PropertyChecker;
 use super::target::CalleeBodies;
 
 enum LocalAccess {
@@ -56,7 +54,13 @@ impl<'tcx> VerifyEngine<'tcx> {
     ) -> Self {
         Self {
             tcx,
-            slicer: BackwardSlicer::new(tcx, caller_def_id, instance_body, callee_bodies.clone()),
+            slicer: BackwardSlicer::new(
+                tcx,
+                caller_def_id,
+                instance_body,
+                callee_bodies.clone(),
+                entry_bodies.clone(),
+            ),
             caller_def_id,
             instance_body,
             callee_bodies,
@@ -288,217 +292,86 @@ impl<'tcx> VerifyEngine<'tcx> {
         LocalAccess::None
     }
 
-    /// Insert `CalleeEntry`/`CalleeExit` markers into a forward item stream by
-    /// detecting `def_id` transitions (caller → callee → caller). Each inlined
-    /// callee entry carries its argument binding; each exit writes the callee's
-    /// return value back to the caller's destination.
-    ///
-    /// `local_to_global` maps `(def_id, local_block)` pairs to the list of
-    /// their global block indices in `tree` (a callee inlined at multiple call
-    /// sites has several entries, in path order); it is precomputed by the
-    /// caller so it can be reused across every checkpoint instead of rebuilt
-    /// per path.
+    /// Insert callee boundaries from each retained item's callsite ancestry.
     fn inject_inline_boundaries(
-        tcx: TyCtxt<'tcx>,
         callee_bodies: &CalleeBodies<'tcx>,
         entry_bodies: &EntryBodies<'tcx>,
         items: Vec<RelevantItem<'tcx>>,
         tree: &PathTree,
-        local_to_global: &HashMap<(DefId, usize), Vec<usize>>,
-        path_blocks: &HashSet<usize>,
-        caller: DefId,
     ) -> Vec<RelevantItem<'tcx>> {
-        let mut out: Vec<RelevantItem<'tcx>> = Vec::new();
-        // Begin in the caller to emit the first inlined callee entry.
-        let mut prev_def_id: Option<DefId> = Some(caller);
-        // Distinguishes inlined call sites whose other statements were sliced out.
-        let mut prev_arg: Option<usize> = None;
-        // Active callees, innermost last; entry blocks identify their parents.
-        let mut active: Vec<(DefId, usize, usize)> = Vec::new();
-        let mut entry_cursor: HashMap<(DefId, DefId), usize> = HashMap::new();
+        let mut out = Vec::new();
+        let mut active: Vec<(usize, usize)> = Vec::new();
 
         for item in items {
-            let (cur_def_id, cur_arg, cur_is_term) = match &item {
+            let entry = match &item {
                 RelevantItem::Statement {
-                    def_id,
                     block,
-                    statement_index,
-                } => {
-                    let body = callee_bodies.get(def_id).copied()
-                        .unwrap_or_else(|| tcx.optimized_mir(*def_id));
-                    let dest = match &body.basic_blocks[*block].statements[*statement_index].kind {
-                        StatementKind::Assign(assign) => Some(assign.0.local.as_usize()),
-                        _ => None,
-                    };
-                    (Some(*def_id), dest, false)
+                    global_block,
+                    ..
                 }
-                RelevantItem::Terminator { def_id, .. } => (Some(*def_id), None, true),
-                _ => (None, None, false),
+                | RelevantItem::Terminator {
+                    block,
+                    global_block,
+                    ..
+                } => Some(
+                    global_block.expect("sliced MIR item has no global block") - block.as_usize(),
+                ),
+                _ => None,
             };
-
-            if let Some(cur) = cur_def_id {
-                if let Some(prev) = prev_def_id
-                    && prev != cur
+            if let Some(mut entry) = entry {
+                if active
+                    .last()
+                    .map(|(active_entry, _)| *active_entry)
+                    .unwrap_or(0)
+                    == entry
                 {
-                    if cur == caller {
-                        // The slice may omit several nested return blocks.
-                        while let Some((_, dest, _)) = active.pop() {
-                            out.push(RelevantItem::CalleeExit { dest });
-                        }
-                    } else {
-                        // An active `cur` is an ascent, possibly across omitted returns.
-                        let is_ascent = active.iter().any(|(d, _, _)| *d == cur);
-                        if is_ascent {
-                            while let Some(&(top_def, _, _)) = active.last() {
-                                if top_def == cur {
-                                    break;
-                                }
-                                let (_, dest, _) = active.pop().unwrap();
-                                out.push(RelevantItem::CalleeExit { dest });
-                            }
-                        } else {
-                            let current_parent =
-                                active.last().map(|(d, _, _)| *d).unwrap_or(caller);
-
-                            // Skip ancestors with no retained slice items.
-                            let eff_parent = |g: usize| -> DefId {
-                                let mut entry = tree.call_parent_entry(g);
-                                while let Some(parent_entry) = entry {
-                                    let Some((pd, _)) = tree.block_fn_of(parent_entry) else {
-                                        break;
-                                    };
-                                    if pd == caller || active.iter().any(|(d, _, _)| *d == pd) {
-                                        return pd;
-                                    }
-                                    entry = tree.call_parent_entry(parent_entry);
-                                }
-                                caller
-                            };
-
-                            let mut cur_entry: Option<usize> = None;
-                            if let Some(globals) = local_to_global.get(&(cur, 0)) {
-                                let mut matching: Vec<usize> = globals
-                                    .iter()
-                                    .copied()
-                                    .filter(|&g| {
-                                        path_blocks.contains(&g) && eff_parent(g) == current_parent
-                                    })
-                                    .collect();
-                                if matching.is_empty() {
-                                    matching = globals
-                                        .iter()
-                                        .copied()
-                                        .filter(|g| path_blocks.contains(g))
-                                        .collect();
-                                }
-                                // Match single-arg and pointer-arithmetic calls by argument;
-                                // other calls use the positional cursor.
-                                let all_single_arg = matching.iter().all(|&g| {
-                                    tree.call_binding(g).map(|b| b.arg_locals.len()) == Some(1)
-                                });
-                                let is_ptr_arith =
-                                    crate::verify::api_classify::is_pointer_add(Some(cur))
-                                        || crate::verify::api_classify::is_pointer_sub(Some(cur));
-                                if (all_single_arg || is_ptr_arith)
-                                    && let Some(arg) = prev_arg
-                                {
-                                    let by_arg: Vec<usize> = matching
-                                        .iter()
-                                        .copied()
-                                        .filter(|&g| {
-                                            tree.call_binding(g)
-                                                .is_some_and(|b| b.arg_locals.contains(&arg))
-                                        })
-                                        .collect();
-                                    if !by_arg.is_empty() {
-                                        matching = by_arg;
-                                    }
-                                }
-                                let pool: &[usize] = matching.as_slice();
-                                let idx = if pool.len() == 1 {
-                                    0
-                                } else {
-                                    let cursor =
-                                        entry_cursor.entry((cur, current_parent)).or_insert(0);
-                                    let idx = *cursor;
-                                    *cursor = (*cursor + 1).min(pool.len() - 1);
-                                    idx
-                                };
-                                cur_entry = pool.get(idx).copied();
-                            }
-
-                            let eff = cur_entry.map(eff_parent).unwrap_or(caller);
-                            let mut skipped: Vec<(DefId, usize)> = Vec::new();
-                            {
-                                let mut entry = cur_entry.and_then(|g| tree.call_parent_entry(g));
-                                while let Some(parent_entry) = entry {
-                                    let Some((pd, _)) = tree.block_fn_of(parent_entry) else {
-                                        break;
-                                    };
-                                    if pd == eff {
-                                        break;
-                                    }
-                                    skipped.push((pd, parent_entry));
-                                    entry = tree.call_parent_entry(parent_entry);
-                                }
-                            }
-
-                            while let Some(&(top_def, _, _)) = active.last() {
-                                if top_def == eff {
-                                    break;
-                                }
-                                let (_, dest, _) = active.pop().unwrap();
-                                out.push(RelevantItem::CalleeExit { dest });
-                            }
-                            for (pd, pe) in skipped.iter().rev() {
-                                if let Some(binding) = tree.call_binding(*pe) {
-                                    out.push(RelevantItem::CalleeEntry {
-                                        callee: *pd,
-                                        body: entry_bodies
-                                            .get(pe)
-                                            .copied()
-                                            .or_else(|| callee_bodies.get(pd).copied()),
-                                        args: binding.arg_locals.clone(),
-                                        consts: binding.arg_consts.clone(),
-                                        field_offsets: binding.arg_field_offsets.clone(),
-                                    });
-                                    active.push((*pd, binding.dest_local, *pe));
-                                }
-                            }
-                            if let Some(&global) = cur_entry.as_ref()
-                                && let Some(binding) = tree.call_binding(global)
-                            {
-                                out.push(RelevantItem::CalleeEntry {
-                                    callee: cur,
-                                    body: entry_bodies
-                                        .get(&global)
-                                        .copied()
-                                        .or_else(|| callee_bodies.get(&cur).copied()),
-                                    args: binding.arg_locals.clone(),
-                                    consts: binding.arg_consts.clone(),
-                                    field_offsets: binding.arg_field_offsets.clone(),
-                                });
-                                active.push((cur, binding.dest_local, global));
-                            }
-                        }
-                    }
+                    out.push(item);
+                    continue;
                 }
-                prev_def_id = Some(cur);
-                // Non-value statements retain the last argument local; terminators clear it.
-                if cur_arg.is_some() {
-                    prev_arg = cur_arg;
-                } else if cur_is_term {
-                    prev_arg = None;
+                let mut ancestry = Vec::new();
+                while entry != 0 {
+                    ancestry.push(entry);
+                    entry = tree
+                        .call_parent_entry(entry)
+                        .expect("inlined callee has no parent entry");
+                }
+                ancestry.reverse();
+
+                let shared = active
+                    .iter()
+                    .zip(&ancestry)
+                    .take_while(|((active_entry, _), wanted)| active_entry == *wanted)
+                    .count();
+                while active.len() > shared {
+                    let (_, dest) = active.pop().unwrap();
+                    out.push(RelevantItem::CalleeExit { dest });
+                }
+                for entry in ancestry.into_iter().skip(shared) {
+                    let (callee, _) = tree
+                        .block_fn_of(entry)
+                        .expect("inlined callee entry has no block metadata");
+                    let binding = tree
+                        .call_binding(entry)
+                        .expect("inlined callee entry has no call binding");
+                    out.push(RelevantItem::CalleeEntry {
+                        callee,
+                        body: entry_bodies
+                            .get(&entry)
+                            .copied()
+                            .or_else(|| callee_bodies.get(&callee).copied()),
+                        args: binding.arg_locals.clone(),
+                        consts: binding.arg_consts.clone(),
+                        field_offsets: binding.arg_field_offsets.clone(),
+                    });
+                    active.push((entry, binding.dest_local));
                 }
             }
-
             out.push(item);
         }
 
-        while let Some((_, dest, _)) = active.pop() {
+        while let Some((_, dest)) = active.pop() {
             out.push(RelevantItem::CalleeExit { dest });
         }
-
         out
     }
 
@@ -712,18 +585,9 @@ impl<'tcx> VerifyEngine<'tcx> {
         entry_facts: &[RelevantItem<'tcx>],
     ) -> Vec<(CheckResult, String)> {
         let z3_ctx = Self::new_z3_context();
-        let mut local_to_global: HashMap<(DefId, usize), Vec<usize>> = HashMap::new();
-        for (global, (def_id, local)) in tree.block_fns().iter().enumerate() {
-            local_to_global
-                .entry((*def_id, *local))
-                .or_default()
-                .push(global);
-        }
-
         goals
             .into_iter()
             .flat_map(|mut goal| {
-                let path_blocks: HashSet<usize> = goal.path.blocks.iter().copied().collect();
                 let path_desc = goal.path.describe_caller_indices(tree);
                 if !entry_facts.is_empty() {
                     let mut items = entry_facts.to_vec();
@@ -731,14 +595,10 @@ impl<'tcx> VerifyEngine<'tcx> {
                     goal.items = items;
                 }
                 goal.items = Self::inject_inline_boundaries(
-                    self.tcx,
                     &self.callee_bodies,
                     &self.entry_bodies,
                     goal.items,
                     tree,
-                    &local_to_global,
-                    &path_blocks,
-                    checkpoint.caller,
                 );
                 super::vm::execute_goal(
                     &z3_ctx,

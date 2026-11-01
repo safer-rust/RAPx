@@ -11,11 +11,12 @@ use rustc_middle::ty::TyCtxt;
 
 use std::collections::{HashMap, HashSet};
 
-use crate::analysis::dataflow::graph::{build_dataflow_graph, build_dataflow_graph_from_body};
+use crate::analysis::dataflow::graph::build_dataflow_graph_from_body;
 use crate::analysis::dataflow::types::DataflowGraph;
 
 use super::super::{contract, path_extractor::Path, relevance::bind_callsite_roots};
 use crate::helpers::def_use::RelevantPlaces;
+use crate::verify::call_index::EntryBodies;
 use crate::verify::checkpoint::{Checkpoint, CheckpointKind, CheckpointLocation};
 use crate::verify::target::CalleeBodies;
 
@@ -36,6 +37,7 @@ pub(crate) struct BackwardSlicer<'tcx> {
     caller_def_id: DefId,
     instance_body: Option<&'tcx Body<'tcx>>,
     callee_bodies: CalleeBodies<'tcx>,
+    entry_bodies: EntryBodies<'tcx>,
 }
 
 impl<'tcx> BackwardSlicer<'tcx> {
@@ -45,12 +47,21 @@ impl<'tcx> BackwardSlicer<'tcx> {
         caller_def_id: DefId,
         instance_body: Option<&'tcx Body<'tcx>>,
         callee_bodies: CalleeBodies<'tcx>,
+        entry_bodies: EntryBodies<'tcx>,
     ) -> Self {
-        Self { tcx, caller_def_id, instance_body, callee_bodies }
+        Self {
+            tcx,
+            caller_def_id,
+            instance_body,
+            callee_bodies,
+            entry_bodies,
+        }
     }
 
     pub(in crate::verify::slicer) fn body_for(&self, def_id: DefId) -> &'tcx Body<'tcx> {
-        if def_id == self.caller_def_id && let Some(body) = self.instance_body {
+        if def_id == self.caller_def_id
+            && let Some(body) = self.instance_body
+        {
             body
         } else if let Some(body) = self.callee_bodies.get(&def_id) {
             body
@@ -124,21 +135,20 @@ impl<'tcx> BackwardSlicer<'tcx> {
         // Pre-build the MIR body and dataflow graph for every function reachable
         // through this tree (caller + inlined callees), so inlined blocks resolve
         // to the correct body/flow.
-        let mut bodies: HashMap<DefId, &'tcx Body<'tcx>> = HashMap::new();
-        let mut flows: HashMap<DefId, DataflowGraph> = HashMap::new();
-        let mut def_ids: HashSet<DefId> = tree.block_fns().iter().map(|(d, _)| *d).collect();
-        def_ids.insert(caller);
-        for d in def_ids {
-            if (d == self.caller_def_id && self.instance_body.is_some())
-                || self.callee_bodies.contains_key(&d)
-            {
-                let body = self.body_for(d);
-                bodies.insert(d, body);
-                flows.insert(d, build_dataflow_graph_from_body(d, body));
-            } else {
-                bodies.insert(d, self.body_for(d));
-                flows.insert(d, build_dataflow_graph(self.tcx, d));
+        let mut bodies: HashMap<usize, &'tcx Body<'tcx>> = HashMap::new();
+        let mut flows: HashMap<usize, DataflowGraph> = HashMap::new();
+        for (global, &(def_id, local)) in tree.block_fns().iter().enumerate() {
+            let entry = global - local;
+            if bodies.contains_key(&entry) {
+                continue;
             }
+            let body = self
+                .entry_bodies
+                .get(&entry)
+                .copied()
+                .unwrap_or_else(|| self.body_for(def_id));
+            flows.insert(entry, build_dataflow_graph_from_body(def_id, body));
+            bodies.insert(entry, body);
         }
 
         let leaf_results = Self::build_leaf_items(
@@ -182,12 +192,13 @@ impl<'tcx> BackwardSlicer<'tcx> {
         bind_checkpoint: Option<&Checkpoint<'tcx>>,
         property: &contract::Property<'tcx>,
         caller: DefId,
-        bodies: &HashMap<DefId, &'tcx Body<'tcx>>,
-        flows: &HashMap<DefId, DataflowGraph>,
+        bodies: &HashMap<usize, &'tcx Body<'tcx>>,
+        flows: &HashMap<usize, DataflowGraph>,
     ) -> Vec<LeafItem<'tcx>> {
         let (def_id, local_index) = tree.block_fn_of(node.block).unwrap_or((caller, node.block));
-        let body = &bodies[&def_id];
-        let flow = &flows[&def_id];
+        let entry = node.block - local_index;
+        let body = &bodies[&entry];
+        let flow = &flows[&entry];
         let block = BasicBlock::from(local_index);
         let keep_inv = property
             .kind()
@@ -216,6 +227,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
                 items.push(RelevantItem::Terminator {
                     def_id: caller,
                     block: checkpoint_block,
+                    global_block: Some(target_block),
                     switch_succ: None,
                 });
             }
@@ -225,6 +237,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
                     checkpoint_block,
                     si,
                     stmt,
+                    body,
                     flow,
                     &mut relevant,
                     &mut items,
@@ -237,6 +250,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
                 def_id,
                 checkpoint_block,
                 block_data,
+                body,
                 flow,
                 &mut relevant,
                 &mut items,
@@ -244,6 +258,9 @@ impl<'tcx> BackwardSlicer<'tcx> {
                 keep_inv,
                 keep_owner,
             );
+            for item in &mut items {
+                item.set_global_block(node.block);
+            }
             (items, relevant)
         } else {
             (Vec::new(), RelevantPlaces::new())
@@ -291,6 +308,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
                 // Skip the `Call` terminator when this block's call was inlined:
                 // the callee's statements are already sliced via the path, so
                 // treating the call as atomic would double-count it.
+                let node_items_start = items.len();
                 if !tree.is_expanded_call(node.block) || tree.call_binding(child.block).is_none() {
                     // The successor this path takes out of `node` (only used for
                     // `SwitchInt`, whose branch is resolved here rather than by
@@ -321,6 +339,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
                         block,
                         si,
                         stmt,
+                        body,
                         flow,
                         &mut relevant,
                         &mut items,
@@ -335,6 +354,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
                         def_id,
                         block,
                         block_data,
+                        body,
                         flow,
                         &mut relevant,
                         &mut items,
@@ -342,6 +362,9 @@ impl<'tcx> BackwardSlicer<'tcx> {
                         keep_inv,
                         keep_owner,
                     );
+                }
+                for item in &mut items[node_items_start..] {
+                    item.set_global_block(node.block);
                 }
                 // Leaving an inlined callee entry: remap the callee's parameter
                 // locals back to the caller's argument locals so the caller's
@@ -392,6 +415,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
         def_id: DefId,
         block: BasicBlock,
         block_data: &'tcx rustc_middle::mir::BasicBlockData<'tcx>,
+        body: &'tcx Body<'tcx>,
         flow: &DataflowGraph,
         relevant: &mut RelevantPlaces,
         items: &mut Vec<RelevantItem<'tcx>>,
@@ -418,19 +442,23 @@ impl<'tcx> BackwardSlicer<'tcx> {
                 .any(|dp| newly_added.iter().any(|np| dp.local() == np.local()));
             if any_new {
                 visitor.visit_statement(
-                    def_id, block, si, stmt, flow, relevant, items, keep_inv, keep_owner,
+                    def_id, block, si, stmt, body, flow, relevant, items, keep_inv, keep_owner,
                 );
             }
         }
         let mut seen = HashSet::new();
         let mut block_items: Vec<_> = items.drain(block_items_start..).collect();
         block_items.retain(|item| match item {
-            RelevantItem::Statement { statement_index, .. } => seen.insert(*statement_index),
+            RelevantItem::Statement {
+                statement_index, ..
+            } => seen.insert(*statement_index),
             _ => true,
         });
         block_items.sort_by_key(|item| match item {
             RelevantItem::Terminator { .. } => (0, 0),
-            RelevantItem::Statement { statement_index, .. } => (1, usize::MAX - statement_index),
+            RelevantItem::Statement {
+                statement_index, ..
+            } => (1, usize::MAX - statement_index),
             _ => (2, 0),
         });
         items.extend(block_items);

@@ -20,6 +20,7 @@ pub(super) struct StatementContext<'a, 'tcx> {
     pub block: BasicBlock,
     pub statement_index: usize,
     pub statement: &'tcx Statement<'tcx>,
+    pub body: &'tcx Body<'tcx>,
     pub flow: &'a DataflowGraph,
     pub relevant: &'a mut RelevantPlaces,
     pub items: &'a mut Vec<RelevantItem<'tcx>>,
@@ -51,6 +52,7 @@ pub(super) fn apply_statement(ctx: &mut StatementContext<'_, '_>) {
                 ctx.statement_index,
                 place,
                 rvalue,
+                ctx.body,
                 ctx.flow,
                 ctx.relevant,
                 ctx.items,
@@ -74,6 +76,7 @@ pub(super) fn apply_statement(ctx: &mut StatementContext<'_, '_>) {
         StatementKind::StorageLive(..) => {
             if ctx.keep_invalidations {
                 ctx.items.push(RelevantItem::Statement {
+                    global_block: None,
                     def_id: ctx.def_id,
                     block: ctx.block,
                     statement_index: ctx.statement_index,
@@ -85,6 +88,7 @@ pub(super) fn apply_statement(ctx: &mut StatementContext<'_, '_>) {
             if let NonDivergingIntrinsic::Assume(operand) = &**intrinsic =>
         {
             ctx.items.push(RelevantItem::Statement {
+                global_block: None,
                 def_id: ctx.def_id,
                 block: ctx.block,
                 statement_index: ctx.statement_index,
@@ -98,6 +102,7 @@ pub(super) fn apply_statement(ctx: &mut StatementContext<'_, '_>) {
             if let NonDivergingIntrinsic::CopyNonOverlapping(copy) = &**intrinsic =>
         {
             ctx.items.push(RelevantItem::Statement {
+                global_block: None,
                 def_id: ctx.def_id,
                 block: ctx.block,
                 statement_index: ctx.statement_index,
@@ -110,6 +115,7 @@ pub(super) fn apply_statement(ctx: &mut StatementContext<'_, '_>) {
         kind if mir_support::ignored_statement(kind) => "Ignored",
         _ => {
             ctx.items.push(RelevantItem::Statement {
+                global_block: None,
                 def_id: ctx.def_id,
                 block: ctx.block,
                 statement_index: ctx.statement_index,
@@ -180,6 +186,7 @@ pub(super) fn apply_terminator(ctx: &mut TerminatorContext<'_, '_>) {
         }
         _ => {
             ctx.items.push(RelevantItem::Terminator {
+                global_block: None,
                 def_id: ctx.def_id,
                 block: ctx.block,
                 switch_succ: None,

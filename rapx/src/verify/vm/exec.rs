@@ -40,6 +40,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 def_id,
                 block,
                 statement_index,
+                ..
             } => {
                 self.active_mir_location = Some(format!(
                     "{} bb{} statement {}",
@@ -51,7 +52,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 let statement = &body.basic_blocks[*block].statements[*statement_index];
                 crate::verify::vm::rules::exec_statement(self, statement);
             }
-            RelevantItem::Terminator { def_id, block, switch_succ } => {
+            RelevantItem::Terminator { def_id, block, switch_succ, .. } => {
                 self.active_mir_location = Some(format!(
                     "{} bb{} terminator",
                     self.tcx.def_path_str(*def_id),

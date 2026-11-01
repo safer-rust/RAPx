@@ -40,6 +40,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
             });
             if is_drop_call {
                 items.push(RelevantItem::Terminator {
+                    global_block: None,
                     def_id,
                     block,
                     switch_succ: None,
@@ -58,6 +59,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
             if dest_ty.needs_drop(self.tcx, typing_env) {
                 let use_def = terminator_use_def(terminator);
                 items.push(RelevantItem::Terminator {
+                    global_block: None,
                     def_id,
                     block,
                     switch_succ: None,
@@ -94,6 +96,7 @@ pub(super) fn visit_non_call_terminator<'tcx>(
 ) {
     if keep_invalidations && matches!(terminator.kind, TerminatorKind::Drop { .. }) {
         items.push(RelevantItem::Terminator {
+            global_block: None,
             def_id,
             block,
             switch_succ: None,
@@ -109,6 +112,7 @@ pub(super) fn visit_non_call_terminator<'tcx>(
     };
     if let Some(switch_succ) = path_successor {
         items.push(RelevantItem::Terminator {
+            global_block: None,
             def_id,
             block,
             switch_succ,
@@ -119,6 +123,7 @@ pub(super) fn visit_non_call_terminator<'tcx>(
 
     if use_def.defs.intersects(relevant) {
         items.push(RelevantItem::Terminator {
+            global_block: None,
             def_id,
             block,
             switch_succ: None,
@@ -130,6 +135,7 @@ pub(super) fn visit_non_call_terminator<'tcx>(
 
     if use_def.uses.intersects(relevant) {
         items.push(RelevantItem::Terminator {
+            global_block: None,
             def_id,
             block,
             switch_succ: None,

@@ -9,6 +9,7 @@ unsafe fn require_align_u32(_ptr: *const u32) {}
 
 #[rapx::verify]
 pub fn sound_usize_round_trip(data: &[u8]) {
+    let _noise = std::hint::black_box(align_of::<u8>());
     let base = data.as_ptr();
     let addr = base as usize;
 

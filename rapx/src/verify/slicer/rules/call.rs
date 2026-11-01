@@ -50,14 +50,14 @@ pub(crate) fn visit<'tcx>(
         tcx,
         mir_utils::dep_callee_def_id(func),
     ) {
-        items.push(RelevantItem::Terminator { def_id, block, switch_succ: None });
+        items.push(RelevantItem::Terminator { def_id, block, global_block: None, switch_succ: None });
         relevant.remove_all(&defs);
         relevant.extend(call_args_uses_at(args, &summary.return_depends_on_args));
         return;
     }
 
     if defs.intersects(relevant) {
-        items.push(RelevantItem::Terminator { def_id, block, switch_succ: None });
+        items.push(RelevantItem::Terminator { def_id, block, global_block: None, switch_succ: None });
         relevant.remove_all(&defs);
         relevant.extend(call_args_uses_at(args, &summary.return_depends_on_args));
         return;
@@ -75,7 +75,7 @@ pub(crate) fn visit<'tcx>(
         TyKind::RawPtr(..) | TyKind::Ref(..)
     );
     if dest_is_ptr && summary.write_args.is_empty() {
-        items.push(RelevantItem::Terminator { def_id, block, switch_succ: None });
+        items.push(RelevantItem::Terminator { def_id, block, global_block: None, switch_succ: None });
         relevant.remove_all(&defs);
         relevant.extend(call_args_uses_at(args, &summary.return_depends_on_args));
         return;
@@ -83,7 +83,7 @@ pub(crate) fn visit<'tcx>(
 
     let summarized_write = !summary.write_args.is_empty();
     if summarized_write || arg_uses.intersects(relevant) {
-        items.push(RelevantItem::Terminator { def_id, block, switch_succ: None });
+        items.push(RelevantItem::Terminator { def_id, block, global_block: None, switch_succ: None });
         relevant.extend(call_args_uses_at(args, &summary.write_inputs));
     }
 
@@ -110,7 +110,7 @@ pub(crate) fn visit<'tcx>(
                         if let Some(local) = dest_key.local() {
                             relevant.locals.insert(local);
                         }
-                        items.push(RelevantItem::Terminator { def_id, block, switch_succ: None });
+                        items.push(RelevantItem::Terminator { def_id, block, global_block: None, switch_succ: None });
                     }
                 }
             }
