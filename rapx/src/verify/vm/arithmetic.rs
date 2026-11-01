@@ -43,7 +43,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return;
         };
         let def_name = self.tcx.def_path_str(uneval.def);
-        if !def_name.contains("::{constant") {
+        if !def_name.contains("::{constant") || !mir_utils::ctfe_mir_available(self.tcx, uneval.def) {
             return;
         }
         let body = self.tcx.mir_for_ctfe(uneval.def);

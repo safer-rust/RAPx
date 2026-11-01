@@ -877,14 +877,11 @@ pub(crate) fn offset_of_container<'tcx>(
     };
     // `mir_for_ctfe` only accepts const-like defs; unevaluated consts may also
     // reference plain functions, so gate on the def kind first.
-    if !is_const_def_kind(tcx, uneval.def) {
-        return None;
-    }
     // `mir_for_ctfe` panics for cross-crate constants (e.g. `char::MAX` from
     // `core`), since it only serves local, CTFE-able definitions. `offset_of!`
     // always expands to a local `AnonConst`, so rejecting external defs loses
     // nothing but avoids the ICE.
-    if !uneval.def.is_local() || !tcx.is_mir_available(uneval.def) {
+    if !ctfe_mir_available(tcx, uneval.def) {
         return None;
     }
     let body = tcx.mir_for_ctfe(uneval.def);
@@ -907,7 +904,11 @@ pub(crate) fn is_sized_type_property(tcx: TyCtxt<'_>, def: DefId, assoc: &str) -
         .ends_with(&format!("SizedTypeProperties::{assoc}"))
 }
 
-/// Whether a `DefId` is a const-like item that `mir_for_ctfe` accepts.
+/// Whether `mir_for_ctfe` can query this locally available const-like definition.
+pub(crate) fn ctfe_mir_available(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
+    is_const_def_kind(tcx, def_id) && def_id.is_local() && tcx.is_mir_available(def_id)
+}
+
 fn is_const_def_kind(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
     use rustc_hir::def::DefKind;
     #[cfg(rapx_defkind_const_struct)]

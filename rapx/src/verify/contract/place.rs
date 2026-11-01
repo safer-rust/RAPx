@@ -154,7 +154,7 @@ pub(crate) fn resolve_place_from_ident<'tcx>(
     fields: &[String],
 ) -> Option<PlacePath<'tcx>> {
     let (param_names, param_tys) = parse_signature(tcx, def_id);
-    if param_names[0] != "0"
+    if param_names.first().is_some_and(|name| name != "0")
         && let Some(param_index) = param_names.iter().position(|name| name == base_ident) {
             return resolve_projection_from_base_ident(
                 tcx,
