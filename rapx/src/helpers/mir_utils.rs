@@ -1766,6 +1766,9 @@ fn fn_always_returns_nonzero<'tcx>(tcx: TyCtxt<'tcx>, func: &Operand<'tcx>) -> b
     let Some(fn_def_id) = dep_callee_def_id(func) else {
         return false;
     };
+    if !tcx.is_mir_available(fn_def_id) {
+        return false;
+    }
     let callee_body = tcx.optimized_mir(fn_def_id);
 
     let mut has_return = false;
