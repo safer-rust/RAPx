@@ -1,5 +1,6 @@
 #[cfg(not(rapx_has_skip_norm_wip))]
 use crate::compat::SkipNormWip;
+use crate::compat::GenericArgsRef;
 use itertools::Itertools;
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::{DefId, LOCAL_CRATE};
@@ -111,7 +112,7 @@ impl<'tcx> PathResolver<'tcx> {
 
     pub fn ty_str(&self, ty: Ty<'tcx>) -> String {
         match ty.kind() {
-            TyKind::Adt(adt_def, args) => self.path_str_with_args(adt_def.did(), args),
+            TyKind::Adt(adt_def, args) => self.path_str_with_args(adt_def.did(), *args),
             TyKind::Array(inner_ty, const_) => {
                 format!("[{};{}]", self.ty_str(*inner_ty), const_)
             }
@@ -181,14 +182,14 @@ impl<'tcx> PathResolver<'tcx> {
         self.path_str_with_args(def_id, ty::GenericArgs::identity_for_item(self.tcx, def_id))
     }
 
-    pub fn path_str_with_args(&self, def_id: DefId, args: ty::GenericArgsRef<'tcx>) -> String {
+    pub fn path_str_with_args(&self, def_id: DefId, args: GenericArgsRef<'tcx>) -> String {
         // `{assoc_path}::{item_name}`
         if let Some((assoc_id, kind)) = self.tcx.assoc_parent(def_id) {
             rap_trace!("assoc item: {:?} => {:?}", assoc_id, kind);
             // the number of generic of assoc parent
             let num_generic = self.tcx.generics_of(assoc_id).own_params.len();
 
-            let (parent_args, own_args) = args.split_at(num_generic);
+            let (parent_args, own_args) = args.as_slice().split_at(num_generic);
 
             let parent_path_str = match kind {
                 // Trait Impl
@@ -204,7 +205,7 @@ impl<'tcx> PathResolver<'tcx> {
                     self.qualified_path_str(
                         trait_ref.self_ty(),
                         trait_ref.def_id,
-                        &trait_ref.args[1..],
+                        &trait_ref.args.as_slice()[1..],
                     )
                 }
                 // inherent impl
@@ -242,7 +243,7 @@ impl<'tcx> PathResolver<'tcx> {
         } else {
             // non assoc item
             let path_str = self.non_assoc_path_str(def_id);
-            let args_str = self.non_syn_generic_args_str(def_id, args);
+            let args_str = self.non_syn_generic_args_str(def_id, args.as_slice());
             join_path_with_double_colon(&[path_str.as_str(), args_str.as_str()])
         }
     }

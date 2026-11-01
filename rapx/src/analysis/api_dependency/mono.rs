@@ -5,6 +5,7 @@ use super::utils::{self, fn_sig_with_generic_args};
 use crate::compat;
 #[cfg(not(rapx_has_skip_norm_wip))]
 use crate::compat::SkipNormWip;
+use crate::compat::GenericArgsRef;
 use crate::helpers::def_path::path_str_def_id;
 use crate::limit::MAX_STEP_SET_SIZE;
 use crate::{rap_debug, rap_trace};
@@ -17,7 +18,7 @@ use rustc_infer::infer::DefineOpaqueTypes;
 use rustc_infer::infer::{InferCtxt, TyCtxtInferExt};
 use rustc_infer::traits::{ImplSource, Obligation, ObligationCause};
 use rustc_middle::ty::{
-    self, GenericArgKind, GenericArgsRef, Ty, TyCtxt, TypeVisitableExt, TypingEnv,
+    self, GenericArgKind, Ty, TyCtxt, TypeVisitableExt, TypingEnv,
 };
 use rustc_span::DUMMY_SP;
 use rustc_trait_selection::traits::query::evaluate_obligation::InferCtxtExt as _;
@@ -341,8 +342,8 @@ fn get_mono_set<'tcx>(
     let dummy_cause = ObligationCause::dummy();
     let fresh_args = infcx.fresh_args_for_item(DUMMY_SP, fn_did);
     // this replace generic types in fn_sig to infer var, e.g. fn(Vec<T>, i32) => fn(Vec<?0>, i32)
-    let fn_sig = fn_sig_with_generic_args(fn_did, fresh_args, tcx);
-    let identity_fnsig = fn_sig_with_generic_args(fn_did, identity, tcx);
+    let fn_sig = fn_sig_with_generic_args(fn_did, fresh_args.as_slice(), tcx);
+    let identity_fnsig = fn_sig_with_generic_args(fn_did, identity.as_slice(), tcx);
     let generics = tcx.generics_of(fn_did);
 
     // print fresh_args for debugging
@@ -355,7 +356,7 @@ fn get_mono_set<'tcx>(
         );
     }
 
-    let mut s = MonoSet::all(&fresh_args);
+    let mut s = MonoSet::all(fresh_args.as_slice());
 
     rap_trace!("[get_mono_set] initialize s: {:?}", s);
 
@@ -375,7 +376,7 @@ fn get_mono_set<'tcx>(
                 if let Some(mono) = unify_ty(
                     *input_ty,
                     (*ty).into(),
-                    &fresh_args,
+                    fresh_args.as_slice(),
                     &infcx,
                     &dummy_cause,
                     param_env,
@@ -439,7 +440,7 @@ fn solve_unbound_type_generics<'tcx>(
     let args = tcx.mk_args(&mono.value);
     let preds = crate::compat::predicates_of(tcx, did);
     let preds = preds.instantiate(tcx, args);
-    let mut mset = MonoSet::all(args);
+    let mut mset = MonoSet::all(args.as_slice());
     rap_debug!("[solve_unbound] did = {did:?}, mset={mset:?}");
     #[cfg(not(rapx_ge_100))]
     let pred_iter = preds.predicates.iter();
@@ -480,7 +481,7 @@ fn solve_unbound_type_generics<'tcx>(
                 if let Some(mono) = unify_trait(
                     trait_pred.trait_ref,
                     impl_trait_ref,
-                    args,
+                    args.as_slice(),
                     &infcx,
                     &cause,
                     param_env,

@@ -6,6 +6,7 @@ fn main() {
     emit_check_cfg("rapx_ge_95");
     emit_check_cfg("rapx_ge_99");
     emit_check_cfg("rapx_ge_100");
+    emit_check_cfg("rapx_generic_args_value");
     emit_check_cfg("rapx_const_ext");
     emit_check_cfg("rapx_box_deref_transmute");
     emit_check_cfg("rapx_has_public_adts");
@@ -30,6 +31,13 @@ fn main() {
     emit_cfg("rapx_ge_95", minor >= 95);
     emit_cfg("rapx_ge_99", minor >= 99);
     emit_cfg("rapx_ge_100", minor >= 100);
+    emit_cfg(
+        "rapx_generic_args_value",
+        rustc_src_contains_path(
+            "compiler/rustc_middle/src/ty/generic_args.rs",
+            "pub struct GenericArgs<'tcx>",
+        ),
+    );
     // `DefKind::Const`/`AssocConst` were struct variants (with `is_type_const`)
     // between 1.96 and 1.99 inclusive; unit variants before and after.
     emit_cfg(

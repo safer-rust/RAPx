@@ -1,6 +1,7 @@
 use super::dep_edge::DepEdge;
 use super::dep_node::DepNode;
 use crate::analysis::api_dependency::ApiDependencyGraph;
+use crate::compat::GenericArgsRef;
 use crate::helpers::path::{PathResolver, get_path_resolver};
 use crate::utils::fs::rap_create_file;
 use anyhow::Result;
@@ -9,7 +10,7 @@ use petgraph::Graph;
 use petgraph::dot;
 use petgraph::graph::NodeIndex;
 use rustc_middle::ty::{self, Ty, TyCtxt, TyKind};
-use rustc_middle::ty::{GenericArgsRef, List};
+use rustc_middle::ty::List;
 use serde::{Serialize, ser::SerializeMap};
 use serde_yaml;
 use std::io::Write;

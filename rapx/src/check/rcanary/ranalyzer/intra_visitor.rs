@@ -1,4 +1,5 @@
 use crate::compat::Spanned;
+use crate::helpers::mir_utils;
 use rustc_abi::VariantIdx;
 use rustc_data_structures::graph;
 use rustc_middle::{
@@ -2716,7 +2717,7 @@ impl<'tcx, 'z3, 'a> IntraFlowAnalysis<'tcx, 'z3, 'a> {
                 // check the ty if it is a struct or union
                 if adtdef.is_struct() || adtdef.is_union() {
                     for field in adtdef.all_fields() {
-                        let field_ty = field.ty(self.tcx(), substs);
+                        let field_ty = mir_utils::field_ty(self.tcx(), field, substs);
 
                         let mut default_heap = DefaultOwnership::new(self.tcx(), self.owner());
 
@@ -2729,7 +2730,7 @@ impl<'tcx, 'z3, 'a> IntraFlowAnalysis<'tcx, 'z3, 'a> {
                     let vidx = variant.unwrap();
 
                     for field in &adtdef.variants()[vidx].fields {
-                        let field_ty = field.ty(self.tcx(), substs);
+                        let field_ty = mir_utils::field_ty(self.tcx(), field, substs);
 
                         let mut default_heap = DefaultOwnership::new(self.tcx(), self.owner());
 

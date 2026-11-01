@@ -1,4 +1,5 @@
 use crate::def_ids::lang_api::{self, LangItem};
+use crate::compat::GenericArgsRef;
 #[cfg(rapx_attr_requires_ext)]
 use rustc_ast::attr::AttributeExt;
 use rustc_hir::{
@@ -16,7 +17,7 @@ use rustc_middle::{
         TerminatorKind,
     },
     ty::{
-        ConstKind, FieldDef, GenericArgKind, GenericArgs, GenericArgsRef, GenericParamDefKind,
+        ConstKind, FieldDef, GenericArgKind, GenericArgs, GenericParamDefKind,
         Instance, InstanceKind, PseudoCanonicalInput, ScalarInt, Ty, TyCtxt, TyKind,
         TypeVisitableExt, TypingEnv,
     },
@@ -1282,8 +1283,18 @@ pub fn type_contains_raw_ptr<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> bool {
 /// On newer rustc `field.ty(tcx, args)` returns an `Unnormalized<Ty>` that must
 /// be `.skip_norm_wip()`-ed; on older toolchains the `SkipNormWip` shim makes
 /// the same call a no-op, so this is version-independent.
+#[cfg(not(rapx_generic_args_value))]
 pub fn field_ty<'tcx>(tcx: TyCtxt<'tcx>, field: &FieldDef, args: GenericArgsRef<'tcx>) -> Ty<'tcx> {
     field.ty(tcx, args).skip_norm_wip()
+}
+
+#[cfg(rapx_generic_args_value)]
+pub fn field_ty<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    field: &FieldDef,
+    args: impl std::borrow::Borrow<GenericArgsRef<'tcx>>,
+) -> Ty<'tcx> {
+    field.ty(tcx, *args.borrow()).skip_norm_wip()
 }
 
 /// Whether `def_id` is a single-field struct wrapping a raw pointer (i.e.

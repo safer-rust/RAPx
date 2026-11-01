@@ -2,9 +2,10 @@
 use super::fuzzable;
 #[cfg(not(rapx_has_skip_norm_wip))]
 use crate::compat::SkipNormWip;
+use crate::compat::GenericArgsRef;
 
 use rustc_hir::def_id::DefId;
-use rustc_middle::ty::{self, FnSig, GenericArgKind, GenericArgsRef, Ty, TyCtxt, TyKind};
+use rustc_middle::ty::{self, FnSig, GenericArgKind, Ty, TyCtxt, TyKind};
 use rustc_span::sym;
 
 pub fn is_def_id_public(fn_def_id: impl Into<DefId>, tcx: TyCtxt<'_>) -> bool {
@@ -29,7 +30,7 @@ pub fn is_fuzzable_ty<'tcx>(ty: Ty<'tcx>, tcx: TyCtxt<'tcx>) -> bool {
 }
 
 pub fn is_fuzzable_api<'tcx>(fn_did: DefId, args: GenericArgsRef<'tcx>, tcx: TyCtxt<'tcx>) -> bool {
-    let fn_sig = fn_sig_with_generic_args(fn_did, args, tcx);
+    let fn_sig = fn_sig_with_generic_args(fn_did, args.as_slice(), tcx);
     fn_sig
         .inputs()
         .iter()

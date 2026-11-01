@@ -6,10 +6,11 @@ use crate::utils::source::get_fn_name_byid;
 
 use super::super::Analysis;
 use crate::compat::FxHashMap;
+use crate::compat::GenericArgsRef;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::Local,
-    ty::{GenericArgsRef, Ty, TyCtxt, TyKind},
+    ty::{Ty, TyCtxt, TyKind},
 };
 use rustc_span::def_id::LOCAL_CRATE;
 use std::{collections::HashSet, fmt};

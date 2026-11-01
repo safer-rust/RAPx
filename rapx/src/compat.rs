@@ -14,6 +14,11 @@
 pub use rustc_hash::FxHashMap;
 pub use rustc_hash::FxHashSet;
 
+#[cfg(not(rapx_generic_args_value))]
+pub use rustc_middle::ty::GenericArgsRef;
+#[cfg(rapx_generic_args_value)]
+pub type GenericArgsRef<'tcx> = rustc_middle::ty::GenericArgs<'tcx>;
+
 /// `Spanned` was moved from `rustc_span::source_map` to `rustc_span` root
 /// in rustc 1.97.
 #[cfg(rapx_ge_99)]
@@ -53,12 +58,20 @@ pub fn args_get<'tcx>(
 ) -> Option<&'tcx rustc_middle::ty::GenericArg<'tcx>> {
     args.get(index)
 }
-#[cfg(rapx_ge_99)]
+#[cfg(all(rapx_ge_99, not(rapx_generic_args_value)))]
 pub fn args_get<'tcx>(
     args: &rustc_middle::ty::Binder<'tcx, &'tcx rustc_middle::ty::GenericArgs<'tcx>>,
     index: usize,
 ) -> Option<rustc_middle::ty::GenericArg<'tcx>> {
     args.skip_binder().get(index).copied()
+}
+
+#[cfg(rapx_generic_args_value)]
+pub fn args_get<'tcx>(
+    args: &rustc_middle::ty::Binder<'tcx, rustc_middle::ty::GenericArgs<'tcx>>,
+    index: usize,
+) -> Option<rustc_middle::ty::GenericArg<'tcx>> {
+    args.skip_binder().get(index)
 }
 
 // ── skip_norm_wip (rustc_type_ir) ──────────────────────────────────────

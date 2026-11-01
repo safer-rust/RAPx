@@ -5,6 +5,7 @@ use rustc_middle::ty::{Ty, TyKind};
 use z3::ast::{Ast, Int};
 
 use crate::helpers::mir_utils;
+use crate::compat::GenericArgsRef;
 use crate::verify::api_classify;
 
 use super::state::{AllocId, Provenance, ValueFacts, ValueSource, VmState, VmValue};
@@ -274,7 +275,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         use rustc_middle::ty::TyKind;
         match ty.kind() {
             TyKind::Adt(adt_def, substs) => {
-                if let Some(pointee) = self.transparent_ptr_pointee(adt_def, substs) {
+                if let Some(pointee) = self.transparent_ptr_pointee(adt_def, *substs) {
                     return Some(pointee);
                 }
                 if self
@@ -282,7 +283,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     .is_diagnostic_item(rustc_span::sym::Option, adt_def.did())
                     && let Some(inner) = substs.first().and_then(|s| s.as_type())
                         && let TyKind::Adt(ia, is_) = inner.kind() {
-                            return self.transparent_ptr_pointee(ia, is_);
+                            return self.transparent_ptr_pointee(ia, *is_);
                         }
                 None
             }
@@ -295,7 +296,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     fn transparent_ptr_pointee(
         &self,
         adt_def: &rustc_middle::ty::AdtDef,
-        substs: rustc_middle::ty::GenericArgsRef<'tcx>,
+        substs: GenericArgsRef<'tcx>,
     ) -> Option<Ty<'tcx>> {
         if !adt_def.repr().transparent() {
             return None;

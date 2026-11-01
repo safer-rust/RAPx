@@ -6,6 +6,7 @@
 //! back to the originating parameter/local.
 
 use crate::helpers::mir_utils;
+use crate::compat::GenericArgsRef;
 use super::alias_hazard::{self, AliasProducer, HazardKind};
 use crate::analysis::alias::FieldOrigin;
 use crate::verify::checkpoint::Checkpoint;
@@ -911,7 +912,7 @@ fn resolve_origin_place_mir(
 fn self_adt<'tcx>(
     tcx: rustc_middle::ty::TyCtxt<'tcx>,
     caller: DefId,
-) -> Option<(DefId, rustc_middle::ty::GenericArgsRef<'tcx>)> {
+) -> Option<(DefId, GenericArgsRef<'tcx>)> {
     let body = tcx.optimized_mir(caller);
     if body.arg_count == 0 {
         return None;

@@ -544,7 +544,7 @@ fn resolve_chain_contracts<'tcx>(
             let arg_operands: Vec<_> = args.iter().map(|a| a.node.clone()).collect();
             #[cfg(rapx_ge_99)]
             let callee_args = callee_args.skip_binder();
-            reqs.retain_mut(|req| rebind_property_to_args(req, &arg_operands, callee_args, body));
+            reqs.retain_mut(|req| rebind_property_to_args(req, &arg_operands, &callee_args, body));
 
             contracts.extend(reqs);
         }

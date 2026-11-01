@@ -4,6 +4,7 @@ use super::dep_node::DepNode;
 use super::transform::TransformKind;
 use super::ty_wrapper::TyWrapper;
 use crate::analysis::api_dependency::ApiDependencyGraph;
+use crate::compat::GenericArgsRef;
 use crate::analysis::api_dependency::graph::std_tys;
 use crate::analysis::api_dependency::mono::{Mono, get_mono_complexity};
 use crate::analysis::api_dependency::utils::{
@@ -22,7 +23,7 @@ use petgraph::graph::NodeIndex;
 use petgraph::visit::{EdgeRef, NodeIndexable, Visitable};
 use rand::Rng;
 use rustc_hir::def_id::DefId;
-use rustc_middle::ty::{self, GenericArgsRef, TraitRef, Ty, TyCtxt};
+use rustc_middle::ty::{self, TraitRef, Ty, TyCtxt};
 use rustc_span::sym::{self, require};
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -274,7 +275,7 @@ impl<'tcx> ApiDependencyGraph<'tcx> {
             unreachable_non_generic_api.retain(|fn_did| {
                 !add_return_type_if_reachable(
                     *fn_did,
-                    ty::GenericArgs::identity_for_item(tcx, *fn_did),
+                    ty::GenericArgs::identity_for_item(tcx, *fn_did).as_slice(),
                     all_reachable_tys,
                     &mut current_tys,
                     tcx,
@@ -326,7 +327,7 @@ impl<'tcx> ApiDependencyGraph<'tcx> {
         for (fn_did, mono_set) in generic_map {
             for mono in mono_set {
                 let args = self.tcx.mk_args(&mono.value);
-                self.add_api(*fn_did, args);
+                self.add_api(*fn_did, args.as_slice());
             }
         }
     }
@@ -415,7 +416,7 @@ impl<'tcx> ApiDependencyGraph<'tcx> {
             select_minimal_set_cover(self.tcx, *fn_did, monos, &mut rng);
             for (args, r) in monos {
                 if *r {
-                    let idx = self.get_index(DepNode::Api(*fn_did, args)).unwrap();
+                    let idx = self.get_index(DepNode::Api(*fn_did, *args)).unwrap();
                     reserved[idx.index()] = true;
                 }
             }
@@ -530,14 +531,14 @@ impl<'tcx> ApiDependencyGraph<'tcx> {
 fn select_minimal_set_cover<'tcx>(
     tcx: TyCtxt<'tcx>,
     fn_did: DefId,
-    monos: &mut Vec<(ty::GenericArgsRef<'tcx>, bool)>,
+    monos: &mut Vec<(GenericArgsRef<'tcx>, bool)>,
     rng: &mut impl Rng,
 ) {
     rap_debug!("select minimal set for: {}", tcx.def_path_str(fn_did));
     let mut impl_vec = Vec::new();
     let mut cmplx_vec = Vec::new();
     for (args, _) in monos.iter() {
-        impl_vec.push(mono::get_impls(tcx, fn_did, args));
+        impl_vec.push(mono::get_impls(tcx, fn_did, *args));
         cmplx_vec.push(get_mono_complexity(args));
     }
 

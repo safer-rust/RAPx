@@ -1,18 +1,19 @@
 use std::hash::Hash;
 
 use super::ty_wrapper::TyWrapper;
+use crate::compat::GenericArgsRef;
 use rustc_middle::ty::{self, Ty, TyCtxt};
 
 use rustc_hir::def_id::DefId;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum DepNode<'tcx> {
-    Api(DefId, ty::GenericArgsRef<'tcx>),
+    Api(DefId, GenericArgsRef<'tcx>),
     Ty(TyWrapper<'tcx>),
 }
 
 impl<'tcx> DepNode<'tcx> {
-    pub fn api(id: DefId, args: ty::GenericArgsRef<'tcx>) -> DepNode<'tcx> {
+    pub fn api(id: DefId, args: GenericArgsRef<'tcx>) -> DepNode<'tcx> {
         DepNode::Api(id, args)
     }
     pub fn ty(ty: Ty<'tcx>) -> DepNode<'tcx> {
@@ -39,9 +40,9 @@ impl<'tcx> DepNode<'tcx> {
         }
     }
 
-    pub fn expect_api(&self) -> (DefId, ty::GenericArgsRef<'tcx>) {
+    pub fn expect_api(&self) -> (DefId, GenericArgsRef<'tcx>) {
         match self {
-            DepNode::Api(did, args) => (*did, args),
+            DepNode::Api(did, args) => (*did, *args),
             _ => {
                 panic!("{self:?} is not an api")
             }
@@ -50,7 +51,7 @@ impl<'tcx> DepNode<'tcx> {
 
     pub fn desc_str(&self, tcx: TyCtxt<'tcx>) -> String {
         match self {
-            DepNode::Api(def_id, args) => tcx.def_path_str_with_args(*def_id, args),
+            DepNode::Api(def_id, args) => tcx.def_path_str_with_args(*def_id, *args),
             DepNode::Ty(ty) => ty.desc_str(tcx),
         }
     }

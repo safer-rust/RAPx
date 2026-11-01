@@ -201,7 +201,7 @@ impl<'tcx> ApiDependencyGraph<'tcx> {
     pub fn add_identity_api(&mut self, fn_did: DefId) -> bool {
         let args = ty::GenericArgs::identity_for_item(self.tcx, fn_did);
 
-        if !self.add_api(fn_did, args) {
+        if !self.add_api(fn_did, args.as_slice()) {
             return false;
         }
 
