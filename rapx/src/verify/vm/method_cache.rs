@@ -1,4 +1,4 @@
-use rustc_hir::def_id::DefId;
+use rustc_hir::{def::DefKind, def_id::DefId};
 use rustc_middle::{
     mir::{Local, Operand, Place, ProjectionElem, Rvalue, StatementKind, TerminatorKind},
     ty::{TyCtxt, TyKind},
@@ -178,7 +178,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 }
 
 fn stable_local_query(tcx: TyCtxt<'_>, method: DefId) -> bool {
-    if method.as_local().is_none() || !tcx.is_mir_available(method) {
+    if !has_method_body(tcx, method) {
         return false;
     }
     let sig = tcx.fn_sig(method).skip_binder();
@@ -196,7 +196,7 @@ fn stable_local_query(tcx: TyCtxt<'_>, method: DefId) -> bool {
 }
 
 pub(super) fn stable_contract_query(tcx: TyCtxt<'_>, method: DefId) -> bool {
-    if method.as_local().is_none() || !tcx.is_mir_available(method) {
+    if !has_method_body(tcx, method) {
         return false;
     }
     let sig = tcx.fn_sig(method).skip_binder();
@@ -209,6 +209,12 @@ pub(super) fn stable_contract_query(tcx: TyCtxt<'_>, method: DefId) -> bool {
         return false;
     }
     stable_query_body(tcx, method)
+}
+
+fn has_method_body(tcx: TyCtxt<'_>, method: DefId) -> bool {
+    method.is_local()
+        && matches!(tcx.def_kind(method), DefKind::Fn | DefKind::AssocFn)
+        && tcx.is_mir_available(method)
 }
 
 fn stable_query_body(tcx: TyCtxt<'_>, method: DefId) -> bool {

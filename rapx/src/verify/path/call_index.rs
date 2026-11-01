@@ -1,8 +1,8 @@
+use super::super::target::CalleeBodies;
 use crate::analysis::path::{CallArg, CallBinding, PathTree};
 use crate::compat::{FxHashMap, FxHashSet};
 use crate::helpers::mir_utils;
 use crate::limit::{HINTED_CALLEE_BLOCK_LIMIT, LOCAL_CALLEE_BLOCK_LIMIT};
-use crate::verify::target::CalleeBodies;
 #[cfg(rapx_has_attr_ir)]
 use rustc_attr_ir::InlineAttr;
 #[cfg(not(rapx_has_attr_ir))]
@@ -372,20 +372,27 @@ impl<'tcx> CallSiteIndex<'tcx> {
         } else {
             actual_parent
         };
-        let instantiated_body = instance.map(|instance| {
-                let mir = self.tcx.optimized_mir(instance.def_id());
-                instance.instantiate_mir_and_normalize_erasing_regions(
+        let instantiated = instance.and_then(|instance| {
+            let mir = self.tcx.optimized_mir(instance.def_id());
+            instance
+                .try_instantiate_mir_and_normalize_erasing_regions(
                     self.tcx,
                     TypingEnv::post_analysis(self.tcx, parent),
                     EarlyBinder::bind(self.tcx, mir.clone()),
                 )
-            }).or_else(|| self.callee_bodies.get(&callee).map(|body| (**body).clone()));
+                .ok()
+                .map(|body| (instance, body))
+        });
+        let instantiated_body = instantiated
+            .as_ref()
+            .map(|(_, body)| body.clone())
+            .or_else(|| self.callee_bodies.get(&callee).map(|body| (**body).clone()));
         let block_count = instantiated_body
             .as_ref()
             .map(|body| body.basic_blocks.len())
             .unwrap_or_else(|| self.tcx.optimized_mir(callee).basic_blocks.len());
         let entry = self.blocks.len();
-        if let Some(instance) = instance {
+        if let Some((instance, _)) = instantiated {
             self.instances.insert(entry, instance);
         }
         self.blocks

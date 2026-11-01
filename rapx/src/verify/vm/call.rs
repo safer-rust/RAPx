@@ -8,7 +8,7 @@
 //! effects summary provides more precise hand-crafted invariants.
 //! Otherwise it falls back to the summary-based approach.
 
-use rustc_hir::def_id::DefId;
+use rustc_hir::{def::DefKind, def_id::DefId};
 use rustc_middle::mir::{
     BasicBlock, Local, Operand, Rvalue, StatementKind, Terminator, TerminatorKind,
 };
@@ -183,10 +183,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             .collect();
         let callee = mir_utils::dep_callee_resolved_def_id(self.tcx, caller_def_id, func);
         if callee.is_some_and(|c| {
-            matches!(
-                self.tcx.fn_sig(c).skip_binder().output().skip_binder().kind(),
-                TyKind::Never
-            )
+            matches!(self.tcx.def_kind(c), DefKind::Fn | DefKind::AssocFn)
+                && matches!(
+                    self.tcx.fn_sig(c).skip_binder().output().skip_binder().kind(),
+                    TyKind::Never
+                )
         }) {
             self.path_infeasible = true;
             return;
@@ -381,6 +382,21 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             self.set_local(dest, VmValue::new(truncated_term, dest_ty));
             return false;
         }
+        let instantiated_body = if let Some(instance) = instance {
+            let body = self.tcx.optimized_mir(callee_def_id).clone();
+            let caller_def_id = self.current_frame.current_def_id;
+            let Ok(body) = instance.try_instantiate_mir_and_normalize_erasing_regions(
+                self.tcx,
+                TypingEnv::post_analysis(self.tcx, caller_def_id),
+                EarlyBinder::bind(self.tcx, body),
+            ) else {
+                self.record_missing_mir(callee_def_id);
+                return false;
+            };
+            Some(&*self.tcx.arena.alloc(body))
+        } else {
+            None
+        };
         let before_inline = self.clone();
         self.inline.inline_depth += 1;
         self.inline.symbolic_generic_const_inline |= instance.as_ref().is_some_and(|instance| {
@@ -441,16 +457,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             std::mem::replace(&mut self.inline.arg_referents, inline_arg_referents);
         let saved_deferred_field_writes = std::mem::take(&mut self.inline.deferred_field_writes);
 
-        let caller_def_id = self.current_frame.current_def_id;
         self.current_frame.current_def_id = callee_def_id;
-        if let Some(instance) = instance {
-            let body = self.tcx.optimized_mir(callee_def_id).clone();
-            let body = instance.instantiate_mir_and_normalize_erasing_regions(
-                self.tcx,
-                TypingEnv::post_analysis(self.tcx, caller_def_id),
-                EarlyBinder::bind(self.tcx, body),
-            );
-            self.frame_body = Some(&*self.tcx.arena.alloc(body));
+        if let Some(body) = instantiated_body {
+            self.frame_body = Some(body);
         }
 
         for (i, arg_val) in arg_values.iter().enumerate() {
@@ -531,7 +540,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             }
             self.set_local(dest, VmValue::new(unknown_term, dest_ty));
             let mut unknown_effect =
-                self.tcx.fn_sig(callee_def_id).skip_binder().safety() == rustc_hir::Safety::Unsafe;
+                matches!(self.tcx.def_kind(callee_def_id), DefKind::Fn | DefKind::AssocFn)
+                    && self.tcx.fn_sig(callee_def_id).skip_binder().safety()
+                        == rustc_hir::Safety::Unsafe;
             for (arg, referent) in arg_values.iter().zip(&caller_referents) {
                 match arg.ty.kind() {
                     TyKind::Bool

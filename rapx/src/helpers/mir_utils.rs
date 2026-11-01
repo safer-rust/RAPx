@@ -884,7 +884,7 @@ pub(crate) fn offset_of_container<'tcx>(
     // `core`), since it only serves local, CTFE-able definitions. `offset_of!`
     // always expands to a local `AnonConst`, so rejecting external defs loses
     // nothing but avoids the ICE.
-    if !uneval.def.is_local() {
+    if !uneval.def.is_local() || !tcx.is_mir_available(uneval.def) {
         return None;
     }
     let body = tcx.mir_for_ctfe(uneval.def);

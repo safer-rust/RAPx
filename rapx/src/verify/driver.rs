@@ -32,7 +32,7 @@ use super::{
     },
     engine::VerifyEngine,
     loop_sensitivity::{LoopSensitivityAnalyzer, RepeatStrategy},
-    path_extractor::PathExtractor,
+    path::PathExtractor,
     report::{
         CheckResult, PATH_LIMIT_DESCRIPTION, PropertyCheckResult, UnknownReason, VerificationReport,
     },
@@ -428,7 +428,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
                         .map(|path| {
                             format!(
                                 "{:?}",
-                                super::path_extractor::caller_blocks(
+                                super::path::caller_blocks(
                                     &tree,
                                     self.target.def_id,
                                     path.iter().copied(),

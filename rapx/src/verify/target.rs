@@ -38,7 +38,7 @@ use super::{
         ContractExpr, ContractPlace, PlaceBase, Property, PropertyArg, PropertyKind,
         attr::parse_rapx_attr,
     },
-    path_extractor::PathExtractor,
+    path::PathExtractor,
     type_invariants::build_type_invariants_from_params,
 };
 use crate::helpers::fn_info::get_adt_def_id_by_adt_method;
@@ -723,13 +723,15 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
         def_id: DefId,
         instance: Option<Instance<'tcx>>,
     ) -> FunctionTarget<'tcx> {
-        let body = instance.map(|inst| -> &'tcx rustc_middle::mir::Body<'tcx> {
+        let body: Option<&'tcx Body<'tcx>> = instance.and_then(|inst| {
             let mir = self.tcx.optimized_mir(def_id);
-            &*self.tcx.arena.alloc(inst.instantiate_mir_and_normalize_erasing_regions(
+            inst.try_instantiate_mir_and_normalize_erasing_regions(
                 self.tcx,
                 rustc_middle::ty::TypingEnv::post_analysis(self.tcx, def_id),
                 rustc_middle::ty::EarlyBinder::bind(self.tcx, mir.clone()),
-            ))
+            )
+            .ok()
+            .map(|body| &*self.tcx.arena.alloc(body))
         });
         let mut callee_bodies = CalleeBodies::default();
         if let Some(root_body) = body {
@@ -768,11 +770,13 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
                     continue;
                 }
                 let mir = self.tcx.optimized_mir(callee).clone();
-                let instantiated = inst.instantiate_mir_and_normalize_erasing_regions(
+                let Ok(instantiated) = inst.try_instantiate_mir_and_normalize_erasing_regions(
                     self.tcx,
                     TypingEnv::post_analysis(self.tcx, def_id),
                     EarlyBinder::bind(self.tcx, mir),
-                );
+                ) else {
+                    continue;
+                };
                 callee_bodies.insert(callee, &*self.tcx.arena.alloc(instantiated));
             }
         }
@@ -850,14 +854,20 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
             def_id,
             crate::limit::trait_impl_limit(),
         );
-        if instances.is_empty() {
-            vec![self.build_function_target(def_id, None)]
-        } else {
-            instances
-                .into_iter()
-                .map(|inst| self.build_function_target(def_id, Some(inst)))
-                .collect()
+        let mut targets = Vec::new();
+        let mut needs_generic = instances.is_empty();
+        for inst in instances {
+            let target = self.build_function_target(def_id, Some(inst));
+            if target.body.is_some() {
+                targets.push(target);
+            } else {
+                needs_generic = true;
+            }
         }
+        if needs_generic {
+            targets.push(self.build_function_target(def_id, None));
+        }
+        targets
     }
 
     /// Adds a function target and updates its owning struct target when applicable.

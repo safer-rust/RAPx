@@ -20,7 +20,7 @@ use super::{
 };
 use crate::verify::checkpoint::{Checkpoint, CheckpointLocation};
 
-use super::call_index::EntryBodies;
+use super::path::EntryBodies;
 use super::property_checker::PropertyChecker;
 use super::target::CalleeBodies;
 

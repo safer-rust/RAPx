@@ -6,7 +6,6 @@
 
 pub(crate) mod api_classify;
 pub(crate) mod call_summary;
-pub(crate) mod call_index;
 pub(crate) mod checkpoint;
 pub(crate) mod contract;
 pub(crate) mod display;
@@ -14,7 +13,7 @@ pub(crate) mod driver;
 pub(crate) mod engine;
 pub(crate) mod loop_sensitivity;
 pub(crate) mod mir_support;
-pub(crate) mod path_extractor;
+pub(crate) mod path;
 
 pub(crate) mod property_checker;
 pub(crate) mod relevance;

@@ -58,3 +58,18 @@ pub fn sound_wide_call_argument(data: &[u32]) {
     let ptr = aligned_on_wide_const(18446744073709551616u128, data.as_ptr());
     unsafe { require_u32_alignment(ptr) }
 }
+
+pub trait ByteCount {
+    const BYTES: usize;
+}
+
+#[inline(never)]
+fn preserve_ptr(_count: usize, ptr: *const u32) -> *const u32 {
+    ptr
+}
+
+#[rapx::verify]
+pub fn sound_trait_assoc_const_argument<T: ByteCount>(data: &[u32]) {
+    let ptr = preserve_ptr(T::BYTES, data.as_ptr());
+    unsafe { require_u32_alignment(ptr) }
+}

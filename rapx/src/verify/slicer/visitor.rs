@@ -14,9 +14,9 @@ use std::collections::{HashMap, HashSet};
 use crate::analysis::dataflow::graph::build_dataflow_graph_from_body;
 use crate::analysis::dataflow::types::DataflowGraph;
 
-use super::super::{contract, path_extractor::Path, relevance::bind_callsite_roots};
+use super::super::{contract, path::Path, relevance::bind_callsite_roots};
 use crate::helpers::def_use::RelevantPlaces;
-use crate::verify::call_index::EntryBodies;
+use crate::verify::path::EntryBodies;
 use crate::verify::checkpoint::{Checkpoint, CheckpointKind, CheckpointLocation};
 use crate::verify::target::CalleeBodies;
 

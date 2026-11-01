@@ -12,13 +12,17 @@
 //! Path enumeration and composition are bounded by [`crate::limit::path_limit`].
 //! The tree is marked truncated when the budget is exhausted.
 
+mod call_index;
+
+pub(crate) use call_index::EntryBodies;
+
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{BasicBlock, TerminatorKind},
     ty::TyCtxt,
 };
 
-use super::call_index::{CallSiteIndex, EntryBodies};
+use self::call_index::CallSiteIndex;
 use super::target::CalleeBodies;
 use crate::analysis::path::{
     PathTree,

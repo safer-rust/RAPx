@@ -112,6 +112,7 @@ fn align_extended_unsound_cases() {
     assert_contain(wide, "Align | Failed");
     assert_function_result(&output, "unsound_wide_call_argument", "UNSOUND");
     assert_function_result(&output, "sound_wide_call_argument", "SOUND");
+    assert_function_result(&output, "sound_trait_assoc_const_argument", "SOUND");
     assert_contain(&output, "Align | Failed");
 }
 
