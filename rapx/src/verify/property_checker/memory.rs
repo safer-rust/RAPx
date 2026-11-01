@@ -681,6 +681,16 @@ impl PropertyChecker {
             }).or(Some(ty))
         });
 
+        if Self::ty_is_maybe_uninit(value.ty)
+            && let Some(Operand::Copy(place) | Operand::Move(place)) = checkpoint.args.first()
+            && self.trace_alloc_ids(vm_state, place.local).iter().any(|id| {
+                vm_state.content(*id).facts.inner_uninit
+                    && vm_state.content(*id).facts.written_pointee_ty.is_none()
+            })
+        {
+            return CheckResult::Failed;
+        }
+
         if let Some(id) = value.provenance_alloc_id() {
             rap_debug!(
                 "check_init: alloc={} init_set={} access={:?}",
@@ -767,6 +777,9 @@ impl PropertyChecker {
                 }
             }
             return CheckResult::Failed;
+        }
+        if Self::ty_is_maybe_uninit(value.ty) {
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
         }
         if let Some(origin_op) = checkpoint.args.first() {
             let origin_val = vm_state.value_of_operand(origin_op);

@@ -39,11 +39,12 @@ macro_rules! ED {
 }
 
 static REGISTRY: &[Entry] = &[
-    // ── Layout and intrinsic effects ───────────────────────────────
-    ED!(api_classify::is_layout_constant, eff_layout_const),
+    // ── Intrinsics ──────────────────────────────────────────────────
+    ED!(api_classify::is_intrinsic_layout_constant, eff_layout_const),
     ED!(intrinsic_api::is_select_unpredictable, eff_select_unpredictable),
     ED!(api_classify::is_intrinsic_branch_hint, eff_alias_arg0),
     ED!(intrinsic_api::is_cold_path, eff_no_effect),
+    ED!(intrinsic_api::is_assert_inhabited, eff_no_effect),
     ED!(api_classify::is_intrinsic_ptr_offset_from, eff_ptr_offset_from),
     ED!(intrinsic_api::is_arith_offset, eff_arith_offset),
     ED!(intrinsic_api::is_black_box, eff_return_arg_value),
@@ -64,22 +65,16 @@ static REGISTRY: &[Entry] = &[
     ED!(intrinsic_api::is_exact_div, eff_exact_div),
     ED!(intrinsic_api::is_size_of_val, eff_size_of_val),
     ED!(api_classify::is_intrinsic_pure_opaque, eff_opaque_return),
-    // ── Allocation and capacity effects ─────────────────────────────
+    // ── APIs without MIR ────────────────────────────────────────────
     ED!(nomir_api::is_global_alloc_shim, eff_nullable_allocation),
     ED!(nomir_api::is_global_alloc_zeroed_shim, eff_nullable_zeroed_allocation),
     ED!(nomir_api::is_alloc_shim_marker, eff_no_effect),
     ED!(nomir_ffi::is_cstr_runtime_strlen, eff_opaque_return),
     ED!(nomir_api::is_slice_to_vec, eff_vec_from_slice),
+    // ── Other APIs ──────────────────────────────────────────────────
+    ED!(api_classify::is_mem_layout_constant, eff_layout_const),
     ED!(api_classify::is_vec_push_or_reserve, eff_write_mem),
-    // ── MIR available — precise symbolic summary ────────────────────
-    ED!(api_classify::is_manually_drop_drop, eff_drop_memory),
-    ED!(api_classify::is_std_drop, eff_drop_memory),
-    ED!(api_classify::is_drop_in_place, eff_drop_memory),
     ED!(api_classify::is_align_offset, eff_align_offset),
-    // ── MIR available — summarized instead of inlined ───────────────
-    ED!(api_classify::is_maybe_uninit_uninit, eff_uninit_wrapper),
-    ED!(api_classify::is_maybe_uninit_assume_init, eff_return_arg_value),
-    ED!(api_classify::is_maybe_uninit_write, eff_write_mem),
 ];
 
 /// A registry entry keeps the call opaque in the path graph, including entries
@@ -120,10 +115,6 @@ pub(crate) fn lookup_effect<'tcx>(
     None
 }
 // ── Effect builders — one small function per API semantic ──────────────
-
-fn eff_uninit_wrapper(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![CallEffect::ReturnUninitWrapper]
-}
 
 fn eff_return_arg_value(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     vec![CallEffect::ReturnArgValue { arg: 0 }]
@@ -274,10 +265,6 @@ fn eff_with_overflow(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
         rhs_arg: 1,
         op,
     }]
-}
-
-fn eff_drop_memory(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![CallEffect::DropMemory { pointer_arg: 0 }]
 }
 
 fn eff_align_offset(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {

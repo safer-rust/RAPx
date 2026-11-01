@@ -1,6 +1,8 @@
 //! Transfer functions for state-changing MIR statements.
 
-use rustc_middle::mir::{CopyNonOverlapping, Local, Operand, Place, ProjectionElem, Rvalue};
+use rustc_middle::mir::{
+    AggregateKind, CopyNonOverlapping, Local, Operand, Place, ProjectionElem, Rvalue,
+};
 #[cfg(rapx_const_ext)]
 use rustc_middle::ty::consts::ConstExt;
 use z3::ast::{Ast, Bool, Int};
@@ -47,6 +49,10 @@ pub(crate) fn exec_assign<'z3, 'tcx>(
     let inner_uninit_source = source_place
         .and_then(|source| state.current_frame.local_alloc.get(&source.local))
         .is_some_and(|id| state.content(*id).facts.inner_uninit);
+    let inner_uninit_aggregate = matches!(rvalue, Rvalue::Aggregate(kind, _)
+        if matches!(kind.as_ref(), AggregateKind::Adt(did, _, _, _, Some(field))
+            if crate::verify::api_classify::is_maybe_uninit_type(*did)
+                && field.as_usize() == 0));
     let source_fields = source_place.map(|source| {
         let prefix = source.projection.iter().filter_map(|projection| {
             match projection.kind() {
@@ -114,6 +120,7 @@ pub(crate) fn exec_assign<'z3, 'tcx>(
         state.set_local(place.local, value);
         if !uninit_source
             && !inner_uninit_source
+            && !inner_uninit_aggregate
             && let Some(&id) = state.current_frame.local_alloc.get(&place.local)
         {
             state.content_mut(id).facts.initialized = true;
@@ -121,7 +128,9 @@ pub(crate) fn exec_assign<'z3, 'tcx>(
         if uninit_source && let Some(id) = state.current_frame.local_alloc.get(&place.local) {
             state.possible_uninit_allocs.insert(*id);
         }
-        if inner_uninit_source && let Some(&id) = state.current_frame.local_alloc.get(&place.local) {
+        if (inner_uninit_source || inner_uninit_aggregate)
+            && let Some(&id) = state.current_frame.local_alloc.get(&place.local)
+        {
             state.content_mut(id).facts.inner_uninit = true;
         }
         // On a whole-place move (`_3 = move _4`), the destination is a fresh

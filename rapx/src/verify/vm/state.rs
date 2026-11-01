@@ -1252,6 +1252,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         path: Vec<usize>,
         value: VmValue<'z3, 'tcx>,
     ) {
+        let written_ty = value.ty;
+        let written_inner = matches!(self.body().local_decls[local].ty.kind(), TyKind::Adt(def, args)
+            if crate::verify::api_classify::is_maybe_uninit_type(def.did())
+                && args.first().and_then(|arg| arg.as_type()) == Some(value.ty))
+            && !path.is_empty()
+            && path.iter().all(|field| *field == 0)
+            && value.facts.init;
         let prior_term = self.local_value(local).map(|value| value.z3_term.to_string());
         self.index_access_facts.retain(|(slice_term, index_term, slice, index)| {
             *slice != local
@@ -1267,6 +1274,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         } else {
             self.invalidate_field_descendants(local, &path);
             self.set_field_value(local, path, value);
+            if written_inner
+                && let Some(&alloc_id) = self.current_frame.local_alloc.get(&local)
+            {
+                self.content_mut(alloc_id).facts.written_pointee_ty = Some(written_ty);
+            }
         }
     }
 

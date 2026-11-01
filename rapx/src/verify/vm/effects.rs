@@ -152,12 +152,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         func: &Operand<'tcx>,
     ) {
         match effect {
-            CallEffect::ReturnUninitWrapper => {
-                self.ensure_local_allocation(dest);
-                if let Some(&id) = self.current_frame.local_alloc.get(&dest) {
-                    self.content_mut(id).facts.inner_uninit = true;
-                }
-            }
             CallEffect::ReturnLayoutSymbolic { is_size } => {
                 let ty = mir_utils::fn_def_first_type_arg(func)
                     .expect("layout effect built from a FnDef");
@@ -801,30 +795,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         .clone()
                         .unwrap_or_else(|| self.fresh_int(&format!("vec_len_{}", dest.as_usize())));
                     self.materialize_vec_fields(dest, ptr_field, len_term.clone(), len_term);
-                }
-            }
-            CallEffect::DropMemory { pointer_arg } => {
-                // `ManuallyDrop::drop(slot)` / `drop_in_place(x)` frees the heap
-                // allocation behind the argument. A reference/raw-pointer
-                // argument carries the *stack* provenance of the referent
-                // (penetrate to its heap field); a value argument (`Box`/`Vec`)
-                // carries the heap provenance directly. Mark the allocation
-                // dead; a second drop of an already-dead allocation is detected
-                // downstream via `dead` alone.
-                if let Some(arg_val) = args.get(*pointer_arg) {
-                    let alloc_id = if matches!(
-                        arg_val.ty.kind(),
-                        rustc_middle::ty::TyKind::Ref(..) | rustc_middle::ty::TyKind::RawPtr(..)
-                    ) {
-                        self.find_local_by_address(&arg_val.z3_term)
-                            .and_then(|r| self.owner_ptr_field(r))
-                            .and_then(|v| v.provenance_alloc_id())
-                    } else {
-                        arg_val.provenance_alloc_id()
-                    };
-                    if let Some(alloc_id) = alloc_id {
-                        self.alloc_mut(alloc_id).facts.dead = true;
-                    }
                 }
             }
         }

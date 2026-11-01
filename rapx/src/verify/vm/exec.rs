@@ -116,30 +116,38 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             .map(|arg| {
                 let arg_local = (*arg)?;
                 self.local_value(arg_local).and_then(|value| {
-                    self.find_local_by_address(&value.z3_term).or_else(|| {
-                        self.find_whole_reborrow_referent(arg_local)
-                            .or_else(|| self.find_copy_root(arg_local))
-                            .filter(|root| {
+                    let address_referent = self.find_local_by_address(&value.z3_term);
+                    let borrow_referent = self.find_whole_borrow_referent(arg_local);
+                    let referent = if address_referent == Some(arg_local) {
+                        borrow_referent.or(address_referent)
+                    } else {
+                        address_referent.or(borrow_referent)
+                    };
+                    referent
+                        .or_else(|| {
+                            self.find_copy_root(arg_local).filter(|root| {
                                 self.local_value(*root).is_some_and(|source| {
                                     value.provenance_alloc_id().is_some_and(|id| {
                                         source.provenance_alloc_id() == Some(id)
                                     })
                                 }) && self.field_value(*root, &[0]).is_some()
                             })
-                    }).or_else(|| {
-                        let outer = arg_local
-                            .as_usize()
-                            .checked_sub(1)
-                            .and_then(|index| self.inline.arg_referents.get(index))
-                            .copied()
-                            .flatten()?;
-                        let parent_alloc = self
-                            .caller_frames
-                            .last()?
-                            .local_alloc
-                            .get(&outer)?;
-                        (value.provenance_alloc_id() == Some(*parent_alloc)).then_some(arg_local)
-                    })
+                        })
+                        .or_else(|| {
+                            let outer = arg_local
+                                .as_usize()
+                                .checked_sub(1)
+                                .and_then(|index| self.inline.arg_referents.get(index))
+                                .copied()
+                                .flatten()?;
+                            let parent_alloc = self
+                                .caller_frames
+                                .last()?
+                                .local_alloc
+                                .get(&outer)?;
+                            (value.provenance_alloc_id() == Some(*parent_alloc))
+                                .then_some(arg_local)
+                        })
                 })
             })
             .collect();
@@ -173,7 +181,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     continue;
                 }
                 source_locals.push((cur, prefix.clone()));
-                if let Some(r) = self.find_whole_reborrow_referent(cur) {
+                if let Some(r) = self.find_whole_borrow_referent(cur) {
                     stack.push((r, prefix.clone()));
                 }
                 if let Some((r, fields)) = self.find_field_reborrow_referent(cur) {
@@ -213,7 +221,16 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
         for (i, arg) in param_sources.iter().enumerate() {
             if let Some(v) = arg.and_then(|local| self.frame_local_value(&frame, local)).cloned() {
-                self.set_local(Local::from_usize(i + 1), v);
+                let inner_uninit = arg
+                    .and_then(|local| frame.local_alloc.get(&local))
+                    .is_some_and(|id| self.content(*id).facts.inner_uninit);
+                let param = Local::from_usize(i + 1);
+                self.set_local(param, v);
+                if inner_uninit
+                    && let Some(&id) = self.current_frame.local_alloc.get(&param)
+                {
+                    self.content_mut(id).facts.inner_uninit = true;
+                }
             }
         }
 
@@ -263,6 +280,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     fn handle_callee_exit(&mut self, dest: usize) {
         let method_call = self.active_method_calls.pop().flatten();
         let ret = self.local_value(Local::from_usize(0)).cloned();
+        let ret_inner_uninit = self
+            .current_frame
+            .local_alloc
+            .get(&Local::from_usize(0))
+            .is_some_and(|id| self.content(*id).facts.inner_uninit);
         let ret_fields: Vec<(Vec<usize>, VmValue<'z3, 'tcx>)> = self
             .field_paths(Local::from_usize(0))
             .into_iter()
@@ -294,6 +316,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 v.facts.non_null = true;
             }
             self.set_local(Local::from_usize(dest), v);
+            if ret_inner_uninit
+                && let Some(&dest_id) = self.current_frame.local_alloc.get(&Local::from_usize(dest))
+            {
+                self.content_mut(dest_id).facts.inner_uninit = true;
+            }
             if let Some(dest_alloc_id) = self.current_frame.local_alloc.get(&Local::from_usize(dest)).copied()
             {
                 self.content_mut(dest_alloc_id).facts.initialized = true;

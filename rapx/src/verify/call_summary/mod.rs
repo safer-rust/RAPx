@@ -34,8 +34,6 @@ pub(crate) type CallEffectSummary = Vec<CallEffect>;
 /// Path-local effect produced by a retained call.
 #[derive(Clone, Debug)]
 pub(crate) enum CallEffect {
-    /// The returned `MaybeUninit<T>` wrapper is valid but its inner `T` is not initialized.
-    ReturnUninitWrapper,
     /// The return value aliases or is a direct value flow from an argument.
     ReturnAliasArg { arg: usize },
     /// The return value is a transparent copy of an argument's *value*
@@ -99,9 +97,6 @@ pub(crate) enum CallEffect {
     /// pointee) and its pointee field values are the argument's field values
     /// with the leading `peel` transparent field-0 hops stripped.
     ReturnTransparentDeref { arg: usize, peel: usize },
-    /// The call *frees* the heap allocation behind `pointer_arg` (a `&mut`
-    /// reference to a `Box`/`Vec`/`String` pointee). Models `ManuallyDrop::drop`.
-    DropMemory { pointer_arg: usize },
     /// `size_of::<T>()` / `align_of::<T>()` for a *generic* `T` (no concrete
     /// layout): the result is the shared symbolic `sizeof_T` / `align_T`, bound
     /// at apply time from `func`'s type argument.
@@ -112,7 +107,6 @@ impl CallEffect {
     pub(super) fn written_args(&self) -> Vec<usize> {
         match self {
             Self::WriteMemory { pointer_arg }
-            | Self::DropMemory { pointer_arg }
             | Self::FillBytes { pointer_arg, .. } => vec![*pointer_arg],
             Self::CopyMemory { destination_arg, .. } => vec![*destination_arg],
             Self::SwapMemory { left_arg, right_arg } => vec![*left_arg, *right_arg],

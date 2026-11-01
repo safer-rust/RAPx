@@ -62,13 +62,6 @@ pub fn is_std_drop(callee: Option<DefId>) -> bool {
     callee.is_some_and(|c| other_api::drop() == Some(c))
 }
 
-/// Whether `callee` is `drop_in_place::<T>` — the MIR drop shim that drops the
-/// pointee in place and (for an owning pointee like `Box`/`Vec`) frees its
-/// heap allocation.
-pub fn is_drop_in_place(callee: Option<DefId>) -> bool {
-    callee.is_some_and(|c| other_api::drop_in_place() == Some(c))
-}
-
 // ── Pointer extraction / cast ─────────────────────────────────────
 
 /// Whether `callee` produces a raw pointer (or `NonNull`) alias of its first
@@ -239,12 +232,15 @@ pub fn is_intrinsic_pure_opaque(callee: Option<DefId>) -> bool {
 /// `align_of::<T>()`. The runtime intrinsics (`size_of_val`, `align_of_val`,
 /// `pref_align_of`, `*_val_raw`, …) are *not* classified here.
 pub fn is_layout_constant(callee: Option<DefId>) -> bool {
-    intrinsic_api::is_size_of(callee)
-        || intrinsic_api::is_align_of(callee)
-        || other_api::matches_any(
-            callee,
-            &[other_api::mem_size_of(), other_api::mem_align_of()],
-        )
+    is_intrinsic_layout_constant(callee) || is_mem_layout_constant(callee)
+}
+
+pub fn is_intrinsic_layout_constant(callee: Option<DefId>) -> bool {
+    intrinsic_api::is_size_of(callee) || intrinsic_api::is_align_of(callee)
+}
+
+pub fn is_mem_layout_constant(callee: Option<DefId>) -> bool {
+    other_api::matches_any(callee, &[other_api::mem_size_of(), other_api::mem_align_of()])
 }
 
 /// Whether `callee` is `ptr::align_offset` / `NonNull::align_offset` /
@@ -303,33 +299,6 @@ pub fn is_ptr_read(callee: Option<DefId>) -> bool {
                 other_api::assume_init_read(),
             ],
         )
-}
-
-// ── MaybeUninit ───────────────────────────────────────────────────
-
-/// Whether `callee` is `MaybeUninit::write`, which initializes the slot (unlike
-/// raw `ptr::write`, handled by [`is_mem_copy_or_write`]).
-pub fn is_maybe_uninit_write(callee: Option<DefId>) -> bool {
-    other_api::matches_any(callee, &[other_api::maybe_uninit_write()])
-}
-
-/// Whether `callee` is `MaybeUninit::uninit` (a new uninitialized slot).
-pub fn is_maybe_uninit_uninit(callee: Option<DefId>) -> bool {
-    other_api::matches_any(callee, &[other_api::maybe_uninit_uninit()])
-}
-
-/// Whether `callee` is a `MaybeUninit` "assume initialized" accessor
-/// (`assume_init`, `assume_init_read`, `assume_init_ref`, `assume_init_mut`).
-pub fn is_maybe_uninit_assume_init(callee: Option<DefId>) -> bool {
-    other_api::matches_any(
-        callee,
-        &[
-            other_api::maybe_uninit_assume_init(),
-            other_api::assume_init_read(),
-            other_api::maybe_uninit_assume_init_ref(),
-            other_api::maybe_uninit_assume_init_mut(),
-        ],
-    )
 }
 
 /// Memory copy/write intrinsics that legitimately write through a raw pointer

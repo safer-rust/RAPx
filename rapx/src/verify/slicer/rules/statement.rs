@@ -101,6 +101,9 @@ impl<'tcx> BackwardSlicer<'tcx> {
             || is_pointee_write
         {
             let mut uses = collect_assignment_uses(rvalue, block, statement_index, flow, &defs);
+            if is_pointee_write {
+                uses.insert_local(place.local);
+            }
             items.push(RelevantItem::Statement {
                 def_id,
                 block,
@@ -205,6 +208,11 @@ fn collect_assignment_uses<'tcx>(
     // enumeration.
     if let Rvalue::Ref(_, _, place) | Rvalue::RawPtr(_, place) = rvalue {
         uses.insert_local(place.local);
+        for projection in place.projection.iter() {
+            if let rustc_middle::mir::ProjectionElem::Index(index) = projection {
+                uses.insert_local(index);
+            }
+        }
     }
 
     uses

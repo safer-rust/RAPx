@@ -396,19 +396,29 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             .iter()
             .enumerate()
             .map(|(index, value)| {
-                self.find_local_by_address(&value.z3_term).or_else(|| {
-                    let local = caller_arg_locals.get(index).copied().flatten()?;
-                    local
-                        .as_usize()
-                        .checked_sub(1)
-                        .and_then(|index| self.inline.arg_referents.get(index))
-                        .copied()
-                        .flatten()?;
-                    let provenance = value.provenance_alloc_id()?;
-                    (self.local_value(local).and_then(VmValue::provenance_alloc_id)
-                        == Some(provenance))
-                        .then_some(local)
-                })
+                let arg_local = caller_arg_locals.get(index).copied().flatten();
+                let address_referent = self.find_local_by_address(&value.z3_term);
+                let borrow_referent =
+                    arg_local.and_then(|local| self.find_whole_borrow_referent(local));
+                let referent = if address_referent == arg_local {
+                    borrow_referent.or(address_referent)
+                } else {
+                    address_referent.or(borrow_referent)
+                };
+                referent
+                    .or_else(|| {
+                        let local = caller_arg_locals.get(index).copied().flatten()?;
+                        local
+                            .as_usize()
+                            .checked_sub(1)
+                            .and_then(|index| self.inline.arg_referents.get(index))
+                            .copied()
+                            .flatten()?;
+                        let provenance = value.provenance_alloc_id()?;
+                        (self.local_value(local).and_then(VmValue::provenance_alloc_id)
+                            == Some(provenance))
+                            .then_some(local)
+                    })
             })
             .collect();
         let caller_referents = inline_arg_referents.clone();
@@ -417,7 +427,14 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         // referent's struct fields into the callee for `old = self.ptr`).
         let reborrow_referents: Vec<Option<Local>> = caller_arg_locals
             .iter()
-            .map(|arg_opt| arg_opt.and_then(|a| self.find_whole_reborrow_referent(a)))
+            .map(|arg_opt| arg_opt.and_then(|a| self.find_whole_borrow_referent(a)))
+            .collect();
+        let arg_inner_uninit: Vec<bool> = caller_arg_locals
+            .iter()
+            .map(|arg| {
+                arg.and_then(|local| self.current_frame.local_alloc.get(&local))
+                    .is_some_and(|id| self.content(*id).facts.inner_uninit)
+            })
             .collect();
         let frame = self.save_frame();
         let saved_inline_arg_referents =
@@ -440,6 +457,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             let callee_local = Local::from_usize(i + 1);
             self.ensure_local_allocation(callee_local);
             self.set_local(callee_local, arg_val.clone());
+            if arg_inner_uninit.get(i) == Some(&true)
+                && let Some(&id) = self.current_frame.local_alloc.get(&callee_local)
+            {
+                self.content_mut(id).facts.inner_uninit = true;
+            }
             if let Some(Operand::Constant(constant)) = call_args.get(i).map(|arg| &arg.node) {
                 self.materialize_const_adt(callee_local, &constant.const_);
             }
@@ -480,7 +502,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 api_classify::is_maybe_uninit_ty(before_inline.body().local_decls[**local].ty)
             })
             .filter_map(|local| before_inline.current_frame.local_alloc.get(local).copied())
-            .filter(|id| !before_inline.content(*id).facts.initialized)
+            .filter(|id| before_inline.allocation_needs_write(*id))
             .collect();
         let may_recurse = self.body().basic_blocks.iter().any(|block| {
             let TerminatorKind::Call { func, .. } = &block.terminator().kind else {
@@ -533,6 +555,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let mut completed = Vec::new();
         for mut state in returns.unwrap() {
             let return_val = state.local_value(Local::from_usize(0)).cloned();
+            let return_inner_uninit = state
+                .current_frame
+                .local_alloc
+                .get(&Local::from_usize(0))
+                .is_some_and(|id| state.content(*id).facts.inner_uninit);
             let return_fields: Vec<_> = state
                 .field_paths(Local::from_usize(0))
                 .into_iter()
@@ -558,6 +585,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 val.facts.non_null = true;
             }
             state.set_local(dest, val);
+            if return_inner_uninit
+                && let Some(&dest_id) = state.current_frame.local_alloc.get(&dest)
+            {
+                state.content_mut(dest_id).facts.inner_uninit = true;
+            }
             for (path, fv) in return_fields {
                 state.set_field_value(dest, path, fv);
             }
@@ -854,7 +886,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             SatResult::Unsat => {}
                         }
                     }
-                    if pre_uninit.iter().any(|id| !state.content(*id).facts.initialized) {
+                    if pre_uninit.iter().any(|id| state.allocation_needs_write(*id)) {
                         let witness = state.find_uninit_witness(terminator, pre_uninit);
                         if !witness.is_empty() {
                             self.possible_uninit_allocs.extend(witness);
@@ -916,7 +948,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     state.assert_all(&solver);
                     if solver.check() == SatResult::Sat {
                         for id in candidates {
-                            if !state.content(*id).facts.initialized {
+                            if state.allocation_needs_write(*id) {
                                 found.insert(*id);
                             }
                         }
@@ -969,6 +1001,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         found
     }
 
+    fn allocation_needs_write(&self, id: AllocId) -> bool {
+        let facts = &self.content(id).facts;
+        !facts.initialized || (facts.inner_uninit && facts.written_pointee_ty.is_none())
+    }
+
     /// Find the local whose symbolic address matches `term` (the address a
     /// reference value points at). Used to resolve a `&self`/`&mut self`
     /// receiver (often a reborrow temp) back to the referent local that carries
@@ -1007,6 +1044,20 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         });
         if let Some(prov) = &pointer.provenance {
             self.clear_write_evidence(prov.alloc_id);
+            if !path.is_empty()
+                && path.iter().all(|field| *field == 0)
+                && value.facts.init
+                && matches!(mir_utils::pointee_ty(pointer.ty).map(|ty| ty.kind()),
+                    Some(TyKind::Adt(def, args))
+                        if crate::verify::api_classify::is_maybe_uninit_type(def.did())
+                            && args.first().and_then(|arg| arg.as_type()) == Some(value.ty))
+                && let Some(offset) = prov.offset.simplify().as_u64()
+            {
+                let end = offset.saturating_add(self.size_of_ty(value.ty)).min(4096);
+                for byte in offset..end {
+                    self.mark_byte_init(prov.alloc_id, byte as usize);
+                }
+            }
         }
         let caller_referent =
             self.inline
@@ -1078,8 +1129,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
     }
 
-    /// Resolve a *whole-place* reborrow (`_7 = &mut (*_1)` / `_7 = &(*_1)`,
-    /// projection exactly `[Deref]`) back to its referent local.  Used to
+    /// Resolve a direct mutable borrow or a whole-place reborrow back to its
+    /// referent local. Used to
     /// propagate the referent's materialized field values into an inlined
     /// callee when the reborrow temp's own forward assignment was pruned from
     /// the slice (so its value is still the stack-address default and
@@ -1087,7 +1138,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// field reborrows (`&mut (*_x).field`) — those address a subfield, whose
     /// value is tracked separately, so propagating the whole struct's fields
     /// would be wrong (BTreeMap's `NodeRef` handles).
-    pub(crate) fn find_whole_reborrow_referent(&self, local: Local) -> Option<Local> {
+    pub(crate) fn find_whole_borrow_referent(&self, local: Local) -> Option<Local> {
         use rustc_middle::mir::{ProjectionElem, Rvalue, StatementKind};
         for bb in self.body().basic_blocks.iter() {
             for stmt in &bb.statements {
@@ -1096,8 +1147,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     if dest.local == local
                         && dest.projection.is_empty()
                         && let Rvalue::Ref(_, _, place) | Rvalue::RawPtr(_, place) = rvalue
-                        && place.projection.len() == 1
-                        && matches!(place.projection[0].kind(), ProjectionElem::Deref)
+                        && ((place.projection.is_empty()
+                            && matches!(self.body().local_decls[local].ty.kind(),
+                                TyKind::Ref(_, _, rustc_middle::ty::Mutability::Mut)
+                                    | TyKind::RawPtr(_, rustc_middle::ty::Mutability::Mut)))
+                            || (place.projection.len() == 1
+                                && matches!(place.projection[0].kind(), ProjectionElem::Deref)))
                     {
                         return Some(place.local);
                     }

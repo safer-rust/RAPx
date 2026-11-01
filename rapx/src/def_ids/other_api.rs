@@ -530,18 +530,6 @@ known_items! {
         "std::mem::maybe_uninit::MaybeUninit::<T>::assume_init_read",
         "core::mem::maybe_uninit::MaybeUninit::<T>::assume_init_read"
     ],
-    maybe_uninit_uninit: &[
-        "std::mem::MaybeUninit::<T>::uninit",
-        "core::mem::MaybeUninit::<T>::uninit",
-        "std::mem::maybe_uninit::MaybeUninit::<T>::uninit",
-        "core::mem::maybe_uninit::MaybeUninit::<T>::uninit"
-    ],
-    maybe_uninit_write: &[
-        "std::mem::MaybeUninit::<T>::write",
-        "core::mem::MaybeUninit::<T>::write",
-        "std::mem::maybe_uninit::MaybeUninit::<T>::write",
-        "core::mem::maybe_uninit::MaybeUninit::<T>::write"
-    ],
     maybe_uninit_as_ptr: &[
         "std::mem::MaybeUninit::<T>::as_ptr",
         "core::mem::MaybeUninit::<T>::as_ptr",
@@ -553,24 +541,6 @@ known_items! {
         "core::mem::MaybeUninit::<T>::as_mut_ptr",
         "std::mem::maybe_uninit::MaybeUninit::<T>::as_mut_ptr",
         "core::mem::maybe_uninit::MaybeUninit::<T>::as_mut_ptr"
-    ],
-    maybe_uninit_assume_init: &[
-        "std::mem::MaybeUninit::<T>::assume_init",
-        "core::mem::MaybeUninit::<T>::assume_init",
-        "std::mem::maybe_uninit::MaybeUninit::<T>::assume_init",
-        "core::mem::maybe_uninit::MaybeUninit::<T>::assume_init"
-    ],
-    maybe_uninit_assume_init_ref: &[
-        "std::mem::MaybeUninit::<T>::assume_init_ref",
-        "core::mem::MaybeUninit::<T>::assume_init_ref",
-        "std::mem::maybe_uninit::MaybeUninit::<T>::assume_init_ref",
-        "core::mem::maybe_uninit::MaybeUninit::<T>::assume_init_ref"
-    ],
-    maybe_uninit_assume_init_mut: &[
-        "std::mem::MaybeUninit::<T>::assume_init_mut",
-        "core::mem::MaybeUninit::<T>::assume_init_mut",
-        "std::mem::maybe_uninit::MaybeUninit::<T>::assume_init_mut",
-        "core::mem::maybe_uninit::MaybeUninit::<T>::assume_init_mut"
     ],
     mem_size_of: &[
         "std::mem::size_of",
