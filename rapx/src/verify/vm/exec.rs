@@ -5,11 +5,12 @@ use rustc_middle::mir::Local;
 use z3::ast::Int;
 
 use crate::{
+    analysis::path::CallArg,
     compat::FxHashSet,
     verify::slicer::RelevantItem,
 };
 
-use super::state::{ValueFacts, ValueSource, VmState, VmValue};
+use super::state::{ValueSource, VmState, VmValue};
 
 impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// Execute all retained MIR items in path order.
@@ -62,9 +63,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 let terminator = body.basic_blocks[*block].terminator();
                 crate::verify::vm::rules::exec_terminator(self, terminator, *switch_succ);
             }
-            RelevantItem::CalleeEntry { callee, body, args, consts, field_offsets } => {
+            RelevantItem::CalleeEntry { callee, body, args } => {
                 self.active_mir_location = None;
-                self.handle_callee_entry(*callee, *body, args, consts, field_offsets);
+                self.handle_callee_entry(*callee, *body, args);
             }
             RelevantItem::CalleeExit { dest } => {
                 self.active_mir_location = None;
@@ -84,28 +85,21 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         &mut self,
         callee: DefId,
         body: Option<&'tcx rustc_middle::mir::Body<'tcx>>,
-        arg_locals: &[usize],
-        arg_consts: &[(usize, crate::analysis::path::CallConstArg)],
-        arg_field_offsets: &[usize],
+        args: &[CallArg],
     ) {
-        let method_call = arg_locals.first().and_then(|arg| {
-            self.local_value(Local::from_usize(*arg))
-                .and_then(|receiver| self.begin_method_call(callee, receiver, Some(Local::from_usize(*arg))))
+        let method_call = args.first().and_then(|arg| {
+            let CallArg::Local(local) = arg else { return None };
+            self.local_value(Local::from_usize(*local))
+                .and_then(|receiver| self.begin_method_call(callee, receiver, Some(Local::from_usize(*local))))
         });
         self.active_method_calls.push(method_call);
         let param_count = body
             .map(|body| body.arg_count)
             .unwrap_or_else(|| self.tcx.optimized_mir(callee).arg_count);
-        let mut locals = arg_locals.iter();
         let param_sources: Vec<Option<Local>> = (1..=param_count)
-            .map(|param| {
-                if arg_consts.iter().any(|(index, _)| *index == param)
-                    || arg_field_offsets.contains(&param)
-                {
-                    None
-                } else {
-                    locals.next().map(|local| Local::from_usize(*local))
-                }
+            .map(|param| match args.get(param - 1) {
+                Some(CallArg::Local(local)) => Some(Local::from_usize(*local)),
+                _ => None,
             })
             .collect();
         self.inline.path_postconditions.push((
@@ -235,39 +229,33 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             }
         }
 
-        for (param, val) in arg_consts {
-            let local = Local::from_usize(*param);
+        for (index, arg) in args.iter().enumerate().take(param_count) {
+            let local = Local::from_usize(index + 1);
             let ty = self.body().local_decls[local].ty;
-            let (term, source) = match val {
-                crate::analysis::path::CallConstArg::Literal(value) => (
-                    Int::from_u64(self.z3_ctx, *value),
-                    ValueSource::CallsiteConst,
-                ),
-                crate::analysis::path::CallConstArg::Symbol(text) => {
-                    (self.symbolic_const_term_text(text), ValueSource::None)
+            let (term, source) = match arg {
+                CallArg::Local(_) => continue,
+                CallArg::Literal(value) => {
+                    let width = self.size_of_ty(ty).saturating_mul(8);
+                    let text = if matches!(ty.kind(), rustc_middle::ty::TyKind::Int(_))
+                        && (1..=128).contains(&width)
+                    {
+                        let shift = 128 - width as u32;
+                        (((*value << shift) as i128) >> shift).to_string()
+                    } else {
+                        value.to_string()
+                    };
+                    (
+                        Int::from_str(self.z3_ctx, &text).expect("valid integer literal"),
+                        ValueSource::CallsiteConst,
+                    )
                 }
+                CallArg::Symbol(text) => (self.symbolic_const_term_text(text), ValueSource::None),
+                CallArg::FieldOffset => (self.fresh_int("field_offset"), ValueSource::FieldOffset),
+                CallArg::Opaque => (self.fresh_int("opaque_call_arg"), ValueSource::None),
             };
             let mut value = VmValue::new(term, ty);
             value.source = source;
             self.set_local(local, value);
-        }
-
-        // Bind `offset_of!` const arguments as a symbolic `FieldOffset` value,
-        // preserving the field-offset marker so pointer arithmetic keeps
-        // `offset_kind == Field` and downstream `Align` stays dischargeable.
-        for &param in arg_field_offsets {
-            let local = Local::from_usize(param);
-            let ty = self.body().local_decls[local].ty;
-            self.set_local(
-                local,
-                VmValue {
-                    z3_term: self.fresh_int("field_offset"),
-                    ty,
-                    provenance: None,
-                    facts: ValueFacts::default(),
-                    source: ValueSource::FieldOffset,
-                },
-            );
         }
 
         for (callee_param, fields, fv) in arg_fields {

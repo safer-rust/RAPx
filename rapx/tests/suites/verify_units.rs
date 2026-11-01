@@ -105,9 +105,13 @@ unsound_tests! {
 }
 
 #[test]
-fn align_vec_buffer_unsound() {
+fn align_extended_unsound_cases() {
     let output = run_with_args("verify_units/align_unsound_18", CMD_VERIFY_TARGETED);
     assert_function_result(&output, "unsound_vec_u8_buffer_alignment", "UNSOUND");
+    let wide = extract_block_after(&output, "function: unsound_wide_call_argument");
+    assert_contain(wide, "Align | Failed");
+    assert_function_result(&output, "unsound_wide_call_argument", "UNSOUND");
+    assert_function_result(&output, "sound_wide_call_argument", "SOUND");
     assert_contain(&output, "Align | Failed");
 }
 

@@ -359,9 +359,7 @@ impl<'tcx> VerifyEngine<'tcx> {
                             .get(&entry)
                             .copied()
                             .or_else(|| callee_bodies.get(&callee).copied()),
-                        args: binding.arg_locals.clone(),
-                        consts: binding.arg_consts.clone(),
-                        field_offsets: binding.arg_field_offsets.clone(),
+                        args: binding.args.clone(),
                     });
                     active.push((entry, binding.dest_local));
                 }

@@ -42,16 +42,11 @@ pub(crate) enum RelevantItem<'tcx> {
         global_block: Option<usize>,
         switch_succ: Option<BasicBlock>,
     },
-    /// Enter an inlined callee: bind the caller's argument locals to the callee
-    /// parameters. `args` holds the caller's argument local indices; `consts`
-    /// holds `(param, value)` for `Const` arguments with no local;
-    /// `field_offsets` holds callee parameters bound to an `offset_of!` const.
+    /// Enter an inlined callee: bind each argument to its parameter position.
     CalleeEntry {
         callee: DefId,
         body: Option<&'tcx Body<'tcx>>,
-        args: Vec<usize>,
-        consts: Vec<(usize, crate::analysis::path::CallConstArg)>,
-        field_offsets: Vec<usize>,
+        args: Vec<crate::analysis::path::CallArg>,
     },
     /// Return from an inlined callee: write the callee's `_0` to the caller's
     /// destination local.

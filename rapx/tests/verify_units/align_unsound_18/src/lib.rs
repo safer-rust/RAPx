@@ -25,3 +25,36 @@ pub fn unsound_vec_u8_buffer_alignment() {
     let mut bytes = vec![0u8; 16];
     unsafe { require_u64_alignment(bytes.as_mut_ptr().cast::<u64>()) }
 }
+
+#[rapx::requires(Align(_ptr, u32), kind = "precond")]
+unsafe fn require_u32_alignment(_ptr: *const u32) {}
+
+#[inline(never)]
+fn offset_on_wide_const(value: u128, ptr: *const u32) -> *const u32 {
+    if value == 0 {
+        ptr
+    } else {
+        ptr.cast::<u8>().wrapping_add(1).cast::<u32>()
+    }
+}
+
+#[rapx::verify]
+pub fn unsound_wide_call_argument(data: &[u32]) {
+    let ptr = offset_on_wide_const(18446744073709551616u128, data.as_ptr());
+    unsafe { require_u32_alignment(ptr) }
+}
+
+#[inline(never)]
+fn aligned_on_wide_const(value: u128, ptr: *const u32) -> *const u32 {
+    if value == 0 {
+        ptr.cast::<u8>().wrapping_add(1).cast::<u32>()
+    } else {
+        ptr
+    }
+}
+
+#[rapx::verify]
+pub fn sound_wide_call_argument(data: &[u32]) {
+    let ptr = aligned_on_wide_const(18446744073709551616u128, data.as_ptr());
+    unsafe { require_u32_alignment(ptr) }
+}

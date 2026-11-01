@@ -10,16 +10,17 @@ use graph::PathGraph;
 
 #[derive(Clone, Debug)]
 pub struct CallBinding {
-    pub arg_locals: Vec<usize>,
-    pub arg_consts: Vec<(usize, CallConstArg)>,
-    pub arg_field_offsets: Vec<usize>,
+    pub args: Vec<CallArg>,
     pub dest_local: usize,
 }
 
 #[derive(Clone, Debug)]
-pub enum CallConstArg {
-    Literal(u64),
+pub enum CallArg {
+    Local(usize),
+    Literal(u128),
     Symbol(String),
+    FieldOffset,
+    Opaque,
 }
 
 /// Format a path slice with cleanup-block annotations.

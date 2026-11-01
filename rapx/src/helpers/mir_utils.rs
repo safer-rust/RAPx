@@ -1223,7 +1223,12 @@ pub fn extract_local(operand: &Operand<'_>) -> Option<Local> {
 
 /// Extract a constant u64 value from an operand, if it's a known constant.
 pub fn operand_const_u64(operand: &Operand<'_>) -> Option<u64> {
-    operand_scalar_int(operand).map(|v| v as u64)
+    operand_scalar_int(operand).and_then(|v| u64::try_from(v).ok())
+}
+
+/// Extract a scalar constant's full bit pattern for typed interpretation.
+pub fn operand_const_u128(operand: &Operand<'_>) -> Option<u128> {
+    operand_scalar_int(operand)
 }
 
 /// Whether a type is a `u8` array (`[u8; N]`) or `u8` slice (`[u8]`).

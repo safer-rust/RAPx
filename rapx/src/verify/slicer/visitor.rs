@@ -20,7 +20,7 @@ use crate::verify::call_index::EntryBodies;
 use crate::verify::checkpoint::{Checkpoint, CheckpointKind, CheckpointLocation};
 use crate::verify::target::CalleeBodies;
 
-use crate::analysis::path::{PathNode, PathTree};
+use crate::analysis::path::{CallArg, PathNode, PathTree};
 
 use super::types::{ProofGoal, RelevantItem};
 
@@ -28,7 +28,7 @@ type LeafItem<'tcx> = (
     Vec<usize>,
     Vec<RelevantItem<'tcx>>,
     RelevantPlaces,
-    Vec<(DefId, Vec<usize>, RelevantPlaces)>,
+    Vec<(DefId, Vec<CallArg>, RelevantPlaces)>,
 );
 
 /// Entry point for backward path visiting.
@@ -301,7 +301,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
                     }
                     frames.push((
                         def_id,
-                        binding.arg_locals.clone(),
+                        binding.args.clone(),
                         std::mem::replace(&mut relevant, callee_relevant),
                     ));
                 }
@@ -370,14 +370,16 @@ impl<'tcx> BackwardSlicer<'tcx> {
                 // locals back to the caller's argument locals so the caller's
                 // argument-producing statements stay relevant.
                 if let Some(binding) = tree.call_binding(node.block) {
-                    let (_, frame_arg_locals, parked) = frames.pop().unwrap_or((
+                    let (_, frame_args, parked) = frames.pop().unwrap_or((
                         def_id,
-                        binding.arg_locals.clone(),
+                        binding.args.clone(),
                         RelevantPlaces::new(),
                     ));
                     let mut caller_relevant = parked;
-                    for (i, arg_local) in frame_arg_locals.iter().enumerate() {
-                        if relevant.locals.contains(&Local::from_usize(i + 1)) {
+                    for (i, arg) in frame_args.iter().enumerate() {
+                        if relevant.locals.contains(&Local::from_usize(i + 1))
+                            && let CallArg::Local(arg_local) = arg
+                        {
                             caller_relevant.insert_local(Local::from_usize(*arg_local));
                         }
                     }

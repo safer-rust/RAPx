@@ -1,4 +1,4 @@
-use crate::analysis::path::{CallBinding, CallConstArg, PathTree};
+use crate::analysis::path::{CallArg, CallBinding, PathTree};
 use crate::compat::{FxHashMap, FxHashSet};
 use crate::helpers::mir_utils;
 use crate::limit::{HINTED_CALLEE_BLOCK_LIMIT, LOCAL_CALLEE_BLOCK_LIMIT};
@@ -340,45 +340,30 @@ impl<'tcx> CallSiteIndex<'tcx> {
         else {
             return;
         };
-        let arg_locals = args
+        let args = args
             .iter()
-            .filter_map(|arg| arg.node.place().map(|place| place.local.as_usize()))
-            .collect();
-        let arg_consts = args
-            .iter()
-            .enumerate()
-            .filter_map(|(index, arg)| {
-                if let Some(value) = mir_utils::operand_const_u64(&arg.node) {
-                    return Some((index + 1, CallConstArg::Literal(value)));
+            .map(|arg| {
+                if let Some(place) = arg.node.place() {
+                    return CallArg::Local(place.local.as_usize());
                 }
                 let Operand::Constant(constant) = &arg.node else {
-                    return None;
+                    return CallArg::Opaque;
                 };
-                let rustc_middle::mir::Const::Ty(_, value) = constant.const_ else {
-                    return None;
-                };
-                matches!(value.kind(), rustc_middle::ty::ConstKind::Param(_)).then(|| {
-                    (
-                        index + 1,
-                        CallConstArg::Symbol(format!("{:?}", constant.const_)),
-                    )
-                })
-            })
-            .collect();
-        let arg_field_offsets = args
-            .iter()
-            .enumerate()
-            .filter_map(|(index, arg)| {
-                let Operand::Constant(constant) = &arg.node else {
-                    return None;
-                };
-                mir_utils::offset_of_container(self.tcx, &constant.const_).map(|_| index + 1)
+                if mir_utils::offset_of_container(self.tcx, &constant.const_).is_some() {
+                    return CallArg::FieldOffset;
+                }
+                if matches!(
+                    constant.const_.ty().kind(),
+                    TyKind::Int(_) | TyKind::Uint(_) | TyKind::Bool | TyKind::Char
+                ) && let Some(value) = mir_utils::operand_const_u128(&arg.node)
+                {
+                    return CallArg::Literal(value);
+                }
+                CallArg::Symbol(format!("{:?}", constant.const_))
             })
             .collect();
         let binding = CallBinding {
-            arg_locals,
-            arg_consts,
-            arg_field_offsets,
+            args,
             dest_local: destination.local.as_usize(),
         };
         let actual_parent = self.blocks[call_block].0;
