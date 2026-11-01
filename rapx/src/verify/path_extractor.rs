@@ -18,7 +18,7 @@ use rustc_middle::{
     ty::TyCtxt,
 };
 
-use super::call_index::CallSiteIndex;
+use super::call_index::{CallSiteIndex, EntryBodies};
 use super::target::CalleeBodies;
 use crate::analysis::path::{
     PathTree,
@@ -96,7 +96,9 @@ impl<'tcx> PathExtractor<'tcx> {
         self.run_with_bodies().0
     }
 
-    pub(crate) fn run_with_bodies(self) -> (PathTree, CalleeBodies<'tcx>) {
+    pub(crate) fn run_with_bodies(
+        self,
+    ) -> (PathTree, CalleeBodies<'tcx>, EntryBodies<'tcx>) {
         let mut caller_graph = match self.body {
             Some(body) => PathGraph::new_with_body(self.tcx, self.def_id, body),
             None => PathGraph::new(self.tcx, self.def_id),
@@ -113,10 +115,11 @@ impl<'tcx> PathExtractor<'tcx> {
         );
         call_index.collect();
         let bodies = call_index.unambiguous_bodies();
+        let entry_bodies = call_index.entry_bodies();
         let mut tree = PathComposer::new(&call_index, self.allow_repeat).compose(&caller_paths);
         tree.mark_structural();
         call_index.attach_metadata(&mut tree);
-        (tree, bodies)
+        (tree, bodies, entry_bodies)
     }
 }
 

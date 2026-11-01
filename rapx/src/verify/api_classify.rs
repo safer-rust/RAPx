@@ -202,30 +202,6 @@ pub fn is_intrinsic_ptr_offset_from(callee: Option<DefId>) -> bool {
     intrinsic_api::is_ptr_offset_from(callee) || intrinsic_api::is_ptr_offset_from_unsigned(callee)
 }
 
-pub fn is_intrinsic_branch_hint(callee: Option<DefId>) -> bool {
-    intrinsic_api::is_unlikely(callee) || intrinsic_api::is_likely(callee)
-}
-
-pub fn is_intrinsic_with_overflow(callee: Option<DefId>) -> bool {
-    intrinsic_api::is_add_with_overflow(callee)
-        || intrinsic_api::is_sub_with_overflow(callee)
-        || intrinsic_api::is_mul_with_overflow(callee)
-}
-
-pub fn is_intrinsic_nonzero_preserving(callee: Option<DefId>) -> bool {
-    intrinsic_api::is_bswap(callee)
-        || intrinsic_api::is_ctpop(callee)
-        || intrinsic_api::is_bitreverse(callee)
-        || intrinsic_api::is_rotate_left(callee)
-        || intrinsic_api::is_rotate_right(callee)
-}
-
-pub fn is_intrinsic_pure_opaque(callee: Option<DefId>) -> bool {
-    intrinsic_api::is_float_to_int_unchecked(callee)
-        || intrinsic_api::is_vtable_size(callee)
-        || intrinsic_api::is_vtable_align(callee)
-}
-
 // ── Layout constants ──────────────────────────────────────────────
 
 /// Whether `callee` is the compile-time layout constant `size_of::<T>()` or

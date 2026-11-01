@@ -13,6 +13,8 @@ use rustc_middle::{
     ty::{EarlyBinder, Instance, InstanceKind, TyCtxt, TyKind, TypingEnv},
 };
 
+pub(crate) type EntryBodies<'tcx> = FxHashMap<usize, &'tcx Body<'tcx>>;
+
 /// Maps callsites to callee block identities and argument bindings.
 pub(crate) struct CallSiteIndex<'tcx> {
     tcx: TyCtxt<'tcx>,
@@ -113,6 +115,17 @@ impl<'tcx> CallSiteIndex<'tcx> {
             bodies.remove(&callee);
         }
         bodies
+    }
+
+    pub(crate) fn entry_bodies(&self) -> EntryBodies<'tcx> {
+        self.bodies
+            .iter()
+            .filter(|(entry, _)| **entry != 0)
+            .map(|(&entry, body)| {
+                let body: &'tcx Body<'tcx> = &*self.tcx.arena.alloc(body.clone());
+                (entry, body)
+            })
+            .collect()
     }
 
     fn terminator(&self, block: usize) -> Option<&Terminator<'tcx>> {
@@ -226,6 +239,8 @@ impl<'tcx> CallSiteIndex<'tcx> {
                 }
                 let generic_const_call = cross_crate
                     && mir_utils::has_generic_const_call_argument(self.tcx, callee);
+                let layout_constant =
+                    crate::verify::api_classify::is_mem_layout_constant(Some(callee));
                 let returns_adt = self.tcx.is_mir_available(callee)
                     && matches!(
                         self.tcx.optimized_mir(callee).return_ty().kind(),
@@ -247,6 +262,7 @@ impl<'tcx> CallSiteIndex<'tcx> {
                             && !instance.args.is_empty()
                             && instance.args.types().all(|ty| {
                                 !mir_utils::ty_has_type_param(ty)
+                                    || layout_constant
                                     || (cross_crate
                                         && returns_adt
                                         && matches!(ty.kind(), TyKind::Adt(..)))
