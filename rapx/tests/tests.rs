@@ -72,7 +72,7 @@ fn run_with_args(dir: &str, args: &[&str]) -> String {
     command.env("CARGO_TERM_COLOR", "never");
     // CI can lower the path cap via `VERIFY_PATH_LIMIT` to speed up the
     // full regression suite (paths past the cap are treated as proved).
-    if args.first() == Some(&"verify") {
+    if args.first() == Some(&"verify") && !args.contains(&"--path-limit") {
         if let Ok(limit) = std::env::var("VERIFY_PATH_LIMIT") {
             command.arg("--path-limit").arg(&limit);
         }

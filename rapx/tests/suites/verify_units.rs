@@ -673,6 +673,118 @@ fn copy_scratch_prefix_01() {
 }
 
 #[test]
+fn intrinsic_coverage_01() {
+    let output = run_with_args(
+        "verify_units/intrinsic_coverage_01",
+        &["verify", "--mode", "targeted", "--path-limit", "64"],
+    );
+    for name in [
+        "atomic::atomic_intrinsics",
+        "atomic::atomic_store_load_flow",
+        "atomic::atomic_store_load_zero_unsound",
+        "integer::integer_intrinsics",
+        "integer::integer_arithmetic_intrinsics",
+        "integer::integer_control_intrinsics",
+        "layout::layout_intrinsics",
+        "layout::layout_reflection_intrinsics",
+        "math::scalar_float_intrinsics",
+        "math::scalar_float_arithmetic_intrinsics",
+        "math::scalar_float_unchecked_intrinsics",
+        "memory::memory_intrinsics",
+        "memory::more_memory_intrinsics",
+        "memory::pointer_misc_intrinsics",
+        "memory::volatile_store_flow",
+        "memory::nontemporal_store_flow",
+        "memory::volatile_copy_flow",
+        "memory::volatile_copy_nonoverlapping_flow",
+        "memory::volatile_copy_nonoverlapping_overlap_unsound",
+        "simd::more_simd_intrinsics",
+        "simd::simd_float_intrinsics",
+        "simd::simd_add_flow",
+        "simd::simd_insert_flow",
+        "simd::simd_dyn_insert_flow",
+        "simd::simd_extract_bounds_unsound",
+        "simd::simd_compare_flow",
+        "simd::simd_zero_flow_unsound",
+        "simd::simd_gather_zero_mask_flow",
+        "simd::simd_masked_load_zero_mask_flow",
+        "simd::simd_scatter_zero_mask_flow",
+        "simd::simd_masked_store_zero_mask_flow",
+        "simd::simd_masked_store_active_unsound",
+        "simd::simd_intrinsics",
+        "simd::simd_pointer_intrinsics",
+        "simd::simd_reduction_intrinsics",
+    ] {
+        assert_contain(&output, &format!("function: {name}"));
+    }
+    assert_not_contain(&output, "verifier crashed");
+    let atomic = extract_block_after(&output, "function: atomic::atomic_intrinsics");
+    assert_contain(atomic, "atomic_singlethreadfence");
+    let atomic_flow = extract_block_after(&output, "function: atomic::atomic_store_load_flow");
+    assert_contain(atomic_flow, "result: SOUND");
+    let atomic_zero = extract_block_after(&output, "function: atomic::atomic_store_load_zero_unsound");
+    assert_contain(atomic_zero, "result: UNSOUND");
+    let memory = extract_block_after(&output, "function: memory::memory_intrinsics");
+    assert_contain(memory, "volatile_store");
+    assert_contain(memory, "compare_bytes");
+    let more_memory = extract_block_after(&output, "function: memory::more_memory_intrinsics");
+    assert_contain(more_memory, "nontemporal_store");
+    let simd = extract_block_after(&output, "function: simd::simd_intrinsics");
+    assert_contain(simd, "simd_bitmask");
+    let more_simd = extract_block_after(&output, "function: simd::more_simd_intrinsics");
+    assert_contain(more_simd, "simd_reduce_add_unordered");
+    let float_simd = extract_block_after(&output, "function: simd::simd_float_intrinsics");
+    assert_contain(float_simd, "simd_flog");
+    let pointer_simd = extract_block_after(&output, "function: simd::simd_pointer_intrinsics");
+    assert_contain(pointer_simd, "simd_with_exposed_provenance");
+    let extract_bounds = extract_block_after(&output, "function: simd::simd_extract_bounds_unsound");
+    assert_contain(extract_bounds, "ValidNum | Failed");
+    assert_contain(extract_bounds, "result: UNSOUND");
+    let overlap = extract_block_after(&output, "function: memory::volatile_copy_nonoverlapping_overlap_unsound");
+    assert_contain(overlap, "NonOverlap | Failed");
+    assert_contain(overlap, "result: UNSOUND");
+    for (name, outcome) in [
+        ("simd::simd_add_flow", "ValidNum | Proved"),
+        ("simd::simd_insert_flow", "ValidNum | Proved"),
+        ("simd::simd_dyn_insert_flow", "ValidNum | Proved"),
+        ("simd::simd_compare_flow", "ValidNum | Proved"),
+        ("simd::simd_zero_flow_unsound", "ValidNum | Failed"),
+        ("simd::simd_gather_zero_mask_flow", "ValidNum | Proved"),
+        ("simd::simd_masked_load_zero_mask_flow", "ValidNum | Proved"),
+        ("simd::simd_scatter_zero_mask_flow", "ValidNum | Proved"),
+        ("simd::simd_masked_store_zero_mask_flow", "ValidNum | Proved"),
+        ("simd::simd_masked_store_active_unsound", "ValidNum | Failed"),
+        ("memory::volatile_store_flow", "ValidNum | Proved"),
+        ("memory::nontemporal_store_flow", "ValidNum | Proved"),
+        ("memory::volatile_copy_flow", "ValidNum | Proved"),
+        ("memory::volatile_copy_nonoverlapping_flow", "ValidNum | Proved"),
+        ("atomic::atomic_store_load_flow", "ValidNum | Proved"),
+        ("atomic::atomic_store_load_zero_unsound", "ValidNum | Failed"),
+    ] {
+        let block = extract_block_after(&output, &format!("function: {name}"));
+        let final_checkpoint = block.rsplit("-> need_nonzero").next().unwrap();
+        assert_contain(final_checkpoint, outcome);
+        if matches!(name, "simd::simd_add_flow" | "simd::simd_insert_flow" | "simd::simd_dyn_insert_flow") {
+            assert_not_contain(block, "missing safety contract");
+            assert_not_contain(block, "unmodeled intrinsic");
+        }
+        if matches!(name, "memory::volatile_copy_flow" | "memory::volatile_copy_nonoverlapping_flow") {
+            assert_contain(block, "result: SOUND");
+        }
+    }
+    for name in [
+        "simd::simd_intrinsics",
+        "simd::more_simd_intrinsics",
+        "simd::simd_reduction_intrinsics",
+        "simd::simd_float_intrinsics",
+        "simd::simd_pointer_intrinsics",
+    ] {
+        let block = extract_block_after(&output, &format!("function: {name}"));
+        assert_not_contain(block, "unmodeled intrinsic");
+    }
+}
+
+#[test]
 fn intrinsic_effects_01() {
     let output = run_with_args("verify_units/intrinsic_effects_01", CMD_VERIFY_TARGETED);
     assert_result_counts(&output, [6, 2, 2]);

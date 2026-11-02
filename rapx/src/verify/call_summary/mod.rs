@@ -83,6 +83,22 @@ pub(crate) enum CallEffect {
     /// `0` and non-zero to non-zero).
     ReturnNonZeroIff { arg: usize },
     ReturnLeadingZeros { arg: usize },
+    ReturnTrailingZeros { arg: usize },
+    ReturnAlignOfVal { arg: usize },
+    ReturnCompareBytes { left_arg: usize, right_arg: usize, count_arg: usize },
+    ReturnMaskedPointer { pointer_arg: usize, mask_arg: usize },
+    LoadMemory { pointer_arg: usize },
+    StoreMemory { pointer_arg: usize, value_arg: usize },
+    AtomicRmw { pointer_arg: usize },
+    SimdCompare { lhs_arg: usize, rhs_arg: usize, op: SimdCmpOp },
+    SimdArithmetic { lhs_arg: usize, rhs_arg: usize, op: SimdArithOp },
+    SimdOpaque,
+    SimdSplat { arg: usize },
+    SimdExtract { vector_arg: usize, index_arg: usize },
+    SimdInsert { vector_arg: usize, index_arg: usize, value_arg: usize },
+    SimdHavocMemory { pointer_arg: usize, mask_arg: usize },
+    SimdMaskedFallback { mask_arg: usize, fallback_arg: usize },
+    SimdBitmask { arg: usize },
     /// The slice-to-Vec conversion creates a new allocation with the source length.
     ReturnVecFromSlice,
     /// `ptr.align_offset(align)` returns an offset such that
@@ -107,6 +123,9 @@ impl CallEffect {
     pub(super) fn written_args(&self) -> Vec<usize> {
         match self {
             Self::WriteMemory { pointer_arg }
+            | Self::StoreMemory { pointer_arg, .. }
+            | Self::AtomicRmw { pointer_arg }
+            | Self::SimdHavocMemory { pointer_arg, .. }
             | Self::FillBytes { pointer_arg, .. } => vec![*pointer_arg],
             Self::CopyMemory { destination_arg, .. } => vec![*destination_arg],
             Self::SwapMemory { left_arg, right_arg } => vec![*left_arg, *right_arg],
@@ -119,6 +138,9 @@ impl CallEffect {
             Self::FillBytes { pointer_arg, byte_arg, count_arg } => {
                 vec![*pointer_arg, *byte_arg, *count_arg]
             }
+            Self::StoreMemory { pointer_arg, value_arg } => vec![*pointer_arg, *value_arg],
+            Self::SimdHavocMemory { pointer_arg, mask_arg } => vec![*pointer_arg, *mask_arg],
+            Self::AtomicRmw { pointer_arg } => vec![*pointer_arg, 1, 2],
             Self::CopyMemory { source_arg, destination_arg, count_arg } => {
                 vec![*source_arg, *destination_arg, *count_arg]
             }
@@ -132,6 +154,25 @@ pub(crate) enum OverflowOp {
     Add,
     Sub,
     Mul,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum SimdCmpOp {
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum SimdArithOp {
+    Add,
+    Sub,
+    Mul,
+    SaturatingAdd,
+    SaturatingSub,
 }
 
 #[derive(Clone, Copy, Debug)]

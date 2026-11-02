@@ -875,6 +875,888 @@
       ]
     }
   ],
+  "core::intrinsics::ctlz_nonzero": [
+    {
+      "tag": "ValidNum",
+      "args": ["arg:0 != 0"]
+    }
+  ],
+  "core::intrinsics::cttz_nonzero": [
+    {
+      "tag": "ValidNum",
+      "args": ["arg:0 != 0"]
+    }
+  ],
+  "core::intrinsics::volatile_load": [
+    {
+      "tag": "ValidPtr",
+      "args": ["arg:0", "T", "1"]
+    },
+    {
+      "tag": "Align",
+      "args": ["arg:0", "T"]
+    },
+    {
+      "tag": "Init",
+      "args": ["arg:0", "T", "1"]
+    }
+  ],
+  "core::intrinsics::volatile_store": [
+    {
+      "tag": "ValidPtr",
+      "args": ["arg:0", "T", "1"]
+    },
+    {
+      "tag": "Align",
+      "args": ["arg:0", "T"]
+    }
+  ],
+  "core::intrinsics::volatile_copy_memory": [
+    {
+      "tag": "ValidPtr",
+      "args": ["arg:0", "T", "arg:2"]
+    },
+    {
+      "tag": "ValidPtr",
+      "args": ["arg:1", "T", "arg:2"]
+    },
+    {
+      "tag": "Align",
+      "args": ["arg:0", "T"]
+    },
+    {
+      "tag": "Align",
+      "args": ["arg:1", "T"]
+    },
+    {
+      "tag": "Init",
+      "args": ["arg:1", "T", "arg:2"]
+    },
+    {
+      "tag": "ValidNum",
+      "args": ["Arg_2 * size_of(T) <= isize::MAX"]
+    }
+  ],
+  "core::intrinsics::volatile_copy_nonoverlapping_memory": [
+    {
+      "tag": "ValidPtr",
+      "args": ["arg:0", "T", "arg:2"]
+    },
+    {
+      "tag": "ValidPtr",
+      "args": ["arg:1", "T", "arg:2"]
+    },
+    {
+      "tag": "Align",
+      "args": ["arg:0", "T"]
+    },
+    {
+      "tag": "Align",
+      "args": ["arg:1", "T"]
+    },
+    {
+      "tag": "Init",
+      "args": ["arg:1", "T", "arg:2"]
+    },
+    {
+      "tag": "NonOverlap",
+      "args": ["arg:0", "arg:1", "T", "arg:2"]
+    },
+    {
+      "tag": "ValidNum",
+      "args": ["Arg_2 * size_of(T) <= isize::MAX"]
+    }
+  ],
+  "core::intrinsics::volatile_set_memory": [
+    {
+      "tag": "ValidPtr",
+      "args": ["arg:0", "T", "arg:2"]
+    },
+    {
+      "tag": "Align",
+      "args": ["arg:0", "T"]
+    },
+    {
+      "tag": "Typed",
+      "args": ["arg:0", "T"]
+    }
+  ],
+  "core::intrinsics::compare_bytes": [
+    {
+      "tag": "ValidPtr",
+      "args": ["arg:0", "u8", "arg:2"]
+    },
+    {
+      "tag": "ValidPtr",
+      "args": ["arg:1", "u8", "arg:2"]
+    },
+    {
+      "tag": "Init",
+      "args": ["arg:0", "u8", "arg:2"]
+    },
+    {
+      "tag": "Init",
+      "args": ["arg:1", "u8", "arg:2"]
+    }
+  ],
+  "core::intrinsics::atomic_load": [
+    {
+      "tag": "ValidPtr",
+      "args": ["arg:0", "T", "1"]
+    },
+    {
+      "tag": "Align",
+      "args": ["arg:0", "T"]
+    },
+    {
+      "tag": "Init",
+      "args": ["arg:0", "T", "1"]
+    }
+  ],
+  "core::intrinsics::atomic_store": [
+    {
+      "tag": "ValidPtr",
+      "args": ["arg:0", "T", "1"]
+    },
+    {
+      "tag": "Align",
+      "args": ["arg:0", "T"]
+    }
+  ],
+  "core::intrinsics::atomic_xchg": [
+    {
+      "tag": "ValidPtr",
+      "args": ["arg:0", "T", "1"]
+    },
+    {
+      "tag": "Align",
+      "args": ["arg:0", "T"]
+    },
+    {
+      "tag": "Init",
+      "args": ["arg:0", "T", "1"]
+    }
+  ],
+  "core::intrinsics::atomic_xadd": [
+    {
+      "tag": "ValidPtr",
+      "args": ["arg:0", "T", "1"]
+    },
+    {
+      "tag": "Align",
+      "args": ["arg:0", "T"]
+    },
+    {
+      "tag": "Init",
+      "args": ["arg:0", "T", "1"]
+    }
+  ],
+  "core::intrinsics::atomic_cxchg": [
+    {
+      "tag": "ValidPtr",
+      "args": ["arg:0", "T", "1"]
+    },
+    {
+      "tag": "Align",
+      "args": ["arg:0", "T"]
+    },
+    {
+      "tag": "Init",
+      "args": ["arg:0", "T", "1"]
+    }
+  ],
+  "core::intrinsics::atomic_cxchgweak": [
+    {
+      "tag": "ValidPtr",
+      "args": ["arg:0", "T", "1"]
+    },
+    {
+      "tag": "Align",
+      "args": ["arg:0", "T"]
+    },
+    {
+      "tag": "Init",
+      "args": ["arg:0", "T", "1"]
+    }
+  ],
+  "core::intrinsics::atomic_xsub": [
+    {
+      "tag": "ValidPtr",
+      "args": ["arg:0", "T", "1"]
+    },
+    {
+      "tag": "Align",
+      "args": ["arg:0", "T"]
+    },
+    {
+      "tag": "Init",
+      "args": ["arg:0", "T", "1"]
+    }
+  ],
+  "core::intrinsics::atomic_and": [
+    {
+      "tag": "ValidPtr",
+      "args": ["arg:0", "T", "1"]
+    },
+    {
+      "tag": "Align",
+      "args": ["arg:0", "T"]
+    },
+    {
+      "tag": "Init",
+      "args": ["arg:0", "T", "1"]
+    }
+  ],
+  "core::intrinsics::atomic_or": [
+    {
+      "tag": "ValidPtr",
+      "args": ["arg:0", "T", "1"]
+    },
+    {
+      "tag": "Align",
+      "args": ["arg:0", "T"]
+    },
+    {
+      "tag": "Init",
+      "args": ["arg:0", "T", "1"]
+    }
+  ],
+  "core::intrinsics::atomic_xor": [
+    {
+      "tag": "ValidPtr",
+      "args": ["arg:0", "T", "1"]
+    },
+    {
+      "tag": "Align",
+      "args": ["arg:0", "T"]
+    },
+    {
+      "tag": "Init",
+      "args": ["arg:0", "T", "1"]
+    }
+  ],
+  "core::intrinsics::atomic_nand": [
+    {
+      "tag": "ValidPtr",
+      "args": ["arg:0", "T", "1"]
+    },
+    {
+      "tag": "Align",
+      "args": ["arg:0", "T"]
+    },
+    {
+      "tag": "Init",
+      "args": ["arg:0", "T", "1"]
+    }
+  ],
+  "core::intrinsics::atomic_max": [
+    {
+      "tag": "ValidPtr",
+      "args": ["arg:0", "T", "1"]
+    },
+    {
+      "tag": "Align",
+      "args": ["arg:0", "T"]
+    },
+    {
+      "tag": "Init",
+      "args": ["arg:0", "T", "1"]
+    }
+  ],
+  "core::intrinsics::atomic_min": [
+    {
+      "tag": "ValidPtr",
+      "args": ["arg:0", "T", "1"]
+    },
+    {
+      "tag": "Align",
+      "args": ["arg:0", "T"]
+    },
+    {
+      "tag": "Init",
+      "args": ["arg:0", "T", "1"]
+    }
+  ],
+  "core::intrinsics::atomic_umin": [
+    {
+      "tag": "ValidPtr",
+      "args": ["arg:0", "T", "1"]
+    },
+    {
+      "tag": "Align",
+      "args": ["arg:0", "T"]
+    },
+    {
+      "tag": "Init",
+      "args": ["arg:0", "T", "1"]
+    }
+  ],
+  "core::intrinsics::atomic_umax": [
+    {
+      "tag": "ValidPtr",
+      "args": ["arg:0", "T", "1"]
+    },
+    {
+      "tag": "Align",
+      "args": ["arg:0", "T"]
+    },
+    {
+      "tag": "Init",
+      "args": ["arg:0", "T", "1"]
+    }
+  ],
+
+  "core::intrinsics::atomic_fence": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::atomic_singlethreadfence": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_add": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_sub": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_mul": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_saturating_add": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_saturating_sub": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_eq": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_ne": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_lt": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_le": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_gt": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_ge": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_splat": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_extract": [
+    {
+      "tag": "ValidNum",
+      "args": ["Arg_1 * size_of(U) < size_of(T)"]
+    }
+  ],
+  "core::intrinsics::simd::simd_extract_dyn": [
+    {
+      "tag": "ValidNum",
+      "args": ["Arg_1 * size_of(U) < size_of(T)"]
+    }
+  ],
+  "core::intrinsics::simd::simd_insert": [
+    {
+      "tag": "ValidNum",
+      "args": ["Arg_1 * size_of(U) < size_of(T)"]
+    }
+  ],
+  "core::intrinsics::simd::simd_insert_dyn": [
+    {
+      "tag": "ValidNum",
+      "args": ["Arg_1 * size_of(U) < size_of(T)"]
+    }
+  ],
+  "core::intrinsics::simd::simd_and": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_or": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_xor": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_neg": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_as": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_bswap": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_bitreverse": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_ctlz": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_ctpop": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_cttz": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_fabs": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_minimum_number_nsz": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_maximum_number_nsz": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_ceil": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_floor": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_round": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_round_ties_even": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_trunc": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_fsqrt": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_fma": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_relaxed_fma": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_fsin": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_fcos": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_fexp": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_fexp2": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_flog10": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_flog2": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_flog": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_reduce_add_ordered": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_reduce_add_unordered": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_reduce_mul_ordered": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_reduce_mul_unordered": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_reduce_max": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_reduce_min": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_reduce_and": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_reduce_or": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_reduce_xor": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_arith_offset": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_carryless_mul": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_cast_ptr": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_expose_provenance": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_with_exposed_provenance": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_shuffle": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_select_bitmask": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::ceil": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::copysignf32": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::cos": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::exp": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::exp2": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::fabs": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::fadd_algebraic": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::fdiv_algebraic": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::floor": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::fma": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::fmul_algebraic": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::fmuladd": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::frem_algebraic": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::fsub_algebraic": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::log": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::log10": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::log2": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::maximum_number_nsz_f32": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::maximumf32": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::minimum_number_nsz_f32": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::minimumf32": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::powf": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::powi": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::round": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::round_ties_even": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::sin": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::sqrt": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::trunc": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::unaligned_volatile_load": [
+    { "tag": "ValidPtr", "args": ["arg:0", "T", "1"] },
+    { "tag": "Init", "args": ["arg:0", "T", "1"] }
+  ],
+  "core::intrinsics::unaligned_volatile_store": [
+    { "tag": "ValidPtr", "args": ["arg:0", "T", "1"] }
+  ],
+  "core::intrinsics::nontemporal_store": [
+    { "tag": "ValidPtr", "args": ["arg:0", "T", "1"] },
+    { "tag": "Align", "args": ["arg:0", "T"] }
+  ],
   "core::intrinsics::copy_nonoverlapping": [
     {
       "tag": "ValidPtr",

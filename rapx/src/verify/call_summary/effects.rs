@@ -7,7 +7,7 @@ use rustc_hir::def_id::DefId;
 use rustc_middle::mir::Operand;
 use rustc_middle::ty::{Ty, TyCtxt, TyKind};
 
-use super::{BoundedArithmeticOp, CallEffect, CallEffectSummary, OverflowOp};
+use super::{BoundedArithmeticOp, CallEffect, CallEffectSummary, OverflowOp, SimdArithOp, SimdCmpOp};
 use crate::def_ids::other_api;
 use crate::def_ids::{intrinsic_api, nomir_api, nomir_ffi};
 use crate::helpers::mir_utils::type_layout;
@@ -40,6 +40,39 @@ macro_rules! ED {
 
 static REGISTRY: &[Entry] = &[
     // ── Intrinsics ──────────────────────────────────────────────────
+    ED!(intrinsic_api::is_ceil, eff_opaque_return),
+    ED!(intrinsic_api::is_copysignf32, eff_opaque_return),
+    ED!(intrinsic_api::is_cos, eff_opaque_return),
+    ED!(intrinsic_api::is_exp, eff_opaque_return),
+    ED!(intrinsic_api::is_exp2, eff_opaque_return),
+    ED!(intrinsic_api::is_fabs, eff_opaque_return),
+    ED!(intrinsic_api::is_fadd_algebraic, eff_opaque_return),
+    ED!(intrinsic_api::is_fadd_fast, eff_opaque_return),
+    ED!(intrinsic_api::is_fdiv_algebraic, eff_opaque_return),
+    ED!(intrinsic_api::is_fdiv_fast, eff_opaque_return),
+    ED!(intrinsic_api::is_floor, eff_opaque_return),
+    ED!(intrinsic_api::is_fma, eff_opaque_return),
+    ED!(intrinsic_api::is_fmul_algebraic, eff_opaque_return),
+    ED!(intrinsic_api::is_fmul_fast, eff_opaque_return),
+    ED!(intrinsic_api::is_fmuladd, eff_opaque_return),
+    ED!(intrinsic_api::is_frem_algebraic, eff_opaque_return),
+    ED!(intrinsic_api::is_frem_fast, eff_opaque_return),
+    ED!(intrinsic_api::is_fsub_algebraic, eff_opaque_return),
+    ED!(intrinsic_api::is_fsub_fast, eff_opaque_return),
+    ED!(intrinsic_api::is_log, eff_opaque_return),
+    ED!(intrinsic_api::is_log10, eff_opaque_return),
+    ED!(intrinsic_api::is_log2, eff_opaque_return),
+    ED!(intrinsic_api::is_maximum_number_nsz_f32, eff_opaque_return),
+    ED!(intrinsic_api::is_maximumf32, eff_opaque_return),
+    ED!(intrinsic_api::is_minimum_number_nsz_f32, eff_opaque_return),
+    ED!(intrinsic_api::is_minimumf32, eff_opaque_return),
+    ED!(intrinsic_api::is_powf, eff_opaque_return),
+    ED!(intrinsic_api::is_powi, eff_opaque_return),
+    ED!(intrinsic_api::is_round, eff_opaque_return),
+    ED!(intrinsic_api::is_round_ties_even, eff_opaque_return),
+    ED!(intrinsic_api::is_sin, eff_opaque_return),
+    ED!(intrinsic_api::is_sqrt, eff_opaque_return),
+    ED!(intrinsic_api::is_trunc, eff_opaque_return),
     ED!(intrinsic_api::is_size_of, eff_layout_const),
     ED!(intrinsic_api::is_align_of, eff_layout_const),
     ED!(intrinsic_api::is_select_unpredictable, eff_select_unpredictable),
@@ -65,15 +98,121 @@ static REGISTRY: &[Entry] = &[
     ED!(intrinsic_api::is_copy_nonoverlapping, eff_copy_memory),
     ED!(intrinsic_api::is_typed_swap_nonoverlapping, eff_swap_memory),
     ED!(intrinsic_api::is_write_bytes, eff_fill_bytes),
+    ED!(intrinsic_api::is_volatile_load, eff_load_memory),
+    ED!(intrinsic_api::is_volatile_store, eff_store_memory),
+    ED!(intrinsic_api::is_unaligned_volatile_load, eff_load_memory),
+    ED!(intrinsic_api::is_unaligned_volatile_store, eff_store_memory),
+    ED!(intrinsic_api::is_nontemporal_store, eff_store_memory),
+    ED!(intrinsic_api::is_volatile_copy_memory, eff_volatile_copy_memory),
+    ED!(intrinsic_api::is_volatile_copy_nonoverlapping_memory, eff_volatile_copy_memory),
+    ED!(intrinsic_api::is_volatile_set_memory, eff_fill_bytes),
+    ED!(intrinsic_api::is_compare_bytes, eff_compare_bytes),
+    ED!(intrinsic_api::is_ptr_mask, eff_ptr_mask),
+    ED!(intrinsic_api::is_atomic_load, eff_load_memory),
+    ED!(intrinsic_api::is_atomic_store, eff_store_memory),
+    ED!(intrinsic_api::is_atomic_xchg, eff_atomic_rmw),
+    ED!(intrinsic_api::is_atomic_xadd, eff_atomic_rmw),
+    ED!(intrinsic_api::is_atomic_xsub, eff_atomic_rmw),
+    ED!(intrinsic_api::is_atomic_and, eff_atomic_rmw),
+    ED!(intrinsic_api::is_atomic_or, eff_atomic_rmw),
+    ED!(intrinsic_api::is_atomic_xor, eff_atomic_rmw),
+    ED!(intrinsic_api::is_atomic_max, eff_atomic_rmw),
+    ED!(intrinsic_api::is_atomic_min, eff_atomic_rmw),
+    ED!(intrinsic_api::is_atomic_cxchg, eff_atomic_rmw),
+    ED!(intrinsic_api::is_atomic_cxchgweak, eff_atomic_rmw),
+    ED!(intrinsic_api::is_atomic_nand, eff_atomic_rmw),
+    ED!(intrinsic_api::is_atomic_umin, eff_atomic_rmw),
+    ED!(intrinsic_api::is_atomic_umax, eff_atomic_rmw),
+    ED!(intrinsic_api::is_atomic_fence, eff_no_effect),
+    ED!(intrinsic_api::is_atomic_singlethreadfence, eff_no_effect),
+    ED!(intrinsic_api::is_simd_lt, eff_simd_lt),
+    ED!(intrinsic_api::is_simd_eq, eff_simd_eq),
+    ED!(intrinsic_api::is_simd_gt, eff_simd_gt),
+    ED!(intrinsic_api::is_simd_ne, eff_simd_ne),
+    ED!(intrinsic_api::is_simd_le, eff_simd_le),
+    ED!(intrinsic_api::is_simd_ge, eff_simd_ge),
+    ED!(intrinsic_api::is_simd_add, eff_simd_add),
+    ED!(intrinsic_api::is_simd_sub, eff_simd_sub),
+    ED!(intrinsic_api::is_simd_mul, eff_simd_mul),
+    ED!(intrinsic_api::is_simd_saturating_add, eff_simd_saturating_add),
+    ED!(intrinsic_api::is_simd_saturating_sub, eff_simd_saturating_sub),
+    ED!(intrinsic_api::is_simd_splat, eff_simd_splat),
+    ED!(intrinsic_api::is_simd_extract, eff_simd_extract),
+    ED!(intrinsic_api::is_simd_extract_dyn, eff_simd_extract),
+    ED!(intrinsic_api::is_simd_insert, eff_simd_insert),
+    ED!(intrinsic_api::is_simd_insert_dyn, eff_simd_insert),
+    ED!(intrinsic_api::is_simd_and, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_or, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_xor, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_neg, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_as, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_bswap, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_bitreverse, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_ctlz, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_ctpop, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_cttz, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_fabs, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_minimum_number_nsz, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_maximum_number_nsz, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_ceil, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_floor, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_round, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_round_ties_even, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_trunc, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_fsqrt, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_fma, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_relaxed_fma, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_fsin, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_fcos, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_fexp, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_fexp2, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_flog10, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_flog2, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_flog, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_reduce_add_ordered, eff_opaque_return),
+    ED!(intrinsic_api::is_simd_reduce_add_unordered, eff_opaque_return),
+    ED!(intrinsic_api::is_simd_reduce_mul_ordered, eff_opaque_return),
+    ED!(intrinsic_api::is_simd_reduce_mul_unordered, eff_opaque_return),
+    ED!(intrinsic_api::is_simd_reduce_max, eff_opaque_return),
+    ED!(intrinsic_api::is_simd_reduce_min, eff_opaque_return),
+    ED!(intrinsic_api::is_simd_reduce_and, eff_opaque_return),
+    ED!(intrinsic_api::is_simd_reduce_or, eff_opaque_return),
+    ED!(intrinsic_api::is_simd_reduce_xor, eff_opaque_return),
+    ED!(intrinsic_api::is_simd_reduce_all, eff_opaque_return),
+    ED!(intrinsic_api::is_simd_reduce_any, eff_opaque_return),
+    ED!(intrinsic_api::is_simd_arith_offset, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_carryless_mul, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_cast, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_cast_ptr, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_div, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_expose_provenance, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_funnel_shl, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_funnel_shr, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_gather, eff_simd_gather),
+    ED!(intrinsic_api::is_simd_masked_load, eff_simd_masked_load),
+    ED!(intrinsic_api::is_simd_masked_store, eff_simd_masked_store),
+    ED!(intrinsic_api::is_simd_rem, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_scatter, eff_simd_scatter),
+    ED!(intrinsic_api::is_simd_select, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_select_bitmask, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_shl, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_shr, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_shuffle, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_with_exposed_provenance, eff_simd_opaque),
+    ED!(intrinsic_api::is_simd_bitmask, eff_simd_bitmask),
     ED!(intrinsic_api::is_bswap, eff_return_nonzero_iff),
     ED!(intrinsic_api::is_ctpop, eff_return_nonzero_iff),
     ED!(intrinsic_api::is_bitreverse, eff_return_nonzero_iff),
     ED!(intrinsic_api::is_rotate_left, eff_return_nonzero_iff),
     ED!(intrinsic_api::is_rotate_right, eff_return_nonzero_iff),
     ED!(intrinsic_api::is_ctlz, eff_leading_zeros),
+    ED!(intrinsic_api::is_ctlz_nonzero, eff_leading_zeros),
+    ED!(intrinsic_api::is_cttz, eff_trailing_zeros),
+    ED!(intrinsic_api::is_cttz_nonzero, eff_trailing_zeros),
     ED!(intrinsic_api::is_raw_eq, eff_raw_eq),
     ED!(intrinsic_api::is_exact_div, eff_exact_div),
     ED!(intrinsic_api::is_size_of_val, eff_size_of_val),
+    ED!(intrinsic_api::is_align_of_val, eff_align_of_val),
     ED!(intrinsic_api::is_float_to_int_unchecked, eff_opaque_return),
     ED!(intrinsic_api::is_vtable_size, eff_opaque_return),
     ED!(intrinsic_api::is_vtable_align, eff_opaque_return),
@@ -137,6 +276,132 @@ fn eff_opaque_return(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 
 fn eff_size_of_val(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     vec![CallEffect::ReturnSizeOfVal { arg: 0 }]
+}
+
+fn eff_align_of_val(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnAlignOfVal { arg: 0 }]
+}
+
+fn eff_trailing_zeros(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnTrailingZeros { arg: 0 }]
+}
+
+fn eff_load_memory(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::LoadMemory { pointer_arg: 0 }]
+}
+
+fn eff_store_memory(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::StoreMemory {
+        pointer_arg: 0,
+        value_arg: 1,
+    }]
+}
+
+fn eff_volatile_copy_memory(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::CopyMemory {
+        source_arg: 1,
+        destination_arg: 0,
+        count_arg: 2,
+    }]
+}
+
+fn eff_compare_bytes(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnCompareBytes {
+        left_arg: 0,
+        right_arg: 1,
+        count_arg: 2,
+    }]
+}
+
+fn eff_atomic_rmw(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::AtomicRmw { pointer_arg: 0 }]
+}
+
+fn eff_ptr_mask(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnMaskedPointer {
+        pointer_arg: 0,
+        mask_arg: 1,
+    }]
+}
+
+fn eff_simd_lt(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::SimdCompare { lhs_arg: 0, rhs_arg: 1, op: SimdCmpOp::Lt }]
+}
+
+fn eff_simd_eq(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::SimdCompare { lhs_arg: 0, rhs_arg: 1, op: SimdCmpOp::Eq }]
+}
+
+fn eff_simd_gt(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::SimdCompare { lhs_arg: 0, rhs_arg: 1, op: SimdCmpOp::Gt }]
+}
+
+fn eff_simd_ne(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::SimdCompare { lhs_arg: 0, rhs_arg: 1, op: SimdCmpOp::Ne }]
+}
+
+fn eff_simd_le(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::SimdCompare { lhs_arg: 0, rhs_arg: 1, op: SimdCmpOp::Le }]
+}
+
+fn eff_simd_ge(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::SimdCompare { lhs_arg: 0, rhs_arg: 1, op: SimdCmpOp::Ge }]
+}
+
+fn eff_simd_bitmask(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::SimdBitmask { arg: 0 }]
+}
+
+fn eff_simd_opaque(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::SimdOpaque]
+}
+
+fn eff_simd_splat(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::SimdSplat { arg: 0 }]
+}
+
+fn eff_simd_extract(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::SimdExtract { vector_arg: 0, index_arg: 1 }]
+}
+
+fn eff_simd_insert(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::SimdInsert { vector_arg: 0, index_arg: 1, value_arg: 2 }]
+}
+
+fn eff_simd_scatter(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::SimdHavocMemory { pointer_arg: 1, mask_arg: 2 }]
+}
+
+fn eff_simd_masked_store(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::SimdHavocMemory { pointer_arg: 1, mask_arg: 0 }]
+}
+
+fn eff_simd_gather(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::SimdMaskedFallback { mask_arg: 2, fallback_arg: 0 }]
+}
+
+fn eff_simd_masked_load(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::SimdMaskedFallback { mask_arg: 0, fallback_arg: 2 }]
+}
+
+fn eff_simd_add(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::SimdArithmetic { lhs_arg: 0, rhs_arg: 1, op: SimdArithOp::Add }]
+}
+
+fn eff_simd_sub(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::SimdArithmetic { lhs_arg: 0, rhs_arg: 1, op: SimdArithOp::Sub }]
+}
+
+fn eff_simd_mul(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::SimdArithmetic { lhs_arg: 0, rhs_arg: 1, op: SimdArithOp::Mul }]
+}
+
+fn eff_simd_saturating_add(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::SimdArithmetic { lhs_arg: 0, rhs_arg: 1, op: SimdArithOp::SaturatingAdd }]
+}
+
+fn eff_simd_saturating_sub(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::SimdArithmetic { lhs_arg: 0, rhs_arg: 1, op: SimdArithOp::SaturatingSub }]
 }
 
 fn eff_raw_eq(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {

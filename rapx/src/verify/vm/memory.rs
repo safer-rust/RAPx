@@ -355,7 +355,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 (*id == provenance.alloc_id).then(|| self.body().local_decls[*local].ty)
             })
             .or_else(|| self.alloc(provenance.alloc_id).element_ty.as_ty())?;
-        let path = self.field_path_at_offset(root_ty, offset, pointee_ty)?;
+        let path = if offset == 0 && root_ty == pointee_ty {
+            Vec::new()
+        } else {
+            self.field_path_at_offset(root_ty, offset, pointee_ty)?
+        };
         self.load_value(provenance.alloc_id, root_ty, &path).cloned()
     }
 

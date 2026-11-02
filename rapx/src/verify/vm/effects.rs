@@ -11,7 +11,7 @@ use super::state::{
 };
 use crate::helpers::mir_utils;
 use crate::verify::api_classify;
-use crate::verify::call_summary::{BoundedArithmeticOp, CallEffect, OverflowOp};
+use crate::verify::call_summary::{BoundedArithmeticOp, CallEffect, OverflowOp, SimdArithOp, SimdCmpOp};
 
 impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// Abstract a safe `Fn*` call when only a scalar boolean or `Ordering`
@@ -197,6 +197,396 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 } else {
                     self.set_opaque_intrinsic_result(dest);
                 }
+            }
+            CallEffect::ReturnAlignOfVal { arg } => {
+                let align = args.get(*arg).and_then(|value| {
+                    let pointee = mir_utils::pointee_ty(value.ty)?;
+                    match pointee.kind() {
+                        TyKind::Slice(elem) => Some(self.align_sym(*elem)),
+                        TyKind::Str => Some(Int::from_u64(self.z3_ctx, 1)),
+                        TyKind::Dynamic(..) => None,
+                        _ => Some(self.align_sym(pointee)),
+                    }
+                });
+                if let Some(align) = align {
+                    let ty = self.body().local_decls[dest].ty;
+                    self.set_local(dest, VmValue::new(align, ty));
+                } else {
+                    self.set_opaque_intrinsic_result(dest);
+                }
+            }
+            CallEffect::ReturnCompareBytes {
+                left_arg,
+                right_arg,
+                count_arg,
+            } => {
+                let Some((left, right, count)) = args
+                    .get(*left_arg)
+                    .zip(args.get(*right_arg))
+                    .zip(args.get(*count_arg))
+                    .map(|((left, right), count)| (left, right, count))
+                else {
+                    self.record_unsupported("compare_bytes arguments");
+                    return;
+                };
+                let ty = self.body().local_decls[dest].ty;
+                let term = if count.z3_term.simplify().as_u64() == Some(0)
+                    || left.z3_term == right.z3_term
+                {
+                    Int::from_u64(self.z3_ctx, 0)
+                } else {
+                    let result = self.fresh_int("compare_bytes_result");
+                    if let Some((min, max, _, _)) = self.integer_limits(ty) {
+                        self.constraints.assertions.push(result.ge(&min));
+                        self.constraints.assertions.push(result.le(&max));
+                    }
+                    result
+                };
+                self.set_local(dest, VmValue::new(term, ty));
+            }
+            CallEffect::ReturnMaskedPointer {
+                pointer_arg,
+                mask_arg,
+            } => {
+                let unchanged = args.get(*mask_arg).is_some_and(|mask| {
+                    let value = mask.z3_term.simplify();
+                    value.as_u64() == Some(usize::MAX as u64) || value.as_i64() == Some(-1)
+                });
+                if unchanged {
+                    if let Some(pointer) = args.get(*pointer_arg) {
+                        let mut pointer = pointer.clone();
+                        pointer.ty = self.body().local_decls[dest].ty;
+                        self.set_local(dest, pointer);
+                    }
+                } else {
+                    self.set_opaque_intrinsic_result(dest);
+                }
+            }
+            CallEffect::LoadMemory { pointer_arg } => {
+                let value = args.get(*pointer_arg).and_then(|pointer| {
+                    let ty = self.body().local_decls[dest].ty;
+                    self.read_field_allocation(pointer, ty)
+                });
+                if let Some(mut value) = value {
+                    value.ty = self.body().local_decls[dest].ty;
+                    self.set_local(dest, value);
+                } else {
+                    self.set_opaque_intrinsic_result(dest);
+                }
+            }
+            CallEffect::StoreMemory {
+                pointer_arg,
+                value_arg,
+            } => {
+                let Some((pointer, value)) = args.get(*pointer_arg).zip(args.get(*value_arg)) else {
+                    self.record_unsupported("volatile_store arguments");
+                    return;
+                };
+                let mut value = value.clone();
+                value.facts.init = true;
+                if !self.write_through_pointer(pointer, Vec::new(), value) {
+                    self.record_unsupported("volatile_store target");
+                }
+            }
+            CallEffect::AtomicRmw { pointer_arg } => {
+                let Some(prov) = args.get(*pointer_arg).and_then(|value| value.provenance.as_ref()) else {
+                    self.record_unsupported("atomic operation target");
+                    return;
+                };
+                self.forget_memory_values(prov.alloc_id);
+                self.set_opaque_intrinsic_result(dest);
+            }
+            CallEffect::SimdCompare { lhs_arg, rhs_arg, op } => {
+                let dest_ty = self.body().local_decls[dest].ty;
+                let Some((elem_ty, len)) = self.simd_lane_type(dest_ty) else {
+                    self.set_opaque_intrinsic_result(dest);
+                    return;
+                };
+                let Some((lhs_local, rhs_local)) = caller_arg_locals
+                    .get(*lhs_arg)
+                    .copied()
+                    .flatten()
+                    .zip(caller_arg_locals.get(*rhs_arg).copied().flatten())
+                else {
+                    self.set_opaque_intrinsic_result(dest);
+                    return;
+                };
+                let Some((lhs, rhs)) = args.get(*lhs_arg).zip(args.get(*rhs_arg)) else {
+                    self.set_opaque_intrinsic_result(dest);
+                    return;
+                };
+                let Some((input_ty, input_len)) = self.simd_lane_type(lhs.ty) else {
+                    self.set_opaque_intrinsic_result(dest);
+                    return;
+                };
+                if input_len != len
+                    || rhs.ty != lhs.ty
+                    || !matches!(input_ty.kind(), TyKind::Int(_) | TyKind::Uint(_))
+                {
+                    self.set_opaque_intrinsic_result(dest);
+                    return;
+                }
+                let lanes: Option<Vec<_>> = (0..len)
+                    .map(|index| {
+                        let left = self.field_value(lhs_local, &[0, index])?.z3_term.clone();
+                        let right = self.field_value(rhs_local, &[0, index])?.z3_term.clone();
+                        let condition = match op {
+                            SimdCmpOp::Eq => left._eq(&right),
+                            SimdCmpOp::Ne => left._eq(&right).not(),
+                            SimdCmpOp::Lt => left.lt(&right),
+                            SimdCmpOp::Le => left.le(&right),
+                            SimdCmpOp::Gt => left.gt(&right),
+                            SimdCmpOp::Ge => left.ge(&right),
+                        };
+                        Some(condition)
+                    })
+                    .collect();
+                let Some(lanes) = lanes else {
+                    self.set_opaque_intrinsic_result(dest);
+                    return;
+                };
+                let true_value = if matches!(elem_ty.kind(), TyKind::Int(_)) {
+                    Int::from_i64(self.z3_ctx, -1)
+                } else if let Some((_, max, _, _)) = self.integer_limits(elem_ty) {
+                    max
+                } else {
+                    self.set_opaque_intrinsic_result(dest);
+                    return;
+                };
+                let zero = Int::from_u64(self.z3_ctx, 0);
+                for (index, condition) in lanes.into_iter().enumerate() {
+                    let mut value = VmValue::new(condition.ite(&true_value, &zero), elem_ty);
+                    value.facts.init = true;
+                    self.set_field_value(dest, vec![0, index], value);
+                }
+            }
+            CallEffect::SimdArithmetic { lhs_arg, rhs_arg, op } => {
+                let dest_ty = self.body().local_decls[dest].ty;
+                let Some((elem_ty, len)) = self.simd_lane_type(dest_ty) else {
+                    self.set_opaque_intrinsic_result(dest);
+                    return;
+                };
+                let Some((min, max, modulus, signed)) = self.integer_limits(elem_ty) else {
+                    self.set_opaque_simd_result(dest);
+                    return;
+                };
+                let Some((lhs_local, rhs_local)) = caller_arg_locals
+                    .get(*lhs_arg)
+                    .copied()
+                    .flatten()
+                    .zip(caller_arg_locals.get(*rhs_arg).copied().flatten())
+                else {
+                    self.set_opaque_simd_result(dest);
+                    return;
+                };
+                if args.get(*lhs_arg).is_none_or(|value| value.ty != dest_ty)
+                    || args.get(*rhs_arg).is_none_or(|value| value.ty != dest_ty)
+                {
+                    self.set_opaque_simd_result(dest);
+                    return;
+                }
+                let lanes: Option<Vec<_>> = (0..len)
+                    .map(|index| {
+                        let left = self.field_value(lhs_local, &[0, index])?.z3_term.clone();
+                        let right = self.field_value(rhs_local, &[0, index])?.z3_term.clone();
+                        let raw = match op {
+                            SimdArithOp::Add | SimdArithOp::SaturatingAdd => {
+                                Int::add(self.z3_ctx, &[&left, &right])
+                            }
+                            SimdArithOp::Sub | SimdArithOp::SaturatingSub => {
+                                Int::sub(self.z3_ctx, &[&left, &right])
+                            }
+                            SimdArithOp::Mul => Int::mul(self.z3_ctx, &[&left, &right]),
+                        };
+                        let term = match op {
+                            SimdArithOp::SaturatingAdd | SimdArithOp::SaturatingSub => {
+                                raw.lt(&min).ite(&min, &raw.gt(&max).ite(&max, &raw))
+                            }
+                            _ => {
+                                let wrapped = raw.modulo(&modulus);
+                                if signed {
+                                    wrapped.gt(&max).ite(
+                                        &Int::sub(self.z3_ctx, &[&wrapped, &modulus]),
+                                        &wrapped,
+                                    )
+                                } else {
+                                    wrapped
+                                }
+                            }
+                        };
+                        Some(term)
+                    })
+                    .collect();
+                let Some(lanes) = lanes else {
+                    self.set_opaque_simd_result(dest);
+                    return;
+                };
+                for (index, term) in lanes.into_iter().enumerate() {
+                    let mut value = VmValue::new(term, elem_ty);
+                    value.facts.init = true;
+                    self.set_field_value(dest, vec![0, index], value);
+                }
+            }
+            CallEffect::SimdOpaque => self.set_opaque_simd_result(dest),
+            CallEffect::SimdSplat { arg } => {
+                let dest_ty = self.body().local_decls[dest].ty;
+                let Some((elem_ty, len)) = self.simd_lane_type(dest_ty) else {
+                    self.set_opaque_intrinsic_result(dest);
+                    return;
+                };
+                let Some(input) = args.get(*arg) else {
+                    self.set_opaque_simd_result(dest);
+                    return;
+                };
+                for index in 0..len {
+                    let mut value = input.clone();
+                    value.ty = elem_ty;
+                    self.set_field_value(dest, vec![0, index], value);
+                }
+            }
+            CallEffect::SimdExtract { vector_arg, index_arg } => {
+                let Some((local, index)) = caller_arg_locals
+                    .get(*vector_arg)
+                    .copied()
+                    .flatten()
+                    .zip(args.get(*index_arg).and_then(|value| value.z3_term.simplify().as_u64()))
+                else {
+                    self.set_opaque_intrinsic_result(dest);
+                    return;
+                };
+                let Some((_, len)) = args.get(*vector_arg).and_then(|value| self.simd_lane_type(value.ty)) else {
+                    self.set_opaque_intrinsic_result(dest);
+                    return;
+                };
+                if index >= len as u64 {
+                    self.set_opaque_intrinsic_result(dest);
+                    return;
+                }
+                if let Some(mut value) = self.field_value(local, &[0, index as usize]).cloned() {
+                    value.ty = self.body().local_decls[dest].ty;
+                    self.set_local(dest, value);
+                } else {
+                    self.set_opaque_intrinsic_result(dest);
+                }
+            }
+            CallEffect::SimdInsert { vector_arg, index_arg, value_arg } => {
+                let dest_ty = self.body().local_decls[dest].ty;
+                let Some((elem_ty, len)) = self.simd_lane_type(dest_ty) else {
+                    self.set_opaque_intrinsic_result(dest);
+                    return;
+                };
+                let Some((local, index, replacement)) = caller_arg_locals
+                    .get(*vector_arg)
+                    .copied()
+                    .flatten()
+                    .zip(args.get(*index_arg).and_then(|value| value.z3_term.simplify().as_u64()))
+                    .zip(args.get(*value_arg))
+                    .map(|((local, index), value)| (local, index, value.clone()))
+                else {
+                    self.set_opaque_simd_result(dest);
+                    return;
+                };
+                if index >= len as u64 {
+                    self.set_opaque_simd_result(dest);
+                    return;
+                }
+                let lanes: Option<Vec<_>> = (0..len)
+                    .map(|lane| {
+                        if lane == index as usize {
+                            let mut value = replacement.clone();
+                            value.ty = elem_ty;
+                            Some(value)
+                        } else {
+                            self.field_value(local, &[0, lane]).cloned()
+                        }
+                    })
+                    .collect();
+                let Some(lanes) = lanes else {
+                    self.set_opaque_simd_result(dest);
+                    return;
+                };
+                for (lane, value) in lanes.into_iter().enumerate() {
+                    self.set_field_value(dest, vec![0, lane], value);
+                }
+            }
+            CallEffect::SimdHavocMemory { mask_arg, .. } => {
+                let mask_is_zero = caller_arg_locals
+                    .get(*mask_arg)
+                    .copied()
+                    .flatten()
+                    .zip(args.get(*mask_arg).and_then(|value| self.simd_lane_type(value.ty)))
+                    .is_some_and(|(local, (_, len))| {
+                        (0..len).all(|lane| {
+                            self.field_value(local, &[0, lane])
+                                .and_then(|value| value.z3_term.simplify().as_u64())
+                                == Some(0)
+                        })
+                    });
+                if !mask_is_zero {
+                    for index in 0..self.units.len() {
+                        self.forget_memory_values(AllocId(index));
+                    }
+                }
+            }
+            CallEffect::SimdMaskedFallback { mask_arg, fallback_arg } => {
+                let mask_is_zero = caller_arg_locals
+                    .get(*mask_arg)
+                    .copied()
+                    .flatten()
+                    .zip(args.get(*mask_arg).and_then(|value| self.simd_lane_type(value.ty)))
+                    .is_some_and(|(local, (_, len))| {
+                        (0..len).all(|lane| {
+                            self.field_value(local, &[0, lane])
+                                .and_then(|value| value.z3_term.simplify().as_u64())
+                                == Some(0)
+                        })
+                    });
+                let copied = mask_is_zero
+                    && caller_arg_locals
+                        .get(*fallback_arg)
+                        .copied()
+                        .flatten()
+                        .is_some_and(|local| self.copy_simd_result_from_local(dest, local));
+                if !copied {
+                    self.set_opaque_simd_result(dest);
+                }
+            }
+            CallEffect::SimdBitmask { arg } => {
+                let Some(local) = caller_arg_locals.get(*arg).copied().flatten() else {
+                    self.set_opaque_intrinsic_result(dest);
+                    return;
+                };
+                let Some((_, len)) = args.get(*arg).and_then(|value| self.simd_lane_type(value.ty)) else {
+                    self.set_opaque_intrinsic_result(dest);
+                    return;
+                };
+                if len == 0
+                    || len > 64
+                    || !matches!(self.body().local_decls[dest].ty.kind(), TyKind::Uint(_))
+                {
+                    self.set_opaque_intrinsic_result(dest);
+                    return;
+                }
+                let lanes: Option<Vec<_>> = (0..len)
+                    .map(|index| self.field_value(local, &[0, index]).map(|value| value.z3_term.clone()))
+                    .collect();
+                let Some(lanes) = lanes else {
+                    self.set_opaque_intrinsic_result(dest);
+                    return;
+                };
+                let zero = Int::from_u64(self.z3_ctx, 0);
+                let mut mask = zero.clone();
+                for (index, lane) in lanes.into_iter().enumerate() {
+                    let bit = if self.tcx.data_layout.endian == rustc_abi::Endian::Little {
+                        index
+                    } else {
+                        len - 1 - index
+                    };
+                    let weight = Int::from_u64(self.z3_ctx, 1_u64 << bit);
+                    mask = Int::add(self.z3_ctx, &[&mask, &lane._eq(&zero).not().ite(&weight, &zero)]);
+                }
+                let dest_ty = self.body().local_decls[dest].ty;
+                self.set_local(dest, VmValue::new(mask, dest_ty));
             }
             CallEffect::ReturnRawEq {
                 left_arg,
@@ -464,7 +854,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     let width = self.size_of_ty(value.ty) * 8;
                     if width == 0
                         || width > 128
-                        || !matches!(value.ty.kind(), TyKind::Uint(_))
+                        || !matches!(value.ty.kind(), TyKind::Uint(_) | TyKind::Int(_))
                     {
                         self.record_unsupported("ctlz operand type");
                     } else {
@@ -486,6 +876,46 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         );
                         self.constraints.assertions.push(
                             value.z3_term.ge(&high_bit).implies(&term._eq(&zero)),
+                        );
+                        self.constraints.assertions.push(
+                            value.z3_term.lt(&zero).implies(&term._eq(&zero)),
+                        );
+                        let dest_ty = self.body().local_decls[dest].ty;
+                        self.set_local(dest, VmValue::new(term, dest_ty));
+                    }
+                }
+            }
+            CallEffect::ReturnTrailingZeros { arg } => {
+                if let Some(value) = args.get(*arg) {
+                    let width = self.size_of_ty(value.ty) * 8;
+                    if width == 0
+                        || width > 128
+                        || !matches!(value.ty.kind(), TyKind::Uint(_) | TyKind::Int(_))
+                    {
+                        self.record_unsupported("cttz operand type");
+                    } else {
+                        let zero = Int::from_u64(self.z3_ctx, 0);
+                        let one = Int::from_u64(self.z3_ctx, 1);
+                        let two = Int::from_u64(self.z3_ctx, 2);
+                        let width_term = Int::from_u64(self.z3_ctx, width);
+                        let term = self.fresh_int(&format!("cttz_{}", dest.as_usize()));
+                        self.constraints.assertions.push(term.ge(&zero));
+                        self.constraints.assertions.push(term.le(&width_term));
+                        self.constraints.assertions.push(
+                            value.z3_term._eq(&zero).implies(&term._eq(&width_term)),
+                        );
+                        self.constraints.assertions.push(
+                            value.z3_term.modulo(&two)._eq(&one).implies(&term._eq(&zero)),
+                        );
+                        self.constraints.assertions.push(
+                            Bool::and(
+                                self.z3_ctx,
+                                &[
+                                    &value.z3_term.modulo(&two)._eq(&zero),
+                                    &value.z3_term._eq(&zero).not(),
+                                ],
+                            )
+                            .implies(&term.ge(&one)),
                         );
                         let dest_ty = self.body().local_decls[dest].ty;
                         self.set_local(dest, VmValue::new(term, dest_ty));
@@ -798,6 +1228,61 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 }
             }
         }
+    }
+
+    fn simd_lane_type(&self, ty: Ty<'tcx>) -> Option<(Ty<'tcx>, usize)> {
+        let TyKind::Adt(def, args) = ty.kind() else {
+            return None;
+        };
+        if !def.repr().simd() {
+            return None;
+        }
+        let field = mir_utils::field_ty(
+            self.tcx,
+            def.non_enum_variant().fields.raw.first()?,
+            args,
+        );
+        let TyKind::Array(elem, len) = field.kind() else {
+            return None;
+        };
+        let len = mir_utils::eval_array_len(self.tcx, len)? as usize;
+        Some((*elem, len))
+    }
+
+    fn set_opaque_simd_result(&mut self, dest: Local) {
+        let dest_ty = self.body().local_decls[dest].ty;
+        let Some((elem_ty, len)) = self.simd_lane_type(dest_ty) else {
+            self.set_opaque_intrinsic_result(dest);
+            return;
+        };
+        let limits = self.integer_limits(elem_ty);
+        for index in 0..len {
+            let term = self.fresh_int("simd_lane");
+            if let Some((min, max, _, _)) = &limits {
+                self.constraints.assertions.push(term.ge(min));
+                self.constraints.assertions.push(term.le(max));
+            }
+            let mut value = VmValue::new(term, elem_ty);
+            value.facts.init = true;
+            self.set_field_value(dest, vec![0, index], value);
+        }
+    }
+
+    fn copy_simd_result_from_local(&mut self, dest: Local, source: Local) -> bool {
+        let dest_ty = self.body().local_decls[dest].ty;
+        let Some((_, len)) = self.simd_lane_type(dest_ty) else {
+            return false;
+        };
+        let lanes: Option<Vec<_>> = (0..len)
+            .map(|index| self.field_value(source, &[0, index]).cloned())
+            .collect();
+        let Some(lanes) = lanes else {
+            return false;
+        };
+        for (index, value) in lanes.into_iter().enumerate() {
+            self.set_field_value(dest, vec![0, index], value);
+        }
+        true
     }
 
     fn set_opaque_intrinsic_result(&mut self, dest: Local) {
