@@ -1070,6 +1070,17 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 }
             }
         }
+        if path.is_empty()
+            && let Some(prov) = &pointer.provenance
+            && self.thread_local_allocs.values().any(|id| *id == prov.alloc_id)
+            && prov.offset.simplify().as_u64() == Some(0)
+            && self.alloc(prov.alloc_id).element_ty.as_ty() == Some(value.ty)
+        {
+            self.clear_write_evidence(prov.alloc_id);
+            self.store_value(prov.alloc_id, value.ty, Vec::new(), value);
+            self.content_mut(prov.alloc_id).facts.initialized = true;
+            return true;
+        }
         let caller_referent =
             self.inline
                 .arg_referents
@@ -1093,6 +1104,23 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 self.content_mut(id).facts.written_pointee_ty = Some(ty);
             }
             return wrote_object;
+        }
+        if path.is_empty()
+            && let Some(prov) = &pointer.provenance
+            && prov.offset.simplify().as_u64() == Some(0)
+            && self.alloc(prov.alloc_id).element_ty.as_ty() == Some(value.ty)
+            && matches!(self.alloc(prov.alloc_id).kind, super::state::AllocKind::Object)
+            && self.find_local_by_address(&pointer.z3_term).is_none()
+        {
+            self.clear_write_evidence(prov.alloc_id);
+            let content = self.content_mut(prov.alloc_id);
+            content.values.clear();
+            content.indexed_elements.clear();
+            content.indexed_elements_modified = true;
+            content.clear_byte_writes();
+            content.facts.initialized = value.facts.init;
+            self.store_value(prov.alloc_id, value.ty, Vec::new(), value);
+            return true;
         }
         if path.is_empty() && self.write_provenance_allocation(pointer, value.clone()) {
             if let Some((id, ty)) = full_inner_write {

@@ -263,26 +263,22 @@ pub(crate) fn trait_impl_candidates(tcx: TyCtxt<'_>, method_def_id: DefId) -> Ve
     candidates
 }
 
-/// Build a partially-monomorphized [`Instance`] for `def_id`, replacing the type
-/// parameter named `param_name` with `concrete_ty` and leaving every other
-/// parameter (const params in particular) as `Param`. Returns `None` when
-/// `def_id` has no such type parameter.
+/// Build a partially-monomorphized [`Instance`] for `def_id`, replacing one
+/// type parameter and leaving the others as parameters.
 pub(crate) fn monomorphize_instance<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
-    param_name: Symbol,
+    param_id: DefId,
     concrete_ty: Ty<'tcx>,
-) -> Option<Instance<'tcx>> {
-    let mut replaced = false;
+) -> Instance<'tcx> {
     let args = GenericArgs::for_item(tcx, def_id, |param, _| {
-        if matches!(param.kind, GenericParamDefKind::Type { .. }) && param.name == param_name {
-            replaced = true;
+        if param.def_id == param_id {
             concrete_ty.into()
         } else {
             tcx.mk_param_from_def(param)
         }
     });
-    replaced.then(|| Instance::new_raw(def_id, args))
+    Instance::new_raw(def_id, args)
 }
 
 /// Enumerate the concrete self types implementing a type parameter's trait
@@ -327,32 +323,32 @@ pub(crate) fn type_param_impl_tys<'tcx>(
     best.unwrap_or_default()
 }
 
-/// Enumerate partially-monomorphized instances of a generic function by
-/// replacing its first unbound type parameter with each concrete impl of that
-/// parameter's bounds (see [`type_param_impl_tys`]), capped at `limit`. Empty
-/// for non-generic functions or when the parameter has no enumerable impls.
+/// Enumerate up to `limit` instances of a generic function using concrete
+/// implementors of one type parameter bound, including containing impl bounds.
 pub(crate) fn enumerate_mono_instances<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
     limit: usize,
 ) -> Vec<Instance<'tcx>> {
-    let generics = tcx.generics_of(def_id);
-    let Some(type_param) = generics
-        .own_params
-        .iter()
-        .find(|p| matches!(p.kind, GenericParamDefKind::Type { .. }))
-    else {
+    let inherited = has_nearby_scalar_unmodeled_generic_call(tcx, def_id);
+    let candidate = std::iter::successors(Some(def_id), |id| {
+        inherited.then(|| tcx.generics_of(*id).parent).flatten()
+    })
+        .flat_map(|id| tcx.generics_of(id).own_params.iter())
+        .filter(|param| matches!(param.kind, GenericParamDefKind::Type { .. }))
+        .filter_map(|param| {
+            let param_ty = tcx.mk_param_from_def(param).expect_ty();
+            let impl_tys = type_param_impl_tys(tcx, def_id, param_ty);
+            (!impl_tys.is_empty()).then_some((param.def_id, impl_tys))
+        })
+        .min_by_key(|(_, impl_tys)| impl_tys.len());
+    let Some((param_id, impl_tys)) = candidate else {
         return Vec::new();
     };
-    let param_ty = tcx.mk_param_from_def(type_param).expect_ty();
-    let impl_tys = type_param_impl_tys(tcx, def_id, param_ty);
-    if impl_tys.is_empty() {
-        return Vec::new();
-    }
     impl_tys
         .into_iter()
         .take(limit)
-        .filter_map(|ty| monomorphize_instance(tcx, def_id, type_param.name, ty))
+        .map(|ty| monomorphize_instance(tcx, def_id, param_id, ty))
         .collect()
 }
 
@@ -363,7 +359,12 @@ pub(crate) fn enumerate_mono_instances<'tcx>(
 /// monomorphization.
 pub(crate) fn has_unmodeled_generic_call<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> bool {
     let mut visited = HashSet::default();
-    has_unmodeled_generic_call_rec(tcx, def_id, &mut visited)
+    has_unmodeled_generic_call_rec(tcx, def_id, &mut visited, usize::MAX, false)
+}
+
+fn has_nearby_scalar_unmodeled_generic_call(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
+    let mut visited = HashSet::default();
+    has_unmodeled_generic_call_rec(tcx, def_id, &mut visited, 2, true)
 }
 
 pub(crate) fn has_generic_const_call_argument(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
@@ -418,6 +419,8 @@ fn has_unmodeled_generic_call_rec<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
     visited: &mut HashSet<DefId>,
+    remaining_depth: usize,
+    scalar_only: bool,
 ) -> bool {
     if !visited.insert(def_id) || !tcx.is_mir_available(def_id) {
         return false;
@@ -445,17 +448,40 @@ fn has_unmodeled_generic_call_rec<'tcx>(
             if target.is_none_or(|target| !tcx.is_mir_available(target))
                 && !has_callback_effect(tcx, callee, body.local_decls[destination.local].ty)
                 && !crate::verify::call_summary::effects::has_registry_entry(Some(callee))
+                && (!scalar_only
+                    || matches!(
+                        body.local_decls[destination.local].ty.kind(),
+                        TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_)
+                    ))
             {
                 return true;
             }
-            if target.is_some_and(|target| has_unmodeled_generic_call_rec(tcx, target, visited)) {
+            if remaining_depth > 0
+                && target.is_some_and(|target| {
+                    has_unmodeled_generic_call_rec(
+                        tcx,
+                        target,
+                        visited,
+                        remaining_depth - 1,
+                        scalar_only,
+                    )
+                })
+            {
                 return true;
             }
             continue;
         }
         // A concrete callee gets inlined, so recurse to surface its own
         // unmodeled generic trait calls.
-        if has_unmodeled_generic_call_rec(tcx, callee, visited) {
+        if remaining_depth > 0
+            && has_unmodeled_generic_call_rec(
+                tcx,
+                callee,
+                visited,
+                remaining_depth - 1,
+                scalar_only,
+            )
+        {
             return true;
         }
     }

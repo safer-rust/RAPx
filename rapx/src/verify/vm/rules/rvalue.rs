@@ -4,13 +4,11 @@ use rustc_abi::FieldIdx;
 use rustc_hir::def_id::DefId;
 use rustc_index::IndexVec;
 use rustc_middle::mir::{AggregateKind, BinOp, CastKind, Operand, Place, UnOp};
-#[cfg(rapx_const_ext)]
-use rustc_middle::ty::consts::ConstExt;
 use rustc_middle::ty::{Ty, TyKind};
 use z3::ast::{Ast, Int};
 
 use super::super::state::{
-    Provenance, REPEATED_ARRAY_ELEMENT, ValueFacts, ValueSource, VmState, VmValue,
+    AllocId, Provenance, REPEATED_ARRAY_ELEMENT, ValueFacts, ValueSource, VmState, VmValue,
 };
 
 use crate::helpers::mir_utils;
@@ -697,7 +695,12 @@ pub(crate) fn eval_aggregate<'z3, 'tcx>(
         rustc_middle::mir::AggregateKind::Adt(did, variant_idx, ..)
             if state.tcx.adt_def(*did).is_enum() =>
         {
-            ValueSource::KnownDiscriminant(Int::from_u64(state.z3_ctx, variant_idx.as_usize() as u64))
+            if let Some(term) = state.enum_discriminant_term(dest_ty, *variant_idx) {
+                ValueSource::KnownDiscriminant(term)
+            } else {
+                state.record_unsupported("enum discriminant value");
+                ValueSource::None
+            }
         }
         _ => ValueSource::None,
     };
@@ -732,6 +735,7 @@ pub(crate) fn eval_discriminant<'z3, 'tcx>(
     // discriminant term to the ADT value so that SwitchInt constraints propagate
     // to the stored value.
     if let Some(ref pv) = place_val
+        && !matches!(pv.source, ValueSource::KnownDiscriminant(_))
         && let rustc_middle::ty::TyKind::Adt(adt_def, _) = pv.ty.kind()
         && api_classify::is_std_ordering(adt_def.did())
         && adt_def.is_enum()
@@ -809,7 +813,8 @@ pub(crate) fn eval_thread_local_ref<'z3, 'tcx>(
         static_ty.kind(),
         TyKind::Int(_) | TyKind::Uint(_) | TyKind::Bool | TyKind::Char
     );
-    let bytes = if scalar && !state.tcx.is_mutable_static(def_id) {
+    let mutable = state.tcx.is_mutable_static(def_id);
+    let bytes = if scalar && !mutable {
         state
             .tcx
             .eval_static_initializer(def_id)
@@ -824,49 +829,53 @@ pub(crate) fn eval_thread_local_ref<'z3, 'tcx>(
         None
     };
     let size = state.size_of_ty(static_ty);
-    if let Some(bytes) = bytes
-        && size > 0
-        && size <= 8
-        && bytes.len() == size as usize
-    {
-        let value = if state.tcx.data_layout.endian == rustc_abi::Endian::Little {
-            bytes
-                .iter()
-                .rev()
-                .fold(0_u64, |value, byte| (value << 8) | u64::from(*byte))
-        } else {
-            bytes
-                .iter()
-                .fold(0_u64, |value, byte| (value << 8) | u64::from(*byte))
-        };
+    if !scalar || size == 0 || size > 16 {
+        state.record_unsupported("ThreadLocalRef pointee type");
+        return eval_fresh_value(state, dest_place, "thread_local");
+    }
+    let scalar_term = if mutable {
+        Some(state.fresh_int("thread_local_initial"))
+    } else {
+        bytes.filter(|bytes| bytes.len() == size as usize).and_then(|bytes| {
+            let bits = if state.tcx.data_layout.endian == rustc_abi::Endian::Little {
+                bytes.iter().rev().fold(0_u128, |bits, byte| (bits << 8) | u128::from(*byte))
+            } else {
+                bytes.iter().fold(0_u128, |bits, byte| (bits << 8) | u128::from(*byte))
+            };
+            state.scalar_bits_term(static_ty, bits)
+        })
+    };
+    let Some(scalar_term) = scalar_term else {
+        state.record_unsupported("ThreadLocalRef initializer");
+        return eval_fresh_value(state, dest_place, "thread_local");
+    };
+    let (alloc_id, base) = if let Some(&alloc_id) = state.thread_local_allocs.get(&def_id) {
+        (alloc_id, state.alloc(alloc_id).base.clone())
+    } else {
         let align = state.align_sym(static_ty);
         let (alloc_id, base) =
             state.allocate(Int::from_u64(state.z3_ctx, size), align, Some(static_ty));
+        state.thread_local_allocs.insert(def_id, alloc_id);
         state.content_mut(alloc_id).facts.initialized = true;
-        let scalar_value = VmValue::new(Int::from_u64(state.z3_ctx, value), static_ty);
-        state
-            .content_mut(alloc_id)
-            .values
-            .insert((static_ty, vec![]), scalar_value);
-        return VmValue {
-            z3_term: base,
-            ty: dest_ty,
-            provenance: Some(Provenance {
-                alloc_id,
-                offset: Int::from_u64(state.z3_ctx, 0),
-                offset_kind: None,
-            }),
-            facts: ValueFacts {
-                non_null: true,
-                init: true,
-                in_bounds: true,
-                ..Default::default()
-            },
-            source: ValueSource::None,
-        };
+        state.store_value(alloc_id, static_ty, Vec::new(), VmValue::new(scalar_term, static_ty));
+        (alloc_id, base)
+    };
+    VmValue {
+        z3_term: base,
+        ty: dest_ty,
+        provenance: Some(Provenance {
+            alloc_id,
+            offset: Int::from_u64(state.z3_ctx, 0),
+            offset_kind: None,
+        }),
+        facts: ValueFacts {
+            non_null: true,
+            init: true,
+            in_bounds: true,
+            ..Default::default()
+        },
+        source: ValueSource::None,
     }
-    state.unsupported_mir = true;
-    eval_fresh_value(state, dest_place, "thread_local")
 }
 
 pub(crate) fn eval_repeat<'z3, 'tcx>(
@@ -875,15 +884,16 @@ pub(crate) fn eval_repeat<'z3, 'tcx>(
     operand: &Operand<'tcx>,
 ) -> VmValue<'z3, 'tcx> {
     let dest_ty = dest_place.ty(state.body(), state.tcx).ty;
-    let TyKind::Array(_, length) = dest_ty.kind() else {
+    let TyKind::Array(..) = dest_ty.kind() else {
         state.unsupported_mir = true;
         return eval_fresh_value(state, dest_place, "repeat");
     };
-    if length.try_to_target_usize(state.tcx).is_none() {
-        state.unsupported_mir = true;
+    let value = state.value_of_operand(operand);
+    if let Some((alloc_id, index, count)) = symbolic_repeat_target(state, dest_place) {
+        let base = Int::mul(state.z3_ctx, &[&index, &Int::from_u64(state.z3_ctx, count)]);
+        state.store_repeated_indexed_elements(alloc_id, base, count, value);
         return eval_fresh_value(state, dest_place, "repeat");
     }
-    let value = state.value_of_operand(operand);
     let mut field_path = Vec::new();
     for projection in dest_place.projection.iter() {
         let index = match projection {
@@ -936,6 +946,42 @@ pub(crate) fn eval_repeat<'z3, 'tcx>(
     eval_fresh_value(state, dest_place, "repeat")
 }
 
+pub(crate) fn symbolic_repeat_target<'z3, 'tcx>(
+    state: &VmState<'z3, 'tcx>,
+    place: &Place<'tcx>,
+) -> Option<(AllocId, Int<'z3>, u64)> {
+    let TyKind::Array(element_ty, length) = place.ty(state.body(), state.tcx).ty.kind() else {
+        return None;
+    };
+    if !matches!(element_ty.kind(), TyKind::Int(_) | TyKind::Uint(_) | TyKind::Bool | TyKind::Char)
+        || place.projection.len() != 1
+    {
+        return None;
+    }
+    let rustc_middle::mir::ProjectionElem::Index(index_local) = place.projection[0] else {
+        return None;
+    };
+    let TyKind::Array(outer_element, _) = state.body().local_decls[place.local].ty.kind() else {
+        return None;
+    };
+    if *outer_element != place.ty(state.body(), state.tcx).ty {
+        return None;
+    }
+    let rustc_middle::ty::ConstKind::Value(length) = length.kind() else {
+        return None;
+    };
+    let count = length.try_to_target_usize(state.tcx)?;
+    if count > 64 {
+        return None;
+    }
+    let index = state.local_value(index_local)?.z3_term.clone();
+    if index.simplify().as_u64().is_some() {
+        return None;
+    }
+    let alloc_id = *state.current_frame.local_alloc.get(&place.local)?;
+    Some((alloc_id, index, count))
+}
+
 pub(crate) fn eval_wrap_unsafe_binder<'z3, 'tcx>(
     state: &mut VmState<'z3, 'tcx>,
     dest_place: &Place<'tcx>,
@@ -970,6 +1016,7 @@ pub(crate) fn eval_reborrow<'z3, 'tcx>(
     state: &mut VmState<'z3, 'tcx>,
     dest_place: &Place<'tcx>,
     source_place: &Place<'tcx>,
+    mutability: rustc_middle::ty::Mutability,
 ) -> VmValue<'z3, 'tcx> {
     let dest_ty = dest_place.ty(state.body(), state.tcx).ty;
     let source_ty = source_place.ty(state.body(), state.tcx).ty;
@@ -978,6 +1025,33 @@ pub(crate) fn eval_reborrow<'z3, 'tcx>(
         (rustc_middle::ty::TyKind::Adt(source, _), rustc_middle::ty::TyKind::Adt(dest, _))
             if source.did() == dest.did()
     );
+    let compatible_shared = match (source_ty.kind(), dest_ty.kind()) {
+        (TyKind::Adt(source, source_args), TyKind::Adt(dest, dest_args))
+            if source.did() != dest.did()
+                && mutability == rustc_middle::ty::Mutability::Not
+                && !source.is_enum()
+                && !dest.is_enum()
+                && !source.is_union()
+                && !dest.is_union() =>
+        {
+            let source_fields = &source.non_enum_variant().fields;
+            let dest_fields = &dest.non_enum_variant().fields;
+            source_fields.len() == dest_fields.len()
+                && source_fields.iter().zip(dest_fields.iter()).all(|(source_field, dest_field)| {
+                    if source_field.ident(state.tcx).name != dest_field.ident(state.tcx).name {
+                        return false;
+                    }
+                    let source_field_ty = mir_utils::field_ty(state.tcx, source_field, source_args);
+                    let dest_field_ty = mir_utils::field_ty(state.tcx, dest_field, dest_args);
+                    source_field_ty == dest_field_ty
+                        || matches!((source_field_ty.kind(), dest_field_ty.kind()),
+                            (TyKind::Ref(_, source_inner, rustc_middle::ty::Mutability::Mut),
+                             TyKind::Ref(_, dest_inner, rustc_middle::ty::Mutability::Not))
+                                if source_inner == dest_inner)
+                })
+        }
+        _ => false,
+    };
     #[cfg(rapx_has_phantom_deref)]
     let has_phantom_deref = source_place.projection.iter().any(|projection| {
         matches!(
@@ -987,7 +1061,7 @@ pub(crate) fn eval_reborrow<'z3, 'tcx>(
     });
     #[cfg(not(rapx_has_phantom_deref))]
     let has_phantom_deref = false;
-    if !same_adt || has_phantom_deref {
+    if (!same_adt && !compatible_shared) || has_phantom_deref {
         state.unsupported_mir = true;
         return eval_fresh_value(state, dest_place, "reborrow");
     }

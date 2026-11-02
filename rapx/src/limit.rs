@@ -71,10 +71,10 @@ pub(crate) const HINTED_CALLEE_BLOCK_LIMIT: usize = 128;
 /// through the Rust call stack, so this caps nesting.
 pub(crate) const MAX_INLINE_DEPTH: usize = 5;
 
-/// Maximum number of trait impls inlined for a virtual (trait-object) call.
+/// Maximum number of trait impls or generic type combinations analyzed.
 /// Overridable via the `--trait-impl-limit` CLI flag. A call whose trait has
 /// more impls than this is truncated to the first `n` (an under-approximation).
-pub(crate) const TRAIT_IMPL_LIMIT: usize = 3;
+pub(crate) const TRAIT_IMPL_LIMIT: usize = 1;
 
 /// Runtime override for [`TRAIT_IMPL_LIMIT`], set from `--trait-impl-limit`.
 /// `0` means "not overridden" (the default above applies).

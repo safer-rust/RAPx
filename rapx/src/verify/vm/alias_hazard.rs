@@ -577,6 +577,7 @@ fn local_traces_to_self_field(
             }
         }
     }
+    seen.remove(&local);
     false
 }
 

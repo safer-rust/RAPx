@@ -622,7 +622,7 @@ unsound_tests! {
 fn unknown_unsound_01() {
     let output = run_with_args("verify_units/unknown_unsound_01", CMD_VERIFY_TARGETED);
     assert_contain(&output, "function: unsound_callsite_without_contract");
-    assert_contain(&output, "Unknown (missing safety contract)");
+    assert_contain(&output, "Unknown (missing safety contract:");
     assert_contain(&output, "result: UNKNOWN");
 }
 
@@ -643,10 +643,13 @@ fn unsupported_mir_01() {
     assert_contain(block, "  unsupported operations:");
     assert_contain(block, "TerminatorKind::InlineAsm");
     assert_contain(block, "asm!(\"xor {0:e}, {0:e}\"");
+    assert_contain(block, "unknown categories:");
+    assert_contain(block, "unsupported_mir:");
     let block = extract_block_after(&output, "function: unknown_external_call_without_mir");
     assert_contain(block, "Unknown (MIR unavailable)");
     assert_contain(block, "  unsupported operations:");
     assert_contain(block, "MIR unavailable: external_clobber");
+    assert_contain(block, "missing_mir:");
     let block = extract_block_after(&output, "function: unknown_fnmut_writes_argument");
     assert_contain(block, "Unknown (MIR unavailable)");
     assert_contain(block, "FnMut::call_mut");
@@ -656,7 +659,8 @@ fn unsupported_mir_01() {
 fn copy_uninit_unknown_01() {
     let output = run_with_args("verify_units/copy_uninit_unknown_01", CMD_VERIFY_TARGETED);
     assert_function_result(&output, "copy_uninit_into_slice", "UNKNOWN");
-    assert_contain(&output, "Init | Unknown (unsupported MIR)");
+    assert_contain(&output, "Init | Unknown (unsupported call effect)");
+    assert_contain(&output, "unsupported_effect:");
 }
 
 #[test]
@@ -670,6 +674,54 @@ fn copy_scratch_prefix_01() {
     let output = run_with_args("verify_units/copy_scratch_prefix_01", CMD_VERIFY_TARGETED);
     assert_function_result(&output, "copy_symbolic_prefix", "SOUND");
     assert_unproved_exclusive(&output, "copy_past_prefix", &["Init"]);
+}
+
+#[test]
+fn set_discriminant_01() {
+    let output = run_with_args("verify_units/set_discriminant_01", CMD_VERIFY_TARGETED);
+    assert_not_contain(&output, "verifier crashed");
+    assert_contain(&output, "SetDiscriminant incomplete payload");
+    assert_function_result(&output, "set_one_sound", "SOUND");
+    assert_function_result(&output, "set_negative_sound", "SOUND");
+    assert_function_result(&output, "direct_one_sound", "SOUND");
+    assert_function_result(&output, "direct_negative_sound", "SOUND");
+    assert_function_result(&output, "set_negative_branch_sound", "SOUND");
+    assert_function_result(&output, "set_deref_local_sound", "SOUND");
+    assert_function_result(&output, "set_deref_arg_sound", "SOUND");
+    assert_function_result(&output, "set_deref_arg_unsound", "UNSOUND");
+    assert_function_result(&output, "set_deref_payload_sound", "SOUND");
+    assert_function_result(&output, "set_deref_payload_incomplete_unknown", "UNKNOWN");
+    assert_function_result(&output, "set_deref_payload_local_sound", "SOUND");
+    assert_function_result(&output, "set_deref_payload_arg_unsound", "UNSOUND");
+    assert_function_result(&output, "set_deref_pair_partial_unknown", "UNKNOWN");
+    assert_function_result(&output, "set_payload_sound", "SOUND");
+    assert_function_result(&output, "set_payload_incomplete_unknown", "UNKNOWN");
+    assert_function_result(&output, "set_pair_sound", "SOUND");
+    assert_function_result(&output, "set_pair_partial_unknown", "UNKNOWN");
+    assert_function_result(&output, "set_payload_from_local_sound", "SOUND");
+    assert_function_result(&output, "set_payload_from_uninit_unknown", "UNKNOWN");
+    assert_function_result(&output, "set_payload_incomplete_branch_unknown", "UNKNOWN");
+    let branch = extract_block_after(&output, "function: set_payload_incomplete_branch_unknown");
+    assert_contain(branch, "unsafe checkpoint: bb2 -> expect_nine");
+    assert_unproved_exclusive(&output, "set_payload_replaces_old_unsound", &["ValidNum"]);
+    assert_unproved_exclusive(&output, "set_zero_unsound", &["ValidNum"]);
+}
+
+#[test]
+fn repeat_generic_01() {
+    let output = run_with_args("verify_units/repeat_generic_01", CMD_VERIFY_TARGETED);
+    assert_function_result(&output, "generic_repeat_sound", "SOUND");
+    assert_unproved_exclusive(&output, "generic_repeat_unsound", &["ValidNum"]);
+    assert_not_contain(&output, "Rvalue::Repeat (model incomplete)");
+}
+
+#[test]
+fn switch_int_128_01() {
+    let output = run_with_args("verify_units/switch_int_128_01", CMD_VERIFY_TARGETED);
+    assert_function_result(&output, "switch_u128_sound", "SOUND");
+    assert_function_result(&output, "switch_i128_sound", "SOUND");
+    assert_unproved_exclusive(&output, "switch_u128_unsound", &["ValidNum"]);
+    assert_not_contain(&output, "SwitchInt target width");
 }
 
 #[test]
@@ -787,7 +839,12 @@ fn intrinsic_coverage_01() {
 #[test]
 fn intrinsic_effects_01() {
     let output = run_with_args("verify_units/intrinsic_effects_01", CMD_VERIFY_TARGETED);
-    assert_result_counts(&output, [6, 2, 2]);
+    assert_result_counts(&output, [7, 3, 2]);
+    assert_function_result(&output, "sound_after_array_fill", "SOUND");
+    assert_function_result(&output, "unsound_after_array_fill", "UNSOUND");
+    let block = extract_block_after(&output, "function: unknown_after_symbolic_write_bytes");
+    assert_contain(block, "Unknown (unsupported call effect)");
+    assert_contain(block, "unsupported_effect: 1");
     let block = extract_block_after(&output, "function: unsound_after_write_bytes");
     assert_contain(block, "bb1 -> need_nonzero");
     assert_contain(block, "ValidNum | Failed");
@@ -799,7 +856,13 @@ fn intrinsic_effects_01() {
 #[test]
 fn intrinsic_flow_01() {
     let output = run_with_args("verify_units/intrinsic_flow_01", CMD_VERIFY_TARGETED);
-    assert_result_counts(&output, [16, 9, 1]);
+    assert_result_counts(&output, [19, 12, 1]);
+    assert_function_result(&output, "sound_thread_local_mut_write", "SOUND");
+    assert_function_result(&output, "unsound_thread_local_mut_write", "UNSOUND");
+    assert_function_result(&output, "unsound_thread_local_mut_initial", "UNSOUND");
+    assert_function_result(&output, "sound_thread_local_mut_inlined_write", "SOUND");
+    assert_function_result(&output, "unsound_thread_local_mut_inlined_write", "UNSOUND");
+    assert_function_result(&output, "sound_thread_local_wide_value", "SOUND");
     let block = extract_block_after(&output, "function: unknown_volatile_store_wrapper");
     assert_contain(block, "  unsupported operations:");
     assert_contain(block, "volatile_store");
@@ -820,6 +883,23 @@ fn rvalue_rare_sound_01() {
     let output = run_with_args("verify_units/rvalue_rare_sound_01", CMD_VERIFY_TARGETED);
     assert_result_counts(&output, [2, 2, 0]);
     assert_not_contain(&output, "verifier crashed");
+}
+
+#[test]
+fn repeat_projected_01() {
+    let output = run_with_args("verify_units/repeat_projected_01", CMD_VERIFY_TARGETED);
+    assert_function_result(&output, "symbolic_index_repeat_sound", "SOUND");
+    assert_function_result(&output, "symbolic_index_repeat_unsound", "UNSOUND");
+    assert_function_result(&output, "symbolic_index_repeat_overwrite_unsound", "UNSOUND");
+}
+
+#[test]
+fn reborrow_01() {
+    let output = run_with_args("verify_units/reborrow_01", CMD_VERIFY_TARGETED);
+    assert_function_result(&output, "shared_reborrow_sound", "SOUND");
+    assert_function_result(&output, "shared_reborrow_unsound", "UNSOUND");
+    assert_function_result(&output, "reference_field_reborrow_sound", "SOUND");
+    assert_function_result(&output, "reference_field_reborrow_unsound", "UNSOUND");
 }
 
 #[test]
@@ -1157,9 +1237,9 @@ fn trait_obj_inline_default_limit() {
     // Single-implementor trait: inlined, so the sole impl's `dangling()` pointer
     // proves NonNull.
     assert_function_result(&output, "single_impl_sound", "SOUND");
-    // Multi-implementor trait truncated to the first three impls (all dangling),
-    // so NonNull is proved; the null-returning `Dd` is dropped.
     assert_function_result(&output, "multi_impl_truncated", "SOUND");
+    let block = extract_block_after(&output, "function: multi_impl_truncated");
+    assert_contain(block, "result: SOUND (with mono limit)");
 }
 
 #[test]
@@ -1175,7 +1255,10 @@ fn trait_obj_inline_limit_four() {
 // Generic Monomorphization
 #[test]
 fn generic_mono() {
-    let output = run_with_args("verify_units/generic_mono_01", CMD_VERIFY_TARGETED);
+    let output = run_with_args(
+        "verify_units/generic_mono_01",
+        &["verify", "--mode", "targeted", "--trait-impl-limit", "2"],
+    );
     // The generic caller is monomorphized per impl and merged into one report:
     //   I = Dangling -> inlined `dangling()` -> NonNull Proved
     //   I = Null     -> inlined `null()`     -> NonNull Failed

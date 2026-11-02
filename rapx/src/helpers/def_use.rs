@@ -101,6 +101,7 @@ impl PlaceKey {
 #[derive(Clone, Debug, Default)]
 pub struct RelevantPlaces {
     pub places: FxHashSet<PlaceKey>,
+    pub enum_payload_writes: FxHashSet<(rustc_hir::def_id::DefId, Local, usize)>,
     pub locals: FxHashSet<Local>,
     pub saturated: FxHashSet<PlaceKey>,
     pub just_added: FxHashSet<PlaceKey>,
@@ -149,6 +150,7 @@ impl RelevantPlaces {
 
     /// Merge another relevance set into this one, tracking additions.
     pub fn extend(&mut self, other: RelevantPlaces) {
+        self.enum_payload_writes.extend(other.enum_payload_writes);
         for place in other.places {
             if self.places.insert(place.clone()) {
                 self.just_added.insert(place);

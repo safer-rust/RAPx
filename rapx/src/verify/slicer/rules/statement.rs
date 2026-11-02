@@ -1,7 +1,7 @@
 //! Backward relevance rules for MIR statements.
 
 use rustc_hir::def_id::DefId;
-use rustc_middle::mir::{BasicBlock, Body, Local, Operand, Place, Rvalue};
+use rustc_middle::mir::{BasicBlock, Body, Local, Operand, Place, ProjectionElem, Rvalue};
 
 use crate::analysis::dataflow::types::DataflowGraph;
 use crate::helpers::def_use::{RelevantPlaces, operand_uses};
@@ -27,6 +27,34 @@ impl<'tcx> BackwardSlicer<'tcx> {
     ) {
         let mut defs = RelevantPlaces::new();
         defs.insert_mir_place(place);
+        if place.projection.is_empty() {
+            relevant
+                .enum_payload_writes
+                .retain(|(owner, local, _)| *owner != def_id || *local != place.local);
+        }
+        let enum_field_start = usize::from(place.projection.first().is_some_and(|projection| {
+            matches!(projection.kind(), ProjectionElem::Deref)
+        }));
+        if place.projection.len() == enum_field_start + 2
+            && let ProjectionElem::Downcast(_, variant) = place.projection[enum_field_start].kind()
+            && matches!(place.projection[enum_field_start + 1].kind(), ProjectionElem::Field(..))
+            && (relevant
+                .enum_payload_writes
+                .contains(&(def_id, place.local, variant.as_usize()))
+                || (enum_field_start == 1
+                    && mir_utils::pointee_ty(body.local_decls[place.local].ty)
+                        .is_some_and(|ty| matches!(ty.kind(), rustc_middle::ty::TyKind::Adt(def, _) if def.is_enum()))))
+        {
+            let uses = collect_assignment_uses(rvalue, block, statement_index, flow, &defs);
+            items.push(RelevantItem::Statement {
+                global_block: None,
+                def_id,
+                block,
+                statement_index,
+            });
+            relevant.extend(uses);
+            return;
+        }
         // Keep the definition of a `needs_drop` local (an owner's construction
         // chain) so `Owning` can trace its field provenance.
         if keep_owner {

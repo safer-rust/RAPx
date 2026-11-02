@@ -3,11 +3,13 @@
 use rustc_middle::mir::{
     AggregateKind, CopyNonOverlapping, Local, Operand, Place, ProjectionElem, Rvalue,
 };
+use rustc_abi::VariantIdx;
+use rustc_middle::ty::TyKind;
 #[cfg(rapx_const_ext)]
 use rustc_middle::ty::consts::ConstExt;
 use z3::ast::{Ast, Bool, Int};
 
-use super::super::state::{AllocKind, Provenance, VmState, VmValue};
+use super::super::state::{AllocKind, Provenance, ValueSource, VmState, VmValue};
 use super::eval_rvalue;
 use crate::helpers::mir_utils;
 
@@ -28,6 +30,214 @@ pub(crate) fn exec_copy_nonoverlapping<'z3, 'tcx>(
     let target = state.value_of_operand(&copy.dst);
     let count = state.value_of_operand(&copy.count);
     state.copy_memory_values(&source, &target, &count);
+}
+
+pub(crate) fn exec_set_discriminant<'z3, 'tcx>(
+    state: &mut VmState<'z3, 'tcx>,
+    place: &Place<'tcx>,
+    variant_index: VariantIdx,
+) {
+    let ty = place.ty(state.body(), state.tcx).ty;
+    let TyKind::Adt(adt, _) = ty.kind() else {
+        state.record_unsupported("SetDiscriminant non-enum target");
+        return;
+    };
+    let deref = place.projection.len() == 1
+        && matches!(place.projection[0].kind(), ProjectionElem::Deref);
+    if (!place.projection.is_empty() && !deref) || !adt.is_enum() {
+        state.record_unsupported("SetDiscriminant target");
+        return;
+    }
+    let fields = &adt.variants()[variant_index].fields;
+    let payload_complete = fields.is_empty()
+        || state
+            .current_frame
+            .pending_enum_fields
+            .get(&place.local)
+            .is_some_and(|(variant, written)| {
+                *variant == variant_index
+                    && fields.iter().enumerate().all(|(index, _)| {
+                        written.contains(&index)
+                            && state
+                                .field_value(place.local, &[index])
+                                .is_some_and(|value| value.facts.init)
+                    })
+            });
+    let Some(term) = state.enum_discriminant_term(ty, variant_index) else {
+        state.record_unsupported("SetDiscriminant value");
+        return;
+    };
+    if !payload_complete {
+        state.record_unsupported("SetDiscriminant incomplete payload");
+    }
+    let value_term = if fields.is_empty() {
+        term.clone()
+    } else {
+        state.fresh_int("enum_value")
+    };
+    let mut value = VmValue::new(value_term, ty);
+    value.source = ValueSource::KnownDiscriminant(term);
+    value.facts.init = payload_complete;
+    if deref {
+        let Some(pointer) = state.local_value(place.local).cloned() else {
+            state.record_unsupported("SetDiscriminant pointer");
+            return;
+        };
+        if !pointer.facts.init || mir_utils::pointee_ty(pointer.ty) != Some(ty) {
+            state.record_unsupported("SetDiscriminant pointer");
+            return;
+        }
+        if !fields.is_empty() {
+            if !payload_complete {
+                state.record_unsupported("SetDiscriminant projected payload");
+                return;
+            }
+            if let Some(provenance) = &pointer.provenance
+                && provenance.offset.simplify().as_u64() == Some(0)
+                && state.alloc(provenance.alloc_id).element_ty.as_ty() == Some(ty)
+            {
+                let alloc_id = provenance.alloc_id;
+                state.clear_write_evidence(alloc_id);
+                state.store_value(alloc_id, ty, Vec::new(), value);
+                state.content_mut(alloc_id).facts.initialized = true;
+                let aliases = state.current_frame.pending_enum_fields.keys().copied().filter(|local| {
+                    state.current_frame.local_alloc.get(local).copied() == Some(alloc_id)
+                        || state.local_value(*local).and_then(|value| value.provenance_alloc_id())
+                            == Some(alloc_id)
+                }).collect::<Vec<_>>();
+                for local in aliases {
+                    state.current_frame.pending_enum_fields.remove(&local);
+                }
+                return;
+            }
+            state.record_unsupported("SetDiscriminant pointer target");
+            return;
+        }
+        let deferred_before = state.inline.deferred_field_writes.len();
+        let referent = state.find_local_by_address(&pointer.z3_term);
+        let written = state.write_through_pointer(&pointer, Vec::new(), value.clone());
+        if written || state.inline.deferred_field_writes.len() != deferred_before {
+            if let Some(local) = referent
+            && let Some(&alloc_id) = state.current_frame.local_alloc.get(&local)
+            {
+                state.content_mut(alloc_id).facts.initialized = true;
+            }
+            return;
+        }
+        if let Some(provenance) = &pointer.provenance
+            && provenance.offset.simplify().as_u64() == Some(0)
+            && matches!(state.alloc(provenance.alloc_id).kind, AllocKind::Object)
+            && state.alloc(provenance.alloc_id).element_ty.as_ty() == Some(ty)
+        {
+            let alloc_id = provenance.alloc_id;
+            state.clear_write_evidence(alloc_id);
+            let content = state.content_mut(alloc_id);
+            content.values.clear();
+            content.indexed_elements.clear();
+            content.indexed_elements_modified = true;
+            content.clear_byte_writes();
+            content.facts.initialized = true;
+            state.store_value(alloc_id, ty, Vec::new(), value);
+            return;
+        }
+        state.record_unsupported("SetDiscriminant pointer target");
+        return;
+    }
+    if !payload_complete || fields.is_empty() {
+        state.invalidate_field_descendants(place.local, &[]);
+    }
+    state.set_local(place.local, value);
+    let alloc_id = state.current_frame.local_alloc[&place.local];
+    state.content_mut(alloc_id).facts.initialized = payload_complete;
+    if !payload_complete {
+        state.possible_uninit_allocs.insert(alloc_id);
+    }
+}
+
+fn record_enum_field_write<'z3, 'tcx>(
+    state: &mut VmState<'z3, 'tcx>,
+    place: &Place<'tcx>,
+    rvalue: &Rvalue<'tcx>,
+) {
+    let start = usize::from(place.projection.first().is_some_and(|projection| {
+        matches!(projection.kind(), ProjectionElem::Deref)
+    }));
+    if place.projection.len() != start + 2 {
+        return;
+    }
+    let ProjectionElem::Downcast(_, variant) = place.projection[start].kind() else {
+        return;
+    };
+    let ProjectionElem::Field(field, _) = place.projection[start + 1].kind() else {
+        return;
+    };
+    let ty = place.ty(state.body(), state.tcx).ty;
+    let ty = if start == 0 {
+        state.body().local_decls[place.local].ty
+    } else {
+        mir_utils::pointee_ty(state.body().local_decls[place.local].ty).unwrap_or(ty)
+    };
+    if !matches!(ty.kind(), TyKind::Adt(adt, _) if adt.is_enum()) {
+        return;
+    }
+    if start == 1
+        && let Some(alloc_id) = state.local_value(place.local).and_then(|value| value.provenance_alloc_id())
+    {
+        let aliases = state.current_frame.pending_enum_fields.keys().copied().filter(|local| {
+            *local != place.local
+                && (state.current_frame.local_alloc.get(local).copied() == Some(alloc_id)
+                    || state.local_value(*local).and_then(|value| value.provenance_alloc_id())
+                        == Some(alloc_id))
+        }).collect::<Vec<_>>();
+        for local in aliases {
+            state.current_frame.pending_enum_fields.remove(&local);
+        }
+    }
+    let pending = state.current_frame.pending_enum_fields.get(&place.local);
+    let new_variant = pending.is_none_or(|(current, _)| *current != variant);
+    if new_variant {
+        let same_active = state
+            .local_value(place.local)
+            .and_then(|value| value.discriminant())
+            .zip(state.enum_discriminant_term(ty, variant))
+            .is_some_and(|(current, target)| current._eq(&target).simplify().as_bool() == Some(true));
+        if pending.is_some() || !same_active {
+            state.invalidate_field_descendants(place.local, &[]);
+            if start == 1
+                && let Some(pointer) = state.local_value(place.local)
+                && let Some(provenance) = &pointer.provenance
+                && provenance.offset.simplify().as_u64() == Some(0)
+                && state.alloc(provenance.alloc_id).element_ty.as_ty() == Some(ty)
+            {
+                let alloc_id = provenance.alloc_id;
+                state.content_mut(alloc_id).values.retain(|(view_ty, path), _| {
+                    *view_ty != ty || path.is_empty()
+                });
+            }
+        }
+        state
+            .current_frame
+            .pending_enum_fields
+            .insert(place.local, (variant, Default::default()));
+    }
+    let initialized = match rvalue {
+        Rvalue::Use(Operand::Constant(_), ..) => true,
+        Rvalue::Use(Operand::Copy(source) | Operand::Move(source), ..)
+            if source.projection.is_empty() =>
+        {
+            state
+                .local_value(source.local)
+                .is_some_and(|value| value.facts.init)
+        }
+        _ => false,
+    };
+    if let Some((_, fields)) = state.current_frame.pending_enum_fields.get_mut(&place.local) {
+        if initialized {
+            fields.insert(field.as_usize());
+        } else {
+            fields.remove(&field.as_usize());
+        }
+    }
 }
 
 pub(crate) fn exec_assign<'z3, 'tcx>(
@@ -112,7 +322,11 @@ pub(crate) fn exec_assign<'z3, 'tcx>(
 
     if !place.projection.is_empty() {
         state.record_projected_store(place, &value);
-        state.record_indexed_store(place, &value);
+        if !matches!(rvalue, Rvalue::Repeat(..))
+            || super::rvalue::symbolic_repeat_target(state, place).is_none()
+        {
+            state.record_indexed_store(place, &value);
+        }
     }
     value.facts.init = true;
 
@@ -161,7 +375,16 @@ pub(crate) fn exec_assign<'z3, 'tcx>(
             });
             state.set_local(place.local, wv);
         }
-        for (path, field) in source_fields {
+        for (path, mut field) in source_fields {
+            #[cfg(rapx_rvalue_has_reborrow)]
+            if matches!(rvalue, Rvalue::Reborrow(..))
+                && path.len() == 1
+                && let TyKind::Adt(adt, args) = state.body().local_decls[place.local].ty.kind()
+                && !adt.is_enum()
+                && let Some(field_def) = adt.non_enum_variant().fields.iter().nth(path[0])
+            {
+                field.ty = mir_utils::field_ty(state.tcx, field_def, args);
+            }
             state.set_field_value(place.local, path, field);
         }
         // Invalidate the moved-out source's owner-field provenance *after* the
@@ -180,6 +403,7 @@ pub(crate) fn exec_assign<'z3, 'tcx>(
             })
             .collect();
         if !field_indices.is_empty() {
+            record_enum_field_write(state, place, rvalue);
             let track_iter = field_indices == [0];
             state.set_field_value(place.local, field_indices.clone(), value);
             for (path, field) in source_fields {
@@ -241,6 +465,12 @@ pub(crate) fn exec_assign<'z3, 'tcx>(
                 }
                 return;
             } else {
+                let enum_field = place.projection.len() == 3
+                    && matches!(place.projection[1].kind(), ProjectionElem::Downcast(..))
+                    && matches!(place.projection[2].kind(), ProjectionElem::Field(..));
+                if enum_field {
+                    record_enum_field_write(state, place, rvalue);
+                }
                 let has_local_field = state.field_value(place.local, &field_indices).is_some();
                 let pointed = state.local_value(place.local).cloned();
                 let mut writes = vec![(field_indices.clone(), value)];
@@ -254,7 +484,18 @@ pub(crate) fn exec_assign<'z3, 'tcx>(
                         state.write_local_path(place.local, path.clone(), field.clone());
                     }
                     if let Some(pointed) = &pointed {
-                        state.write_through_pointer(pointed, path, field);
+                        if enum_field
+                            && let Some(provenance) = &pointed.provenance
+                            && provenance.offset.simplify().as_u64() == Some(0)
+                            && let Some(ty) = mir_utils::pointee_ty(pointed.ty)
+                            && state.alloc(provenance.alloc_id).element_ty.as_ty() == Some(ty)
+                        {
+                            state.clear_write_evidence(provenance.alloc_id);
+                            state.store_value(provenance.alloc_id, ty, path.clone(), field.clone());
+                            state.set_field_value(place.local, path, field);
+                        } else {
+                            state.write_through_pointer(pointed, path, field);
+                        }
                     }
                 }
                 if has_local_field && field_indices == [0] {
@@ -266,12 +507,14 @@ pub(crate) fn exec_assign<'z3, 'tcx>(
 }
 
 pub(crate) fn exec_storage_live<'z3, 'tcx>(state: &mut VmState<'z3, 'tcx>, local: Local) {
+    state.current_frame.pending_enum_fields.remove(&local);
     state.ensure_local_allocation(local);
     let alloc_id = state.current_frame.local_alloc[&local];
     state.alloc_mut(alloc_id).facts.dead = false;
 }
 
 pub(crate) fn exec_storage_dead<'z3, 'tcx>(state: &mut VmState<'z3, 'tcx>, local: Local) {
+    state.current_frame.pending_enum_fields.remove(&local);
     if let Some(alloc_id) = state.current_frame.local_alloc.get(&local).copied() {
         state.alloc_mut(alloc_id).facts.dead = true;
     }

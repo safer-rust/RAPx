@@ -490,6 +490,24 @@ pub(crate) fn emit_results_and_verdict<'tcx>(
             rap_info!("    - {detail}");
         }
     }
+    let mut categories = std::collections::BTreeMap::<&str, usize>::new();
+    for item in all_results {
+        if let CheckResult::Unknown(reason) = &item.result {
+            let mut item_categories = Vec::new();
+            reason.categories(&mut item_categories);
+            item_categories.sort_unstable();
+            item_categories.dedup();
+            for category in item_categories {
+                *categories.entry(category).or_default() += 1;
+            }
+        }
+    }
+    if !categories.is_empty() {
+        rap_info!("  unknown categories:");
+        for (category, count) in categories {
+            rap_info!("    - {category}: {count}");
+        }
+    }
 }
 
 pub(crate) fn emit_property_rows<'tcx>(_tcx: TyCtxt<'tcx>, results: &[&PropertyCheckResult<'tcx>]) {

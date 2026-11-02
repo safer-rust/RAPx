@@ -88,11 +88,13 @@ impl DataflowGraph {
                         stmt_idx,
                     );
                 }
-                PlaceElem::Downcast(symbol, _) => {
+                PlaceElem::Downcast(symbol, variant) => {
                     graph.add_node_edge(
                         src,
                         dst,
-                        EdgeOp::Downcast(symbol.unwrap().to_string()),
+                        EdgeOp::Downcast(symbol.map(|name| name.to_string()).unwrap_or_else(|| {
+                            format!("variant#{}", variant.as_usize())
+                        })),
                         block,
                         stmt_idx,
                     );

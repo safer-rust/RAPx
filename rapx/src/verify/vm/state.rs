@@ -5,12 +5,13 @@
 //! state at a program point.
 
 use crate::helpers::mir_utils;
+use rustc_abi::VariantIdx;
 use rustc_hir::def_id::DefId;
 #[cfg(rapx_const_ext)]
 use rustc_middle::ty::consts::ConstExt;
 use rustc_middle::{
     mir::{Body, ConstValue, Local, Operand, Place, ProjectionElem},
-    ty::{Region, Ty, TyCtxt, TyKind},
+    ty::{Region, Ty, TyCtxt, TyKind, TypingEnv},
 };
 use z3::{
     Context, SatResult, Solver,
@@ -476,7 +477,7 @@ pub(crate) enum ValueSource<'z3> {
     SliceLen(Int<'z3>),
     /// A compile-time `offset_of!` field offset.
     FieldOffset,
-    /// A discriminant from a directly constructed enum variant.
+    /// A known enum discriminant.
     KnownDiscriminant(Int<'z3>),
     /// A comparison result (`Eq`/`Ne`/`Le`/`Lt`/`Ge`/`Gt`): the operands and
     /// the direct boolean condition (`offset <= len`) carried alongside the
@@ -671,6 +672,7 @@ pub(crate) struct FrameState<'tcx> {
     /// `(AllocId, view_ty, path)` with the local's declared type as the view
     /// type), so there is no local-keyed value table here.
     pub(crate) local_alloc: FxHashMap<Local, AllocId>,
+    pub(crate) pending_enum_fields: FxHashMap<Local, (VariantIdx, FxHashSet<usize>)>,
 }
 
 /// The full symbolic execution state at a program point.
@@ -713,6 +715,7 @@ pub(crate) struct VmState<'z3, 'tcx> {
     /// `AllocId`.  Each unit carries its shape ([`Allocation`]) and its contents
     /// (per-byte state + per-allocation typed values).
     pub(crate) units: Vec<MemoryUnit<'z3, 'tcx>>,
+    pub(crate) thread_local_allocs: FxHashMap<DefId, AllocId>,
 
     /// Solver constraints and term caches accumulated along the current path.
     pub(crate) constraints: Constraints<'z3, 'tcx>,
@@ -725,6 +728,7 @@ pub(crate) struct VmState<'z3, 'tcx> {
     pub(crate) unsupported_mir: bool,
     /// MIR forms or call effects that this execution could not model.
     pub(crate) unsupported_details: FxHashSet<String>,
+    pub(crate) unsupported_effects: FxHashSet<String>,
     pub(crate) missing_mir: FxHashSet<String>,
     /// Branches that depend on a deliberately opaque call result.
     pub(crate) opaque_control_flow: FxHashSet<String>,
@@ -749,6 +753,56 @@ pub(crate) struct VmState<'z3, 'tcx> {
 }
 
 impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+    pub(crate) fn scalar_bits_term(&self, ty: Ty<'tcx>, bits: u128) -> Option<Int<'z3>> {
+        let bytes = self.size_of_ty(ty);
+        if bytes == 0 || bytes > 16 {
+            return None;
+        }
+        if bytes == 16 {
+            let low = Int::from_u64(self.z3_ctx, bits as u64);
+            let high = Int::from_u64(self.z3_ctx, (bits >> 64) as u64);
+            let two_64 = Int::add(
+                self.z3_ctx,
+                &[&Int::from_u64(self.z3_ctx, u64::MAX), &Int::from_u64(self.z3_ctx, 1)],
+            );
+            let unsigned = Int::add(
+                self.z3_ctx,
+                &[&Int::mul(self.z3_ctx, &[&high, &two_64]), &low],
+            );
+            return if matches!(ty.kind(), TyKind::Int(_)) && bits >> 127 != 0 {
+                let two_128 = Int::mul(self.z3_ctx, &[&two_64, &two_64]);
+                Some(Int::sub(self.z3_ctx, &[&unsigned, &two_128]))
+            } else {
+                Some(unsigned)
+            };
+        }
+        let width = bytes * 8;
+        if matches!(ty.kind(), TyKind::Int(_)) {
+            let shift = 64 - width;
+            let signed = ((bits as u64) << shift) as i64 >> shift;
+            Some(Int::from_i64(self.z3_ctx, signed))
+        } else {
+            u64::try_from(bits)
+                .ok()
+                .map(|unsigned| Int::from_u64(self.z3_ctx, unsigned))
+        }
+    }
+
+    pub(crate) fn enum_discriminant_term(
+        &self,
+        ty: Ty<'tcx>,
+        variant: VariantIdx,
+    ) -> Option<Int<'z3>> {
+        let TyKind::Adt(adt, _) = ty.kind() else {
+            return None;
+        };
+        if !adt.is_enum() {
+            return None;
+        }
+        let discr = adt.discriminant_for_variant(self.tcx, variant);
+        self.scalar_bits_term(discr.ty, discr.val)
+    }
+
     /// Create a fresh VM state for executing a path.
     pub(crate) fn new(
         z3_ctx: &'z3 Context,
@@ -777,15 +831,18 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 current_def_id: caller_def_id,
                 body: instance_body,
                 local_alloc: FxHashMap::default(),
+                pending_enum_fields: FxHashMap::default(),
             },
             caller_frames: Vec::default(),
             active_method_calls: Vec::default(),
             method_returns: Vec::default(),
             typed_values: FxHashSet::default(),
             units: Vec::default(),
+            thread_local_allocs: FxHashMap::default(),
             inline: InlineCtx::default(),
             unsupported_mir: false,
             unsupported_details: FxHashSet::default(),
+            unsupported_effects: FxHashSet::default(),
             missing_mir: FxHashSet::default(),
             opaque_control_flow: FxHashSet::default(),
             active_mir_location: None,
@@ -827,9 +884,18 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             .insert(format!("{location}: {operation}"));
     }
 
+    pub(crate) fn record_unsupported_effect(&mut self, effect: &str) {
+        self.unsupported_mir = true;
+        let location = self.active_mir_location.as_deref().unwrap_or("unknown location");
+        self.unsupported_effects
+            .insert(format!("{location}: {effect}"));
+    }
+
     pub(crate) fn record_missing_mir(&mut self, callee: DefId) {
         self.unsupported_mir = true;
-        self.missing_mir.insert(self.tcx.def_path_str(callee));
+        let location = self.active_mir_location.as_deref().unwrap_or("unknown location");
+        self.missing_mir
+            .insert(format!("{} at {location}", self.tcx.def_path_str(callee)));
     }
 
     pub(crate) fn record_opaque_control_flow(&mut self, operation: &str) {
@@ -850,6 +916,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             current_def_id: self.current_frame.current_def_id,
             body: self.frame_body.take(),
             local_alloc: std::mem::take(&mut self.current_frame.local_alloc),
+            pending_enum_fields: std::mem::take(&mut self.current_frame.pending_enum_fields),
         }
     }
 
@@ -885,6 +952,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// Bind a whole value to a MIR local (store it at `path == []` in the
     /// allocation backing the local, allocating that stack slot on demand).
     pub(crate) fn set_local(&mut self, local: Local, mut value: VmValue<'z3, 'tcx>) {
+        self.current_frame.pending_enum_fields.remove(&local);
         self.ensure_local_allocation(local);
         let alloc_id = self.current_frame.local_alloc[&local];
         self.possible_uninit_allocs.remove(&alloc_id);
@@ -1511,6 +1579,33 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         content.indexed_elements.push((index, value));
     }
 
+    pub(crate) fn store_repeated_indexed_elements(
+        &mut self,
+        alloc_id: AllocId,
+        base: Int<'z3>,
+        count: u64,
+        value: VmValue<'z3, 'tcx>,
+    ) {
+        let end = Int::add(self.z3_ctx, &[&base, &Int::from_u64(self.z3_ctx, count)]);
+        let retained = self.content(alloc_id)
+            .indexed_elements
+            .iter()
+            .filter(|(index, _)| {
+                let outside = Bool::or(self.z3_ctx, &[&index.lt(&base), &index.ge(&end)]);
+                self.path_implies(&outside)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut elements = retained;
+        for offset in 0..count {
+            let index = Int::add(self.z3_ctx, &[&base, &Int::from_u64(self.z3_ctx, offset)]);
+            elements.push((index, value.clone()));
+        }
+        let content = self.content_mut(alloc_id);
+        content.indexed_elements_modified = true;
+        content.indexed_elements = elements;
+    }
+
     pub(crate) fn path_implies(&self, condition: &Bool<'z3>) -> bool {
         if condition.simplify().as_bool() == Some(true) {
             return true;
@@ -1622,23 +1717,34 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             && matches!(args.type_at(0).kind(), TyKind::Ref(..)))
                         .then_some(0)
                     });
-                let term = if let Some(v) = int_val {
-                    if v < 0 {
-                        Int::from_i64(self.z3_ctx, v as i64)
-                    } else {
-                        Int::from_u64(self.z3_ctx, v as u64)
-                    }
-                } else {
-                    self.symbolic_const_term(&constant.const_)
-                };
                 let ty = constant.const_.ty();
+                let wide_literal = matches!(
+                    ty.kind(),
+                    TyKind::Int(rustc_middle::ty::IntTy::I128)
+                        | TyKind::Uint(rustc_middle::ty::UintTy::U128)
+                )
+                .then(|| {
+                    constant
+                        .const_
+                        .eval(self.tcx, TypingEnv::fully_monomorphized(), rustc_span::DUMMY_SP)
+                        .ok()
+                        .and_then(|value| value.try_to_scalar_int())
+                        .and_then(|scalar| self.scalar_bits_term(ty, scalar.to_bits(scalar.size())))
+                })
+                .flatten();
+                let term = wide_literal
+                    .or_else(|| int_val.and_then(|value| self.scalar_bits_term(ty, value as u128)))
+                    .unwrap_or_else(|| self.symbolic_const_term(&constant.const_));
+                let enum_discriminant = enum_variant.and_then(|variant| {
+                    self.enum_discriminant_term(ty, VariantIdx::from_usize(variant as usize))
+                });
                 VmValue {
                     z3_term: term,
                     ty,
                     provenance: None,
                     facts: ValueFacts::default(),
-                    source: if let Some(v) = enum_variant {
-                        ValueSource::KnownDiscriminant(Int::from_u64(self.z3_ctx, v))
+                    source: if let Some(term) = enum_discriminant {
+                        ValueSource::KnownDiscriminant(term)
                     } else if field_offset {
                         ValueSource::FieldOffset
                     } else {
@@ -1735,6 +1841,20 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return self.local_value(place.local).cloned();
         }
         let place_ty = place.ty(self.body(), self.tcx).ty;
+        if place.projection.len() == 3
+            && matches!(place.projection[0].kind(), ProjectionElem::Deref)
+            && matches!(place.projection[1].kind(), ProjectionElem::Downcast(..))
+            && let ProjectionElem::Field(field, _) = place.projection[2].kind()
+            && let Some(pointer) = self.local_value(place.local)
+            && let Some(provenance) = &pointer.provenance
+            && provenance.offset.simplify().as_u64() == Some(0)
+            && let Some(pointee) = mir_utils::pointee_ty(pointer.ty)
+            && matches!(pointee.kind(), TyKind::Adt(def, _) if def.is_enum())
+            && self.alloc(provenance.alloc_id).element_ty.as_ty() == Some(pointee)
+            && let Some(value) = self.load_value(provenance.alloc_id, pointee, &[field.as_usize()])
+        {
+            return Some(value.clone());
+        }
         let last_is_index = place.projection.last().is_some_and(|projection| {
             matches!(
                 projection.kind(),
@@ -1839,6 +1959,17 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             if let Some(value) = value {
                 return Some(value);
             }
+        }
+        if place.projection.len() == 1
+            && matches!(place.projection[0], ProjectionElem::Deref)
+            && matches!(place_ty.kind(), TyKind::Adt(def, _) if def.is_enum())
+            && let Some(pointer) = self.local_value(place.local)
+            && let Some(provenance) = &pointer.provenance
+            && provenance.offset.simplify().as_u64() == Some(0)
+            && self.alloc(provenance.alloc_id).element_ty.as_ty() == Some(place_ty)
+            && let Some(value) = self.load_value(provenance.alloc_id, place_ty, &[])
+        {
+            return Some(value.clone());
         }
         if place.projection.len() == 1
             && matches!(place.projection[0], ProjectionElem::Deref)

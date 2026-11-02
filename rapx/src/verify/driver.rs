@@ -23,6 +23,7 @@ use crate::compat::FxHashSet;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::BasicBlock;
 use rustc_middle::ty::TyCtxt;
+use std::time::Instant;
 
 use super::{
     contract::{PlaceBase, Property, PropertyArg},
@@ -388,7 +389,11 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
     ) -> Vec<PropertyCheckResult<'tcx>> {
         let mut results = Vec::new();
         let z3_ctx = VerifyEngine::new_z3_context();
-        let mut cache = VmCache::new(&z3_ctx);
+        let mut cache = if label == "type" {
+            VmCache::new_with_capacity(&z3_ctx, 512)
+        } else {
+            VmCache::new(&z3_ctx)
+        };
         for (checkpoint, tree) in self.build_invariant_trees(is_constructor, check_unwind) {
             rap_debug!(
                 "[rapx::verify] {label} invariant checkpoint bb{}: {} tree node(s)",
@@ -408,38 +413,67 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
                 if !is_return && targets_return_value(invariant) {
                     continue;
                 }
-                let check_results = self.engine.check_invariant_from_tree(
-                    &mut cache,
-                    self.target.def_id,
-                    &tree,
-                    checkpoint,
-                    invariant,
-                    entry_facts,
-                );
+                let filtered_tree = if label == "type" {
+                    type_invariant_subject(invariant).map(|local| {
+                        tree.filter_paths(|path| {
+                            type_invariant_subject_live(
+                                self.tcx,
+                                self.target.def_id,
+                                &tree,
+                                path,
+                                local,
+                            )
+                        })
+                    })
+                } else {
+                    None
+                };
+                let check_tree = filtered_tree.as_ref().unwrap_or(&tree);
+                if let Some(filtered_tree) = &filtered_tree {
+                    rap_debug!(
+                        "type invariant bb{} property {}: {} of {} paths remain live",
+                        checkpoint.block.as_usize(),
+                        property_index,
+                        filtered_tree.len(),
+                        tree.len()
+                    );
+                }
+                if check_tree.is_empty() {
+                    continue;
+                }
+                let filtered_paths = filtered_tree.as_ref().map(PathTree::to_vecs);
+                let check_paths = filtered_paths.as_ref().unwrap_or(&paths);
+                let check_results = if label == "type"
+                    && entry_facts.iter().any(|item| {
+                        matches!(item, RelevantItem::ContractFact { property } if property == invariant)
+                    })
+                    && stable_reference_metadata(self.tcx, self.target.def_id, invariant)
+                {
+                    rap_debug!(
+                        "reusing stable reference metadata for type invariant bb{} property {}",
+                        checkpoint.block.as_usize(),
+                        property_index
+                    );
+                    vec![(CheckResult::ProvedByRule, String::new()); check_tree.len()]
+                } else {
+                    self.engine.check_invariant_from_tree(
+                        &mut cache,
+                        self.target.def_id,
+                        check_tree,
+                        checkpoint,
+                        invariant,
+                        entry_facts,
+                    )
+                };
 
                 for (path_index, (result, _path_desc)) in check_results.into_iter().enumerate() {
-                    if label == "type"
-                        && paths.get(path_index).is_some_and(|path| {
-                            type_invariant_subject(invariant).is_some_and(|local| {
-                                !type_invariant_subject_live(
-                                    self.tcx,
-                                    self.target.def_id,
-                                    &tree,
-                                    path,
-                                    local,
-                                )
-                            })
-                        })
-                    {
-                        continue;
-                    }
-                    let path_description = paths
+                    let path_description = check_paths
                         .get(path_index)
                         .map(|path| {
                             format!(
                                 "{:?}",
                                 super::path::caller_blocks(
-                                    &tree,
+                                    check_tree,
                                     self.target.def_id,
                                     path.iter().copied(),
                                 )
@@ -682,12 +716,28 @@ impl<'tcx> VerifyRun<'tcx> {
         repeat_rounds: &[usize],
         skip_label: &str,
         all_results: &mut Vec<PropertyCheckResult<'tcx>>,
+        trait_impl_limited: &mut bool,
     ) -> Option<String> {
         for &repeat in repeat_rounds {
+            let enumeration_started = Instant::now();
             let driver =
                 VerifyDriver::new_with_repeat(self.tcx, target, repeat, !self.skip_invariant);
+            *trait_impl_limited |= driver.path_tree.is_trait_impl_limited();
+            rap_debug!(
+                "built path tree for {} repeat {} in {:?}",
+                skip_label,
+                repeat,
+                enumeration_started.elapsed()
+            );
+            let verification_started = Instant::now();
             match mir_utils::catch_panic(|| driver.verify_function()) {
                 Ok(report) => {
+                    rap_debug!(
+                        "checked {} repeat {} in {:?}",
+                        skip_label,
+                        repeat,
+                        verification_started.elapsed()
+                    );
                     rap_debug!("{}", report.describe());
                     all_results.extend(report.results);
                 }
@@ -709,6 +759,7 @@ impl<'tcx> VerifyRun<'tcx> {
         mut_ids: &[rustc_hir::def_id::DefId],
     ) {
         let mut all_results: Vec<PropertyCheckResult<'_>> = Vec::new();
+        let mut trait_impl_limited = false;
 
         let (_, repeat_rounds) = self.repeat_rounds_for_target(con_target);
         let crashed = self.run_repeat_rounds(
@@ -716,6 +767,7 @@ impl<'tcx> VerifyRun<'tcx> {
             &repeat_rounds,
             &format!("constructor {}", self.tcx.def_path_str(con_id)),
             &mut all_results,
+            &mut trait_impl_limited,
         );
 
         let read_name = short_fn_name(self.tcx, read_def_id);
@@ -736,7 +788,7 @@ impl<'tcx> VerifyRun<'tcx> {
         } else if all_results.is_empty() {
             rap_info!("  result: SOUND (no unsafe checkpoints)");
         } else {
-            emit_results_and_verdict(self.tcx, &all_results, false);
+            emit_results_and_verdict(self.tcx, &all_results, trait_impl_limited);
         }
         rap_info!("");
     }
@@ -752,12 +804,20 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
     fn run(&mut self) {
         crate::verify::contract::compound::register_compound_properties(self.tcx);
 
+        let collection_started = Instant::now();
+        rap_debug!("collecting verification targets");
         let mut collector = VerifyTargetCollector::collect_all(
             self.tcx,
             self.mode,
             self.skip_invariant,
             self.crate_filter.clone(),
             self.module_filter.clone(),
+        );
+        rap_debug!(
+            "collected {} function targets and {} trait targets in {:?}",
+            collector.function_targets.len(),
+            collector.trait_targets.len(),
+            collection_started.elapsed()
         );
 
         if self.debug_contracts {
@@ -774,8 +834,11 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
 
         for target in &collector.function_targets {
             let target_path = fmt_fn_path_with_bounds(self.tcx, target.def_id);
+            let target_started = Instant::now();
+            rap_debug!("verifying target {target_path}");
             let mut all_results: Vec<PropertyCheckResult<'_>> = Vec::new();
             let mut fn_crashed: Option<String>;
+            let mut trait_impl_limited = false;
 
             let (planned_repeat, repeat_rounds) = self.repeat_rounds_for_target(target);
 
@@ -784,7 +847,9 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                 &repeat_rounds,
                 &format!("function {}", target_path),
                 &mut all_results,
+                &mut trait_impl_limited,
             );
+            rap_debug!("verified function paths for {target_path} in {:?}", target_started.elapsed());
 
             if !target.struct_invariants.is_empty() && !self.skip_invariant {
                 let driver = VerifyDriver::new_with_repeat(
@@ -793,6 +858,7 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                     planned_repeat,
                     !self.skip_invariant,
                 );
+                trait_impl_limited |= driver.path_tree.is_trait_impl_limited();
                 match mir_utils::catch_panic(|| driver.verify_struct_invariants()) {
                     Ok(struct_report) => {
                         rap_debug!("{}", struct_report.describe());
@@ -825,6 +891,7 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                     planned_repeat,
                     !self.skip_invariant,
                 );
+                trait_impl_limited |= driver.path_tree.is_trait_impl_limited();
                 match mir_utils::catch_panic(|| driver.verify_type_invariants()) {
                     Ok(type_report) => {
                         rap_debug!("{}", type_report.describe());
@@ -862,7 +929,7 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                 entry.1 = fn_crashed;
             }
             entry.2 |= no_checkpoints;
-            entry.3 |= target.body.is_some();
+            entry.3 |= target.body.is_some() || trait_impl_limited;
         }
 
         let mut ordered: Vec<DefId> = by_fn.keys().copied().collect();
@@ -1560,6 +1627,60 @@ fn targets_return_value(property: &Property<'_>) -> bool {
     property
         .target_place()
         .is_some_and(|cp| matches!(cp.base, PlaceBase::Return))
+}
+
+fn stable_reference_metadata(tcx: TyCtxt<'_>, def_id: DefId, property: &Property<'_>) -> bool {
+    use rustc_middle::mir::{Rvalue, StatementKind, TerminatorKind};
+    use rustc_middle::ty::TyKind;
+
+    let Some(kind) = property.kind() else {
+        return false;
+    };
+    if !matches!(kind, PropertyKind::NonNull | PropertyKind::Align | PropertyKind::ValidNum) {
+        return false;
+    }
+    let Some(local) = type_invariant_subject(property) else {
+        return false;
+    };
+    let body = tcx.optimized_mir(def_id);
+    if local.as_usize() > body.arg_count {
+        return false;
+    }
+    let TyKind::Ref(_, inner, _) = body.local_decls[local].ty.kind() else {
+        return false;
+    };
+    if !matches!(inner.kind(), TyKind::Slice(_)) {
+        return false;
+    }
+    for block in body.basic_blocks.iter() {
+        for statement in &block.statements {
+            match &statement.kind {
+                StatementKind::Assign(assign) => {
+                    let (destination, value) = assign.as_ref();
+                    if destination.local == local && destination.projection.is_empty() {
+                        return false;
+                    }
+                    if matches!(value, Rvalue::Ref(_, _, place) | Rvalue::RawPtr(_, place)
+                        if place.local == local && place.projection.is_empty())
+                    {
+                        return false;
+                    }
+                }
+                StatementKind::StorageDead(dead) if *dead == local => return false,
+                _ => {}
+            }
+        }
+        match &block.terminator().kind {
+            TerminatorKind::Call { destination, .. }
+                if destination.local == local && destination.projection.is_empty() =>
+            {
+                return false;
+            }
+            TerminatorKind::InlineAsm { .. } => return false,
+            _ => {}
+        }
+    }
+    true
 }
 
 fn type_invariant_subject(property: &Property<'_>) -> Option<rustc_middle::mir::Local> {

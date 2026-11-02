@@ -24,7 +24,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return;
         }
         let Some(pointee_ty) = mir_utils::pointee_ty(target.ty) else {
-            self.unsupported_mir = true;
+            self.record_unsupported_effect("CopyMemory pointee type unavailable");
             return;
         };
         let local_target = self
@@ -65,11 +65,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         });
         let scratch_target = scratch_target_ty.is_some();
         if !local_target && !inline_target && !allocated_target && !scratch_target {
-            self.unsupported_mir = true;
+            self.record_unsupported_effect("CopyMemory target unavailable");
             return;
         }
         if concrete_count != Some(1) && target.provenance.is_none() {
-            self.unsupported_mir = true;
+            self.record_unsupported_effect("CopyMemory symbolic count without target provenance");
             return;
         }
         let source_value = self
@@ -102,7 +102,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 value.facts.init && (source.provenance.is_none() || concrete_count == Some(1))
             });
         if (slice_target || scratch_target) && !source_initialized {
-            self.unsupported_mir = true;
+            self.record_unsupported_effect("CopyMemory source initialization unavailable");
             return;
         }
         let mut copied = if concrete_count == Some(1) {
@@ -972,6 +972,80 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             Some(arr) => arr.select(i).as_int().expect("byte array range is Int").simplify(),
             None => self.uninit_byte(),
         }
+    }
+
+    pub(crate) fn fill_byte_array(&mut self, pointer: &VmValue<'z3, 'tcx>, byte: u64) -> bool {
+        let Some(ty) = mir_utils::pointee_ty(pointer.ty) else {
+            return false;
+        };
+        let TyKind::Array(element, _) = ty.kind() else {
+            return false;
+        };
+        if !matches!(element.kind(), TyKind::Uint(rustc_middle::ty::UintTy::U8)) {
+            return false;
+        }
+        let size = self.size_of_ty(ty) as usize;
+        if size == 0 {
+            return true;
+        }
+        if size > 256 {
+            return false;
+        }
+        let Some(provenance) = pointer.provenance.as_ref() else {
+            return false;
+        };
+        let Some(offset) = provenance.offset.simplify().as_u64() else {
+            return false;
+        };
+        let Some(end) = offset.checked_add(size as u64) else {
+            return false;
+        };
+        if !self
+            .allocation_size(provenance.alloc_id)
+            .simplify()
+            .as_u64()
+            .is_some_and(|allocation_size| end <= allocation_size)
+        {
+            return false;
+        }
+        let alloc_id = provenance.alloc_id;
+        let local_path = self.current_frame.local_alloc.iter().find_map(|(local, id)| {
+            if *id != alloc_id {
+                return None;
+            }
+            let root_ty = self.body().local_decls[*local].ty;
+            let path = if root_ty == ty && offset == 0 {
+                Some(Vec::new())
+            } else {
+                self.field_path_at_offset(root_ty, offset, ty)
+            }?;
+            Some((*local, path))
+        });
+        let content = self.content_mut(alloc_id);
+        content.values.clear();
+        content.indexed_elements.clear();
+        content.indexed_elements_modified = true;
+        content.copied_prefix = None;
+        let value = Int::from_u64(self.z3_ctx, byte);
+        for index in offset..end {
+            self.record_byte_value(alloc_id, index as usize, value.clone());
+        }
+        if let Some((local, path)) = local_path {
+            for index in 0..size {
+                let mut element_path = path.clone();
+                element_path.push(index);
+                let mut element_value = VmValue::new(value.clone(), *element);
+                element_value.facts.init = true;
+                self.write_local_path(local, element_path, element_value);
+            }
+            if path.is_empty() {
+                self.content_mut(alloc_id).indexed_elements_modified = false;
+            }
+        }
+        if offset == 0 && end == self.allocation_size(alloc_id).simplify().as_u64().unwrap_or(0) {
+            self.content_mut(alloc_id).facts.initialized = true;
+        }
+        true
     }
 
     /// Write `byte[i] = v`.

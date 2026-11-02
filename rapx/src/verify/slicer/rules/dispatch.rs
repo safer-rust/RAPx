@@ -2,7 +2,7 @@
 
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{
-    BasicBlock, Body, Local, NonDivergingIntrinsic, Operand, Place, Statement, StatementKind,
+    BasicBlock, Body, Local, NonDivergingIntrinsic, Operand, Place, ProjectionElem, Statement, StatementKind,
     Terminator, TerminatorKind,
 };
 
@@ -59,6 +59,32 @@ pub(super) fn apply_statement(ctx: &mut StatementContext<'_, '_>) {
                 ctx.keep_owner,
             );
             "Assign"
+        }
+        StatementKind::SetDiscriminant { place, variant_index } => {
+            ctx.items.push(RelevantItem::Statement {
+                global_block: None,
+                def_id: ctx.def_id,
+                block: ctx.block,
+                statement_index: ctx.statement_index,
+            });
+            if !place.projection.is_empty() {
+                ctx.relevant.insert_mir_place(place);
+            }
+            if (place.projection.is_empty()
+                || (place.projection.len() == 1
+                    && matches!(place.projection[0].kind(), ProjectionElem::Deref)))
+                && let rustc_middle::ty::TyKind::Adt(adt, _) =
+                    place.ty(ctx.body, ctx.slicer.tcx).ty.kind()
+                && adt.is_enum()
+                && !adt.variants()[*variant_index].fields.is_empty()
+            {
+                ctx.relevant.enum_payload_writes.insert((
+                    ctx.def_id,
+                    place.local,
+                    variant_index.as_usize(),
+                ));
+            }
+            "SetDiscriminant"
         }
         StatementKind::StorageDead(local) => {
             statement::visit_storage_dead(

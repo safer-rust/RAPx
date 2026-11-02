@@ -222,6 +222,8 @@ impl PropertyChecker {
         if vm_state.unsupported_mir {
             let mut details: Vec<_> = vm_state.unsupported_details.iter().cloned().collect();
             details.sort();
+            let mut effect_details: Vec<_> = vm_state.unsupported_effects.iter().cloned().collect();
+            effect_details.sort();
             let mut missing_mir: Vec<_> = vm_state.missing_mir.iter().cloned().collect();
             missing_mir.sort();
             let mut opaque_control_flow: Vec<_> =
@@ -234,11 +236,14 @@ impl PropertyChecker {
             if !opaque_control_flow.is_empty() {
                 reasons.push(UnknownReason::OpaqueControlFlow(opaque_control_flow));
             }
-            if details.is_empty() && reasons.is_empty() {
+            if details.is_empty() && effect_details.is_empty() && reasons.is_empty() {
                 details.push("MIR operation could not be modeled (location unavailable)".to_string());
             }
             if !details.is_empty() {
                 reasons.push(UnknownReason::UnsupportedMir(details));
+            }
+            if !effect_details.is_empty() {
+                reasons.push(UnknownReason::UnsupportedEffect(effect_details));
             }
             return CheckResult::Unknown(if reasons.len() == 1 {
                 reasons.pop().unwrap()
@@ -318,7 +323,12 @@ impl PropertyChecker {
             Property::And(_) => self.check_and(vm_state, checkpoint, property),
             Property::Atom(atom) => {
                 if atom.kind == PropertyKind::Unknown {
-                    return CheckResult::Unknown(UnknownReason::MissingContract);
+                    let callee = checkpoint.callee_name(vm_state.tcx);
+                    return CheckResult::Unknown(UnknownReason::MissingContract(format!(
+                        "{callee} at {} bb{}",
+                        vm_state.tcx.def_path_str(checkpoint.caller),
+                        checkpoint.block.as_usize(),
+                    )));
                 }
                 let target_arg = property.args().first().and_then(|arg| match arg {
                     PropertyArg::Expr(ContractExpr::Place(place)) => match place.base {

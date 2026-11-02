@@ -13,6 +13,7 @@ pub(crate) fn exec_switch_int<'z3, 'tcx>(
     switch_succ: Option<BasicBlock>,
 ) {
     let discr_val = state.value_of_operand(discr);
+    let discr_ty = discr.ty(&state.body().local_decls, state.tcx);
     let known_value = match &discr_val.source {
         ValueSource::Comparison { cond, .. } => cond.simplify().as_bool().map(u64::from),
         ValueSource::CallsiteConst | ValueSource::KnownDiscriminant(_) => {
@@ -47,7 +48,10 @@ pub(crate) fn exec_switch_int<'z3, 'tcx>(
     if let Some(chosen) = switch_succ {
         for (value, target) in targets.iter() {
             if target == chosen {
-                let val_term = Int::from_u64(state.z3_ctx, value as u64);
+                let Some(val_term) = state.scalar_bits_term(discr_ty, value) else {
+                    state.record_unsupported("SwitchInt target width");
+                    return;
+                };
                 state
                     .constraints
                     .assertions
@@ -65,7 +69,10 @@ pub(crate) fn exec_switch_int<'z3, 'tcx>(
         }
         if targets.otherwise() == chosen {
             for (value, _) in targets.iter() {
-                let val_term = Int::from_u64(state.z3_ctx, value as u64);
+                let Some(val_term) = state.scalar_bits_term(discr_ty, value) else {
+                    state.record_unsupported("SwitchInt target width");
+                    return;
+                };
                 state
                     .constraints
                     .assertions

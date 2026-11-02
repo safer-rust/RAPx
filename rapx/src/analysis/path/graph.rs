@@ -251,7 +251,9 @@ fn build_function_info<'tcx>(
                                 .try_eval_bool(tcx, typing_env)
                                 .map(|b| if b { 1 } else { 0 }),
                             TyKind::Int(_) | TyKind::Uint(_) => {
-                                c.const_.try_eval_bits(tcx, typing_env).map(|v| v as usize)
+                                c.const_
+                                    .try_eval_bits(tcx, typing_env)
+                                    .and_then(|v| usize::try_from(v).ok())
                             }
                             _ => None,
                         };
@@ -324,7 +326,8 @@ fn build_function_info<'tcx>(
                                     let typing_env = TypingEnv::post_analysis(tcx, def_id);
                                     c.const_
                                         .try_eval_bits(tcx, typing_env)
-                                        .map(|v| Rhs::Const(v as usize))
+                                        .and_then(|v| usize::try_from(v).ok())
+                                        .map(Rhs::Const)
                                 }
                                 Operand::Copy(r) | Operand::Move(r)
                                     if r.projection.is_empty() =>
@@ -364,7 +367,8 @@ fn build_function_info<'tcx>(
                                     let typing_env = TypingEnv::post_analysis(tcx, def_id);
                                     c.const_
                                         .try_eval_bits(tcx, typing_env)
-                                        .map(|v| Rhs::Const(v as usize))
+                                        .and_then(|v| usize::try_from(v).ok())
+                                        .map(Rhs::Const)
                                 }
                                 Operand::Copy(r) | Operand::Move(r)
                                     if r.projection.is_empty() =>
@@ -409,7 +413,9 @@ fn build_function_info<'tcx>(
                             let divisor = match rhs {
                                 Operand::Constant(c) => {
                                     let typing_env = TypingEnv::post_analysis(tcx, def_id);
-                                    c.const_.try_eval_bits(tcx, typing_env).map(|v| v as usize)
+                                    c.const_
+                                        .try_eval_bits(tcx, typing_env)
+                                        .and_then(|v| usize::try_from(v).ok())
                                 }
                                 _ => None,
                             };
@@ -1299,6 +1305,15 @@ impl<'tcx> PathGraph<'tcx> {
 
                 if !all_targets.contains(&next) {
                     return false;
+                }
+
+                let discr_ty = discr.ty(&self.cfg.body().local_decls, self.cfg.tcx);
+                if matches!(
+                    discr_ty.kind(),
+                    TyKind::Int(rustc_middle::ty::IntTy::I128)
+                        | TyKind::Uint(rustc_middle::ty::UintTy::U128)
+                ) {
+                    return true;
                 }
 
                 // Try to evaluate a concrete constant for the discriminant.

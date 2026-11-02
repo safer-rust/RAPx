@@ -24,6 +24,7 @@ pub(crate) struct CallSiteIndex<'tcx> {
     callee_bodies: CalleeBodies<'tcx>,
     bindings: FxHashMap<usize, CallBinding>,
     pub(crate) entries: FxHashMap<usize, Vec<usize>>,
+    trait_impl_limited: bool,
 }
 
 impl<'tcx> CallSiteIndex<'tcx> {
@@ -52,10 +53,14 @@ impl<'tcx> CallSiteIndex<'tcx> {
             callee_bodies,
             bindings: FxHashMap::default(),
             entries: FxHashMap::default(),
+            trait_impl_limited: false,
         }
     }
 
     pub(crate) fn attach_metadata(self, tree: &mut PathTree) {
+        if self.trait_impl_limited {
+            tree.mark_trait_impl_limited();
+        }
         let mut parents = FxHashMap::default();
         for (&call_block, entries) in &self.entries {
             let parent = call_block - self.blocks[call_block].1;
@@ -223,7 +228,11 @@ impl<'tcx> CallSiteIndex<'tcx> {
                         .is_some_and(|instance| mir_utils::instance_def_id(self.tcx, instance).1);
                     if is_virtual {
                         if !registry_handled {
-                            for candidate in mir_utils::trait_impl_candidates(self.tcx, base_callee)
+                            let candidates = mir_utils::trait_impl_candidates(self.tcx, base_callee);
+                            if candidates.len() > crate::limit::trait_impl_limit() {
+                                self.trait_impl_limited = true;
+                            }
+                            for candidate in candidates
                                 .into_iter()
                                 .take(crate::limit::trait_impl_limit())
                             {
@@ -246,23 +255,34 @@ impl<'tcx> CallSiteIndex<'tcx> {
                         self.tcx.optimized_mir(callee).return_ty().kind(),
                         TyKind::Adt(..)
                     );
+                let generic_callee = self.tcx.is_mir_available(callee)
+                    && self.tcx.generics_of(callee).requires_monomorphization(self.tcx);
+                let unmodeled_generic_call = (generic_callee
+                    || (returns_adt && (cross_crate || is_trait_method)))
+                    && mir_utils::has_unmodeled_generic_call(self.tcx, callee);
+                let generic_trait_call = !cross_crate && generic_callee && unmodeled_generic_call;
                 let instantiate = self.tcx.is_mir_available(callee)
                     && ((cross_crate && crate::def_ids::other_api::is_slice_get(Some(base_callee)))
                         || (returns_adt
                             && (cross_crate || is_trait_method)
-                            && (mir_utils::has_unmodeled_generic_call(self.tcx, callee)
-                                || generic_const_call))
+                            && (unmodeled_generic_call || generic_const_call))
+                        || generic_trait_call
                         || self.tcx.optimized_mir(callee).basic_blocks.len() == 1);
                 let instance = instantiate
                     .then(|| mir_utils::resolve_callee_instance(self.tcx, caller, func))
                     .flatten()
                     .filter(|instance| {
+                        let has_concrete_arg = instance
+                            .args
+                            .types()
+                            .any(|ty| !mir_utils::ty_has_type_param(ty));
                         matches!(instance.def, InstanceKind::Item(_))
                             && instance.def_id() == callee
                             && !instance.args.is_empty()
                             && instance.args.types().all(|ty| {
                                 !mir_utils::ty_has_type_param(ty)
                                     || layout_constant
+                                    || (generic_trait_call && has_concrete_arg)
                                     || (cross_crate
                                         && returns_adt
                                         && matches!(ty.kind(), TyKind::Adt(..)))

@@ -42,6 +42,21 @@ fn cargo_check(dir: &Utf8Path) {
     // arguments are stored in env variable and read by rapx
     cmd.env("RAPXFLAGS", rap_args.join(" "));
 
+    if let Some(mut flags) = env::var_os("CARGO_ENCODED_RUSTFLAGS") {
+        if !flags.is_empty() {
+            flags.push("\x1f");
+        }
+        flags.push("-Zalways-encode-mir");
+        cmd.env("CARGO_ENCODED_RUSTFLAGS", flags);
+    } else {
+        let mut flags = env::var_os("RUSTFLAGS").unwrap_or_default();
+        if !flags.is_empty() {
+            flags.push(" ");
+        }
+        flags.push("-Zalways-encode-mir");
+        cmd.env("RUSTFLAGS", flags);
+    }
+
     // Invoke actual cargo for the job, but with different flags.
     let cargo_rap_path = args::current_exe_path();
     cmd.env("RUSTC_WRAPPER", cargo_rap_path);

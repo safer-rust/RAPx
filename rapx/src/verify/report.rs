@@ -21,13 +21,14 @@ pub(crate) enum UnknownReason {
     /// executed and the memory state is incomplete.
     InlineDepthExceeded,
     UnsupportedMir(Vec<String>),
+    UnsupportedEffect(Vec<String>),
     MissingMir(Vec<String>),
     OpaqueControlFlow(Vec<String>),
     IncompleteInlineBranch,
     UnmodeledIntrinsic(String),
     CallbackMayInvalidate,
     UnresolvedUnsafeCall,
-    MissingContract,
+    MissingContract(String),
     UnsupportedProperty,
     /// A checker cannot resolve a value or supported property shape.
     Unimplemented,
@@ -35,6 +36,30 @@ pub(crate) enum UnknownReason {
 }
 
 impl UnknownReason {
+    pub(crate) fn categories(&self, out: &mut Vec<&'static str>) {
+        match self {
+            Self::SmtUnknown(reason) if reason == "timeout" => out.push("smt_timeout"),
+            Self::SmtUnknown(_) => out.push("smt_unknown"),
+            Self::InlineDepthExceeded => out.push("inline_depth"),
+            Self::UnsupportedMir(_) => out.push("unsupported_mir"),
+            Self::UnsupportedEffect(_) => out.push("unsupported_effect"),
+            Self::MissingMir(_) => out.push("missing_mir"),
+            Self::OpaqueControlFlow(_) => out.push("opaque_control_flow"),
+            Self::IncompleteInlineBranch => out.push("incomplete_inline_branch"),
+            Self::UnmodeledIntrinsic(_) => out.push("unmodeled_intrinsic"),
+            Self::CallbackMayInvalidate => out.push("callback_invalidation"),
+            Self::UnresolvedUnsafeCall => out.push("unresolved_unsafe_call"),
+            Self::MissingContract(_) => out.push("missing_contract"),
+            Self::UnsupportedProperty => out.push("unsupported_property"),
+            Self::Unimplemented => out.push("unresolved_value"),
+            Self::Multiple(reasons) => {
+                for reason in reasons {
+                    reason.categories(out);
+                }
+            }
+        }
+    }
+
     pub(crate) fn from_solver(solver: &z3::Solver<'_>) -> Self {
         Self::SmtUnknown(
             solver
@@ -49,13 +74,14 @@ impl UnknownReason {
             Self::SmtUnknown(reason) => format!("SMT: {reason}"),
             Self::InlineDepthExceeded => "inline depth".to_string(),
             Self::UnsupportedMir(_) => "unsupported MIR".to_string(),
+            Self::UnsupportedEffect(_) => "unsupported call effect".to_string(),
             Self::MissingMir(_) => "MIR unavailable".to_string(),
             Self::OpaqueControlFlow(_) => "opaque call controls branch".to_string(),
             Self::IncompleteInlineBranch => "incomplete inline branch".to_string(),
             Self::UnmodeledIntrinsic(_) => "unmodeled intrinsic".to_string(),
             Self::CallbackMayInvalidate => "callback may invalidate allocation".to_string(),
             Self::UnresolvedUnsafeCall => "unresolved unsafe call".to_string(),
-            Self::MissingContract => "missing safety contract".to_string(),
+            Self::MissingContract(callee) => format!("missing safety contract: {callee}"),
             Self::UnsupportedProperty => "unsupported property".to_string(),
             Self::Unimplemented => "unresolved value or unsupported shape".to_string(),
             Self::Multiple(reasons) => reasons
@@ -69,6 +95,7 @@ impl UnknownReason {
     pub(crate) fn unsupported_details(&self, out: &mut Vec<String>) {
         match self {
             Self::UnsupportedMir(details) => out.extend(details.iter().cloned()),
+            Self::UnsupportedEffect(details) => out.extend(details.iter().cloned()),
             Self::MissingMir(callees) => {
                 out.extend(
                     callees
@@ -78,6 +105,7 @@ impl UnknownReason {
             }
             Self::OpaqueControlFlow(details) => out.extend(details.iter().cloned()),
             Self::UnmodeledIntrinsic(name) => out.push(format!("intrinsic: {name}")),
+            Self::MissingContract(callee) => out.push(format!("missing contract: {callee}")),
             Self::Multiple(reasons) => {
                 for reason in reasons {
                     reason.unsupported_details(out);

@@ -34,6 +34,20 @@ pub fn unknown_after_symbolic_write_bytes(byte: u8) {
 }
 
 #[rapx::verify]
+pub fn sound_after_array_fill() {
+    let mut bytes = [0_u8; 8];
+    unsafe { std::intrinsics::write_bytes(&mut bytes, 0xff, 1) };
+    unsafe { need_nonzero(bytes[0] as u32) };
+}
+
+#[rapx::verify]
+pub fn unsound_after_array_fill() {
+    let mut bytes = [1_u8; 8];
+    unsafe { std::intrinsics::write_bytes(&mut bytes, 0, 1) };
+    unsafe { need_nonzero(bytes[0] as u32) };
+}
+
+#[rapx::verify]
 pub fn sound_raw_eq_same_pointer() {
     let value = 1_u64;
     let equal = unsafe { std::intrinsics::raw_eq(&value, &value) };

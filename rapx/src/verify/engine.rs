@@ -46,6 +46,7 @@ enum GoalItemKey<'tcx> {
 pub(crate) struct VmCache<'z3, 'tcx> {
     context: &'z3 z3::Context,
     states: FxHashMap<Vec<GoalItemKey<'tcx>>, CachedGoal<'z3, 'tcx>>,
+    max_entries: usize,
 }
 
 struct CachedGoal<'z3, 'tcx> {
@@ -57,9 +58,14 @@ const VM_CACHE_MAX_ENTRIES: usize = 128;
 
 impl<'z3, 'tcx> VmCache<'z3, 'tcx> {
     pub(crate) fn new(context: &'z3 z3::Context) -> Self {
+        Self::new_with_capacity(context, VM_CACHE_MAX_ENTRIES)
+    }
+
+    pub(crate) fn new_with_capacity(context: &'z3 z3::Context, max_entries: usize) -> Self {
         Self {
             context,
             states: FxHashMap::default(),
+            max_entries,
         }
     }
 
@@ -69,7 +75,7 @@ impl<'z3, 'tcx> VmCache<'z3, 'tcx> {
         goal: ProofGoal<'tcx>,
     ) -> &CachedGoal<'z3, 'tcx> {
         let key = goal_key(&goal.items);
-        if self.states.len() >= VM_CACHE_MAX_ENTRIES && !self.states.contains_key(&key) {
+        if self.states.len() >= self.max_entries && !self.states.contains_key(&key) {
             self.states.clear();
         }
         self.states.entry(key).or_insert_with(|| {

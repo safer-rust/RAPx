@@ -22,6 +22,10 @@ pub(super) fn exec_statement<'z3, 'tcx>(state: &mut VmState<'z3, 'tcx>, stmt: &S
             statement::exec_assign(state, place, value);
             "Assign"
         }
+        StatementKind::SetDiscriminant { place, variant_index } => {
+            statement::exec_set_discriminant(state, place, *variant_index);
+            "SetDiscriminant"
+        }
         StatementKind::StorageLive(local) => {
             statement::exec_storage_live(state, *local);
             "StorageLive"
@@ -52,7 +56,11 @@ pub(super) fn exec_statement<'z3, 'tcx>(state: &mut VmState<'z3, 'tcx>, stmt: &S
             "Unsupported"
         }
     };
-    if !was_unsupported && state.unsupported_mir && state.unsupported_details.is_empty() {
+    if !was_unsupported
+        && state.unsupported_mir
+        && state.unsupported_details.is_empty()
+        && state.unsupported_effects.is_empty()
+    {
         state.record_unsupported(&format!(
             "StatementKind::{name} (model incomplete): {:?}",
             stmt.kind
@@ -109,6 +117,7 @@ pub(super) fn exec_terminator<'z3, 'tcx>(
     if !was_unsupported
         && state.unsupported_mir
         && state.unsupported_details.is_empty()
+        && state.unsupported_effects.is_empty()
         && state.missing_mir.len() == previous_missing_mir
         && state.opaque_control_flow.is_empty()
     {
@@ -165,7 +174,10 @@ pub(super) fn eval_rvalue<'z3, 'tcx>(
             rvalue::eval_wrap_unsafe_binder(state, place, operand),
         ),
         #[cfg(rapx_rvalue_has_reborrow)]
-        Rvalue::Reborrow(_, _, source) => ("Reborrow", rvalue::eval_reborrow(state, place, source)),
+        Rvalue::Reborrow(_, mutability, source) => (
+            "Reborrow",
+            rvalue::eval_reborrow(state, place, source, *mutability),
+        ),
         _ => {
             let rendered = format!("{rv:?}");
             state.record_unsupported(&format!("Rvalue::{}: {rendered}", mir_variant(&rendered)));
@@ -175,7 +187,11 @@ pub(super) fn eval_rvalue<'z3, 'tcx>(
             )
         }
     };
-    if !was_unsupported && state.unsupported_mir && state.unsupported_details.is_empty() {
+    if !was_unsupported
+        && state.unsupported_mir
+        && state.unsupported_details.is_empty()
+        && state.unsupported_effects.is_empty()
+    {
         state.record_unsupported(&format!("Rvalue::{name} (model incomplete): {rv:?}"));
     }
     log::trace!("vm rvalue rule: {name}");

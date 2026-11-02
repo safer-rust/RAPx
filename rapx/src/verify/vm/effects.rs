@@ -594,7 +594,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             } => {
                 let ty = self.body().local_decls[dest].ty;
                 let Some((left, right)) = args.get(*left_arg).zip(args.get(*right_arg)) else {
-                    self.unsupported_mir = true;
+                    self.record_unsupported_effect("ReturnRawEq arguments unavailable");
                     return;
                 };
                 if left.z3_term == right.z3_term && left.ty == right.ty {
@@ -627,11 +627,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             CallEffect::ReturnExactDiv { lhs_arg, rhs_arg } => {
                 let ty = self.body().local_decls[dest].ty;
                 let Some((lhs, rhs)) = args.get(*lhs_arg).zip(args.get(*rhs_arg)) else {
-                    self.unsupported_mir = true;
+                    self.record_unsupported_effect("ReturnExactDiv arguments unavailable");
                     return;
                 };
                 if !matches!(ty.kind(), TyKind::Uint(_)) {
-                    self.unsupported_mir = true;
+                    self.record_unsupported_effect("ReturnExactDiv result type unsupported");
                     return;
                 }
                 self.set_local(dest, VmValue::new(lhs.z3_term.div(&rhs.z3_term), ty));
@@ -940,11 +940,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 right_arg,
             } => {
                 let Some((left, right)) = args.get(*left_arg).zip(args.get(*right_arg)) else {
-                    self.unsupported_mir = true;
+                    self.record_unsupported_effect("SwapMemory arguments unavailable");
                     return;
                 };
                 if !self.swap_memory_values(left, right) {
-                    self.unsupported_mir = true;
+                    self.record_unsupported_effect("SwapMemory target unsupported");
                 }
             }
             CallEffect::FillBytes {
@@ -957,7 +957,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     args.get(*byte_arg),
                     args.get(*count_arg),
                 ) else {
-                    self.unsupported_mir = true;
+                    self.record_unsupported_effect("FillBytes arguments unavailable");
                     return;
                 };
                 let concrete_count = count.z3_term.simplify().as_u64();
@@ -968,7 +968,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     mir_utils::pointee_ty(pointer.ty),
                     byte.z3_term.simplify().as_u64(),
                 ) else {
-                    self.unsupported_mir = true;
+                    self.record_unsupported_effect("FillBytes pointee type or byte value unavailable");
                     return;
                 };
                 let local = self
@@ -985,12 +985,30 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                     .local_value(Local::from_usize(i + 1))
                                     .is_some_and(|value| value.z3_term == pointer.z3_term)
                         });
+                if concrete_count == Some(1)
+                    && byte_value <= u8::MAX as u64
+                    && self.fill_byte_array(pointer, byte_value)
+                {
+                    return;
+                }
                 if concrete_count != Some(1)
                     || (local.is_none() && !inline_target)
                     || !matches!(ty.kind(), TyKind::Int(_) | TyKind::Uint(_))
                     || byte_value > u8::MAX as u64
                 {
-                    self.unsupported_mir = true;
+                    let allocation = pointer.provenance.as_ref().map(|provenance| {
+                        format!(
+                            "kind={:?}, element={:?}, size={:?}",
+                            self.alloc(provenance.alloc_id).kind,
+                            self.alloc(provenance.alloc_id).element_ty,
+                            self.allocation_size(provenance.alloc_id),
+                        )
+                    });
+                    self.record_unsupported_effect(&format!(
+                        "FillBytes target unsupported: count={concrete_count:?}, local={}, inline_target={inline_target}, pointee={ty:?}, byte={byte_value}, provenance={:?}, allocation={allocation:?}",
+                        local.is_some(),
+                        pointer.provenance,
+                    ));
                     return;
                 }
                 let value_bits = if byte_value == 0 {
@@ -998,7 +1016,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 } else {
                     let size = self.size_of_ty(ty);
                     if !matches!(ty.kind(), TyKind::Uint(_)) || size == 0 || size > 8 {
-                        self.unsupported_mir = true;
+                        self.record_unsupported_effect(&format!(
+                            "FillBytes nonzero fill unsupported: pointee={ty:?}, size={size}"
+                        ));
                         return;
                     }
                     (0..size).fold(0_u64, |bits, index| bits | (byte_value << (8 * index)))

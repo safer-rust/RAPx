@@ -18,8 +18,7 @@ impl SingleSource for Dangling {
     }
 }
 
-// A multi-implementor trait: with `--trait-impl-limit 3` (the default) only
-// the first three impls are inlined; the rest are dropped (an under-approximation).
+// A multi-implementor trait: the default limit inlines one impl.
 pub trait MultiSource {
     fn ptr(&self) -> *const u8;
 }
@@ -62,10 +61,10 @@ pub fn single_impl_sound(x: &dyn SingleSource) {
     }
 }
 
-// SOUND (under `--trait-impl-limit 3`): the call is truncated to the first
-// three impls (`Da`/`Db`/`Dc` → dangling), so NonNull is proved. `Dd` returns
-// null and would fail, but is dropped by the limit. With `--trait-impl-limit 4`
-// all impls are inlined and the null branch makes this UNSOUND.
+// SOUND (under the default limit of 1): the call is truncated to `Da`, so
+// NonNull is proved. `Dd` returns null and would fail, but is dropped by the
+// limit. With `--trait-impl-limit 4`, all impls are inlined and the null branch
+// makes this UNSOUND.
 #[rapx::verify]
 pub fn multi_impl_truncated(x: &dyn MultiSource) {
     let p = x.ptr();

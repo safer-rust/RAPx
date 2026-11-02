@@ -5,11 +5,20 @@
 #[rapx::requires(ValidNum(value != 0))]
 unsafe fn need_nonzero(value: u32) {}
 
+#[rapx::requires(ValidNum(value != 0))]
+unsafe fn need_nonzero_wide(value: u128) {}
+
 #[thread_local]
 static TLS_ONE: u32 = 7;
 
 #[thread_local]
 static TLS_ZERO: u32 = 0;
+
+#[thread_local]
+static TLS_WIDE: u128 = 1u128 << 80;
+
+#[thread_local]
+static mut TLS_MUT: u32 = 7;
 
 struct ArrayHolder {
     values: [u32; 4],
@@ -45,6 +54,52 @@ pub fn sound_thread_local_value() {
 #[rapx::verify]
 pub fn unsound_thread_local_value() {
     unsafe { need_nonzero(TLS_ZERO) };
+}
+
+#[rapx::verify]
+pub fn sound_thread_local_wide_value() {
+    unsafe { need_nonzero_wide(TLS_WIDE) };
+}
+
+#[rapx::verify]
+pub fn sound_thread_local_mut_write() {
+    unsafe {
+        TLS_MUT = 1;
+        need_nonzero(TLS_MUT);
+    }
+}
+
+#[rapx::verify]
+pub fn unsound_thread_local_mut_write() {
+    unsafe {
+        TLS_MUT = 0;
+        need_nonzero(TLS_MUT);
+    }
+}
+
+#[rapx::verify]
+pub fn unsound_thread_local_mut_initial() {
+    unsafe { need_nonzero(TLS_MUT) };
+}
+
+fn overwrite_thread_local(value: *mut u32, replacement: u32) {
+    unsafe { *value = replacement };
+}
+
+#[rapx::verify]
+pub fn sound_thread_local_mut_inlined_write() {
+    unsafe {
+        overwrite_thread_local(&raw mut TLS_MUT, 1);
+        need_nonzero(TLS_MUT);
+    }
+}
+
+#[rapx::verify]
+pub fn unsound_thread_local_mut_inlined_write() {
+    unsafe {
+        overwrite_thread_local(&raw mut TLS_MUT, 0);
+        need_nonzero(TLS_MUT);
+    }
 }
 
 fn fill_one(dest: &mut u32) {
