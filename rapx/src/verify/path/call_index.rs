@@ -392,17 +392,19 @@ impl<'tcx> CallSiteIndex<'tcx> {
         } else {
             actual_parent
         };
-        let instantiated = instance.and_then(|instance| {
-            let mir = self.tcx.optimized_mir(instance.def_id());
-            instance
-                .try_instantiate_mir_and_normalize_erasing_regions(
-                    self.tcx,
-                    TypingEnv::post_analysis(self.tcx, parent),
-                    EarlyBinder::bind(self.tcx, mir.clone()),
-                )
-                .ok()
-                .map(|body| (instance, body))
-        });
+        let instantiated = instance
+            .filter(|instance| !mir_utils::has_unresolved_const_args(self.tcx, parent, instance.args))
+            .and_then(|instance| {
+                let mir = self.tcx.optimized_mir(instance.def_id());
+                instance
+                    .try_instantiate_mir_and_normalize_erasing_regions(
+                        self.tcx,
+                        TypingEnv::post_analysis(self.tcx, parent),
+                        EarlyBinder::bind(self.tcx, mir.clone()),
+                    )
+                    .ok()
+                    .map(|body| (instance, body))
+            });
         let instantiated_body = instantiated
             .as_ref()
             .map(|(_, body)| body.clone())

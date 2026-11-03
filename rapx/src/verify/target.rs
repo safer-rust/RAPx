@@ -723,16 +723,18 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
         def_id: DefId,
         instance: Option<Instance<'tcx>>,
     ) -> FunctionTarget<'tcx> {
-        let body: Option<&'tcx Body<'tcx>> = instance.and_then(|inst| {
-            let mir = self.tcx.optimized_mir(def_id);
-            inst.try_instantiate_mir_and_normalize_erasing_regions(
-                self.tcx,
-                rustc_middle::ty::TypingEnv::post_analysis(self.tcx, def_id),
-                rustc_middle::ty::EarlyBinder::bind(self.tcx, mir.clone()),
-            )
-            .ok()
-            .map(|body| &*self.tcx.arena.alloc(body))
-        });
+        let body: Option<&'tcx Body<'tcx>> = instance
+            .filter(|inst| !crate::helpers::mir_utils::has_unresolved_const_args(self.tcx, def_id, inst.args))
+            .and_then(|inst| {
+                let mir = self.tcx.optimized_mir(def_id);
+                inst.try_instantiate_mir_and_normalize_erasing_regions(
+                    self.tcx,
+                    rustc_middle::ty::TypingEnv::post_analysis(self.tcx, def_id),
+                    rustc_middle::ty::EarlyBinder::bind(self.tcx, mir.clone()),
+                )
+                .ok()
+                .map(|body| &*self.tcx.arena.alloc(body))
+            });
         let mut callee_bodies = CalleeBodies::default();
         if let Some(root_body) = body {
             let mut instances = FxHashMap::default();
@@ -757,6 +759,9 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
                     continue;
                 };
                 if !matches!(inst.def, InstanceKind::Item(_)) || inst.def_id() != callee {
+                    continue;
+                }
+                if crate::helpers::mir_utils::has_unresolved_const_args(self.tcx, def_id, inst.args) {
                     continue;
                 }
                 if let Some(previous) = instances.insert(callee, inst)
@@ -1087,9 +1092,7 @@ impl<'tcx> Visitor<'tcx> for VerifyTargetCollector<'tcx> {
         id: LocalDefId,
     ) -> Self::Result {
         if matches!(self.mode, VerifyMode::Targeted) && !has_rapx_verify_attr(self.tcx, id) {
-            if !is_drop_impl(self.tcx, id.to_def_id()) {
-                return;
-            }
+            return;
         }
 
         let def_id = id.to_def_id();

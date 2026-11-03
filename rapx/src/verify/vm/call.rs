@@ -383,8 +383,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return false;
         }
         let instantiated_body = if let Some(instance) = instance {
-            let body = self.tcx.optimized_mir(callee_def_id).clone();
             let caller_def_id = self.current_frame.current_def_id;
+            if mir_utils::has_unresolved_const_args(self.tcx, caller_def_id, instance.args) {
+                self.record_missing_mir(callee_def_id);
+                return false;
+            }
+            let body = self.tcx.optimized_mir(callee_def_id).clone();
             let Ok(body) = instance.try_instantiate_mir_and_normalize_erasing_regions(
                 self.tcx,
                 TypingEnv::post_analysis(self.tcx, caller_def_id),

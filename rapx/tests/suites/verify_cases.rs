@@ -23,7 +23,6 @@ fn linked_list_nonnull() {
         "LinkedList::<T: Copy>::back_copy",
         "LinkedList::<T: Copy>::front_mut_copy",
         "LinkedList::<T: Copy>::back_mut_copy",
-        "<LinkedList<T> as std::ops::Drop>::drop",
     ] {
         assert_function_result(&output, func, "SOUND");
     }
@@ -46,7 +45,6 @@ fn linked_list_rawptr() {
         "LinkedList::<T: Copy>::back_copy",
         "LinkedList::<T: Copy>::front_mut_copy",
         "LinkedList::<T: Copy>::back_mut_copy",
-        "<LinkedList<T> as std::ops::Drop>::drop",
     ] {
         assert_function_result(&output, func, "SOUND");
     }

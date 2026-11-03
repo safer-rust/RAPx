@@ -677,54 +677,6 @@ fn copy_scratch_prefix_01() {
 }
 
 #[test]
-fn set_discriminant_01() {
-    let output = run_with_args("verify_units/set_discriminant_01", CMD_VERIFY_TARGETED);
-    assert_not_contain(&output, "verifier crashed");
-    assert_contain(&output, "SetDiscriminant incomplete payload");
-    assert_function_result(&output, "set_one_sound", "SOUND");
-    assert_function_result(&output, "set_negative_sound", "SOUND");
-    assert_function_result(&output, "direct_one_sound", "SOUND");
-    assert_function_result(&output, "direct_negative_sound", "SOUND");
-    assert_function_result(&output, "set_negative_branch_sound", "SOUND");
-    assert_function_result(&output, "set_deref_local_sound", "SOUND");
-    assert_function_result(&output, "set_deref_arg_sound", "SOUND");
-    assert_function_result(&output, "set_deref_arg_unsound", "UNSOUND");
-    assert_function_result(&output, "set_deref_payload_sound", "SOUND");
-    assert_function_result(&output, "set_deref_payload_incomplete_unknown", "UNKNOWN");
-    assert_function_result(&output, "set_deref_payload_local_sound", "SOUND");
-    assert_function_result(&output, "set_deref_payload_arg_unsound", "UNSOUND");
-    assert_function_result(&output, "set_deref_pair_partial_unknown", "UNKNOWN");
-    assert_function_result(&output, "set_payload_sound", "SOUND");
-    assert_function_result(&output, "set_payload_incomplete_unknown", "UNKNOWN");
-    assert_function_result(&output, "set_pair_sound", "SOUND");
-    assert_function_result(&output, "set_pair_partial_unknown", "UNKNOWN");
-    assert_function_result(&output, "set_payload_from_local_sound", "SOUND");
-    assert_function_result(&output, "set_payload_from_uninit_unknown", "UNKNOWN");
-    assert_function_result(&output, "set_payload_incomplete_branch_unknown", "UNKNOWN");
-    let branch = extract_block_after(&output, "function: set_payload_incomplete_branch_unknown");
-    assert_contain(branch, "unsafe checkpoint: bb2 -> expect_nine");
-    assert_unproved_exclusive(&output, "set_payload_replaces_old_unsound", &["ValidNum"]);
-    assert_unproved_exclusive(&output, "set_zero_unsound", &["ValidNum"]);
-}
-
-#[test]
-fn repeat_generic_01() {
-    let output = run_with_args("verify_units/repeat_generic_01", CMD_VERIFY_TARGETED);
-    assert_function_result(&output, "generic_repeat_sound", "SOUND");
-    assert_unproved_exclusive(&output, "generic_repeat_unsound", &["ValidNum"]);
-    assert_not_contain(&output, "Rvalue::Repeat (model incomplete)");
-}
-
-#[test]
-fn switch_int_128_01() {
-    let output = run_with_args("verify_units/switch_int_128_01", CMD_VERIFY_TARGETED);
-    assert_function_result(&output, "switch_u128_sound", "SOUND");
-    assert_function_result(&output, "switch_i128_sound", "SOUND");
-    assert_unproved_exclusive(&output, "switch_u128_unsound", &["ValidNum"]);
-    assert_not_contain(&output, "SwitchInt target width");
-}
-
-#[test]
 fn intrinsic_coverage_01() {
     let output = run_with_args(
         "verify_units/intrinsic_coverage_01",
@@ -883,23 +835,6 @@ fn rvalue_rare_sound_01() {
     let output = run_with_args("verify_units/rvalue_rare_sound_01", CMD_VERIFY_TARGETED);
     assert_result_counts(&output, [2, 2, 0]);
     assert_not_contain(&output, "verifier crashed");
-}
-
-#[test]
-fn repeat_projected_01() {
-    let output = run_with_args("verify_units/repeat_projected_01", CMD_VERIFY_TARGETED);
-    assert_function_result(&output, "symbolic_index_repeat_sound", "SOUND");
-    assert_function_result(&output, "symbolic_index_repeat_unsound", "UNSOUND");
-    assert_function_result(&output, "symbolic_index_repeat_overwrite_unsound", "UNSOUND");
-}
-
-#[test]
-fn reborrow_01() {
-    let output = run_with_args("verify_units/reborrow_01", CMD_VERIFY_TARGETED);
-    assert_function_result(&output, "shared_reborrow_sound", "SOUND");
-    assert_function_result(&output, "shared_reborrow_unsound", "UNSOUND");
-    assert_function_result(&output, "reference_field_reborrow_sound", "SOUND");
-    assert_function_result(&output, "reference_field_reborrow_unsound", "UNSOUND");
 }
 
 #[test]

@@ -17,14 +17,14 @@ use rustc_middle::{
         TerminatorKind,
     },
     ty::{
-        ConstKind, FieldDef, GenericArgKind, GenericArgs, GenericParamDefKind,
-        Instance, InstanceKind, PseudoCanonicalInput, ScalarInt, Ty, TyCtxt, TyKind,
-        TypeVisitableExt, TypingEnv,
+        Const, ConstKind, FieldDef, GenericArgKind, GenericArgs, GenericParamDefKind,
+        Instance, InstanceKind, PseudoCanonicalInput, ScalarInt, Ty, TyCtxt, TyKind, TypeFlags,
+        TypeSuperVisitable, TypeVisitable, TypeVisitableExt, TypeVisitor, TypingEnv,
     },
 };
 use rustc_span::{DUMMY_SP, Symbol};
 
-use std::collections::HashSet;
+use std::{collections::HashSet, ops::ControlFlow};
 
 #[cfg(not(rapx_has_skip_norm_wip))]
 use crate::compat::SkipNormWip;
@@ -165,10 +165,48 @@ pub(crate) fn resolve_instance<'tcx>(
     def_id: DefId,
     args: GenericArgsRef<'tcx>,
 ) -> Option<Instance<'tcx>> {
+    if has_unresolved_const_args(tcx, caller, args) {
+        return None;
+    }
     let typing_env = TypingEnv::post_analysis(tcx, caller);
     Instance::try_resolve(tcx, typing_env, def_id, args)
         .ok()
         .flatten()
+}
+
+pub(crate) fn has_unresolved_const_args<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    caller: DefId,
+    args: GenericArgsRef<'tcx>,
+) -> bool {
+    if !args.has_type_flags(TypeFlags::HAS_CT_PARAM) {
+        return false;
+    }
+    struct UnboundConstParam<'tcx> {
+        tcx: TyCtxt<'tcx>,
+        caller: DefId,
+    }
+    impl<'tcx> TypeVisitor<TyCtxt<'tcx>> for UnboundConstParam<'tcx> {
+        type Result = ControlFlow<()>;
+
+        fn visit_const(&mut self, ct: Const<'tcx>) -> Self::Result {
+            if let ConstKind::Param(param) = ct.kind() {
+                let generics = self.tcx.generics_of(self.caller);
+                let index = param.index as usize;
+                if index >= generics.count() {
+                    return ControlFlow::Break(());
+                }
+                let definition = generics.param_at(index, self.tcx);
+                if !matches!(definition.kind, GenericParamDefKind::Const { .. })
+                    || definition.name != param.name
+                {
+                    return ControlFlow::Break(());
+                }
+            }
+            ct.super_visit_with(self)
+        }
+    }
+    args.visit_with(&mut UnboundConstParam { tcx, caller }).is_break()
 }
 
 /// Map a resolved [`Instance`] to its concrete target `DefId` and whether the
