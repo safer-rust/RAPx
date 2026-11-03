@@ -13,6 +13,8 @@ use rustc_middle::{
     mir::{Body, ConstValue, Local, Operand, Place, ProjectionElem},
     ty::{Region, Ty, TyCtxt, TyKind, TypingEnv},
 };
+use rustc_span::Span;
+use std::cell::RefCell;
 use z3::{
     Context, SatResult, Solver,
     ast::{Array, Ast, Bool, Dynamic, Int},
@@ -26,6 +28,23 @@ pub(crate) const REPEATED_ARRAY_ELEMENT: usize = usize::MAX;
 /// Unique identifier for a heap or stack allocation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct AllocId(pub usize);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MemoryEventKind {
+    Drop,
+    DoubleFree,
+    UseAfterFree,
+    DanglingPointer,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct MemoryEvent {
+    pub alloc_id: AllocId,
+    pub kind: MemoryEventKind,
+    pub block: Option<usize>,
+    pub local: usize,
+    pub span: Span,
+}
 
 /// The structure of a pointer's byte offset, when it has one.
 ///
@@ -166,12 +185,16 @@ pub(crate) enum AllocKind<'z3> {
     /// untyped raw buffer.
     Object,
     /// A slice/array buffer with a known element count.
-    Slice { len: Int<'z3> },
+    Slice {
+        len: Int<'z3>,
+    },
     /// An external raw-pointer parameter. `size` is an unconstrained symbolic
     /// term (the caller may pass any allocation); nullability is *not* stored
     /// here — it is tracked via the pointer term (`term == 0`) path conditions.
     External,
-    ExternalSlice { len: Int<'z3> },
+    ExternalSlice {
+        len: Int<'z3>,
+    },
 }
 
 /// The element type of an allocation's contents, either a concrete [`Ty`] or
@@ -360,7 +383,10 @@ impl<'z3, 'tcx> Allocation<'z3, 'tcx> {
 
     /// Whether this allocation models an external raw-pointer parameter.
     pub(crate) fn is_external(&self) -> bool {
-        matches!(self.kind, AllocKind::External | AllocKind::ExternalSlice { .. })
+        matches!(
+            self.kind,
+            AllocKind::External | AllocKind::ExternalSlice { .. }
+        )
     }
 
     /// The slice/array element count, if this allocation is slice data.
@@ -477,6 +503,10 @@ pub(crate) enum ValueSource<'z3> {
     SliceLen(Int<'z3>),
     /// A compile-time `offset_of!` field offset.
     FieldOffset,
+    FieldBorrow {
+        base: Local,
+        fields: Vec<usize>,
+    },
     /// A known enum discriminant.
     KnownDiscriminant(Int<'z3>),
     /// A comparison result (`Eq`/`Ne`/`Le`/`Lt`/`Ge`/`Gt`): the operands and
@@ -733,8 +763,11 @@ pub(crate) struct VmState<'z3, 'tcx> {
     /// Branches that depend on a deliberately opaque call result.
     pub(crate) opaque_control_flow: FxHashSet<String>,
     pub(crate) active_mir_location: Option<String>,
+    pub(crate) active_mir_block: Option<usize>,
+    pub(crate) active_mir_span: Option<Span>,
+    pub(crate) track_memory_events: bool,
+    pub(crate) memory_events: RefCell<Vec<MemoryEvent>>,
     pub(crate) path_infeasible: bool,
-
 
     pub(crate) incomplete_inline_branch: bool,
     pub(crate) possible_uninit_allocs: FxHashSet<AllocId>,
@@ -753,6 +786,35 @@ pub(crate) struct VmState<'z3, 'tcx> {
 }
 
 impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+    pub(crate) fn record_memory_drop(&mut self, alloc_id: AllocId, local: Local) {
+        if self.track_memory_events {
+            self.memory_events.borrow_mut().push(MemoryEvent {
+                alloc_id,
+                kind: if self.alloc(alloc_id).facts.dead {
+                    MemoryEventKind::DoubleFree
+                } else {
+                    MemoryEventKind::Drop
+                },
+                block: self.active_mir_block,
+                local: local.as_usize(),
+                span: self.active_mir_span.unwrap_or(rustc_span::DUMMY_SP),
+            });
+        }
+        self.alloc_mut(alloc_id).facts.dead = true;
+    }
+
+    pub(crate) fn record_memory_use(&self, alloc_id: AllocId, local: Local) {
+        if self.track_memory_events && self.alloc(alloc_id).facts.dead {
+            self.memory_events.borrow_mut().push(MemoryEvent {
+                alloc_id,
+                kind: MemoryEventKind::UseAfterFree,
+                block: self.active_mir_block,
+                local: local.as_usize(),
+                span: self.active_mir_span.unwrap_or(rustc_span::DUMMY_SP),
+            });
+        }
+    }
+
     pub(crate) fn scalar_bits_term(&self, ty: Ty<'tcx>, bits: u128) -> Option<Int<'z3>> {
         let bytes = self.size_of_ty(ty);
         if bytes == 0 || bytes > 16 {
@@ -763,7 +825,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             let high = Int::from_u64(self.z3_ctx, (bits >> 64) as u64);
             let two_64 = Int::add(
                 self.z3_ctx,
-                &[&Int::from_u64(self.z3_ctx, u64::MAX), &Int::from_u64(self.z3_ctx, 1)],
+                &[
+                    &Int::from_u64(self.z3_ctx, u64::MAX),
+                    &Int::from_u64(self.z3_ctx, 1),
+                ],
             );
             let unsigned = Int::add(
                 self.z3_ctx,
@@ -846,6 +911,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             missing_mir: FxHashSet::default(),
             opaque_control_flow: FxHashSet::default(),
             active_mir_location: None,
+            active_mir_block: None,
+            active_mir_span: None,
+            track_memory_events: false,
+            memory_events: RefCell::new(Vec::new()),
             path_infeasible: false,
             incomplete_inline_branch: false,
             possible_uninit_allocs: FxHashSet::default(),
@@ -863,9 +932,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     }
 
     pub(crate) fn body_for(&self, def_id: DefId) -> &'tcx Body<'tcx> {
-        if def_id == self.current_frame.current_def_id && let Some(body) = self.frame_body {
+        if def_id == self.current_frame.current_def_id
+            && let Some(body) = self.frame_body
+        {
             body
-        } else if def_id == self.root_def_id && let Some(body) = &self.instance_body {
+        } else if def_id == self.root_def_id
+            && let Some(body) = &self.instance_body
+        {
             body
         } else {
             self.tcx.optimized_mir(def_id)
@@ -879,30 +952,43 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
     pub(crate) fn record_unsupported(&mut self, operation: &str) {
         self.unsupported_mir = true;
-        let location = self.active_mir_location.as_deref().unwrap_or("unknown location");
+        let location = self
+            .active_mir_location
+            .as_deref()
+            .unwrap_or("unknown location");
         self.unsupported_details
             .insert(format!("{location}: {operation}"));
     }
 
     pub(crate) fn record_unsupported_effect(&mut self, effect: &str) {
         self.unsupported_mir = true;
-        let location = self.active_mir_location.as_deref().unwrap_or("unknown location");
+        let location = self
+            .active_mir_location
+            .as_deref()
+            .unwrap_or("unknown location");
         self.unsupported_effects
             .insert(format!("{location}: {effect}"));
     }
 
     pub(crate) fn record_missing_mir(&mut self, callee: DefId) {
         self.unsupported_mir = true;
-        let location = self.active_mir_location.as_deref().unwrap_or("unknown location");
+        let location = self
+            .active_mir_location
+            .as_deref()
+            .unwrap_or("unknown location");
         self.missing_mir
             .insert(format!("{} at {location}", self.tcx.def_path_str(callee)));
     }
 
     pub(crate) fn record_opaque_control_flow(&mut self, operation: &str) {
         self.unsupported_mir = true;
-        let location = self.active_mir_location.as_deref().unwrap_or("unknown location");
-        self.opaque_control_flow
-            .insert(format!("{location}: opaque call result controls {operation}"));
+        let location = self
+            .active_mir_location
+            .as_deref()
+            .unwrap_or("unknown location");
+        self.opaque_control_flow.insert(format!(
+            "{location}: opaque call result controls {operation}"
+        ));
     }
 
     /// Capture the frame-scoped state before switching to an inlined callee.
@@ -990,11 +1076,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             element_ty = *inner;
             is_array = true;
         }
-        if is_array
-            && let Some(&alloc_id) = self.current_frame.local_alloc.get(&local) {
+        if is_array && let Some(&alloc_id) = self.current_frame.local_alloc.get(&local) {
             let content = self.content_mut(alloc_id);
-            let was_tracked = content.indexed_elements_modified
-                || !content.indexed_elements.is_empty();
+            let was_tracked =
+                content.indexed_elements_modified || !content.indexed_elements.is_empty();
             content.indexed_elements.clear();
             content.indexed_elements_modified = was_tracked;
             content
@@ -1196,7 +1281,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
     /// The declared type of `local` in `frame`'s body.
     fn frame_local_ty(&self, frame: &FrameState<'tcx>, local: Local) -> Ty<'tcx> {
-        let body = frame.body
+        let body = frame
+            .body
             .or_else(|| {
                 (frame.current_def_id == self.root_def_id)
                     .then_some(self.instance_body)
@@ -1209,7 +1295,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// Enumerate the field paths materialized for `local` in a saved caller
     /// `frame`. Field values live in the path-scoped [`MemoryContent::values`], so they
     /// are read via `frame`'s `local_alloc` and declared type.
-    pub(crate) fn frame_field_paths(&self, frame: &FrameState<'tcx>, local: Local) -> Vec<Vec<usize>> {
+    pub(crate) fn frame_field_paths(
+        &self,
+        frame: &FrameState<'tcx>,
+        local: Local,
+    ) -> Vec<Vec<usize>> {
         let Some(&alloc_id) = frame.local_alloc.get(&local) else {
             return Vec::new();
         };
@@ -1327,14 +1417,17 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             && !path.is_empty()
             && path.iter().all(|field| *field == 0)
             && value.facts.init;
-        let prior_term = self.local_value(local).map(|value| value.z3_term.to_string());
-        self.index_access_facts.retain(|(slice_term, index_term, slice, index)| {
-            *slice != local
-                && *index != local
-                && prior_term.as_ref().is_none_or(|term| {
-                    *term != slice_term.to_string() && *term != index_term.to_string()
-                })
-        });
+        let prior_term = self
+            .local_value(local)
+            .map(|value| value.z3_term.to_string());
+        self.index_access_facts
+            .retain(|(slice_term, index_term, slice, index)| {
+                *slice != local
+                    && *index != local
+                    && prior_term.as_ref().is_none_or(|term| {
+                        *term != slice_term.to_string() && *term != index_term.to_string()
+                    })
+            });
         if path.is_empty() {
             self.invalidate_indexed_array(local);
             self.invalidate_field_descendants(local, &[]);
@@ -1342,9 +1435,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         } else {
             self.invalidate_field_descendants(local, &path);
             self.set_field_value(local, path, value);
-            if written_inner
-                && let Some(&alloc_id) = self.current_frame.local_alloc.get(&local)
-            {
+            if written_inner && let Some(&alloc_id) = self.current_frame.local_alloc.get(&local) {
                 self.content_mut(alloc_id).facts.written_pointee_ty = Some(written_ty);
             }
         }
@@ -1353,11 +1444,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     pub(crate) fn invalidate_field_descendants(&mut self, local: Local, path: &[usize]) {
         if let Some(&alloc_id) = self.current_frame.local_alloc.get(&local) {
             let view_ty = self.body().local_decls[local].ty;
-            self.content_mut(alloc_id).values.retain(|(ty, stored_path), _| {
-                *ty != view_ty
-                    || stored_path.len() <= path.len()
-                    || !stored_path.starts_with(path)
-            });
+            self.content_mut(alloc_id)
+                .values
+                .retain(|(ty, stored_path), _| {
+                    *ty != view_ty
+                        || stored_path.len() <= path.len()
+                        || !stored_path.starts_with(path)
+                });
         }
     }
 
@@ -1512,7 +1605,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     current_ty = inner;
                     indexed = true;
                 }
-                ProjectionElem::ConstantIndex { offset, from_end, .. } => {
+                ProjectionElem::ConstantIndex {
+                    offset, from_end, ..
+                } => {
                     let (inner, length) = match current_ty.kind() {
                         rustc_middle::ty::TyKind::Array(inner, length) => (*inner, Some(length)),
                         rustc_middle::ty::TyKind::Slice(inner) => (*inner, None),
@@ -1567,7 +1662,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         index: Int<'z3>,
         value: VmValue<'z3, 'tcx>,
     ) {
-        let retained = self.content(alloc_id)
+        let retained = self
+            .content(alloc_id)
             .indexed_elements
             .iter()
             .filter(|(stored_index, _)| self.path_implies(&stored_index._eq(&index).not()))
@@ -1587,7 +1683,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         value: VmValue<'z3, 'tcx>,
     ) {
         let end = Int::add(self.z3_ctx, &[&base, &Int::from_u64(self.z3_ctx, count)]);
-        let retained = self.content(alloc_id)
+        let retained = self
+            .content(alloc_id)
             .indexed_elements
             .iter()
             .filter(|(index, _)| {
@@ -1621,7 +1718,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     fn stored_indexed_element(&self, place: &Place<'tcx>) -> Option<VmValue<'z3, 'tcx>> {
         let (alloc_id, index) = self.indexed_element_target(place)?;
         let elements = &self.content(alloc_id).indexed_elements;
-        if let Some((_, value)) = elements.iter().rev().find(|(stored_index, _)| index == *stored_index) {
+        if let Some((_, value)) = elements
+            .iter()
+            .rev()
+            .find(|(stored_index, _)| index == *stored_index)
+        {
             return Some(value.clone());
         }
         for (stored_index, value) in elements.iter().rev() {
@@ -1650,7 +1751,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return None;
         }
         let param = generics.param_at(index as usize, self.tcx);
-        if !matches!(param.kind, rustc_middle::ty::GenericParamDefKind::Const { .. }) {
+        if !matches!(
+            param.kind,
+            rustc_middle::ty::GenericParamDefKind::Const { .. }
+        ) {
             return None;
         }
         let ty = self.tcx.type_of(param.def_id).instantiate_identity();
@@ -1689,7 +1793,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         };
                         let zero = Int::from_u64(self.z3_ctx, 0);
                         let one = Int::from_u64(self.z3_ctx, 1);
-                        return VmValue::new(size._eq(&zero).ite(&one, &zero), constant.const_.ty());
+                        return VmValue::new(
+                            size._eq(&zero).ite(&one, &zero),
+                            constant.const_.ty(),
+                        );
                     }
                     let is_size = mir_utils::is_sized_type_property(self.tcx, uneval.def, "SIZE");
                     let is_align = mir_utils::is_sized_type_property(self.tcx, uneval.def, "ALIGN");
@@ -1713,7 +1820,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             return None;
                         };
                         (int_val == Some(0)
-                            && self.tcx.is_diagnostic_item(rustc_span::sym::Option, adt.did())
+                            && self
+                                .tcx
+                                .is_diagnostic_item(rustc_span::sym::Option, adt.did())
                             && matches!(args.type_at(0).kind(), TyKind::Ref(..)))
                         .then_some(0)
                     });
@@ -1726,7 +1835,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 .then(|| {
                     constant
                         .const_
-                        .eval(self.tcx, TypingEnv::fully_monomorphized(), rustc_span::DUMMY_SP)
+                        .eval(
+                            self.tcx,
+                            TypingEnv::fully_monomorphized(),
+                            rustc_span::DUMMY_SP,
+                        )
                         .ok()
                         .and_then(|value| value.try_to_scalar_int())
                         .and_then(|scalar| self.scalar_bits_term(ty, scalar.to_bits(scalar.size())))
@@ -1837,6 +1950,16 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
     /// Look up the value stored at a MIR place.
     pub(crate) fn value_of_place(&self, place: &Place<'tcx>) -> Option<VmValue<'z3, 'tcx>> {
+        if place
+            .projection
+            .iter()
+            .any(|projection| matches!(projection, ProjectionElem::Deref))
+            && let Some(alloc_id) = self
+                .local_value(place.local)
+                .and_then(VmValue::provenance_alloc_id)
+        {
+            self.record_memory_use(alloc_id, place.local);
+        }
         if place.projection.is_empty() {
             return self.local_value(place.local).cloned();
         }
@@ -1895,21 +2018,24 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     match projection {
                         ProjectionElem::Field(field, _) => path.push(field.as_usize()),
                         ProjectionElem::Index(local) => {
-                            let index = self.local_value(local)
+                            let index = self
+                                .local_value(local)
                                 .and_then(|value| value.z3_term.simplify().as_u64())
                                 .and_then(|index| usize::try_from(index).ok())
                                 .unwrap_or(REPEATED_ARRAY_ELEMENT);
                             path.push(index);
                         }
-                        ProjectionElem::ConstantIndex { offset, from_end: false, .. } => {
+                        ProjectionElem::ConstantIndex {
+                            offset,
+                            from_end: false,
+                            ..
+                        } => {
                             path.push(offset as usize);
                         }
                         _ => supported = false,
                     }
                 }
-                if supported
-                    && let Some(value) = self.field_value(place.local, &path)
-                {
+                if supported && let Some(value) = self.field_value(place.local, &path) {
                     return Some(value.clone());
                 }
             }
@@ -2325,14 +2451,19 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             TyKind::Ref(_, inner, _) | TyKind::RawPtr(inner, _) => *inner,
             _ => ty,
         };
-        if !matches!(view_ty.kind(), TyKind::Adt(adt, _) if crate::verify::api_classify::is_std_vec(adt.did()) || crate::verify::api_classify::is_std_string(adt.did())) {
+        if !matches!(view_ty.kind(), TyKind::Adt(adt, _) if crate::verify::api_classify::is_std_vec(adt.did()) || crate::verify::api_classify::is_std_string(adt.did()))
+        {
             return false;
         }
         for (index, &field_idx) in field_path.iter().enumerate() {
             let TyKind::Adt(adt, substs) = view_ty.kind() else {
                 return false;
             };
-            let Some(field) = adt.non_enum_variant().fields.get(rustc_abi::FieldIdx::from_usize(field_idx)) else {
+            let Some(field) = adt
+                .non_enum_variant()
+                .fields
+                .get(rustc_abi::FieldIdx::from_usize(field_idx))
+            else {
                 return false;
             };
             if index + 1 == field_path.len() {

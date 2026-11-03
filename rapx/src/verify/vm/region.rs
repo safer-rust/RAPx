@@ -1,6 +1,6 @@
 //! Region (lifetime) helpers shared by the VM and the property checker.
 
-use rustc_hir::def_id::DefId;
+use rustc_hir::{def::DefKind, def_id::DefId};
 use rustc_middle::ty::{EarlyParamRegion, GenericParamDefKind, Region, RegionKind, Ty, TyCtxt};
 
 use crate::verify::contract::is_static_lifetime_ident;
@@ -112,17 +112,23 @@ pub(crate) fn region_outlives_implied<'tcx>(
 /// The function's signature with late-bound regions liberated to free
 /// `ReLateParam`s, so reference regions are comparable (MIR erases them to
 /// `ReErased`).
-fn liberate_fn_sig<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> rustc_middle::ty::FnSig<'tcx> {
+fn liberate_fn_sig<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def_id: DefId,
+) -> Option<rustc_middle::ty::FnSig<'tcx>> {
+    if !matches!(tcx.def_kind(def_id), DefKind::Fn | DefKind::AssocFn) {
+        return None;
+    }
     let fn_sig = tcx.fn_sig(def_id).instantiate_identity();
     #[cfg(rapx_ge_99)]
     let fn_sig = fn_sig.skip_norm_wip();
-    tcx.liberate_late_bound_regions(def_id, fn_sig)
+    Some(tcx.liberate_late_bound_regions(def_id, fn_sig))
 }
 
 /// The reference region of `def_id`'s return type (`&'r T` → `Some('r)`).
 pub(crate) fn fn_return_region<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Option<Region<'tcx>> {
     use rustc_middle::ty::TyKind;
-    match liberate_fn_sig(tcx, def_id).output().kind() {
+    match liberate_fn_sig(tcx, def_id)?.output().kind() {
         TyKind::Ref(region, _, _) => Some(*region),
         _ => None,
     }
@@ -130,5 +136,5 @@ pub(crate) fn fn_return_region<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Option
 
 /// The type of `def_id`'s argument at `index`.
 pub(crate) fn fn_arg_ty<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, index: usize) -> Option<Ty<'tcx>> {
-    liberate_fn_sig(tcx, def_id).inputs().get(index).copied()
+    liberate_fn_sig(tcx, def_id)?.inputs().get(index).copied()
 }

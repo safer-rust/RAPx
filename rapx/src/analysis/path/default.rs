@@ -46,6 +46,7 @@ impl<'tcx> PathAnalyzer<'tcx> {
         }
 
         let mut graph = PathGraph::new(self.tcx, def_id);
+        graph.conservative_origins = true;
         graph.find_scc();
         let mut enumerator = PathEnumerator::new(&graph);
         let paths = enumerator.enumerate_paths_repeat(postfix_repeat);

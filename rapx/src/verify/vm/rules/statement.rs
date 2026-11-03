@@ -248,6 +248,7 @@ pub(crate) fn exec_assign<'z3, 'tcx>(
     let source_place = match rvalue {
         Rvalue::Use(Operand::Copy(source) | Operand::Move(source), ..)
         | Rvalue::WrapUnsafeBinder(Operand::Copy(source) | Operand::Move(source), _)
+        | Rvalue::Cast(rustc_middle::mir::CastKind::Transmute, Operand::Copy(source) | Operand::Move(source), _)
         | Rvalue::CopyForDeref(source) => Some(source),
         #[cfg(rapx_rvalue_has_reborrow)]
         Rvalue::Reborrow(_, _, source) => Some(source),

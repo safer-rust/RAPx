@@ -172,7 +172,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         destination: Local,
         caller_def_id: DefId,
     ) {
-        let prior_result = self.local_value(destination).map(|value| value.z3_term.clone());
+        let prior_result = self
+            .local_value(destination)
+            .map(|value| value.z3_term.clone());
         let arg_values: Vec<VmValue<'z3, 'tcx>> = args
             .iter()
             .map(|arg| self.value_of_operand(&arg.node))
@@ -182,10 +184,30 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             .map(|a| a.node.place().map(|p| p.local))
             .collect();
         let callee = mir_utils::dep_callee_resolved_def_id(self.tcx, caller_def_id, func);
+        let is_drop_call = api_classify::is_std_drop(callee)
+            || api_classify::is_manually_drop_drop(callee)
+            || callee.is_some_and(|id| {
+                mir_utils::is_drop_in_place(id)
+                    || self.tcx.def_path_str(id).contains("::ptr::drop_glue")
+            });
+        if !is_drop_call {
+            for (arg, value) in args.iter().zip(&arg_values) {
+                if let Some(local) = arg.node.place().map(|place| place.local)
+                    && let Some(alloc_id) = value.provenance_alloc_id()
+                {
+                    self.record_memory_use(alloc_id, local);
+                }
+            }
+        }
         if callee.is_some_and(|c| {
             matches!(self.tcx.def_kind(c), DefKind::Fn | DefKind::AssocFn)
                 && matches!(
-                    self.tcx.fn_sig(c).skip_binder().output().skip_binder().kind(),
+                    self.tcx
+                        .fn_sig(c)
+                        .skip_binder()
+                        .output()
+                        .skip_binder()
+                        .kind(),
                     TyKind::Never
                 )
         }) {
@@ -222,6 +244,38 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return;
         }
 
+        if api_classify::is_std_drop(callee)
+            || callee.is_some_and(|id| self.tcx.def_path_str(id).contains("::ptr::drop_glue"))
+        {
+            if let Some(Operand::Move(place)) = args.first().map(|arg| &arg.node) {
+                super::rules::terminator::exec_drop(self, place);
+            }
+            return;
+        }
+
+        if callee.is_some_and(mir_utils::is_drop_in_place)
+            || api_classify::is_manually_drop_drop(callee)
+        {
+            let event_count = self.memory_events.borrow().len();
+            if let Some(pointer) = arg_values.first()
+                && let Some(local) = self.find_local_by_address(&pointer.z3_term)
+            {
+                super::rules::terminator::exec_drop(self, &rustc_middle::mir::Place::from(local));
+            }
+            if self.memory_events.borrow().len() == event_count
+                && let Some(pointer) = arg_values.first()
+                && let Some(alloc_id) = pointer.provenance_alloc_id()
+            {
+                let local = caller_arg_locals
+                    .first()
+                    .copied()
+                    .flatten()
+                    .unwrap_or(destination);
+                self.record_memory_drop(alloc_id, local);
+            }
+            return;
+        }
+
         if call_summary::effects::is_unmodeled_intrinsic(self.tcx, callee) {
             let name = callee
                 .map(|id| self.tcx.def_path_str(id))
@@ -243,9 +297,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             destination,
         ) {
             Some(Vec::new())
-        } else if callee.is_some_and(|id| {
-            crate::verify::target::has_slice_offset_ensures(self.tcx, id)
-        }) {
+        } else if callee
+            .is_some_and(|id| crate::verify::target::has_slice_offset_ensures(self.tcx, id))
+        {
             Some(Vec::new())
         } else {
             crate::verify::call_summary::effects::lookup_effect(
@@ -257,11 +311,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             .or_else(|| call_summary::effects::effect_summary(self.tcx, func))
         };
         let ctor_summarized = summary.is_none()
-            && callee.is_some_and(|id| {
-                !crate::verify::options::should_inline_constructor(self.tcx, id)
-            });
-        let summary_used = summary.as_ref().is_some_and(|effects| !effects.is_empty())
-            || ctor_summarized;
+            && callee
+                .is_some_and(|id| !crate::verify::options::should_inline_constructor(self.tcx, id));
+        let summary_used =
+            summary.as_ref().is_some_and(|effects| !effects.is_empty()) || ctor_summarized;
 
         if let Some(effects) = summary {
             for effect in &effects {
@@ -276,14 +329,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             }
         } else if ctor_summarized {
             let callee = callee.unwrap();
-            let has_invariant =
-                crate::verify::options::constructor_has_invariant(self.tcx, callee);
-            self.materialize_constructor_result(
-                destination,
-                &arg_values,
-                callee,
-                has_invariant,
-            );
+            let has_invariant = crate::verify::options::constructor_has_invariant(self.tcx, callee);
+            self.materialize_constructor_result(destination, &arg_values, callee, has_invariant);
         } else if let Some(c) = callee
             && self.tcx.is_mir_available(c)
         {
@@ -297,8 +344,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     };
                     #[cfg(rapx_ge_99)]
                     let args = args.skip_binder();
-                    (*def_id == c && self.tcx.trait_of_assoc(c).is_none())
-                    .then_some(Instance {
+                    (*def_id == c && self.tcx.trait_of_assoc(c).is_none()).then_some(Instance {
                         def: InstanceKind::Item(c),
                         args,
                     })
@@ -306,27 +352,77 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 .filter(|instance| {
                     matches!(instance.def, InstanceKind::Item(_))
                         && instance.def_id() == c
-                        && (instance.args.types().all(|ty| !mir_utils::ty_has_type_param(ty))
+                        && (instance
+                            .args
+                            .types()
+                            .all(|ty| !mir_utils::ty_has_type_param(ty))
                             || self.inline.symbolic_generic_const_inline
                             || mir_utils::has_generic_const_call_argument(self.tcx, c))
                 });
-            self.exec_inline_call(c, instance, args, &arg_values, &caller_arg_locals, destination);
+            self.exec_inline_call(
+                c,
+                instance,
+                args,
+                &arg_values,
+                &caller_arg_locals,
+                destination,
+            );
         } else if let Some(c) = callee {
             // `assert!` panic exits contain this diverging call. It cannot
             // change the caller's state before the unwind invariant check.
-            if self.tcx.trait_of_assoc(c).is_some_and(|trait_id| {
-                crate::def_ids::lang_api::is_fn_trait(self.tcx, trait_id)
-            }) {
+            if self
+                .tcx
+                .trait_of_assoc(c)
+                .is_some_and(|trait_id| crate::def_ids::lang_api::is_fn_trait(self.tcx, trait_id))
+            {
                 self.apply_callback_effect(&arg_values, &caller_arg_locals, destination, c);
             } else if !crate::def_ids::lang_api::is_panic_exit(self.tcx, c) {
                 self.record_missing_mir(c);
             }
         }
+        if self.track_memory_events
+            && self.unsupported_mir
+            && !self.unsupported_effects.is_empty()
+            && self
+                .unsupported_effects
+                .iter()
+                .all(|effect| effect.contains("CopyMemory target unavailable"))
+            && self.unsupported_details.is_empty()
+            && self.missing_mir.is_empty()
+            && matches!(self.body().local_decls[destination].ty.kind(), TyKind::Adt(def, _) if api_classify::is_std_string(def.did()))
+        {
+            let ty = self.body().local_decls[destination].ty;
+            let mut facts = Default::default();
+            if self.init_box_vec_param(destination, ty, destination.as_usize(), &mut facts) {
+                self.unsupported_mir = false;
+                self.unsupported_effects.clear();
+            }
+        }
+        if self.track_memory_events
+            && self.unsupported_mir
+            && !self.missing_mir.is_empty()
+            && self.unsupported_details.is_empty()
+            && self.unsupported_effects.is_empty()
+            && arg_values.iter().all(|value| {
+                value.provenance.is_none()
+                    && !matches!(value.ty.kind(), TyKind::Ref(..) | TyKind::RawPtr(..))
+            })
+        {
+            let ty = self.body().local_decls[destination].ty;
+            let mut facts = Default::default();
+            if !self.init_box_vec_param(destination, ty, destination.as_usize(), &mut facts) {
+                let term = self.fresh_int("safedrop_opaque_result");
+                self.set_local(destination, VmValue::new(term, ty));
+            }
+            self.missing_mir.clear();
+            self.unsupported_mir = false;
+        }
         if let Some(callee) = callee {
             self.assert_call_postconditions(callee, &caller_arg_locals, destination);
-            if self.local_value(destination).is_some_and(|value| {
-                prior_result.as_ref() != Some(&value.z3_term)
-            }) {
+            if self
+                .local_value(destination)
+                .is_some_and(|value| prior_result.as_ref() != Some(&value.z3_term))
+            {
                 self.assert_call_result_invariants(destination);
                 if summary_used {
                     self.assert_summary_result_type_invariants(callee, destination);
@@ -339,9 +435,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         for state in &mut alternatives {
             if let Some(callee) = callee {
                 state.assert_call_postconditions(callee, &caller_arg_locals, destination);
-                if state.local_value(destination).is_some_and(|value| {
-                    prior_result.as_ref() != Some(&value.z3_term)
-                }) {
+                if state
+                    .local_value(destination)
+                    .is_some_and(|value| prior_result.as_ref() != Some(&value.z3_term))
+                {
                     state.assert_call_result_invariants(destination);
                     if summary_used {
                         state.assert_summary_result_type_invariants(callee, destination);
@@ -416,6 +513,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             .iter()
             .enumerate()
             .map(|(index, value)| {
+                if let super::state::ValueSource::FieldBorrow { base, .. } = &value.source {
+                    return Some(*base);
+                }
                 let arg_local = caller_arg_locals.get(index).copied().flatten();
                 let address_referent = self.find_local_by_address(&value.z3_term);
                 let borrow_referent =
@@ -425,20 +525,21 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 } else {
                     address_referent.or(borrow_referent)
                 };
-                referent
-                    .or_else(|| {
-                        let local = caller_arg_locals.get(index).copied().flatten()?;
-                        local
-                            .as_usize()
-                            .checked_sub(1)
-                            .and_then(|index| self.inline.arg_referents.get(index))
-                            .copied()
-                            .flatten()?;
-                        let provenance = value.provenance_alloc_id()?;
-                        (self.local_value(local).and_then(VmValue::provenance_alloc_id)
-                            == Some(provenance))
-                            .then_some(local)
-                    })
+                referent.or_else(|| {
+                    let local = caller_arg_locals.get(index).copied().flatten()?;
+                    local
+                        .as_usize()
+                        .checked_sub(1)
+                        .and_then(|index| self.inline.arg_referents.get(index))
+                        .copied()
+                        .flatten()?;
+                    let provenance = value.provenance_alloc_id()?;
+                    (self
+                        .local_value(local)
+                        .and_then(VmValue::provenance_alloc_id)
+                        == Some(provenance))
+                    .then_some(local)
+                })
             })
             .collect();
         let caller_referents = inline_arg_referents.clone();
@@ -469,7 +570,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         for (i, arg_val) in arg_values.iter().enumerate() {
             let callee_local = Local::from_usize(i + 1);
             self.ensure_local_allocation(callee_local);
-            self.set_local(callee_local, arg_val.clone());
+            let mut arg_val = arg_val.clone();
+            if let super::state::ValueSource::FieldBorrow { base, .. } = &mut arg_val.source {
+                *base = callee_local;
+            }
+            self.set_local(callee_local, arg_val);
             if arg_inner_uninit.get(i) == Some(&true)
                 && let Some(&id) = self.current_frame.local_alloc.get(&callee_local)
             {
@@ -543,10 +648,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     .insert(unknown_term.clone());
             }
             self.set_local(dest, VmValue::new(unknown_term, dest_ty));
-            let mut unknown_effect =
-                matches!(self.tcx.def_kind(callee_def_id), DefKind::Fn | DefKind::AssocFn)
-                    && self.tcx.fn_sig(callee_def_id).skip_binder().safety()
-                        == rustc_hir::Safety::Unsafe;
+            let mut unknown_effect = matches!(
+                self.tcx.def_kind(callee_def_id),
+                DefKind::Fn | DefKind::AssocFn
+            ) && self.tcx.fn_sig(callee_def_id).skip_binder().safety()
+                == rustc_hir::Safety::Unsafe;
             for (arg, referent) in arg_values.iter().zip(&caller_referents) {
                 match arg.ty.kind() {
                     TyKind::Bool
@@ -579,7 +685,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 .field_paths(Local::from_usize(0))
                 .into_iter()
                 .filter_map(|path| {
-                    state.field_value(Local::from_usize(0), &path)
+                    state
+                        .field_value(Local::from_usize(0), &path)
                         .cloned()
                         .map(|val| (path, val))
                 })
@@ -623,7 +730,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return true;
         }
         *self = completed.remove(0);
-        self.inline.pending_states.extend(completed.into_iter().map(Box::new));
+        self.inline
+            .pending_states
+            .extend(completed.into_iter().map(Box::new));
         true
     }
 
@@ -795,10 +904,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         return InlineStep::Complete(false);
                     }
                     if feasible.len() > 1 {
-                        return InlineStep::Fork(feasible
-                            .into_iter()
-                            .map(|(target, state)| (state, target, visited.clone()))
-                            .collect());
+                        return InlineStep::Fork(
+                            feasible
+                                .into_iter()
+                                .map(|(target, state)| (state, target, visited.clone()))
+                                .collect(),
+                        );
                     }
                     let (target, state) = feasible.pop().unwrap();
                     *self = state;
@@ -901,7 +1012,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             SatResult::Unsat => {}
                         }
                     }
-                    if pre_uninit.iter().any(|id| state.allocation_needs_write(*id)) {
+                    if pre_uninit
+                        .iter()
+                        .any(|id| state.allocation_needs_write(*id))
+                    {
                         let witness = state.find_uninit_witness(terminator, pre_uninit);
                         if !witness.is_empty() {
                             self.possible_uninit_allocs.extend(witness);
@@ -1076,7 +1190,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
         if path.is_empty()
             && let Some(prov) = &pointer.provenance
-            && self.thread_local_allocs.values().any(|id| *id == prov.alloc_id)
+            && self
+                .thread_local_allocs
+                .values()
+                .any(|id| *id == prov.alloc_id)
             && prov.offset.simplify().as_u64() == Some(0)
             && self.alloc(prov.alloc_id).element_ty.as_ty() == Some(value.ty)
         {
@@ -1097,6 +1214,14 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         .and_then(|_| *referent)
                 });
         if let Some(local) = caller_referent {
+            let path = match &pointer.source {
+                super::state::ValueSource::FieldBorrow { fields, .. } => {
+                    let mut full = fields.clone();
+                    full.extend(path);
+                    full
+                }
+                _ => path,
+            };
             let wrote_object = path.is_empty()
                 && pointer.provenance.as_ref().is_some_and(|prov| {
                     self.alloc(prov.alloc_id).is_external()
@@ -1113,7 +1238,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             && let Some(prov) = &pointer.provenance
             && prov.offset.simplify().as_u64() == Some(0)
             && self.alloc(prov.alloc_id).element_ty.as_ty() == Some(value.ty)
-            && matches!(self.alloc(prov.alloc_id).kind, super::state::AllocKind::Object)
+            && matches!(
+                self.alloc(prov.alloc_id).kind,
+                super::state::AllocKind::Object
+            )
             && self.find_local_by_address(&pointer.z3_term).is_none()
         {
             self.clear_write_evidence(prov.alloc_id);
@@ -1191,9 +1319,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         && dest.projection.is_empty()
                         && let Rvalue::Ref(_, _, place) | Rvalue::RawPtr(_, place) = rvalue
                         && ((place.projection.is_empty()
-                            && matches!(self.body().local_decls[local].ty.kind(),
+                            && matches!(
+                                self.body().local_decls[local].ty.kind(),
                                 TyKind::Ref(_, _, rustc_middle::ty::Mutability::Mut)
-                                    | TyKind::RawPtr(_, rustc_middle::ty::Mutability::Mut)))
+                                    | TyKind::RawPtr(_, rustc_middle::ty::Mutability::Mut)
+                            ))
                             || (place.projection.len() == 1
                                 && matches!(place.projection[0].kind(), ProjectionElem::Deref)))
                     {
@@ -1269,6 +1399,4 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
         None
     }
-
-
 }

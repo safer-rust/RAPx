@@ -8,14 +8,26 @@ use crate::utils::span::{
 };
 use rustc_middle::mir::{Body, HasLocalDecls, Local};
 
-use super::drop::LocalSpot;
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+pub struct LocalSpot {
+    pub bb: Option<usize>,
+    pub local: Option<usize>,
+}
+
+impl LocalSpot {
+    pub fn new(bb: usize, local: usize) -> Self {
+        Self {
+            bb: Some(bb),
+            local: Some(local),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BugType {
     UseAfterFree,
     DoubleFree,
     DanglingPointer,
-    UseAfterFreeAndDoubleFree,
 }
 
 #[derive(Debug)]
@@ -50,51 +62,6 @@ impl BugRecords {
         }
     }
 
-    /// Returns `Some(bug_type)` if the caller should insert the bug with the returned type.
-    /// Returns `None` if the bug should be skipped (already covered by an existing entry).
-    /// When both UAF and DF exist for the same pair, DF wins as the survivor.
-    pub fn try_merge_pair(
-        &mut self,
-        drop_spot: LocalSpot,
-        trigger_bb: usize,
-        in_type: BugType,
-    ) -> Option<BugType> {
-        let pair_match =
-            |bug: &TyBug| bug.drop_spot == drop_spot && bug.trigger_info.bb == Some(trigger_bb);
-        if in_type == BugType::UseAfterFree {
-            for bug in self.df_bugs.values_mut() {
-                if pair_match(bug) {
-                    bug.bug_type = BugType::UseAfterFreeAndDoubleFree;
-                    return None;
-                }
-            }
-            for bug in self.df_bugs_unwind.values_mut() {
-                if pair_match(bug) {
-                    bug.bug_type = BugType::UseAfterFreeAndDoubleFree;
-                    return None;
-                }
-            }
-        } else {
-            let uaf_keys: Vec<usize> = self
-                .uaf_bugs
-                .iter()
-                .filter(|(_, bug)| pair_match(bug))
-                .map(|(k, _)| *k)
-                .collect();
-            if !uaf_keys.is_empty() {
-                for k in &uaf_keys {
-                    self.uaf_bugs.remove(k);
-                }
-                return Some(BugType::UseAfterFreeAndDoubleFree);
-            }
-        }
-        let check = |bugs: &FxHashMap<usize, TyBug>| -> bool { bugs.values().any(pair_match) };
-        if check(&self.uaf_bugs) || check(&self.df_bugs) || check(&self.df_bugs_unwind) {
-            return None;
-        }
-        Some(in_type)
-    }
-
     pub fn is_bug_free(&self) -> bool {
         self.df_bugs.is_empty()
             && self.df_bugs_unwind.is_empty()
@@ -113,7 +80,6 @@ impl BugRecords {
             "Double free detected.",
             df_uaf_detail,
         );
-
         self.emit_bug_reports(
             body,
             &self.df_bugs_unwind,
@@ -147,7 +113,6 @@ impl BugRecords {
             "Dangling pointer detected.",
             |bug, dl, tl, db, _| dp_detail(bug, dl, tl, db),
         );
-
         self.emit_bug_reports(
             body,
             &self.dp_bugs_unwind,
@@ -274,17 +239,6 @@ fn df_uaf_detail(
         span_to_line_number(bug.span)
     );
     match bug.bug_type {
-        BugType::UseAfterFreeAndDoubleFree => format!(
-            "Double free / Use-after-free (confidence {}%): Location in file {}\n    | MIR detail: Value {} and {} are alias.\n    | MIR detail: {} is dropped at {}; {} is dropped at {}.",
-            bug.confidence,
-            line,
-            drop_local,
-            trigger_local,
-            drop_local,
-            drop_bb,
-            trigger_local,
-            trigger_bb
-        ),
         BugType::UseAfterFree => format!(
             "Use-after-free (confidence {}%): Location in file {}\n    | MIR detail: Value {} and {} are alias.\n    | MIR detail: {} is dropped at {}; {} is used at {}.",
             bug.confidence,
@@ -310,12 +264,7 @@ fn df_uaf_detail(
     }
 }
 
-fn dp_detail(
-    bug: &TyBug,
-    drop_local: &str,
-    trigger_local: &str,
-    drop_bb: &str,
-) -> String {
+fn dp_detail(bug: &TyBug, drop_local: &str, trigger_local: &str, drop_bb: &str) -> String {
     format!(
         "Dangling pointer (confidence {}%): Location in file {} line {}.\n    | MIR detail: Value {} and {} are alias.\n    | MIR detail: {} is dropped at {}; {} became dangling.",
         bug.confidence,

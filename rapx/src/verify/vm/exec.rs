@@ -1,14 +1,10 @@
 //! Execute retained path items in the symbolic VM.
 
 use rustc_hir::def_id::DefId;
-use rustc_middle::mir::Local;
+use rustc_middle::mir::{Local, TerminatorKind, UnwindAction};
 use z3::ast::Int;
 
-use crate::{
-    analysis::path::CallArg,
-    compat::FxHashSet,
-    verify::slicer::RelevantItem,
-};
+use crate::{analysis::path::CallArg, compat::FxHashSet, verify::slicer::RelevantItem};
 
 use super::state::{ValueSource, VmState, VmValue};
 
@@ -57,9 +53,16 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 ));
                 let body = self.body_for(*def_id);
                 let statement = &body.basic_blocks[*block].statements[*statement_index];
+                self.active_mir_block = Some(block.as_usize());
+                self.active_mir_span = Some(statement.source_info.span);
                 crate::verify::vm::rules::exec_statement(self, statement);
             }
-            RelevantItem::Terminator { def_id, block, switch_succ, .. } => {
+            RelevantItem::Terminator {
+                def_id,
+                block,
+                switch_succ,
+                ..
+            } => {
                 self.active_mir_location = Some(format!(
                     "{} bb{} terminator",
                     self.tcx.def_path_str(*def_id),
@@ -67,7 +70,14 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 ));
                 let body = self.body_for(*def_id);
                 let terminator = body.basic_blocks[*block].terminator();
+                self.active_mir_block = Some(block.as_usize());
+                self.active_mir_span = Some(terminator.source_info.span);
                 crate::verify::vm::rules::exec_terminator(self, terminator, *switch_succ);
+                if self.track_memory_events
+                    && matches!(&terminator.kind, TerminatorKind::Call { unwind: UnwindAction::Cleanup(target), .. } if Some(*target) == *switch_succ)
+                {
+                    self.path_infeasible = false;
+                }
             }
             RelevantItem::CalleeEntry { callee, body, args } => {
                 self.active_mir_location = None;
@@ -94,9 +104,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         args: &[CallArg],
     ) {
         let method_call = args.first().and_then(|arg| {
-            let CallArg::Local(local) = arg else { return None };
+            let CallArg::Local(local) = arg else {
+                return None;
+            };
             self.local_value(Local::from_usize(*local))
-                .and_then(|receiver| self.begin_method_call(callee, receiver, Some(Local::from_usize(*local))))
+                .and_then(|receiver| {
+                    self.begin_method_call(callee, receiver, Some(Local::from_usize(*local)))
+                })
         });
         self.active_method_calls.push(method_call);
         let param_count = body
@@ -108,10 +122,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 _ => None,
             })
             .collect();
-        self.inline.path_postconditions.push((
-            callee,
-            param_sources.clone(),
-        ));
+        self.inline
+            .path_postconditions
+            .push((callee, param_sources.clone()));
         let arg_referents: Vec<Option<Local>> = param_sources
             .iter()
             .map(|arg| {
@@ -128,9 +141,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         .or_else(|| {
                             self.find_copy_root(arg_local).filter(|root| {
                                 self.local_value(*root).is_some_and(|source| {
-                                    value.provenance_alloc_id().is_some_and(|id| {
-                                        source.provenance_alloc_id() == Some(id)
-                                    })
+                                    value
+                                        .provenance_alloc_id()
+                                        .is_some_and(|id| source.provenance_alloc_id() == Some(id))
                                 }) && self.field_value(*root, &[0]).is_some()
                             })
                         })
@@ -141,11 +154,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                 .and_then(|index| self.inline.arg_referents.get(index))
                                 .copied()
                                 .flatten()?;
-                            let parent_alloc = self
-                                .caller_frames
-                                .last()?
-                                .local_alloc
-                                .get(&outer)?;
+                            let parent_alloc =
+                                self.caller_frames.last()?.local_alloc.get(&outer)?;
                             (value.provenance_alloc_id() == Some(*parent_alloc))
                                 .then_some(arg_local)
                         })
@@ -221,15 +231,16 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         self.current_frame.current_def_id = callee;
 
         for (i, arg) in param_sources.iter().enumerate() {
-            if let Some(v) = arg.and_then(|local| self.frame_local_value(&frame, local)).cloned() {
+            if let Some(v) = arg
+                .and_then(|local| self.frame_local_value(&frame, local))
+                .cloned()
+            {
                 let inner_uninit = arg
                     .and_then(|local| frame.local_alloc.get(&local))
                     .is_some_and(|id| self.content(*id).facts.inner_uninit);
                 let param = Local::from_usize(i + 1);
                 self.set_local(param, v);
-                if inner_uninit
-                    && let Some(&id) = self.current_frame.local_alloc.get(&param)
-                {
+                if inner_uninit && let Some(&id) = self.current_frame.local_alloc.get(&param) {
                     self.content_mut(id).facts.inner_uninit = true;
                 }
             }
@@ -270,8 +281,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         self.caller_frames.push(frame);
     }
 
-     /// Exit an inlined callee: capture the callee's return value, restore the
-     /// caller context, and write the return value to the caller's destination.
+    /// Exit an inlined callee: capture the callee's return value, restore the
+    /// caller context, and write the return value to the caller's destination.
     fn handle_callee_exit(&mut self, dest: usize) {
         let method_call = self.active_method_calls.pop().flatten();
         let ret = self.local_value(Local::from_usize(0)).cloned();
@@ -293,7 +304,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             self.restore_frame(frame);
         }
         let writes = std::mem::take(&mut self.inline.deferred_field_writes);
-        self.inline.arg_referents = self.inline.path_saved_arg_referents.pop().unwrap_or_default();
+        self.inline.arg_referents = self
+            .inline
+            .path_saved_arg_referents
+            .pop()
+            .unwrap_or_default();
         self.inline.deferred_field_writes = self
             .inline
             .path_saved_deferred_writes
@@ -316,7 +331,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             {
                 self.content_mut(dest_id).facts.inner_uninit = true;
             }
-            if let Some(dest_alloc_id) = self.current_frame.local_alloc.get(&Local::from_usize(dest)).copied()
+            if let Some(dest_alloc_id) = self
+                .current_frame
+                .local_alloc
+                .get(&Local::from_usize(dest))
+                .copied()
             {
                 self.content_mut(dest_alloc_id).facts.initialized = true;
             }

@@ -290,7 +290,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// Initialize a `Box`/`Vec`/`CString` parameter: allocate its heap pointee,
     /// expose the owning pointer field, and (for `Vec`) bind symbolic
     /// `len`/`cap`.
-    fn init_box_vec_param(
+    pub(crate) fn init_box_vec_param(
         &mut self,
         local: Local,
         ty: Ty<'tcx>,
