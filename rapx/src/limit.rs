@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// Maximum number of paths collected per search — both whole-CFG enumeration
 /// and per-checkpoint prefix collection. Overridable via the `--path-limit`
 /// CLI flag.
-pub(crate) const PATH_LIMIT: usize = 512;
+pub(crate) const PATH_LIMIT: usize = 256;
 
 /// Runtime override for [`PATH_LIMIT`], set from `--path-limit`. `0` means
 /// "not overridden" (the default above applies).

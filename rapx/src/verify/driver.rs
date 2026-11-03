@@ -80,6 +80,14 @@ pub(crate) struct VerifyDriver<'target, 'tcx> {
     engine: VerifyEngine<'tcx>,
 }
 
+fn property_contains_alias(property: &Property<'_>) -> bool {
+    match property {
+        Property::Atom(atom) => atom.kind == PropertyKind::Alias,
+        Property::And(and) => and.conjuncts.iter().any(property_contains_alias),
+        Property::Or(or) => or.disjuncts.iter().any(property_contains_alias),
+    }
+}
+
 impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
     pub(crate) fn new_with_repeat(
         tcx: TyCtxt<'tcx>,
@@ -114,10 +122,11 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
     }
 
     /// Run unsafe-checkpoint verification for the managed function target.
-    pub(crate) fn verify_function(&self) -> VerificationReport<'tcx> {
+    pub(crate) fn verify_function(
+        &self,
+        cache: &mut VmCache<'_, 'tcx>,
+    ) -> VerificationReport<'tcx> {
         let mut report = VerificationReport::new(self.target.def_id);
-        let z3_ctx = VerifyEngine::new_z3_context();
-        let mut cache = VmCache::new(&z3_ctx);
 
         for view in self.iter_callsite_checks() {
             let unresolved_call = view.checkpoint.kind == CheckpointKind::UnsafeCall
@@ -157,7 +166,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
             }
 
             for (property_index, property) in view.properties.iter().enumerate() {
-                let bulk = self.check_property_paths(&mut cache, &view, property);
+                let bulk = self.check_property_paths(cache, &view, property);
                 let path_count = bulk.len();
                 for (path_index, (result, path_desc)) in bulk.into_iter().enumerate() {
                     report.results.push(PropertyCheckResult {
@@ -195,9 +204,8 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
         report
     }
 
-    /// Check one property (atom / `And` / `Or`) across all paths, returning
-    /// per-path `(result, path_desc)` pairs.  `And`/`Or` are folded per path,
-    /// preserving per-leaf slicing for precision.
+    /// Check one property across all paths. `Or` evaluates its disjuncts on the
+    /// same VM states; `And` keeps per-child slicing.
     fn check_property_paths(
         &self,
         cache: &mut VmCache<'_, 'tcx>,
@@ -213,51 +221,64 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
             {
                 self.engine.check_drop_from_tree(view.tree, view.checkpoint)
             }
-            Property::Atom(_) => self.engine.check_callsite_from_tree(
+            Property::Atom(_) | Property::Or(_) => self.engine.check_callsite_from_tree(
                 cache,
                 view.tree,
                 view.checkpoint,
                 property,
                 &self.target.caller_requires,
+                crate::verify::api_classify::is_manually_drop_drop(view.checkpoint.callee)
+                    && property_contains_alias(property),
             ),
-            Property::And(and) => {
-                self.combine_check_paths(cache, view, &and.conjuncts, CheckResult::and, |r| {
-                    matches!(r, CheckResult::Failed | CheckResult::Unknown(_))
-                })
-            }
-            Property::Or(or) => {
-                self.combine_check_paths(cache, view, &or.disjuncts, CheckResult::or, |r| {
-                    r.is_proved()
-                })
-            }
+            Property::And(and) => self.combine_check_paths(cache, view, &and.conjuncts),
         }
     }
 
-    /// Fold `And`/`Or` children per path: `fold` combines results, and the
-    /// description is replaced when `replace_desc_on` matches the child result.
+    /// Combine independently sliced conjuncts after aligning structural paths.
     fn combine_check_paths(
         &self,
         cache: &mut VmCache<'_, 'tcx>,
         view: &CheckpointCheckView<'_, '_, 'tcx>,
         children: &[Property<'tcx>],
-        fold: fn(CheckResult, CheckResult) -> CheckResult,
-        replace_desc_on: fn(&CheckResult) -> bool,
     ) -> Vec<(CheckResult, String)> {
-        let mut per_path: Vec<Option<(CheckResult, String)>> = Vec::new();
+        let mut children = children.iter();
+        let Some(first) = children.next() else {
+            return Vec::new();
+        };
+        let mut per_path = self.check_property_paths(cache, view, first);
         for child in children {
             let bulk = self.check_property_paths(cache, view, child);
-            if per_path.is_empty() {
-                per_path.resize(bulk.len(), None);
+            if per_path.len() != bulk.len()
+                || per_path
+                    .iter()
+                    .zip(&bulk)
+                    .any(|(left, right)| left.1 != right.1)
+            {
+                let descriptions = if bulk.len() > per_path.len() {
+                    bulk.into_iter()
+                        .map(|(_, description)| description)
+                        .collect::<Vec<_>>()
+                } else {
+                    per_path
+                        .into_iter()
+                        .map(|(_, description)| description)
+                        .collect::<Vec<_>>()
+                };
+                return descriptions
+                    .into_iter()
+                    .map(|description| {
+                        (
+                            CheckResult::Unknown(UnknownReason::InconsistentPathResults),
+                            description,
+                        )
+                    })
+                    .collect();
             }
-            for (i, (result, desc)) in bulk.iter().enumerate() {
-                let slot = per_path[i].get_or_insert_with(|| (result.clone(), desc.clone()));
-                slot.0 = fold(slot.0.clone(), result.clone());
-                if replace_desc_on(result) {
-                    slot.1 = desc.clone();
-                }
+            for (slot, (result, _)) in per_path.iter_mut().zip(bulk) {
+                slot.0 = slot.0.clone().and(result);
             }
         }
-        per_path.into_iter().map(|x| x.unwrap()).collect()
+        per_path
     }
 
     /// Iterate over checkpoints together with the shared path tree and properties.
@@ -718,6 +739,8 @@ impl<'tcx> VerifyRun<'tcx> {
         all_results: &mut Vec<PropertyCheckResult<'tcx>>,
         trait_impl_limited: &mut bool,
     ) -> Option<String> {
+        let z3_ctx = VerifyEngine::new_z3_context();
+        let mut cache = VmCache::new(&z3_ctx);
         for &repeat in repeat_rounds {
             let enumeration_started = Instant::now();
             let driver =
@@ -730,7 +753,7 @@ impl<'tcx> VerifyRun<'tcx> {
                 enumeration_started.elapsed()
             );
             let verification_started = Instant::now();
-            match mir_utils::catch_panic(|| driver.verify_function()) {
+            match mir_utils::catch_panic(|| driver.verify_function(&mut cache)) {
                 Ok(report) => {
                     rap_debug!(
                         "checked {} repeat {} in {:?}",
@@ -849,7 +872,10 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                 &mut all_results,
                 &mut trait_impl_limited,
             );
-            rap_debug!("verified function paths for {target_path} in {:?}", target_started.elapsed());
+            rap_debug!(
+                "verified function paths for {target_path} in {:?}",
+                target_started.elapsed()
+            );
 
             if !target.struct_invariants.is_empty() && !self.skip_invariant {
                 let driver = VerifyDriver::new_with_repeat(
@@ -1004,7 +1030,10 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
             if let Some(self_ty) = trait_target.self_ty_def_id {
                 rap_info!("  impl for: {}", self.tcx.def_path_str(self_ty));
             } else {
-                rap_info!("  impl: {}", self.tcx.def_path_str(trait_target.impl_def_id));
+                rap_info!(
+                    "  impl: {}",
+                    self.tcx.def_path_str(trait_target.impl_def_id)
+                );
             }
             if ensures.is_empty() {
                 rap_info!("  ensures: <none>");
@@ -1026,10 +1055,8 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                         continue;
                     }
                     checked_methods.insert(self.tcx.def_path_str(trait_method));
-                    let postconditions = crate::verify::target::get_trait_method_ensures(
-                        self.tcx,
-                        item.def_id,
-                    );
+                    let postconditions =
+                        crate::verify::target::get_trait_method_ensures(self.tcx, item.def_id);
                     rap_info!("    fn {}:", item.name());
                     for property in dedup_compound_props(postconditions.iter()) {
                         let (call, _) = fmt_contract_expanded(
@@ -1636,7 +1663,10 @@ fn stable_reference_metadata(tcx: TyCtxt<'_>, def_id: DefId, property: &Property
     let Some(kind) = property.kind() else {
         return false;
     };
-    if !matches!(kind, PropertyKind::NonNull | PropertyKind::Align | PropertyKind::ValidNum) {
+    if !matches!(
+        kind,
+        PropertyKind::NonNull | PropertyKind::Align | PropertyKind::ValidNum
+    ) {
         return false;
     }
     let Some(local) = type_invariant_subject(property) else {

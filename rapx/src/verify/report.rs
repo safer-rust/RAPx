@@ -30,6 +30,8 @@ pub(crate) enum UnknownReason {
     UnresolvedUnsafeCall,
     MissingContract(String),
     UnsupportedProperty,
+    InconsistentPathResults,
+    DropAliasMixedPaths,
     /// A checker cannot resolve a value or supported property shape.
     Unimplemented,
     Multiple(Vec<UnknownReason>),
@@ -51,6 +53,8 @@ impl UnknownReason {
             Self::UnresolvedUnsafeCall => out.push("unresolved_unsafe_call"),
             Self::MissingContract(_) => out.push("missing_contract"),
             Self::UnsupportedProperty => out.push("unsupported_property"),
+            Self::InconsistentPathResults => out.push("inconsistent_path_results"),
+            Self::DropAliasMixedPaths => out.push("drop_alias_mixed_paths"),
             Self::Unimplemented => out.push("unresolved_value"),
             Self::Multiple(reasons) => {
                 for reason in reasons {
@@ -83,6 +87,8 @@ impl UnknownReason {
             Self::UnresolvedUnsafeCall => "unresolved unsafe call".to_string(),
             Self::MissingContract(callee) => format!("missing safety contract: {callee}"),
             Self::UnsupportedProperty => "unsupported property".to_string(),
+            Self::InconsistentPathResults => "compound property paths do not align".to_string(),
+            Self::DropAliasMixedPaths => "drop alias outcome differs across paths".to_string(),
             Self::Unimplemented => "unresolved value or unsupported shape".to_string(),
             Self::Multiple(reasons) => reasons
                 .iter()

@@ -230,8 +230,12 @@ static REGISTRY: &[Entry] = &[
 /// A registry entry keeps the call opaque in the path graph, including entries
 /// with an intentionally empty effect. Operand-dependent fallbacks are checked
 /// later by the VM and cannot be identified by `DefId` alone.
+fn registry_entry(callee: Option<DefId>) -> Option<&'static Entry> {
+    REGISTRY.iter().find(|entry| (entry.matches)(callee))
+}
+
 pub(crate) fn has_registry_entry(callee: Option<DefId>) -> bool {
-    REGISTRY.iter().any(|e| (e.matches)(callee))
+    registry_entry(callee).is_some()
 }
 
 pub(crate) fn is_unmodeled_intrinsic(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
@@ -245,15 +249,13 @@ pub(crate) fn lookup_effect<'tcx>(
     callee: Option<DefId>,
     func: &Operand<'tcx>,
 ) -> Option<CallEffectSummary> {
-    for e in REGISTRY {
-        if (e.matches)(callee) {
-            let ctx = EffCtx {
-                tcx,
-                caller,
-                func,
-            };
-            return Some((e.effects)(&ctx));
-        }
+    if let Some(entry) = registry_entry(callee) {
+        let ctx = EffCtx {
+            tcx,
+            caller,
+            func,
+        };
+        return Some((entry.effects)(&ctx));
     }
     if callee.is_some_and(|id| api_classify::is_ptr_copy(Some(id)) && !tcx.is_mir_available(id)) {
         return Some(eff_copy_memory(&EffCtx {

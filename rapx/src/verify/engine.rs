@@ -5,6 +5,7 @@
 
 use crate::helpers::mir_utils;
 use std::cell::Cell;
+use std::sync::Arc;
 use z3::Config;
 
 use rustc_hir::def_id::DefId;
@@ -33,7 +34,7 @@ enum LocalAccess {
     Reinitialized,
 }
 
-#[derive(Hash, PartialEq, Eq)]
+#[derive(Clone, Hash, PartialEq, Eq)]
 enum GoalItemKey<'tcx> {
     Statement(DefId, BasicBlock, Option<usize>, usize),
     Terminator(DefId, BasicBlock, Option<usize>, Option<BasicBlock>),
@@ -42,19 +43,28 @@ enum GoalItemKey<'tcx> {
     ContractFact(Property<'tcx>),
 }
 
+#[derive(Hash, PartialEq, Eq)]
+struct PrefixEdge<'tcx> {
+    parent: usize,
+    chunk: Vec<GoalItemKey<'tcx>>,
+}
+
 /// Symbolic states shared by properties that retain the same MIR and entry facts.
 pub(crate) struct VmCache<'z3, 'tcx> {
     context: &'z3 z3::Context,
     states: FxHashMap<Vec<GoalItemKey<'tcx>>, CachedGoal<'z3, 'tcx>>,
+    prefix_edges: FxHashMap<PrefixEdge<'tcx>, usize>,
+    prefix_states: Vec<Arc<Vec<VmState<'z3, 'tcx>>>>,
     max_entries: usize,
 }
 
 struct CachedGoal<'z3, 'tcx> {
-    states: Vec<VmState<'z3, 'tcx>>,
+    states: Arc<Vec<VmState<'z3, 'tcx>>>,
     reachability: Vec<Cell<Option<z3::SatResult>>>,
 }
 
 const VM_CACHE_MAX_ENTRIES: usize = 128;
+const VM_PREFIX_STRIDE: usize = 16;
 
 impl<'z3, 'tcx> VmCache<'z3, 'tcx> {
     pub(crate) fn new(context: &'z3 z3::Context) -> Self {
@@ -65,6 +75,8 @@ impl<'z3, 'tcx> VmCache<'z3, 'tcx> {
         Self {
             context,
             states: FxHashMap::default(),
+            prefix_edges: FxHashMap::default(),
+            prefix_states: Vec::new(),
             max_entries,
         }
     }
@@ -75,21 +87,78 @@ impl<'z3, 'tcx> VmCache<'z3, 'tcx> {
         goal: ProofGoal<'tcx>,
     ) -> &CachedGoal<'z3, 'tcx> {
         let key = goal_key(&goal.items);
-        if self.states.len() >= self.max_entries && !self.states.contains_key(&key) {
+        if self.states.contains_key(&key) {
+            return self.states.get(&key).unwrap();
+        }
+        if self.states.len() >= self.max_entries {
             self.states.clear();
         }
-        self.states.entry(key).or_insert_with(|| {
-            let states = super::vm::execute_goal(
-                self.context,
-                engine.tcx,
-                engine.caller_def_id,
-                engine.instance_body,
-                engine.assume_struct_invariants,
-                goal,
-            );
-            let reachability = states.iter().map(|_| Cell::new(None)).collect();
-            CachedGoal { states, reachability }
-        })
+        if self.prefix_states.len() >= self.max_entries.saturating_mul(4).max(1) {
+            self.prefix_edges.clear();
+            self.prefix_states.clear();
+        }
+        let mut prefix_len = 0;
+        let mut parent = 0;
+        while prefix_len + VM_PREFIX_STRIDE < key.len() {
+            let edge = PrefixEdge {
+                parent,
+                chunk: key[prefix_len..prefix_len + VM_PREFIX_STRIDE].to_vec(),
+            };
+            let Some(&next) = self.prefix_edges.get(&edge) else {
+                break;
+            };
+            parent = next;
+            prefix_len += VM_PREFIX_STRIDE;
+        }
+        let mut states = if prefix_len > 0 {
+            Arc::clone(&self.prefix_states[parent - 1])
+        } else {
+            Arc::new(
+                VmState::new(
+                    self.context,
+                    engine.tcx,
+                    engine.caller_def_id,
+                    engine.instance_body,
+                    engine.assume_struct_invariants,
+                )
+                .execute_items(&[]),
+            )
+        };
+        while prefix_len < key.len() {
+            let end = ((prefix_len / VM_PREFIX_STRIDE) + 1)
+                .saturating_mul(VM_PREFIX_STRIDE)
+                .min(key.len());
+            if states
+                .iter()
+                .any(|state| !state.path_infeasible && !state.unsupported_mir)
+            {
+                let owned =
+                    Arc::try_unwrap(states).unwrap_or_else(|shared| shared.as_ref().clone());
+                states = Arc::new(VmState::execute_items_after(
+                    owned,
+                    &goal.items[prefix_len..end],
+                ));
+            }
+            if end < key.len() {
+                let edge = PrefixEdge {
+                    parent,
+                    chunk: key[prefix_len..end].to_vec(),
+                };
+                parent = self.prefix_states.len() + 1;
+                self.prefix_edges.insert(edge, parent);
+                self.prefix_states.push(Arc::clone(&states));
+            }
+            prefix_len = end;
+        }
+        let reachability = states.iter().map(|_| Cell::new(None)).collect();
+        self.states.insert(
+            key.clone(),
+            CachedGoal {
+                states,
+                reachability,
+            },
+        );
+        self.states.get(&key).unwrap()
     }
 }
 
@@ -180,6 +249,7 @@ impl<'tcx> VerifyEngine<'tcx> {
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
         caller_contracts: &[Property<'tcx>],
+        forward_drop_alias: bool,
     ) -> Vec<(CheckResult, String)> {
         let target_block = checkpoint.block.as_usize();
         let goals = self
@@ -200,6 +270,7 @@ impl<'tcx> VerifyEngine<'tcx> {
             checkpoint,
             &bound_property,
             &entry_facts,
+            forward_drop_alias,
         )
     }
 
@@ -235,22 +306,7 @@ impl<'tcx> VerifyEngine<'tcx> {
                 };
                 if def == caller && local == target {
                     reaches = true;
-                    for &g2 in &path[pos + 1..] {
-                        let Some((def2, local2)) = tree.block_fn_of(g2) else {
-                            continue;
-                        };
-                        if def2 != caller {
-                            continue;
-                        }
-                        match Self::block_local_access(self.tcx, caller, local2, slot) {
-                            LocalAccess::None => {}
-                            LocalAccess::Read => {
-                                used = true;
-                                break;
-                            }
-                            LocalAccess::Reinitialized => break,
-                        }
-                    }
+                    used |= self.drop_suffix_reads(tree, caller, slot, &path[pos + 1..]);
                 }
             }
             if reaches {
@@ -381,6 +437,99 @@ impl<'tcx> VerifyEngine<'tcx> {
             }
         }
         LocalAccess::None
+    }
+
+    fn drop_suffix_reads(
+        &self,
+        tree: &PathTree,
+        caller: DefId,
+        slot: Local,
+        suffix: &[usize],
+    ) -> bool {
+        for &block in suffix {
+            let Some((def_id, local_block)) = tree.block_fn_of(block) else {
+                continue;
+            };
+            if def_id != caller {
+                continue;
+            }
+            match Self::block_local_access(self.tcx, caller, local_block, slot) {
+                LocalAccess::None => {}
+                LocalAccess::Read => return true,
+                LocalAccess::Reinitialized => return false,
+            }
+        }
+        false
+    }
+
+    fn drop_alias_for_prefix(
+        &self,
+        tree: &PathTree,
+        checkpoint: &Checkpoint<'tcx>,
+        prefix: &[usize],
+        slot: Option<Local>,
+    ) -> CheckResult {
+        let Some(slot) = slot else {
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
+        };
+        let mut safe = false;
+        let mut unsafe_path = false;
+        for path in tree.iter().filter(|path| path.starts_with(prefix)) {
+            let used = self.drop_suffix_reads(tree, checkpoint.caller, slot, &path[prefix.len()..]);
+            safe |= !used;
+            unsafe_path |= used;
+        }
+        match (safe, unsafe_path) {
+            (true, false) => CheckResult::ProvedByRule,
+            (false, true) => CheckResult::Failed,
+            (true, true) => CheckResult::Unknown(UnknownReason::DropAliasMixedPaths),
+            (false, false) => CheckResult::Unknown(UnknownReason::Unimplemented),
+        }
+    }
+
+    fn check_with_forward_alias<'z3>(
+        vm_state: &VmState<'z3, 'tcx>,
+        checkpoint: &Checkpoint<'tcx>,
+        property: &Property<'tcx>,
+        structural: bool,
+        reachability: &Cell<Option<z3::SatResult>>,
+        alias_result: &CheckResult,
+    ) -> CheckResult {
+        if vm_state.path_infeasible {
+            return CheckResult::ProvedByRule;
+        }
+        match property {
+            Property::Atom(atom) if atom.kind == super::contract::PropertyKind::Alias => {
+                alias_result.clone()
+            }
+            Property::Atom(_) => {
+                PropertyChecker.check(vm_state, checkpoint, property, structural, reachability)
+            }
+            Property::And(and) => {
+                and.conjuncts
+                    .iter()
+                    .fold(CheckResult::ProvedByRule, |acc, child| {
+                        acc.and(Self::check_with_forward_alias(
+                            vm_state,
+                            checkpoint,
+                            child,
+                            structural,
+                            reachability,
+                            alias_result,
+                        ))
+                    })
+            }
+            Property::Or(or) => or.disjuncts.iter().fold(CheckResult::Failed, |acc, child| {
+                acc.or(Self::check_with_forward_alias(
+                    vm_state,
+                    checkpoint,
+                    child,
+                    structural,
+                    reachability,
+                    alias_result,
+                ))
+            }),
+        }
     }
 
     /// Insert callee boundaries from each retained item's callsite ancestry.
@@ -662,7 +811,15 @@ impl<'tcx> VerifyEngine<'tcx> {
             is_mut_ref: false,
             statement_index: 0,
         };
-        self.check_goals(cache, tree, goals, &fake_checkpoint, invariant, entry_facts)
+        self.check_goals(
+            cache,
+            tree,
+            goals,
+            &fake_checkpoint,
+            invariant,
+            entry_facts,
+            false,
+        )
     }
 
     /// Replay sliced paths and check one property, shared by callsite and invariant checks.
@@ -674,11 +831,16 @@ impl<'tcx> VerifyEngine<'tcx> {
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
         entry_facts: &[RelevantItem<'tcx>],
+        forward_drop_alias: bool,
     ) -> Vec<(CheckResult, String)> {
+        let drop_slot = forward_drop_alias.then(|| self.drop_referent_local(checkpoint));
         goals
             .into_iter()
-            .flat_map(|mut goal| {
+            .map(|mut goal| {
                 let path_desc = goal.path.describe_caller_indices(tree);
+                let alias_result = drop_slot.map(|slot| {
+                    self.drop_alias_for_prefix(tree, checkpoint, &goal.path.blocks, slot)
+                });
                 if !entry_facts.is_empty() {
                     let mut items = entry_facts.to_vec();
                     items.append(&mut goal.items);
@@ -691,21 +853,32 @@ impl<'tcx> VerifyEngine<'tcx> {
                     tree,
                 );
                 let cached = cache.states_for(self, goal);
-                cached
+                let result = cached
                     .states
                     .iter()
                     .zip(&cached.reachability)
                     .map(|(vm_state, reachability)| {
-                        let result = PropertyChecker.check(
-                            &vm_state,
-                            checkpoint,
-                            property,
-                            tree.is_structural(),
-                            reachability,
-                        );
-                        (result, path_desc.clone())
+                        if let Some(alias_result) = &alias_result {
+                            Self::check_with_forward_alias(
+                                vm_state,
+                                checkpoint,
+                                property,
+                                tree.is_structural(),
+                                reachability,
+                                alias_result,
+                            )
+                        } else {
+                            PropertyChecker.check(
+                                vm_state,
+                                checkpoint,
+                                property,
+                                tree.is_structural(),
+                                reachability,
+                            )
+                        }
                     })
-                    .collect::<Vec<_>>()
+                    .fold(CheckResult::ProvedByRule, CheckResult::and);
+                (result, path_desc)
             })
             .collect()
     }

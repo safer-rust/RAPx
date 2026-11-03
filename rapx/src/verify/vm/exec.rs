@@ -16,11 +16,17 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// Execute all retained MIR items in path order.
     pub(crate) fn execute_items(mut self, items: &[RelevantItem<'tcx>]) -> Vec<Self> {
         self.init_parameters();
-        let mut states = vec![self];
+        Self::execute_items_after(vec![self], items)
+    }
+
+    pub(crate) fn execute_items_after(
+        mut states: Vec<Self>,
+        items: &[RelevantItem<'tcx>],
+    ) -> Vec<Self> {
         for item in items {
             let mut next = Vec::new();
             for mut state in states {
-                if !state.path_infeasible {
+                if !state.path_infeasible && !state.unsupported_mir {
                     state.execute_item(item);
                     next.extend(
                         std::mem::take(&mut state.inline.pending_states)

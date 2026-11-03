@@ -28,30 +28,4 @@ pub(crate) mod region;
 pub(crate) mod rules;
 pub(crate) mod state;
 
-use rustc_middle::ty::TyCtxt;
-use rustc_middle::mir::Body;
-use rustc_hir::def_id::DefId;
-use z3::Context;
-
-use crate::verify::slicer::ProofGoal;
-
 pub(crate) use self::state::VmState;
-
-/// Run one sliced path through the symbolic MIR executor.
-pub(crate) fn execute_goal<'z3, 'tcx>(
-    z3_ctx: &'z3 Context,
-    tcx: TyCtxt<'tcx>,
-    caller_def_id: DefId,
-    instance_body: Option<&'tcx Body<'tcx>>,
-    assume_struct_invariants: bool,
-    goal: ProofGoal<'tcx>,
-) -> Vec<VmState<'z3, 'tcx>> {
-    VmState::new(
-        z3_ctx,
-        tcx,
-        caller_def_id,
-        instance_body,
-        assume_struct_invariants,
-    )
-    .execute_items(&goal.items)
-}

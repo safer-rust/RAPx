@@ -159,6 +159,8 @@ impl PropertyChecker {
         }
         solver.assert(&condition.not());
         let r0 = solver.check();
+        let mut unknown_reason =
+            (r0 == SatResult::Unknown).then(|| UnknownReason::from_solver(solver));
         let mut r = match r0 {
             SatResult::Unsat => Some(CheckResult::ProvedBySmt),
             SatResult::Sat => Some(CheckResult::Failed),
@@ -198,10 +200,17 @@ impl PropertyChecker {
             r = match bv_solver.check() {
                 SatResult::Unsat => Some(CheckResult::ProvedBySmt),
                 SatResult::Sat => Some(CheckResult::Failed),
-                _ => r,
+                SatResult::Unknown => {
+                    unknown_reason = Some(UnknownReason::from_solver(&bv_solver));
+                    r
+                }
             };
         }
-        r
+        r.or_else(|| {
+            Some(CheckResult::Unknown(
+                unknown_reason.unwrap_or(UnknownReason::Unimplemented),
+            ))
+        })
     }
 
     fn expr_has_mul<'tcx>(&self, expr: &ContractExpr<'tcx>) -> bool {
