@@ -1,5 +1,5 @@
-use crate::def_ids::lang_api::{self, LangItem};
 use crate::compat::GenericArgsRef;
+use crate::def_ids::lang_api::{self, LangItem};
 #[cfg(rapx_attr_requires_ext)]
 use rustc_ast::attr::AttributeExt;
 use rustc_hir::{
@@ -17,8 +17,8 @@ use rustc_middle::{
         TerminatorKind,
     },
     ty::{
-        Const, ConstKind, FieldDef, GenericArgKind, GenericArgs, GenericParamDefKind,
-        Instance, InstanceKind, PseudoCanonicalInput, ScalarInt, Ty, TyCtxt, TyKind, TypeFlags,
+        Const, ConstKind, FieldDef, GenericArgKind, GenericArgs, GenericParamDefKind, Instance,
+        InstanceKind, PseudoCanonicalInput, ScalarInt, Ty, TyCtxt, TyKind, TypeFlags,
         TypeSuperVisitable, TypeVisitable, TypeVisitableExt, TypeVisitor, TypingEnv,
     },
 };
@@ -206,7 +206,8 @@ pub(crate) fn has_unresolved_const_args<'tcx>(
             ct.super_visit_with(self)
         }
     }
-    args.visit_with(&mut UnboundConstParam { tcx, caller }).is_break()
+    args.visit_with(&mut UnboundConstParam { tcx, caller })
+        .is_break()
 }
 
 /// Map a resolved [`Instance`] to its concrete target `DefId` and whether the
@@ -333,32 +334,49 @@ pub(crate) fn type_param_impl_tys<'tcx>(
         return Vec::new();
     }
     let param_env = tcx.param_env(def_id);
-    let mut best: Option<Vec<Ty<'tcx>>> = None;
+    let mut bounds = Vec::new();
     for clause in param_env.caller_bounds() {
         let Some(trait_clause) = clause.as_trait_clause() else {
             continue;
         };
         let self_ty = trait_clause.self_ty().skip_binder();
-        if self_ty != param_ty {
+        if self_ty != param_ty || tcx.trait_is_auto(trait_clause.def_id()) {
             continue;
         }
-        let impl_tys: Vec<Ty<'tcx>> = tcx
+        let requested_args = trait_clause.skip_binder().trait_ref.args;
+        let mut impl_tys: Vec<Ty<'tcx>> = tcx
             .all_impls(trait_clause.def_id())
+            .filter(|impl_def_id| {
+                tcx.impl_polarity(*impl_def_id) == rustc_middle::ty::ImplPolarity::Positive
+                    && requested_args
+                        .iter()
+                        .skip(1)
+                        .zip(tcx.impl_trait_ref(*impl_def_id).skip_binder().args.iter().skip(1))
+                        .all(|(requested, implemented)| match implemented.kind() {
+                            GenericArgKind::Type(ty) if matches!(ty.kind(), TyKind::Param(_)) => true,
+                            GenericArgKind::Const(ct) if matches!(ct.kind(), ConstKind::Param(_)) => true,
+                            _ => requested == implemented,
+                        })
+            })
             .map(|impl_def_id| tcx.type_of(impl_def_id).skip_binder())
             // Only concrete self types are usable as monomorphization candidates
             // (a generic `impl<T: Clone> Clone for Range<T>` must not count).
             .filter(|ty| !ty_has_type_param(*ty))
             .collect();
+        let mut seen = HashSet::new();
+        impl_tys.retain(|ty| seen.insert(*ty));
         if impl_tys.is_empty() {
             continue;
         }
-        best = Some(match best {
-            None => impl_tys,
-            Some(prev) if impl_tys.len() < prev.len() => impl_tys,
-            Some(prev) => prev,
-        });
+        bounds.push(impl_tys);
     }
-    best.unwrap_or_default()
+    let Some(best) = bounds.iter().min_by_key(|types| types.len()) else {
+        return Vec::new();
+    };
+    best.iter()
+        .copied()
+        .filter(|ty| bounds.iter().all(|types| types.contains(ty)))
+        .collect()
 }
 
 /// Enumerate up to `limit` instances of a generic function using concrete
@@ -368,10 +386,7 @@ pub(crate) fn enumerate_mono_instances<'tcx>(
     def_id: DefId,
     limit: usize,
 ) -> Vec<Instance<'tcx>> {
-    let inherited = has_nearby_scalar_unmodeled_generic_call(tcx, def_id);
-    let candidate = std::iter::successors(Some(def_id), |id| {
-        inherited.then(|| tcx.generics_of(*id).parent).flatten()
-    })
+    let candidate = std::iter::successors(Some(def_id), |id| tcx.generics_of(*id).parent)
         .flat_map(|id| tcx.generics_of(id).own_params.iter())
         .filter(|param| matches!(param.kind, GenericParamDefKind::Type { .. }))
         .filter_map(|param| {
@@ -379,7 +394,7 @@ pub(crate) fn enumerate_mono_instances<'tcx>(
             let impl_tys = type_param_impl_tys(tcx, def_id, param_ty);
             (!impl_tys.is_empty()).then_some((param.def_id, impl_tys))
         })
-        .min_by_key(|(_, impl_tys)| impl_tys.len());
+        .next();
     let Some((param_id, impl_tys)) = candidate else {
         return Vec::new();
     };
@@ -397,12 +412,7 @@ pub(crate) fn enumerate_mono_instances<'tcx>(
 /// monomorphization.
 pub(crate) fn has_unmodeled_generic_call<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> bool {
     let mut visited = HashSet::default();
-    has_unmodeled_generic_call_rec(tcx, def_id, &mut visited, usize::MAX, false)
-}
-
-fn has_nearby_scalar_unmodeled_generic_call(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
-    let mut visited = HashSet::default();
-    has_unmodeled_generic_call_rec(tcx, def_id, &mut visited, 2, true)
+    has_unmodeled_generic_call_rec(tcx, def_id, &mut visited)
 }
 
 pub(crate) fn has_generic_const_call_argument(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
@@ -428,16 +438,16 @@ pub(crate) fn has_generic_const_call_argument(tcx: TyCtxt<'_>, def_id: DefId) ->
 
 /// A callee may need its own MIR instantiated when an immediate trait call
 /// can change target after substituting the caller's type arguments.
-pub(crate) fn has_direct_unmodeled_generic_call<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    def_id: DefId,
-) -> bool {
+pub(crate) fn has_direct_unmodeled_generic_call<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> bool {
     if !tcx.is_mir_available(def_id) {
         return false;
     }
     let body = tcx.optimized_mir(def_id);
     body.basic_blocks.iter().any(|bb| {
-        let TerminatorKind::Call { func, destination, .. } = &bb.terminator().kind else {
+        let TerminatorKind::Call {
+            func, destination, ..
+        } = &bb.terminator().kind
+        else {
             return false;
         };
         let Some(callee) = dep_callee_def_id(func) else {
@@ -457,8 +467,6 @@ fn has_unmodeled_generic_call_rec<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
     visited: &mut HashSet<DefId>,
-    remaining_depth: usize,
-    scalar_only: bool,
 ) -> bool {
     if !visited.insert(def_id) || !tcx.is_mir_available(def_id) {
         return false;
@@ -468,7 +476,10 @@ fn has_unmodeled_generic_call_rec<'tcx>(
         let Some(term) = &bb.terminator else {
             continue;
         };
-        let TerminatorKind::Call { func, destination, .. } = &term.kind else {
+        let TerminatorKind::Call {
+            func, destination, ..
+        } = &term.kind
+        else {
             continue;
         };
         let Some(callee) = dep_callee_def_id(func) else {
@@ -486,40 +497,17 @@ fn has_unmodeled_generic_call_rec<'tcx>(
             if target.is_none_or(|target| !tcx.is_mir_available(target))
                 && !has_callback_effect(tcx, callee, body.local_decls[destination.local].ty)
                 && !crate::verify::call_summary::effects::has_registry_entry(Some(callee))
-                && (!scalar_only
-                    || matches!(
-                        body.local_decls[destination.local].ty.kind(),
-                        TyKind::Bool | TyKind::Char | TyKind::Int(_) | TyKind::Uint(_) | TyKind::Float(_)
-                    ))
             {
                 return true;
             }
-            if remaining_depth > 0
-                && target.is_some_and(|target| {
-                    has_unmodeled_generic_call_rec(
-                        tcx,
-                        target,
-                        visited,
-                        remaining_depth - 1,
-                        scalar_only,
-                    )
-                })
-            {
+            if target.is_some_and(|target| has_unmodeled_generic_call_rec(tcx, target, visited)) {
                 return true;
             }
             continue;
         }
         // A concrete callee gets inlined, so recurse to surface its own
         // unmodeled generic trait calls.
-        if remaining_depth > 0
-            && has_unmodeled_generic_call_rec(
-                tcx,
-                callee,
-                visited,
-                remaining_depth - 1,
-                scalar_only,
-            )
-        {
+        if has_unmodeled_generic_call_rec(tcx, callee, visited) {
             return true;
         }
     }
@@ -1037,7 +1025,7 @@ pub fn type_layout<'tcx>(tcx: TyCtxt<'tcx>, caller: DefId, ty: Ty<'tcx>) -> Opti
         return None;
     }
     match layout_of_ty(tcx, caller, ty) {
-        Some(l) => Some((l.align.abi.bytes(), l.size.bytes())),
+        Some(l) => Some((layout_align_bytes(&l), l.size.bytes())),
         None if matches!(ty.kind(), TyKind::Param(_)) => Some((0, 0)),
         None => None,
     }
@@ -1060,6 +1048,18 @@ pub fn layout_of_ty<'tcx>(
     })
     .ok()
     .and_then(|r| r.ok())
+}
+
+/// ABI alignment in bytes across rustc layout API versions.
+pub fn layout_align_bytes(layout: &rustc_abi::TyAndLayout<'_, Ty<'_>>) -> u64 {
+    #[cfg(rapx_layout_align_abi)]
+    {
+        layout.align.abi.bytes()
+    }
+    #[cfg(not(rapx_layout_align_abi))]
+    {
+        layout.align.bytes()
+    }
 }
 
 /// Byte offset of a struct field within its container type (0 on failure).
@@ -1439,7 +1439,7 @@ pub fn size_of_generic_param<'tcx>(tcx: TyCtxt<'tcx>, caller: DefId, ty: Ty<'tcx
 pub fn min_align_of_generic_param<'tcx>(tcx: TyCtxt<'tcx>, caller: DefId, ty: Ty<'tcx>) -> u64 {
     generic_param_impl_layouts(tcx, caller, ty)
         .into_iter()
-        .map(|l| l.align.abi.bytes())
+        .map(|l| layout_align_bytes(&l))
         .min()
         .unwrap_or(0)
 }
@@ -1450,7 +1450,7 @@ pub fn min_align_of_generic_param<'tcx>(tcx: TyCtxt<'tcx>, caller: DefId, ty: Ty
 pub fn max_align_of_generic_param<'tcx>(tcx: TyCtxt<'tcx>, caller: DefId, ty: Ty<'tcx>) -> u64 {
     generic_param_impl_layouts(tcx, caller, ty)
         .into_iter()
-        .map(|l| l.align.abi.bytes())
+        .map(|l| layout_align_bytes(&l))
         .max()
         .unwrap_or(0)
 }

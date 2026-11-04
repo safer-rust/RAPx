@@ -697,7 +697,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
     pub(crate) fn align_of_ty(&self, ty: Ty<'tcx>) -> u64 {
         mir_utils::layout_of_ty(self.tcx, self.current_frame.current_def_id, ty)
-            .map(|l| l.align.abi.bytes())
+            .map(|l| mir_utils::layout_align_bytes(&l))
             .unwrap_or(1)
     }
 

@@ -498,7 +498,16 @@ pub(crate) fn eval_cast<'z3, 'tcx>(
                 src_val.facts.align_n
             },
         },
-        source: src_val.source.field_offset_only(),
+        source: match &src_val.source {
+            ValueSource::SliceLen(len)
+                if src_is_ptr
+                    && mir_utils::pointee_ty(cast_ty)
+                        .is_some_and(|ty| matches!(ty.kind(), TyKind::Slice(_) | TyKind::Str)) =>
+            {
+                ValueSource::SliceLen(len.clone())
+            }
+            _ => src_val.source.field_offset_only(),
+        },
     }
 }
 
@@ -518,13 +527,14 @@ pub(crate) fn eval_aggregate<'z3, 'tcx>(
     if let rustc_middle::mir::AggregateKind::RawPtr(pointee_ty, _) = kind
         && let Some(data_operand) = operands.iter().next()
     {
-        let sized = pointee_ty.is_sized(
-            state.tcx,
-            rustc_middle::ty::TypingEnv::post_analysis(
+        let sized = (!mir_utils::ty_has_type_param(*pointee_ty)
+            && pointee_ty.is_sized(
                 state.tcx,
-                state.current_frame.current_def_id,
-            ),
-        ) || operands
+                rustc_middle::ty::TypingEnv::post_analysis(
+                    state.tcx,
+                    state.current_frame.current_def_id,
+                ),
+            )) || operands
             .iter()
             .nth(1)
             .is_some_and(|meta| state.value_of_operand(meta).ty.is_unit());
@@ -538,7 +548,8 @@ pub(crate) fn eval_aggregate<'z3, 'tcx>(
             let metadata = state.value_of_operand(metadata);
             let mut val = state.value_of_operand(data_operand);
             val.ty = dest_ty;
-            if matches!(pointee_ty.kind(), TyKind::Slice(_)) || metadata.ty == state.tcx.types.usize
+            if matches!(pointee_ty.kind(), TyKind::Slice(_) | TyKind::Param(_) | TyKind::Alias(..))
+                || metadata.ty == state.tcx.types.usize
             {
                 val.source = ValueSource::SliceLen(metadata.z3_term);
             }

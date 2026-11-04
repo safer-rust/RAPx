@@ -42,13 +42,15 @@ jobs:
   verify-std:
     runs-on: ubuntu-22.04
     continue-on-error: true
+    env:
+      RUSTUP_TOOLCHAIN: nightly-2026-10-22
     steps:
     - uses: actions/checkout@v4
     - name: Setup toolchain
       run: |
-        rustup toolchain install nightly-2026-10-12 --profile minimal
-        rustup component add rustc-dev rust-src llvm-tools-preview rustfmt --toolchain nightly-2026-10-12
-        rustup override set nightly-2026-10-12
+        rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+        rustup component add rustc-dev rust-src llvm-tools-preview rustfmt --toolchain "$RUSTUP_TOOLCHAIN"
+        rustup override set "$RUSTUP_TOOLCHAIN"
         rustc --version
     - name: Build
       run: ./install.sh

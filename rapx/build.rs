@@ -27,6 +27,7 @@ fn main() {
     emit_check_cfg("rapx_has_compiler_entrypoint");
     emit_check_cfg("rapx_defkind_const_struct");
     emit_check_cfg("rapx_has_boxraw");
+    emit_check_cfg("rapx_layout_align_abi");
 
     emit_cfg("rapx_ge_95", minor >= 95);
     emit_cfg("rapx_ge_99", minor >= 99);
@@ -170,6 +171,13 @@ fn main() {
     emit_cfg(
         "rapx_has_boxraw",
         std_src_contains_path("library/alloc/src/boxed.rs", "struct BoxRaw"),
+    );
+    emit_cfg(
+        "rapx_layout_align_abi",
+        rustc_src_contains_path(
+            "compiler/rustc_abi/src/lib.rs",
+            "pub align: AbiAlign,\n    pub size: Size,",
+        ),
     );
 }
 
