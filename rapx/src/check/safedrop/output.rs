@@ -46,7 +46,7 @@ pub fn create_unit_directory(unit: &str) -> io::Result<PathBuf> {
 pub fn write_reports(
     directory: &Path,
     mut profile: SafeDropProfile,
-    functions: &BTreeMap<String, SafeDropFunction>,
+    functions: &BTreeMap<u32, SafeDropFunction>,
     mut findings: Vec<SafeDropFinding>,
 ) -> io::Result<()> {
     if profile.analyzer != Analyzer::Safedrop
@@ -55,21 +55,27 @@ pub fn write_reports(
     {
         return Err(io::Error::other("Invalid SafeDrop report profile"));
     }
-    for (function, context) in functions {
+    for (function_id, context) in functions {
         if context.source.is_none() {
             profile
                 .limitations
-                .push(format!("{function}: source_unavailable"));
+                .push(format!("body {function_id}: source_unavailable"));
         }
     }
     for (index, finding) in findings.iter_mut().enumerate() {
         finding.id = format!("sd-{}-{index}", profile.unit);
-        let context = functions.get(&finding.function).ok_or_else(|| {
+        let context = functions.get(&finding.function_id).ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
                 "SafeDrop function context is missing",
             )
         })?;
+        if context.id != finding.function_id {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "SafeDrop function context identity does not match the finding",
+            ));
+        }
         if finding.location.is_none() {
             profile
                 .limitations

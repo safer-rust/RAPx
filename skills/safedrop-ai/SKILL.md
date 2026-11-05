@@ -115,6 +115,13 @@ For the current format, read `profile.json` first, verify `analyzer` is `safedro
 
 `profile.json` is generated only after every finding file has been written successfully. Without a profile or with invalid profile JSON, existing finding files are partial evidence and cannot establish that this run completed a full scan. Zero findings produce only the profile; still check status, actual function count, limitations, and Cargo exit status. `limitations` appears only in the profile; look up entries for the current function or finding ID. Read legacy `functions[finding.function]` mappings or inline `function_source` and `mir` according to their actual fields, without overwriting original reports.
 
+Verify `finding.function_id` matches `function.id` before reasoning from the
+captured context. This compiler definition index is unique only within the
+compilation unit/run; `finding.function` is a display name and can repeat.
+Use `function.location` to distinguish definitions. If legacy or inconsistent
+context cannot be associated reliably, recover the correct body or keep the
+assessment inconclusive rather than editing a same-named function.
+
 ### Fixed capability boundaries
 
 The current implementation has these general boundaries:

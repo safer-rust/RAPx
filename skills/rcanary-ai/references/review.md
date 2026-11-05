@@ -1,5 +1,13 @@
 # Reviewing and repairing rCanary candidates
 
+Before analyzing a current finding, verify `finding.function_id == function.id`
+and check the definition location and relevant MIR locals. Readable names can
+repeat within one compilation unit. Use the ID only within that unit/run, not
+for cross-run matching. A mismatched context is an evidence failure: recover the
+correct body or retain `inconclusive`, without proposing edits to another body.
+Legacy reports without these IDs require source/MIR association checks; a matching
+source-file digest alone does not establish the correct function context.
+
 ## Follow the ownership obligation
 
 Read the profile and its function-specific limitations before the candidate. The return check and source sites anchor the investigation. Determine:

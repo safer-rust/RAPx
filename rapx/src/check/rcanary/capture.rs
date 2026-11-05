@@ -57,7 +57,7 @@ pub fn source_location(tcx: TyCtxt<'_>, span: Span) -> Option<SourceLocation> {
     })
 }
 
-pub fn function_context(tcx: TyCtxt<'_>, body: &Body<'_>) -> RCanaryFunction {
+pub fn function_context(tcx: TyCtxt<'_>, def_id: DefId, body: &Body<'_>) -> RCanaryFunction {
     let mut mir = String::new();
     for (local, decl) in body.local_decls.iter_enumerated() {
         let _ = writeln!(mir, "let {local:?}: {};", decl.ty);
@@ -72,6 +72,8 @@ pub fn function_context(tcx: TyCtxt<'_>, body: &Body<'_>) -> RCanaryFunction {
         }
     }
     RCanaryFunction {
+        id: def_id.index.as_u32(),
+        location: source_location(tcx, body.span),
         source: tcx.sess.source_map().span_to_snippet(body.span).ok(),
         mir,
     }
@@ -136,6 +138,7 @@ pub fn finding(
     RCanaryFinding {
         id: String::new(),
         function: tcx.def_path_str(def_id),
+        function_id: def_id.index.as_u32(),
         bug_type: BugType::MemoryLeak,
         location: source_location(tcx, body.span),
         return_site: site(

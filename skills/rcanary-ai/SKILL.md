@@ -59,6 +59,13 @@ rCanary warns when its accumulated constraints are `unsat` at a return and it ha
 
 Deliver each candidate's report path and ID, relevant code locations, ownership sequence, assessment (`supported`, `refuted`, or `inconclusive`), evidence, remaining assumptions and any repair proposal. For a false positive, identify the concrete premise that fails. If the user asked for analysis only, stop after the assessment and proposals.
 
+Verify `finding.function_id` matches `function.id` before reasoning from the
+captured context. This compiler definition index is unique only within the
+compilation unit/run; `finding.function` is a display name and can repeat.
+Use `function.location` to distinguish definitions. If legacy or inconsistent
+context cannot be associated reliably, recover the correct body or keep the
+assessment inconclusive rather than editing a same-named function.
+
 ## Repair and rescan
 
 When repairs are requested, apply focused ownership or release changes within the existing authorization. Check that source still matches the reviewed snapshot. Group related candidates by resource/function so the same issue is fixed once.

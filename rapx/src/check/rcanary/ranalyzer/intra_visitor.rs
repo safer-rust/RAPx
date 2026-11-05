@@ -85,23 +85,24 @@ impl<'tcx, 'a> FlowAnalysis<'tcx, 'a> {
                     .take()
                     .expect("rCanary capture was enabled");
                 let function = tcx.def_path_str(def_id);
+                let function_id = def_id.index.as_u32();
                 report.analyzed_functions += 1;
                 report.checked_returns += captured.checked_returns;
                 if captured.checked_returns == 0 {
-                    report
-                        .limitations
-                        .push(format!("{function}: no_return_checked"));
+                    report.limitations.push(format!(
+                        "{function} (body {function_id}): no_return_checked"
+                    ));
                 }
                 report.limitations.extend(
                     captured
                         .limitations
                         .into_iter()
-                        .map(|reason| format!("{function}: {reason}")),
+                        .map(|reason| format!("{function} (body {function_id}): {reason}")),
                 );
                 if !captured.findings.is_empty() {
                     report
                         .functions
-                        .insert(function, capture::function_context(tcx, body));
+                        .insert(function_id, capture::function_context(tcx, def_id, body));
                     report.findings.extend(captured.findings);
                 }
             }

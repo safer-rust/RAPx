@@ -1,5 +1,13 @@
 # Review and repair rules
 
+Before analyzing a current finding, verify `finding.function_id == function.id`
+and check the definition location and relevant MIR locals. Readable names can
+repeat within one compilation unit. Use the ID only within that unit/run, not
+for cross-run matching. A mismatched context is an evidence failure: recover the
+correct body or retain `inconclusive`, without proposing edits to another body.
+Legacy reports without these IDs require source/MIR association checks; a matching
+source-file digest alone does not establish the correct function context.
+
 ## Explain each candidate with verifiable evidence
 
 Read the profile's status and limitations, then read each `sd-*.json`. Each file's `function` contains the owning function's source and MIR, while `finding` contains the current candidate and its witness. Reconstruct the reasoning: who owns the resource, what invalidates it, which value is considered related to it, and whether a subsequent use, repeated release, or dangling pointer at exit occurs. Distinguish analyzer assumptions from facts established by the source.
