@@ -8,6 +8,8 @@ use std::{
 
 use serde::Serialize;
 
+use crate::check::report::Analyzer;
+
 use super::report::{SafeDropFinding, SafeDropFunction, SafeDropProfile};
 
 #[derive(Serialize)]
@@ -17,7 +19,7 @@ struct FindingReport<'a> {
 }
 
 /// Create this unit's directory in its Cargo package, preserving existing output.
-pub fn create_unit_directory(unit: &str) -> io::Result<Option<PathBuf>> {
+pub fn create_unit_directory(unit: &str) -> io::Result<PathBuf> {
     if !valid_name(unit) {
         return Err(io::Error::other("Invalid SafeDrop crate/target name"));
     }
@@ -28,14 +30,14 @@ pub fn create_unit_directory(unit: &str) -> io::Result<Option<PathBuf>> {
     };
     let directory = crate_directory.join(unit);
     match fs::create_dir(&directory) {
-        Ok(()) => Ok(Some(directory)),
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            rap_warn!(
-                "SafeDrop report directory {} already exists; skipping analysis for {unit}. Move the existing directory before running a fresh analysis.",
+        Ok(()) => Ok(directory),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Err(io::Error::new(
+            error.kind(),
+            format!(
+                "SafeDrop report path {} already exists; cannot start a fresh analysis for {unit}. Move the existing path before running again.",
                 directory.display()
-            );
-            Ok(None)
-        }
+            ),
+        )),
         Err(error) => Err(error),
     }
 }
@@ -47,8 +49,11 @@ pub fn write_reports(
     functions: &BTreeMap<String, SafeDropFunction>,
     mut findings: Vec<SafeDropFinding>,
 ) -> io::Result<()> {
-    if !valid_name(&profile.unit) {
-        return Err(io::Error::other("Invalid SafeDrop crate/target name"));
+    if profile.analyzer != Analyzer::Safedrop
+        || !valid_name(&profile.unit)
+        || profile.finding_count != findings.len()
+    {
+        return Err(io::Error::other("Invalid SafeDrop report profile"));
     }
     for (function, context) in functions {
         if context.source.is_none() {

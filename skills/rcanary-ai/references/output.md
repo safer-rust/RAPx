@@ -1,5 +1,50 @@
 # rCanary output protocol
 
+## Shared reading rules
+
+The current SafeDrop, rCanary, and opt exports share a profile header and a
+`finding` object in every candidate file. Read them in this order:
+
+1. Verify this invocation's exit status and scope, then read its fresh
+   `profile.json`. Missing or invalid profiles indicate incomplete output.
+2. Read `analyzer` and choose the filename prefix below. Check that `unit`,
+   versions, working directory, status, and limitations match the intended run.
+3. Enumerate the analyzer's candidate files in the same directory. Their number
+   must equal `finding_count`. Read each file's `finding`, verify that its ID
+   matches the filename stem, and reject duplicate or mismatched IDs.
+4. Use any top-level `function` context and the analyzer-specific evidence
+   described below. Count agreement is an output-consistency check, not proof
+   of fresh execution or complete analysis coverage.
+
+| `analyzer` | Candidate files | Additional evidence |
+| --- | --- | --- |
+| `safedrop` | `sd-<unit>-<index>.json` | Top-level `function`; release/use sites and witness in `finding` |
+| `rcanary` | `rc-<unit>-<index>.json` | Top-level `function`; return sites, locals and solver evidence in `finding` |
+| `opt` | `opt-<unit>-<index>.json` | Source, annotations and static advice inside `finding` |
+
+The common profile fields are `analyzer`, `unit`, `rapx_version`,
+`rustc_version`, `working_directory`, `status`, `analyzed_functions`,
+`finding_count`, and optional `limitations`. Analyzer-specific profile fields
+remain at the same JSON level. `rustc_version` is a best-effort query of
+`rustc --version` on PATH; use build records to establish binary compatibility.
+No schema-version field or top-level Cargo command is exported.
+
+`completed` means analysis completed within that analyzer's model; `partial`
+means known coverage loss; `skipped` means no functions were analyzed. All three
+statuses use the same vocabulary, but opt currently emits only `completed` or
+`skipped`. Function counts reflect each detector's traversal: opt excludes the
+two injected helpers, while other analyzers retain their existing filtering.
+Do not compare those counts as identical coverage measurements across detectors.
+Zero findings are meaningful only with fresh completed output, positive analyzed
+function count, matching scope, and successful execution. Read `limitations`
+even when status is `completed`.
+
+Older reports may lack `analyzer` or `finding_count`; older opt profiles may
+include `schema_version`, and their candidate files may be flat JSON objects.
+Read these according to their actual fields and provenance, state any completion
+checks that cannot be performed, and preserve the originals. Do not infer a
+current-format zero-finding scan from missing fields.
+
 ## Locations and completion
 
 `cargo rapx check -M -- [cargo options]` writes to each analyzed package, using Cargo's `CARGO_MANIFEST_DIR`. A direct invocation without that variable uses the working directory:
@@ -13,7 +58,7 @@
 
 Kinds are `lib`, `bin`, `lib-test`, `bin-test`, and `integration-test`. Explicit crate types currently accept only `lib` and `bin`; mixed library/binary types and other types fail classification before analysis. Test harnesses without `--crate-type` use Cargo's `CARGO_BIN_NAME` and `CARGO_TARGET_TMPDIR` to distinguish binary, library and integration tests. These directories are separate from SafeDrop's `<crate>-<kind>/` outputs.
 
-An existing directory is preserved and that unit's rCanary analysis is skipped. A successful Cargo exit or an old completed profile cannot establish a fresh scan. Use this invocation's logs and actual output paths. Archive and move existing directories before an authorized fresh run.
+An existing directory, even if empty, or a file occupying the output path causes the command to fail with a nonzero exit status before this unit's rCanary analysis. Existing contents are preserved. An old completed profile cannot establish a fresh scan. Use this invocation's logs and actual output paths. Archive and move existing directories before an authorized fresh run.
 
 The profile is written after all finding files succeed. Without a valid profile, finding files are partial evidence. Zero findings produce only the profile. Check that `finding_count` equals the number of current `rc-*.json` files and that every selected unit was actually analyzed. Interrupted writes, analysis panics, export errors and missing compilation units cannot count as a clean scan.
 
@@ -21,6 +66,7 @@ The profile is written after all finding files succeed. Without a valid profile,
 
 | Field | Meaning |
 | --- | --- |
+| `analyzer` | `rcanary` |
 | `unit` | rustc crate name plus target kind, without the `rcanary-` directory prefix |
 | `rapx_version`, `rustc_version` | RAPx package version and best-effort `rustc --version` from PATH; retain build records to establish the actual matching compiler |
 | `working_directory` | Analysis process working directory, not necessarily the command's launch directory |

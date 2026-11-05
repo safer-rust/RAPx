@@ -9,9 +9,10 @@ pub mod observer;
 pub mod output;
 pub mod report;
 
+use crate::check::report::{Analyzer, ReportProfile};
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
-use std::{collections::BTreeMap, env, process::Command};
+use std::{collections::BTreeMap, env};
 
 use crate::limit::SAFEDROP_VISIT_LIMIT;
 use crate::{
@@ -41,11 +42,11 @@ impl<'tcx> SafeDrop<'tcx> {
             let rustc_args: Vec<String> = env::args().collect();
             let unit = driver::unit_name(&rustc_args)
                 .unwrap_or_else(|err| panic!("Cannot identify SafeDrop compilation unit: {err}"));
-            let Some(directory) = output::create_unit_directory(&unit)
-                .unwrap_or_else(|err| panic!("Cannot create SafeDrop unit directory: {err}"))
-            else {
-                return;
-            };
+            let directory = output::create_unit_directory(&unit).unwrap_or_else(|err| {
+                crate::utils::log::rap_error_and_exit(format!(
+                    "Cannot create SafeDrop unit directory: {err}"
+                ))
+            });
             Some((unit, directory))
         } else {
             None
@@ -106,24 +107,15 @@ impl<'tcx> SafeDrop<'tcx> {
             } else {
                 report::RunStatus::Completed
             };
-            let profile = report::SafeDropProfile {
+            let finding_count = findings.len();
+            let profile = ReportProfile::new(
+                Analyzer::Safedrop,
                 unit,
-                rapx_version: env!("CARGO_PKG_VERSION").into(),
-                rustc_version: Command::new("rustc")
-                    .arg("--version")
-                    .output()
-                    .ok()
-                    .filter(|out| out.status.success())
-                    .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_owned()),
-                working_directory: env::current_dir()
-                    .expect("Current working directory invalid.")
-                    .to_string_lossy()
-                    .into_owned(),
                 status,
                 analyzed_functions,
+                finding_count,
                 limitations,
-            };
-            let finding_count = findings.len();
+            );
             output::write_reports(&directory, profile, &functions, findings)
                 .unwrap_or_else(|error| panic!("Failed to export SafeDrop context: {error}"));
             rap_info!(

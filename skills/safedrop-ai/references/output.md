@@ -1,5 +1,50 @@
 # SafeDrop output and evidence
 
+## Shared reading rules
+
+The current SafeDrop, rCanary, and opt exports share a profile header and a
+`finding` object in every candidate file. Read them in this order:
+
+1. Verify this invocation's exit status and scope, then read its fresh
+   `profile.json`. Missing or invalid profiles indicate incomplete output.
+2. Read `analyzer` and choose the filename prefix below. Check that `unit`,
+   versions, working directory, status, and limitations match the intended run.
+3. Enumerate the analyzer's candidate files in the same directory. Their number
+   must equal `finding_count`. Read each file's `finding`, verify that its ID
+   matches the filename stem, and reject duplicate or mismatched IDs.
+4. Use any top-level `function` context and the analyzer-specific evidence
+   described below. Count agreement is an output-consistency check, not proof
+   of fresh execution or complete analysis coverage.
+
+| `analyzer` | Candidate files | Additional evidence |
+| --- | --- | --- |
+| `safedrop` | `sd-<unit>-<index>.json` | Top-level `function`; release/use sites and witness in `finding` |
+| `rcanary` | `rc-<unit>-<index>.json` | Top-level `function`; return sites, locals and solver evidence in `finding` |
+| `opt` | `opt-<unit>-<index>.json` | Source, annotations and static advice inside `finding` |
+
+The common profile fields are `analyzer`, `unit`, `rapx_version`,
+`rustc_version`, `working_directory`, `status`, `analyzed_functions`,
+`finding_count`, and optional `limitations`. Analyzer-specific profile fields
+remain at the same JSON level. `rustc_version` is a best-effort query of
+`rustc --version` on PATH; use build records to establish binary compatibility.
+No schema-version field or top-level Cargo command is exported.
+
+`completed` means analysis completed within that analyzer's model; `partial`
+means known coverage loss; `skipped` means no functions were analyzed. All three
+statuses use the same vocabulary, but opt currently emits only `completed` or
+`skipped`. Function counts reflect each detector's traversal: opt excludes the
+two injected helpers, while other analyzers retain their existing filtering.
+Do not compare those counts as identical coverage measurements across detectors.
+Zero findings are meaningful only with fresh completed output, positive analyzed
+function count, matching scope, and successful execution. Read `limitations`
+even when status is `completed`.
+
+Older reports may lack `analyzer` or `finding_count`; older opt profiles may
+include `schema_version`, and their candidate files may be flat JSON objects.
+Read these according to their actual fields and provenance, state any completion
+checks that cannot be performed, and preserve the originals. Do not infer a
+current-format zero-finding scan from missing fields.
+
 ## Terminal diagnostics
 
 Ordinary `cargo rapx check -f` retains the existing logs and warnings with source snippets, typically including:
@@ -26,16 +71,18 @@ demo-bin/
   sd-demo-bin-1.json
 ```
 
-Directory creation uses atomic `create_dir`. If a directory or file with that name exists, RAPx warns and returns, skipping SafeDrop analysis for that unit and preserving the contents. Even an empty directory prevents analysis. Other units without conflicts can still generate reports. For an authorized new run, archive and move the entire old unit directory; copying reports while leaving the original directory is insufficient.
+Directory creation uses atomic `create_dir`. If a directory or file with that name exists, RAPx reports an error and exits unsuccessfully before starting SafeDrop analysis for that unit, preserving the contents. Even an empty directory is a conflict. Other compilation units may already have generated reports, but the overall command fails. For an authorized new run, archive and move the entire old unit directory; copying reports while leaving the original directory is insufficient.
 
-Read each unit's newly generated reports and retain the top-level Cargo command, selection scope, terminal logs, and exit status. A directory-exists warning takes precedence over an old JSON `completed` status: the unit was skipped in this run, even if Cargo succeeds. Build failure, an empty directory, or missing or invalid reports cannot establish a completed scan. Missing reports can mean analysis never started, was skipped by caching, or failed.
+Read each unit's newly generated reports and retain the top-level Cargo command, selection scope, terminal logs, and exit status. An output-path conflict produces a nonzero command exit status. An old JSON `completed` status describes the earlier run, not the failed invocation. Build failure, an empty directory, or missing or invalid reports cannot establish a completed scan. Missing reports can mean analysis never started, was skipped by caching, or failed.
 
-Verify that the profile and finding JSON files parse. Check their actual fields and `rapx_version` / `rustc_version` against the corresponding implementation. The profile is written after all finding files succeed. A missing or invalid profile indicates incomplete output; existing finding files remain partial evidence. Zero findings produce only the profile; still check status, function count, and actual execution. An empty directory is not a zero-finding result. The profile contains no finding manifest; enumerate all `sd-*.json` in the same directory.
+Verify that the profile and finding JSON files parse. Check their actual fields and `rapx_version` / `rustc_version` against the corresponding implementation. The profile is written after all finding files succeed. A missing or invalid profile indicates incomplete output; existing finding files remain partial evidence. Zero findings produce only the profile; still check status, function count, and actual execution. An empty directory is not a zero-finding result. The profile contains `finding_count` but no filename manifest; enumerate all `sd-*.json` in the same directory and verify the count.
 
 Each `profile.json` contains:
 
 | Field | Meaning |
 | --- | --- |
+| `analyzer` | `safedrop` |
+| `finding_count` | Number of candidate files, checked against the files in this directory |
 | `unit` | Crate name and target kind, such as `demo-lib` or `demo-bin` |
 | `rapx_version`, `rustc_version` | Tool and compiler versions; the compiler version may be null if unknown |
 | `working_directory` | Analysis process's working directory, used to interpret relative source paths; it may differ from the command's launch directory |
@@ -94,7 +141,7 @@ Each `SafeDropFinding` has these base fields:
 
 `SafeDropSite.local` and `.basic_block` may be null. Do not replace null with zero: local 0 commonly denotes the return slot and is a valid ID. Source mapping for a site may identify only a basic block; MIR IDs do not replace source locations.
 
-`SourceLocation` contains `path`, `start_line`, `start_column`, `end_line`, `end_column`, and optional `source_digest`. Lines and columns are one-based character coordinates, with an exclusive end, not UTF-8 byte offsets. The current digest is `fnv1a64:<sixteen lowercase hexadecimal digits>` for the compiler's snapshot of the entire source file. It detects version changes but is not a cryptographic integrity guarantee. rustc removes a UTF-8 BOM and normalizes CRLF to LF. Apply the same normalization before comparing digests; hashing raw Windows file bytes alone does not establish that source changed. You can also compare the finding file's `function.source` or collect fresh context. If the digest is absent, state that snapshot consistency was not verified by digest rather than claiming the file is unchanged. If source differs from the snapshot, recollect context or explicitly review only the historical version.
+`SourceLocation` contains `path`, `start_line`, `start_column`, `end_line`, `end_column`, and optional `source_digest`. Lines and columns are one-based character coordinates, with an exclusive end, not UTF-8 byte offsets. The current digest is `fnv1a64:<sixteen lowercase hexadecimal digits>` for the compiler's snapshot of the entire source file. It detects version changes but is not a cryptographic integrity guarantee. rustc removes a UTF-8 BOM and normalizes CRLF to LF. Apply the same normalization before comparing digests; a digest of unnormalized file bytes alone does not establish that source changed. You can also compare the finding file's `function.source` or collect fresh context. If the digest is absent, state that snapshot consistency was not verified by digest rather than claiming the file is unchanged. If source differs from the snapshot, recollect context or explicitly review only the historical version.
 
 ## Use witness evidence correctly
 

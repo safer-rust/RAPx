@@ -5,6 +5,8 @@ description: Check Rust crates for memory leak candidates with RAPx rCanary, rev
 
 # rCanary AI
 
+The provided command is based on linux environment.
+
 Run detection and review in the current agent session. RAPx exports static-analysis evidence; this skill reads it, checks the relevant source and ownership contracts, and performs repairs when the user requests them. No separate model API is needed. When asked to run `check -M`, continue through review of every candidate. A standalone terminal command exports reports without launching an agent.
 
 ## Choose the entry point
@@ -17,7 +19,7 @@ Determine the target manifest, selected packages, features, target platform, and
 
 ## Run detection
 
-RAPx uses rustc internals. Its binary and the target crate must use the same compiler build and sysroot, with the required components (`rustc-dev`, `rust-src`, `llvm-tools-preview`) and platform tools available. Inspect the toolchain in both the RAPx and target directories:
+RAPx uses rustc internals. Its binary and the target crate must use the same compiler build and sysroot, with the required components (`rustc-dev`, `rust-src`, `llvm-tools-preview`) and Linux build tools available. Inspect the toolchain in both the RAPx and target directories:
 
 ```sh
 rustup show active-toolchain
@@ -41,7 +43,7 @@ cargo +nightly rapx check -M -- --manifest-path Cargo.toml
 - If compilation fails, report that failure rather than a clean scan. Do not arbitrarily upgrade dependencies to fit RAPx.
 - Verify that `check --help` includes `-M`. For a local build, use `cargo +nightly build --manifest-path /path/to/RAPx/Cargo.toml -p rapx --bins --locked`. Use `cargo-rapx` and `rapx` from the same build, putting that binary directory first on PATH for this invocation. The wrapper resolves `rapx` and `rustc` from PATH. Do not replace the user's global installation just to review reports.
 - Each analyzed Cargo package gets `rcanary-<crate>-<kind>/`, for example `rcanary-demo-lib/`. `CARGO_MANIFEST_DIR` selects the package directory, including when launched from another directory or with `--manifest-path`. Direct rustc/RAPx invocation falls back to its working directory when that variable is absent. The crate name is rustc's name, which may differ from the package name.
-- Existing unit directories cause a warning and skip analysis, preserving their contents. Before an authorized new check, archive and move the old directories, confirming the original paths no longer exist. Copying files while leaving the original directories causes rescans to skip. Do not delete existing reports to bypass this protection.
+- Existing unit directories, including empty directories, or files occupying those paths cause an error and a nonzero command exit status. Their contents are preserved. Before an authorized new check, archive and move the old directories, confirming the original paths no longer exist. Copying files while leaving the original directories causes rescans to fail with an output-path conflict. Do not delete existing reports to bypass this protection.
 - The wrapper normally runs `cargo clean` before and after analysis, using the launch directory. When using an external `--manifest-path`, cleanup may fail or clean a different workspace; running from the target package avoids that mismatch. If necessary, clean the target with its actual manifest or use a fresh Cargo `--target-dir`. If cleanup is disabled or ineffective, verify that Cargo actually recompiled and RAPx analyzed the selected units; Cargo can replay old diagnostics without running the detector.
 - Keep the full command, selected scope, logs and exit status outside unit directories, for example under `.rapx-ai/rcanary/`. Report classification failures and missing units. Explicit crate types other than `lib` or `bin`, including mixed lib/bin, are currently unsupported for export.
 
@@ -49,7 +51,7 @@ cargo +nightly rapx check -M -- --manifest-path Cargo.toml
 
 Read the [output protocol](references/output.md) for field meanings, completion checks and detector limitations. Read the [review rules](references/review.md) when judging findings or preparing repairs.
 
-For every selected compilation unit, read the profile before its findings. Check status, analyzed and skipped function counts, return checks, finding count and limitations, together with this invocation's exit status and logs. Missing or invalid profiles indicate incomplete export. Even a completed zero-finding profile has the detector's fixed coverage boundaries.
+For every selected compilation unit, read the profile before its findings and verify `analyzer` is `rcanary`. Follow the shared reading rules in the output protocol, including candidate count and filename/ID checks. Check status, analyzed and skipped function counts, return checks, finding count and limitations, together with this invocation's exit status and logs. Missing or invalid profiles indicate incomplete export. Even a completed zero-finding profile has the detector's fixed coverage boundaries.
 
 Each finding file contains `function` (source and full MIR) and `finding` (one candidate, return site, source calls, symbolic local state and solver constraints). Extract the candidate first; read long MIR and constraints selectively. Reuse matching function context across files. Do not load every report in full at once.
 

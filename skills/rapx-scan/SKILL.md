@@ -5,6 +5,8 @@ description: Run RAPx scan to inventory a Rust crate before deeper analysis — 
 
 # RAPx scan
 
+The provided command is based on linux environment.
+
 ## When to use
 
 - Starting on a crate: run this first to get its public API size and unsafe footprint, then pick a
@@ -25,9 +27,19 @@ The output carries terminal color codes, so strip them before parsing.
 
 Read the values by label: `# total api`, `# generic api`, `# unsafe api`, `# unsafe block`.
 
-Logging keeps the default level. `RAPX_LOG=TRACE` is available when you want to check the arguments
-passed through; do not use `RAPX_LOG=DEBUG`, it panics and aborts the whole run. No per-function log
-level is currently safe to enable.
+The default `INFO` level is sufficient for the four counts. Use `RAPX_LOG=DEBUG`
+to inspect visited API paths, signatures and optional visibility records, or
+`RAPX_LOG=TRACE` for additional invocation and compiler-argument details. TRACE
+also enables DEBUG messages; it does not bypass their evaluation.
+
+To limit verbose output to the scan module while retaining INFO elsewhere:
+
+```sh
+RAPX_LOG=INFO,analysis::scan:DEBUG cargo rapx analyze scan 2>&1
+```
+
+Log filters apply to Rust module paths, not individual functions. Extra log lines
+are diagnostic context; continue extracting the four counts by their labels.
 
 ## What you get
 
