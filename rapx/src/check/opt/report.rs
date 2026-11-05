@@ -6,6 +6,9 @@ use crate::utils::span::{
 use rustc_span::Span;
 use serde::{Deserialize, Serialize};
 
+use crate::check::report::ReportProfile;
+pub use crate::check::report::RunStatus;
+
 /// Stable rule identities, independent of diagnostic wording and source locations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -58,32 +61,16 @@ impl OptRule {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RunStatus {
-    Completed,
-    Skipped,
-}
-
 /// Written last for each compilation unit; absence means output is incomplete.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OptProfile {
-    pub schema_version: u32,
-    pub unit: String,
-    pub rapx_version: String,
-    pub rustc_version: Option<String>,
-    pub working_directory: String,
-    pub status: RunStatus,
+    #[serde(flatten)]
+    pub common: ReportProfile,
     pub level: usize,
     pub no_std: bool,
-    /// User function/closure graphs checked, excluding the two RAPx-injected helpers.
-    pub analyzed_functions: usize,
-    pub finding_count: usize,
     /// Counts sites, in category order: bounds, encoding, suboptimal,
     /// initialization, reallocation, cloning. A report can annotate several sites.
     pub statistics: [usize; 6],
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub limitations: Vec<String>,
 }
 
 /// The same source snippet, annotations and advice shown in the terminal.

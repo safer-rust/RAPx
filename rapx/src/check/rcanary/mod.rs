@@ -9,9 +9,10 @@ use crate::analysis::{
         HeapOwnershipAnalysis, HeapOwnershipResultMap, default::HeapOwnershipAnalyzer,
     },
 };
+use crate::check::report::{Analyzer, ReportProfile};
 use ranalyzer::{FlowAnalysis, IcxSliceFroBlock, IntraFlowContext, MirGraph};
 use rustc_middle::ty::TyCtxt;
-use std::{collections::HashMap, env, process::Command};
+use std::{collections::HashMap, env};
 
 use report::{AnalysisReport, RCanaryProfile, RunStatus};
 
@@ -39,11 +40,11 @@ impl<'tcx> rCanary<'tcx> {
             let rustc_args: Vec<_> = env::args().collect();
             let unit = crate::check::driver::unit_name(&rustc_args)
                 .unwrap_or_else(|err| panic!("Cannot identify rCanary compilation unit: {err}"));
-            let Some(directory) = output::create_unit_directory(&unit)
-                .unwrap_or_else(|err| panic!("Cannot create rCanary unit directory: {err}"))
-            else {
-                return;
-            };
+            let directory = output::create_unit_directory(&unit).unwrap_or_else(|err| {
+                crate::utils::log::rap_error_and_exit(format!(
+                    "Cannot create rCanary unit directory: {err}"
+                ))
+            });
             Some((unit, directory))
         } else {
             None
@@ -68,25 +69,17 @@ impl<'tcx> rCanary<'tcx> {
             };
             let finding_count = report.findings.len();
             let profile = RCanaryProfile {
-                unit,
-                rapx_version: env!("CARGO_PKG_VERSION").into(),
-                rustc_version: Command::new("rustc")
-                    .arg("--version")
-                    .output()
-                    .ok()
-                    .filter(|out| out.status.success())
-                    .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_owned()),
-                working_directory: env::current_dir()
-                    .expect("Current working directory invalid.")
-                    .to_string_lossy()
-                    .into_owned(),
-                status,
-                analyzed_functions: report.analyzed_functions,
+                common: ReportProfile::new(
+                    Analyzer::Rcanary,
+                    unit,
+                    status,
+                    report.analyzed_functions,
+                    finding_count,
+                    std::mem::take(&mut report.limitations),
+                ),
                 skipped_functions: report.skipped_functions,
                 checked_returns: report.checked_returns,
-                finding_count,
                 solver_timeout_ms: SOLVER_TIMEOUT_MS,
-                limitations: std::mem::take(&mut report.limitations),
             };
             output::write_reports(&directory, profile, report)
                 .unwrap_or_else(|err| panic!("Failed to export rCanary context: {err}"));

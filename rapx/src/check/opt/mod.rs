@@ -24,6 +24,7 @@ macro_rules! def_paths {
     };
 }
 
+use crate::check::report::{Analyzer, ReportProfile};
 use rustc_middle::ty::TyCtxt;
 
 use crate::analysis::dataflow::{Graph, default::DataflowAnalyzer};
@@ -37,7 +38,7 @@ use memory_cloning::used_as_immutable::UsedAsImmutableCheck;
 use report::{OptFinding, OptProfile, OptReport, RunStatus};
 
 use lazy_static::lazy_static;
-use std::{env, process::Command, sync::Mutex};
+use std::{env, sync::Mutex};
 
 lazy_static! {
     pub(crate) static ref NO_STD: Mutex<bool> = Mutex::new(false);
@@ -67,11 +68,11 @@ impl<'tcx> Opt<'tcx> {
             let rustc_args: Vec<String> = env::args().collect();
             let unit = crate::check::driver::unit_name(&rustc_args)
                 .unwrap_or_else(|error| panic!("Cannot identify opt compilation unit: {error}"));
-            let Some(directory) = output::create_unit_directory(&unit)
-                .unwrap_or_else(|error| panic!("Cannot create opt unit directory: {error}"))
-            else {
-                return;
-            };
+            let directory = output::create_unit_directory(&unit).unwrap_or_else(|error| {
+                crate::utils::log::rap_error_and_exit(format!(
+                    "Cannot create opt unit directory: {error}"
+                ))
+            });
             Some((unit, directory))
         } else {
             None
@@ -163,26 +164,17 @@ impl<'tcx> Opt<'tcx> {
                 RunStatus::Completed
             };
             let profile = OptProfile {
-                schema_version: 1,
-                unit,
-                rapx_version: env!("CARGO_PKG_VERSION").into(),
-                rustc_version: Command::new("rustc")
-                    .arg("--version")
-                    .output()
-                    .ok()
-                    .filter(|out| out.status.success())
-                    .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_owned()),
-                working_directory: env::current_dir()
-                    .expect("Current working directory invalid.")
-                    .to_string_lossy()
-                    .into_owned(),
-                status,
+                common: ReportProfile::new(
+                    Analyzer::Opt,
+                    unit,
+                    status,
+                    analyzed_functions,
+                    findings.len(),
+                    limitations,
+                ),
                 level: self.level,
                 no_std,
-                analyzed_functions,
-                finding_count: findings.len(),
                 statistics,
-                limitations,
             };
             output::write_reports(&directory, profile, findings)
                 .unwrap_or_else(|error| panic!("Failed to export opt context: {error}"));

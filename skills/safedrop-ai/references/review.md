@@ -51,13 +51,13 @@ When repairs are requested, prioritize restoring correct ownership, resource lif
 
 Before editing, verify that the target source still matches the reviewed version. Existing repair authorization remains valid; do not ask again for ordinary local changes. If the user requests analysis only, provide proposals without starting repairs.
 
-For an authorized repair or rescan, move each package's relevant `<crate>-<kind>/` directories into a baseline location such as that package's `.rapx-ai/before-001/`. Confirm that reports, the top-level command, and exit status are preserved and that the original unit paths no longer exist. Verify source and archive destinations, preserving package hierarchy to avoid collisions. RAPx does not clear or overwrite existing directories; copying reports while keeping the original directory causes the next run to warn and skip analysis. Preserve original material rather than automatically deleting directories to bypass warnings.
+For an authorized repair or rescan, move each package's relevant `<crate>-<kind>/` directories into a baseline location such as that package's `.rapx-ai/before-001/`. Confirm that reports, the top-level command, and exit status are preserved and that the original unit paths no longer exist. Verify source and archive destinations, preserving package hierarchy to avoid collisions. RAPx does not clear or overwrite existing directories; copying reports while keeping the original directory causes the next run to fail with an output-path conflict. Preserve original material rather than automatically deleting directories to bypass errors.
 
 After repairs, retain the actual:
 
 - Changes and associated findings, with a patch or version diff when useful.
 - Compilation and relevant test commands and their exit results.
-- Newly generated SafeDrop reports and analysis statuses in each package's unit directories. Combine these with the actual Cargo exit status and directory-exists warnings to verify that this run analyzed the target code. Archive and move current unit directories before another rescan.
+- Newly generated SafeDrop reports and analysis statuses in each package's unit directories. Combine these with the actual Cargo exit status and output-path conflict errors to verify that this run analyzed the target code. Archive and move current unit directories before another rescan.
 - Semantic matching of old, remaining, and new findings under the same configuration.
 
 A disappearing warning is only part of validation. Confirm that the original dangerous relationship is eliminated, compilation and applicable tests pass, and a changed detection scope has not hidden the issue. If the rescan did not analyze the code, the configuration changed, results are incomplete, or matching is ambiguous, report validation as incomplete and preserve the issue and failure evidence.

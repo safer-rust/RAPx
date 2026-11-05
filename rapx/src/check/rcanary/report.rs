@@ -4,28 +4,16 @@ use std::{collections::BTreeMap, num::NonZeroU32};
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RunStatus {
-    Completed,
-    Partial,
-    Skipped,
-}
+use crate::check::report::ReportProfile;
+pub use crate::check::report::RunStatus;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RCanaryProfile {
-    pub unit: String,
-    pub rapx_version: String,
-    pub rustc_version: Option<String>,
-    pub working_directory: String,
-    pub status: RunStatus,
-    pub analyzed_functions: usize,
+    #[serde(flatten)]
+    pub common: ReportProfile,
     pub skipped_functions: usize,
     pub checked_returns: usize,
-    pub finding_count: usize,
     pub solver_timeout_ms: u64,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub limitations: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

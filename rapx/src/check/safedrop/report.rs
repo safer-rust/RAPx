@@ -18,31 +18,7 @@ pub enum BugType {
     UseAfterFreeAndDoubleFree,
 }
 
-/// Analysis status for one compilation unit, independent of the Cargo exit code.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RunStatus {
-    /// Requested analysis finished; fixed capability boundaries still apply.
-    Completed,
-    Partial,
-    Skipped,
-}
-
-/// One compilation unit. Having no finding files is meaningful only together
-/// with the execution status and limitations; it is not a safety proof.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SafeDropProfile {
-    /// Crate name and target kind, e.g. demo-lib or demo-bin.
-    pub unit: String,
-    pub rapx_version: String,
-    pub rustc_version: Option<String>,
-    pub working_directory: String,
-    pub status: RunStatus,
-    pub analyzed_functions: usize,
-    /// Events actually observed in this run; fixed capability boundaries live in the skill.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub limitations: Vec<String>,
-}
+pub use crate::check::report::{ReportProfile as SafeDropProfile, RunStatus};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SafeDropFunction {

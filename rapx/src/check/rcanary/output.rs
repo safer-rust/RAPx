@@ -7,6 +7,8 @@ use std::{
 
 use serde::Serialize;
 
+use crate::check::report::Analyzer;
+
 use super::report::{AnalysisReport, RCanaryFinding, RCanaryFunction, RCanaryProfile};
 
 #[derive(Serialize)]
@@ -15,7 +17,7 @@ struct FindingReport<'a> {
     finding: &'a RCanaryFinding,
 }
 
-pub fn create_unit_directory(unit: &str) -> io::Result<Option<PathBuf>> {
+pub fn create_unit_directory(unit: &str) -> io::Result<PathBuf> {
     if !valid_name(unit) {
         return Err(io::Error::other("Invalid rCanary crate/target name"));
     }
@@ -24,14 +26,14 @@ pub fn create_unit_directory(unit: &str) -> io::Result<Option<PathBuf>> {
         .map_or_else(env::current_dir, Ok)?;
     let directory = package.join(format!("rcanary-{unit}"));
     match fs::create_dir(&directory) {
-        Ok(()) => Ok(Some(directory)),
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            rap_warn!(
-                "rCanary report directory {} already exists; skipping analysis for {unit}. Move the existing directory before running a fresh analysis.",
+        Ok(()) => Ok(directory),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Err(io::Error::new(
+            error.kind(),
+            format!(
+                "rCanary report path {} already exists; cannot start a fresh analysis for {unit}. Move the existing path before running again.",
                 directory.display()
-            );
-            Ok(None)
-        }
+            ),
+        )),
         Err(error) => Err(error),
     }
 }
@@ -42,18 +44,22 @@ pub(crate) fn write_reports(
     mut profile: RCanaryProfile,
     mut report: AnalysisReport,
 ) -> io::Result<()> {
-    if !valid_name(&profile.unit) || profile.finding_count != report.findings.len() {
+    if profile.common.analyzer != Analyzer::Rcanary
+        || !valid_name(&profile.common.unit)
+        || profile.common.finding_count != report.findings.len()
+    {
         return Err(io::Error::other("Invalid rCanary report profile"));
     }
     for (name, context) in &report.functions {
         if context.source.is_none() {
             profile
+                .common
                 .limitations
                 .push(format!("{name}: source_unavailable"));
         }
     }
     for (index, finding) in report.findings.iter_mut().enumerate() {
-        finding.id = format!("rc-{}-{index}", profile.unit);
+        finding.id = format!("rc-{}-{index}", profile.common.unit);
         let context = report.functions.get(&finding.function).ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -68,6 +74,7 @@ pub(crate) fn write_reports(
                 .any(|site| site.location.is_none())
         {
             profile
+                .common
                 .limitations
                 .push(format!("{}: source_location_unavailable", finding.id));
         }

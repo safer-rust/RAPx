@@ -67,8 +67,7 @@ impl<'tcx> FnVisitor<'tcx> {
             "visibility: {:?}",
             self.tcx
                 .effective_visibilities(())
-                .effective_vis(fn_did.as_local().unwrap())
-                .unwrap()
+                .effective_vis(id)
         );
 
         if !is_api_public(fn_did, self.tcx) {
