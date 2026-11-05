@@ -1,11 +1,23 @@
 
 // Dangling pointer detection
 check_contain_test!(check_uaf_01, "check/uaf_1",  CMD_CHECK_UAF, "Dangling pointer detected in function \"create_vec\"");
-check_contain_test!(check_uaf_02, "check/uaf_2",  CMD_CHECK_UAF, "Double free detected in function \"main\"");
-check_contain_test!(check_uaf_03, "check/uaf_3",  CMD_CHECK_UAF, "Double free detected");
+#[test]
+fn check_uaf_02() {
+    let output = run_with_args("check/uaf_2", CMD_CHECK_UAF);
+    assert_contain(&output, "warning: Double free detected.");
+    assert_contain(&output, "warning: Double free detected during unwinding.");
+}
+check_contain_test!(check_uaf_03, "check/uaf_3", CMD_CHECK_UAF, "warning: Double free detected during unwinding.");
 check_contain_test!(check_uaf_04, "check/uaf_4",  CMD_CHECK_UAF, "Dangling pointer detected in function \"call\"");
 check_contain_test!(check_uaf_05, "check/uaf_5",  CMD_CHECK_UAF, "Use-after-free detected in function \"main\"");
-check_contain_test!(check_uaf_06, "check/uaf_6",  CMD_CHECK_UAF, "Use-after-free detected in function \"main\"");
+#[test]
+fn check_uaf_06() {
+    let output = run_with_args("check/uaf_6", CMD_CHECK_UAF);
+    assert_contain(&output, "Use-after-free detected in function \"main\"");
+    assert_contain(&output, "Use-after-free detected in function \"irrefutable_let_else_uaf\"");
+    assert_contain(&output, "Use-after-free detected in function \"moved_reference_uaf\"");
+    assert_contain(&output, "Use-after-free detected in function \"closure_wrapper_uaf\"");
+}
 check_contain_test!(check_uaf_07, "check/uaf_7",  CMD_CHECK_UAF, "Double free detected in function \"main\"");
 check_contain_test!(check_uaf_08, "check/uaf_8",  CMD_CHECK_UAF, "Use-after-free detected in function \"main\"");
 check_contain_test!(check_uaf_09, "check/uaf_9",  CMD_CHECK_UAF, "Use-after-free detected in function \"main\"");
