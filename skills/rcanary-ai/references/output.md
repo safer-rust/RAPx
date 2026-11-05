@@ -12,9 +12,14 @@ The current SafeDrop, rCanary, and opt exports share a profile header and a
 3. Enumerate the analyzer's candidate files in the same directory. Their number
    must equal `finding_count`. Read each file's `finding`, verify that its ID
    matches the filename stem, and reject duplicate or mismatched IDs.
-4. Use any top-level `function` context and the analyzer-specific evidence
-   described below. Count agreement is an output-consistency check, not proof
-   of fresh execution or complete analysis coverage.
+4. For SafeDrop and rCanary, require `finding.function_id` to equal the
+   top-level `function.id` before using its source or MIR. The ID is a compiler
+   definition index unique only within this unit/run; names can repeat. Use
+   `function.location` to locate the definition. Opt embeds its source in the
+   candidate and does not use this context map or these body-ID fields.
+5. Read the analyzer-specific evidence described below. Count and ID agreement
+   are output-consistency checks, not proof of fresh execution, correct evidence
+   contents, or complete analysis coverage.
 
 | `analyzer` | Candidate files | Additional evidence |
 | --- | --- | --- |
@@ -38,6 +43,14 @@ Do not compare those counts as identical coverage measurements across detectors.
 Zero findings are meaningful only with fresh completed output, positive analyzed
 function count, matching scope, and successful execution. Read `limitations`
 even when status is `completed`.
+
+Older SafeDrop/rCanary reports may lack `function_id`, `function.id`, and the
+context definition location. Some keyed context by the display name and can
+associate a candidate with the wrong same-named body. Verify definition locations,
+source, and MIR locals before relying on old context. A source-file digest does
+not distinguish bodies in one file. If the required context was overwritten,
+collect fresh reports after rebuilding RAPx or retain `inconclusive`; do not
+select context solely by name.
 
 Older reports may lack `analyzer` or `finding_count`; older opt profiles may
 include `schema_version`, and their candidate files may be flat JSON objects.
@@ -75,7 +88,7 @@ The profile is written after all finding files succeed. Without a valid profile,
 | `checked_returns` | Number of visited returns with a solver check |
 | `finding_count` | Number of exported warning candidates, not number of leaking allocations |
 | `solver_timeout_ms` | Per-function solver configuration, currently 1000 ms per check |
-| `limitations` | Observed gaps, qualified by function or finding ID; absent when empty |
+| `limitations` | Observed gaps, qualified by body ID, function name with body ID, or finding ID; absent when empty |
 
 Coverage markers include `cyclic_cfg_skipped`, `syscall_dispatch_skipped`, `no_return_checked`, `no_functions_analyzed`, `unsupported_local`, `unsupported_merge_local`, `incompatible_merge_local`, and `solver_unknown` with a return block and reason. Missing source text or locations are recorded while writing. Source-mapping gaps do not by themselves change analysis status. Unsupported-local markers are conservative and may involve locals unrelated to the candidate; inspect them before assessing their effect.
 
@@ -85,10 +98,13 @@ The JSON does not store the top-level command, all Cargo selection options, exit
 
 Each file contains exactly two top-level objects:
 
+- `function.id`: compiler definition index unique within this unit/run, matching `finding.function_id`.
+- `function.location`: optional definition span corresponding to the captured source, separate from the diagnostic event.
 - `function.source`: compiler-snapshot source for the function, or null when unavailable.
 - `function.mir`: complete function MIR, including local types and cleanup annotations. Context repeats for different candidates in the same function.
 - `finding.id`: `rc-<unit>-<index>`, unique within this unit output. Combine it with its package-qualified report path; IDs are not stable across runs.
-- `finding.function`: full rustc function path.
+- `finding.function`: readable rustc function path; different bodies can have the same display name.
+- `finding.function_id`: the compiler definition index used for context lookup, matching `function.id`; not stable across runs.
 - `finding.bug_type`: `memory_leak`.
 - `finding.location`: mapped function span, not an exact leaking instruction.
 - `finding.return_site`: return basic block, mapped terminator span and MIR terminator.

@@ -18,6 +18,10 @@ pub struct RCanaryProfile {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RCanaryFunction {
+    /// Compiler definition index, unique only within this compilation unit/run.
+    pub id: u32,
+    /// Definition span matching the captured source.
+    pub location: Option<SourceLocation>,
     pub source: Option<String>,
     pub mir: String,
 }
@@ -45,6 +49,8 @@ pub struct RCanaryFinding {
     /// Unit-local identity, not a stable cross-run fingerprint.
     pub id: String,
     pub function: String,
+    /// Matches function.id; the display name alone is not unique.
+    pub function_id: u32,
     pub bug_type: BugType,
     pub location: Option<SourceLocation>,
     pub return_site: RCanarySite,
@@ -88,7 +94,7 @@ pub struct RCanaryLocal {
 /// In-memory aggregation only; never serialized as a single large report.
 #[derive(Default)]
 pub(crate) struct AnalysisReport {
-    pub functions: BTreeMap<String, RCanaryFunction>,
+    pub functions: BTreeMap<u32, RCanaryFunction>,
     pub findings: Vec<RCanaryFinding>,
     pub analyzed_functions: usize,
     pub skipped_functions: usize,

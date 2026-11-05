@@ -80,6 +80,7 @@ impl<'tcx> SafeDrop<'tcx> {
                 if exporting {
                     analyzed_functions += 1;
                     let function = self.tcx.def_path_str(local_def_id.to_def_id());
+                    let function_id = local_def_id.to_def_id().index.as_u32();
                     if graph.analysis_incomplete {
                         incomplete = true;
                         let reason = if graph.alias_graph.visit_times() > SAFEDROP_VISIT_LIMIT {
@@ -87,12 +88,12 @@ impl<'tcx> SafeDrop<'tcx> {
                         } else {
                             "no_enumerated_path"
                         };
-                        limitations.push(format!("{function}: {reason}"));
+                        limitations.push(format!("{function} (body {function_id}): {reason}"));
                     }
                     let function_findings = capture::findings(&graph);
                     if !function_findings.is_empty() {
                         let context = capture::function_context(&graph);
-                        functions.insert(function, context);
+                        functions.insert(function_id, context);
                     }
                     findings.extend(function_findings);
                 }

@@ -168,7 +168,12 @@ pub fn function_context(graph: &SafeDropGraph<'_>) -> SafeDropFunction {
             let _ = writeln!(mir, "  {term:?}");
         }
     }
-    SafeDropFunction { source, mir }
+    SafeDropFunction {
+        id: alias.def_id().index.as_u32(),
+        location: source_location(alias, alias.span()),
+        source,
+        mir,
+    }
 }
 
 pub fn findings(graph: &SafeDropGraph<'_>) -> Vec<SafeDropFinding> {
@@ -208,6 +213,7 @@ pub fn findings(graph: &SafeDropGraph<'_>) -> Vec<SafeDropFinding> {
             SafeDropFinding {
                 id: String::new(), // assigned within this compilation unit when written
                 function: alias.tcx().def_path_str(alias.def_id()),
+                function_id: alias.def_id().index.as_u32(),
                 bug_type: bug.bug_type,
                 confidence: bug.confidence,
                 during_unwind,

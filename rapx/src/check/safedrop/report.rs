@@ -22,6 +22,10 @@ pub use crate::check::report::{ReportProfile as SafeDropProfile, RunStatus};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SafeDropFunction {
+    /// Compiler definition index, unique only within this compilation unit/run.
+    pub id: u32,
+    /// Definition span matching the captured source, not a diagnostic event span.
+    pub location: Option<SourceLocation>,
     pub source: Option<String>,
     /// The whole function MIR included in each finding file for this function.
     pub mir: String,
@@ -33,8 +37,10 @@ pub struct SafeDropFinding {
     /// Identity within this compilation unit; not a cross-run matching fingerprint.
     /// Format: `sd-<crate name>-<target kind>-<zero-based report index>`.
     pub id: String,
-    /// Full function name corresponding to the file's function context.
+    /// Display name; different bodies may have the same name.
     pub function: String,
+    /// Matches function.id; not stable across runs.
+    pub function_id: u32,
     pub bug_type: BugType,
     /// Original SafeDrop heuristic (currently 0, 50, or 99), not a probability.
     pub confidence: usize,

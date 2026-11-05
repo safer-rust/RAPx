@@ -12,9 +12,14 @@ The current SafeDrop, rCanary, and opt exports share a profile header and a
 3. Enumerate the analyzer's candidate files in the same directory. Their number
    must equal `finding_count`. Read each file's `finding`, verify that its ID
    matches the filename stem, and reject duplicate or mismatched IDs.
-4. Use any top-level `function` context and the analyzer-specific evidence
-   described below. Count agreement is an output-consistency check, not proof
-   of fresh execution or complete analysis coverage.
+4. For SafeDrop and rCanary, require `finding.function_id` to equal the
+   top-level `function.id` before using its source or MIR. The ID is a compiler
+   definition index unique only within this unit/run; names can repeat. Use
+   `function.location` to locate the definition. Opt embeds its source in the
+   candidate and does not use this context map or these body-ID fields.
+5. Read the analyzer-specific evidence described below. Count and ID agreement
+   are output-consistency checks, not proof of fresh execution, correct evidence
+   contents, or complete analysis coverage.
 
 | `analyzer` | Candidate files | Additional evidence |
 | --- | --- | --- |
@@ -38,6 +43,14 @@ Do not compare those counts as identical coverage measurements across detectors.
 Zero findings are meaningful only with fresh completed output, positive analyzed
 function count, matching scope, and successful execution. Read `limitations`
 even when status is `completed`.
+
+Older SafeDrop/rCanary reports may lack `function_id`, `function.id`, and the
+context definition location. Some keyed context by the display name and can
+associate a candidate with the wrong same-named body. Verify definition locations,
+source, and MIR locals before relying on old context. A source-file digest does
+not distinguish bodies in one file. If the required context was overwritten,
+collect fresh reports after rebuilding RAPx or retain `inconclusive`; do not
+select context solely by name.
 
 Older reports may lack `analyzer` or `finding_count`; older opt profiles may
 include `schema_version`, and their candidate files may be flat JSON objects.
@@ -104,14 +117,14 @@ Each finding file is named `<finding.id>.json`, for example `sd-demo-bin-0.json`
 
 | Field | Meaning |
 | --- | --- |
-| `function` | Owning function's context: optional `source` and complete function `mir` |
+| `function` | Owning body context: unit-local `id`, optional definition `location`, optional `source`, and complete `mir` |
 | `finding` | Exactly one `SafeDropFinding`, including its function name, candidate judgment, and witness |
 
 Read context from `function.source` and `function.mir`; `finding.function` gives the full function name. Each file independently supplies one finding's evidence. Multiple findings in the same function repeat its source and MIR for individual reading, which can increase total disk use and does not shorten a long function. Complete MIR still includes all basic blocks, local declarations, and statements; no path slicing is performed. Read run metadata and limitations from the profile in the same directory. JSON no longer stores `command`; callers record the top-level Cargo command and selection scope separately.
 
 Legacy `report.json` may link shared context through `functions[finding.function]` or inline `function_source` and `mir` in each finding. Read its actual structure without overwriting historical reports.
 
-`profile.limitations` records only exceptions that actually occurred, scoped by function name or finding ID:
+`profile.limitations` records only exceptions that actually occurred, scoped by body ID, function name with body ID, or finding ID:
 
 | Short marker | Observed event |
 | --- | --- |
@@ -130,7 +143,8 @@ Each `SafeDropFinding` has these base fields:
 | Field | Meaning and caveats |
 | --- | --- |
 | `id` | `sd-<crate>-<target-kind>-<unit-index>`, such as `sd-demo-lib-0` or `sd-demo-bin-0`. Indices start at zero in each unit. The ID is also the filename stem and links reviews and repairs; it does not affect detection or deduplication and need not remain stable after rescanning |
-| `function` | Full function name corresponding to the file's `function` context |
+| `function` | Display name, which may repeat for distinct bodies |
+| `function_id` | Unit-local compiler definition index matching the context's `function.id`; not a stable cross-run identity |
 | `bug_type` | `use_after_free` / `double_free` / `dangling_pointer` / `use_after_free_and_double_free` |
 | `confidence` | Detector's original heuristic level |
 | `during_unwind` | Whether the finding relates to unwinding |

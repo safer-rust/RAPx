@@ -50,22 +50,28 @@ pub(crate) fn write_reports(
     {
         return Err(io::Error::other("Invalid rCanary report profile"));
     }
-    for (name, context) in &report.functions {
+    for (function_id, context) in &report.functions {
         if context.source.is_none() {
             profile
                 .common
                 .limitations
-                .push(format!("{name}: source_unavailable"));
+                .push(format!("body {function_id}: source_unavailable"));
         }
     }
     for (index, finding) in report.findings.iter_mut().enumerate() {
         finding.id = format!("rc-{}-{index}", profile.common.unit);
-        let context = report.functions.get(&finding.function).ok_or_else(|| {
+        let context = report.functions.get(&finding.function_id).ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
                 "rCanary function context is missing",
             )
         })?;
+        if context.id != finding.function_id {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "rCanary function context identity does not match the finding",
+            ));
+        }
         if finding.location.is_none()
             || finding.return_site.location.is_none()
             || finding
