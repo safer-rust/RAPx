@@ -15,14 +15,17 @@ fn mir_variant(rendered: &str) -> &str {
 }
 
 pub(super) fn exec_statement<'z3, 'tcx>(state: &mut VmState<'z3, 'tcx>, stmt: &Statement<'tcx>) {
-    let was_unsupported = state.unsupported_mir;
+    let was_unsupported = state.diagnostics.unsupported_mir;
     let name = match &stmt.kind {
         StatementKind::Assign(assign) => {
             let (place, value) = &**assign;
             statement::exec_assign(state, place, value);
             "Assign"
         }
-        StatementKind::SetDiscriminant { place, variant_index } => {
+        StatementKind::SetDiscriminant {
+            place,
+            variant_index,
+        } => {
             statement::exec_set_discriminant(state, place, *variant_index);
             "SetDiscriminant"
         }
@@ -57,9 +60,9 @@ pub(super) fn exec_statement<'z3, 'tcx>(state: &mut VmState<'z3, 'tcx>, stmt: &S
         }
     };
     if !was_unsupported
-        && state.unsupported_mir
-        && state.unsupported_details.is_empty()
-        && state.unsupported_effects.is_empty()
+        && state.diagnostics.unsupported_mir
+        && state.diagnostics.unsupported_details.is_empty()
+        && state.diagnostics.unsupported_effects.is_empty()
     {
         state.record_unsupported(&format!(
             "StatementKind::{name} (model incomplete): {:?}",
@@ -74,8 +77,8 @@ pub(super) fn exec_terminator<'z3, 'tcx>(
     term: &Terminator<'tcx>,
     successor: Option<BasicBlock>,
 ) {
-    let was_unsupported = state.unsupported_mir;
-    let previous_missing_mir = state.missing_mir.len();
+    let was_unsupported = state.diagnostics.unsupported_mir;
+    let previous_missing_mir = state.diagnostics.missing_mir.len();
     let name = match &term.kind {
         TerminatorKind::Call {
             func,
@@ -115,11 +118,11 @@ pub(super) fn exec_terminator<'z3, 'tcx>(
         }
     };
     if !was_unsupported
-        && state.unsupported_mir
-        && state.unsupported_details.is_empty()
-        && state.unsupported_effects.is_empty()
-        && state.missing_mir.len() == previous_missing_mir
-        && state.opaque_control_flow.is_empty()
+        && state.diagnostics.unsupported_mir
+        && state.diagnostics.unsupported_details.is_empty()
+        && state.diagnostics.unsupported_effects.is_empty()
+        && state.diagnostics.missing_mir.len() == previous_missing_mir
+        && state.diagnostics.opaque_control_flow.is_empty()
     {
         state.record_unsupported(&format!(
             "TerminatorKind::{name} (model incomplete): {:?}",
@@ -134,7 +137,7 @@ pub(super) fn eval_rvalue<'z3, 'tcx>(
     place: &Place<'tcx>,
     rv: &Rvalue<'tcx>,
 ) -> VmValue<'z3, 'tcx> {
-    let was_unsupported = state.unsupported_mir;
+    let was_unsupported = state.diagnostics.unsupported_mir;
     #[allow(unreachable_patterns)]
     let (name, value) = match rv {
         Rvalue::Use(operand, ..) => ("Use", rvalue::eval_use(state, place, operand)),
@@ -188,9 +191,9 @@ pub(super) fn eval_rvalue<'z3, 'tcx>(
         }
     };
     if !was_unsupported
-        && state.unsupported_mir
-        && state.unsupported_details.is_empty()
-        && state.unsupported_effects.is_empty()
+        && state.diagnostics.unsupported_mir
+        && state.diagnostics.unsupported_details.is_empty()
+        && state.diagnostics.unsupported_effects.is_empty()
     {
         state.record_unsupported(&format!("Rvalue::{name} (model incomplete): {rv:?}"));
     }

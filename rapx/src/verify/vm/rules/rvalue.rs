@@ -263,7 +263,26 @@ pub(crate) fn eval_binary_op<'z3, 'tcx>(
             .cloned()
             .expect("pointer arithmetic must assign its destination");
     }
-    let raw_term = state.eval_binary_op(op, &lhs.z3_term, &rhs.z3_term);
+    let lhs_concrete =
+        matches!(op, BinOp::Shl | BinOp::ShlUnchecked).then(|| lhs.z3_term.simplify());
+    let raw_term = if let Some(value) = lhs_concrete.as_ref().and_then(|term| {
+        term.as_u64()
+            .map(u128::from)
+            .or_else(|| term.to_string().parse::<u128>().ok())
+    }) && let Some(shift) = rhs.z3_term.simplify().as_u64()
+        && let width = state.size_of_ty(lhs.ty) * 8
+        && width > 0
+        && width <= 128
+        && shift < width
+        && matches!(lhs.ty.kind(), TyKind::Uint(_) | TyKind::Int(_))
+    {
+        let shifted = (value << shift) & (u128::MAX >> (128 - width));
+        state
+            .scalar_bits_term(lhs.ty, shifted)
+            .unwrap_or_else(|| state.eval_binary_op(op, &lhs.z3_term, &rhs.z3_term))
+    } else {
+        state.eval_binary_op(op, &lhs.z3_term, &rhs.z3_term)
+    };
     if matches!(op, BinOp::Shl | BinOp::ShlUnchecked)
         && lhs.z3_term.simplify().as_u64() == Some(1)
         && matches!(lhs.ty.kind(), TyKind::Uint(_) | TyKind::Int(_))
@@ -450,8 +469,8 @@ pub(crate) fn eval_cast<'z3, 'tcx>(
     // resolves to the right field instead of the original view's field at the
     // same index.
     if let rustc_middle::ty::TyKind::RawPtr(target_ty, _) = cast_ty.kind()
-        && let rustc_middle::ty::TyKind::Adt(adt_def, _) = target_ty.kind()
-        && adt_def.is_struct()
+        && (matches!(target_ty.kind(), TyKind::Tuple(_))
+            || matches!(target_ty.kind(), TyKind::Adt(adt_def, _) if adt_def.is_struct()))
         && let Some(alloc_id) = src_val.provenance_alloc_id()
     {
         state.decompose_pointee_fields(alloc_id, Vec::new(), *target_ty, *target_ty, 0, 0, 0);
@@ -876,7 +895,7 @@ pub(crate) fn eval_thread_local_ref<'z3, 'tcx>(
 ) -> VmValue<'z3, 'tcx> {
     let dest_ty = dest_place.ty(state.body(), state.tcx).ty;
     let Some(static_ty) = mir_utils::pointee_ty(dest_ty) else {
-        state.unsupported_mir = true;
+        state.diagnostics.unsupported_mir = true;
         return eval_fresh_value(state, dest_place, "thread_local");
     };
     let scalar = matches!(
@@ -967,7 +986,7 @@ pub(crate) fn eval_repeat<'z3, 'tcx>(
 ) -> VmValue<'z3, 'tcx> {
     let dest_ty = dest_place.ty(state.body(), state.tcx).ty;
     let TyKind::Array(..) = dest_ty.kind() else {
-        state.unsupported_mir = true;
+        state.diagnostics.unsupported_mir = true;
         return eval_fresh_value(state, dest_place, "repeat");
     };
     let value = state.value_of_operand(operand);
@@ -986,7 +1005,7 @@ pub(crate) fn eval_repeat<'z3, 'tcx>(
                     .and_then(|value| value.z3_term.simplify().as_u64())
                     .and_then(|index| usize::try_from(index).ok())
                 else {
-                    state.unsupported_mir = true;
+                    state.diagnostics.unsupported_mir = true;
                     return eval_fresh_value(state, dest_place, "repeat");
                 };
                 index
@@ -997,7 +1016,7 @@ pub(crate) fn eval_repeat<'z3, 'tcx>(
                 ..
             } => offset as usize,
             _ => {
-                state.unsupported_mir = true;
+                state.diagnostics.unsupported_mir = true;
                 return eval_fresh_value(state, dest_place, "repeat");
             }
         };
@@ -1160,7 +1179,7 @@ pub(crate) fn eval_reborrow<'z3, 'tcx>(
     #[cfg(not(rapx_has_phantom_deref))]
     let has_phantom_deref = false;
     if (!same_adt && !compatible_shared) || has_phantom_deref {
-        state.unsupported_mir = true;
+        state.diagnostics.unsupported_mir = true;
         return eval_fresh_value(state, dest_place, "reborrow");
     }
     let mut value = state

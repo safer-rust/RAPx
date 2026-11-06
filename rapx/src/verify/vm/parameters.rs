@@ -15,12 +15,16 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         &mut self,
         destination: Local,
         args: &[VmValue<'z3, 'tcx>],
+        first_operand: Option<&Operand<'tcx>>,
         callee: rustc_hir::def_id::DefId,
         has_invariant: bool,
     ) {
         let ty = self.body().local_decls[destination].ty;
         if !has_invariant {
-            self.set_local(destination, VmValue::new(self.fresh_int("ctor_unknown"), ty));
+            self.set_local(
+                destination,
+                VmValue::new(self.fresh_int("ctor_unknown"), ty),
+            );
             return;
         }
         if let TyKind::Adt(adt, _) = ty.kind()
@@ -33,6 +37,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     && (matches!(value.ty.kind(), TyKind::RawPtr(..))
                         || matches!(value.ty.kind(), TyKind::Adt(def, _) if api_classify::is_std_nonnull(def.did())))
             })
+            && !api_classify::is_std_box_value_constructor(self.tcx, callee)
             && let Some(path) = self.container_ptr_field(ty)
         {
             let mut result = pointer.clone();
@@ -96,6 +101,58 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         if self.init_box_vec_param(destination, ty, destination.as_usize(), &mut facts)
             || self.init_struct_param(destination, ty, destination.as_usize(), &mut facts)
         {
+            if api_classify::is_std_box_value_constructor(self.tcx, callee)
+                && let Some(operand) = first_operand
+                && let Some(pointee_ty) = args.first().map(|value| value.ty)
+                && let Some(heap_id) = self
+                    .local_value(destination)
+                    .and_then(VmValue::provenance_alloc_id)
+            {
+                match operand {
+                    Operand::Copy(place) | Operand::Move(place) if place.projection.is_empty() => {
+                        let fields = self
+                            .field_paths(place.local)
+                            .into_iter()
+                            .filter_map(|path| {
+                                self.field_value(place.local, &path)
+                                    .cloned()
+                                    .map(|value| (path, value))
+                            })
+                            .collect::<Vec<_>>();
+                        for (path, value) in fields {
+                            self.store_value(heap_id, pointee_ty, path, value);
+                        }
+                        if let Some(value) = self.local_value(place.local).cloned() {
+                            self.store_value(heap_id, pointee_ty, Vec::new(), value);
+                        }
+                    }
+                    Operand::Constant(constant) => {
+                        if matches!(
+                            pointee_ty.kind(),
+                            TyKind::Int(_) | TyKind::Uint(_) | TyKind::Bool | TyKind::Char
+                        ) && let Some(mut value) = args.first().cloned()
+                        {
+                            value.facts.init = true;
+                            self.store_value(heap_id, pointee_ty, Vec::new(), value);
+                        }
+                        if let Some((_, fields)) =
+                            mir_utils::const_destructure(self.tcx, &constant.const_)
+                        {
+                            for (index, (field, field_ty)) in fields.iter().enumerate() {
+                                if let Some(scalar) = (*field).try_to_scalar_int()
+                                    && let Some(term) = self
+                                        .scalar_bits_term(*field_ty, scalar.to_bits(scalar.size()))
+                                {
+                                    let mut value = VmValue::new(term, *field_ty);
+                                    value.facts.init = true;
+                                    self.store_value(heap_id, pointee_ty, vec![index], value);
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
             return;
         }
         self.set_local(

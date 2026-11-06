@@ -717,7 +717,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         self.set_field_value(place.local, vec![element], updated);
                     }
                 } else {
-                    self.unsupported_mir = true;
+                    self.diagnostics.unsupported_mir = true;
                     if let Some(alloc_id) = self.current_frame.local_alloc.get(&place.local).copied() {
                         self.content_mut(alloc_id)
                             .values

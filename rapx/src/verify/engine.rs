@@ -130,7 +130,7 @@ impl<'z3, 'tcx> VmCache<'z3, 'tcx> {
                 .min(key.len());
             if states
                 .iter()
-                .any(|state| !state.path_infeasible && !state.unsupported_mir)
+                .any(|state| !state.path_infeasible && !state.diagnostics.unsupported_mir)
             {
                 let owned =
                     Arc::try_unwrap(states).unwrap_or_else(|shared| shared.as_ref().clone());

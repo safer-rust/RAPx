@@ -32,7 +32,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         context: ContractEvalContext<'_, 'tcx>,
     ) -> Option<Int<'z3>> {
         match expr {
-            ContractExpr::Const(value) => Some(Int::from_u64(self.z3_ctx, *value as u64)),
+            ContractExpr::Const(value) => Some(self.u128_term(*value)),
             ContractExpr::Binary { op, lhs, rhs } => {
                 let left = self.eval_contract_tree(lhs, context)?;
                 let right = self.eval_contract_tree(rhs, context)?;
@@ -415,14 +415,14 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 if let Ok(val) = c.const_.eval(self.tcx, typing_env, rustc_span::DUMMY_SP)
                     && let Some(scalar) = val.try_to_scalar_int()
                 {
-                    let v = scalar.to_bits(scalar.size()) as u64;
-                    if v != 0
+                    let bits = scalar.to_bits(scalar.size());
+                    if bits != 0
                         || !(const_text.contains("AlignOf")
                             || const_text.contains("SizeOf")
                             || const_text.contains("min_align_of")
                             || const_text.contains("min_size_of"))
                     {
-                        return Some(Int::from_u64(self.z3_ctx, v));
+                        return self.scalar_bits_term(c.const_.ty(), bits);
                     }
                 }
                 Some(

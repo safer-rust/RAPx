@@ -30,7 +30,7 @@ use rustc_middle::{
     mir::{Body, TerminatorKind},
     ty::{EarlyBinder, Instance, InstanceKind, TyCtxt, TypingEnv},
 };
-use rustc_span::Span;
+use rustc_span::{Span, Symbol};
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::{
@@ -1482,16 +1482,8 @@ impl<'tcx> PrepareTargets<'tcx> {
 }
 
 fn is_rapx_named_attr(attr: &Attribute, name: &str) -> bool {
-    let path = attr.path();
-    if path.len() >= 2
-        && path[path.len() - 2].as_str() == "rapx"
-        && path[path.len() - 1].as_str() == name
-    {
-        return true;
-    }
-    // In newer rustc, tool attrs may have the tool prefix stripped from the path.
-    // Match bare name when the attribute has exactly one path segment.
-    path.len() == 1 && path[0].as_str() == name
+    let name = Symbol::intern(name);
+    attr.path_matches(&[Symbol::intern("rapx"), name]) || attr.path_matches(&[name])
 }
 
 /// Resolve whether an `unsafe impl` is implementing the `Send`/`Sync` marker trait.

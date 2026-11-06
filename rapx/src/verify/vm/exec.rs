@@ -22,7 +22,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         for item in items {
             let mut next = Vec::new();
             for mut state in states {
-                if !state.path_infeasible && !state.unsupported_mir {
+                if !state.path_infeasible && !state.diagnostics.unsupported_mir {
                     state.execute_item(item);
                     next.extend(
                         std::mem::take(&mut state.inline.pending_states)
@@ -166,8 +166,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         self.inline.path_saved_arg_referents.push(saved_referents);
         let saved_writes = std::mem::take(&mut self.inline.deferred_field_writes);
         self.inline.path_saved_deferred_writes.push(saved_writes);
-        let frame = self.save_frame();
-        self.frame_body = body;
+        let frame = self.enter_frame(callee, body);
 
         // Collect the caller argument fields from the saved map, so the callee's
         // parameters inherit them (e.g. NonZero's non-zero inner value, and an
@@ -227,8 +226,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 }
             }
         }
-
-        self.current_frame.current_def_id = callee;
 
         for (i, arg) in param_sources.iter().enumerate() {
             if let Some(v) = arg

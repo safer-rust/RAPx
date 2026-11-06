@@ -63,8 +63,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         receiver_local: Option<Local>,
     ) -> Option<Int<'z3>> {
         let mut state = self.clone();
-        let frame = state.save_frame();
-        state.current_frame.current_def_id = method;
+        let frame = state.enter_frame(method, None);
         for (index, value) in values.iter().enumerate() {
             let local = Local::from_usize(index + 1);
             state.ensure_local_allocation(local);
@@ -110,7 +109,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             let terminator = data.terminator();
             match &terminator.kind {
                 TerminatorKind::Return => {
-                    if state.unsupported_mir || state.incomplete_inline_branch {
+                    if state.diagnostics.unsupported_mir || state.diagnostics.incomplete_inline_branch {
                         return None;
                     }
                     let term = state.local_value(Local::from_usize(0))?.z3_term.clone();
@@ -330,7 +329,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         } else if ctor_summarized {
             let callee = callee.unwrap();
             let has_invariant = crate::verify::options::constructor_has_invariant(self.tcx, callee);
-            self.materialize_constructor_result(destination, &arg_values, callee, has_invariant);
+            self.materialize_constructor_result(
+                destination,
+                &arg_values,
+                args.first().map(|arg| &arg.node),
+                callee,
+                has_invariant,
+            );
         } else if let Some(c) = callee
             && self.tcx.is_mir_available(c)
         {
@@ -381,28 +386,28 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             }
         }
         if self.track_memory_events
-            && self.unsupported_mir
-            && !self.unsupported_effects.is_empty()
+            && self.diagnostics.unsupported_mir
+            && !self.diagnostics.unsupported_effects.is_empty()
             && self
-                .unsupported_effects
+                .diagnostics.unsupported_effects
                 .iter()
                 .all(|effect| effect.contains("CopyMemory target unavailable"))
-            && self.unsupported_details.is_empty()
-            && self.missing_mir.is_empty()
+            && self.diagnostics.unsupported_details.is_empty()
+            && self.diagnostics.missing_mir.is_empty()
             && matches!(self.body().local_decls[destination].ty.kind(), TyKind::Adt(def, _) if api_classify::is_std_string(def.did()))
         {
             let ty = self.body().local_decls[destination].ty;
             let mut facts = Default::default();
             if self.init_box_vec_param(destination, ty, destination.as_usize(), &mut facts) {
-                self.unsupported_mir = false;
-                self.unsupported_effects.clear();
+                self.diagnostics.unsupported_mir = false;
+                self.diagnostics.unsupported_effects.clear();
             }
         }
         if self.track_memory_events
-            && self.unsupported_mir
-            && !self.missing_mir.is_empty()
-            && self.unsupported_details.is_empty()
-            && self.unsupported_effects.is_empty()
+            && self.diagnostics.unsupported_mir
+            && !self.diagnostics.missing_mir.is_empty()
+            && self.diagnostics.unsupported_details.is_empty()
+            && self.diagnostics.unsupported_effects.is_empty()
             && arg_values.iter().all(|value| {
                 value.provenance.is_none()
                     && !matches!(value.ty.kind(), TyKind::Ref(..) | TyKind::RawPtr(..))
@@ -414,8 +419,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 let term = self.fresh_int("safedrop_opaque_result");
                 self.set_local(destination, VmValue::new(term, ty));
             }
-            self.missing_mir.clear();
-            self.unsupported_mir = false;
+            self.diagnostics.missing_mir.clear();
+            self.diagnostics.unsupported_mir = false;
         }
         if let Some(callee) = callee {
             self.assert_call_postconditions(callee, &caller_arg_locals, destination);
@@ -557,15 +562,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     .is_some_and(|id| self.content(*id).facts.inner_uninit)
             })
             .collect();
-        let frame = self.save_frame();
+        let frame = self.enter_frame(callee_def_id, instantiated_body);
         let saved_inline_arg_referents =
             std::mem::replace(&mut self.inline.arg_referents, inline_arg_referents);
         let saved_deferred_field_writes = std::mem::take(&mut self.inline.deferred_field_writes);
-
-        self.current_frame.current_def_id = callee_def_id;
-        if let Some(body) = instantiated_body {
-            self.frame_body = Some(body);
-        }
 
         for (i, arg_val) in arg_values.iter().enumerate() {
             let callee_local = Local::from_usize(i + 1);
@@ -636,9 +636,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 .any(|state| state.local_value(Local::from_usize(0)).is_none())
         }) {
             let witnessed = self.possible_uninit_allocs.clone();
+            let explored_diagnostics = self.diagnostics.clone();
             *self = before_inline;
             self.possible_uninit_allocs.extend(witnessed);
-            self.incomplete_inline_branch = true;
+            self.diagnostics.merge_inline_fallback(&explored_diagnostics);
             let dest_ty = self.body().local_decls[dest].ty;
             let unknown_term = self.fresh_int("inline_branch_unknown");
             self.inline.inline_branch_terms.insert(unknown_term.clone());
@@ -670,7 +671,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     _ => unknown_effect = true,
                 }
             }
-            self.unsupported_mir |= unknown_effect;
+            self.diagnostics.unsupported_mir |= unknown_effect;
             return false;
         }
         let mut completed = Vec::new();
@@ -738,7 +739,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
     fn forget_inline_referent(&mut self, local: Local) {
         let Some(alloc_id) = self.current_frame.local_alloc.get(&local).copied() else {
-            self.unsupported_mir = true;
+            self.diagnostics.unsupported_mir = true;
             return;
         };
         if self.possible_uninit_allocs.contains(&alloc_id) {
@@ -1113,11 +1114,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         func,
                     );
                     if callee.is_some_and(|def_id| state.tcx.is_mir_available(def_id)) {
-                        let incomplete = state.incomplete_inline_branch;
+                        let incomplete = state.diagnostics.incomplete_inline_branch;
                         let truncated = state.inline.inline_truncated_terms.len();
                         crate::verify::vm::rules::exec_terminator(&mut state, terminator, None);
-                        if !state.unsupported_mir
-                            && state.incomplete_inline_branch == incomplete
+                        if !state.diagnostics.unsupported_mir
+                            && state.diagnostics.incomplete_inline_branch == incomplete
                             && state.inline.inline_truncated_terms.len() == truncated
                         {
                             stack.push((state, *target, visited));

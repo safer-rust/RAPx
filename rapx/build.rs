@@ -28,6 +28,7 @@ fn main() {
     emit_check_cfg("rapx_defkind_const_struct");
     emit_check_cfg("rapx_has_boxraw");
     emit_check_cfg("rapx_layout_align_abi");
+    emit_check_cfg("rapx_caller_bounds_accessor");
 
     emit_cfg("rapx_ge_95", minor >= 95);
     emit_cfg("rapx_ge_99", minor >= 99);
@@ -177,6 +178,13 @@ fn main() {
         rustc_src_contains_path(
             "compiler/rustc_abi/src/lib.rs",
             "pub align: AbiAlign,\n    pub size: Size,",
+        ),
+    );
+    emit_cfg(
+        "rapx_caller_bounds_accessor",
+        rustc_src_contains_path(
+            "compiler/rustc_type_ir/src/param_env.rs",
+            "pub struct CallerBoundsAccessor",
         ),
     );
 }

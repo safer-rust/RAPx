@@ -21,6 +21,23 @@ fn assert_result_counts(output: &str, expected: [usize; 3]) {
 }
 
 #[test]
+fn vm_state_precision_01() {
+    let modes: [&[&str]; 2] = [
+        CMD_VERIFY_TARGETED,
+        &["verify", "--mode", "targeted", "--", "--release"],
+    ];
+    for mode in modes {
+        let output = run_with_args("verify_units/vm_state_precision_01", mode);
+        for function in ["boxed_zero_sound", "boxed_scalar_sound", "constant_big_sound", "maximum_constant_sound", "shifted_big_sound", "shifted_twice_big_sound", "literal_big_sound"] {
+            assert_function_result(&output, function, "SOUND");
+        }
+        for function in ["boxed_zero_unsound", "boxed_unknown_unsound", "boxed_scalar_unsound", "constant_zero_unsound"] {
+            assert_function_result(&output, function, "UNSOUND");
+        }
+    }
+}
+
+#[test]
 fn pointer_slot_origin_cases() {
     let output = run_with_args("verify_units/pointer_slot_origin_01", CMD_VERIFY_TARGETED);
     assert_result_counts(&output, [27, 19, 6]);

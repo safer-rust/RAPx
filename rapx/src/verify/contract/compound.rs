@@ -26,6 +26,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{OnceLock, RwLock};
 
 use rustc_hir::def_id::{CrateNum, LOCAL_CRATE};
+use rustc_span::Symbol;
 #[cfg(rapx_has_attr_ir)]
 use rustc_attr_ir::Attribute;
 #[cfg(rapx_attr_requires_ext)]
@@ -771,14 +772,8 @@ pub(crate) fn register_compound_properties(tcx: rustc_middle::ty::TyCtxt<'_>) ->
 /// Whether an attribute path is `rapx::def_property` (or the bare form with the
 /// tool prefix stripped).
 fn is_def_property_attr(attr: &Attribute) -> bool {
-    let path = attr.path();
-    if path.len() >= 2
-        && path[path.len() - 2].as_str() == "rapx"
-        && path[path.len() - 1].as_str() == "def_property"
-    {
-        return true;
-    }
-    path.len() == 1 && path[0].as_str() == "def_property"
+    let name = Symbol::intern("def_property");
+    attr.path_matches(&[Symbol::intern("rapx"), name]) || attr.path_matches(&[name])
 }
 
 /// Extract the string literal from a `#[rapx::def_property("compound ...")]`

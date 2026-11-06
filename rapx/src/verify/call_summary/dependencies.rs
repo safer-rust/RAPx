@@ -61,20 +61,42 @@ pub(crate) fn dependency_summary<'tcx>(
         // Writes and return-dependencies are orthogonal. Analyze both even
         // when a callee writes through an argument.
         let write_args = match local_write_args(tcx, callee) {
-            Some(args) => args.into_iter().filter(|i| *i < arg_count).collect::<Vec<_>>(),
-            None => tcx.fn_sig(callee).skip_binder().inputs().skip_binder().iter().enumerate()
+            Some(args) => args
+                .into_iter()
+                .filter(|i| *i < arg_count)
+                .collect::<Vec<_>>(),
+            None => tcx
+                .fn_sig(callee)
+                .skip_binder()
+                .inputs()
+                .skip_binder()
+                .iter()
+                .enumerate()
                 .filter_map(|(i, ty)| {
-                    (i < arg_count && matches!(ty.kind(), TyKind::Ref(_, _, Mutability::Mut) | TyKind::RawPtr(_, Mutability::Mut)))
-                        .then_some(i)
+                    (i < arg_count
+                        && matches!(
+                            ty.kind(),
+                            TyKind::Ref(_, _, Mutability::Mut) | TyKind::RawPtr(_, Mutability::Mut)
+                        ))
+                    .then_some(i)
                 })
                 .collect(),
         };
         let write_args = (!write_args.is_empty()).then_some(write_args);
-        let return_deps = if api_classify::is_branch(Some(callee)) {
+        let return_ty = body.local_decls[destination].ty;
+        let box_constructor = matches!(return_ty.kind(), TyKind::Adt(adt, _)
+            if api_classify::is_std_box(adt.did()))
+            && api_classify::is_std_box_value_constructor(tcx, callee);
+        let return_deps = if box_constructor {
+            Some((0..arg_count).collect())
+        } else if api_classify::is_branch(Some(callee)) {
             Some(vec![0])
         } else {
-            local_return_dependencies(tcx, callee)
-                .map(|args| args.into_iter().filter(|i| *i < arg_count).collect::<Vec<_>>())
+            local_return_dependencies(tcx, callee).map(|args| {
+                args.into_iter()
+                    .filter(|i| *i < arg_count)
+                    .collect::<Vec<_>>()
+            })
         };
 
         if write_args.is_some() || return_deps.is_some() {

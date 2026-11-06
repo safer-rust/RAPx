@@ -416,18 +416,23 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         if depth > 4 {
             return;
         }
-        let TyKind::Adt(adt_def, substs) = ty.kind() else {
-            return;
+        let fields = match ty.kind() {
+            TyKind::Adt(adt_def, substs) if !adt_def.is_enum() => adt_def
+                .non_enum_variant()
+                .fields
+                .iter()
+                .map(|field| mir_utils::field_ty(self.tcx, field, substs))
+                .collect::<Vec<_>>(),
+            TyKind::Tuple(fields) => fields.iter().collect::<Vec<_>>(),
+            _ => return,
         };
-        if adt_def.is_enum() {
-            return;
-        }
-        let variant = adt_def.non_enum_variant();
-        for (idx, field_def) in variant.fields.iter().enumerate() {
-            let field_ty = mir_utils::field_ty(self.tcx, field_def, substs);
+        for (idx, field_ty) in fields.into_iter().enumerate() {
             let field_off = byte_offset + self.field_offset_in_bytes(ty, idx) as usize;
             let mut path = prefix.clone();
             path.push(idx);
+            if self.load_value(alloc_id, root_ty, &path).is_some() {
+                continue;
+            }
             if let Some(pointee) = self.find_nn_pointee(field_ty) {
                 let field_align = self.align_sym(pointee);
                 let max_size = Int::from_u64(self.z3_ctx, i64::MAX as u64);
@@ -460,7 +465,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     depth + 1,
                     0,
                 );
-            } else if let TyKind::Adt(_, _) = field_ty.kind() {
+            } else if matches!(field_ty.kind(), TyKind::Adt(_, _) | TyKind::Tuple(_)) {
                 self.decompose_pointee_fields(
                     alloc_id,
                     path,

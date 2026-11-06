@@ -19,7 +19,20 @@ use crate::def_ids::nomir_ffi;
 use crate::def_ids::other_api;
 use crate::def_ids::type_ids;
 use rustc_hir::def_id::DefId;
-use rustc_middle::ty::Ty;
+use rustc_middle::ty::{Ty, TyCtxt, TyKind};
+
+pub(crate) fn is_std_box_value_constructor(tcx: TyCtxt<'_>, callee: DefId) -> bool {
+    if !matches!(tcx.item_name(callee).as_str(), "new" | "new_in") {
+        return false;
+    }
+    let Some(impl_id) = tcx.inherent_impl_of_assoc(callee) else {
+        return false;
+    };
+    let ty = tcx.type_of(impl_id).instantiate_identity();
+    #[cfg(rapx_ge_99)]
+    let ty = ty.skip_norm_wip();
+    matches!(ty.kind(), TyKind::Adt(adt, _) if is_std_box(adt.did()))
+}
 
 /// Whether `callee` is `Some` and matches any resolved DefId in the slice.
 fn any_def(callee: Option<DefId>, defs: &[DefId]) -> bool {
@@ -216,7 +229,10 @@ pub fn is_intrinsic_layout_constant(callee: Option<DefId>) -> bool {
 }
 
 pub fn is_mem_layout_constant(callee: Option<DefId>) -> bool {
-    other_api::matches_any(callee, &[other_api::mem_size_of(), other_api::mem_align_of()])
+    other_api::matches_any(
+        callee,
+        &[other_api::mem_size_of(), other_api::mem_align_of()],
+    )
 }
 
 /// Whether `callee` is `ptr::align_offset` / `NonNull::align_offset` /

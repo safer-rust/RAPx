@@ -219,15 +219,25 @@ impl PropertyChecker {
         if vm_state.path_infeasible {
             return CheckResult::ProvedByRule;
         }
-        if vm_state.unsupported_mir {
-            let mut details: Vec<_> = vm_state.unsupported_details.iter().cloned().collect();
+        if vm_state.diagnostics.unsupported_mir {
+            let mut details: Vec<_> = vm_state
+                .diagnostics
+                .unsupported_details
+                .iter()
+                .cloned()
+                .collect();
             details.sort();
-            let mut effect_details: Vec<_> = vm_state.unsupported_effects.iter().cloned().collect();
+            let mut effect_details: Vec<_> = vm_state
+                .diagnostics
+                .unsupported_effects
+                .iter()
+                .cloned()
+                .collect();
             effect_details.sort();
-            let mut missing_mir: Vec<_> = vm_state.missing_mir.iter().cloned().collect();
+            let mut missing_mir: Vec<_> = vm_state.diagnostics.missing_mir.iter().cloned().collect();
             missing_mir.sort();
             let mut opaque_control_flow: Vec<_> =
-                vm_state.opaque_control_flow.iter().cloned().collect();
+                vm_state.diagnostics.opaque_control_flow.iter().cloned().collect();
             opaque_control_flow.sort();
             let mut reasons = Vec::new();
             if !missing_mir.is_empty() {
@@ -378,7 +388,7 @@ impl PropertyChecker {
                         return CheckResult::Unknown(reason);
                     }
                 }
-                if vm_state.incomplete_inline_branch
+                if vm_state.diagnostics.incomplete_inline_branch
                     && (checkpoint.callee.is_some() || !checkpoint.args.is_empty())
                 {
                     return CheckResult::Unknown(UnknownReason::IncompleteInlineBranch);
@@ -389,7 +399,7 @@ impl PropertyChecker {
                     .unwrap_or(&UNKNOWN_RULE);
                 crate::rap_debug!("property rule: {}", rule.name);
                 let result = (rule.apply)(self, vm_state, checkpoint, property);
-                if vm_state.incomplete_inline_branch && result == CheckResult::Failed {
+                if vm_state.diagnostics.incomplete_inline_branch && result == CheckResult::Failed {
                     CheckResult::Unknown(UnknownReason::IncompleteInlineBranch)
                 } else {
                     result

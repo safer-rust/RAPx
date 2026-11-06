@@ -2,6 +2,8 @@ use crate::compat::GenericArgsRef;
 use crate::def_ids::lang_api::{self, LangItem};
 #[cfg(rapx_attr_requires_ext)]
 use rustc_ast::attr::AttributeExt;
+#[cfg(rapx_caller_bounds_accessor)]
+use rustc_type_ir::CallerBoundsIterator;
 use rustc_hir::{
     ItemKind,
     def_id::{DefId, LocalDefId},
@@ -335,7 +337,11 @@ pub(crate) fn type_param_impl_tys<'tcx>(
     }
     let param_env = tcx.param_env(def_id);
     let mut bounds = Vec::new();
-    for clause in param_env.caller_bounds() {
+    #[cfg(rapx_caller_bounds_accessor)]
+    let clauses = param_env.caller_bounds().all_clauses(tcx).iter();
+    #[cfg(not(rapx_caller_bounds_accessor))]
+    let clauses = param_env.caller_bounds();
+    for clause in clauses {
         let Some(trait_clause) = clause.as_trait_clause() else {
             continue;
         };
@@ -673,15 +679,7 @@ pub(crate) fn has_rapx_attr(tcx: TyCtxt<'_>, def_id: LocalDefId, name: Symbol) -
     let rapx = Symbol::intern("rapx");
     let attrs = tcx.hir_attrs(hir_id);
 
-    attrs.iter().any(|attr| {
-        if attr.is_doc_comment().is_some() {
-            return false;
-        }
-
-        let path = attr.path();
-
-        path.len() == 2 && path[0] == rapx && path[1] == name
-    })
+    attrs.iter().any(|attr| attr.path_matches(&[rapx, name]))
 }
 
 pub fn has_rapx_verify_attr(tcx: TyCtxt<'_>, def_id: LocalDefId) -> bool {
@@ -1395,7 +1393,11 @@ fn generic_param_impl_layouts<'tcx>(
     }
     let param_env = tcx.param_env(caller);
     let typing_env = TypingEnv::post_analysis(tcx, caller);
-    for clause in param_env.caller_bounds() {
+    #[cfg(rapx_caller_bounds_accessor)]
+    let clauses = param_env.caller_bounds().all_clauses(tcx).iter();
+    #[cfg(not(rapx_caller_bounds_accessor))]
+    let clauses = param_env.caller_bounds();
+    for clause in clauses {
         let Some(trait_clause) = clause.as_trait_clause() else {
             continue;
         };
