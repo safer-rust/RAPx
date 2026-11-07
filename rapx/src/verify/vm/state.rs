@@ -23,7 +23,7 @@ use z3::{
 use crate::compat::{FxHashMap, FxHashSet};
 use super::{
     diagnostics::Diagnostics,
-    method_cache::{MethodReturn, MethodSnapshot},
+    method_cache::{CachedMethodResult, MethodSnapshot},
 };
 use crate::helpers::def_use::PlaceKey;
 
@@ -665,7 +665,6 @@ pub(crate) struct VmState<'z3, 'tcx> {
     pub(crate) current_frame: FrameState<'tcx>,
     /// Caller frames saved by path-replay inlining.
     pub(crate) caller_frames: Vec<SavedCallerFrame<'z3, 'tcx>>,
-    pub(crate) method_returns: Vec<MethodReturn<'z3, 'tcx>>,
 
     /// Allocation units indexed by `AllocId`.
     pub(crate) units: Vec<MemoryUnit<'z3, 'tcx>>,
@@ -677,6 +676,10 @@ pub(crate) struct VmState<'z3, 'tcx> {
 
     /// Scratch state for recursive inlining.
     pub(crate) inline: InlineCtx<'z3, 'tcx>,
+
+    /// Stable `&self` results reused by contracts only when the method, caller,
+    /// receiver allocation and offset, fields, and slice length still match.
+    pub(crate) method_result_cache: Vec<CachedMethodResult<'z3, 'tcx>>,
 
     /// Allocation roots licensed by declared `Alias` contract sources.
     pub(crate) alias_hazard_allocs: FxHashSet<AllocId>,
@@ -822,11 +825,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 pending_enum_fields: FxHashMap::default(),
             },
             caller_frames: Vec::default(),
-            method_returns: Vec::default(),
             units: Vec::default(),
             thread_local_allocs: FxHashMap::default(),
-            inline: InlineCtx::default(),
             constraints,
+            inline: InlineCtx::default(),
+            method_result_cache: Vec::default(),
             alias_hazard_allocs: FxHashSet::default(),
             index_access_facts: Vec::new(),
             safedrop_events: SafeDropEventLog::default(),

@@ -26,8 +26,9 @@ struct FieldSnapshot<'z3, 'tcx> {
     slice_len: Option<Int<'z3>>,
 }
 
+/// A stable method result paired with the receiver state at the call site.
 #[derive(Clone)]
-pub(crate) struct MethodReturn<'z3, 'tcx> {
+pub(crate) struct CachedMethodResult<'z3, 'tcx> {
     snapshot: MethodSnapshot<'z3, 'tcx>,
     result: Int<'z3>,
 }
@@ -88,7 +89,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return;
         };
         if self.method_snapshot_matches(&snapshot) {
-            self.method_returns.push(MethodReturn {
+            self.method_result_cache.push(CachedMethodResult {
                 snapshot,
                 result: result.z3_term.clone(),
             });
@@ -101,7 +102,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         receiver: &VmValue<'z3, 'tcx>,
     ) -> Option<Int<'z3>> {
         let provenance = receiver.provenance.as_ref()?;
-        self.method_returns.iter().rev().find_map(|entry| {
+        self.method_result_cache.iter().rev().find_map(|entry| {
             (entry.snapshot.method == method
                 && entry.snapshot.caller == self.current_frame.current_def_id
                 && entry.snapshot.receiver_alloc == provenance.alloc_id
