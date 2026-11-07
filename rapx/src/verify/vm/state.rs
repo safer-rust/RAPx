@@ -21,6 +21,7 @@ use z3::{
 };
 
 use crate::compat::{FxHashMap, FxHashSet};
+use super::diagnostics::Diagnostics;
 use crate::helpers::def_use::PlaceKey;
 
 pub(crate) const REPEATED_ARRAY_ELEMENT: usize = usize::MAX;
@@ -45,6 +46,32 @@ pub(crate) struct MemoryEvent {
     pub local: usize,
     pub span: Span,
 }
+#[derive(Clone, Copy)]
+pub(crate) struct ActiveMirLocation {
+    pub def_id: DefId,
+    pub block: usize,
+    pub item: ActiveMirItem,
+    pub span: Span,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum ActiveMirItem {
+    Statement(usize),
+    Terminator,
+}
+
+impl ActiveMirLocation {
+    fn label(&self, tcx: TyCtxt<'_>) -> String {
+        let function = tcx.def_path_str(self.def_id);
+        match self.item {
+            ActiveMirItem::Statement(index) => {
+                format!("{function} bb{} statement {index}", self.block)
+            }
+            ActiveMirItem::Terminator => format!("{function} bb{} terminator", self.block),
+        }
+    }
+}
+
 
 /// The structure of a pointer's byte offset, when it has one.
 ///
@@ -599,31 +626,6 @@ pub(crate) struct FrameState<'tcx> {
     pub(crate) pending_enum_fields: FxHashMap<Local, (VariantIdx, FxHashSet<usize>)>,
 }
 
-/// Path-local reasons why verification cannot make a complete claim.
-#[derive(Default, Clone)]
-pub(crate) struct Diagnostics {
-    /// Whether execution encountered unsupported behavior.
-    pub(crate) unsupported_mir: bool,
-    /// Unsupported MIR forms with source locations.
-    pub(crate) unsupported_details: FxHashSet<String>,
-    /// Unsupported call effects with source locations.
-    pub(crate) unsupported_effects: FxHashSet<String>,
-    /// Calls whose MIR body was unavailable.
-    pub(crate) missing_mir: FxHashSet<String>,
-    /// Branches controlled by opaque call results.
-    pub(crate) opaque_control_flow: FxHashSet<String>,
-    /// Whether at least one inlined branch was replaced by an unknown result.
-    pub(crate) incomplete_inline_branch: bool,
-}
-
-impl Diagnostics {
-    /// Retain missing-MIR evidence when an explored inline state is discarded.
-    pub(crate) fn merge_inline_fallback(&mut self, explored: &Self) {
-        self.missing_mir.extend(explored.missing_mir.iter().cloned());
-        self.incomplete_inline_branch = true;
-    }
-}
-
 /// The full symbolic execution state at a program point.
 ///
 /// Accumulates the name → allocation bindings, allocations, and solver
@@ -667,9 +669,7 @@ pub(crate) struct VmState<'z3, 'tcx> {
     pub(crate) inline: InlineCtx<'z3, 'tcx>,
 
     pub(crate) diagnostics: Diagnostics,
-    pub(crate) active_mir_location: Option<String>,
-    pub(crate) active_mir_block: Option<usize>,
-    pub(crate) active_mir_span: Option<Span>,
+    pub(crate) active_mir: Option<ActiveMirLocation>,
     pub(crate) track_memory_events: bool,
     pub(crate) memory_events: RefCell<Vec<MemoryEvent>>,
     pub(crate) path_infeasible: bool,
@@ -696,9 +696,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 } else {
                     MemoryEventKind::Drop
                 },
-                block: self.active_mir_block,
+                block: self.active_mir.as_ref().map(|location| location.block),
                 local: local.as_usize(),
-                span: self.active_mir_span.unwrap_or(rustc_span::DUMMY_SP),
+                span: self
+                    .active_mir
+                    .as_ref()
+                    .map(|location| location.span)
+                    .unwrap_or(rustc_span::DUMMY_SP),
             });
         }
         self.alloc_mut(alloc_id).facts.dead = true;
@@ -709,9 +713,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             self.memory_events.borrow_mut().push(MemoryEvent {
                 alloc_id,
                 kind: MemoryEventKind::UseAfterFree,
-                block: self.active_mir_block,
+                block: self.active_mir.as_ref().map(|location| location.block),
                 local: local.as_usize(),
-                span: self.active_mir_span.unwrap_or(rustc_span::DUMMY_SP),
+                span: self
+                    .active_mir
+                    .as_ref()
+                    .map(|location| location.span)
+                    .unwrap_or(rustc_span::DUMMY_SP),
             });
         }
     }
@@ -820,9 +828,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             thread_local_allocs: FxHashMap::default(),
             inline: InlineCtx::default(),
             diagnostics: Diagnostics::default(),
-            active_mir_location: None,
-            active_mir_block: None,
-            active_mir_span: None,
+            active_mir: None,
             track_memory_events: false,
             memory_events: RefCell::new(Vec::new()),
             path_infeasible: false,
@@ -860,44 +866,35 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     }
 
     pub(crate) fn record_unsupported(&mut self, operation: &str) {
-        self.diagnostics.unsupported_mir = true;
-        let location = self
-            .active_mir_location
-            .as_deref()
-            .unwrap_or("unknown location");
-        self.diagnostics.unsupported_details
-            .insert(format!("{location}: {operation}"));
+        let location = self.active_mir.as_ref().map(|location| location.label(self.tcx));
+        self.diagnostics.record_unsupported(
+            location.as_deref(),
+            operation,
+        );
     }
 
     pub(crate) fn record_unsupported_effect(&mut self, effect: &str) {
-        self.diagnostics.unsupported_mir = true;
-        let location = self
-            .active_mir_location
-            .as_deref()
-            .unwrap_or("unknown location");
-        self.diagnostics.unsupported_effects
-            .insert(format!("{location}: {effect}"));
+        let location = self.active_mir.as_ref().map(|location| location.label(self.tcx));
+        self.diagnostics.record_unsupported_effect(
+            location.as_deref(),
+            effect,
+        );
     }
 
     pub(crate) fn record_missing_mir(&mut self, callee: DefId) {
-        self.diagnostics.unsupported_mir = true;
-        let location = self
-            .active_mir_location
-            .as_deref()
-            .unwrap_or("unknown location");
-        self.diagnostics.missing_mir
-            .insert(format!("{} at {location}", self.tcx.def_path_str(callee)));
+        let location = self.active_mir.as_ref().map(|location| location.label(self.tcx));
+        self.diagnostics.record_missing_mir(
+            location.as_deref(),
+            &self.tcx.def_path_str(callee),
+        );
     }
 
     pub(crate) fn record_opaque_control_flow(&mut self, operation: &str) {
-        self.diagnostics.unsupported_mir = true;
-        let location = self
-            .active_mir_location
-            .as_deref()
-            .unwrap_or("unknown location");
-        self.diagnostics.opaque_control_flow.insert(format!(
-            "{location}: opaque call result controls {operation}"
-        ));
+        let location = self.active_mir.as_ref().map(|location| location.label(self.tcx));
+        self.diagnostics.record_opaque_control_flow(
+            location.as_deref(),
+            operation,
+        );
     }
 
     /// Capture the frame-scoped state before switching to an inlined callee.

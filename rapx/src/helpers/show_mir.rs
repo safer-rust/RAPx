@@ -4,11 +4,13 @@ use crate::helpers::draw_dot::render_dot_string;
 use crate::helpers::name::get_cleaned_def_path_name;
 use colorful::{Color, Colorful};
 use rustc_hir::def_id::DefId;
-use rustc_middle::mir::{
-    BasicBlockData, BasicBlocks, Body, LocalDecl, LocalDecls, Operand, Rvalue, Statement,
-    StatementKind, Terminator, TerminatorKind,
+use rustc_middle::{
+    mir::{
+        BasicBlockData, BasicBlocks, Body, LocalDecl, LocalDecls, Operand, Rvalue, Statement,
+        StatementKind, Terminator, TerminatorKind,
+    },
+    ty::{self, TyCtxt, TyKind},
 };
-use rustc_middle::ty::{self, TyCtxt, TyKind};
 
 const NEXT_LINE: &str = "\n";
 const PADDING: &str = "    ";

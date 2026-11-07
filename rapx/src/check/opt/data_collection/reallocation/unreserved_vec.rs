@@ -1,7 +1,6 @@
 use crate::{analysis::dataflow::*, check::opt::OptCheck};
 use rustc_hir::intravisit;
-use rustc_middle::mir::Local;
-use rustc_middle::ty::TyCtxt;
+use rustc_middle::{mir::Local, ty::TyCtxt};
 
 use annotate_snippets::Level;
 use rustc_span::Span;

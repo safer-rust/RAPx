@@ -4,8 +4,7 @@ use crate::analysis::range::domain::core::{ConstConvert, IntervalArithmetic, Var
 use crate::analysis::range::{Range, RangeType};
 use crate::compat::FxHashMap;
 use rustc_hir::def_id::DefId;
-use rustc_middle::mir::Operand;
-use rustc_middle::mir::Place;
+use rustc_middle::mir::{Operand, Place};
 use std::cell::RefCell;
 use std::fmt::Debug;
 use std::rc::Rc;

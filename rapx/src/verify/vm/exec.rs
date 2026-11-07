@@ -6,7 +6,7 @@ use z3::ast::Int;
 
 use crate::{analysis::path::CallArg, compat::FxHashSet, verify::slicer::RelevantItem};
 
-use super::state::{ValueSource, VmState, VmValue};
+use super::state::{ActiveMirItem, ActiveMirLocation, ValueSource, VmState, VmValue};
 
 impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// Execute all retained MIR items in path order.
@@ -22,7 +22,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         for item in items {
             let mut next = Vec::new();
             for mut state in states {
-                if !state.path_infeasible && !state.diagnostics.unsupported_mir {
+                if !state.path_infeasible && !state.diagnostics.is_unsupported() {
                     state.execute_item(item);
                     next.extend(
                         std::mem::take(&mut state.inline.pending_states)
@@ -45,16 +45,14 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 statement_index,
                 ..
             } => {
-                self.active_mir_location = Some(format!(
-                    "{} bb{} statement {}",
-                    self.tcx.def_path_str(*def_id),
-                    block.as_usize(),
-                    statement_index,
-                ));
                 let body = self.body_for(*def_id);
                 let statement = &body.basic_blocks[*block].statements[*statement_index];
-                self.active_mir_block = Some(block.as_usize());
-                self.active_mir_span = Some(statement.source_info.span);
+                self.active_mir = Some(ActiveMirLocation {
+                    def_id: *def_id,
+                    block: block.as_usize(),
+                    item: ActiveMirItem::Statement(*statement_index),
+                    span: statement.source_info.span,
+                });
                 crate::verify::vm::rules::exec_statement(self, statement);
             }
             RelevantItem::Terminator {
@@ -63,15 +61,14 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 switch_succ,
                 ..
             } => {
-                self.active_mir_location = Some(format!(
-                    "{} bb{} terminator",
-                    self.tcx.def_path_str(*def_id),
-                    block.as_usize(),
-                ));
                 let body = self.body_for(*def_id);
                 let terminator = body.basic_blocks[*block].terminator();
-                self.active_mir_block = Some(block.as_usize());
-                self.active_mir_span = Some(terminator.source_info.span);
+                self.active_mir = Some(ActiveMirLocation {
+                    def_id: *def_id,
+                    block: block.as_usize(),
+                    item: ActiveMirItem::Terminator,
+                    span: terminator.source_info.span,
+                });
                 crate::verify::vm::rules::exec_terminator(self, terminator, *switch_succ);
                 if self.track_memory_events
                     && matches!(&terminator.kind, TerminatorKind::Call { unwind: UnwindAction::Cleanup(target), .. } if Some(*target) == *switch_succ)
@@ -80,15 +77,15 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 }
             }
             RelevantItem::CalleeEntry { callee, body, args } => {
-                self.active_mir_location = None;
+                self.active_mir = None;
                 self.handle_callee_entry(*callee, *body, args);
             }
             RelevantItem::CalleeExit { dest } => {
-                self.active_mir_location = None;
+                self.active_mir = None;
                 self.handle_callee_exit(*dest);
             }
             RelevantItem::ContractFact { property } => {
-                self.active_mir_location = None;
+                self.active_mir = None;
                 self.assert_contract_fact(property);
             }
         }

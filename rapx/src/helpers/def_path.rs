@@ -3,9 +3,7 @@ use rustc_hir::PrimTy;
 use rustc_hir::def::{DefKind, Res};
 use rustc_hir::def_id::{CrateNum, DefId, LOCAL_CRATE, LocalDefId};
 use rustc_hir::{ImplItemId, ItemKind, Mutability, Node, OwnerId, TraitItemId};
-use rustc_middle::ty::TyCtxt;
-use rustc_middle::ty::fast_reject::SimplifiedType;
-use rustc_middle::ty::{FloatTy, IntTy, UintTy};
+use rustc_middle::ty::{FloatTy, IntTy, TyCtxt, UintTy, fast_reject::SimplifiedType};
 use rustc_span::symbol::{Ident, Symbol};
 
 pub fn path_str_def_id<'tcx>(tcx: TyCtxt<'tcx>, path_str: &str) -> DefId {

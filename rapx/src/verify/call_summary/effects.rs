@@ -4,10 +4,11 @@
 use crate::def_ids::lang_api::{self, LangItem};
 use crate::helpers::mir_utils;
 use rustc_hir::def_id::DefId;
-use rustc_middle::mir::Operand;
-use rustc_middle::ty::{Ty, TyCtxt, TyKind};
+use rustc_middle::{mir::Operand, ty::{Ty, TyCtxt, TyKind}};
 
-use super::{BoundedArithmeticOp, CallEffect, CallEffectSummary, OverflowOp, SimdArithOp, SimdCmpOp};
+use super::{
+    BoundedArithmeticOp, CallEffect, CallEffectSummary, OverflowOp, SimdArithOp, SimdCmpOp,
+};
 use crate::def_ids::other_api;
 use crate::def_ids::{intrinsic_api, nomir_api, nomir_ffi};
 use crate::helpers::mir_utils::type_layout;

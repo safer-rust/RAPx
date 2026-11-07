@@ -5,9 +5,7 @@
 //! and carries the backward relevance frontier between blocks.
 
 use rustc_hir::def_id::DefId;
-use rustc_middle::mir::Body;
-use rustc_middle::mir::{BasicBlock, Local};
-use rustc_middle::ty::TyCtxt;
+use rustc_middle::{mir::{BasicBlock, Body, Local}, ty::TyCtxt};
 
 use std::collections::{HashMap, HashSet};
 
@@ -16,8 +14,8 @@ use crate::analysis::dataflow::types::DataflowGraph;
 
 use super::super::{contract, path::Path, relevance::bind_callsite_roots};
 use crate::helpers::def_use::RelevantPlaces;
-use crate::verify::path::EntryBodies;
 use crate::verify::checkpoint::{Checkpoint, CheckpointKind, CheckpointLocation};
+use crate::verify::path::EntryBodies;
 use crate::verify::target::CalleeBodies;
 
 use crate::analysis::path::{CallArg, PathNode, PathTree};

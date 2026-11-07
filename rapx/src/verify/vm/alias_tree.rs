@@ -15,8 +15,10 @@
 use crate::helpers::mir_utils;
 use rustc_hash::FxHashMap;
 use rustc_hir::def_id::DefId;
-use rustc_middle::mir::{Local, Operand, Rvalue, StatementKind};
-use rustc_middle::ty::{Ty, TyCtxt, TyKind};
+use rustc_middle::{
+    mir::{Local, Operand, Rvalue, StatementKind},
+    ty::{Ty, TyCtxt, TyKind},
+};
 
 /// A node identifier (index into [`AliasTree::nodes`]).
 pub(crate) type TagId = usize;

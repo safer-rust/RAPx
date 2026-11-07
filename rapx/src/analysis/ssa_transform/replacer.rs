@@ -5,8 +5,7 @@ use super::ssa_transformer::SSATransformer;
 use rustc_abi::FieldIdx;
 use rustc_hir::def_id::DefIdMap;
 use rustc_index::IndexVec;
-use rustc_middle::ty::TyCtxt;
-use rustc_middle::{mir::*, ty::GenericArgs};
+use rustc_middle::{mir::*, ty::{GenericArgs, TyCtxt}};
 use rustc_span::sym::new;
 use std::collections::{HashMap, HashSet, VecDeque};
 

@@ -4,8 +4,10 @@
 //! equality never writes its operands or makes a fact true unconditionally.
 
 use rustc_hir::def_id::DefId;
-use rustc_middle::mir::{BinOp, Local, Operand, Rvalue, StatementKind};
-use rustc_middle::ty::{TyCtxt, TyKind};
+use rustc_middle::{
+    mir::{BinOp, Local, Operand, Rvalue, StatementKind},
+    ty::{TyCtxt, TyKind},
+};
 use z3::ast::{Ast, Bool, Int};
 
 use super::state::{AllocKind, ValueSource, VmState, VmValue};

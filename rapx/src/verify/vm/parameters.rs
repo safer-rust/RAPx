@@ -1,7 +1,9 @@
 //! Initialize symbolic function parameters and their backing allocations.
 
-use rustc_middle::mir::{Local, Operand, Rvalue, StatementKind};
-use rustc_middle::ty::{Ty, TyKind};
+use rustc_middle::{
+    mir::{Local, Operand, Rvalue, StatementKind},
+    ty::{Ty, TyKind},
+};
 use z3::ast::Int;
 
 use crate::compat::FxHashMap;

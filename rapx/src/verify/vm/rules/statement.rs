@@ -1,10 +1,10 @@
 //! Transfer functions for state-changing MIR statements.
 
-use rustc_middle::mir::{
-    AggregateKind, CopyNonOverlapping, Local, Operand, Place, ProjectionElem, Rvalue,
-};
 use rustc_abi::VariantIdx;
-use rustc_middle::ty::TyKind;
+use rustc_middle::{
+    mir::{AggregateKind, CopyNonOverlapping, Local, Operand, Place, ProjectionElem, Rvalue},
+    ty::TyKind,
+};
 #[cfg(rapx_const_ext)]
 use rustc_middle::ty::consts::ConstExt;
 use z3::ast::{Ast, Bool, Int};
@@ -717,7 +717,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         self.set_field_value(place.local, vec![element], updated);
                     }
                 } else {
-                    self.diagnostics.unsupported_mir = true;
+                    self.diagnostics.mark_unsupported();
                     if let Some(alloc_id) = self.current_frame.local_alloc.get(&place.local).copied() {
                         self.content_mut(alloc_id)
                             .values

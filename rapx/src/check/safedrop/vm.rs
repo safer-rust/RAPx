@@ -6,8 +6,7 @@ use crate::verify::slicer::RelevantItem;
 use crate::verify::vm::VmState;
 use crate::verify::vm::state::{AllocId, MemoryEvent, MemoryEventKind};
 use rustc_hir::def_id::DefId;
-use rustc_middle::mir::{BasicBlock, Local, TerminatorKind};
-use rustc_middle::ty::TyCtxt;
+use rustc_middle::{mir::{BasicBlock, Local, TerminatorKind}, ty::TyCtxt};
 use rustc_span::Symbol;
 use z3::{Config, Context};
 

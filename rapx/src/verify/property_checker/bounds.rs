@@ -4,16 +4,18 @@
 //! invariants, or an SMT coverage check over allocation base/size.
 //! `NonOverlap` uses provenance-distinctness and range-overlap reasoning.
 
-use crate::verify::checkpoint::Checkpoint;
 use crate::helpers::mir_utils;
 use crate::verify::api_classify;
+use crate::verify::checkpoint::Checkpoint;
 use crate::verify::contract::{
     ContractExpr, ContractKind, NumericBinOp, PlaceBase, Property, PropertyArg, RelOp,
 };
 use crate::verify::report::{CheckResult, UnknownReason};
 use crate::verify::vm::state::{OffsetKind, VmState, VmValue};
-use rustc_middle::mir::{Local, Operand, Rvalue, StatementKind};
-use rustc_middle::ty::{Ty, TyKind};
+use rustc_middle::{
+    mir::{Local, Operand, Rvalue, StatementKind},
+    ty::{Ty, TyKind},
+};
 use z3::{
     SatResult, Solver,
     ast::{Ast, Bool, Int},

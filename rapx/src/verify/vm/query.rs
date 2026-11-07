@@ -6,8 +6,10 @@ use crate::verify::checkpoint::Checkpoint;
 use crate::verify::contract::{
     ContractExpr, ContractPlace, ContractProjection, PlaceBase, Property, PropertyArg,
 };
-use rustc_middle::mir::{Local, Operand};
-use rustc_middle::ty::{Ty, TyKind};
+use rustc_middle::{
+    mir::{Local, Operand},
+    ty::{Ty, TyKind},
+};
 use z3::ast::{Ast, Int};
 
 use super::state::{AllocId, OffsetKind, VmState, VmValue};

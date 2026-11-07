@@ -14,12 +14,13 @@ use crate::{rap_debug, rap_trace};
 use num_traits::{Bounded, CheckedAdd, CheckedSub, One, ToPrimitive, Zero, ops};
 use rustc_abi::Size;
 use rustc_hir::def_id::DefId;
-use rustc_middle::mir::coverage::Op;
-use rustc_middle::mir::{
-    BasicBlock, BinOp, BorrowKind, CastKind, Const, Local, LocalDecl, Operand, Place, Rvalue,
-    Statement, StatementKind, Terminator, UnOp,
+use rustc_middle::{
+    mir::{
+        coverage::Op, BasicBlock, BinOp, BorrowKind, CastKind, Const, Local, LocalDecl, Operand,
+        Place, Rvalue, Statement, StatementKind, Terminator, UnOp,
+    },
+    ty::{ScalarInt, Ty},
 };
-use rustc_middle::ty::{ScalarInt, Ty};
 use rustc_span::sym::no_default_passes;
 use std::cell::RefCell;
 use std::cmp::PartialEq;

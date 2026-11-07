@@ -1,8 +1,7 @@
 use super::default::CallGraph;
 use crate::helpers::mir_utils::{dep_callee_def_id, instance_def_id, resolve_callee_instance};
 use rustc_hir::def_id::DefId;
-use rustc_middle::mir;
-use rustc_middle::ty::TyCtxt;
+use rustc_middle::{mir, ty::TyCtxt};
 
 pub struct CallGraphVisitor<'b, 'tcx> {
     tcx: TyCtxt<'tcx>,

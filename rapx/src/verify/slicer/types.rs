@@ -7,8 +7,7 @@
 
 use crate::verify::{contract, path::Path};
 use rustc_hir::def_id::DefId;
-use rustc_middle::mir::BasicBlock;
-use rustc_middle::mir::Body;
+use rustc_middle::mir::{BasicBlock, Body};
 
 /// A proof goal for one `(checkpoint, path)` item: the set of relevant items
 /// plus the path context needed to verify the target property.

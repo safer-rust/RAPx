@@ -1,7 +1,6 @@
 //! Iterator pointer, length, and offset tracking in the symbolic VM.
 
-use rustc_middle::mir::Local;
-use rustc_middle::ty::TyKind;
+use rustc_middle::{mir::Local, ty::TyKind};
 use z3::ast::{Ast, Int};
 
 use crate::helpers::mir_utils;

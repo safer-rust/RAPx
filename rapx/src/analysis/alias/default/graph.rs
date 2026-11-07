@@ -9,8 +9,7 @@ use crate::{
     graphs::cfg::CfgBlock,
     utils::source::get_fn_name,
 };
-use rustc_middle::mir::Terminator;
-use rustc_middle::ty::TyCtxt;
+use rustc_middle::{mir::Terminator, ty::TyCtxt};
 use rustc_span::{Span, def_id::DefId};
 use std::fmt;
 

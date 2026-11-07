@@ -3,8 +3,7 @@
 //! Extends the core [`crate::helpers::def_use`] `PlaceKey`/`RelevantPlaces`
 //! types with contract/property-aware methods, plus call-site root binding.
 
-use rustc_middle::mir::Operand;
-use rustc_middle::ty::TyCtxt;
+use rustc_middle::{mir::Operand, ty::TyCtxt};
 
 use crate::helpers::def_use::{PlaceBaseKey, PlaceKey, RelevantPlaces, operand_uses};
 use crate::helpers::mir_utils::callee_param_index_for_local;

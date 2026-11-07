@@ -1,7 +1,9 @@
 //! Symbolic arithmetic and layout constraints used by MIR transfer rules.
 
-use rustc_middle::mir::{BinOp, Local, Operand, UnOp};
-use rustc_middle::ty::{Ty, TyKind};
+use rustc_middle::{
+    mir::{BinOp, Local, Operand, UnOp},
+    ty::{Ty, TyKind},
+};
 use z3::ast::{Ast, Bool, Int};
 
 use crate::helpers::mir_utils;

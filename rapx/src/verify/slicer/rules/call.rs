@@ -5,16 +5,18 @@
 //! which arguments flow through to the destination and whether the call may
 //! modify relevant state.
 
-use crate::helpers::mir_utils;
 use crate::compat::Spanned;
+use crate::helpers::mir_utils;
 use rustc_hir::def_id::DefId;
-use rustc_middle::mir::{BasicBlock, Body, Operand, Place};
-use rustc_middle::ty::{TyCtxt, TyKind};
+use rustc_middle::{
+    mir::{BasicBlock, Body, Operand, Place},
+    ty::{TyCtxt, TyKind},
+};
 
 use crate::analysis::dataflow::types::DataflowGraph;
 
+use crate::helpers::def_use::{PlaceKey, RelevantPlaces, call_args_uses_at};
 use crate::verify::call_summary;
-use crate::helpers::def_use::{call_args_uses_at, PlaceKey, RelevantPlaces};
 
 use super::super::types::RelevantItem;
 

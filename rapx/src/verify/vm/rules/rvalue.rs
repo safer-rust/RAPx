@@ -3,8 +3,10 @@
 use rustc_abi::FieldIdx;
 use rustc_hir::def_id::DefId;
 use rustc_index::IndexVec;
-use rustc_middle::mir::{AggregateKind, BinOp, CastKind, Operand, Place, UnOp};
-use rustc_middle::ty::{Ty, TyKind};
+use rustc_middle::{
+    mir::{AggregateKind, BinOp, CastKind, Operand, Place, UnOp},
+    ty::{Ty, TyKind},
+};
 use z3::ast::{Ast, Int};
 
 use super::super::state::{
@@ -895,7 +897,7 @@ pub(crate) fn eval_thread_local_ref<'z3, 'tcx>(
 ) -> VmValue<'z3, 'tcx> {
     let dest_ty = dest_place.ty(state.body(), state.tcx).ty;
     let Some(static_ty) = mir_utils::pointee_ty(dest_ty) else {
-        state.diagnostics.unsupported_mir = true;
+        state.diagnostics.mark_unsupported();
         return eval_fresh_value(state, dest_place, "thread_local");
     };
     let scalar = matches!(
@@ -986,7 +988,7 @@ pub(crate) fn eval_repeat<'z3, 'tcx>(
 ) -> VmValue<'z3, 'tcx> {
     let dest_ty = dest_place.ty(state.body(), state.tcx).ty;
     let TyKind::Array(..) = dest_ty.kind() else {
-        state.diagnostics.unsupported_mir = true;
+        state.diagnostics.mark_unsupported();
         return eval_fresh_value(state, dest_place, "repeat");
     };
     let value = state.value_of_operand(operand);
@@ -1005,7 +1007,7 @@ pub(crate) fn eval_repeat<'z3, 'tcx>(
                     .and_then(|value| value.z3_term.simplify().as_u64())
                     .and_then(|index| usize::try_from(index).ok())
                 else {
-                    state.diagnostics.unsupported_mir = true;
+                    state.diagnostics.mark_unsupported();
                     return eval_fresh_value(state, dest_place, "repeat");
                 };
                 index
@@ -1016,7 +1018,7 @@ pub(crate) fn eval_repeat<'z3, 'tcx>(
                 ..
             } => offset as usize,
             _ => {
-                state.diagnostics.unsupported_mir = true;
+                state.diagnostics.mark_unsupported();
                 return eval_fresh_value(state, dest_place, "repeat");
             }
         };
@@ -1179,7 +1181,7 @@ pub(crate) fn eval_reborrow<'z3, 'tcx>(
     #[cfg(not(rapx_has_phantom_deref))]
     let has_phantom_deref = false;
     if (!same_adt && !compatible_shared) || has_phantom_deref {
-        state.diagnostics.unsupported_mir = true;
+        state.diagnostics.mark_unsupported();
         return eval_fresh_value(state, dest_place, "reborrow");
     }
     let mut value = state

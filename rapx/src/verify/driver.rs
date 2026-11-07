@@ -19,8 +19,10 @@ use crate::verify::property_checker::{
 
 use crate::compat::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
-use rustc_middle::mir::{BasicBlock, Operand, Rvalue, StatementKind, TerminatorKind};
-use rustc_middle::ty::{TyCtxt, TyKind};
+use rustc_middle::{
+    mir::{BasicBlock, Operand, Rvalue, StatementKind, TerminatorKind},
+    ty::{TyCtxt, TyKind},
+};
 use std::time::Instant;
 
 use super::{

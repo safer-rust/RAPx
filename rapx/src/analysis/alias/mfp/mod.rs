@@ -4,8 +4,7 @@ pub mod transfer;
 
 use crate::compat::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
-use rustc_middle::mir::{Operand, TerminatorKind};
-use rustc_middle::ty::{self, TyCtxt};
+use rustc_middle::{mir::{Operand, TerminatorKind}, ty::{self, TyCtxt}};
 use rustc_mir_dataflow::Analysis;
 use std::cell::RefCell;
 use std::rc::Rc;

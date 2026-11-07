@@ -1,17 +1,18 @@
 //! Apply modeled call effects to symbolic state.
 
 use rustc_hir::def_id::DefId;
-use rustc_middle::mir::{Local, Operand};
-use rustc_middle::ty::{Ty, TyKind};
+use rustc_middle::{
+    mir::{Local, Operand},
+    ty::{Ty, TyKind},
+};
 use z3::ast::{Ast, Bool, Int};
 
-use super::state::{
-    AllocId, ElementTy, Provenance, ValueFacts, ValueSource, VmState,
-    VmValue,
-};
+use super::state::{AllocId, ElementTy, Provenance, ValueFacts, ValueSource, VmState, VmValue};
 use crate::helpers::mir_utils;
 use crate::verify::api_classify;
-use crate::verify::call_summary::{BoundedArithmeticOp, CallEffect, OverflowOp, SimdArithOp, SimdCmpOp};
+use crate::verify::call_summary::{
+    BoundedArithmeticOp, CallEffect, OverflowOp, SimdArithOp, SimdCmpOp,
+};
 
 impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// Abstract a safe `Fn*` call when only a scalar boolean or `Ordering`

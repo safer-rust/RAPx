@@ -14,8 +14,10 @@ use crate::verify::report::{CheckResult, UnknownReason};
 use crate::verify::vm::contract_eval::ContractEvalContext;
 use crate::verify::vm::query::ContractTargetContext;
 use crate::verify::vm::state::{VmState, VmValue};
-use rustc_middle::mir::{Local, Operand, Rvalue, StatementKind};
-use rustc_middle::ty::{GenericArg, GenericArgKind, Ty, TyKind};
+use rustc_middle::{
+    mir::{Local, Operand, Rvalue, StatementKind},
+    ty::{GenericArg, GenericArgKind, Ty, TyKind},
+};
 use z3::{
     SatResult, Solver,
     ast::{Ast, Bool, Int},

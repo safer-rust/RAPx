@@ -5,8 +5,7 @@
 //! (attributes, JSON, compound-property macros, pest DSL) produce this IR.
 
 use rustc_hir::def_id::DefId;
-use rustc_middle::mir::Local;
-use rustc_middle::ty::{Region, Ty};
+use rustc_middle::{mir::Local, ty::{Region, Ty}};
 
 /// The `Ident` a contract uses for the `'static` lifetime. `'static` is a Rust
 /// keyword, so after the leading `'` is stripped it cannot be a plain ident

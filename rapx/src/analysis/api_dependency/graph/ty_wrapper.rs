@@ -4,8 +4,7 @@ use std::ops::Deref;
 use super::transform::TransformKind;
 use rustc_infer::infer::TyCtxtInferExt;
 use rustc_infer::traits::{Obligation, ObligationCause};
-use rustc_middle::traits;
-use rustc_middle::ty::{self, Ty, TyCtxt};
+use rustc_middle::{traits, ty::{self, Ty, TyCtxt}};
 use rustc_trait_selection::infer::InferCtxtExt;
 use rustc_trait_selection::traits::query::evaluate_obligation::InferCtxtExt as _;
 

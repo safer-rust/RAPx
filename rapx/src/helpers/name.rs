@@ -1,7 +1,6 @@
 use crate::helpers::mir_utils;
 use rustc_hir::def_id::DefId;
-use rustc_middle::ty::print::with_no_trimmed_paths;
-use rustc_middle::ty::{GenericArgKind, Ty, TyCtxt, TyKind};
+use rustc_middle::ty::{GenericArgKind, Ty, TyCtxt, TyKind, print::with_no_trimmed_paths};
 use serde_json::Value;
 use std::sync::OnceLock;
 use syn::Expr;

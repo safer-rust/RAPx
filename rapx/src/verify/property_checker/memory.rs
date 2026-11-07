@@ -6,14 +6,13 @@
 //! `value.z3_term` and allocation base/size.
 
 use crate::helpers::mir_utils;
-use crate::verify::checkpoint::Checkpoint;
 use crate::verify::api_classify;
+use crate::verify::checkpoint::Checkpoint;
 use crate::verify::contract::{ContractExpr, Property, PropertyArg, is_static_lifetime_ident};
 use crate::verify::report::{CheckResult, UnknownReason};
 use crate::verify::vm::state::{AllocId, OffsetKind, VmState, VmValue};
 use rustc_hash::FxHashSet;
-use rustc_middle::mir::{Local, Operand, Rvalue, StatementKind};
-use rustc_middle::ty::TyKind;
+use rustc_middle::{mir::{Local, Operand, Rvalue, StatementKind}, ty::TyKind};
 use z3::{
     DeclKind, SatResult, Solver,
     ast::{Ast, Int},

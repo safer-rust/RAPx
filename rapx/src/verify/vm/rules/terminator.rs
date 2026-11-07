@@ -21,8 +21,8 @@ pub(crate) fn exec_switch_int<'z3, 'tcx>(
         }
         _ => None,
     };
-    if !state.diagnostics.unsupported_mir
-        && !state.diagnostics.incomplete_inline_branch
+    if !state.diagnostics.is_unsupported()
+        && !state.diagnostics.has_incomplete_inline_branch()
         && let Some(value) = known_value
         && let Some(chosen) = switch_succ
     {
