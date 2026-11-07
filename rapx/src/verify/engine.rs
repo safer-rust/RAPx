@@ -118,7 +118,6 @@ impl<'z3, 'tcx> VmCache<'z3, 'tcx> {
                     engine.tcx,
                     engine.caller_def_id,
                     engine.instance_body,
-                    engine.assume_struct_invariants,
                 )
                 .execute_items(&[]),
             )
@@ -197,7 +196,6 @@ pub(crate) struct VerifyEngine<'tcx> {
     instance_body: Option<&'tcx Body<'tcx>>,
     callee_bodies: CalleeBodies<'tcx>,
     entry_bodies: EntryBodies<'tcx>,
-    assume_struct_invariants: bool,
 }
 
 impl<'tcx> VerifyEngine<'tcx> {
@@ -208,7 +206,6 @@ impl<'tcx> VerifyEngine<'tcx> {
         instance_body: Option<&'tcx Body<'tcx>>,
         callee_bodies: CalleeBodies<'tcx>,
         entry_bodies: EntryBodies<'tcx>,
-        assume_struct_invariants: bool,
     ) -> Self {
         Self {
             tcx,
@@ -223,7 +220,6 @@ impl<'tcx> VerifyEngine<'tcx> {
             instance_body,
             callee_bodies,
             entry_bodies,
-            assume_struct_invariants,
         }
     }
 

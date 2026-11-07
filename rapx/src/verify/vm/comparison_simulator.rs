@@ -197,13 +197,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         // argument, bypassing the `Use` transfer that carries ConstBytes.
         // Recover it only by matching that exact symbolic constant to its MIR
         // operand in a live caller frame.
-        let bodies = std::iter::once(self.root_body()).chain(
+        let bodies = std::iter::once(self.entry_body()).chain(
             self.caller_frames
                 .iter()
                 .map(|saved| &saved.frame)
                 .chain(std::iter::once(&self.current_frame))
                 .filter_map(|frame| {
-                    frame.body.or_else(|| {
+                    frame.instantiated_body.or_else(|| {
                         self.tcx
                             .is_mir_available(frame.current_def_id)
                             .then(|| self.tcx.optimized_mir(frame.current_def_id))

@@ -610,7 +610,7 @@ pub(crate) struct FrameState<'tcx> {
     /// Function executed by this frame.
     pub(crate) current_def_id: DefId,
     /// Instantiated MIR, or `None` to use the compiler's optimized MIR.
-    pub(crate) body: Option<&'tcx Body<'tcx>>,
+    pub(crate) instantiated_body: Option<&'tcx Body<'tcx>>,
 
     /// Stack allocation backing each MIR local and its field values.
     pub(crate) local_alloc: FxHashMap<Local, AllocId>,
@@ -626,15 +626,6 @@ pub(crate) struct SavedCallerFrame<'z3, 'tcx> {
     pub(crate) postcondition_args: Vec<Option<Local>>,
     pub(crate) arg_referents: Vec<Option<Local>>,
     pub(crate) deferred_writes: Vec<(Local, Vec<usize>, VmValue<'z3, 'tcx>)>,
-}
-
-/// Entry function identity and MIR retained while executing inlined callees.
-#[derive(Clone)]
-struct RootFunction<'tcx> {
-    /// Entry function being verified.
-    def_id: DefId,
-    /// Instantiated entry MIR, when available.
-    body: Option<&'tcx Body<'tcx>>,
 }
 
 /// Optional memory diagnostics collected along one execution path.
@@ -679,9 +670,10 @@ pub(crate) struct VmState<'z3, 'tcx> {
 
     /// Compiler type context.
     pub(crate) tcx: TyCtxt<'tcx>,
-    /// Entry function and instantiated MIR, retained across frame switches.
-    root: RootFunction<'tcx>,
-    pub(crate) assume_struct_invariants: bool,
+    /// Entry function being verified, retained across frame switches.
+    entry_def_id: DefId,
+    /// Instantiated entry MIR, when available.
+    instantiated_entry_body: Option<&'tcx Body<'tcx>>,
 
     pub(crate) current_frame: FrameState<'tcx>,
     /// Caller frames saved by path-replay inlining.
@@ -827,9 +819,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     pub(crate) fn new(
         z3_ctx: &'z3 Context,
         tcx: TyCtxt<'tcx>,
-        caller_def_id: DefId,
-        instance_body: Option<&'tcx Body<'tcx>>,
-        assume_struct_invariants: bool,
+        entry_def_id: DefId,
+        instantiated_body: Option<&'tcx Body<'tcx>>,
     ) -> Self {
         // The `UNINIT` sentinel is created once and shared by every byte array:
         // an unwritten offset reads it back, so `select != UNINIT` decides
@@ -843,14 +834,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         Self {
             z3_ctx,
             tcx,
-            root: RootFunction {
-                def_id: caller_def_id,
-                body: instance_body,
-            },
-            assume_struct_invariants,
+            entry_def_id,
+            instantiated_entry_body: instantiated_body,
             current_frame: FrameState {
-                current_def_id: caller_def_id,
-                body: instance_body,
+                current_def_id: entry_def_id,
+                instantiated_body,
                 local_alloc: FxHashMap::default(),
                 pending_enum_fields: FxHashMap::default(),
             },
@@ -880,11 +868,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
     pub(crate) fn body_for(&self, def_id: DefId) -> &'tcx Body<'tcx> {
         if def_id == self.current_frame.current_def_id
-            && let Some(body) = self.current_frame.body
+            && let Some(body) = self.current_frame.instantiated_body
         {
             body
-        } else if def_id == self.root.def_id
-            && let Some(body) = &self.root.body
+        } else if def_id == self.entry_def_id
+            && let Some(body) = &self.instantiated_entry_body
         {
             body
         } else {
@@ -892,9 +880,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
     }
 
-    pub(crate) fn root_body(&self) -> &rustc_middle::mir::Body<'tcx> {
-        self.root.body
-            .unwrap_or_else(|| self.tcx.optimized_mir(self.root.def_id))
+    pub(crate) fn entry_body(&self) -> &rustc_middle::mir::Body<'tcx> {
+        self.instantiated_entry_body
+            .unwrap_or_else(|| self.tcx.optimized_mir(self.entry_def_id))
     }
 
     pub(crate) fn record_unsupported(&mut self, operation: &str) {
@@ -944,7 +932,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             &mut self.current_frame,
             FrameState {
                 current_def_id: callee,
-                body,
+                instantiated_body: body,
                 local_alloc: FxHashMap::default(),
                 pending_enum_fields: FxHashMap::default(),
             },
@@ -1226,10 +1214,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// The declared type of `local` in `frame`'s body.
     fn frame_local_ty(&self, frame: &FrameState<'tcx>, local: Local) -> Ty<'tcx> {
         let body = frame
-            .body
+            .instantiated_body
             .or_else(|| {
-                (frame.current_def_id == self.root.def_id)
-                    .then_some(self.root.body)
+                (frame.current_def_id == self.entry_def_id)
+                    .then_some(self.instantiated_entry_body)
                     .flatten()
             })
             .unwrap_or_else(|| self.tcx.optimized_mir(frame.current_def_id));

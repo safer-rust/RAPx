@@ -97,7 +97,6 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
         tcx: TyCtxt<'tcx>,
         target: &'target FunctionTarget<'tcx>,
         allow_repeat: usize,
-        assume_struct_invariants: bool,
     ) -> Self {
         let checkpoints: Vec<_> = target.all_checkpoints().cloned().collect();
         let locations = checkpoints
@@ -120,7 +119,6 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
                 target.body,
                 callee_bodies,
                 entry_bodies,
-                assume_struct_invariants,
             ),
         }
     }
@@ -747,8 +745,7 @@ impl<'tcx> VerifyRun<'tcx> {
         let mut cache = VmCache::new(&z3_ctx);
         for &repeat in repeat_rounds {
             let enumeration_started = Instant::now();
-            let driver =
-                VerifyDriver::new_with_repeat(self.tcx, target, repeat, !self.skip_invariant);
+            let driver = VerifyDriver::new_with_repeat(self.tcx, target, repeat);
             *trait_impl_limited |= driver.path_tree.is_trait_impl_limited();
             rap_debug!(
                 "built path tree for {} repeat {} in {:?}",
@@ -886,7 +883,6 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                     self.tcx,
                     target,
                     planned_repeat,
-                    !self.skip_invariant,
                 );
                 trait_impl_limited |= driver.path_tree.is_trait_impl_limited();
                 match mir_utils::catch_panic(|| driver.verify_struct_invariants()) {
@@ -919,7 +915,6 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                     self.tcx,
                     target,
                     planned_repeat,
-                    !self.skip_invariant,
                 );
                 trait_impl_limited |= driver.path_tree.is_trait_impl_limited();
                 match mir_utils::catch_panic(|| driver.verify_type_invariants()) {
@@ -1084,7 +1079,6 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                             self.tcx,
                             &target,
                             repeat,
-                            !self.skip_invariant,
                         );
                         match mir_utils::catch_panic(|| {
                             driver.verify_postconditions(&postconditions)

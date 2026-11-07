@@ -23,9 +23,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         &mut self,
         destination: Local,
     ) {
-        if !self.assume_struct_invariants {
-            return;
-        }
         let Some(result) = self.local_value(destination) else {
             return;
         };
