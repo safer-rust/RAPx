@@ -115,7 +115,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         affected.dedup();
         for id in affected {
             if !borrowed.contains(&id) {
-                self.callback_may_drop.insert(id);
+                self.alloc_mut(id).facts.callback_may_drop = true;
             }
             self.forget_memory_values(id);
             for alias in 0..self.units.len() {

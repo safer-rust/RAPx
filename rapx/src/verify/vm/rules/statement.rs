@@ -150,7 +150,7 @@ pub(crate) fn exec_set_discriminant<'z3, 'tcx>(
     let alloc_id = state.current_frame.local_alloc[&place.local];
     state.content_mut(alloc_id).facts.initialized = payload_complete;
     if !payload_complete {
-        state.possible_uninit_allocs.insert(alloc_id);
+        state.content_mut(alloc_id).facts.may_be_uninit = true;
     }
 }
 
@@ -256,7 +256,7 @@ pub(crate) fn exec_assign<'z3, 'tcx>(
     };
     let uninit_source = source_place
         .and_then(|source| state.current_frame.local_alloc.get(&source.local))
-        .is_some_and(|id| state.possible_uninit_allocs.contains(id));
+        .is_some_and(|id| state.content(*id).facts.may_be_uninit);
     let inner_uninit_source = source_place
         .and_then(|source| state.current_frame.local_alloc.get(&source.local))
         .is_some_and(|id| state.content(*id).facts.inner_uninit);
@@ -341,7 +341,7 @@ pub(crate) fn exec_assign<'z3, 'tcx>(
             state.content_mut(id).facts.initialized = true;
         }
         if uninit_source && let Some(id) = state.current_frame.local_alloc.get(&place.local) {
-            state.possible_uninit_allocs.insert(*id);
+            state.content_mut(*id).facts.may_be_uninit = true;
         }
         if (inner_uninit_source || inner_uninit_aggregate)
             && let Some(&id) = state.current_frame.local_alloc.get(&place.local)

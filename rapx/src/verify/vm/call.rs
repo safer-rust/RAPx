@@ -628,10 +628,21 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 .iter()
                 .any(|state| state.local_value(Local::from_usize(0)).is_none())
         }) {
-            let witnessed = self.possible_uninit_allocs.clone();
+            let witnessed: Vec<_> = self
+                .units
+                .iter()
+                .enumerate()
+                .filter_map(|(index, unit)| {
+                    unit.content.facts.may_be_uninit.then_some(AllocId(index))
+                })
+                .collect();
             let explored_diagnostics = self.diagnostics.clone();
             *self = before_inline;
-            self.possible_uninit_allocs.extend(witnessed);
+            for id in witnessed {
+                if let Some(unit) = self.units.get_mut(id.0) {
+                    unit.content.facts.may_be_uninit = true;
+                }
+            }
             self.diagnostics.merge_inline_fallback(&explored_diagnostics);
             let dest_ty = self.body().local_decls[dest].ty;
             let unknown_term = self.fresh_int("inline_branch_unknown");
@@ -734,7 +745,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             self.diagnostics.mark_unsupported();
             return;
         };
-        if self.possible_uninit_allocs.contains(&alloc_id) {
+        if self.content(alloc_id).facts.may_be_uninit {
             return;
         }
         let prior = self.local_value(local).cloned();
@@ -1021,7 +1032,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     {
                         let witness = state.find_uninit_witness(terminator, pre_uninit);
                         if !witness.is_empty() {
-                            self.possible_uninit_allocs.extend(witness);
+                            for id in witness {
+                                self.content_mut(id).facts.may_be_uninit = true;
+                            }
                             return None;
                         }
                     }

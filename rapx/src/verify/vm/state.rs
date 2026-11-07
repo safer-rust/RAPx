@@ -281,6 +281,8 @@ pub(crate) struct ForEachFacts<'z3, 'tcx> {
 pub(crate) struct AllocFacts<'z3, 'tcx> {
     /// Whether the allocation has been freed (StorageDead / Drop).
     pub dead: bool,
+    /// Whether an opaque callback may have freed this allocation.
+    pub callback_may_drop: bool,
     /// Pointer term licensed by an `Owning` precondition.
     pub owning: Option<Int<'z3>>,
     /// Whether this allocation was created in the analyzed function.
@@ -302,6 +304,8 @@ pub(crate) struct AllocFacts<'z3, 'tcx> {
 pub(crate) struct ContentFacts<'tcx> {
     /// Whether the allocation contains a readable value.
     pub initialized: bool,
+    /// Whether some explored branch may leave this allocation uninitialized.
+    pub may_be_uninit: bool,
     /// Whether the inner `T` is still uninitialized after `MaybeUninit::uninit`.
     pub inner_uninit: bool,
     /// Type of a complete initialized write at offset zero; cleared by invalidating writes.
@@ -701,10 +705,6 @@ pub(crate) struct VmState<'z3, 'tcx> {
     pub(crate) active_mir: Option<ActiveMirLocation>,
     pub(crate) memory_events: MemoryEventLog,
 
-    pub(crate) possible_uninit_allocs: FxHashSet<AllocId>,
-    /// Captured allocations a callback may have dropped.
-    pub(crate) callback_may_drop: FxHashSet<AllocId>,
-
     /// Allocation roots licensed by declared `Alias` contract sources.
     pub(crate) alias_hazard_allocs: FxHashSet<AllocId>,
     /// Slice and index terms with their originating MIR locals.
@@ -855,8 +855,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             inline: InlineCtx::default(),
             active_mir: None,
             memory_events: MemoryEventLog::default(),
-            possible_uninit_allocs: FxHashSet::default(),
-            callback_may_drop: FxHashSet::default(),
             constraints,
             alias_hazard_allocs: FxHashSet::default(),
             index_access_facts: Vec::new(),
@@ -978,7 +976,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         self.current_frame.pending_enum_fields.remove(&local);
         self.ensure_local_allocation(local);
         let alloc_id = self.current_frame.local_alloc[&local];
-        self.possible_uninit_allocs.remove(&alloc_id);
+        self.content_mut(alloc_id).facts.may_be_uninit = false;
         let view_ty = self.body().local_decls[local].ty;
         if matches!(view_ty.kind(), TyKind::Adt(def, _)
             if crate::verify::api_classify::is_std_vec(def.did()))

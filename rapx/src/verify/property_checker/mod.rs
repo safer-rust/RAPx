@@ -349,18 +349,20 @@ impl PropertyChecker {
                     .target_value(vm_state, checkpoint, property)
                     .and_then(|value| value.provenance_alloc_id());
                 if target_alloc_id
-                    .is_some_and(|id| vm_state.callback_may_drop.contains(&vm_state.root_alloc(id)))
+                    .is_some_and(|id| {
+                        vm_state.alloc(vm_state.root_alloc(id)).facts.callback_may_drop
+                    })
                 {
                     return CheckResult::Unknown(UnknownReason::CallbackMayInvalidate);
                 }
                 if atom.kind == PropertyKind::Init
                     && (target_alloc_id
-                        .is_some_and(|id| vm_state.possible_uninit_allocs.contains(&id))
+                        .is_some_and(|id| vm_state.content(id).facts.may_be_uninit)
                         || target_arg
                             .and_then(|index| checkpoint.args.get(index))
                             .and_then(|arg| arg.place())
                             .and_then(|place| vm_state.current_frame.local_alloc.get(&place.local))
-                            .is_some_and(|id| vm_state.possible_uninit_allocs.contains(id)))
+                            .is_some_and(|id| vm_state.content(*id).facts.may_be_uninit))
                 {
                     return CheckResult::Failed;
                 }
