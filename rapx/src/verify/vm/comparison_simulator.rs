@@ -197,7 +197,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         // argument, bypassing the `Use` transfer that carries ConstBytes.
         // Recover it only by matching that exact symbolic constant to its MIR
         // operand in a live caller frame.
-        let bodies = std::iter::once(self.entry_body()).chain(
+        let bodies = std::iter::once(self.target_body()).chain(
             self.caller_frames
                 .iter()
                 .map(|saved| &saved.frame)

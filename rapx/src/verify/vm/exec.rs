@@ -22,22 +22,27 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         for item in items {
             let mut next = Vec::new();
             for mut state in states {
-                if !state.path_infeasible && !state.diagnostics.is_unsupported() {
-                    state.execute_item(item);
+                let viable = if state.diagnostics.is_unsupported() {
+                    true
+                } else {
+                    let viable = state.execute_item(item);
                     next.extend(
                         std::mem::take(&mut state.inline.pending_states)
                             .into_iter()
                             .map(|state| *state),
                     );
+                    viable
+                };
+                if viable {
+                    next.push(state);
                 }
-                next.push(state);
             }
             states = next;
         }
         states
     }
 
-    fn execute_item(&mut self, item: &RelevantItem<'tcx>) {
+    fn execute_item(&mut self, item: &RelevantItem<'tcx>) -> bool {
         match item {
             RelevantItem::Statement {
                 def_id,
@@ -54,6 +59,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     span: statement.source_info.span,
                 });
                 crate::verify::vm::rules::exec_statement(self, statement);
+                true
             }
             RelevantItem::Terminator {
                 def_id,
@@ -69,24 +75,26 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     item: ActiveMirItem::Terminator,
                     span: terminator.source_info.span,
                 });
-                crate::verify::vm::rules::exec_terminator(self, terminator, *switch_succ);
-                if self.memory_events.is_enabled()
+                let viable =
+                    crate::verify::vm::rules::exec_terminator(self, terminator, *switch_succ);
+                viable || (self.memory_events.is_enabled()
                     && matches!(&terminator.kind, TerminatorKind::Call { unwind: UnwindAction::Cleanup(target), .. } if Some(*target) == *switch_succ)
-                {
-                    self.path_infeasible = false;
-                }
+                )
             }
             RelevantItem::CalleeEntry { callee, body, args } => {
                 self.active_mir = None;
                 self.handle_callee_entry(*callee, *body, args);
+                true
             }
             RelevantItem::CalleeExit { dest } => {
                 self.active_mir = None;
                 self.handle_callee_exit(*dest);
+                true
             }
             RelevantItem::ContractFact { property } => {
                 self.active_mir = None;
                 self.assert_contract_fact(property);
+                true
             }
         }
     }

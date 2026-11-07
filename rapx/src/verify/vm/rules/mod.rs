@@ -17,12 +17,13 @@ pub(crate) fn eval_rvalue<'z3, 'tcx>(
     dispatch::eval_rvalue(state, place, rvalue)
 }
 
+/// Execute a terminator and report whether the selected successor remains possible.
 pub(crate) fn exec_terminator<'z3, 'tcx>(
     state: &mut VmState<'z3, 'tcx>,
     terminator: &Terminator<'tcx>,
     switch_succ: Option<BasicBlock>,
-) {
-    dispatch::exec_terminator(state, terminator, switch_succ);
+) -> bool {
+    dispatch::exec_terminator(state, terminator, switch_succ)
 }
 
 pub(crate) fn exec_statement<'z3, 'tcx>(

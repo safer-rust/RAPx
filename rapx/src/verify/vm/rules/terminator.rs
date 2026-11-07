@@ -11,7 +11,7 @@ pub(crate) fn exec_switch_int<'z3, 'tcx>(
     discr: &Operand<'tcx>,
     targets: &SwitchTargets,
     switch_succ: Option<BasicBlock>,
-) {
+) -> bool {
     let discr_val = state.value_of_operand(discr);
     let discr_ty = discr.ty(&state.body().local_decls, state.tcx);
     let known_value = match &discr_val.source {
@@ -32,8 +32,7 @@ pub(crate) fn exec_switch_int<'z3, 'tcx>(
             .map(|(_, target)| target)
             .unwrap_or_else(|| targets.otherwise());
         if actual != chosen {
-            state.path_infeasible = true;
-            return;
+            return false;
         }
     }
     if VmState::term_involves(&state.inline.opaque_intrinsic_terms, &discr_val.z3_term) {
@@ -50,7 +49,7 @@ pub(crate) fn exec_switch_int<'z3, 'tcx>(
             if target == chosen {
                 let Some(val_term) = state.scalar_bits_term(discr_ty, value) else {
                     state.record_unsupported("SwitchInt target width");
-                    return;
+                    return true;
                 };
                 state
                     .constraints
@@ -64,14 +63,14 @@ pub(crate) fn exec_switch_int<'z3, 'tcx>(
                 } else if let Some(ref cond) = cmp_cond {
                     state.constraints.assertions.push(cond.not());
                 }
-                return;
+                return true;
             }
         }
         if targets.otherwise() == chosen {
             for (value, _) in targets.iter() {
                 let Some(val_term) = state.scalar_bits_term(discr_ty, value) else {
                     state.record_unsupported("SwitchInt target width");
-                    return;
+                    return true;
                 };
                 state
                     .constraints
@@ -91,6 +90,7 @@ pub(crate) fn exec_switch_int<'z3, 'tcx>(
             }
         }
     }
+    true
 }
 
 pub(crate) fn exec_assert<'z3, 'tcx>(

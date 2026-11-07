@@ -21,7 +21,10 @@ use z3::{
 };
 
 use crate::compat::{FxHashMap, FxHashSet};
-use super::diagnostics::Diagnostics;
+use super::{
+    diagnostics::Diagnostics,
+    method_cache::{MethodReturn, MethodSnapshot},
+};
 use crate::helpers::def_use::PlaceKey;
 
 pub(crate) const REPEATED_ARRAY_ELEMENT: usize = usize::MAX;
@@ -609,7 +612,7 @@ pub(crate) struct TermCaches<'z3, 'tcx> {
 pub(crate) struct FrameState<'tcx> {
     /// Function executed by this frame.
     pub(crate) current_def_id: DefId,
-    /// Instantiated MIR, or `None` to use the compiler's optimized MIR.
+    /// Optimized MIR with this frame's selected generic arguments substituted, if available.
     pub(crate) instantiated_body: Option<&'tcx Body<'tcx>>,
 
     /// Stack allocation backing each MIR local and its field values.
@@ -622,7 +625,7 @@ pub(crate) struct FrameState<'tcx> {
 #[derive(Clone)]
 pub(crate) struct SavedCallerFrame<'z3, 'tcx> {
     pub(crate) frame: FrameState<'tcx>,
-    pub(crate) method_call: Option<super::method_cache::MethodSnapshot<'z3, 'tcx>>,
+    pub(crate) method_call: Option<MethodSnapshot<'z3, 'tcx>>,
     pub(crate) postcondition_args: Vec<Option<Local>>,
     pub(crate) arg_referents: Vec<Option<Local>>,
     pub(crate) deferred_writes: Vec<(Local, Vec<usize>, VmValue<'z3, 'tcx>)>,
@@ -670,15 +673,17 @@ pub(crate) struct VmState<'z3, 'tcx> {
 
     /// Compiler type context.
     pub(crate) tcx: TyCtxt<'tcx>,
-    /// Entry function being verified, retained across frame switches.
-    entry_def_id: DefId,
-    /// Instantiated entry MIR, when available.
-    instantiated_entry_body: Option<&'tcx Body<'tcx>>,
+    /// Function being verified, retained while inlined callee frames execute.
+    target_def_id: DefId,
+    /// Target MIR instantiated with a selected trait-bound implementor when an
+    /// unresolved, unmodeled generic trait call needs a concrete method target.
+    /// `None` uses the original optimized MIR, even for generic functions.
+    instantiated_target_body: Option<&'tcx Body<'tcx>>,
 
     pub(crate) current_frame: FrameState<'tcx>,
     /// Caller frames saved by path-replay inlining.
     pub(crate) caller_frames: Vec<SavedCallerFrame<'z3, 'tcx>>,
-    pub(crate) method_returns: Vec<super::method_cache::MethodReturn<'z3, 'tcx>>,
+    pub(crate) method_returns: Vec<MethodReturn<'z3, 'tcx>>,
     /// `(allocation, address, type)` facts from `Typed` contracts.
     pub(crate) typed_values: FxHashSet<(AllocId, Int<'z3>, Ty<'tcx>)>,
 
@@ -693,10 +698,8 @@ pub(crate) struct VmState<'z3, 'tcx> {
     /// Scratch state for recursive inlining.
     pub(crate) inline: InlineCtx<'z3, 'tcx>,
 
-    pub(crate) diagnostics: Diagnostics,
     pub(crate) active_mir: Option<ActiveMirLocation>,
     pub(crate) memory_events: MemoryEventLog,
-    pub(crate) path_infeasible: bool,
 
     pub(crate) possible_uninit_allocs: FxHashSet<AllocId>,
     /// Captured allocations a callback may have dropped.
@@ -708,6 +711,8 @@ pub(crate) struct VmState<'z3, 'tcx> {
     pub(crate) index_access_facts: Vec<(Int<'z3>, Int<'z3>, Local, Local)>,
     /// Allocation spans established by `InBound` contracts.
     pub(super) bounded_object_spans: Vec<(AllocId, Int<'z3>, Ty<'tcx>)>,
+
+    pub(crate) diagnostics: Diagnostics,
 }
 
 impl<'z3, 'tcx> VmState<'z3, 'tcx> {
@@ -819,8 +824,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     pub(crate) fn new(
         z3_ctx: &'z3 Context,
         tcx: TyCtxt<'tcx>,
-        entry_def_id: DefId,
-        instantiated_body: Option<&'tcx Body<'tcx>>,
+        target_def_id: DefId,
+        instantiated_target_body: Option<&'tcx Body<'tcx>>,
     ) -> Self {
         // The `UNINIT` sentinel is created once and shared by every byte array:
         // an unwritten offset reads it back, so `select != UNINIT` decides
@@ -834,11 +839,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         Self {
             z3_ctx,
             tcx,
-            entry_def_id,
-            instantiated_entry_body: instantiated_body,
+            target_def_id,
+            instantiated_target_body,
             current_frame: FrameState {
-                current_def_id: entry_def_id,
-                instantiated_body,
+                current_def_id: target_def_id,
+                instantiated_body: instantiated_target_body,
                 local_alloc: FxHashMap::default(),
                 pending_enum_fields: FxHashMap::default(),
             },
@@ -848,20 +853,19 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             units: Vec::default(),
             thread_local_allocs: FxHashMap::default(),
             inline: InlineCtx::default(),
-            diagnostics: Diagnostics::default(),
             active_mir: None,
             memory_events: MemoryEventLog::default(),
-            path_infeasible: false,
             possible_uninit_allocs: FxHashSet::default(),
             callback_may_drop: FxHashSet::default(),
             constraints,
             alias_hazard_allocs: FxHashSet::default(),
             index_access_facts: Vec::new(),
             bounded_object_spans: Vec::new(),
+            diagnostics: Diagnostics::default(),
         }
     }
 
-    /// The MIR body of the current function, using the instantiated caller body when available.
+    /// MIR for the current frame, preferring its selected generic instantiation.
     pub(crate) fn body(&self) -> &'tcx Body<'tcx> {
         self.body_for(self.current_frame.current_def_id)
     }
@@ -871,8 +875,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             && let Some(body) = self.current_frame.instantiated_body
         {
             body
-        } else if def_id == self.entry_def_id
-            && let Some(body) = &self.instantiated_entry_body
+        } else if def_id == self.target_def_id
+            && let Some(body) = &self.instantiated_target_body
         {
             body
         } else {
@@ -880,9 +884,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
     }
 
-    pub(crate) fn entry_body(&self) -> &rustc_middle::mir::Body<'tcx> {
-        self.instantiated_entry_body
-            .unwrap_or_else(|| self.tcx.optimized_mir(self.entry_def_id))
+    /// MIR for the verification target, preferring its selected generic instantiation.
+    pub(crate) fn target_body(&self) -> &rustc_middle::mir::Body<'tcx> {
+        self.instantiated_target_body
+            .unwrap_or_else(|| self.tcx.optimized_mir(self.target_def_id))
     }
 
     pub(crate) fn record_unsupported(&mut self, operation: &str) {
@@ -1216,8 +1221,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let body = frame
             .instantiated_body
             .or_else(|| {
-                (frame.current_def_id == self.entry_def_id)
-                    .then_some(self.instantiated_entry_body)
+                (frame.current_def_id == self.target_def_id)
+                    .then_some(self.instantiated_target_body)
                     .flatten()
             })
             .unwrap_or_else(|| self.tcx.optimized_mir(frame.current_def_id));

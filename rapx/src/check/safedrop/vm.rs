@@ -40,9 +40,6 @@ pub(crate) fn analyze<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, paths: &PathTree) 
             states = VmState::execute_items_after(states, &[item]);
         }
         for state in &states {
-            if state.path_infeasible {
-                continue;
-            }
             if let Some(&last) = path.last() {
                 record_dangling_exit(state, body, last);
             }

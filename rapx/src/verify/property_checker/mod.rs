@@ -216,9 +216,6 @@ impl PropertyChecker {
         structural: bool,
         reachability_cache: &std::cell::Cell<Option<z3::SatResult>>,
     ) -> CheckResult {
-        if vm_state.path_infeasible {
-            return CheckResult::ProvedByRule;
-        }
         if vm_state.diagnostics.is_unsupported() {
             let mut details: Vec<_> = vm_state
                 .diagnostics

@@ -72,7 +72,7 @@ pub(super) fn exec_terminator<'z3, 'tcx>(
     state: &mut VmState<'z3, 'tcx>,
     term: &Terminator<'tcx>,
     successor: Option<BasicBlock>,
-) {
+) -> bool {
     let was_unsupported = state.diagnostics.is_unsupported();
     let previous_missing_mir = state.diagnostics.missing_mir_count();
     let name = match &term.kind {
@@ -83,16 +83,22 @@ pub(super) fn exec_terminator<'z3, 'tcx>(
             ..
         } => {
             let caller_id = state.current_frame.current_def_id;
-            state.exec_call(func, args, destination.local, caller_id);
+            if !state.exec_call(func, args, destination.local, caller_id) {
+                return false;
+            }
             "Call"
         }
         TerminatorKind::TailCall { func, args, .. } => {
             let caller_id = state.current_frame.current_def_id;
-            state.exec_call(func, args, Local::from_usize(0), caller_id);
+            if !state.exec_call(func, args, Local::from_usize(0), caller_id) {
+                return false;
+            }
             "TailCall"
         }
         TerminatorKind::SwitchInt { discr, targets } => {
-            terminator::exec_switch_int(state, discr, targets, successor);
+            if !terminator::exec_switch_int(state, discr, targets, successor) {
+                return false;
+            }
             "SwitchInt"
         }
         TerminatorKind::Assert { cond, expected, .. } => {
@@ -123,6 +129,7 @@ pub(super) fn exec_terminator<'z3, 'tcx>(
         ));
     }
     log::trace!("vm terminator rule: {name}");
+    true
 }
 
 pub(super) fn eval_rvalue<'z3, 'tcx>(

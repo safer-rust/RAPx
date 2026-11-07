@@ -128,7 +128,7 @@ impl<'z3, 'tcx> VmCache<'z3, 'tcx> {
                 .min(key.len());
             if states
                 .iter()
-                .any(|state| !state.path_infeasible && !state.diagnostics.is_unsupported())
+                .any(|state| !state.diagnostics.is_unsupported())
             {
                 let owned =
                     Arc::try_unwrap(states).unwrap_or_else(|shared| shared.as_ref().clone());
@@ -489,9 +489,6 @@ impl<'tcx> VerifyEngine<'tcx> {
         reachability: &Cell<Option<z3::SatResult>>,
         alias_result: &CheckResult,
     ) -> CheckResult {
-        if vm_state.path_infeasible {
-            return CheckResult::ProvedByRule;
-        }
         match property {
             Property::Atom(atom) if atom.kind == super::contract::PropertyKind::Alias => {
                 alias_result.clone()

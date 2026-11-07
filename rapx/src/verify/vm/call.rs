@@ -123,12 +123,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 TerminatorKind::SwitchInt { targets, .. } => {
                     for target in targets.all_targets().iter().copied() {
                         let mut branch = state.clone();
-                        crate::verify::vm::rules::exec_terminator(
+                        if crate::verify::vm::rules::exec_terminator(
                             &mut branch,
                             terminator,
                             Some(target),
-                        );
-                        if !branch.path_infeasible {
+                        ) {
                             pending.push((branch, target, visited.clone()));
                         }
                     }
@@ -165,14 +164,14 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     ///  3. inline of the callee's MIR when there is no summary.
     ///
     /// A call with neither a summary nor inlinable MIR leaves `destination`
-    /// unset.
+    /// unset. Returns whether execution can continue after the call.
     pub(crate) fn exec_call(
         &mut self,
         func: &Operand<'tcx>,
         args: &[Spanned<Operand<'tcx>>],
         destination: Local,
         caller_def_id: DefId,
-    ) {
+    ) -> bool {
         let prior_result = self
             .local_value(destination)
             .map(|value| value.z3_term.clone());
@@ -212,8 +211,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     TyKind::Never
                 )
         }) {
-            self.path_infeasible = true;
-            return;
+            return false;
         }
         let method_call = callee.and_then(|method| {
             arg_values.first().and_then(|receiver| {
@@ -228,7 +226,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         if self.try_simulate_comparison(callee, &arg_values, destination) {
             let result = self.local_value(destination).cloned();
             self.finish_method_call(method_call, result.as_ref());
-            return;
+            return true;
         }
 
         // `assert_unsafe_precondition!` gates are disabled under release
@@ -242,7 +240,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 destination,
                 VmValue::new(Int::from_u64(self.z3_ctx, 0), dest_ty),
             );
-            return;
+            return true;
         }
 
         if api_classify::is_std_drop(callee)
@@ -251,7 +249,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             if let Some(Operand::Move(place)) = args.first().map(|arg| &arg.node) {
                 super::rules::terminator::exec_drop(self, place);
             }
-            return;
+            return true;
         }
 
         if callee.is_some_and(mir_utils::is_drop_in_place)
@@ -274,7 +272,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     .unwrap_or(destination);
                 self.record_memory_drop(alloc_id, local);
             }
-            return;
+            return true;
         }
 
         if call_summary::effects::is_unmodeled_intrinsic(self.tcx, callee) {
@@ -282,7 +280,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 .map(|id| self.tcx.def_path_str(id))
                 .unwrap_or_else(|| "<unresolved>".to_string());
             self.record_unsupported(&format!("intrinsic {name}"));
-            return;
+            return true;
         }
 
         let diagnostics_before_call = self.memory_events.is_enabled().then(|| self.diagnostics.clone());
@@ -368,14 +366,16 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             || self.inline.symbolic_generic_const_inline
                             || mir_utils::has_generic_const_call_argument(self.tcx, c))
                 });
-            self.exec_inline_call(
+            if !self.exec_inline_call(
                 c,
                 instance,
                 args,
                 &arg_values,
                 &caller_arg_locals,
                 destination,
-            );
+            ) {
+                return false;
+            }
         } else if let Some(c) = callee {
             // `assert!` panic exits contain this diverging call. It cannot
             // change the caller's state before the unwind invariant check.
@@ -448,15 +448,14 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             state.finish_method_call(method_call.clone(), result.as_ref());
         }
         self.inline.pending_states = alternatives;
+        true
     }
 
     /// Recursively execute a callee's MIR body inline.
     ///
     /// Binds the caller's argument values to the callee's parameters,
     /// executes the callee's MIR, and writes the return value to
-    /// the caller's destination local. Returns `false` if inline
-    /// is not possible (e.g., recursion limit reached or a branch cannot
-    /// be resolved).
+    /// the caller's destination local. Returns whether the call may return.
     fn exec_inline_call(
         &mut self,
         callee_def_id: DefId,
@@ -476,13 +475,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 .inline_truncated_terms
                 .insert(truncated_term.clone());
             self.set_local(dest, VmValue::new(truncated_term, dest_ty));
-            return false;
+            return true;
         }
         let instantiated_body = if let Some(instance) = instance {
             let caller_def_id = self.current_frame.current_def_id;
             if mir_utils::has_unresolved_const_args(self.tcx, caller_def_id, instance.args) {
                 self.record_missing_mir(callee_def_id);
-                return false;
+                return true;
             }
             let body = self.tcx.optimized_mir(callee_def_id).clone();
             let Ok(body) = instance.try_instantiate_mir_and_normalize_erasing_regions(
@@ -491,7 +490,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 EarlyBinder::bind(self.tcx, body),
             ) else {
                 self.record_missing_mir(callee_def_id);
-                return false;
+                return true;
             };
             Some(&*self.tcx.arena.alloc(body))
         } else {
@@ -666,7 +665,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 }
             }
             self.diagnostics.mark_unsupported_if(unknown_effect);
-            return false;
+            return true;
         }
         let mut completed = Vec::new();
         for mut state in returns.unwrap() {
@@ -721,8 +720,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
         if completed.is_empty() {
             *self = before_inline;
-            self.path_infeasible = true;
-            return true;
+            return false;
         }
         *self = completed.remove(0);
         self.inline
@@ -843,7 +841,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let mut queue = vec![BasicBlock::from_usize(0)];
         let mut returned = false;
         while let Some(block) = queue.pop() {
-            if self.path_infeasible || !visited.insert(block) {
+            if !visited.insert(block) {
                 continue;
             }
             let bb_data = &self.body().basic_blocks[block];
@@ -855,8 +853,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 TerminatorKind::Goto { target, .. } => queue.push(*target),
                 TerminatorKind::Return => returned = true,
                 TerminatorKind::Assert { target, .. } => {
-                    crate::verify::vm::rules::exec_terminator(self, terminator, None);
-                    queue.push(*target);
+                    if crate::verify::vm::rules::exec_terminator(self, terminator, None) {
+                        queue.push(*target);
+                    }
                 }
                 TerminatorKind::SwitchInt { discr, targets } => {
                     if let Some(value) = self.switch_discr_const(self.body(), discr) {
@@ -875,12 +874,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     let mut feasible = Vec::new();
                     for target in targets.all_targets().iter().copied() {
                         let mut candidate = self.clone();
-                        crate::verify::vm::rules::exec_terminator(
+                        if !crate::verify::vm::rules::exec_terminator(
                             &mut candidate,
                             terminator,
                             Some(target),
-                        );
-                        if candidate.path_infeasible {
+                        ) {
                             continue;
                         }
                         let solver = Solver::new(self.z3_ctx);
@@ -911,7 +909,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     queue.push(target);
                 }
                 TerminatorKind::Call { target, .. } => {
-                    crate::verify::vm::rules::exec_terminator(self, terminator, None);
+                    let viable = crate::verify::vm::rules::exec_terminator(self, terminator, None);
                     if !self.inline.pending_states.is_empty() {
                         let Some(target) = target else {
                             return InlineStep::Complete(false);
@@ -920,18 +918,28 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             .into_iter()
                             .map(|state| (*state, *target, visited.clone()))
                             .collect::<Vec<_>>();
-                        states.push((self.clone(), *target, visited));
+                        if viable {
+                            states.push((self.clone(), *target, visited));
+                        }
                         return InlineStep::Fork(states);
+                    }
+                    if !viable {
+                        return InlineStep::Complete(false);
                     }
                     if let Some(target) = target {
                         queue.push(*target);
                     }
                 }
                 TerminatorKind::Drop { target, .. } => {
-                    crate::verify::vm::rules::exec_terminator(self, terminator, None);
-                    queue.push(*target);
+                    if crate::verify::vm::rules::exec_terminator(self, terminator, None) {
+                        queue.push(*target);
+                    }
                 }
-                _ => crate::verify::vm::rules::exec_terminator(self, terminator, None),
+                _ => {
+                    if !crate::verify::vm::rules::exec_terminator(self, terminator, None) {
+                        return InlineStep::Complete(false);
+                    }
+                }
             }
         }
         InlineStep::Complete(returned)
@@ -944,7 +952,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     ) -> Option<Vec<Self>> {
         let mut returns = Vec::new();
         while let Some((mut state, block, mut visited)) = pending.pop() {
-            if state.path_infeasible || !visited.insert(block) {
+            if !visited.insert(block) {
                 continue;
             }
             let bb_data = &state.body().basic_blocks[block];
@@ -968,8 +976,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     }
                 }
                 TerminatorKind::Assert { target, .. } => {
-                    crate::verify::vm::rules::exec_terminator(&mut state, terminator, None);
-                    pending.push((state, *target, visited));
+                    if crate::verify::vm::rules::exec_terminator(&mut state, terminator, None) {
+                        pending.push((state, *target, visited));
+                    }
                 }
                 TerminatorKind::SwitchInt { discr, targets } => {
                     if let Some(v) = state.switch_discr_const(state.body(), discr) {
@@ -987,12 +996,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     }
                     for target in targets.all_targets().iter().copied() {
                         let mut candidate = state.clone();
-                        crate::verify::vm::rules::exec_terminator(
+                        if !crate::verify::vm::rules::exec_terminator(
                             &mut candidate,
                             terminator,
                             Some(target),
-                        );
-                        if candidate.path_infeasible {
+                        ) {
                             continue;
                         }
                         let solver = Solver::new(self.z3_ctx);
@@ -1019,19 +1027,25 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     }
                 }
                 TerminatorKind::Call { target, .. } => {
-                    crate::verify::vm::rules::exec_terminator(&mut state, terminator, None);
+                    let viable =
+                        crate::verify::vm::rules::exec_terminator(&mut state, terminator, None);
                     if let Some(target) = target {
                         for alternative in std::mem::take(&mut state.inline.pending_states) {
                             pending.push((*alternative, *target, visited.clone()));
                         }
-                        pending.push((state, *target, visited));
+                        if viable {
+                            pending.push((state, *target, visited));
+                        }
                     }
                 }
                 TerminatorKind::Drop { target, .. } => {
-                    crate::verify::vm::rules::exec_terminator(&mut state, terminator, None);
-                    pending.push((state, *target, visited));
+                    if crate::verify::vm::rules::exec_terminator(&mut state, terminator, None) {
+                        pending.push((state, *target, visited));
+                    }
                 }
-                _ => crate::verify::vm::rules::exec_terminator(&mut state, terminator, None),
+                _ => {
+                    crate::verify::vm::rules::exec_terminator(&mut state, terminator, None);
+                }
             }
         }
         Some(returns)
@@ -1052,12 +1066,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let mut stack = Vec::new();
         for target in targets.all_targets().iter().copied() {
             let mut state = self.clone();
-            crate::verify::vm::rules::exec_terminator(&mut state, switch, Some(target));
-            stack.push((state, target, FxHashSet::default()));
+            if crate::verify::vm::rules::exec_terminator(&mut state, switch, Some(target)) {
+                stack.push((state, target, FxHashSet::default()));
+            }
         }
         let mut explored = 0;
         while let Some((mut state, block, mut visited)) = stack.pop() {
-            if state.path_infeasible || explored >= 512 || !visited.insert(block) {
+            if explored >= 512 || !visited.insert(block) {
                 continue;
             }
             explored += 1;
@@ -1085,17 +1100,19 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 TerminatorKind::SwitchInt { targets, .. } => {
                     for target in targets.all_targets().iter().copied() {
                         let mut branch = state.clone();
-                        crate::verify::vm::rules::exec_terminator(
+                        if crate::verify::vm::rules::exec_terminator(
                             &mut branch,
                             terminator,
                             Some(target),
-                        );
-                        stack.push((branch, target, visited.clone()));
+                        ) {
+                            stack.push((branch, target, visited.clone()));
+                        }
                     }
                 }
                 TerminatorKind::Assert { target, .. } => {
-                    crate::verify::vm::rules::exec_terminator(&mut state, terminator, None);
-                    stack.push((state, *target, visited));
+                    if crate::verify::vm::rules::exec_terminator(&mut state, terminator, None) {
+                        stack.push((state, *target, visited));
+                    }
                 }
                 TerminatorKind::Call {
                     func,
@@ -1110,8 +1127,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     if callee.is_some_and(|def_id| state.tcx.is_mir_available(def_id)) {
                         let incomplete = state.diagnostics.has_incomplete_inline_branch();
                         let truncated = state.inline.inline_truncated_terms.len();
-                        crate::verify::vm::rules::exec_terminator(&mut state, terminator, None);
-                        if !state.diagnostics.is_unsupported()
+                        let viable =
+                            crate::verify::vm::rules::exec_terminator(&mut state, terminator, None);
+                        if viable
+                            && !state.diagnostics.is_unsupported()
                             && state.diagnostics.has_incomplete_inline_branch() == incomplete
                             && state.inline.inline_truncated_terms.len() == truncated
                         {
