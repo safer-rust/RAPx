@@ -70,7 +70,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     span: terminator.source_info.span,
                 });
                 crate::verify::vm::rules::exec_terminator(self, terminator, *switch_succ);
-                if self.track_memory_events
+                if self.memory_events.is_enabled()
                     && matches!(&terminator.kind, TerminatorKind::Call { unwind: UnwindAction::Cleanup(target), .. } if Some(*target) == *switch_succ)
                 {
                     self.path_infeasible = false;
@@ -109,7 +109,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     self.begin_method_call(callee, receiver, Some(Local::from_usize(*local)))
                 })
         });
-        self.active_method_calls.push(method_call);
         let param_count = body
             .map(|body| body.arg_count)
             .unwrap_or_else(|| self.tcx.optimized_mir(callee).arg_count);
@@ -119,9 +118,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 _ => None,
             })
             .collect();
-        self.inline
-            .path_postconditions
-            .push((callee, param_sources.clone()));
         let arg_referents: Vec<Option<Local>> = param_sources
             .iter()
             .map(|arg| {
@@ -152,7 +148,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                 .copied()
                                 .flatten()?;
                             let parent_alloc =
-                                self.caller_frames.last()?.local_alloc.get(&outer)?;
+                                self.caller_frames.last()?.frame.local_alloc.get(&outer)?;
                             (value.provenance_alloc_id() == Some(*parent_alloc))
                                 .then_some(arg_local)
                         })
@@ -160,9 +156,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             })
             .collect();
         let saved_referents = std::mem::replace(&mut self.inline.arg_referents, arg_referents);
-        self.inline.path_saved_arg_referents.push(saved_referents);
         let saved_writes = std::mem::take(&mut self.inline.deferred_field_writes);
-        self.inline.path_saved_deferred_writes.push(saved_writes);
         let frame = self.enter_frame(callee, body);
 
         // Collect the caller argument fields from the saved map, so the callee's
@@ -272,13 +266,19 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         for (callee_param, fields, fv) in arg_fields {
             self.set_field_value(Local::from_usize(callee_param), fields, fv);
         }
-        self.caller_frames.push(frame);
+        self.caller_frames.push(super::state::SavedCallerFrame {
+            frame,
+            method_call,
+            postcondition_args: param_sources,
+            arg_referents: saved_referents,
+            deferred_writes: saved_writes,
+        });
     }
 
     /// Exit an inlined callee: capture the callee's return value, restore the
     /// caller context, and write the return value to the caller's destination.
     fn handle_callee_exit(&mut self, dest: usize) {
-        let method_call = self.active_method_calls.pop().flatten();
+        let callee = self.current_frame.current_def_id;
         let ret = self.local_value(Local::from_usize(0)).cloned();
         let ret_inner_uninit = self
             .current_frame
@@ -294,20 +294,19 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     .map(|v| (f, v))
             })
             .collect();
-        if let Some(frame) = self.caller_frames.pop() {
-            self.restore_frame(frame);
-        }
         let writes = std::mem::take(&mut self.inline.deferred_field_writes);
-        self.inline.arg_referents = self
-            .inline
-            .path_saved_arg_referents
-            .pop()
-            .unwrap_or_default();
-        self.inline.deferred_field_writes = self
-            .inline
-            .path_saved_deferred_writes
-            .pop()
-            .unwrap_or_default();
+        let (method_call, postcondition_args) = match self.caller_frames.pop() {
+            Some(saved) => {
+                self.restore_frame(saved.frame);
+                self.inline.arg_referents = saved.arg_referents;
+                self.inline.deferred_field_writes = saved.deferred_writes;
+                (saved.method_call, Some(saved.postcondition_args))
+            }
+            None => {
+                self.inline.arg_referents.clear();
+                (None, None)
+            }
+        };
         self.replay_deferred_writes(writes);
         if let Some(mut v) = ret.clone() {
             let dest_ty = self.body().local_decls[Local::from_usize(dest)].ty;
@@ -338,7 +337,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             self.set_field_value(Local::from_usize(dest), fields, fv);
         }
         self.materialize_slice_ref_return(Local::from_usize(dest));
-        if let Some((callee, args)) = self.inline.path_postconditions.pop()
+        if let Some(args) = postcondition_args
             && self.local_value(Local::from_usize(dest)).is_some()
         {
             self.assert_call_postconditions(callee, &args, Local::from_usize(dest));

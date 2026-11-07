@@ -17,7 +17,7 @@ pub(crate) fn analyze<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, paths: &PathTree) 
     let mut bugs = BugRecords::new();
     for path in paths.to_vecs() {
         let mut state = VmState::new(&context, tcx, def_id, None, false);
-        state.track_memory_events = true;
+        state.memory_events.enable();
         let mut states = state.execute_items(&[]);
         for (position, &bb_idx) in path.iter().enumerate() {
             let block = BasicBlock::from_usize(bb_idx);
@@ -46,7 +46,7 @@ pub(crate) fn analyze<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, paths: &PathTree) 
             if let Some(&last) = path.last() {
                 record_dangling_exit(state, body, last);
             }
-            collect_events(&state.memory_events.borrow(), body, &mut bugs);
+            collect_events(&state.memory_events.events(), body, &mut bugs);
         }
     }
     report(tcx, def_id, body, &bugs);
@@ -78,7 +78,7 @@ fn record_dangling_exit<'z3, 'tcx>(
             .and_then(|v| v.provenance_alloc_id())
             && state.alloc(alloc_id).facts.dead
         {
-            state.memory_events.borrow_mut().push(MemoryEvent {
+            state.memory_events.push(MemoryEvent {
                 alloc_id,
                 kind: MemoryEventKind::DanglingPointer,
                 block: Some(last),

@@ -200,6 +200,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let bodies = std::iter::once(self.root_body()).chain(
             self.caller_frames
                 .iter()
+                .map(|saved| &saved.frame)
                 .chain(std::iter::once(&self.current_frame))
                 .filter_map(|frame| {
                     frame.body.or_else(|| {

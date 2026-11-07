@@ -397,14 +397,9 @@ impl<'z3, 'tcx> Allocation<'z3, 'tcx> {
     }
 }
 
-/// Scratch state for the *recursive* inlined-callee mechanism
-/// ([`crate::verify::vm::call::exec_inline_call`]), which unwinds via the Rust
-/// call stack, is bounded by `inline_depth`, and stashes its per-call bindings
-/// in `arg_referents`/`deferred_field_writes`.
-///
-/// (The *path-replay* mechanism — `CalleeEntry`/`CalleeExit` items — keeps its
-/// saved caller frames on [`VmState::caller_frames`] instead, which lives next to
-/// [`VmState::current_frame`] to form the frame stack.)
+/// Scratch state shared by recursive inlining and path replay.
+/// Recursive inlining saves caller bindings on the Rust call stack; path replay
+/// saves them with the caller frame in [`SavedCallerFrame`].
 ///
 /// # Deferring `&mut` writes across the inline frame
 ///
@@ -441,9 +436,6 @@ pub(crate) struct InlineCtx<'z3, 'tcx> {
     pub opaque_intrinsic_terms: FxHashSet<Int<'z3>>,
     /// Caller referent local for each inlined callee argument.
     pub arg_referents: Vec<Option<Local>>,
-    pub path_saved_arg_referents: Vec<Vec<Option<Local>>>,
-    pub path_postconditions: Vec<(DefId, Vec<Option<Local>>)>,
-    pub path_saved_deferred_writes: Vec<Vec<(Local, Vec<usize>, VmValue<'z3, 'tcx>)>>,
     /// `(caller local, field path, value)` writes replayed after frame restoration.
     pub deferred_field_writes: Vec<(Local, Vec<usize>, VmValue<'z3, 'tcx>)>,
 }
@@ -626,6 +618,55 @@ pub(crate) struct FrameState<'tcx> {
     pub(crate) pending_enum_fields: FxHashMap<Local, (VariantIdx, FxHashSet<usize>)>,
 }
 
+/// Caller state parked during a path-replay call, including its method snapshot.
+#[derive(Clone)]
+pub(crate) struct SavedCallerFrame<'z3, 'tcx> {
+    pub(crate) frame: FrameState<'tcx>,
+    pub(crate) method_call: Option<super::method_cache::MethodSnapshot<'z3, 'tcx>>,
+    pub(crate) postcondition_args: Vec<Option<Local>>,
+    pub(crate) arg_referents: Vec<Option<Local>>,
+    pub(crate) deferred_writes: Vec<(Local, Vec<usize>, VmValue<'z3, 'tcx>)>,
+}
+
+/// Entry function identity and MIR retained while executing inlined callees.
+#[derive(Clone)]
+struct RootFunction<'tcx> {
+    /// Entry function being verified.
+    def_id: DefId,
+    /// Instantiated entry MIR, when available.
+    body: Option<&'tcx Body<'tcx>>,
+}
+
+/// Optional memory diagnostics collected along one execution path.
+#[derive(Clone, Default)]
+pub(crate) struct MemoryEventLog {
+    events: Option<RefCell<Vec<MemoryEvent>>>,
+}
+
+impl MemoryEventLog {
+    pub(crate) fn enable(&mut self) {
+        self.events.get_or_insert_with(RefCell::default);
+    }
+
+    pub(crate) fn is_enabled(&self) -> bool {
+        self.events.is_some()
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.events.as_ref().map_or(0, |events| events.borrow().len())
+    }
+
+    pub(crate) fn push(&self, event: MemoryEvent) {
+        if let Some(events) = &self.events {
+            events.borrow_mut().push(event);
+        }
+    }
+
+    pub(crate) fn events(&self) -> std::cell::Ref<'_, Vec<MemoryEvent>> {
+        self.events.as_ref().expect("memory event log is disabled").borrow()
+    }
+}
+
 /// The full symbolic execution state at a program point.
 ///
 /// Accumulates the name → allocation bindings, allocations, and solver
@@ -633,33 +674,25 @@ pub(crate) struct FrameState<'tcx> {
 /// borrowed so a single context can be reused across property checks.
 #[derive(Clone)]
 pub(crate) struct VmState<'z3, 'tcx> {
-    // ── Shared handles (passed in at run start; not execution state, but
-    //    needed to create terms and query types during checking)
     /// Shared Z3 context.
     pub(crate) z3_ctx: &'z3 Context,
 
     /// Compiler type context.
     pub(crate) tcx: TyCtxt<'tcx>,
-    root_def_id: DefId,
-    instance_body: Option<&'tcx Body<'tcx>>,
+    /// Entry function and instantiated MIR, retained across frame switches.
+    root: RootFunction<'tcx>,
     pub(crate) assume_struct_invariants: bool,
 
-    // ── Frame-scoped state (swapped on inline entry/exit; the exact set
-    //    captured by [`Self::enter_frame`])
     pub(crate) current_frame: FrameState<'tcx>,
-
-    // ── Path-scoped state (accumulates across the whole path, including
-    //    inlined frames)
     /// Caller frames saved by path-replay inlining.
-    pub(crate) caller_frames: Vec<FrameState<'tcx>>,
-
-    pub(crate) active_method_calls: Vec<Option<super::method_cache::MethodSnapshot<'z3, 'tcx>>>,
+    pub(crate) caller_frames: Vec<SavedCallerFrame<'z3, 'tcx>>,
     pub(crate) method_returns: Vec<super::method_cache::MethodReturn<'z3, 'tcx>>,
     /// `(allocation, address, type)` facts from `Typed` contracts.
     pub(crate) typed_values: FxHashSet<(AllocId, Int<'z3>, Ty<'tcx>)>,
 
     /// Allocation units indexed by `AllocId`.
     pub(crate) units: Vec<MemoryUnit<'z3, 'tcx>>,
+    /// Stable allocation for each thread-local static across MIR locals and frames.
     pub(crate) thread_local_allocs: FxHashMap<DefId, AllocId>,
 
     /// Path conditions and term caches.
@@ -670,8 +703,7 @@ pub(crate) struct VmState<'z3, 'tcx> {
 
     pub(crate) diagnostics: Diagnostics,
     pub(crate) active_mir: Option<ActiveMirLocation>,
-    pub(crate) track_memory_events: bool,
-    pub(crate) memory_events: RefCell<Vec<MemoryEvent>>,
+    pub(crate) memory_events: MemoryEventLog,
     pub(crate) path_infeasible: bool,
 
     pub(crate) possible_uninit_allocs: FxHashSet<AllocId>,
@@ -688,8 +720,8 @@ pub(crate) struct VmState<'z3, 'tcx> {
 
 impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     pub(crate) fn record_memory_drop(&mut self, alloc_id: AllocId, local: Local) {
-        if self.track_memory_events {
-            self.memory_events.borrow_mut().push(MemoryEvent {
+        if self.memory_events.is_enabled() {
+            self.memory_events.push(MemoryEvent {
                 alloc_id,
                 kind: if self.alloc(alloc_id).facts.dead {
                     MemoryEventKind::DoubleFree
@@ -709,8 +741,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     }
 
     pub(crate) fn record_memory_use(&self, alloc_id: AllocId, local: Local) {
-        if self.track_memory_events && self.alloc(alloc_id).facts.dead {
-            self.memory_events.borrow_mut().push(MemoryEvent {
+        if self.memory_events.is_enabled() && self.alloc(alloc_id).facts.dead {
+            self.memory_events.push(MemoryEvent {
                 alloc_id,
                 kind: MemoryEventKind::UseAfterFree,
                 block: self.active_mir.as_ref().map(|location| location.block),
@@ -811,8 +843,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         Self {
             z3_ctx,
             tcx,
-            root_def_id: caller_def_id,
-            instance_body,
+            root: RootFunction {
+                def_id: caller_def_id,
+                body: instance_body,
+            },
             assume_struct_invariants,
             current_frame: FrameState {
                 current_def_id: caller_def_id,
@@ -821,7 +855,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 pending_enum_fields: FxHashMap::default(),
             },
             caller_frames: Vec::default(),
-            active_method_calls: Vec::default(),
             method_returns: Vec::default(),
             typed_values: FxHashSet::default(),
             units: Vec::default(),
@@ -829,8 +862,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             inline: InlineCtx::default(),
             diagnostics: Diagnostics::default(),
             active_mir: None,
-            track_memory_events: false,
-            memory_events: RefCell::new(Vec::new()),
+            memory_events: MemoryEventLog::default(),
             path_infeasible: false,
             possible_uninit_allocs: FxHashSet::default(),
             callback_may_drop: FxHashSet::default(),
@@ -851,8 +883,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             && let Some(body) = self.current_frame.body
         {
             body
-        } else if def_id == self.root_def_id
-            && let Some(body) = &self.instance_body
+        } else if def_id == self.root.def_id
+            && let Some(body) = &self.root.body
         {
             body
         } else {
@@ -861,8 +893,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     }
 
     pub(crate) fn root_body(&self) -> &rustc_middle::mir::Body<'tcx> {
-        self.instance_body
-            .unwrap_or_else(|| self.tcx.optimized_mir(self.root_def_id))
+        self.root.body
+            .unwrap_or_else(|| self.tcx.optimized_mir(self.root.def_id))
     }
 
     pub(crate) fn record_unsupported(&mut self, operation: &str) {
@@ -1196,8 +1228,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let body = frame
             .body
             .or_else(|| {
-                (frame.current_def_id == self.root_def_id)
-                    .then_some(self.instance_body)
+                (frame.current_def_id == self.root.def_id)
+                    .then_some(self.root.body)
                     .flatten()
             })
             .unwrap_or_else(|| self.tcx.optimized_mir(frame.current_def_id));
