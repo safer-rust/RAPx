@@ -326,8 +326,6 @@ pub fn extract_summary<'tcx>(
 fn filter_redundant_aliases(
     aliases: std::collections::HashSet<AliasPair>,
 ) -> std::collections::HashSet<AliasPair> {
-    use std::collections::HashSet;
-
     let aliases_vec: Vec<_> = aliases.iter().cloned().collect();
     let mut to_remove = HashSet::new();
 

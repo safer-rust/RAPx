@@ -1,7 +1,9 @@
 //! Materialize external fields and pointee values in symbolic memory.
 
-use rustc_middle::mir::{Local, Operand, Place, Rvalue, StatementKind};
-use rustc_middle::ty::{Region, Ty, TyKind};
+use rustc_middle::{
+    mir::{Local, Operand, Place, Rvalue, StatementKind},
+    ty::{Region, Ty, TyKind},
+};
 use z3::ast::Int;
 
 use crate::compat::{FxHashMap, FxHashSet};
@@ -337,7 +339,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         prefix: Vec<usize>,
         field_ty: Ty<'tcx>,
     ) -> bool {
-        use rustc_middle::ty::TyKind;
         let TyKind::Adt(adt_def, substs) = field_ty.kind() else {
             return false;
         };
@@ -412,7 +413,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         depth: usize,
         byte_offset: usize,
     ) {
-        use rustc_middle::ty::TyKind;
         if depth > 4 {
             return;
         }

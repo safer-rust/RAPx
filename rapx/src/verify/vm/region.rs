@@ -1,7 +1,12 @@
 //! Region (lifetime) helpers shared by the VM and the property checker.
 
+use rustc_data_structures::{fx::FxHashSet, smallvec::SmallVec};
 use rustc_hir::{def::DefKind, def_id::DefId};
-use rustc_middle::ty::{EarlyParamRegion, GenericParamDefKind, Region, RegionKind, Ty, TyCtxt};
+use rustc_infer::infer::outlives::env::OutlivesEnvironment;
+use rustc_middle::ty::{
+    EarlyParamRegion, GenericParamDefKind, Region, RegionKind, Ty, TyCtxt, TyKind,
+    outlives::{Component, push_outlives_components},
+};
 
 use crate::verify::contract::is_static_lifetime_ident;
 
@@ -69,9 +74,6 @@ fn free_region_outlives<'tcx>(
     src: Region<'tcx>,
     ret: Region<'tcx>,
 ) -> bool {
-    use rustc_data_structures::fx::FxHashSet;
-    use rustc_infer::infer::outlives::env::OutlivesEnvironment;
-
     let param_env = tcx.param_env(def_id);
     let env = OutlivesEnvironment::from_normalized_bounds(
         param_env,
@@ -94,10 +96,7 @@ pub(crate) fn region_outlives_implied<'tcx>(
     self_ty: Ty<'tcx>,
     demand: Region<'tcx>,
 ) -> bool {
-    use rustc_data_structures::smallvec::SmallVec;
-    use rustc_middle::ty::outlives::{Component, push_outlives_components};
-
-    let rustc_middle::ty::TyKind::Ref(ref_region, pointee, _) = self_ty.kind() else {
+    let TyKind::Ref(ref_region, pointee, _) = self_ty.kind() else {
         return false;
     };
     if *ref_region != demand {
@@ -127,7 +126,6 @@ fn liberate_fn_sig<'tcx>(
 
 /// The reference region of `def_id`'s return type (`&'r T` → `Some('r)`).
 pub(crate) fn fn_return_region<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Option<Region<'tcx>> {
-    use rustc_middle::ty::TyKind;
     match liberate_fn_sig(tcx, def_id)?.output().kind() {
         TyKind::Ref(region, _, _) => Some(*region),
         _ => None,

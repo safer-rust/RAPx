@@ -22,20 +22,25 @@
 //! front-end that produces ordinary `Property` values consumed by the existing
 //! checker.
 
-use std::collections::{HashMap, HashSet};
-use std::sync::{OnceLock, RwLock};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{OnceLock, RwLock},
+};
 
-use rustc_hir::def_id::{CrateNum, LOCAL_CRATE};
-use rustc_span::Symbol;
-#[cfg(rapx_has_attr_ir)]
-use rustc_attr_ir::Attribute;
 #[cfg(rapx_attr_requires_ext)]
 use rustc_ast::attr::AttributeExt;
+#[cfg(rapx_has_attr_ir)]
+use rustc_attr_ir::Attribute;
 #[cfg(not(rapx_has_attr_ir))]
 use rustc_hir::Attribute;
-use syn::Expr;
-use syn::visit_mut::{self, VisitMut};
+use rustc_hir::def_id::{CrateNum, LOCAL_CRATE};
+use rustc_span::Symbol;
+use syn::{
+    Expr,
+    visit_mut::{self, VisitMut},
+};
 
+use super::spec::ArgKind;
 use super::types::{AtomProperty, ContractExpr, ContractKind, Property, PropertyArg, PropertyKind};
 
 /// A single argument in a compound body: a reference to a formal parameter, or a
@@ -296,7 +301,6 @@ impl VisitMut for Subst<'_> {
 
 /// Whether a compound parameter annotation matches a primitive argument role.
 fn compound_param_ty_matches_arg_kind(def_ty: &str, kind: super::spec::ArgKind) -> bool {
-    use super::spec::ArgKind;
     matches!(
         (def_ty, kind),
         ("Ptr", ArgKind::Target)

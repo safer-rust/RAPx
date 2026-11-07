@@ -1,17 +1,23 @@
-use crate::compat::GenericArgsRef;
-use crate::def_ids::lang_api::{self, LangItem};
+use crate::compat::{FxHashMap, GenericArgsRef};
+use crate::def_ids::{
+    lang_api::{self, LangItem},
+    other_api, type_ids,
+};
 #[cfg(rapx_attr_requires_ext)]
 use rustc_ast::attr::AttributeExt;
 #[cfg(rapx_caller_bounds_accessor)]
 use rustc_type_ir::CallerBoundsIterator;
 use rustc_hir::{
     ItemKind,
+    def::DefKind,
     def_id::{DefId, LocalDefId},
 };
 #[cfg(rapx_ge_99)]
 use rustc_middle::ty::ShimKind;
 #[cfg(rapx_const_ext)]
 use rustc_middle::ty::consts::ConstExt;
+#[cfg(rapx_alias_const_inherent_self)]
+use rustc_middle::ty::AliasConstKind;
 use rustc_middle::{
     mir::interpret::{AllocId, GlobalAlloc},
     mir::{
@@ -30,10 +36,6 @@ use std::{collections::HashSet, ops::ControlFlow};
 
 #[cfg(not(rapx_has_skip_norm_wip))]
 use crate::compat::SkipNormWip;
-
-use crate::compat::FxHashMap;
-use crate::def_ids::other_api;
-use crate::def_ids::type_ids;
 
 use super::def_use::PlaceKey;
 
@@ -745,7 +747,6 @@ pub fn has_crate(tcx: TyCtxt<'_>, name: &str) -> bool {
 pub fn rvalue_source_place<'a, 'tcx>(
     rvalue: &'a Rvalue<'tcx>,
 ) -> Option<&'a rustc_middle::mir::Place<'tcx>> {
-    use rustc_middle::mir::{Operand, Rvalue};
     match rvalue {
         Rvalue::Use(Operand::Copy(place), ..)
         | Rvalue::Use(Operand::Move(place), ..)
@@ -960,7 +961,6 @@ pub(crate) fn ctfe_mir_available(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
 }
 
 fn is_const_def_kind(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
-    use rustc_hir::def::DefKind;
     #[cfg(rapx_defkind_const_struct)]
     let base = matches!(
         tcx.def_kind(def_id),
@@ -1213,7 +1213,6 @@ pub(crate) fn eval_array_len<'tcx>(
         let def_id = alias_const.kind.opt_def_id()?;
         #[cfg(rapx_alias_const_inherent_self)]
         let def_id = {
-            use rustc_middle::ty::AliasConstKind;
             match alias_const.kind {
                 AliasConstKind::Projection { def_id } => def_id,
                 AliasConstKind::InherentSelf { def_id } => def_id,

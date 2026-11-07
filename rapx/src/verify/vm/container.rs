@@ -1,11 +1,13 @@
 //! Container layout, length, and backing-allocation queries.
 
-use rustc_middle::mir::Local;
-use rustc_middle::ty::{Ty, TyKind};
+use rustc_middle::{
+    mir::Local,
+    ty::{Ty, TyKind},
+};
 use z3::ast::{Ast, Int};
 
-use crate::helpers::mir_utils;
 use crate::compat::GenericArgsRef;
+use crate::helpers::mir_utils;
 use crate::verify::api_classify;
 
 use super::state::{AllocId, Provenance, ValueFacts, ValueSource, VmState, VmValue};
@@ -272,7 +274,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// rather than by name, so re-implemented std types in the challenge
     /// suites are modelled identically to their std counterparts.
     pub(crate) fn find_nn_pointee(&self, ty: Ty<'tcx>) -> Option<Ty<'tcx>> {
-        use rustc_middle::ty::TyKind;
         match ty.kind() {
             TyKind::Adt(adt_def, substs) => {
                 if let Some(pointee) = self.transparent_ptr_pointee(adt_def, *substs) {
@@ -336,7 +337,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         prefix: Vec<usize>,
         depth: usize,
     ) -> Option<Vec<usize>> {
-        use rustc_middle::ty::TyKind;
         if depth > 4 {
             return None;
         }
@@ -373,7 +373,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         header: AllocId,
         ty: Ty<'tcx>,
     ) -> Option<AllocId> {
-        use rustc_middle::ty::TyKind;
         let mut view_ty = ty;
         while let TyKind::Ref(_, inner, _) | TyKind::RawPtr(inner, _) = view_ty.kind() {
             view_ty = *inner;
@@ -448,7 +447,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         base: Int<'z3>,
         elem_ty: Ty<'tcx>,
     ) -> bool {
-        use rustc_middle::ty::TyKind;
         let mut view_ty = ty;
         while let TyKind::Ref(_, inner, _) | TyKind::RawPtr(inner, _) = view_ty.kind() {
             view_ty = *inner;

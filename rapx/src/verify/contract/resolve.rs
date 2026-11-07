@@ -5,15 +5,15 @@
 //! here: places (via `place.rs`), const generics, builtin integer bounds, the
 //! length calls, tag argument types/targets, and `ValidNum` predicates.
 
-use crate::helpers::mir_utils;
+use crate::helpers::{
+    fn_info::parse_expr_into_number,
+    mir_utils,
+    name::{access_ident_recursive, match_ty_with_ident},
+};
 use quote::ToTokens;
-use rustc_hir::def::DefKind;
-use rustc_hir::def_id::DefId;
-use rustc_middle::ty::{GenericParamDefKind, Ty, TyCtxt};
+use rustc_hir::{def::DefKind, def_id::DefId};
+use rustc_middle::ty::{GenericParamDefKind, IntTy, Ty, TyCtxt, UintTy};
 use syn::{Expr, Lit};
-
-use crate::helpers::fn_info::parse_expr_into_number;
-use crate::helpers::name::{access_ident_recursive, match_ty_with_ident};
 
 use super::place;
 use super::types::{ContractExpr, ContractPlace, NumericPredicate, PlaceBase, PropertyArg, RelOp};
@@ -163,8 +163,6 @@ pub(crate) fn resolve_type_name<'tcx>(
 }
 
 pub(crate) fn int_type_min_max<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<(u128, u128)> {
-    use rustc_middle::ty::IntTy;
-    use rustc_middle::ty::UintTy;
     let bits: u32 = match ty.kind() {
         rustc_middle::ty::TyKind::Uint(ut) => match ut {
             UintTy::U8 => 8,

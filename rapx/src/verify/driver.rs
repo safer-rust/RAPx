@@ -6,27 +6,28 @@
 //! struct invariants) and delegates the actual backward/forward/SMT work to
 //! the shared `VerifyEngine`.
 
-use crate::analysis::Analysis;
-use crate::analysis::path::PathTree;
+use crate::analysis::{Analysis, path::PathTree};
 use crate::cli::VerifyMode;
-use crate::helpers::fn_info::{FnKind, get_cons, get_mutated_fields, get_muts, get_type};
-use crate::helpers::mir_utils;
-use crate::verify::contract::PropertyKind;
+use crate::helpers::{
+    fn_info::{FnKind, get_cons, get_mutated_fields, get_muts, get_type},
+    mir_utils,
+};
 use crate::verify::property_checker::{
     atomic_update_check, contain_no_type_check, field_invariant_check, no_internal_mut_check,
     no_raw_ptr_check, ref_send_check, uni_internal_mut_check,
 };
-use crate::verify::target::get_contract_from_annotation;
 
-use crate::compat::FxHashMap;
-use crate::compat::FxHashSet;
+use crate::compat::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
-use rustc_middle::mir::BasicBlock;
-use rustc_middle::ty::TyCtxt;
+use rustc_middle::mir::{BasicBlock, Operand, Rvalue, StatementKind, TerminatorKind};
+use rustc_middle::ty::{TyCtxt, TyKind};
 use std::time::Instant;
 
 use super::{
-    contract::{PlaceBase, Property, PropertyArg},
+    contract::{
+        ContractExpr, ContractPlace, ContractProjection, PlaceBase, Property, PropertyArg,
+        PropertyKind,
+    },
     display::{
         dedup_compound_props, emit_results_and_verdict, emit_verify_summary, fmt_contract_expanded,
         fmt_fn_path_with_bounds, fmt_fn_path_with_generics, fmt_fn_with_params,
@@ -40,6 +41,7 @@ use super::{
     slicer::RelevantItem,
     target::{
         FunctionTarget, MarkerTraitKind, TraitEnsurance, TraitEnsuranceKind, VerifyTargetCollector,
+        get_contract_from_annotation,
     },
 };
 
@@ -1485,8 +1487,6 @@ impl<'tcx> VerifyRun<'tcx> {
         branch: &str,
         cont: &str,
     ) -> bool {
-        use crate::verify::contract::PropertyKind;
-
         let (arg_names_typed, ret_ty) = self.resolve_arg_names_with_types(target.def_id);
         let is_unsafe_fn = self.is_unsafe_fn(target.def_id);
 
@@ -1621,7 +1621,6 @@ use crate::helpers::name::short_fn_name;
 /// Used to determine which invariants are invalidated when a mutator writes
 /// to specific struct fields.
 fn property_field_indices(property: &crate::verify::contract::Property<'_>) -> Vec<usize> {
-    use crate::verify::contract::{ContractExpr, PropertyArg};
     let mut indices = Vec::new();
     for arg in property.args() {
         let place = match arg {
@@ -1657,9 +1656,6 @@ fn targets_return_value(property: &Property<'_>) -> bool {
 }
 
 fn stable_reference_metadata(tcx: TyCtxt<'_>, def_id: DefId, property: &Property<'_>) -> bool {
-    use rustc_middle::mir::{Rvalue, StatementKind, TerminatorKind};
-    use rustc_middle::ty::TyKind;
-
     let Some(kind) = property.kind() else {
         return false;
     };
@@ -1714,8 +1710,6 @@ fn stable_reference_metadata(tcx: TyCtxt<'_>, def_id: DefId, property: &Property
 }
 
 fn type_invariant_subject(property: &Property<'_>) -> Option<rustc_middle::mir::Local> {
-    use crate::verify::contract::ContractExpr;
-
     fn collect_expr(expr: &ContractExpr<'_>, roots: &mut FxHashSet<rustc_middle::mir::Local>) {
         match expr {
             ContractExpr::Place(place) => {
@@ -1777,8 +1771,6 @@ fn type_invariant_subject_live(
     path: &[usize],
     local: rustc_middle::mir::Local,
 ) -> bool {
-    use rustc_middle::mir::{Operand, Rvalue, StatementKind, TerminatorKind};
-
     let body = tcx.optimized_mir(def_id);
     let mut live = true;
     for &global_block in path {
@@ -1844,9 +1836,6 @@ fn type_invariant_subject_live(
 fn remap_constructor_contract<'tcx>(
     property: crate::verify::contract::Property<'tcx>,
 ) -> crate::verify::contract::Property<'tcx> {
-    use crate::verify::contract::{
-        ContractExpr, ContractPlace, ContractProjection, PlaceBase, PropertyArg,
-    };
 
     fn remap_place_arg<'tcx>(arg: &PropertyArg<'tcx>) -> PropertyArg<'tcx> {
         let place = match arg {

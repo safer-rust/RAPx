@@ -17,13 +17,16 @@ use rustc_middle::{
         BasicBlock, Body, Local, NonDivergingIntrinsic, Operand, Place, ProjectionElem, Rvalue,
         StatementKind, TerminatorKind,
     },
-    ty::{self, Ty, TyCtxt},
+    ty::{self, List, Ty, TyCtxt},
 };
 use std::collections::HashSet;
 
-use crate::helpers::mir_scan::{get_fn_safety, place_has_raw_deref};
-use crate::helpers::mir_utils::{dep_callee_def_id, pointee_ty, resolve_callee_impl};
-use crate::helpers::name::get_cleaned_def_path_name;
+use crate::helpers::{
+    mir_scan::{get_fn_safety, place_has_raw_deref},
+    mir_utils::{dep_callee_def_id, pointee_ty, resolve_callee_impl},
+    name::get_cleaned_def_path_name,
+};
+
 /// Stable MIR location for a call terminator inside one function body.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct CheckpointLocation {
@@ -419,8 +422,6 @@ pub fn collect_raw_ptr_deref_info<'tcx>(
 
 /// Extract the pointer operand from a dereference place.
 fn ptr_operand_for_deref_place<'tcx>(place: &Place<'tcx>) -> Option<Operand<'tcx>> {
-    use rustc_middle::ty::List;
-
     let first_deref_idx = place
         .projection
         .iter()

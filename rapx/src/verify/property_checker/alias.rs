@@ -5,6 +5,10 @@ use crate::verify::checkpoint::Checkpoint;
 use crate::verify::contract::Property;
 use crate::verify::report::{CheckResult, UnknownReason};
 use crate::verify::vm::state::VmState;
+use rustc_middle::{
+    mir::{Operand, ProjectionElem, Rvalue, StatementKind},
+    ty::TyKind,
+};
 
 use super::PropertyChecker;
 
@@ -217,10 +221,6 @@ fn owning_field_source(
     caller: rustc_hir::def_id::DefId,
     local: rustc_middle::mir::Local,
 ) -> bool {
-    use rustc_middle::{
-        mir::{Operand, ProjectionElem, Rvalue, StatementKind},
-        ty::TyKind,
-    };
 
     let body = tcx.optimized_mir(caller);
     let mut source = None;

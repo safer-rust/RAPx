@@ -4,29 +4,28 @@
 //! then checks safety properties with a unified property checker.
 
 use crate::helpers::mir_utils;
-use std::cell::Cell;
-use std::sync::Arc;
+use std::{cell::Cell, sync::Arc};
 use z3::Config;
 
 use rustc_hir::def_id::DefId;
-use rustc_middle::mir::Body;
-use rustc_middle::mir::{BasicBlock, Local, Operand, Rvalue, StatementKind};
-use rustc_middle::ty::TyCtxt;
+use rustc_middle::{
+    mir::{BasicBlock, Body, Local, Operand, Rvalue, StatementKind, TerminatorKind},
+    ty::TyCtxt,
+};
 
 use crate::analysis::path::{CallArg, PathTree};
 use crate::compat::FxHashMap;
 
 use super::{
+    checkpoint::{Checkpoint, CheckpointLocation},
     contract::{AndProperty, AtomProperty, OrProperty, Property},
+    path::EntryBodies,
+    property_checker::PropertyChecker,
     report::{CheckResult, UnknownReason},
     slicer::{BackwardSlicer, ProofGoal, RelevantItem},
+    target::CalleeBodies,
+    vm::VmState,
 };
-use crate::verify::checkpoint::{Checkpoint, CheckpointLocation};
-
-use super::path::EntryBodies;
-use super::property_checker::PropertyChecker;
-use super::target::CalleeBodies;
-use super::vm::VmState;
 
 enum LocalAccess {
     None,
@@ -388,7 +387,6 @@ impl<'tcx> VerifyEngine<'tcx> {
             }
         }
         if let Some(terminator) = &data.terminator {
-            use rustc_middle::mir::TerminatorKind;
             match &terminator.kind {
                 TerminatorKind::Call {
                     args, destination, ..

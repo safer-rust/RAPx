@@ -14,10 +14,7 @@
 //! [`crate::def_ids::type_ids`]. Some standard-library method sets in
 //! `other_api` are collected by name patterns before being matched by `DefId`.
 
-use crate::def_ids::intrinsic_api;
-use crate::def_ids::nomir_ffi;
-use crate::def_ids::other_api;
-use crate::def_ids::type_ids;
+use crate::def_ids::{intrinsic_api, nomir_ffi, other_api, type_ids};
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::{Ty, TyCtxt, TyKind};
 
@@ -494,7 +491,6 @@ pub fn is_maybe_uninit_type(def_id: DefId) -> bool {
 /// `MaybeUninit<...>`, i.e. carries no validity invariant (any bit pattern is a
 /// valid value).  Shared by the VM (`init_parameters`) and the `Typed` checker.
 pub fn is_maybe_uninit_ty(ty: Ty<'_>) -> bool {
-    use rustc_middle::ty::TyKind;
     let mut t = ty;
     loop {
         match t.kind() {

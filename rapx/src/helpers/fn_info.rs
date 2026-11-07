@@ -1,7 +1,7 @@
 use rustc_hir::{Safety, def::DefKind, def_id::DefId};
 use rustc_middle::{
-    ty,
-    ty::{AssocKind, Mutability, TyCtxt, TyKind},
+    mir::{ProjectionElem, StatementKind},
+    ty::{self, AssocKind, Mutability, TyCtxt, TyKind},
 };
 use rustc_span::{kw, sym};
 use std::{collections::HashSet, fmt::Debug, hash::Hash};
@@ -311,8 +311,6 @@ pub fn get_ptr_deref_dummy_def_id(tcx: TyCtxt<'_>) -> Option<DefId> {
 /// set of field indices that are modified.  Used by --no-invariant-target mode to know which
 /// constructor-inherited invariants are invalidated by a mutator.
 pub fn get_mutated_fields(tcx: TyCtxt<'_>, def_id: DefId) -> Vec<usize> {
-    use rustc_middle::mir::{ProjectionElem, StatementKind};
-
     let body = tcx.optimized_mir(def_id);
     let mut fields = Vec::new();
 

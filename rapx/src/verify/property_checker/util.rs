@@ -5,6 +5,7 @@
 //! by every checker family.
 
 use crate::def_ids::type_ids;
+use crate::helpers::def_use::{PlaceBaseKey, PlaceKey};
 use crate::verify::checkpoint::Checkpoint;
 use crate::verify::contract::{
     ContractExpr, ContractPlace, ContractProjection, Property, PropertyArg,
@@ -77,7 +78,6 @@ impl PropertyChecker {
         checkpoint: &Checkpoint<'tcx>,
         place: &ContractPlace<'tcx>,
     ) -> bool {
-        use crate::helpers::def_use::{PlaceBaseKey, PlaceKey};
         let key = PlaceKey::from_contract_place(place);
         let local = match key.base {
             PlaceBaseKey::Local(n) => Local::from_usize(n),

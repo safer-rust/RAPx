@@ -10,7 +10,7 @@
 
 use rustc_hir::{def::DefKind, def_id::DefId};
 use rustc_middle::mir::{
-    BasicBlock, Local, Operand, Rvalue, StatementKind, Terminator, TerminatorKind,
+    BasicBlock, Local, Operand, ProjectionElem, Rvalue, StatementKind, Terminator, TerminatorKind,
 };
 use rustc_middle::ty::{EarlyBinder, Instance, InstanceKind, TyKind, TypingEnv};
 use z3::ast::{Ast, Bool, Int};
@@ -20,8 +20,7 @@ use super::state::{AllocId, MemoryContent, VmState, VmValue};
 use crate::compat::{FxHashSet, Spanned};
 use crate::helpers::mir_utils;
 use crate::limit::MAX_INLINE_DEPTH;
-use crate::verify::api_classify;
-use crate::verify::call_summary;
+use crate::verify::{api_classify, call_summary};
 
 type InlineWorkItem<'z3, 'tcx> = (VmState<'z3, 'tcx>, BasicBlock, FxHashSet<BasicBlock>);
 
@@ -1311,7 +1310,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// value is tracked separately, so propagating the whole struct's fields
     /// would be wrong (BTreeMap's `NodeRef` handles).
     pub(crate) fn find_whole_borrow_referent(&self, local: Local) -> Option<Local> {
-        use rustc_middle::mir::{ProjectionElem, Rvalue, StatementKind};
         for bb in self.body().basic_blocks.iter() {
             for stmt in &bb.statements {
                 if let StatementKind::Assign(assign) = &stmt.kind {
@@ -1339,7 +1337,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// Resolve a *field* reborrow (`_7 = &mut (*_x).field`, projection
     /// `[Deref, Field(..)*]`) back to its referent local plus the field path.
     pub(crate) fn find_field_reborrow_referent(&self, local: Local) -> Option<(Local, Vec<usize>)> {
-        use rustc_middle::mir::{ProjectionElem, Rvalue, StatementKind};
         for bb in self.body().basic_blocks.iter() {
             for stmt in &bb.statements {
                 if let StatementKind::Assign(assign) = &stmt.kind {
@@ -1379,7 +1376,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// `handle_callee_entry`'s field collection can follow the copy chain to the
     /// local that actually carries the fields.
     pub(crate) fn find_copy_root(&self, local: Local) -> Option<Local> {
-        use rustc_middle::mir::{Rvalue, StatementKind};
         for bb in self.body().basic_blocks.iter() {
             for stmt in &bb.statements {
                 if let StatementKind::Assign(assign) = &stmt.kind {

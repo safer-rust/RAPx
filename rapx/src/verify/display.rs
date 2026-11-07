@@ -4,16 +4,19 @@
 //! function paths with generic bounds, and grouped result trees with verdicts.
 
 use rustc_hir::def_id::DefId;
-use rustc_middle::ty::ClauseKind;
-use rustc_middle::ty::{self, TyCtxt};
+use rustc_middle::ty::{self, ClauseKind, TyCtxt};
 
 use crate::compat::FxHashMap;
 use crate::helpers::fn_info::get_cons;
 use indexmap::IndexMap;
 
 use super::report::{CheckResult, PropertyCheckResult, Soundness};
-use crate::verify::checkpoint::CheckpointLocation;
-use crate::verify::contract::render::display_expr_user_friendly;
+use crate::verify::{
+    checkpoint::CheckpointLocation,
+    contract::{
+        ContractExpr, ContractKind, PropertyArg, PropertyKind, render::display_expr_user_friendly,
+    },
+};
 
 type CountEntry = (
     Option<crate::verify::contract::PropertyKind>,
@@ -138,7 +141,6 @@ fn insert_bounds_into_path(path: &str, param_bounds: &FxHashMap<String, Vec<Stri
 }
 
 fn contract_kind_prefix(kind: crate::verify::contract::ContractKind) -> &'static str {
-    use crate::verify::contract::ContractKind;
     match kind {
         ContractKind::Precond => "",
         ContractKind::Hazard => "[hazard] ",
@@ -153,7 +155,6 @@ pub(crate) fn fmt_contract_expanded<'tcx>(
     struct_def_id: Option<rustc_hir::def_id::DefId>,
     fn_def_id: Option<rustc_hir::def_id::DefId>,
 ) -> (String, String) {
-    use crate::verify::contract::PropertyKind;
     // Compound `def` (e.g. `Ptr2Ref`, `Deref`, user `pred!`): show it
     // as a single `name(args)` entry with its doc-derived meaning, instead of
     // the underlying primitives it expanded into.
@@ -220,7 +221,6 @@ pub(crate) fn fmt_contract_expanded<'tcx>(
             ))
         )
     {
-        use crate::verify::contract::{ContractExpr, PropertyArg};
         if let Some(PropertyArg::Expr(ContractExpr::IndexAccess { slice, index })) =
             property.args().first()
         {
@@ -251,7 +251,6 @@ pub(crate) fn fmt_contract_expanded<'tcx>(
     };
     let meaning = match kind {
         PropertyKind::InBound => {
-            use crate::verify::contract::{ContractExpr, PropertyArg};
             let placeholder = format!("InBound({})", args.join(", "));
             match property.args().first() {
                 Some(PropertyArg::Expr(ContractExpr::IndexAccess { slice, index })) => {
@@ -363,9 +362,6 @@ pub(crate) fn emit_results_counts_and_checkpoints<'tcx>(
     tcx: TyCtxt<'tcx>,
     all_results: &[PropertyCheckResult<'tcx>],
 ) -> (usize, usize) {
-    use super::report::CheckResult;
-    use crate::verify::contract::ContractKind;
-
     // Distinguish a *confirmed* violation (`Failed`) from an *incomplete* proof
     // (`Unknown`).  A `Failed` makes the function UNSOUND; a lone `Unknown`
     // (e.g. an unannotated unsafe callee) only leaves it UNKNOWN.  Optional

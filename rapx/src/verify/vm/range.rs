@@ -1,9 +1,9 @@
 //! Range indexing and range effects in the symbolic VM.
 
-use rustc_middle::mir::Local;
-use rustc_middle::ty::TyKind;
+use rustc_middle::{mir::Local, ty::TyKind};
 use z3::ast::Int;
 
+use crate::def_ids::lang_api::{self, LangItem};
 use crate::helpers::mir_utils;
 use crate::verify::api_classify;
 
@@ -17,7 +17,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         arg_locals: &[Option<Local>],
         dest: Local,
     ) -> bool {
-        use crate::def_ids::lang_api::{self, LangItem};
 
         let Some(callee) = callee else {
             return false;
@@ -95,7 +94,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 | mir_utils::RangeKind::Range
                 | mir_utils::RangeKind::RangeInclusive => start_field(),
                 mir_utils::RangeKind::Other => {
-                    use crate::def_ids::lang_api::{self, LangItem};
                     if api_classify::is_index_range(def.did()) {
                         start_field()
                     } else {
@@ -131,7 +129,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 self.field_value(index_local, &[1])?.z3_term.clone()
             }
             mir_utils::RangeKind::Other => {
-                use crate::def_ids::lang_api::{self, LangItem};
                 if lang_api::matches(self.tcx, def.did(), LangItem::RangeToInclusive) {
                     self.field_value(index_local, &[0])?.z3_term.clone() + &one
                 } else if lang_api::matches(self.tcx, def.did(), LangItem::RangeFull) {

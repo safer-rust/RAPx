@@ -4,10 +4,12 @@ use crate::helpers::mir_utils;
 use crate::verify::checkpoint::Checkpoint;
 use crate::verify::contract::{ContractExpr, NumericBinOp, NumericUnaryOp, PlaceBase, RelOp};
 use rustc_hir::def_id::DefId;
-use rustc_middle::mir::{Local, Operand, TerminatorKind};
 #[cfg(rapx_const_ext)]
 use rustc_middle::ty::consts::ConstExt;
-use rustc_middle::ty::{GenericArgKind, Ty, TyKind};
+use rustc_middle::{
+    mir::{Local, Operand, Place, TerminatorKind},
+    ty::{GenericArgKind, Ty, TyKind},
+};
 use z3::ast::{Ast, Bool, Int};
 
 use super::query::ContractTargetContext;
@@ -443,7 +445,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         checkpoint: &Checkpoint<'tcx>,
         expr: &ContractExpr<'tcx>,
     ) -> Option<Int<'z3>> {
-        use rustc_middle::mir::Place;
         let ContractExpr::Place(cp) = expr else {
             return None;
         };

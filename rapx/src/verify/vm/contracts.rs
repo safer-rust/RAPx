@@ -5,19 +5,18 @@ use z3::ast::{Ast, Bool, Int};
 
 use crate::{
     compat::FxHashSet,
-    verify::contract::{
-        ContractExpr, ContractKind, ContractPlace, ContractProjection, PlaceBase, Property,
-        PropertyArg, PropertyKind,
+    helpers::mir_utils,
+    verify::{
+        api_classify,
+        contract::{
+            ContractExpr, ContractKind, ContractPlace, ContractProjection, NumericBinOp, PlaceBase,
+            Property, PropertyArg, PropertyKind,
+        },
     },
 };
 
 use super::query::ContractTargetContext;
-use super::state::{
-    AllocId, ElementTy, Provenance, ValueFacts, ValueSource, VmState, VmValue,
-};
-
-use crate::verify::api_classify;
-use crate::helpers::mir_utils;
+use super::state::{AllocId, ElementTy, Provenance, ValueFacts, ValueSource, VmState, VmValue};
 
 impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     pub(crate) fn assert_call_result_invariants(
@@ -721,7 +720,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         right: &Int<'z3>,
         op: crate::verify::contract::NumericBinOp,
     ) -> Option<Int<'z3>> {
-        use crate::verify::contract::NumericBinOp;
         match op {
             NumericBinOp::Div => Some(left.div(right)),
             NumericBinOp::Rem => Some(left.rem(right)),
