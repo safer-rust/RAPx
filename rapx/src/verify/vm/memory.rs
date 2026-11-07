@@ -207,8 +207,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             .map(AllocId)
             .filter(|id| self.root_alloc(*id) == root)
             .collect();
-        self.typed_values.retain(|(id, _, _)| !aliases.contains(id));
         for id in aliases {
+            self.units[id.0].content.typed_facts.clear();
             self.units[id.0].content.copied_prefix = None;
             self.units[id.0].content.facts.written_pointee_ty = None;
         }

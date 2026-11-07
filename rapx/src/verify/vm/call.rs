@@ -255,13 +255,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         if callee.is_some_and(mir_utils::is_drop_in_place)
             || api_classify::is_manually_drop_drop(callee)
         {
-            let event_count = self.memory_events.len();
+            let event_count = self.safedrop_events.len();
             if let Some(pointer) = arg_values.first()
                 && let Some(local) = self.find_local_by_address(&pointer.z3_term)
             {
                 super::rules::terminator::exec_drop(self, &rustc_middle::mir::Place::from(local));
             }
-            if self.memory_events.len() == event_count
+            if self.safedrop_events.len() == event_count
                 && let Some(pointer) = arg_values.first()
                 && let Some(alloc_id) = pointer.provenance_alloc_id()
             {
@@ -283,7 +283,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return true;
         }
 
-        let diagnostics_before_call = self.memory_events.is_enabled().then(|| self.diagnostics.clone());
+        let diagnostics_before_call = self.safedrop_events.is_enabled().then(|| self.diagnostics.clone());
 
         // Registry summary, else the transparent-deref / unknown fallback.
         let summary = if callee.is_some_and(|id| {

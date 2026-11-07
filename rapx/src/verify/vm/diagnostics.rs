@@ -1,9 +1,42 @@
-//! Path-scoped evidence for incomplete VM execution.
+//! Path-scoped diagnostic evidence and its current MIR source location.
 
 use crate::compat::FxHashSet;
+use rustc_hir::def_id::DefId;
+use rustc_middle::ty::TyCtxt;
+use rustc_span::Span;
 
+/// Source location of the MIR item currently being replayed.
+#[derive(Clone, Copy)]
+pub(crate) struct ActiveMirLocation {
+    pub def_id: DefId,
+    pub block: usize,
+    pub item: ActiveMirItem,
+    pub span: Span,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum ActiveMirItem {
+    Statement(usize),
+    Terminator,
+}
+
+impl ActiveMirLocation {
+    fn label(&self, tcx: TyCtxt<'_>) -> String {
+        let function = tcx.def_path_str(self.def_id);
+        match self.item {
+            ActiveMirItem::Statement(index) => {
+                format!("{function} bb{} statement {index}", self.block)
+            }
+            ActiveMirItem::Terminator => format!("{function} bb{} terminator", self.block),
+        }
+    }
+}
+
+/// Diagnostic evidence collected while replaying one path.
 #[derive(Default, Clone)]
 pub(crate) struct Diagnostics {
+    /// Current MIR item used to locate new diagnostics and memory events.
+    pub(crate) active_mir: Option<ActiveMirLocation>,
     unsupported_mir: bool,
     unattributed_unsupported: bool,
     unsupported_details: FxHashSet<String>,
@@ -14,6 +47,10 @@ pub(crate) struct Diagnostics {
 }
 
 impl Diagnostics {
+    pub(crate) fn location_label(&self, tcx: TyCtxt<'_>) -> Option<String> {
+        self.active_mir.as_ref().map(|location| location.label(tcx))
+    }
+
     pub(crate) fn is_unsupported(&self) -> bool {
         self.unsupported_mir
     }

@@ -4,7 +4,7 @@ use crate::compat::FxHashMap;
 use crate::utils::source::{get_filename, get_name};
 use crate::verify::slicer::RelevantItem;
 use crate::verify::vm::VmState;
-use crate::verify::vm::state::{AllocId, MemoryEvent, MemoryEventKind};
+use crate::verify::vm::state::{AllocId, SafeDropEvent, SafeDropEventKind};
 use rustc_hir::def_id::DefId;
 use rustc_middle::{mir::{BasicBlock, Local, TerminatorKind}, ty::TyCtxt};
 use rustc_span::Symbol;
@@ -17,7 +17,7 @@ pub(crate) fn analyze<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, paths: &PathTree) 
     let mut bugs = BugRecords::new();
     for path in paths.to_vecs() {
         let mut state = VmState::new(&context, tcx, def_id, None);
-        state.memory_events.enable();
+        state.safedrop_events.enable();
         let mut states = state.execute_items(&[]);
         for (position, &bb_idx) in path.iter().enumerate() {
             let block = BasicBlock::from_usize(bb_idx);
@@ -43,7 +43,7 @@ pub(crate) fn analyze<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, paths: &PathTree) 
             if let Some(&last) = path.last() {
                 record_dangling_exit(state, body, last);
             }
-            collect_events(&state.memory_events.events(), body, &mut bugs);
+            collect_events(&state.safedrop_events.events(), body, &mut bugs);
         }
     }
     report(tcx, def_id, body, &bugs);
@@ -75,9 +75,9 @@ fn record_dangling_exit<'z3, 'tcx>(
             .and_then(|v| v.provenance_alloc_id())
             && state.alloc(alloc_id).facts.dead
         {
-            state.memory_events.push(MemoryEvent {
+            state.safedrop_events.push(SafeDropEvent {
                 alloc_id,
-                kind: MemoryEventKind::DanglingPointer,
+                kind: SafeDropEventKind::DanglingPointer,
                 block: Some(last),
                 local: local_idx,
                 span: if local_idx == 0 {
@@ -91,7 +91,7 @@ fn record_dangling_exit<'z3, 'tcx>(
 }
 
 fn collect_events<'tcx>(
-    events: &[MemoryEvent],
+    events: &[SafeDropEvent],
     body: &rustc_middle::mir::Body<'tcx>,
     bugs: &mut BugRecords,
 ) {
@@ -101,26 +101,26 @@ fn collect_events<'tcx>(
         let is_cleanup = body.basic_blocks[BasicBlock::from_usize(bb)].is_cleanup;
         let trigger = LocalSpot::new(bb, event.local);
         match event.kind {
-            MemoryEventKind::Drop => {
+            SafeDropEventKind::Drop => {
                 drops.insert(event.alloc_id, trigger);
             }
-            MemoryEventKind::DoubleFree
-            | MemoryEventKind::UseAfterFree
-            | MemoryEventKind::DanglingPointer => {
+            SafeDropEventKind::DoubleFree
+            | SafeDropEventKind::UseAfterFree
+            | SafeDropEventKind::DanglingPointer => {
                 let drop_spot = drops.get(&event.alloc_id).copied().unwrap_or_default();
                 let (kind, map) = match event.kind {
-                    MemoryEventKind::DoubleFree if is_cleanup => {
+                    SafeDropEventKind::DoubleFree if is_cleanup => {
                         (BugType::DoubleFree, &mut bugs.df_bugs_unwind)
                     }
-                    MemoryEventKind::DoubleFree => (BugType::DoubleFree, &mut bugs.df_bugs),
-                    MemoryEventKind::UseAfterFree => (BugType::UseAfterFree, &mut bugs.uaf_bugs),
-                    MemoryEventKind::DanglingPointer if is_cleanup => {
+                    SafeDropEventKind::DoubleFree => (BugType::DoubleFree, &mut bugs.df_bugs),
+                    SafeDropEventKind::UseAfterFree => (BugType::UseAfterFree, &mut bugs.uaf_bugs),
+                    SafeDropEventKind::DanglingPointer if is_cleanup => {
                         (BugType::DanglingPointer, &mut bugs.dp_bugs_unwind)
                     }
-                    MemoryEventKind::DanglingPointer => {
+                    SafeDropEventKind::DanglingPointer => {
                         (BugType::DanglingPointer, &mut bugs.dp_bugs)
                     }
-                    MemoryEventKind::Drop => unreachable!(),
+                    SafeDropEventKind::Drop => unreachable!(),
                 };
                 map.entry(event.local).or_insert(TyBug {
                     drop_spot,

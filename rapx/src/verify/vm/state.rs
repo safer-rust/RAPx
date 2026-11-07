@@ -33,8 +33,9 @@ pub(crate) const REPEATED_ARRAY_ELEMENT: usize = usize::MAX;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct AllocId(pub usize);
 
+/// Memory events consumed by SafeDrop; normal drops locate later violations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum MemoryEventKind {
+pub(crate) enum SafeDropEventKind {
     Drop,
     DoubleFree,
     UseAfterFree,
@@ -42,40 +43,13 @@ pub(crate) enum MemoryEventKind {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct MemoryEvent {
+pub(crate) struct SafeDropEvent {
     pub alloc_id: AllocId,
-    pub kind: MemoryEventKind,
+    pub kind: SafeDropEventKind,
     pub block: Option<usize>,
     pub local: usize,
     pub span: Span,
 }
-#[derive(Clone, Copy)]
-pub(crate) struct ActiveMirLocation {
-    pub def_id: DefId,
-    pub block: usize,
-    pub item: ActiveMirItem,
-    pub span: Span,
-}
-
-#[derive(Clone, Copy)]
-pub(crate) enum ActiveMirItem {
-    Statement(usize),
-    Terminator,
-}
-
-impl ActiveMirLocation {
-    fn label(&self, tcx: TyCtxt<'_>) -> String {
-        let function = tcx.def_path_str(self.def_id);
-        match self.item {
-            ActiveMirItem::Statement(index) => {
-                format!("{function} bb{} statement {index}", self.block)
-            }
-            ActiveMirItem::Terminator => format!("{function} bb{} terminator", self.block),
-        }
-    }
-}
-
-
 /// The structure of a pointer's byte offset, when it has one.
 ///
 /// Each variant lets the verifier use a cheaper, more precise proof: `Field`
@@ -293,6 +267,8 @@ pub(crate) struct AllocFacts<'z3, 'tcx> {
 
     /// Facts shared by all pointer elements of this allocation.
     pub for_each: ForEachFacts<'z3, 'tcx>,
+    /// `(address, type)` spans licensed by `InBound` contracts.
+    pub bounded_spans: Vec<(Int<'z3>, Ty<'tcx>)>,
 }
 
 /// Per-allocation *content* facts: whether the allocation's contents are
@@ -545,6 +521,8 @@ pub(crate) struct MemoryContent<'z3, 'tcx> {
 
     /// Typed values keyed by view type and field path; `[]` is the whole value.
     pub(crate) values: FxHashMap<(Ty<'tcx>, Vec<usize>), VmValue<'z3, 'tcx>>,
+    /// `(address, type)` facts established by `Typed` contracts.
+    pub(crate) typed_facts: FxHashSet<(Int<'z3>, Ty<'tcx>)>,
 
     pub(crate) indexed_elements: Vec<(Int<'z3>, VmValue<'z3, 'tcx>)>,
     pub(crate) indexed_elements_modified: bool,
@@ -637,11 +615,11 @@ pub(crate) struct SavedCallerFrame<'z3, 'tcx> {
 
 /// Optional memory diagnostics collected along one execution path.
 #[derive(Clone, Default)]
-pub(crate) struct MemoryEventLog {
-    events: Option<RefCell<Vec<MemoryEvent>>>,
+pub(crate) struct SafeDropEventLog {
+    events: Option<RefCell<Vec<SafeDropEvent>>>,
 }
 
-impl MemoryEventLog {
+impl SafeDropEventLog {
     pub(crate) fn enable(&mut self) {
         self.events.get_or_insert_with(RefCell::default);
     }
@@ -654,14 +632,14 @@ impl MemoryEventLog {
         self.events.as_ref().map_or(0, |events| events.borrow().len())
     }
 
-    pub(crate) fn push(&self, event: MemoryEvent) {
+    pub(crate) fn push(&self, event: SafeDropEvent) {
         if let Some(events) = &self.events {
             events.borrow_mut().push(event);
         }
     }
 
-    pub(crate) fn events(&self) -> std::cell::Ref<'_, Vec<MemoryEvent>> {
-        self.events.as_ref().expect("memory event log is disabled").borrow()
+    pub(crate) fn events(&self) -> std::cell::Ref<'_, Vec<SafeDropEvent>> {
+        self.events.as_ref().expect("SafeDrop event log is disabled").borrow()
     }
 }
 
@@ -688,8 +666,6 @@ pub(crate) struct VmState<'z3, 'tcx> {
     /// Caller frames saved by path-replay inlining.
     pub(crate) caller_frames: Vec<SavedCallerFrame<'z3, 'tcx>>,
     pub(crate) method_returns: Vec<MethodReturn<'z3, 'tcx>>,
-    /// `(allocation, address, type)` facts from `Typed` contracts.
-    pub(crate) typed_values: FxHashSet<(AllocId, Int<'z3>, Ty<'tcx>)>,
 
     /// Allocation units indexed by `AllocId`.
     pub(crate) units: Vec<MemoryUnit<'z3, 'tcx>>,
@@ -702,33 +678,31 @@ pub(crate) struct VmState<'z3, 'tcx> {
     /// Scratch state for recursive inlining.
     pub(crate) inline: InlineCtx<'z3, 'tcx>,
 
-    pub(crate) active_mir: Option<ActiveMirLocation>,
-    pub(crate) memory_events: MemoryEventLog,
-
     /// Allocation roots licensed by declared `Alias` contract sources.
     pub(crate) alias_hazard_allocs: FxHashSet<AllocId>,
     /// Slice and index terms with their originating MIR locals.
     pub(crate) index_access_facts: Vec<(Int<'z3>, Int<'z3>, Local, Local)>,
-    /// Allocation spans established by `InBound` contracts.
-    pub(super) bounded_object_spans: Vec<(AllocId, Int<'z3>, Ty<'tcx>)>,
 
+    /// Optional SafeDrop log of drops, use-after-free, and dangling pointers.
+    pub(crate) safedrop_events: SafeDropEventLog,
+    /// Path diagnostics and the MIR location used to attribute new records.
     pub(crate) diagnostics: Diagnostics,
 }
 
 impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     pub(crate) fn record_memory_drop(&mut self, alloc_id: AllocId, local: Local) {
-        if self.memory_events.is_enabled() {
-            self.memory_events.push(MemoryEvent {
+        if self.safedrop_events.is_enabled() {
+            self.safedrop_events.push(SafeDropEvent {
                 alloc_id,
                 kind: if self.alloc(alloc_id).facts.dead {
-                    MemoryEventKind::DoubleFree
+                    SafeDropEventKind::DoubleFree
                 } else {
-                    MemoryEventKind::Drop
+                    SafeDropEventKind::Drop
                 },
-                block: self.active_mir.as_ref().map(|location| location.block),
+                block: self.diagnostics.active_mir.as_ref().map(|location| location.block),
                 local: local.as_usize(),
                 span: self
-                    .active_mir
+                    .diagnostics.active_mir
                     .as_ref()
                     .map(|location| location.span)
                     .unwrap_or(rustc_span::DUMMY_SP),
@@ -738,14 +712,14 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     }
 
     pub(crate) fn record_memory_use(&self, alloc_id: AllocId, local: Local) {
-        if self.memory_events.is_enabled() && self.alloc(alloc_id).facts.dead {
-            self.memory_events.push(MemoryEvent {
+        if self.safedrop_events.is_enabled() && self.alloc(alloc_id).facts.dead {
+            self.safedrop_events.push(SafeDropEvent {
                 alloc_id,
-                kind: MemoryEventKind::UseAfterFree,
-                block: self.active_mir.as_ref().map(|location| location.block),
+                kind: SafeDropEventKind::UseAfterFree,
+                block: self.diagnostics.active_mir.as_ref().map(|location| location.block),
                 local: local.as_usize(),
                 span: self
-                    .active_mir
+                    .diagnostics.active_mir
                     .as_ref()
                     .map(|location| location.span)
                     .unwrap_or(rustc_span::DUMMY_SP),
@@ -849,16 +823,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             },
             caller_frames: Vec::default(),
             method_returns: Vec::default(),
-            typed_values: FxHashSet::default(),
             units: Vec::default(),
             thread_local_allocs: FxHashMap::default(),
             inline: InlineCtx::default(),
-            active_mir: None,
-            memory_events: MemoryEventLog::default(),
             constraints,
             alias_hazard_allocs: FxHashSet::default(),
             index_access_facts: Vec::new(),
-            bounded_object_spans: Vec::new(),
+            safedrop_events: SafeDropEventLog::default(),
             diagnostics: Diagnostics::default(),
         }
     }
@@ -889,7 +860,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     }
 
     pub(crate) fn record_unsupported(&mut self, operation: &str) {
-        let location = self.active_mir.as_ref().map(|location| location.label(self.tcx));
+        let location = self.diagnostics.location_label(self.tcx);
         self.diagnostics.record_unsupported(
             location.as_deref(),
             operation,
@@ -897,7 +868,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     }
 
     pub(crate) fn record_unsupported_effect(&mut self, effect: &str) {
-        let location = self.active_mir.as_ref().map(|location| location.label(self.tcx));
+        let location = self.diagnostics.location_label(self.tcx);
         self.diagnostics.record_unsupported_effect(
             location.as_deref(),
             effect,
@@ -905,7 +876,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     }
 
     pub(crate) fn record_missing_mir(&mut self, callee: DefId) {
-        let location = self.active_mir.as_ref().map(|location| location.label(self.tcx));
+        let location = self.diagnostics.location_label(self.tcx);
         self.diagnostics.record_missing_mir(
             location.as_deref(),
             &self.tcx.def_path_str(callee),
@@ -913,7 +884,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     }
 
     pub(crate) fn record_opaque_control_flow(&mut self, operation: &str) {
-        let location = self.active_mir.as_ref().map(|location| location.label(self.tcx));
+        let location = self.diagnostics.location_label(self.tcx);
         self.diagnostics.record_opaque_control_flow(
             location.as_deref(),
             operation,

@@ -35,8 +35,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         address: &Int<'z3>,
         ty: Ty<'tcx>,
     ) -> bool {
-        self.bounded_object_spans
-            .contains(&(alloc_id, address.clone(), ty))
+        self.alloc(alloc_id)
+            .facts
+            .bounded_spans
+            .contains(&(address.clone(), ty))
     }
 
     pub(crate) fn callsite_operand_for_local<'a>(

@@ -295,8 +295,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     if let (Some(alloc_id), Some(ty)) =
                         (val.provenance_alloc_id(), property.ty_arg(1))
                     {
-                        self.bounded_object_spans
-                            .push((alloc_id, val.z3_term.clone(), ty));
+                        let address = val.z3_term.clone();
+                        self.alloc_mut(alloc_id)
+                            .facts
+                            .bounded_spans
+                            .push((address, ty));
                     }
                     self.set_in_bounds_for_value(property, val);
                 }
@@ -330,11 +333,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             && property.args().len() <= 2
                             && let Some(prov) = &val.provenance
                         {
-                            self.typed_values.insert((
-                                alloc_id,
-                                prov.offset.clone(),
-                                expected_ty,
-                            ));
+                            self.content_mut(alloc_id)
+                                .typed_facts
+                                .insert((prov.offset.clone(), expected_ty));
                         }
                         if property.for_each().is_some() {
                             self.alloc_mut(alloc_id).facts.for_each.target_ty = Some(expected_ty);
@@ -415,8 +416,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             && let Some(alloc_id) = result.provenance_alloc_id()
             && let Some(pointee) = mir_utils::pointee_ty(result.ty)
         {
-            self.bounded_object_spans
-                .push((alloc_id, result.z3_term.clone(), pointee));
+            let address = result.z3_term.clone();
+            self.alloc_mut(alloc_id)
+                .facts
+                .bounded_spans
+                .push((address, pointee));
         }
     }
 

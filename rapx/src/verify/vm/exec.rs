@@ -6,7 +6,8 @@ use z3::ast::Int;
 
 use crate::{analysis::path::CallArg, compat::FxHashSet, verify::slicer::RelevantItem};
 
-use super::state::{ActiveMirItem, ActiveMirLocation, ValueSource, VmState, VmValue};
+use super::diagnostics::{ActiveMirItem, ActiveMirLocation};
+use super::state::{ValueSource, VmState, VmValue};
 
 impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// Execute all retained MIR items in path order.
@@ -52,7 +53,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             } => {
                 let body = self.body_for(*def_id);
                 let statement = &body.basic_blocks[*block].statements[*statement_index];
-                self.active_mir = Some(ActiveMirLocation {
+                self.diagnostics.active_mir = Some(ActiveMirLocation {
                     def_id: *def_id,
                     block: block.as_usize(),
                     item: ActiveMirItem::Statement(*statement_index),
@@ -69,7 +70,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             } => {
                 let body = self.body_for(*def_id);
                 let terminator = body.basic_blocks[*block].terminator();
-                self.active_mir = Some(ActiveMirLocation {
+                self.diagnostics.active_mir = Some(ActiveMirLocation {
                     def_id: *def_id,
                     block: block.as_usize(),
                     item: ActiveMirItem::Terminator,
@@ -77,22 +78,22 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 });
                 let viable =
                     crate::verify::vm::rules::exec_terminator(self, terminator, *switch_succ);
-                viable || (self.memory_events.is_enabled()
+                viable || (self.safedrop_events.is_enabled()
                     && matches!(&terminator.kind, TerminatorKind::Call { unwind: UnwindAction::Cleanup(target), .. } if Some(*target) == *switch_succ)
                 )
             }
             RelevantItem::CalleeEntry { callee, body, args } => {
-                self.active_mir = None;
+                self.diagnostics.active_mir = None;
                 self.handle_callee_entry(*callee, *body, args);
                 true
             }
             RelevantItem::CalleeExit { dest } => {
-                self.active_mir = None;
+                self.diagnostics.active_mir = None;
                 self.handle_callee_exit(*dest);
                 true
             }
             RelevantItem::ContractFact { property } => {
-                self.active_mir = None;
+                self.diagnostics.active_mir = None;
                 self.assert_contract_fact(property);
                 true
             }

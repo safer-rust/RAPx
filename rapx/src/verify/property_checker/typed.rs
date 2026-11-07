@@ -67,11 +67,10 @@ impl PropertyChecker {
             if let Some(alloc_id) = value.provenance_alloc_id() {
                 if property.args().len() <= 2
                     && value.provenance.as_ref().is_some_and(|prov| {
-                    vm_state.typed_values.contains(&(
-                        alloc_id,
-                        prov.offset.clone(),
-                        expected_ty,
-                    ))
+                    vm_state
+                        .content(alloc_id)
+                        .typed_facts
+                        .contains(&(prov.offset.clone(), expected_ty))
                 }) {
                     return CheckResult::ProvedByRule;
                 }
