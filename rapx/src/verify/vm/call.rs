@@ -11,8 +11,8 @@
 use rustc_hir::{def::DefKind, def_id::DefId};
 use rustc_middle::{
     mir::{
-        BasicBlock, Local, Operand, ProjectionElem, Rvalue, StatementKind, Terminator,
-        TerminatorKind,
+        BasicBlock, Local, Operand, ProjectionElem, Rvalue, StatementKind, SwitchTargets,
+        Terminator, TerminatorKind,
     },
     ty::{EarlyBinder, Instance, InstanceKind, TyKind, TypingEnv},
 };
@@ -102,10 +102,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     && let Some(scalar) = value.try_to_scalar_int()
                     && let Ok(bits) = u64::try_from(scalar.to_bits(scalar.size()))
                 {
-                    state.set_local(
-                        assign.0.local,
-                        VmValue::new(Int::from_u64(self.z3_ctx, bits), constant.const_.ty()),
-                    );
+                    if let Some(mut assigned) = state.local_value(assign.0.local).cloned() {
+                        // The normal assignment rule already established initialization,
+                        // provenance, and source facts. Refine only its scalar term.
+                        assigned.z3_term = Int::from_u64(self.z3_ctx, bits);
+                        state.set_local(assign.0.local, assigned);
+                    }
                 }
             }
             let terminator = data.terminator();
@@ -837,6 +839,26 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         None
     }
 
+    /// Select a successor for a discriminator folded by inline execution.
+    /// Some folds (notably generic `IS_ZST`) choose an equivalent path without
+    /// proving the discriminator's symbolic value, so do not assert the normal
+    /// `SwitchInt` guard for this successor.
+    fn forced_switch_target(
+        &self,
+        body: &rustc_middle::mir::Body<'tcx>,
+        discr: &Operand<'tcx>,
+        targets: &SwitchTargets,
+    ) -> Option<BasicBlock> {
+        let value = self.switch_discr_const(body, discr)?;
+        Some(
+            targets
+                .iter()
+                .find(|(candidate, _)| *candidate == value as u128)
+                .map(|(_, target)| target)
+                .unwrap_or_else(|| targets.otherwise()),
+        )
+    }
+
     /// Execute the callee's MIR body.
     fn inline_execute_body(&mut self, pre_uninit: &[AllocId]) -> Option<Vec<Self>> {
         match self.inline_execute_single() {
@@ -869,12 +891,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     }
                 }
                 TerminatorKind::SwitchInt { discr, targets } => {
-                    if let Some(value) = self.switch_discr_const(self.body(), discr) {
-                        let target = targets
-                            .iter()
-                            .find(|(candidate, _)| *candidate == value as u128)
-                            .map(|(_, target)| target)
-                            .unwrap_or_else(|| targets.otherwise());
+                    if let Some(target) = self.forced_switch_target(self.body(), discr, targets) {
                         queue.push(target);
                         continue;
                     }
@@ -992,12 +1009,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     }
                 }
                 TerminatorKind::SwitchInt { discr, targets } => {
-                    if let Some(v) = state.switch_discr_const(state.body(), discr) {
-                        let target = targets
-                            .iter()
-                            .find(|(val, _)| *val == v as u128)
-                            .map(|(_, target)| target)
-                            .unwrap_or_else(|| targets.otherwise());
+                    if let Some(target) = state.forced_switch_target(state.body(), discr, targets) {
                         pending.push((state, target, visited));
                         continue;
                     }
