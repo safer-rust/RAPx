@@ -1,10 +1,92 @@
 //! Transfer functions for MIR terminators.
 
-use rustc_middle::mir::{BasicBlock, Operand, Place, SwitchTargets};
+use rustc_middle::mir::{BasicBlock, Body, Operand, Place, Rvalue, StatementKind, SwitchTargets, TerminatorKind};
 use z3::ast::{Ast, Int};
 
 use super::super::state::{ValueSource, VmState};
 use crate::helpers::def_use::PlaceKey;
+use crate::helpers::mir_utils;
+
+/// The `IS_ZST` fold selects an equivalent path without asserting its guard.
+pub(crate) fn forced_inline_switch_target<'z3, 'tcx>(
+    state: &VmState<'z3, 'tcx>,
+    body: &Body<'tcx>,
+    discr: &Operand<'tcx>,
+    targets: &SwitchTargets,
+) -> Option<BasicBlock> {
+    let value = inline_switch_discr_const(state, body, discr)?;
+    Some(
+        targets
+            .iter()
+            .find(|(candidate, _)| *candidate == value as u128)
+            .map(|(_, target)| target)
+            .unwrap_or_else(|| targets.otherwise()),
+    )
+}
+
+fn inline_switch_discr_const<'z3, 'tcx>(
+    state: &VmState<'z3, 'tcx>,
+    body: &Body<'tcx>,
+    discr: &Operand<'tcx>,
+) -> Option<u64> {
+    if let Some(value) = mir_utils::operand_const_u64(discr) {
+        return Some(value);
+    }
+    #[cfg(rapx_ge_95)]
+    if let Operand::RuntimeChecks(_) = discr {
+        return Some(0);
+    }
+    if let Operand::Constant(constant) = discr
+        && let rustc_middle::mir::Const::Unevaluated(uneval, _) = constant.const_
+        && mir_utils::is_sized_type_property(state.tcx, uneval.def, "IS_ZST")
+    {
+        return Some(0);
+    }
+    let (Operand::Copy(place) | Operand::Move(place)) = discr else {
+        return None;
+    };
+    if place.local.as_usize() <= body.arg_count {
+        return None;
+    }
+    let mut definition_seen = false;
+    let mut folded = None;
+    for block in body.basic_blocks.iter() {
+        for statement in &block.statements {
+            let StatementKind::Assign(assign) = &statement.kind else {
+                continue;
+            };
+            let (dest, rvalue) = &**assign;
+            if dest != place {
+                continue;
+            }
+            if definition_seen {
+                return None;
+            }
+            definition_seen = true;
+            folded = mir_utils::rvalue_runtime_checks_value(rvalue);
+            if folded.is_none()
+                && let Rvalue::Use(Operand::Constant(constant), ..) = rvalue
+                && let rustc_middle::mir::Const::Unevaluated(uneval, _) = constant.const_
+                && mir_utils::is_sized_type_property(state.tcx, uneval.def, "IS_ZST")
+            {
+                folded = Some(0);
+            }
+        }
+        let terminator = block.terminator();
+        if let TerminatorKind::Call { func, destination, .. } = &terminator.kind
+            && destination == place
+        {
+            if definition_seen {
+                return None;
+            }
+            definition_seen = true;
+            folded = mir_utils::dep_callee_def_id(func)
+                .filter(|callee| crate::def_ids::other_api::is_ub_check(state.tcx, *callee))
+                .map(|_| 0);
+        }
+    }
+    folded
+}
 
 pub(crate) fn exec_switch_int<'z3, 'tcx>(
     state: &mut VmState<'z3, 'tcx>,

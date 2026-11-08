@@ -11,8 +11,8 @@
 use rustc_hir::{def::DefKind, def_id::DefId};
 use rustc_middle::{
     mir::{
-        BasicBlock, Local, Operand, ProjectionElem, Rvalue, StatementKind, SwitchTargets,
-        Terminator, TerminatorKind,
+        BasicBlock, Local, Operand, ProjectionElem, Rvalue, StatementKind, Terminator,
+        TerminatorKind,
     },
     ty::{EarlyBinder, Instance, InstanceKind, TyKind, TypingEnv},
 };
@@ -90,25 +90,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             explored += 1;
             let data = &body.basic_blocks[block];
             for statement in &data.statements {
-                crate::verify::vm::rules::exec_statement(&mut state, statement);
-                if let StatementKind::Assign(assign) = &statement.kind
-                    && assign.0.projection.is_empty()
-                    && let Rvalue::Use(Operand::Constant(constant), ..) = &assign.1
-                    && let Ok(value) = constant.const_.eval(
-                        self.tcx,
-                        rustc_middle::ty::TypingEnv::fully_monomorphized(),
-                        rustc_span::DUMMY_SP,
-                    )
-                    && let Some(scalar) = value.try_to_scalar_int()
-                    && let Ok(bits) = u64::try_from(scalar.to_bits(scalar.size()))
-                {
-                    if let Some(mut assigned) = state.local_value(assign.0.local).cloned() {
-                        // The normal assignment rule already established initialization,
-                        // provenance, and source facts. Refine only its scalar term.
-                        assigned.z3_term = Int::from_u64(self.z3_ctx, bits);
-                        state.set_local(assign.0.local, assigned);
-                    }
-                }
+                crate::verify::vm::rules::exec_contract_method_statement(&mut state, statement);
             }
             let terminator = data.terminator();
             match &terminator.kind {
@@ -764,101 +746,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         self.set_local(local, unknown);
     }
 
-    /// Resolve a `SwitchInt` discriminant to a constant `u64`, following a
-    /// single local-assignment chain (a `cfg!`-style runtime-check flag) or a
-    /// call to an `assert_unsafe_precondition!` gate (`check_language_ub`),
-    /// which is disabled under release semantics.
-    fn switch_discr_const(
-        &self,
-        body: &rustc_middle::mir::Body<'tcx>,
-        discr: &Operand<'tcx>,
-    ) -> Option<u64> {
-        if let Some(v) = mir_utils::operand_const_u64(discr) {
-            return Some(v);
-        }
-        // A `UbChecks`/`ContractChecks`/`OverflowChecks` discriminant folds to
-        // the no-check edge (`0` = false), mirroring release-mode const-folding.
-        #[cfg(rapx_ge_95)]
-        if let Operand::RuntimeChecks(_) = discr {
-            return Some(0);
-        }
-        // `T::IS_ZST` for a generic `T` is unevaluated; fold it to `false`
-        // (non-ZST).  The `IS_ZST` guard in pointer arithmetic (`add`/`sub`/
-        // `offset`) only skips redundant arithmetic: `offset` on a ZST pointee
-        // is a no-op (stride 0), so the non-ZST path is correct for ZST too and
-        // avoids the ZST branch returning `self` with a stale element offset.
-        if let Operand::Constant(constant) = discr
-            && let rustc_middle::mir::Const::Unevaluated(uneval, _) = constant.const_
-            && mir_utils::is_sized_type_property(self.tcx, uneval.def, "IS_ZST")
-        {
-            return Some(0);
-        }
-        let (Operand::Copy(p) | Operand::Move(p)) = discr else {
-            return None;
-        };
-        for bbd in body.basic_blocks.iter() {
-            for stmt in bbd.statements.iter() {
-                let rustc_middle::mir::StatementKind::Assign(assign) = &stmt.kind else {
-                    continue;
-                };
-                let (dest, rvalue) = &**assign;
-                if dest != p {
-                    continue;
-                }
-                if let Some(v) = mir_utils::rvalue_runtime_checks_value(rvalue) {
-                    return Some(v);
-                }
-                // `_4 = const <T as SizedTypeProperties>::IS_ZST` (generic `T`):
-                // fold to non-ZST, mirroring the direct-const case above.
-                if let rustc_middle::mir::Rvalue::Use(operand, ..) = rvalue
-                    && let Operand::Constant(constant) = operand
-                    && let rustc_middle::mir::Const::Unevaluated(uneval, _) = constant.const_
-                    && mir_utils::is_sized_type_property(self.tcx, uneval.def, "IS_ZST")
-                {
-                    return Some(0);
-                }
-            }
-        }
-        // `check_language_ub` is a function *call* (not an assignment), whose
-        // destination is the discriminant.  It gates the precondition check
-        // behind `debug_assertions`/`ub_checks` and is `false` under the release
-        // semantics the VM models.
-        for bbd in body.basic_blocks.iter() {
-            let terminator = bbd.terminator();
-            if let TerminatorKind::Call {
-                func, destination, ..
-            } = &terminator.kind
-                && destination.local == p.local
-                && destination.projection.is_empty()
-                && let Some(callee) = mir_utils::dep_callee_def_id(func)
-                && crate::def_ids::other_api::is_ub_check(self.tcx, callee)
-            {
-                return Some(0);
-            }
-        }
-        None
-    }
-
-    /// Select a successor for a discriminator folded by inline execution.
-    /// Some folds (notably generic `IS_ZST`) choose an equivalent path without
-    /// proving the discriminator's symbolic value, so do not assert the normal
-    /// `SwitchInt` guard for this successor.
-    fn forced_switch_target(
-        &self,
-        body: &rustc_middle::mir::Body<'tcx>,
-        discr: &Operand<'tcx>,
-        targets: &SwitchTargets,
-    ) -> Option<BasicBlock> {
-        let value = self.switch_discr_const(body, discr)?;
-        Some(
-            targets
-                .iter()
-                .find(|(candidate, _)| *candidate == value as u128)
-                .map(|(_, target)| target)
-                .unwrap_or_else(|| targets.otherwise()),
-        )
-    }
-
     /// Execute the callee's MIR body.
     fn inline_execute_body(&mut self, pre_uninit: &[AllocId]) -> Option<Vec<Self>> {
         match self.inline_execute_single() {
@@ -891,7 +778,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     }
                 }
                 TerminatorKind::SwitchInt { discr, targets } => {
-                    if let Some(target) = self.forced_switch_target(self.body(), discr, targets) {
+                    if let Some(target) = super::rules::terminator::forced_inline_switch_target(
+                        self,
+                        self.body(),
+                        discr,
+                        targets,
+                    ) {
                         queue.push(target);
                         continue;
                     }
@@ -1009,7 +901,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     }
                 }
                 TerminatorKind::SwitchInt { discr, targets } => {
-                    if let Some(target) = state.forced_switch_target(state.body(), discr, targets) {
+                    if let Some(target) = super::rules::terminator::forced_inline_switch_target(
+                        &state,
+                        state.body(),
+                        discr,
+                        targets,
+                    ) {
                         pending.push((state, target, visited));
                         continue;
                     }

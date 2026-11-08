@@ -32,3 +32,11 @@ pub(crate) fn exec_statement<'z3, 'tcx>(
 ) {
     dispatch::exec_statement(state, statement);
 }
+
+pub(crate) fn exec_contract_method_statement<'z3, 'tcx>(
+    state: &mut VmState<'z3, 'tcx>,
+    statement: &Statement<'tcx>,
+) {
+    dispatch::exec_statement(state, statement);
+    statement::refine_contract_method_const(state, statement);
+}

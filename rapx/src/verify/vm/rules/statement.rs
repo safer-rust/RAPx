@@ -2,8 +2,8 @@
 
 use rustc_abi::VariantIdx;
 use rustc_middle::{
-    mir::{AggregateKind, CopyNonOverlapping, Local, Operand, Place, ProjectionElem, Rvalue},
-    ty::TyKind,
+    mir::{AggregateKind, CopyNonOverlapping, Local, Operand, Place, ProjectionElem, Rvalue, Statement, StatementKind},
+    ty::{TyKind, TypingEnv},
 };
 #[cfg(rapx_const_ext)]
 use rustc_middle::ty::consts::ConstExt;
@@ -20,6 +20,39 @@ pub(crate) fn exec_assume<'z3, 'tcx>(state: &mut VmState<'z3, 'tcx>, operand: &O
         .constraints
         .assertions
         .push(value.z3_term._eq(&zero).not());
+}
+
+pub(crate) fn refine_contract_method_const<'z3, 'tcx>(
+    state: &mut VmState<'z3, 'tcx>,
+    statement: &Statement<'tcx>,
+) {
+    let StatementKind::Assign(assign) = &statement.kind else {
+        return;
+    };
+    let (place, rvalue) = &**assign;
+    if !place.projection.is_empty() {
+        return;
+    }
+    let Rvalue::Use(Operand::Constant(constant), ..) = rvalue else {
+        return;
+    };
+    let Ok(value) = constant.const_.eval(
+        state.tcx,
+        TypingEnv::fully_monomorphized(),
+        rustc_span::DUMMY_SP,
+    ) else {
+        return;
+    };
+    let Some(bits) = value
+        .try_to_scalar_int()
+        .and_then(|scalar| u64::try_from(scalar.to_bits(scalar.size())).ok())
+    else {
+        return;
+    };
+    if let Some(mut assigned) = state.local_value(place.local).cloned() {
+        assigned.z3_term = Int::from_u64(state.z3_ctx, bits);
+        state.set_local(place.local, assigned);
+    }
 }
 
 pub(crate) fn exec_copy_nonoverlapping<'z3, 'tcx>(
