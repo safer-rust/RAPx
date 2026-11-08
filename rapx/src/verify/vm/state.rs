@@ -261,10 +261,8 @@ pub(crate) struct AllocFacts<'z3, 'tcx> {
     pub owning: Option<Int<'z3>>,
     /// Whether this allocation was created in the analyzed function.
     pub locally_allocated: bool,
-
     /// Assumed live region for external allocations; `None` grants no lifetime.
     pub liveness: Option<Region<'tcx>>,
-
     /// Facts shared by all pointer elements of this allocation.
     pub for_each: ForEachFacts<'z3, 'tcx>,
     /// `(address, type)` spans licensed by `InBound` contracts.
@@ -286,13 +284,10 @@ pub(crate) struct ContentFacts<'tcx> {
     pub inner_uninit: bool,
     /// Type of a complete initialized write at offset zero; cleared by invalidating writes.
     pub written_pointee_ty: Option<Ty<'tcx>>,
-
     /// Trusted `ValidCStr` contract or invariant evidence.
     pub cstr_trusted: bool,
-
     /// Trusted `ValidString` contract evidence.
     pub utf8_trusted: bool,
-
     /// Destination element type licensed by `SplitTransmute`; `None` grants none.
     pub split_transmute_to: Option<Ty<'tcx>>,
 }
@@ -306,22 +301,16 @@ pub(crate) struct ContentFacts<'tcx> {
 pub(crate) struct Allocation<'z3, 'tcx> {
     /// Symbolic base address.
     pub base: Int<'z3>,
-
     /// Size in bytes, possibly symbolic.
     pub size: Int<'z3>,
-
     /// Alignment in bytes, possibly symbolic for a generic type.
     pub align: Int<'z3>,
-
     /// Element type of the stored object or slice.
     pub element_ty: ElementTy<'tcx>,
-
     /// Object, slice, or external allocation shape.
     pub kind: AllocKind<'z3>,
-
     /// Allocation lifecycle and ownership facts.
     pub facts: AllocFacts<'z3, 'tcx>,
-
     /// Source allocation of a view; followed to find its aliasing root.
     pub parent: Option<AllocId>,
 }
@@ -515,19 +504,15 @@ pub(crate) struct MemoryUnit<'z3, 'tcx> {
 pub(crate) struct MemoryContent<'z3, 'tcx> {
     /// Symbolic byte array; absent until the first byte write.
     pub(crate) byte_array: Option<Array<'z3>>,
-
     /// Concrete written byte offsets; symbolic writes update only `byte_array`.
     pub(crate) byte_written: FxHashSet<usize>,
-
     /// Typed values keyed by view type and field path; `[]` is the whole value.
     pub(crate) values: FxHashMap<(Ty<'tcx>, Vec<usize>), VmValue<'z3, 'tcx>>,
     /// `(address, type)` facts established by `Typed` contracts.
     pub(crate) typed_facts: FxHashSet<(Int<'z3>, Ty<'tcx>)>,
-
     pub(crate) indexed_elements: Vec<(Int<'z3>, VmValue<'z3, 'tcx>)>,
     pub(crate) indexed_elements_modified: bool,
     pub(crate) copied_prefix: Option<(Ty<'tcx>, Int<'z3>)>,
-
     pub(crate) facts: ContentFacts<'tcx>,
 }
 
@@ -548,7 +533,7 @@ impl MemoryContent<'_, '_> {
 pub(crate) struct Constraints<'z3, 'tcx> {
     /// Path conditions, call preconditions, and layout facts asserted to Z3.
     pub(crate) assertions: Vec<Bool<'z3>>,
-
+    /// Path-scoped term provenance caches used to keep expressions compact.
     pub(crate) term_caches: TermCaches<'z3, 'tcx>,
 }
 
@@ -563,26 +548,19 @@ pub(crate) struct Constraints<'z3, 'tcx> {
 pub(crate) struct TermCaches<'z3, 'tcx> {
     /// Shared symbolic `sizeof_T` term for each generic type.
     pub(crate) sizes: FxHashMap<Ty<'tcx>, Int<'z3>>,
-
     /// Positive size terms already proved on this path. Assertions only accumulate.
     pub(crate) non_zst: FxHashSet<Int<'z3>>,
-
     /// Shared symbolic `align_T` term for each generic type.
     pub(crate) aligns: FxHashMap<Ty<'tcx>, Int<'z3>>,
-
     /// Bitwise `Not` terms used to recognize alignment masks.
     pub(crate) not_mask_terms: FxHashSet<Int<'z3>>,
-
     /// Exact-division quotient mapped to its dividend for later bound proofs.
     pub(crate) exact_div_roots: FxHashMap<Int<'z3>, Int<'z3>>,
-
     /// Non-exact quotient mapped to its dividend and divisor.
     pub(crate) div_roots: FxHashMap<Int<'z3>, (Int<'z3>, Int<'z3>)>,
-
     /// Iterator offset and optional length, keyed by backing buffer and pointer.
     pub(crate) iter_ptr_offset:
         FxHashMap<(AllocId, Int<'z3>), (AllocId, Int<'z3>, Option<Int<'z3>>)>,
-
     /// Shared byte-array sentinel outside the `u8` range.
     pub(crate) uninit_byte: Option<Int<'z3>>,
 }
@@ -596,7 +574,6 @@ pub(crate) struct FrameState<'tcx> {
     pub(crate) current_def_id: DefId,
     /// Optimized MIR with this frame's selected generic arguments substituted, if available.
     pub(crate) instantiated_body: Option<&'tcx Body<'tcx>>,
-
     /// Stack allocation backing each MIR local and its field values.
     pub(crate) local_alloc: FxHashMap<Local, AllocId>,
     /// Enum variant and payload fields assembled before `SetDiscriminant`.
