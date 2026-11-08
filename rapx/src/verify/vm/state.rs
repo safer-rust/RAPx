@@ -650,11 +650,6 @@ impl SafeDropEventLog {
 /// borrowed so a single context can be reused across property checks.
 #[derive(Clone)]
 pub(crate) struct VmState<'z3, 'tcx> {
-    /// Shared Z3 context.
-    pub(crate) z3_ctx: &'z3 Context,
-
-    /// Compiler type context.
-    pub(crate) tcx: TyCtxt<'tcx>,
     /// Function being verified, retained while inlined callee frames execute.
     target_def_id: DefId,
     /// Target MIR instantiated with a selected trait-bound implementor when an
@@ -662,14 +657,20 @@ pub(crate) struct VmState<'z3, 'tcx> {
     /// `None` uses the original optimized MIR, even for generic functions.
     instantiated_target_body: Option<&'tcx Body<'tcx>>,
 
+    /// Shared Z3 context.
+    pub(crate) z3_ctx: &'z3 Context,
+    /// Compiler type context.
+    pub(crate) tcx: TyCtxt<'tcx>,
+
+    /// Currently executing MIR frame and its local allocation bindings.
     pub(crate) current_frame: FrameState<'tcx>,
     /// Caller frames saved by path-replay inlining.
-    pub(crate) caller_frames: Vec<SavedCallerFrame<'z3, 'tcx>>,
+    pub(super) caller_frames: Vec<SavedCallerFrame<'z3, 'tcx>>,
 
     /// Allocation units indexed by `AllocId`.
-    pub(crate) units: Vec<MemoryUnit<'z3, 'tcx>>,
+    pub(super) units: Vec<MemoryUnit<'z3, 'tcx>>,
     /// Stable allocation for each thread-local static across MIR locals and frames.
-    pub(crate) thread_local_allocs: FxHashMap<DefId, AllocId>,
+    pub(super) thread_local_allocs: FxHashMap<DefId, AllocId>,
 
     /// Path conditions and term caches.
     pub(crate) constraints: Constraints<'z3, 'tcx>,
@@ -679,10 +680,10 @@ pub(crate) struct VmState<'z3, 'tcx> {
 
     /// Stable `&self` results reused by contracts only when the method, caller,
     /// receiver allocation and offset, fields, and slice length still match.
-    pub(crate) method_result_cache: Vec<CachedMethodResult<'z3, 'tcx>>,
+    pub(super) method_result_cache: Vec<CachedMethodResult<'z3, 'tcx>>,
 
     /// Allocation roots licensed by declared `Alias` contract sources.
-    pub(crate) alias_hazard_allocs: FxHashSet<AllocId>,
+    pub(super) alias_hazard_allocs: FxHashSet<AllocId>,
     /// Slice and index terms with their originating MIR locals.
     pub(crate) index_access_facts: Vec<(Int<'z3>, Int<'z3>, Local, Local)>,
 
@@ -814,10 +815,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             .assertions
             .push(uninit.ge(&Int::from_u64(z3_ctx, 256)));
         Self {
-            z3_ctx,
-            tcx,
             target_def_id,
             instantiated_target_body,
+            z3_ctx,
+            tcx,
             current_frame: FrameState {
                 current_def_id: target_def_id,
                 instantiated_body: instantiated_target_body,
