@@ -1,5 +1,7 @@
 //! Call effect builders for intrinsics, FFI APIs, and other calls.
 
+use std::sync::OnceLock;
+
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::Operand,
@@ -126,14 +128,30 @@ fn model_builder(model: &json::ApiModel) -> Option<EffectBuilder> {
         .map(|name| effect_builder(name).unwrap_or_else(|| panic!("unknown call effect builder: {name}")))
 }
 
+fn validate_model_effects() {
+    static VALIDATED: OnceLock<()> = OnceLock::new();
+    VALIDATED.get_or_init(|| {
+        for model in json::intrinsic_models()
+            .values()
+            .chain(json::ffi_models().values())
+        {
+            if let Some(name) = model.effect.as_deref() {
+                assert!(effect_builder(name).is_some(), "unknown call effect builder: {name}");
+            }
+        }
+    });
+}
+
 fn lookup_builder(tcx: TyCtxt<'_>, callee: Option<DefId>) -> Option<EffectBuilder> {
     let id = callee?;
     if let Some(intrinsic) = tcx.intrinsic(id) {
+        validate_model_effects();
         return json::intrinsic_models()
             .get(intrinsic.name.as_str())
             .and_then(model_builder);
     }
     if tcx.is_foreign_item(id) {
+        validate_model_effects();
         if let Some(builder) = json::ffi_models()
             .get(&public_def_path(tcx, id))
             .and_then(model_builder)
@@ -444,12 +462,11 @@ fn eff_wrapping_sub(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 
 fn eff_with_overflow(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     let callee = mir_utils::dep_callee_def_id(ctx.func);
-    let op = if intrinsic_api::is_add_with_overflow(callee) {
-        OverflowOp::Add
-    } else if intrinsic_api::is_sub_with_overflow(callee) {
-        OverflowOp::Sub
-    } else {
-        OverflowOp::Mul
+    let intrinsic = intrinsic_api::name(callee);
+    let op = match intrinsic.as_ref().map(|name| name.as_str()) {
+        Some("add_with_overflow") => OverflowOp::Add,
+        Some("sub_with_overflow") => OverflowOp::Sub,
+        _ => OverflowOp::Mul,
     };
     vec![CallEffect::ReturnWithOverflow {
         lhs_arg: 0,
@@ -506,10 +523,10 @@ fn layout_constant_effect<'tcx>(
 ) -> Option<CallEffect> {
     let ty = layout_call_ty(func)?;
     let callee = mir_utils::dep_callee_def_id(func)?;
-    let is_align =
-        other_api::mem_align_of() == Some(callee) || intrinsic_api::is_align_of(Some(callee));
-    let is_size =
-        other_api::mem_size_of() == Some(callee) || intrinsic_api::is_size_of(Some(callee));
+    let intrinsic = intrinsic_api::name(Some(callee));
+    let intrinsic = intrinsic.as_ref().map(|name| name.as_str());
+    let is_align = other_api::mem_align_of() == Some(callee) || intrinsic == Some("align_of");
+    let is_size = other_api::mem_size_of() == Some(callee) || intrinsic == Some("size_of");
     if !is_size && !is_align {
         return None;
     }

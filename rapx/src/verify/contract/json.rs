@@ -88,6 +88,7 @@ struct StdTraitMethodContracts {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ApiModel {
     #[serde(default)]
     pub effect: Option<String>,

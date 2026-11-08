@@ -18,6 +18,10 @@ use crate::def_ids::{intrinsic_api, nomir_ffi, other_api, type_ids};
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::{Ty, TyCtxt, TyKind};
 
+fn intrinsic_named(callee: Option<DefId>, names: &[&str]) -> bool {
+    intrinsic_api::name(callee).is_some_and(|name| names.contains(&name.as_str()))
+}
+
 pub(crate) fn is_std_box_value_constructor(tcx: TyCtxt<'_>, callee: DefId) -> bool {
     if !matches!(tcx.item_name(callee).as_str(), "new" | "new_in") {
         return false;
@@ -204,12 +208,12 @@ pub fn is_pointer_sub(callee: Option<DefId>) -> bool {
     is_element_ptr_sub(callee) || is_byte_ptr_sub(callee)
 }
 
-pub fn is_intrinsic_copy(callee: Option<DefId>) -> bool {
-    intrinsic_api::is_copy(callee) || intrinsic_api::is_copy_nonoverlapping(callee)
+fn is_intrinsic_copy(callee: Option<DefId>) -> bool {
+    intrinsic_named(callee, &["copy", "copy_nonoverlapping"])
 }
 
 pub fn is_intrinsic_ptr_offset_from(callee: Option<DefId>) -> bool {
-    intrinsic_api::is_ptr_offset_from(callee) || intrinsic_api::is_ptr_offset_from_unsigned(callee)
+    intrinsic_named(callee, &["ptr_offset_from", "ptr_offset_from_unsigned"])
 }
 
 // ── Layout constants ──────────────────────────────────────────────
@@ -221,8 +225,8 @@ pub fn is_layout_constant(callee: Option<DefId>) -> bool {
     is_intrinsic_layout_constant(callee) || is_mem_layout_constant(callee)
 }
 
-pub fn is_intrinsic_layout_constant(callee: Option<DefId>) -> bool {
-    intrinsic_api::is_size_of(callee) || intrinsic_api::is_align_of(callee)
+fn is_intrinsic_layout_constant(callee: Option<DefId>) -> bool {
+    intrinsic_named(callee, &["size_of", "align_of"])
 }
 
 pub fn is_mem_layout_constant(callee: Option<DefId>) -> bool {
