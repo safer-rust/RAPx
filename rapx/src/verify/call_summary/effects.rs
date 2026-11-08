@@ -1,12 +1,13 @@
 //! Call effect builders for intrinsics, FFI APIs, and other calls.
 
-use std::sync::OnceLock;
+use std::{collections::HashMap, sync::OnceLock};
 
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::Operand,
     ty::{Ty, TyCtxt, TyKind},
 };
+use serde::Deserialize;
 
 use super::{
     BoundedArithmeticOp, CallEffect, CallEffectSummary, OverflowOp, SimdArithOp, SimdCmpOp,
@@ -22,7 +23,7 @@ use crate::{
         mir_utils::{self, type_layout},
         name::public_def_path,
     },
-    verify::{api_classify, contract::json},
+    verify::api_classify,
 };
 
 // ── Context for effect builders ────────────────────────────────────────
@@ -62,6 +63,26 @@ static REGISTRY: &[Entry] = &[
     ED!(api_classify::is_vec_push_or_reserve, eff_write_mem),
     ED!(api_classify::is_align_offset, eff_align_offset),
 ];
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EffectModel {
+    effect: String,
+}
+
+fn load_effect_models(source: &'static str) -> HashMap<String, EffectModel> {
+    serde_json::from_str(source).expect("failed to parse call effect models")
+}
+
+fn intrinsic_effects() -> &'static HashMap<String, EffectModel> {
+    static MODELS: OnceLock<HashMap<String, EffectModel>> = OnceLock::new();
+    MODELS.get_or_init(|| load_effect_models(include_str!("assets/intrinsic-effects.json")))
+}
+
+fn ffi_effects() -> &'static HashMap<String, EffectModel> {
+    static MODELS: OnceLock<HashMap<String, EffectModel>> = OnceLock::new();
+    MODELS.get_or_init(|| load_effect_models(include_str!("assets/ffi-effects.json")))
+}
 
 fn effect_builder(name: &str) -> Option<EffectBuilder> {
     match name {
@@ -121,23 +142,19 @@ fn effect_builder(name: &str) -> Option<EffectBuilder> {
     }
 }
 
-fn model_builder(model: &json::ApiModel) -> Option<EffectBuilder> {
-    model
-        .effect
-        .as_deref()
-        .map(|name| effect_builder(name).unwrap_or_else(|| panic!("unknown call effect builder: {name}")))
+fn model_builder(model: &EffectModel) -> EffectBuilder {
+    let name = model.effect.as_str();
+    effect_builder(name).unwrap_or_else(|| panic!("unknown call effect builder: {name}"))
 }
 
 fn validate_model_effects() {
     static VALIDATED: OnceLock<()> = OnceLock::new();
     VALIDATED.get_or_init(|| {
-        for model in json::intrinsic_models()
+        for model in intrinsic_effects()
             .values()
-            .chain(json::ffi_models().values())
+            .chain(ffi_effects().values())
         {
-            if let Some(name) = model.effect.as_deref() {
-                assert!(effect_builder(name).is_some(), "unknown call effect builder: {name}");
-            }
+            model_builder(model);
         }
     });
 }
@@ -146,15 +163,15 @@ fn lookup_builder(tcx: TyCtxt<'_>, callee: Option<DefId>) -> Option<EffectBuilde
     let id = callee?;
     if let Some(intrinsic) = tcx.intrinsic(id) {
         validate_model_effects();
-        return json::intrinsic_models()
+        return intrinsic_effects()
             .get(intrinsic.name.as_str())
-            .and_then(model_builder);
+            .map(model_builder);
     }
     if tcx.is_foreign_item(id) {
         validate_model_effects();
-        if let Some(builder) = json::ffi_models()
+        if let Some(builder) = ffi_effects()
             .get(&public_def_path(tcx, id))
-            .and_then(model_builder)
+            .map(model_builder)
         {
             return Some(builder);
         }

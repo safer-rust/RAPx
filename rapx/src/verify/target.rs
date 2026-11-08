@@ -1842,12 +1842,7 @@ pub(crate) fn get_trait_method_ensures<'tcx>(
 
 pub(crate) fn get_call_ensures<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> FnContracts<'tcx> {
     if !tcx.is_foreign_item(def_id) {
-        let ensures = get_trait_method_ensures(tcx, def_id);
-        return if ensures.is_empty() {
-            super::contract::json::query_api_ensures(tcx, def_id)
-        } else {
-            ensures
-        };
+        return get_trait_method_ensures(tcx, def_id);
     }
     let mut ensures = collect_properties_from_named_attrs(
         tcx,
@@ -1856,9 +1851,6 @@ pub(crate) fn get_call_ensures<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> FnCont
         "foreign function ensures",
         "ensures",
     );
-    if ensures.is_empty() {
-        ensures = super::contract::json::query_api_ensures(tcx, def_id);
-    }
     for property in &mut ensures {
         property.set_contract_kind(crate::verify::contract::ContractKind::Postcond);
     }

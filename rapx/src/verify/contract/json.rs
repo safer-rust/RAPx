@@ -1,7 +1,6 @@
 //! The bundled JSON contract front-end: loading, lookup, and conversion.
 //!
-//! Embedded JSON assets provide std `requires`, type invariants, trait contracts,
-//! and intrinsic/FFI models with effects and optional `ensures`.
+//! Embedded JSON assets provide std `requires`, type invariants, and trait contracts.
 //! Lookup uses exact, path-stripped, and wildcard
 //! fallback so trait-method impls and re-exported paths resolve correctly.
 //! Entries are then converted into [`Property`] values via [`entry_to_property`].
@@ -85,56 +84,6 @@ struct StdTraitMethodContracts {
     requires: Vec<JsonProperty>,
     #[serde(default)]
     ensures: Vec<JsonProperty>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ApiModel {
-    #[serde(default)]
-    pub effect: Option<String>,
-    #[serde(default)]
-    ensures: Vec<JsonProperty>,
-}
-
-fn load_api_models(source: &'static str) -> HashMap<String, ApiModel> {
-    serde_json::from_str(source).expect("failed to parse API models")
-}
-
-pub(crate) fn intrinsic_models() -> &'static HashMap<String, ApiModel> {
-    static MODELS: OnceLock<HashMap<String, ApiModel>> = OnceLock::new();
-    MODELS.get_or_init(|| load_api_models(include_str!("assets/intrinsic-models.json")))
-}
-
-pub(crate) fn ffi_models() -> &'static HashMap<String, ApiModel> {
-    static MODELS: OnceLock<HashMap<String, ApiModel>> = OnceLock::new();
-    MODELS.get_or_init(|| load_api_models(include_str!("assets/ffi-models.json")))
-}
-
-pub(crate) fn query_api_ensures<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<Property<'tcx>> {
-    let model = if let Some(intrinsic) = tcx.intrinsic(def_id) {
-        intrinsic_models().get(intrinsic.name.as_str())
-    } else if tcx.is_foreign_item(def_id) {
-        ffi_models().get(&public_def_path(tcx, def_id))
-    } else {
-        None
-    };
-    let Some(model) = model else {
-        return Vec::new();
-    };
-    if model.ensures.is_empty() {
-        return Vec::new();
-    }
-    let (param_names, _) = crate::helpers::name::parse_signature(tcx, def_id);
-    let has_names = !param_names.is_empty() && !param_names[0].chars().all(|c| c.is_ascii_digit());
-    model
-        .ensures
-        .iter()
-        .flat_map(|entry| entry_to_property(tcx, def_id, entry, &param_names, has_names))
-        .map(|mut property| {
-            property.set_contract_kind(super::types::ContractKind::Postcond);
-            property
-        })
-        .collect()
 }
 
 /// Looks up backup contracts for a standard-library function by its normalized path.
