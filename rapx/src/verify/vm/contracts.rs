@@ -74,9 +74,14 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         args: &[Option<Local>],
         destination: Local,
     ) {
-        let ensures = crate::verify::target::get_trait_method_ensures(self.tcx, callee);
+        let ensures = crate::verify::target::get_call_ensures(self.tcx, callee);
         if ensures.is_empty() {
             return;
+        }
+        if self.tcx.is_foreign_item(callee) && self.local_value(destination).is_none() {
+            let ty = self.body().local_decls[destination].ty;
+            let term = self.fresh_int("ffi_return");
+            self.set_local(destination, VmValue::new(term, ty));
         }
         let bound_index_requires: Vec<(Local, Local)> = if ensures
             .iter()

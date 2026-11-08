@@ -587,7 +587,7 @@ pub(crate) struct SavedCallerFrame<'z3, 'tcx> {
     pub(crate) frame: FrameState<'tcx>,
     /// Call snapshot used to cache a stable return value.
     pub(crate) method_call: Option<MethodSnapshot<'z3, 'tcx>>,
-    /// Caller local corresponding to each callee parameter for postconditions.
+    /// Caller locals used to bind trait-method `ensures` after inlining.
     pub(crate) postcondition_args: Vec<Option<Local>>,
     /// Caller frame's argument referents restored on return.
     pub(crate) arg_referents: Vec<Option<Local>>,

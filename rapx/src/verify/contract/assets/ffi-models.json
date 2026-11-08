@@ -1,0 +1,5 @@
+{
+  "core::ffi::c_str::strlen::runtime::strlen": {
+    "effect": "eff_opaque_return"
+  }
+}

@@ -1,0 +1,530 @@
+{
+  "ceil": {
+    "effect": "eff_opaque_return"
+  },
+  "copysignf32": {
+    "effect": "eff_opaque_return"
+  },
+  "cos": {
+    "effect": "eff_opaque_return"
+  },
+  "exp": {
+    "effect": "eff_opaque_return"
+  },
+  "exp2": {
+    "effect": "eff_opaque_return"
+  },
+  "fabs": {
+    "effect": "eff_opaque_return"
+  },
+  "fadd_algebraic": {
+    "effect": "eff_opaque_return"
+  },
+  "fadd_fast": {
+    "effect": "eff_opaque_return"
+  },
+  "fdiv_algebraic": {
+    "effect": "eff_opaque_return"
+  },
+  "fdiv_fast": {
+    "effect": "eff_opaque_return"
+  },
+  "floor": {
+    "effect": "eff_opaque_return"
+  },
+  "fma": {
+    "effect": "eff_opaque_return"
+  },
+  "fmul_algebraic": {
+    "effect": "eff_opaque_return"
+  },
+  "fmul_fast": {
+    "effect": "eff_opaque_return"
+  },
+  "fmuladd": {
+    "effect": "eff_opaque_return"
+  },
+  "frem_algebraic": {
+    "effect": "eff_opaque_return"
+  },
+  "frem_fast": {
+    "effect": "eff_opaque_return"
+  },
+  "fsub_algebraic": {
+    "effect": "eff_opaque_return"
+  },
+  "fsub_fast": {
+    "effect": "eff_opaque_return"
+  },
+  "log": {
+    "effect": "eff_opaque_return"
+  },
+  "log10": {
+    "effect": "eff_opaque_return"
+  },
+  "log2": {
+    "effect": "eff_opaque_return"
+  },
+  "maximum_number_nsz_f32": {
+    "effect": "eff_opaque_return"
+  },
+  "maximumf32": {
+    "effect": "eff_opaque_return"
+  },
+  "minimum_number_nsz_f32": {
+    "effect": "eff_opaque_return"
+  },
+  "minimumf32": {
+    "effect": "eff_opaque_return"
+  },
+  "powf": {
+    "effect": "eff_opaque_return"
+  },
+  "powi": {
+    "effect": "eff_opaque_return"
+  },
+  "round": {
+    "effect": "eff_opaque_return"
+  },
+  "round_ties_even": {
+    "effect": "eff_opaque_return"
+  },
+  "sin": {
+    "effect": "eff_opaque_return"
+  },
+  "sqrt": {
+    "effect": "eff_opaque_return"
+  },
+  "trunc": {
+    "effect": "eff_opaque_return"
+  },
+  "size_of": {
+    "effect": "eff_layout_const"
+  },
+  "align_of": {
+    "effect": "eff_layout_const"
+  },
+  "select_unpredictable": {
+    "effect": "eff_select_unpredictable"
+  },
+  "unlikely": {
+    "effect": "eff_alias_arg0"
+  },
+  "likely": {
+    "effect": "eff_alias_arg0"
+  },
+  "cold_path": {
+    "effect": "eff_no_effect"
+  },
+  "assert_inhabited": {
+    "effect": "eff_no_effect"
+  },
+  "ptr_offset_from": {
+    "effect": "eff_ptr_offset_from"
+  },
+  "ptr_offset_from_unsigned": {
+    "effect": "eff_ptr_offset_from"
+  },
+  "arith_offset": {
+    "effect": "eff_arith_offset"
+  },
+  "black_box": {
+    "effect": "eff_return_arg_value"
+  },
+  "add_with_overflow": {
+    "effect": "eff_with_overflow"
+  },
+  "sub_with_overflow": {
+    "effect": "eff_with_overflow"
+  },
+  "mul_with_overflow": {
+    "effect": "eff_with_overflow"
+  },
+  "integer_min": {
+    "effect": "eff_cmp_min"
+  },
+  "integer_max": {
+    "effect": "eff_return_max"
+  },
+  "saturating_add": {
+    "effect": "eff_saturating_add"
+  },
+  "saturating_sub": {
+    "effect": "eff_saturating_sub"
+  },
+  "unchecked_add": {
+    "effect": "eff_return_add"
+  },
+  "unchecked_mul": {
+    "effect": "eff_return_mul"
+  },
+  "wrapping_sub": {
+    "effect": "eff_wrapping_sub"
+  },
+  "copy": {
+    "effect": "eff_copy_memory"
+  },
+  "copy_nonoverlapping": {
+    "effect": "eff_copy_memory"
+  },
+  "typed_swap_nonoverlapping": {
+    "effect": "eff_swap_memory"
+  },
+  "write_bytes": {
+    "effect": "eff_fill_bytes"
+  },
+  "volatile_load": {
+    "effect": "eff_load_memory"
+  },
+  "volatile_store": {
+    "effect": "eff_store_memory"
+  },
+  "unaligned_volatile_load": {
+    "effect": "eff_load_memory"
+  },
+  "unaligned_volatile_store": {
+    "effect": "eff_store_memory"
+  },
+  "nontemporal_store": {
+    "effect": "eff_store_memory"
+  },
+  "volatile_copy_memory": {
+    "effect": "eff_volatile_copy_memory"
+  },
+  "volatile_copy_nonoverlapping_memory": {
+    "effect": "eff_volatile_copy_memory"
+  },
+  "volatile_set_memory": {
+    "effect": "eff_fill_bytes"
+  },
+  "compare_bytes": {
+    "effect": "eff_compare_bytes"
+  },
+  "ptr_mask": {
+    "effect": "eff_ptr_mask"
+  },
+  "atomic_load": {
+    "effect": "eff_load_memory"
+  },
+  "atomic_store": {
+    "effect": "eff_store_memory"
+  },
+  "atomic_xchg": {
+    "effect": "eff_atomic_rmw"
+  },
+  "atomic_xadd": {
+    "effect": "eff_atomic_rmw"
+  },
+  "atomic_xsub": {
+    "effect": "eff_atomic_rmw"
+  },
+  "atomic_and": {
+    "effect": "eff_atomic_rmw"
+  },
+  "atomic_or": {
+    "effect": "eff_atomic_rmw"
+  },
+  "atomic_xor": {
+    "effect": "eff_atomic_rmw"
+  },
+  "atomic_max": {
+    "effect": "eff_atomic_rmw"
+  },
+  "atomic_min": {
+    "effect": "eff_atomic_rmw"
+  },
+  "atomic_cxchg": {
+    "effect": "eff_atomic_rmw"
+  },
+  "atomic_cxchgweak": {
+    "effect": "eff_atomic_rmw"
+  },
+  "atomic_nand": {
+    "effect": "eff_atomic_rmw"
+  },
+  "atomic_umin": {
+    "effect": "eff_atomic_rmw"
+  },
+  "atomic_umax": {
+    "effect": "eff_atomic_rmw"
+  },
+  "atomic_fence": {
+    "effect": "eff_no_effect"
+  },
+  "atomic_singlethreadfence": {
+    "effect": "eff_no_effect"
+  },
+  "simd_lt": {
+    "effect": "eff_simd_lt"
+  },
+  "simd_eq": {
+    "effect": "eff_simd_eq"
+  },
+  "simd_gt": {
+    "effect": "eff_simd_gt"
+  },
+  "simd_ne": {
+    "effect": "eff_simd_ne"
+  },
+  "simd_le": {
+    "effect": "eff_simd_le"
+  },
+  "simd_ge": {
+    "effect": "eff_simd_ge"
+  },
+  "simd_add": {
+    "effect": "eff_simd_add"
+  },
+  "simd_sub": {
+    "effect": "eff_simd_sub"
+  },
+  "simd_mul": {
+    "effect": "eff_simd_mul"
+  },
+  "simd_saturating_add": {
+    "effect": "eff_simd_saturating_add"
+  },
+  "simd_saturating_sub": {
+    "effect": "eff_simd_saturating_sub"
+  },
+  "simd_splat": {
+    "effect": "eff_simd_splat"
+  },
+  "simd_extract": {
+    "effect": "eff_simd_extract"
+  },
+  "simd_extract_dyn": {
+    "effect": "eff_simd_extract"
+  },
+  "simd_insert": {
+    "effect": "eff_simd_insert"
+  },
+  "simd_insert_dyn": {
+    "effect": "eff_simd_insert"
+  },
+  "simd_and": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_or": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_xor": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_neg": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_as": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_bswap": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_bitreverse": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_ctlz": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_ctpop": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_cttz": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_fabs": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_minimum_number_nsz": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_maximum_number_nsz": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_ceil": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_floor": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_round": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_round_ties_even": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_trunc": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_fsqrt": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_fma": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_relaxed_fma": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_fsin": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_fcos": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_fexp": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_fexp2": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_flog10": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_flog2": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_flog": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_reduce_add_ordered": {
+    "effect": "eff_opaque_return"
+  },
+  "simd_reduce_add_unordered": {
+    "effect": "eff_opaque_return"
+  },
+  "simd_reduce_mul_ordered": {
+    "effect": "eff_opaque_return"
+  },
+  "simd_reduce_mul_unordered": {
+    "effect": "eff_opaque_return"
+  },
+  "simd_reduce_max": {
+    "effect": "eff_opaque_return"
+  },
+  "simd_reduce_min": {
+    "effect": "eff_opaque_return"
+  },
+  "simd_reduce_and": {
+    "effect": "eff_opaque_return"
+  },
+  "simd_reduce_or": {
+    "effect": "eff_opaque_return"
+  },
+  "simd_reduce_xor": {
+    "effect": "eff_opaque_return"
+  },
+  "simd_reduce_all": {
+    "effect": "eff_opaque_return"
+  },
+  "simd_reduce_any": {
+    "effect": "eff_opaque_return"
+  },
+  "simd_arith_offset": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_carryless_mul": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_cast": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_cast_ptr": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_div": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_expose_provenance": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_funnel_shl": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_funnel_shr": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_gather": {
+    "effect": "eff_simd_gather"
+  },
+  "simd_masked_load": {
+    "effect": "eff_simd_masked_load"
+  },
+  "simd_masked_store": {
+    "effect": "eff_simd_masked_store"
+  },
+  "simd_rem": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_scatter": {
+    "effect": "eff_simd_scatter"
+  },
+  "simd_select": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_select_bitmask": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_shl": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_shr": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_shuffle": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_with_exposed_provenance": {
+    "effect": "eff_simd_opaque"
+  },
+  "simd_bitmask": {
+    "effect": "eff_simd_bitmask"
+  },
+  "bswap": {
+    "effect": "eff_return_nonzero_iff"
+  },
+  "ctpop": {
+    "effect": "eff_return_nonzero_iff"
+  },
+  "bitreverse": {
+    "effect": "eff_return_nonzero_iff"
+  },
+  "rotate_left": {
+    "effect": "eff_return_nonzero_iff"
+  },
+  "rotate_right": {
+    "effect": "eff_return_nonzero_iff"
+  },
+  "ctlz": {
+    "effect": "eff_leading_zeros"
+  },
+  "ctlz_nonzero": {
+    "effect": "eff_leading_zeros"
+  },
+  "cttz": {
+    "effect": "eff_trailing_zeros"
+  },
+  "cttz_nonzero": {
+    "effect": "eff_trailing_zeros"
+  },
+  "raw_eq": {
+    "effect": "eff_raw_eq"
+  },
+  "exact_div": {
+    "effect": "eff_exact_div"
+  },
+  "size_of_val": {
+    "effect": "eff_size_of_val"
+  },
+  "align_of_val": {
+    "effect": "eff_align_of_val"
+  },
+  "float_to_int_unchecked": {
+    "effect": "eff_opaque_return"
+  },
+  "vtable_size": {
+    "effect": "eff_opaque_return"
+  },
+  "vtable_align": {
+    "effect": "eff_opaque_return"
+  }
+}

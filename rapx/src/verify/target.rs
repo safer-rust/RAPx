@@ -1840,6 +1840,31 @@ pub(crate) fn get_trait_method_ensures<'tcx>(
     ensures
 }
 
+pub(crate) fn get_call_ensures<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> FnContracts<'tcx> {
+    if !tcx.is_foreign_item(def_id) {
+        let ensures = get_trait_method_ensures(tcx, def_id);
+        return if ensures.is_empty() {
+            super::contract::json::query_api_ensures(tcx, def_id)
+        } else {
+            ensures
+        };
+    }
+    let mut ensures = collect_properties_from_named_attrs(
+        tcx,
+        crate::compat::get_all_attrs(tcx, def_id),
+        def_id,
+        "foreign function ensures",
+        "ensures",
+    );
+    if ensures.is_empty() {
+        ensures = super::contract::json::query_api_ensures(tcx, def_id);
+    }
+    for property in &mut ensures {
+        property.set_contract_kind(crate::verify::contract::ContractKind::Postcond);
+    }
+    ensures
+}
+
 pub(crate) fn has_slice_offset_ensures(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
     get_trait_method_ensures(tcx, def_id)
         .iter()

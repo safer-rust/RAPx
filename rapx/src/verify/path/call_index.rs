@@ -189,10 +189,11 @@ impl<'tcx> CallSiteIndex<'tcx> {
                     .opt_associated_item(base_callee)
                     .and_then(|item| item.trait_container(self.tcx))
                     .is_some();
-                let registry_handled = crate::verify::call_summary::effects::has_registry_entry(Some(
-                    base_callee,
-                )) || crate::verify::target::has_slice_offset_ensures(self.tcx, base_callee);
-                let resolve_to_impl = !cross_crate || !is_trait_method || !registry_handled;
+                let effect_modeled = crate::verify::call_summary::effects::has_registered_effect(
+                    self.tcx,
+                    Some(base_callee),
+                ) || crate::verify::target::has_slice_offset_ensures(self.tcx, base_callee);
+                let resolve_to_impl = !cross_crate || !is_trait_method || !effect_modeled;
                 if caller.as_local().is_none() && !(is_trait_method && resolve_to_impl) {
                     continue;
                 }
@@ -227,7 +228,7 @@ impl<'tcx> CallSiteIndex<'tcx> {
                     let is_virtual = mir_utils::resolve_callee_instance(self.tcx, caller, func)
                         .is_some_and(|instance| mir_utils::instance_def_id(self.tcx, instance).1);
                     if is_virtual {
-                        if !registry_handled {
+                        if !effect_modeled {
                             let candidates = mir_utils::trait_impl_candidates(self.tcx, base_callee);
                             if candidates.len() > crate::limit::trait_impl_limit() {
                                 self.trait_impl_limited = true;
@@ -304,7 +305,7 @@ impl<'tcx> CallSiteIndex<'tcx> {
                 if crate::def_ids::intrinsic_api::is_intrinsic(self.tcx, callee)
                     || !self.tcx.is_mir_available(callee)
                     || expanded.contains(&callee)
-                    || (crate::verify::call_summary::effects::has_registry_entry(Some(callee))
+                    || (crate::verify::call_summary::effects::has_registered_effect(self.tcx, Some(callee))
                         && !crate::verify::options::force_inline_constructor(self.tcx, callee))
                     || crate::verify::target::has_slice_offset_ensures(self.tcx, callee)
                     || crate::def_ids::other_api::is_ub_check(self.tcx, callee)
