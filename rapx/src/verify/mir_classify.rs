@@ -1,8 +1,10 @@
-//! MIR forms without a dedicated slicer or VM transfer rule.
+//! MIR forms that need no dedicated state transfer rule in RAPx's verifier.
+//! Other supported forms are handled directly in each dispatcher's match arms.
 
 use rustc_middle::mir::{StatementKind, TerminatorKind};
 
-pub(crate) fn ignored_statement(kind: &StatementKind<'_>) -> bool {
+/// Statements with no state or relevance effect for RAPx's verifier.
+pub(crate) fn is_noop_statement(kind: &StatementKind<'_>) -> bool {
     matches!(
         kind,
         StatementKind::FakeRead(..)
@@ -15,7 +17,8 @@ pub(crate) fn ignored_statement(kind: &StatementKind<'_>) -> bool {
     )
 }
 
-pub(crate) fn ignored_terminator(kind: &TerminatorKind<'_>) -> bool {
+/// Terminators whose branch or exit is handled by the path, without a state transfer here.
+pub(crate) fn is_control_only_terminator(kind: &TerminatorKind<'_>) -> bool {
     matches!(
         kind,
         TerminatorKind::Goto { .. }

@@ -7,7 +7,7 @@ use rustc_middle::mir::{
 
 use super::super::state::{VmState, VmValue};
 use super::{rvalue, statement, terminator};
-use crate::verify::mir_support;
+use crate::verify::mir_classify;
 
 fn mir_variant(rendered: &str) -> &str {
     let name = rendered.split(['(', '{', ' ']).next().unwrap_or("Unknown");
@@ -49,7 +49,7 @@ pub(super) fn exec_statement<'z3, 'tcx>(state: &mut VmState<'z3, 'tcx>, stmt: &S
             statement::exec_copy_nonoverlapping(state, copy);
             "CopyNonOverlapping"
         }
-        kind if mir_support::ignored_statement(kind) => "Ignored",
+        kind if mir_classify::is_noop_statement(kind) => "NoOp",
         _ => {
             let rendered = format!("{:?}", stmt.kind);
             state.record_unsupported(&format!(
@@ -109,7 +109,7 @@ pub(super) fn exec_terminator<'z3, 'tcx>(
             terminator::exec_drop(state, place);
             "Drop"
         }
-        kind if mir_support::ignored_terminator(kind) => "Ignored",
+        kind if mir_classify::is_control_only_terminator(kind) => "ControlOnly",
         _ => {
             let rendered = format!("{:?}", term.kind);
             state.record_unsupported(&format!(

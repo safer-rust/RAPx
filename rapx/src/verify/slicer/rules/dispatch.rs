@@ -8,7 +8,7 @@ use rustc_middle::mir::{
 
 use crate::analysis::dataflow::types::DataflowGraph;
 use crate::helpers::def_use::{RelevantPlaces, operand_uses};
-use crate::verify::mir_support;
+use crate::verify::mir_classify;
 
 use super::super::types::RelevantItem;
 use super::super::visitor::BackwardSlicer;
@@ -138,7 +138,7 @@ pub(super) fn apply_statement(ctx: &mut StatementContext<'_, '_>) {
             ctx.relevant.extend(operand_uses(&copy.count));
             "CopyNonOverlapping"
         }
-        kind if mir_support::ignored_statement(kind) => "Ignored",
+        kind if mir_classify::is_noop_statement(kind) => "NoOp",
         _ => {
             ctx.items.push(RelevantItem::Statement {
                 global_block: None,
@@ -206,9 +206,9 @@ pub(super) fn apply_terminator(ctx: &mut TerminatorContext<'_, '_>) {
             visit_non_call(ctx);
             "Drop"
         }
-        kind if mir_support::ignored_terminator(kind) => {
+        kind if mir_classify::is_control_only_terminator(kind) => {
             visit_non_call(ctx);
-            "Ignored"
+            "ControlOnly"
         }
         _ => {
             ctx.items.push(RelevantItem::Terminator {
