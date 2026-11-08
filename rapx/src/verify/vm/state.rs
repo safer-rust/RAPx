@@ -606,10 +606,15 @@ pub(crate) struct FrameState<'tcx> {
 /// Caller state parked during a path-replay call, including its method snapshot.
 #[derive(Clone)]
 pub(crate) struct SavedCallerFrame<'z3, 'tcx> {
+    /// Caller MIR frame restored when the inlined callee returns.
     pub(crate) frame: FrameState<'tcx>,
+    /// Call snapshot used to cache a stable return value.
     pub(crate) method_call: Option<MethodSnapshot<'z3, 'tcx>>,
+    /// Caller local corresponding to each callee parameter for postconditions.
     pub(crate) postcondition_args: Vec<Option<Local>>,
+    /// Caller frame's argument referents restored on return.
     pub(crate) arg_referents: Vec<Option<Local>>,
+    /// Caller frame's pending field writes restored on return.
     pub(crate) deferred_writes: Vec<(Local, Vec<usize>, VmValue<'z3, 'tcx>)>,
 }
 
@@ -656,37 +661,29 @@ pub(crate) struct VmState<'z3, 'tcx> {
     /// unresolved, unmodeled generic trait call needs a concrete method target.
     /// `None` uses the original optimized MIR, even for generic functions.
     instantiated_target_body: Option<&'tcx Body<'tcx>>,
-
     /// Shared Z3 context.
     pub(crate) z3_ctx: &'z3 Context,
     /// Compiler type context.
     pub(crate) tcx: TyCtxt<'tcx>,
-
     /// Currently executing MIR frame and its local allocation bindings.
     pub(crate) current_frame: FrameState<'tcx>,
     /// Caller frames saved by path-replay inlining.
     pub(super) caller_frames: Vec<SavedCallerFrame<'z3, 'tcx>>,
-
     /// Allocation units indexed by `AllocId`.
     pub(super) units: Vec<MemoryUnit<'z3, 'tcx>>,
     /// Stable allocation for each thread-local static across MIR locals and frames.
     pub(super) thread_local_allocs: FxHashMap<DefId, AllocId>,
-
     /// Path conditions and term caches.
     pub(crate) constraints: Constraints<'z3, 'tcx>,
-
     /// Scratch state for recursive inlining.
     pub(crate) inline: InlineCtx<'z3, 'tcx>,
-
     /// Stable `&self` results reused by contracts only when the method, caller,
     /// receiver allocation and offset, fields, and slice length still match.
     pub(super) method_result_cache: Vec<CachedMethodResult<'z3, 'tcx>>,
-
     /// Allocation roots licensed by declared `Alias` contract sources.
     pub(super) alias_hazard_allocs: FxHashSet<AllocId>,
     /// Slice and index terms with their originating MIR locals.
     pub(crate) index_access_facts: Vec<(Int<'z3>, Int<'z3>, Local, Local)>,
-
     /// Optional SafeDrop log of drops, use-after-free, and dangling pointers.
     pub(crate) safedrop_events: SafeDropEventLog,
     /// Path diagnostics and the MIR location used to attribute new records.
