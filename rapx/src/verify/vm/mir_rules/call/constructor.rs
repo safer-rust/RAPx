@@ -53,32 +53,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return;
         }
         if let TyKind::Adt(adt, substs) = ty.kind()
-            && api_classify::is_std_nonnull(adt.did())
-            && crate::def_ids::other_api::is_dangling_method(self.tcx, callee)
-        {
-            let field_ty = mir_utils::field_ty(
-                self.tcx,
-                adt.non_enum_variant().fields.iter().next().unwrap(),
-                substs,
-            );
-            let value = VmValue {
-                z3_term: self.fresh_int("dangling_ptr"),
-                ty,
-                provenance: None,
-                facts: ValueFacts {
-                    non_null: true,
-                    dangling: true,
-                    ..Default::default()
-                },
-                source: ValueSource::None,
-            };
-            let mut field = value.clone();
-            field.ty = field_ty;
-            self.set_field_value(destination, vec![0], field);
-            self.set_local(destination, value);
-            return;
-        }
-        if let TyKind::Adt(adt, substs) = ty.kind()
             && mir_utils::is_raw_ptr_wrapper(self.tcx, adt.did())
             && let [pointer] = args
             && matches!(pointer.ty.kind(), TyKind::RawPtr(..))

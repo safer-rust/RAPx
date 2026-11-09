@@ -290,24 +290,8 @@ pub(crate) fn eval_binary_op<'z3, 'tcx>(
         let zero = Int::from_u64(state.z3_ctx, 0);
         state.constraints.assertions.push(raw_term._eq(&zero).not());
     }
-    let term = if op == BinOp::Sub
-        && crate::def_ids::other_api::is_integer_wrapping_sub(
-            state.tcx,
-            state.current_frame.current_def_id,
-        )
-    {
-        if let Some((_, max, modulus, signed)) = state.integer_limits(lhs.ty) {
-            let wrapped = raw_term.modulo(&modulus);
-            if signed {
-                wrapped
-                    .gt(&max)
-                    .ite(&Int::sub(state.z3_ctx, &[&wrapped, &modulus]), &wrapped)
-            } else {
-                wrapped
-            }
-        } else {
-            raw_term
-        }
+    let term = if matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul) {
+        state.wrap_integer_term(lhs.ty, &raw_term)
     } else {
         raw_term
     };
@@ -440,6 +424,23 @@ pub(crate) fn eval_unary_op<'z3, 'tcx>(
     }
 }
 
+fn pointer_free_bits<'z3, 'tcx>(state: &VmState<'z3, 'tcx>, ty: Ty<'tcx>, depth: usize) -> bool {
+    if depth > 8 {
+        return false;
+    }
+    match ty.kind() {
+        TyKind::Int(_) | TyKind::Uint(_) | TyKind::Bool | TyKind::Char => true,
+        TyKind::Adt(adt, args) => adt.all_fields().all(|field| {
+            pointer_free_bits(state, mir_utils::field_ty(state.tcx, field, args), depth + 1)
+        }),
+        TyKind::Tuple(fields) => fields
+            .iter()
+            .all(|field| pointer_free_bits(state, field, depth + 1)),
+        TyKind::Array(element, _) => pointer_free_bits(state, *element, depth + 1),
+        _ => false,
+    }
+}
+
 pub(crate) fn eval_cast<'z3, 'tcx>(
     state: &mut VmState<'z3, 'tcx>,
     kind: CastKind,
@@ -462,7 +463,7 @@ pub(crate) fn eval_cast<'z3, 'tcx>(
     let numeric_transmute = matches!(kind, CastKind::Transmute)
         && mir_utils::is_std_crate_def_id(state.tcx, state.current_frame.current_def_id)
         && src_val.provenance.is_none()
-        && (matches!(src_ty.kind(), TyKind::Int(_) | TyKind::Uint(_))
+        && (pointer_free_bits(state, src_ty, 0)
             || matches!(src_val.source, ValueSource::KnownDiscriminant(_)))
         && (matches!(cast_ty.kind(), TyKind::RawPtr(..))
             || matches!(cast_ty.kind(), TyKind::Adt(adt, _) if api_classify::is_std_nonnull(adt.did())));

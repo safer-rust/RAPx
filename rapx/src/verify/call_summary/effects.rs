@@ -137,6 +137,7 @@ fn effect_builder(name: &str) -> Option<EffectBuilder> {
         "eff_trailing_zeros" => Some(eff_trailing_zeros),
         "eff_volatile_copy_memory" => Some(eff_volatile_copy_memory),
         "eff_with_overflow" => Some(eff_with_overflow),
+        "eff_wrapping_add" => Some(eff_wrapping_add),
         "eff_wrapping_sub" => Some(eff_wrapping_sub),
         _ => None,
     }
@@ -466,6 +467,14 @@ fn eff_saturating_sub(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
         lhs_arg: 0,
         rhs_arg: 1,
         op: BoundedArithmeticOp::SaturatingSub,
+    }]
+}
+
+fn eff_wrapping_add(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnBoundedArithmetic {
+        lhs_arg: 0,
+        rhs_arg: 1,
+        op: BoundedArithmeticOp::WrappingAdd,
     }]
 }
 

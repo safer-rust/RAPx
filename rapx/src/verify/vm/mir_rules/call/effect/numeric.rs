@@ -58,7 +58,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         return;
                     };
                     let raw = match op {
-                        BoundedArithmeticOp::SaturatingAdd => {
+                        BoundedArithmeticOp::SaturatingAdd | BoundedArithmeticOp::WrappingAdd => {
                             Int::add(self.z3_ctx, &[&lhs.z3_term, &rhs.z3_term])
                         }
                         BoundedArithmeticOp::SaturatingSub | BoundedArithmeticOp::WrappingSub => {
@@ -69,7 +69,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         BoundedArithmeticOp::SaturatingAdd | BoundedArithmeticOp::SaturatingSub => {
                             raw.lt(&min).ite(&min, &raw.gt(&max).ite(&max, &raw))
                         }
-                        BoundedArithmeticOp::WrappingSub => {
+                        BoundedArithmeticOp::WrappingAdd | BoundedArithmeticOp::WrappingSub => {
                             let wrapped = raw.modulo(&modulus);
                             if signed {
                                 wrapped

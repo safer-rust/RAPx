@@ -15,27 +15,10 @@ use super::{
     type_ids,
 };
 
-static INIT: OnceLock<KnownItems> = OnceLock::new();
-
-struct KnownItems {
-    // The key is fn path, starting from `core::` or `std::`. The value is internal def id.
-    map: IndexMap<Box<str>, DefId>,
-}
+static INIT: OnceLock<IndexMap<Box<str>, DefId>> = OnceLock::new();
 
 pub fn init(tcx: TyCtxt) {
     INIT.get_or_init(|| init_inner(tcx));
-}
-
-pub fn is_integer_wrapping_sub(tcx: TyCtxt<'_>, callee: DefId) -> bool {
-    if !matches!(tcx.crate_name(callee.krate).as_str(), "core" | "alloc" | "std") {
-        return false;
-    }
-    let name = tcx.def_path_str(callee);
-    name.ends_with("::wrapping_sub") && name.contains("::num::<impl ")
-}
-
-pub fn is_dangling_method(tcx: TyCtxt<'_>, callee: DefId) -> bool {
-    tcx.item_name(callee).as_str() == "dangling"
 }
 
 pub fn is_ub_check(tcx: TyCtxt<'_>, callee: DefId) -> bool {
@@ -160,7 +143,7 @@ fn is_slice_iter_method(tcx: TyCtxt<'_>, did: DefId) -> bool {
         .is_some_and(|adt| type_ids::iter_types().contains(&adt))
 }
 
-fn init_inner(tcx: TyCtxt) -> KnownItems {
+fn init_inner(tcx: TyCtxt) -> IndexMap<Box<str>, DefId> {
     const CRATES: &[&str] = &["core", "std", "alloc"];
 
     // Map every registered path — both with and without its
@@ -250,7 +233,7 @@ fn init_inner(tcx: TyCtxt) -> KnownItems {
         }
     }
 
-    KnownItems { map }
+    map
 }
 
 macro_rules! known_items {
@@ -259,7 +242,7 @@ macro_rules! known_items {
         $(
             $(#[$attr])*
             pub fn $id() -> Option<DefId> {
-                let map = &INIT.get().expect("Known item DefIds haven't been initialized.").map;
+                let map = INIT.get().expect("Known item DefIds haven't been initialized.");
                 for path in $paths {
                     match map.get(*path) {
                         Some(id) => return Some(*id),

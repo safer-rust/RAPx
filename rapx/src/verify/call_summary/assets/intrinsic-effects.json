@@ -158,6 +158,9 @@
   "unchecked_mul": {
     "effect": "eff_return_mul"
   },
+  "wrapping_add": {
+    "effect": "eff_wrapping_add"
+  },
   "wrapping_sub": {
     "effect": "eff_wrapping_sub"
   },

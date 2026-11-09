@@ -179,5 +179,6 @@ pub(crate) enum SimdArithOp {
 pub(crate) enum BoundedArithmeticOp {
     SaturatingAdd,
     SaturatingSub,
+    WrappingAdd,
     WrappingSub,
 }

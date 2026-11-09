@@ -361,6 +361,23 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         ))
     }
 
+    pub(crate) fn wrap_integer_term(&self, ty: Ty<'tcx>, raw: &Int<'z3>) -> Int<'z3> {
+        let Some((min, max, modulus, signed)) = self.integer_limits(ty) else {
+            return raw.clone();
+        };
+        if self.path_implies(&raw.ge(&min)) && self.path_implies(&raw.le(&max)) {
+            return raw.clone();
+        }
+        let wrapped = raw.modulo(&modulus);
+        if signed {
+            wrapped
+                .gt(&max)
+                .ite(&Int::sub(self.z3_ctx, &[&wrapped, &modulus]), &wrapped)
+        } else {
+            wrapped
+        }
+    }
+
     /// Compute the preserved alignment when doing `base + offset * stride`.
     /// Pointer arithmetic only ever *preserves* the base's alignment; it never
     /// creates it. When the base's alignment is unknown, we cannot conclude

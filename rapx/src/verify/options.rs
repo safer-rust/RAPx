@@ -24,7 +24,15 @@ pub(crate) fn should_inline_constructor(tcx: TyCtxt<'_>, callee: DefId) -> bool 
     match INLINE_CTOR.load(Ordering::Relaxed) {
         0 => false,
         1 => true,
-        _ => !constructor_has_invariant(tcx, callee),
+        _ => {
+            let sig = tcx.fn_sig(callee).skip_binder();
+            let output = sig.output().skip_binder();
+            let no_arg_nonnull = sig.inputs().skip_binder().is_empty()
+                && output
+                    .ty_adt_def()
+                    .is_some_and(|adt| crate::verify::api_classify::is_std_nonnull(adt.did()));
+            no_arg_nonnull || !constructor_has_invariant(tcx, callee)
+        }
     }
 }
 
