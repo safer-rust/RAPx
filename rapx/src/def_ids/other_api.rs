@@ -41,10 +41,6 @@ fn is_std_api(tcx: TyCtxt<'_>, did: DefId) -> bool {
     matches!(tcx.crate_name(did.krate).as_str(), "core" | "alloc" | "std")
 }
 
-pub fn is_split_at(tcx: TyCtxt<'_>, did: DefId) -> bool {
-    is_std_api(tcx, did) && tcx.def_path_str(did).contains("::split_at")
-}
-
 pub fn is_range_next(tcx: TyCtxt<'_>, did: DefId) -> bool {
     if !is_std_api(tcx, did)
         || !matches!(tcx.item_name(did).as_str(), "next" | "spec_next")

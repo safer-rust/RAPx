@@ -1083,19 +1083,6 @@ fn local_hazard_violation_with(
     expand_origin_aliases(&tree, &mut origins);
     let mut hazard_locals: HashSet<Local> = destination.into_iter().collect();
     expand_hazard_alias_locals(tcx, caller, &mut hazard_locals);
-    for data in body.basic_blocks.iter() {
-        if let Some(terminator) = &data.terminator
-            && let TerminatorKind::Call {
-                func,
-                destination: call_dest,
-                ..
-            } = &terminator.kind
-                && mir_utils::dep_callee_def_id(func)
-                    .is_some_and(|did| crate::def_ids::other_api::is_split_at(tcx, did))
-            {
-                    hazard_locals.insert(call_dest.local);
-                }
-    }
     origins.retain(|origin| !origin.local().is_some_and(|l| hazard_locals.contains(&l)));
     let vec_owners = find_as_ptr_receivers(tcx, caller, &origins, &tree, true);
     let reachable = blocks_reachable_after_call(tcx, caller, call_block);
