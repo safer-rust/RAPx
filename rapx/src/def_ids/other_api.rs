@@ -1,7 +1,7 @@
 //! Known `core`/`std`/`alloc` API identities, regardless of MIR availability.
 //!
 //! [`init`] scans standard-library functions once for the fixed paths declared
-//! by [`known_items!`]. Other methods are recognized directly from their `DefId`.
+//! by [`std_api_def_ids!`]. Other methods are recognized directly from their `DefId`.
 //! Missing items in `#![no_std]` builds are reported as warnings.
 
 use indexmap::IndexMap;
@@ -96,16 +96,8 @@ pub fn is_gcd(tcx: TyCtxt<'_>, did: DefId) -> bool {
 }
 
 pub fn is_null_ptr(tcx: TyCtxt<'_>, did: DefId) -> bool {
-    is_std_api(tcx, did)
-        && matches!(
-            tcx.def_path_str(did).as_str(),
-            "std::ptr::null"
-                | "std::ptr::null_mut"
-                | "core::ptr::null"
-                | "core::ptr::null_mut"
-                | "ptr::null"
-                | "ptr::null_mut"
-        )
+    tcx.is_diagnostic_item(rustc_span::Symbol::intern("ptr_null"), did)
+        || tcx.is_diagnostic_item(rustc_span::Symbol::intern("ptr_null_mut"), did)
 }
 
 pub fn is_known_nonnull(did: DefId) -> bool {
@@ -223,7 +215,7 @@ fn init_inner(tcx: TyCtxt) -> IndexMap<Box<str>, DefId> {
     map
 }
 
-macro_rules! known_items {
+macro_rules! std_api_def_ids {
     ($( $(#[$attr:meta])* $id:ident : $paths:expr ,)+) => {
         const KNOWN_ITEM_PATHS: &[&[&str]] = &[$( $(#[$attr])* $paths ,)+];
         $(
@@ -244,7 +236,7 @@ macro_rules! known_items {
 
 // For no_std crates, function paths start from core instead of std.
 // cc https://github.com/Artisan-Lab/RAPx/issues/190
-known_items! {
+std_api_def_ids! {
     copy_from: &[
         "std::ptr::mut_ptr::<impl *mut T>::copy_from",
         "core::ptr::mut_ptr::<impl *mut T>::copy_from"
