@@ -35,7 +35,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     && (matches!(value.ty.kind(), TyKind::RawPtr(..))
                         || matches!(value.ty.kind(), TyKind::Adt(def, _) if api_classify::is_std_nonnull(def.did())))
             })
-            && !api_classify::is_std_box_value_constructor(self.tcx, callee)
+            && !crate::def_ids::other_api::is_std_box_value_constructor(self.tcx, callee)
             && let Some(path) = self.container_ptr_field(ty)
         {
             let mut result = pointer.clone();
@@ -53,7 +53,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
         if let TyKind::Adt(adt, substs) = ty.kind()
             && api_classify::is_std_nonnull(adt.did())
-            && self.tcx.item_name(callee).as_str() == "dangling"
+            && crate::def_ids::other_api::is_dangling_method(self.tcx, callee)
         {
             let field_ty = mir_utils::field_ty(
                 self.tcx,
@@ -99,7 +99,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         if self.init_box_vec_param(destination, ty, destination.as_usize(), &mut facts)
             || self.init_struct_param(destination, ty, destination.as_usize(), &mut facts)
         {
-            if api_classify::is_std_box_value_constructor(self.tcx, callee)
+            if crate::def_ids::other_api::is_std_box_value_constructor(self.tcx, callee)
                 && let Some(operand) = first_operand
                 && let Some(pointee_ty) = args.first().map(|value| value.ty)
                 && let Some(heap_id) = self

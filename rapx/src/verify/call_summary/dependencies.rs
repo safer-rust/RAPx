@@ -86,7 +86,7 @@ pub(crate) fn dependency_summary<'tcx>(
         let return_ty = body.local_decls[destination].ty;
         let box_constructor = matches!(return_ty.kind(), TyKind::Adt(adt, _)
             if api_classify::is_std_box(adt.did()))
-            && api_classify::is_std_box_value_constructor(tcx, callee);
+            && crate::def_ids::other_api::is_std_box_value_constructor(tcx, callee);
         let return_deps = if box_constructor {
             Some((0..arg_count).collect())
         } else if api_classify::is_branch(Some(callee)) {

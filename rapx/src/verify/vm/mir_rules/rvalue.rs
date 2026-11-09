@@ -291,7 +291,10 @@ pub(crate) fn eval_binary_op<'z3, 'tcx>(
         state.constraints.assertions.push(raw_term._eq(&zero).not());
     }
     let term = if op == BinOp::Sub
-        && api_classify::is_integer_wrapping_sub_method(Some(state.current_frame.current_def_id))
+        && crate::def_ids::other_api::is_integer_wrapping_sub(
+            state.tcx,
+            state.current_frame.current_def_id,
+        )
     {
         if let Some((_, max, modulus, signed)) = state.integer_limits(lhs.ty) {
             let wrapped = raw_term.modulo(&modulus);

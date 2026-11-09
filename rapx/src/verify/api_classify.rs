@@ -15,23 +15,10 @@
 
 use crate::def_ids::{intrinsic_api, nomir_ffi, other_api, type_ids};
 use rustc_hir::def_id::DefId;
-use rustc_middle::ty::{Ty, TyCtxt, TyKind};
+use rustc_middle::ty::{Ty, TyKind};
 
 fn intrinsic_named(callee: Option<DefId>, names: &[&str]) -> bool {
     intrinsic_api::name(callee).is_some_and(|name| names.contains(&name.as_str()))
-}
-
-pub(crate) fn is_std_box_value_constructor(tcx: TyCtxt<'_>, callee: DefId) -> bool {
-    if !matches!(tcx.item_name(callee).as_str(), "new" | "new_in") {
-        return false;
-    }
-    let Some(impl_id) = tcx.inherent_impl_of_assoc(callee) else {
-        return false;
-    };
-    let ty = tcx.type_of(impl_id).instantiate_identity();
-    #[cfg(rapx_ge_99)]
-    let ty = ty.skip_norm_wip();
-    matches!(ty.kind(), TyKind::Adt(adt, _) if is_std_box(adt.did()))
 }
 
 /// Whether `callee` is `Some` and matches any resolved DefId in the slice.
@@ -466,20 +453,9 @@ pub fn is_std_ordering(def_id: DefId) -> bool {
     type_ids::ordering_types().contains(&def_id)
 }
 
-// ── Arithmetic / collection-operation classifiers ─────────────────
-// Matched by `DefId` via [`other_api::OP_FNS`] (resolved from `fn_defs()`).
-// [`crate::def_ids::other_api`] for the exact method-name patterns each group collects.
-
-pub fn is_integer_wrapping_sub_method(callee: Option<DefId>) -> bool {
-    any_def(callee, other_api::integer_wrapping_sub_fns())
-}
 pub fn is_split_at(callee: Option<DefId>) -> bool {
     any_def(callee, other_api::split_at_fns())
 }
-
-// ── Open-ended operation classifiers ──────────────────────────────
-// These match standard-library methods through the name-scanned `fn_defs()`
-// groups in [`crate::def_ids::other_api`].
 
 /// Whether `callee` is `Range::next` / `RangeInclusive::next` (or their
 /// `spec_next` impls). Distinct from the slice-side getters above: the receiver

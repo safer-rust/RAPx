@@ -1,38 +1,13 @@
 //! Known `core`/`std`/`alloc` API identities, regardless of MIR availability.
 //!
-//! The path table resolves well-known items to [`DefId`]s. Classifiers in
-//! [`crate::verify::api_classify`] combine those identities into operations.
-//! The table owns global state initialized by the compiler callback.
-//!
-//! # How a lookup works
-//!
-//! 1. The [`known_items!`] macro declares a *path table*: each identifier maps
-//!    to one or more candidate `fn_def.name()` strings (typically the `std::`
-//!    re-export plus the `core::`/`alloc::` canonical form, for `#![no_std]`
-//!    crates) and generates a `{id}() -> Option<DefId>` accessor.
-//! 2. [`init`] runs once from [`crate::RapCallback::after_analysis`], iterates
-//!    every `fn_def` of the `core`/`std`/`alloc` crates via `rustc_public`,
-//!    and caches the `path -> DefId` map in a `OnceLock`.
-//! 3. [`contains`] tests whether a call-site `DefId` is in a set of resolved
-//!    ids; [`is_drop_fn`] is a convenience wrapper over the drop family.
-//!
-//! # Path format
-//!
-//! `rustc_public::CrateDef::name()` is `def_path_str` with crate-name
-//! resolution and untrimmed paths, so a re-exported item appears under its
-//! `std::` name and generics are kept: `std::mem::MaybeUninit::<T>::write`,
-//! `std::result::Result::<T, E>::unwrap`, `std::vec::Vec::<T, A>::push`,
-//! `std::ptr::mut_ptr::<impl *mut T>::copy_from`.
-//!
-//! # Limitations
-//!
-//! - In `#![no_std]` builds some standard-library items are absent; [`init`] only warns
-//!   (`rap_warn!`) instead of panicking, so an entry with no matching path
-//!   simply yields `None`.
+//! [`init`] scans standard-library functions once. [`known_items!`] resolves
+//! fixed paths to `DefId`s, while [`Methods`] collects groups matched by name.
+//! Simple method patterns are checked directly from a call-site `DefId`.
+//! Missing items in `#![no_std]` builds are reported as warnings.
 
 use indexmap::IndexMap;
 use rustc_hir::def_id::DefId;
-use rustc_middle::ty::TyCtxt;
+use rustc_middle::ty::{TyCtxt, TyKind};
 use rustc_public::{CrateDef, rustc_internal};
 use std::sync::OnceLock;
 
@@ -61,6 +36,31 @@ pub fn is_slice_get(tcx: TyCtxt<'_>, callee: DefId) -> bool {
             || name.contains("::<impl *const [T]>::get"))
 }
 
+pub fn is_integer_wrapping_sub(tcx: TyCtxt<'_>, callee: DefId) -> bool {
+    if !matches!(tcx.crate_name(callee.krate).as_str(), "core" | "alloc" | "std") {
+        return false;
+    }
+    let name = tcx.def_path_str(callee);
+    name.ends_with("::wrapping_sub") && name.contains("::num::<impl ")
+}
+
+pub fn is_std_box_value_constructor(tcx: TyCtxt<'_>, callee: DefId) -> bool {
+    if !matches!(tcx.item_name(callee).as_str(), "new" | "new_in") {
+        return false;
+    }
+    let Some(impl_id) = tcx.inherent_impl_of_assoc(callee) else {
+        return false;
+    };
+    let ty = tcx.type_of(impl_id).instantiate_identity();
+    #[cfg(rapx_ge_99)]
+    let ty = ty.skip_norm_wip();
+    matches!(ty.kind(), TyKind::Adt(adt, _) if type_ids::box_types().contains(&adt.did()))
+}
+
+pub fn is_dangling_method(tcx: TyCtxt<'_>, callee: DefId) -> bool {
+    tcx.item_name(callee).as_str() == "dangling"
+}
+
 pub fn is_ub_check(tcx: TyCtxt<'_>, callee: DefId) -> bool {
     if !matches!(
         tcx.crate_name(callee.krate).as_str(),
@@ -77,15 +77,10 @@ pub fn is_ub_check(tcx: TyCtxt<'_>, callee: DefId) -> bool {
         || path.contains("ub_checks::maybe_is_nonoverlapping")
 }
 
-/// Resolved `DefId`s of std *methods* that are matched by *generic name* rather
-/// than a fixed `known_items!` path (e.g. `len`, `capacity`, `::abs`,
-/// `::checked_add`, `::split_at`, `Iterator::position`, …). Each group collects
-/// matching `fn_def`s from `core`, `std`, and `alloc`. Callers match a call-site
-/// `DefId` against these sets via [`contains`].
+/// Methods collected by name from `core`, `std`, and `alloc` for `DefId` set lookups.
 static METHODS: OnceLock<Methods> = OnceLock::new();
 
 struct Methods {
-    integer_wrapping_sub_fns: Vec<DefId>,
     split_at: Vec<DefId>,
     range_next: Vec<DefId>,
     iter_next: Vec<DefId>,
@@ -99,7 +94,6 @@ struct Methods {
 
 fn init_methods(tcx: TyCtxt) -> Methods {
     let mut methods = Methods {
-        integer_wrapping_sub_fns: Vec::new(),
         split_at: Vec::new(),
         range_next: Vec::new(),
         iter_next: Vec::new(),
@@ -125,10 +119,6 @@ fn init_methods(tcx: TyCtxt) -> Methods {
                     })
             }) {
                 methods.iterator_next_trait.push(did);
-            }
-
-            if name.ends_with("::wrapping_sub") && name.contains("::num::<impl ") {
-                methods.integer_wrapping_sub_fns.push(did);
             }
 
             if name.contains("::split_at") {
@@ -248,10 +238,6 @@ macro_rules! method_fns {
             }
         )+
     };
-}
-
-method_fns! {
-    integer_wrapping_sub_fns => integer_wrapping_sub_fns,
 }
 
 method_fns! {
