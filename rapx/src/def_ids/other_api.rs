@@ -108,19 +108,6 @@ pub fn is_null_ptr(tcx: TyCtxt<'_>, did: DefId) -> bool {
         )
 }
 
-pub fn is_as_ptr_like(did: DefId) -> bool {
-    matches_any(
-        Some(did),
-        &[
-            slice_as_ptr(), slice_as_mut_ptr(), str_as_ptr(), str_as_mut_ptr(),
-            vec_as_ptr(), vec_as_mut_ptr(), cstr_as_ptr(), nonnull_as_ptr(),
-            nonnull_slice_as_mut_ptr(), box_as_ptr(), box_as_mut_ptr(),
-            maybe_uninit_as_ptr(), maybe_uninit_as_mut_ptr(), arc_as_ptr(), rc_as_ptr(),
-            const_ptr_slice_as_ptr(), mut_ptr_slice_as_mut_ptr(),
-        ],
-    )
-}
-
 pub fn is_known_nonnull(did: DefId) -> bool {
     matches_any(
         Some(did),

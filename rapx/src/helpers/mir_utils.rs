@@ -1599,16 +1599,8 @@ pub fn collect_all_const_bytes_worklist<'tcx>(
                 if !destination.projection.is_empty() {
                     continue;
                 }
-                let did = dep_callee_def_id(func);
-                if did.is_some_and(other_api::is_as_ptr_like) {
-                    for arg in args {
-                        if let Some(bytes) = trace_const_bytes_from_operand(tcx, body, &arg.node) {
-                            results.push(bytes);
-                        }
-                    }
-                }
                 #[cfg(rapx_ge_99)]
-                if did.is_some_and(|d| other_api::box_assume_init_into_vec_unsafe() == Some(d))
+                if dep_callee_def_id(func).is_some_and(|d| other_api::box_assume_init_into_vec_unsafe() == Some(d))
                     && let Some(box_op) = args.first()
                     && let Operand::Copy(p) | Operand::Move(p) = &box_op.node
                     && p.projection.is_empty()
@@ -1620,7 +1612,6 @@ pub fn collect_all_const_bytes_worklist<'tcx>(
     }
 
     collect_aggregate_const_bytes(tcx, body, &mut results);
-    collect_as_ptr_const_bytes(tcx, body, &mut results);
 
     results
 }
@@ -1663,73 +1654,6 @@ fn collect_aggregate_const_bytes<'tcx>(
     }
 }
 
-fn collect_as_ptr_const_bytes<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    body: &Body<'tcx>,
-    results: &mut Vec<Vec<u8>>,
-) {
-    for data in body.basic_blocks.iter() {
-        if let Some(terminator) = &data.terminator
-            && let TerminatorKind::Call { func, args, .. } = &terminator.kind
-            && dep_callee_def_id(func).is_some_and(other_api::is_as_ptr_like)
-        {
-            for arg in args {
-                if let Some(bytes) = trace_const_bytes_from_operand(tcx, body, &arg.node) {
-                    results.push(bytes);
-                }
-            }
-        }
-    }
-}
-
-fn trace_const_bytes_from_operand<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    body: &Body<'tcx>,
-    operand: &Operand<'tcx>,
-) -> Option<Vec<u8>> {
-    if let Some(bytes) = const_operand_bytes(tcx, operand) {
-        return Some(bytes);
-    }
-    match operand {
-        Operand::Copy(p) | Operand::Move(p) if p.projection.is_empty() => {
-            if let Some(bytes) = const_bytes_for_local(tcx, body, p.local) {
-                return Some(bytes);
-            }
-            const_bytes_from_call_dest(tcx, body, p.local)
-        }
-        _ => None,
-    }
-}
-
-fn const_bytes_from_call_dest<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    body: &Body<'tcx>,
-    local: Local,
-) -> Option<Vec<u8>> {
-    for data in body.basic_blocks.iter() {
-        if let Some(terminator) = &data.terminator
-            && let TerminatorKind::Call {
-                destination,
-                func,
-                args,
-                ..
-            } = &terminator.kind
-        {
-            if destination.local != local || !destination.projection.is_empty() {
-                continue;
-            }
-            if dep_callee_def_id(func).is_some_and(other_api::is_as_ptr_like) {
-                for arg in args {
-                    if let Some(bytes) = trace_const_bytes_from_operand(tcx, body, &arg.node) {
-                        return Some(bytes);
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
 pub fn const_bytes_for_local<'tcx>(
     tcx: TyCtxt<'tcx>,
     body: &Body<'tcx>,
@@ -1756,9 +1680,6 @@ pub fn const_bytes_for_local<'tcx>(
                 match operand {
                     Operand::Copy(p) | Operand::Move(p) => {
                         if let Some(bytes) = const_bytes_for_local(tcx, body, p.local) {
-                            return Some(bytes);
-                        }
-                        if let Some(bytes) = const_bytes_from_call_dest(tcx, body, p.local) {
                             return Some(bytes);
                         }
                         continue;
