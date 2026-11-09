@@ -1,5 +1,3 @@
-//! Symbolic arithmetic and layout constraints used by MIR transfer rules.
-
 use rustc_middle::{
     mir::{BinOp, Local, Operand, UnOp},
     ty::{Ty, TyKind},
@@ -13,7 +11,11 @@ use super::state::{OffsetKind, Provenance, ValueFacts, ValueSource, VmState, VmV
 
 impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// Inject layout constraints (>= 1) for generic AlignOf/SizeOf constants.
-    pub(crate) fn inject_layout_constraints(&mut self, operand: &Operand<'tcx>, val: &VmValue<'z3, 'tcx>) {
+    pub(crate) fn inject_layout_constraints(
+        &mut self,
+        operand: &Operand<'tcx>,
+        val: &VmValue<'z3, 'tcx>,
+    ) {
         if let Operand::Constant(constant) = operand {
             let text = format!("{:?}", constant.const_);
             if mir_utils::const_int_from_debug(&text).is_none() {
@@ -37,7 +39,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// block and re-establish `gcd`'s key consequences as path conditions. This
     /// is a targeted workaround for a missing general property of recursive
     /// const fns, not an `align_to`-specific effect.
-    pub(crate) fn try_emit_gcd_divisibility(&mut self, operand: &Operand<'tcx>, val: &VmValue<'z3, 'tcx>) {
+    pub(crate) fn try_emit_gcd_divisibility(
+        &mut self,
+        operand: &Operand<'tcx>,
+        val: &VmValue<'z3, 'tcx>,
+    ) {
         let Operand::Constant(constant) = operand else {
             return;
         };
@@ -45,15 +51,17 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return;
         };
         let def_name = self.tcx.def_path_str(uneval.def);
-        if !def_name.contains("::{constant") || !mir_utils::ctfe_mir_available(self.tcx, uneval.def) {
+        if !def_name.contains("::{constant") || !mir_utils::ctfe_mir_available(self.tcx, uneval.def)
+        {
             return;
         }
         let body = self.tcx.mir_for_ctfe(uneval.def);
         let is_gcd = body.basic_blocks.iter().any(|bb| {
             if let rustc_middle::mir::TerminatorKind::Call { func, .. } = &bb.terminator().kind
-                && let Some(did) = mir_utils::dep_callee_def_id(func) {
-                    return api_classify::is_gcd(Some(did));
-                }
+                && let Some(did) = mir_utils::dep_callee_def_id(func)
+            {
+                return api_classify::is_gcd(Some(did));
+            }
             false
         });
         if !is_gcd || uneval.args.len() < 2 {
@@ -129,22 +137,23 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         if rhs.as_u64().is_some_and(|r| r >= 2) {
             let one = Int::from_u64(self.z3_ctx, 1);
             let qp1 = Int::add(self.z3_ctx, &[quot, &one]);
-            self.constraints.assertions.push(lhs.ge(&one).implies(&qp1.le(lhs)));
+            self.constraints
+                .assertions
+                .push(lhs.ge(&one).implies(&qp1.le(lhs)));
         } else {
-            // For rhs >= 1: quot <= lhs
             if rhs.as_u64().is_some_and(|r| r >= 1) {
                 self.constraints.assertions.push(quot.le(lhs));
             }
         }
     }
 
-
-    /// Encode a boolean condition as the integer `1`/`0`.
     fn bool_as_int(&self, cond: &Bool<'z3>) -> Int<'z3> {
-        cond.ite(&Int::from_u64(self.z3_ctx, 1), &Int::from_u64(self.z3_ctx, 0))
+        cond.ite(
+            &Int::from_u64(self.z3_ctx, 1),
+            &Int::from_u64(self.z3_ctx, 0),
+        )
     }
 
-    /// Negate a Z3 integer (`0 - val`).
     fn negate(&self, val: &Int<'z3>) -> Int<'z3> {
         let zero = Int::from_u64(self.z3_ctx, 0);
         Int::sub(self.z3_ctx, &[&zero, val])
@@ -174,17 +183,18 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 // degree-3 `div * us * sizeof_U` that Z3's NIA cannot rewrite.
                 if let Some((div_lhs, div_rhs)) = self.constraints.term_caches.div_roots.get(lhs)
                     && let Some(us_dividend) = self.constraints.term_caches.exact_div_roots.get(rhs)
-                        && let Some(ts_dividend) = self.constraints.term_caches.exact_div_roots.get(div_rhs)
-                        {
-                            let us_len = self.fresh_int("us_len");
-                            self.constraints
-                                .assertions
-                                .push(us_len._eq(&Int::mul(self.z3_ctx, &[lhs, rhs])));
-                            let byte_len = Int::mul(self.z3_ctx, &[&us_len, ts_dividend]);
-                            let byte_bound = Int::mul(self.z3_ctx, &[div_lhs, us_dividend]);
-                            self.constraints.assertions.push(byte_len.le(&byte_bound));
-                            return us_len;
-                        }
+                    && let Some(ts_dividend) =
+                        self.constraints.term_caches.exact_div_roots.get(div_rhs)
+                {
+                    let us_len = self.fresh_int("us_len");
+                    self.constraints
+                        .assertions
+                        .push(us_len._eq(&Int::mul(self.z3_ctx, &[lhs, rhs])));
+                    let byte_len = Int::mul(self.z3_ctx, &[&us_len, ts_dividend]);
+                    let byte_bound = Int::mul(self.z3_ctx, &[div_lhs, us_dividend]);
+                    self.constraints.assertions.push(byte_len.le(&byte_bound));
+                    return us_len;
+                }
                 Int::mul(self.z3_ctx, &[lhs, rhs])
             }
             BinOp::Div => {
@@ -205,7 +215,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     .any(|c| *c == lhs.rem(rhs)._eq(&zero));
                 if exact {
                     let q = self.fresh_int("exact_div");
-                    self.constraints.term_caches.exact_div_roots.insert(q.clone(), lhs.clone());
+                    self.constraints
+                        .term_caches
+                        .exact_div_roots
+                        .insert(q.clone(), lhs.clone());
                     q
                 } else {
                     // A *non-exact* division is likewise a fresh variable (the
@@ -214,7 +227,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     // product of two symbols instead of a `div` term that Z3's
                     // nonlinear solver cannot combine with a multiplier.
                     let q = self.fresh_int("div");
-                    self.constraints.term_caches.div_roots.insert(q.clone(), (lhs.clone(), rhs.clone()));
+                    self.constraints
+                        .term_caches
+                        .div_roots
+                        .insert(q.clone(), (lhs.clone(), rhs.clone()));
                     q
                 }
             }
@@ -246,7 +262,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     // of the pre-incremented value).
                     let zero = Int::from_u64(self.z3_ctx, 0);
                     let align = Int::sub(self.z3_ctx, &[&zero, rhs]);
-                    self.constraints.assertions.push(result.rem(&align)._eq(&zero));
+                    self.constraints
+                        .assertions
+                        .push(result.rem(&align)._eq(&zero));
                     let one = Int::from_u64(self.z3_ctx, 1);
                     let addr = Int::add(self.z3_ctx, &[lhs, rhs, &one]);
                     self.constraints.assertions.push(result.ge(&addr));
@@ -261,9 +279,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 // `result >= lhs`, which is only valid for non-negative values)
                 // so `NonZero` bit-or methods discharge their `!= 0` obligation
                 // for both signed and unsigned instantiations.
-                self.constraints.assertions
+                self.constraints
+                    .assertions
                     .push(lhs._eq(&zero).not().implies(&result._eq(&zero).not()));
-                self.constraints.assertions
+                self.constraints
+                    .assertions
                     .push(rhs._eq(&zero).not().implies(&result._eq(&zero).not()));
                 result
             }
@@ -281,7 +301,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 } else {
                     let one = Int::from_u64(self.z3_ctx, 1);
                     let result = Int::sub(self.z3_ctx, &[&self.negate(val), &one]);
-                    self.constraints.term_caches.not_mask_terms.insert(result.clone());
+                    self.constraints
+                        .term_caches
+                        .not_mask_terms
+                        .insert(result.clone());
                     result
                 }
             }
@@ -290,34 +313,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
     }
 
-
-    /// Clone `arg_val`, retype it to `dest`'s type, mark it as a non-null,
-    /// aligned, initialized pointer, and bind it to `dest`.
-    pub(crate) fn set_dest_as_heap_ptr(&mut self, arg_val: &VmValue<'z3, 'tcx>, dest: Local) {
-        let mut val = arg_val.clone();
-        val.ty = self.body().local_decls[dest].ty;
-        val.facts.non_null = true;
-        val.facts.init = true;
-        self.set_local(dest, val);
-    }
-
-    /// Apply a binary numeric effect: compute `f(lhs.z3_term, rhs.z3_term)` and store
-    /// it as the destination's fresh scalar value.
-    pub(crate) fn apply_binary_num(
-        &mut self,
-        dest: Local,
-        args: &[VmValue<'z3, 'tcx>],
-        lhs_arg: usize,
-        rhs_arg: usize,
-        f: impl Fn(&Int<'z3>, &Int<'z3>) -> Int<'z3>,
-    ) {
-        if let (Some(lhs), Some(rhs)) = (args.get(lhs_arg), args.get(rhs_arg)) {
-            let dest_ty = self.body().local_decls[dest].ty;
-            self.set_local(dest, VmValue::new(f(&lhs.z3_term, &rhs.z3_term), dest_ty));
-        }
-    }
-
-    pub(crate) fn integer_limits(&self, ty: Ty<'tcx>) -> Option<(Int<'z3>, Int<'z3>, Int<'z3>, bool)> {
+    pub(crate) fn integer_limits(
+        &self,
+        ty: Ty<'tcx>,
+    ) -> Option<(Int<'z3>, Int<'z3>, Int<'z3>, bool)> {
         let signed = match ty.kind() {
             TyKind::Int(_) => true,
             TyKind::Uint(_) => false,
@@ -328,11 +327,18 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         if bits == 0 || bits > 128 {
             return None;
         }
-        let unsigned_max = if bits == 128 { u128::MAX } else { (1u128 << bits) - 1 };
-        let modulus = Int::add(self.z3_ctx, &[
-            &Int::from_str(self.z3_ctx, &unsigned_max.to_string())?,
-            &Int::from_u64(self.z3_ctx, 1),
-        ]);
+        let unsigned_max = if bits == 128 {
+            u128::MAX
+        } else {
+            (1u128 << bits) - 1
+        };
+        let modulus = Int::add(
+            self.z3_ctx,
+            &[
+                &Int::from_str(self.z3_ctx, &unsigned_max.to_string())?,
+                &Int::from_u64(self.z3_ctx, 1),
+            ],
+        );
         let (min, max) = if signed {
             let signed_max = if bits == 128 {
                 i128::MAX
@@ -459,7 +465,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         } else {
             match base.provenance.as_ref().and_then(|p| match &p.offset_kind {
                 Some(OffsetKind::Element { index, stride })
-                    if stride.simplify() == stride_term.simplify() => Some(index.clone()),
+                    if stride.simplify() == stride_term.simplify() =>
+                {
+                    Some(index.clone())
+                }
                 _ => None,
             }) {
                 Some(e) => Some(combine(&e, &offset_term)),

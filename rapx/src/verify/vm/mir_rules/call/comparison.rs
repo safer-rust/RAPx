@@ -10,7 +10,7 @@ use rustc_middle::{
 };
 use z3::ast::{Ast, Bool, Int};
 
-use super::state::{AllocKind, ValueSource, VmState, VmValue};
+use super::super::super::state::{AllocKind, ValueSource, VmState, VmValue};
 use crate::def_ids::lang_api::{self, LangItem};
 use crate::helpers::mir_utils;
 
@@ -72,20 +72,25 @@ impl ComparisonMethod {
     }
 }
 
+pub(super) struct ComparisonPlan<'z3> {
+    op: BinOp,
+    condition: Bool<'z3>,
+}
+
 impl<'z3, 'tcx> VmState<'z3, 'tcx> {
-    pub(crate) fn try_simulate_comparison(
-        &mut self,
+    pub(super) fn prepare_comparison(
+        &self,
         callee: Option<DefId>,
         args: &[VmValue<'z3, 'tcx>],
         destination: Local,
-    ) -> bool {
+    ) -> Option<ComparisonPlan<'z3>> {
         let Some(method) = callee.and_then(|id| ComparisonMethod::from_callee(self.tcx, id)) else {
-            return false;
+            return None;
         };
         if args.len() != 2
             || !matches!(self.body().local_decls[destination].ty.kind(), TyKind::Bool)
         {
-            return false;
+            return None;
         }
 
         let Some(condition) = self
@@ -96,19 +101,26 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 _ => None,
             })
         else {
-            return false;
+            return None;
         };
+        Some(ComparisonPlan {
+            op: method.mir_op(),
+            condition,
+        })
+    }
+
+    pub(super) fn apply_comparison(&mut self, plan: ComparisonPlan<'z3>, destination: Local) {
+        let ComparisonPlan { op, condition } = plan;
         let one = Int::from_u64(self.z3_ctx, 1);
         let zero = Int::from_u64(self.z3_ctx, 0);
         let mut result = VmValue::new(condition.ite(&one, &zero), self.tcx.types.bool);
         result.source = ValueSource::Comparison {
             lhs: None,
             rhs: None,
-            op: method.mir_op(),
+            op,
             cond: condition,
         };
         self.set_local(destination, result);
-        true
     }
 
     /// A reference to a primitive scalar compares its stored value, not its
@@ -164,7 +176,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let slice_id = slice.provenance_alloc_id()?;
         let slice_alloc = self.alloc(slice_id);
         if slice_alloc.element_ty.as_ty() != Some(self.tcx.types.u8)
-            || !matches!(slice_alloc.kind, AllocKind::Slice { .. } | AllocKind::ExternalSlice { .. })
+            || !matches!(
+                slice_alloc.kind,
+                AllocKind::Slice { .. } | AllocKind::ExternalSlice { .. }
+            )
             || slice.provenance.as_ref()?.offset.simplify().as_u64() != Some(0)
         {
             return None;

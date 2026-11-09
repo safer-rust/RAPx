@@ -1,5 +1,3 @@
-//! Iterator pointer, length, and offset tracking in the symbolic VM.
-
 use rustc_middle::{mir::Local, ty::TyKind};
 use z3::ast::{Ast, Int};
 

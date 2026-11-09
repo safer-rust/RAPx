@@ -1,5 +1,3 @@
-//! Transfer functions for MIR rvalues.
-
 use rustc_abi::FieldIdx;
 use rustc_hir::def_id::DefId;
 use rustc_index::IndexVec;
@@ -555,10 +553,11 @@ pub(crate) fn eval_aggregate<'z3, 'tcx>(
                     state.tcx,
                     state.current_frame.current_def_id,
                 ),
-            )) || operands
-            .iter()
-            .nth(1)
-            .is_some_and(|meta| state.value_of_operand(meta).ty.is_unit());
+            ))
+            || operands
+                .iter()
+                .nth(1)
+                .is_some_and(|meta| state.value_of_operand(meta).ty.is_unit());
         if sized {
             let data_val = state.value_of_operand(data_operand);
             let mut val = data_val.clone();
@@ -569,8 +568,10 @@ pub(crate) fn eval_aggregate<'z3, 'tcx>(
             let metadata = state.value_of_operand(metadata);
             let mut val = state.value_of_operand(data_operand);
             val.ty = dest_ty;
-            if matches!(pointee_ty.kind(), TyKind::Slice(_) | TyKind::Param(_) | TyKind::Alias(..))
-                || metadata.ty == state.tcx.types.usize
+            if matches!(
+                pointee_ty.kind(),
+                TyKind::Slice(_) | TyKind::Param(_) | TyKind::Alias(..)
+            ) || metadata.ty == state.tcx.types.usize
             {
                 val.source = ValueSource::SliceLen(metadata.z3_term);
             }

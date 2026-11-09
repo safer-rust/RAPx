@@ -1,13 +1,27 @@
-//! MIR transfer functions for the symbolic VM.
-
 use rustc_middle::mir::{BasicBlock, Place, Rvalue, Statement, Terminator};
 
 use super::state::{VmState, VmValue};
 
+#[must_use]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RuleFlow {
+    Continue,
+    Pruned,
+}
+
+impl RuleFlow {
+    pub(crate) fn continues(self) -> bool {
+        self == Self::Continue
+    }
+}
+
+mod call;
 mod dispatch;
-pub(crate) mod rvalue;
-pub(crate) mod statement;
-pub(crate) mod terminator;
+mod rvalue;
+mod statement;
+mod terminator;
+
+pub(crate) use terminator::forced_inline_switch_target;
 
 pub(crate) fn eval_rvalue<'z3, 'tcx>(
     state: &mut VmState<'z3, 'tcx>,
@@ -22,7 +36,7 @@ pub(crate) fn exec_terminator<'z3, 'tcx>(
     state: &mut VmState<'z3, 'tcx>,
     terminator: &Terminator<'tcx>,
     switch_succ: Option<BasicBlock>,
-) -> bool {
+) -> RuleFlow {
     dispatch::exec_terminator(state, terminator, switch_succ)
 }
 

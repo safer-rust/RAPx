@@ -8,7 +8,6 @@ use rustc_middle::mir::{
 
 use crate::analysis::dataflow::types::DataflowGraph;
 use crate::helpers::def_use::{RelevantPlaces, operand_uses};
-use crate::verify::mir_classify;
 
 use super::super::types::RelevantItem;
 use super::super::visitor::BackwardSlicer;
@@ -138,7 +137,13 @@ pub(super) fn apply_statement(ctx: &mut StatementContext<'_, '_>) {
             ctx.relevant.extend(operand_uses(&copy.count));
             "CopyNonOverlapping"
         }
-        kind if mir_classify::is_noop_statement(kind) => "NoOp",
+        StatementKind::FakeRead(..)
+        | StatementKind::AscribeUserType(..)
+        | StatementKind::Coverage(..)
+        | StatementKind::PlaceMention(..)
+        | StatementKind::ConstEvalCounter
+        | StatementKind::Nop
+        | StatementKind::BackwardIncompatibleDropHint { .. } => "NoOp",
         _ => {
             ctx.items.push(RelevantItem::Statement {
                 global_block: None,
@@ -206,7 +211,13 @@ pub(super) fn apply_terminator(ctx: &mut TerminatorContext<'_, '_>) {
             visit_non_call(ctx);
             "Drop"
         }
-        kind if mir_classify::is_control_only_terminator(kind) => {
+        TerminatorKind::Goto { .. }
+        | TerminatorKind::Return
+        | TerminatorKind::Unreachable
+        | TerminatorKind::UnwindResume
+        | TerminatorKind::UnwindTerminate(_)
+        | TerminatorKind::FalseEdge { .. }
+        | TerminatorKind::FalseUnwind { .. } => {
             visit_non_call(ctx);
             "ControlOnly"
         }

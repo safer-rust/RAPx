@@ -1290,3 +1290,147 @@ fn peel_slice_elem(ty: Ty<'_>) -> Ty<'_> {
         _ => ty,
     }
 }
+
+impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+    /// Find the local whose symbolic address matches `term` (the address a
+    /// reference value points at). Used to resolve a `&self`/`&mut self`
+    /// receiver (often a reborrow temp) back to the referent local that carries
+    /// the materialized field values.
+    pub(crate) fn find_local_by_address(&self, term: &Int<'z3>) -> Option<Local> {
+        for (local, id) in &self.current_frame.local_alloc {
+            if self.units[id.0].allocation.base == *term {
+                return Some(*local);
+            }
+        }
+        None
+    }
+
+    pub(crate) fn write_through_pointer(
+        &mut self,
+        pointer: &VmValue<'z3, 'tcx>,
+        path: Vec<usize>,
+        value: VmValue<'z3, 'tcx>,
+    ) -> bool {
+        let full_inner_write = pointer.provenance.as_ref().and_then(|prov| {
+            let ty = self.alloc(prov.alloc_id).element_ty.as_ty()?;
+            match ty.kind() {
+                TyKind::Adt(def, args)
+                    if crate::verify::api_classify::is_maybe_uninit_type(def.did())
+                        && path.is_empty()
+                        && prov.offset.simplify().as_u64() == Some(0)
+                        && value.facts.init =>
+                {
+                    args.first()
+                        .and_then(|arg| arg.as_type())
+                        .filter(|inner| *inner == value.ty)
+                        .map(|inner| (prov.alloc_id, inner))
+                }
+                _ => None,
+            }
+        });
+        if let Some(prov) = &pointer.provenance {
+            self.clear_write_evidence(prov.alloc_id);
+            if !path.is_empty()
+                && path.iter().all(|field| *field == 0)
+                && value.facts.init
+                && matches!(mir_utils::pointee_ty(pointer.ty).map(|ty| ty.kind()),
+                    Some(TyKind::Adt(def, args))
+                        if crate::verify::api_classify::is_maybe_uninit_type(def.did())
+                            && args.first().and_then(|arg| arg.as_type()) == Some(value.ty))
+                && let Some(offset) = prov.offset.simplify().as_u64()
+            {
+                let end = offset.saturating_add(self.size_of_ty(value.ty)).min(4096);
+                for byte in offset..end {
+                    self.mark_byte_init(prov.alloc_id, byte as usize);
+                }
+            }
+        }
+        if path.is_empty()
+            && let Some(prov) = &pointer.provenance
+            && self
+                .thread_local_allocs
+                .values()
+                .any(|id| *id == prov.alloc_id)
+            && prov.offset.simplify().as_u64() == Some(0)
+            && self.alloc(prov.alloc_id).element_ty.as_ty() == Some(value.ty)
+        {
+            self.clear_write_evidence(prov.alloc_id);
+            self.store_value(prov.alloc_id, value.ty, Vec::new(), value);
+            self.content_mut(prov.alloc_id).facts.initialized = true;
+            return true;
+        }
+        let caller_referent =
+            self.inline
+                .arg_referents
+                .iter()
+                .enumerate()
+                .find_map(|(i, referent)| {
+                    let param = Local::from_usize(i + 1);
+                    self.local_value(param)
+                        .filter(|arg| arg.z3_term == pointer.z3_term)
+                        .and_then(|_| *referent)
+                });
+        if let Some(local) = caller_referent {
+            let path = match &pointer.source {
+                super::state::ValueSource::FieldBorrow { fields, .. } => {
+                    let mut full = fields.clone();
+                    full.extend(path);
+                    full
+                }
+                _ => path,
+            };
+            let wrote_object = path.is_empty()
+                && pointer.provenance.as_ref().is_some_and(|prov| {
+                    self.alloc(prov.alloc_id).is_external()
+                        && self.alloc(prov.alloc_id).element_ty.as_ty() != Some(value.ty)
+                })
+                && self.write_provenance_allocation(pointer, value.clone());
+            self.inline.deferred_field_writes.push((local, path, value));
+            if let Some((id, ty)) = full_inner_write {
+                self.content_mut(id).facts.written_pointee_ty = Some(ty);
+            }
+            return wrote_object;
+        }
+        if path.is_empty()
+            && let Some(prov) = &pointer.provenance
+            && prov.offset.simplify().as_u64() == Some(0)
+            && self.alloc(prov.alloc_id).element_ty.as_ty() == Some(value.ty)
+            && matches!(
+                self.alloc(prov.alloc_id).kind,
+                super::state::AllocKind::Object
+            )
+            && self.find_local_by_address(&pointer.z3_term).is_none()
+        {
+            self.clear_write_evidence(prov.alloc_id);
+            let content = self.content_mut(prov.alloc_id);
+            content.values.clear();
+            content.indexed_elements.clear();
+            content.indexed_elements_modified = true;
+            content.clear_byte_writes();
+            content.facts.initialized = value.facts.init;
+            self.store_value(prov.alloc_id, value.ty, Vec::new(), value);
+            return true;
+        }
+        if path.is_empty() && self.write_provenance_allocation(pointer, value.clone()) {
+            if let Some((id, ty)) = full_inner_write {
+                self.content_mut(id).facts.written_pointee_ty = Some(ty);
+                self.content_mut(id).facts.inner_uninit = false;
+            }
+            return true;
+        }
+        if let Some(local) = self.find_local_by_address(&pointer.z3_term) {
+            self.write_local_path(local, path, value);
+            if let Some((id, ty)) = full_inner_write {
+                self.content_mut(id).facts.written_pointee_ty = Some(ty);
+                self.content_mut(id).facts.inner_uninit = false;
+            }
+            true
+        } else if path.is_empty() {
+            self.invalidate_provenance_allocation(pointer);
+            false
+        } else {
+            false
+        }
+    }
+
+}

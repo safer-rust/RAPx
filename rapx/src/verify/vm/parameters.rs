@@ -1,5 +1,3 @@
-//! Initialize symbolic function parameters and their backing allocations.
-
 use rustc_middle::{
     mir::{Local, Operand, Rvalue, StatementKind},
     ty::{Ty, TyKind},
@@ -13,275 +11,9 @@ use crate::verify::api_classify;
 use super::state::{AllocId, Provenance, ValueFacts, ValueSource, VmState, VmValue};
 
 impl<'z3, 'tcx> VmState<'z3, 'tcx> {
-    pub(crate) fn materialize_constructor_result(
-        &mut self,
-        destination: Local,
-        args: &[VmValue<'z3, 'tcx>],
-        first_operand: Option<&Operand<'tcx>>,
-        callee: rustc_hir::def_id::DefId,
-        has_invariant: bool,
-    ) {
-        let ty = self.body().local_decls[destination].ty;
-        if !has_invariant {
-            self.set_local(
-                destination,
-                VmValue::new(self.fresh_int("ctor_unknown"), ty),
-            );
-            return;
-        }
-        if let TyKind::Adt(adt, _) = ty.kind()
-            && (api_classify::is_std_vec(adt.did())
-                || api_classify::is_std_box(adt.did())
-                || api_classify::is_std_string(adt.did())
-                || api_classify::is_std_cstring(adt.did()))
-            && let Some((index, pointer)) = args.iter().enumerate().find(|(_, value)| {
-                value.provenance_alloc_id().is_some()
-                    && (matches!(value.ty.kind(), TyKind::RawPtr(..))
-                        || matches!(value.ty.kind(), TyKind::Adt(def, _) if api_classify::is_std_nonnull(def.did())))
-            })
-            && !api_classify::is_std_box_value_constructor(self.tcx, callee)
-            && let Some(path) = self.container_ptr_field(ty)
-        {
-            let mut result = pointer.clone();
-            result.ty = ty;
-            result.facts.init = true;
-            self.set_local(destination, result);
-            self.set_field_value(destination, path, pointer.clone());
-            if api_classify::is_std_vec(adt.did())
-                && let Some(len) = args.get(index + 1)
-                && let Some(alloc_id) = pointer.provenance_alloc_id()
-            {
-                self.alloc_mut(alloc_id).set_slice_len(len.z3_term.clone());
-            }
-            return;
-        }
-        if let TyKind::Adt(adt, substs) = ty.kind()
-            && api_classify::is_std_nonnull(adt.did())
-            && self.tcx.item_name(callee).as_str() == "dangling"
-        {
-            let field_ty = mir_utils::field_ty(
-                self.tcx,
-                adt.non_enum_variant().fields.iter().next().unwrap(),
-                substs,
-            );
-            let value = VmValue {
-                z3_term: self.fresh_int("dangling_ptr"),
-                ty,
-                provenance: None,
-                facts: ValueFacts {
-                    non_null: true,
-                    dangling: true,
-                    ..Default::default()
-                },
-                source: ValueSource::None,
-            };
-            let mut field = value.clone();
-            field.ty = field_ty;
-            self.set_field_value(destination, vec![0], field);
-            self.set_local(destination, value);
-            return;
-        }
-        if let TyKind::Adt(adt, substs) = ty.kind()
-            && mir_utils::is_raw_ptr_wrapper(self.tcx, adt.did())
-            && let [pointer] = args
-            && matches!(pointer.ty.kind(), TyKind::RawPtr(..))
-        {
-            let field_ty = mir_utils::field_ty(
-                self.tcx,
-                adt.non_enum_variant().fields.iter().next().unwrap(),
-                substs,
-            );
-            let mut field = pointer.clone();
-            field.ty = field_ty;
-            self.set_field_value(destination, vec![0], field);
-            let mut value = pointer.clone();
-            value.ty = ty;
-            self.set_local(destination, value);
-            return;
-        }
-        let mut facts = ValueFacts::default();
-        if self.init_box_vec_param(destination, ty, destination.as_usize(), &mut facts)
-            || self.init_struct_param(destination, ty, destination.as_usize(), &mut facts)
-        {
-            if api_classify::is_std_box_value_constructor(self.tcx, callee)
-                && let Some(operand) = first_operand
-                && let Some(pointee_ty) = args.first().map(|value| value.ty)
-                && let Some(heap_id) = self
-                    .local_value(destination)
-                    .and_then(VmValue::provenance_alloc_id)
-            {
-                match operand {
-                    Operand::Copy(place) | Operand::Move(place) if place.projection.is_empty() => {
-                        let fields = self
-                            .field_paths(place.local)
-                            .into_iter()
-                            .filter_map(|path| {
-                                self.field_value(place.local, &path)
-                                    .cloned()
-                                    .map(|value| (path, value))
-                            })
-                            .collect::<Vec<_>>();
-                        for (path, value) in fields {
-                            self.store_value(heap_id, pointee_ty, path, value);
-                        }
-                        if let Some(value) = self.local_value(place.local).cloned() {
-                            self.store_value(heap_id, pointee_ty, Vec::new(), value);
-                        }
-                    }
-                    Operand::Constant(constant) => {
-                        if matches!(
-                            pointee_ty.kind(),
-                            TyKind::Int(_) | TyKind::Uint(_) | TyKind::Bool | TyKind::Char
-                        ) && let Some(mut value) = args.first().cloned()
-                        {
-                            value.facts.init = true;
-                            self.store_value(heap_id, pointee_ty, Vec::new(), value);
-                        }
-                        if let Some((_, fields)) =
-                            mir_utils::const_destructure(self.tcx, &constant.const_)
-                        {
-                            for (index, (field, field_ty)) in fields.iter().enumerate() {
-                                if let Some(scalar) = (*field).try_to_scalar_int()
-                                    && let Some(term) = self
-                                        .scalar_bits_term(*field_ty, scalar.to_bits(scalar.size()))
-                                {
-                                    let mut value = VmValue::new(term, *field_ty);
-                                    value.facts.init = true;
-                                    self.store_value(heap_id, pointee_ty, vec![index], value);
-                                }
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            return;
-        }
-        self.set_local(
-            destination,
-            VmValue {
-                z3_term: self.fresh_int("ctor_result"),
-                ty,
-                provenance: None,
-                facts,
-                source: ValueSource::None,
-            },
-        );
-    }
-
-    pub(crate) fn init_parameters(&mut self) {
-        let arg_count = self.body().arg_count;
-        let local_count = self.body().local_decls.len();
-
-        for local_idx in 1..local_count {
-            let local = Local::from_usize(local_idx);
-            if self.current_frame.local_alloc.contains_key(&local) {
-                continue;
-            }
-            let decl = &self.body().local_decls[local];
-            let ty = decl.ty;
-
-            self.ensure_local_allocation(local);
-
-            let mut invariants = ValueFacts::default();
-            if local_idx <= arg_count {
-                if self.init_box_vec_param(local, ty, local_idx, &mut invariants) {
-                    continue;
-                }
-                if self.init_struct_param(local, ty, local_idx, &mut invariants) {
-                    continue;
-                }
-                if self.init_reference_param(local, ty, local_idx, &mut invariants) {
-                    continue;
-                }
-                let is_scalar = matches!(
-                    ty.kind(),
-                    rustc_middle::ty::TyKind::Uint(_)
-                        | rustc_middle::ty::TyKind::Int(_)
-                        | rustc_middle::ty::TyKind::Float(_)
-                        | rustc_middle::ty::TyKind::Bool
-                        | rustc_middle::ty::TyKind::Char
-                );
-                if is_scalar {
-                    let val = self.fresh_int(&format!("arg_{}", local_idx));
-                    self.set_local(
-                        local,
-                        VmValue {
-                            z3_term: val,
-                            ty,
-                            provenance: None,
-                            facts: invariants,
-                            source: ValueSource::None,
-                        },
-                    );
-                    continue;
-                }
-                if let rustc_middle::ty::TyKind::RawPtr(pointee, _mutbl) = ty.kind() {
-                    let max_size = Int::from_u64(self.z3_ctx, i64::MAX as u64);
-                    let pointee_align = self.align_sym(*pointee);
-                    let (alloc_id, base) =
-                        self.allocate_external(max_size, pointee_align, Some(*pointee));
-                    self.set_local(
-                        local,
-                        VmValue {
-                            z3_term: base,
-                            ty,
-                            provenance: Some(Provenance {
-                                alloc_id,
-                                offset: Int::from_u64(self.z3_ctx, 0),
-                                offset_kind: None,
-                            }),
-                            facts: invariants,
-                            source: ValueSource::None,
-                        },
-                    );
-                    continue;
-                }
-                if self.init_array_param(local, ty, local_idx, &mut invariants) {
-                    continue;
-                }
-                let term = self.fresh_int(&format!("param_{}", local_idx));
-                self.set_local(
-                    local,
-                    VmValue {
-                        z3_term: term,
-                        ty,
-                        provenance: None,
-                        facts: invariants,
-                        source: ValueSource::None,
-                    },
-                );
-                continue;
-            }
-            // assignments). For reference/raw-pointer locals the value *is* the
-            // stack address; for scalar locals use a fresh symbolic value so a
-            // stale stack address never leaks into scalar arithmetic (e.g. the
-            // `offset <= len` bound check in memchr-style loops).
-            let term = match ty.kind() {
-                rustc_middle::ty::TyKind::Ref(..) | rustc_middle::ty::TyKind::RawPtr(..) => {
-                    self.local_address(local)
-                }
-                _ => self.fresh_int(&format!("local_{}", local_idx)),
-            };
-            self.set_local(
-                local,
-                VmValue {
-                    z3_term: term,
-                    ty,
-                    provenance: None,
-                    facts: invariants,
-                    source: ValueSource::None,
-                },
-            );
-        }
-
-        self.propagate_entry_block_provenance();
-        self.prewarm_generic_size_align();
-    }
-
     /// Initialize a struct/tuple/enum parameter (a non-`Box`/`Vec` ADT):
     /// decompose it into per-field symbolic values for field-level checking.
-    fn init_struct_param(
+    pub(super) fn init_struct_param(
         &mut self,
         local: Local,
         ty: Ty<'tcx>,
@@ -450,7 +182,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
     /// Initialize an array parameter (`[T; N]`): give it a real allocation with
     /// provenance so downstream call effects can record the alloc_id.
-    fn init_array_param(
+    pub(super) fn init_array_param(
         &mut self,
         local: Local,
         ty: Ty<'tcx>,
@@ -495,7 +227,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// Initialize a reference parameter (`&T`, `&mut T`): create a symbolic
     /// allocation for the pointee, attach provenance, and (for a struct pointee)
     /// materialize its pointer/scalar fields.
-    fn init_reference_param(
+    pub(super) fn init_reference_param(
         &mut self,
         local: Local,
         ty: Ty<'tcx>,
@@ -756,7 +488,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// Propagate parameter provenance through the entry block's simple
     /// assignments (`_tmp = _1`, `_tmp = _1 as *const T`), which the backward
     /// slicer may omit as same-block definitions.
-    fn propagate_entry_block_provenance(&mut self) {
+    pub(super) fn propagate_entry_block_provenance(&mut self) {
         let Some(entry_bb) = self.body().basic_blocks.iter().next() else {
             return;
         };
@@ -800,4 +532,112 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
     }
 
+}
+
+impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+    pub(crate) fn init_parameters(&mut self) {
+        let arg_count = self.body().arg_count;
+        let local_count = self.body().local_decls.len();
+
+        for local_idx in 1..local_count {
+            let local = Local::from_usize(local_idx);
+            if self.current_frame.local_alloc.contains_key(&local) {
+                continue;
+            }
+            let decl = &self.body().local_decls[local];
+            let ty = decl.ty;
+
+            self.ensure_local_allocation(local);
+
+            let mut invariants = ValueFacts::default();
+            if local_idx <= arg_count {
+                if self.init_box_vec_param(local, ty, local_idx, &mut invariants) {
+                    continue;
+                }
+                if self.init_struct_param(local, ty, local_idx, &mut invariants) {
+                    continue;
+                }
+                if self.init_reference_param(local, ty, local_idx, &mut invariants) {
+                    continue;
+                }
+                let is_scalar = matches!(
+                    ty.kind(),
+                    rustc_middle::ty::TyKind::Uint(_)
+                        | rustc_middle::ty::TyKind::Int(_)
+                        | rustc_middle::ty::TyKind::Float(_)
+                        | rustc_middle::ty::TyKind::Bool
+                        | rustc_middle::ty::TyKind::Char
+                );
+                if is_scalar {
+                    let val = self.fresh_int(&format!("arg_{}", local_idx));
+                    self.set_local(
+                        local,
+                        VmValue {
+                            z3_term: val,
+                            ty,
+                            provenance: None,
+                            facts: invariants,
+                            source: ValueSource::None,
+                        },
+                    );
+                    continue;
+                }
+                if let rustc_middle::ty::TyKind::RawPtr(pointee, _mutbl) = ty.kind() {
+                    let max_size = Int::from_u64(self.z3_ctx, i64::MAX as u64);
+                    let pointee_align = self.align_sym(*pointee);
+                    let (alloc_id, base) =
+                        self.allocate_external(max_size, pointee_align, Some(*pointee));
+                    self.set_local(
+                        local,
+                        VmValue {
+                            z3_term: base,
+                            ty,
+                            provenance: Some(Provenance {
+                                alloc_id,
+                                offset: Int::from_u64(self.z3_ctx, 0),
+                                offset_kind: None,
+                            }),
+                            facts: invariants,
+                            source: ValueSource::None,
+                        },
+                    );
+                    continue;
+                }
+                if self.init_array_param(local, ty, local_idx, &mut invariants) {
+                    continue;
+                }
+                let term = self.fresh_int(&format!("param_{}", local_idx));
+                self.set_local(
+                    local,
+                    VmValue {
+                        z3_term: term,
+                        ty,
+                        provenance: None,
+                        facts: invariants,
+                        source: ValueSource::None,
+                    },
+                );
+                continue;
+            }
+            let term = match ty.kind() {
+                rustc_middle::ty::TyKind::Ref(..) | rustc_middle::ty::TyKind::RawPtr(..) => {
+                    self.local_address(local)
+                }
+                _ => self.fresh_int(&format!("local_{}", local_idx)),
+            };
+            self.set_local(
+                local,
+                VmValue {
+                    z3_term: term,
+                    ty,
+                    provenance: None,
+                    facts: invariants,
+                    source: ValueSource::None,
+                },
+            );
+        }
+
+        self.propagate_entry_block_provenance();
+        self.prewarm_generic_size_align();
+    }
 }

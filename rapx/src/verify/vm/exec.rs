@@ -59,7 +59,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     item: ActiveMirItem::Statement(*statement_index),
                     span: statement.source_info.span,
                 });
-                crate::verify::vm::rules::exec_statement(self, statement);
+                crate::verify::vm::mir_rules::exec_statement(self, statement);
                 true
             }
             RelevantItem::Terminator {
@@ -77,7 +77,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     span: terminator.source_info.span,
                 });
                 let viable =
-                    crate::verify::vm::rules::exec_terminator(self, terminator, *switch_succ);
+                    crate::verify::vm::mir_rules::exec_terminator(self, terminator, *switch_succ).continues();
                 viable || (self.safedrop_events.is_enabled()
                     && matches!(&terminator.kind, TerminatorKind::Call { unwind: UnwindAction::Cleanup(target), .. } if Some(*target) == *switch_succ)
                 )
