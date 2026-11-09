@@ -50,8 +50,15 @@ pub fn init(tcx: TyCtxt) {
     METHODS.get_or_init(|| init_methods(tcx));
 }
 
-pub fn is_slice_get(callee: Option<DefId>) -> bool {
-    callee.is_some_and(|id| slice_get_fns().contains(&id))
+pub fn is_slice_get(tcx: TyCtxt<'_>, callee: DefId) -> bool {
+    if !matches!(tcx.crate_name(callee.krate).as_str(), "core" | "alloc" | "std") {
+        return false;
+    }
+    let name = tcx.def_path_str(callee);
+    (name.ends_with("::get") || name.ends_with("::get_mut"))
+        && (name.contains("::<impl [T]>::get")
+            || name.contains("::<impl *mut [T]>::get")
+            || name.contains("::<impl *const [T]>::get"))
 }
 
 pub fn is_ub_check(tcx: TyCtxt<'_>, callee: DefId) -> bool {
@@ -80,8 +87,6 @@ static METHODS: OnceLock<Methods> = OnceLock::new();
 struct Methods {
     integer_wrapping_sub_fns: Vec<DefId>,
     split_at: Vec<DefId>,
-    slice_get_unchecked: Vec<DefId>,
-    slice_get: Vec<DefId>,
     range_next: Vec<DefId>,
     iter_next: Vec<DefId>,
     iterator_next_trait: Vec<DefId>,
@@ -96,8 +101,6 @@ fn init_methods(tcx: TyCtxt) -> Methods {
     let mut methods = Methods {
         integer_wrapping_sub_fns: Vec::new(),
         split_at: Vec::new(),
-        slice_get_unchecked: Vec::new(),
-        slice_get: Vec::new(),
         range_next: Vec::new(),
         iter_next: Vec::new(),
         iterator_next_trait: Vec::new(),
@@ -130,22 +133,6 @@ fn init_methods(tcx: TyCtxt) -> Methods {
 
             if name.contains("::split_at") {
                 methods.split_at.push(did);
-            }
-            if (name.contains("::get_unchecked") || name.contains("::get_unchecked_mut"))
-                && (name.contains("::<impl [T]>::get_unchecked")
-                    || name.contains("::<impl *mut [T]>::get_unchecked")
-                    || name.contains("::<impl *const [T]>::get_unchecked")
-                    || name.contains("::mut_ptr::get_unchecked")
-                    || name.contains("::const_ptr::get_unchecked"))
-            {
-                methods.slice_get_unchecked.push(did);
-            }
-            if (name.ends_with("::get") || name.ends_with("::get_mut"))
-                && (name.contains("::<impl [T]>::get")
-                    || name.contains("::<impl *mut [T]>::get")
-                    || name.contains("::<impl *const [T]>::get"))
-            {
-                methods.slice_get.push(did);
             }
             // `Range::next` / `RangeInclusive::next` and their `spec_next` impls:
             // the loop variable of `for i in 0..N` is produced by these, so the
@@ -269,7 +256,6 @@ method_fns! {
 
 method_fns! {
     split_at_fns => split_at,
-    slice_get_fns => slice_get,
     range_next_fns => range_next,
     /// Slice `Iter::next` / `IterMut::next`.
     iter_next_fns => iter_next,

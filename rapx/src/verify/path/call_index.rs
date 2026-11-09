@@ -263,7 +263,8 @@ impl<'tcx> CallSiteIndex<'tcx> {
                     && mir_utils::has_unmodeled_generic_call(self.tcx, callee);
                 let generic_trait_call = !cross_crate && generic_callee && unmodeled_generic_call;
                 let instantiate = self.tcx.is_mir_available(callee)
-                    && ((cross_crate && crate::def_ids::other_api::is_slice_get(Some(base_callee)))
+                    && ((cross_crate
+                        && crate::def_ids::other_api::is_slice_get(self.tcx, base_callee))
                         || (returns_adt
                             && (cross_crate || is_trait_method)
                             && (unmodeled_generic_call || generic_const_call))

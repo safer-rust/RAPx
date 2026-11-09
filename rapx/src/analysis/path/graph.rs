@@ -835,7 +835,7 @@ impl<'tcx> PathGraph<'tcx> {
                     }
                 }
             }
-            if crate::def_ids::other_api::is_slice_get(Some(callee)) {
+            if crate::def_ids::other_api::is_slice_get(self.tcx(), callee) {
                 if let Some(range) = args.get(1)
                     && let Some(range_local) = range.node.place().map(|p| p.local.as_usize())
                 {
