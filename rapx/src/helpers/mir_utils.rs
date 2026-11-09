@@ -1600,7 +1600,7 @@ pub fn collect_all_const_bytes_worklist<'tcx>(
                     continue;
                 }
                 let did = dep_callee_def_id(func);
-                if did.is_some_and(|d| other_api::as_ptr_like_fns().contains(&d)) {
+                if did.is_some_and(other_api::is_as_ptr_like) {
                     for arg in args {
                         if let Some(bytes) = trace_const_bytes_from_operand(tcx, body, &arg.node) {
                             results.push(bytes);
@@ -1671,7 +1671,7 @@ fn collect_as_ptr_const_bytes<'tcx>(
     for data in body.basic_blocks.iter() {
         if let Some(terminator) = &data.terminator
             && let TerminatorKind::Call { func, args, .. } = &terminator.kind
-            && dep_callee_def_id(func).is_some_and(|d| other_api::as_ptr_like_fns().contains(&d))
+            && dep_callee_def_id(func).is_some_and(other_api::is_as_ptr_like)
         {
             for arg in args {
                 if let Some(bytes) = trace_const_bytes_from_operand(tcx, body, &arg.node) {
@@ -1718,7 +1718,7 @@ fn const_bytes_from_call_dest<'tcx>(
             if destination.local != local || !destination.projection.is_empty() {
                 continue;
             }
-            if dep_callee_def_id(func).is_some_and(|d| other_api::as_ptr_like_fns().contains(&d)) {
+            if dep_callee_def_id(func).is_some_and(other_api::is_as_ptr_like) {
                 for arg in args {
                     if let Some(bytes) = trace_const_bytes_from_operand(tcx, body, &arg.node) {
                         return Some(bytes);

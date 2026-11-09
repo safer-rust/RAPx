@@ -1090,9 +1090,9 @@ fn local_hazard_violation_with(
                 destination: call_dest,
                 ..
             } = &terminator.kind
-                && crate::verify::api_classify::is_split_at(
-                    mir_utils::dep_callee_def_id(func),
-                ) {
+                && mir_utils::dep_callee_def_id(func)
+                    .is_some_and(|did| crate::def_ids::other_api::is_split_at(tcx, did))
+            {
                     hazard_locals.insert(call_dest.local);
                 }
     }

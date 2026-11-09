@@ -40,9 +40,9 @@ pub(crate) fn dependency_summary<'tcx>(
             return summary;
         }
         if arg_count > 0
-            && (api_classify::is_iter_next(Some(callee))
-                || api_classify::is_range_next(Some(callee))
-                || crate::def_ids::other_api::iterator_next_trait_fns().contains(&callee))
+            && (crate::def_ids::other_api::is_iter_next(tcx, callee)
+                || crate::def_ids::other_api::is_range_next(tcx, callee)
+                || crate::def_ids::other_api::is_iterator_next_trait(tcx, callee))
         {
             let mut summary = CallDependencySummary::fallback(arg_count);
             summary.write_args.push(0);
@@ -89,7 +89,7 @@ pub(crate) fn dependency_summary<'tcx>(
             && crate::def_ids::other_api::is_std_box_value_constructor(tcx, callee);
         let return_deps = if box_constructor {
             Some((0..arg_count).collect())
-        } else if api_classify::is_branch(Some(callee)) {
+        } else if crate::def_ids::other_api::is_option_branch(tcx, callee) {
             Some(vec![0])
         } else {
             local_return_dependencies(tcx, callee).map(|args| {

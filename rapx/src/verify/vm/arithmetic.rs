@@ -5,7 +5,6 @@ use rustc_middle::{
 use z3::ast::{Ast, Bool, Int};
 
 use crate::helpers::mir_utils;
-use crate::verify::api_classify;
 
 use super::state::{OffsetKind, Provenance, ValueFacts, ValueSource, VmState, VmValue};
 
@@ -60,7 +59,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             if let rustc_middle::mir::TerminatorKind::Call { func, .. } = &bb.terminator().kind
                 && let Some(did) = mir_utils::dep_callee_def_id(func)
             {
-                return api_classify::is_gcd(Some(did));
+                return crate::def_ids::other_api::is_gcd(self.tcx, did);
             }
             false
         });

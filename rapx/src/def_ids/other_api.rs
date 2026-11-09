@@ -1,8 +1,7 @@
 //! Known `core`/`std`/`alloc` API identities, regardless of MIR availability.
 //!
-//! [`init`] scans standard-library functions once. [`known_items!`] resolves
-//! fixed paths to `DefId`s, while [`Methods`] collects groups matched by name.
-//! Simple method patterns are checked directly from a call-site `DefId`.
+//! [`init`] scans standard-library functions once for the fixed paths declared
+//! by [`known_items!`]. Other methods are recognized directly from their `DefId`.
 //! Missing items in `#![no_std]` builds are reported as warnings.
 
 use indexmap::IndexMap;
@@ -11,7 +10,10 @@ use rustc_middle::ty::{TyCtxt, TyKind};
 use rustc_public::{CrateDef, rustc_internal};
 use std::sync::OnceLock;
 
-use super::type_ids;
+use super::{
+    lang_api::{self, LangItem},
+    type_ids,
+};
 
 static INIT: OnceLock<KnownItems> = OnceLock::new();
 
@@ -22,7 +24,6 @@ struct KnownItems {
 
 pub fn init(tcx: TyCtxt) {
     INIT.get_or_init(|| init_inner(tcx));
-    METHODS.get_or_init(|| init_methods(tcx));
 }
 
 pub fn is_slice_get(tcx: TyCtxt<'_>, callee: DefId) -> bool {
@@ -77,144 +78,101 @@ pub fn is_ub_check(tcx: TyCtxt<'_>, callee: DefId) -> bool {
         || path.contains("ub_checks::maybe_is_nonoverlapping")
 }
 
-/// Methods collected by name from `core`, `std`, and `alloc` for `DefId` set lookups.
-static METHODS: OnceLock<Methods> = OnceLock::new();
-
-struct Methods {
-    split_at: Vec<DefId>,
-    range_next: Vec<DefId>,
-    iter_next: Vec<DefId>,
-    iterator_next_trait: Vec<DefId>,
-    as_ptr_like: Vec<DefId>,
-    branch: Vec<DefId>,
-    gcd: Vec<DefId>,
-    known_nonnull: Vec<DefId>,
-    null_ptr: Vec<DefId>,
+fn is_std_api(tcx: TyCtxt<'_>, did: DefId) -> bool {
+    matches!(tcx.crate_name(did.krate).as_str(), "core" | "alloc" | "std")
 }
 
-fn init_methods(tcx: TyCtxt) -> Methods {
-    let mut methods = Methods {
-        split_at: Vec::new(),
-        range_next: Vec::new(),
-        iter_next: Vec::new(),
-        iterator_next_trait: Vec::new(),
-        as_ptr_like: Vec::new(),
-        branch: Vec::new(),
-        gcd: Vec::new(),
-        known_nonnull: Vec::new(),
-        null_ptr: Vec::new(),
-    };
+pub fn is_split_at(tcx: TyCtxt<'_>, did: DefId) -> bool {
+    is_std_api(tcx, did) && tcx.def_path_str(did).contains("::split_at")
+}
 
-    for krate in std::iter::once(rustc_public::local_crate())
-        .chain(rustc_public::external_crates())
-        .filter(|k| ["core", "std", "alloc"].iter().any(|n| *n == k.name))
+pub fn is_range_next(tcx: TyCtxt<'_>, did: DefId) -> bool {
+    if !is_std_api(tcx, did)
+        || !matches!(tcx.item_name(did).as_str(), "next" | "spec_next")
     {
-        for fn_def in krate.fn_defs() {
-            let name = fn_def.name();
-            let did = rustc_internal::internal(tcx, fn_def.def_id());
-            if tcx.opt_associated_item(did).is_some_and(|item| {
-                item.name() == rustc_span::sym::next
-                    && item.trait_container(tcx).is_some_and(|trait_id| {
-                        tcx.is_diagnostic_item(rustc_span::Symbol::intern("Iterator"), trait_id)
-                    })
-            }) {
-                methods.iterator_next_trait.push(did);
-            }
-
-            if name.contains("::split_at") {
-                methods.split_at.push(did);
-            }
-            // `Range::next` / `RangeInclusive::next` and their `spec_next` impls:
-            // the loop variable of `for i in 0..N` is produced by these, so the
-            // VM models them to carry the `0 <= i < N` bound.
-            if (name.ends_with("::next") || name.ends_with("::spec_next"))
-                && (name.contains("RangeIteratorImpl")
-                    || name.contains("RangeInclusiveIteratorImpl")
-                    || (name.contains("Iterator for") && name.contains("Range<"))
-                    || (name.contains("Iterator for") && name.contains("RangeInclusive<")))
-            {
-                methods.range_next.push(did);
-            }
-            if is_slice_iter_method(tcx, did)
-                && let Some(item) = tcx.opt_associated_item(did)
-            {
-                match item.name().as_str() {
-                    "next" => methods.iter_next.push(did),
-                    _ => {}
-                }
-            }
-            // `<Option<T> as Try>::branch` (the `?` operator on `Option`).
-            // `branch` has no lang/diagnostic item; `Option` disambiguates it
-            // from `<Result<T, E> as Try>::branch`.
-            if name.ends_with("::branch") && name.contains("Option") {
-                methods.branch.push(did);
-            }
-            // `gcd` const fn (const-eval integer GCD).
-            if name.ends_with("::gcd") {
-                methods.gcd.push(did);
-            }
-            if matches!(
-                name.as_str(),
-                "std::ptr::null"
-                    | "std::ptr::null_mut"
-                    | "core::ptr::null"
-                    | "core::ptr::null_mut"
-                    | "ptr::null"
-                    | "ptr::null_mut"
-            ) {
-                methods.null_ptr.push(did);
-            }
-        }
+        return false;
     }
+    crate::helpers::name::get_struct_self_ty(tcx, did)
+        .and_then(|ty| match ty.kind() {
+            TyKind::Adt(adt, _) => Some(adt.did()),
+            _ => None,
+        })
+        .is_some_and(|adt| {
+            lang_api::matches(tcx, adt, LangItem::Range)
+                || lang_api::matches(tcx, adt, LangItem::RangeInclusiveStruct)
+        })
+}
 
-    methods.as_ptr_like = [
-        slice_as_ptr(),
-        slice_as_mut_ptr(),
-        str_as_ptr(),
-        str_as_mut_ptr(),
-        vec_as_ptr(),
-        vec_as_mut_ptr(),
-        cstr_as_ptr(),
-        nonnull_as_ptr(),
-        nonnull_slice_as_mut_ptr(),
-        box_as_ptr(),
-        box_as_mut_ptr(),
-        maybe_uninit_as_ptr(),
-        maybe_uninit_as_mut_ptr(),
-        arc_as_ptr(),
-        rc_as_ptr(),
-        const_ptr_slice_as_ptr(),
-        mut_ptr_slice_as_mut_ptr(),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-    methods.known_nonnull = [
-        slice_as_ptr(),
-        slice_as_mut_ptr(),
-        str_as_ptr(),
-        str_as_mut_ptr(),
-        vec_as_ptr(),
-        vec_as_mut_ptr(),
-        cstr_as_ptr(),
-        nonnull_as_ptr(),
-        nonnull_slice_as_mut_ptr(),
-        box_as_ptr(),
-        box_as_mut_ptr(),
-        maybe_uninit_as_ptr(),
-        maybe_uninit_as_mut_ptr(),
-        arc_as_ptr(),
-        rc_as_ptr(),
-        box_into_raw(),
-        cstring_into_raw(),
-        arc_into_raw(),
-        rc_into_raw(),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
+pub fn is_iter_next(tcx: TyCtxt<'_>, did: DefId) -> bool {
+    is_std_api(tcx, did)
+        && is_slice_iter_method(tcx, did)
+        && tcx
+            .opt_associated_item(did)
+            .is_some_and(|item| item.name() == rustc_span::sym::next)
+}
 
-    methods
+pub fn is_iterator_next_trait(tcx: TyCtxt<'_>, did: DefId) -> bool {
+    is_std_api(tcx, did)
+        && tcx.opt_associated_item(did).is_some_and(|item| {
+            item.name() == rustc_span::sym::next
+                && item.trait_container(tcx).is_some_and(|trait_id| {
+                    tcx.is_diagnostic_item(rustc_span::Symbol::intern("Iterator"), trait_id)
+                })
+        })
+}
+
+pub fn is_option_branch(tcx: TyCtxt<'_>, did: DefId) -> bool {
+    if !is_std_api(tcx, did) || tcx.item_name(did).as_str() != "branch" {
+        return false;
+    }
+    crate::helpers::name::get_struct_self_ty(tcx, did)
+        .is_some_and(|ty| {
+            matches!(ty.kind(), TyKind::Adt(adt, _)
+                if tcx.is_diagnostic_item(rustc_span::sym::Option, adt.did()))
+        })
+}
+
+pub fn is_gcd(tcx: TyCtxt<'_>, did: DefId) -> bool {
+    is_std_api(tcx, did) && tcx.def_path_str(did).ends_with("::gcd")
+}
+
+pub fn is_null_ptr(tcx: TyCtxt<'_>, did: DefId) -> bool {
+    is_std_api(tcx, did)
+        && matches!(
+            tcx.def_path_str(did).as_str(),
+            "std::ptr::null"
+                | "std::ptr::null_mut"
+                | "core::ptr::null"
+                | "core::ptr::null_mut"
+                | "ptr::null"
+                | "ptr::null_mut"
+        )
+}
+
+pub fn is_as_ptr_like(did: DefId) -> bool {
+    matches_any(
+        Some(did),
+        &[
+            slice_as_ptr(), slice_as_mut_ptr(), str_as_ptr(), str_as_mut_ptr(),
+            vec_as_ptr(), vec_as_mut_ptr(), cstr_as_ptr(), nonnull_as_ptr(),
+            nonnull_slice_as_mut_ptr(), box_as_ptr(), box_as_mut_ptr(),
+            maybe_uninit_as_ptr(), maybe_uninit_as_mut_ptr(), arc_as_ptr(), rc_as_ptr(),
+            const_ptr_slice_as_ptr(), mut_ptr_slice_as_mut_ptr(),
+        ],
+    )
+}
+
+pub fn is_known_nonnull(did: DefId) -> bool {
+    matches_any(
+        Some(did),
+        &[
+            slice_as_ptr(), slice_as_mut_ptr(), str_as_ptr(), str_as_mut_ptr(),
+            vec_as_ptr(), vec_as_mut_ptr(), cstr_as_ptr(), nonnull_as_ptr(),
+            nonnull_slice_as_mut_ptr(), box_as_ptr(), box_as_mut_ptr(),
+            maybe_uninit_as_ptr(), maybe_uninit_as_mut_ptr(), arc_as_ptr(), rc_as_ptr(),
+            box_into_raw(), cstring_into_raw(), arc_into_raw(), rc_into_raw(),
+        ],
+    )
 }
 
 fn is_slice_iter_method(tcx: TyCtxt<'_>, did: DefId) -> bool {
@@ -224,40 +182,6 @@ fn is_slice_iter_method(tcx: TyCtxt<'_>, did: DefId) -> bool {
             _ => None,
         })
         .is_some_and(|adt| type_ids::iter_types().contains(&adt))
-}
-
-macro_rules! method_fns {
-    ($( $(#[$attr:meta])* $name:ident => $field:ident ,)+) => {
-        $(
-            $(#[$attr])*
-            pub fn $name() -> &'static [DefId] {
-                &METHODS
-                    .get()
-                    .expect("Method DefIds haven't been initialized.")
-                    .$field
-            }
-        )+
-    };
-}
-
-method_fns! {
-    split_at_fns => split_at,
-    range_next_fns => range_next,
-    /// Slice `Iter::next` / `IterMut::next`.
-    iter_next_fns => iter_next,
-    iterator_next_trait_fns => iterator_next_trait,
-    /// `Iter::is_empty` / `IterMut::is_empty`.
-    /// Pointer accessors that retain the source bytes.
-    as_ptr_like_fns => as_ptr_like,
-    /// `<Option<T> as Try>::branch`.
-    branch_fns => branch,
-    /// `gcd` const functions.
-    gcd_fns => gcd,
-    /// Known non-null-returning pointer methods (`into_raw` / `Box::new` /
-    /// `as_ptr` / `as_mut_ptr`).
-    known_nonnull_fns => known_nonnull,
-    /// Null-returning pointer methods (`null` / `null_mut`).
-    null_ptr_fns => null_ptr,
 }
 
 fn init_inner(tcx: TyCtxt) -> KnownItems {

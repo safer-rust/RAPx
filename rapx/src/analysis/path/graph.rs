@@ -491,11 +491,11 @@ fn build_function_info<'tcx>(
             } = terminator.kind
             && let Some(did) = mir_utils::dep_callee_def_id(func)
         {
-            if other_api::known_nonnull_fns().contains(&did) {
+            if other_api::is_known_nonnull(did) {
                 info.origin
                     .insert(destination.local.as_usize(), LocalOrigin::NonNull);
             }
-            if other_api::null_ptr_fns().contains(&did) {
+            if other_api::is_null_ptr(tcx, did) {
                 info.origin
                     .insert(destination.local.as_usize(), LocalOrigin::Const(0));
             }

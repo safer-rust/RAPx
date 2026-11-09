@@ -10,8 +10,7 @@
 //! Most classifiers match callees or ADT types by `DefId`, using identities
 //! from [`crate::def_ids::intrinsic_api`],
 //! [`crate::def_ids::nomir_ffi`], [`crate::def_ids::other_api`], and
-//! [`crate::def_ids::type_ids`]. Some `other_api` sets collect methods from
-//! the local crate and standard-library crates by name before matching `DefId`.
+//! [`crate::def_ids::type_ids`].
 
 use crate::def_ids::{intrinsic_api, nomir_ffi, other_api, type_ids};
 use rustc_hir::def_id::DefId;
@@ -19,11 +18,6 @@ use rustc_middle::ty::{Ty, TyKind};
 
 fn intrinsic_named(callee: Option<DefId>, names: &[&str]) -> bool {
     intrinsic_api::name(callee).is_some_and(|name| names.contains(&name.as_str()))
-}
-
-/// Whether `callee` is `Some` and matches any resolved DefId in the slice.
-fn any_def(callee: Option<DefId>, defs: &[DefId]) -> bool {
-    callee.is_some_and(|c| defs.contains(&c))
 }
 
 /// Whether `callee` is `ManuallyDrop::<T>::drop` — the *manual* drop that frees
@@ -451,33 +445,6 @@ pub fn is_std_iter_or_itermut(def_id: DefId) -> bool {
 
 pub fn is_std_ordering(def_id: DefId) -> bool {
     type_ids::ordering_types().contains(&def_id)
-}
-
-pub fn is_split_at(callee: Option<DefId>) -> bool {
-    any_def(callee, other_api::split_at_fns())
-}
-
-/// Whether `callee` is `Range::next` / `RangeInclusive::next` (or their
-/// `spec_next` impls). Distinct from the slice-side getters above: the receiver
-/// is `&mut Range<A>`, and the returned element is the current `start`.
-pub fn is_range_next(callee: Option<DefId>) -> bool {
-    any_def(callee, other_api::range_next_fns())
-}
-
-/// Whether `callee` is a slice iterator's `next` (`Iter::next` /
-/// `IterMut::next`, or the `Iterator::next` trait method they forward to).
-pub fn is_iter_next(callee: Option<DefId>) -> bool {
-    any_def(callee, other_api::iter_next_fns())
-}
-
-/// Whether `callee` is `<Option<T> as Try>::branch`.
-pub fn is_branch(callee: Option<DefId>) -> bool {
-    any_def(callee, other_api::branch_fns())
-}
-
-/// Whether `callee` is a `gcd` const fn.
-pub fn is_gcd(callee: Option<DefId>) -> bool {
-    any_def(callee, other_api::gcd_fns())
 }
 
 /// Whether `def_id` is `core::ops::index_range::IndexRange`.
