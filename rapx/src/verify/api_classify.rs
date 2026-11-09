@@ -14,10 +14,34 @@
 
 use crate::def_ids::{intrinsic_api, nomir_ffi, other_api, type_ids};
 use rustc_hir::def_id::DefId;
-use rustc_middle::ty::{Ty, TyKind};
+use rustc_middle::ty::{Ty, TyCtxt, TyKind};
 
 fn intrinsic_named(callee: Option<DefId>, names: &[&str]) -> bool {
     intrinsic_api::name(callee).is_some_and(|name| names.contains(&name.as_str()))
+}
+
+pub(crate) fn is_std_box_value_constructor(tcx: TyCtxt<'_>, callee: DefId) -> bool {
+    let Some(impl_id) = tcx.inherent_impl_of_assoc(callee) else {
+        return false;
+    };
+    let self_ty = tcx.type_of(impl_id).instantiate_identity();
+    #[cfg(rapx_ge_99)]
+    let self_ty = self_ty.skip_norm_wip();
+    let TyKind::Adt(adt, args) = self_ty.kind() else {
+        return false;
+    };
+    if !is_std_box(adt.did()) {
+        return false;
+    }
+    let Some(pointee) = args.first().and_then(|arg| arg.as_type()) else {
+        return false;
+    };
+    let sig = tcx.fn_sig(callee).skip_binder();
+    let output = sig.output().skip_binder();
+    matches!(output.kind(), TyKind::Adt(def, output_args)
+        if def.did() == adt.did()
+            && output_args.first().and_then(|arg| arg.as_type()) == Some(pointee))
+        && sig.inputs().skip_binder().first() == Some(&pointee)
 }
 
 /// Whether `callee` is `ManuallyDrop::<T>::drop` — the *manual* drop that frees

@@ -34,19 +34,6 @@ pub fn is_integer_wrapping_sub(tcx: TyCtxt<'_>, callee: DefId) -> bool {
     name.ends_with("::wrapping_sub") && name.contains("::num::<impl ")
 }
 
-pub fn is_std_box_value_constructor(tcx: TyCtxt<'_>, callee: DefId) -> bool {
-    if !matches!(tcx.item_name(callee).as_str(), "new" | "new_in") {
-        return false;
-    }
-    let Some(impl_id) = tcx.inherent_impl_of_assoc(callee) else {
-        return false;
-    };
-    let ty = tcx.type_of(impl_id).instantiate_identity();
-    #[cfg(rapx_ge_99)]
-    let ty = ty.skip_norm_wip();
-    matches!(ty.kind(), TyKind::Adt(adt, _) if type_ids::box_types().contains(&adt.did()))
-}
-
 pub fn is_dangling_method(tcx: TyCtxt<'_>, callee: DefId) -> bool {
     tcx.item_name(callee).as_str() == "dangling"
 }

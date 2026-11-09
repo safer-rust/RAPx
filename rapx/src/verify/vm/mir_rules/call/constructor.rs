@@ -25,6 +25,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             );
             return;
         }
+        let box_value_constructor = api_classify::is_std_box_value_constructor(self.tcx, callee);
         if let TyKind::Adt(adt, _) = ty.kind()
             && (api_classify::is_std_vec(adt.did())
                 || api_classify::is_std_box(adt.did())
@@ -35,7 +36,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     && (matches!(value.ty.kind(), TyKind::RawPtr(..))
                         || matches!(value.ty.kind(), TyKind::Adt(def, _) if api_classify::is_std_nonnull(def.did())))
             })
-            && !crate::def_ids::other_api::is_std_box_value_constructor(self.tcx, callee)
+            && !box_value_constructor
             && let Some(path) = self.container_ptr_field(ty)
         {
             let mut result = pointer.clone();
@@ -99,7 +100,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         if self.init_box_vec_param(destination, ty, destination.as_usize(), &mut facts)
             || self.init_struct_param(destination, ty, destination.as_usize(), &mut facts)
         {
-            if crate::def_ids::other_api::is_std_box_value_constructor(self.tcx, callee)
+            if box_value_constructor
                 && let Some(operand) = first_operand
                 && let Some(pointee_ty) = args.first().map(|value| value.ty)
                 && let Some(heap_id) = self

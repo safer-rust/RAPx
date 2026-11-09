@@ -83,11 +83,7 @@ pub(crate) fn dependency_summary<'tcx>(
                 .collect(),
         };
         let write_args = (!write_args.is_empty()).then_some(write_args);
-        let return_ty = body.local_decls[destination].ty;
-        let box_constructor = matches!(return_ty.kind(), TyKind::Adt(adt, _)
-            if api_classify::is_std_box(adt.did()))
-            && crate::def_ids::other_api::is_std_box_value_constructor(tcx, callee);
-        let return_deps = if box_constructor {
+        let return_deps = if api_classify::is_std_box_value_constructor(tcx, callee) {
             Some((0..arg_count).collect())
         } else if crate::def_ids::other_api::is_option_branch(tcx, callee) {
             Some(vec![0])
