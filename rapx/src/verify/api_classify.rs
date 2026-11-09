@@ -1,4 +1,4 @@
-//! Standard-library API call classification helpers.
+//! API call and type classification helpers.
 //!
 //! Each classifier answers "what kind of operation is this call?" (pointer
 //! arithmetic, raw memory access, ownership transfer, …). Callers — the path
@@ -7,12 +7,11 @@
 //!
 //! # Matching mechanism
 //!
-//! Every classifier takes a `DefId` — `fn(Option<DefId>) -> bool` for callee
-//! matching, or `fn(DefId) -> bool` for ADT *type* matching — and answers via
-//! exact identities from [`crate::def_ids::intrinsic_api`],
+//! Most classifiers match callees or ADT types by `DefId`, using identities
+//! from [`crate::def_ids::intrinsic_api`],
 //! [`crate::def_ids::nomir_ffi`], [`crate::def_ids::other_api`], and
-//! [`crate::def_ids::type_ids`]. Some standard-library method sets in
-//! `other_api` are collected by name patterns before being matched by `DefId`.
+//! [`crate::def_ids::type_ids`]. Some `other_api` sets collect methods from
+//! the local crate and standard-library crates by name before matching `DefId`.
 
 use crate::def_ids::{intrinsic_api, nomir_ffi, other_api, type_ids};
 use rustc_hir::def_id::DefId;
@@ -40,29 +39,6 @@ fn any_def(callee: Option<DefId>, defs: &[DefId]) -> bool {
     callee.is_some_and(|c| defs.contains(&c))
 }
 
-// ── Ownership reconstruction ──────────────────────────────────────
-
-/// Whether `callee` reconstructs an owned value, taking ownership of the
-/// pointed-to memory: from a single raw pointer (`Box::from_raw`,
-/// `CString::from_raw`, `Arc::from_raw`, `Rc::from_raw`) or from a `Vec<u8>`
-/// (`CString::from_vec_with_nul_unchecked`). Distinct from
-/// [`is_from_raw_parts`], which builds a slice/`Vec` from `(ptr, len[, cap])`.
-pub fn is_ownership_reconstruction(callee: Option<DefId>) -> bool {
-    other_api::matches_any(
-        callee,
-        &[
-            other_api::box_from_raw(),
-            nomir_ffi::cstring_from_raw(),
-            other_api::arc_from_raw(),
-            other_api::rc_from_raw(),
-            other_api::box_from_raw_in(),
-            other_api::arc_from_raw_in(),
-            other_api::rc_from_raw_in(),
-            nomir_ffi::cstring_from_vec_with_nul_unchecked(),
-        ],
-    )
-}
-
 /// Whether `callee` is `ManuallyDrop::<T>::drop` — the *manual* drop that frees
 /// the pointee's allocation without the `ManuallyDrop` wrapper's own (no-op)
 /// drop glue.
@@ -70,8 +46,7 @@ pub fn is_manually_drop_drop(callee: Option<DefId>) -> bool {
     callee.is_some_and(|c| other_api::manually_drop() == Some(c))
 }
 
-/// Whether `callee` is `std::mem::drop` / `core::mem::drop` — the value drop
-/// that frees the argument's heap allocation.
+/// Whether `callee` is `std::mem::drop` / `core::mem::drop`.
 pub fn is_std_drop(callee: Option<DefId>) -> bool {
     callee.is_some_and(|c| other_api::drop() == Some(c))
 }
@@ -82,9 +57,8 @@ pub fn is_std_drop(callee: Option<DefId>) -> bool {
 /// argument: `as_ptr`/`as_mut_ptr`, `into_raw`, and pointer `cast` (incl.
 /// `cast_mut`/`cast_const`). `as_ptr_range`/`as_mut_ptr_range` are excluded
 /// because they return a `Range` of two pointers rather than a single pointer;
-/// `NonNull::new_unchecked`/`as_ref`/`as_mut` are excluded because they do not
-/// produce a raw pointer (and `new_unchecked` must not mark its result
-/// non-null, or it would hide `new_unchecked(null)` unsoundness).
+/// `NonNull::new_unchecked` constructs a wrapper from a pointer; `as_ref` and
+/// `as_mut` produce references. None extracts a raw pointer from its argument.
 pub fn is_as_ptr(callee: Option<DefId>) -> bool {
     other_api::matches_any(
         callee,
@@ -130,7 +104,7 @@ pub fn is_as_ptr(callee: Option<DefId>) -> bool {
 /// Element-strided `add`/`wrapping_add` and signed `offset`/`wrapping_offset`
 /// (stride = `size_of::<T>()`). `offset_from`/`offset_from_unsigned` are *not*
 /// matched (they subtract two pointers into an `isize`).
-pub(crate) fn is_element_ptr_add(callee: Option<DefId>) -> bool {
+fn is_element_ptr_add(callee: Option<DefId>) -> bool {
     other_api::matches_any(
         callee,
         &[
@@ -149,7 +123,7 @@ pub(crate) fn is_element_ptr_add(callee: Option<DefId>) -> bool {
 }
 
 /// Element-strided `sub`/`wrapping_sub` (stride = `size_of::<T>()`).
-pub(crate) fn is_element_ptr_sub(callee: Option<DefId>) -> bool {
+fn is_element_ptr_sub(callee: Option<DefId>) -> bool {
     other_api::matches_any(
         callee,
         &[
@@ -164,7 +138,7 @@ pub(crate) fn is_element_ptr_sub(callee: Option<DefId>) -> bool {
 
 /// Byte-granular `byte_add`/`wrapping_byte_add` and signed
 /// `byte_offset`/`wrapping_byte_offset` (stride 1).
-pub(crate) fn is_byte_ptr_add(callee: Option<DefId>) -> bool {
+fn is_byte_ptr_add(callee: Option<DefId>) -> bool {
     other_api::matches_any(
         callee,
         &[
@@ -183,7 +157,7 @@ pub(crate) fn is_byte_ptr_add(callee: Option<DefId>) -> bool {
 }
 
 /// Byte-granular `byte_sub`/`wrapping_byte_sub` (stride 1).
-pub(crate) fn is_byte_ptr_sub(callee: Option<DefId>) -> bool {
+fn is_byte_ptr_sub(callee: Option<DefId>) -> bool {
     other_api::matches_any(
         callee,
         &[
@@ -294,10 +268,10 @@ pub fn is_ptr_read(callee: Option<DefId>) -> bool {
         )
 }
 
-/// Memory copy/write intrinsics that legitimately write through a raw pointer
-/// without requiring the target bytes to be pre-initialized (e.g. `ptr::write`,
-/// `write_bytes`, `copy_nonoverlapping`, `ptr::copy`). Used by the checker to
-/// discharge `Init`/`Typed` obligations on `MaybeUninit` targets.
+/// Copy/write operations that do not require initialized destination bytes:
+/// intrinsic `copy`/`copy_nonoverlapping`, pointer `copy_to_nonoverlapping`/
+/// `copy_from_nonoverlapping`, `write`, and `write_bytes`. Used by the checker
+/// for `Init`/`Typed` obligations on `MaybeUninit` targets.
 pub fn is_mem_copy_or_write(callee: Option<DefId>) -> bool {
     is_intrinsic_copy(callee)
         || other_api::matches_any(
@@ -311,25 +285,7 @@ pub fn is_mem_copy_or_write(callee: Option<DefId>) -> bool {
         )
 }
 
-// ── Queries and unwrap ────────────────────────────────────────────
-
 // ── Slice / C-string ──────────────────────────────────────────────
-
-/// Whether `callee` is a `from_raw_parts` constructor (`slice`/`str`/`ptr`/
-/// `String`/`Vec`/`NonNull`). Matched by `DefId` via
-/// [`crate::def_ids::other_api::from_raw_parts_fns`] in the standard-library crates.
-pub fn is_from_raw_parts(callee: Option<DefId>) -> bool {
-    any_def(callee, other_api::from_raw_parts_fns())
-}
-
-/// Whether `callee` is a `from_raw_parts_mut` constructor.
-pub fn is_from_raw_parts_mut(callee: Option<DefId>) -> bool {
-    any_def(callee, other_api::from_raw_parts_mut_fns())
-}
-
-pub fn is_cstr_from_ptr(callee: Option<DefId>) -> bool {
-    other_api::matches_any(callee, &[other_api::cstr_from_ptr()])
-}
 
 /// `_unchecked` C-string constructors whose caller must guarantee NUL
 /// termination (`CStr::from_bytes_with_nul_unchecked`,
@@ -357,21 +313,18 @@ pub fn is_vec_push_or_reserve(callee: Option<DefId>) -> bool {
     )
 }
 // ── Alias-hazard classification ───────────────────────────────────
-// These are the single home for "what does this raw-pointer API do" used by the
-// alias/hazard scanner. `is_ownership_transfer` is the raw-pointer subset of
-// [`is_ownership_reconstruction`]: it excludes `from_vec_with_nul_unchecked`
-// (which consumes a `Vec<u8>` rather than a raw pointer). `Vec::from_raw_parts`
-// / `from_parts` ownership transfer is matched separately by
-// [`is_vec_ownership_transfer`].
-
-pub fn is_ownership_transfer(callee: Option<DefId>) -> bool {
-    let Some(callee) = callee else { return false };
-    is_ownership_reconstruction(Some(callee))
-        && !other_api::contains(&[nomir_ffi::cstring_from_vec_with_nul_unchecked()], callee)
-}
-
-pub fn is_vec_ownership_transfer(callee: Option<DefId>) -> bool {
-    any_def(callee, other_api::vec_ownership_transfer_fns())
+// Ref-counted reconstruction retains a dedicated rule until the alias model
+// accounts for shared ownership and clone counts.
+pub fn is_ref_counted_from_raw(callee: Option<DefId>) -> bool {
+    other_api::matches_any(
+        callee,
+        &[
+            other_api::arc_from_raw(),
+            other_api::rc_from_raw(),
+            other_api::arc_from_raw_in(),
+            other_api::rc_from_raw_in(),
+        ],
+    )
 }
 
 /// Whether `callee` is `NonNull::as_ref` or `NonNull::as_mut`.
@@ -387,8 +340,8 @@ pub fn is_nonnull_as_mut(callee: Option<DefId>) -> bool {
     other_api::matches_any(callee, &[other_api::nonnull_as_mut()])
 }
 
-/// Whether `callee` is a `Vec` method that may reallocate (invalidating any
-/// outstanding raw pointers derived from it).
+/// Whether `callee` mutates a `Vec` in a way relevant to outstanding
+/// raw-pointer views (including length changes, element moves, and reallocation).
 pub fn is_vec_invalidating_method(callee: Option<DefId>) -> bool {
     other_api::matches_any(
         callee,

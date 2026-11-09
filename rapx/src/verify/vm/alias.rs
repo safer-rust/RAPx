@@ -496,13 +496,17 @@ pub(crate) fn check_alias_vm<'z3, 'tcx>(
         return VmAliasResult::Proved;
     }
 
-    let Some(producer) = alias_hazard::alias_producer(callee) else {
+    let Some(producer) = alias_hazard::alias_producer(vm_state.tcx, callee) else {
         return VmAliasResult::Unknown;
     };
 
     match producer {
-        AliasProducer::View(kind) => check_view_alias(vm_state, checkpoint, kind),
-        AliasProducer::OwnershipTransfer => check_ownership_transfer_alias(vm_state, checkpoint),
+        AliasProducer::View(kind, source_arg) => {
+            check_view_alias(vm_state, checkpoint, kind, source_arg)
+        }
+        AliasProducer::OwnershipTransfer(source_arg) => {
+            check_ownership_transfer_alias(vm_state, checkpoint, source_arg)
+        }
         AliasProducer::ReadMemory => check_read_memory_alias(vm_state, checkpoint),
     }
 }
@@ -511,8 +515,9 @@ fn check_view_alias<'z3, 'tcx>(
     vm_state: &VmState<'z3, 'tcx>,
     checkpoint: &Checkpoint<'tcx>,
     kind: HazardKind,
+    source_arg: usize,
 ) -> VmAliasResult {
-    let Some(origin_arg) = checkpoint.args.first() else {
+    let Some(origin_arg) = checkpoint.args.get(source_arg) else {
         return VmAliasResult::Unknown;
     };
     let origin_val = vm_state.value_of_operand(origin_arg);
@@ -558,17 +563,16 @@ fn check_view_alias<'z3, 'tcx>(
 
     // Also try to extract field projections from the checkpoint arg's MIR place.
     // If the arg directly references a struct field (e.g., `(*_1).0`), capture it.
-    let mir_place_from_arg = checkpoint
-        .args
-        .first()
-        .and_then(|a| alias_hazard::operand_mir_place(a));
+    let mir_place_from_arg = alias_hazard::operand_mir_place(origin_arg);
     if let Some(place) = mir_place_from_arg
-        && !place.projection.is_empty() && place.local == Local::from_usize(1) {
-            let field_key = PlaceKey::from_mir_place(place);
-            if !field_key.fields.is_empty() && !origins.contains(&field_key) {
-                origins.push(field_key);
-            }
+        && !place.projection.is_empty()
+        && place.local == Local::from_usize(1)
+    {
+        let field_key = PlaceKey::from_mir_place(place);
+        if !field_key.fields.is_empty() && !origins.contains(&field_key) {
+            origins.push(field_key);
         }
+    }
 
     if let Some(origin) = vm_state.resolve_origin(&origin_val) {
         match (kind, origin.kind) {
@@ -617,10 +621,11 @@ fn check_view_alias<'z3, 'tcx>(
         }
     }
 
-    let view_len_place = checkpoint
-        .args
-        .get(1)
-        .and_then(|a| alias_hazard::operand_place(a));
+    let view_len_place = if source_arg == 0 {
+        checkpoint.args.get(1).and_then(alias_hazard::operand_place)
+    } else {
+        None
+    };
 
     if let Some(reason) = alias_hazard::local_hazard_violation(
         tcx,
@@ -928,8 +933,9 @@ fn self_adt<'tcx>(
 fn check_ownership_transfer_alias<'z3, 'tcx>(
     vm_state: &VmState<'z3, 'tcx>,
     checkpoint: &Checkpoint<'tcx>,
+    source_arg: usize,
 ) -> VmAliasResult {
-    let Some(origin_arg) = checkpoint.args.first() else {
+    let Some(origin_arg) = checkpoint.args.get(source_arg) else {
         return VmAliasResult::Unknown;
     };
 

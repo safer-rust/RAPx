@@ -43,6 +43,10 @@
       ]
     },
     {
+      "tag": "Owning",
+      "args": ["$self.buf.inner.ptr"]
+    },
+    {
       "tag": "ValidNum",
       "args": [
         "0 <= $self.len"
@@ -73,6 +77,10 @@
     {
       "tag": "Init",
       "args": ["$self.vec.buf.inner.ptr", "u8", "$self.vec.len"]
+    },
+    {
+      "tag": "Owning",
+      "args": ["$self.vec.buf.inner.ptr"]
     },
     {
       "tag": "ValidNum",

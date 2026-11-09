@@ -851,15 +851,6 @@ impl<'tcx> PathGraph<'tcx> {
                         cs.lengths.insert(dest, (start, end));
                     }
                 }
-            } else if crate::def_ids::other_api::is_len(Some(callee)) {
-                // `slice::len(slice)` -> resolve the slice's length.
-                if let Some(slice) = args.get(0)
-                    && let Some(slice_local) = slice.node.place().map(|p| p.local.as_usize())
-                {
-                    if let Some(len) = self.resolve_length(slice_local, cs) {
-                        cs.lengths.insert(dest, len);
-                    }
-                }
             } else if self.tcx().def_path_str(callee).ends_with("::branch") {
                 // `Try::branch(option)` -> the `Continue` payload carries the
                 // same length as the input `Some` payload.

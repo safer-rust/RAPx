@@ -5998,6 +5998,11 @@
   ],
   "alloc::string::from_raw_parts": [
     {
+      "tag": "Alias",
+      "kind": "hazard",
+      "args": ["buf", "return"]
+    },
+    {
       "tag": "Allocated",
       "args": [
         "buf",

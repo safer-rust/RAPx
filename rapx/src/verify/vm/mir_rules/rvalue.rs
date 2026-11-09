@@ -69,14 +69,14 @@ pub(crate) fn eval_ref<'z3, 'tcx>(
             .iter()
             .any(|p| matches!(p.kind(), rustc_middle::mir::ProjectionElem::Deref));
         let src_ty = state.body().local_decls[place.local].ty;
-        let is_from_raw_parts_like =
+        let is_raw_ptr_source =
             matches!(src_ty.kind(), rustc_middle::ty::TyKind::RawPtr(_, _));
         let is_slice_ref = if let rustc_middle::ty::TyKind::Ref(_, inner, _) = dest_ty.kind() {
             matches!(inner.kind(), rustc_middle::ty::TyKind::Slice(_))
         } else {
             false
         };
-        let is_slice_ref_from_raw = is_slice_ref && is_from_raw_parts_like && has_deref;
+        let is_slice_ref_from_raw = is_slice_ref && is_raw_ptr_source && has_deref;
         let src_in_bounds = if is_slice_ref_from_raw {
             addr.is_pointer()
         } else {

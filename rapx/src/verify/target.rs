@@ -28,7 +28,7 @@ use rustc_hir::{
 use rustc_middle::{
     hir::nested_filter,
     mir::{Body, TerminatorKind},
-    ty::{EarlyBinder, Instance, InstanceKind, TyCtxt, TypingEnv},
+    ty::{self, EarlyBinder, Instance, InstanceKind, Ty, TyCtxt, TypingEnv},
 };
 use rustc_span::{Span, Symbol};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -1760,6 +1760,56 @@ pub(crate) fn get_struct_invariants_from_annotation<'tcx>(
         bind_alive_regions(tcx, struct_def_id, inv);
     }
     invariants
+}
+
+/// Resolve `Owning(self.field...)` invariants on a local returned struct to
+/// field-index paths, without requiring a method `self` binding.
+pub(crate) fn owning_field_paths_from_annotation<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    output: Ty<'tcx>,
+) -> Vec<Vec<usize>> {
+    let ty::Adt(adt, _) = output.kind() else {
+        return Vec::new();
+    };
+    if !adt.did().is_local() || !adt.is_struct() {
+        return Vec::new();
+    }
+    crate::compat::get_all_attrs(tcx, adt.did())
+        .into_iter()
+        .filter(|attr| is_rapx_named_attr(attr, "invariant"))
+        .filter_map(|attr| {
+            let text = crate::compat::attribute_to_string(tcx, attr);
+            parse_rapx_attr(&text, "invariant").ok().flatten()
+        })
+        .filter(|property| property.tag == "Owning")
+        .filter_map(|property| {
+            let mut members = Vec::new();
+            let mut expr = property.args.first()?;
+            while let syn::Expr::Field(field) = expr {
+                members.push(&field.member);
+                expr = &field.base;
+            }
+            let syn::Expr::Path(root) = expr else { return None };
+            if !root.path.is_ident("self") {
+                return None;
+            }
+            let mut ty = output;
+            let mut path = Vec::new();
+            for member in members.into_iter().rev() {
+                let ty::Adt(adt, args) = ty.kind() else { return None };
+                let fields = &adt.non_enum_variant().fields;
+                let index = match member {
+                    syn::Member::Named(name) =>
+                        fields.iter().position(|field| field.name.as_str() == name.to_string())?,
+                    syn::Member::Unnamed(index) => index.index as usize,
+                };
+                let field = fields.iter().nth(index)?;
+                path.push(index);
+                ty = crate::helpers::mir_utils::field_ty(tcx, field, args);
+            }
+            Some(path)
+        })
+        .collect()
 }
 
 /// Bind `Alive(p, 'a)` region idents in a contract to `Region`s, resolving `'a`

@@ -1607,16 +1607,6 @@ pub fn collect_all_const_bytes_worklist<'tcx>(
                         }
                     }
                 }
-                if did.is_some_and(|d| other_api::ptr_add_fns().contains(&d))
-                    && let Some(offset) = args.get(1).and_then(|a| operand_scalar_int(&a.node))
-                    && let Some(base) = args.first()
-                    && let Some(bytes) = trace_const_bytes_from_operand(tcx, body, &base.node)
-                {
-                    let start = offset as usize;
-                    if start < bytes.len() {
-                        results.push(bytes[start..].to_vec());
-                    }
-                }
                 #[cfg(rapx_ge_99)]
                 if did.is_some_and(|d| other_api::box_assume_init_into_vec_unsafe() == Some(d))
                     && let Some(box_op) = args.first()

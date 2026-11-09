@@ -50,10 +50,6 @@ pub fn init(tcx: TyCtxt) {
     METHODS.get_or_init(|| init_methods(tcx));
 }
 
-pub fn is_len(callee: Option<DefId>) -> bool {
-    callee.is_some_and(|id| len_fns().contains(&id))
-}
-
 pub fn is_slice_get(callee: Option<DefId>) -> bool {
     callee.is_some_and(|id| slice_get_fns().contains(&id))
 }
@@ -82,11 +78,7 @@ pub fn is_ub_check(tcx: TyCtxt<'_>, callee: DefId) -> bool {
 static METHODS: OnceLock<Methods> = OnceLock::new();
 
 struct Methods {
-    len_fns: Vec<DefId>,
-    from_raw_parts_fns: Vec<DefId>,
-    from_raw_parts_mut_fns: Vec<DefId>,
     integer_wrapping_sub_fns: Vec<DefId>,
-    vec_ownership_transfer_fns: Vec<DefId>,
     split_at: Vec<DefId>,
     slice_get_unchecked: Vec<DefId>,
     slice_get: Vec<DefId>,
@@ -94,7 +86,6 @@ struct Methods {
     iter_next: Vec<DefId>,
     iterator_next_trait: Vec<DefId>,
     as_ptr_like: Vec<DefId>,
-    ptr_add: Vec<DefId>,
     branch: Vec<DefId>,
     gcd: Vec<DefId>,
     known_nonnull: Vec<DefId>,
@@ -103,11 +94,7 @@ struct Methods {
 
 fn init_methods(tcx: TyCtxt) -> Methods {
     let mut methods = Methods {
-        len_fns: Vec::new(),
-        from_raw_parts_fns: Vec::new(),
-        from_raw_parts_mut_fns: Vec::new(),
         integer_wrapping_sub_fns: Vec::new(),
-        vec_ownership_transfer_fns: Vec::new(),
         split_at: Vec::new(),
         slice_get_unchecked: Vec::new(),
         slice_get: Vec::new(),
@@ -115,7 +102,6 @@ fn init_methods(tcx: TyCtxt) -> Methods {
         iter_next: Vec::new(),
         iterator_next_trait: Vec::new(),
         as_ptr_like: Vec::new(),
-        ptr_add: Vec::new(),
         branch: Vec::new(),
         gcd: Vec::new(),
         known_nonnull: Vec::new(),
@@ -138,22 +124,8 @@ fn init_methods(tcx: TyCtxt) -> Methods {
                 methods.iterator_next_trait.push(did);
             }
 
-            if name.ends_with("::len") {
-                methods.len_fns.push(did);
-            }
-            if name.ends_with("::from_raw_parts") || name.ends_with("::from_raw_parts_mut") {
-                methods.from_raw_parts_fns.push(did);
-            }
-            if name.ends_with("::from_raw_parts_mut") {
-                methods.from_raw_parts_mut_fns.push(did);
-            }
             if name.ends_with("::wrapping_sub") && name.contains("::num::<impl ") {
                 methods.integer_wrapping_sub_fns.push(did);
-            }
-            if (name.ends_with("::from_raw_parts") || name.ends_with("::from_parts"))
-                && (name.contains("Vec") || name.contains("vec::"))
-            {
-                methods.vec_ownership_transfer_fns.push(did);
             }
 
             if name.contains("::split_at") {
@@ -240,10 +212,6 @@ fn init_methods(tcx: TyCtxt) -> Methods {
     .into_iter()
     .flatten()
     .collect();
-    methods.ptr_add = [const_ptr_byte_add(), mut_ptr_byte_add(), nonnull_byte_add()]
-        .into_iter()
-        .flatten()
-        .collect();
     methods.known_nonnull = [
         slice_as_ptr(),
         slice_as_mut_ptr(),
@@ -296,16 +264,7 @@ macro_rules! method_fns {
 }
 
 method_fns! {
-    /// `len` query methods (`slice::len`, `str::len`, `Vec::len`, `String::len`,
-    /// and pointer-slice `len`).
-    len_fns => len_fns,
-    /// `from_raw_parts` constructors (`slice`/`str`/`ptr`/`NonNull`/`Vec`/`String`).
-    from_raw_parts_fns => from_raw_parts_fns,
-    /// `from_raw_parts_mut` constructors (`slice`/`ptr`/`NonNull`).
-    from_raw_parts_mut_fns => from_raw_parts_mut_fns,
     integer_wrapping_sub_fns => integer_wrapping_sub_fns,
-    /// `Vec::from_raw_parts` / `Vec::from_parts` (ownership transfer into a `Vec`).
-    vec_ownership_transfer_fns => vec_ownership_transfer_fns,
 }
 
 method_fns! {
@@ -318,8 +277,6 @@ method_fns! {
     /// `Iter::is_empty` / `IterMut::is_empty`.
     /// Pointer accessors that retain the source bytes.
     as_ptr_like_fns => as_ptr_like,
-    /// Byte-strided pointer `add` methods.
-    ptr_add_fns => ptr_add,
     /// `<Option<T> as Try>::branch`.
     branch_fns => branch,
     /// `gcd` const functions.
@@ -712,12 +669,6 @@ known_items! {
         "std::ptr::non_null::NonNull::<T>::byte_offset",
         "core::ptr::non_null::NonNull::<T>::byte_offset"
     ],
-    cstr_from_ptr: &[
-        "std::ffi::CStr::from_ptr",
-        "core::ffi::CStr::from_ptr",
-        "std::ffi::c_str::CStr::from_ptr",
-        "core::ffi::c_str::CStr::from_ptr"
-    ],
     cstr_from_bytes_with_nul_unchecked: &[
         "std::ffi::CStr::from_bytes_with_nul_unchecked",
         "core::ffi::CStr::from_bytes_with_nul_unchecked",
@@ -764,10 +715,6 @@ known_items! {
         "std::vec::Vec::<T, A>::set_len",
         "alloc::vec::Vec::<T, A>::set_len"
     ],
-    box_from_raw: &[
-        "std::boxed::Box::<T>::from_raw",
-        "alloc::boxed::Box::<T>::from_raw"
-    ],
     arc_from_raw: &[
         "std::sync::Arc::<T>::from_raw",
         "alloc::sync::Arc::<T>::from_raw"
@@ -775,10 +722,6 @@ known_items! {
     rc_from_raw: &[
         "std::rc::Rc::<T>::from_raw",
         "alloc::rc::Rc::<T>::from_raw"
-    ],
-    box_from_raw_in: &[
-        "std::boxed::Box::<T, A>::from_raw_in",
-        "alloc::boxed::Box::<T, A>::from_raw_in"
     ],
     arc_from_raw_in: &[
         "std::sync::Arc::<T, A>::from_raw_in",

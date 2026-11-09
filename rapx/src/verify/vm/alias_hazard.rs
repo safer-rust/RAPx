@@ -1,12 +1,13 @@
 //! MIR-level alias hazard analysis independent of VM state and Z3 terms.
 
 use crate::helpers::mir_utils;
+use crate::verify::contract::PropertyKind;
 use std::collections::{HashMap, HashSet};
 
 use rustc_hir::{Safety, def::DefKind, def_id::DefId};
 use rustc_middle::{
     mir::{
-        BasicBlock, Local, LocalDecls, Operand, Place, ProjectionElem, Rvalue, StatementKind,
+        BasicBlock, Body, Local, LocalDecls, Operand, Place, ProjectionElem, Rvalue, StatementKind,
         TerminatorKind,
     },
     ty::{self, AssocKind, TyCtxt, TyKind},
@@ -35,8 +36,8 @@ pub(super) enum HazardKind {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum AliasProducer {
-    View(HazardKind),
-    OwnershipTransfer,
+    View(HazardKind, usize),
+    OwnershipTransfer(usize),
     ReadMemory,
 }
 
@@ -63,25 +64,399 @@ pub(super) enum HazardCheck {
 
 // ── API classification ───────────────────────────────────────────
 
-pub(super) fn alias_producer(callee: DefId) -> Option<AliasProducer> {
-    if crate::verify::api_classify::is_from_raw_parts_mut(Some(callee)) {
-        return Some(AliasProducer::View(HazardKind::UniqueView));
+pub(super) fn alias_producer(tcx: TyCtxt<'_>, callee: DefId) -> Option<AliasProducer> {
+    if let Some(source_arg) = ownership_transfer_source_arg(tcx, callee) {
+        return Some(AliasProducer::OwnershipTransfer(source_arg));
     }
-    if crate::verify::api_classify::is_vec_ownership_transfer(Some(callee)) {
-        return Some(AliasProducer::OwnershipTransfer);
-    }
-    if crate::verify::api_classify::is_from_raw_parts(Some(callee))
-        || crate::verify::api_classify::is_cstr_from_ptr(Some(callee))
-    {
-        return Some(AliasProducer::View(HazardKind::SharedView));
-    }
-    if crate::verify::api_classify::is_ownership_transfer(Some(callee)) {
-        return Some(AliasProducer::OwnershipTransfer);
+    if crate::verify::api_classify::is_ref_counted_from_raw(Some(callee)) {
+        return Some(AliasProducer::OwnershipTransfer(0));
     }
     if crate::verify::api_classify::is_ptr_read(Some(callee)) {
         return Some(AliasProducer::ReadMemory);
     }
-    None
+    raw_pointer_view_from_mir(tcx, callee)
+        .map(|(kind, source_arg)| AliasProducer::View(kind, source_arg))
+}
+
+/// Recognize a returned reference formed by dereferencing a raw pointer
+/// derived from one of the callee's raw-pointer parameters.
+fn raw_pointer_view_from_mir(tcx: TyCtxt<'_>, callee: DefId) -> Option<(HazardKind, usize)> {
+    if !tcx.is_mir_available(callee) {
+        return None;
+    }
+    let body = tcx.optimized_mir(callee);
+    let kind = match body.local_decls[rustc_middle::mir::RETURN_PLACE].ty.kind() {
+        ty::Ref(_, _, ty::Mutability::Not) => HazardKind::SharedView,
+        ty::Ref(_, _, ty::Mutability::Mut) => HazardKind::UniqueView,
+        _ => return None,
+    };
+    let source_arg = trace_returned_ref(
+        tcx,
+        body,
+        rustc_middle::mir::RETURN_PLACE,
+        &mut HashSet::new(),
+        5,
+    )?;
+    let inputs = tcx.fn_sig(callee).skip_binder().inputs().skip_binder();
+    if !matches!(inputs.get(source_arg)?.kind(), ty::RawPtr(..)) {
+        return None;
+    }
+    Some((kind, source_arg))
+}
+
+pub(super) fn pointer_result_source_arg(tcx: TyCtxt<'_>, callee: DefId) -> Option<usize> {
+    if !tcx.is_mir_available(callee) {
+        return None;
+    }
+    let body = tcx.optimized_mir(callee);
+    let result = rustc_middle::mir::RETURN_PLACE;
+    match body.local_decls[result].ty.kind() {
+        ty::Ref(..) => trace_returned_ref(tcx, body, result, &mut HashSet::new(), 5),
+        ty::RawPtr(..) => trace_raw_pointer_arg(tcx, body, result, &mut HashSet::new(), 5),
+        _ => None,
+    }
+}
+
+fn ownership_transfer_source_arg(tcx: TyCtxt<'_>, callee: DefId) -> Option<usize> {
+    let output = tcx.fn_sig(callee).skip_binder().output().skip_binder();
+    let ty::Adt(..) = output.kind() else {
+        return None;
+    };
+    let invariants =
+        crate::verify::type_invariants::build_type_invariants_for_ty(tcx, callee, output);
+    let mut paths: Vec<_> = invariants
+        .iter()
+        .filter(|invariant| invariant.kind() == Some(PropertyKind::Owning))
+        .filter_map(|invariant| invariant.target_place()?.plain_field_path())
+        .collect();
+    paths.extend(crate::verify::target::owning_field_paths_from_annotation(tcx, output));
+    let opaque_source = if tcx.is_mir_available(callee) {
+        None
+    } else {
+        opaque_ownership_source_arg(tcx, callee)
+    };
+    let mut source = None;
+    for path in &paths {
+        let candidate = if tcx.is_mir_available(callee) {
+            trace_owned_field(
+                tcx,
+                tcx.optimized_mir(callee),
+                rustc_middle::mir::RETURN_PLACE,
+                path,
+                &mut HashSet::new(),
+                5,
+            )?
+        } else {
+            opaque_source?
+        };
+        let inputs = tcx.fn_sig(callee).skip_binder().inputs().skip_binder();
+        if !matches!(inputs.get(candidate)?.kind(), ty::RawPtr(..)) {
+            return None;
+        }
+        if source.is_some_and(|old| old != candidate) {
+            return None;
+        }
+        source = Some(candidate);
+    }
+    source
+}
+
+fn opaque_ownership_source_arg(tcx: TyCtxt<'_>, callee: DefId) -> Option<usize> {
+    let contracts = crate::verify::contract::json::get_std_contracts_from_json(tcx, callee)?;
+    let has_transfer_hazard = contracts.iter().any(|alias| {
+        alias.tag == "Alias"
+            && alias.kind.as_deref() == Some("hazard")
+            && alias.args.first().is_some_and(|source| {
+                contracts.iter().any(|owning| {
+                    owning.tag == "Owning" && owning.args.first() == Some(source)
+                })
+            })
+    });
+    if !has_transfer_hazard {
+        return None;
+    }
+    let inputs = tcx.fn_sig(callee).skip_binder().inputs().skip_binder();
+    let mut raw_args = inputs.iter().enumerate().filter_map(|(index, ty)| {
+        matches!(ty.kind(), ty::RawPtr(..)).then_some(index)
+    });
+    let source_arg = raw_args.next()?;
+    raw_args.next().is_none().then_some(source_arg)
+}
+
+fn trace_owned_field(
+    tcx: TyCtxt<'_>,
+    body: &Body<'_>,
+    local: Local,
+    path: &[usize],
+    seen: &mut HashSet<(Local, Vec<usize>)>,
+    depth: usize,
+) -> Option<usize> {
+    if !seen.insert((local, path.to_vec())) {
+        return None;
+    }
+    if path.is_empty() && matches!(body.local_decls[local].ty.kind(), ty::RawPtr(..)) {
+        return trace_raw_pointer_arg(tcx, body, local, &mut HashSet::new(), depth);
+    }
+    let mut source = None;
+    for data in body.basic_blocks.iter() {
+        for stmt in &data.statements {
+            let StatementKind::Assign(assign) = &stmt.kind else {
+                continue;
+            };
+            let (dest, value) = &**assign;
+            if dest.local != local || !dest.projection.is_empty() {
+                continue;
+            }
+            let candidate = match value {
+                Rvalue::Aggregate(_, operands) if !path.is_empty() => {
+                    let source_local = operands.iter().nth(path[0]).and_then(operand_local)?;
+                    trace_owned_field(tcx, body, source_local, &path[1..], &mut seen.clone(), depth)
+                }
+                Rvalue::Aggregate(_, operands) => {
+                    let mut source = None;
+                    for operand in operands {
+                        let Some(candidate) = operand_local(operand).and_then(|source_local| {
+                            trace_owned_field(
+                                tcx,
+                                body,
+                                source_local,
+                                path,
+                                &mut seen.clone(),
+                                depth,
+                            )
+                        }) else {
+                            continue;
+                        };
+                        if source.is_some_and(|old| old != candidate) {
+                            return None;
+                        }
+                        source = Some(candidate);
+                    }
+                    source
+                }
+                Rvalue::Use(operand, _) => operand_local(operand).and_then(|source_local| {
+                    trace_owned_field(tcx, body, source_local, path, &mut seen.clone(), depth)
+                }),
+                Rvalue::Cast(_, operand, _) if path.is_empty() => {
+                    let source_local = operand_local(operand)?;
+                    trace_raw_pointer_arg(tcx, body, source_local, &mut HashSet::new(), depth)
+                }
+                _ => None,
+            }?;
+            if source.is_some_and(|old| old != candidate) {
+                return None;
+            }
+            source = Some(candidate);
+        }
+        if let TerminatorKind::Call {
+            func,
+            args,
+            destination,
+            ..
+        } = &data.terminator().kind
+            && destination.local == local
+            && destination.projection.is_empty()
+        {
+            if depth == 0 {
+                return None;
+            }
+            let callee = mir_utils::dep_callee_def_id(func)?;
+            if !tcx.is_mir_available(callee) {
+                return None;
+            }
+            let callee_body = tcx.optimized_mir(callee);
+            let arg_index = trace_owned_field(
+                tcx,
+                callee_body,
+                rustc_middle::mir::RETURN_PLACE,
+                path,
+                &mut HashSet::new(),
+                depth - 1,
+            )?;
+            let source_local = args.get(arg_index).and_then(|arg| operand_local(&arg.node))?;
+            let candidate =
+                trace_raw_pointer_arg(tcx, body, source_local, &mut HashSet::new(), depth)?;
+            if source.is_some_and(|old| old != candidate) {
+                return None;
+            }
+            source = Some(candidate);
+        }
+    }
+    source
+}
+
+fn trace_returned_ref(
+    tcx: TyCtxt<'_>,
+    body: &Body<'_>,
+    local: Local,
+    seen: &mut HashSet<Local>,
+    depth: usize,
+) -> Option<usize> {
+    if !seen.insert(local) {
+        return None;
+    }
+    let index = local.as_usize();
+    if index > 0 && index <= body.arg_count
+        && matches!(body.local_decls[local].ty.kind(), ty::Ref(..))
+    {
+        return Some(index - 1);
+    }
+    let mut source = None;
+    for data in body.basic_blocks.iter() {
+        for stmt in &data.statements {
+            let StatementKind::Assign(assign) = &stmt.kind else {
+                continue;
+            };
+            let (dest, value) = &**assign;
+            if dest.local != local || !dest.projection.is_empty() {
+                continue;
+            }
+            let candidate = match value {
+                Rvalue::Ref(_, _, place)
+                    if place.projection.first() == Some(&ProjectionElem::Deref) =>
+                {
+                    trace_raw_pointer_arg(tcx, body, place.local, &mut HashSet::new(), 4)
+                        .or_else(|| {
+                            matches!(body.local_decls[place.local].ty.kind(), ty::Ref(..))
+                                .then(|| trace_returned_ref(tcx, body, place.local, &mut seen.clone(), depth))
+                                .flatten()
+                        })
+                }
+                Rvalue::Use(operand, _) => operand_local(operand)
+                    .and_then(|local| trace_returned_ref(tcx, body, local, &mut seen.clone(), depth)),
+                _ => None,
+            }?;
+            if source.is_some_and(|old| old != candidate) {
+                return None;
+            }
+            source = Some(candidate);
+        }
+        if depth > 0
+            && let TerminatorKind::Call { func, args, destination, .. } = &data.terminator().kind
+            && destination.local == local
+            && destination.projection.is_empty()
+        {
+            let callee = mir_utils::dep_callee_def_id(func)?;
+            if !tcx.is_mir_available(callee) {
+                return None;
+            }
+            let callee_body = tcx.optimized_mir(callee);
+            let arg_index = trace_returned_ref(
+                tcx,
+                callee_body,
+                rustc_middle::mir::RETURN_PLACE,
+                &mut HashSet::new(),
+                depth - 1,
+            )?;
+            let arg_local = args.get(arg_index).and_then(|arg| operand_local(&arg.node))?;
+            let candidate = match body.local_decls[arg_local].ty.kind() {
+                ty::Ref(..) => trace_returned_ref(tcx, body, arg_local, &mut seen.clone(), depth - 1),
+                ty::RawPtr(..) => trace_raw_pointer_arg(tcx, body, arg_local, &mut HashSet::new(), depth - 1),
+                _ => None,
+            }?;
+            if source.is_some_and(|old| old != candidate) {
+                return None;
+            }
+            source = Some(candidate);
+        }
+    }
+    source
+}
+
+fn trace_raw_pointer_arg(
+    tcx: TyCtxt<'_>,
+    body: &Body<'_>,
+    local: Local,
+    seen: &mut HashSet<Local>,
+    depth: usize,
+) -> Option<usize> {
+    if !seen.insert(local) {
+        return None;
+    }
+    if !matches!(body.local_decls[local].ty.kind(), ty::RawPtr(..)) {
+        return None;
+    }
+    let index = local.as_usize();
+    if index > 0 && index <= body.arg_count {
+        return Some(index - 1);
+    }
+    let mut source = None;
+    for data in body.basic_blocks.iter() {
+        for stmt in &data.statements {
+            let StatementKind::Assign(assign) = &stmt.kind else {
+                continue;
+            };
+            let (dest, value) = &**assign;
+            if dest.local != local || !dest.projection.is_empty() {
+                continue;
+            }
+            let candidate = match value {
+                Rvalue::Use(operand, _) | Rvalue::Cast(_, operand, _) => operand_local(operand)
+                    .and_then(|local| trace_raw_pointer_arg(tcx, body, local, &mut seen.clone(), depth)),
+                Rvalue::RawPtr(_, place)
+                    if place.projection.first() == Some(&ProjectionElem::Deref) =>
+                {
+                    trace_raw_pointer_arg(tcx, body, place.local, &mut seen.clone(), depth)
+                }
+                Rvalue::Aggregate(kind, operands)
+                    if matches!(&**kind, rustc_middle::mir::AggregateKind::RawPtr(..)) =>
+                {
+                    operands.iter().next().and_then(operand_local).and_then(|local| {
+                        trace_raw_pointer_arg(tcx, body, local, &mut seen.clone(), depth)
+                    })
+                }
+                _ => None,
+            }?;
+            if source.is_some_and(|old| old != candidate) {
+                return None;
+            }
+            source = Some(candidate);
+        }
+    }
+    if depth > 0 {
+        for data in body.basic_blocks.iter() {
+            let TerminatorKind::Call {
+                func,
+                args,
+                destination,
+                ..
+            } = &data.terminator().kind else {
+                continue;
+            };
+            if destination.local != local || !destination.projection.is_empty() {
+                continue;
+            }
+            let callee = mir_utils::dep_callee_def_id(func)?;
+            if !tcx.is_mir_available(callee) {
+                return None;
+            }
+            let callee_body = tcx.optimized_mir(callee);
+            let arg_index = trace_raw_pointer_arg(
+                tcx,
+                callee_body,
+                rustc_middle::mir::RETURN_PLACE,
+                &mut HashSet::new(),
+                depth - 1,
+            )?;
+            let arg = args.get(arg_index)?;
+            let candidate = operand_local(&arg.node)
+                .and_then(|local| trace_raw_pointer_arg(tcx, body, local, &mut seen.clone(), depth))?;
+            if source.is_some_and(|old| old != candidate) {
+                return None;
+            }
+            source = Some(candidate);
+        }
+    }
+    source
+}
+
+fn operand_local(operand: &Operand<'_>) -> Option<Local> {
+    match operand {
+        Operand::Copy(place) | Operand::Move(place) if place.projection.is_empty() => {
+            Some(place.local)
+        }
+        _ => None,
+    }
 }
 
 // ── Origin-based parameter safety ────────────────────────────────
@@ -835,23 +1210,27 @@ fn local_hazard_violation_with(
                     destination: call_dest,
                     ..
                 } = &terminator.kind
+            {
+                let callee = mir_utils::dep_callee_def_id(func);
+                if let Some((_, source_arg)) =
+                    callee.and_then(|id| raw_pointer_view_from_mir(tcx, id))
+                    && let Some(ptr_place) = args
+                        .get(source_arg)
+                        .and_then(|arg| operand_place(&arg.node))
                 {
-                    let callee = mir_utils::dep_callee_def_id(func);
-                    if crate::verify::api_classify::is_from_raw_parts(callee) && !args.is_empty()
-                        && let Some(ptr_place) = operand_place(&args[0].node) {
-                            let offset_eq = is_ptr_add_offset_eq(
-                                tcx,
-                                caller,
-                                &ptr_place,
-                                view_len_place.as_ref().unwrap(),
-                            );
-                            let from_add = is_ptr_from_ptr_add(tcx, caller, &ptr_place);
-                            if offset_eq || from_add {
-                                hazard_locals.insert(call_dest.local);
-                                continue;
-                            }
-                        }
+                    let offset_eq = is_ptr_add_offset_eq(
+                        tcx,
+                        caller,
+                        &ptr_place,
+                        view_len_place.as_ref().unwrap(),
+                    );
+                    let from_add = is_ptr_from_ptr_add(tcx, caller, &ptr_place);
+                    if offset_eq || from_add {
+                        hazard_locals.insert(call_dest.local);
+                        continue;
+                    }
                 }
+            }
         }
     }
 

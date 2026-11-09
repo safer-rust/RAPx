@@ -13,6 +13,7 @@
 //! consulted for live-value grouping.
 
 use crate::helpers::mir_utils;
+use super::alias_hazard;
 use rustc_hash::FxHashMap;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
@@ -102,13 +103,10 @@ impl AliasTree {
                 }
             }
 
-            // Call destinations: `p = v.as_mut_ptr()` / `into_raw` /
-            // `from_raw_parts` — the returned pointer derives from the first
-            // argument (the receiver/pointer). An *owned* result (`Box::new`,
-            // `Vec::new`, `Box::from_raw`) is a fresh owner, so it becomes a root
-            // regardless of whether its first argument is a place.
+            // An owned result is a fresh root. For pointer/reference results,
+            // resolve the source argument from the callee MIR when available.
             if let rustc_middle::mir::TerminatorKind::Call {
-                args, destination, ..
+                func, args, destination, ..
             } = &block.terminator().kind
             {
                 let dest_local = destination.local;
@@ -116,8 +114,8 @@ impl AliasTree {
                 if let Some(is_owned) = classify(dest_ty) {
                     if is_owned {
                         tree.add(None, Vec::new(), dest_local);
-                    } else if let Some(first_arg) = args.first()
-                        && let Some(place) = first_arg.node.place()
+                    } else if let Some(source_arg) = call_source_arg(tcx, func, args)
+                        && let Some(place) = args[source_arg].node.place()
                         && let Some(parent) = tree.tag_of_local.get(&place.local).copied()
                     {
                         tree.add(Some(parent), field_projection(&place), dest_local);
@@ -179,6 +177,23 @@ impl AliasTree {
             None => (local.as_usize(), Vec::new()),
         }
     }
+}
+
+fn call_source_arg<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    func: &Operand<'tcx>,
+    args: &[rustc_span::Spanned<Operand<'tcx>>],
+) -> Option<usize> {
+    let callee = mir_utils::dep_callee_def_id(func)?;
+    if let Some(source_arg) = alias_hazard::pointer_result_source_arg(tcx, callee) {
+        return (source_arg < args.len()).then_some(source_arg);
+    }
+    let inputs = tcx.fn_sig(callee).skip_binder().inputs().skip_binder();
+    let mut pointer_args = inputs.iter().enumerate().filter(|(index, ty)| {
+        *index < args.len() && classify(**ty).is_some()
+    });
+    let (source_arg, _) = pointer_args.next()?;
+    pointer_args.next().is_none().then_some(source_arg)
 }
 
 /// The `Field` projection indices of `place`, in order (`Deref`/index/etc. are

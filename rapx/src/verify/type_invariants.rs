@@ -11,10 +11,11 @@
 //! `init_parameters` and re-proved at return by `VerifyDriver::verify_type_invariants`.
 
 use rustc_hir::def_id::DefId;
-use rustc_middle::ty::{Ty, TyCtxt};
+use rustc_middle::ty::{self, Ty, TyCtxt};
 
 use super::contract::{
-    ContractExpr, NumericPredicate, Property, PropertyArg, PropertyKind, json::AnyItem,
+    ContractExpr, ContractProjection, NumericPredicate, Property, PropertyArg, PropertyKind,
+    json::AnyItem,
 };
 
 /// For each function parameter (and the return type), look up the type's
@@ -219,7 +220,49 @@ fn instantiate_entry<'tcx>(
         };
         replace_ty_args(&mut property, ty);
     }
+    resolve_pointer_wrapper_target(tcx, &mut property);
     vec![property]
+}
+
+fn resolve_pointer_wrapper_target<'tcx>(tcx: TyCtxt<'tcx>, property: &mut Property<'tcx>) {
+    let Property::Atom(atom) = property else { return };
+    let Some(PropertyArg::Expr(ContractExpr::Place(place))) = atom.args.first_mut() else {
+        return;
+    };
+    let Some(ContractProjection::Field { ty: Some(ty), .. }) = place.projections.last() else {
+        return;
+    };
+    let Some(fields) = transparent_nonnull_path(tcx, *ty, 5) else { return };
+    for (index, ty) in fields {
+        place.projections.push(ContractProjection::Field { index, ty: Some(ty) });
+    }
+}
+
+fn transparent_nonnull_path<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    ty: Ty<'tcx>,
+    depth: usize,
+) -> Option<Vec<(usize, Ty<'tcx>)>> {
+    let ty::Adt(adt, args) = ty.kind() else { return None };
+    if crate::verify::api_classify::is_std_nonnull(adt.did()) {
+        return Some(Vec::new());
+    }
+    if depth == 0 || !adt.is_struct() || !adt.repr().transparent() {
+        return None;
+    }
+    let mut path = None;
+    for (index, field) in adt.non_enum_variant().fields.iter().enumerate() {
+        let field_ty = crate::helpers::mir_utils::field_ty(tcx, field, args);
+        let Some(mut suffix) = transparent_nonnull_path(tcx, field_ty, depth - 1) else {
+            continue;
+        };
+        if path.is_some() {
+            return None;
+        }
+        suffix.insert(0, (index, field_ty));
+        path = Some(suffix);
+    }
+    path
 }
 
 /// Replace every type argument in a property tree with the slice element type.

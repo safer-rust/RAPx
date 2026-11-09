@@ -267,9 +267,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 {
                     return Some(result);
                 }
-                if method.is_some_and(|id| !crate::def_ids::other_api::is_len(Some(id))) {
-                    return None;
-                }
                 if let Some(ck) = checkpoint
                     && let Some(term) = self.try_iter_len_from_fields(ck, inner)
                 {
@@ -517,10 +514,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     .get(&(view_ty, path))
                     .map(|value| value.z3_term.clone())
             }
-            ContractExpr::Len(inner, method) => {
-                if method.is_some_and(|id| !crate::def_ids::other_api::is_len(Some(id))) {
-                    return None;
-                }
+            ContractExpr::Len(inner, _) => {
                 let val = self.eval_contract_expr_simple_value(inner)?;
                 if self.is_local_adt_receiver(&val) {
                     return None;

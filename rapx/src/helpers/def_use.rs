@@ -5,7 +5,6 @@
 //! from MIR terminators.  Shared between the verify module and other analysis
 //! passes (points-to, etc.).
 
-use crate::analysis::dataflow::types::DataflowGraph;
 use crate::compat::FxHashSet;
 use crate::compat::Spanned;
 use rustc_middle::mir::{
@@ -304,18 +303,4 @@ pub fn rvalue_operands<'tcx>(rvalue: &'tcx Rvalue<'tcx>) -> Vec<&'tcx Operand<'t
         _ => {}
     }
     operands
-}
-
-// ── chain-tracing helpers ────────────────────────────────────────────
-
-/// Trace a [`PlaceKey`] through the dataflow graph to resolve
-/// Copy/Move chains back to their origin local.
-pub fn trace_place_origin(flow: &DataflowGraph, key: &PlaceKey) -> PlaceKey {
-    let Some(local) = key.local() else {
-        return key.clone();
-    };
-    PlaceKey {
-        base: PlaceBaseKey::Local(flow.trace_origin(local).as_usize()),
-        fields: key.fields.clone(),
-    }
 }

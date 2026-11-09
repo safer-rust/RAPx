@@ -15,7 +15,7 @@ use rustc_middle::{
 
 use crate::analysis::dataflow::types::DataflowGraph;
 
-use crate::helpers::def_use::{PlaceKey, RelevantPlaces, call_args_uses_at};
+use crate::helpers::def_use::{RelevantPlaces, call_args_uses_at};
 use crate::verify::call_summary;
 
 use super::super::types::RelevantItem;
@@ -89,32 +89,4 @@ pub(crate) fn visit<'tcx>(
         relevant.extend(call_args_uses_at(args, &summary.write_inputs));
     }
 
-    // If the contract requires the length of a place (via `Len(place)`),
-    // and this call is a `slice::len()` whose argument traces to the
-    // same origin, add the destination to relevance so the length term
-    // is available for the contract obligation.
-    if !relevant.need_len.is_empty() {
-        let callee = mir_utils::dep_callee_def_id(func);
-        if crate::def_ids::other_api::is_len(callee)
-            && let Some(first) = args.first() {
-                let arg_place = mir_utils::operand_place(&first.node);
-                if let Some(arg_key) = arg_place {
-                    let matches = relevant.need_len.contains(&arg_key)
-                        || relevant.need_len.iter().any(|nl| {
-                            crate::helpers::def_use::trace_place_origin(flow, nl)
-                                == crate::helpers::def_use::trace_place_origin(flow, &arg_key)
-                        });
-                    if matches {
-                        let dest_key = PlaceKey::from_mir_place(destination);
-                        if relevant.places.insert(dest_key.clone()) {
-                            relevant.just_added.insert(dest_key.clone());
-                        }
-                        if let Some(local) = dest_key.local() {
-                            relevant.locals.insert(local);
-                        }
-                        items.push(RelevantItem::Terminator { def_id, block, global_block: None, switch_succ: None });
-                    }
-                }
-            }
-    }
 }
