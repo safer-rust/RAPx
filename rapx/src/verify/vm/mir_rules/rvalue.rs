@@ -446,14 +446,15 @@ pub(crate) fn eval_cast<'z3, 'tcx>(
     operand: &Operand<'tcx>,
     cast_ty: Ty<'tcx>,
 ) -> VmValue<'z3, 'tcx> {
-    let mut src_val = state.value_of_operand(operand);
+    let src_val = state.value_of_operand(operand);
     #[cfg(rapx_box_deref_transmute)]
-    if matches!(kind, CastKind::BoxDerefTransmute)
-        && let Some(local) = mir_utils::extract_local(operand)
-        && let Some(pointer) = state.field_value(local, &[0]).cloned()
-    {
-        src_val = pointer;
-    }
+    let src_val = if matches!(kind, CastKind::BoxDerefTransmute) {
+        mir_utils::extract_local(operand)
+            .and_then(|local| state.field_value(local, &[0]).cloned())
+            .unwrap_or(src_val)
+    } else {
+        src_val
+    };
     let src_ty = src_val.ty;
     let nonnull_to_raw = matches!(kind, CastKind::Transmute)
         && matches!(cast_ty.kind(), TyKind::RawPtr(..))

@@ -26,17 +26,6 @@ pub fn init(tcx: TyCtxt) {
     INIT.get_or_init(|| init_inner(tcx));
 }
 
-pub fn is_slice_get(tcx: TyCtxt<'_>, callee: DefId) -> bool {
-    if !matches!(tcx.crate_name(callee.krate).as_str(), "core" | "alloc" | "std") {
-        return false;
-    }
-    let name = tcx.def_path_str(callee);
-    (name.ends_with("::get") || name.ends_with("::get_mut"))
-        && (name.contains("::<impl [T]>::get")
-            || name.contains("::<impl *mut [T]>::get")
-            || name.contains("::<impl *const [T]>::get"))
-}
-
 pub fn is_integer_wrapping_sub(tcx: TyCtxt<'_>, callee: DefId) -> bool {
     if !matches!(tcx.crate_name(callee.krate).as_str(), "core" | "alloc" | "std") {
         return false;

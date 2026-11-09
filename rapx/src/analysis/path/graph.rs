@@ -166,7 +166,7 @@ pub struct DiscriminantInfo {
     pub variant_count_of: FxHashMap<usize, usize>,
 }
 
-/// Path-sensitive facts (constant values, relational bounds, slice lengths)
+/// Path-sensitive facts (constant values and relational bounds)
 /// tracked while enumerating a single path.
 #[derive(Clone, Default)]
 pub(crate) struct ConstraintSet {
@@ -174,8 +174,6 @@ pub(crate) struct ConstraintSet {
     consts: FxHashMap<usize, usize>,
     /// `lhs -> [(rhs, strict)]`: `lhs < rhs` when `strict`, else `lhs <= rhs`.
     bounds: FxHashMap<usize, Vec<(usize, bool)>>,
-    /// `len_local -> (start, end)`: `len_local == end - start`.
-    lengths: FxHashMap<usize, (usize, usize)>,
 }
 
 /// CFG augmented with per-block facts and discriminant metadata
@@ -197,8 +195,6 @@ pub struct PathGraph<'tcx> {
     pub aggregate_field_sources: FxHashMap<usize, usize>,
     /// Global store: maps `dest` to `src` for pointer-cast chains.
     pub cast_chains: FxHashMap<usize, usize>,
-    /// Global store: maps `_dest` to the referent local of `_dest = &*referent`.
-    pub reborrow_referents: FxHashMap<usize, usize>,
     /// Global store: maps `_dest` to encoded `(base, field_idx)` from field-projection copies.
     pub field_projection_source: FxHashMap<usize, usize>,
 }
@@ -216,7 +212,6 @@ fn build_function_info<'tcx>(
     FxHashMap<usize, usize>,
     FxHashMap<usize, usize>,
     FxHashMap<usize, usize>,
-    FxHashMap<usize, usize>,
 ) {
     let basicblocks = &body.basic_blocks;
     let mut block_info = Vec::new();
@@ -224,7 +219,6 @@ fn build_function_info<'tcx>(
     let mut aggregate_field_sources: FxHashMap<usize, usize> = FxHashMap::default();
     let mut field_projection_source: FxHashMap<usize, usize> = FxHashMap::default();
     let mut cast_chains: FxHashMap<usize, usize> = FxHashMap::default();
-    let mut reborrow_referents: FxHashMap<usize, usize> = FxHashMap::default();
 
     for i in 0..basicblocks.len() {
         let bb = &basicblocks[BasicBlock::from(i)];
@@ -468,16 +462,6 @@ fn build_function_info<'tcx>(
                             cast_chains.insert(dest, src.local.as_usize());
                         }
                     }
-                    Rvalue::Ref(_, _, referent) => {
-                        // `_x = &*_y` reborrows `_y`; link them for length tracking.
-                        if referent
-                            .projection
-                            .iter()
-                            .any(|p| matches!(p, ProjectionElem::Deref))
-                        {
-                            reborrow_referents.insert(dest, referent.local.as_usize());
-                        }
-                    }
                     _ => {} // close match rvalue
                 }
             }
@@ -510,7 +494,6 @@ fn build_function_info<'tcx>(
         aggregate_field_sources,
         field_projection_source,
         cast_chains,
-        reborrow_referents,
     )
 }
 
@@ -651,7 +634,6 @@ impl<'tcx> PathGraph<'tcx> {
             aggregate_field_sources,
             field_projection_source,
             cast_chains,
-            reborrow_referents,
         ) = build_function_info(tcx, def_id, body);
 
         PathGraph {
@@ -662,7 +644,6 @@ impl<'tcx> PathGraph<'tcx> {
             aggregate_field_sources,
             field_projection_source,
             cast_chains,
-            reborrow_referents,
         }
     }
 
@@ -734,8 +715,6 @@ impl<'tcx> PathGraph<'tcx> {
                 // `i = (_add).0` canonicalizes to `(_add, 0)`).
                 cs.bounds.remove(local);
                 cs.bounds.remove(&self.canonical_field(*local));
-                cs.lengths.remove(local);
-                cs.lengths.remove(&self.canonical_field(*local));
                 if let Some(&src) = info.origin.get(local).and_then(LocalOrigin::as_copy) {
                     if let Some(val) = self.resolve_local_value(src, cs) {
                         cs.consts.insert(*local, val);
@@ -758,9 +737,6 @@ impl<'tcx> PathGraph<'tcx> {
                     cs.consts.insert(*local, usize::MAX);
                 }
             }
-            for local in &info.assigned_locals {
-                self.derive_increment_bound(*local, cs);
-            }
         }
 
         // Also clear constraints for locals assigned by the terminator
@@ -775,7 +751,6 @@ impl<'tcx> PathGraph<'tcx> {
             };
             if let Some(local) = assigned {
                 cs.bounds.remove(&local);
-                cs.lengths.remove(&local);
                 if let Some(block_info) = self.block_info.get(cur) {
                     if let Some(&val) = block_info
                         .origin
@@ -794,7 +769,6 @@ impl<'tcx> PathGraph<'tcx> {
             }
         }
 
-        // Track slice lengths from `slice::get`/`slice::len`/`Try::branch`.
         if let Some(terminator) = self.terminator(cur)
             && let TerminatorKind::Call {
                 func,
@@ -832,33 +806,6 @@ impl<'tcx> PathGraph<'tcx> {
                     };
                     if let Some(branch) = branch {
                         cs.consts.insert(dest, branch);
-                    }
-                }
-            }
-            if crate::def_ids::other_api::is_slice_get(self.tcx(), callee) {
-                if let Some(range) = args.get(1)
-                    && let Some(range_local) = range.node.place().map(|p| p.local.as_usize())
-                {
-                    let start = self
-                        .aggregate_field_sources
-                        .get(&encode_aggregate_field(range_local, 0))
-                        .copied();
-                    let end = self
-                        .aggregate_field_sources
-                        .get(&encode_aggregate_field(range_local, 1))
-                        .copied();
-                    if let (Some(start), Some(end)) = (start, end) {
-                        cs.lengths.insert(dest, (start, end));
-                    }
-                }
-            } else if self.tcx().def_path_str(callee).ends_with("::branch") {
-                // `Try::branch(option)` -> the `Continue` payload carries the
-                // same length as the input `Some` payload.
-                if let Some(opt) = args.get(0)
-                    && let Some(opt_local) = opt.node.place().map(|p| p.local.as_usize())
-                {
-                    if let Some(len) = self.resolve_length(opt_local, cs) {
-                        cs.lengths.insert(dest, len);
                     }
                 }
             }
@@ -1050,160 +997,6 @@ impl<'tcx> PathGraph<'tcx> {
             match next {
                 Some(src) => cur = src,
                 None => return cur,
-            }
-        }
-    }
-
-    /// Resolve a slice-length fact `(start, end)` for `local`, following copies,
-    /// field projections, and reborrows.
-    fn resolve_length(&self, local: usize, cs: &ConstraintSet) -> Option<(usize, usize)> {
-        let mut stack = vec![local];
-        let mut seen = FxHashSet::default();
-        while let Some(cur) = stack.pop() {
-            if !seen.insert(cur) {
-                continue;
-            }
-            if let Some(&len) = cs.lengths.get(&cur) {
-                return Some(len);
-            }
-            for info in &self.block_info {
-                if let Some(&src) = info.origin.get(&cur).and_then(LocalOrigin::as_copy) {
-                    stack.push(src);
-                }
-            }
-            if let Some(&encoded) = self.field_projection_source.get(&cur) {
-                if let Some((agg, field)) = decode_aggregate_field(encoded)
-                    && let Some(&actual) = self
-                        .aggregate_field_sources
-                        .get(&encode_aggregate_field(agg, field))
-                {
-                    stack.push(actual);
-                }
-            }
-            if let Some(&ref_src) = self.reborrow_referents.get(&cur) {
-                stack.push(ref_src);
-            }
-        }
-        None
-    }
-
-    /// Resolve `local` to `(base, index, k)` where `local == base + index + k`;
-    /// `index` is `usize::MAX` when there is no secondary variable.
-    fn resolve_sum(&self, local: usize) -> Option<(usize, usize, usize)> {
-        let mut cur = local;
-        let mut seen = FxHashSet::default();
-        loop {
-            if !seen.insert(cur) {
-                return None;
-            }
-            // A field projection is not an integer sum.
-            if self.field_projection_source.contains_key(&cur) {
-                return None;
-            }
-            let mut next: Option<usize> = None;
-            for info in &self.block_info {
-                if let Some(&src) = info.origin.get(&cur).and_then(LocalOrigin::as_copy) {
-                    next = Some(src);
-                    break;
-                }
-            }
-            match next {
-                Some(src) => cur = src,
-                None => break,
-            }
-        }
-        for info in &self.block_info {
-            if let Some(LocalOrigin::Expr(Expr::Add { lhs, rhs })) = info.origin.get(&cur) {
-                return match rhs {
-                    Rhs::Local(r) => {
-                        let (r_base, r_k) = self.resolve_rhs_sum(*r);
-                        Some((*lhs, r_base, r_k))
-                    }
-                    Rhs::Const(k) => Some((*lhs, usize::MAX, *k)),
-                };
-            }
-        }
-        Some((cur, usize::MAX, 0))
-    }
-
-    /// Resolve the `rhs` of an add to `(base, k)` (`rhs == base + k`),
-    /// following field projections and copies to the underlying increment.
-    fn resolve_rhs_sum(&self, rhs: usize) -> (usize, usize) {
-        let mut cur = rhs;
-        let mut seen = FxHashSet::default();
-        loop {
-            if !seen.insert(cur) {
-                return (cur, 0);
-            }
-            if let Some(&encoded) = self.field_projection_source.get(&cur) {
-                if let Some((agg, _)) = decode_aggregate_field(encoded) {
-                    cur = agg;
-                    continue;
-                }
-            }
-            let mut next: Option<usize> = None;
-            for info in &self.block_info {
-                if let Some(&src) = info.origin.get(&cur).and_then(LocalOrigin::as_copy) {
-                    next = Some(src);
-                    break;
-                }
-            }
-            match next {
-                Some(src) => cur = src,
-                None => break,
-            }
-        }
-        for info in &self.block_info {
-            if let Some(LocalOrigin::Expr(Expr::Add {
-                lhs,
-                rhs: Rhs::Const(k),
-            })) = info.origin.get(&cur)
-            {
-                return (*lhs, *k);
-            }
-        }
-        (cur, 0)
-    }
-
-    /// Derive `local <= end` from `local = base + index + k`, a bound
-    /// `index < len`/`index <= len`, and a length `len == end - base`.
-    fn derive_increment_bound(&self, local: usize, cs: &mut ConstraintSet) {
-        let Some((base, index, k)) = self.resolve_sum(local) else {
-            return;
-        };
-        if index == usize::MAX {
-            return;
-        }
-        let canonical = self.canonical_field(index);
-        let mut bounds: Vec<(usize, bool)> = Vec::new();
-        if let Some(b) = cs.bounds.get(&index) {
-            bounds.extend_from_slice(b);
-        }
-        if canonical != index
-            && let Some(b) = cs.bounds.get(&canonical)
-        {
-            bounds.extend_from_slice(b);
-        }
-        for &(len, strict) in &bounds {
-            let Some(&(start, end)) = cs.lengths.get(&len) else {
-                continue;
-            };
-            if self.canonical_field(start) != base {
-                continue;
-            }
-            let out = if strict {
-                match k {
-                    0 => Some((end, true)),
-                    1 => Some((end, false)),
-                    _ => None,
-                }
-            } else if k == 0 {
-                Some((end, false))
-            } else {
-                None
-            };
-            if let Some((rhs, s)) = out {
-                Self::record_bound(cs, base, self.canonical_field(rhs), s);
             }
         }
     }
