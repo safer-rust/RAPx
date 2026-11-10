@@ -237,6 +237,7 @@ pub(crate) enum PropertyKind {
     Unwrap,
     Typed,
     Owning,
+    RefCountShare,
     Alias,
     Alive,
     Pinned,

@@ -23,6 +23,7 @@ struct Types {
     ordering_types: Vec<DefId>,
     iter_types: Vec<DefId>,
     rc_types: Vec<DefId>,
+    arc_types: Vec<DefId>,
     sync_primitive_types: Vec<DefId>,
     index_range_types: Vec<DefId>,
     /// Negative auto-trait types (`Cell`/`UnsafeCell`/`RefCell`/`Ref`/`RefMut`/
@@ -46,6 +47,7 @@ fn init_types(tcx: TyCtxt) -> Types {
         ordering_types: Vec::new(),
         iter_types: Vec::new(),
         rc_types: Vec::new(),
+        arc_types: Vec::new(),
         sync_primitive_types: Vec::new(),
         index_range_types: Vec::new(),
         negative_types: IndexMap::new(),
@@ -147,6 +149,7 @@ fn collect_type_by_path(types: &mut Types, name: &str, did: DefId) {
         TypeGroup::IndexRange => &mut types.index_range_types,
         TypeGroup::AsciiChar => &mut types.ascii_char_types,
         TypeGroup::Rc => &mut types.rc_types,
+        TypeGroup::Arc => &mut types.arc_types,
         TypeGroup::SyncPrimitive => &mut types.sync_primitive_types,
         TypeGroup::Negative(name) => types.negative_types.entry(name.into()).or_default(),
     };
@@ -165,6 +168,7 @@ enum TypeGroup {
     IndexRange,
     AsciiChar,
     Rc,
+    Arc,
     SyncPrimitive,
     Negative(&'static str),
 }
@@ -183,7 +187,8 @@ fn classify_type_path(name: &str) -> Option<TypeGroup> {
         | "std::ops::index_range::IndexRange"
         | "std::ops::IndexRange" => TypeGroup::IndexRange,
         "core::ascii::ascii_char::AsciiChar" | "std::ascii::AsciiChar" => TypeGroup::AsciiChar,
-        "alloc::rc::Rc" | "std::rc::Rc" => TypeGroup::Rc,
+        "alloc::rc::Rc" | "alloc::rcs::rc::Rc" | "std::rc::Rc" => TypeGroup::Rc,
+        "alloc::sync::Arc" | "alloc::rcs::arc::Arc" | "std::sync::Arc" => TypeGroup::Arc,
         "core::cell::Cell" | "std::cell::Cell" => TypeGroup::Negative("Cell"),
         "core::cell::RefCell" | "std::cell::RefCell" => TypeGroup::Negative("RefCell"),
         "core::cell::Ref" | "std::cell::Ref" => TypeGroup::Negative("Ref"),

@@ -302,7 +302,19 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             mir_utils::dep_callee_resolved_def_id(self.tcx, callee_def_id, func)
                 == Some(callee_def_id)
         });
-        let returns = self.inline_execute_body(&pre_uninit);
+        let mut returns = self.inline_execute_body(&pre_uninit);
+        let return_ty = self.body().local_decls[Local::from_usize(0)].ty;
+        if crate::helpers::mir_utils::layout_of_ty(self.tcx, callee_def_id, return_ty)
+            .is_some_and(|layout| layout.size.bytes() == 0)
+            && let Some(states) = returns.as_mut()
+        {
+            for state in states {
+                if state.local_value(Local::from_usize(0)).is_none() {
+                    let term = state.fresh_int("zst_return");
+                    state.set_local(Local::from_usize(0), VmValue::new(term, return_ty));
+                }
+            }
+        }
         if returns.as_ref().is_none_or(|states| {
             states
                 .iter()

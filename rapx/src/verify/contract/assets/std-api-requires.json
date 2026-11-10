@@ -5794,7 +5794,8 @@
       "args": [
         "ptr",
         "T",
-        "1"
+        "1",
+        "Global"
       ]
     },
     {
@@ -5805,7 +5806,7 @@
       ]
     },
     {
-      "tag": "Owning",
+      "tag": "RefCountShare",
       "args": [
         "ptr"
       ]
@@ -5824,7 +5825,14 @@
       "args": [
         "ptr",
         "T",
-        "1"
+        "1",
+        "Global"
+      ]
+    },
+    {
+      "tag": "RefCountShare",
+      "args": [
+        "ptr"
       ]
     },
     {
@@ -5848,7 +5856,14 @@
       "args": [
         "ptr",
         "T",
-        "1"
+        "1",
+        "Global"
+      ]
+    },
+    {
+      "tag": "RefCountShare",
+      "args": [
+        "ptr"
       ]
     },
     {
@@ -5872,7 +5887,8 @@
       "args": [
         "ptr",
         "T",
-        "1"
+        "1",
+        "alloc"
       ]
     },
     {
@@ -5883,7 +5899,7 @@
       ]
     },
     {
-      "tag": "Owning",
+      "tag": "RefCountShare",
       "args": [
         "ptr"
       ]
@@ -5902,7 +5918,14 @@
       "args": [
         "ptr",
         "T",
-        "1"
+        "1",
+        "alloc"
+      ]
+    },
+    {
+      "tag": "RefCountShare",
+      "args": [
+        "ptr"
       ]
     },
     {
@@ -5926,7 +5949,14 @@
       "args": [
         "ptr",
         "T",
-        "1"
+        "1",
+        "alloc"
+      ]
+    },
+    {
+      "tag": "RefCountShare",
+      "args": [
+        "ptr"
       ]
     },
     {
@@ -6088,7 +6118,8 @@
       "args": [
         "ptr",
         "T",
-        "1"
+        "1",
+        "Global"
       ]
     },
     {
@@ -6099,7 +6130,7 @@
       ]
     },
     {
-      "tag": "Owning",
+      "tag": "RefCountShare",
       "args": [
         "ptr"
       ]
@@ -6118,7 +6149,14 @@
       "args": [
         "ptr",
         "T",
-        "1"
+        "1",
+        "Global"
+      ]
+    },
+    {
+      "tag": "RefCountShare",
+      "args": [
+        "ptr"
       ]
     },
     {
@@ -6142,7 +6180,14 @@
       "args": [
         "ptr",
         "T",
-        "1"
+        "1",
+        "Global"
+      ]
+    },
+    {
+      "tag": "RefCountShare",
+      "args": [
+        "ptr"
       ]
     },
     {
@@ -6166,7 +6211,8 @@
       "args": [
         "ptr",
         "T",
-        "1"
+        "1",
+        "alloc"
       ]
     },
     {
@@ -6177,7 +6223,7 @@
       ]
     },
     {
-      "tag": "Owning",
+      "tag": "RefCountShare",
       "args": [
         "ptr"
       ]
@@ -6196,7 +6242,14 @@
       "args": [
         "ptr",
         "T",
-        "1"
+        "1",
+        "alloc"
+      ]
+    },
+    {
+      "tag": "RefCountShare",
+      "args": [
+        "ptr"
       ]
     },
     {
@@ -6220,7 +6273,14 @@
       "args": [
         "ptr",
         "T",
-        "1"
+        "1",
+        "alloc"
+      ]
+    },
+    {
+      "tag": "RefCountShare",
+      "args": [
+        "ptr"
       ]
     },
     {

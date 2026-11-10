@@ -45,7 +45,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     return;
                 };
                 self.forget_memory_values(prov.alloc_id);
-                self.set_opaque_intrinsic_result(dest);
+                let ty = self.body().local_decls[dest].ty;
+                let old = self.fresh_int("atomic_rmw_old");
+                self.set_local(dest, VmValue::new(old, ty));
             }
             CallEffect::CopyMemory {
                 source_arg,

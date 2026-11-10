@@ -30,15 +30,19 @@ impl<'tcx> BackwardSlicer<'tcx> {
         keep_owner: bool,
     ) {
         if keep_invalidations {
-            // A manual drop (`std::mem::drop` / `ManuallyDrop::drop`) also frees
-            // the pointee's heap: keep the call and its argument's construction
-            // chain so `Allocated`/`Owning` can see the freed allocation and
-            // detect a later use / second drop.
-            let is_drop_call = mir_utils::dep_callee_def_id(func).is_some_and(|c| {
+            // Keep calls that can change an allocation's lifetime or consume
+            // a raw ownership share, together with their argument sources.
+            let is_state_change = mir_utils::dep_callee_def_id(func).is_some_and(|c| {
                 crate::verify::api_classify::is_manually_drop_drop(Some(c))
                     || crate::verify::api_classify::is_std_drop(Some(c))
+                    || crate::verify::contract::json::query_json_contracts(self.tcx, c)
+                        .iter()
+                        .any(|property| {
+                            property.kind()
+                                == Some(crate::verify::contract::PropertyKind::RefCountShare)
+                        })
             });
-            if is_drop_call {
+            if is_state_change {
                 items.push(RelevantItem::Terminator {
                     global_block: None,
                     def_id,
@@ -55,8 +59,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
         // itself relevant, so its field provenance survives.
         if keep_owner {
             let dest_ty = body.local_decls[destination.local].ty;
-            let typing_env = rustc_middle::ty::TypingEnv::non_body_analysis(self.tcx, def_id);
-            if dest_ty.needs_drop(self.tcx, typing_env) {
+            if super::may_need_drop(self.tcx, def_id, dest_ty) {
                 let use_def = terminator_use_def(terminator);
                 items.push(RelevantItem::Terminator {
                     global_block: None,

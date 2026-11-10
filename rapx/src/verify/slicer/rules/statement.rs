@@ -59,8 +59,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
         // chain) so `Owning` can trace its field provenance.
         if keep_owner {
             let ty = body.local_decls[place.local].ty;
-            let typing_env = rustc_middle::ty::TypingEnv::non_body_analysis(self.tcx, def_id);
-            if ty.needs_drop(self.tcx, typing_env) {
+            if super::may_need_drop(self.tcx, def_id, ty) {
                 let uses = collect_assignment_uses(rvalue, block, statement_index, flow, &defs);
                 items.push(RelevantItem::Statement {
                     global_block: None,

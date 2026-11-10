@@ -13,6 +13,33 @@ use rustc_middle::{
 use super::PropertyChecker;
 
 impl PropertyChecker {
+    pub(super) fn check_ref_count_share<'z3, 'tcx>(
+        &self,
+        vm_state: &VmState<'z3, 'tcx>,
+        checkpoint: &Checkpoint<'tcx>,
+        property: &Property<'tcx>,
+    ) -> CheckResult {
+        let Some(owner) = checkpoint.callee.and_then(|did| {
+            crate::def_ids::other_api::ref_count_adjust(vm_state.tcx, did)
+                .map(|(owner, _)| owner)
+                .or_else(|| crate::verify::vm::alias_hazard::reconstructed_owner(vm_state.tcx, did)
+                    .map(|(_, owner)| owner))
+        }) else {
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
+        };
+        let Some(value) = self
+            .target_value(vm_state, checkpoint, property)
+            .map(|value| vm_state.resolve_pointer_provenance(value))
+        else {
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
+        };
+        match vm_state.ownership_share(&value, owner) {
+            Some(0) => CheckResult::Failed,
+            Some(_) => CheckResult::ProvedByRule,
+            None => CheckResult::Unknown(UnknownReason::Unimplemented),
+        }
+    }
+
     pub(super) fn check_alias<'z3, 'tcx>(
         &self,
         vm_state: &VmState<'z3, 'tcx>,

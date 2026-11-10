@@ -117,6 +117,7 @@ pub(crate) fn eval_ref<'z3, 'tcx>(
                 in_bounds: src_in_bounds,
                 align_n: slice_elem_align.or(alloc_align),
                 dangling: false,
+                ownership_transfer: addr.facts.ownership_transfer,
             },
             source: match state.local_value(place.local).map(|value| &value.source) {
                 Some(ValueSource::SliceLen(len)) if is_slice_ref && has_deref => {
@@ -447,7 +448,8 @@ pub(crate) fn eval_cast<'z3, 'tcx>(
     operand: &Operand<'tcx>,
     cast_ty: Ty<'tcx>,
 ) -> VmValue<'z3, 'tcx> {
-    let src_val = state.value_of_operand(operand);
+    let mut src_val = state.value_of_operand(operand);
+    state.try_materialize_const_bytes(&mut src_val, operand);
     #[cfg(rapx_box_deref_transmute)]
     let src_val = if matches!(kind, CastKind::BoxDerefTransmute) {
         mir_utils::extract_local(operand)
@@ -516,6 +518,7 @@ pub(crate) fn eval_cast<'z3, 'tcx>(
             dangling: src_val.facts.dangling || numeric_transmute,
             init: src_val.facts.init,
             in_bounds: src_val.facts.in_bounds,
+            ownership_transfer: src_val.facts.ownership_transfer,
             align_n: if mir_utils::pointee_ty(src_ty).is_some_and(|t| t.is_unit()) {
                 None
             } else {

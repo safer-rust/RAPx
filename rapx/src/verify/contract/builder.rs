@@ -30,7 +30,8 @@ impl<'tcx> Property<'tcx> {
             PropertyKind::Init
             | PropertyKind::Typed
             | PropertyKind::NonVolatile
-            | PropertyKind::Owning => Self::build_target_ty_count(spec, tcx, def_id, exprs),
+            | PropertyKind::Owning
+            | PropertyKind::RefCountShare => Self::build_target_ty_count(spec, tcx, def_id, exprs),
             PropertyKind::NonOverlap => Self::build_nonoverlap(tcx, def_id, exprs),
             PropertyKind::ValidNum => Self::build_validnum(tcx, def_id, exprs),
             PropertyKind::Pinned => Self::build_pinned(tcx, def_id, exprs),

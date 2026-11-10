@@ -94,6 +94,12 @@ pub(super) fn exec_call<'z3, 'tcx>(
         .map(|a| a.node.place().map(|p| p.local))
         .collect();
     let callee = mir_utils::dep_callee_resolved_def_id(state.tcx, caller_def_id, func);
+    if let Some((source, owner)) = callee
+        .and_then(|id| super::super::alias_hazard::reconstructed_owner(state.tcx, id))
+        && let Some(value) = arg_values.get(source)
+    {
+        state.consume_ownership_share(value, owner, false);
+    }
     let site = CallSite {
         func,
         args,
@@ -418,6 +424,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         method_call: Option<super::super::method_cache::MethodSnapshot<'z3, 'tcx>>,
     ) {
         let callee = site.callee;
+        if let Some(owner) = callee
+            .and_then(|id| crate::verify::pointer_origin::shared_raw_owner_type(self.tcx, id))
+        {
+            self.begin_ownership_transfer(site.destination, owner);
+        }
         let arg_locals = site.arg_locals;
         let destination = site.destination;
         if let Some(callee) = callee {

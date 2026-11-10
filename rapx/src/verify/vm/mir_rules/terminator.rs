@@ -7,6 +7,7 @@ use super::super::state::{ValueSource, VmState};
 use super::RuleFlow;
 use crate::helpers::def_use::PlaceKey;
 use crate::helpers::mir_utils;
+use crate::verify::contract::PropertyKind;
 
 /// The `IS_ZST` fold selects an equivalent path without asserting its guard.
 pub(crate) fn forced_inline_switch_target<'z3, 'tcx>(
@@ -218,10 +219,35 @@ pub(crate) fn exec_assert<'z3, 'tcx>(
 pub(crate) fn exec_drop<'z3, 'tcx>(state: &mut VmState<'z3, 'tcx>, place: &Place<'tcx>) {
     if let Some(alloc_id) = state.current_frame.local_alloc.get(&place.local).copied() {
         let is_param = place.local.as_usize() <= state.body().arg_count;
-        if !is_param {
-            let ty = state.body().local_decls[place.local].ty;
-            if let Some(data_id) = state.container_data_alloc(alloc_id, ty) {
-                state.record_memory_drop(data_id, place.local);
+        let owner = if is_param {
+            state.caller_frames.last().and_then(|saved| {
+                let source = saved
+                    .postcondition_args
+                    .get(place.local.as_usize().checked_sub(1)?)?
+                    .as_ref()?;
+                let header = *saved.frame.local_alloc.get(source)?;
+                let ty = state.frame_local_ty(&saved.frame, *source);
+                Some((header, ty, *source))
+            })
+        } else {
+            Some((alloc_id, state.body().local_decls[place.local].ty, place.local))
+        };
+        if let Some((header, ty, source)) = owner {
+            if let Some(data_id) = state.container_data_alloc(header, ty) {
+                let shared_owner = state.owner_ptr_has_invariant(ty, PropertyKind::Allocated)
+                    && !state.owner_ptr_has_invariant(ty, PropertyKind::Owning);
+                if shared_owner {
+                    state.alloc_mut(data_id).facts.drop_may_free = true;
+                    if let Some(path) = state.container_ptr_field(ty)
+                        && let Some(mut field) = state.load_value(header, ty, &path).cloned()
+                    {
+                        field.provenance = None;
+                        state.store_value(header, ty, path, field);
+                    }
+                    state.alloc_mut(header).facts.dead = true;
+                } else if !is_param {
+                    state.record_memory_drop(data_id, source);
+                }
             }
         }
         state.alloc_mut(alloc_id).facts.dead = true;

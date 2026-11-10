@@ -100,6 +100,8 @@ pub(crate) struct ValueFacts<'z3> {
     pub in_bounds: bool,
     /// Known divisor `n` for which `z3_term % n == 0`, possibly symbolic.
     pub align_n: Option<Int<'z3>>,
+    /// Identity of an ownership transfer carried by this pointer and its copies.
+    pub ownership_transfer: Option<usize>,
 }
 
 /// A symbolic value tracked by the VM.
@@ -257,6 +259,8 @@ pub(crate) struct AllocFacts<'z3, 'tcx> {
     pub dead: bool,
     /// Whether an opaque callback may have freed this allocation.
     pub callback_may_drop: bool,
+    /// A destructor may have freed this allocation.
+    pub drop_may_free: bool,
     /// Pointer term licensed by an `Owning` precondition.
     pub owning: Option<Int<'z3>>,
     /// Whether this allocation was created in the analyzed function.
@@ -625,6 +629,14 @@ impl SafeDropEventLog {
     }
 }
 
+/// A transferable ownership share. Copies of its pointer use the same entry.
+#[derive(Clone)]
+pub(crate) struct OwnershipTransfer {
+    alloc_id: AllocId,
+    owner: DefId,
+    available: usize,
+}
+
 /// The full symbolic execution state at a program point.
 ///
 /// Accumulates the name → allocation bindings, allocations, and solver
@@ -648,6 +660,8 @@ pub(crate) struct VmState<'z3, 'tcx> {
     pub(super) caller_frames: Vec<SavedCallerFrame<'z3, 'tcx>>,
     /// Allocation units indexed by `AllocId`.
     pub(super) units: Vec<MemoryUnit<'z3, 'tcx>>,
+    /// Ownership transfers shared by copies of the same raw pointer.
+    ownership_transfers: Vec<OwnershipTransfer>,
     /// Stable allocation for each thread-local static across MIR locals and frames.
     pub(super) thread_local_allocs: FxHashMap<DefId, AllocId>,
     /// Path conditions and term caches.
@@ -668,6 +682,63 @@ pub(crate) struct VmState<'z3, 'tcx> {
 }
 
 impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+    pub(crate) fn ownership_share(&self, value: &VmValue<'z3, 'tcx>, owner: DefId) -> Option<usize> {
+        let transfer = self.ownership_transfers.get(value.facts.ownership_transfer?)?;
+        (transfer.owner == owner
+            && value
+                .provenance_alloc_id()
+                .is_some_and(|id| self.root_alloc(id) == transfer.alloc_id))
+        .then_some(transfer.available)
+    }
+
+    pub(crate) fn has_available_transfer(&self, alloc_id: AllocId) -> bool {
+        let root = self.root_alloc(alloc_id);
+        self.ownership_transfers
+            .iter()
+            .any(|transfer| transfer.alloc_id == root && transfer.available > 0)
+    }
+
+    pub(crate) fn begin_ownership_transfer(&mut self, local: Local, owner: DefId) {
+        let Some(alloc_id) = self.local_value(local).and_then(|value| value.provenance_alloc_id()) else {
+            return;
+        };
+        let id = self.ownership_transfers.len();
+        self.ownership_transfers.push(OwnershipTransfer {
+            alloc_id: self.root_alloc(alloc_id),
+            owner,
+            available: 1,
+        });
+        if let Some(mut value) = self.local_value(local).cloned() {
+            value.facts.ownership_transfer = Some(id);
+            self.set_local(local, value);
+        }
+    }
+
+    pub(crate) fn grant_ownership_share(&mut self, value: &VmValue<'z3, 'tcx>, owner: DefId) {
+        if self.ownership_share(value, owner).is_some()
+            && let Some(id) = value.facts.ownership_transfer
+        {
+            self.ownership_transfers[id].available += 1;
+        }
+    }
+
+    pub(crate) fn consume_ownership_share(
+        &mut self,
+        value: &VmValue<'z3, 'tcx>,
+        owner: DefId,
+        may_free: bool,
+    ) {
+        if self.ownership_share(value, owner).is_some()
+            && let Some(id) = value.facts.ownership_transfer
+        {
+            self.ownership_transfers[id].available =
+                self.ownership_transfers[id].available.saturating_sub(1);
+        }
+        if may_free && let Some(alloc_id) = value.provenance_alloc_id() {
+            self.alloc_mut(self.root_alloc(alloc_id)).facts.drop_may_free = true;
+        }
+    }
+
     pub(crate) fn record_memory_drop(&mut self, alloc_id: AllocId, local: Local) {
         if self.safedrop_events.is_enabled() {
             self.safedrop_events.push(SafeDropEvent {
@@ -801,6 +872,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             },
             caller_frames: Vec::default(),
             units: Vec::default(),
+            ownership_transfers: Vec::new(),
             thread_local_allocs: FxHashMap::default(),
             constraints,
             inline: InlineCtx::default(),
@@ -1164,7 +1236,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     }
 
     /// The declared type of `local` in `frame`'s body.
-    fn frame_local_ty(&self, frame: &FrameState<'tcx>, local: Local) -> Ty<'tcx> {
+    pub(crate) fn frame_local_ty(&self, frame: &FrameState<'tcx>, local: Local) -> Ty<'tcx> {
         let body = frame
             .instantiated_body
             .or_else(|| {

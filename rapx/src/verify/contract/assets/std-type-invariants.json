@@ -192,6 +192,10 @@
       "args": [
         "$self.ptr"
       ]
+    },
+    {
+      "tag": "Allocated",
+      "args": ["$self.ptr", "u8", "1"]
     }
   ],
   "alloc::sync::Arc": [
@@ -200,6 +204,10 @@
       "args": [
         "$self.ptr"
       ]
+    },
+    {
+      "tag": "Allocated",
+      "args": ["$self.ptr", "u8", "1"]
     }
   ],
   "[T]": [

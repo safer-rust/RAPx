@@ -3,9 +3,10 @@
 use std::collections::HashSet;
 
 use rustc_hir::def_id::DefId;
+use rustc_hir::def::DefKind;
 use rustc_middle::{
     mir::{Body, Local, Rvalue, StatementKind, TerminatorKind},
-    ty::{TyCtxt, TyKind},
+    ty::{TyCtxt, TyKind, TypingEnv},
 };
 #[cfg(rapx_box_deref_transmute)]
 use rustc_middle::mir::CastKind;
@@ -34,7 +35,51 @@ pub(crate) fn is_read_only_return(tcx: TyCtxt<'_>, callee: DefId) -> bool {
     if !inputs.first().is_some_and(|ty| mir_utils::pointee_ty(*ty).is_some()) {
         return false;
     }
-    let body = tcx.optimized_mir(callee);
+    single_block_without_effects(tcx.optimized_mir(callee))
+}
+
+/// A consumed owner remains allocated when a side-effect-free MIR body
+/// returns its pointer without running a destructor.
+pub(crate) fn returns_undropped_arg(tcx: TyCtxt<'_>, callee: DefId, arg: usize) -> bool {
+    return_source_arg(tcx, callee) == Some(arg)
+        && single_block_without_effects(tcx.optimized_mir(callee))
+}
+
+/// Type of a shared owner whose raw pointer can later reconstruct a share.
+pub(crate) fn shared_raw_owner_type(tcx: TyCtxt<'_>, callee: DefId) -> Option<DefId> {
+    if !matches!(tcx.def_kind(callee), DefKind::Fn | DefKind::AssocFn) {
+        return None;
+    }
+    let arg = return_source_arg(tcx, callee)?;
+    if !single_block_without_effects(tcx.optimized_mir(callee)) {
+        return None;
+    }
+    let inputs = tcx.fn_sig(callee).skip_binder().inputs().skip_binder();
+    let ty = *inputs.get(arg)?;
+    let TyKind::Adt(adt, _) = ty.kind() else {
+        return None;
+    };
+    let reconstructs_share = tcx.inherent_impls(adt.did()).iter().any(|impl_id| {
+        tcx.associated_item_def_ids(*impl_id).iter().any(|item| {
+            matches!(tcx.def_kind(*item), DefKind::Fn | DefKind::AssocFn)
+                && crate::verify::contract::json::query_json_contracts(tcx, *item)
+                    .iter()
+                    .any(|property| {
+                        property.kind()
+                            == Some(crate::verify::contract::PropertyKind::RefCountShare)
+                    })
+                && crate::verify::vm::alias_hazard::reconstructed_owner(tcx, *item)
+                    .is_some_and(|(_, owner)| owner == adt.did())
+        })
+    });
+    if !reconstructs_share {
+        return None;
+    }
+    ty.needs_drop(tcx, TypingEnv::non_body_analysis(tcx, callee))
+        .then_some(adt.did())
+}
+
+fn single_block_without_effects(body: &Body<'_>) -> bool {
     let [block] = &body.basic_blocks[..] else {
         return false;
     };

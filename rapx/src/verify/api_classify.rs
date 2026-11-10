@@ -342,18 +342,6 @@ pub fn is_vec_push_or_reserve(callee: Option<DefId>) -> bool {
 // ── Alias-hazard classification ───────────────────────────────────
 // Ref-counted reconstruction retains a dedicated rule until the alias model
 // accounts for shared ownership and clone counts.
-pub fn is_ref_counted_from_raw(callee: Option<DefId>) -> bool {
-    other_api::matches_any(
-        callee,
-        &[
-            other_api::arc_from_raw(),
-            other_api::rc_from_raw(),
-            other_api::arc_from_raw_in(),
-            other_api::rc_from_raw_in(),
-        ],
-    )
-}
-
 /// Whether `callee` is `NonNull::as_ref` or `NonNull::as_mut`.
 pub fn is_nonnull_as_ref_as_mut(callee: Option<DefId>) -> bool {
     other_api::matches_any(
@@ -383,20 +371,6 @@ pub fn is_vec_invalidating_method(callee: Option<DefId>) -> bool {
             other_api::vec_clear(),
             other_api::vec_truncate(),
             other_api::vec_set_len(),
-        ],
-    )
-}
-
-/// Whether `callee` returns ownership of an allocation as a raw pointer
-/// (`Box::into_raw`, `CString::into_raw`, `Arc::into_raw`, `Rc::into_raw`, ...).
-pub fn is_ownership_return(callee: Option<DefId>) -> bool {
-    other_api::matches_any(
-        callee,
-        &[
-            other_api::box_into_raw(),
-            other_api::cstring_into_raw(),
-            other_api::arc_into_raw(),
-            other_api::rc_into_raw(),
         ],
     )
 }

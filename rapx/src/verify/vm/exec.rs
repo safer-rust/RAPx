@@ -109,6 +109,16 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         body: Option<&'tcx rustc_middle::mir::Body<'tcx>>,
         args: &[CallArg],
     ) {
+        if let Some((owner, delta)) = crate::def_ids::other_api::ref_count_adjust(self.tcx, callee)
+            && let Some(CallArg::Local(local)) = args.first()
+            && let Some(value) = self.local_value(Local::from_usize(*local)).cloned()
+        {
+            if delta > 0 {
+                self.grant_ownership_share(&value, owner);
+            } else {
+                self.consume_ownership_share(&value, owner, true);
+            }
+        }
         let method_call = args.first().and_then(|arg| {
             let CallArg::Local(local) = arg else {
                 return None;
@@ -328,6 +338,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 v.facts.non_null = true;
             }
             self.set_local(Local::from_usize(dest), v);
+            if let Some(owner) =
+                crate::verify::pointer_origin::shared_raw_owner_type(self.tcx, callee)
+            {
+                self.begin_ownership_transfer(Local::from_usize(dest), owner);
+            }
             if ret_inner_uninit
                 && let Some(&dest_id) = self.current_frame.local_alloc.get(&Local::from_usize(dest))
             {

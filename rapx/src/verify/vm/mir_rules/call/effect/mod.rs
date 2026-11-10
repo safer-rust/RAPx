@@ -37,6 +37,15 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         func: &Operand<'tcx>,
     ) {
         match effect {
+            CallEffect::AdjustRefCount { arg, owner, delta } => {
+                if let Some(value) = args.get(*arg) {
+                    if *delta > 0 {
+                        self.grant_ownership_share(value, *owner);
+                    } else {
+                        self.consume_ownership_share(value, *owner, true);
+                    }
+                }
+            }
             CallEffect::ReturnLayoutSymbolic { is_size } => {
                 let ty = mir_utils::fn_def_first_type_arg(func)
                     .expect("layout effect built from a FnDef");

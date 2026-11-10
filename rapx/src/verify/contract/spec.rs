@@ -84,6 +84,13 @@ static SPECS: &[PropertySpec] = &[
         ContractKind::Precond,
         "ownership(*{0}) = none: no other live owner points to the pointee",
     ),
+    ps(
+        "RefCountShare",
+        PropertyKind::RefCountShare,
+        &[&[Target]],
+        ContractKind::Precond,
+        "{0} carries an unclaimed Arc/Rc strong-reference share",
+    ),
     // Unverified: the checker returns `Unknown` (no implementation yet).
     ps(
         "Opened",

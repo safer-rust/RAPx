@@ -201,9 +201,12 @@ impl<'tcx> BackwardSlicer<'tcx> {
         let keep_inv = property
             .kind()
             .is_some_and(|k| needs_invalidation_tracking(&k));
-        // Only `Owning` needs the owner's construction chain; other invalidations
-        // (Allocated/Init/…) must not be perturbed by the extra needs_drop keeps.
-        let keep_owner = matches!(property.kind(), Some(contract::PropertyKind::Owning));
+        // `Allocated` also needs the construction chain of owners that may be
+        // dropped before the checkpoint.
+        let keep_owner = matches!(
+            property.kind(),
+            Some(contract::PropertyKind::Owning | contract::PropertyKind::Allocated)
+        );
         let block_data = &body.basic_blocks[block];
         let mut results = Vec::new();
 
@@ -480,5 +483,6 @@ fn needs_invalidation_tracking(kind: &contract::PropertyKind) -> bool {
             | contract::PropertyKind::ValidString
             | contract::PropertyKind::ValidCStr
             | contract::PropertyKind::Owning
+            | contract::PropertyKind::RefCountShare
     )
 }

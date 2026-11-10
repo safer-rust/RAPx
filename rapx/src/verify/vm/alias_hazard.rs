@@ -1,7 +1,7 @@
 //! MIR-level alias hazard analysis independent of VM state and Z3 terms.
 
 use crate::helpers::mir_utils;
-use crate::verify::pointer_origin::trace_source_arg;
+use crate::verify::pointer_origin::{self, trace_source_arg};
 use crate::verify::contract::PropertyKind;
 use std::collections::{HashMap, HashSet};
 
@@ -69,14 +69,54 @@ pub(super) fn alias_producer(tcx: TyCtxt<'_>, callee: DefId) -> Option<AliasProd
     if let Some(source_arg) = ownership_transfer_source_arg(tcx, callee) {
         return Some(AliasProducer::OwnershipTransfer(source_arg));
     }
-    if crate::verify::api_classify::is_ref_counted_from_raw(Some(callee)) {
-        return Some(AliasProducer::OwnershipTransfer(0));
+    if let Some(source_arg) = share_transfer_source_arg(tcx, callee) {
+        return Some(AliasProducer::OwnershipTransfer(source_arg));
     }
     if crate::verify::api_classify::is_ptr_read(Some(callee)) {
         return Some(AliasProducer::ReadMemory);
     }
     raw_pointer_view_from_mir(tcx, callee)
         .map(|(kind, source_arg)| AliasProducer::View(kind, source_arg))
+}
+
+fn share_transfer_source_arg(tcx: TyCtxt<'_>, callee: DefId) -> Option<usize> {
+    if !matches!(tcx.def_kind(callee), DefKind::Fn | DefKind::AssocFn) {
+        return None;
+    }
+    let sig = tcx.fn_sig(callee).skip_binder();
+    if !matches!(sig.output().skip_binder().kind(), ty::Adt(..))
+        || !sig.inputs().skip_binder().iter().any(|ty| matches!(ty.kind(), ty::RawPtr(..)))
+    {
+        return None;
+    }
+    let requires = crate::verify::contract::json::query_json_contracts(tcx, callee);
+    requires.iter().find_map(|property| {
+        (property.kind() == Some(PropertyKind::RefCountShare))
+            .then(|| property.target_place())
+            .flatten()
+            .and_then(|place| match place.base {
+                crate::verify::contract::PlaceBase::Arg(index) => Some(index),
+                _ => None,
+            })
+    })
+}
+
+pub(crate) fn reconstructed_owner(tcx: TyCtxt<'_>, callee: DefId) -> Option<(usize, DefId)> {
+    if !matches!(tcx.def_kind(callee), DefKind::Fn | DefKind::AssocFn) {
+        return None;
+    }
+    let sig = tcx.fn_sig(callee).skip_binder();
+    let output = sig.output().skip_binder();
+    let ty::Adt(adt, _) = output.kind() else {
+        return None;
+    };
+    if !sig.inputs().skip_binder().iter().any(|ty| matches!(ty.kind(), ty::RawPtr(..))) {
+        return None;
+    }
+    let AliasProducer::OwnershipTransfer(source) = alias_producer(tcx, callee)? else {
+        return None;
+    };
+    Some((source, adt.did()))
 }
 
 /// Recognize a returned reference formed by dereferencing a raw pointer
@@ -1635,17 +1675,7 @@ pub(super) fn ownership_transfer_violation(
     origin_place: &PlaceKey,
 ) -> Option<String> {
     let body = tcx.optimized_mir(caller);
-    let mut owner_locals: HashSet<Local> = destination.into_iter().collect();
-    expand_hazard_alias_locals(tcx, caller, &mut owner_locals);
     let reachable = blocks_reachable_after_call(tcx, caller, call_block);
-
-    for block_index in &reachable {
-        if let Some(terminator) = &body.basic_blocks[*block_index].terminator
-            && terminator_returns_ownership(&terminator.kind, &owner_locals)
-        {
-            return None;
-        }
-    }
 
     let origins = places_holding_transferred_pointer(tcx, caller, call_block, origin_place);
 
@@ -1662,11 +1692,14 @@ pub(super) fn ownership_transfer_violation(
         _ => return None,
     };
 
-    let mut entry_states: HashMap<BasicBlock, Vec<PlaceKey>> = HashMap::new();
-    let mut worklist: Vec<(BasicBlock, Vec<PlaceKey>)> = vec![(start, origins)];
+    let mut entry_states: HashMap<(BasicBlock, Vec<usize>), Vec<PlaceKey>> = HashMap::new();
+    let mut worklist = vec![(start, origins, destination.into_iter().collect::<HashSet<_>>())];
 
-    while let Some((block_index, incoming)) = worklist.pop() {
-        let mut live_origins = match entry_states.get_mut(&block_index) {
+    while let Some((block_index, incoming, mut owners)) = worklist.pop() {
+        let mut owner_key: Vec<_> = owners.iter().map(|local| local.as_usize()).collect();
+        owner_key.sort_unstable();
+        let state_key = (block_index, owner_key);
+        let mut live_origins = match entry_states.get_mut(&state_key) {
             Some(known) => {
                 let mut changed = false;
                 for origin in &incoming {
@@ -1681,7 +1714,7 @@ pub(super) fn ownership_transfer_violation(
                 known.clone()
             }
             None => {
-                entry_states.insert(block_index, incoming.clone());
+                entry_states.insert(state_key, incoming.clone());
                 incoming
             }
         };
@@ -1691,6 +1724,23 @@ pub(super) fn ownership_transfer_violation(
             match &statement.kind {
                 StatementKind::Assign(assign) => {
                     let (target, rvalue) = assign.as_ref();
+                    let transfers_owner = match rvalue {
+                        Rvalue::Use(Operand::Move(source) | Operand::Copy(source), ..)
+                            if source.projection.is_empty() && owners.contains(&source.local) =>
+                        {
+                            true
+                        }
+                        _ => false,
+                    };
+                    if target.projection.is_empty() {
+                        owners.remove(&target.local);
+                        if transfers_owner {
+                            owners.insert(target.local);
+                        }
+                    }
+                    if let Rvalue::Use(Operand::Move(source), ..) = rvalue {
+                        owners.remove(&source.local);
+                    }
                     let target_key = PlaceKey::from_mir_place(target);
                     let is_deref_to_pointee = target_key.fields.is_empty()
                         && target
@@ -1725,6 +1775,7 @@ pub(super) fn ownership_transfer_violation(
                     }
                 }
                 StatementKind::StorageDead(local) => {
+                    owners.remove(local);
                     live_origins
                         .retain(|origin| origin.base != PlaceBaseKey::Local(local.as_usize()));
                 }
@@ -1741,17 +1792,39 @@ pub(super) fn ownership_transfer_violation(
             );
         }
         if let TerminatorKind::Call {
+            func,
+            args,
             destination: call_destination,
             ..
         } = &terminator.kind
         {
+            let callee = mir_utils::dep_callee_def_id(func);
+            // Moving the owner only releases this hazard if the callee returns
+            // its allocation as a raw pointer without dropping it.
+            let escaped = args.iter().enumerate().any(|(index, arg)| {
+                let Operand::Move(place) = &arg.node else {
+                    return false;
+                };
+                place.projection.is_empty()
+                    && owners.contains(&place.local)
+                    && callee.is_some_and(|did| pointer_origin::returns_undropped_arg(tcx, did, index))
+            });
+            for arg in args {
+                if let Operand::Move(place) = &arg.node {
+                    owners.remove(&place.local);
+                }
+            }
+            if escaped {
+                live_origins.clear();
+            }
+            owners.remove(&call_destination.local);
             kill_strongly_updated_origins(&body.local_decls, call_destination, &mut live_origins);
         }
         if live_origins.is_empty() {
             continue;
         }
         for successor in terminator.successors() {
-            worklist.push((successor, live_origins.clone()));
+            worklist.push((successor, live_origins.clone(), owners.clone()));
         }
     }
 
@@ -1935,24 +2008,6 @@ fn terminator_uses_live_origin(kind: &TerminatorKind<'_>, live_origins: &[PlaceK
         };
         let key = PlaceKey::from_mir_place(place);
         live_origins.iter().any(|origin| key.overlaps(origin))
-    })
-}
-
-fn terminator_returns_ownership(
-    terminator: &TerminatorKind<'_>,
-    owner_locals: &HashSet<Local>,
-) -> bool {
-    let TerminatorKind::Call { func, args, .. } = terminator else {
-        return false;
-    };
-    if !crate::verify::api_classify::is_ownership_return(
-        mir_utils::dep_callee_def_id(func),
-    ) {
-        return false;
-    }
-    args.iter().any(|arg| match &arg.node {
-        Operand::Copy(place) | Operand::Move(place) => owner_locals.contains(&place.local),
-        _ => false,
     })
 }
 

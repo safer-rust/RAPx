@@ -531,6 +531,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 in_bounds: dereferenceable,
                 align_n,
                 init: base.facts.init,
+                ownership_transfer: base.facts.ownership_transfer,
             },
             source: ValueSource::None,
         };

@@ -10,6 +10,37 @@ use rustc_middle::ty::TyCtxt;
 use rustc_public::{CrateDef, rustc_internal};
 use std::sync::OnceLock;
 
+pub fn ref_count_adjust(tcx: TyCtxt<'_>, did: DefId) -> Option<(DefId, i8)> {
+    if !is_std_api(tcx, did) {
+        return None;
+    }
+    let path = tcx.def_path_str(did);
+    let delta = if path.ends_with("::increment_strong_count")
+        || path.ends_with("::increment_strong_count_in")
+    {
+        1
+    } else if path.ends_with("::decrement_strong_count")
+        || path.ends_with("::decrement_strong_count_in")
+    {
+        -1
+    } else {
+        return None;
+    };
+    let owner = crate::helpers::name::get_struct_self_ty(tcx, did)?;
+    let rustc_middle::ty::TyKind::Adt(adt, _) = owner.kind() else {
+        return None;
+    };
+    if !crate::verify::contract::json::query_json_contracts(tcx, did)
+        .iter()
+        .any(|property| {
+            property.kind() == Some(crate::verify::contract::PropertyKind::RefCountShare)
+        })
+    {
+        return None;
+    }
+    Some((adt.did(), delta))
+}
+
 static INIT: OnceLock<IndexMap<Box<str>, DefId>> = OnceLock::new();
 
 pub fn init(tcx: TyCtxt) {
@@ -454,40 +485,6 @@ std_api_def_ids! {
     vec_set_len: &[
         "std::vec::Vec::<T, A>::set_len",
         "alloc::vec::Vec::<T, A>::set_len"
-    ],
-    arc_from_raw: &[
-        "std::sync::Arc::<T>::from_raw",
-        "alloc::sync::Arc::<T>::from_raw"
-    ],
-    rc_from_raw: &[
-        "std::rc::Rc::<T>::from_raw",
-        "alloc::rc::Rc::<T>::from_raw"
-    ],
-    arc_from_raw_in: &[
-        "std::sync::Arc::<T, A>::from_raw_in",
-        "alloc::sync::Arc::<T, A>::from_raw_in"
-    ],
-    rc_from_raw_in: &[
-        "std::rc::Rc::<T, A>::from_raw_in",
-        "alloc::rc::Rc::<T, A>::from_raw_in"
-    ],
-    box_into_raw: &[
-        "std::boxed::Box::<T>::into_raw",
-        "alloc::boxed::Box::<T>::into_raw"
-    ],
-    cstring_into_raw: &[
-        "std::ffi::CString::into_raw",
-        "alloc::ffi::CString::into_raw",
-        "std::ffi::c_str::CString::into_raw",
-        "alloc::ffi::c_str::CString::into_raw"
-    ],
-    arc_into_raw: &[
-        "std::sync::Arc::<T>::into_raw",
-        "alloc::sync::Arc::<T>::into_raw"
-    ],
-    rc_into_raw: &[
-        "std::rc::Rc::<T>::into_raw",
-        "alloc::rc::Rc::<T>::into_raw"
     ],
     #[cfg(rapx_ge_99)]
     box_assume_init_into_vec_unsafe: &[

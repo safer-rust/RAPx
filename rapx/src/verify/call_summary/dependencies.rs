@@ -36,6 +36,13 @@ pub(crate) fn dependency_summary<'tcx>(
     let callee = helpers::dep_callee_def_id(func);
 
     if let Some(callee) = callee {
+        if crate::def_ids::other_api::ref_count_adjust(tcx, callee).is_some() {
+            return CallDependencySummary {
+                return_depends_on_args: vec![0],
+                write_args: vec![0],
+                write_inputs: vec![0],
+            };
+        }
         if let Some(summary) = callback::estimate(tcx, callee, args, body) {
             return summary;
         }

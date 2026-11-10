@@ -41,6 +41,11 @@ pub(crate) enum CallEffect {
     /// (`MaybeUninit::assume_init`, `ManuallyDrop::into_inner`): same term and
     /// facts, retyped to the destination — no pointer `non_null` forcing.
     ReturnArgValue { arg: usize },
+    AdjustRefCount {
+        arg: usize,
+        owner: rustc_hir::def_id::DefId,
+        delta: i8,
+    },
     ReturnOpaque,
     ReturnSizeOfVal { arg: usize },
     ReturnRawEq { left_arg: usize, right_arg: usize },
@@ -124,6 +129,7 @@ impl CallEffect {
     pub(super) fn written_args(&self) -> Vec<usize> {
         match self {
             Self::WriteMemory { pointer_arg }
+            | Self::AdjustRefCount { arg: pointer_arg, .. }
             | Self::StoreMemory { pointer_arg, .. }
             | Self::AtomicRmw { pointer_arg }
             | Self::SimdHavocMemory { pointer_arg, .. }

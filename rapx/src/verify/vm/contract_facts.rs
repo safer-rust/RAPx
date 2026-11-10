@@ -429,6 +429,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 init: true,
                 in_bounds: true,
                 align_n: heap_align_n,
+                ownership_transfer: None,
             },
             source: ValueSource::None,
         }

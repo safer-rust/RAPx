@@ -8,7 +8,7 @@
 use crate::helpers::mir_utils;
 use crate::verify::api_classify;
 use crate::verify::checkpoint::Checkpoint;
-use crate::verify::contract::{ContractExpr, Property, PropertyArg, is_static_lifetime_ident};
+use crate::verify::contract::{ContractExpr, Property, PropertyArg, PropertyKind, is_static_lifetime_ident};
 use crate::verify::report::{CheckResult, UnknownReason};
 use crate::verify::vm::state::{AllocId, OffsetKind, VmState, VmValue};
 use rustc_hash::FxHashSet;
@@ -352,6 +352,21 @@ impl PropertyChecker {
             return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
         let value = vm_state.resolve_pointer_provenance(value);
+
+        if value.provenance_alloc_id().is_some_and(|id| {
+            let root = vm_state.root_alloc(id);
+            vm_state.alloc(root).facts.drop_may_free
+                && !vm_state.has_available_transfer(root)
+                && !vm_state.current_frame.local_alloc.iter().any(|(local, header)| {
+                    let ty = vm_state.body().local_decls[*local].ty;
+                    !vm_state.alloc(*header).facts.dead
+                        && vm_state.owner_ptr_has_invariant(ty, PropertyKind::Allocated)
+                        && vm_state.container_data_alloc(*header, ty)
+                            .is_some_and(|data| vm_state.root_alloc(data) == root)
+                })
+        }) {
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
+        }
 
         if self.zst_guard(vm_state, checkpoint, property) {
             return CheckResult::ProvedByRule;

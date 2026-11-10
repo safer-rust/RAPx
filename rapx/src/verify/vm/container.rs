@@ -9,6 +9,7 @@ use z3::ast::{Ast, Int};
 use crate::compat::GenericArgsRef;
 use crate::helpers::mir_utils;
 use crate::verify::api_classify;
+use crate::verify::contract::{ContractExpr, ContractProjection, PropertyArg, PropertyKind};
 
 use super::state::{AllocId, Provenance, ValueFacts, ValueSource, VmState, VmValue};
 
@@ -329,6 +330,77 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
     pub(crate) fn container_ptr_field(&self, ty: Ty<'tcx>) -> Option<Vec<usize>> {
         self.container_ptr_field_inner(ty, Vec::new(), 0)
+    }
+
+    pub(crate) fn owner_ptr_has_invariant(&self, ty: Ty<'tcx>, kind: PropertyKind) -> bool {
+        let TyKind::Adt(adt, _) = ty.kind() else {
+            return false;
+        };
+        let Some(path) = self.container_ptr_field(ty) else {
+            return false;
+        };
+        let invariants = crate::verify::target::get_struct_invariants_from_annotation(
+            self.tcx, adt.did(), adt.did(),
+        );
+        let annotated = invariants.iter().any(|property| {
+            property.kind() == Some(kind)
+                && (kind != PropertyKind::Allocated
+                    || matches!(
+                        property.args().get(2),
+                        Some(PropertyArg::Expr(ContractExpr::Const(count))) if *count > 0
+                    ))
+                && property.target_place().is_some_and(|place| {
+                    place
+                        .projections
+                        .iter()
+                        .map(|projection| match projection {
+                            ContractProjection::Field { index, .. } => Some(*index),
+                            _ => None,
+                        })
+                        .collect::<Option<Vec<_>>>()
+                        == Some(path.clone())
+                })
+        });
+        if annotated {
+            return true;
+        }
+        let tag = match kind {
+            PropertyKind::Allocated => "Allocated",
+            PropertyKind::Owning => "Owning",
+            _ => return false,
+        };
+        let key = crate::helpers::name::public_def_path(self.tcx, adt.did());
+        crate::verify::contract::json::get_std_type_invariants()
+            .get(&key)
+            .is_some_and(|entries| entries.iter().any(|entry| {
+                entry.tag == tag
+                    && (kind != PropertyKind::Allocated
+                        || entry.args.get(2).is_some_and(|count| {
+                            count.parse::<u128>().is_ok_and(|count| count > 0)
+                        }))
+                    && entry.args.first().and_then(|arg| {
+                        let mut field_ty = ty;
+                        arg.strip_prefix("$self.")?
+                            .split('.')
+                            .map(|name| {
+                                let TyKind::Adt(adt, substs) = field_ty.kind() else {
+                                    return None;
+                                };
+                                if adt.is_enum() {
+                                    return None;
+                                }
+                                let field = adt.non_enum_variant().fields.iter().enumerate().find(
+                                    |(index, field)| {
+                                        name.parse::<usize>().ok() == Some(*index)
+                                            || field.name.as_str() == name
+                                    },
+                                )?;
+                                field_ty = mir_utils::field_ty(self.tcx, field.1, substs);
+                                Some(field.0)
+                            })
+                            .collect::<Option<Vec<_>>>()
+                    }) == Some(path.clone())
+            }))
     }
 
     fn container_ptr_field_inner(
