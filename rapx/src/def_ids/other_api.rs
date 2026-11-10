@@ -10,10 +10,7 @@ use rustc_middle::ty::{TyCtxt, TyKind};
 use rustc_public::{CrateDef, rustc_internal};
 use std::sync::OnceLock;
 
-use super::{
-    lang_api::{self, LangItem},
-    type_ids,
-};
+use super::lang_api::{self, LangItem};
 
 static INIT: OnceLock<IndexMap<Box<str>, DefId>> = OnceLock::new();
 
@@ -58,14 +55,6 @@ pub fn is_range_next(tcx: TyCtxt<'_>, did: DefId) -> bool {
         })
 }
 
-pub fn is_iter_next(tcx: TyCtxt<'_>, did: DefId) -> bool {
-    is_std_api(tcx, did)
-        && is_slice_iter_method(tcx, did)
-        && tcx
-            .opt_associated_item(did)
-            .is_some_and(|item| item.name() == rustc_span::sym::next)
-}
-
 pub fn is_iterator_next_trait(tcx: TyCtxt<'_>, did: DefId) -> bool {
     is_std_api(tcx, did)
         && tcx.opt_associated_item(did).is_some_and(|item| {
@@ -107,15 +96,6 @@ pub fn is_known_nonnull(did: DefId) -> bool {
             box_into_raw(), cstring_into_raw(), arc_into_raw(), rc_into_raw(),
         ],
     )
-}
-
-fn is_slice_iter_method(tcx: TyCtxt<'_>, did: DefId) -> bool {
-    crate::helpers::name::get_struct_self_ty(tcx, did)
-        .and_then(|ty| match ty.kind() {
-            rustc_middle::ty::TyKind::Adt(adt, _) => Some(adt.did()),
-            _ => None,
-        })
-        .is_some_and(|adt| type_ids::iter_types().contains(&adt))
 }
 
 fn init_inner(tcx: TyCtxt) -> IndexMap<Box<str>, DefId> {
