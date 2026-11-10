@@ -39,10 +39,7 @@ pub(crate) fn dependency_summary<'tcx>(
         if let Some(summary) = callback::estimate(tcx, callee, args, body) {
             return summary;
         }
-        if arg_count > 0
-            && (crate::def_ids::other_api::is_range_next(tcx, callee)
-                || crate::def_ids::other_api::is_iterator_next_trait(tcx, callee))
-        {
+        if arg_count > 0 && crate::def_ids::other_api::is_iterator_next_trait(tcx, callee) {
             let mut summary = CallDependencySummary::fallback(arg_count);
             summary.write_args.push(0);
             summary.write_inputs.push(0);

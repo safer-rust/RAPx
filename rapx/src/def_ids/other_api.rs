@@ -10,8 +10,6 @@ use rustc_middle::ty::{TyCtxt, TyKind};
 use rustc_public::{CrateDef, rustc_internal};
 use std::sync::OnceLock;
 
-use super::lang_api::{self, LangItem};
-
 static INIT: OnceLock<IndexMap<Box<str>, DefId>> = OnceLock::new();
 
 pub fn init(tcx: TyCtxt) {
@@ -36,23 +34,6 @@ pub fn is_ub_check(tcx: TyCtxt<'_>, callee: DefId) -> bool {
 
 fn is_std_api(tcx: TyCtxt<'_>, did: DefId) -> bool {
     matches!(tcx.crate_name(did.krate).as_str(), "core" | "alloc" | "std")
-}
-
-pub fn is_range_next(tcx: TyCtxt<'_>, did: DefId) -> bool {
-    if !is_std_api(tcx, did)
-        || !matches!(tcx.item_name(did).as_str(), "next" | "spec_next")
-    {
-        return false;
-    }
-    crate::helpers::name::get_struct_self_ty(tcx, did)
-        .and_then(|ty| match ty.kind() {
-            TyKind::Adt(adt, _) => Some(adt.did()),
-            _ => None,
-        })
-        .is_some_and(|adt| {
-            lang_api::matches(tcx, adt, LangItem::Range)
-                || lang_api::matches(tcx, adt, LangItem::RangeInclusiveStruct)
-        })
 }
 
 pub fn is_iterator_next_trait(tcx: TyCtxt<'_>, did: DefId) -> bool {
