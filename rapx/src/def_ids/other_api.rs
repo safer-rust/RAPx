@@ -6,7 +6,7 @@
 
 use indexmap::IndexMap;
 use rustc_hir::def_id::DefId;
-use rustc_middle::ty::{TyCtxt, TyKind};
+use rustc_middle::ty::TyCtxt;
 use rustc_public::{CrateDef, rustc_internal};
 use std::sync::OnceLock;
 
@@ -34,17 +34,6 @@ pub fn is_ub_check(tcx: TyCtxt<'_>, callee: DefId) -> bool {
 
 fn is_std_api(tcx: TyCtxt<'_>, did: DefId) -> bool {
     matches!(tcx.crate_name(did.krate).as_str(), "core" | "alloc" | "std")
-}
-
-pub fn is_option_branch(tcx: TyCtxt<'_>, did: DefId) -> bool {
-    if !is_std_api(tcx, did) || tcx.item_name(did).as_str() != "branch" {
-        return false;
-    }
-    crate::helpers::name::get_struct_self_ty(tcx, did)
-        .is_some_and(|ty| {
-            matches!(ty.kind(), TyKind::Adt(adt, _)
-                if tcx.is_diagnostic_item(rustc_span::sym::Option, adt.did()))
-        })
 }
 
 pub fn is_gcd(tcx: TyCtxt<'_>, did: DefId) -> bool {

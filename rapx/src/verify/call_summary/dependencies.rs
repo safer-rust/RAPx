@@ -75,8 +75,6 @@ pub(crate) fn dependency_summary<'tcx>(
         let write_args = (!write_args.is_empty()).then_some(write_args);
         let return_deps = if api_classify::is_std_box_value_constructor(tcx, callee) {
             Some((0..arg_count).collect())
-        } else if crate::def_ids::other_api::is_option_branch(tcx, callee) {
-            Some(vec![0])
         } else {
             local_return_dependencies(tcx, callee).map(|args| {
                 args.into_iter()
