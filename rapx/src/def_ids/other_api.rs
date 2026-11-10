@@ -36,16 +36,6 @@ fn is_std_api(tcx: TyCtxt<'_>, did: DefId) -> bool {
     matches!(tcx.crate_name(did.krate).as_str(), "core" | "alloc" | "std")
 }
 
-pub fn is_iterator_next_trait(tcx: TyCtxt<'_>, did: DefId) -> bool {
-    is_std_api(tcx, did)
-        && tcx.opt_associated_item(did).is_some_and(|item| {
-            item.name() == rustc_span::sym::next
-                && item.trait_container(tcx).is_some_and(|trait_id| {
-                    tcx.is_diagnostic_item(rustc_span::Symbol::intern("Iterator"), trait_id)
-                })
-        })
-}
-
 pub fn is_option_branch(tcx: TyCtxt<'_>, did: DefId) -> bool {
     if !is_std_api(tcx, did) || tcx.item_name(did).as_str() != "branch" {
         return false;
@@ -744,14 +734,9 @@ pub fn to_internal<T: CrateDef>(val: &T, tcx: TyCtxt) -> DefId {
 /// using alloc, dealloc doesn't exist.
 pub fn is_drop_fn(target: DefId) -> bool {
     let drop_fn = [drop(), drop_in_place(), manually_drop(), dealloc()];
-    contains(&drop_fn, target)
-}
-
-/// Whether the target `DefId` is in the given array.
-pub fn contains(v: &[Option<DefId>], target: DefId) -> bool {
-    v.contains(&Some(target))
+    matches_any(Some(target), &drop_fn)
 }
 
 pub(crate) fn matches_any(target: Option<DefId>, candidates: &[Option<DefId>]) -> bool {
-    target.is_some_and(|id| contains(candidates, id))
+    target.is_some_and(|id| candidates.contains(&Some(id)))
 }

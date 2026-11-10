@@ -707,10 +707,7 @@ fn exact_range_repeat<'tcx>(
                 },
             )
             .unwrap_or(false);
-        let callee = mir_utils::dep_callee_def_id(func);
-        let is_next = callee.is_some_and(|id| {
-            crate::verify::api_classify::is_iterator_advance_call(tcx, id)
-        });
+        let is_next = crate::verify::api_classify::is_range_advancing_call(tcx, def_id, func);
         if !receiver_is_range || !is_next {
             continue;
         }

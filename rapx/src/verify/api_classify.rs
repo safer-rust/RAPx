@@ -18,25 +18,44 @@ use crate::def_ids::{
     nomir_ffi, other_api, type_ids,
 };
 use rustc_hir::def_id::DefId;
-use rustc_middle::ty::{Mutability, Ty, TyCtxt, TyKind};
+use rustc_middle::{
+    mir::Operand,
+    ty::{Mutability, Ty, TyCtxt, TyKind},
+};
 
 fn intrinsic_named(callee: Option<DefId>, names: &[&str]) -> bool {
     intrinsic_api::name(callee).is_some_and(|name| names.contains(&name.as_str()))
 }
 
-/// Recognize iterator advancement through either the trait method or a
-/// specialized Range method, without depending on the method's path spelling.
-pub(crate) fn is_iterator_advance_call(tcx: TyCtxt<'_>, callee: DefId) -> bool {
+/// Recognize a mutating Range call that returns an optional element.
+pub(crate) fn is_range_advancing_call<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    caller: DefId,
+    func: &Operand<'tcx>,
+) -> bool {
+    let Some(callee) = crate::helpers::mir_utils::dep_callee_resolved_def_id(tcx, caller, func)
+    else {
+        return false;
+    };
     let sig = tcx.fn_sig(callee).skip_binder();
-    let range_owner = crate::helpers::name::get_struct_self_ty(tcx, callee)
-        .is_some_and(|ty| matches!(ty.kind(), TyKind::Adt(adt, _)
+    let inputs = sig.inputs().skip_binder();
+    let range_owner = crate::helpers::name::get_struct_self_ty(tcx, callee).is_some_and(|ty| {
+        matches!(ty.kind(), TyKind::Adt(adt, _)
             if lang_api::matches(tcx, adt.did(), LangItem::Range)
-                || lang_api::matches(tcx, adt.did(), LangItem::RangeInclusiveStruct)));
-    matches!(sig.inputs().skip_binder().first().map(|ty| ty.kind()),
-        Some(TyKind::Ref(_, _, Mutability::Mut)))
-        && (range_owner || other_api::is_iterator_next_trait(tcx, callee))
-        && matches!(sig.output().skip_binder().kind(),
-            TyKind::Adt(adt, _) if tcx.is_diagnostic_item(rustc_span::sym::Option, adt.did()))
+                || lang_api::matches(tcx, adt.did(), LangItem::RangeInclusiveStruct))
+    });
+    inputs.len() == 1
+        && matches!(
+            inputs.first().map(|ty| ty.kind()),
+            Some(TyKind::Ref(_, _, Mutability::Mut))
+        )
+        && range_owner
+        && matches!(
+            sig.output().skip_binder().kind(),
+            TyKind::Adt(adt, _) if tcx.is_diagnostic_item(rustc_span::sym::Option, adt.did())
+        )
+        && crate::verify::call_summary::callsite_write_args(tcx, caller, func)
+            .is_some_and(|args| args.contains(&0))
 }
 
 pub(crate) fn is_std_box_value_constructor(tcx: TyCtxt<'_>, callee: DefId) -> bool {

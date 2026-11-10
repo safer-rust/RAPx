@@ -11,7 +11,7 @@ use rustc_middle::{
         BasicBlock, Body, Local, NonDivergingIntrinsic, Operand, ProjectionElem, Rvalue, StatementKind,
         TerminatorKind,
     },
-    ty::{Mutability, TyCtxt, TyKind},
+    ty::{EarlyBinder, InstanceKind, Mutability, TyCtxt, TyKind, TypingEnv},
 };
 
 use crate::analysis::dataflow::{DataflowAnalysis, default::DataflowAnalyzer};
@@ -39,12 +39,6 @@ pub(crate) fn dependency_summary<'tcx>(
         if let Some(summary) = callback::estimate(tcx, callee, args, body) {
             return summary;
         }
-        if arg_count > 0 && crate::def_ids::other_api::is_iterator_next_trait(tcx, callee) {
-            let mut summary = CallDependencySummary::fallback(arg_count);
-            summary.write_args.push(0);
-            summary.write_inputs.push(0);
-            return summary;
-        }
         if let Some(summary) = intrinsic_dependency_summary(
             tcx, caller, Some(callee), func, destination, arg_count,
         ) {
@@ -56,7 +50,7 @@ pub(crate) fn dependency_summary<'tcx>(
 
         // Writes and return-dependencies are orthogonal. Analyze both even
         // when a callee writes through an argument.
-        let write_args = match local_write_args(tcx, callee) {
+        let write_args = match callsite_write_args(tcx, caller, func) {
             Some(args) => args
                 .into_iter()
                 .filter(|i| *i < arg_count)
@@ -295,15 +289,57 @@ pub(super) fn local_return_dependencies(tcx: TyCtxt<'_>, callee: DefId) -> Optio
     .ok()
 }
 
-/// Memo keyed by `(callee, depth)`, shared within a single
-/// `local_write_args` recursion.
+/// Memo keyed by `(callee, depth)` for uninstantiated MIR summaries.
 type WriteMemo = HashMap<(DefId, usize), Option<HashSet<usize>>>;
 
-/// Return callee argument indices that are written. Works for any callee with
-/// available MIR, and follows wrapper calls (`Vec::push` → `push_mut`) with
-/// bounded depth.
-pub(super) fn local_write_args(tcx: TyCtxt<'_>, callee: DefId) -> Option<Vec<usize>> {
-    write_args_rec(tcx, callee, 0, &mut HashMap::new()).map(|set| set.into_iter().collect())
+/// Return arguments written by the concrete call, following wrapper calls
+/// while retaining their generic arguments.
+pub(crate) fn callsite_write_args<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    caller: DefId,
+    func: &Operand<'tcx>,
+) -> Option<Vec<usize>> {
+    callsite_write_args_rec(tcx, caller, func, 0, &mut HashMap::new())
+        .map(|set| set.into_iter().collect())
+}
+
+fn callsite_write_args_rec<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    caller: DefId,
+    func: &Operand<'tcx>,
+    depth: usize,
+    memo: &mut WriteMemo,
+) -> Option<HashSet<usize>> {
+    if depth > 4 {
+        return None;
+    }
+    let base = helpers::dep_callee_def_id(func)?;
+    let is_trait_method = tcx.opt_associated_item(base)
+        .and_then(|item| item.trait_container(tcx))
+        .is_some();
+    if !is_trait_method && !tcx.generics_of(base).requires_monomorphization(tcx) {
+        return write_args_rec(tcx, base, depth, memo);
+    }
+    let Some(instance) = helpers::resolve_callee_instance(tcx, caller, func) else {
+        return (!is_trait_method)
+            .then(|| write_args_rec(tcx, base, depth, memo))
+            .flatten();
+    };
+    if !matches!(instance.def, InstanceKind::Item(_)) || !tcx.is_mir_available(instance.def_id()) {
+        return None;
+    }
+    let callee = instance.def_id();
+    let mir = tcx.optimized_mir(callee);
+    let body = instance
+        .try_instantiate_mir_and_normalize_erasing_regions(
+            tcx,
+            TypingEnv::post_analysis(tcx, caller),
+            EarlyBinder::bind(tcx, mir.clone()),
+        )
+        .ok()?;
+    helpers::catch_panic(|| write_args_for_body(tcx, callee, &body, depth, memo))
+        .ok()
+        .flatten()
 }
 
 fn write_args_rec(
@@ -328,35 +364,45 @@ fn write_args_rec(
 
     let summary = helpers::catch_panic(|| {
         let body = tcx.optimized_mir(callee);
-        let mut graph = PathGraph::new(tcx, callee);
-        graph.find_scc();
-        let mut enumerator = PathEnumerator::new(&graph);
-        let paths = enumerator.enumerate_paths_repeat(0);
-        if paths.is_truncated() {
-            return None;
-        }
-
-        let mut write: Option<HashSet<usize>> = None;
-        for path in paths.iter() {
-            if !path_ends_in_return(body, &path) {
-                continue;
-            }
-            let writes = write_args_on_path(tcx, callee, body, &path, depth, memo);
-            write = Some(match write {
-                Some(mut current) => {
-                    current.extend(writes);
-                    current
-                }
-                None => writes,
-            });
-        }
-
-        Some(write.unwrap_or_default())
+        write_args_for_body(tcx, callee, body, depth, memo)
     })
     .ok()
     .flatten();
     memo.insert(key, summary.clone());
     summary
+}
+
+fn write_args_for_body<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    callee: DefId,
+    body: &Body<'tcx>,
+    depth: usize,
+    memo: &mut WriteMemo,
+) -> Option<HashSet<usize>> {
+    let mut graph = PathGraph::new(tcx, callee);
+    graph.find_scc();
+    let mut enumerator = PathEnumerator::new(&graph);
+    let paths = enumerator.enumerate_paths_repeat(0);
+    if paths.is_truncated() {
+        return None;
+    }
+
+    let mut write: Option<HashSet<usize>> = None;
+    for path in paths.iter() {
+        if !path_ends_in_return(body, &path) {
+            continue;
+        }
+        let writes = write_args_on_path(tcx, callee, body, &path, depth, memo);
+        write = Some(match write {
+            Some(mut current) => {
+                current.extend(writes);
+                current
+            }
+            None => writes,
+        });
+    }
+
+    Some(write.unwrap_or_default())
 }
 
 fn path_ends_in_return(body: &rustc_middle::mir::Body<'_>, path: &[usize]) -> bool {
@@ -450,7 +496,7 @@ fn write_args_on_path<'tcx>(
                 super::callback::estimate(tcx, nested, args, body)
                     .map(|summary| summary.write_args.into_iter().collect::<HashSet<_>>())
             })
-            .or_else(|| write_args_rec(tcx, nested, depth + 1, memo))
+            .or_else(|| callsite_write_args_rec(tcx, caller, func, depth + 1, memo))
         {
             for (i, arg) in args.iter().enumerate() {
                 if nested_writes.contains(&i) {

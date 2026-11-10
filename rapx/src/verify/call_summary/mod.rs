@@ -5,6 +5,7 @@ mod dependencies;
 pub(crate) mod callback;
 
 pub(crate) use dependencies::dependency_summary;
+pub(crate) use dependencies::callsite_write_args;
 
 /// Dependency summary consumed by the backward visitor.
 #[derive(Clone, Debug)]

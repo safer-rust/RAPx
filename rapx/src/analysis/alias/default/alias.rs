@@ -1,6 +1,6 @@
 use super::{MopFnAliasMap, graph::*};
 use crate::def_ids::nomir_api::{call_mut, clone};
-use crate::def_ids::other_api::{contains, replace, take};
+use crate::def_ids::other_api::{matches_any, replace, take};
 use crate::limit::MAX_VALUES_PER_PATH;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
@@ -84,7 +84,7 @@ impl<'tcx> AliasGraph<'tcx> {
 
 pub fn is_no_alias_intrinsic(def_id: DefId) -> bool {
     let v = [call_mut(), clone(), take(), replace()];
-    contains(&v, def_id)
+    matches_any(Some(def_id), &v)
 }
 
 pub fn ensure_fn_aliases_cached<'tcx>(

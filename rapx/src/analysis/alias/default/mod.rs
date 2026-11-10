@@ -191,7 +191,7 @@ impl<'tcx> AliasAnalyzer<'tcx> {
         ];
         let alias = MopAliasPair::new(1, true, true, 2, true, true);
         for (key, value) in self.fn_map.iter_mut() {
-            if contains(&cases, *key) {
+            if matches_any(Some(*key), &cases) {
                 value.alias_set.clear();
                 value.alias_set.insert(alias.clone());
             }

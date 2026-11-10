@@ -308,7 +308,7 @@ impl<'tcx> CallSiteIndex<'tcx> {
                         && !crate::verify::options::force_inline_constructor(self.tcx, callee))
                     || crate::verify::target::has_slice_offset_ensures(self.tcx, callee)
                     || crate::def_ids::other_api::is_ub_check(self.tcx, callee)
-                    || (crate::verify::api_classify::is_iterator_advance_call(self.tcx, callee)
+                    || (crate::verify::api_classify::is_range_advancing_call(self.tcx, caller, func)
                         && mir_utils::blocks_reachable_after_call(
                             self.tcx,
                             actual_caller,
