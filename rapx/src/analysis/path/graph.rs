@@ -1,6 +1,5 @@
 use super::PathTree;
 use crate::compat::{FxHashMap, FxHashSet};
-use crate::def_ids::other_api;
 use crate::graphs::{
     cfg::{CfgBlock, ControlFlowGraph},
     scc::{Scc, SccInfo},
@@ -96,8 +95,8 @@ pub enum Expr {
     Cmp { op: BinOp, lhs: usize, rhs: Rhs },
 }
 
-/// The origin of a local's value: a constant, a copy of another local, an
-/// expression result, or a provably non-null pointer.
+/// The origin of a local's value: a constant, a copy of another local, or an
+/// expression result.
 #[derive(Clone, Debug)]
 pub enum LocalOrigin {
     /// `dest` is the given constant value.
@@ -106,8 +105,6 @@ pub enum LocalOrigin {
     Copy(usize),
     /// `dest` is an expression result.
     Expr(Expr),
-    /// `dest` is a provably non-null pointer.
-    NonNull,
 }
 
 impl LocalOrigin {
@@ -467,24 +464,6 @@ fn build_function_info<'tcx>(
             }
         }
 
-        if let Some(terminator) = &bb.terminator
-            && let TerminatorKind::Call {
-                destination,
-                ref func,
-                ..
-            } = terminator.kind
-            && let Some(did) = mir_utils::dep_callee_def_id(func)
-        {
-            if other_api::is_known_nonnull(did) {
-                info.origin
-                    .insert(destination.local.as_usize(), LocalOrigin::NonNull);
-            }
-            if other_api::is_null_ptr(tcx, did) {
-                info.origin
-                    .insert(destination.local.as_usize(), LocalOrigin::Const(0));
-            }
-        }
-
         block_info.push(info);
     }
 
@@ -732,11 +711,6 @@ impl<'tcx> PathGraph<'tcx> {
                 }
                 cs.consts.remove(local);
             }
-            for (local, origin) in &info.origin {
-                if matches!(origin, LocalOrigin::NonNull) {
-                    cs.consts.insert(*local, usize::MAX);
-                }
-            }
         }
 
         // Also clear constraints for locals assigned by the terminator
@@ -758,8 +732,6 @@ impl<'tcx> PathGraph<'tcx> {
                         .and_then(LocalOrigin::as_const)
                     {
                         cs.consts.insert(local, val);
-                    } else if matches!(block_info.origin.get(&local), Some(LocalOrigin::NonNull)) {
-                        cs.consts.insert(local, usize::MAX);
                     } else {
                         cs.consts.remove(&local);
                     }
