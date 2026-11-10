@@ -294,8 +294,8 @@ fn stable_rvalue(rvalue: &Rvalue<'_>) -> bool {
 fn stable_query(tcx: TyCtxt<'_>, callee: DefId) -> bool {
     let id = Some(callee);
     if api_classify::is_layout_constant(id)
-        || api_classify::is_benign_origin_use(id)
-        || api_classify::is_as_ptr(id)
+        || api_classify::is_benign_origin_use(tcx, id)
+        || api_classify::is_as_ptr(tcx, id)
         || api_classify::is_intrinsic_ptr_offset_from(id)
     {
         return true;

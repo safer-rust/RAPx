@@ -162,18 +162,22 @@ fn intrinsic_dependency_summary<'tcx>(
 /// `Ref`/`RawPtr` are treated as data-flow too, which is an
 /// approximation (taking a reference is not a pure copy) but is adequate for
 /// wrapper recognition.
-fn trace_to_callee_args(
-    body: &rustc_middle::mir::Body<'_>,
-    operand: &Operand<'_>,
+fn trace_to_callee_args<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    body: &rustc_middle::mir::Body<'tcx>,
+    operand: &Operand<'tcx>,
 ) -> HashSet<usize> {
     match operand {
-        Operand::Copy(place) | Operand::Move(place) => trace_local_to_callee_args(body, place.local),
+        Operand::Copy(place) | Operand::Move(place) => {
+            trace_local_to_callee_args(tcx, body, place.local)
+        }
         _ => HashSet::new(),
     }
 }
 
-fn trace_local_to_callee_args(
-    body: &rustc_middle::mir::Body<'_>,
+fn trace_local_to_callee_args<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    body: &rustc_middle::mir::Body<'tcx>,
     local: rustc_middle::mir::Local,
 ) -> HashSet<usize> {
     let mut queue = VecDeque::from([local]);
@@ -241,7 +245,7 @@ fn trace_local_to_callee_args(
             // provenance (and thus the written-through arg) is carried by
             // their first (base/receiver) argument.
             let callee = helpers::dep_callee_def_id(func);
-            let traces_base = crate::verify::api_classify::is_as_ptr(callee)
+            let traces_base = crate::verify::api_classify::is_as_ptr(tcx, callee)
                 || crate::verify::api_classify::is_pointer_add(callee)
                 || crate::verify::api_classify::is_pointer_sub(callee);
             if !traces_base {
@@ -435,7 +439,7 @@ fn write_args_on_path<'tcx>(
             if let StatementKind::Intrinsic(intrinsic) = &stmt.kind
                 && let NonDivergingIntrinsic::CopyNonOverlapping(copy) = &**intrinsic
             {
-                writes.extend(trace_to_callee_args(body, &copy.dst));
+                writes.extend(trace_to_callee_args(tcx, body, &copy.dst));
             }
             let StatementKind::Assign(assign) = &stmt.kind else {
                 continue;
@@ -443,7 +447,7 @@ fn write_args_on_path<'tcx>(
             let dest = &assign.0;
             if dest.projection.first() == Some(&ProjectionElem::Deref)
             {
-                writes.extend(trace_local_to_callee_args(body, dest.local));
+                writes.extend(trace_local_to_callee_args(tcx, body, dest.local));
             }
         }
 
@@ -466,14 +470,14 @@ fn write_args_on_path<'tcx>(
         // `ptr::write`-style writes: trace the pointer arg to a callee arg.
         if crate::verify::api_classify::is_ptr_write(helpers::dep_callee_def_id(func)) {
             if let Some(pointer_arg) = args.first() {
-                writes.extend(trace_to_callee_args(body, &pointer_arg.node));
+                writes.extend(trace_to_callee_args(tcx, body, &pointer_arg.node));
             }
             continue;
         }
 
         if crate::verify::api_classify::is_ptr_copy(helpers::dep_callee_def_id(func)) {
             if let Some(destination_arg) = args.get(1) {
-                writes.extend(trace_to_callee_args(body, &destination_arg.node));
+                writes.extend(trace_to_callee_args(tcx, body, &destination_arg.node));
             }
             continue;
         }
@@ -498,7 +502,7 @@ fn write_args_on_path<'tcx>(
         {
             for (i, arg) in args.iter().enumerate() {
                 if nested_writes.contains(&i) {
-                    writes.extend(trace_to_callee_args(body, &arg.node));
+                    writes.extend(trace_to_callee_args(tcx, body, &arg.node));
                 }
             }
         }

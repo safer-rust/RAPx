@@ -239,18 +239,6 @@ std_api_def_ids! {
         "std::mem::maybe_uninit::MaybeUninit::<T>::assume_init_read",
         "core::mem::maybe_uninit::MaybeUninit::<T>::assume_init_read"
     ],
-    maybe_uninit_as_ptr: &[
-        "std::mem::MaybeUninit::<T>::as_ptr",
-        "core::mem::MaybeUninit::<T>::as_ptr",
-        "std::mem::maybe_uninit::MaybeUninit::<T>::as_ptr",
-        "core::mem::maybe_uninit::MaybeUninit::<T>::as_ptr"
-    ],
-    maybe_uninit_as_mut_ptr: &[
-        "std::mem::MaybeUninit::<T>::as_mut_ptr",
-        "core::mem::MaybeUninit::<T>::as_mut_ptr",
-        "std::mem::maybe_uninit::MaybeUninit::<T>::as_mut_ptr",
-        "core::mem::maybe_uninit::MaybeUninit::<T>::as_mut_ptr"
-    ],
     mem_size_of: &[
         "std::mem::size_of",
         "core::mem::size_of"
@@ -487,14 +475,6 @@ std_api_def_ids! {
         "std::boxed::Box::<T>::into_raw",
         "alloc::boxed::Box::<T>::into_raw"
     ],
-    box_as_ptr: &[
-        "std::boxed::Box::<T, A>::as_ptr",
-        "alloc::boxed::Box::<T, A>::as_ptr"
-    ],
-    box_as_mut_ptr: &[
-        "std::boxed::Box::<T, A>::as_mut_ptr",
-        "alloc::boxed::Box::<T, A>::as_mut_ptr"
-    ],
     cstring_into_raw: &[
         "std::ffi::CString::into_raw",
         "alloc::ffi::CString::into_raw",
@@ -505,21 +485,9 @@ std_api_def_ids! {
         "std::sync::Arc::<T>::into_raw",
         "alloc::sync::Arc::<T>::into_raw"
     ],
-    arc_as_ptr: &[
-        "std::sync::Arc::<T>::as_ptr",
-        "alloc::sync::Arc::<T>::as_ptr",
-        "std::sync::Arc::<T, A>::as_ptr",
-        "alloc::sync::Arc::<T, A>::as_ptr"
-    ],
     rc_into_raw: &[
         "std::rc::Rc::<T>::into_raw",
         "alloc::rc::Rc::<T>::into_raw"
-    ],
-    rc_as_ptr: &[
-        "std::rc::Rc::<T>::as_ptr",
-        "alloc::rc::Rc::<T>::as_ptr",
-        "std::rc::Rc::<T, A>::as_ptr",
-        "alloc::rc::Rc::<T, A>::as_ptr"
     ],
     #[cfg(rapx_ge_99)]
     box_assume_init_into_vec_unsafe: &[
@@ -602,12 +570,6 @@ std_api_def_ids! {
         "std::ptr::non_null::NonNull::<T>::cast",
         "core::ptr::non_null::NonNull::<T>::cast"
     ],
-    nonnull_as_ptr: &[
-        "std::ptr::NonNull::<T>::as_ptr",
-        "core::ptr::NonNull::<T>::as_ptr",
-        "std::ptr::non_null::NonNull::<T>::as_ptr",
-        "core::ptr::non_null::NonNull::<T>::as_ptr"
-    ],
     nonnull_slice_is_empty: &[
         "std::ptr::NonNull::<[T]>::is_empty",
         "core::ptr::NonNull::<[T]>::is_empty",
@@ -620,12 +582,6 @@ std_api_def_ids! {
         "std::ptr::non_null::NonNull::<[T]>::len",
         "core::ptr::non_null::NonNull::<[T]>::len"
     ],
-    nonnull_slice_as_mut_ptr: &[
-        "std::ptr::NonNull::<[T]>::as_mut_ptr",
-        "core::ptr::NonNull::<[T]>::as_mut_ptr",
-        "std::ptr::non_null::NonNull::<[T]>::as_mut_ptr",
-        "core::ptr::non_null::NonNull::<[T]>::as_mut_ptr"
-    ],
     slice_len: &[
         "std::slice::<impl [T]>::len",
         "core::slice::<impl [T]>::len"
@@ -633,14 +589,6 @@ std_api_def_ids! {
     slice_is_empty: &[
         "std::slice::<impl [T]>::is_empty",
         "core::slice::<impl [T]>::is_empty"
-    ],
-    slice_as_ptr: &[
-        "std::slice::<impl [T]>::as_ptr",
-        "core::slice::<impl [T]>::as_ptr"
-    ],
-    slice_as_mut_ptr: &[
-        "std::slice::<impl [T]>::as_mut_ptr",
-        "core::slice::<impl [T]>::as_mut_ptr"
     ],
     str_len: &[
         "std::str::<impl str>::len",
@@ -650,14 +598,6 @@ std_api_def_ids! {
         "std::str::<impl str>::is_empty",
         "core::str::<impl str>::is_empty"
     ],
-    str_as_ptr: &[
-        "std::str::<impl str>::as_ptr",
-        "core::str::<impl str>::as_ptr"
-    ],
-    str_as_mut_ptr: &[
-        "std::str::<impl str>::as_mut_ptr",
-        "core::str::<impl str>::as_mut_ptr"
-    ],
     vec_len: &[
         "std::vec::Vec::<T, A>::len",
         "alloc::vec::Vec::<T, A>::len"
@@ -666,14 +606,6 @@ std_api_def_ids! {
         "std::vec::Vec::<T, A>::is_empty",
         "alloc::vec::Vec::<T, A>::is_empty"
     ],
-    vec_as_ptr: &[
-        "std::vec::Vec::<T, A>::as_ptr",
-        "alloc::vec::Vec::<T, A>::as_ptr"
-    ],
-    vec_as_mut_ptr: &[
-        "std::vec::Vec::<T, A>::as_mut_ptr",
-        "alloc::vec::Vec::<T, A>::as_mut_ptr"
-    ],
     string_len: &[
         "std::string::String::len",
         "alloc::string::String::len"
@@ -681,12 +613,6 @@ std_api_def_ids! {
     string_is_empty: &[
         "std::string::String::is_empty",
         "alloc::string::String::is_empty"
-    ],
-    cstr_as_ptr: &[
-        "std::ffi::CStr::as_ptr",
-        "core::ffi::CStr::as_ptr",
-        "std::ffi::c_str::CStr::as_ptr",
-        "core::ffi::c_str::CStr::as_ptr"
     ],
     cstr_is_empty: &[
         "std::ffi::CStr::is_empty",

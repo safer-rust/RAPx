@@ -1,7 +1,10 @@
 //! ValidCStr property checking for the symbolic VM.
 
 use crate::helpers::mir_utils;
-use rustc_middle::mir::{Body, Local, Operand, Rvalue, StatementKind, TerminatorKind};
+use rustc_middle::{
+    mir::{Body, Local, Operand, Rvalue, StatementKind, TerminatorKind},
+    ty::TyCtxt,
+};
 use z3::{
     Solver,
     ast::{Ast, Int},
@@ -30,7 +33,7 @@ fn first_arg_local<'tcx>(checkpoint: &Checkpoint<'tcx>) -> Option<Local> {
 
 /// Build a `local -> source` map for `Use`/`Cast`/`Ref`/`RawPtr`/`CopyForDeref`
 /// assignments and `as_ptr` calls.
-fn body_parents(body: &Body<'_>) -> FxHashMap<Local, Local> {
+fn body_parents<'tcx>(tcx: TyCtxt<'tcx>, body: &Body<'tcx>) -> FxHashMap<Local, Local> {
     let mut parents: FxHashMap<Local, Local> = Default::default();
     for data in body.basic_blocks.iter() {
         for statement in &data.statements {
@@ -62,7 +65,7 @@ fn body_parents(body: &Body<'_>) -> FxHashMap<Local, Local> {
         else {
             continue;
         };
-        if !is_as_ptr(dep_callee_def_id(func)) {
+        if !is_as_ptr(tcx, dep_callee_def_id(func)) {
             continue;
         }
         let Some(source) = args.first().and_then(|arg| match &arg.node {
@@ -364,7 +367,7 @@ impl PropertyChecker {
         let target_local = first_arg_local(checkpoint)?;
         let body = vm_state.body();
 
-        let parents = body_parents(body);
+        let parents = body_parents(vm_state.tcx, body);
         let root = mir_utils::resolve_through_casts(
             body,
             mir_utils::follow_parents(&parents, target_local),

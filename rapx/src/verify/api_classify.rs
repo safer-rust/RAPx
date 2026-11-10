@@ -17,6 +17,7 @@ use crate::def_ids::{
     lang_api::{self, LangItem},
     nomir_ffi, other_api, type_ids,
 };
+use crate::verify::pointer_origin;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::Operand,
@@ -102,27 +103,13 @@ pub fn is_std_drop(callee: Option<DefId>) -> bool {
 /// because they return a `Range` of two pointers rather than a single pointer;
 /// `NonNull::new_unchecked` constructs a wrapper from a pointer; `as_ref` and
 /// `as_mut` produce references. None extracts a raw pointer from its argument.
-pub fn is_as_ptr(callee: Option<DefId>) -> bool {
+/// Other pointer-returning calls are recognized from their MIR.
+pub fn is_as_ptr(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
     other_api::matches_any(
         callee,
         &[
-            other_api::slice_as_ptr(),
-            other_api::slice_as_mut_ptr(),
-            other_api::str_as_ptr(),
-            other_api::str_as_mut_ptr(),
-            other_api::vec_as_ptr(),
-            other_api::vec_as_mut_ptr(),
-            other_api::cstr_as_ptr(),
-            other_api::nonnull_as_ptr(),
             other_api::const_ptr_slice_as_ptr(),
             other_api::mut_ptr_slice_as_mut_ptr(),
-            other_api::nonnull_slice_as_mut_ptr(),
-            other_api::box_as_ptr(),
-            other_api::box_as_mut_ptr(),
-            other_api::maybe_uninit_as_ptr(),
-            other_api::maybe_uninit_as_mut_ptr(),
-            other_api::arc_as_ptr(),
-            other_api::rc_as_ptr(),
             other_api::const_ptr_cast(),
             other_api::const_ptr_cast_mut(),
             other_api::const_ptr_cast_array(),
@@ -130,12 +117,9 @@ pub fn is_as_ptr(callee: Option<DefId>) -> bool {
             other_api::mut_ptr_cast_const(),
             other_api::mut_ptr_cast_array(),
             other_api::nonnull_cast(),
-            other_api::box_into_raw(),
-            other_api::cstring_into_raw(),
-            other_api::arc_into_raw(),
-            other_api::rc_into_raw(),
         ],
-    )
+    ) || callee
+        .is_some_and(|id| crate::verify::pointer_origin::return_source_arg(tcx, id) == Some(0))
 }
 
 // ── Pointer arithmetic ────────────────────────────────────────────
@@ -419,7 +403,7 @@ pub fn is_ownership_return(callee: Option<DefId>) -> bool {
 
 /// Whether `callee` is a benign, read-only use of a raw-pointer origin
 /// (`len`, `is_empty`, `is_null`, `addr`, `as_ptr`/`as_mut_ptr`, `cast`).
-pub fn is_benign_origin_use(callee: Option<DefId>) -> bool {
+pub fn is_benign_origin_use(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
     other_api::matches_any(
         callee,
         &[
@@ -439,28 +423,19 @@ pub fn is_benign_origin_use(callee: Option<DefId>) -> bool {
             other_api::mut_ptr_slice_as_mut_ptr(),
             other_api::nonnull_addr(),
             other_api::nonnull_cast(),
-            other_api::nonnull_as_ptr(),
             other_api::nonnull_slice_is_empty(),
             other_api::nonnull_slice_len(),
-            other_api::nonnull_slice_as_mut_ptr(),
             other_api::slice_len(),
             other_api::slice_is_empty(),
-            other_api::slice_as_ptr(),
-            other_api::slice_as_mut_ptr(),
             other_api::str_len(),
             other_api::str_is_empty(),
-            other_api::str_as_ptr(),
-            other_api::str_as_mut_ptr(),
             other_api::vec_len(),
             other_api::vec_is_empty(),
-            other_api::vec_as_ptr(),
-            other_api::vec_as_mut_ptr(),
             other_api::string_len(),
             other_api::string_is_empty(),
-            other_api::cstr_as_ptr(),
             other_api::cstr_is_empty(),
         ],
-    )
+    ) || callee.is_some_and(|did| pointer_origin::is_read_only_return(tcx, did))
 }
 
 // ── ADT type-name classifiers ─────────────────────────────────────
