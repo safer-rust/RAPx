@@ -2,7 +2,6 @@ mod memory;
 mod numeric;
 mod simd;
 
-use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{Local, Operand},
     ty::{Ty, TyKind},
@@ -10,7 +9,7 @@ use rustc_middle::{
 use z3::ast::{Ast, Bool, Int};
 
 use super::super::super::state::{
-    AllocId, ElementTy, Provenance, ValueFacts, ValueSource, VmState, VmValue,
+    AllocId, Provenance, ValueFacts, ValueSource, VmState, VmValue,
 };
 use crate::helpers::mir_utils;
 use crate::verify::api_classify;
@@ -33,10 +32,14 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         args: &[VmValue<'z3, 'tcx>],
         caller_arg_locals: &[Option<Local>],
         dest: Local,
-        callee: Option<DefId>,
         func: &Operand<'tcx>,
     ) {
         match effect {
+            CallEffect::ReallocateVec { arg } => {
+                if let Some(value) = args.get(*arg) {
+                    self.reallocate_vec_backing(value);
+                }
+            }
             CallEffect::AdjustRefCount { arg, owner, delta } => {
                 if let Some(value) = args.get(*arg) {
                     if *delta > 0 {
@@ -161,9 +164,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             | CallEffect::AtomicRmw { .. }
             | CallEffect::CopyMemory { .. }
             | CallEffect::SwapMemory { .. }
-            | CallEffect::FillBytes { .. }
-            | CallEffect::WriteMemory { .. }) => {
-                self.apply_memory_effect(effect, args, dest, callee);
+            | CallEffect::FillBytes { .. }) => {
+                self.apply_memory_effect(effect, args, dest);
             }
             effect @ (CallEffect::SimdCompare { .. }
             | CallEffect::SimdArithmetic { .. }

@@ -1124,7 +1124,7 @@ fn local_hazard_violation_with(
             }
             if kind == HazardKind::UniqueView
                 && !vec_owners.is_empty()
-                && terminator_invalidates_vec_owner(&terminator.kind, &vec_owners, &tree)
+                && terminator_invalidates_vec_owner(tcx, caller, &terminator.kind, &vec_owners, &tree)
                 && hazard_used_after_block(tcx, caller, block_index, &hazard_locals)
             {
                 return Some(
@@ -1533,6 +1533,8 @@ fn terminator_is_benign_origin_use<'tcx>(
 }
 
 fn terminator_invalidates_vec_owner<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    caller: DefId,
     terminator: &TerminatorKind<'tcx>,
     owners: &[PlaceKey],
     tree: &crate::verify::vm::alias_tree::AliasTree,
@@ -1540,15 +1542,24 @@ fn terminator_invalidates_vec_owner<'tcx>(
     let TerminatorKind::Call { func, args, .. } = terminator else {
         return false;
     };
-    if !crate::verify::api_classify::is_vec_invalidating_method(
-        mir_utils::dep_callee_def_id(func),
-    ) {
-        return false;
-    }
-    args.iter().any(|arg| {
+    let writes = crate::verify::call_summary::callsite_write_args(tcx, caller, func);
+    args.iter().enumerate().any(|(index, arg)| {
+        if !writes.as_ref().is_none_or(|writes| writes.contains(&index)) {
+            return false;
+        }
         let Some(place) = operand_mir_place(&arg.node) else {
             return false;
         };
+        let ty = place.ty(tcx.optimized_mir(caller), tcx).ty;
+        let TyKind::Ref(_, inner, rustc_middle::mir::Mutability::Mut) = ty.kind() else {
+            return false;
+        };
+        if !inner
+            .ty_adt_def()
+            .is_some_and(|adt| crate::verify::api_classify::is_std_vec(adt.did()))
+        {
+            return false;
+        }
         let arg = resolve_mir_place_tree(tree, place);
         owners
             .iter()

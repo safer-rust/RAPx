@@ -59,8 +59,7 @@ pub(crate) enum CallEffect {
     ReturnPtrOffsetFrom { ptr_arg: usize, base_arg: usize },
     /// The return value is a concrete layout/numeric constant.
     ReturnConst { value: u64 },
-    /// The call writes one initialized element through a pointer argument.
-    WriteMemory { pointer_arg: usize },
+    ReallocateVec { arg: usize },
     CopyMemory { source_arg: usize, destination_arg: usize, count_arg: usize },
     SwapMemory { left_arg: usize, right_arg: usize },
     FillBytes { pointer_arg: usize, byte_arg: usize, count_arg: usize },
@@ -128,8 +127,8 @@ pub(crate) enum CallEffect {
 impl CallEffect {
     pub(super) fn written_args(&self) -> Vec<usize> {
         match self {
-            Self::WriteMemory { pointer_arg }
-            | Self::AdjustRefCount { arg: pointer_arg, .. }
+            Self::ReallocateVec { arg } => vec![*arg],
+            Self::AdjustRefCount { arg: pointer_arg, .. }
             | Self::StoreMemory { pointer_arg, .. }
             | Self::AtomicRmw { pointer_arg }
             | Self::SimdHavocMemory { pointer_arg, .. }

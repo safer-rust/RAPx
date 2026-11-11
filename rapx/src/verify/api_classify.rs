@@ -240,8 +240,6 @@ pub fn is_cstr_unchecked_constructor(callee: Option<DefId>) -> bool {
     )
 }
 
-// ── Vec constructors / methods ────────────────────────────────────
-
 pub fn is_vec_push_or_reserve(callee: Option<DefId>) -> bool {
     other_api::matches_any(
         callee,
@@ -252,6 +250,7 @@ pub fn is_vec_push_or_reserve(callee: Option<DefId>) -> bool {
         ],
     )
 }
+
 // ── Alias-hazard classification ───────────────────────────────────
 // Ref-counted reconstruction retains a dedicated rule until the alias model
 // accounts for shared ownership and clone counts.
@@ -266,26 +265,6 @@ pub fn is_nonnull_as_ref_as_mut(callee: Option<DefId>) -> bool {
 /// Whether `callee` is `NonNull::as_mut` (produces an exclusive `&mut`).
 pub fn is_nonnull_as_mut(callee: Option<DefId>) -> bool {
     other_api::matches_any(callee, &[other_api::nonnull_as_mut()])
-}
-
-/// Whether `callee` mutates a `Vec` in a way relevant to outstanding
-/// raw-pointer views (including length changes, element moves, and reallocation).
-pub fn is_vec_invalidating_method(callee: Option<DefId>) -> bool {
-    other_api::matches_any(
-        callee,
-        &[
-            other_api::vec_push(),
-            other_api::vec_reserve(),
-            other_api::vec_reserve_exact(),
-            other_api::vec_shrink_to_fit(),
-            other_api::vec_shrink_to(),
-            other_api::vec_insert(),
-            other_api::vec_remove(),
-            other_api::vec_clear(),
-            other_api::vec_truncate(),
-            other_api::vec_set_len(),
-        ],
-    )
 }
 
 /// Whether `callee` is a benign, read-only use of a raw-pointer origin

@@ -60,7 +60,7 @@ static REGISTRY: &[Entry] = &[
     ED!(nomir_api::is_alloc_shim_marker, eff_no_effect),
     ED!(nomir_api::is_slice_to_vec, eff_vec_from_slice),
     // ── Other APIs ──────────────────────────────────────────────────
-    ED!(api_classify::is_vec_push_or_reserve, eff_write_mem),
+    ED!(api_classify::is_vec_push_or_reserve, eff_reallocate_vec),
     ED!(api_classify::is_align_offset, eff_align_offset),
 ];
 
@@ -396,8 +396,8 @@ fn eff_arith_offset(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     }]
 }
 
-fn eff_write_mem(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
-    vec![CallEffect::WriteMemory { pointer_arg: 0 }]
+fn eff_reallocate_vec(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReallocateVec { arg: 0 }]
 }
 
 fn eff_copy_memory(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {

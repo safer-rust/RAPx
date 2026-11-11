@@ -509,44 +509,50 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         result
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn set_container_data_field(
-        &mut self,
-        header: AllocId,
-        ty: Ty<'tcx>,
-        data_alloc: AllocId,
-        base: Int<'z3>,
-        elem_ty: Ty<'tcx>,
-    ) -> bool {
-        let mut view_ty = ty;
-        while let TyKind::Ref(_, inner, _) | TyKind::RawPtr(inner, _) = view_ty.kind() {
-            view_ty = *inner;
-        }
-        if !matches!(view_ty.kind(), TyKind::Adt(..)) {
-            return false;
-        }
-        let Some(path) = self.container_ptr_field(view_ty) else {
-            return false;
+    pub(crate) fn reallocate_vec_backing(&mut self, value: &VmValue<'z3, 'tcx>) {
+        let Some(header) = value.provenance_alloc_id() else {
+            return;
         };
-        let ptr_field = VmValue {
-            z3_term: base,
-            ty: elem_ty,
-            provenance: Some(Provenance {
-                alloc_id: data_alloc,
-                offset: Int::from_u64(self.z3_ctx, 0),
-                offset_kind: None,
-            }),
-            facts: ValueFacts {
-                non_null: true,
-                init: true,
-                in_bounds: true,
-                ..ValueFacts::default()
+        if self.alloc(header).is_external() {
+            return;
+        }
+        let Some(data) = self.container_data_alloc(header, value.ty) else {
+            return;
+        };
+        let Some(elem_ty) = self.alloc(data).element_ty.as_ty() else {
+            return;
+        };
+        self.alloc_mut(data).facts.dead = true;
+        let max_size = Int::from_u64(self.z3_ctx, i64::MAX as u64);
+        let align = self.align_sym(elem_ty);
+        let (new_data, base) = self.allocate_external(max_size, align, Some(elem_ty));
+        let mut ty = value.ty;
+        while let TyKind::Ref(_, inner, _) | TyKind::RawPtr(inner, _) = ty.kind() {
+            ty = *inner;
+        }
+        let Some(path) = self.container_ptr_field(ty) else {
+            return;
+        };
+        self.store_value(
+            header,
+            ty,
+            path,
+            VmValue {
+                z3_term: base,
+                ty: elem_ty,
+                provenance: Some(Provenance {
+                    alloc_id: new_data,
+                    offset: Int::from_u64(self.z3_ctx, 0),
+                    offset_kind: None,
+                }),
+                facts: ValueFacts {
+                    non_null: true,
+                    init: true,
+                    in_bounds: true,
+                    ..ValueFacts::default()
+                },
+                source: ValueSource::None,
             },
-            source: ValueSource::None,
-        };
-        self.store_value(header, view_ty, path, ptr_field);
-        true
+        );
     }
-
-
 }
