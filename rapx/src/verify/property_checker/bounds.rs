@@ -178,6 +178,9 @@ impl PropertyChecker {
         if alloc.is_external() && size.simplify().as_u64() == Some(i64::MAX as u64) {
             return CheckResult::ProvedByRule;
         }
+        let pointer_sub = checkpoint.callee.and_then(|callee| {
+            crate::verify::pointer_origin::pointer_offset_direction(vm_state.tcx, callee)
+        }) == Some(crate::verify::pointer_origin::PointerOffsetDirection::Backward);
 
         // Element-level bounds fast-path: when the allocation materializes a
         // slice length and the pointer was derived by element-strided arithmetic
@@ -195,7 +198,7 @@ impl PropertyChecker {
                 _ => None,
             })
             .is_none_or(|ty| Some(ty) == alloc.element_ty.as_ty());
-        if !api_classify::is_pointer_sub(checkpoint.callee)
+        if !pointer_sub
             && matching_element_ty
             && let (Some(len), Some(k)) = (
                 alloc.slice_len().cloned(),
@@ -264,7 +267,7 @@ impl PropertyChecker {
         // `sub` walks *backwards*: the accessed range is `[value - access, value)`,
         // so the lower bound is `value - access >= base` and the upper bound is
         // `value <= base + size`.  `add` (and everything else) walks forwards.
-        let (above_negated, below_negated) = if api_classify::is_pointer_sub(checkpoint.callee) {
+        let (above_negated, below_negated) = if pointer_sub {
             let walked = Int::sub(vm_state.z3_ctx, &[&value.z3_term, &access]);
             (value.z3_term.gt(&bound), walked.lt(&base))
         } else {

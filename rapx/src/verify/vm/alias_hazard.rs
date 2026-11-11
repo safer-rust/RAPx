@@ -1634,9 +1634,12 @@ fn is_ptr_add_offset_eq(
             if ptr_key != *ptr_place {
                 continue;
             }
-            if crate::verify::api_classify::is_pointer_add(
-                mir_utils::dep_callee_def_id(func),
-            ) && args.len() >= 2
+            if mir_utils::dep_callee_def_id(func)
+                .and_then(|callee| {
+                    crate::verify::pointer_origin::pointer_offset_direction(tcx, callee)
+                })
+                == Some(crate::verify::pointer_origin::PointerOffsetDirection::Forward)
+                && args.len() >= 2
                 && let Some(offset_place) = operand_place(&args[1].node) {
                     let offset_root = offset_place.local().map(|l| tree.resolve_local_to_root(l));
                     return offset_root == view_len_root;
@@ -1657,9 +1660,11 @@ fn is_ptr_from_ptr_add(tcx: TyCtxt<'_>, caller: DefId, ptr_place: &PlaceKey) -> 
             if ptr_key != *ptr_place {
                 continue;
             }
-            return crate::verify::api_classify::is_pointer_add(
-                mir_utils::dep_callee_def_id(func),
-            );
+            return mir_utils::dep_callee_def_id(func)
+                .and_then(|callee| {
+                    crate::verify::pointer_origin::pointer_offset_direction(tcx, callee)
+                })
+                == Some(crate::verify::pointer_origin::PointerOffsetDirection::Forward);
         }
     }
     false

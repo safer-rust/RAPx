@@ -248,8 +248,9 @@ fn trace_local_to_callee_args<'tcx>(
             // their first (base/receiver) argument.
             let callee = helpers::dep_callee_def_id(func);
             let traces_base = crate::verify::api_classify::is_as_ptr(tcx, callee)
-                || crate::verify::api_classify::is_pointer_add(callee)
-                || crate::verify::api_classify::is_pointer_sub(callee)
+                || callee.is_some_and(|id| {
+                    crate::verify::pointer_origin::pointer_offset_direction(tcx, id).is_some()
+                })
                 || helpers::dep_callee_resolved_def_id(tcx, caller, func)
                     .and_then(|resolved| {
                         crate::verify::pointer_origin::interior_mutable_borrow_source_arg(tcx, resolved)
