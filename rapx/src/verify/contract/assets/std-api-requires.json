@@ -256,17 +256,14 @@
     {
       "tag": "ValidCStr",
       "args": [
-        "ptr",
-        "1"
+        "ptr"
       ]
     },
     {
       "tag": "Allocated",
       "args": [
         "raw",
-        "T",
-        "1",
-        "Global"
+        "T"
       ]
     },
     {
@@ -306,8 +303,7 @@
       "tag": "ValidPtr",
       "args": [
         "_to_drop",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -327,8 +323,7 @@
       "tag": "Allocated",
       "args": [
         "_to_drop",
-        "T",
-        "1"
+        "T"
       ]
     }
   ],
@@ -376,8 +371,7 @@
       "tag": "Init",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     }
   ],
@@ -386,8 +380,7 @@
       "tag": "Init",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -414,16 +407,14 @@
       "tag": "Init",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
       "tag": "Allocated",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     }
   ],
@@ -432,8 +423,7 @@
       "tag": "Init",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     }
   ],
@@ -442,8 +432,7 @@
       "tag": "Init",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     }
   ],
@@ -462,8 +451,7 @@
       "tag": "Init",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     }
   ],
@@ -472,8 +460,7 @@
       "tag": "Init",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     }
   ],
@@ -550,8 +537,7 @@
       "tag": "ValidPtr",
       "args": [
         "src",
-        "Dst",
-        "1"
+        "Dst"
       ]
     }
   ],
@@ -643,8 +629,7 @@
       "tag": "ValidPtr",
       "args": [
         "ptr",
-        "AtomicBool",
-        "1"
+        "AtomicBool"
       ]
     },
     {
@@ -684,8 +669,7 @@
       "tag": "ValidPtr",
       "args": [
         "x",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -699,8 +683,7 @@
       "tag": "ValidPtr",
       "args": [
         "y",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -890,7 +873,7 @@
   "core::intrinsics::volatile_load": [
     {
       "tag": "ValidPtr",
-      "args": ["arg:0", "T", "1"]
+      "args": ["arg:0", "T"]
     },
     {
       "tag": "Align",
@@ -898,13 +881,13 @@
     },
     {
       "tag": "Init",
-      "args": ["arg:0", "T", "1"]
+      "args": ["arg:0", "T"]
     }
   ],
   "core::intrinsics::volatile_store": [
     {
       "tag": "ValidPtr",
-      "args": ["arg:0", "T", "1"]
+      "args": ["arg:0", "T"]
     },
     {
       "tag": "Align",
@@ -1002,7 +985,7 @@
   "core::intrinsics::atomic_load": [
     {
       "tag": "ValidPtr",
-      "args": ["arg:0", "T", "1"]
+      "args": ["arg:0", "T"]
     },
     {
       "tag": "Align",
@@ -1010,13 +993,13 @@
     },
     {
       "tag": "Init",
-      "args": ["arg:0", "T", "1"]
+      "args": ["arg:0", "T"]
     }
   ],
   "core::intrinsics::atomic_store": [
     {
       "tag": "ValidPtr",
-      "args": ["arg:0", "T", "1"]
+      "args": ["arg:0", "T"]
     },
     {
       "tag": "Align",
@@ -1026,7 +1009,7 @@
   "core::intrinsics::atomic_xchg": [
     {
       "tag": "ValidPtr",
-      "args": ["arg:0", "T", "1"]
+      "args": ["arg:0", "T"]
     },
     {
       "tag": "Align",
@@ -1034,13 +1017,13 @@
     },
     {
       "tag": "Init",
-      "args": ["arg:0", "T", "1"]
+      "args": ["arg:0", "T"]
     }
   ],
   "core::intrinsics::atomic_xadd": [
     {
       "tag": "ValidPtr",
-      "args": ["arg:0", "T", "1"]
+      "args": ["arg:0", "T"]
     },
     {
       "tag": "Align",
@@ -1048,13 +1031,13 @@
     },
     {
       "tag": "Init",
-      "args": ["arg:0", "T", "1"]
+      "args": ["arg:0", "T"]
     }
   ],
   "core::intrinsics::atomic_cxchg": [
     {
       "tag": "ValidPtr",
-      "args": ["arg:0", "T", "1"]
+      "args": ["arg:0", "T"]
     },
     {
       "tag": "Align",
@@ -1062,13 +1045,13 @@
     },
     {
       "tag": "Init",
-      "args": ["arg:0", "T", "1"]
+      "args": ["arg:0", "T"]
     }
   ],
   "core::intrinsics::atomic_cxchgweak": [
     {
       "tag": "ValidPtr",
-      "args": ["arg:0", "T", "1"]
+      "args": ["arg:0", "T"]
     },
     {
       "tag": "Align",
@@ -1076,13 +1059,13 @@
     },
     {
       "tag": "Init",
-      "args": ["arg:0", "T", "1"]
+      "args": ["arg:0", "T"]
     }
   ],
   "core::intrinsics::atomic_xsub": [
     {
       "tag": "ValidPtr",
-      "args": ["arg:0", "T", "1"]
+      "args": ["arg:0", "T"]
     },
     {
       "tag": "Align",
@@ -1090,13 +1073,13 @@
     },
     {
       "tag": "Init",
-      "args": ["arg:0", "T", "1"]
+      "args": ["arg:0", "T"]
     }
   ],
   "core::intrinsics::atomic_and": [
     {
       "tag": "ValidPtr",
-      "args": ["arg:0", "T", "1"]
+      "args": ["arg:0", "T"]
     },
     {
       "tag": "Align",
@@ -1104,13 +1087,13 @@
     },
     {
       "tag": "Init",
-      "args": ["arg:0", "T", "1"]
+      "args": ["arg:0", "T"]
     }
   ],
   "core::intrinsics::atomic_or": [
     {
       "tag": "ValidPtr",
-      "args": ["arg:0", "T", "1"]
+      "args": ["arg:0", "T"]
     },
     {
       "tag": "Align",
@@ -1118,13 +1101,13 @@
     },
     {
       "tag": "Init",
-      "args": ["arg:0", "T", "1"]
+      "args": ["arg:0", "T"]
     }
   ],
   "core::intrinsics::atomic_xor": [
     {
       "tag": "ValidPtr",
-      "args": ["arg:0", "T", "1"]
+      "args": ["arg:0", "T"]
     },
     {
       "tag": "Align",
@@ -1132,13 +1115,13 @@
     },
     {
       "tag": "Init",
-      "args": ["arg:0", "T", "1"]
+      "args": ["arg:0", "T"]
     }
   ],
   "core::intrinsics::atomic_nand": [
     {
       "tag": "ValidPtr",
-      "args": ["arg:0", "T", "1"]
+      "args": ["arg:0", "T"]
     },
     {
       "tag": "Align",
@@ -1146,13 +1129,13 @@
     },
     {
       "tag": "Init",
-      "args": ["arg:0", "T", "1"]
+      "args": ["arg:0", "T"]
     }
   ],
   "core::intrinsics::atomic_max": [
     {
       "tag": "ValidPtr",
-      "args": ["arg:0", "T", "1"]
+      "args": ["arg:0", "T"]
     },
     {
       "tag": "Align",
@@ -1160,13 +1143,13 @@
     },
     {
       "tag": "Init",
-      "args": ["arg:0", "T", "1"]
+      "args": ["arg:0", "T"]
     }
   ],
   "core::intrinsics::atomic_min": [
     {
       "tag": "ValidPtr",
-      "args": ["arg:0", "T", "1"]
+      "args": ["arg:0", "T"]
     },
     {
       "tag": "Align",
@@ -1174,13 +1157,13 @@
     },
     {
       "tag": "Init",
-      "args": ["arg:0", "T", "1"]
+      "args": ["arg:0", "T"]
     }
   ],
   "core::intrinsics::atomic_umin": [
     {
       "tag": "ValidPtr",
-      "args": ["arg:0", "T", "1"]
+      "args": ["arg:0", "T"]
     },
     {
       "tag": "Align",
@@ -1188,13 +1171,13 @@
     },
     {
       "tag": "Init",
-      "args": ["arg:0", "T", "1"]
+      "args": ["arg:0", "T"]
     }
   ],
   "core::intrinsics::atomic_umax": [
     {
       "tag": "ValidPtr",
-      "args": ["arg:0", "T", "1"]
+      "args": ["arg:0", "T"]
     },
     {
       "tag": "Align",
@@ -1202,7 +1185,7 @@
     },
     {
       "tag": "Init",
-      "args": ["arg:0", "T", "1"]
+      "args": ["arg:0", "T"]
     }
   ],
 
@@ -1747,14 +1730,14 @@
     }
   ],
   "core::intrinsics::unaligned_volatile_load": [
-    { "tag": "ValidPtr", "args": ["arg:0", "T", "1"] },
-    { "tag": "Init", "args": ["arg:0", "T", "1"] }
+    { "tag": "ValidPtr", "args": ["arg:0", "T"] },
+    { "tag": "Init", "args": ["arg:0", "T"] }
   ],
   "core::intrinsics::unaligned_volatile_store": [
-    { "tag": "ValidPtr", "args": ["arg:0", "T", "1"] }
+    { "tag": "ValidPtr", "args": ["arg:0", "T"] }
   ],
   "core::intrinsics::nontemporal_store": [
-    { "tag": "ValidPtr", "args": ["arg:0", "T", "1"] },
+    { "tag": "ValidPtr", "args": ["arg:0", "T"] },
     { "tag": "Align", "args": ["arg:0", "T"] }
   ],
   "core::intrinsics::copy_nonoverlapping": [
@@ -1887,8 +1870,7 @@
       "tag": "InBound",
       "args": [
         "ptr",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -2026,8 +2008,7 @@
       "tag": "InBound",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -2043,8 +2024,7 @@
       "tag": "InBound",
       "args": [
         "self",
-        "u8",
-        "1"
+        "u8"
       ]
     }
   ],
@@ -2053,8 +2033,7 @@
       "tag": "InBound",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -2080,8 +2059,7 @@
       "tag": "ValidPtr",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -2113,8 +2091,7 @@
       "tag": "Init",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     }
   ],
@@ -2123,8 +2100,7 @@
       "tag": "ValidPtr",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -2156,8 +2132,7 @@
       "tag": "Init",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     }
   ],
@@ -2166,8 +2141,7 @@
       "tag": "ValidPtr",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -2192,8 +2166,7 @@
       "tag": "Init",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     }
   ],
@@ -2484,8 +2457,7 @@
       "tag": "ValidPtr",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -2501,8 +2473,7 @@
       "tag": "ValidPtr",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -2542,8 +2513,7 @@
       "tag": "ValidPtr",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -2559,8 +2529,7 @@
       "tag": "ValidPtr",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     }
   ],
@@ -2569,8 +2538,7 @@
       "tag": "ValidPtr",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -2584,8 +2552,7 @@
       "tag": "Init",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     }
   ],
@@ -2594,8 +2561,7 @@
       "tag": "ValidPtr",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -2609,8 +2575,7 @@
       "tag": "ValidPtr",
       "args": [
         "other",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -2632,8 +2597,7 @@
       "tag": "ValidPtr",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -2670,8 +2634,7 @@
       "tag": "ValidPtr",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -2702,8 +2665,7 @@
       "tag": "Allocated",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     }
   ],
@@ -2791,8 +2753,7 @@
       "tag": "InBound",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -2830,8 +2791,7 @@
       "tag": "InBound",
       "args": [
         "self",
-        "u8",
-        "1"
+        "u8"
       ]
     }
   ],
@@ -2840,8 +2800,7 @@
       "tag": "InBound",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -2857,8 +2816,7 @@
       "tag": "InBound",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -2894,8 +2852,7 @@
       "tag": "ValidPtr",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -2916,8 +2873,7 @@
       "tag": "Init",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -2944,8 +2900,7 @@
       "tag": "ValidPtr",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -2959,8 +2914,7 @@
       "tag": "Init",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -2987,16 +2941,14 @@
       "tag": "ValidPtr",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
       "tag": "Init",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -3170,8 +3122,7 @@
       "tag": "ValidPtr",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -3202,8 +3153,7 @@
       "tag": "Allocated",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     }
   ],
@@ -3324,8 +3274,7 @@
       "tag": "InBound",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -3363,8 +3312,7 @@
       "tag": "InBound",
       "args": [
         "self",
-        "u8",
-        "1"
+        "u8"
       ]
     }
   ],
@@ -3373,8 +3321,7 @@
       "tag": "InBound",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -3410,8 +3357,7 @@
       "tag": "ValidPtr",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -3432,8 +3378,7 @@
       "tag": "Init",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -3460,8 +3405,7 @@
       "tag": "ValidPtr",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -3493,8 +3437,7 @@
       "tag": "Init",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     }
   ],
@@ -3503,8 +3446,7 @@
       "tag": "ValidPtr",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -3529,8 +3471,7 @@
       "tag": "Init",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     }
   ],
@@ -3821,8 +3762,7 @@
       "tag": "ValidPtr",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -3844,8 +3784,7 @@
       "tag": "ValidPtr",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -3885,8 +3824,7 @@
       "tag": "ValidPtr",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -3902,8 +3840,7 @@
       "tag": "ValidPtr",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     }
   ],
@@ -3912,8 +3849,7 @@
       "tag": "ValidPtr",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -3927,8 +3863,7 @@
       "tag": "Init",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     }
   ],
@@ -3937,8 +3872,7 @@
       "tag": "ValidPtr",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -3952,8 +3886,7 @@
       "tag": "ValidPtr",
       "args": [
         "other",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -4007,8 +3940,7 @@
       "tag": "ValidPtr",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -4045,8 +3977,7 @@
       "tag": "ValidPtr",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -4077,8 +4008,7 @@
       "tag": "Allocated",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     }
   ],
@@ -4100,8 +4030,7 @@
       "tag": "ValidPtr",
       "args": [
         "to_drop",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -4123,8 +4052,7 @@
       "tag": "ValidPtr",
       "args": [
         "dst",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -4138,8 +4066,7 @@
       "tag": "Init",
       "args": [
         "dst",
-        "T",
-        "1"
+        "T"
       ]
     }
   ],
@@ -4148,8 +4075,7 @@
       "tag": "ValidPtr",
       "args": [
         "src",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -4170,8 +4096,7 @@
       "tag": "Init",
       "args": [
         "src",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -4198,8 +4123,7 @@
       "tag": "ValidPtr",
       "args": [
         "dst",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -4215,8 +4139,7 @@
       "tag": "ValidPtr",
       "args": [
         "x",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -4230,8 +4153,7 @@
       "tag": "ValidPtr",
       "args": [
         "y",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -4273,16 +4195,14 @@
       "tag": "ValidPtr",
       "args": [
         "src",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
       "tag": "Init",
       "args": [
         "src",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -4309,8 +4229,7 @@
       "tag": "ValidPtr",
       "args": [
         "dst",
-        "T",
-        "1"
+        "T"
       ]
     }
   ],
@@ -4319,16 +4238,14 @@
       "tag": "ValidPtr",
       "args": [
         "src",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
       "tag": "Init",
       "args": [
         "src",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -4362,8 +4279,7 @@
       "tag": "ValidPtr",
       "args": [
         "dst",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -4389,8 +4305,7 @@
       "tag": "ValidPtr",
       "args": [
         "dst",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -4698,16 +4613,14 @@
       "tag": "Allocated",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
       "tag": "InBound",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     }
   ],
@@ -4716,16 +4629,14 @@
       "tag": "Allocated",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
       "tag": "InBound",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     }
   ],
@@ -4740,16 +4651,14 @@
       "tag": "ValidPtr",
       "args": [
         "range",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
       "tag": "Init",
       "args": [
         "range",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -4778,8 +4687,7 @@
       "tag": "InBound",
       "args": [
         "range",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -4801,16 +4709,14 @@
       "tag": "ValidPtr",
       "args": [
         "range",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
       "tag": "Init",
       "args": [
         "range",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -4855,8 +4761,7 @@
       "tag": "InBound",
       "args": [
         "self",
-        "u8",
-        "1"
+        "u8"
       ]
     }
   ],
@@ -4873,8 +4778,7 @@
       "tag": "InBound",
       "args": [
         "self",
-        "u8",
-        "1"
+        "u8"
       ]
     }
   ],
@@ -4891,8 +4795,7 @@
       "tag": "InBound",
       "args": [
         "self",
-        "u8",
-        "1"
+        "u8"
       ]
     }
   ],
@@ -4909,8 +4812,7 @@
       "tag": "InBound",
       "args": [
         "self",
-        "u8",
-        "1"
+        "u8"
       ]
     }
   ],
@@ -5091,8 +4993,7 @@
       "tag": "InBound",
       "args": [
         "self",
-        "u8",
-        "1"
+        "u8"
       ]
     }
   ],
@@ -5109,8 +5010,7 @@
       "tag": "InBound",
       "args": [
         "self",
-        "u8",
-        "1"
+        "u8"
       ]
     }
   ],
@@ -5139,8 +5039,7 @@
       "tag": "Init",
       "args": [
         "self",
-        "u8",
-        "1"
+        "u8"
       ]
     }
   ],
@@ -5149,8 +5048,7 @@
       "tag": "Allocated",
       "args": [
         "data",
-        "T",
-        "1"
+        "T"
       ]
     }
   ],
@@ -5403,8 +5301,7 @@
       "tag": "Allocated",
       "args": [
         "ptr",
-        "u8",
-        "1"
+        "u8"
       ]
     },
     {
@@ -5537,8 +5434,7 @@
       "tag": "Init",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     }
   ],
@@ -5554,9 +5450,7 @@
       "tag": "Allocated",
       "args": [
         "raw",
-        "T",
-        "1",
-        "Global"
+        "T"
       ]
     },
     {
@@ -5592,9 +5486,7 @@
       "tag": "Allocated",
       "args": [
         "ptr",
-        "T",
-        "1",
-        "Global"
+        "T"
       ]
     },
     {
@@ -5632,8 +5524,7 @@
       "args": [
         "raw",
         "T",
-        "1",
-        "alloc"
+        "allocator=alloc"
       ]
     },
     {
@@ -5670,8 +5561,7 @@
       "args": [
         "raw",
         "T",
-        "1",
-        "alloc"
+        "allocator=alloc"
       ]
     },
     {
@@ -5751,8 +5641,7 @@
       "tag": "Allocated",
       "args": [
         "ptr",
-        "c_char",
-        "1"
+        "c_char"
       ]
     },
     {
@@ -5783,8 +5672,7 @@
       "tag": "Init",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     }
   ],
@@ -5793,9 +5681,7 @@
       "tag": "Allocated",
       "args": [
         "ptr",
-        "T",
-        "1",
-        "Global"
+        "T"
       ]
     },
     {
@@ -5824,9 +5710,7 @@
       "tag": "Allocated",
       "args": [
         "ptr",
-        "T",
-        "1",
-        "Global"
+        "T"
       ]
     },
     {
@@ -5855,9 +5739,7 @@
       "tag": "Allocated",
       "args": [
         "ptr",
-        "T",
-        "1",
-        "Global"
+        "T"
       ]
     },
     {
@@ -5887,8 +5769,7 @@
       "args": [
         "ptr",
         "T",
-        "1",
-        "alloc"
+        "allocator=alloc"
       ]
     },
     {
@@ -5918,8 +5799,7 @@
       "args": [
         "ptr",
         "T",
-        "1",
-        "alloc"
+        "allocator=alloc"
       ]
     },
     {
@@ -5949,8 +5829,7 @@
       "args": [
         "ptr",
         "T",
-        "1",
-        "alloc"
+        "allocator=alloc"
       ]
     },
     {
@@ -6117,9 +5996,7 @@
       "tag": "Allocated",
       "args": [
         "ptr",
-        "T",
-        "1",
-        "Global"
+        "T"
       ]
     },
     {
@@ -6148,9 +6025,7 @@
       "tag": "Allocated",
       "args": [
         "ptr",
-        "T",
-        "1",
-        "Global"
+        "T"
       ]
     },
     {
@@ -6179,9 +6054,7 @@
       "tag": "Allocated",
       "args": [
         "ptr",
-        "T",
-        "1",
-        "Global"
+        "T"
       ]
     },
     {
@@ -6211,8 +6084,7 @@
       "args": [
         "ptr",
         "T",
-        "1",
-        "alloc"
+        "allocator=alloc"
       ]
     },
     {
@@ -6242,8 +6114,7 @@
       "args": [
         "ptr",
         "T",
-        "1",
-        "alloc"
+        "allocator=alloc"
       ]
     },
     {
@@ -6273,8 +6144,7 @@
       "args": [
         "ptr",
         "T",
-        "1",
-        "alloc"
+        "allocator=alloc"
       ]
     },
     {
@@ -6318,8 +6188,7 @@
       "tag": "Allocated",
       "args": [
         "ptr",
-        "Value",
-        "1"
+        "Value"
       ]
     }
   ],
@@ -6362,8 +6231,7 @@
       "tag": "ValidPtr",
       "args": [
         "dst",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -6459,8 +6327,7 @@
       "tag": "ValidPtr",
       "args": [
         "dst",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -6532,8 +6399,7 @@
       "tag": "ValidPtr",
       "args": [
         "dst",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -6659,8 +6525,7 @@
       "tag": "Init",
       "args": [
         "name",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -6691,8 +6556,7 @@
       "tag": "ValidPtr",
       "args": [
         "to_drop",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -6731,8 +6595,7 @@
       "tag": "ValidPtr",
       "args": [
         "ptr",
-        "T",
-        "1"
+        "T"
       ]
     }
   ],
@@ -6741,8 +6604,7 @@
       "tag": "ValidPtr",
       "args": [
         "ptr",
-        "T",
-        "1"
+        "T"
       ]
     }
   ],
@@ -6789,16 +6651,14 @@
       "tag": "InBound",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
       "tag": "Init",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     },
     {
@@ -6838,8 +6698,7 @@
       "tag": "Init",
       "args": [
         "self",
-        "T",
-        "1"
+        "T"
       ]
     }
   ],

@@ -345,10 +345,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let annotated = invariants.iter().any(|property| {
             property.kind() == Some(kind)
                 && (kind != PropertyKind::Allocated
-                    || matches!(
-                        property.args().get(2),
-                        Some(PropertyArg::Expr(ContractExpr::Const(count))) if *count > 0
-                    ))
+                    || property.args().get(2).is_none_or(|arg| {
+                        matches!(arg, PropertyArg::Expr(ContractExpr::Const(count)) if *count > 0)
+                    }))
                 && property.target_place().is_some_and(|place| {
                     place
                         .projections
@@ -375,7 +374,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             .is_some_and(|entries| entries.iter().any(|entry| {
                 entry.tag == tag
                     && (kind != PropertyKind::Allocated
-                        || entry.args.get(2).is_some_and(|count| {
+                        || entry.args.get(2).is_none_or(|count| {
                             count.parse::<u128>().is_ok_and(|count| count > 0)
                         }))
                     && entry.args.first().and_then(|arg| {

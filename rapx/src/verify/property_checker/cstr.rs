@@ -118,9 +118,8 @@ impl PropertyChecker {
             // The `ValidCStr(p, n)` length argument is the exact byte length of
             // the nul-terminated buffer.  Prefer it over the allocation size
             // (which may be larger, e.g. a `Vec` with spare capacity).  A
-            // `Const` length is the `1` placeholder used for raw pointers
-            // (`from_ptr`), whose true length is `strlen(ptr) + 1` and is not
-            // expressible in the contract, so it is ignored.
+            // constant length carries no known terminator position, so use
+            // the tracked allocation instead.
             let n_term = property.args().get(1).and_then(|a| match a {
                 PropertyArg::Expr(ContractExpr::Const(_)) => None,
                 a => self.resolve_arg_term(vm_state, checkpoint, a),

@@ -1,6 +1,7 @@
 use super::super::target::CalleeBodies;
 use crate::analysis::path::{CallArg, CallBinding, PathTree};
 use crate::compat::{FxHashMap, FxHashSet};
+use crate::def_ids::lang_api::{self, LangItem};
 use crate::helpers::mir_utils;
 use crate::limit::{HINTED_CALLEE_BLOCK_LIMIT, LOCAL_CALLEE_BLOCK_LIMIT};
 #[cfg(rapx_has_attr_ir)]
@@ -262,10 +263,26 @@ impl<'tcx> CallSiteIndex<'tcx> {
                     || (returns_adt && (cross_crate || is_trait_method)))
                     && mir_utils::has_unmodeled_generic_call(self.tcx, callee);
                 let generic_trait_call = !cross_crate && generic_callee && unmodeled_generic_call;
+                let trait_method = self
+                    .tcx
+                    .opt_associated_item(callee)
+                    .and_then(|item| item.trait_item_def_id())
+                    .unwrap_or(base_callee);
+                let modeled_comparison = self
+                    .tcx
+                    .trait_of_assoc(trait_method)
+                    .is_some_and(|trait_id| {
+                        lang_api::matches(self.tcx, trait_id, LangItem::PartialEq)
+                            || lang_api::matches(self.tcx, trait_id, LangItem::PartialOrd)
+                    });
                 let instantiate = self.tcx.is_mir_available(callee)
                     && ((returns_adt
                             && (cross_crate || is_trait_method)
-                            && (unmodeled_generic_call || generic_const_call))
+                            && (unmodeled_generic_call || generic_const_call || generic_callee))
+                        || (cross_crate
+                            && generic_callee
+                            && unmodeled_generic_call
+                            && !modeled_comparison)
                         || generic_trait_call
                         || self.tcx.optimized_mir(callee).basic_blocks.len() == 1);
                 let instance = instantiate

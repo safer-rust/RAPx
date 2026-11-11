@@ -208,12 +208,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 } else {
                     self.assert_in_bound_single(property);
                 }
-                // The pointer-and-count form `InBound(p, T, n)` also guarantees
-                // the allocation backs `n` elements — materialize that size so a
+                // A typed pointer bound also guarantees the allocation backs
+                // the requested elements — materialize that size so a
                 // downstream `ptr.add(n)`/`ptr.sub(n)` can discharge `InBound`
                 // against a concrete (or `i64::MAX`) size rather than the coarse
                 // `in_bounds` flag (which only covers `count == 1`).
-                if property.args().len() >= 3 && property.for_each().is_none() {
+                if property.ty_arg(1).is_some() && property.for_each().is_none() {
                     self.assert_allocated_fact(property);
                 }
             }

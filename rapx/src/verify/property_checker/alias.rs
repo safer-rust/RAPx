@@ -20,10 +20,15 @@ impl PropertyChecker {
         property: &Property<'tcx>,
     ) -> CheckResult {
         let Some(owner) = checkpoint.callee.and_then(|did| {
-            crate::def_ids::other_api::ref_count_adjust(vm_state.tcx, did)
-                .map(|(owner, _)| owner)
-                .or_else(|| crate::verify::vm::alias_hazard::reconstructed_owner(vm_state.tcx, did)
-                    .map(|(_, owner)| owner))
+            crate::verify::vm::alias_hazard::reconstructed_owner(vm_state.tcx, did)
+                .map(|(_, owner)| owner)
+                .or_else(|| {
+                    let owner_ty = crate::helpers::name::get_struct_self_ty(vm_state.tcx, did)?;
+                    let TyKind::Adt(adt, _) = owner_ty.kind() else {
+                        return None;
+                    };
+                    Some(adt.did())
+                })
         }) else {
             return CheckResult::Unknown(UnknownReason::Unimplemented);
         };

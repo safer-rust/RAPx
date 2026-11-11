@@ -25,6 +25,42 @@ pub(crate) fn return_source_arg(tcx: TyCtxt<'_>, callee: DefId) -> Option<usize>
     trace_source_arg(tcx, body, result, &mut HashSet::new(), 5)
 }
 
+/// Trace a returned reference to interior mutable storage back to its input.
+pub(crate) fn interior_mutable_borrow_source_arg(tcx: TyCtxt<'_>, callee: DefId) -> Option<usize> {
+    if !tcx.is_mir_available(callee) {
+        return None;
+    }
+    let body = tcx.optimized_mir(callee);
+    let result = rustc_middle::mir::RETURN_PLACE;
+    let TyKind::Ref(_, pointee, _) = body.local_decls[result].ty.kind() else {
+        return None;
+    };
+    if !contains_unsafe_cell(tcx, *pointee, 4) {
+        return None;
+    }
+    trace_source_arg(tcx, body, result, &mut HashSet::new(), 5)
+}
+
+fn contains_unsafe_cell<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    ty: rustc_middle::ty::Ty<'tcx>,
+    depth: usize,
+) -> bool {
+    if depth == 0 {
+        return false;
+    }
+    let TyKind::Adt(adt, args) = ty.kind() else {
+        return false;
+    };
+    if tcx.is_lang_item(adt.did(), crate::def_ids::lang_api::LangItem::UnsafeCell) {
+        return true;
+    }
+    !adt.is_enum()
+        && adt.non_enum_variant().fields.iter().any(|field| {
+            contains_unsafe_cell(tcx, mir_utils::field_ty(tcx, field, args), depth - 1)
+        })
+}
+
 /// A pointer result from a single, side-effect-free MIR block is safe to use
 /// while tracking an existing pointer origin.
 pub(crate) fn is_read_only_return(tcx: TyCtxt<'_>, callee: DefId) -> bool {

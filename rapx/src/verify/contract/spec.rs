@@ -26,7 +26,7 @@ pub(crate) struct PropertySpec {
     pub tag: &'static str,
     /// The `PropertyKind` this tag resolves to.
     pub kind: PropertyKind,
-    /// Accepted argument shapes, one entry per arity (authoritative for positional builds only).
+    /// Accepted argument shapes (authoritative for positional builds only).
     pub forms: &'static [&'static [ArgKind]],
     /// Default contract kind (`Precond` / `Hazard` / `Option_`).
     pub contract_kind: ContractKind,
@@ -216,7 +216,7 @@ static SPECS: &[PropertySpec] = &[
     ps(
         "ValidCStr",
         PropertyKind::ValidCStr,
-        &[&[Target, Expr]],
+        &[&[Target], &[Target, Expr]],
         ContractKind::Precond,
         "{0} is a null-terminated valid UTF-8 byte sequence",
     ),
@@ -239,7 +239,7 @@ static SPECS: &[PropertySpec] = &[
     ps(
         "Allocated",
         PropertyKind::Allocated,
-        &[&[Target], &[Target, Ty], &[Target, Ty, Expr], &[Target, Ty, Expr, Ident]],
+        &[&[Target], &[Target, Ty], &[Target, Ty, Expr], &[Target, Ty, Ident], &[Target, Ty, Expr, Ident]],
         ContractKind::Precond,
         "{0} points to a live allocation of size: size_of({1}) * {2}",
     ),

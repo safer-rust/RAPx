@@ -360,7 +360,38 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         } else {
             self.field_path_at_offset(root_ty, offset, pointee_ty)?
         };
-        self.load_value(provenance.alloc_id, root_ty, &path).cloned()
+        self.load_value(provenance.alloc_id, root_ty, &path)
+            .cloned()
+            .or_else(|| {
+                (0..path.len()).rev().find_map(|prefix_len| {
+                    let stored = self.load_value(provenance.alloc_id, root_ty, &path[..prefix_len])?;
+                    let mut ty = stored.ty;
+                    for &field_index in &path[prefix_len..] {
+                        let TyKind::Adt(adt, args) = ty.kind() else {
+                            return None;
+                        };
+                        if !adt.repr().transparent() {
+                            return None;
+                        }
+                        let field = adt
+                            .non_enum_variant()
+                            .fields
+                            .get(rustc_abi::FieldIdx::from_usize(field_index))?;
+                        let field_ty = mir_utils::field_ty(self.tcx, field, args);
+                        if self.field_offset_in_bytes(ty, field_index) != 0
+                            || self.size_of_ty(ty) != self.size_of_ty(field_ty)
+                        {
+                            return None;
+                        }
+                        ty = field_ty;
+                    }
+                    (ty == pointee_ty).then(|| {
+                        let mut value = stored.clone();
+                        value.ty = pointee_ty;
+                        value
+                    })
+                })
+            })
     }
 
     fn field_path_at_offset(

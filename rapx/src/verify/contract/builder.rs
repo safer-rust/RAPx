@@ -161,6 +161,27 @@ impl<'tcx> Property<'tcx> {
                 let Some(ty) = super::resolve::parse_type(tcx, def_id, ty_expr, "Allocated") else {
                     return Self::new_simple(PropertyKind::Unknown);
                 };
+                if let Expr::Assign(assign) = len_expr
+                    && let Some((name, fields)) = access_ident_recursive(&assign.left)
+                    && name == "allocator"
+                    && fields.is_empty()
+                {
+                    let Some((allocator, fields)) = access_ident_recursive(&assign.right) else {
+                        return Self::new_simple(PropertyKind::Unknown);
+                    };
+                    if !fields.is_empty() {
+                        return Self::new_simple(PropertyKind::Unknown);
+                    }
+                    return Self::new_atom(
+                        PropertyKind::Allocated,
+                        vec![
+                            target,
+                            PropertyArg::Ty(ty),
+                            PropertyArg::Expr(ContractExpr::Const(1)),
+                            PropertyArg::Ident(allocator),
+                        ],
+                    );
+                }
                 let length = super::resolve::expr_to_pest(tcx, def_id, len_expr);
                 Self::new_atom(
                     PropertyKind::Allocated,

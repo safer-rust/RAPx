@@ -114,8 +114,7 @@
       "tag": "Allocated",
       "args": [
         "$self.0.pointer",
-        "$elem",
-        "1"
+        "$elem"
       ]
     },
     {
@@ -124,7 +123,7 @@
     },
     {
       "tag": "Init",
-      "args": ["$self.0.pointer", "$elem", "1"]
+      "args": ["$self.0.pointer", "$elem"]
     },
     {
       "tag": "Owning",
@@ -138,8 +137,7 @@
       "tag": "ValidPtr",
       "args": [
         "$self.inner.0.pointer",
-        "u8",
-        "1"
+        "u8"
       ]
     },
     {
@@ -195,7 +193,7 @@
     },
     {
       "tag": "Allocated",
-      "args": ["$self.ptr", "u8", "1"]
+      "args": ["$self.ptr", "u8"]
     }
   ],
   "alloc::sync::Arc": [
@@ -207,7 +205,7 @@
     },
     {
       "tag": "Allocated",
-      "args": ["$self.ptr", "u8", "1"]
+      "args": ["$self.ptr", "u8"]
     }
   ],
   "[T]": [
