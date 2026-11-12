@@ -377,10 +377,6 @@ std_api_def_ids! {
         "std::slice::<impl [T]>::len",
         "core::slice::<impl [T]>::len"
     ],
-    slice_is_empty: &[
-        "std::slice::<impl [T]>::is_empty",
-        "core::slice::<impl [T]>::is_empty"
-    ],
     str_len: &[
         "std::str::<impl str>::len",
         "core::str::<impl str>::len"
@@ -392,10 +388,6 @@ std_api_def_ids! {
     vec_len: &[
         "std::vec::Vec::<T, A>::len",
         "alloc::vec::Vec::<T, A>::len"
-    ],
-    vec_is_empty: &[
-        "std::vec::Vec::<T, A>::is_empty",
-        "alloc::vec::Vec::<T, A>::is_empty"
     ],
     string_len: &[
         "std::string::String::len",
