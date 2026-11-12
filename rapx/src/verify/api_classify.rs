@@ -240,17 +240,6 @@ pub fn is_cstr_unchecked_constructor(callee: Option<DefId>) -> bool {
     )
 }
 
-pub fn is_vec_push_or_reserve(callee: Option<DefId>) -> bool {
-    other_api::matches_any(
-        callee,
-        &[
-            other_api::vec_push(),
-            other_api::vec_reserve(),
-            other_api::vec_reserve_exact(),
-        ],
-    )
-}
-
 // ── Alias-hazard classification ───────────────────────────────────
 // Ref-counted reconstruction retains a dedicated rule until the alias model
 // accounts for shared ownership and clone counts.

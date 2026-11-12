@@ -6,6 +6,7 @@ pub(crate) mod callback;
 
 pub(crate) use dependencies::dependency_summary;
 pub(crate) use dependencies::callsite_write_args;
+pub(crate) use dependencies::callsite_replaces_pointer_field;
 
 /// Dependency summary consumed by the backward visitor.
 #[derive(Clone, Debug)]

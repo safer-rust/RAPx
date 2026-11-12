@@ -314,18 +314,6 @@ std_api_def_ids! {
         "std::ffi::c_str::CStr::from_bytes_with_nul_unchecked",
         "core::ffi::c_str::CStr::from_bytes_with_nul_unchecked"
     ],
-    vec_push: &[
-        "std::vec::Vec::<T, A>::push",
-        "alloc::vec::Vec::<T, A>::push"
-    ],
-    vec_reserve: &[
-        "std::vec::Vec::<T, A>::reserve",
-        "alloc::vec::Vec::<T, A>::reserve"
-    ],
-    vec_reserve_exact: &[
-        "std::vec::Vec::<T, A>::reserve_exact",
-        "alloc::vec::Vec::<T, A>::reserve_exact"
-    ],
     #[cfg(rapx_ge_99)]
     box_assume_init_into_vec_unsafe: &[
         "std::boxed::box_assume_init_into_vec_unsafe",

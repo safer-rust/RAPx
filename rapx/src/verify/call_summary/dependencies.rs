@@ -301,6 +301,52 @@ pub(super) fn local_return_dependencies(tcx: TyCtxt<'_>, callee: DefId) -> Optio
 /// Memo keyed by `(callee, depth)` for uninstantiated MIR summaries.
 type WriteMemo = HashMap<(DefId, usize), Option<HashSet<usize>>>;
 
+/// Whether a callee can replace a pointer stored in one of its objects.
+/// This follows MIR calls rather than identifying container methods by name.
+pub(crate) fn callsite_replaces_pointer_field(tcx: TyCtxt<'_>, func: &Operand<'_>) -> bool {
+    let Some(callee) = helpers::dep_callee_def_id(func) else {
+        return false;
+    };
+    replaces_pointer_field_rec(tcx, callee, 0, &mut HashMap::new())
+}
+
+fn replaces_pointer_field_rec(
+    tcx: TyCtxt<'_>,
+    callee: DefId,
+    depth: usize,
+    visited: &mut HashMap<DefId, usize>,
+) -> bool {
+    if depth > 10 || !tcx.is_mir_available(callee)
+        || visited.get(&callee).is_some_and(|&previous| previous <= depth)
+    {
+        return false;
+    }
+    visited.insert(callee, depth);
+    let body = tcx.optimized_mir(callee);
+    for block in body.basic_blocks.iter() {
+        for statement in &block.statements {
+            let StatementKind::Assign(assign) = &statement.kind else {
+                continue;
+            };
+            let place = assign.0;
+            if place.projection.first() == Some(&ProjectionElem::Deref)
+                && place.projection.iter().any(|elem| matches!(elem, ProjectionElem::Field(..)))
+                && place.ty(body, tcx).ty.ty_adt_def().is_some_and(|adt| api_classify::is_std_nonnull(adt.did()))
+            {
+                return true;
+            }
+        }
+        if let Some(terminator) = &block.terminator
+            && let TerminatorKind::Call { func, .. } | TerminatorKind::TailCall { func, .. } = &terminator.kind
+            && let Some(nested) = helpers::dep_callee_def_id(func)
+            && replaces_pointer_field_rec(tcx, nested, depth + 1, visited)
+        {
+            return true;
+        }
+    }
+    false
+}
+
 /// Return arguments written by the concrete call, following wrapper calls
 /// while retaining their generic arguments.
 pub(crate) fn callsite_write_args<'tcx>(
