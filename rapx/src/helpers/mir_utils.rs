@@ -1636,7 +1636,9 @@ pub fn collect_all_const_bytes_worklist<'tcx>(
                     continue;
                 }
                 #[cfg(rapx_ge_99)]
-                if dep_callee_def_id(func).is_some_and(|d| other_api::box_assume_init_into_vec_unsafe() == Some(d))
+                if dep_callee_def_id(func).is_some_and(|d| {
+                    tcx.is_diagnostic_item(Symbol::intern("box_assume_init_into_vec_unsafe"), d)
+                })
                     && let Some(box_op) = args.first()
                     && let Operand::Copy(p) | Operand::Move(p) = &box_op.node
                     && p.projection.is_empty()

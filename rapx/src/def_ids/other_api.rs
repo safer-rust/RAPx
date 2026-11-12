@@ -280,11 +280,6 @@ std_api_def_ids! {
         "std::ffi::c_str::CStr::from_bytes_with_nul_unchecked",
         "core::ffi::c_str::CStr::from_bytes_with_nul_unchecked"
     ],
-    #[cfg(rapx_ge_99)]
-    box_assume_init_into_vec_unsafe: &[
-        "std::boxed::box_assume_init_into_vec_unsafe",
-        "alloc::boxed::box_assume_init_into_vec_unsafe"
-    ],
 }
 
 /// rustc_public DefId to internal DefId
