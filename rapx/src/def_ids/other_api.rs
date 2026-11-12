@@ -353,28 +353,6 @@ std_api_def_ids! {
         "std::ptr::non_null::NonNull::<T>::cast",
         "core::ptr::non_null::NonNull::<T>::cast"
     ],
-    nonnull_slice_len: &[
-        "std::ptr::NonNull::<[T]>::len",
-        "core::ptr::NonNull::<[T]>::len",
-        "std::ptr::non_null::NonNull::<[T]>::len",
-        "core::ptr::non_null::NonNull::<[T]>::len"
-    ],
-    slice_len: &[
-        "std::slice::<impl [T]>::len",
-        "core::slice::<impl [T]>::len"
-    ],
-    str_len: &[
-        "std::str::<impl str>::len",
-        "core::str::<impl str>::len"
-    ],
-    vec_len: &[
-        "std::vec::Vec::<T, A>::len",
-        "alloc::vec::Vec::<T, A>::len"
-    ],
-    string_len: &[
-        "std::string::String::len",
-        "alloc::string::String::len"
-    ],
 }
 
 /// rustc_public DefId to internal DefId

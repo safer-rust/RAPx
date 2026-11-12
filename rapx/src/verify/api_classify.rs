@@ -283,11 +283,6 @@ pub fn is_benign_origin_use(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
             other_api::mut_ptr_slice_as_mut_ptr(),
             other_api::nonnull_addr(),
             other_api::nonnull_cast(),
-            other_api::nonnull_slice_len(),
-            other_api::slice_len(),
-            other_api::str_len(),
-            other_api::vec_len(),
-            other_api::string_len(),
         ],
     ) || callee.is_some_and(|did| pointer_origin::is_read_only_return(tcx, did))
 }

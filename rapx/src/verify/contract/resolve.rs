@@ -12,7 +12,7 @@ use crate::helpers::{
 };
 use quote::ToTokens;
 use rustc_hir::{def::DefKind, def_id::DefId};
-use rustc_middle::ty::{GenericParamDefKind, IntTy, Ty, TyCtxt, UintTy};
+use rustc_middle::ty::{GenericParamDefKind, IntTy, Ty, TyCtxt, TyKind, UintTy};
 use syn::{Expr, Lit};
 
 use super::place;
@@ -32,7 +32,12 @@ pub(crate) fn parse_contract_expr<'tcx>(
             &expr_method.method.to_string(),
         )
         && method.is_local()
-        && crate::def_ids::other_api::slice_len() != Some(method)
+        && !tcx
+            .opt_associated_item(method)
+            .and_then(|item| item.impl_container(tcx))
+            .is_some_and(|impl_id| {
+                matches!(tcx.type_of(impl_id).skip_binder().kind(), TyKind::Slice(_))
+            })
     {
         return ContractExpr::MethodCall {
             receiver: Box::new(parse_contract_expr(tcx, def_id, &expr_method.receiver, sp)),
