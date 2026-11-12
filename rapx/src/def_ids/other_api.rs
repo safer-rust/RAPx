@@ -305,10 +305,6 @@ std_api_def_ids! {
         "std::ptr::const_ptr::<impl *const T>::cast_array",
         "core::ptr::const_ptr::<impl *const T>::cast_array"
     ],
-    const_ptr_slice_is_empty: &[
-        "std::ptr::const_ptr::<impl *const [T]>::is_empty",
-        "core::ptr::const_ptr::<impl *const [T]>::is_empty"
-    ],
     const_ptr_slice_len: &[
         "std::ptr::const_ptr::<impl *const [T]>::len",
         "core::ptr::const_ptr::<impl *const [T]>::len"
@@ -337,10 +333,6 @@ std_api_def_ids! {
         "std::ptr::mut_ptr::<impl *mut T>::cast_array",
         "core::ptr::mut_ptr::<impl *mut T>::cast_array"
     ],
-    mut_ptr_slice_is_empty: &[
-        "std::ptr::mut_ptr::<impl *mut [T]>::is_empty",
-        "core::ptr::mut_ptr::<impl *mut [T]>::is_empty"
-    ],
     mut_ptr_slice_len: &[
         "std::ptr::mut_ptr::<impl *mut [T]>::len",
         "core::ptr::mut_ptr::<impl *mut [T]>::len"
@@ -361,12 +353,6 @@ std_api_def_ids! {
         "std::ptr::non_null::NonNull::<T>::cast",
         "core::ptr::non_null::NonNull::<T>::cast"
     ],
-    nonnull_slice_is_empty: &[
-        "std::ptr::NonNull::<[T]>::is_empty",
-        "core::ptr::NonNull::<[T]>::is_empty",
-        "std::ptr::non_null::NonNull::<[T]>::is_empty",
-        "core::ptr::non_null::NonNull::<[T]>::is_empty"
-    ],
     nonnull_slice_len: &[
         "std::ptr::NonNull::<[T]>::len",
         "core::ptr::NonNull::<[T]>::len",
@@ -380,10 +366,6 @@ std_api_def_ids! {
     str_len: &[
         "std::str::<impl str>::len",
         "core::str::<impl str>::len"
-    ],
-    str_is_empty: &[
-        "std::str::<impl str>::is_empty",
-        "core::str::<impl str>::is_empty"
     ],
     vec_len: &[
         "std::vec::Vec::<T, A>::len",
