@@ -11,7 +11,7 @@ use rustc_middle::{
         BasicBlock, Body, Local, NonDivergingIntrinsic, Operand, ProjectionElem, Rvalue, StatementKind,
         TerminatorKind,
     },
-    ty::{EarlyBinder, InstanceKind, Mutability, TyCtxt, TyKind, TypingEnv},
+    ty::{EarlyBinder, InstanceKind, Mutability, Ty, TyCtxt, TyKind, TypingEnv},
 };
 
 use crate::analysis::dataflow::{DataflowAnalysis, default::DataflowAnalyzer};
@@ -331,7 +331,7 @@ fn replaces_pointer_field_rec(
             let place = assign.0;
             if place.projection.first() == Some(&ProjectionElem::Deref)
                 && place.projection.iter().any(|elem| matches!(elem, ProjectionElem::Field(..)))
-                && place.ty(body, tcx).ty.ty_adt_def().is_some_and(|adt| api_classify::is_std_nonnull(adt.did()))
+                && is_pointer_storage_ty(tcx, place.ty(body, tcx).ty, 0)
             {
                 return true;
             }
@@ -345,6 +345,19 @@ fn replaces_pointer_field_rec(
         }
     }
     false
+}
+
+fn is_pointer_storage_ty<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>, depth: usize) -> bool {
+    match ty.kind() {
+        TyKind::RawPtr(..) => true,
+        TyKind::Pat(inner, _) => is_pointer_storage_ty(tcx, *inner, depth + 1),
+        TyKind::Adt(adt, args) if depth < 2 && adt.repr().transparent() && !adt.is_enum() => {
+            adt.non_enum_variant().fields.iter().any(|field| {
+                is_pointer_storage_ty(tcx, helpers::field_ty(tcx, field, args), depth + 1)
+            })
+        }
+        _ => false,
+    }
 }
 
 /// Return arguments written by the concrete call, following wrapper calls

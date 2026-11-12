@@ -435,16 +435,6 @@ std_api_def_ids! {
         "std::string::String::len",
         "alloc::string::String::len"
     ],
-    string_is_empty: &[
-        "std::string::String::is_empty",
-        "alloc::string::String::is_empty"
-    ],
-    cstr_is_empty: &[
-        "std::ffi::CStr::is_empty",
-        "core::ffi::CStr::is_empty",
-        "std::ffi::c_str::CStr::is_empty",
-        "core::ffi::c_str::CStr::is_empty"
-    ],
 }
 
 /// rustc_public DefId to internal DefId

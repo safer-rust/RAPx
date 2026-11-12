@@ -287,8 +287,6 @@ pub fn is_benign_origin_use(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
             other_api::vec_len(),
             other_api::vec_is_empty(),
             other_api::string_len(),
-            other_api::string_is_empty(),
-            other_api::cstr_is_empty(),
         ],
     ) || callee.is_some_and(|did| pointer_origin::is_read_only_return(tcx, did))
 }
