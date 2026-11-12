@@ -341,18 +341,6 @@ std_api_def_ids! {
         "std::ptr::mut_ptr::<impl *mut [T]>::as_mut_ptr",
         "core::ptr::mut_ptr::<impl *mut [T]>::as_mut_ptr"
     ],
-    nonnull_addr: &[
-        "std::ptr::NonNull::<T>::addr",
-        "core::ptr::NonNull::<T>::addr",
-        "std::ptr::non_null::NonNull::<T>::addr",
-        "core::ptr::non_null::NonNull::<T>::addr"
-    ],
-    nonnull_cast: &[
-        "std::ptr::NonNull::<T>::cast",
-        "core::ptr::NonNull::<T>::cast",
-        "std::ptr::non_null::NonNull::<T>::cast",
-        "core::ptr::non_null::NonNull::<T>::cast"
-    ],
 }
 
 /// rustc_public DefId to internal DefId

@@ -311,6 +311,26 @@ pub(crate) fn return_source_arg(tcx: TyCtxt<'_>, callee: DefId) -> Option<usize>
     trace_source_arg(tcx, body, result, &mut HashSet::new(), 5)
 }
 
+/// A `NonNull` result that still points into its sole `NonNull` argument.
+pub(crate) fn is_nonnull_view(tcx: TyCtxt<'_>, callee: DefId) -> bool {
+    if !matches!(tcx.def_kind(callee), DefKind::Fn | DefKind::AssocFn)
+        || !tcx.is_mir_available(callee)
+    {
+        return false;
+    }
+    let sig = tcx.fn_sig(callee).skip_binder();
+    let [input] = sig.inputs().skip_binder() else {
+        return false;
+    };
+    let output = sig.output().skip_binder();
+    let is_nonnull = |ty: rustc_middle::ty::Ty<'_>| {
+        matches!(ty.kind(), TyKind::Adt(adt, _) if crate::def_ids::type_ids::nonnull_types().contains(&adt.did()))
+    };
+    is_nonnull(*input)
+        && is_nonnull(output)
+        && return_source_arg_with_depth(tcx, callee, 5) == Some(0)
+}
+
 /// Trace a returned reference to interior mutable storage back to its input.
 pub(crate) fn interior_mutable_borrow_source_arg(tcx: TyCtxt<'_>, callee: DefId) -> Option<usize> {
     if !tcx.is_mir_available(callee) {

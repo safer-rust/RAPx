@@ -116,10 +116,12 @@ pub fn is_as_ptr(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
             other_api::mut_ptr_cast(),
             other_api::mut_ptr_cast_const(),
             other_api::mut_ptr_cast_array(),
-            other_api::nonnull_cast(),
         ],
     ) || callee
-        .is_some_and(|id| crate::verify::pointer_origin::return_source_arg(tcx, id) == Some(0))
+        .is_some_and(|id| {
+            crate::verify::pointer_origin::return_source_arg(tcx, id) == Some(0)
+                || crate::verify::pointer_origin::is_nonnull_view(tcx, id)
+        })
 }
 
 fn is_intrinsic_copy(callee: Option<DefId>) -> bool {
@@ -281,10 +283,10 @@ pub fn is_benign_origin_use(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
             other_api::mut_ptr_cast_const(),
             other_api::mut_ptr_slice_len(),
             other_api::mut_ptr_slice_as_mut_ptr(),
-            other_api::nonnull_addr(),
-            other_api::nonnull_cast(),
         ],
-    ) || callee.is_some_and(|did| pointer_origin::is_read_only_return(tcx, did))
+    ) || callee.is_some_and(|did| {
+        pointer_origin::is_read_only_return(tcx, did) || pointer_origin::is_nonnull_view(tcx, did)
+    })
 }
 
 // ── ADT type-name classifiers ─────────────────────────────────────
