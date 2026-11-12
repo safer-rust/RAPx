@@ -254,14 +254,6 @@ std_api_def_ids! {
         "std::mem::maybe_uninit::MaybeUninit::<T>::assume_init_read",
         "core::mem::maybe_uninit::MaybeUninit::<T>::assume_init_read"
     ],
-    mem_size_of: &[
-        "std::mem::size_of",
-        "core::mem::size_of"
-    ],
-    mem_align_of: &[
-        "std::mem::align_of",
-        "core::mem::align_of"
-    ],
     ptr_align_offset: &[
         "std::ptr::align_offset",
         "core::ptr::align_offset"

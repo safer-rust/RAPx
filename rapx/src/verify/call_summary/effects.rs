@@ -17,7 +17,6 @@ use crate::{
         intrinsic_api,
         lang_api::{self, LangItem},
         nomir_api,
-        other_api,
     },
     helpers::{
         mir_utils::{self, type_layout},
@@ -551,8 +550,10 @@ fn layout_constant_effect<'tcx>(
     let callee = mir_utils::dep_callee_def_id(func)?;
     let intrinsic = intrinsic_api::name(Some(callee));
     let intrinsic = intrinsic.as_ref().map(|name| name.as_str());
-    let is_align = other_api::mem_align_of() == Some(callee) || intrinsic == Some("align_of");
-    let is_size = other_api::mem_size_of() == Some(callee) || intrinsic == Some("size_of");
+    let is_align = tcx.is_diagnostic_item(rustc_span::Symbol::intern("mem_align_of"), callee)
+        || intrinsic == Some("align_of");
+    let is_size = tcx.is_diagnostic_item(rustc_span::Symbol::intern("mem_size_of"), callee)
+        || intrinsic == Some("size_of");
     if !is_size && !is_align {
         return None;
     }

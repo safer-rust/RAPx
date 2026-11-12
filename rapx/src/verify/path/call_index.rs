@@ -251,7 +251,7 @@ impl<'tcx> CallSiteIndex<'tcx> {
                 let generic_const_call = cross_crate
                     && mir_utils::has_generic_const_call_argument(self.tcx, callee);
                 let layout_constant =
-                    crate::verify::api_classify::is_mem_layout_constant(Some(callee));
+                    crate::verify::api_classify::is_mem_layout_constant(self.tcx, Some(callee));
                 let returns_adt = self.tcx.is_mir_available(callee)
                     && matches!(
                         self.tcx.optimized_mir(callee).return_ty().kind(),

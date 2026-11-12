@@ -117,19 +117,19 @@ pub fn is_intrinsic_ptr_offset_from(callee: Option<DefId>) -> bool {
 /// Whether `callee` is the compile-time layout constant `size_of::<T>()` or
 /// `align_of::<T>()`. The runtime intrinsics (`size_of_val`, `align_of_val`,
 /// `pref_align_of`, `*_val_raw`, …) are *not* classified here.
-pub fn is_layout_constant(callee: Option<DefId>) -> bool {
-    is_intrinsic_layout_constant(callee) || is_mem_layout_constant(callee)
+pub fn is_layout_constant(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
+    is_intrinsic_layout_constant(callee) || is_mem_layout_constant(tcx, callee)
 }
 
 fn is_intrinsic_layout_constant(callee: Option<DefId>) -> bool {
     intrinsic_named(callee, &["size_of", "align_of"])
 }
 
-pub fn is_mem_layout_constant(callee: Option<DefId>) -> bool {
-    other_api::matches_any(
-        callee,
-        &[other_api::mem_size_of(), other_api::mem_align_of()],
-    )
+pub fn is_mem_layout_constant(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
+    callee.is_some_and(|did| {
+        tcx.is_diagnostic_item(rustc_span::Symbol::intern("mem_size_of"), did)
+            || tcx.is_diagnostic_item(rustc_span::Symbol::intern("mem_align_of"), did)
+    })
 }
 
 /// Whether `callee` is `ptr::align_offset` / `*const T::align_offset` /
