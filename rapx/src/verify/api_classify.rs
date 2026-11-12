@@ -281,7 +281,6 @@ pub fn is_benign_origin_use(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
             other_api::mut_ptr_addr(),
             other_api::mut_ptr_cast(),
             other_api::mut_ptr_cast_const(),
-            other_api::mut_ptr_slice_len(),
             other_api::mut_ptr_slice_as_mut_ptr(),
         ],
     ) || callee.is_some_and(|did| {

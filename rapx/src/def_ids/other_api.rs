@@ -333,10 +333,6 @@ std_api_def_ids! {
         "std::ptr::mut_ptr::<impl *mut T>::cast_array",
         "core::ptr::mut_ptr::<impl *mut T>::cast_array"
     ],
-    mut_ptr_slice_len: &[
-        "std::ptr::mut_ptr::<impl *mut [T]>::len",
-        "core::ptr::mut_ptr::<impl *mut [T]>::len"
-    ],
     mut_ptr_slice_as_mut_ptr: &[
         "std::ptr::mut_ptr::<impl *mut [T]>::as_mut_ptr",
         "core::ptr::mut_ptr::<impl *mut [T]>::as_mut_ptr"
