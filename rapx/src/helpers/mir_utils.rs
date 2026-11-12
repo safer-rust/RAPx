@@ -1380,6 +1380,42 @@ pub fn is_raw_ptr_wrapper<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> bool {
     matches!(field_ty.kind(), TyKind::RawPtr(..))
 }
 
+/// Recognize a pointer-copy wrapper by its signature and the copy in its MIR.
+pub(crate) fn is_ptr_copy_wrapper(tcx: TyCtxt<'_>, callee: DefId) -> bool {
+    if !matches!(tcx.def_kind(callee), DefKind::Fn | DefKind::AssocFn)
+        || !tcx.is_mir_available(callee)
+    {
+        return false;
+    }
+    let sig = tcx.fn_sig(callee).skip_binder();
+    let [first, second, count] = sig.inputs().skip_binder() else {
+        return false;
+    };
+    let (TyKind::RawPtr(first_pointee, first_mut), TyKind::RawPtr(second_pointee, second_mut)) =
+        (first.kind(), second.kind())
+    else {
+        return false;
+    };
+    if first_pointee != second_pointee
+        || first_mut == second_mut
+        || *count != tcx.types.usize
+        || sig.output().skip_binder() != tcx.types.unit
+    {
+        return false;
+    }
+    tcx.optimized_mir(callee).basic_blocks.iter().any(|block| {
+        block.statements.iter().any(|stmt| {
+            matches!(&stmt.kind, StatementKind::Intrinsic(intrinsic)
+                if matches!(&**intrinsic, rustc_middle::mir::NonDivergingIntrinsic::CopyNonOverlapping(..)))
+        }) || matches!(&block.terminator().kind,
+            TerminatorKind::Call { func, .. } | TerminatorKind::TailCall { func, .. }
+                if dep_callee_def_id(func).is_some_and(|id| {
+                    other_api::matches_any(Some(id), &[other_api::ptr_copy(), other_api::ptr_copy_nonoverlapping()])
+                        || crate::def_ids::intrinsic_api::name(Some(id)).is_some_and(|name| matches!(name.as_str(), "copy" | "copy_nonoverlapping"))
+                }))
+    })
+}
+
 /// Collect the layouts of every concrete implementor of a generic type
 /// parameter's trait bounds (empty for non-param types).
 fn generic_param_impl_layouts<'tcx>(

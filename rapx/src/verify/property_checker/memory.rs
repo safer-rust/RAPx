@@ -779,7 +779,7 @@ impl PropertyChecker {
                 && vm_state.is_value_aligned(&value)
                 && matches!(value.ty.kind(), TyKind::RawPtr(..))
                 && !vm_state.alloc(id).facts.dead
-                && crate::verify::api_classify::is_mem_copy_or_write(checkpoint.callee) {
+                && crate::verify::api_classify::is_mem_copy_or_write(vm_state.tcx, checkpoint.callee) {
                     return CheckResult::ProvedByRule;
                 }
             let size = vm_state.allocation_size(id).clone();

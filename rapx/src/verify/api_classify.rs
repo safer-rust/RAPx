@@ -188,36 +188,31 @@ pub fn is_ptr_copy(callee: Option<DefId>) -> bool {
 }
 
 /// Whether `callee` reads through a raw pointer or copies memory
-/// (`ptr::read`/`read_unaligned`/`read_volatile`, `copy_to`/`copy_from`,
+/// (`ptr::read`/`read_unaligned`/`read_volatile`, pointer-copy wrappers,
 /// `MaybeUninit::assume_init_read`, and intrinsics `copy`/`copy_nonoverlapping`).
-pub fn is_ptr_read(callee: Option<DefId>) -> bool {
+pub fn is_ptr_read(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
     is_intrinsic_copy(callee)
+        || callee.is_some_and(|did| crate::helpers::mir_utils::is_ptr_copy_wrapper(tcx, did))
         || other_api::matches_any(
             callee,
             &[
                 other_api::ptr_read(),
                 other_api::ptr_read_unaligned(),
                 other_api::ptr_read_volatile(),
-                other_api::copy_to(),
-                other_api::copy_to_nonoverlapping(),
-                other_api::copy_from(),
-                other_api::copy_from_nonoverlapping(),
                 other_api::assume_init_read(),
             ],
         )
 }
 
 /// Copy/write operations that do not require initialized destination bytes:
-/// intrinsic `copy`/`copy_nonoverlapping`, pointer `copy_to_nonoverlapping`/
-/// `copy_from_nonoverlapping`, `write`, and `write_bytes`. Used by the checker
-/// for `Init`/`Typed` obligations on `MaybeUninit` targets.
-pub fn is_mem_copy_or_write(callee: Option<DefId>) -> bool {
+/// Intrinsic copies, pointer-copy wrappers, `write`, and `write_bytes` do not
+/// require initialized destination bytes for `Init`/`Typed` obligations.
+pub fn is_mem_copy_or_write(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
     is_intrinsic_copy(callee)
+        || callee.is_some_and(|did| crate::helpers::mir_utils::is_ptr_copy_wrapper(tcx, did))
         || other_api::matches_any(
             callee,
             &[
-                other_api::copy_from_nonoverlapping(),
-                other_api::copy_to_nonoverlapping(),
                 other_api::ptr_write(),
                 other_api::ptr_write_bytes(),
             ],

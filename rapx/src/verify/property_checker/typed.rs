@@ -82,7 +82,7 @@ impl PropertyChecker {
                         && args.first().and_then(|arg| arg.as_type()) == Some(expected_ty)
                         && vm_state.content(alloc_id).facts.inner_uninit
                         && vm_state.content(alloc_id).facts.written_pointee_ty != Some(expected_ty)
-                        && !crate::verify::api_classify::is_mem_copy_or_write(checkpoint.callee)
+                        && !crate::verify::api_classify::is_mem_copy_or_write(vm_state.tcx, checkpoint.callee)
                     {
                         return CheckResult::Failed;
                     }
@@ -119,7 +119,7 @@ impl PropertyChecker {
                         && matches!(value.ty.kind(), TyKind::RawPtr(..))
                         && let Some(inner) = substs.first().and_then(|s| s.as_type())
                         && inner == expected_ty
-                        && crate::verify::api_classify::is_mem_copy_or_write(checkpoint.callee)
+                        && crate::verify::api_classify::is_mem_copy_or_write(vm_state.tcx, checkpoint.callee)
                     {
                         return CheckResult::ProvedByRule;
                     }

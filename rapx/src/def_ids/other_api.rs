@@ -186,22 +186,6 @@ macro_rules! std_api_def_ids {
 // For no_std crates, function paths start from core instead of std.
 // cc https://github.com/Artisan-Lab/RAPx/issues/190
 std_api_def_ids! {
-    copy_from: &[
-        "std::ptr::mut_ptr::<impl *mut T>::copy_from",
-        "core::ptr::mut_ptr::<impl *mut T>::copy_from"
-    ],
-    copy_from_nonoverlapping: &[
-        "std::ptr::mut_ptr::<impl *mut T>::copy_from_nonoverlapping",
-        "core::ptr::mut_ptr::<impl *mut T>::copy_from_nonoverlapping"
-    ],
-    copy_to: &[
-        "std::ptr::const_ptr::<impl *const T>::copy_to",
-        "core::ptr::const_ptr::<impl *const T>::copy_to",
-    ],
-    copy_to_nonoverlapping: &[
-        "std::ptr::const_ptr::<impl *const T>::copy_to_nonoverlapping",
-        "core::ptr::const_ptr::<impl *const T>::copy_to_nonoverlapping"
-    ],
     dealloc: &[
         "std::alloc::dealloc",
         "alloc::alloc::dealloc"

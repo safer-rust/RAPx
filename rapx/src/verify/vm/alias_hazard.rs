@@ -72,7 +72,7 @@ pub(super) fn alias_producer(tcx: TyCtxt<'_>, callee: DefId) -> Option<AliasProd
     if let Some(source_arg) = share_transfer_source_arg(tcx, callee) {
         return Some(AliasProducer::OwnershipTransfer(source_arg));
     }
-    if crate::verify::api_classify::is_ptr_read(Some(callee)) {
+    if crate::verify::api_classify::is_ptr_read(tcx, Some(callee)) {
         return Some(AliasProducer::ReadMemory);
     }
     raw_pointer_view_from_mir(tcx, callee)
