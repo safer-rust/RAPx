@@ -321,18 +321,6 @@ std_api_def_ids! {
         "std::ptr::mut_ptr::<impl *mut T>::addr",
         "core::ptr::mut_ptr::<impl *mut T>::addr"
     ],
-    mut_ptr_cast: &[
-        "std::ptr::mut_ptr::<impl *mut T>::cast",
-        "core::ptr::mut_ptr::<impl *mut T>::cast"
-    ],
-    mut_ptr_cast_const: &[
-        "std::ptr::mut_ptr::<impl *mut T>::cast_const",
-        "core::ptr::mut_ptr::<impl *mut T>::cast_const"
-    ],
-    mut_ptr_cast_array: &[
-        "std::ptr::mut_ptr::<impl *mut T>::cast_array",
-        "core::ptr::mut_ptr::<impl *mut T>::cast_array"
-    ],
     mut_ptr_slice_as_mut_ptr: &[
         "std::ptr::mut_ptr::<impl *mut [T]>::as_mut_ptr",
         "core::ptr::mut_ptr::<impl *mut [T]>::as_mut_ptr"

@@ -113,9 +113,6 @@ pub fn is_as_ptr(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
             other_api::const_ptr_cast(),
             other_api::const_ptr_cast_mut(),
             other_api::const_ptr_cast_array(),
-            other_api::mut_ptr_cast(),
-            other_api::mut_ptr_cast_const(),
-            other_api::mut_ptr_cast_array(),
         ],
     ) || callee
         .is_some_and(|id| {
@@ -279,8 +276,6 @@ pub fn is_benign_origin_use(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
             other_api::const_ptr_slice_as_ptr(),
             other_api::mut_ptr_is_null(),
             other_api::mut_ptr_addr(),
-            other_api::mut_ptr_cast(),
-            other_api::mut_ptr_cast_const(),
             other_api::mut_ptr_slice_as_mut_ptr(),
         ],
     ) || callee.is_some_and(|did| {
