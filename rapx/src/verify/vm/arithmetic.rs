@@ -243,6 +243,16 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             BinOp::Offset => Int::add(self.z3_ctx, &[lhs, rhs]),
             BinOp::BitAnd => {
                 let result = self.fresh_int("binop");
+                if let Some(mask) = rhs.simplify().as_u64() {
+                    let zero = Int::from_u64(self.z3_ctx, 0);
+                    if mask == 0 {
+                        self.constraints.assertions.push(result._eq(&zero));
+                    } else if mask.trailing_zeros() > 0 {
+                        // AND preserves the zero low bits of a constant mask.
+                        let divisor = Int::from_u64(self.z3_ctx, 1_u64 << mask.trailing_zeros());
+                        self.constraints.assertions.push(result.rem(&divisor)._eq(&zero));
+                    }
+                }
                 // BitAnd only clears bits, so it never increases a non-negative
                 // value: result <= lhs.
                 self.constraints.assertions.push(result.le(lhs));
