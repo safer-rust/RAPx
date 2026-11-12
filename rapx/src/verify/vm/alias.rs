@@ -482,10 +482,10 @@ pub(crate) fn check_alias_vm<'z3, 'tcx>(
     // exclusive view is derived from a raw pointer with no borrow information,
     // so it cannot be exclusive while the enclosing `&mut self` is still live.
     // An escaping `&` (as_ref) is only a *possible* hazard → Unknown.
-    if api_classify::is_nonnull_as_ref_as_mut(Some(callee)) {
+    if let Some(mutability) = api_classify::nonnull_ref_return(vm_state.tcx, callee) {
         let ret_ty = vm_state.body().local_decls[rustc_middle::mir::RETURN_PLACE].ty;
         if mir_utils::type_contains_reference(ret_ty) {
-            if api_classify::is_nonnull_as_mut(Some(callee)) {
+            if mutability == rustc_middle::mir::Mutability::Mut {
                 return VmAliasResult::Failed(
                     "escaping `&mut` derived from a raw pointer without borrow information"
                         .into(),

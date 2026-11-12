@@ -150,14 +150,13 @@ pub fn is_mem_layout_constant(callee: Option<DefId>) -> bool {
     )
 }
 
-/// Whether `callee` is `ptr::align_offset` / `NonNull::align_offset` /
-/// `*const T::align_offset` / `*mut T::align_offset`.
+/// Whether `callee` is `ptr::align_offset` / `*const T::align_offset` /
+/// `*mut T::align_offset`.
 pub fn is_align_offset(callee: Option<DefId>) -> bool {
     other_api::matches_any(
         callee,
         &[
             other_api::ptr_align_offset(),
-            other_api::nonnull_align_offset(),
             other_api::const_ptr_align_offset(),
             other_api::mut_ptr_align_offset(),
         ],
@@ -243,17 +242,30 @@ pub fn is_cstr_unchecked_constructor(callee: Option<DefId>) -> bool {
 // ── Alias-hazard classification ───────────────────────────────────
 // Ref-counted reconstruction retains a dedicated rule until the alias model
 // accounts for shared ownership and clone counts.
-/// Whether `callee` is `NonNull::as_ref` or `NonNull::as_mut`.
-pub fn is_nonnull_as_ref_as_mut(callee: Option<DefId>) -> bool {
-    other_api::matches_any(
-        callee,
-        &[other_api::nonnull_as_ref(), other_api::nonnull_as_mut()],
-    )
-}
-
-/// Whether `callee` is `NonNull::as_mut` (produces an exclusive `&mut`).
-pub fn is_nonnull_as_mut(callee: Option<DefId>) -> bool {
-    other_api::matches_any(callee, &[other_api::nonnull_as_mut()])
+/// Mutability of a reference returned from a `NonNull<T>` receiver.
+pub fn nonnull_ref_return(tcx: TyCtxt<'_>, callee: DefId) -> Option<rustc_middle::mir::Mutability> {
+    if !tcx.is_mir_available(callee) {
+        return None;
+    }
+    let sig = tcx.fn_sig(callee).skip_binder();
+    let [receiver] = sig.inputs().skip_binder() else {
+        return None;
+    };
+    let TyKind::Ref(_, inner, _) = receiver.kind() else {
+        return None;
+    };
+    let TyKind::Adt(adt, args) = inner.kind() else {
+        return None;
+    };
+    if !is_std_nonnull(adt.did()) {
+        return None;
+    }
+    let pointee = args.first().and_then(|arg| arg.as_type())?;
+    let output = sig.output().skip_binder();
+    let TyKind::Ref(_, returned, mutability) = output.kind() else {
+        return None;
+    };
+    (*returned == pointee).then_some(*mutability)
 }
 
 /// Whether `callee` is a benign, read-only use of a raw-pointer origin

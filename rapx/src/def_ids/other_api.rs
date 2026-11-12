@@ -282,24 +282,6 @@ std_api_def_ids! {
         "std::ptr::align_offset",
         "core::ptr::align_offset"
     ],
-    nonnull_align_offset: &[
-        "std::ptr::NonNull::<T>::align_offset",
-        "core::ptr::NonNull::<T>::align_offset",
-        "std::ptr::non_null::NonNull::<T>::align_offset",
-        "core::ptr::non_null::NonNull::<T>::align_offset"
-    ],
-    nonnull_as_ref: &[
-        "std::ptr::NonNull::<T>::as_ref",
-        "core::ptr::NonNull::<T>::as_ref",
-        "std::ptr::non_null::NonNull::<T>::as_ref",
-        "core::ptr::non_null::NonNull::<T>::as_ref"
-    ],
-    nonnull_as_mut: &[
-        "std::ptr::NonNull::<T>::as_mut",
-        "core::ptr::NonNull::<T>::as_mut",
-        "std::ptr::non_null::NonNull::<T>::as_mut",
-        "core::ptr::non_null::NonNull::<T>::as_mut"
-    ],
     const_ptr_align_offset: &[
         "std::ptr::const_ptr::<impl *const T>::align_offset",
         "core::ptr::const_ptr::<impl *const T>::align_offset"

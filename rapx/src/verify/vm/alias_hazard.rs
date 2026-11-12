@@ -2060,9 +2060,9 @@ fn pre_existing_view_on_origin(
         let terminator = data.terminator();
         if let TerminatorKind::Call { func, args, .. } = &terminator.kind {
             let callee_name = mir_utils::call_name(tcx, func);
-            if crate::verify::api_classify::is_nonnull_as_ref_as_mut(
-                mir_utils::dep_callee_def_id(func),
-            )
+            if mir_utils::dep_callee_def_id(func)
+                .and_then(|callee| crate::verify::api_classify::nonnull_ref_return(tcx, callee))
+                .is_some()
                 && let Some(arg) = args.first()
                     && let Some(place) = operand_mir_place(&arg.node)
                 {
