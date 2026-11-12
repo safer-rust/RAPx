@@ -274,12 +274,6 @@ std_api_def_ids! {
         "std::ptr::mut_ptr::<impl *mut T>::align_offset",
         "core::ptr::mut_ptr::<impl *mut T>::align_offset"
     ],
-    cstr_from_bytes_with_nul_unchecked: &[
-        "std::ffi::CStr::from_bytes_with_nul_unchecked",
-        "core::ffi::CStr::from_bytes_with_nul_unchecked",
-        "std::ffi::c_str::CStr::from_bytes_with_nul_unchecked",
-        "core::ffi::c_str::CStr::from_bytes_with_nul_unchecked"
-    ],
 }
 
 /// rustc_public DefId to internal DefId

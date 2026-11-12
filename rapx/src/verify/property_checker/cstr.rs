@@ -156,13 +156,7 @@ impl PropertyChecker {
             return r;
         }
 
-        let is_strict =
-            crate::verify::api_classify::is_cstr_unchecked_constructor(checkpoint.callee);
-        if is_strict {
-            CheckResult::Unknown(UnknownReason::Unimplemented)
-        } else {
-            CheckResult::ProvedByRule
-        }
+        CheckResult::Unknown(UnknownReason::Unimplemented)
     }
 
     /// Fast-path: check NUL termination using per-byte NUL/non-NUL knowledge.

@@ -9,13 +9,12 @@
 //!
 //! Most classifiers match callees or ADT types by `DefId`, using identities
 //! from [`crate::def_ids::intrinsic_api`],
-//! [`crate::def_ids::nomir_ffi`], [`crate::def_ids::other_api`], and
-//! [`crate::def_ids::type_ids`].
+//! [`crate::def_ids::other_api`] and [`crate::def_ids::type_ids`].
 
 use crate::def_ids::{
     intrinsic_api,
     lang_api::{self, LangItem},
-    nomir_ffi, other_api, type_ids,
+    other_api, type_ids,
 };
 use crate::verify::pointer_origin;
 use rustc_hir::def_id::DefId;
@@ -200,21 +199,6 @@ pub fn is_mem_copy_or_write(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
                 other_api::ptr_write_bytes(),
             ],
         )
-}
-
-// ── Slice / C-string ──────────────────────────────────────────────
-
-/// `_unchecked` C-string constructors whose caller must guarantee NUL
-/// termination (`CStr::from_bytes_with_nul_unchecked`,
-/// `CString::from_vec_with_nul_unchecked`).
-pub fn is_cstr_unchecked_constructor(callee: Option<DefId>) -> bool {
-    other_api::matches_any(
-        callee,
-        &[
-            other_api::cstr_from_bytes_with_nul_unchecked(),
-            nomir_ffi::cstring_from_vec_with_nul_unchecked(),
-        ],
-    )
 }
 
 // ── Alias-hazard classification ───────────────────────────────────
