@@ -97,28 +97,12 @@ pub fn is_std_drop(callee: Option<DefId>) -> bool {
 
 // ── Pointer extraction / cast ─────────────────────────────────────
 
-/// Whether `callee` produces a raw pointer (or `NonNull`) alias of its first
-/// argument: `as_ptr`/`as_mut_ptr`, `into_raw`, and pointer `cast` (incl.
-/// `cast_mut`/`cast_const`). `as_ptr_range`/`as_mut_ptr_range` are excluded
-/// because they return a `Range` of two pointers rather than a single pointer;
-/// `NonNull::new_unchecked` constructs a wrapper from a pointer; `as_ref` and
-/// `as_mut` produce references. None extracts a raw pointer from its argument.
-/// Other pointer-returning calls are recognized from their MIR.
+/// Whether MIR traces the returned pointer to the first argument.
 pub fn is_as_ptr(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
-    other_api::matches_any(
-        callee,
-        &[
-            other_api::const_ptr_slice_as_ptr(),
-            other_api::mut_ptr_slice_as_mut_ptr(),
-            other_api::const_ptr_cast(),
-            other_api::const_ptr_cast_mut(),
-            other_api::const_ptr_cast_array(),
-        ],
-    ) || callee
-        .is_some_and(|id| {
-            crate::verify::pointer_origin::return_source_arg(tcx, id) == Some(0)
-                || crate::verify::pointer_origin::is_nonnull_view(tcx, id)
-        })
+    callee.is_some_and(|id| {
+        crate::verify::pointer_origin::return_source_arg(tcx, id) == Some(0)
+            || crate::verify::pointer_origin::is_nonnull_view(tcx, id)
+    })
 }
 
 fn is_intrinsic_copy(callee: Option<DefId>) -> bool {
@@ -262,23 +246,9 @@ pub fn nonnull_ref_return(tcx: TyCtxt<'_>, callee: DefId) -> Option<rustc_middle
     (*returned == pointee).then_some(*mutability)
 }
 
-/// Whether `callee` is a benign, read-only use of a raw-pointer origin
-/// (`len`, `is_empty`, `is_null`, `addr`, `as_ptr`/`as_mut_ptr`, `cast`).
+/// Whether MIR shows a read-only pointer view of the first argument.
 pub fn is_benign_origin_use(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
-    other_api::matches_any(
-        callee,
-        &[
-            other_api::const_ptr_is_null(),
-            other_api::const_ptr_addr(),
-            other_api::const_ptr_cast(),
-            other_api::const_ptr_cast_mut(),
-            other_api::const_ptr_slice_len(),
-            other_api::const_ptr_slice_as_ptr(),
-            other_api::mut_ptr_is_null(),
-            other_api::mut_ptr_addr(),
-            other_api::mut_ptr_slice_as_mut_ptr(),
-        ],
-    ) || callee.is_some_and(|did| {
+    callee.is_some_and(|did| {
         pointer_origin::is_read_only_return(tcx, did) || pointer_origin::is_nonnull_view(tcx, did)
     })
 }

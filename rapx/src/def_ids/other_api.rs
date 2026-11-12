@@ -285,46 +285,6 @@ std_api_def_ids! {
         "std::boxed::box_assume_init_into_vec_unsafe",
         "alloc::boxed::box_assume_init_into_vec_unsafe"
     ],
-    const_ptr_is_null: &[
-        "std::ptr::const_ptr::<impl *const T>::is_null",
-        "core::ptr::const_ptr::<impl *const T>::is_null"
-    ],
-    const_ptr_addr: &[
-        "std::ptr::const_ptr::<impl *const T>::addr",
-        "core::ptr::const_ptr::<impl *const T>::addr"
-    ],
-    const_ptr_cast: &[
-        "std::ptr::const_ptr::<impl *const T>::cast",
-        "core::ptr::const_ptr::<impl *const T>::cast"
-    ],
-    const_ptr_cast_mut: &[
-        "std::ptr::const_ptr::<impl *const T>::cast_mut",
-        "core::ptr::const_ptr::<impl *const T>::cast_mut"
-    ],
-    const_ptr_cast_array: &[
-        "std::ptr::const_ptr::<impl *const T>::cast_array",
-        "core::ptr::const_ptr::<impl *const T>::cast_array"
-    ],
-    const_ptr_slice_len: &[
-        "std::ptr::const_ptr::<impl *const [T]>::len",
-        "core::ptr::const_ptr::<impl *const [T]>::len"
-    ],
-    const_ptr_slice_as_ptr: &[
-        "std::ptr::const_ptr::<impl *const [T]>::as_ptr",
-        "core::ptr::const_ptr::<impl *const [T]>::as_ptr"
-    ],
-    mut_ptr_is_null: &[
-        "std::ptr::mut_ptr::<impl *mut T>::is_null",
-        "core::ptr::mut_ptr::<impl *mut T>::is_null"
-    ],
-    mut_ptr_addr: &[
-        "std::ptr::mut_ptr::<impl *mut T>::addr",
-        "core::ptr::mut_ptr::<impl *mut T>::addr"
-    ],
-    mut_ptr_slice_as_mut_ptr: &[
-        "std::ptr::mut_ptr::<impl *mut [T]>::as_mut_ptr",
-        "core::ptr::mut_ptr::<impl *mut [T]>::as_mut_ptr"
-    ],
 }
 
 /// rustc_public DefId to internal DefId
