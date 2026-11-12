@@ -5,6 +5,9 @@ pub struct Slot {
     pub fields: Vec<usize>,
 }
 
+/// Reserved projection index for the value behind a pointer.
+pub const DEREF_PROJECTION: usize = usize::MAX;
+
 impl Slot {
     pub fn new(local: usize) -> Self {
         Slot {
@@ -33,6 +36,22 @@ impl Slot {
             })
             .collect();
         Slot { local, fields }
+    }
+
+    pub fn from_mir_place_with_deref(place: &rustc_middle::mir::Place) -> Self {
+        let fields = place
+            .projection
+            .iter()
+            .filter_map(|elem| match elem {
+                rustc_middle::mir::ProjectionElem::Field(idx, _) => Some(idx.as_usize()),
+                rustc_middle::mir::ProjectionElem::Deref => Some(DEREF_PROJECTION),
+                _ => None,
+            })
+            .collect();
+        Slot {
+            local: place.local.as_usize(),
+            fields,
+        }
     }
 }
 

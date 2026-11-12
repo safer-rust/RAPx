@@ -204,14 +204,6 @@ std_api_def_ids! {
         "std::mem::manually_drop::ManuallyDrop::<T>::drop",
         "core::mem::manually_drop::ManuallyDrop::<T>::drop"
     ],
-    replace: &[
-        "std::mem::replace",
-        "core::mem::replace"
-    ],
-    take: &[
-        "std::mem::take",
-        "core::mem::take"
-    ],
     ptr_read: &[
         "std::ptr::read",
         "core::ptr::read"

@@ -4,6 +4,7 @@ use crate::analysis::points_to::slot::{AbstractLoc, Slot};
 use rustc_abi::FieldIdx;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{AggregateKind, Operand, Rvalue, StatementKind, TerminatorKind};
+use rustc_middle::ty::TypingEnv;
 use rustc_span::Span;
 
 use super::MopFnAliasMap;
@@ -41,8 +42,15 @@ impl<'tcx> AliasGraph<'tcx> {
         span: Span,
         obs: &mut dyn AliasObserver,
     ) {
-        let lv_slot = Slot::from_mir_place(place);
-        let lv_pts = self.pts_graph.ensure_slot(lv_slot.clone(), false, false);
+        let body = self.tcx().optimized_mir(self.def_id());
+        let lv_slot = Slot::from_mir_place_with_deref(place);
+        let ty = place.ty(&body.local_decls, self.tcx()).ty;
+        let ty_env = TypingEnv::post_analysis(self.tcx(), self.def_id());
+        let lv_pts = self.pts_graph.ensure_slot(
+            lv_slot.clone(),
+            !super::types::is_not_drop(self.tcx(), ty),
+            ty.needs_drop(self.tcx(), ty_env),
+        );
         if !self.pts_graph.may_drop(lv_pts) {
             return;
         }
@@ -160,8 +168,15 @@ impl<'tcx> AliasGraph<'tcx> {
         &mut self,
         place: &rustc_middle::mir::Place<'tcx>,
     ) -> Option<(usize, usize)> {
-        let slot = Slot::from_mir_place(place);
-        let pts_idx = self.pts_graph.ensure_slot(slot, false, false);
+        let slot = Slot::from_mir_place_with_deref(place);
+        let body = self.tcx().optimized_mir(self.def_id());
+        let ty = place.ty(&body.local_decls, self.tcx()).ty;
+        let ty_env = TypingEnv::post_analysis(self.tcx(), self.def_id());
+        let pts_idx = self.pts_graph.ensure_slot(
+            slot,
+            !super::types::is_not_drop(self.tcx(), ty),
+            ty.needs_drop(self.tcx(), ty_env),
+        );
         if !self.pts_graph.may_drop(pts_idx) {
             return None;
         }

@@ -206,6 +206,12 @@ impl PtsGraph {
     }
 
     fn propagate_to_father(&mut self, a_idx: usize, b_idx: usize) {
+        // A pointer value does not alias the value behind its dereference.
+        if self.slots[a_idx].fields.last() == Some(&super::slot::DEREF_PROJECTION)
+            || self.slots[b_idx].fields.last() == Some(&super::slot::DEREF_PROJECTION)
+        {
+            return;
+        }
         let fa = self.father_of(a_idx);
         let fb = self.father_of(b_idx);
         let ra = fa.unwrap_or(a_idx);
@@ -513,8 +519,24 @@ impl PtsGraph {
         if slot_idx >= self.alias_parent.len() {
             return;
         }
-        // Point slot_idx directly to target's root
         let target_root = self.alias_find(target_idx);
+        // Keep aliases of the old pointee separate when a write replaces it.
+        if self.slots[slot_idx]
+            .fields
+            .contains(&super::slot::DEREF_PROJECTION)
+            && self.alias_find(slot_idx) != target_root
+        {
+            let old_root = self.alias_find(slot_idx);
+            let others: Vec<_> = (0..self.alias_parent.len())
+                .filter(|&idx| idx != slot_idx && self.alias_find(idx) == old_root)
+                .collect();
+            if let Some(&new_root) = others.first() {
+                self.alias_parent[new_root] = new_root;
+                for &idx in others.iter().skip(1) {
+                    self.alias_parent[idx] = new_root;
+                }
+            }
+        }
         self.alias_parent[slot_idx] = target_root;
         self.may_hold.retain(|&(holder, _)| holder != slot_idx);
     }
