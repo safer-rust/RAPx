@@ -11,12 +11,19 @@ pub unsafe fn read_ptr(ptr: *const u32) -> u32 {
 }
 
 #[rapx::verify]
-pub fn sound_caller(ptr: *const u32) -> u32 {
+pub fn nonnull_caller(ptr: *const u32) -> u32 {
     if ptr.is_null() {
         0
     } else {
         unsafe { read_ptr(ptr) }
     }
+}
+
+// A real allocation, rather than a null check, establishes ValidPtr.
+#[rapx::verify]
+pub fn sound_caller() -> u32 {
+    let value = 7u32;
+    unsafe { read_ptr(&value) }
 }
 
 #[rapx::verify]

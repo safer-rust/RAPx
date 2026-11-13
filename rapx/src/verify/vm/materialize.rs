@@ -51,8 +51,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         self.materialize_external_field_at(local, vec![idx], field_ty, elem_ty, alive_region);
     }
 
-    /// Materialize an external (unbounded) allocation and bind it as the value at
-    /// `path`, carrying data provenance and an optional liveness region. Shared by
+    /// Materialize an external allocation and bind it as the value at `path`,
+    /// carrying data provenance and an optional liveness region. Slice fields
+    /// receive symbolic length metadata; other fields retain an unknown extent.
+    /// Shared by
     /// the whole-field (`materialize_external_field`) and pointer-subfield
     /// (`materialize_vec_ptr_field`) materialization paths.
     fn materialize_external_field_at(
@@ -64,8 +66,28 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         alive_region: Option<Region<'tcx>>,
     ) {
         let align = self.align_sym(elem_ty);
-        let max_size = Int::from_u64(self.z3_ctx, i64::MAX as u64);
-        let (alloc_id, base) = self.allocate_external(max_size, align, Some(elem_ty));
+        let (alloc_id, base) = if matches!(field_ty.kind(), TyKind::Slice(_)) {
+            // A DST slice field has real length metadata. Give it a stable
+            // symbolic length instead of deriving one from the size placeholder.
+            let len = self.fresh_int("field_slice_len");
+            let elem_size = self.size_sym(elem_ty);
+            let bytes = Int::mul(self.z3_ctx, &[&len, &elem_size]);
+            self.constraints
+                .assertions
+                .push(len.ge(&Int::from_u64(self.z3_ctx, 0)));
+            if let Some((_, max_len, _, _)) = self.integer_limits(self.tcx.types.usize) {
+                self.constraints.assertions.push(len.le(&max_len));
+            }
+            if let Some((_, max_bytes, _, _)) = self.integer_limits(self.tcx.types.isize) {
+                self.constraints.assertions.push(bytes.le(&max_bytes));
+            }
+            let result = self.allocate_external(bytes, align, Some(elem_ty));
+            self.alloc_mut(result.0).set_slice_len(len);
+            result
+        } else {
+            let max_size = Int::from_u64(self.z3_ctx, i64::MAX as u64);
+            self.allocate_external(max_size, align, Some(elem_ty))
+        };
         self.content_mut(alloc_id).facts.initialized = true;
         if let Some(region) = alive_region {
             self.alloc_mut(alloc_id).facts.liveness = Some(region);

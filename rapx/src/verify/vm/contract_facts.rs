@@ -211,7 +211,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 // A typed pointer bound also guarantees the allocation backs
                 // the requested elements — materialize that size so a
                 // downstream `ptr.add(n)`/`ptr.sub(n)` can discharge `InBound`
-                // against a concrete (or `i64::MAX`) size rather than the coarse
+                // against the recorded byte range rather than the coarse
                 // `in_bounds` flag (which only covers `count == 1`).
                 if property.ty_arg(1).is_some() && property.for_each().is_none() {
                     self.assert_allocated_fact(property);
@@ -359,6 +359,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
         self.content_mut(id).facts.initialized = true;
         self.content_mut(id).facts.cstr_trusted = true;
+        // A valid C string includes at least its terminating byte, even when
+        // the explicit length expression could not be resolved.
+        let one = Int::from_u64(self.z3_ctx, 1);
+        self.constraints.assertions.push(self.alloc(id).size.ge(&one));
         if let Some(n) = property.args().get(1).and_then(|a| match a {
             PropertyArg::Expr(ContractExpr::Const(_)) => None,
             a => self.resolve_contract_count(a),
@@ -403,9 +407,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let heap_align = self.align_sym(elem_ty);
         let heap_align_n = Self::non_trivial_align(heap_align.clone());
         let (heap_id, heap_base) = if huge || elem_sz_raw == 0 {
-            // Struct-field targets (and generic element types): use an
-            // unbounded external allocation so `Allocated`/`InBound` checks
-            // auto-pass regardless of the symbolic element size.
+            // Legacy placeholder for struct fields and generic elements.
+            // assert_allocated_fact records the contract's finite byte range;
+            // the placeholder itself supplies no coverage evidence.
             let max_size = Int::from_u64(self.z3_ctx, i64::MAX as u64);
             self.allocate_external(max_size, heap_align.clone(), Some(elem_ty))
         } else {
@@ -441,10 +445,36 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// - For a whole pointer parameter (`src`), the allocation is sized
     ///   `n * sizeof(T)` so downstream pointer arithmetic stays in bounds.
     /// - For a plain pointer *field* (e.g. `RawVecInner::ptr`), the allocation
-    ///   is written back to the field via `set_contract_target_value`, and is
-    ///   unbounded so field-subrange `InBound` checks auto-pass.
+    ///   is written back to the field via `set_contract_target_value` and
+    ///   retains an unknown extent with a separately recorded covered range.
     /// - For `Downcast` targets, the legacy whole-local behaviour applies.
     fn assert_allocated_fact(&mut self, property: &Property<'tcx>) {
+        self.materialize_allocated_fact(property);
+        let Some(value) = self.contract_target_value(property) else {
+            return;
+        };
+        let (Some(alloc_id), Some(elem_ty)) = (value.provenance_alloc_id(), property.ty_arg(1))
+        else {
+            return;
+        };
+        let count = match property.args().get(2) {
+            Some(arg) => match self.resolve_contract_count(arg) {
+                Some(count) => count,
+                None => return,
+            },
+            None => Int::from_u64(self.z3_ctx, 1),
+        };
+        // Preserve only the range supplied by the contract. It does not
+        // establish the size of the entire allocation.
+        let bytes = Int::mul(self.z3_ctx, &[&count, &self.size_sym(elem_ty)]);
+        let range = (value.z3_term, bytes);
+        let ranges = &mut self.alloc_mut(alloc_id).facts.bounded_ranges;
+        if !ranges.contains(&range) {
+            ranges.push(range);
+        }
+    }
+
+    fn materialize_allocated_fact(&mut self, property: &Property<'tcx>) {
         let elem_ty = property.ty_arg(1);
         let count_term = property
             .args()
