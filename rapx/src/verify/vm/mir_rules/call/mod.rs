@@ -242,13 +242,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             {
                 return CallModel::PostconditionsOnly;
             }
-            if args.first().is_some_and(|value| {
-                matches!(
-                    value.ty.kind(),
-                    TyKind::Ref(_, inner, rustc_middle::mir::Mutability::Mut)
-                        if inner.ty_adt_def().is_some_and(|adt| api_classify::is_std_vec(adt.did()))
-                )
-            }) && call_summary::callsite_replaces_pointer_field(self.tcx, func) {
+            if args
+                .first()
+                .is_some_and(|value| !self.vec_reallocation_targets(value).is_empty())
+                && call_summary::callsite_replaces_pointer_field(self.tcx, func)
+            {
                 return CallModel::Summary(vec![CallEffect::ReallocateVec { arg: 0 }]);
             }
             if let Some(effects) = call_summary::effects::lookup_effect(

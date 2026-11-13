@@ -169,19 +169,10 @@ impl PropertyChecker {
         let base = vm_state.allocation_base(alloc_id).clone();
         let size = vm_state.allocation_size(alloc_id).clone();
 
-        let alloc = vm_state.alloc(alloc_id);
-        // An external allocation whose size is the `i64::MAX` "unbounded"
-        // sentinel (a Vec/slice buffer, or a materialized `Allocated` fact)
-        // auto-passes any `InBound` access.  A *raw-pointer target* carries a
-        // symbolic "unknown" size instead, so its access falls through and must
-        // be proved (and otherwise fails).
-        if alloc.is_external() && size.simplify().as_u64() == Some(i64::MAX as u64) {
-            return CheckResult::ProvedByRule;
-        }
         let pointer_sub = checkpoint.callee.and_then(|callee| {
             crate::verify::pointer_origin::pointer_offset_direction(vm_state.tcx, callee)
         }) == Some(crate::verify::pointer_origin::PointerOffsetDirection::Backward);
-
+        let alloc = vm_state.alloc(alloc_id);
         // Element-level bounds fast-path: when the allocation materializes a
         // slice length and the pointer was derived by element-strided arithmetic
         // (its `element_offset` is tracked), check `k + count <= len` linearly.
@@ -261,6 +252,21 @@ impl PropertyChecker {
             };
             solver.pop(1);
             return r;
+        }
+
+        // The legacy unbounded sentinel is not a real allocation size. Do
+        // not use it either as a proof or as the bound in the SMT query.
+        if alloc.has_unbounded_size() {
+            let start = if pointer_sub {
+                Int::sub(vm_state.z3_ctx, &[&value.z3_term, &access])
+            } else {
+                value.z3_term.clone()
+            };
+            return if vm_state.has_bounded_range(alloc_id, &start, &access) {
+                CheckResult::ProvedBySmt
+            } else {
+                CheckResult::Unknown(UnknownReason::Unimplemented)
+            };
         }
 
         let bound = Int::add(vm_state.z3_ctx, &[&base, &size]);

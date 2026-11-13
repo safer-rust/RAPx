@@ -271,6 +271,9 @@ pub(crate) struct AllocFacts<'z3, 'tcx> {
     pub for_each: ForEachFacts<'z3, 'tcx>,
     /// `(address, type)` spans licensed by `InBound` contracts.
     pub bounded_spans: Vec<(Int<'z3>, Ty<'tcx>)>,
+    /// Byte ranges established by explicit allocation/bounds contracts.
+    /// Each entry is (start address, byte count), not a whole-allocation extent.
+    pub bounded_ranges: Vec<(Int<'z3>, Int<'z3>)>,
 }
 
 /// Per-allocation *content* facts: whether the allocation's contents are
@@ -346,6 +349,11 @@ impl<'z3, 'tcx> Allocation<'z3, 'tcx> {
             self.kind,
             AllocKind::External | AllocKind::ExternalSlice { .. }
         )
+    }
+
+    /// Legacy external-allocation placeholder, not evidence of a byte extent.
+    pub(crate) fn has_unbounded_size(&self) -> bool {
+        self.is_external() && self.size.simplify().as_u64() == Some(i64::MAX as u64)
     }
 
     /// The slice/array element count, if this allocation is slice data.
@@ -2403,7 +2411,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         false
     }
 
-    fn is_cap_field_read(&self, ty: Ty<'tcx>, field_path: &[usize]) -> bool {
+    pub(super) fn is_cap_field_read(&self, ty: Ty<'tcx>, field_path: &[usize]) -> bool {
         if field_path.is_empty() {
             return false;
         }

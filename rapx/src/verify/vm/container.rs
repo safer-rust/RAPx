@@ -71,6 +71,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         if let Some(len) = alloc.slice_len() {
             return Some(len.clone());
         }
+        if alloc.has_unbounded_size() {
+            return None;
+        }
         let elem_ty = alloc.element_ty.as_ty()?;
         let elem_term = self.size_sym_read(elem_ty);
         if elem_term.simplify().as_u64() == Some(1) {
@@ -206,6 +209,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let elem_ty = alloc.element_ty.as_ty()?;
         if self.size_of_ty(elem_ty) == 0 && !mir_utils::ty_has_type_param(elem_ty) {
             return Some(Int::from_u64(self.z3_ctx, usize::MAX as u64));
+        }
+        if alloc.has_unbounded_size() {
+            return None;
         }
         Some(alloc.size.div(&self.size_sym_read(elem_ty)))
     }
@@ -472,10 +478,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return None;
         }
         self.container_data_alloc(header, ty).or_else(|| {
-            // The header → data fallback is only for local (non-external) slice
-            // views. An external parameter's header carries an `i64::MAX`
-            // "unbounded" size that already discharges `Allocated`, so do not
-            // redirect it to the (symbolic-sized) pointee.
+            // The header → data fallback is only for local slice views.
+            // External parameter headers retain their own contract range facts.
             if self.alloc(header).is_external() {
                 None
             } else {
@@ -509,50 +513,136 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         result
     }
 
+    /// Resolve a mutable Vec receiver, including a borrow of its backing
+    /// buffer fields (as used by reserve's MIR). A borrow of an unrelated
+    /// field, such as the length, does not replace the backing allocation.
+    pub(crate) fn vec_reallocation_targets(
+        &self,
+        value: &VmValue<'z3, 'tcx>,
+    ) -> Vec<(AllocId, Ty<'tcx>)> {
+        let TyKind::Ref(_, inner, rustc_middle::mir::Mutability::Mut) = value.ty.kind() else {
+            return Vec::new();
+        };
+        if inner
+            .ty_adt_def()
+            .is_some_and(|adt| api_classify::is_std_vec(adt.did()))
+        {
+            return value
+                .provenance_alloc_id()
+                .map(|id| (id, *inner))
+                .into_iter()
+                .collect();
+        }
+        let ValueSource::FieldBorrow { fields, .. } = &value.source else {
+            return Vec::new();
+        };
+        // A field borrow can cross an inlined frame, where its source Local
+        // no longer names the owner. Resolve the stored field value instead.
+        let borrowed = value.z3_term.simplify();
+        let mut targets = Vec::new();
+        let mut backing = None;
+        for (index, unit) in self.units.iter().enumerate() {
+            for ((view_ty, path), field) in &unit.content.values {
+                if path != fields
+                    || field.ty != *inner
+                    || !view_ty
+                        .ty_adt_def()
+                        .is_some_and(|adt| api_classify::is_std_vec(adt.did()))
+                    || field.z3_term.simplify() != borrowed
+                    || !self
+                        .container_ptr_field(*view_ty)
+                        .is_some_and(|pointer| pointer.starts_with(path))
+                {
+                    continue;
+                }
+                let candidate = (AllocId(index), *view_ty);
+                let Some(data) = self.container_data_alloc(candidate.0, candidate.1) else {
+                    return Vec::new();
+                };
+                if backing.is_some_and(|previous| previous != data) {
+                    return Vec::new();
+                }
+                backing = Some(data);
+                if !targets.contains(&candidate) {
+                    targets.push(candidate);
+                }
+            }
+        }
+        targets
+    }
+
     pub(crate) fn reallocate_vec_backing(&mut self, value: &VmValue<'z3, 'tcx>) {
-        let Some(header) = value.provenance_alloc_id() else {
+        let targets = self.vec_reallocation_targets(value);
+        let Some(&(header, ty)) = targets.first() else {
             return;
         };
         if self.alloc(header).is_external() {
             return;
         }
-        let Some(data) = self.container_data_alloc(header, value.ty) else {
+        let Some(data) = self.container_data_alloc(header, ty) else {
             return;
         };
         let Some(elem_ty) = self.alloc(data).element_ty.as_ty() else {
             return;
         };
-        self.alloc_mut(data).facts.dead = true;
-        let max_size = Int::from_u64(self.z3_ctx, i64::MAX as u64);
-        let align = self.align_sym(elem_ty);
-        let (new_data, base) = self.allocate_external(max_size, align, Some(elem_ty));
-        let mut ty = value.ty;
-        while let TyKind::Ref(_, inner, _) | TyKind::RawPtr(inner, _) = ty.kind() {
-            ty = *inner;
-        }
-        let Some(path) = self.container_ptr_field(ty) else {
+        // Zero-sized elements never require a backing allocation to grow.
+        if self.size_of_ty(elem_ty) == 0 && !mir_utils::ty_has_type_param(elem_ty) {
             return;
-        };
-        self.store_value(
-            header,
-            ty,
-            path,
-            VmValue {
-                z3_term: base,
-                ty: elem_ty,
-                provenance: Some(Provenance {
-                    alloc_id: new_data,
-                    offset: Int::from_u64(self.z3_ctx, 0),
-                    offset_kind: None,
-                }),
-                facts: ValueFacts {
-                    non_null: true,
-                    init: true,
-                    in_bounds: true,
-                    ..ValueFacts::default()
+        }
+        self.alloc_mut(data).facts.dead = true;
+        // The replacement's capacity is unknown, but finite. Use the same
+        // extent for bounds checks and capacity_from_value; in particular,
+        // capacity() + 1 must not be proved in bounds after growth.
+        let capacity = self.fresh_int("vec_capacity");
+        let elem_size = self.size_sym(elem_ty);
+        let size = Int::mul(self.z3_ctx, &[&capacity, &elem_size]);
+        let zero = Int::from_u64(self.z3_ctx, 0);
+        self.constraints.assertions.push(capacity.ge(&zero));
+        if let Some((_, max_size, _, _)) = self.integer_limits(self.tcx.types.isize) {
+            self.constraints.assertions.push(size.le(&max_size));
+        }
+        let align = self.align_sym(elem_ty);
+        let (new_data, base) = self.allocate_external(size, align, Some(elem_ty));
+        // Field loads take precedence over capacity_from_value. Replace any
+        // materialized capacity field together with the backing allocation.
+        // Moves can leave more than one materialized header for the same
+        // backing allocation. Update every matching view of the borrowed field.
+        for (header, ty) in targets {
+            let Some(path) = self.container_ptr_field(ty) else {
+                continue;
+            };
+            let capacity_fields: Vec<_> = self
+                .content(header)
+                .values
+                .iter()
+                .filter(|((view_ty, field_path), _)| self.is_cap_field_read(*view_ty, field_path))
+                .map(|((view_ty, field_path), value)| (*view_ty, field_path.clone(), value.ty))
+                .collect();
+            for (view_ty, field_path, field_ty) in capacity_fields {
+                let mut value = VmValue::new(capacity.clone(), field_ty);
+                value.facts.init = true;
+                self.store_value(header, view_ty, field_path, value);
+            }
+            self.store_value(
+                header,
+                ty,
+                path,
+                VmValue {
+                    z3_term: base.clone(),
+                    ty: elem_ty,
+                    provenance: Some(Provenance {
+                        alloc_id: new_data,
+                        offset: Int::from_u64(self.z3_ctx, 0),
+                        offset_kind: None,
+                    }),
+                    facts: ValueFacts {
+                        non_null: true,
+                        init: true,
+                        ..ValueFacts::default()
+                    },
+                    source: ValueSource::None,
                 },
-                source: ValueSource::None,
-            },
-        );
+            );
+        }
     }
 }

@@ -41,6 +41,41 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             .contains(&(address.clone(), ty))
     }
 
+    pub(crate) fn has_bounded_range(
+        &self,
+        alloc_id: AllocId,
+        address: &Int<'z3>,
+        bytes: &Int<'z3>,
+    ) -> bool {
+        let ranges = &self.alloc(alloc_id).facts.bounded_ranges;
+        if ranges.is_empty() {
+            return false;
+        }
+        let solver = z3::Solver::new(self.z3_ctx);
+        self.assert_path_constraints(&solver);
+        let end = Int::add(self.z3_ctx, &[address, bytes]);
+        ranges.iter().any(|(start, size)| {
+            let limit = Int::add(self.z3_ctx, &[start, size]);
+            let covered = z3::ast::Bool::and(
+                self.z3_ctx,
+                &[
+                    &address.ge(start),
+                    &address.le(&limit),
+                    &end.ge(start),
+                    &end.le(&limit),
+                ],
+            );
+            solver.push();
+            // A recorded byte range has nonnegative length, including when
+            // its usize count is no longer a live local in this frame.
+            solver.assert(&size.ge(&Int::from_u64(self.z3_ctx, 0)));
+            solver.assert(&covered.not());
+            let proved = solver.check() == z3::SatResult::Unsat;
+            solver.pop(1);
+            proved
+        })
+    }
+
     pub(crate) fn callsite_operand_for_local<'a>(
         &self,
         checkpoint: &'a Checkpoint<'tcx>,
