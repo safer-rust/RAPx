@@ -483,7 +483,7 @@ fn eff_wrapping_sub(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 
 fn eff_with_overflow(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     let callee = mir_utils::dep_callee_def_id(ctx.func);
-    let intrinsic = intrinsic_api::intrinsic_name(callee);
+    let intrinsic = intrinsic_api::intrinsic_name(ctx.tcx, callee);
     let op = match intrinsic.as_ref().map(|name| name.as_str()) {
         Some("add_with_overflow") => OverflowOp::Add,
         Some("sub_with_overflow") => OverflowOp::Sub,
@@ -544,7 +544,7 @@ fn layout_constant_effect<'tcx>(
 ) -> Option<CallEffect> {
     let ty = layout_call_ty(func)?;
     let callee = mir_utils::dep_callee_def_id(func)?;
-    let intrinsic = intrinsic_api::intrinsic_name(Some(callee));
+    let intrinsic = intrinsic_api::intrinsic_name(tcx, Some(callee));
     let intrinsic = intrinsic.as_ref().map(|name| name.as_str());
     let is_align = tcx.is_diagnostic_item(rustc_span::Symbol::intern("mem_align_of"), callee)
         || intrinsic == Some("align_of");

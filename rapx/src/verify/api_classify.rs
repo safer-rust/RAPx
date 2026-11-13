@@ -23,8 +23,8 @@ use rustc_middle::{
     ty::{Mutability, Ty, TyCtxt, TyKind},
 };
 
-fn intrinsic_named(callee: Option<DefId>, names: &[&str]) -> bool {
-    intrinsic_api::intrinsic_name(callee).is_some_and(|name| names.contains(&name.as_str()))
+fn intrinsic_named(tcx: TyCtxt<'_>, callee: Option<DefId>, names: &[&str]) -> bool {
+    intrinsic_api::intrinsic_name(tcx, callee).is_some_and(|name| names.contains(&name.as_str()))
 }
 
 /// Recognize a mutating Range call that returns an optional element.
@@ -107,12 +107,12 @@ pub fn is_as_ptr(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
     })
 }
 
-fn is_intrinsic_copy(callee: Option<DefId>) -> bool {
-    intrinsic_named(callee, &["copy", "copy_nonoverlapping"])
+fn is_intrinsic_copy(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
+    intrinsic_named(tcx, callee, &["copy", "copy_nonoverlapping"])
 }
 
-pub fn is_intrinsic_ptr_offset_from(callee: Option<DefId>) -> bool {
-    intrinsic_named(callee, &["ptr_offset_from", "ptr_offset_from_unsigned"])
+pub fn is_intrinsic_ptr_offset_from(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
+    intrinsic_named(tcx, callee, &["ptr_offset_from", "ptr_offset_from_unsigned"])
 }
 
 // ── Layout constants ──────────────────────────────────────────────
@@ -121,11 +121,11 @@ pub fn is_intrinsic_ptr_offset_from(callee: Option<DefId>) -> bool {
 /// `align_of::<T>()`. The runtime intrinsics (`size_of_val`, `align_of_val`,
 /// `pref_align_of`, `*_val_raw`, …) are *not* classified here.
 pub fn is_layout_constant(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
-    is_intrinsic_layout_constant(callee) || is_mem_layout_constant(tcx, callee)
+    is_intrinsic_layout_constant(tcx, callee) || is_mem_layout_constant(tcx, callee)
 }
 
-fn is_intrinsic_layout_constant(callee: Option<DefId>) -> bool {
-    intrinsic_named(callee, &["size_of", "align_of"])
+fn is_intrinsic_layout_constant(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
+    intrinsic_named(tcx, callee, &["size_of", "align_of"])
 }
 
 pub fn is_mem_layout_constant(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
@@ -144,7 +144,7 @@ pub fn is_ptr_write(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
 }
 
 pub fn is_ptr_copy(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
-    is_intrinsic_copy(callee)
+    is_intrinsic_copy(tcx, callee)
         || callee.is_some_and(|did| other_api::is_ptr_copy(tcx, did))
 }
 
@@ -152,7 +152,7 @@ pub fn is_ptr_copy(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
 /// (`ptr::read`/`read_unaligned`/`read_volatile`, pointer-copy wrappers,
 /// `MaybeUninit::assume_init_read`, and intrinsics `copy`/`copy_nonoverlapping`).
 pub fn is_ptr_read(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
-    is_intrinsic_copy(callee)
+    is_intrinsic_copy(tcx, callee)
         || callee.is_some_and(|did| crate::helpers::mir_utils::is_ptr_copy_wrapper(tcx, did))
         || callee.is_some_and(|did| other_api::is_ptr_read(tcx, did))
         || callee.is_some_and(|did| other_api::is_assume_init_read(tcx, did))
@@ -162,7 +162,7 @@ pub fn is_ptr_read(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
 /// Intrinsic copies, pointer-copy wrappers, `write`, and `write_bytes` do not
 /// require initialized destination bytes for `Init`/`Typed` obligations.
 pub fn is_mem_copy_or_write(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
-    is_intrinsic_copy(callee)
+    is_intrinsic_copy(tcx, callee)
         || callee.is_some_and(|did| crate::helpers::mir_utils::is_ptr_copy_wrapper(tcx, did))
         || callee.is_some_and(|did| other_api::is_ptr_write_to_uninit(tcx, did))
 }

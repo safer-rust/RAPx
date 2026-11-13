@@ -144,7 +144,7 @@ impl Callbacks for RapCallback {
     fn after_analysis<'tcx>(&mut self, _compiler: &Compiler, tcx: TyCtxt<'tcx>) -> Compilation {
         rap_trace!("Execute after_analysis() of compiler callbacks");
         rustc_public::rustc_internal::run(tcx, || {
-            def_ids::init(tcx);
+            def_ids::type_ids::init(tcx);
             if self.is_building_test_crate() {
                 start_analyzer(tcx, self);
             } else {
