@@ -144,6 +144,15 @@ fn align_extended_unsound_cases() {
     assert_contain(&output, "Align | Failed");
 }
 
+#[test]
+fn align_projection_pointee_cases() {
+    let output = run_with_args("verify_units/align_unsound_19", CMD_VERIFY_TARGETED);
+    let unsound = extract_block_after(&output, "function: unsound_projection_pointee");
+    assert_contain(unsound, "Align | Failed");
+    assert_function_result(&output, "unsound_projection_pointee", "UNSOUND");
+    assert_function_result(&output, "sound_projection_pointee", "SOUND");
+}
+
 // Allocated
 sound_tests! {
     allocated_sound_01: "verify_units/allocated_sound_01" => "sound_stack_local_allocated",
