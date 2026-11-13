@@ -68,7 +68,18 @@ impl PropertyChecker {
         let ty_arg = property.ty_arg(1);
         let align = match ty_arg {
             Some(ty) => {
-                let resolved = vm_state.instantiate_callsite_ty(checkpoint, ty);
+                let mut resolved = vm_state.instantiate_callsite_ty(checkpoint, ty);
+                // Generic MIR can name the pointee as a projection such as
+                // `<I as SliceIndex<[T]>>::Output`. Use the pointee type of the
+                // checked value instead, as `check_allocated` does.
+                if matches!(resolved.kind(), TyKind::Alias(..)) {
+                    resolved = mir_utils::pointee_ty(value.ty).unwrap_or(resolved);
+                }
+                // A projection that is still unresolved has no known alignment,
+                // so it must not reach the `align == 1` fast path below.
+                if matches!(resolved.kind(), TyKind::Alias(..)) {
+                    return CheckResult::Unknown(UnknownReason::Unimplemented);
+                }
                 vm_state.align_sym_read(resolved)
             }
             None => Int::from_u64(vm_state.z3_ctx, 1),
