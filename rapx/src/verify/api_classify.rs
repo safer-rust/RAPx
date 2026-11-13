@@ -17,7 +17,7 @@ use crate::def_ids::{
     other_api, type_ids,
 };
 use crate::verify::pointer_origin;
-use rustc_hir::def_id::DefId;
+use rustc_hir::{def::DefKind, def_id::DefId};
 use rustc_middle::{
     mir::Operand,
     ty::{Mutability, Ty, TyCtxt, TyKind},
@@ -37,19 +37,24 @@ pub(crate) fn is_range_advancing_call<'tcx>(
     else {
         return false;
     };
-    let sig = tcx.fn_sig(callee).skip_binder();
-    let inputs = sig.inputs().skip_binder();
+    if !matches!(tcx.def_kind(callee), DefKind::Fn | DefKind::AssocFn) {
+        return false;
+    }
     let range_owner = crate::helpers::name::get_struct_self_ty(tcx, callee).is_some_and(|ty| {
         matches!(ty.kind(), TyKind::Adt(adt, _)
             if lang_api::matches(tcx, adt.did(), LangItem::Range)
                 || lang_api::matches(tcx, adt.did(), LangItem::RangeInclusiveStruct))
     });
+    if !range_owner {
+        return false;
+    }
+    let sig = tcx.fn_sig(callee).skip_binder();
+    let inputs = sig.inputs().skip_binder();
     inputs.len() == 1
         && matches!(
             inputs.first().map(|ty| ty.kind()),
             Some(TyKind::Ref(_, _, Mutability::Mut))
         )
-        && range_owner
         && matches!(
             sig.output().skip_binder().kind(),
             TyKind::Adt(adt, _) if tcx.is_diagnostic_item(rustc_span::sym::Option, adt.did())
@@ -167,7 +172,9 @@ pub fn is_mem_copy_or_write(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
 // accounts for shared ownership and clone counts.
 /// Mutability of a reference returned from a `NonNull<T>` receiver.
 pub fn nonnull_ref_return(tcx: TyCtxt<'_>, callee: DefId) -> Option<rustc_middle::mir::Mutability> {
-    if !tcx.is_mir_available(callee) {
+    if !matches!(tcx.def_kind(callee), DefKind::Fn | DefKind::AssocFn)
+        || !tcx.is_mir_available(callee)
+    {
         return None;
     }
     let sig = tcx.fn_sig(callee).skip_binder();

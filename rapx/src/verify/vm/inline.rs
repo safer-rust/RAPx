@@ -187,7 +187,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         // temps) *before* the caller's address map is saved away, so that
         // `exec_assign` can resolve `(*self).field = val` writes back to the
         // caller's referent while the callee executes.
-        let inline_arg_referents: Vec<Option<Local>> = arg_values
+        let caller_local_count = self.body().local_decls.len();
+        let resolved_arg_referents: Vec<Option<Local>> = arg_values
             .iter()
             .enumerate()
             .map(|(index, value)| {
@@ -219,6 +220,17 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     .then_some(local)
                 })
             })
+            .collect();
+        if resolved_arg_referents
+            .iter()
+            .flatten()
+            .any(|local| local.as_usize() >= caller_local_count)
+        {
+            self.diagnostics.mark_unsupported();
+        }
+        let inline_arg_referents: Vec<Option<Local>> = resolved_arg_referents
+            .into_iter()
+            .map(|local| local.filter(|local| local.as_usize() < caller_local_count))
             .collect();
         let caller_referents = inline_arg_referents.clone();
         // Whole-place reborrow referents, resolved from the *caller's* MIR
