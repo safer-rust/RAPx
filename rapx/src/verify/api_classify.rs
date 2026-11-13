@@ -130,19 +130,6 @@ pub fn is_mem_layout_constant(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
     })
 }
 
-/// Whether `callee` is `ptr::align_offset` / `*const T::align_offset` /
-/// `*mut T::align_offset`.
-pub fn is_align_offset(callee: Option<DefId>) -> bool {
-    other_api::matches_any(
-        callee,
-        &[
-            other_api::ptr_align_offset(),
-            other_api::const_ptr_align_offset(),
-            other_api::mut_ptr_align_offset(),
-        ],
-    )
-}
-
 // ── Raw pointer read / write ──────────────────────────────────────
 
 /// Whether `callee` writes through a raw pointer to its first argument

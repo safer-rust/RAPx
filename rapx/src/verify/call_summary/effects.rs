@@ -16,7 +16,7 @@ use crate::{
     def_ids::{
         intrinsic_api,
         lang_api::{self, LangItem},
-        nomir_api,
+        nomir_api, other_api,
     },
     helpers::{
         mir_utils::{self, type_layout},
@@ -58,8 +58,6 @@ static REGISTRY: &[Entry] = &[
     ED!(nomir_api::is_global_alloc_zeroed_shim, eff_nullable_zeroed_allocation),
     ED!(nomir_api::is_alloc_shim_marker, eff_no_effect),
     ED!(nomir_api::is_slice_to_vec, eff_vec_from_slice),
-    // ── Other APIs ──────────────────────────────────────────────────
-    ED!(api_classify::is_align_offset, eff_align_offset),
 ];
 
 #[derive(Deserialize)]
@@ -174,6 +172,9 @@ fn lookup_builder(tcx: TyCtxt<'_>, callee: Option<DefId>) -> Option<EffectBuilde
         {
             return Some(builder);
         }
+    }
+    if other_api::is_align_offset(tcx, id) {
+        return Some(eff_align_offset);
     }
     REGISTRY
         .iter()
