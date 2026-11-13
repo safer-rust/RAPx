@@ -220,6 +220,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
                 bind_checkpoint.map(|c| c.kind),
                 Some(CheckpointKind::RawPtrDeref)
                     | Some(CheckpointKind::StaticMutAccess)
+                    | Some(CheckpointKind::CopyNonOverlapping)
                     | Some(CheckpointKind::UnsafeCall)
             ) || crate::verify::api_classify::is_manually_drop_drop(
                 visitor.tcx,

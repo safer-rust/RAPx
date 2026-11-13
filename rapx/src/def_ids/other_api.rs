@@ -105,7 +105,3 @@ pub fn is_drop_fn(tcx: TyCtxt<'_>, target: DefId) -> bool {
         || is_drop_in_place(tcx, target)
         || is_manually_drop(tcx, target)
 }
-
-pub(crate) fn matches_any(target: Option<DefId>, candidates: &[Option<DefId>]) -> bool {
-    target.is_some_and(|id| candidates.contains(&Some(id)))
-}

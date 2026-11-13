@@ -259,7 +259,7 @@ impl<'tcx> AliasGraph<'tcx> {
         }
 
         match target_id {
-            Some(id) if super::alias::is_no_alias_intrinsic(id) => {}
+            Some(id) if super::alias::is_no_alias_intrinsic(self.tcx(), id) => {}
             Some(id) if !self.tcx().is_mir_available(id) => {
                 let (ret_val, _) = merge_slots[0];
                 if ret_val != 0 && self.value_is_ptr(ret_val) {

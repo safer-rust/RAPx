@@ -798,6 +798,7 @@ impl<'tcx> VerifyEngine<'tcx> {
             block: checkpoint.block,
             args: Vec::new(),
             kind: crate::verify::checkpoint::CheckpointKind::UnsafeCall,
+            requires: Vec::new(),
             destination: None,
             is_mut_ref: false,
             statement_index: 0,

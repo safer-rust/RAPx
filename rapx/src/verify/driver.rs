@@ -211,7 +211,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
     fn check_property_paths(
         &self,
         cache: &mut VmCache<'_, 'tcx>,
-        view: &CheckpointCheckView<'_, '_, 'tcx>,
+        view: &CheckpointCheckView<'_, 'tcx>,
         property: &Property<'tcx>,
     ) -> Vec<(CheckResult, String)> {
         match property {
@@ -241,7 +241,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
     fn combine_check_paths(
         &self,
         cache: &mut VmCache<'_, 'tcx>,
-        view: &CheckpointCheckView<'_, '_, 'tcx>,
+        view: &CheckpointCheckView<'_, 'tcx>,
         children: &[Property<'tcx>],
     ) -> Vec<(CheckResult, String)> {
         let mut children = children.iter();
@@ -287,7 +287,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
     /// Iterate over checkpoints together with the shared path tree and properties.
     pub(crate) fn iter_callsite_checks(
         &self,
-    ) -> impl Iterator<Item = CheckpointCheckView<'_, 'target, 'tcx>> + '_ {
+    ) -> impl Iterator<Item = CheckpointCheckView<'_, 'tcx>> + '_ {
         let mut checkpoint_index = 0usize;
         self.checkpoints.iter().filter_map(move |checkpoint| {
             let properties = self.target.properties_for_callsite(checkpoint);
@@ -593,7 +593,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
 
 /// Returns whether a function returns the owning struct type (i.e. is a constructor).
 /// Borrowed view of all verification inputs for one unsafe checkpoint.
-pub(crate) struct CheckpointCheckView<'view, 'target, 'tcx> {
+pub(crate) struct CheckpointCheckView<'view, 'tcx> {
     /// Position among checkpoints that have properties to verify.
     pub checkpoint_index: usize,
     /// The concrete unsafe checkpoint in the caller MIR body.
@@ -601,7 +601,7 @@ pub(crate) struct CheckpointCheckView<'view, 'target, 'tcx> {
     /// Per-checkpoint prefix tree of all verification paths to this checkpoint.
     pub tree: &'view PathTree,
     /// Required safety properties for the unsafe callee.
-    pub properties: &'target [Property<'tcx>],
+    pub properties: &'view [Property<'tcx>],
 }
 
 /// Analysis pass that runs verification and emits function-level summaries.

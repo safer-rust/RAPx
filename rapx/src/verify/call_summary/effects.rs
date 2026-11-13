@@ -36,13 +36,13 @@ pub(crate) struct EffCtx<'a, 'tcx> {
 // ── Registry table ─────────────────────────────────────────────────────
 
 struct Entry {
-    matches: fn(Option<DefId>) -> bool,
+    matches: fn(TyCtxt<'_>, Option<DefId>) -> bool,
     effects: EffectBuilder,
 }
 
 type EffectBuilder = for<'a, 'tcx> fn(&EffCtx<'a, 'tcx>) -> Vec<CallEffect>;
 
-/// `DefId`-based matcher row (`fn(Option<DefId>) -> bool`).
+/// `DefId`-based matcher row (`fn(TyCtxt, Option<DefId>) -> bool`).
 macro_rules! ED {
     ($m:expr, $e:ident) => {
         Entry {
@@ -178,7 +178,7 @@ fn lookup_builder(tcx: TyCtxt<'_>, callee: Option<DefId>) -> Option<EffectBuilde
     }
     REGISTRY
         .iter()
-        .find(|entry| (entry.matches)(callee))
+        .find(|entry| (entry.matches)(tcx, callee))
         .map(|entry| entry.effects)
 }
 
@@ -483,7 +483,7 @@ fn eff_wrapping_sub(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 
 fn eff_with_overflow(ctx: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     let callee = mir_utils::dep_callee_def_id(ctx.func);
-    let intrinsic = intrinsic_api::name(callee);
+    let intrinsic = intrinsic_api::intrinsic_name(callee);
     let op = match intrinsic.as_ref().map(|name| name.as_str()) {
         Some("add_with_overflow") => OverflowOp::Add,
         Some("sub_with_overflow") => OverflowOp::Sub,
@@ -544,7 +544,7 @@ fn layout_constant_effect<'tcx>(
 ) -> Option<CallEffect> {
     let ty = layout_call_ty(func)?;
     let callee = mir_utils::dep_callee_def_id(func)?;
-    let intrinsic = intrinsic_api::name(Some(callee));
+    let intrinsic = intrinsic_api::intrinsic_name(Some(callee));
     let intrinsic = intrinsic.as_ref().map(|name| name.as_str());
     let is_align = tcx.is_diagnostic_item(rustc_span::Symbol::intern("mem_align_of"), callee)
         || intrinsic == Some("align_of");

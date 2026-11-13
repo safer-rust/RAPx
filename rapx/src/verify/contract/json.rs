@@ -486,6 +486,27 @@ pub(crate) fn query_json_contracts<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Ve
     let Some(entries) = get_std_contracts_from_json(tcx, def_id) else {
         return Vec::new();
     };
+    parse_json_contracts(tcx, def_id, entries)
+}
+
+/// Parse the contract at an explicit JSON key using a function's parameter types.
+pub(crate) fn query_json_contracts_at_path<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    signature_def_id: DefId,
+    path: &str,
+) -> Vec<Property<'tcx>> {
+    let db = load_std_contracts_json();
+    let Some(entries) = db.get(path) else {
+        return Vec::new();
+    };
+    parse_json_contracts(tcx, signature_def_id, entries)
+}
+
+fn parse_json_contracts<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    def_id: DefId,
+    entries: &[JsonProperty],
+) -> Vec<Property<'tcx>> {
     let (param_names, _) = crate::helpers::name::parse_signature(tcx, def_id);
     let has_names = !param_names.is_empty() && !param_names[0].chars().all(|c| c.is_ascii_digit());
 

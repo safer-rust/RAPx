@@ -210,7 +210,7 @@ impl<'tcx> CallSiteIndex<'tcx> {
                 // An instantiated root can resolve Clone at this callsite.
                 // Leave the call in the path so the VM executes that exact MIR.
                 if self.bodies.contains_key(&0)
-                    && crate::def_ids::nomir_api::clone() == Some(base_callee)
+                    && crate::def_ids::nomir_api::is_clone(self.tcx, base_callee)
                     && mir_utils::resolve_callee_instance(self.tcx, caller, func).is_some_and(
                         |instance| {
                             matches!(instance.def, InstanceKind::Item(_))

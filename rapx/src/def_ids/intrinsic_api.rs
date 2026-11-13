@@ -28,22 +28,11 @@ pub fn init(tcx: TyCtxt<'_>) {
     });
 }
 
-pub fn name(callee: Option<DefId>) -> Option<Symbol> {
+pub(crate) fn intrinsic_name(callee: Option<DefId>) -> Option<Symbol> {
     IDS.get()
         .expect("Intrinsic IDs have not been initialized")
         .get(&callee?)
         .copied()
-}
-
-fn get(name: &str) -> Option<DefId> {
-    IDS.get()
-        .expect("Intrinsic IDs have not been initialized")
-        .iter()
-        .find_map(|(&id, intrinsic)| (intrinsic.as_str() == name).then_some(id))
-}
-
-pub fn copy_nonoverlapping_id() -> Option<DefId> {
-    get("copy_nonoverlapping")
 }
 
 pub fn is_intrinsic(tcx: TyCtxt<'_>, callee: DefId) -> bool {

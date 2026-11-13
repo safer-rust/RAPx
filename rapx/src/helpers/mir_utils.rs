@@ -1413,7 +1413,7 @@ pub(crate) fn is_ptr_copy_wrapper(tcx: TyCtxt<'_>, callee: DefId) -> bool {
             TerminatorKind::Call { func, .. } | TerminatorKind::TailCall { func, .. }
                 if dep_callee_def_id(func).is_some_and(|id| {
                     other_api::is_ptr_copy(tcx, id)
-                        || crate::def_ids::intrinsic_api::name(Some(id)).is_some_and(|name| matches!(name.as_str(), "copy" | "copy_nonoverlapping"))
+                        || crate::def_ids::intrinsic_api::intrinsic_name(Some(id)).is_some_and(|name| matches!(name.as_str(), "copy" | "copy_nonoverlapping"))
                 }))
     })
 }

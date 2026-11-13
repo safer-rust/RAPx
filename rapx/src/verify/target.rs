@@ -46,7 +46,7 @@ use crate::helpers::mir_utils::{
     collect_return_block_indices, has_rapx_verify_attr, is_std_crate_def_id, is_trait_unsafe,
     resolve_impl_self_ty_def_id,
 };
-use crate::verify::checkpoint::{Checkpoint, collect_unsafe_callsites};
+use crate::verify::checkpoint::{Checkpoint, CheckpointKind, collect_unsafe_callsites};
 
 /// A list of parsed `requires` contracts.
 pub(crate) type FnContracts<'tcx> = Vec<Property<'tcx>>;
@@ -99,10 +99,9 @@ pub(crate) struct FunctionTarget<'tcx> {
     /// verification results under the owning struct in diagnostic output.
     pub owner_struct_def_id: Option<DefId>,
 
-    /// All call-terminator-based unsafe checkpoints found in this function's MIR.
+    /// All unsafe checkpoints found in this function's MIR.
     ///
-    /// Each [`Checkpoint`] records the callee `DefId`, the source-span of the
-    /// call, the basic-block location, and the MIR operands passed as arguments.
+    /// Each [`Checkpoint`] records its MIR location, operands, and callee when present.
     pub checkpoints: Vec<Checkpoint<'tcx>>,
 
     /// Safety contracts demanded by each unique unsafe callee reachable from
@@ -181,10 +180,10 @@ impl<'tcx> FunctionTarget<'tcx> {
             )
     }
 
-    pub(crate) fn properties_for_callsite(
-        &self,
-        checkpoint: &Checkpoint<'tcx>,
-    ) -> &[Property<'tcx>] {
+    pub(crate) fn properties_for_callsite<'a>(
+        &'a self,
+        checkpoint: &'a Checkpoint<'tcx>,
+    ) -> &'a [Property<'tcx>] {
         let loc = checkpoint.location();
         match checkpoint.kind {
             crate::verify::checkpoint::CheckpointKind::RawPtrDeref => self
@@ -204,6 +203,7 @@ impl<'tcx> FunctionTarget<'tcx> {
                 .and_then(|callee| self.callee_requires.get(&callee))
                 .map(Vec::as_slice)
                 .unwrap_or(&[]),
+            crate::verify::checkpoint::CheckpointKind::CopyNonOverlapping => &checkpoint.requires,
         }
     }
 }
@@ -785,9 +785,26 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
                 callee_bodies.insert(callee, &*self.tcx.arena.alloc(instantiated));
             }
         }
-        let checkpoints = collect_unsafe_callsites(self.tcx, def_id);
+        let mut checkpoints = collect_unsafe_callsites(self.tcx, def_id);
+        for checkpoint in checkpoints
+            .iter_mut()
+            .filter(|checkpoint| checkpoint.kind == CheckpointKind::CopyNonOverlapping)
+        {
+            checkpoint.requires = checkpoint
+                .callee
+                .map(|callee| {
+                    super::contract::json::query_json_contracts_at_path(
+                        self.tcx,
+                        callee,
+                        "core::intrinsics::copy_nonoverlapping",
+                    )
+                })
+                .filter(|requires| !requires.is_empty())
+                .unwrap_or_else(|| vec![Property::new_atom(PropertyKind::Unknown, Vec::new())]);
+        }
         let unsafe_callees: HashSet<_> = checkpoints
             .iter()
+            .filter(|checkpoint| checkpoint.kind == CheckpointKind::UnsafeCall)
             .filter_map(|checkpoint| checkpoint.callee)
             .collect();
         let callee_requires = unsafe_callees
@@ -1981,6 +1998,7 @@ fn build_raw_ptr_deref_checks<'tcx>(
                     block: info.block,
                     args: vec![info.ptr_operand],
                     kind: crate::verify::checkpoint::CheckpointKind::RawPtrDeref,
+                    requires: Vec::new(),
                     destination: Some(info.destination),
                     is_mut_ref: info.is_mut_ref,
                     statement_index: info.statement_index,
@@ -2032,6 +2050,7 @@ fn build_static_mut_checks<'tcx>(
                     block: info.block,
                     args: vec![info.ptr_operand],
                     kind: crate::verify::checkpoint::CheckpointKind::StaticMutAccess,
+                    requires: Vec::new(),
                     destination: None,
                     is_mut_ref: false,
                     statement_index: 0,

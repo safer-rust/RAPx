@@ -1,7 +1,7 @@
 //! Verification checkpoint types and their MIR collection.
 //!
 //! A [`Checkpoint`] is a point in a function body that must be verified: an
-//! unsafe call, a raw-pointer dereference, or a `static mut` access.  The
+//! unsafe call, a MIR intrinsic, a raw-pointer dereference, or a `static mut` access.  The
 //! `collect_*` functions scan MIR for them; the rest of the verifier consumes
 //! the resulting records.
 
@@ -26,6 +26,7 @@ use crate::helpers::{
     mir_utils::{dep_callee_def_id, pointee_ty, resolve_callee_impl},
     name::get_cleaned_def_path_name,
 };
+use super::contract::Property;
 
 /// Stable MIR location for a call terminator inside one function body.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -41,6 +42,8 @@ pub struct CheckpointLocation {
 pub enum CheckpointKind {
     /// A real unsafe function call.
     UnsafeCall,
+    /// A MIR `CopyNonOverlapping` statement.
+    CopyNonOverlapping,
     /// A raw pointer dereference.
     RawPtrDeref,
     /// A mutable static variable access.
@@ -49,7 +52,7 @@ pub enum CheckpointKind {
 
 /// A verification checkpoint in one MIR body.
 ///
-/// Unifies unsafe calls, raw-pointer dereferences, and mutable static
+/// Unifies unsafe calls, MIR intrinsics, raw-pointer dereferences, and mutable static
 /// accesses under a single type so they all flow through the same path
 /// extraction and SMT verification pipeline.
 #[derive(Clone, Debug)]
@@ -59,6 +62,8 @@ pub struct Checkpoint<'tcx> {
     pub block: BasicBlock,
     pub args: Vec<Operand<'tcx>>,
     pub kind: CheckpointKind,
+    /// Requirements attached directly to this MIR operation.
+    pub(crate) requires: Vec<Property<'tcx>>,
     pub destination: Option<Local>,
     /// For `RawPtrDeref` checkpoints: whether the deref produces a mutable
     /// reference (`&mut *ptr`) rather than a shared one (`&*ptr`).
@@ -79,12 +84,15 @@ impl<'tcx> Checkpoint<'tcx> {
 
     /// Return a human-readable label for diagnostics.
     pub fn callee_name(&self, tcx: TyCtxt<'tcx>) -> String {
+        if self.kind == CheckpointKind::CopyNonOverlapping {
+            return "copy_nonoverlapping".to_string();
+        }
         match self.callee {
             Some(def_id) => get_cleaned_def_path_name(tcx, def_id),
             None => match self.kind {
                 CheckpointKind::RawPtrDeref => "raw-ptr-deref".to_string(),
                 CheckpointKind::StaticMutAccess => "static-mut-access".to_string(),
-                CheckpointKind::UnsafeCall => "unknown-callee".to_string(),
+                _ => "unknown-callee".to_string(),
             },
         }
     }
@@ -156,19 +164,21 @@ pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<C
     for (bb, data) in body.basic_blocks.iter_enumerated() {
         for (statement_index, statement) in data.statements.iter().enumerate() {
             if let StatementKind::Intrinsic(intrinsic) = &statement.kind {
-                let (callee, args) = match &**intrinsic {
+                let (kind, callee, args) = match &**intrinsic {
                     NonDivergingIntrinsic::CopyNonOverlapping(copy) => (
-                        crate::def_ids::intrinsic_api::copy_nonoverlapping_id(),
+                        CheckpointKind::CopyNonOverlapping,
+                        tcx.get_diagnostic_item(rustc_span::sym::ptr_copy_nonoverlapping),
                         vec![copy.src.clone(), copy.dst.clone(), copy.count.clone()],
                     ),
-                    _ => (None, Vec::new()),
+                    _ => (CheckpointKind::UnsafeCall, None, Vec::new()),
                 };
                 checkpoints.push(Checkpoint {
                     caller: def_id,
                     callee,
                     block: bb,
                     args,
-                    kind: CheckpointKind::UnsafeCall,
+                    kind,
+                    requires: Vec::new(),
                     destination: None,
                     is_mut_ref: false,
                     statement_index,
@@ -203,6 +213,7 @@ pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<C
                     block: bb,
                     args: args.iter().map(|arg| arg.node.clone()).collect(),
                     kind: CheckpointKind::UnsafeCall,
+                    requires: Vec::new(),
                     destination,
                     is_mut_ref: false,
                     statement_index: 0,
@@ -229,6 +240,7 @@ pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<C
             block: bb,
             args: args.iter().map(|arg| arg.node.clone()).collect(),
             kind: CheckpointKind::UnsafeCall,
+            requires: Vec::new(),
             destination,
             is_mut_ref: false,
             statement_index: 0,

@@ -24,7 +24,7 @@ use rustc_middle::{
 };
 
 fn intrinsic_named(callee: Option<DefId>, names: &[&str]) -> bool {
-    intrinsic_api::name(callee).is_some_and(|name| names.contains(&name.as_str()))
+    intrinsic_api::intrinsic_name(callee).is_some_and(|name| names.contains(&name.as_str()))
 }
 
 /// Recognize a mutating Range call that returns an optional element.

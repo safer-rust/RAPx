@@ -11,5 +11,4 @@ use rustc_middle::ty::TyCtxt;
 pub(crate) fn init(tcx: TyCtxt<'_>) {
     type_ids::init(tcx);
     intrinsic_api::init(tcx);
-    nomir_api::init(tcx);
 }
