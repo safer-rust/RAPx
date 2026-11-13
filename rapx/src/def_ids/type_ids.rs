@@ -109,6 +109,7 @@ fn init_types(tcx: TyCtxt) -> Types {
         }
     }
 
+    #[cfg(not(rapx_has_public_adts))]
     for krate in std::iter::once(rustc_public::local_crate())
         .chain(rustc_public::external_crates())
         .filter(|k| ["core", "std", "alloc"].iter().any(|n| *n == k.name))
@@ -332,6 +333,7 @@ pub fn negative_type_defs(name: &str) -> &'static [DefId] {
 /// The ADT `DefId` that `def_id`'s associated function belongs to (the impl's
 /// `self` type), used to resolve an ADT that has no lang/diagnostic item from
 /// one of its emitted methods (e.g. `slice::IterMut`).
+#[cfg(not(rapx_has_public_adts))]
 fn assoc_self_adt_did(tcx: TyCtxt, def_id: DefId) -> Option<DefId> {
     let ty = crate::helpers::name::get_struct_self_ty(tcx, def_id)?;
     match ty.kind() {

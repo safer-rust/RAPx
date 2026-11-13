@@ -1,4 +1,4 @@
-//! Known APIs without MIR and trait calls handled by name.
+//! Known standard-library APIs without MIR.
 
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
@@ -24,27 +24,6 @@ fn matches_path(tcx: TyCtxt<'_>, did: DefId, paths: &[&str]) -> bool {
 
 fn is_no_mir(tcx: TyCtxt<'_>, did: DefId) -> bool {
     !tcx.is_mir_available(did) && !intrinsic_api::is_intrinsic(tcx, did)
-}
-
-pub fn is_call_mut(tcx: TyCtxt<'_>, did: DefId) -> bool {
-    matches_path(
-        tcx,
-        did,
-        &[
-            "std::ops::FnMut::call_mut",
-            "core::ops::FnMut::call_mut",
-            "std::ops::function::FnMut::call_mut",
-            "core::ops::function::FnMut::call_mut",
-        ],
-    )
-}
-
-pub fn is_clone(tcx: TyCtxt<'_>, did: DefId) -> bool {
-    matches_path(
-        tcx,
-        did,
-        &["std::clone::Clone::clone", "core::clone::Clone::clone"],
-    )
 }
 
 pub fn is_slice_to_vec(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {

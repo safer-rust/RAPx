@@ -21,6 +21,21 @@ pub(crate) fn is_fn_trait(tcx: TyCtxt<'_>, trait_id: DefId) -> bool {
         || matches(tcx, trait_id, LangItem::FnOnce)
 }
 
+fn is_trait_method(tcx: TyCtxt<'_>, did: DefId, trait_item: LangItem, name: &str) -> bool {
+    tcx.opt_associated_item(did)
+        .and_then(|item| item.trait_container(tcx))
+        .is_some_and(|trait_id| matches(tcx, trait_id, trait_item))
+        && tcx.item_name(did).as_str() == name
+}
+
+pub(crate) fn is_call_mut(tcx: TyCtxt<'_>, did: DefId) -> bool {
+    is_trait_method(tcx, did, LangItem::FnMut, "call_mut")
+}
+
+pub(crate) fn is_clone(tcx: TyCtxt<'_>, did: DefId) -> bool {
+    is_trait_method(tcx, did, LangItem::Clone, "clone")
+}
+
 /// The plain `panic!` entry point, which only consumes a static message.
 pub(crate) fn is_panic_exit(tcx: TyCtxt<'_>, callee: DefId) -> bool {
     matches(tcx, callee, LangItem::Panic)
