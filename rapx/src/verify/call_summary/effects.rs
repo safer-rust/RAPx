@@ -197,11 +197,6 @@ pub(crate) fn lookup_effect<'tcx>(
     callee: Option<DefId>,
     func: &Operand<'tcx>,
 ) -> Option<CallEffectSummary> {
-    if let Some((owner, delta)) =
-        callee.and_then(|did| crate::def_ids::other_api::ref_count_adjust(tcx, did))
-    {
-        return Some(vec![CallEffect::AdjustRefCount { arg: 0, owner, delta }]);
-    }
     if let Some(builder) = lookup_builder(tcx, callee) {
         let ctx = EffCtx {
             tcx,

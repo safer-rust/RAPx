@@ -251,6 +251,9 @@ pub(crate) fn exec_drop<'z3, 'tcx>(state: &mut VmState<'z3, 'tcx>, place: &Place
             }
         }
         state.alloc_mut(alloc_id).facts.dead = true;
+        if place.projection.is_empty() {
+            state.invalidate_owner_field(place.local);
+        }
     }
 }
 

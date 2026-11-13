@@ -471,14 +471,13 @@ impl<'tcx> BackwardSlicer<'tcx> {
 
 // ── property helpers ──────────────────────────────────────────────────
 
-/// Whether a property's checker reads allocation liveness (`alloc.facts.dead`), so
-/// the backward slice must keep `StorageDead`/`StorageLive`/`Drop` unconditionally
-/// (the allocation owner may not be reachable from the pointer target, e.g. a
-/// raw pointer into a separately-owned Vec/Box buffer).
+/// Whether a property can depend on state changes outside its direct value
+/// dependencies, including drops and raw-share updates before an index read.
 fn needs_invalidation_tracking(kind: &contract::PropertyKind) -> bool {
     matches!(
         kind,
-        contract::PropertyKind::Allocated
+        contract::PropertyKind::InBound
+            | contract::PropertyKind::Allocated
             | contract::PropertyKind::Init
             | contract::PropertyKind::Alive
             | contract::PropertyKind::ValidString

@@ -372,6 +372,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
         let mut completed = Vec::new();
         for mut state in returns.unwrap() {
+            state.recover_leaked_owner_shares(callee_def_id);
             let return_val = state.local_value(Local::from_usize(0)).cloned();
             let return_inner_uninit = state
                 .current_frame

@@ -2,11 +2,12 @@ use rustc_middle::{
     mir::{Local, Operand},
     ty::TyKind,
 };
+use z3::ast::Int;
 
 use crate::helpers::mir_utils;
 use crate::verify::api_classify;
 
-use super::super::super::state::{ValueFacts, ValueSource, VmState, VmValue};
+use super::super::super::state::{Provenance, ValueFacts, ValueSource, VmState, VmValue};
 
 impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     pub(crate) fn materialize_constructor_result(
@@ -23,6 +24,45 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 destination,
                 VmValue::new(self.fresh_int("ctor_unknown"), ty),
             );
+            return;
+        }
+        // A reconstructed owner points into the raw pointer's allocation.
+        if let TyKind::Adt(adt, _) = ty.kind()
+            && let Some((source, owner)) =
+                super::super::super::alias_hazard::reconstructed_owner(self.tcx, callee)
+            && adt.did() == owner
+            && let Some(pointer) = args.get(source)
+            && let Some(provenance) = pointer.provenance.as_ref()
+            && let TyKind::RawPtr(data_ty, _) = pointer.ty.kind()
+            && let Some(path) = self.container_ptr_field(ty)
+            && let Some(field_ty) = self.field_type_at(destination, &path)
+            && let Some(inner_ty) = self.find_nn_pointee(field_ty)
+            && let TyKind::Adt(inner, inner_args) = inner_ty.kind()
+            && !inner.is_enum()
+            && let Some((value_field, field)) = inner
+                .non_enum_variant()
+                .fields
+                .iter()
+                .enumerate()
+                .last()
+            && mir_utils::field_ty(self.tcx, field, inner_args) == *data_ty
+        {
+            let offset = mir_utils::layout_of_ty(self.tcx, callee, inner_ty)
+                .map(|layout| Int::from_u64(self.z3_ctx, layout.fields.offset(value_field).bytes()))
+                .unwrap_or_else(|| self.fresh_int("raw_owner_data_offset"));
+            let mut field = pointer.clone();
+            field.ty = field_ty;
+            field.z3_term = &pointer.z3_term - &offset;
+            field.provenance = Some(Provenance {
+                alloc_id: provenance.alloc_id,
+                offset: &provenance.offset - &offset,
+                offset_kind: None,
+            });
+            field.facts.ownership_transfer = None;
+            let mut result = VmValue::new(self.fresh_int("raw_owner"), ty);
+            result.facts.init = true;
+            self.set_local(destination, result);
+            self.set_field_value(destination, path, field);
             return;
         }
         let box_value_constructor = api_classify::is_std_box_value_constructor(self.tcx, callee);

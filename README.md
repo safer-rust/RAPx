@@ -144,7 +144,7 @@ Verification modes:
 
 Options:
 - `--no-invariant-target` — works with both modes; skips struct invariant checks and instead derives safety requirements automatically from constructor-mutator-method chains
-- `--inline-ctor` — `true` inlines constructors with MIR, `false` never inlines them, and `default` inlines only when the directly returned struct has no source or JSON invariant. Without an invariant, `false` leaves the result unknown. `--no-invariant-target` makes `default` inline constructors.
+- `--inline-ctor` — `true` inlines constructors with MIR, `false` never inlines them, and `default` inlines constructors without a source or JSON invariant, plus constructors of shared owners whose inputs contain no raw pointer. Without an invariant, `false` leaves the result unknown. `--no-invariant-target` makes `default` inline constructors.
 
 Built-in type invariants for public standard-library structs are declared in `rapx/src/verify/contract/assets/std-type-invariants.json`. They cover `Vec`, `String`, `Box`, `CString`, `CStr`, `NonNull`, `NonZero`, `Rc`, and `Arc`, plus slices. `CStr` is borrowed; its invariant does not claim ownership. Constructors summarized under `--inline-ctor=default` use these declarations instead of expanding their MIR.
 

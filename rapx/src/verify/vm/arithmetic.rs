@@ -242,6 +242,18 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             BinOp::Ge => self.bool_as_int(&lhs.ge(rhs)),
             BinOp::Offset => Int::add(self.z3_ctx, &[lhs, rhs]),
             BinOp::BitAnd => {
+                let left = lhs.simplify();
+                let right = rhs.simplify();
+                let all_bits = Int::from_i64(self.z3_ctx, -1);
+                if left == all_bits {
+                    return rhs.clone();
+                }
+                if right == all_bits {
+                    return lhs.clone();
+                }
+                if let (Some(left), Some(right)) = (left.as_u64(), right.as_u64()) {
+                    return Int::from_u64(self.z3_ctx, left & right);
+                }
                 let result = self.fresh_int("binop");
                 if let Some(mask) = rhs.simplify().as_u64() {
                     let zero = Int::from_u64(self.z3_ctx, 0);

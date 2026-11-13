@@ -4,37 +4,6 @@ use rustc_hir::def_id::DefId;
 use rustc_middle::ty::{TyCtxt, TyKind, UintTy};
 use rustc_public::{CrateDef, rustc_internal};
 
-pub fn ref_count_adjust(tcx: TyCtxt<'_>, did: DefId) -> Option<(DefId, i8)> {
-    if !is_std_api(tcx, did) {
-        return None;
-    }
-    let path = tcx.def_path_str(did);
-    let delta = if path.ends_with("::increment_strong_count")
-        || path.ends_with("::increment_strong_count_in")
-    {
-        1
-    } else if path.ends_with("::decrement_strong_count")
-        || path.ends_with("::decrement_strong_count_in")
-    {
-        -1
-    } else {
-        return None;
-    };
-    let owner = crate::helpers::name::get_struct_self_ty(tcx, did)?;
-    let rustc_middle::ty::TyKind::Adt(adt, _) = owner.kind() else {
-        return None;
-    };
-    if !crate::verify::contract::json::query_json_contracts(tcx, did)
-        .iter()
-        .any(|property| {
-            property.kind() == Some(crate::verify::contract::PropertyKind::RefCountShare)
-        })
-    {
-        return None;
-    }
-    Some((adt.did(), delta))
-}
-
 pub fn is_ub_check(tcx: TyCtxt<'_>, callee: DefId) -> bool {
     if !matches!(
         tcx.crate_name(callee.krate).as_str(),

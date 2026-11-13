@@ -2,6 +2,7 @@
 
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{Local, TerminatorKind, UnwindAction};
+use rustc_middle::ty::TyKind;
 use z3::ast::Int;
 
 use crate::{analysis::path::CallArg, compat::FxHashSet, verify::slicer::RelevantItem};
@@ -109,16 +110,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         body: Option<&'tcx rustc_middle::mir::Body<'tcx>>,
         args: &[CallArg],
     ) {
-        if let Some((owner, delta)) = crate::def_ids::other_api::ref_count_adjust(self.tcx, callee)
-            && let Some(CallArg::Local(local)) = args.first()
-            && let Some(value) = self.local_value(Local::from_usize(*local)).cloned()
-        {
-            if delta > 0 {
-                self.grant_ownership_share(&value, owner);
-            } else {
-                self.consume_ownership_share(&value, owner, true);
-            }
-        }
         let method_call = args.first().and_then(|arg| {
             let CallArg::Local(local) = arg else {
                 return None;
@@ -298,6 +289,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// caller context, and write the return value to the caller's destination.
     fn handle_callee_exit(&mut self, dest: usize) {
         let callee = self.current_frame.current_def_id;
+        self.recover_leaked_owner_shares(callee);
         let ret = self.local_value(Local::from_usize(0)).cloned();
         let ret_inner_uninit = self
             .current_frame
@@ -368,5 +360,62 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             self.assert_call_result_invariants(Local::from_usize(dest));
         }
         self.finish_method_call(method_call, ret.as_ref());
+    }
+
+    /// A `ManuallyDrop<Owner>` retained at return keeps its strong share alive.
+    pub(super) fn recover_leaked_owner_shares(&mut self, callee: DefId) {
+        use crate::verify::contract::{PlaceBase, PropertyKind};
+
+        let raw_args: Vec<_> = crate::verify::contract::json::query_json_contracts(self.tcx, callee)
+            .iter()
+            .filter(|property| property.kind() == Some(PropertyKind::RefCountShare))
+            .filter_map(|property| match property.target_place()?.base {
+                PlaceBase::Arg(index) => Some(Local::from_usize(index + 1)),
+                _ => None,
+            })
+            .filter_map(|local| self.local_value(local).cloned())
+            .collect();
+        if raw_args.is_empty() {
+            return;
+        }
+        let arg_count = self.body().arg_count;
+        let mut grants = Vec::new();
+        for (local, decl) in self.body().local_decls.iter_enumerated() {
+            if local.as_usize() <= arg_count {
+                continue;
+            }
+            let TyKind::Adt(wrapper, args) = decl.ty.kind() else {
+                continue;
+            };
+            if !self.tcx.is_lang_item(
+                wrapper.did(),
+                crate::def_ids::lang_api::LangItem::ManuallyDrop,
+            ) {
+                continue;
+            }
+            let Some(owner) = args
+                .first()
+                .and_then(|arg| arg.as_type())
+                .and_then(|ty| ty.ty_adt_def())
+            else {
+                continue;
+            };
+            let Some(alloc) = self
+                .owner_ptr_field(local)
+                .and_then(VmValue::provenance_alloc_id)
+            else {
+                continue;
+            };
+            let root = self.root_alloc(alloc);
+            if let Some(raw) = raw_args.iter().find(|raw| {
+                raw.provenance_alloc_id().is_some_and(|id| self.root_alloc(id) == root)
+                    && self.ownership_share(raw, owner.did()).is_some()
+            }) {
+                grants.push((raw.clone(), owner.did()));
+            }
+        }
+        for (raw, owner) in grants {
+            self.grant_ownership_share(&raw, owner);
+        }
     }
 }

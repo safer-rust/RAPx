@@ -31,7 +31,16 @@ pub(crate) fn should_inline_constructor(tcx: TyCtxt<'_>, callee: DefId) -> bool 
                 && output
                     .ty_adt_def()
                     .is_some_and(|adt| crate::verify::api_classify::is_std_nonnull(adt.did()));
-            no_arg_nonnull || !constructor_has_invariant(tcx, callee)
+            let shared_owner_without_raw_input = output.ty_adt_def().is_some_and(|adt| {
+                crate::verify::pointer_origin::has_ref_count_share_reconstruction(tcx, adt.did())
+            }) && sig
+                .inputs()
+                .skip_binder()
+                .iter()
+                .all(|ty| !matches!(ty.kind(), rustc_middle::ty::TyKind::RawPtr(..)));
+            no_arg_nonnull
+                || shared_owner_without_raw_input
+                || !constructor_has_invariant(tcx, callee)
         }
     }
 }
