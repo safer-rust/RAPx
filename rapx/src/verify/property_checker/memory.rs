@@ -523,16 +523,6 @@ impl PropertyChecker {
         let base = vm_state.allocation_base(alloc_id).clone();
         let size = vm_state.allocation_size(alloc_id).clone();
 
-        // An external allocation whose size is the `i64::MAX` "unbounded"
-        // sentinel (a Vec/slice buffer, or a materialized `Allocated` fact)
-        // auto-passes any `Allocated` access.  A *raw-pointer target* carries a
-        // symbolic "unknown" size instead, so its access falls through and must
-        // be proved (and otherwise fails).
-        if vm_state.alloc(alloc_id).is_external() && size.simplify().as_u64() == Some(i64::MAX as u64)
-        {
-            return CheckResult::ProvedByRule;
-        }
-
         let access = self.access_bytes(vm_state, property, 1, 2, checkpoint, &value);
 
         // A field-offset pointer (`byte_add(offset_of!())`) is allocated within
@@ -559,6 +549,16 @@ impl PropertyChecker {
             };
             solver.pop(1);
             return r;
+        }
+
+        // Unknown extent cannot establish coverage of the requested range.
+        // Falling through with the sentinel as a numeric bound is also unsound.
+        if vm_state.alloc(alloc_id).has_unbounded_size() {
+            return if vm_state.has_bounded_range(alloc_id, &value.z3_term, &access) {
+                CheckResult::ProvedBySmt
+            } else {
+                CheckResult::Unknown(UnknownReason::Unimplemented)
+            };
         }
 
         if let (Some(off), Some(size_val), Some(access_val)) = (

@@ -67,6 +67,17 @@ fn property_checker_regression_01() {
     ] {
         assert_function_result(&output, function, "UNKNOWN");
     }
+    for (function, property) in [
+        ("unknown_external_inbound", "InBound"),
+        ("unknown_external_allocated", "Allocated"),
+        ("TwoByteBuffer::unknown_suffix", "Allocated"),
+        ("TwoByteBuffer::unknown_prefix", "InBound"),
+    ] {
+        assert_function_result(&output, function, "UNKNOWN");
+        let block = extract_block_after(&output, &format!("function: {function}"));
+        assert_contain(block, &format!("{property} | Unknown"));
+    }
+    assert_function_result(&output, "TwoByteBuffer::covered_range", "SOUND");
     assert_function_result(&output, "owner_from_precondition", "SOUND");
 }
 
@@ -210,6 +221,18 @@ unsound_tests! {
     validptr_unsound_05: "verify_units/validptr_unsound_05" => "unsound_signed_suffix_missing_lower_bound" => "ValidPtr",
 }
 
+// Regression for #337: keep the intended result while the cast bug is open.
+#[test]
+#[ignore = "issue #337: integer cast semantics prune the out-of-bounds branch"]
+fn validptr_unsound_06() {
+    let output = run_with_args("verify_units/validptr_unsound_06", CMD_VERIFY_TARGETED);
+    assert_unproved(&output, "unsound_narrow_cast_selects_out_of_bounds_read", "ValidPtr");
+}
+
+unsound_weak_tests! {
+    validptr_unsound_07: "verify_units/validptr_unsound_07" => "unsound_vec_one_past_read" => "ValidPtr",
+}
+
 // Deref
 #[test]
 fn deref_sound_cases() {
@@ -244,6 +267,11 @@ sound_tests! {
 }
 
 sound_tests_multi! {
+    inbound_sound_13: "verify_units/inbound_sound_13" => [
+        "sound_pushed_vec_one_past_capacity",
+        "sound_reserved_vec_one_past_capacity",
+        "sound_pushed_zst_vec_one_past_capacity"
+    ],
     inbound_sound_zst: "verify_units/inbound_sound_zst" => [
         "sound_zst_slice_len",
         "sound_zst_index_in_bounds",
@@ -278,6 +306,24 @@ unsound_weak_tests! {
     inbound_std_unsound_02: "verify_units/inbound_std_unsound_02" => "unsound_std_copy_nonoverlapping_dst_unguarded" => "ValidPtr",
 }
 
+#[test]
+fn inbound_unsound_14() {
+    let output = run_with_args("verify_units/inbound_unsound_14", CMD_VERIFY_TARGETED);
+    for function in [
+        "unsound_pushed_vec_far_add",
+        "unsound_reserved_vec_far_add",
+        "unsound_pushed_vec_past_capacity",
+    ] {
+        assert_contain(&output, &format!("function: {function}"));
+        let block = extract_block_after(&output, &format!("function: {function}"));
+        assert_property_failed(block, "InBound", function);
+        assert!(
+            block.contains("result: UNSOUND") || block.contains("result: UNKNOWN"),
+            "Expected the out-of-bounds offset to remain unproved\n{block}"
+        );
+    }
+}
+
 // Init
 sound_tests! {
     init_std_sound_01: "verify_units/init_std_sound_01" => "sound_assume_init_read_after_write",
@@ -306,6 +352,14 @@ unsound_tests! {
     init_std_unsound_09: "verify_units/init_std_unsound_09" => "unsound_write_past_path_limit" => "Init",
 }
 
+// Regression for #335: aggregate validity does not initialize every byte.
+#[test]
+#[ignore = "issue #335: an aggregate containing an uninitialized byte still proves Init"]
+fn init_std_unsound_11() {
+    let output = run_with_args("verify_units/init_std_unsound_11", CMD_VERIFY_TARGETED);
+    assert_unproved(&output, "unsound_initialized_prefix_with_one_byte_hole", "Init");
+}
+
 #[test]
 fn init_ctx_cases() {
     let output = run_with_args("verify_units/init_ctx_unsound_01", CMD_VERIFY_TARGETED);
@@ -313,9 +367,12 @@ fn init_ctx_cases() {
     assert_contain(&output, "Init | Failed");
 }
 
-// Custom: `from_raw_parts` with the wrong element type causes multiple failures.
+// Pin Init while allowing other properties to fail at the same checkpoint.
 unsound_weak_tests! {
     init_std_unsound_07: "verify_units/init_std_unsound_07" => "unsound_from_raw_parts_wrong_element_type" => "Init",
+    init_std_unsound_10: "verify_units/init_std_unsound_10" => "unsound_partial_write_then_read_two" => "Init",
+    init_std_unsound_12: "verify_units/init_std_unsound_12" => "unsound_raw_write_leaves_second_element_uninitialized" => "Init",
+    init_std_unsound_13: "verify_units/init_std_unsound_13" => "unsound_symbolic_write_leaves_other_element_uninitialized" => "Init",
 }
 
 // ValidNum
@@ -442,10 +499,15 @@ sound_tests! {
     lifetime_escape_sound_01: "verify_units/lifetime_escape_sound_01" => "return_longer",
 }
 
+// CString's unknown extent no longer proves the later raw write's bounds.
+// Keep the ownership/aliasing violation as this fixture's primary signal.
+unsound_weak_tests! {
+    alias_unsound_09: "verify_units/alias_unsound_09" => "unsound_cstring_from_raw_then_raw_write" => "Alias",
+}
+
 unsound_hazard_tests! {
     alias_unsound_03: "verify_units/alias_unsound_03" => "unsound_vec_push_while_raw_slice_live" => "Alias",
     alias_unsound_04: "verify_units/alias_unsound_04" => "unsound_box_from_raw_then_raw_write" => "Alias",
-    alias_unsound_09: "verify_units/alias_unsound_09" => "unsound_cstring_from_raw_then_raw_write" => "Alias",
     alias_unsound_10: "verify_units/alias_unsound_10" => "unsound_cstr_from_ptr_then_raw_mutation" => "Alias",
     alias_unsound_15: "verify_units/alias_unsound_15" => "unsound_vec_from_raw_parts_then_raw_write" => "Alias",
     alias_unsound_16: "verify_units/alias_unsound_16" => "unsound_vec_reserve_while_raw_slice_live" => "Alias",
@@ -1105,7 +1167,9 @@ fn interproc_unsafe_callee() {
     let output = run_with_args("verify_units/interproc_unsafe_callee", CMD_VERIFY_TARGETED);
     // The callee's own body (`*ptr`) is analyzed as a raw-ptr-deref checkpoint.
     assert_function_result(&output, "read_ptr", "SOUND");
-    // The sound caller discharges the callee's `requires` at the call site.
+    // A null check alone supplies no evidence about the allocation extent.
+    assert_function_result(&output, "nonnull_caller", "UNKNOWN");
+    // A pointer to a live local satisfies the callee's range requirement.
     assert_function_result(&output, "sound_caller", "SOUND");
     // The unsound caller fails to discharge the callee's `requires` — the
     // checkpoint is still enforced even though the callee is now inlined.

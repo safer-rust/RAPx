@@ -105,3 +105,46 @@ pub unsafe fn offset_is_not_owner(p: *mut u8) {
 pub fn unknown_is_empty(s: &[u8]) {
     unsafe { needs_nonempty(s) }
 }
+
+// External CString buffers have an unknown extent in the VM. The legacy
+// unbounded sentinel must not prove either of these range requirements.
+#[rapx::requires(InBound(p, i8, 2))]
+unsafe fn needs_two_external_inbound(p: *const i8) {}
+
+#[rapx::requires(Allocated(p, i8, 2))]
+unsafe fn needs_two_external_allocated(p: *const i8) {}
+
+#[rapx::verify]
+pub fn unknown_external_inbound(data: std::ffi::CString) {
+    unsafe { needs_two_external_inbound(data.as_ptr()) }
+}
+
+#[rapx::verify]
+pub fn unknown_external_allocated(data: std::ffi::CString) {
+    unsafe { needs_two_external_allocated(data.as_ptr()) }
+}
+
+#[rapx::requires(Allocated(p, u8, 3))]
+unsafe fn needs_three_alloc(p: *const u8) {}
+
+#[rapx::invariant(Allocated(ptr, u8, 2))]
+pub struct TwoByteBuffer {
+    ptr: std::ptr::NonNull<u8>,
+}
+
+impl TwoByteBuffer {
+    #[rapx::verify]
+    pub fn covered_range(&self) {
+        unsafe { needs_two_alloc(self.ptr.as_ptr()) }
+    }
+
+    #[rapx::verify]
+    pub fn unknown_suffix(&self) {
+        unsafe { needs_three_alloc(self.ptr.as_ptr()) }
+    }
+
+    #[rapx::verify]
+    pub fn unknown_prefix(&self) -> *mut u8 {
+        unsafe { self.ptr.as_ptr().sub(2) }
+    }
+}
