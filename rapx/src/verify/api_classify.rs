@@ -149,24 +149,13 @@ pub fn is_align_offset(callee: Option<DefId>) -> bool {
 
 /// Whether `callee` writes through a raw pointer to its first argument
 /// (`ptr::write`, `write_bytes`, `write_unaligned`, `write_volatile`).
-pub fn is_ptr_write(callee: Option<DefId>) -> bool {
-    other_api::matches_any(
-        callee,
-        &[
-            other_api::ptr_write(),
-            other_api::ptr_write_unaligned(),
-            other_api::ptr_write_volatile(),
-            other_api::ptr_write_bytes(),
-        ],
-    )
+pub fn is_ptr_write(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
+    callee.is_some_and(|did| other_api::is_ptr_write(tcx, did))
 }
 
-pub fn is_ptr_copy(callee: Option<DefId>) -> bool {
+pub fn is_ptr_copy(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
     is_intrinsic_copy(callee)
-        || other_api::matches_any(
-            callee,
-            &[other_api::ptr_copy(), other_api::ptr_copy_nonoverlapping()],
-        )
+        || callee.is_some_and(|did| other_api::is_ptr_copy(tcx, did))
 }
 
 /// Whether `callee` reads through a raw pointer or copies memory
@@ -175,15 +164,8 @@ pub fn is_ptr_copy(callee: Option<DefId>) -> bool {
 pub fn is_ptr_read(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
     is_intrinsic_copy(callee)
         || callee.is_some_and(|did| crate::helpers::mir_utils::is_ptr_copy_wrapper(tcx, did))
-        || other_api::matches_any(
-            callee,
-            &[
-                other_api::ptr_read(),
-                other_api::ptr_read_unaligned(),
-                other_api::ptr_read_volatile(),
-                other_api::assume_init_read(),
-            ],
-        )
+        || callee.is_some_and(|did| other_api::is_ptr_read(tcx, did))
+        || callee == other_api::assume_init_read()
 }
 
 /// Copy/write operations that do not require initialized destination bytes:
@@ -192,13 +174,7 @@ pub fn is_ptr_read(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
 pub fn is_mem_copy_or_write(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
     is_intrinsic_copy(callee)
         || callee.is_some_and(|did| crate::helpers::mir_utils::is_ptr_copy_wrapper(tcx, did))
-        || other_api::matches_any(
-            callee,
-            &[
-                other_api::ptr_write(),
-                other_api::ptr_write_bytes(),
-            ],
-        )
+        || callee.is_some_and(|did| other_api::is_ptr_write_to_uninit(tcx, did))
 }
 
 // ── Alias-hazard classification ───────────────────────────────────

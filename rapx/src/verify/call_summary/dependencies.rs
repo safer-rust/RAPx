@@ -107,11 +107,11 @@ fn intrinsic_dependency_summary<'tcx>(
     arg_count: usize,
 ) -> Option<CallDependencySummary> {
     let id = callee?;
-    if !intrinsic_api::is_intrinsic(tcx, id) && !api_classify::is_ptr_copy(callee) {
+    if !intrinsic_api::is_intrinsic(tcx, id) && !api_classify::is_ptr_copy(tcx, callee) {
         return None;
     }
     let modeled = effects::lookup_effect(tcx, caller, callee, func);
-    if api_classify::is_ptr_copy(callee) && modeled.is_none() {
+    if api_classify::is_ptr_copy(tcx, callee) && modeled.is_none() {
         return Some(CallDependencySummary {
             return_depends_on_args: (0..arg_count).collect(),
             write_args: (arg_count > 1).then_some(1).into_iter().collect(),
@@ -534,14 +534,14 @@ fn write_args_on_path<'tcx>(
         };
 
         // `ptr::write`-style writes: trace the pointer arg to a callee arg.
-        if crate::verify::api_classify::is_ptr_write(helpers::dep_callee_def_id(func)) {
+        if crate::verify::api_classify::is_ptr_write(tcx, helpers::dep_callee_def_id(func)) {
             if let Some(pointer_arg) = args.first() {
                 writes.extend(trace_to_callee_args(tcx, caller, body, &pointer_arg.node));
             }
             continue;
         }
 
-        if crate::verify::api_classify::is_ptr_copy(helpers::dep_callee_def_id(func)) {
+        if crate::verify::api_classify::is_ptr_copy(tcx, helpers::dep_callee_def_id(func)) {
             if let Some(destination_arg) = args.get(1) {
                 writes.extend(trace_to_callee_args(tcx, caller, body, &destination_arg.node));
             }

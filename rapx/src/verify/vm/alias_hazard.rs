@@ -819,7 +819,7 @@ fn method_writes_self_field(
         let Some(terminator) = &block.terminator else {
             continue;
         };
-        if terminator_writes_origin(&terminator.kind, &origin, &tree) {
+        if terminator_writes_origin(tcx, &terminator.kind, &origin, &tree) {
             return true;
         }
     }
@@ -1114,7 +1114,7 @@ fn local_hazard_violation_with(
             };
             if origins
                 .iter()
-                .any(|origin| terminator_writes_origin(&terminator.kind, origin, &tree))
+                .any(|origin| terminator_writes_origin(tcx, &terminator.kind, origin, &tree))
                 && hazard_used_after_block(tcx, caller, block_index, &hazard_locals)
             {
                 return Some(format!(
@@ -1484,6 +1484,7 @@ fn rvalue_reads_any_origin(
 }
 
 fn terminator_writes_origin<'tcx>(
+    tcx: TyCtxt<'tcx>,
     terminator: &TerminatorKind<'tcx>,
     origin: &PlaceKey,
     tree: &crate::verify::vm::alias_tree::AliasTree,
@@ -1492,7 +1493,7 @@ fn terminator_writes_origin<'tcx>(
         return false;
     };
     let callee = mir_utils::dep_callee_def_id(func);
-    if !crate::verify::api_classify::is_ptr_write(callee) {
+    if !crate::verify::api_classify::is_ptr_write(tcx, callee) {
         return false;
     }
     let Some(arg0) = args.first() else {

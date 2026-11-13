@@ -67,6 +67,28 @@ fn is_std_api(tcx: TyCtxt<'_>, did: DefId) -> bool {
     matches!(tcx.crate_name(did.krate).as_str(), "core" | "alloc" | "std")
 }
 
+pub fn is_ptr_read(tcx: TyCtxt<'_>, did: DefId) -> bool {
+    tcx.get_diagnostic_name(did).is_some_and(|name| {
+        matches!(name.as_str(), "ptr_read" | "ptr_read_unaligned" | "ptr_read_volatile")
+    })
+}
+
+pub fn is_ptr_write(tcx: TyCtxt<'_>, did: DefId) -> bool {
+    tcx.get_diagnostic_name(did).is_some_and(|name| {
+        matches!(name.as_str(), "ptr_write" | "ptr_write_unaligned" | "ptr_write_volatile" | "ptr_write_bytes")
+    })
+}
+
+pub fn is_ptr_write_to_uninit(tcx: TyCtxt<'_>, did: DefId) -> bool {
+    tcx.get_diagnostic_name(did)
+        .is_some_and(|name| matches!(name.as_str(), "ptr_write" | "ptr_write_bytes"))
+}
+
+pub fn is_ptr_copy(tcx: TyCtxt<'_>, did: DefId) -> bool {
+    tcx.get_diagnostic_name(did)
+        .is_some_and(|name| matches!(name.as_str(), "ptr_copy" | "ptr_copy_nonoverlapping"))
+}
+
 pub fn is_gcd(tcx: TyCtxt<'_>, did: DefId) -> bool {
     is_std_api(tcx, did) && tcx.def_path_str(did).ends_with("::gcd")
 }
@@ -203,42 +225,6 @@ std_api_def_ids! {
         "core::mem::ManuallyDrop::<T>::drop",
         "std::mem::manually_drop::ManuallyDrop::<T>::drop",
         "core::mem::manually_drop::ManuallyDrop::<T>::drop"
-    ],
-    ptr_read: &[
-        "std::ptr::read",
-        "core::ptr::read"
-    ],
-    ptr_read_unaligned: &[
-        "std::ptr::read_unaligned",
-        "core::ptr::read_unaligned"
-    ],
-    ptr_read_volatile: &[
-        "std::ptr::read_volatile",
-        "core::ptr::read_volatile"
-    ],
-    ptr_write: &[
-        "std::ptr::write",
-        "core::ptr::write"
-    ],
-    ptr_write_unaligned: &[
-        "std::ptr::write_unaligned",
-        "core::ptr::write_unaligned"
-    ],
-    ptr_write_volatile: &[
-        "std::ptr::write_volatile",
-        "core::ptr::write_volatile"
-    ],
-    ptr_write_bytes: &[
-        "std::ptr::write_bytes",
-        "core::ptr::write_bytes"
-    ],
-    ptr_copy: &[
-        "std::ptr::copy",
-        "core::ptr::copy"
-    ],
-    ptr_copy_nonoverlapping: &[
-        "std::ptr::copy_nonoverlapping",
-        "core::ptr::copy_nonoverlapping"
     ],
     assume_init_read: &[
         "std::mem::MaybeUninit::<T>::assume_init_read",
