@@ -269,7 +269,7 @@ fn generate_mir_cfg_dot<'tcx>(
                 TerminatorKind::Call { func, .. } => {
                     if let Operand::Constant(c) = func
                         && let ty::FnDef(def_id, _) = *c.ty().kind()
-                        && is_drop_fn(def_id)
+                        && is_drop_fn(tcx, def_id)
                     {
                         is_drop_related = true;
                     }

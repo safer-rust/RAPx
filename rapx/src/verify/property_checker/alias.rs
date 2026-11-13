@@ -227,7 +227,7 @@ impl PropertyChecker {
         if untrusted_raw_origin && !matches_owning_precondition && !declared_field_owner {
             let fresh_internal = origin.is_none() && internal_alloc && !local_alloc;
             let local_manually_drop =
-                crate::verify::api_classify::is_manually_drop_drop(checkpoint.callee)
+                crate::verify::api_classify::is_manually_drop_drop(vm_state.tcx, checkpoint.callee)
                     && internal_alloc
                     && local_alloc
                     && origin.as_ref().is_some_and(|origin| {

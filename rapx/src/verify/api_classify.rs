@@ -82,16 +82,14 @@ pub(crate) fn is_std_box_value_constructor(tcx: TyCtxt<'_>, callee: DefId) -> bo
         && sig.inputs().skip_binder().first() == Some(&pointee)
 }
 
-/// Whether `callee` is `ManuallyDrop::<T>::drop` — the *manual* drop that frees
-/// the pointee's allocation without the `ManuallyDrop` wrapper's own (no-op)
-/// drop glue.
-pub fn is_manually_drop_drop(callee: Option<DefId>) -> bool {
-    callee.is_some_and(|c| other_api::manually_drop() == Some(c))
+/// Whether `callee` explicitly drops the value stored in `ManuallyDrop<T>`.
+pub fn is_manually_drop_drop(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
+    callee.is_some_and(|c| other_api::is_manually_drop(tcx, c))
 }
 
 /// Whether `callee` is `std::mem::drop` / `core::mem::drop`.
-pub fn is_std_drop(callee: Option<DefId>) -> bool {
-    callee.is_some_and(|c| other_api::drop() == Some(c))
+pub fn is_std_drop(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
+    callee.is_some_and(|c| other_api::is_drop(tcx, c))
 }
 
 // ── Pointer extraction / cast ─────────────────────────────────────

@@ -109,12 +109,12 @@ pub(super) fn exec_call<'z3, 'tcx>(
         destination,
         caller_def_id,
     };
-    let drop_call = if api_classify::is_std_drop(callee)
+    let drop_call = if api_classify::is_std_drop(state.tcx, callee)
         || callee.is_some_and(|id| state.tcx.def_path_str(id).contains("::ptr::drop_glue"))
     {
         Some(DropCall::Value)
-    } else if callee.is_some_and(mir_utils::is_drop_in_place)
-        || api_classify::is_manually_drop_drop(callee)
+    } else if callee.is_some_and(|id| mir_utils::is_drop_in_place(state.tcx, id))
+        || api_classify::is_manually_drop_drop(state.tcx, callee)
     {
         Some(DropCall::Pointee)
     } else {

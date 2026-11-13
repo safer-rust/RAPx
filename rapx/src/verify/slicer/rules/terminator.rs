@@ -33,8 +33,8 @@ impl<'tcx> BackwardSlicer<'tcx> {
             // Keep calls that can change an allocation's lifetime or consume
             // a raw ownership share, together with their argument sources.
             let is_state_change = mir_utils::dep_callee_def_id(func).is_some_and(|c| {
-                crate::verify::api_classify::is_manually_drop_drop(Some(c))
-                    || crate::verify::api_classify::is_std_drop(Some(c))
+                crate::verify::api_classify::is_manually_drop_drop(self.tcx, Some(c))
+                    || crate::verify::api_classify::is_std_drop(self.tcx, Some(c))
                     || crate::verify::contract::json::query_json_contracts(self.tcx, c)
                         .iter()
                         .any(|property| {

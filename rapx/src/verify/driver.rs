@@ -218,6 +218,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
             Property::Atom(atom)
                 if atom.kind == PropertyKind::Alias
                     && crate::verify::api_classify::is_manually_drop_drop(
+                        self.tcx,
                         view.checkpoint.callee,
                     ) =>
             {
@@ -229,7 +230,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
                 view.checkpoint,
                 property,
                 &self.target.caller_requires,
-                crate::verify::api_classify::is_manually_drop_drop(view.checkpoint.callee)
+                crate::verify::api_classify::is_manually_drop_drop(self.tcx, view.checkpoint.callee)
                     && property_contains_alias(property),
             ),
             Property::And(and) => self.combine_check_paths(cache, view, &and.conjuncts),

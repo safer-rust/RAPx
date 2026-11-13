@@ -89,6 +89,26 @@ pub fn is_ptr_copy(tcx: TyCtxt<'_>, did: DefId) -> bool {
         .is_some_and(|name| matches!(name.as_str(), "ptr_copy" | "ptr_copy_nonoverlapping"))
 }
 
+pub fn is_drop(tcx: TyCtxt<'_>, did: DefId) -> bool {
+    tcx.is_diagnostic_item(rustc_span::Symbol::intern("mem_drop"), did)
+}
+
+pub fn is_drop_in_place(tcx: TyCtxt<'_>, did: DefId) -> bool {
+    tcx.is_diagnostic_item(rustc_span::Symbol::intern("ptr_drop_in_place"), did)
+}
+
+pub fn is_manually_drop(tcx: TyCtxt<'_>, did: DefId) -> bool {
+    let Some(impl_id) = tcx.inherent_impl_of_assoc(did) else {
+        return false;
+    };
+    let self_ty = tcx.type_of(impl_id).instantiate_identity();
+    #[cfg(rapx_ge_99)]
+    let self_ty = self_ty.skip_norm_wip();
+    matches!(self_ty.kind(), rustc_middle::ty::TyKind::Adt(adt, _)
+        if tcx.is_lang_item(adt.did(), crate::def_ids::lang_api::LangItem::ManuallyDrop))
+        && tcx.item_name(did).as_str() == "drop"
+}
+
 pub fn is_gcd(tcx: TyCtxt<'_>, did: DefId) -> bool {
     is_std_api(tcx, did) && tcx.def_path_str(did).ends_with("::gcd")
 }
@@ -212,20 +232,6 @@ std_api_def_ids! {
         "std::alloc::dealloc",
         "alloc::alloc::dealloc"
     ],
-    drop: &[
-        "std::mem::drop",
-        "core::mem::drop",
-    ],
-    drop_in_place: &[
-        "std::ptr::drop_in_place",
-        "core::ptr::drop_in_place",
-    ],
-    manually_drop: &[
-        "std::mem::ManuallyDrop::<T>::drop",
-        "core::mem::ManuallyDrop::<T>::drop",
-        "std::mem::manually_drop::ManuallyDrop::<T>::drop",
-        "core::mem::manually_drop::ManuallyDrop::<T>::drop"
-    ],
     assume_init_read: &[
         "std::mem::MaybeUninit::<T>::assume_init_read",
         "core::mem::MaybeUninit::<T>::assume_init_read",
@@ -253,9 +259,11 @@ pub fn to_internal<T: CrateDef>(val: &T, tcx: TyCtxt) -> DefId {
 
 /// Find any drop fn. Any of these drop fns can be missing, e.g. for crates like no_std without
 /// using alloc, dealloc doesn't exist.
-pub fn is_drop_fn(target: DefId) -> bool {
-    let drop_fn = [drop(), drop_in_place(), manually_drop(), dealloc()];
-    matches_any(Some(target), &drop_fn)
+pub fn is_drop_fn(tcx: TyCtxt<'_>, target: DefId) -> bool {
+    is_drop(tcx, target)
+        || is_drop_in_place(tcx, target)
+        || is_manually_drop(tcx, target)
+        || dealloc() == Some(target)
 }
 
 pub(crate) fn matches_any(target: Option<DefId>, candidates: &[Option<DefId>]) -> bool {

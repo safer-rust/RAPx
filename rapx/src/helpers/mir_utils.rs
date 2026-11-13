@@ -62,8 +62,8 @@ pub(crate) fn dep_callee_def_id(func: &Operand<'_>) -> Option<DefId> {
 }
 
 /// Whether `def_id` is `core::ptr::drop_in_place`.
-pub(crate) fn is_drop_in_place(def_id: DefId) -> bool {
-    other_api::drop_in_place() == Some(def_id)
+pub(crate) fn is_drop_in_place(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
+    other_api::is_drop_in_place(tcx, def_id)
 }
 
 /// Whether `def_id` is a diverging call target: a `panic*` lang item or the

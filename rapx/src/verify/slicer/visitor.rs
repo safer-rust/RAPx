@@ -222,6 +222,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
                     | Some(CheckpointKind::StaticMutAccess)
                     | Some(CheckpointKind::UnsafeCall)
             ) || crate::verify::api_classify::is_manually_drop_drop(
+                visitor.tcx,
                 bind_checkpoint.and_then(|c| c.callee),
             );
             if !skip_terminator {

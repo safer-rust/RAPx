@@ -44,7 +44,7 @@ pub(crate) fn dependency_summary<'tcx>(
         ) {
             return summary;
         }
-        if helpers::is_drop_in_place(callee) {
+        if helpers::is_drop_in_place(tcx, callee) {
             return CallDependencySummary::fallback(arg_count);
         }
 
@@ -422,7 +422,7 @@ fn write_args_rec(
     if !tcx.is_mir_available(callee) {
         return None;
     }
-    if crate::def_ids::intrinsic_api::is_intrinsic(tcx, callee) || helpers::is_drop_in_place(callee) {
+    if crate::def_ids::intrinsic_api::is_intrinsic(tcx, callee) || helpers::is_drop_in_place(tcx, callee) {
         return None;
     }
     let key = (callee, depth);
