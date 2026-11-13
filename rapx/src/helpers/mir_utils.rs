@@ -241,9 +241,11 @@ pub(crate) fn instance_def_id<'tcx>(
             } => Some(coroutine_closure_def_id),
             ShimKind::ThreadLocal(def_id) => Some(def_id),
             ShimKind::DropGlue(def_id, _) => Some(def_id),
-            #[cfg(rapx_has_fnptr_asptr)]
+            #[cfg(rapx_has_fnaddr_asptr)]
+            ShimKind::FnAddrAsPtr(def_id, _) => Some(def_id),
+            #[cfg(all(not(rapx_has_fnaddr_asptr), rapx_has_fnptr_asptr))]
             ShimKind::FnPtrAsPtr(def_id, _) => Some(def_id),
-            #[cfg(not(rapx_has_fnptr_asptr))]
+            #[cfg(all(not(rapx_has_fnaddr_asptr), not(rapx_has_fnptr_asptr)))]
             ShimKind::FnPtrAddr(def_id, _) => Some(def_id),
             ShimKind::AsyncDropGlueCtor(def_id, _) => Some(def_id),
             ShimKind::Clone(def_id, _) => {

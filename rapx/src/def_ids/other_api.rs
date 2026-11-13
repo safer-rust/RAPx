@@ -109,6 +109,18 @@ pub fn is_manually_drop(tcx: TyCtxt<'_>, did: DefId) -> bool {
         && tcx.item_name(did).as_str() == "drop"
 }
 
+pub fn is_assume_init_read(tcx: TyCtxt<'_>, did: DefId) -> bool {
+    let Some(impl_id) = tcx.inherent_impl_of_assoc(did) else {
+        return false;
+    };
+    let self_ty = tcx.type_of(impl_id).instantiate_identity();
+    #[cfg(rapx_ge_99)]
+    let self_ty = self_ty.skip_norm_wip();
+    matches!(self_ty.kind(), rustc_middle::ty::TyKind::Adt(adt, _)
+        if tcx.is_lang_item(adt.did(), crate::def_ids::lang_api::LangItem::MaybeUninit))
+        && tcx.item_name(did).as_str() == "assume_init_read"
+}
+
 pub fn is_gcd(tcx: TyCtxt<'_>, did: DefId) -> bool {
     is_std_api(tcx, did) && tcx.def_path_str(did).ends_with("::gcd")
 }
@@ -228,16 +240,6 @@ macro_rules! std_api_def_ids {
 // For no_std crates, function paths start from core instead of std.
 // cc https://github.com/Artisan-Lab/RAPx/issues/190
 std_api_def_ids! {
-    dealloc: &[
-        "std::alloc::dealloc",
-        "alloc::alloc::dealloc"
-    ],
-    assume_init_read: &[
-        "std::mem::MaybeUninit::<T>::assume_init_read",
-        "core::mem::MaybeUninit::<T>::assume_init_read",
-        "std::mem::maybe_uninit::MaybeUninit::<T>::assume_init_read",
-        "core::mem::maybe_uninit::MaybeUninit::<T>::assume_init_read"
-    ],
     ptr_align_offset: &[
         "std::ptr::align_offset",
         "core::ptr::align_offset"
@@ -257,13 +259,11 @@ pub fn to_internal<T: CrateDef>(val: &T, tcx: TyCtxt) -> DefId {
     rustc_internal::internal(tcx, val.def_id())
 }
 
-/// Find any drop fn. Any of these drop fns can be missing, e.g. for crates like no_std without
-/// using alloc, dealloc doesn't exist.
+/// Find a call that explicitly drops a value.
 pub fn is_drop_fn(tcx: TyCtxt<'_>, target: DefId) -> bool {
     is_drop(tcx, target)
         || is_drop_in_place(tcx, target)
         || is_manually_drop(tcx, target)
-        || dealloc() == Some(target)
 }
 
 pub(crate) fn matches_any(target: Option<DefId>, candidates: &[Option<DefId>]) -> bool {

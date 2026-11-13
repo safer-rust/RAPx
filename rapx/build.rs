@@ -17,6 +17,7 @@ fn main() {
     emit_check_cfg("rapx_has_phantom_deref");
     emit_check_cfg("rapx_scalar_to_pointer_interp_result");
     emit_check_cfg("rapx_has_fnptr_asptr");
+    emit_check_cfg("rapx_has_fnaddr_asptr");
     emit_check_cfg("rapx_has_attr_ir");
     emit_check_cfg("rapx_attr_requires_ext");
     emit_check_cfg("rapx_rvalue_has_nullary_op");
@@ -89,6 +90,11 @@ fn main() {
     emit_cfg(
         "rapx_has_fnptr_asptr",
         rustc_src_contains_path("compiler/rustc_middle/src/ty/instance.rs", "FnPtrAsPtr"),
+    );
+    emit_cfg(
+        "rapx_has_fnaddr_asptr",
+        rustc_commit_date().is_some_and(|date| date.as_str() >= "2026-11-12")
+            || rustc_src_contains_path("compiler/rustc_middle/src/ty/instance.rs", "FnAddrAsPtr"),
     );
     // `LangItem` / `Attribute` / `AttributeKind` / `find_attr!` moved from
     // `rustc_hir` into the new `rustc_attr_ir` crate around 2026-09 (nightly
@@ -216,6 +222,13 @@ fn detect_rustc_version() -> (u32, u32, u32) {
     let minor = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
     let patch = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
     (major, minor, patch)
+}
+
+fn rustc_commit_date() -> Option<String> {
+    let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".to_string());
+    let output = Command::new(rustc).arg("-vV").output().ok()?;
+    let version = String::from_utf8_lossy(&output.stdout);
+    version.lines().find_map(|line| line.strip_prefix("commit-date: ").map(str::to_string))
 }
 
 /// Check whether the rustc source tree contains a specific string (requires

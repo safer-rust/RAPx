@@ -163,7 +163,7 @@ pub fn is_ptr_read(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
     is_intrinsic_copy(callee)
         || callee.is_some_and(|did| crate::helpers::mir_utils::is_ptr_copy_wrapper(tcx, did))
         || callee.is_some_and(|did| other_api::is_ptr_read(tcx, did))
-        || callee == other_api::assume_init_read()
+        || callee.is_some_and(|did| other_api::is_assume_init_read(tcx, did))
 }
 
 /// Copy/write operations that do not require initialized destination bytes:
