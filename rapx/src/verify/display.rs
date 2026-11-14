@@ -20,7 +20,7 @@ use crate::verify::{
 
 type CountEntry = (
     Option<crate::verify::contract::PropertyKind>,
-    Option<String>,
+    Option<(String, Vec<String>)>,
     bool,
     bool,
     super::report::CheckResult,
@@ -380,29 +380,29 @@ pub(crate) fn emit_results_counts_and_checkpoints<'tcx>(
         })
         .count();
 
-    let mut groups: IndexMap<(CheckpointLocation, String), Vec<&PropertyCheckResult<'_>>> =
+    let mut groups: IndexMap<(usize, CheckpointLocation, String), Vec<&PropertyCheckResult<'_>>> =
         IndexMap::new();
     for r in all_results {
         groups
-            .entry((r.checkpoint, r.callee_name.clone()))
+            .entry((r.checkpoint_index, r.checkpoint, r.callee_name.clone()))
             .or_default()
             .push(r);
     }
 
     let checkpoint_groups: Vec<_> = groups
         .iter()
-        .filter(|((_, name), _)| !name.starts_with("struct-invariant"))
+        .filter(|((_, _, name), _)| !name.starts_with("struct-invariant"))
         .collect();
     let invariant_groups: Vec<_> = groups
         .iter()
-        .filter(|((_, name), _)| name.starts_with("struct-invariant"))
+        .filter(|((_, _, name), _)| name.starts_with("struct-invariant"))
         .collect();
 
     if !checkpoint_groups.is_empty() {
         rap_info!("  --- unsafe checkpoints ---");
-        for ((checkpoint, callee_name), results) in &checkpoint_groups {
+        for ((index, checkpoint, callee_name), results) in &checkpoint_groups {
             rap_info!(
-                "      unsafe checkpoint: bb{} -> {callee_name}",
+                "      unsafe checkpoint: bb{} -> {callee_name} (#{index})",
                 checkpoint.block.as_usize(),
             );
             emit_property_rows(tcx, results);
@@ -411,7 +411,7 @@ pub(crate) fn emit_results_counts_and_checkpoints<'tcx>(
 
     if !invariant_groups.is_empty() {
         rap_info!("  --- struct invariants ---");
-        for ((checkpoint, _), results) in &invariant_groups {
+        for ((_, checkpoint, _), results) in &invariant_groups {
             rap_info!("      checkpoint bb{}:", checkpoint.block.as_usize());
             emit_property_rows(tcx, results);
         }
@@ -530,22 +530,22 @@ pub(crate) fn emit_property_rows<'tcx>(_tcx: TyCtxt<'tcx>, results: &[&PropertyC
         let mut counts: Vec<CountEntry> = Vec::new();
         for r in props.iter() {
             let result = r.result.clone();
-            if let Some(on) = r.property.origin().map(|o| o.name.as_str()) {
-                // Compound `def`: one entry per origin name, its primitives
-                // AND-combined into a single verdict (no hazard/option prefix).
+            let is_hazard = r.property.contract_kind() == ContractKind::Hazard;
+            let is_option = r.property.contract_kind() == ContractKind::Option_;
+            if let Some(origin) = r.property.origin() {
+                // Combine only primitives from the same compound invocation.
+                let key = (origin.name.clone(), origin.args.clone());
                 if let Some(entry) = counts
                     .iter_mut()
-                    .find(|(_, o, _, _, _, _)| o.as_deref() == Some(on))
+                    .find(|(_, o, h, opt, _, _)| {
+                        o.as_ref() == Some(&key) && *h == is_hazard && *opt == is_option
+                    })
                 {
                     entry.4 = entry.4.clone().and(result);
                 } else {
-                    counts.push((None, Some(on.to_string()), false, false, result, 1usize));
+                    counts.push((None, Some(key), is_hazard, is_option, result, 1usize));
                 }
             } else {
-                let is_hazard =
-                    r.property.contract_kind() == crate::verify::contract::ContractKind::Hazard;
-                let is_option =
-                    r.property.contract_kind() == crate::verify::contract::ContractKind::Option_;
                 if let Some(entry) = counts.iter_mut().find(|(k, o, h, opt, res, _)| {
                     *k == r.property.kind()
                         && o.is_none()
@@ -574,10 +574,23 @@ pub(crate) fn emit_property_rows<'tcx>(_tcx: TyCtxt<'tcx>, results: &[&PropertyC
             } else {
                 ""
             };
-            let name = origin.clone().unwrap_or_else(|| match kind {
-                Some(k) => format!("{k:?}"),
-                None => "Or".to_string(),
-            });
+            let name = if let Some((name, args)) = origin {
+                let same_name_with_other_args = counts.iter().any(|(_, other, _, _, _, _)| {
+                    other.as_ref().is_some_and(|(other_name, other_args)| {
+                        other_name == name && other_args != args
+                    })
+                });
+                if same_name_with_other_args {
+                    format!("{}({})", name, args.join(", "))
+                } else {
+                    name.clone()
+                }
+            } else {
+                match kind {
+                    Some(k) => format!("{k:?}"),
+                    None => "Or".to_string(),
+                }
+            };
             let tag = if *is_hazard {
                 format!("[hazard] {name}")
             } else if *is_option {

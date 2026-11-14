@@ -180,12 +180,16 @@ fn assert_unproved(output: &str, function: &str, property: &str) {
 fn assert_property_failed(block: &str, property: &str, function: &str) {
     let matches_plain = block.contains(&format!("{property} | Failed"))
         || block.contains(&format!("{property} | Unknown"));
+    let matches_with_args = block.lines().any(|line| {
+        line.contains(&format!("{property}("))
+            && (line.contains(" | Failed") || line.contains(" | Unknown"))
+    });
     let matches_hazard = block.contains(&format!("[hazard] {property} | Failed"))
         || block.contains(&format!("[hazard] {property} | Unknown"));
     let matches_option = block.contains(&format!("[option] {property} | Failed"))
         || block.contains(&format!("[option] {property} | Unknown"));
     assert!(
-        matches_plain || matches_hazard || matches_option,
+        matches_plain || matches_with_args || matches_hazard || matches_option,
         "Expected {property} | Failed/Unknown for {function}\nBlock:\n{block}"
     );
 }

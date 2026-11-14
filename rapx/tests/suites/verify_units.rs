@@ -50,9 +50,13 @@ fn checkpoint_regression_01() {
     let output = run_with_args("verify_units/checkpoint_regression_01", CMD_VERIFY_TARGETED);
     assert_function_result(&output, "deref_before_reassign", "UNSOUND");
     let statics = extract_block_after(&output, "function: two_static_mut_accesses");
-    let static_checks = statics.split("static-mut-access").nth(1).expect("static checks");
-    assert_contain(static_checks, "Align | Proved");
-    assert_contain(static_checks, "Align | Unknown");
+    assert_eq!(
+        statics.matches("unsafe checkpoint: bb0 -> static-mut-access").count(),
+        2,
+        "{statics}"
+    );
+    assert_contain(statics, "Align | Proved");
+    assert_contain(statics, "Align | Unknown");
     let auto_trait = extract_block_after(&output, "unsafe impl Send for PlainWriteWithAtomicRead");
     assert_contain(auto_trait, "verdict: UNSAFE");
     let mixed_update = extract_block_after(&output, "unsafe impl Send for PlainWriteWithAtomicUpdate");
