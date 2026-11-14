@@ -291,7 +291,7 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
             trait_impl_limit,
             ..
         }) => {
-            crate::verify::options::set_inline_ctor(if *skip_invariant
+            crate::verify::constructor_policy::set_inline_ctor(if *skip_invariant
                 && matches!(*inline_ctor, crate::cli::InlineCtor::Default)
             {
                 crate::cli::InlineCtor::True

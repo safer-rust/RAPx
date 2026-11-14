@@ -204,7 +204,7 @@ impl<'tcx> CallSiteIndex<'tcx> {
                 } else {
                     base_callee
                 };
-                if !crate::verify::options::should_inline_constructor(self.tcx, callee) {
+                if !crate::verify::constructor_policy::should_inline_constructor(self.tcx, callee) {
                     continue;
                 }
                 // An instantiated root can resolve Clone at this callsite.
@@ -322,7 +322,7 @@ impl<'tcx> CallSiteIndex<'tcx> {
                     || !self.tcx.is_mir_available(callee)
                     || expanded.contains(&callee)
                     || (crate::verify::call_summary::effects::has_registered_effect(self.tcx, Some(callee))
-                        && !crate::verify::options::force_inline_constructor(self.tcx, callee))
+                        && !crate::verify::constructor_policy::force_inline_constructor(self.tcx, callee))
                     || crate::verify::target::has_slice_offset_ensures(self.tcx, callee)
                     || crate::def_ids::other_api::is_ub_check(self.tcx, callee)
                     || (crate::verify::api_classify::is_range_advancing_call(self.tcx, caller, func)

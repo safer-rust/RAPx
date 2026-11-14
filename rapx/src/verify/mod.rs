@@ -19,6 +19,6 @@ pub(crate) mod report;
 pub(crate) mod slicer;
 pub(crate) mod target;
 pub(crate) mod type_invariants;
-pub(crate) mod options;
+pub(crate) mod constructor_policy;
 
 pub(crate) mod vm;

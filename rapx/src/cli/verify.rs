@@ -64,7 +64,7 @@ pub struct VerifyArgs {
     /// Works with both `scan` and `targeted` modes.
     #[arg(long = "no-invariant-target")]
     pub skip_invariant: bool,
-    /// Constructor inlining: true always, false never, default only without a struct invariant.
+    /// Constructor inlining: true always, false never, default based on invariants and constructor shape.
     #[arg(long, default_value = "default")]
     pub inline_ctor: InlineCtor,
     /// Filter verification targets to only those within the specified crate

@@ -230,7 +230,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return CallModel::UnsupportedIntrinsic;
         }
         let force_inline = callee.is_some_and(|id| {
-            crate::verify::options::force_inline_constructor(self.tcx, id)
+            crate::verify::constructor_policy::force_inline_constructor(self.tcx, id)
                 && self.tcx.is_mir_available(id)
         });
         if !force_inline {
@@ -259,7 +259,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             }
         }
         if let Some(callee) = callee
-            && !crate::verify::options::should_inline_constructor(self.tcx, callee)
+            && !crate::verify::constructor_policy::should_inline_constructor(self.tcx, callee)
         {
             CallModel::Constructor(callee)
         } else if let Some(callee) = callee
@@ -343,7 +343,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             }
             CallModel::Constructor(callee) => {
                 let has_invariant =
-                    crate::verify::options::constructor_has_invariant(self.tcx, callee);
+                    crate::verify::constructor_policy::constructor_has_invariant(self.tcx, callee);
                 self.materialize_constructor_result(
                     destination,
                     arg_values,

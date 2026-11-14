@@ -24,6 +24,19 @@ pub(crate) fn return_source_arg(tcx: TyCtxt<'_>, callee: DefId) -> Option<usize>
     trace_source_arg(tcx, body, result, &mut HashSet::new(), 5)
 }
 
+/// Trace a returned reference to the argument from which it was derived.
+pub(crate) fn return_reference_source_arg(tcx: TyCtxt<'_>, callee: DefId) -> Option<usize> {
+    if !tcx.is_mir_available(callee) {
+        return None;
+    }
+    let body = tcx.optimized_mir(callee);
+    let result = rustc_middle::mir::RETURN_PLACE;
+    if !matches!(body.local_decls[result].ty.kind(), TyKind::Ref(..)) {
+        return None;
+    }
+    trace_source_arg(tcx, body, result, &mut HashSet::new(), 5)
+}
+
 /// A `NonNull` result that still points into its sole `NonNull` argument.
 pub(crate) fn is_nonnull_view(tcx: TyCtxt<'_>, callee: DefId) -> bool {
     if !matches!(tcx.def_kind(callee), DefKind::Fn | DefKind::AssocFn)
@@ -40,6 +53,10 @@ pub(crate) fn is_nonnull_view(tcx: TyCtxt<'_>, callee: DefId) -> bool {
     is_nonnull(*input)
         && is_nonnull(output)
         && return_source_arg_with_depth(tcx, callee, 5) == Some(0)
+}
+
+pub(crate) fn is_read_only_nonnull_view(tcx: TyCtxt<'_>, callee: DefId) -> bool {
+    is_nonnull_view(tcx, callee) && single_block_without_effects(tcx.optimized_mir(callee))
 }
 
 /// Trace a returned reference to interior mutable storage back to its input.

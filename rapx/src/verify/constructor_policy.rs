@@ -1,3 +1,5 @@
+//! Constructor inlining policy shared by path collection and the VM.
+
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use rustc_hir::def_id::DefId;

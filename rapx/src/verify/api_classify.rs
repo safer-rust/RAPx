@@ -195,13 +195,15 @@ pub fn nonnull_ref_return(tcx: TyCtxt<'_>, callee: DefId) -> Option<rustc_middle
     let TyKind::Ref(_, returned, mutability) = output.kind() else {
         return None;
     };
-    (*returned == pointee).then_some(*mutability)
+    (*returned == pointee && pointer_flow::return_reference_source_arg(tcx, callee) == Some(0))
+        .then_some(*mutability)
 }
 
 /// Whether MIR shows a read-only pointer view of the first argument.
 pub fn is_benign_origin_use(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
     callee.is_some_and(|did| {
-        pointer_flow::is_read_only_return(tcx, did) || pointer_flow::is_nonnull_view(tcx, did)
+        pointer_flow::is_read_only_return(tcx, did)
+            || pointer_flow::is_read_only_nonnull_view(tcx, did)
     })
 }
 
