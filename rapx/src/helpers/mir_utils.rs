@@ -3,8 +3,6 @@ use crate::def_ids::{
     lang_api::{self, LangItem},
     other_api, type_ids,
 };
-#[cfg(rapx_attr_requires_ext)]
-use rustc_ast::attr::AttributeExt;
 #[cfg(rapx_caller_bounds_accessor)]
 use rustc_type_ir::CallerBoundsIterator;
 use rustc_hir::{
@@ -683,7 +681,7 @@ pub(crate) fn has_rapx_attr(tcx: TyCtxt<'_>, def_id: LocalDefId, name: Symbol) -
     let rapx = Symbol::intern("rapx");
     let attrs = tcx.hir_attrs(hir_id);
 
-    attrs.iter().any(|attr| attr.path_matches(&[rapx, name]))
+    attrs.iter().any(|attr| crate::compat::attribute_path_matches(tcx, attr, &[rapx, name]))
 }
 
 pub fn has_rapx_verify_attr(tcx: TyCtxt<'_>, def_id: LocalDefId) -> bool {

@@ -19,7 +19,6 @@ fn main() {
     emit_check_cfg("rapx_has_fnptr_asptr");
     emit_check_cfg("rapx_has_fnaddr_asptr");
     emit_check_cfg("rapx_has_attr_ir");
-    emit_check_cfg("rapx_attr_requires_ext");
     emit_check_cfg("rapx_rvalue_has_nullary_op");
     emit_check_cfg("rapx_constkind_alias");
     emit_check_cfg("rapx_alias_const_inherent_self");
@@ -103,16 +102,6 @@ fn main() {
     emit_cfg(
         "rapx_has_attr_ir",
         rustc_src_contains_path("compiler/rustc_attr_ir/src/lang_items.rs", "pub enum LangItem"),
-    );
-    emit_cfg(
-        "rapx_attr_requires_ext",
-        rustc_src_contains_path(
-            "compiler/rustc_attr_ir/src/attr.rs",
-            "impl AttributeExt for Attribute",
-        ) && !rustc_src_contains_path(
-            "compiler/rustc_attr_ir/src/attr.rs",
-            "pub fn path(&self)",
-        ),
     );
     emit_cfg(
         "rapx_rvalue_has_nullary_op",

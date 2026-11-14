@@ -14,8 +14,6 @@ use crate::compat::FxHashMap;
 use crate::def_ids::lang_api::{self, LangItem};
 use crate::helpers::name::short_fn_name;
 use crate::verify::checkpoint::{collect_raw_ptr_deref_info, collect_static_mut_access_info};
-#[cfg(rapx_attr_requires_ext)]
-use rustc_ast::attr::AttributeExt;
 #[cfg(rapx_has_attr_ir)]
 use rustc_attr_ir::Attribute;
 #[cfg(not(rapx_has_attr_ir))]
@@ -1498,9 +1496,10 @@ impl<'tcx> PrepareTargets<'tcx> {
     }
 }
 
-fn is_rapx_named_attr(attr: &Attribute, name: &str) -> bool {
+fn is_rapx_named_attr(tcx: TyCtxt<'_>, attr: &Attribute, name: &str) -> bool {
     let name = Symbol::intern(name);
-    attr.path_matches(&[Symbol::intern("rapx"), name]) || attr.path_matches(&[name])
+    crate::compat::attribute_path_matches(tcx, attr, &[Symbol::intern("rapx"), name])
+        || crate::compat::attribute_path_matches(tcx, attr, &[name])
 }
 
 /// Resolve whether an `unsafe impl` is implementing the `Send`/`Sync` marker trait.
@@ -1692,7 +1691,7 @@ fn collect_properties_from_named_attrs<'tcx>(
     let mut results = Vec::new();
 
     for attr in attrs {
-        if !is_rapx_named_attr(attr, attr_name) {
+        if !is_rapx_named_attr(tcx, attr, attr_name) {
             continue;
         }
 
@@ -1793,7 +1792,7 @@ pub(crate) fn owning_field_paths_from_annotation<'tcx>(
     }
     crate::compat::get_all_attrs(tcx, adt.did())
         .into_iter()
-        .filter(|attr| is_rapx_named_attr(attr, "invariant"))
+        .filter(|attr| is_rapx_named_attr(tcx, attr, "invariant"))
         .filter_map(|attr| {
             let text = crate::compat::attribute_to_string(tcx, attr);
             parse_rapx_attr(&text, "invariant").ok().flatten()

@@ -27,8 +27,6 @@ use std::{
     sync::{OnceLock, RwLock},
 };
 
-#[cfg(rapx_attr_requires_ext)]
-use rustc_ast::attr::AttributeExt;
 #[cfg(rapx_has_attr_ir)]
 use rustc_attr_ir::Attribute;
 #[cfg(not(rapx_has_attr_ir))]
@@ -750,7 +748,7 @@ pub(crate) fn register_compound_properties(tcx: rustc_middle::ty::TyCtxt<'_>) ->
         fn visit_item(&mut self, item: &'tcx rustc_hir::Item<'tcx>) {
             let attrs = self.tcx.hir_attrs(item.hir_id());
             for attr in attrs {
-                if !is_def_property_attr(attr) {
+                if !is_def_property_attr(self.tcx, attr) {
                     continue;
                 }
                 let attr_str = crate::compat::attribute_to_string(self.tcx, attr);
@@ -775,9 +773,10 @@ pub(crate) fn register_compound_properties(tcx: rustc_middle::ty::TyCtxt<'_>) ->
 
 /// Whether an attribute path is `rapx::def_property` (or the bare form with the
 /// tool prefix stripped).
-fn is_def_property_attr(attr: &Attribute) -> bool {
+fn is_def_property_attr(tcx: rustc_middle::ty::TyCtxt<'_>, attr: &Attribute) -> bool {
     let name = Symbol::intern("def_property");
-    attr.path_matches(&[Symbol::intern("rapx"), name]) || attr.path_matches(&[name])
+    crate::compat::attribute_path_matches(tcx, attr, &[Symbol::intern("rapx"), name])
+        || crate::compat::attribute_path_matches(tcx, attr, &[name])
 }
 
 /// Extract the string literal from a `#[rapx::def_property("compound ...")]`

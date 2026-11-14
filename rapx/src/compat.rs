@@ -111,3 +111,28 @@ pub fn attribute_to_string(_tcx: TyCtxt<'_>, attr: &Attribute) -> String {
     impl rustc_hir_pretty::PpAnn for Ann {}
     rustc_hir_pretty::attribute_to_string(&Ann, attr)
 }
+
+/// Match an attribute path through its pretty-printed syntax.  The rustc
+/// attribute representation changes across nightlies, while both versions
+/// expose `attribute_to_string`.
+pub fn attribute_path_matches(
+    tcx: TyCtxt<'_>,
+    attr: &Attribute,
+    path: &[rustc_span::Symbol],
+) -> bool {
+    use syn::parse::Parser;
+
+    let text = attribute_to_string(tcx, attr);
+    let Ok(attrs) = syn::Attribute::parse_outer.parse_str(&text) else {
+        return false;
+    };
+    let [attr] = attrs.as_slice() else {
+        return false;
+    };
+    let segments = &attr.path().segments;
+    segments.len() == path.len()
+        && segments.iter().zip(path).all(|(segment, symbol)| {
+            matches!(segment.arguments, syn::PathArguments::None)
+                && segment.ident == symbol.as_str()
+        })
+}
