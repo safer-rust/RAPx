@@ -18,7 +18,7 @@ use self::index::BuiltinIndexPlan;
 use crate::compat::Spanned;
 use crate::helpers::mir_utils;
 use crate::verify::call_summary::CallEffect;
-use crate::verify::{api_classify, call_summary};
+use crate::verify::{api_classify, call_summary, constructor_policy};
 
 #[derive(Clone, Copy)]
 struct CallSite<'a, 'z3, 'tcx> {
@@ -229,11 +229,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         if call_summary::effects::is_unmodeled_intrinsic(self.tcx, callee) {
             return CallModel::UnsupportedIntrinsic;
         }
-        let force_inline = callee.is_some_and(|id| {
-            crate::verify::constructor_policy::force_inline_constructor(self.tcx, id)
+        let force_constructor_mir = callee.is_some_and(|id| {
+            constructor_policy::forces_constructor_mir(self.tcx, id)
                 && self.tcx.is_mir_available(id)
         });
-        if !force_inline {
+        if !force_constructor_mir {
             if let Some(plan) = self.prepare_builtin_index(callee, args, arg_locals, destination) {
                 return CallModel::BuiltinIndex(plan);
             }
@@ -259,7 +259,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             }
         }
         if let Some(callee) = callee
-            && !crate::verify::constructor_policy::should_inline_constructor(self.tcx, callee)
+            && !constructor_policy::allows_mir_expansion(self.tcx, callee)
         {
             CallModel::Constructor(callee)
         } else if let Some(callee) = callee
@@ -343,7 +343,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             }
             CallModel::Constructor(callee) => {
                 let has_invariant =
-                    crate::verify::constructor_policy::constructor_has_invariant(self.tcx, callee);
+                    constructor_policy::constructor_result_has_invariant(self.tcx, callee);
                 self.materialize_constructor_result(
                     destination,
                     arg_values,

@@ -9,7 +9,7 @@ pub enum VerifyMode {
 }
 
 #[derive(Debug, Clone, Copy, Default, clap::ValueEnum)]
-pub enum InlineCtor {
+pub enum ConstructorMirMode {
     True,
     False,
     #[default]
@@ -64,9 +64,10 @@ pub struct VerifyArgs {
     /// Works with both `scan` and `targeted` modes.
     #[arg(long = "no-invariant-target")]
     pub skip_invariant: bool,
-    /// Constructor inlining: true always, false never, default based on invariants and constructor shape.
-    #[arg(long, default_value = "default")]
-    pub inline_ctor: InlineCtor,
+    /// Constructor expansion: true forces available MIR instead of call models;
+    /// false never expands constructor MIR; default uses result invariants when available.
+    #[arg(long = "expand-ctor", value_name = "MODE", default_value = "default")]
+    pub constructor_mir: ConstructorMirMode,
     /// Filter verification targets to only those within the specified crate
     /// (Rust crate name or Cargo package name, e.g. `std`, `core`, `my-crate`).
     /// Useful for standard-library workspaces and sub-workspaces.

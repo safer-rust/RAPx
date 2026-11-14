@@ -276,7 +276,7 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
             postfix_repeat,
             mode,
             skip_invariant,
-            inline_ctor,
+            constructor_mir,
             crate_name,
             module,
             debug_contracts,
@@ -284,12 +284,12 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
             trait_impl_limit,
             ..
         }) => {
-            crate::verify::constructor_policy::set_inline_ctor(if *skip_invariant
-                && matches!(*inline_ctor, crate::cli::InlineCtor::Default)
+            crate::verify::constructor_policy::set_constructor_mir_mode(if *skip_invariant
+                && matches!(*constructor_mir, crate::cli::ConstructorMirMode::Default)
             {
-                crate::cli::InlineCtor::True
+                crate::cli::ConstructorMirMode::True
             } else {
-                *inline_ctor
+                *constructor_mir
             });
             if let Some(n) = path_limit {
                 crate::limit::set_path_limit(*n);

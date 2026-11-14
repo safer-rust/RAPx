@@ -131,7 +131,7 @@ Options:
       --postfix-repeat <N|auto>  number of extra SCC postfix repetitions during path enumeration; `auto` enables automatic loop-depth detection (default auto)
       --mode <MODE>               verification mode: scan, targeted (default scan)
       --no-invariant-target       skip struct invariant checks and derive safety via constructor-mutator-method chains
-      --inline-ctor <MODE>        constructor inlining: true, false, default (default: default)
+      --expand-ctor <MODE>        constructor expansion: true, false, default (default: default)
       --debug-contracts          print expanded contract assertions for debug purposes
       --crate <CRATE>             filter verification targets to a specific crate (Rust crate name or Cargo package name)
       --module <MODULE_PATH>     filter verification targets to a specific module path within the crate
@@ -144,9 +144,7 @@ Verification modes:
 
 Options:
 - `--no-invariant-target` — works with both modes; skips struct invariant checks and instead derives safety requirements automatically from constructor-mutator-method chains
-- `--inline-ctor` — `true` inlines constructors with MIR, `false` never inlines them, and `default` inlines constructors without a source or JSON invariant, plus constructors of shared owners whose inputs contain no raw pointer. Without an invariant, `false` leaves the result unknown. `--no-invariant-target` makes `default` inline constructors.
-
-Built-in type invariants for public standard-library structs are declared in `rapx/src/verify/contract/assets/std-type-invariants.json`. They cover `Vec`, `String`, `Box`, `CString`, `CStr`, `NonNull`, `NonZero`, `Rc`, and `Arc`, plus slices. `CStr` is borrowed; its invariant does not claim ownership. Constructors summarized under `--inline-ctor=default` use these declarations instead of expanding their MIR.
+- `--expand-ctor` — `true` forces constructor MIR when available; `false` never uses constructor MIR and uses a summary when available; `default` usually uses invariants and otherwise uses available MIR. `--no-invariant-target` makes `default` behave like `true`.
 
 **Filtering targets:** `--crate` and `--module` work in any mode and can be combined. When analyzing standard-library workspaces or sub-workspaces:
 

@@ -4,6 +4,7 @@ use crate::compat::{FxHashMap, FxHashSet};
 use crate::def_ids::lang_api::{self, LangItem};
 use crate::helpers::mir_utils;
 use crate::limit::{HINTED_CALLEE_BLOCK_LIMIT, LOCAL_CALLEE_BLOCK_LIMIT};
+use crate::verify::constructor_policy;
 #[cfg(rapx_has_attr_ir)]
 use rustc_attr_ir::InlineAttr;
 #[cfg(not(rapx_has_attr_ir))]
@@ -204,7 +205,7 @@ impl<'tcx> CallSiteIndex<'tcx> {
                 } else {
                     base_callee
                 };
-                if !crate::verify::constructor_policy::should_inline_constructor(self.tcx, callee) {
+                if !constructor_policy::allows_mir_expansion(self.tcx, callee) {
                     continue;
                 }
                 // An instantiated root can resolve Clone at this callsite.
@@ -322,7 +323,7 @@ impl<'tcx> CallSiteIndex<'tcx> {
                     || !self.tcx.is_mir_available(callee)
                     || expanded.contains(&callee)
                     || (crate::verify::call_summary::effects::has_registered_effect(self.tcx, Some(callee))
-                        && !crate::verify::constructor_policy::force_inline_constructor(self.tcx, callee))
+                        && !constructor_policy::forces_constructor_mir(self.tcx, callee))
                     || crate::verify::target::has_slice_offset_ensures(self.tcx, callee)
                     || crate::def_ids::other_api::is_ub_check(self.tcx, callee)
                     || (crate::verify::api_classify::is_range_advancing_call(self.tcx, caller, func)
