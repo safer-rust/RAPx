@@ -86,6 +86,19 @@ pub(crate) fn is_std_box_value_constructor(tcx: TyCtxt<'_>, callee: DefId) -> bo
         && sig.inputs().skip_binder().first() == Some(&pointee)
 }
 
+/// Recognize `NonNull::dangling`, whose return has no allocation provenance.
+pub(crate) fn is_std_nonnull_dangling(tcx: TyCtxt<'_>, callee: DefId) -> bool {
+    if tcx.item_name(callee).as_str() != "dangling" {
+        return false;
+    }
+    let Some(impl_id) = tcx.inherent_impl_of_assoc(callee) else {
+        return false;
+    };
+    let self_ty = tcx.type_of(impl_id).instantiate_identity().skip_norm_wip();
+    matches!(self_ty.kind(), TyKind::Adt(adt, _) if is_std_nonnull(adt.did()))
+        && tcx.fn_sig(callee).skip_binder().inputs().skip_binder().is_empty()
+}
+
 /// Whether `callee` explicitly drops the value stored in `ManuallyDrop<T>`.
 pub fn is_manually_drop_drop(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
     callee.is_some_and(|c| other_api::is_manually_drop(tcx, c))

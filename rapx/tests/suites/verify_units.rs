@@ -248,6 +248,16 @@ unsound_tests! {
     validptr_unsound_05: "verify_units/validptr_unsound_05" => "unsound_signed_suffix_missing_lower_bound" => "ValidPtr",
 }
 
+#[test]
+fn validptr_unsound_01_constructor_summary() {
+    let output = run_with_args(
+        "verify_units/validptr_unsound_01",
+        &["verify", "--mode", "targeted", "--expand-ctor=false"],
+    );
+    assert_function_result(&output, "unsound_non_zst_dangling_not_allocated", "UNSOUND");
+    assert_contain(&output, "ValidPtr | Failed");
+}
+
 // Regression for #337: keep the intended result while the cast bug is open.
 #[test]
 #[ignore = "issue #337: integer cast semantics prune the out-of-bounds branch"]

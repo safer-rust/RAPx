@@ -19,6 +19,25 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         has_invariant: bool,
     ) {
         let ty = self.body().local_decls[destination].ty;
+        if api_classify::is_std_nonnull_dangling(self.tcx, callee)
+            && let TyKind::Adt(_, substs) = ty.kind()
+            && let Some(pointee) = substs.first().and_then(|arg| arg.as_type())
+            && let Some(field_ty) = self.field_type_at(destination, &[0])
+        {
+            // `dangling()` returns an aligned address without allocation
+            // provenance. NonNull's type invariant alone only proves non-null.
+            let align = self.align_sym(pointee);
+            let mut result = VmValue::new(align.clone(), ty);
+            result.facts.non_null = true;
+            result.facts.dangling = true;
+            result.facts.init = true;
+            result.facts.align_n = Some(align);
+            let mut pointer = result.clone();
+            pointer.ty = field_ty;
+            self.set_local(destination, result);
+            self.set_field_value(destination, vec![0], pointer);
+            return;
+        }
         if !has_invariant {
             self.set_local(
                 destination,

@@ -32,10 +32,6 @@ pub(crate) fn allows_mir_expansion(tcx: TyCtxt<'_>, callee: DefId) -> bool {
         _ => {
             let sig = tcx.fn_sig(callee).skip_binder();
             let output = sig.output().skip_binder();
-            let no_arg_nonnull = sig.inputs().skip_binder().is_empty()
-                && output
-                    .ty_adt_def()
-                    .is_some_and(|adt| crate::verify::api_classify::is_std_nonnull(adt.did()));
             let shared_owner_without_raw_input = output.ty_adt_def().is_some_and(|adt| {
                 crate::verify::call_summary::shared_owner::has_ref_count_share_reconstruction(
                     tcx,
@@ -46,9 +42,7 @@ pub(crate) fn allows_mir_expansion(tcx: TyCtxt<'_>, callee: DefId) -> bool {
                 .skip_binder()
                 .iter()
                 .all(|ty| !matches!(ty.kind(), rustc_middle::ty::TyKind::RawPtr(..)));
-            no_arg_nonnull
-                || shared_owner_without_raw_input
-                || !constructor_result_has_invariant(tcx, callee)
+            shared_owner_without_raw_input || !constructor_result_has_invariant(tcx, callee)
         }
     }
 }
