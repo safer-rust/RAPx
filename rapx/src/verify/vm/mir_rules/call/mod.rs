@@ -433,7 +433,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     ) {
         let callee = site.callee;
         if let Some(owner) = callee
-            .and_then(|id| crate::verify::pointer_origin::shared_raw_owner_type(self.tcx, id))
+            .and_then(|id| crate::verify::call_summary::shared_owner::shared_raw_owner_type(self.tcx, id))
         {
             self.begin_ownership_transfer(site.destination, owner);
         }

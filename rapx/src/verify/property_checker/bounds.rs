@@ -170,8 +170,8 @@ impl PropertyChecker {
         let size = vm_state.allocation_size(alloc_id).clone();
 
         let pointer_sub = checkpoint.callee.and_then(|callee| {
-            crate::verify::pointer_origin::pointer_offset_direction(vm_state.tcx, callee)
-        }) == Some(crate::verify::pointer_origin::PointerOffsetDirection::Backward);
+            crate::verify::call_summary::pointer_offset::pointer_offset_direction(vm_state.tcx, callee)
+        }) == Some(crate::verify::call_summary::pointer_offset::PointerOffsetDirection::Backward);
         let alloc = vm_state.alloc(alloc_id);
         // Element-level bounds fast-path: when the allocation materializes a
         // slice length and the pointer was derived by element-strided arithmetic

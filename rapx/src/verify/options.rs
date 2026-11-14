@@ -32,7 +32,7 @@ pub(crate) fn should_inline_constructor(tcx: TyCtxt<'_>, callee: DefId) -> bool 
                     .ty_adt_def()
                     .is_some_and(|adt| crate::verify::api_classify::is_std_nonnull(adt.did()));
             let shared_owner_without_raw_input = output.ty_adt_def().is_some_and(|adt| {
-                crate::verify::pointer_origin::has_ref_count_share_reconstruction(tcx, adt.did())
+                crate::verify::call_summary::shared_owner::has_ref_count_share_reconstruction(tcx, adt.did())
             }) && sig
                 .inputs()
                 .skip_binder()

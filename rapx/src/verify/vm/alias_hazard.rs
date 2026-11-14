@@ -1,7 +1,7 @@
 //! MIR-level alias hazard analysis independent of VM state and Z3 terms.
 
 use crate::helpers::mir_utils;
-use crate::verify::pointer_origin::{self, trace_source_arg};
+use crate::verify::call_summary::pointer_flow::{self, trace_source_arg};
 use crate::verify::contract::PropertyKind;
 use std::collections::{HashMap, HashSet};
 
@@ -1648,9 +1648,9 @@ fn is_ptr_add_offset_eq(
             }
             if mir_utils::dep_callee_def_id(func)
                 .and_then(|callee| {
-                    crate::verify::pointer_origin::pointer_offset_direction(tcx, callee)
+                    crate::verify::call_summary::pointer_offset::pointer_offset_direction(tcx, callee)
                 })
-                == Some(crate::verify::pointer_origin::PointerOffsetDirection::Forward)
+                == Some(crate::verify::call_summary::pointer_offset::PointerOffsetDirection::Forward)
                 && args.len() >= 2
                 && let Some(offset_place) = operand_place(&args[1].node) {
                     let offset_root = offset_place.local().map(|l| tree.resolve_local_to_root(l));
@@ -1674,9 +1674,9 @@ fn is_ptr_from_ptr_add(tcx: TyCtxt<'_>, caller: DefId, ptr_place: &PlaceKey) -> 
             }
             return mir_utils::dep_callee_def_id(func)
                 .and_then(|callee| {
-                    crate::verify::pointer_origin::pointer_offset_direction(tcx, callee)
+                    crate::verify::call_summary::pointer_offset::pointer_offset_direction(tcx, callee)
                 })
-                == Some(crate::verify::pointer_origin::PointerOffsetDirection::Forward);
+                == Some(crate::verify::call_summary::pointer_offset::PointerOffsetDirection::Forward);
         }
     }
     false
@@ -1824,7 +1824,7 @@ pub(super) fn ownership_transfer_violation(
                 };
                 place.projection.is_empty()
                     && owners.contains(&place.local)
-                    && callee.is_some_and(|did| pointer_origin::returns_undropped_arg(tcx, did, index))
+                    && callee.is_some_and(|did| pointer_flow::returns_undropped_arg(tcx, did, index))
             });
             for arg in args {
                 if let Operand::Move(place) = &arg.node {

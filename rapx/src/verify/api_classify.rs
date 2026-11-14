@@ -16,7 +16,7 @@ use crate::def_ids::{
     lang_api::{self, LangItem},
     other_api, type_ids,
 };
-use crate::verify::pointer_origin;
+use crate::verify::call_summary::pointer_flow;
 use rustc_hir::{def::DefKind, def_id::DefId};
 use rustc_middle::{
     mir::Operand,
@@ -102,8 +102,8 @@ pub fn is_std_drop(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
 /// Whether MIR traces the returned pointer to the first argument.
 pub fn is_as_ptr(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
     callee.is_some_and(|id| {
-        crate::verify::pointer_origin::return_source_arg(tcx, id) == Some(0)
-            || crate::verify::pointer_origin::is_nonnull_view(tcx, id)
+        crate::verify::call_summary::pointer_flow::return_source_arg(tcx, id) == Some(0)
+            || crate::verify::call_summary::pointer_flow::is_nonnull_view(tcx, id)
     })
 }
 
@@ -201,7 +201,7 @@ pub fn nonnull_ref_return(tcx: TyCtxt<'_>, callee: DefId) -> Option<rustc_middle
 /// Whether MIR shows a read-only pointer view of the first argument.
 pub fn is_benign_origin_use(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
     callee.is_some_and(|did| {
-        pointer_origin::is_read_only_return(tcx, did) || pointer_origin::is_nonnull_view(tcx, did)
+        pointer_flow::is_read_only_return(tcx, did) || pointer_flow::is_nonnull_view(tcx, did)
     })
 }
 

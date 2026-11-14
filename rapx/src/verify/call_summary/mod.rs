@@ -1,8 +1,11 @@
-//! Call summaries for the staged verifier: backward dependency (which call
-//! arguments stay relevant) and forward effect (what facts a call adds).
+//! Call summaries for the staged verifier: backward dependencies, forward
+//! effects, and bounded MIR analyses of pointer flow through callees.
 pub(crate) mod effects;
 mod dependencies;
 pub(crate) mod callback;
+pub(crate) mod pointer_flow;
+pub(crate) mod pointer_offset;
+pub(crate) mod shared_owner;
 
 pub(crate) use dependencies::dependency_summary;
 pub(crate) use dependencies::callsite_write_args;

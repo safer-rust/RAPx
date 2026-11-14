@@ -13,10 +13,8 @@ pub(crate) mod driver;
 pub(crate) mod engine;
 pub(crate) mod loop_sensitivity;
 pub(crate) mod path;
-pub(crate) mod pointer_origin;
 
 pub(crate) mod property_checker;
-pub(crate) mod relevance;
 pub(crate) mod report;
 pub(crate) mod slicer;
 pub(crate) mod target;

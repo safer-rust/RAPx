@@ -47,7 +47,7 @@ use rustc_middle::{
 
 use super::{
     contract::{ContractExpr, NumericPredicate, Property, PropertyArg, PropertyKind, RelOp},
-    relevance::bind_callsite_roots,
+    slicer::bind_callsite_roots,
     target::FunctionTarget,
 };
 use crate::helpers::def_use::RelevantPlaces;

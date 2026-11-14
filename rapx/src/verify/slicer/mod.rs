@@ -5,8 +5,10 @@
 //! one [`ProofGoal`] per path for the symbolic VM to execute forward.
 
 mod rules;
+mod relevance;
 pub(crate) mod types;
 mod visitor;
 
+pub(crate) use relevance::bind_callsite_roots;
 pub(crate) use types::{ProofGoal, RelevantItem};
 pub(crate) use visitor::BackwardSlicer;

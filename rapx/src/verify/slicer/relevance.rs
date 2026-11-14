@@ -9,7 +9,7 @@ use crate::helpers::def_use::{PlaceBaseKey, PlaceKey, RelevantPlaces, operand_us
 use crate::helpers::mir_utils::callee_param_index_for_local;
 use crate::verify::checkpoint::Checkpoint;
 
-use super::contract::{
+use super::super::contract::{
     ContractExpr, ContractPlace, ContractProjection, NumericPredicate, PlaceBase, Property,
     PropertyArg, PropertyKind,
 };

@@ -331,7 +331,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             }
             self.set_local(Local::from_usize(dest), v);
             if let Some(owner) =
-                crate::verify::pointer_origin::shared_raw_owner_type(self.tcx, callee)
+                crate::verify::call_summary::shared_owner::shared_raw_owner_type(self.tcx, callee)
             {
                 self.begin_ownership_transfer(Local::from_usize(dest), owner);
             }
