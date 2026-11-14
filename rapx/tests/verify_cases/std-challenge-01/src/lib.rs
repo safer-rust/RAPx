@@ -392,23 +392,6 @@ pub unsafe fn align_to_mut_ext<T, U>(slice: &mut [T]) -> (&mut [T], &mut [U], &m
 }
 
 /// `<[T]>::as_simd`: view a slice as SIMD lanes via `align_to`.
-#[cfg(not(rapx_rustc_ge_195))]
-#[rapx::verify]
-pub fn as_simd_ext<T, const LANES: usize>(
-    slice: &[T],
-) -> (&[T], &[std::simd::Simd<T, LANES>], &[T])
-where
-    T: std::simd::SimdElement,
-    std::simd::LaneCount<LANES>: std::simd::SupportedLaneCount,
-    std::simd::Simd<T, LANES>: AsRef<[T; LANES]>,
-{
-    assert!(LANES != 0, "SIMD lane count must be non-zero");
-    // SAFETY: the SIMD type has the same layout as `[T; LANES]`.
-    unsafe { align_to_ext::<T, std::simd::Simd<T, LANES>>(slice) }
-}
-
-/// `<[T]>::as_simd`: view a slice as SIMD lanes via `align_to`.
-#[cfg(rapx_rustc_ge_195)]
 #[rapx::verify]
 pub fn as_simd_ext<T, const LANES: usize>(
     slice: &[T],
@@ -423,23 +406,6 @@ where
 }
 
 /// `<[T]>::as_simd_mut`: mutable counterpart of `as_simd`.
-#[cfg(not(rapx_rustc_ge_195))]
-#[rapx::verify]
-pub fn as_simd_mut_ext<T, const LANES: usize>(
-    slice: &mut [T],
-) -> (&mut [T], &mut [std::simd::Simd<T, LANES>], &mut [T])
-where
-    T: std::simd::SimdElement,
-    std::simd::LaneCount<LANES>: std::simd::SupportedLaneCount,
-    std::simd::Simd<T, LANES>: AsMut<[T; LANES]>,
-{
-    assert!(LANES != 0, "SIMD lane count must be non-zero");
-    // SAFETY: the SIMD type has the same layout as `[T; LANES]`.
-    unsafe { align_to_mut_ext::<T, std::simd::Simd<T, LANES>>(slice) }
-}
-
-/// `<[T]>::as_simd_mut`: mutable counterpart of `as_simd`.
-#[cfg(rapx_rustc_ge_195)]
 #[rapx::verify]
 pub fn as_simd_mut_ext<T, const LANES: usize>(
     slice: &mut [T],

@@ -1102,7 +1102,6 @@ pub(crate) fn eval_wrap_unsafe_binder<'z3, 'tcx>(
 }
 
 
-#[cfg(rapx_rvalue_has_reborrow)]
 pub(crate) fn eval_reborrow<'z3, 'tcx>(
     state: &mut VmState<'z3, 'tcx>,
     dest_place: &Place<'tcx>,

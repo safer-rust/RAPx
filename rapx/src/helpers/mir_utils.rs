@@ -31,9 +31,6 @@ use rustc_span::{DUMMY_SP, Symbol};
 
 use std::{collections::HashSet, ops::ControlFlow};
 
-#[cfg(not(rapx_has_skip_norm_wip))]
-use crate::compat::SkipNormWip;
-
 use super::def_use::PlaceKey;
 
 pub(crate) fn pointee_ty<'tcx>(ty: Ty<'tcx>) -> Option<Ty<'tcx>> {
@@ -115,21 +112,11 @@ pub(crate) fn switch_targets_unreachable<'tcx>(
 /// Resolve a `cfg!`-style runtime-check flag (`UbChecks`, `ContractChecks`,
 /// `OverflowChecks`) to a constant `u64`. We fold to the *no-check* edge (`0`):
 /// the check only panics on a violated precondition, and its branchy body would
-/// otherwise corrupt field/Typed propagation during inlining. Older rustc lowers
-/// these to `Rvalue::NullaryOp(NullOp::RuntimeChecks)`; newer rustc lowers them
-/// to `Operand::RuntimeChecks`.
+/// otherwise corrupt field/Typed propagation during inlining. Rustc lowers
+/// these to `Operand::RuntimeChecks`.
 pub(crate) fn rvalue_runtime_checks_value(rvalue: &Rvalue<'_>) -> Option<u64> {
-    #[cfg(rapx_rvalue_has_nullary_op)]
-    {
-        if let Rvalue::NullaryOp(rustc_middle::mir::NullOp::RuntimeChecks(_)) = rvalue {
-            return Some(0);
-        }
-    }
-    #[cfg(not(rapx_rvalue_has_nullary_op))]
-    {
-        if let Rvalue::Use(Operand::RuntimeChecks(_), ..) = rvalue {
-            return Some(0);
-        }
+    if let Rvalue::Use(Operand::RuntimeChecks(_), ..) = rvalue {
+        return Some(0);
     }
     None
 }
@@ -1154,10 +1141,7 @@ pub(crate) fn eval_array_len<'tcx>(
         return Some(v);
     }
     // An unevaluated array length (`[MaybeUninit<K>; CAPACITY]` where
-    // `CAPACITY = 2 * B - 1`) is an anonymous const. Its `ConstKind`
-    // representation differs across toolchains: `Unevaluated` before the
-    // `Alias` rename (~2026-07), `Alias` afterwards.
-    #[cfg(rapx_constkind_alias)]
+    // `CAPACITY = 2 * B - 1`) is an anonymous const represented as an alias.
     let def_id = {
         let ConstKind::Alias(_, alias_const) = c.kind() else {
             return None;
@@ -1175,13 +1159,6 @@ pub(crate) fn eval_array_len<'tcx>(
             }
         };
         def_id
-    };
-    #[cfg(not(rapx_constkind_alias))]
-    let def_id = {
-        let ConstKind::Unevaluated(uneval) = c.kind() else {
-            return None;
-        };
-        uneval.def
     };
     let instance = rustc_middle::ty::Instance::mono(tcx, def_id);
     let cid = rustc_middle::mir::interpret::GlobalId {

@@ -1,5 +1,3 @@
-#[cfg(not(rapx_has_skip_norm_wip))]
-use crate::compat::SkipNormWip;
 use crate::def_ids::lang_api::{self, LangItem};
 use crate::helpers::mir_utils;
 use crate::limit::FUZZABLE_MAX_DEPTH;

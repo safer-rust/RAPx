@@ -58,7 +58,6 @@ rvalue_registry!(state, place, rv;
     rule_repeat: Repeat(operand, _) => rvalue::eval_repeat(state, place, operand),
     rule_thread_local_ref: ThreadLocalRef(def_id) => rvalue::eval_thread_local_ref(state, place, *def_id),
     rule_wrap_unsafe_binder: WrapUnsafeBinder(operand, _) => rvalue::eval_wrap_unsafe_binder(state, place, operand),
-    #[cfg(rapx_rvalue_has_reborrow)]
     rule_reborrow: Reborrow(_, mutability, source) => rvalue::eval_reborrow(state, place, source, *mutability),
 );
 

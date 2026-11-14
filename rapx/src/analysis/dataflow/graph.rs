@@ -200,7 +200,6 @@ impl DataflowGraph {
                     self.add_operand(operand, dst, block, stmt_idx);
                     self.nodes[dst].ops[seq] = NodeOp::Use;
                 }
-                #[cfg(rapx_rvalue_has_reborrow)]
                 Rvalue::Reborrow(_, _, place) => {
                     let src = self.parse_place(place, block, stmt_idx);
                     self.add_node_edge(src, dst, EdgeOp::Copy, block, stmt_idx);

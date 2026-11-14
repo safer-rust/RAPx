@@ -316,7 +316,6 @@ pub(crate) fn exec_assign<'z3, 'tcx>(
             _,
         )
         | Rvalue::CopyForDeref(source) => Some(source),
-        #[cfg(rapx_rvalue_has_reborrow)]
         Rvalue::Reborrow(_, _, source) => Some(source),
         _ => None,
     };
@@ -458,7 +457,6 @@ pub(crate) fn exec_assign<'z3, 'tcx>(
             state.set_local(place.local, wv);
         }
         for (path, mut field) in source_fields {
-            #[cfg(rapx_rvalue_has_reborrow)]
             if matches!(rvalue, Rvalue::Reborrow(..))
                 && path.len() == 1
                 && let TyKind::Adt(adt, args) = state.body().local_decls[place.local].ty.kind()

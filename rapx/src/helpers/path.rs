@@ -1,5 +1,3 @@
-#[cfg(not(rapx_has_skip_norm_wip))]
-use crate::compat::SkipNormWip;
 use crate::compat::GenericArgsRef;
 use itertools::Itertools;
 use rustc_hir::def::DefKind;
@@ -133,33 +131,12 @@ impl<'tcx> PathResolver<'tcx> {
             TyKind::Slice(inner_ty) => {
                 format!("[{}]", self.ty_str(*inner_ty))
             }
-            #[cfg(rapx_alias_ty_structured_kind)]
             TyKind::Alias(is_rigid, alias_ty) => match alias_ty.kind {
                 ty::AliasTyKind::Projection { def_id } => {
                     self.path_str_with_args(def_id, alias_ty.args)
                 }
                 ty::AliasTyKind::Opaque { .. } => {
                     let ty_str = alias_ty.to_ty(self.tcx, *is_rigid).to_string();
-                    rap_warn!(
-                        "encounter opaque type {}, type string might be private",
-                        ty_str
-                    );
-                    ty_str
-                }
-                kind => {
-                    panic!(
-                        "unexpected alias kind: {:?} for alias_ty: {:?}",
-                        kind, alias_ty
-                    );
-                }
-            },
-            #[cfg(not(rapx_alias_ty_structured_kind))]
-            TyKind::Alias(alias_kind, alias_ty) => match alias_kind {
-                ty::AliasTyKind::Projection => {
-                    self.path_str_with_args(alias_ty.def_id, alias_ty.args)
-                }
-                ty::AliasTyKind::Opaque => {
-                    let ty_str = alias_ty.to_ty(self.tcx).to_string();
                     rap_warn!(
                         "encounter opaque type {}, type string might be private",
                         ty_str

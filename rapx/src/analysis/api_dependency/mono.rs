@@ -3,8 +3,6 @@
 use super::graph::TyWrapper;
 use super::utils::{self, fn_sig_with_generic_args};
 use crate::compat;
-#[cfg(not(rapx_has_skip_norm_wip))]
-use crate::compat::SkipNormWip;
 use crate::compat::GenericArgsRef;
 use crate::helpers::def_path::path_str_def_id;
 use crate::limit::MAX_STEP_SET_SIZE;
