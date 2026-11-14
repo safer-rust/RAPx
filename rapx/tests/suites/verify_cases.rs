@@ -145,6 +145,7 @@ fn std_challenge_01() {
 #[test]
 fn std_challenge_17() {
     let output = run_with_args("verify_cases/std-challenge-17", CMD_VERIFY_TARGETED);
+    assert_not_contain(&output, "contract predicate not supported by grammar");
     assert_function_result(&output, "<[T] as SliceExt<T>>::get_unchecked_ext", "SOUND");
     assert_function_result(&output, "<[T] as SliceExt<T>>::get_unchecked_mut_ext", "SOUND");
     if output.contains("UNSOUND") {

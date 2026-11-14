@@ -498,6 +498,10 @@ mod tests {
     #[test]
     fn length_spellings_are_supported() {
         assert!(ContractParser::parse(Rule::expr_input, "b.len()").is_ok());
+        assert!(ContractParser::parse(Rule::expr_input, "self_.len()").is_ok());
+        assert!(ContractParser::parse(Rule::expr_input, "self_.0").is_ok());
+        assert!(ContractParser::parse(Rule::expr_input, "return.0").is_ok());
+        assert!(ContractParser::parse(Rule::expr_input, "Arg_2.size").is_ok());
         assert!(ContractParser::parse(Rule::expr_input, "len(b)").is_ok());
         assert!(ContractParser::parse(Rule::expr_input, "len(b) + 1").is_ok());
     }

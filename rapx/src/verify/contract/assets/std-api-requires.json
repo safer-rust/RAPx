@@ -4427,7 +4427,8 @@
     {
       "tag": "ValidNum",
       "args": [
-        "0 <= mid && mid <= self.len()"
+        "mid",
+        "[0,self.len()]"
       ]
     }
   ],
@@ -4435,7 +4436,8 @@
     {
       "tag": "ValidNum",
       "args": [
-        "0 <= mid && mid <= self.len()"
+        "mid",
+        "[0,self.len()]"
       ]
     }
   ],

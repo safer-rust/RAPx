@@ -96,10 +96,17 @@ fn run_with_args(dir: &str, args: &[&str]) -> String {
 /// regression (like a broken `#[rapx::invariant(...)]`) go unnoticed while the
 /// function still verifies as SOUND. Fail hard here instead.
 fn assert_no_parse_error(output: &str) {
-    assert!(
-        !output.contains("Failed to parse RAPx"),
-        "RAPx attribute parse error detected (a contract was silently dropped):\n{output}"
-    );
+    for pattern in [
+        "Failed to parse RAPx",
+        "contract expression not supported by grammar",
+        "contract predicate not supported by grammar",
+        "contract place not parseable",
+    ] {
+        assert!(
+            !output.contains(pattern),
+            "RAPx contract parse error detected ({pattern}):\n{output}"
+        );
+    }
 }
 
 fn cargo_rapx_command() -> Command {

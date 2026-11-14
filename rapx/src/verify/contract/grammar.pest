@@ -64,7 +64,8 @@ size_of_call = { ("std" ~ "::" ~ "mem" ~ "::" | "core" ~ "::" ~ "mem" ~ "::")? ~
 // ── Places and projections ──────────────────────────────────────────────────
 
 place      = { base ~ projection* }
-base       = { "self" | "return" | "Arg_" ~ int | ident }
+// Parse the whole identifier so names such as `self_` are not split at `self`.
+base       = { ident }
 projection = { "." ~ member }
 member     = { ident ~ "()"? | int }
 
