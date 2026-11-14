@@ -577,8 +577,7 @@ pub(crate) struct VerifyTargetCollector<'tcx> {
 }
 
 impl<'tcx> VerifyTargetCollector<'tcx> {
-    /// Collect all verification targets across the current crate and optionally
-    /// external crates (when `crate_filter` is set).
+    /// Collect verification targets from the crate currently being compiled.
     pub(crate) fn collect_all(
         tcx: TyCtxt<'tcx>,
         mode: VerifyMode,
@@ -590,13 +589,10 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
             tcx,
             mode,
             skip_invariant,
-            crate_filter.clone(),
+            crate_filter,
             module_filter,
         );
         tcx.hir_visit_all_item_likes_in_crate(&mut collector);
-        if crate_filter.is_some() {
-            collector.collect_extern_crate_targets();
-        }
         collector.check_module_filter_result();
         collector
     }
@@ -913,49 +909,6 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
                 })
                 .function_targets
                 .push(function_target);
-        }
-    }
-
-    /// Process MIR keys from non-local crates that match the `--crate` filter.
-    ///
-    /// `hir_visit_all_item_likes_in_crate` only visits the *local* crate, but
-    /// in a workspace the target crate (e.g. `core`) may be compiled as a
-    /// dependency of another crate (e.g. `std`).  This method iterates all
-    /// crates' MIR bodies and collects targets from those matching the filter.
-    fn collect_extern_crate_targets(&mut self) {
-        let local_crate = rustc_hir::def_id::LOCAL_CRATE;
-
-        for def_id in self.tcx.mir_keys(()) {
-            let def_id = def_id.to_def_id();
-            if def_id.krate == local_crate {
-                continue; // already visited via the HIR visitor
-            }
-            if !self.crate_name_matches(def_id) {
-                continue;
-            }
-            let def_kind = self.tcx.def_kind(def_id);
-            if !matches!(
-                def_kind,
-                rustc_hir::def::DefKind::Fn | rustc_hir::def::DefKind::AssocFn
-            ) {
-                continue;
-            }
-
-            if matches!(self.mode, VerifyMode::Targeted) {
-                continue;
-            }
-
-            self.crate_filter_matched = true;
-
-            if !self.module_path_matches(def_id) {
-                continue;
-            }
-            self.module_filter_matched = true;
-
-            let function_targets = self.build_function_targets(def_id);
-            for function_target in function_targets {
-                self.push_function_target(function_target);
-            }
         }
     }
 
