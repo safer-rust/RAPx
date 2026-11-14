@@ -161,7 +161,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     .generics_of(*callee_def_id)
                     .param_at(index as usize, self.tcx);
                 let param_ty = self.tcx.type_of(param.def_id).instantiate_identity();
-                #[cfg(rapx_ge_99)]
                 let param_ty = param_ty.skip_norm_wip();
                 Some(match value {
                     Some(value) => Int::from_u64(self.z3_ctx, value),

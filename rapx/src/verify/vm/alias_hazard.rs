@@ -1375,14 +1375,12 @@ fn terminator_uses_any_local(terminator: &TerminatorKind<'_>, locals: &HashSet<L
         TerminatorKind::Call { args, .. } => args.iter().any(|arg| match &arg.node {
             Operand::Copy(place) | Operand::Move(place) => locals.contains(&place.local),
             Operand::Constant(_) => false,
-            #[cfg(rapx_ge_95)]
             Operand::RuntimeChecks(_) => false,
         }),
         TerminatorKind::SwitchInt { discr, .. } | TerminatorKind::Assert { cond: discr, .. } => {
             match discr {
                 Operand::Copy(place) | Operand::Move(place) => locals.contains(&place.local),
                 Operand::Constant(_) => false,
-                #[cfg(rapx_ge_95)]
                 Operand::RuntimeChecks(_) => false,
             }
         }

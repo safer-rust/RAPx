@@ -119,7 +119,6 @@ fn liberate_fn_sig<'tcx>(
         return None;
     }
     let fn_sig = tcx.fn_sig(def_id).instantiate_identity();
-    #[cfg(rapx_ge_99)]
     let fn_sig = fn_sig.skip_norm_wip();
     Some(tcx.liberate_late_bound_regions(def_id, fn_sig))
 }

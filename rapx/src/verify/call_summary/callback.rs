@@ -64,7 +64,6 @@ fn operand_ty<'tcx>(
     match operand {
         Operand::Copy(place) | Operand::Move(place) => Some(place.ty(&body.local_decls, tcx).ty),
         Operand::Constant(constant) => Some(constant.const_.ty()),
-        #[cfg(rapx_ge_95)]
         Operand::RuntimeChecks(_) => None,
     }
 }

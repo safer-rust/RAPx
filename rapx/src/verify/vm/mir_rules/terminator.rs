@@ -34,7 +34,6 @@ fn inline_switch_discr_const<'z3, 'tcx>(
     if let Some(value) = mir_utils::operand_const_u64(discr) {
         return Some(value);
     }
-    #[cfg(rapx_ge_95)]
     if let Operand::RuntimeChecks(_) = discr {
         return Some(0);
     }

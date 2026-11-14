@@ -59,7 +59,6 @@ pub fn is_manually_drop(tcx: TyCtxt<'_>, did: DefId) -> bool {
         return false;
     };
     let self_ty = tcx.type_of(impl_id).instantiate_identity();
-    #[cfg(rapx_ge_99)]
     let self_ty = self_ty.skip_norm_wip();
     matches!(self_ty.kind(), TyKind::Adt(adt, _)
         if tcx.is_lang_item(adt.did(), crate::def_ids::lang_api::LangItem::ManuallyDrop))
@@ -71,7 +70,6 @@ pub fn is_assume_init_read(tcx: TyCtxt<'_>, did: DefId) -> bool {
         return false;
     };
     let self_ty = tcx.type_of(impl_id).instantiate_identity();
-    #[cfg(rapx_ge_99)]
     let self_ty = self_ty.skip_norm_wip();
     matches!(self_ty.kind(), TyKind::Adt(adt, _)
         if tcx.is_lang_item(adt.did(), crate::def_ids::lang_api::LangItem::MaybeUninit))

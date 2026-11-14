@@ -3,8 +3,6 @@ use std::process::Command;
 fn main() {
     let (_major, minor, _patch) = detect_rustc_version();
 
-    emit_check_cfg("rapx_ge_95");
-    emit_check_cfg("rapx_ge_99");
     emit_check_cfg("rapx_ge_100");
     emit_check_cfg("rapx_generic_args_value");
     emit_check_cfg("rapx_const_ext");
@@ -30,8 +28,6 @@ fn main() {
     emit_check_cfg("rapx_layout_align_abi");
     emit_check_cfg("rapx_caller_bounds_accessor");
 
-    emit_cfg("rapx_ge_95", minor >= 95);
-    emit_cfg("rapx_ge_99", minor >= 99);
     emit_cfg("rapx_ge_100", minor >= 100);
     emit_cfg(
         "rapx_generic_args_value",

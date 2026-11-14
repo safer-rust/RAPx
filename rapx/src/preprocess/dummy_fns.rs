@@ -30,8 +30,6 @@ fn make_dummy_block() -> Block {
         id: DUMMY_NODE_ID,
         rules: BlockCheckMode::Default,
         span: DUMMY_SP,
-        #[cfg(not(rapx_ge_99))]
-        tokens: None,
     }
 }
 
@@ -39,10 +37,7 @@ fn make_dummy_fn(ident_name: &str, build_std: bool) -> Box<Item> {
     let ident = Ident::from_str(ident_name);
 
     let fn_ast = Fn {
-        #[cfg(rapx_ge_99)]
         defaultness: Defaultness::Implicit,
-        #[cfg(not(rapx_ge_99))]
-        defaultness: Defaultness::Final,
         ident,
         generics: Generics::default(),
         sig: make_dummy_fn_sig(),
@@ -50,7 +45,7 @@ fn make_dummy_fn(ident_name: &str, build_std: bool) -> Box<Item> {
         define_opaque: None,
         #[cfg(rapx_ge_100)]
         eii_impl: Default::default(),
-        #[cfg(all(rapx_ge_95, not(rapx_ge_100)))]
+        #[cfg(not(rapx_ge_100))]
         eii_impls: Default::default(),
         body: Some(Box::new(make_dummy_block())),
     };
@@ -62,8 +57,6 @@ fn make_dummy_fn(ident_name: &str, build_std: bool) -> Box<Item> {
         vis: Visibility {
             span: DUMMY_SP,
             kind: VisibilityKind::Public,
-            #[cfg(not(rapx_ge_99))]
-            tokens: None,
         },
         span: DUMMY_SP,
         tokens: None,

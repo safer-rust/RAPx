@@ -21,10 +21,7 @@ pub type GenericArgsRef<'tcx> = rustc_middle::ty::GenericArgs<'tcx>;
 
 /// `Spanned` was moved from `rustc_span::source_map` to `rustc_span` root
 /// in rustc 1.97.
-#[cfg(rapx_ge_99)]
 pub use rustc_span::Spanned;
-#[cfg(not(rapx_ge_99))]
-pub use rustc_span::source_map::Spanned;
 
 // ── predicates_of / clauses_of (rustc ≥ 1.100) ────────────────────────
 
@@ -51,14 +48,7 @@ pub fn predicates_of<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> GenericPredicate
 
 // ── GenericArgsRef::get (Binder wrapping in rustc ≥ 1.99) ─────────────
 
-#[cfg(not(rapx_ge_99))]
-pub fn args_get<'tcx>(
-    args: &rustc_middle::ty::GenericArgsRef<'tcx>,
-    index: usize,
-) -> Option<&'tcx rustc_middle::ty::GenericArg<'tcx>> {
-    args.get(index)
-}
-#[cfg(all(rapx_ge_99, not(rapx_generic_args_value)))]
+#[cfg(not(rapx_generic_args_value))]
 pub fn args_get<'tcx>(
     args: &rustc_middle::ty::Binder<'tcx, &'tcx rustc_middle::ty::GenericArgs<'tcx>>,
     index: usize,
@@ -101,11 +91,6 @@ pub fn get_all_attrs<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> &'tcx [Attribute
     tcx.get_all_attrs(def_id)
 }
 
-#[cfg(not(rapx_ge_99))]
-pub fn attribute_to_string<'tcx>(tcx: TyCtxt<'tcx>, attr: &Attribute) -> String {
-    rustc_hir_pretty::attribute_to_string(&tcx, attr)
-}
-#[cfg(rapx_ge_99)]
 pub fn attribute_to_string(_tcx: TyCtxt<'_>, attr: &Attribute) -> String {
     struct Ann;
     impl rustc_hir_pretty::PpAnn for Ann {}

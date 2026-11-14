@@ -24,13 +24,9 @@ pub enum NodeOp {
     Cast,
     BinaryOp,
     CheckedBinaryOp,
-    #[cfg(not(rapx_ge_99))]
-    NullaryOp,
     UnaryOp,
     Discriminant,
     Aggregate(AggKind),
-    #[cfg(not(rapx_ge_99))]
-    ShallowInitBox,
     CopyForDeref,
     RawPtr,
     Call(DefId),

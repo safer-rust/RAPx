@@ -526,8 +526,6 @@ impl<'tcx> PathGraph<'tcx> {
                     unwind,
                     replace: _,
                     drop: _,
-                    #[cfg(not(rapx_ge_99))]
-                        async_fut: _,
                 } => {
                     cfg_block.add_next(target.as_usize());
                     if let UnwindAction::Cleanup(target) = unwind {
@@ -843,7 +841,6 @@ impl<'tcx> PathGraph<'tcx> {
                     .try_eval_bool(self.cfg.tcx, typing_env)
                     .unwrap_or(true);
             }
-            #[cfg(rapx_ge_95)]
             Operand::RuntimeChecks(_) => return true,
         };
         self.resolve_bool_local(cond_local, cs)

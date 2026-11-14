@@ -629,7 +629,6 @@ impl<'tcx> TypeVisitor<TyCtxt<'tcx>> for FindPtr<'tcx> {
                 self.set_ptr(true);
                 ControlFlow::Break(())
             }
-            #[cfg(rapx_ge_99)]
             TyKind::Pat(..) => {
                 self.set_ptr(true);
                 ControlFlow::Break(())

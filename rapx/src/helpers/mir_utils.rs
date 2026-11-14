@@ -10,7 +10,6 @@ use rustc_hir::{
     def::DefKind,
     def_id::{DefId, LocalDefId},
 };
-#[cfg(rapx_ge_99)]
 use rustc_middle::ty::ShimKind;
 #[cfg(rapx_const_ext)]
 use rustc_middle::ty::consts::ConstExt;
@@ -220,7 +219,6 @@ pub(crate) fn instance_def_id<'tcx>(
     instance: Instance<'tcx>,
 ) -> (Option<DefId>, bool) {
     let mut is_virtual = false;
-    #[cfg(rapx_ge_99)]
     let def_id = match instance.def {
         InstanceKind::Item(def_id) => Some(def_id),
         InstanceKind::Intrinsic(def_id) => Some(def_id),
@@ -257,35 +255,6 @@ pub(crate) fn instance_def_id<'tcx>(
         },
         #[allow(unreachable_patterns)]
         _ => None,
-    };
-    #[cfg(not(rapx_ge_99))]
-    let def_id = match instance.def {
-        InstanceKind::Item(def_id) => Some(def_id),
-        InstanceKind::Intrinsic(def_id) => Some(def_id),
-        InstanceKind::VTableShim(def_id) => Some(def_id),
-        InstanceKind::ReifyShim(def_id, _) => Some(def_id),
-        InstanceKind::FnPtrShim(def_id, _) => Some(def_id),
-        InstanceKind::Virtual(def_id, _) => {
-            is_virtual = true;
-            Some(def_id)
-        }
-        InstanceKind::ClosureOnceShim { call_once, .. } => Some(call_once),
-        InstanceKind::ConstructCoroutineInClosureShim {
-            coroutine_closure_def_id,
-            ..
-        } => Some(coroutine_closure_def_id),
-        InstanceKind::ThreadLocalShim(def_id) => Some(def_id),
-        InstanceKind::DropGlue(def_id, _) => Some(def_id),
-        InstanceKind::FnPtrAddrShim(def_id, _) => Some(def_id),
-        InstanceKind::AsyncDropGlueCtorShim(def_id, _) => Some(def_id),
-        InstanceKind::CloneShim(def_id, _) => {
-            if !tcx.is_closure_like(def_id) {
-                Some(def_id)
-            } else {
-                None
-            }
-        }
-        _ => todo!(),
     };
     (def_id, is_virtual)
 }
@@ -563,7 +532,6 @@ pub(crate) fn resolve_callee_instance<'tcx>(
     let TyKind::FnDef(def_id, callee_args) = c.const_.ty().kind() else {
         return None;
     };
-    #[cfg(rapx_ge_99)]
     let callee_args = callee_args.skip_binder();
     resolve_instance(tcx, caller, *def_id, callee_args)
 }
@@ -582,7 +550,6 @@ pub(crate) fn dep_callee_resolved_def_id<'tcx>(
         return None;
     };
     let callee_def_id = *def_id;
-    #[cfg(rapx_ge_99)]
     let callee_args = callee_args.skip_binder();
     resolve_callee_impl(tcx, caller, callee_def_id, callee_args).or(Some(callee_def_id))
 }
@@ -644,11 +611,6 @@ pub fn is_trait_unsafe(tcx: TyCtxt<'_>, trait_def_id: DefId) -> bool {
     };
     let item = tcx.hir_expect_item(local_id);
 
-    #[cfg(not(rapx_ge_99))]
-    if let ItemKind::Trait(_, _, unsafety, _, _, _, _) = &item.kind {
-        return matches!(unsafety, rustc_hir::Safety::Unsafe);
-    }
-    #[cfg(rapx_ge_99)]
     if let ItemKind::Trait { safety, .. } = &item.kind {
         return matches!(safety, rustc_hir::Safety::Unsafe);
     }
@@ -823,7 +785,6 @@ pub fn rvalue_any_place_matching<'tcx>(
         Rvalue::Aggregate(_, operands) => operands.iter().any(|operand| match operand {
             Operand::Copy(place) | Operand::Move(place) => pred(place),
             Operand::Constant(_) => false,
-            #[cfg(rapx_ge_95)]
             Operand::RuntimeChecks(_) => false,
         }),
         _ => rvalue_source_place(rvalue).is_some_and(pred),
@@ -974,14 +935,7 @@ fn is_const_def_kind(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
         tcx.def_kind(def_id),
         DefKind::Const | DefKind::Static { .. } | DefKind::AssocConst | DefKind::AnonConst
     );
-    #[cfg(rapx_ge_99)]
-    {
-        base
-    }
-    #[cfg(not(rapx_ge_99))]
-    {
-        base || matches!(tcx.def_kind(def_id), DefKind::InlineConst)
-    }
+    base
 }
 
 /// Extract the first `Type` generic argument of an `FnDef` call operand.
@@ -996,7 +950,6 @@ pub(crate) fn fn_def_first_type_arg<'tcx>(func: &Operand<'tcx>) -> Option<Ty<'tc
         return None;
     };
     args.iter().find_map(|a| {
-        #[cfg(rapx_ge_99)]
         let a = a.skip_binder();
         match a.kind() {
             GenericArgKind::Type(t) => Some(t),
@@ -1635,7 +1588,6 @@ pub fn collect_all_const_bytes_worklist<'tcx>(
                 if !destination.projection.is_empty() {
                     continue;
                 }
-                #[cfg(rapx_ge_99)]
                 if dep_callee_def_id(func).is_some_and(|d| {
                     tcx.is_diagnostic_item(Symbol::intern("box_assume_init_into_vec_unsafe"), d)
                 })

@@ -1722,7 +1722,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return None;
         }
         let ty = self.tcx.type_of(param.def_id).instantiate_identity();
-        #[cfg(rapx_ge_99)]
         let ty = ty.skip_norm_wip();
         let value = rustc_middle::ty::Const::new_param(
             self.tcx,
@@ -1829,7 +1828,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     },
                 }
             }
-            #[cfg(rapx_ge_95)]
             Operand::RuntimeChecks(_) => VmValue::new(
                 self.fresh_int("runtime_checks"),
                 self.body().local_decls[Local::from_usize(0)].ty,

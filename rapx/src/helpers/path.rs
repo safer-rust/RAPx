@@ -199,7 +199,6 @@ impl<'tcx> PathResolver<'tcx> {
                         .impl_trait_ref(assoc_id)
                         .instantiate(self.tcx, parent_args);
 
-                    #[cfg(rapx_ge_99)]
                     let trait_ref = trait_ref.skip_norm_wip();
 
                     self.qualified_path_str(
@@ -214,7 +213,6 @@ impl<'tcx> PathResolver<'tcx> {
                         .tcx
                         .type_of(assoc_id)
                         .instantiate(self.tcx, parent_args);
-                    #[cfg(rapx_ge_99)]
                     let self_ty = self_ty.skip_norm_wip();
                     self.ty_str(self_ty)
                 }

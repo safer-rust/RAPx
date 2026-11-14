@@ -233,7 +233,6 @@ fn zst_property_operand<'tcx>(
             }
             found
         }
-        #[cfg(rapx_ge_95)]
         Operand::RuntimeChecks(_) => None,
     };
     let Some(constant) = constant else {

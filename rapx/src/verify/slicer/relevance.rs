@@ -237,7 +237,6 @@ fn bind_operand_place(operand: &Operand<'_>, fields: &[usize]) -> Option<PlaceKe
     let mut place = match operand {
         Operand::Copy(place) | Operand::Move(place) => PlaceKey::from_mir_place(place),
         Operand::Constant(_) => return None,
-        #[cfg(rapx_ge_95)]
         Operand::RuntimeChecks(_) => return None,
     };
     place.fields.extend(fields.iter().copied());

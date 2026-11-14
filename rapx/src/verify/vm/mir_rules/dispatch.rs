@@ -54,13 +54,9 @@ rvalue_registry!(state, place, rv;
     rule_cast: Cast(kind, operand, ty) => rvalue::eval_cast(state, *kind, operand, *ty),
     rule_aggregate: Aggregate(kind, operands) => rvalue::eval_aggregate(state, place, kind, operands),
     rule_discriminant: Discriminant(source) => rvalue::eval_discriminant(state, place, source),
-    #[cfg(not(rapx_ge_99))]
-    rule_shallow_init_box: ShallowInitBox(operand, _) => rvalue::eval_shallow_init_box(state, place, operand),
     rule_copy_for_deref: CopyForDeref(source) => rvalue::eval_copy_for_deref(state, place, source),
     rule_repeat: Repeat(operand, _) => rvalue::eval_repeat(state, place, operand),
     rule_thread_local_ref: ThreadLocalRef(def_id) => rvalue::eval_thread_local_ref(state, place, *def_id),
-    #[cfg(not(rapx_ge_95))]
-    rule_nullary_op: NullaryOp(op) => rvalue::eval_nullary_op(state, place, op),
     rule_wrap_unsafe_binder: WrapUnsafeBinder(operand, _) => rvalue::eval_wrap_unsafe_binder(state, place, operand),
     #[cfg(rapx_rvalue_has_reborrow)]
     rule_reborrow: Reborrow(_, mutability, source) => rvalue::eval_reborrow(state, place, source, *mutability),

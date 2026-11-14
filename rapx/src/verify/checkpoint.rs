@@ -229,7 +229,6 @@ pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<C
         let func_ty = match func {
             Operand::Constant(func_constant) => func_constant.const_.ty(),
             Operand::Copy(place) | Operand::Move(place) => place.ty(body, tcx).ty,
-            #[cfg(rapx_ge_95)]
             Operand::RuntimeChecks(_) => continue,
         };
         let ty::FnDef(callee_def_id, callee_args) = func_ty.kind() else {
@@ -251,7 +250,6 @@ pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<C
             }
             continue;
         };
-        #[cfg(rapx_ge_99)]
         let callee_args = callee_args.skip_binder();
 
         if get_fn_safety(tcx, *callee_def_id) != Safety::Unsafe {

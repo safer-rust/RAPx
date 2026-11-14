@@ -1,7 +1,5 @@
 use super::set_attrs;
-#[cfg(rapx_ge_99)]
 use rustc_ast::MutRestriction;
-#[cfg(rapx_ge_99)]
 use rustc_ast::RestrictionKind;
 use rustc_ast::*;
 use rustc_span::{
@@ -88,10 +86,7 @@ pub(crate) fn create_struct(
                     vis: Visibility {
                         span: DUMMY_SP,
                         kind: VisibilityKind::Public,
-                        #[cfg(not(rapx_ge_99))]
-                        tokens: None,
                     },
-                    #[cfg(rapx_ge_99)]
                     mut_restriction: MutRestriction {
                         kind: RestrictionKind::Unrestricted,
                         span: DUMMY_SP,
@@ -101,8 +96,6 @@ pub(crate) fn create_struct(
                         id: NodeId::from_u32(0),
                         kind: TyKind::Path(None, Path::from_ident(Ident::with_dummy_span(fty))),
                         span: DUMMY_SP,
-                        #[cfg(not(rapx_ge_99))]
-                        tokens: None,
                     }),
                     id: NodeId::from_u32(0),
                     span: DUMMY_SP,
@@ -132,8 +125,6 @@ pub(crate) fn create_struct(
         vis: Visibility {
             span: DUMMY_SP,
             kind: VisibilityKind::Public,
-            #[cfg(not(rapx_ge_99))]
-            tokens: None,
         },
         span: DUMMY_SP,
         tokens: None,

@@ -68,7 +68,6 @@ pub(crate) fn is_std_box_value_constructor(tcx: TyCtxt<'_>, callee: DefId) -> bo
         return false;
     };
     let self_ty = tcx.type_of(impl_id).instantiate_identity();
-    #[cfg(rapx_ge_99)]
     let self_ty = self_ty.skip_norm_wip();
     let TyKind::Adt(adt, args) = self_ty.kind() else {
         return false;

@@ -2275,7 +2275,6 @@ impl<'tcx, 'z3, 'a> IntraFlowAnalysis<'tcx, 'z3, 'a> {
                     }
                 }
                 Operand::Constant(..) => continue,
-                #[cfg(rapx_ge_95)]
                 Operand::RuntimeChecks(_) => continue,
             }
         }

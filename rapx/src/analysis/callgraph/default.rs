@@ -73,8 +73,6 @@ impl<'tcx> CallGraphAnalyzer<'tcx> {
                         // NOTE: safer fallback for constants
                         self.tcx.mir_for_ctfe(def_id)
                     }
-                    #[cfg(not(rapx_ge_99))]
-                    DefKind::InlineConst => self.tcx.mir_for_ctfe(def_id),
                     // These don't have MIR or shouldn't be visited
                     _ => {
                         rap_debug!("Skipping def_id {:?} with kind {:?}", def_id, def_kind);

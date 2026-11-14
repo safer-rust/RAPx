@@ -390,7 +390,6 @@ impl<'tcx> VerifyEngine<'tcx> {
                     if args.iter().any(|a| match &a.node {
                         Operand::Copy(p) | Operand::Move(p) => p.local == local,
                         Operand::Constant(_) => false,
-                        #[cfg(rapx_ge_95)]
                         Operand::RuntimeChecks(_) => false,
                     }) {
                         return LocalAccess::Read;
@@ -407,7 +406,6 @@ impl<'tcx> VerifyEngine<'tcx> {
                     if args.iter().any(|a| match &a.node {
                         Operand::Copy(p) | Operand::Move(p) => p.local == local,
                         Operand::Constant(_) => false,
-                        #[cfg(rapx_ge_95)]
                         Operand::RuntimeChecks(_) => false,
                     }) {
                         return LocalAccess::Read;
@@ -421,7 +419,6 @@ impl<'tcx> VerifyEngine<'tcx> {
                         }
                     }
                     Operand::Constant(_) => {}
-                    #[cfg(rapx_ge_95)]
                     Operand::RuntimeChecks(_) => {}
                 },
                 TerminatorKind::Drop { place, .. } if place.local == local => {

@@ -277,7 +277,6 @@ fn is_args_fit_trait_bound<'tcx>(
     #[cfg(rapx_ge_100)]
     let iter = inst_pred.clauses.iter();
     for pred in iter {
-        #[cfg(rapx_ge_99)]
         let pred = pred.skip_norm_wip();
         let obligation = Obligation::new(
             tcx,
@@ -312,7 +311,6 @@ fn is_fn_solvable<'tcx>(fn_did: DefId, tcx: TyCtxt<'tcx>) -> bool {
     #[cfg(rapx_ge_100)]
     let iter = predicates.instantiate_identity(tcx).clauses;
     for pred in iter {
-        #[cfg(rapx_ge_99)]
         let pred = pred.skip_norm_wip();
         if let Some(pred) = pred.as_trait_clause() {
             let trait_did = pred.skip_binder().trait_ref.def_id;
@@ -448,7 +446,6 @@ fn solve_unbound_type_generics<'tcx>(
     let pred_iter = preds.clauses.iter();
     for pred in pred_iter {
         rap_debug!("[solve_unbound] pred = {:?}", pred);
-        #[cfg(rapx_ge_99)]
         let pred = pred.skip_norm_wip();
         if let Some(trait_pred) = pred.as_trait_clause() {
             let trait_pred = trait_pred.skip_binder();
@@ -619,7 +616,6 @@ pub fn get_impls<'tcx>(
     let preds = crate::compat::predicates_of(tcx, fn_did);
     let preds = preds.instantiate(tcx, args);
     for (pred, _) in preds {
-        #[cfg(rapx_ge_99)]
         let pred = pred.skip_norm_wip();
         if let Some(trait_pred) = pred.as_trait_clause() {
             let trait_ref: rustc_type_ir::TraitRef<TyCtxt<'tcx>> = tcx

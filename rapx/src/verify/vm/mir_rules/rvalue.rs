@@ -858,22 +858,6 @@ pub(crate) fn eval_discriminant<'z3, 'tcx>(
     value
 }
 
-#[cfg(not(rapx_ge_99))]
-pub(crate) fn eval_shallow_init_box<'z3, 'tcx>(
-    state: &mut VmState<'z3, 'tcx>,
-    dest_place: &Place<'tcx>,
-    operand: &Operand<'tcx>,
-) -> VmValue<'z3, 'tcx> {
-    let dest_ty = dest_place.ty(state.body(), state.tcx).ty;
-    let val = state.value_of_operand(operand);
-    VmValue {
-        z3_term: val.z3_term,
-        ty: dest_ty,
-        provenance: val.provenance,
-        facts: val.facts,
-        source: ValueSource::None,
-    }
-}
 
 pub(crate) fn eval_copy_for_deref<'z3, 'tcx>(
     state: &mut VmState<'z3, 'tcx>,
@@ -1117,23 +1101,6 @@ pub(crate) fn eval_wrap_unsafe_binder<'z3, 'tcx>(
     value
 }
 
-#[cfg(not(rapx_ge_95))]
-pub(crate) fn eval_nullary_op<'z3, 'tcx>(
-    state: &mut VmState<'z3, 'tcx>,
-    dest_place: &Place<'tcx>,
-    op: &impl std::fmt::Debug,
-) -> VmValue<'z3, 'tcx> {
-    let dest_ty = dest_place.ty(state.body(), state.tcx).ty;
-    let term = state.fresh_int("nullary");
-    let op_debug = format!("{:?}", op);
-    let is_align_of = op_debug.contains("AlignOf") || op_debug.contains("min_align_of");
-    let is_size_of = op_debug.contains("SizeOf");
-    if is_align_of || is_size_of {
-        let one = Int::from_u64(state.z3_ctx, 1);
-        state.constraints.assertions.push(term.ge(&one));
-    }
-    VmValue::new(term, dest_ty)
-}
 
 #[cfg(rapx_rvalue_has_reborrow)]
 pub(crate) fn eval_reborrow<'z3, 'tcx>(

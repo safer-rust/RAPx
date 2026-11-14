@@ -362,7 +362,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         let TyKind::FnDef(def_id, args) = constant.const_.ty().kind() else {
                             return None;
                         };
-                        #[cfg(rapx_ge_99)]
                         let args = args.skip_binder();
                         (*def_id == callee && self.tcx.trait_of_assoc(callee).is_none()).then_some(
                             Instance {

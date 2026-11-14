@@ -54,7 +54,6 @@ impl DataflowGraph {
                 };
                 self.add_const_edge(src_desc, src_ty, dst, EdgeOp::Const, block, stmt_idx);
             }
-            #[cfg(rapx_ge_95)]
             Operand::RuntimeChecks(_) => {}
         }
     }
@@ -196,10 +195,6 @@ impl DataflowGraph {
                     self.add_operand(operand, dst, block, stmt_idx);
                     self.nodes[dst].ops[seq] = NodeOp::UnaryOp;
                 }
-                #[cfg(not(rapx_ge_95))]
-                Rvalue::NullaryOp(_) => {
-                    self.nodes[dst].ops[seq] = NodeOp::NullaryOp;
-                }
                 Rvalue::ThreadLocalRef(_) => {}
                 Rvalue::WrapUnsafeBinder(operand, _) => {
                     self.add_operand(operand, dst, block, stmt_idx);
@@ -215,11 +210,6 @@ impl DataflowGraph {
                     let src = self.parse_place(place, block, stmt_idx);
                     self.add_node_edge(src, dst, EdgeOp::Nop, block, stmt_idx);
                     self.nodes[dst].ops[seq] = NodeOp::Discriminant;
-                }
-                #[cfg(not(rapx_ge_99))]
-                Rvalue::ShallowInitBox(operand, _) => {
-                    self.add_operand(operand, dst, block, stmt_idx);
-                    self.nodes[dst].ops[seq] = NodeOp::ShallowInitBox;
                 }
                 Rvalue::CopyForDeref(place) => {
                     let src = self.parse_place(place, block, stmt_idx);
