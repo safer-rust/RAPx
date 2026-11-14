@@ -187,13 +187,18 @@ impl<'tcx> FunctionTarget<'tcx> {
             crate::verify::checkpoint::CheckpointKind::RawPtrDeref => self
                 .raw_ptr_deref_checks
                 .iter()
-                .find(|(candidate, _)| candidate.location() == loc)
+                .find(|(candidate, _)| {
+                    candidate.location() == loc
+                        && candidate.statement_index == checkpoint.statement_index
+                })
                 .map(|(_, properties)| properties.as_slice())
                 .unwrap_or(&[]),
             crate::verify::checkpoint::CheckpointKind::StaticMutAccess => self
                 .static_mut_checks
                 .iter()
-                .find(|(candidate, _)| candidate.location() == loc)
+                .find(|(candidate, _)| {
+                    candidate.location() == loc && candidate.site_ordinal == checkpoint.site_ordinal
+                })
                 .map(|(_, properties)| properties.as_slice())
                 .unwrap_or(&[]),
             crate::verify::checkpoint::CheckpointKind::UnsafeCall => checkpoint
@@ -2001,6 +2006,7 @@ fn build_raw_ptr_deref_checks<'tcx>(
                     destination: Some(info.destination),
                     is_mut_ref: info.is_mut_ref,
                     statement_index: info.statement_index,
+                    site_ordinal: 0,
                 },
                 properties,
             )
@@ -2052,7 +2058,8 @@ fn build_static_mut_checks<'tcx>(
                     requires: Vec::new(),
                     destination: None,
                     is_mut_ref: false,
-                    statement_index: 0,
+                    statement_index: info.statement_index,
+                    site_ordinal: info.site_ordinal,
                 },
                 properties,
             )

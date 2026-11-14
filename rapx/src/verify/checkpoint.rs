@@ -68,9 +68,12 @@ pub struct Checkpoint<'tcx> {
     /// For `RawPtrDeref` checkpoints: whether the deref produces a mutable
     /// reference (`&mut *ptr`) rather than a shared one (`&*ptr`).
     pub is_mut_ref: bool,
-    /// For `RawPtrDeref` checkpoints: statement index within `block`, used for
-    /// reverse liveness at the deref point.
+    /// Statement index within `block` for statement checkpoints; used to stop
+    /// slicing at the operation and for reverse liveness at raw dereferences.
     pub statement_index: usize,
+    /// Distinguishes multiple accesses at one MIR location (for example,
+    /// separate static pointers passed as arguments to the same call).
+    pub site_ordinal: usize,
 }
 
 impl<'tcx> Checkpoint<'tcx> {
@@ -119,9 +122,9 @@ pub fn has_raw_ptr_write(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
     })
 }
 
-/// Detect whether a function performs an atomic operation, either through a
+/// Detect whether a function performs an atomic update, either through a
 /// compiler intrinsic (`atomic_store`/`atomic_xadd`/...) or through an
-/// `Atomic*` method (`fetch_add`/`store`/...).
+/// `Atomic*` method (`fetch_add`/`store`/...). Reads and fences do not count.
 ///
 /// Used by the marker-trait (`Send`/`Sync`) checker to recognize raw-pointer
 /// updates that are performed atomically rather than through a plain
@@ -142,11 +145,36 @@ pub fn has_atomic_call(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
             };
             if tcx
                 .intrinsic(callee)
-                .is_some_and(|i| i.name.as_str().starts_with("atomic_"))
+                .is_some_and(|i| {
+                    i.name.as_str().strip_prefix("atomic_").is_some_and(|op| {
+                        [
+                            "store", "xchg", "cxchg", "xadd", "xsub", "and", "or", "xor",
+                            "nand", "min", "max", "umin", "umax",
+                        ]
+                            .iter()
+                            .any(|prefix| op.starts_with(prefix))
+                    })
+                })
             {
                 return true;
             }
-            tcx.def_path_str(callee).contains("Atomic")
+            let Some(impl_id) = tcx.inherent_impl_of_assoc(callee) else {
+                return false;
+            };
+            let Some(adt) = tcx.type_of(impl_id).skip_binder().ty_adt_def() else {
+                return false;
+            };
+            let owner = tcx.def_path_str(adt.did());
+            (owner.starts_with("core::sync::atomic::Atomic")
+                || owner.starts_with("std::sync::atomic::Atomic"))
+                && matches!(
+                    tcx.item_name(callee).as_str(),
+                    "store" | "swap" | "compare_exchange" | "compare_exchange_weak"
+                        | "fetch_add" | "fetch_sub" | "fetch_and" | "fetch_nand"
+                        | "fetch_or" | "fetch_xor" | "fetch_not" | "fetch_update"
+                        | "fetch_max" | "fetch_min" | "fetch_ptr_add" | "fetch_ptr_sub"
+                        | "fetch_byte_add" | "fetch_byte_sub"
+                )
         } else {
             false
         }
@@ -182,6 +210,7 @@ pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<C
                     destination: None,
                     is_mut_ref: false,
                     statement_index,
+                    site_ordinal: 0,
                 });
             }
         }
@@ -217,6 +246,7 @@ pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<C
                     destination,
                     is_mut_ref: false,
                     statement_index: 0,
+                    site_ordinal: 0,
                 });
             }
             continue;
@@ -244,6 +274,7 @@ pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<C
             destination,
             is_mut_ref: false,
             statement_index: 0,
+            site_ordinal: 0,
         });
     }
 
@@ -460,6 +491,10 @@ pub struct StaticMutAccessInfo<'tcx> {
     pub ty: Ty<'tcx>,
     /// The MIR operand holding the pointer to the static.
     pub ptr_operand: Operand<'tcx>,
+    /// Statement position, or the statement count for a terminator argument.
+    pub statement_index: usize,
+    /// Unique access number within this function.
+    pub site_ordinal: usize,
 }
 
 /// Collect all basic blocks that reference mutable statics in `def_id`.
@@ -478,7 +513,7 @@ pub fn collect_static_mut_access_info<'tcx>(
 
     let body = tcx.optimized_mir(def_id);
     for (bb, data) in body.basic_blocks.iter_enumerated() {
-        for stmt in &data.statements {
+        for (statement_index, stmt) in data.statements.iter().enumerate() {
             if let StatementKind::Assign(assign) = &stmt.kind {
                 let (_lhs, rhs) = &**assign;
                 if let Rvalue::Use(op @ Operand::Constant(c), ..) = rhs
@@ -490,6 +525,8 @@ pub fn collect_static_mut_access_info<'tcx>(
                         block: bb,
                         ty,
                         ptr_operand: op.clone(),
+                        statement_index,
+                        site_ordinal: infos.len(),
                     });
                 }
             }
@@ -509,6 +546,8 @@ pub fn collect_static_mut_access_info<'tcx>(
                         block: bb,
                         ty,
                         ptr_operand: op.clone(),
+                        statement_index: data.statements.len(),
+                        site_ordinal: infos.len(),
                     });
                 }
             }

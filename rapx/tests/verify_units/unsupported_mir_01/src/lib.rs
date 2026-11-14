@@ -41,7 +41,7 @@ pub fn unsound_intrinsic_copy() {
 }
 
 #[rapx::verify]
-pub unsafe fn unknown_direct_intrinsic_copy(pointer: *mut u32) {
+pub unsafe fn unsound_direct_intrinsic_copy(pointer: *mut u32) {
     unsafe { std::intrinsics::copy_nonoverlapping(pointer, pointer, 1) };
 }
 

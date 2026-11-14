@@ -235,7 +235,26 @@ impl<'tcx> BackwardSlicer<'tcx> {
                     switch_succ: None,
                 });
             }
-            for (si, stmt) in block_data.statements.iter().enumerate().rev() {
+            let statement_end = bind_checkpoint
+                .filter(|checkpoint| {
+                    matches!(
+                        checkpoint.kind,
+                        CheckpointKind::RawPtrDeref
+                            | CheckpointKind::StaticMutAccess
+                            | CheckpointKind::CopyNonOverlapping
+                    )
+                })
+                .map(|checkpoint| {
+                    // Alias checks need the reference created by the deref itself;
+                    // memory-shape checks must inspect the state before it.
+                    checkpoint.statement_index
+                        + usize::from(
+                            checkpoint.kind == CheckpointKind::RawPtrDeref
+                                && property.kind() == Some(contract::PropertyKind::Alias),
+                        )
+                })
+                .unwrap_or(block_data.statements.len());
+            for (si, stmt) in block_data.statements[..statement_end].iter().enumerate().rev() {
                 visitor.visit_statement(
                     def_id,
                     checkpoint_block,
@@ -254,6 +273,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
                 def_id,
                 checkpoint_block,
                 block_data,
+                statement_end,
                 body,
                 flow,
                 &mut relevant,
@@ -358,6 +378,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
                         def_id,
                         block,
                         block_data,
+                        block_data.statements.len(),
                         body,
                         flow,
                         &mut relevant,
@@ -421,6 +442,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
         def_id: DefId,
         block: BasicBlock,
         block_data: &'tcx rustc_middle::mir::BasicBlockData<'tcx>,
+        statement_end: usize,
         body: &'tcx Body<'tcx>,
         flow: &DataflowGraph,
         relevant: &mut RelevantPlaces,
@@ -433,7 +455,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
         if newly_added.is_empty() {
             return;
         }
-        for (si, stmt) in block_data.statements.iter().enumerate().rev() {
+        for (si, stmt) in block_data.statements[..statement_end].iter().enumerate().rev() {
             let defs = match &stmt.kind {
                 rustc_middle::mir::StatementKind::Assign(assign) => {
                     let mut d = crate::helpers::def_use::RelevantPlaces::new();

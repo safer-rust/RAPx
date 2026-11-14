@@ -46,6 +46,20 @@ fn pointer_slot_origin_cases() {
 }
 
 #[test]
+fn checkpoint_regression_01() {
+    let output = run_with_args("verify_units/checkpoint_regression_01", CMD_VERIFY_TARGETED);
+    assert_function_result(&output, "deref_before_reassign", "UNSOUND");
+    let statics = extract_block_after(&output, "function: two_static_mut_accesses");
+    let static_checks = statics.split("static-mut-access").nth(1).expect("static checks");
+    assert_contain(static_checks, "Align | Proved");
+    assert_contain(static_checks, "Align | Unknown");
+    let auto_trait = extract_block_after(&output, "unsafe impl Send for PlainWriteWithAtomicRead");
+    assert_contain(auto_trait, "verdict: UNSAFE");
+    let mixed_update = extract_block_after(&output, "unsafe impl Send for PlainWriteWithAtomicUpdate");
+    assert_contain(mixed_update, "verdict: UNSAFE");
+}
+
+#[test]
 fn property_checker_regression_01() {
     let output = run_with_args(
         "verify_units/property_checker_regression_01",
@@ -724,7 +738,8 @@ fn invariant_unknown_01() {
 #[test]
 fn unsupported_mir_01() {
     let output = run_with_args("verify_units/unsupported_mir_01", CMD_VERIFY_TARGETED);
-    assert_result_counts(&output, [0, 1, 5]);
+    assert_result_counts(&output, [0, 2, 4]);
+    assert_unproved(&output, "unsound_direct_intrinsic_copy", "NonOverlap");
     assert_contain(&output, "Unknown (unsupported MIR)");
     assert_contain(&output, "Unknown (unresolved unsafe call)");
     let block = extract_block_after(&output, "function: unknown_inline_asm_write");

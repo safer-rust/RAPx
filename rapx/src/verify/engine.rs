@@ -802,6 +802,7 @@ impl<'tcx> VerifyEngine<'tcx> {
             destination: None,
             is_mut_ref: false,
             statement_index: 0,
+            site_ordinal: 0,
         };
         self.check_goals(
             cache,

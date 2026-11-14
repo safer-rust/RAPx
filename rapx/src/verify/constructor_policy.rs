@@ -19,6 +19,8 @@ pub(crate) fn set_inline_ctor(mode: InlineCtor) {
     INLINE_CTOR.store(value, Ordering::Relaxed);
 }
 
+/// Whether the inlining policy allows this call to use the callee's MIR.
+/// A registered call summary can still take precedence unless inlining is forced.
 pub(crate) fn should_inline_constructor(tcx: TyCtxt<'_>, callee: DefId) -> bool {
     if fn_info::get_type(tcx, callee) != FnKind::Constructor {
         return true;
@@ -57,6 +59,7 @@ pub(crate) fn constructor_has_invariant(tcx: TyCtxt<'_>, callee: DefId) -> bool 
             || crate::verify::type_invariants::has_type_invariants_for_ty(tcx, output))
 }
 
+/// Whether an explicit `--inline-ctor=true` overrides a constructor's call summary.
 pub(crate) fn force_inline_constructor(tcx: TyCtxt<'_>, callee: DefId) -> bool {
     INLINE_CTOR.load(Ordering::Relaxed) == 1
         && fn_info::get_type(tcx, callee) == FnKind::Constructor

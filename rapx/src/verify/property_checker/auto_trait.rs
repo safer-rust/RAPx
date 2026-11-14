@@ -227,7 +227,9 @@ pub(crate) fn atomic_update_check<'tcx>(
         Contains::No => CheckResult::ProvedByRule,
         Contains::Maybe => CheckResult::Unknown(UnknownReason::Unimplemented),
         Contains::Yes => {
-            if has_atomic_ptr_updates(tcx, ty) {
+            // An atomic call elsewhere in the type does not make a plain raw
+            // pointer write safe to share across threads.
+            if has_atomic_ptr_updates(tcx, ty) && !has_raw_ptr_writes(tcx, ty) {
                 CheckResult::ProvedByRule
             } else {
                 CheckResult::Failed
