@@ -11,59 +11,14 @@
 //! from [`crate::def_ids::intrinsic_api`],
 //! [`crate::def_ids::other_api`] and [`crate::def_ids::type_ids`].
 
-use crate::def_ids::{
-    intrinsic_api,
-    lang_api::{self, LangItem},
-    other_api, type_ids,
-};
-use crate::helpers::{mir_utils::resolve_callee_def_id, name::get_struct_self_ty};
-use crate::verify::call_summary::{callsite_write_args, pointer_flow};
+use crate::def_ids::{intrinsic_api, other_api, type_ids};
+use crate::verify::call_summary::pointer_flow;
 use rustc_hir::{def::DefKind, def_id::DefId};
-use rustc_middle::{
-    mir::Operand,
-    ty::{Mutability, Ty, TyCtxt, TyKind},
-};
+use rustc_middle::ty::{Ty, TyCtxt, TyKind};
 
 /// Whether `callee` is an intrinsic with one of the given names.
 fn is_intrinsic(tcx: TyCtxt<'_>, callee: Option<DefId>, names: &[&str]) -> bool {
     intrinsic_api::intrinsic_name(tcx, callee).is_some_and(|name| names.contains(&name.as_str()))
-}
-
-/// Recognize a call that advances a `Range` or `RangeInclusive`, for example
-/// `let mut range = 0..3; range.next()`.
-/// The callee must take only `&mut self`, return `Option<_>`, and write to its
-/// receiver at this call site. Loop analysis uses this to identify range-driven
-/// iteration; call expansion uses it to avoid unfolding a cyclic call block.
-pub(crate) fn is_range_advancing_call<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    caller: DefId,
-    func: &Operand<'tcx>,
-) -> bool {
-    let Some(callee) = resolve_callee_def_id(tcx, caller, func) else {
-        return false;
-    };
-    if !matches!(tcx.def_kind(callee), DefKind::Fn | DefKind::AssocFn) {
-        return false;
-    }
-    if !get_struct_self_ty(tcx, callee).is_some_and(|ty| {
-        matches!(ty.kind(), TyKind::Adt(adt, _)
-            if lang_api::matches(tcx, adt.did(), LangItem::Range)
-                || lang_api::matches(tcx, adt.did(), LangItem::RangeInclusiveStruct))
-    }) {
-        return false;
-    }
-    let sig = tcx.fn_sig(callee).skip_binder();
-    let inputs = sig.inputs().skip_binder();
-    inputs.len() == 1
-        && matches!(
-            inputs.first().map(|ty| ty.kind()),
-            Some(TyKind::Ref(_, _, Mutability::Mut))
-        )
-        && matches!(
-            sig.output().skip_binder().kind(),
-            TyKind::Adt(adt, _) if tcx.is_diagnostic_item(rustc_span::sym::Option, adt.did())
-        )
-        && callsite_write_args(tcx, caller, func).is_some_and(|args| args.contains(&0))
 }
 
 pub(crate) fn is_std_box_value_constructor(tcx: TyCtxt<'_>, callee: DefId) -> bool {

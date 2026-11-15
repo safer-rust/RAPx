@@ -35,8 +35,7 @@ use super::{
         fmt_fn_path_with_bounds, fmt_fn_path_with_generics, fmt_fn_with_params,
     },
     engine::{VerifyEngine, VmCache},
-    loop_sensitivity::{LoopSensitivityAnalyzer, RepeatStrategy},
-    path::PathExtractor,
+    path::{LoopSensitivityAnalyzer, PathExtractor, RepeatStrategy},
     report::{
         CheckResult, PATH_LIMIT_DESCRIPTION, PropertyCheckResult, UnknownReason, VerificationReport,
     },

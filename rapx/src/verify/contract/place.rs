@@ -15,7 +15,7 @@ use rustc_middle::ty::{Ty, TyCtxt, TyKind};
 use syn::Expr;
 
 use crate::helpers::fn_info::{FnKind, get_type};
-use crate::helpers::name::{access_ident_recursive, get_struct_self_ty, parse_signature};
+use crate::helpers::name::{access_ident_recursive, get_adt_self_ty, parse_signature};
 
 use super::types::{ContractExpr, ContractPlace, ContractProjection, PlaceBase, PropertyArg};
 
@@ -164,7 +164,7 @@ pub(crate) fn resolve_place_from_ident<'tcx>(
             );
         }
 
-    if let Some(struct_ty) = get_struct_self_ty(tcx, def_id) {
+    if let Some(struct_ty) = get_adt_self_ty(tcx, def_id) {
         return resolve_projection_from_struct_ident(
             tcx,
             def_id,

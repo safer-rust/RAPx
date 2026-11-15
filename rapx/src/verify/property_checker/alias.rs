@@ -23,7 +23,7 @@ impl PropertyChecker {
             crate::verify::vm::alias_hazard::reconstructed_owner(vm_state.tcx, did)
                 .map(|(_, owner)| owner)
                 .or_else(|| {
-                    let owner_ty = crate::helpers::name::get_struct_self_ty(vm_state.tcx, did)?;
+                    let owner_ty = crate::helpers::name::get_adt_self_ty(vm_state.tcx, did)?;
                     let TyKind::Adt(adt, _) = owner_ty.kind() else {
                         return None;
                     };

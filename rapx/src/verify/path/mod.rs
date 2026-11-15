@@ -1,6 +1,7 @@
-//! Path extraction for verification targets.
+//! Loop-repeat planning and path extraction for verification targets.
 //!
-//! This module builds finite paths from a function CFG to each unsafe checkpoint.
+//! `loop_handling` chooses an SCC repeat budget, then this module builds
+//! finite paths from a function CFG to each unsafe checkpoint.
 //!
 //! # Path reachability
 //!
@@ -13,8 +14,10 @@
 //! The tree is marked truncated when the budget is exhausted.
 
 mod call_index;
+mod loop_handling;
 
 pub(crate) use call_index::EntryBodies;
+pub(crate) use loop_handling::{LoopSensitivityAnalyzer, RepeatStrategy};
 
 use rustc_hir::def_id::DefId;
 use rustc_middle::{

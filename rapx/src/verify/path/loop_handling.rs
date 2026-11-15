@@ -30,6 +30,8 @@
 //!
 //! Both hint kinds are calibrated into the `PathEnumerator`'s `allow_repeat`
 //! budget, keeping detector-specific details inside this module.
+//! Constant `Range` bounds can also supply an exact repeat count; variable
+//! bounds fall back to the general hints.
 
 use crate::analysis::path::graph::PathGraph;
 use crate::compat::{FxHashMap, FxHashSet};
@@ -45,7 +47,7 @@ use rustc_middle::{
     ty::{TyCtxt, TyKind, TypingEnv},
 };
 
-use super::{
+use super::super::{
     contract::{ContractExpr, NumericPredicate, Property, PropertyArg, PropertyKind, RelOp},
     slicer::bind_callsite_roots,
     target::FunctionTarget,
@@ -196,7 +198,7 @@ impl<'tcx> LoopSensitivityAnalyzer<'tcx> {
             })
             .max()
             .unwrap_or(0);
-        let exact_range_repeat = exact_range_repeat.max(inclusive_range_repeat(
+        let range_repeat = exact_range_repeat.max(inclusive_range_repeat(
             self.tcx,
             body,
             &sinks,
@@ -214,7 +216,7 @@ impl<'tcx> LoopSensitivityAnalyzer<'tcx> {
             .max()
             .unwrap_or(0)
             .min(MAX_AUTO_REPEAT)
-            .max(exact_range_repeat)
+            .max(range_repeat)
     }
 
     /// Compute loop-carried dataflow hints for every safety sink.
@@ -420,7 +422,9 @@ fn inclusive_range_repeat<'tcx>(
         .filter_map(|len| usize::try_from(len).ok())
         .filter(|len| *len <= MAX_EXACT_RANGE_REPEAT)
         .max()
-        .map_or(MAX_AUTO_REPEAT, |len| len.saturating_add(1))
+        // TODO: Resolve variable inclusive-range bounds; use the general loop
+        // hints when no constant bound can be recovered.
+        .map_or(0, |len| len.saturating_add(1))
 }
 
 /// Collect the atom leaves of a (possibly compound) property tree.
@@ -707,7 +711,8 @@ fn exact_range_repeat<'tcx>(
                 },
             )
             .unwrap_or(false);
-        let is_next = crate::verify::api_classify::is_range_advancing_call(tcx, def_id, func);
+        let is_next = mir_utils::resolve_callee_def_id(tcx, def_id, func)
+            .is_some_and(|callee| tcx.item_name(callee).as_str() == "next");
         if !receiver_is_range || !is_next {
             continue;
         }
@@ -747,6 +752,8 @@ fn exact_range_repeat<'tcx>(
             else {
                 continue;
             };
+            // TODO: Resolve variable range bounds; without constants, use the
+            // general loop hints instead of assuming an exact trip count.
             let start = operand_const_i128(tcx, def_id, start)?;
             let end = operand_const_i128(tcx, def_id, end)?;
             let count = usize::try_from(end.checked_sub(start)?).ok()?;

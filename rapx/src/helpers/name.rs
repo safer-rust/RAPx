@@ -137,7 +137,7 @@ pub fn public_def_path<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> String {
 /// Return the resolved `self` type for a method whose `DefId` points to an
 /// associated item that lives inside an `impl` block returning an ADT, or for
 /// a struct/enum DefId directly (needed for parsing struct-invariant annotations).
-pub fn get_struct_self_ty<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Option<Ty<'tcx>> {
+pub fn get_adt_self_ty<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Option<Ty<'tcx>> {
     if let Some(assoc_item) = tcx.opt_associated_item(def_id) {
         let impl_id = assoc_item.impl_container(tcx)?;
         let self_ty = tcx.type_of(impl_id).skip_binder();
@@ -452,7 +452,7 @@ fn find_generic_param<'tcx>(
         }
     }
 
-    if let Some(struct_ty) = get_struct_self_ty(tcx, def_id)
+    if let Some(struct_ty) = get_adt_self_ty(tcx, def_id)
         && let Some(found) = find_generic_in_ty(tcx, struct_ty, type_ident) {
             return Some(found);
         }

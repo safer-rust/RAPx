@@ -2,7 +2,7 @@ use super::super::target::CalleeBodies;
 use crate::analysis::path::{CallArg, CallBinding, PathTree};
 use crate::compat::{FxHashMap, FxHashSet};
 use crate::def_ids::lang_api::{self, LangItem};
-use crate::helpers::mir_utils;
+use crate::helpers::{mir_utils, name::get_adt_self_ty};
 use crate::limit::{HINTED_CALLEE_BLOCK_LIMIT, LOCAL_CALLEE_BLOCK_LIMIT};
 use crate::verify::constructor_policy;
 #[cfg(rapx_has_attr_ir)]
@@ -319,6 +319,14 @@ impl<'tcx> CallSiteIndex<'tcx> {
                         && (callee == base_callee
                             || self.tcx.fn_sig(base_callee).skip_binder().safety()
                                 != rustc_hir::Safety::Unsafe);
+                let range_next = self.tcx.item_name(callee).as_str() == "next"
+                    && get_adt_self_ty(self.tcx, callee).is_some_and(|ty| {
+                        matches!(ty.kind(), TyKind::Adt(adt, _)
+                            if matches!(
+                                mir_utils::range_kind(self.tcx, adt.did()),
+                                mir_utils::RangeKind::Range | mir_utils::RangeKind::RangeInclusive
+                            ))
+                    });
                 if crate::def_ids::intrinsic_api::is_intrinsic(self.tcx, callee)
                     || !self.tcx.is_mir_available(callee)
                     || expanded.contains(&callee)
@@ -326,7 +334,7 @@ impl<'tcx> CallSiteIndex<'tcx> {
                         && !constructor_policy::forces_constructor_mir(self.tcx, callee))
                     || crate::verify::target::has_slice_offset_ensures(self.tcx, callee)
                     || crate::def_ids::other_api::is_ub_check(self.tcx, callee)
-                    || (crate::verify::api_classify::is_range_advancing_call(self.tcx, caller, func)
+                    || (range_next
                         && mir_utils::blocks_reachable_after_call(
                             self.tcx,
                             actual_caller,
