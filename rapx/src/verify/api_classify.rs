@@ -53,7 +53,7 @@ pub fn is_ptr_copy(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
 /// `MaybeUninit::assume_init_read`, and intrinsics `copy`/`copy_nonoverlapping`).
 pub fn is_ptr_read(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
     is_intrinsic_copy(tcx, callee)
-        || callee.is_some_and(|did| other_api::is_std_ptr_copy_api(tcx, did))
+        || callee.is_some_and(|did| other_api::is_std_ptr_copy(tcx, did))
         || callee.is_some_and(|did| diagnostic_api::is_ptr_read(tcx, did))
         || callee.is_some_and(|did| other_api::is_assume_init_read(tcx, did))
 }
@@ -63,7 +63,7 @@ pub fn is_ptr_read(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
 /// require initialized destination bytes for `Init`/`Typed` obligations.
 pub fn is_mem_copy_or_write(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
     is_intrinsic_copy(tcx, callee)
-        || callee.is_some_and(|did| other_api::is_std_ptr_copy_api(tcx, did))
+        || callee.is_some_and(|did| other_api::is_std_ptr_copy(tcx, did))
         || callee.is_some_and(|did| diagnostic_api::is_ptr_write_to_uninit(tcx, did))
 }
 

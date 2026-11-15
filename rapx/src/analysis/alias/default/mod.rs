@@ -184,7 +184,7 @@ impl<'tcx> AliasAnalyzer<'tcx> {
     fn handle_pointer_copy_apis(&mut self) {
         let alias = MopAliasPair::new(1, true, true, 2, true, true);
         for (callee, pairs) in &mut self.fn_map {
-            if crate::def_ids::other_api::is_std_ptr_copy_api(self.tcx, *callee) {
+            if crate::def_ids::other_api::is_std_ptr_copy(self.tcx, *callee) {
                 pairs.alias_set.clear();
                 pairs.alias_set.insert(alias.clone());
             }
