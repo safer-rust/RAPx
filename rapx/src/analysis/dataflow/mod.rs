@@ -1,3 +1,7 @@
+pub(crate) mod call;
+pub(crate) mod call_write;
+pub(crate) mod pointer_flow;
+pub(crate) mod pointer_offset;
 pub mod debug;
 pub mod default;
 pub mod graph;

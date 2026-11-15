@@ -13,6 +13,7 @@ use rustc_middle::{
     ty::{TyCtxt, TyKind},
 };
 
+use crate::analysis::dataflow::call;
 use crate::analysis::dataflow::types::DataflowGraph;
 
 use crate::helpers::def_use::{RelevantPlaces, call_args_uses_at};
@@ -46,7 +47,14 @@ pub(crate) fn visit<'tcx>(
         }
     }
 
-    let summary = call_summary::dependency_summary(tcx, def_id, func, destination.local, args, body);
+    let summary = call::dependencies(
+        tcx,
+        def_id,
+        func,
+        args,
+        body,
+        &call_summary::VerifierCallSemantics,
+    );
 
     if call_summary::effects::is_unmodeled_intrinsic(
         tcx,

@@ -1,6 +1,5 @@
 //! ValidCStr property checking for the symbolic VM.
 
-use crate::helpers::mir_utils;
 use rustc_middle::{
     mir::{Body, Local, Operand, Rvalue, StatementKind, TerminatorKind},
     ty::TyCtxt,
@@ -10,10 +9,10 @@ use z3::{
     ast::{Ast, Int},
 };
 
+use crate::analysis::dataflow::pointer_flow::return_traces_first_arg;
 use crate::compat::FxHashMap;
+use crate::helpers::mir_utils::{self, dep_callee_def_id};
 use crate::verify::checkpoint::Checkpoint;
-use crate::helpers::mir_utils::dep_callee_def_id;
-use crate::verify::api_classify::is_as_ptr;
 use crate::verify::vm::state::{AllocId, VmState};
 use crate::verify::{
     contract::{ContractExpr, Property, PropertyArg},
@@ -65,7 +64,7 @@ fn body_parents<'tcx>(tcx: TyCtxt<'tcx>, body: &Body<'tcx>) -> FxHashMap<Local, 
         else {
             continue;
         };
-        if !is_as_ptr(tcx, dep_callee_def_id(func)) {
+        if !return_traces_first_arg(tcx, dep_callee_def_id(func)) {
             continue;
         }
         let Some(source) = args.first().and_then(|arg| match &arg.node {

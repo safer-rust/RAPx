@@ -246,7 +246,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             if args
                 .first()
                 .is_some_and(|value| !self.vec_reallocation_targets(value).is_empty())
-                && call_summary::callsite_replaces_pointer_field(self.tcx, func)
+                && call_summary::pointer_semantics::callsite_replaces_pointer_field(self.tcx, func)
             {
                 return CallModel::Summary(vec![CallEffect::ReallocateVec { arg: 0 }]);
             }

@@ -11,8 +11,9 @@
 //! from [`crate::def_ids::intrinsic_api`],
 //! [`crate::def_ids::other_api`] and [`crate::def_ids::type_ids`].
 
+use crate::analysis::dataflow::pointer_flow;
 use crate::def_ids::{diagnostic_api, intrinsic_api, other_api, type_ids};
-use crate::verify::call_summary::pointer_flow;
+use crate::verify::call_summary::pointer_semantics;
 use rustc_hir::{def::DefKind, def_id::DefId};
 use rustc_middle::ty::{Ty, TyCtxt, TyKind};
 
@@ -24,16 +25,6 @@ fn is_intrinsic(tcx: TyCtxt<'_>, callee: Option<DefId>, names: &[&str]) -> bool 
 /// Whether `callee` explicitly drops the value stored in `ManuallyDrop<T>`.
 pub fn is_manually_drop_drop(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
     callee.is_some_and(|c| other_api::is_manually_drop(tcx, c))
-}
-
-// ── Pointer extraction / cast ─────────────────────────────────────
-
-/// Whether MIR traces the returned pointer to the first argument.
-pub fn is_as_ptr(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
-    callee.is_some_and(|id| {
-        crate::verify::call_summary::pointer_flow::return_source_arg(tcx, id) == Some(0)
-            || crate::verify::call_summary::pointer_flow::is_nonnull_view(tcx, id)
-    })
 }
 
 fn is_intrinsic_copy(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
@@ -111,8 +102,8 @@ pub fn nonnull_ref_return(tcx: TyCtxt<'_>, callee: DefId) -> Option<rustc_middle
 /// Whether MIR shows a read-only pointer view of the first argument.
 pub fn is_benign_origin_use(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
     callee.is_some_and(|did| {
-        pointer_flow::is_read_only_return(tcx, did)
-            || pointer_flow::is_read_only_nonnull_view(tcx, did)
+        pointer_semantics::is_read_only_return(tcx, did)
+            || pointer_semantics::is_read_only_nonnull_view(tcx, did)
     })
 }
 

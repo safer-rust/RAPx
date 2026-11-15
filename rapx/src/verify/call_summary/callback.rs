@@ -11,11 +11,10 @@ use rustc_middle::{
     ty::{Mutability, Ty, TyCtxt, TyKind},
 };
 
+use crate::analysis::dataflow::call::CallDependencies;
 use crate::compat::Spanned;
 use crate::def_ids::lang_api;
 use crate::verify::api_classify;
-
-use super::CallDependencySummary;
 
 pub(crate) fn supports_result(ty: Ty<'_>) -> bool {
     matches!(ty.kind(), TyKind::Bool)
@@ -27,7 +26,7 @@ pub(super) fn estimate<'tcx>(
     callee: DefId,
     args: &[Spanned<Operand<'tcx>>],
     body: &Body<'tcx>,
-) -> Option<CallDependencySummary> {
+) -> Option<CallDependencies> {
     if tcx.is_mir_available(callee) {
         return None;
     }
@@ -49,7 +48,7 @@ pub(super) fn estimate<'tcx>(
         })
         .collect();
     let all_args: Vec<_> = (0..args.len()).collect();
-    Some(CallDependencySummary {
+    Some(CallDependencies {
         return_depends_on_args: all_args.clone(),
         write_args,
         write_inputs: all_args,

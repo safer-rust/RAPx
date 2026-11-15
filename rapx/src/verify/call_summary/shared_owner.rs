@@ -3,7 +3,8 @@
 use rustc_hir::{def::DefKind, def_id::DefId};
 use rustc_middle::ty::{TyCtxt, TyKind, TypingEnv};
 
-use super::pointer_flow::{return_source_arg, single_block_without_effects};
+use crate::analysis::dataflow::pointer_flow::return_source_arg;
+use super::pointer_semantics::single_block_without_effects;
 
 pub(crate) fn shared_raw_owner_type(tcx: TyCtxt<'_>, callee: DefId) -> Option<DefId> {
     if !matches!(tcx.def_kind(callee), DefKind::Fn | DefKind::AssocFn) {

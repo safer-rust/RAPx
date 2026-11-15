@@ -1,37 +1,11 @@
-//! Call summaries for the staged verifier: backward dependencies, forward
-//! effects, and bounded MIR analyses of pointer flow through callees.
+//! Call effects and verifier semantics for dataflow dependency queries.
 pub(crate) mod effects;
-mod dependencies;
+mod dependency_semantics;
 pub(crate) mod callback;
-pub(crate) mod pointer_flow;
-pub(crate) mod pointer_offset;
+pub(crate) mod pointer_semantics;
 pub(crate) mod shared_owner;
 
-pub(crate) use dependencies::dependency_summary;
-pub(crate) use dependencies::callsite_write_args;
-pub(crate) use dependencies::callsite_replaces_pointer_field;
-
-/// Dependency summary consumed by the backward visitor.
-#[derive(Clone, Debug)]
-pub(crate) struct CallDependencySummary {
-    /// If the call destination is relevant, these call arguments are relevant.
-    pub return_depends_on_args: Vec<usize>,
-    /// Arguments whose referents the callee may write.
-    pub write_args: Vec<usize>,
-    /// Arguments the backward slicer needs to model those writes.
-    pub write_inputs: Vec<usize>,
-}
-
-impl CallDependencySummary {
-    /// Conservative fallback: keep all arguments relevant.
-    fn fallback(arg_count: usize) -> Self {
-        Self {
-            return_depends_on_args: (0..arg_count).collect(),
-            write_args: Vec::new(),
-            write_inputs: Vec::new(),
-        }
-    }
-}
+pub(crate) use dependency_semantics::VerifierCallSemantics;
 
 /// Effect summary consumed by the forward visitor.
 pub(crate) type CallEffectSummary = Vec<CallEffect>;

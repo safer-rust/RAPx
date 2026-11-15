@@ -12,6 +12,11 @@ use rustc_middle::{
 
 use crate::helpers::mir_utils;
 
+/// Whether a raw pointer or `NonNull` return value traces to the first argument.
+pub(crate) fn return_traces_first_arg(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
+    callee.is_some_and(|id| return_source_arg(tcx, id) == Some(0) || is_nonnull_view(tcx, id))
+}
+
 pub(crate) fn return_source_arg(tcx: TyCtxt<'_>, callee: DefId) -> Option<usize> {
     if !tcx.is_mir_available(callee) {
         return None;
@@ -55,10 +60,6 @@ pub(crate) fn is_nonnull_view(tcx: TyCtxt<'_>, callee: DefId) -> bool {
         && return_source_arg_with_depth(tcx, callee, 5) == Some(0)
 }
 
-pub(crate) fn is_read_only_nonnull_view(tcx: TyCtxt<'_>, callee: DefId) -> bool {
-    is_nonnull_view(tcx, callee) && single_block_without_effects(tcx.optimized_mir(callee))
-}
-
 /// Trace a returned reference to interior mutable storage back to its input.
 pub(crate) fn interior_mutable_borrow_source_arg(tcx: TyCtxt<'_>, callee: DefId) -> Option<usize> {
     if !tcx.is_mir_available(callee) {
@@ -92,48 +93,6 @@ fn contains_unsafe_cell<'tcx>(
     !adt.is_enum()
         && adt.non_enum_variant().fields.iter().any(|field| {
             contains_unsafe_cell(tcx, mir_utils::field_ty(tcx, field, args), depth - 1)
-        })
-}
-
-/// A pointer result from a single, side-effect-free MIR block is safe to use
-/// while tracking an existing pointer origin.
-pub(crate) fn is_read_only_return(tcx: TyCtxt<'_>, callee: DefId) -> bool {
-    if return_source_arg(tcx, callee) != Some(0) {
-        return false;
-    }
-    let inputs = tcx.fn_sig(callee).skip_binder().inputs().skip_binder();
-    if !inputs
-        .first()
-        .is_some_and(|ty| mir_utils::pointee_ty(*ty).is_some())
-    {
-        return false;
-    }
-    single_block_without_effects(tcx.optimized_mir(callee))
-}
-
-/// A consumed owner remains allocated when a side-effect-free MIR body
-/// returns its pointer without running a destructor.
-pub(crate) fn returns_undropped_arg(tcx: TyCtxt<'_>, callee: DefId, arg: usize) -> bool {
-    return_source_arg(tcx, callee) == Some(arg)
-        && single_block_without_effects(tcx.optimized_mir(callee))
-}
-
-/// Type of a shared owner whose raw pointer can later reconstruct a share.
-pub(super) fn single_block_without_effects(body: &Body<'_>) -> bool {
-    let [block] = &body.basic_blocks[..] else {
-        return false;
-    };
-    matches!(block.terminator().kind, TerminatorKind::Return)
-        && block.statements.iter().all(|stmt| match &stmt.kind {
-            StatementKind::Assign(assign) => !assign
-                .0
-                .projection
-                .iter()
-                .any(|p| matches!(p, rustc_middle::mir::ProjectionElem::Deref)),
-            StatementKind::StorageLive(_) | StatementKind::StorageDead(_) | StatementKind::Nop => {
-                true
-            }
-            _ => false,
         })
 }
 
