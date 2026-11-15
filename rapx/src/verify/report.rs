@@ -31,6 +31,7 @@ pub(crate) enum UnknownReason {
     MissingContract(String),
     UnsupportedProperty,
     InconsistentPathResults,
+    DisjunctionNeedsJointProof,
     DropAliasMixedPaths,
     /// A checker cannot resolve a value or supported property shape.
     Unimplemented,
@@ -54,6 +55,7 @@ impl UnknownReason {
             Self::MissingContract(_) => out.push("missing_contract"),
             Self::UnsupportedProperty => out.push("unsupported_property"),
             Self::InconsistentPathResults => out.push("inconsistent_path_results"),
+            Self::DisjunctionNeedsJointProof => out.push("disjunction_joint_proof"),
             Self::DropAliasMixedPaths => out.push("drop_alias_mixed_paths"),
             Self::Unimplemented => out.push("unresolved_value"),
             Self::Multiple(reasons) => {
@@ -88,6 +90,7 @@ impl UnknownReason {
             Self::MissingContract(callee) => format!("missing safety contract: {callee}"),
             Self::UnsupportedProperty => "unsupported property".to_string(),
             Self::InconsistentPathResults => "compound property paths do not align".to_string(),
+            Self::DisjunctionNeedsJointProof => "disjunction needs a joint proof".to_string(),
             Self::DropAliasMixedPaths => "drop alias outcome differs across paths".to_string(),
             Self::Unimplemented => "unresolved value or unsupported shape".to_string(),
             Self::Multiple(reasons) => reasons
@@ -229,8 +232,8 @@ impl CheckResult {
         }
     }
 
-    /// OR-combine two results: any proved → proved (a `Rule` proof dominates);
-    /// all `Failed` → `Failed`; otherwise `Unknown`.
+    /// OR-combine two results: any proved → proved (a `Rule` proof dominates).
+    /// Separate counterexamples for the disjuncts do not prove their OR false.
     pub(crate) fn or(self, other: CheckResult) -> CheckResult {
         match (self, other) {
             (CheckResult::ProvedByRule, _) | (_, CheckResult::ProvedByRule) => {
@@ -239,10 +242,38 @@ impl CheckResult {
             (CheckResult::ProvedBySmt, _) | (_, CheckResult::ProvedBySmt) => {
                 CheckResult::ProvedBySmt
             }
-            (CheckResult::Failed, CheckResult::Failed) => CheckResult::Failed,
+            (CheckResult::Failed, CheckResult::Failed) => {
+                CheckResult::Unknown(UnknownReason::DisjunctionNeedsJointProof)
+            }
             (CheckResult::Unknown(a), CheckResult::Unknown(b)) => CheckResult::Unknown(a.merge(b)),
             (CheckResult::Unknown(a), _) | (_, CheckResult::Unknown(a)) => CheckResult::Unknown(a),
         }
+    }
+
+    pub(crate) fn disjunction(results: impl IntoIterator<Item = CheckResult>) -> CheckResult {
+        let mut results = results.into_iter();
+        let Some(first) = results.next() else {
+            return CheckResult::Failed;
+        };
+        results.fold(first, CheckResult::or)
+    }
+
+    /// A false guard is independent of the symbolic program state. When all
+    /// other disjuncts except one are false guards, that disjunct's witness is
+    /// also a witness against the whole OR.
+    pub(crate) fn disjunction_with_guards(
+        results: impl IntoIterator<Item = (CheckResult, bool)>,
+    ) -> CheckResult {
+        let results: Vec<_> = results.into_iter().collect();
+        if !results.is_empty()
+            && results
+                .iter()
+                .all(|(result, _)| matches!(result, CheckResult::Failed))
+            && results.iter().filter(|(_, guard)| *guard).count() + 1 >= results.len()
+        {
+            return CheckResult::Failed;
+        }
+        Self::disjunction(results.into_iter().map(|(result, _)| result))
     }
 }
 

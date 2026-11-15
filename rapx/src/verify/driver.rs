@@ -1300,18 +1300,14 @@ impl<'tcx> VerifyRun<'tcx> {
                 }
                 overall
             }
-            Property::Or(or) => {
-                let mut overall = CheckResult::Failed;
-                for disjunct in &or.disjuncts {
-                    overall = overall.or(self.check_type_obligation(
-                        disjunct,
-                        impl_def_id,
-                        self_ty,
-                        is_sync,
-                    ));
-                }
-                overall
-            }
+            Property::Or(or) => CheckResult::disjunction_with_guards(
+                or.disjuncts.iter().map(|disjunct| {
+                    (
+                        self.check_type_obligation(disjunct, impl_def_id, self_ty, is_sync),
+                        true,
+                    )
+                }),
+            ),
         }
     }
 

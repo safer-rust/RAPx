@@ -335,10 +335,10 @@ fn replace_expr_ty<'tcx>(expr: &mut ContractExpr<'tcx>, ty: Ty<'tcx>) {
 /// Generate a normalised type path key for lookups in the type-invariants DB,
 /// together with the element type for the built-in slice entry.
 ///
-/// ADTs map to their def path (e.g. `core::num::NonZero`); `&[T]` / `&mut [T]`
-/// slice references map to the built-in `[T]` key and carry their element type
-/// (resolved via `$elem` during instantiation); anything else falls back to the
-/// type's `Debug` representation.
+/// ADTs and mutable references to ADTs map to the ADT's def path (e.g.
+/// `core::num::NonZero`). Slice references map to the built-in `[T]` key and
+/// carry their element type; anything else falls back to the type's `Debug`
+/// representation.
 fn type_path_key<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> (String, Option<Ty<'tcx>>) {
     match ty.kind() {
         rustc_middle::ty::TyKind::Adt(adt_def, substs) => {
@@ -349,8 +349,13 @@ fn type_path_key<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> (String, Option<Ty<'t
             let elem_ty = substs.first().and_then(|s| s.as_type());
             (key, elem_ty)
         }
-        rustc_middle::ty::TyKind::Ref(_, inner, _) => match inner.kind() {
+        rustc_middle::ty::TyKind::Ref(_, inner, mutability) => match inner.kind() {
             rustc_middle::ty::TyKind::Slice(elem) => ("[T]".to_string(), Some(*elem)),
+            rustc_middle::ty::TyKind::Adt(..)
+                if *mutability == rustc_middle::ty::Mutability::Mut =>
+            {
+                type_path_key(tcx, *inner)
+            }
             rustc_middle::ty::TyKind::Adt(adt, _)
                 if crate::helpers::name::public_def_path(tcx, adt.did()) == "core::ffi::CStr" =>
             {

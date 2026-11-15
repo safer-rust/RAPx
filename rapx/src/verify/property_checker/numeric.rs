@@ -7,7 +7,7 @@
 use crate::helpers::def_use::PlaceKey;
 use crate::verify::checkpoint::Checkpoint;
 use crate::verify::contract::{
-    ContractExpr, NumericBinOp, PlaceBase, Property, PropertyArg, RelOp,
+    ContractExpr, NumericBinOp, PlaceBase, Property, PropertyArg, PropertyKind, RelOp,
 };
 use crate::verify::report::{CheckResult, UnknownReason};
 use crate::verify::vm::state::VmState;
@@ -21,6 +21,66 @@ use z3::{
 use super::PropertyChecker;
 
 impl PropertyChecker {
+    /// Check all numeric disjuncts against one shared counterexample.
+    pub(super) fn check_valid_num_disjunction<'z3, 'tcx>(
+        &self,
+        vm_state: &VmState<'z3, 'tcx>,
+        checkpoint: &Checkpoint<'tcx>,
+        property: &Property<'tcx>,
+    ) -> Option<CheckResult> {
+        let solver = Solver::new(vm_state.z3_ctx);
+        vm_state.assert_all(&solver);
+        let mut disjuncts = Vec::new();
+        for disjunct in property.disjuncts() {
+            let Property::Atom(atom) = disjunct else {
+                return None;
+            };
+            if atom.kind != PropertyKind::ValidNum {
+                return None;
+            }
+            let Some(PropertyArg::Predicates(predicates)) = atom.args.first() else {
+                return None;
+            };
+            let mut conjuncts = Vec::new();
+            for pred in predicates {
+                let (lhs, is_range) =
+                    match self.range_end_of_lhs(vm_state, Some(checkpoint), &pred.lhs) {
+                        Some(end) => (end, true),
+                        None => (
+                            self.eval_contract_expr(vm_state, Some(checkpoint), &pred.lhs)?,
+                            false,
+                        ),
+                    };
+                let rhs = self.eval_contract_expr(vm_state, Some(checkpoint), &pred.rhs)?;
+                let op = if is_range && matches!(pred.op, RelOp::Lt) {
+                    RelOp::Le
+                } else {
+                    pred.op
+                };
+                conjuncts.push(vm_state.contract_relop_bool(op, &lhs, &rhs));
+                self.inject_nia_axioms(vm_state, &solver, Some(checkpoint), &pred.lhs);
+                self.inject_nia_axioms(vm_state, &solver, Some(checkpoint), &pred.rhs);
+                self.inject_vm_div_axioms(vm_state, &solver, &pred.lhs);
+                self.inject_vm_div_axioms(vm_state, &solver, &pred.rhs);
+                self.inject_int_range_axioms(vm_state, &solver, Some(checkpoint), &pred.lhs);
+                self.inject_int_range_axioms(vm_state, &solver, Some(checkpoint), &pred.rhs);
+            }
+            if conjuncts.is_empty() {
+                return None;
+            }
+            let parts: Vec<_> = conjuncts.iter().collect();
+            disjuncts.push(Bool::and(vm_state.z3_ctx, &parts));
+        }
+        let parts: Vec<_> = disjuncts.iter().collect();
+        let condition = Bool::or(vm_state.z3_ctx, &parts);
+        solver.assert(&condition.not());
+        Some(match solver.check() {
+            SatResult::Unsat => CheckResult::ProvedBySmt,
+            SatResult::Sat => CheckResult::Failed,
+            SatResult::Unknown => CheckResult::Unknown(UnknownReason::from_solver(&solver)),
+        })
+    }
+
     pub(super) fn check_valid_num<'z3, 'tcx>(
         &self,
         vm_state: &VmState<'z3, 'tcx>,

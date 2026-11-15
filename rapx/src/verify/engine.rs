@@ -18,7 +18,7 @@ use crate::compat::FxHashMap;
 
 use super::{
     checkpoint::{Checkpoint, CheckpointLocation},
-    contract::{AndProperty, AtomProperty, OrProperty, Property},
+    contract::{AndProperty, AtomProperty, OrProperty, Property, PropertyKind},
     path::EntryBodies,
     property_checker::PropertyChecker,
     report::{CheckResult, UnknownReason},
@@ -538,16 +538,23 @@ impl<'tcx> VerifyEngine<'tcx> {
                         ))
                     })
             }
-            Property::Or(or) => or.disjuncts.iter().fold(CheckResult::Failed, |acc, child| {
-                acc.or(Self::check_with_forward_alias(
-                    vm_state,
-                    checkpoint,
-                    child,
-                    structural,
-                    reachability,
-                    alias_result,
-                ))
-            }),
+            Property::Or(or) => CheckResult::disjunction_with_guards(
+                or.disjuncts.iter().map(|child| {
+                    let result = Self::check_with_forward_alias(
+                        vm_state,
+                        checkpoint,
+                        child,
+                        structural,
+                        reachability,
+                        alias_result,
+                    );
+                    let guard = matches!(
+                        child.kind(),
+                        Some(PropertyKind::Size | PropertyKind::Null | PropertyKind::Trait)
+                    );
+                    (result, guard)
+                }),
+            ),
         }
     }
 
