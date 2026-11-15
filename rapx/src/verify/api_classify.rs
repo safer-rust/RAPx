@@ -21,29 +21,6 @@ fn is_intrinsic(tcx: TyCtxt<'_>, callee: Option<DefId>, names: &[&str]) -> bool 
     intrinsic_api::intrinsic_name(tcx, callee).is_some_and(|name| names.contains(&name.as_str()))
 }
 
-pub(crate) fn is_std_box_value_constructor(tcx: TyCtxt<'_>, callee: DefId) -> bool {
-    let Some(impl_id) = tcx.inherent_impl_of_assoc(callee) else {
-        return false;
-    };
-    let self_ty = tcx.type_of(impl_id).instantiate_identity();
-    let self_ty = self_ty.skip_norm_wip();
-    let TyKind::Adt(adt, args) = self_ty.kind() else {
-        return false;
-    };
-    if !is_std_box(adt.did()) {
-        return false;
-    }
-    let Some(pointee) = args.first().and_then(|arg| arg.as_type()) else {
-        return false;
-    };
-    let sig = tcx.fn_sig(callee).skip_binder();
-    let output = sig.output().skip_binder();
-    matches!(output.kind(), TyKind::Adt(def, output_args)
-        if def.did() == adt.did()
-            && output_args.first().and_then(|arg| arg.as_type()) == Some(pointee))
-        && sig.inputs().skip_binder().first() == Some(&pointee)
-}
-
 /// Recognize `NonNull::dangling`, whose return has no allocation provenance.
 pub(crate) fn is_std_nonnull_dangling(tcx: TyCtxt<'_>, callee: DefId) -> bool {
     if tcx.item_name(callee).as_str() != "dangling" {

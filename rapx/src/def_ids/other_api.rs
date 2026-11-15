@@ -4,6 +4,8 @@ use rustc_hir::def_id::DefId;
 use rustc_middle::ty::{TyCtxt, TyKind, UintTy};
 use rustc_public::{CrateDef, rustc_internal};
 
+use super::type_ids;
+
 pub fn is_ub_check(tcx: TyCtxt<'_>, callee: DefId) -> bool {
     if !matches!(
         tcx.crate_name(callee.krate).as_str(),
@@ -22,6 +24,18 @@ pub fn is_ub_check(tcx: TyCtxt<'_>, callee: DefId) -> bool {
 
 fn is_std_api(tcx: TyCtxt<'_>, did: DefId) -> bool {
     matches!(tcx.crate_name(did.krate).as_str(), "core" | "alloc" | "std")
+}
+
+/// Whether `did` names `Box::new` or `Box::new_in` on the standard Box type.
+pub fn is_box_new(tcx: TyCtxt<'_>, did: DefId) -> bool {
+    if !matches!(tcx.item_name(did).as_str(), "new" | "new_in") {
+        return false;
+    }
+    let Some(impl_id) = tcx.inherent_impl_of_assoc(did) else {
+        return false;
+    };
+    let self_ty = tcx.type_of(impl_id).instantiate_identity().skip_norm_wip();
+    matches!(self_ty.kind(), TyKind::Adt(adt, _) if type_ids::box_types().contains(&adt.did()))
 }
 
 pub fn is_ptr_read(tcx: TyCtxt<'_>, did: DefId) -> bool {

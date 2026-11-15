@@ -4,6 +4,7 @@ use rustc_middle::{
 };
 use z3::ast::Int;
 
+use crate::def_ids::other_api;
 use crate::helpers::mir_utils;
 use crate::verify::api_classify;
 
@@ -84,7 +85,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             self.set_field_value(destination, path, field);
             return;
         }
-        let box_value_constructor = api_classify::is_std_box_value_constructor(self.tcx, callee);
+        let box_new = other_api::is_box_new(self.tcx, callee);
         if let TyKind::Adt(adt, _) = ty.kind()
             && (api_classify::is_std_vec(adt.did())
                 || api_classify::is_std_box(adt.did())
@@ -95,7 +96,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     && (matches!(value.ty.kind(), TyKind::RawPtr(..))
                         || matches!(value.ty.kind(), TyKind::Adt(def, _) if api_classify::is_std_nonnull(def.did())))
             })
-            && !box_value_constructor
+            && !box_new
             && let Some(path) = self.container_ptr_field(ty)
         {
             let mut result = pointer.clone();
@@ -133,7 +134,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         if self.init_box_vec_param(destination, ty, destination.as_usize(), &mut facts)
             || self.init_struct_param(destination, ty, destination.as_usize(), &mut facts)
         {
-            if box_value_constructor
+            if box_new
                 && let Some(operand) = first_operand
                 && let Some(pointee_ty) = args.first().map(|value| value.ty)
                 && let Some(heap_id) = self

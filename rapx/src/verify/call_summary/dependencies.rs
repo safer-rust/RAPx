@@ -17,7 +17,7 @@ use rustc_middle::{
 use crate::analysis::dataflow::{DataflowAnalysis, default::DataflowAnalyzer};
 use crate::analysis::path::graph::{PathEnumerator, PathGraph};
 use crate::compat::Spanned;
-use crate::def_ids::intrinsic_api;
+use crate::def_ids::{intrinsic_api, other_api};
 use crate::helpers::mir_utils as helpers;
 use crate::verify::api_classify;
 
@@ -73,7 +73,7 @@ pub(crate) fn dependency_summary<'tcx>(
                 .collect(),
         };
         let write_args = (!write_args.is_empty()).then_some(write_args);
-        let return_deps = if api_classify::is_std_box_value_constructor(tcx, callee) {
+        let return_deps = if other_api::is_box_new(tcx, callee) {
             Some((0..arg_count).collect())
         } else {
             local_return_dependencies(tcx, callee).map(|args| {
