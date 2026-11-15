@@ -120,7 +120,7 @@ pub(crate) fn return_dependencies(tcx: TyCtxt<'_>, callee: DefId) -> Option<Vec<
             .param_return_deps()
             .iter_enumerated()
             .filter_map(|(local, depends)| {
-                (*depends && local.as_usize() > 0).then_some(local.as_usize() - 1)
+                (*depends && local.as_usize() > 0).then(|| local.as_usize() - 1)
             })
             .collect()
     })

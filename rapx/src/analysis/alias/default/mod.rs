@@ -156,7 +156,7 @@ impl<'tcx> Analysis for AliasAnalyzer<'tcx> {
                 rap_debug!("Alias found in {:?}: {}", fn_name, fn_alias);
             }
         }
-        self.handle_pointer_copy_apis();
+        self.handle_pointer_copies();
     }
 }
 
@@ -181,10 +181,13 @@ impl<'tcx> AliasAnalyzer<'tcx> {
         }
     }
 
-    fn handle_pointer_copy_apis(&mut self) {
+    fn handle_pointer_copies(&mut self) {
         let alias = MopAliasPair::new(1, true, true, 2, true, true);
         for (callee, pairs) in &mut self.fn_map {
-            if crate::def_ids::other_api::is_std_ptr_copy(self.tcx, *callee) {
+            if crate::def_ids::other_api::is_std_ptr_copy_function(self.tcx, *callee)
+                || crate::analysis::dataflow::pointer_copy::std_raw_ptr_copy_args(self.tcx, *callee)
+                    .is_some()
+            {
                 pairs.alias_set.clear();
                 pairs.alias_set.insert(alias.clone());
             }

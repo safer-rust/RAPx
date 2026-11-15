@@ -508,6 +508,9 @@ pub(crate) fn check_alias_vm<'z3, 'tcx>(
             check_ownership_transfer_alias(vm_state, checkpoint, source_arg)
         }
         AliasProducer::ReadMemory => check_read_memory_alias(vm_state, checkpoint),
+        AliasProducer::CopyMemory(source_arg) => {
+            check_copy_memory_alias(vm_state, checkpoint, source_arg)
+        }
     }
 }
 
@@ -1000,4 +1003,29 @@ fn check_read_memory_alias<'z3, 'tcx>(
     VmAliasResult::Failed(
         "read API value escapes while the source pointer persists — structural alias hazard".into(),
     )
+}
+
+fn check_copy_memory_alias<'z3, 'tcx>(
+    vm_state: &VmState<'z3, 'tcx>,
+    checkpoint: &Checkpoint<'tcx>,
+    source_arg: usize,
+) -> VmAliasResult {
+    let Some(origin_arg) = checkpoint.args.get(source_arg) else {
+        return VmAliasResult::Unknown;
+    };
+    let origin_val = vm_state.value_of_operand(origin_arg);
+    if let Some(alloc_id) = origin_val.provenance_alloc_id()
+        && vm_state
+            .alias_hazard_allocs
+            .contains(&vm_state.root_alloc(alloc_id))
+    {
+        return VmAliasResult::Proved;
+    }
+    if let rustc_middle::ty::TyKind::RawPtr(pointee, _) = origin_val.ty.kind() {
+        let typing_env = rustc_middle::ty::TypingEnv::post_analysis(vm_state.tcx, checkpoint.caller);
+        if vm_state.tcx.type_is_copy_modulo_regions(typing_env, *pointee) {
+            return VmAliasResult::Proved;
+        }
+    }
+    VmAliasResult::Unknown
 }

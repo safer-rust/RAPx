@@ -62,7 +62,7 @@ impl WriteSemantics for VerifierCallSemantics {
         let callee = helpers::dep_callee_def_id(func);
         if api_classify::is_ptr_write(tcx, callee) {
             Some(0)
-        } else if api_classify::is_ptr_copy(tcx, callee) {
+        } else if api_classify::is_ptr_copy_function(tcx, callee) {
             Some(1)
         } else {
             None
@@ -95,7 +95,7 @@ fn intrinsic_dependency_summary<'tcx>(
     func: &Operand<'tcx>,
     arg_count: usize,
 ) -> Option<CallDependencies> {
-    let is_ptr_copy = api_classify::is_ptr_copy(tcx, Some(callee));
+    let is_ptr_copy = api_classify::is_ptr_copy_function(tcx, Some(callee));
     if !intrinsic_api::is_intrinsic(tcx, callee) && !is_ptr_copy {
         return None;
     }

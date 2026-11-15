@@ -1,6 +1,6 @@
 //! MIR-level alias hazard analysis independent of VM state and Z3 terms.
 
-use crate::analysis::dataflow::call_write;
+use crate::analysis::dataflow::{call_write, pointer_copy};
 use crate::analysis::dataflow::pointer_flow::{self, trace_source_arg};
 use crate::helpers::mir_utils;
 use crate::verify::call_summary::VerifierCallSemantics;
@@ -43,6 +43,7 @@ pub(super) enum AliasProducer {
     View(HazardKind, usize),
     OwnershipTransfer(usize),
     ReadMemory,
+    CopyMemory(usize),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -74,6 +75,12 @@ pub(super) fn alias_producer(tcx: TyCtxt<'_>, callee: DefId) -> Option<AliasProd
     }
     if let Some(source_arg) = share_transfer_source_arg(tcx, callee) {
         return Some(AliasProducer::OwnershipTransfer(source_arg));
+    }
+    if let Some((source_arg, _)) = pointer_copy::std_raw_ptr_copy_args(tcx, callee) {
+        return Some(AliasProducer::CopyMemory(source_arg));
+    }
+    if crate::verify::api_classify::is_memory_copy(tcx, Some(callee)) {
+        return Some(AliasProducer::CopyMemory(0));
     }
     if crate::verify::api_classify::is_ptr_read(tcx, Some(callee)) {
         return Some(AliasProducer::ReadMemory);
