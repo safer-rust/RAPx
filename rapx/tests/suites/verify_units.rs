@@ -638,7 +638,8 @@ sound_tests_multi! {
 #[test]
 fn manually_drop_reinit_cases() {
     let output = run_with_args("verify_units/manually_drop_reinit", CMD_VERIFY_TARGETED);
-    assert_result_counts(&output, [2, 1, 0]);
+    assert_result_counts(&output, [2, 2, 0]);
+    assert_function_result(&output, "unsound_branch_drop_then_use", "UNSOUND");
 }
 
 #[test]

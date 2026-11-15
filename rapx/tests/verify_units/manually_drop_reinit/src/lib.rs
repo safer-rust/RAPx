@@ -26,3 +26,14 @@ pub fn unsound_double_drop_box() {
     unsafe { ManuallyDrop::drop(&mut slot) };
     unsafe { ManuallyDrop::drop(&mut slot) };
 }
+
+#[rapx::verify]
+pub fn unsound_branch_drop_then_use(first_branch: bool) {
+    let mut first = ManuallyDrop::new(Box::new(1u8));
+    let mut other = ManuallyDrop::new(Box::new(2u8));
+    let target = if first_branch { &mut first } else { &mut other };
+    unsafe { ManuallyDrop::drop(target) };
+    if !first_branch {
+        std::hint::black_box(&other);
+    }
+}

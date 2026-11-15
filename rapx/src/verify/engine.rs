@@ -282,35 +282,33 @@ impl<'tcx> VerifyEngine<'tcx> {
         tree: &PathTree,
         checkpoint: &Checkpoint<'tcx>,
     ) -> Vec<(CheckResult, String)> {
-        let Some(slot) = self.drop_referent_local(checkpoint) else {
-            return vec![(
-                CheckResult::Unknown(UnknownReason::Unimplemented),
-                String::new(),
-            )];
-        };
         let caller = checkpoint.caller;
         let target = checkpoint.block.as_usize();
 
         let mut results: Vec<(CheckResult, String)> = Vec::new();
         for path in tree.iter() {
-            let mut used = false;
             let mut reaches = false;
+            let mut verdict = CheckResult::ProvedByRule;
             for (pos, &g) in path.iter().enumerate() {
                 let Some((def, local)) = tree.block_fn_of(g) else {
                     continue;
                 };
                 if def == caller && local == target {
                     reaches = true;
-                    used |= self.drop_suffix_reads(tree, caller, slot, &path[pos + 1..]);
+                    let result = match self.drop_referent_local(tree, checkpoint, &path[..=pos]) {
+                        Some(slot)
+                            if self.drop_suffix_reads(tree, caller, slot, &path[pos + 1..]) =>
+                        {
+                            CheckResult::Failed
+                        }
+                        Some(_) => CheckResult::ProvedByRule,
+                        None => CheckResult::Unknown(UnknownReason::Unimplemented),
+                    };
+                    verdict = verdict.and(result);
                 }
             }
             if reaches {
-                let desc = format!("{:?}", path);
-                if used {
-                    results.push((CheckResult::Failed, desc));
-                } else {
-                    results.push((CheckResult::ProvedByRule, desc));
-                }
+                results.push((verdict, format!("{:?}", path)));
             }
         }
 
@@ -321,39 +319,72 @@ impl<'tcx> VerifyEngine<'tcx> {
         }
     }
 
-    /// Resolve the `&mut slot` borrow operand of a `Drop(slot)` checkpoint to the
-    /// referent local (`slot` itself, e.g. `_1`).  The optimized MIR lowers
-    /// `drop(&mut slot)` to a reborrow chain (`_7 = &mut (*_8)`, `_8 = &mut _1`),
-    /// so follow both direct borrows (`&mut _1`) and deref reborrows
-    /// (`&mut (*_8)`) back to the ultimate referent.
-    fn drop_referent_local(&self, checkpoint: &Checkpoint<'tcx>) -> Option<Local> {
+    /// Follow the borrow passed to `ManuallyDrop::drop` on the current path.
+    /// A reference temporary can point at different slots on different paths.
+    fn drop_referent_local(
+        &self,
+        tree: &PathTree,
+        checkpoint: &Checkpoint<'tcx>,
+        prefix: &[usize],
+    ) -> Option<Local> {
         let arg = checkpoint.args.first()?;
         let place = mir_utils::operand_mir_place(arg)?;
         let mut cur = place.local;
         let body = self.tcx.optimized_mir(checkpoint.caller);
-        let mut seen = std::collections::HashSet::new();
+        let mut before = (prefix.len(), usize::MAX);
         loop {
-            if !seen.insert(cur) {
-                return Some(cur);
-            }
-            let mut next: Option<Local> = None;
-            'outer: for bb in body.basic_blocks.iter() {
-                for stmt in &bb.statements {
-                    if let StatementKind::Assign(assign) = &stmt.kind {
-                        let (target, rvalue) = assign.as_ref();
-                        if target.local == cur
-                            && target.projection.is_empty()
-                            && let Rvalue::Ref(_, _, referent) = rvalue
-                        {
-                            next = Some(referent.local);
-                            break 'outer;
-                        }
+            let mut source = None;
+            'find: for (path_index, &global_block) in prefix.iter().enumerate().rev() {
+                if path_index > before.0 {
+                    continue;
+                }
+                let Some((def_id, local_block)) = tree.block_fn_of(global_block) else {
+                    continue;
+                };
+                if def_id != checkpoint.caller {
+                    continue;
+                }
+                let statements = &body.basic_blocks[BasicBlock::from_usize(local_block)].statements;
+                let end = if path_index == before.0 {
+                    before.1.min(statements.len())
+                } else {
+                    statements.len()
+                };
+                for statement_index in (0..end).rev() {
+                    let StatementKind::Assign(assign) = &statements[statement_index].kind else {
+                        continue;
+                    };
+                    let (target, rvalue) = assign.as_ref();
+                    if target.local == cur && target.projection.is_empty() {
+                        source = Some((rvalue, path_index, statement_index));
+                        break 'find;
                     }
                 }
             }
-            match next {
-                Some(l) => cur = l,
-                None => return Some(cur),
+            let Some((rvalue, path_index, statement_index)) = source else {
+                // A parameter can be the caller's `&mut slot`. A local with no
+                // visible definition may come from a call, which we cannot trace.
+                return (cur.as_usize() > 0 && cur.as_usize() <= body.arg_count).then_some(cur);
+            };
+            before = (path_index, statement_index);
+            match rvalue {
+                Rvalue::Ref(_, _, referent) if referent.projection.is_empty() => {
+                    return Some(referent.local);
+                }
+                Rvalue::Ref(_, _, referent)
+                    if matches!(
+                        referent.projection.first(),
+                        Some(rustc_middle::mir::ProjectionElem::Deref)
+                    ) =>
+                {
+                    cur = referent.local;
+                }
+                Rvalue::Use(Operand::Copy(place) | Operand::Move(place), _)
+                    if place.projection.is_empty() =>
+                {
+                    cur = place.local;
+                }
+                _ => return None,
             }
         }
     }
@@ -823,12 +854,12 @@ impl<'tcx> VerifyEngine<'tcx> {
         entry_facts: &[RelevantItem<'tcx>],
         forward_drop_alias: bool,
     ) -> Vec<(CheckResult, String)> {
-        let drop_slot = forward_drop_alias.then(|| self.drop_referent_local(checkpoint));
         goals
             .into_iter()
             .map(|mut goal| {
                 let path_desc = goal.path.describe_caller_indices(tree);
-                let alias_result = drop_slot.map(|slot| {
+                let alias_result = forward_drop_alias.then(|| {
+                    let slot = self.drop_referent_local(tree, checkpoint, &goal.path.blocks);
                     self.drop_alias_for_prefix(tree, checkpoint, &goal.path.blocks, slot)
                 });
                 if !entry_facts.is_empty() {
