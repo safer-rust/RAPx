@@ -1,7 +1,7 @@
 //! Known `core`/`std`/`alloc` API identities, regardless of MIR availability.
 
-use rustc_hir::def_id::DefId;
-use rustc_middle::ty::{TyCtxt, TyKind, UintTy};
+use rustc_hir::{def::DefKind, def_id::DefId};
+use rustc_middle::ty::{Mutability, TyCtxt, TyKind, UintTy};
 use rustc_public::{CrateDef, rustc_internal};
 
 use super::{diagnostic_api, type_ids};
@@ -84,6 +84,63 @@ pub fn is_align_offset(tcx: TyCtxt<'_>, did: DefId) -> bool {
         && matches!(inputs[0].kind(), TyKind::RawPtr(..))
         && matches!(inputs[1].kind(), TyKind::Uint(UintTy::Usize))
         && matches!(sig.output().skip_binder().kind(), TyKind::Uint(UintTy::Usize))
+}
+
+/// Standard raw-pointer methods that delegate to `ptr::copy` or `copy_nonoverlapping`.
+fn is_std_ptr_copy_method(tcx: TyCtxt<'_>, did: DefId) -> bool {
+    if !is_std_api(tcx, did)
+        || !matches!(tcx.def_kind(did), DefKind::AssocFn)
+    {
+        return false;
+    }
+    let name = tcx.item_name(did);
+    if !matches!(
+        name.as_str(),
+        "copy_to" | "copy_to_nonoverlapping" | "copy_from" | "copy_from_nonoverlapping"
+    ) {
+        return false;
+    }
+    let Some(impl_id) = tcx.inherent_impl_of_assoc(did) else {
+        return false;
+    };
+    let self_ty = tcx.type_of(impl_id).instantiate_identity().skip_norm_wip();
+    if !matches!(self_ty.kind(), TyKind::RawPtr(..)) {
+        return false;
+    }
+    let sig = tcx.fn_sig(did).skip_binder();
+    let [first, second, count] = sig.inputs().skip_binder() else {
+        return false;
+    };
+    let (TyKind::RawPtr(first_pointee, first_mut), TyKind::RawPtr(second_pointee, second_mut)) =
+        (first.kind(), second.kind())
+    else {
+        return false;
+    };
+    first_pointee == second_pointee
+        && (if matches!(name.as_str(), "copy_to" | "copy_to_nonoverlapping") {
+            *second_mut == Mutability::Mut
+        } else {
+            *first_mut == Mutability::Mut
+        })
+        && *count == tcx.types.usize
+        && sig.output().skip_binder() == tcx.types.unit
+}
+
+/// Public `ptr::copy` and `ptr::copy_nonoverlapping` functions in `core` or `std`.
+fn is_std_ptr_copy_function(tcx: TyCtxt<'_>, did: DefId) -> bool {
+    matches!(tcx.def_kind(did), DefKind::Fn)
+        && matches!(
+            tcx.def_path_str(did).as_str(),
+            "core::ptr::copy"
+                | "core::ptr::copy_nonoverlapping"
+                | "std::ptr::copy"
+                | "std::ptr::copy_nonoverlapping"
+        )
+}
+
+/// Whether a standard pointer API copies elements between two raw pointers.
+pub fn is_std_ptr_copy_api(tcx: TyCtxt<'_>, did: DefId) -> bool {
+    is_std_ptr_copy_function(tcx, did) || is_std_ptr_copy_method(tcx, did)
 }
 
 pub fn is_gcd(tcx: TyCtxt<'_>, did: DefId) -> bool {

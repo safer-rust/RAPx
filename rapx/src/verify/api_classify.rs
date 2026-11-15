@@ -49,21 +49,21 @@ pub fn is_ptr_copy(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
 }
 
 /// Whether `callee` reads through a raw pointer or copies memory
-/// (`ptr::read`/`read_unaligned`/`read_volatile`, pointer-copy wrappers,
+/// (`ptr::read`/`read_unaligned`/`read_volatile`, standard pointer copy APIs,
 /// `MaybeUninit::assume_init_read`, and intrinsics `copy`/`copy_nonoverlapping`).
 pub fn is_ptr_read(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
     is_intrinsic_copy(tcx, callee)
-        || callee.is_some_and(|did| crate::helpers::mir_utils::is_ptr_copy_wrapper(tcx, did))
+        || callee.is_some_and(|did| other_api::is_std_ptr_copy_api(tcx, did))
         || callee.is_some_and(|did| diagnostic_api::is_ptr_read(tcx, did))
         || callee.is_some_and(|did| other_api::is_assume_init_read(tcx, did))
 }
 
 /// Copy/write operations that do not require initialized destination bytes:
-/// Intrinsic copies, pointer-copy wrappers, `write`, and `write_bytes` do not
+/// Intrinsic copies, standard pointer copy APIs, `write`, and `write_bytes` do not
 /// require initialized destination bytes for `Init`/`Typed` obligations.
 pub fn is_mem_copy_or_write(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
     is_intrinsic_copy(tcx, callee)
-        || callee.is_some_and(|did| crate::helpers::mir_utils::is_ptr_copy_wrapper(tcx, did))
+        || callee.is_some_and(|did| other_api::is_std_ptr_copy_api(tcx, did))
         || callee.is_some_and(|did| diagnostic_api::is_ptr_write_to_uninit(tcx, did))
 }
 

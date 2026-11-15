@@ -7,7 +7,6 @@ pub mod value;
 
 use super::{AliasAnalysis, AliasPair, FnAliasMap, FnAliasPairs};
 use crate::compat::FxHashMap;
-use crate::helpers::mir_utils;
 use crate::{
     analysis::{Analysis, path::default::PathAnalyzer},
     limit::ALIAS_VISIT_LIMIT,
@@ -157,7 +156,7 @@ impl<'tcx> Analysis for AliasAnalyzer<'tcx> {
                 rap_debug!("Alias found in {:?}: {}", fn_name, fn_alias);
             }
         }
-        self.handle_copy_wrappers();
+        self.handle_pointer_copy_apis();
     }
 }
 
@@ -182,10 +181,10 @@ impl<'tcx> AliasAnalyzer<'tcx> {
         }
     }
 
-    fn handle_copy_wrappers(&mut self) {
+    fn handle_pointer_copy_apis(&mut self) {
         let alias = MopAliasPair::new(1, true, true, 2, true, true);
         for (callee, pairs) in &mut self.fn_map {
-            if mir_utils::is_ptr_copy_wrapper(self.tcx, *callee) {
+            if crate::def_ids::other_api::is_std_ptr_copy_api(self.tcx, *callee) {
                 pairs.alias_set.clear();
                 pairs.alias_set.insert(alias.clone());
             }
