@@ -20,7 +20,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         has_invariant: bool,
     ) {
         let ty = self.body().local_decls[destination].ty;
-        if api_classify::is_std_nonnull_dangling(self.tcx, callee)
+        if other_api::is_nonnull_dangling(self.tcx, callee)
             && let TyKind::Adt(_, substs) = ty.kind()
             && let Some(pointee) = substs.first().and_then(|arg| arg.as_type())
             && let Some(field_ty) = self.field_type_at(destination, &[0])

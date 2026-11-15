@@ -38,6 +38,26 @@ pub fn is_box_new(tcx: TyCtxt<'_>, did: DefId) -> bool {
     matches!(self_ty.kind(), TyKind::Adt(adt, _) if type_ids::box_types().contains(&adt.did()))
 }
 
+/// Whether `did` is `mem::size_of` or `mem::align_of`.
+pub fn is_mem_size_or_align_of(tcx: TyCtxt<'_>, did: DefId) -> bool {
+    tcx.is_diagnostic_item(rustc_span::Symbol::intern("mem_size_of"), did)
+        || tcx.is_diagnostic_item(rustc_span::Symbol::intern("mem_align_of"), did)
+}
+
+/// Whether `did` names the standard `NonNull::dangling` constructor.
+pub fn is_nonnull_dangling(tcx: TyCtxt<'_>, did: DefId) -> bool {
+    if tcx.item_name(did).as_str() != "dangling" {
+        return false;
+    }
+    let Some(impl_id) = tcx.inherent_impl_of_assoc(did) else {
+        return false;
+    };
+    let self_ty = tcx.type_of(impl_id).instantiate_identity().skip_norm_wip();
+    matches!(self_ty.kind(), TyKind::Adt(adt, _)
+        if type_ids::nonnull_types().contains(&adt.did()))
+        && tcx.fn_sig(did).skip_binder().inputs().skip_binder().is_empty()
+}
+
 pub fn is_ptr_read(tcx: TyCtxt<'_>, did: DefId) -> bool {
     tcx.get_diagnostic_name(did).is_some_and(|name| {
         matches!(name.as_str(), "ptr_read" | "ptr_read_unaligned" | "ptr_read_volatile")

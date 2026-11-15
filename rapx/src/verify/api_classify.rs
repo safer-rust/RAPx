@@ -21,27 +21,9 @@ fn is_intrinsic(tcx: TyCtxt<'_>, callee: Option<DefId>, names: &[&str]) -> bool 
     intrinsic_api::intrinsic_name(tcx, callee).is_some_and(|name| names.contains(&name.as_str()))
 }
 
-/// Recognize `NonNull::dangling`, whose return has no allocation provenance.
-pub(crate) fn is_std_nonnull_dangling(tcx: TyCtxt<'_>, callee: DefId) -> bool {
-    if tcx.item_name(callee).as_str() != "dangling" {
-        return false;
-    }
-    let Some(impl_id) = tcx.inherent_impl_of_assoc(callee) else {
-        return false;
-    };
-    let self_ty = tcx.type_of(impl_id).instantiate_identity().skip_norm_wip();
-    matches!(self_ty.kind(), TyKind::Adt(adt, _) if is_std_nonnull(adt.did()))
-        && tcx.fn_sig(callee).skip_binder().inputs().skip_binder().is_empty()
-}
-
 /// Whether `callee` explicitly drops the value stored in `ManuallyDrop<T>`.
 pub fn is_manually_drop_drop(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
     callee.is_some_and(|c| other_api::is_manually_drop(tcx, c))
-}
-
-/// Whether `callee` is `std::mem::drop` / `core::mem::drop`.
-pub fn is_std_drop(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
-    callee.is_some_and(|c| other_api::is_drop(tcx, c))
 }
 
 // ── Pointer extraction / cast ─────────────────────────────────────
@@ -60,26 +42,6 @@ fn is_intrinsic_copy(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
 
 pub fn is_intrinsic_ptr_offset_from(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
     is_intrinsic(tcx, callee, &["ptr_offset_from", "ptr_offset_from_unsigned"])
-}
-
-// ── Layout constants ──────────────────────────────────────────────
-
-/// Whether `callee` is the compile-time layout constant `size_of::<T>()` or
-/// `align_of::<T>()`. The runtime intrinsics (`size_of_val`, `align_of_val`,
-/// `pref_align_of`, `*_val_raw`, …) are *not* classified here.
-pub fn is_layout_constant(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
-    is_intrinsic_layout_constant(tcx, callee) || is_mem_layout_constant(tcx, callee)
-}
-
-fn is_intrinsic_layout_constant(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
-    is_intrinsic(tcx, callee, &["size_of", "align_of"])
-}
-
-pub fn is_mem_layout_constant(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
-    callee.is_some_and(|did| {
-        tcx.is_diagnostic_item(rustc_span::Symbol::intern("mem_size_of"), did)
-            || tcx.is_diagnostic_item(rustc_span::Symbol::intern("mem_align_of"), did)
-    })
 }
 
 // ── Raw pointer read / write ──────────────────────────────────────
