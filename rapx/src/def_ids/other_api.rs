@@ -4,7 +4,7 @@ use rustc_hir::def_id::DefId;
 use rustc_middle::ty::{TyCtxt, TyKind, UintTy};
 use rustc_public::{CrateDef, rustc_internal};
 
-use super::type_ids;
+use super::{diagnostic_api, type_ids};
 
 pub fn is_ub_check(tcx: TyCtxt<'_>, callee: DefId) -> bool {
     if !matches!(
@@ -38,12 +38,6 @@ pub fn is_box_new(tcx: TyCtxt<'_>, did: DefId) -> bool {
     matches!(self_ty.kind(), TyKind::Adt(adt, _) if type_ids::box_types().contains(&adt.did()))
 }
 
-/// Whether `did` is `mem::size_of` or `mem::align_of`.
-pub fn is_mem_size_or_align_of(tcx: TyCtxt<'_>, did: DefId) -> bool {
-    tcx.is_diagnostic_item(rustc_span::Symbol::intern("mem_size_of"), did)
-        || tcx.is_diagnostic_item(rustc_span::Symbol::intern("mem_align_of"), did)
-}
-
 /// Whether `did` names the standard `NonNull::dangling` constructor.
 pub fn is_nonnull_dangling(tcx: TyCtxt<'_>, did: DefId) -> bool {
     if tcx.item_name(did).as_str() != "dangling" {
@@ -56,36 +50,6 @@ pub fn is_nonnull_dangling(tcx: TyCtxt<'_>, did: DefId) -> bool {
     matches!(self_ty.kind(), TyKind::Adt(adt, _)
         if type_ids::nonnull_types().contains(&adt.did()))
         && tcx.fn_sig(did).skip_binder().inputs().skip_binder().is_empty()
-}
-
-pub fn is_ptr_read(tcx: TyCtxt<'_>, did: DefId) -> bool {
-    tcx.get_diagnostic_name(did).is_some_and(|name| {
-        matches!(name.as_str(), "ptr_read" | "ptr_read_unaligned" | "ptr_read_volatile")
-    })
-}
-
-pub fn is_ptr_write(tcx: TyCtxt<'_>, did: DefId) -> bool {
-    tcx.get_diagnostic_name(did).is_some_and(|name| {
-        matches!(name.as_str(), "ptr_write" | "ptr_write_unaligned" | "ptr_write_volatile" | "ptr_write_bytes")
-    })
-}
-
-pub fn is_ptr_write_to_uninit(tcx: TyCtxt<'_>, did: DefId) -> bool {
-    tcx.get_diagnostic_name(did)
-        .is_some_and(|name| matches!(name.as_str(), "ptr_write" | "ptr_write_bytes"))
-}
-
-pub fn is_ptr_copy(tcx: TyCtxt<'_>, did: DefId) -> bool {
-    tcx.get_diagnostic_name(did)
-        .is_some_and(|name| matches!(name.as_str(), "ptr_copy" | "ptr_copy_nonoverlapping"))
-}
-
-pub fn is_drop(tcx: TyCtxt<'_>, did: DefId) -> bool {
-    tcx.is_diagnostic_item(rustc_span::Symbol::intern("mem_drop"), did)
-}
-
-pub fn is_drop_in_place(tcx: TyCtxt<'_>, did: DefId) -> bool {
-    tcx.is_diagnostic_item(rustc_span::Symbol::intern("ptr_drop_in_place"), did)
 }
 
 pub fn is_manually_drop(tcx: TyCtxt<'_>, did: DefId) -> bool {
@@ -133,7 +97,7 @@ pub fn to_internal<T: CrateDef>(val: &T, tcx: TyCtxt) -> DefId {
 
 /// Find a call that explicitly drops a value.
 pub fn is_drop_fn(tcx: TyCtxt<'_>, target: DefId) -> bool {
-    is_drop(tcx, target)
-        || is_drop_in_place(tcx, target)
+    diagnostic_api::is_drop(tcx, target)
+        || diagnostic_api::is_drop_in_place(tcx, target)
         || is_manually_drop(tcx, target)
 }

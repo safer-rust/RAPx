@@ -1,7 +1,8 @@
 use crate::compat::{FxHashMap, GenericArgsRef};
 use crate::def_ids::{
+    diagnostic_api,
     lang_api::{self, LangItem},
-    other_api, type_ids,
+    type_ids,
 };
 #[cfg(rapx_caller_bounds_accessor)]
 use rustc_type_ir::CallerBoundsIterator;
@@ -57,7 +58,7 @@ pub(crate) fn dep_callee_def_id(func: &Operand<'_>) -> Option<DefId> {
 
 /// Whether `def_id` is `core::ptr::drop_in_place`.
 pub(crate) fn is_drop_in_place(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
-    other_api::is_drop_in_place(tcx, def_id)
+    diagnostic_api::is_drop_in_place(tcx, def_id)
 }
 
 /// Whether `def_id` is a diverging call target: a `panic*` lang item or the
@@ -1340,7 +1341,7 @@ pub(crate) fn is_ptr_copy_wrapper(tcx: TyCtxt<'_>, callee: DefId) -> bool {
         }) || matches!(&block.terminator().kind,
             TerminatorKind::Call { func, .. } | TerminatorKind::TailCall { func, .. }
                 if dep_callee_def_id(func).is_some_and(|id| {
-                    other_api::is_ptr_copy(tcx, id)
+                    diagnostic_api::is_ptr_copy(tcx, id)
                         || crate::def_ids::intrinsic_api::intrinsic_name(tcx, Some(id)).is_some_and(|name| matches!(name.as_str(), "copy" | "copy_nonoverlapping"))
                 }))
     })

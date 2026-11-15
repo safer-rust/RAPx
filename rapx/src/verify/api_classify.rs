@@ -11,7 +11,7 @@
 //! from [`crate::def_ids::intrinsic_api`],
 //! [`crate::def_ids::other_api`] and [`crate::def_ids::type_ids`].
 
-use crate::def_ids::{intrinsic_api, other_api, type_ids};
+use crate::def_ids::{diagnostic_api, intrinsic_api, other_api, type_ids};
 use crate::verify::call_summary::pointer_flow;
 use rustc_hir::{def::DefKind, def_id::DefId};
 use rustc_middle::ty::{Ty, TyCtxt, TyKind};
@@ -49,12 +49,12 @@ pub fn is_intrinsic_ptr_offset_from(tcx: TyCtxt<'_>, callee: Option<DefId>) -> b
 /// Whether `callee` writes through a raw pointer to its first argument
 /// (`ptr::write`, `write_bytes`, `write_unaligned`, `write_volatile`).
 pub fn is_ptr_write(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
-    callee.is_some_and(|did| other_api::is_ptr_write(tcx, did))
+    callee.is_some_and(|did| diagnostic_api::is_ptr_write(tcx, did))
 }
 
 pub fn is_ptr_copy(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
     is_intrinsic_copy(tcx, callee)
-        || callee.is_some_and(|did| other_api::is_ptr_copy(tcx, did))
+        || callee.is_some_and(|did| diagnostic_api::is_ptr_copy(tcx, did))
 }
 
 /// Whether `callee` reads through a raw pointer or copies memory
@@ -63,7 +63,7 @@ pub fn is_ptr_copy(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
 pub fn is_ptr_read(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
     is_intrinsic_copy(tcx, callee)
         || callee.is_some_and(|did| crate::helpers::mir_utils::is_ptr_copy_wrapper(tcx, did))
-        || callee.is_some_and(|did| other_api::is_ptr_read(tcx, did))
+        || callee.is_some_and(|did| diagnostic_api::is_ptr_read(tcx, did))
         || callee.is_some_and(|did| other_api::is_assume_init_read(tcx, did))
 }
 
@@ -73,7 +73,7 @@ pub fn is_ptr_read(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
 pub fn is_mem_copy_or_write(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
     is_intrinsic_copy(tcx, callee)
         || callee.is_some_and(|did| crate::helpers::mir_utils::is_ptr_copy_wrapper(tcx, did))
-        || callee.is_some_and(|did| other_api::is_ptr_write_to_uninit(tcx, did))
+        || callee.is_some_and(|did| diagnostic_api::is_ptr_write_to_uninit(tcx, did))
 }
 
 // ── Alias-hazard classification ───────────────────────────────────

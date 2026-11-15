@@ -252,7 +252,7 @@ impl<'tcx> CallSiteIndex<'tcx> {
                 let generic_const_call = cross_crate
                     && mir_utils::has_generic_const_call_argument(self.tcx, callee);
                 let size_or_align_of =
-                    crate::def_ids::other_api::is_mem_size_or_align_of(self.tcx, callee);
+                    crate::def_ids::diagnostic_api::is_mem_size_or_align_of(self.tcx, callee);
                 let returns_adt = self.tcx.is_mir_available(callee)
                     && matches!(
                         self.tcx.optimized_mir(callee).return_ty().kind(),

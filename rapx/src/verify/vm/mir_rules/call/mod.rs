@@ -16,7 +16,7 @@ use super::RuleFlow;
 use self::comparison::ComparisonPlan;
 use self::index::BuiltinIndexPlan;
 use crate::compat::Spanned;
-use crate::def_ids::other_api;
+use crate::def_ids::diagnostic_api;
 use crate::helpers::mir_utils;
 use crate::verify::call_summary::CallEffect;
 use crate::verify::{api_classify, call_summary, constructor_policy};
@@ -110,7 +110,7 @@ pub(super) fn exec_call<'z3, 'tcx>(
         destination,
         caller_def_id,
     };
-    let drop_call = if callee.is_some_and(|id| other_api::is_drop(state.tcx, id))
+    let drop_call = if callee.is_some_and(|id| diagnostic_api::is_drop(state.tcx, id))
         || callee.is_some_and(|id| state.tcx.def_path_str(id).contains("::ptr::drop_glue"))
     {
         Some(DropCall::Value)

@@ -1,5 +1,6 @@
 //! Known API and type identities.
 
+pub(crate) mod diagnostic_api;
 pub(crate) mod intrinsic_api;
 pub(crate) mod lang_api;
 pub(crate) mod nomir_api;
