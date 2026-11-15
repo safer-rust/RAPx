@@ -200,7 +200,7 @@ impl<'tcx> CallSiteIndex<'tcx> {
                     continue;
                 }
                 let callee = if resolve_to_impl {
-                    mir_utils::dep_callee_resolved_def_id(self.tcx, caller, func)
+                    mir_utils::resolve_callee_def_id(self.tcx, caller, func)
                         .unwrap_or(base_callee)
                 } else {
                     base_callee

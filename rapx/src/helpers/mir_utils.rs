@@ -420,7 +420,7 @@ pub(crate) fn has_direct_unmodeled_generic_call<'tcx>(tcx: TyCtxt<'tcx>, def_id:
         tcx.opt_associated_item(callee)
             .and_then(|item| item.trait_container(tcx))
             .is_some()
-            && dep_callee_resolved_def_id(tcx, def_id, func)
+            && resolve_callee_def_id(tcx, def_id, func)
                 .is_none_or(|target| !tcx.is_mir_available(target))
             && !has_callback_effect(tcx, callee, body.local_decls[destination.local].ty)
             && !crate::verify::call_summary::effects::has_registered_effect(tcx, Some(callee))
@@ -457,7 +457,7 @@ fn has_unmodeled_generic_call_rec<'tcx>(
             // A resolved `Instance` may still be virtual or name the trait
             // method itself. What matters is whether the actual target has
             // executable MIR after resolving this call.
-            let target = dep_callee_resolved_def_id(tcx, def_id, func);
+            let target = resolve_callee_def_id(tcx, def_id, func);
             if target.is_none_or(|target| !tcx.is_mir_available(target))
                 && !has_callback_effect(tcx, callee, body.local_decls[destination.local].ty)
                 && !crate::verify::call_summary::effects::has_registered_effect(tcx, Some(callee))
@@ -523,9 +523,9 @@ pub(crate) fn resolve_callee_instance<'tcx>(
     resolve_instance(tcx, caller, *def_id, callee_args)
 }
 
-/// Like [`dep_callee_def_id`], but resolves trait-method callees to the concrete
-/// impl (whose MIR is what actually gets inlined).
-pub(crate) fn dep_callee_resolved_def_id<'tcx>(
+/// Return the call's `DefId`, resolving trait methods to a concrete impl when
+/// possible. Fall back to the operand's `DefId` if resolution fails.
+pub(crate) fn resolve_callee_def_id<'tcx>(
     tcx: TyCtxt<'tcx>,
     caller: DefId,
     func: &Operand<'tcx>,

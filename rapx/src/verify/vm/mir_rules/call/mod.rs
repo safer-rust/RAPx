@@ -93,7 +93,7 @@ pub(super) fn exec_call<'z3, 'tcx>(
         .iter()
         .map(|a| a.node.place().map(|p| p.local))
         .collect();
-    let callee = mir_utils::dep_callee_resolved_def_id(state.tcx, caller_def_id, func);
+    let callee = mir_utils::resolve_callee_def_id(state.tcx, caller_def_id, func);
     if let Some((source, owner)) = callee
         .and_then(|id| super::super::alias_hazard::reconstructed_owner(state.tcx, id))
         && let Some(value) = arg_values.get(source)

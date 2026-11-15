@@ -251,7 +251,7 @@ fn trace_local_to_callee_args<'tcx>(
                 || callee.is_some_and(|id| {
                     crate::verify::call_summary::pointer_offset::pointer_offset_direction(tcx, id).is_some()
                 })
-                || helpers::dep_callee_resolved_def_id(tcx, caller, func)
+                || helpers::resolve_callee_def_id(tcx, caller, func)
                     .and_then(|resolved| {
                         crate::verify::call_summary::pointer_flow::interior_mutable_borrow_source_arg(tcx, resolved)
                     }) == Some(0);

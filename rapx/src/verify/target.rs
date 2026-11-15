@@ -674,7 +674,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
                 let TerminatorKind::Call { func, .. } = &block.terminator().kind else {
                     continue;
                 };
-                let Some(callee) = crate::helpers::mir_utils::dep_callee_resolved_def_id(
+                let Some(callee) = crate::helpers::mir_utils::resolve_callee_def_id(
                     self.tcx, def_id, func,
                 ) else {
                     continue;

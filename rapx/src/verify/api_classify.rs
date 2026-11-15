@@ -16,36 +16,40 @@ use crate::def_ids::{
     lang_api::{self, LangItem},
     other_api, type_ids,
 };
-use crate::verify::call_summary::pointer_flow;
+use crate::helpers::{mir_utils::resolve_callee_def_id, name::get_struct_self_ty};
+use crate::verify::call_summary::{callsite_write_args, pointer_flow};
 use rustc_hir::{def::DefKind, def_id::DefId};
 use rustc_middle::{
     mir::Operand,
     ty::{Mutability, Ty, TyCtxt, TyKind},
 };
 
-fn intrinsic_named(tcx: TyCtxt<'_>, callee: Option<DefId>, names: &[&str]) -> bool {
+/// Whether `callee` is an intrinsic with one of the given names.
+fn is_intrinsic(tcx: TyCtxt<'_>, callee: Option<DefId>, names: &[&str]) -> bool {
     intrinsic_api::intrinsic_name(tcx, callee).is_some_and(|name| names.contains(&name.as_str()))
 }
 
-/// Recognize a mutating Range call that returns an optional element.
+/// Recognize a call that advances a `Range` or `RangeInclusive`, for example
+/// `let mut range = 0..3; range.next()`.
+/// The callee must take only `&mut self`, return `Option<_>`, and write to its
+/// receiver at this call site. Loop analysis uses this to identify range-driven
+/// iteration; call expansion uses it to avoid unfolding a cyclic call block.
 pub(crate) fn is_range_advancing_call<'tcx>(
     tcx: TyCtxt<'tcx>,
     caller: DefId,
     func: &Operand<'tcx>,
 ) -> bool {
-    let Some(callee) = crate::helpers::mir_utils::dep_callee_resolved_def_id(tcx, caller, func)
-    else {
+    let Some(callee) = resolve_callee_def_id(tcx, caller, func) else {
         return false;
     };
     if !matches!(tcx.def_kind(callee), DefKind::Fn | DefKind::AssocFn) {
         return false;
     }
-    let range_owner = crate::helpers::name::get_struct_self_ty(tcx, callee).is_some_and(|ty| {
+    if !get_struct_self_ty(tcx, callee).is_some_and(|ty| {
         matches!(ty.kind(), TyKind::Adt(adt, _)
             if lang_api::matches(tcx, adt.did(), LangItem::Range)
                 || lang_api::matches(tcx, adt.did(), LangItem::RangeInclusiveStruct))
-    });
-    if !range_owner {
+    }) {
         return false;
     }
     let sig = tcx.fn_sig(callee).skip_binder();
@@ -59,8 +63,7 @@ pub(crate) fn is_range_advancing_call<'tcx>(
             sig.output().skip_binder().kind(),
             TyKind::Adt(adt, _) if tcx.is_diagnostic_item(rustc_span::sym::Option, adt.did())
         )
-        && crate::verify::call_summary::callsite_write_args(tcx, caller, func)
-            .is_some_and(|args| args.contains(&0))
+        && callsite_write_args(tcx, caller, func).is_some_and(|args| args.contains(&0))
 }
 
 pub(crate) fn is_std_box_value_constructor(tcx: TyCtxt<'_>, callee: DefId) -> bool {
@@ -120,11 +123,11 @@ pub fn is_as_ptr(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
 }
 
 fn is_intrinsic_copy(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
-    intrinsic_named(tcx, callee, &["copy", "copy_nonoverlapping"])
+    is_intrinsic(tcx, callee, &["copy", "copy_nonoverlapping"])
 }
 
 pub fn is_intrinsic_ptr_offset_from(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
-    intrinsic_named(tcx, callee, &["ptr_offset_from", "ptr_offset_from_unsigned"])
+    is_intrinsic(tcx, callee, &["ptr_offset_from", "ptr_offset_from_unsigned"])
 }
 
 // ── Layout constants ──────────────────────────────────────────────
@@ -137,7 +140,7 @@ pub fn is_layout_constant(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
 }
 
 fn is_intrinsic_layout_constant(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
-    intrinsic_named(tcx, callee, &["size_of", "align_of"])
+    is_intrinsic(tcx, callee, &["size_of", "align_of"])
 }
 
 pub fn is_mem_layout_constant(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {

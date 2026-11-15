@@ -311,7 +311,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             let TerminatorKind::Call { func, .. } = &block.terminator().kind else {
                 return false;
             };
-            mir_utils::dep_callee_resolved_def_id(self.tcx, callee_def_id, func)
+            mir_utils::resolve_callee_def_id(self.tcx, callee_def_id, func)
                 == Some(callee_def_id)
         });
         let mut returns = self.inline_execute_body(&pre_uninit);
@@ -761,7 +761,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     target: Some(target),
                     ..
                 } => {
-                    let callee = mir_utils::dep_callee_resolved_def_id(
+                    let callee = mir_utils::resolve_callee_def_id(
                         state.tcx,
                         state.current_frame.current_def_id,
                         func,
