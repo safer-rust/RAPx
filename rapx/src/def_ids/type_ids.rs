@@ -1,4 +1,10 @@
 //! Resolved `DefId`s of standard-library types used by verification.
+//!
+//! # Agent Policy
+//!
+//! Keep this module limited to resolving standard-library type identities
+//! from rustc lang items, diagnostic items, and definition paths. Do not
+//! depend on other RAPx modules.
 
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
@@ -7,49 +13,48 @@ use rustc_span::sym;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-static TYPES: OnceLock<HashMap<DefId, TypeGroup>> = OnceLock::new();
+static TYPES: OnceLock<HashMap<DefId, StdAdtType>> = OnceLock::new();
 
 pub fn init(tcx: TyCtxt) {
     TYPES.get_or_init(|| init_types(tcx));
 }
 
-fn init_types(tcx: TyCtxt) -> HashMap<DefId, TypeGroup> {
+fn init_types(tcx: TyCtxt) -> HashMap<DefId, StdAdtType> {
     let mut types = HashMap::new();
 
     // Lang items.
     if let Some(did) = tcx.lang_items().owned_box() {
-        types.insert(did, TypeGroup::Box);
+        types.insert(did, StdAdtType::Box);
     }
     if let Some(did) = tcx.lang_items().ordering_enum() {
-        types.insert(did, TypeGroup::Ordering);
+        types.insert(did, StdAdtType::Ordering);
     }
     if let Some(did) = tcx.lang_items().maybe_uninit() {
-        types.insert(did, TypeGroup::MaybeUninit);
+        types.insert(did, StdAdtType::MaybeUninit);
     }
     if let Some(unsafe_cell) = tcx.lang_items().unsafe_cell_type() {
-        types.insert(unsafe_cell, TypeGroup::Negative("UnsafeCell"));
+        types.insert(unsafe_cell, StdAdtType::UnsafeCell);
     }
 
     // Diagnostic items.
     if let Some(did) = tcx.get_diagnostic_item(sym::cstring_type) {
-        types.insert(did, TypeGroup::CString);
+        types.insert(did, StdAdtType::CString);
     }
     if let Some(did) = tcx.get_diagnostic_item(sym::Vec) {
-        types.insert(did, TypeGroup::Vec);
+        types.insert(did, StdAdtType::Vec);
     }
     if let Some(did) = tcx.get_diagnostic_item(sym::Rc) {
-        types.insert(did, TypeGroup::Rc);
+        types.insert(did, StdAdtType::Rc);
     }
 
-    // Resolve types without lang or diagnostic items by their definition path.
+    // Resolve remaining public type identities by definition path.
     for krate in std::iter::once(rustc_public::local_crate())
         .chain(rustc_public::external_crates())
         .filter(|k| ["core", "std", "alloc"].iter().any(|n| *n == k.name))
     {
         for adt in krate.adts() {
             let did = rustc_internal::internal(tcx, adt.def_id());
-            let path = type_path(tcx, did, &krate.name, krate.is_local);
-            if let Some(group) = classify_type_path(&path) {
+            if let Some(group) = classify_type(tcx, did, &krate.name, krate.is_local) {
                 types.insert(did, group);
             }
         }
@@ -58,17 +63,8 @@ fn init_types(tcx: TyCtxt) -> HashMap<DefId, TypeGroup> {
     types
 }
 
-fn type_path(tcx: TyCtxt<'_>, did: DefId, crate_name: &str, is_local: bool) -> String {
-    let path = tcx.def_path_str(did);
-    if is_local && !path.starts_with(&format!("{crate_name}::")) {
-        format!("{crate_name}::{path}")
-    } else {
-        path
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum TypeGroup {
+pub(crate) enum StdAdtType {
     Box,
     CString,
     Vec,
@@ -81,72 +77,77 @@ enum TypeGroup {
     AsciiChar,
     Rc,
     SyncPrimitive,
-    Negative(&'static str),
+    Cell,
+    UnsafeCell,
+    RefCell,
+    Ref,
+    RefMut,
+    MutexGuard,
+    MappedMutexGuard,
+    RwLockWriteGuard,
 }
 
-fn classify_type_path(name: &str) -> Option<TypeGroup> {
+fn classify_type(
+    tcx: TyCtxt<'_>,
+    did: DefId,
+    crate_name: &str,
+    is_local: bool,
+) -> Option<StdAdtType> {
+    let path = tcx.def_path_str(did);
+    let path = if is_local && !path.starts_with(&format!("{crate_name}::")) {
+        format!("{crate_name}::{path}")
+    } else {
+        path
+    };
+    let name = path.as_str();
     Some(match name {
-        "alloc::string::String" | "std::string::String" => TypeGroup::String,
+        "alloc::string::String" | "std::string::String" => StdAdtType::String,
         "core::slice::iter::Iter"
         | "core::slice::iter::IterMut"
         | "std::slice::Iter"
-        | "std::slice::IterMut" => TypeGroup::Iter,
-        "core::ptr::non_null::NonNull" | "std::ptr::NonNull" => TypeGroup::NonNull,
+        | "std::slice::IterMut" => StdAdtType::Iter,
+        "core::ptr::non_null::NonNull" | "std::ptr::NonNull" => StdAdtType::NonNull,
         "core::ops::index_range::IndexRange"
         | "std::ops::index_range::IndexRange"
-        | "std::ops::IndexRange" => TypeGroup::IndexRange,
-        "core::ascii::ascii_char::AsciiChar" | "std::ascii::AsciiChar" => TypeGroup::AsciiChar,
-        "core::cell::Cell" | "std::cell::Cell" => TypeGroup::Negative("Cell"),
-        "core::cell::RefCell" | "std::cell::RefCell" => TypeGroup::Negative("RefCell"),
-        "core::cell::Ref" | "std::cell::Ref" => TypeGroup::Negative("Ref"),
-        "core::cell::RefMut" | "std::cell::RefMut" => TypeGroup::Negative("RefMut"),
+        | "std::ops::IndexRange" => StdAdtType::IndexRange,
+        "core::ascii::ascii_char::AsciiChar" | "std::ascii::AsciiChar" => StdAdtType::AsciiChar,
+        "alloc::rc::Rc" | "alloc::rcs::rc::Rc" | "std::rc::Rc" => StdAdtType::Rc,
         "std::sync::poison::mutex::Mutex"
         | "std::sync::nonpoison::mutex::Mutex"
+        | "std::sync::nonpoison::Mutex"
         | "std::sync::poison::rwlock::RwLock"
         | "std::sync::nonpoison::rwlock::RwLock"
         | "std::sync::once_lock::OnceLock"
         | "std::sync::Mutex"
         | "std::sync::RwLock"
-        | "std::sync::OnceLock" => TypeGroup::SyncPrimitive,
+        | "std::sync::OnceLock"
+        | "core::sync::atomic::Atomic"
+        | "std::sync::atomic::Atomic" => StdAdtType::SyncPrimitive,
+        "core::cell::Cell" | "std::cell::Cell" => StdAdtType::Cell,
+        "core::cell::RefCell" | "std::cell::RefCell" => StdAdtType::RefCell,
+        "core::cell::Ref" | "std::cell::Ref" => StdAdtType::Ref,
+        "core::cell::RefMut" | "std::cell::RefMut" => StdAdtType::RefMut,
         "std::sync::poison::mutex::MutexGuard"
         | "std::sync::nonpoison::mutex::MutexGuard"
-        | "std::sync::MutexGuard" => TypeGroup::Negative("MutexGuard"),
+        | "std::sync::MutexGuard" => StdAdtType::MutexGuard,
         "std::sync::poison::mutex::MappedMutexGuard"
         | "std::sync::nonpoison::mutex::MappedMutexGuard"
-        | "std::sync::MappedMutexGuard" => TypeGroup::Negative("MappedMutexGuard"),
+        | "std::sync::MappedMutexGuard" => StdAdtType::MappedMutexGuard,
         "std::sync::poison::rwlock::RwLockWriteGuard"
         | "std::sync::nonpoison::rwlock::RwLockWriteGuard"
-        | "std::sync::RwLockWriteGuard" => TypeGroup::Negative("RwLockWriteGuard"),
-        _ if (name.starts_with("core::sync::atomic::")
-            || name.starts_with("std::sync::atomic::"))
-            && name.rsplit("::").next().is_some_and(|short| {
-                matches!(
-                    short,
-                    "AtomicBool"
-                        | "AtomicPtr"
-                        | "AtomicI8"
-                        | "AtomicI16"
-                        | "AtomicI32"
-                        | "AtomicI64"
-                        | "AtomicI128"
-                        | "AtomicIsize"
-                        | "AtomicU8"
-                        | "AtomicU16"
-                        | "AtomicU32"
-                        | "AtomicU64"
-                        | "AtomicU128"
-                        | "AtomicUsize"
-                )
-            }) =>
-        {
-            TypeGroup::SyncPrimitive
-        }
+        | "std::sync::RwLockWriteGuard" => StdAdtType::RwLockWriteGuard,
         _ => return None,
     })
 }
 
-fn types() -> &'static HashMap<DefId, TypeGroup> {
+fn types() -> &'static HashMap<DefId, StdAdtType> {
     TYPES.get().expect("Type DefIds haven't been initialized.")
+}
+
+pub(crate) fn def_ids_for_type(group: StdAdtType) -> impl Iterator<Item = DefId> {
+    types()
+        .iter()
+        .filter_map(move |(&did, &kind)| (kind == group).then_some(did))
 }
 
 macro_rules! type_predicates {
@@ -154,7 +155,7 @@ macro_rules! type_predicates {
         $(
             $(#[$attr])*
             pub fn $name(did: DefId) -> bool {
-                types().get(&did) == Some(&TypeGroup::$group)
+                types().get(&did) == Some(&StdAdtType::$group)
             }
         )+
     };
@@ -183,28 +184,4 @@ type_predicates! {
     is_std_sync_primitive => SyncPrimitive,
     /// Whether this is the standard `IndexRange` type.
     is_index_range => IndexRange,
-}
-
-/// Resolve the `AsciiChar` definition used by contract type names.
-pub fn get_ascii_char_def_id() -> Option<DefId> {
-    types()
-        .iter()
-        .find_map(|(&did, &group)| (group == TypeGroup::AsciiChar).then_some(did))
-}
-
-/// Resolve a negative-type name (as written in `std-trait.json`) to its
-/// resolved `DefId` set. Unknown or unresolved names return `None`.
-pub fn negative_type_defs(name: &str) -> Option<Vec<DefId>> {
-    let ids: Vec<_> = types()
-        .iter()
-        .filter_map(|(&did, &group)| {
-            let matches = match group {
-                TypeGroup::Rc => name == "Rc",
-                TypeGroup::Negative(short) => name == short,
-                _ => false,
-            };
-            matches.then_some(did)
-        })
-        .collect();
-    (!ids.is_empty()).then_some(ids)
 }

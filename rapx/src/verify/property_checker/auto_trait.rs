@@ -15,7 +15,7 @@
 //! implements the primitive type-level checks.
 
 use crate::def_ids::lang_api::{self, LangItem};
-use crate::def_ids::type_ids;
+use crate::def_ids::type_ids::{self, StdAdtType};
 use crate::helpers::mir_utils;
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
@@ -169,10 +169,23 @@ pub(crate) fn contain_no_type_check<'tcx>(
 ) -> CheckResult {
     let mut defs: Vec<DefId> = Vec::new();
     for name in negatives {
-        let Some(ids) = type_ids::negative_type_defs(name) else {
-            return CheckResult::Unknown(UnknownReason::Unimplemented);
+        let group = match name.as_str() {
+            "Rc" => StdAdtType::Rc,
+            "Cell" => StdAdtType::Cell,
+            "UnsafeCell" => StdAdtType::UnsafeCell,
+            "RefCell" => StdAdtType::RefCell,
+            "Ref" => StdAdtType::Ref,
+            "RefMut" => StdAdtType::RefMut,
+            "MutexGuard" => StdAdtType::MutexGuard,
+            "MappedMutexGuard" => StdAdtType::MappedMutexGuard,
+            "RwLockWriteGuard" => StdAdtType::RwLockWriteGuard,
+            _ => return CheckResult::Unknown(UnknownReason::Unimplemented),
         };
-        defs.extend(ids);
+        let count = defs.len();
+        defs.extend(type_ids::def_ids_for_type(group));
+        if defs.len() == count {
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
+        }
     }
     type_structurally_contains(tcx, ty, &defs, impl_def_id, is_sync).to_check()
 }

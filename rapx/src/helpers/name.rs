@@ -1,4 +1,4 @@
-use crate::def_ids::type_ids;
+use crate::def_ids::type_ids::{self, StdAdtType};
 use crate::helpers::mir_utils;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::{GenericArgKind, Ty, TyCtxt, TyKind, print::with_no_trimmed_paths};
@@ -376,7 +376,7 @@ pub fn match_ty_with_ident<'tcx>(
 fn match_std_type<'tcx>(tcx: TyCtxt<'tcx>, type_ident: &str) -> Option<Ty<'tcx>> {
     match type_ident {
         "Char" | "AsciiChar" => {
-            let did = type_ids::get_ascii_char_def_id()?;
+            let did = type_ids::def_ids_for_type(StdAdtType::AsciiChar).next()?;
             let adt = tcx.adt_def(did);
             Some(Ty::new_adt(
                 tcx,
