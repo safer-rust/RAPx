@@ -11,14 +11,14 @@ use rustc_middle::{
     ty::{Mutability, Ty, TyCtxt, TyKind},
 };
 
+use crate::def_ids::type_ids;
 use crate::analysis::dataflow::call::CallDependencies;
 use crate::compat::Spanned;
 use crate::def_ids::lang_api;
-use crate::verify::api_classify;
 
 pub(crate) fn supports_result(ty: Ty<'_>) -> bool {
     matches!(ty.kind(), TyKind::Bool)
-        || matches!(ty.kind(), TyKind::Adt(def, _) if api_classify::is_std_ordering(def.did()))
+        || matches!(ty.kind(), TyKind::Adt(def, _) if type_ids::is_std_ordering(def.did()))
 }
 
 pub(super) fn estimate<'tcx>(

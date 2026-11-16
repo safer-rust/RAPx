@@ -1,8 +1,7 @@
-//! Identities of standard-library APIs and types used by verification.
+//! API identities and thin type classifiers used by verification.
 //!
-//! Call classifiers recognize specific intrinsics, diagnostic items, or
-//! inherent methods. Type classifiers compare ADT `DefId`s with the standard
-//! type sets resolved in [`crate::def_ids::type_ids`].
+//! API classifiers recognize specific intrinsics, diagnostic items, or
+//! inherent methods by `DefId`. Type classifiers use identities from `def_ids`.
 //!
 //! # Agent Policy
 //!
@@ -39,57 +38,16 @@ pub fn is_ptr_write(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
     callee.is_some_and(|did| diagnostic_api::is_ptr_write(tcx, did))
 }
 
-// Standard-library ADT identities used throughout verification.
-
-pub fn is_std_vec(def_id: DefId) -> bool {
-    type_ids::vec_types().contains(&def_id)
-}
-
-pub fn is_std_string(def_id: DefId) -> bool {
-    type_ids::string_types().contains(&def_id)
-}
-
-pub fn is_std_box(def_id: DefId) -> bool {
-    type_ids::box_types().contains(&def_id)
-}
-
-pub fn is_std_cstring(def_id: DefId) -> bool {
-    type_ids::cstring_types().contains(&def_id)
-}
-
-pub fn is_std_nonnull(def_id: DefId) -> bool {
-    type_ids::nonnull_types().contains(&def_id)
-}
-
-pub fn is_maybe_uninit_type(def_id: DefId) -> bool {
-    type_ids::maybe_uninit_types().contains(&def_id)
-}
-
-/// Whether the type inside any references, raw pointers, slices, or arrays is
-/// the standard `MaybeUninit<T>`.
-pub fn is_maybe_uninit_ty(ty: Ty<'_>) -> bool {
+/// Whether stripping references, raw pointers, slices, and arrays from `ty`
+/// reaches the standard `MaybeUninit<T>` type.
+pub fn strips_to_maybe_uninit(ty: Ty<'_>) -> bool {
     let mut t = ty;
     loop {
         match t.kind() {
             TyKind::Slice(e) | TyKind::Array(e, _) => t = *e,
             TyKind::RawPtr(e, _) | TyKind::Ref(_, e, _) => t = *e,
-            TyKind::Adt(adt, _) => return is_maybe_uninit_type(adt.did()),
+            TyKind::Adt(adt, _) => return type_ids::is_maybe_uninit_type(adt.did()),
             _ => return false,
         }
     }
-}
-
-/// Whether `def_id` is the slice iterator type `Iter` or `IterMut`.
-pub fn is_std_iter_or_itermut(def_id: DefId) -> bool {
-    type_ids::iter_types().contains(&def_id)
-}
-
-/// Whether `def_id` is `core::cmp::Ordering`.
-pub fn is_std_ordering(def_id: DefId) -> bool {
-    type_ids::ordering_types().contains(&def_id)
-}
-
-/// Whether `def_id` is the standard `IndexRange` type.
-pub fn is_index_range(def_id: DefId) -> bool {
-    type_ids::index_range_types().contains(&def_id)
 }

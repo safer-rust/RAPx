@@ -1,5 +1,6 @@
 //! MIR-level alias hazard analysis independent of VM state and Z3 terms.
 
+use crate::def_ids::type_ids;
 use crate::analysis::dataflow::{call_read, call_write, pointer_copy};
 use crate::analysis::dataflow::pointer_flow::{self, trace_source_arg};
 use crate::helpers::mir_utils;
@@ -1562,7 +1563,7 @@ fn terminator_invalidates_vec_owner<'tcx>(
         };
         if !inner
             .ty_adt_def()
-            .is_some_and(|adt| crate::verify::api_classify::is_std_vec(adt.did()))
+            .is_some_and(|adt| type_ids::is_std_vec(adt.did()))
         {
             return false;
         }

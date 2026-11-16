@@ -4,6 +4,7 @@
 //! offset) against the expected type; `Size` checks `sized`/`unsized`/exact
 //! size assertions.
 
+use crate::def_ids::type_ids;
 use crate::def_ids::lang_api::{self, LangItem};
 use crate::helpers::mir_utils;
 use crate::verify::checkpoint::Checkpoint;
@@ -78,7 +79,7 @@ impl PropertyChecker {
                 if let Some(mut elem_ty) = alloc.element_ty.as_ty() {
                     elem_ty = self.resolve_ty_params(vm_state, checkpoint, elem_ty);
                     if let TyKind::Adt(def, args) = elem_ty.kind()
-                        && crate::verify::api_classify::is_maybe_uninit_type(def.did())
+                        && type_ids::is_maybe_uninit_type(def.did())
                         && args.first().and_then(|arg| arg.as_type()) == Some(expected_ty)
                         && vm_state.content(alloc_id).facts.inner_uninit
                         && vm_state.content(alloc_id).facts.written_pointee_ty != Some(expected_ty)
@@ -115,7 +116,7 @@ impl PropertyChecker {
                         return CheckResult::ProvedByRule;
                     }
                     if let TyKind::Adt(adt_def, substs) = elem_ty.kind()
-                        && crate::verify::api_classify::is_maybe_uninit_type(adt_def.did())
+                        && type_ids::is_maybe_uninit_type(adt_def.did())
                         && matches!(value.ty.kind(), TyKind::RawPtr(..))
                         && let Some(inner) = substs.first().and_then(|s| s.as_type())
                         && inner == expected_ty
@@ -249,7 +250,7 @@ impl PropertyChecker {
     }
 
     pub(super) fn ty_is_maybe_uninit(ty: Ty<'_>) -> bool {
-        crate::verify::api_classify::is_maybe_uninit_ty(ty)
+        crate::verify::api_classify::strips_to_maybe_uninit(ty)
     }
 
     pub(super) fn check_size<'z3, 'tcx>(

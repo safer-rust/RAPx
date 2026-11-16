@@ -4,9 +4,9 @@ use rustc_middle::{
 };
 use z3::ast::Int;
 
+use crate::def_ids::type_ids;
 use crate::compat::FxHashMap;
 use crate::helpers::mir_utils;
-use crate::verify::api_classify;
 
 use super::state::{AllocId, Provenance, ValueFacts, ValueSource, VmState, VmValue};
 
@@ -91,10 +91,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let rustc_middle::ty::TyKind::Adt(adt_def, substs) = ty.kind() else {
             return false;
         };
-        let is_vec = api_classify::is_std_vec(adt_def.did());
-        let is_string = api_classify::is_std_string(adt_def.did());
-        let is_cstring = api_classify::is_std_cstring(adt_def.did());
-        if !(api_classify::is_std_box(adt_def.did()) || is_vec || is_string || is_cstring) {
+        let is_vec = type_ids::is_std_vec(adt_def.did());
+        let is_string = type_ids::is_std_string(adt_def.did());
+        let is_cstring = type_ids::is_std_cstring(adt_def.did());
+        if !(type_ids::is_std_box(adt_def.did()) || is_vec || is_string || is_cstring) {
             return false;
         }
         let heap_ty = if is_string {
@@ -256,7 +256,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         // `&MaybeUninit<T>` / `&[MaybeUninit<T>]` carry no validity invariant —
         // the content need not be initialized — so do not claim `Init` for them
         // (the content property reduces to `Typed`).
-        let pointee_is_maybe_uninit = api_classify::is_maybe_uninit_ty(pointee_ty);
+        let pointee_is_maybe_uninit = crate::verify::api_classify::strips_to_maybe_uninit(pointee_ty);
 
         invariants.non_null = true;
         if !pointee_is_maybe_uninit {
@@ -437,8 +437,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         // inside a referenced struct: materialize the pointee
                         // allocation so field access (e.g. `self.buckets.iter()`)
                         // resolves to the *data* elements, not the whole struct.
-                        if (api_classify::is_std_box(adt.did())
-                            || api_classify::is_std_vec(adt.did()))
+                        if (type_ids::is_std_box(adt.did())
+                            || type_ids::is_std_vec(adt.did()))
                             && let Some(pointee) = substs.first().and_then(|s| s.as_type())
                             {
                                 let elem_ty = match pointee.kind() {
@@ -446,7 +446,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                     _ => pointee,
                                 };
                                 self.materialize_external_field(local, idx, field_ty, elem_ty, None);
-                            } else if !adt.is_enum() && api_classify::is_std_vec(adt.did()) {
+                            } else if !adt.is_enum() && type_ids::is_std_vec(adt.did()) {
                                 self.materialize_vec_ptr_field(local, vec![idx], field_ty);
                             }
                     } else if matches!(

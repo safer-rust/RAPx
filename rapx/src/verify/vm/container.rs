@@ -6,9 +6,9 @@ use rustc_middle::{
 };
 use z3::ast::{Ast, Int};
 
+use crate::def_ids::type_ids;
 use crate::compat::GenericArgsRef;
 use crate::helpers::mir_utils;
-use crate::verify::api_classify;
 use crate::verify::contract::{ContractExpr, ContractProjection, PropertyArg, PropertyKind};
 
 use super::state::{AllocId, Provenance, ValueFacts, ValueSource, VmState, VmValue};
@@ -150,7 +150,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let rustc_middle::ty::TyKind::Adt(adt_def, _) = val.ty.kind() else {
             return None;
         };
-        if !api_classify::is_index_range(adt_def.did()) {
+        if !type_ids::is_index_range(adt_def.did()) {
             return None;
         }
         let alloc_id = val.provenance_alloc_id()?;
@@ -184,7 +184,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             ty = *inner;
         }
         if let TyKind::Adt(adt, _) = ty.kind()
-            && (api_classify::is_std_vec(adt.did()) || api_classify::is_std_string(adt.did()))
+            && (type_ids::is_std_vec(adt.did()) || type_ids::is_std_string(adt.did()))
             && let Some(data_id) = self.container_data_alloc(val.provenance_alloc_id()?, val.ty)
         {
             return self.slice_len_of_alloc(data_id);
@@ -200,7 +200,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let TyKind::Adt(adt, _) = ty.kind() else {
             return None;
         };
-        if !api_classify::is_std_vec(adt.did()) && !api_classify::is_std_string(adt.did()) {
+        if !type_ids::is_std_vec(adt.did()) && !type_ids::is_std_string(adt.did()) {
             return None;
         }
         let root_id = val.provenance_alloc_id()?;
@@ -525,7 +525,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         };
         if inner
             .ty_adt_def()
-            .is_some_and(|adt| api_classify::is_std_vec(adt.did()))
+            .is_some_and(|adt| type_ids::is_std_vec(adt.did()))
         {
             return value
                 .provenance_alloc_id()
@@ -547,7 +547,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     || field.ty != *inner
                     || !view_ty
                         .ty_adt_def()
-                        .is_some_and(|adt| api_classify::is_std_vec(adt.did()))
+                        .is_some_and(|adt| type_ids::is_std_vec(adt.did()))
                     || field.z3_term.simplify() != borrowed
                     || !self
                         .container_ptr_field(*view_ty)

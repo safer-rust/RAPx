@@ -13,7 +13,6 @@ use super::state::{AllocId, MemoryContent, VmState, VmValue};
 use crate::compat::{FxHashSet, Spanned};
 use crate::helpers::mir_utils;
 use crate::limit::MAX_INLINE_DEPTH;
-use crate::verify::api_classify;
 
 type InlineWorkItem<'z3, 'tcx> = (VmState<'z3, 'tcx>, BasicBlock, FxHashSet<BasicBlock>);
 
@@ -302,7 +301,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             .iter()
             .flatten()
             .filter(|local| {
-                api_classify::is_maybe_uninit_ty(before_inline.body().local_decls[**local].ty)
+                crate::verify::api_classify::strips_to_maybe_uninit(before_inline.body().local_decls[**local].ty)
             })
             .filter_map(|local| before_inline.current_frame.local_alloc.get(local).copied())
             .filter(|id| before_inline.allocation_needs_write(*id))

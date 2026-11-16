@@ -4,9 +4,9 @@ use rustc_middle::{
 };
 use z3::ast::Int;
 
+use crate::def_ids::type_ids;
 use crate::def_ids::other_api;
 use crate::helpers::mir_utils;
-use crate::verify::api_classify;
 
 use super::super::super::state::{Provenance, ValueFacts, ValueSource, VmState, VmValue};
 
@@ -87,14 +87,14 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
         let box_new = other_api::is_box_new(self.tcx, callee);
         if let TyKind::Adt(adt, _) = ty.kind()
-            && (api_classify::is_std_vec(adt.did())
-                || api_classify::is_std_box(adt.did())
-                || api_classify::is_std_string(adt.did())
-                || api_classify::is_std_cstring(adt.did()))
+            && (type_ids::is_std_vec(adt.did())
+                || type_ids::is_std_box(adt.did())
+                || type_ids::is_std_string(adt.did())
+                || type_ids::is_std_cstring(adt.did()))
             && let Some((index, pointer)) = args.iter().enumerate().find(|(_, value)| {
                 value.provenance_alloc_id().is_some()
                     && (matches!(value.ty.kind(), TyKind::RawPtr(..))
-                        || matches!(value.ty.kind(), TyKind::Adt(def, _) if api_classify::is_std_nonnull(def.did())))
+                        || matches!(value.ty.kind(), TyKind::Adt(def, _) if type_ids::is_std_nonnull(def.did())))
             })
             && !box_new
             && let Some(path) = self.container_ptr_field(ty)
@@ -104,7 +104,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             result.facts.init = true;
             self.set_local(destination, result);
             self.set_field_value(destination, path, pointer.clone());
-            if api_classify::is_std_vec(adt.did())
+            if type_ids::is_std_vec(adt.did())
                 && let Some(len) = args.get(index + 1)
                 && let Some(alloc_id) = pointer.provenance_alloc_id()
             {

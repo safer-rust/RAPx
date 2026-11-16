@@ -11,8 +11,8 @@ use super::super::state::{
     AllocId, Provenance, REPEATED_ARRAY_ELEMENT, ValueFacts, ValueSource, VmState, VmValue,
 };
 
+use crate::def_ids::type_ids;
 use crate::helpers::mir_utils;
-use crate::verify::api_classify;
 
 pub(crate) fn eval_use<'z3, 'tcx>(
     state: &mut VmState<'z3, 'tcx>,
@@ -461,14 +461,14 @@ pub(crate) fn eval_cast<'z3, 'tcx>(
     let src_ty = src_val.ty;
     let nonnull_to_raw = matches!(kind, CastKind::Transmute)
         && matches!(cast_ty.kind(), TyKind::RawPtr(..))
-        && matches!(src_ty.kind(), TyKind::Adt(adt, _) if api_classify::is_std_nonnull(adt.did()));
+        && matches!(src_ty.kind(), TyKind::Adt(adt, _) if type_ids::is_std_nonnull(adt.did()));
     let numeric_transmute = matches!(kind, CastKind::Transmute)
         && mir_utils::is_std_crate_def_id(state.tcx, state.current_frame.current_def_id)
         && src_val.provenance.is_none()
         && (pointer_free_bits(state, src_ty, 0)
             || matches!(src_val.source, ValueSource::KnownDiscriminant(_)))
         && (matches!(cast_ty.kind(), TyKind::RawPtr(..))
-            || matches!(cast_ty.kind(), TyKind::Adt(adt, _) if api_classify::is_std_nonnull(adt.did())));
+            || matches!(cast_ty.kind(), TyKind::Adt(adt, _) if type_ids::is_std_nonnull(adt.did())));
     // A raw-pointer cast to a *different* ADT pointee reinterprets the
     // allocation's fields (e.g. `NonNull<LeafNode>::as_ptr() as *mut
     // InternalNode` in `NodeRef::as_internal_ptr`).  Lazily materialize the
@@ -778,7 +778,7 @@ pub(crate) fn eval_aggregate<'z3, 'tcx>(
         // `Box::assume_init`'s rebuild drops the heap provenance and a later
         // `Box::as_ptr` field read fails `NonNull`.
         let box_prov = if let rustc_middle::ty::TyKind::Adt(adt, _) = dest_ty.kind() {
-            if api_classify::is_std_box(adt.did()) {
+            if type_ids::is_std_box(adt.did()) {
                 state
                     .container_ptr_field(dest_ty)
                     .and_then(|path| state.field_value(dest_local, &path))
@@ -837,7 +837,7 @@ pub(crate) fn eval_discriminant<'z3, 'tcx>(
     if let Some(ref pv) = place_val
         && !matches!(pv.source, ValueSource::KnownDiscriminant(_))
         && let rustc_middle::ty::TyKind::Adt(adt_def, _) = pv.ty.kind()
-        && api_classify::is_std_ordering(adt_def.did())
+        && type_ids::is_std_ordering(adt_def.did())
         && adt_def.is_enum()
     {
         let one = Int::from_u64(state.z3_ctx, 1);

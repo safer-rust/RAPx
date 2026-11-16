@@ -1,11 +1,11 @@
 use rustc_middle::{mir::Local, ty::Ty};
 use z3::ast::{Ast, Bool, Int};
 
+use crate::def_ids::type_ids;
 use crate::{
     compat::FxHashSet,
     helpers::mir_utils,
     verify::{
-        api_classify,
         contract::{
             ContractExpr, ContractKind, ContractPlace, ContractProjection, NumericBinOp, Property,
             PropertyArg, PropertyKind,
@@ -529,7 +529,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     .map(|val| {
                         (matches!(val.ty.kind(), rustc_middle::ty::TyKind::RawPtr(..))
                             || matches!(val.ty.kind(), rustc_middle::ty::TyKind::Adt(adt, _)
-                                if api_classify::is_std_nonnull(adt.did())
+                                if type_ids::is_std_nonnull(adt.did())
                                     || mir_utils::is_raw_ptr_wrapper(self.tcx, adt.did())))
                             && (elem_ty.is_primitive()
                                 || matches!(elem_ty.kind(), rustc_middle::ty::TyKind::Param(_)))
@@ -540,8 +540,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 };
                 if let rustc_middle::ty::TyKind::Adt(adt, _) =
                     self.body().local_decls[local].ty.kind()
-                    && (api_classify::is_std_vec(adt.did())
-                        || api_classify::is_std_string(adt.did()))
+                    && (type_ids::is_std_vec(adt.did())
+                        || type_ids::is_std_string(adt.did()))
                     && val.provenance_alloc_id().is_some_and(|id| {
                         self.alloc(id).slice_len().is_some()
                             && self.alloc(id).element_ty.as_ty() == Some(elem_ty)
@@ -943,7 +943,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         // initialized — the `Init ⇒ Typed` subsumption records the element type.
         let is_maybe_uninit = property
             .ty_arg(1)
-            .map(api_classify::is_maybe_uninit_ty)
+            .map(crate::verify::api_classify::strips_to_maybe_uninit)
             .unwrap_or(false);
         if is_maybe_uninit {
             return;

@@ -5,8 +5,8 @@
 //! `in_bounds`, `non_null`) with fast paths, falling back to SMT over
 //! `value.z3_term` and allocation base/size.
 
+use crate::def_ids::type_ids;
 use crate::helpers::mir_utils;
-use crate::verify::api_classify;
 use crate::verify::checkpoint::Checkpoint;
 use crate::verify::contract::{ContractExpr, Property, PropertyArg, PropertyKind, is_static_lifetime_ident};
 use crate::verify::report::{CheckResult, UnknownReason};
@@ -698,7 +698,7 @@ impl PropertyChecker {
             mir_utils::pointee_ty(value.ty).and_then(|pointee| {
                 match pointee.kind() {
                     TyKind::Adt(def, args)
-                        if crate::verify::api_classify::is_maybe_uninit_type(def.did()) => {
+                        if type_ids::is_maybe_uninit_type(def.did()) => {
                         args.first().and_then(|arg| arg.as_type())
                     }
                     _ => Some(pointee),
@@ -1013,8 +1013,8 @@ impl PropertyChecker {
                 let param_ty = body.local_decls[param_local].ty;
                 let guarantees = matches!(param_ty.kind(), TyKind::Ref(..))
                     || matches!(param_ty.kind(), TyKind::Adt(adt_def, _)
-                        if api_classify::is_std_box(adt_def.did())
-                            || api_classify::is_std_vec(adt_def.did()));
+                        if type_ids::is_std_box(adt_def.did())
+                            || type_ids::is_std_vec(adt_def.did()));
                 if !guarantees {
                     return false;
                 }

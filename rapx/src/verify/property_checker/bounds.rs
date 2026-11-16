@@ -4,8 +4,8 @@
 //! invariants, or an SMT coverage check over allocation base/size.
 //! `NonOverlap` uses provenance-distinctness and range-overlap reasoning.
 
+use crate::def_ids::type_ids;
 use crate::helpers::mir_utils;
-use crate::verify::api_classify;
 use crate::verify::checkpoint::Checkpoint;
 use crate::verify::contract::{
     ContractExpr, ContractKind, NumericBinOp, PlaceBase, Property, PropertyArg, RelOp,
@@ -412,7 +412,7 @@ impl PropertyChecker {
                             let kind = mir_utils::range_kind(vm_state.tcx, def.did());
                             (
                                 matches!(kind, mir_utils::RangeKind::Range | mir_utils::RangeKind::RangeInclusive)
-                                    || api_classify::is_index_range(def.did()),
+                                    || type_ids::is_index_range(def.did()),
                                 matches!(kind, mir_utils::RangeKind::RangeInclusive),
                             )
                         }
@@ -548,7 +548,7 @@ impl PropertyChecker {
             mir_utils::RangeKind::Other => {
                 // `core::ops::IndexRange` is a private `{ start, end }` struct
                 // (no lang item); its `end` lives at field 1 like `Range`.
-                if api_classify::is_index_range(adt_def.did()) {
+                if type_ids::is_index_range(adt_def.did()) {
                     Some(rustc_abi::FieldIdx::from_usize(1))
                 } else {
                     None

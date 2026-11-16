@@ -39,7 +39,7 @@ pub(crate) fn pointee_ty<'tcx>(ty: Ty<'tcx>) -> Option<Ty<'tcx>> {
         TyKind::RawPtr(ty, _) | TyKind::Ref(_, ty, _) => Some(*ty),
         // `NonNull<T>` is a raw-pointer wrapper; unwrap it so pointer-arith
         // effects (`NonNull::add`/`sub`/`offset`) keep their provenance.
-        TyKind::Adt(adt, args) if type_ids::nonnull_types().contains(&adt.did()) => {
+        TyKind::Adt(adt, args) if type_ids::is_std_nonnull(adt.did()) => {
             args.types().next()
         }
         _ => None,

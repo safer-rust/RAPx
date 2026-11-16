@@ -1,3 +1,4 @@
+use crate::def_ids::type_ids;
 use crate::helpers::mir_utils;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::{GenericArgKind, Ty, TyCtxt, TyKind, print::with_no_trimmed_paths};
@@ -5,7 +6,6 @@ use serde_json::Value;
 use std::sync::OnceLock;
 use syn::Expr;
 
-use crate::def_ids::type_ids;
 
 /// The internal `crate::module::…` path of a `DefId` (e.g. `alloc::rcs::rc::Rc`),
 /// normalised from its `def_path_str` debug form.  Used for display/debug and as
@@ -376,7 +376,7 @@ pub fn match_ty_with_ident<'tcx>(
 fn match_std_type<'tcx>(tcx: TyCtxt<'tcx>, type_ident: &str) -> Option<Ty<'tcx>> {
     match type_ident {
         "Char" | "AsciiChar" => {
-            let did = *type_ids::ascii_char_types().first()?;
+            let did = type_ids::get_ascii_char_def_id()?;
             let adt = tcx.adt_def(did);
             Some(Ty::new_adt(
                 tcx,

@@ -5,13 +5,13 @@
 //! each local's value points to; this module traces that provenance
 //! back to the originating parameter/local.
 
+use crate::def_ids::type_ids;
 use crate::helpers::mir_utils;
 use crate::compat::GenericArgsRef;
 use super::alias_hazard::{self, AliasProducer, HazardKind};
 use crate::analysis::alias::FieldOrigin;
 use crate::analysis::dataflow::pointer_flow;
 use crate::verify::checkpoint::Checkpoint;
-use crate::verify::api_classify;
 use crate::helpers::def_use::PlaceKey;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{Local, Operand, ProjectionElem, Rvalue, StatementKind};
@@ -407,7 +407,7 @@ pub(crate) fn check_alias_vm<'z3, 'tcx>(
                     },
                     _ => None,
                 };
-                if nonnull_adt.is_some_and(|adt| api_classify::is_std_nonnull(adt.did())) {
+                if nonnull_adt.is_some_and(|adt| type_ids::is_std_nonnull(adt.did())) {
                     return VmAliasResult::Proved;
                 }
             }
@@ -617,7 +617,7 @@ fn check_view_alias<'z3, 'tcx>(
             // so MIR-level hazard scanning can detect reallocation hazards.
             let is_reallocatable = match &origin.kind {
                 VmOriginKind::Owned(def_id) => {
-                    api_classify::is_std_vec(*def_id) || api_classify::is_std_cstring(*def_id)
+                    type_ids::is_std_vec(*def_id) || type_ids::is_std_cstring(*def_id)
                 }
                 _ => false,
             };
@@ -706,7 +706,7 @@ fn check_view_alias<'z3, 'tcx>(
             // transfers exclusive ownership of its pointer, so producing a unique
             // view is safe even though the receiver is not a `&mut self`.
             if let rustc_middle::ty::TyKind::Adt(adt_def, _) = self_ty.kind()
-                && api_classify::is_std_nonnull(adt_def.did()) {
+                && type_ids::is_std_nonnull(adt_def.did()) {
                     return VmAliasResult::Proved;
                 }
         }

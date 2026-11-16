@@ -35,7 +35,7 @@ pub fn is_box_new(tcx: TyCtxt<'_>, did: DefId) -> bool {
         return false;
     };
     let self_ty = tcx.type_of(impl_id).instantiate_identity().skip_norm_wip();
-    matches!(self_ty.kind(), TyKind::Adt(adt, _) if type_ids::box_types().contains(&adt.did()))
+    matches!(self_ty.kind(), TyKind::Adt(adt, _) if type_ids::is_std_box(adt.did()))
 }
 
 /// Whether `did` names the standard `NonNull::dangling` constructor.
@@ -48,7 +48,7 @@ pub fn is_nonnull_dangling(tcx: TyCtxt<'_>, did: DefId) -> bool {
     };
     let self_ty = tcx.type_of(impl_id).instantiate_identity().skip_norm_wip();
     matches!(self_ty.kind(), TyKind::Adt(adt, _)
-        if type_ids::nonnull_types().contains(&adt.did()))
+        if type_ids::is_std_nonnull(adt.did()))
         && tcx.fn_sig(did).skip_binder().inputs().skip_binder().is_empty()
 }
 

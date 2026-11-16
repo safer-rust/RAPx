@@ -1,7 +1,7 @@
 //! Read-only queries over the symbolic VM state used by property checks.
 
+use crate::def_ids::type_ids;
 use crate::helpers::mir_utils;
-use crate::verify::api_classify;
 use crate::verify::checkpoint::Checkpoint;
 use crate::verify::contract::{
     ContractExpr, ContractPlace, ContractProjection, PlaceBase, Property, PropertyArg,
@@ -348,13 +348,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             && (matches!(value.ty.kind(), TyKind::RawPtr(..))
                 || matches!(value.ty.kind(), TyKind::Ref(_, inner, _)
                     if matches!(inner.kind(), TyKind::Adt(adt, _)
-                        if api_classify::is_maybe_uninit_type(adt.did()))))
+                        if type_ids::is_maybe_uninit_type(adt.did()))))
             && {
                 let a = self.alloc(alloc_id);
                 !a.is_external()
                     && a.element_ty.as_ty().is_some_and(|ty| {
                         if let TyKind::Adt(adt, _) = ty.kind() {
-                            api_classify::is_maybe_uninit_type(adt.did())
+                            type_ids::is_maybe_uninit_type(adt.did())
                         } else {
                             false
                         }

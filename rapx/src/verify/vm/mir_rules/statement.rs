@@ -12,6 +12,7 @@ use z3::ast::{Ast, Bool, Int};
 
 use super::super::state::{AllocKind, Provenance, ValueSource, VmState, VmValue};
 use super::eval_rvalue;
+use crate::def_ids::type_ids;
 use crate::helpers::mir_utils;
 
 pub(crate) fn exec_assume<'z3, 'tcx>(state: &mut VmState<'z3, 'tcx>, operand: &Operand<'tcx>) {
@@ -327,7 +328,7 @@ pub(crate) fn exec_assign<'z3, 'tcx>(
         .is_some_and(|id| state.content(*id).facts.inner_uninit);
     let inner_uninit_aggregate = matches!(rvalue, Rvalue::Aggregate(kind, _)
         if matches!(kind.as_ref(), AggregateKind::Adt(did, _, _, _, Some(field))
-            if crate::verify::api_classify::is_maybe_uninit_type(*did)
+            if type_ids::is_maybe_uninit_type(*did)
                 && field.as_usize() == 0));
     let source_fields = source_place
         .map(|source| {
@@ -665,7 +666,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             if byte_offset == 0
                 && self.alloc(alloc_id).element_ty.as_ty().is_some_and(|ty| {
                     matches!(ty.kind(), rustc_middle::ty::TyKind::Adt(def, args)
-                        if crate::verify::api_classify::is_maybe_uninit_type(def.did())
+                        if type_ids::is_maybe_uninit_type(def.did())
                         && args.first().and_then(|arg| arg.as_type()) == Some(value_ty))
                 })
             {

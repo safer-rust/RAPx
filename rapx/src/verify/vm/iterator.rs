@@ -1,8 +1,8 @@
 use rustc_middle::{mir::Local, ty::TyKind};
 use z3::ast::{Ast, Int};
 
+use crate::def_ids::type_ids;
 use crate::helpers::mir_utils;
-use crate::verify::api_classify;
 
 use super::state::{AllocId, OffsetKind, Provenance, VmState, VmValue};
 
@@ -167,7 +167,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             let rustc_middle::ty::TyKind::Adt(adt, _) = pointee.kind() else {
                 return false;
             };
-            if !api_classify::is_std_iter_or_itermut(adt.did()) {
+            if !type_ids::is_std_iter_or_itermut(adt.did()) {
                 return false;
             }
             let Some((ptr, end)) = self.iter_ptr_end(*local) else {
@@ -289,7 +289,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             rustc_middle::ty::TyKind::Ref(_, pointee, _) => match pointee.kind() {
                 rustc_middle::ty::TyKind::Adt(adt_def, _) => {
                     adt_def.did().as_local().is_none()
-                        && api_classify::is_std_iter_or_itermut(adt_def.did())
+                        && type_ids::is_std_iter_or_itermut(adt_def.did())
                 }
                 _ => false,
             },

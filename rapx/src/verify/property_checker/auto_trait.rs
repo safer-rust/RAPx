@@ -15,13 +15,13 @@
 //! implements the primitive type-level checks.
 
 use crate::def_ids::lang_api::{self, LangItem};
+use crate::def_ids::type_ids;
 use crate::helpers::mir_utils;
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::{ClauseKind, GenericArgKind, ParamTy, Ty, TyCtxt, TyKind};
 
 use crate::compat::FxHashMap;
-use crate::def_ids::type_ids;
 use crate::verify::checkpoint::{Checkpoint, has_atomic_call, has_raw_ptr_write};
 use crate::verify::vm::state::VmState;
 use crate::verify::{
@@ -169,7 +169,10 @@ pub(crate) fn contain_no_type_check<'tcx>(
 ) -> CheckResult {
     let mut defs: Vec<DefId> = Vec::new();
     for name in negatives {
-        defs.extend_from_slice(type_ids::negative_type_defs(name));
+        let Some(ids) = type_ids::negative_type_defs(name) else {
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
+        };
+        defs.extend(ids);
     }
     type_structurally_contains(tcx, ty, &defs, impl_def_id, is_sync).to_check()
 }
@@ -430,7 +433,7 @@ fn type_structurally_contains<'tcx>(
             if negative_defs.contains(&adt_def.did()) {
                 return Contains::Yes;
             }
-            if type_ids::sync_primitive_types().contains(&adt_def.did()) {
+            if type_ids::is_std_sync_primitive(adt_def.did()) {
                 return Contains::No;
             }
             let mut result = Contains::No;
@@ -500,7 +503,7 @@ fn find_unsynchronized_mutation<'tcx>(
         TyKind::Pat(inner, _) => find_unsynchronized_mutation(tcx, *inner, impl_def_id, is_sync),
         TyKind::Adt(adt_def, substs) => {
             let did = adt_def.did();
-            if type_ids::sync_primitive_types().contains(&did) {
+            if type_ids::is_std_sync_primitive(did) {
                 return Contains::No;
             }
             if lang_api::matches(tcx, did, LangItem::UnsafeCell) {

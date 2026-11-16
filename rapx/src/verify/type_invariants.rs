@@ -10,6 +10,7 @@
 //! (see `super::target`), whose entry facts are synthesized by the VM's
 //! `init_parameters` and re-proved at return by `VerifyDriver::verify_type_invariants`.
 
+use crate::def_ids::type_ids;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::{self, Ty, TyCtxt};
 
@@ -244,7 +245,7 @@ fn transparent_nonnull_path<'tcx>(
     depth: usize,
 ) -> Option<Vec<(usize, Ty<'tcx>)>> {
     let ty::Adt(adt, args) = ty.kind() else { return None };
-    if crate::verify::api_classify::is_std_nonnull(adt.did()) {
+    if type_ids::is_std_nonnull(adt.did()) {
         return Some(Vec::new());
     }
     if depth == 0 || !adt.is_struct() || !adt.repr().transparent() {

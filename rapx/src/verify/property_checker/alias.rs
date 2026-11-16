@@ -1,5 +1,6 @@
 //! Checkers for `Alias` and `Owning` properties.
 
+use crate::def_ids::type_ids;
 use crate::helpers::mir_utils;
 use crate::verify::checkpoint::Checkpoint;
 use crate::verify::contract::Property;
@@ -158,9 +159,9 @@ impl PropertyChecker {
             | crate::verify::vm::alias::VmOriginKind::Unknown => true,
             crate::verify::vm::alias::VmOriginKind::MutRef => !owns_field_by_invariant,
             crate::verify::vm::alias::VmOriginKind::Owned(def_id) => {
-                !(crate::verify::api_classify::is_std_box(def_id)
-                    || crate::verify::api_classify::is_std_vec(def_id)
-                    || crate::verify::api_classify::is_std_cstring(def_id)
+                !(type_ids::is_std_box(def_id)
+                    || type_ids::is_std_vec(def_id)
+                    || type_ids::is_std_cstring(def_id)
                     || owns_field_by_invariant
                     || (internal_alloc && !local_alloc))
             }

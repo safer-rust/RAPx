@@ -11,8 +11,8 @@ use z3::ast::{Ast, Bool, Int};
 use super::super::super::state::{
     AllocId, Provenance, ValueFacts, ValueSource, VmState, VmValue,
 };
+use crate::def_ids::type_ids;
 use crate::helpers::mir_utils;
-use crate::verify::api_classify;
 use crate::verify::call_summary::{
     BoundedArithmeticOp, CallEffect, OverflowOp, SimdArithOp, SimdCmpOp,
 };
@@ -400,7 +400,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         let source_ty = alloc.element_ty.as_ty()?;
                         let array_ty = match source_ty.kind() {
                             TyKind::Adt(def, args)
-                                if api_classify::is_maybe_uninit_type(def.did()) =>
+                                if type_ids::is_maybe_uninit_type(def.did()) =>
                             {
                                 args.first()?.as_type()?
                             }
@@ -415,12 +415,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         let TyKind::Adt(box_def, box_args) = args.first()?.ty.kind() else {
                             return None;
                         };
-                        if !api_classify::is_std_box(box_def.did()) {
+                        if !type_ids::is_std_box(box_def.did()) {
                             return None;
                         }
                         let mut source_ty = box_args.first()?.as_type()?;
                         if let TyKind::Adt(def, args) = source_ty.kind()
-                            && api_classify::is_maybe_uninit_type(def.did())
+                            && type_ids::is_maybe_uninit_type(def.did())
                         {
                             source_ty = args.first()?.as_type()?;
                         }
@@ -547,7 +547,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let TyKind::Adt(adt_def, _) = dest_ty.kind() else {
             return None;
         };
-        if !api_classify::is_std_vec(adt_def.did()) {
+        if !type_ids::is_std_vec(adt_def.did()) {
             return None;
         }
         Some(VmValue {

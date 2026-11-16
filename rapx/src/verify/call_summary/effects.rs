@@ -12,6 +12,7 @@ use serde::Deserialize;
 use super::{
     BoundedArithmeticOp, CallEffect, CallEffectSummary, OverflowOp, SimdArithOp, SimdCmpOp,
 };
+use crate::def_ids::type_ids;
 use crate::{
     analysis::dataflow::pointer_copy,
     def_ids::{
@@ -23,7 +24,6 @@ use crate::{
         mir_utils::{self, type_layout},
         name::public_def_path,
     },
-    verify::api_classify,
 };
 
 // ── Context for effect builders ────────────────────────────────────────
@@ -603,7 +603,7 @@ fn transparent_deref_peel<'tcx>(tcx: TyCtxt<'tcx>, func: &Operand<'tcx>) -> Opti
 /// Element type of a `Vec<T>`, if `ty` is a `Vec`.
 pub(crate) fn vec_elem_ty<'tcx>(ty: Ty<'tcx>) -> Option<Ty<'tcx>> {
     if let TyKind::Adt(adt_def, substs) = ty.kind()
-        && api_classify::is_std_vec(adt_def.did())
+        && type_ids::is_std_vec(adt_def.did())
     {
         return substs.first().and_then(|s| s.as_type());
     }

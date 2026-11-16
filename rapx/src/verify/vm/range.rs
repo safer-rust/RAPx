@@ -1,9 +1,9 @@
 use rustc_middle::{mir::Local, ty::TyKind};
 use z3::ast::Int;
 
+use crate::def_ids::type_ids;
 use crate::def_ids::lang_api::{self, LangItem};
 use crate::helpers::mir_utils;
-use crate::verify::api_classify;
 
 use super::state::{VmState, VmValue};
 
@@ -56,7 +56,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 | mir_utils::RangeKind::Range
                 | mir_utils::RangeKind::RangeInclusive => start_field(),
                 mir_utils::RangeKind::Other => {
-                    if api_classify::is_index_range(def.did()) {
+                    if type_ids::is_index_range(def.did()) {
                         start_field()
                     } else {
                         (lang_api::matches(self.tcx, def.did(), LangItem::RangeToInclusive)
@@ -87,7 +87,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             }
             mir_utils::RangeKind::RangeTo => self.field_value(index_local, &[0])?.z3_term.clone(),
             mir_utils::RangeKind::RangeFrom => self.slice_len_from_value(base)?,
-            mir_utils::RangeKind::Other if api_classify::is_index_range(def.did()) => {
+            mir_utils::RangeKind::Other if type_ids::is_index_range(def.did()) => {
                 self.field_value(index_local, &[1])?.z3_term.clone()
             }
             mir_utils::RangeKind::Other => {

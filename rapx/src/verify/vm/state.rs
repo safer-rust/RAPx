@@ -4,6 +4,7 @@
 //! values and their invariants, memory allocations, and the full execution
 //! state at a program point.
 
+use crate::def_ids::type_ids;
 use crate::helpers::mir_utils;
 use rustc_abi::VariantIdx;
 use rustc_hir::def_id::DefId;
@@ -1008,13 +1009,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         self.content_mut(alloc_id).facts.may_be_uninit = false;
         let view_ty = self.body().local_decls[local].ty;
         if matches!(view_ty.kind(), TyKind::Adt(def, _)
-            if crate::verify::api_classify::is_std_vec(def.did()))
+            if type_ids::is_std_vec(def.did()))
             && value.provenance.as_ref().is_none_or(|prov| {
                 let source = self.alloc(prov.alloc_id);
                 matches!(source.kind, AllocKind::Object)
                     && matches!(source.element_ty.as_ty(), Some(ty)
                         if matches!(ty.kind(), TyKind::Adt(source_def, _)
-                            if crate::verify::api_classify::is_std_vec(source_def.did())))
+                            if type_ids::is_std_vec(source_def.did())))
             })
         {
             value.provenance = Some(Provenance {
@@ -1024,7 +1025,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             });
         }
         if matches!(view_ty.kind(), TyKind::Adt(def, _)
-            if crate::verify::api_classify::is_maybe_uninit_type(def.did()))
+            if type_ids::is_maybe_uninit_type(def.did()))
         {
             self.clear_write_evidence(alloc_id);
             self.content_mut(alloc_id).facts.inner_uninit = false;
@@ -1376,7 +1377,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     ) {
         let written_ty = value.ty;
         let written_inner = matches!(self.body().local_decls[local].ty.kind(), TyKind::Adt(def, args)
-            if crate::verify::api_classify::is_maybe_uninit_type(def.did())
+            if type_ids::is_maybe_uninit_type(def.did())
                 && args.first().and_then(|arg| arg.as_type()) == Some(value.ty))
             && !path.is_empty()
             && path.iter().all(|field| *field == 0)
@@ -2383,7 +2384,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             _ => return false,
         };
         if field_path.len() > 1
-            && !matches!(view_ty.kind(), TyKind::Adt(adt, _) if crate::verify::api_classify::is_std_string(adt.did()))
+            && !matches!(view_ty.kind(), TyKind::Adt(adt, _) if type_ids::is_std_string(adt.did()))
         {
             return false;
         }
@@ -2417,7 +2418,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             TyKind::Ref(_, inner, _) | TyKind::RawPtr(inner, _) => *inner,
             _ => ty,
         };
-        if !matches!(view_ty.kind(), TyKind::Adt(adt, _) if crate::verify::api_classify::is_std_vec(adt.did()) || crate::verify::api_classify::is_std_string(adt.did()))
+        if !matches!(view_ty.kind(), TyKind::Adt(adt, _) if type_ids::is_std_vec(adt.did()) || type_ids::is_std_string(adt.did()))
         {
             return false;
         }

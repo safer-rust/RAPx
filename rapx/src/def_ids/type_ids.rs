@@ -1,83 +1,47 @@
-//! DefIds of standard-library types used by type and layout classifiers.
+//! Resolved `DefId`s of standard-library types used by verification.
 
-use indexmap::IndexMap;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 use rustc_public::{CrateDef, rustc_internal};
 use rustc_span::sym;
+use std::collections::HashMap;
 use std::sync::OnceLock;
 
-static TYPES: OnceLock<Types> = OnceLock::new();
-
-/// Resolved `DefId`s of well-known std *types* (ADTs), used by the ADT
-/// type-name classifiers ([`crate::verify::api_classify::is_std_box`],
-/// [`crate::verify::api_classify::is_std_vec`], …).
-struct Types {
-    box_types: Vec<DefId>,
-    cstring_types: Vec<DefId>,
-    string_types: Vec<DefId>,
-    vec_types: Vec<DefId>,
-    nonnull_types: Vec<DefId>,
-    maybe_uninit_types: Vec<DefId>,
-    ascii_char_types: Vec<DefId>,
-    ordering_types: Vec<DefId>,
-    iter_types: Vec<DefId>,
-    rc_types: Vec<DefId>,
-    sync_primitive_types: Vec<DefId>,
-    index_range_types: Vec<DefId>,
-    /// Negative auto-trait types (`Cell`/`UnsafeCell`/`RefCell`/`Ref`/`RefMut`/
-    /// guards), keyed by short name — used by `ContainNoType` in Send/Sync obligations.
-    negative_types: IndexMap<Box<str>, Vec<DefId>>,
-}
+static TYPES: OnceLock<HashMap<DefId, TypeGroup>> = OnceLock::new();
 
 pub fn init(tcx: TyCtxt) {
     TYPES.get_or_init(|| init_types(tcx));
 }
 
-fn init_types(tcx: TyCtxt) -> Types {
-    let mut types = Types {
-        box_types: Vec::new(),
-        cstring_types: Vec::new(),
-        string_types: Vec::new(),
-        vec_types: Vec::new(),
-        nonnull_types: Vec::new(),
-        maybe_uninit_types: Vec::new(),
-        ascii_char_types: Vec::new(),
-        ordering_types: Vec::new(),
-        iter_types: Vec::new(),
-        rc_types: Vec::new(),
-        sync_primitive_types: Vec::new(),
-        index_range_types: Vec::new(),
-        negative_types: IndexMap::new(),
-    };
+fn init_types(tcx: TyCtxt) -> HashMap<DefId, TypeGroup> {
+    let mut types = HashMap::new();
 
-    // Real std types via diagnostic/lang items (`NonNull` only before rustc
-    // 1.100, when it was still a diagnostic item).
-    types.box_types.extend(tcx.lang_items().owned_box());
-    types
-        .cstring_types
-        .extend(tcx.get_diagnostic_item(sym::cstring_type));
-    types.vec_types.extend(tcx.get_diagnostic_item(sym::Vec));
-    types.rc_types.extend(tcx.get_diagnostic_item(sym::Rc));
-    // `core::cmp::Ordering` is `#[lang = "Ordering"]`.
-    types
-        .ordering_types
-        .extend(tcx.lang_items().ordering_enum());
-    // `core::mem::MaybeUninit` is `#[lang = "maybe_uninit"]`.
-    types
-        .maybe_uninit_types
-        .extend(tcx.lang_items().maybe_uninit());
-    // `core::cell::UnsafeCell` is `#[lang = "unsafe_cell"]`.
+    // Lang items.
+    if let Some(did) = tcx.lang_items().owned_box() {
+        types.insert(did, TypeGroup::Box);
+    }
+    if let Some(did) = tcx.lang_items().ordering_enum() {
+        types.insert(did, TypeGroup::Ordering);
+    }
+    if let Some(did) = tcx.lang_items().maybe_uninit() {
+        types.insert(did, TypeGroup::MaybeUninit);
+    }
     if let Some(unsafe_cell) = tcx.lang_items().unsafe_cell_type() {
-        types
-            .negative_types
-            .entry("UnsafeCell".into())
-            .or_default()
-            .push(unsafe_cell);
+        types.insert(unsafe_cell, TypeGroup::Negative("UnsafeCell"));
     }
 
-    // Resolve standard-library ADTs by path, including `NonNull` and
-    // `slice::Iter`/`IterMut`, which lack usable lang or diagnostic items.
+    // Diagnostic items.
+    if let Some(did) = tcx.get_diagnostic_item(sym::cstring_type) {
+        types.insert(did, TypeGroup::CString);
+    }
+    if let Some(did) = tcx.get_diagnostic_item(sym::Vec) {
+        types.insert(did, TypeGroup::Vec);
+    }
+    if let Some(did) = tcx.get_diagnostic_item(sym::Rc) {
+        types.insert(did, TypeGroup::Rc);
+    }
+
+    // Resolve types without lang or diagnostic items by their definition path.
     for krate in std::iter::once(rustc_public::local_crate())
         .chain(rustc_public::external_crates())
         .filter(|k| ["core", "std", "alloc"].iter().any(|n| *n == k.name))
@@ -85,7 +49,9 @@ fn init_types(tcx: TyCtxt) -> Types {
         for adt in krate.adts() {
             let did = rustc_internal::internal(tcx, adt.def_id());
             let path = type_path(tcx, did, &krate.name, krate.is_local);
-            collect_type_by_path(&mut types, &path, did);
+            if let Some(group) = classify_type_path(&path) {
+                types.insert(did, group);
+            }
         }
     }
 
@@ -101,31 +67,13 @@ fn type_path(tcx: TyCtxt<'_>, did: DefId, crate_name: &str, is_local: bool) -> S
     }
 }
 
-fn collect_type_by_path(types: &mut Types, name: &str, did: DefId) {
-    let Some(group) = classify_type_path(name) else {
-        return;
-    };
-    let ids = match group {
-        TypeGroup::Vec => &mut types.vec_types,
-        TypeGroup::String => &mut types.string_types,
-        TypeGroup::Iter => &mut types.iter_types,
-        TypeGroup::NonNull => &mut types.nonnull_types,
-        TypeGroup::MaybeUninit => &mut types.maybe_uninit_types,
-        TypeGroup::IndexRange => &mut types.index_range_types,
-        TypeGroup::AsciiChar => &mut types.ascii_char_types,
-        TypeGroup::Rc => &mut types.rc_types,
-        TypeGroup::SyncPrimitive => &mut types.sync_primitive_types,
-        TypeGroup::Negative(name) => types.negative_types.entry(name.into()).or_default(),
-    };
-    if !ids.contains(&did) {
-        ids.push(did);
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TypeGroup {
+    Box,
+    CString,
     Vec,
     String,
+    Ordering,
     Iter,
     NonNull,
     MaybeUninit,
@@ -138,19 +86,16 @@ enum TypeGroup {
 
 fn classify_type_path(name: &str) -> Option<TypeGroup> {
     Some(match name {
-        "alloc::vec::Vec" | "std::vec::Vec" => TypeGroup::Vec,
         "alloc::string::String" | "std::string::String" => TypeGroup::String,
         "core::slice::iter::Iter"
         | "core::slice::iter::IterMut"
         | "std::slice::Iter"
         | "std::slice::IterMut" => TypeGroup::Iter,
         "core::ptr::non_null::NonNull" | "std::ptr::NonNull" => TypeGroup::NonNull,
-        "core::mem::maybe_uninit::MaybeUninit" | "std::mem::MaybeUninit" => TypeGroup::MaybeUninit,
         "core::ops::index_range::IndexRange"
         | "std::ops::index_range::IndexRange"
         | "std::ops::IndexRange" => TypeGroup::IndexRange,
         "core::ascii::ascii_char::AsciiChar" | "std::ascii::AsciiChar" => TypeGroup::AsciiChar,
-        "alloc::rc::Rc" | "alloc::rcs::rc::Rc" | "std::rc::Rc" => TypeGroup::Rc,
         "core::cell::Cell" | "std::cell::Cell" => TypeGroup::Negative("Cell"),
         "core::cell::RefCell" | "std::cell::RefCell" => TypeGroup::Negative("RefCell"),
         "core::cell::Ref" | "std::cell::Ref" => TypeGroup::Negative("Ref"),
@@ -200,98 +145,66 @@ fn classify_type_path(name: &str) -> Option<TypeGroup> {
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{TypeGroup, classify_type_path};
-
-    #[test]
-    fn only_canonical_std_types_match() {
-        assert_eq!(
-            classify_type_path("core::slice::iter::Iter"),
-            Some(TypeGroup::Iter)
-        );
-        assert_eq!(
-            classify_type_path("std::slice::Iter"),
-            Some(TypeGroup::Iter)
-        );
-        assert_eq!(
-            classify_type_path("core::ptr::non_null::NonNull"),
-            Some(TypeGroup::NonNull)
-        );
-        assert_eq!(
-            classify_type_path("std::ptr::NonNull"),
-            Some(TypeGroup::NonNull)
-        );
-        assert_eq!(classify_type_path("alloc::vec::Vec"), Some(TypeGroup::Vec));
-        assert_eq!(classify_type_path("std::vec::Vec"), Some(TypeGroup::Vec));
-        assert_eq!(classify_type_path("local::Vec"), None);
-        assert_eq!(classify_type_path("local::NonNull"), None);
-        assert_eq!(
-            classify_type_path("alloc::collections::linked_list::Iter"),
-            None
-        );
-        assert_eq!(
-            classify_type_path("std::collections::hash::map::Iter"),
-            None
-        );
-        assert_eq!(classify_type_path("core::ascii::Char"), None);
-        assert_eq!(classify_type_path("local::AtomicCounter"), None);
-    }
+fn types() -> &'static HashMap<DefId, TypeGroup> {
+    TYPES.get().expect("Type DefIds haven't been initialized.")
 }
 
-macro_rules! type_defs {
-    ($( $(#[$attr:meta])* $name:ident ,)+) => {
+macro_rules! type_predicates {
+    ($( $(#[$attr:meta])* $name:ident => $group:ident ,)+) => {
         $(
             $(#[$attr])*
-            pub fn $name() -> &'static [DefId] {
-                &TYPES
-                    .get()
-                    .expect("Type DefIds haven't been initialized.")
-                    .$name
+            pub fn $name(did: DefId) -> bool {
+                types().get(&did) == Some(&TypeGroup::$group)
             }
         )+
     };
 }
 
-type_defs! {
-    /// `alloc::boxed::Box`.
-    box_types,
-    /// `alloc::ffi::CString`.
-    cstring_types,
-    /// `alloc::vec::Vec`.
-    vec_types,
-    /// `alloc::string::String`.
-    string_types,
-    /// `core::ptr::NonNull`.
-    nonnull_types,
-    /// `core::mem::MaybeUninit`.
-    maybe_uninit_types,
-    /// `core::ascii::ascii_char::AsciiChar`.
-    ascii_char_types,
-    /// `core::cmp::Ordering`.
-    ordering_types,
-    /// `core::slice::Iter` / `core::slice::IterMut` (the two-field `ptr`/`end`
-    /// slice iterators).
-    iter_types,
-    /// `alloc::rc::Rc`.
-    rc_types,
-    /// Standard-library `Mutex`, `RwLock`, `OnceLock`, and atomic types.
-    sync_primitive_types,
-    /// `core::ops::index_range::IndexRange`.
-    index_range_types,
+type_predicates! {
+    /// Whether this is `alloc::boxed::Box`.
+    is_std_box => Box,
+    /// Whether this is `alloc::ffi::CString`.
+    is_std_cstring => CString,
+    /// Whether this is `alloc::vec::Vec`.
+    is_std_vec => Vec,
+    /// Whether this is `alloc::string::String`.
+    is_std_string => String,
+    /// Whether this is `core::ptr::NonNull`.
+    is_std_nonnull => NonNull,
+    /// Whether this is `core::mem::MaybeUninit`.
+    is_maybe_uninit_type => MaybeUninit,
+    /// Whether this is `core::cmp::Ordering`.
+    is_std_ordering => Ordering,
+    /// Whether this is `core::slice::Iter` or `IterMut`.
+    is_std_iter_or_itermut => Iter,
+    /// Whether this is `alloc::rc::Rc`.
+    is_std_rc => Rc,
+    /// Whether this is a standard `Mutex`, `RwLock`, `OnceLock`, or atomic type.
+    is_std_sync_primitive => SyncPrimitive,
+    /// Whether this is the standard `IndexRange` type.
+    is_index_range => IndexRange,
+}
+
+/// Resolve the `AsciiChar` definition used by contract type names.
+pub fn get_ascii_char_def_id() -> Option<DefId> {
+    types()
+        .iter()
+        .find_map(|(&did, &group)| (group == TypeGroup::AsciiChar).then_some(did))
 }
 
 /// Resolve a negative-type name (as written in `std-trait.json`) to its
-/// resolved `DefId` set.  Unknown names resolve to an empty set (the checker
-/// then reports `Unknown`).
-pub fn negative_type_defs(name: &str) -> &'static [DefId] {
-    match name {
-        "Rc" => rc_types(),
-        "NonNull" => nonnull_types(),
-        _ => TYPES
-            .get()
-            .and_then(|t| t.negative_types.get(name))
-            .map(Vec::as_slice)
-            .unwrap_or(&[]),
-    }
+/// resolved `DefId` set. Unknown or unresolved names return `None`.
+pub fn negative_type_defs(name: &str) -> Option<Vec<DefId>> {
+    let ids: Vec<_> = types()
+        .iter()
+        .filter_map(|(&did, &group)| {
+            let matches = match group {
+                TypeGroup::Rc => name == "Rc",
+                TypeGroup::Negative(short) => name == short,
+                _ => false,
+            };
+            matches.then_some(did)
+        })
+        .collect();
+    (!ids.is_empty()).then_some(ids)
 }

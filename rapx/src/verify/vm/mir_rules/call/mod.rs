@@ -15,6 +15,7 @@ use super::super::state::{VmState, VmValue};
 use super::RuleFlow;
 use self::comparison::ComparisonPlan;
 use self::index::BuiltinIndexPlan;
+use crate::def_ids::type_ids;
 use crate::compat::Spanned;
 use crate::def_ids::diagnostic_api;
 use crate::helpers::mir_utils;
@@ -176,7 +177,7 @@ pub(super) fn exec_call<'z3, 'tcx>(
         && state
             .diagnostics
             .only_copy_memory_target_unavailable_since(before)
-        && matches!(state.body().local_decls[destination].ty.kind(), TyKind::Adt(def, _) if api_classify::is_std_string(def.did()))
+        && matches!(state.body().local_decls[destination].ty.kind(), TyKind::Adt(def, _) if type_ids::is_std_string(def.did()))
     {
         let ty = state.body().local_decls[destination].ty;
         let mut facts = Default::default();

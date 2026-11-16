@@ -10,6 +10,7 @@ use rustc_middle::{
     ty::{TyCtxt, TyKind},
 };
 
+use crate::def_ids::type_ids;
 use crate::helpers::mir_utils;
 
 /// Whether a raw pointer or `NonNull` return value traces to the first argument.
@@ -62,7 +63,7 @@ pub(crate) fn nonnull_ref_return(
     let TyKind::Adt(adt, args) = inner.kind() else {
         return None;
     };
-    if !crate::def_ids::type_ids::nonnull_types().contains(&adt.did()) {
+    if !type_ids::is_std_nonnull(adt.did()) {
         return None;
     }
     let pointee = args.first().and_then(|arg| arg.as_type())?;
@@ -86,7 +87,7 @@ pub(crate) fn is_nonnull_view(tcx: TyCtxt<'_>, callee: DefId) -> bool {
         return false;
     };
     let output = sig.output().skip_binder();
-    let is_nonnull = |ty: rustc_middle::ty::Ty<'_>| matches!(ty.kind(), TyKind::Adt(adt, _) if crate::def_ids::type_ids::nonnull_types().contains(&adt.did()));
+    let is_nonnull = |ty: rustc_middle::ty::Ty<'_>| matches!(ty.kind(), TyKind::Adt(adt, _) if type_ids::is_std_nonnull(adt.did()));
     is_nonnull(*input)
         && is_nonnull(output)
         && return_source_arg_with_depth(tcx, callee, 5) == Some(0)

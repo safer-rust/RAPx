@@ -1,7 +1,7 @@
 //! Symbolic memory model for the VM.
 
+use crate::def_ids::type_ids;
 use crate::helpers::mir_utils;
-use crate::verify::api_classify;
 #[cfg(rapx_const_ext)]
 use rustc_middle::ty::consts::ConstExt;
 use rustc_middle::{
@@ -56,7 +56,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             let ty = alloc.element_ty.as_ty()?;
             match ty.kind() {
                 TyKind::Adt(def, args)
-                    if api_classify::is_maybe_uninit_type(def.did())
+                    if type_ids::is_maybe_uninit_type(def.did())
                         && prov.offset.simplify().as_u64() == Some(0) => {
                     args.first().and_then(|arg| arg.as_type())
                 }
@@ -89,7 +89,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 let content = self.content(prov.alloc_id);
                 let maybe_uninit = self.alloc(prov.alloc_id).element_ty.as_ty().is_some_and(|ty| {
                     matches!(ty.kind(), TyKind::Adt(def, _)
-                        if api_classify::is_maybe_uninit_type(def.did()))
+                        if type_ids::is_maybe_uninit_type(def.did()))
                 });
                 (content.facts.initialized && !maybe_uninit)
                     || (prov.offset.simplify().as_u64() == Some(0)
@@ -1346,7 +1346,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             let ty = self.alloc(prov.alloc_id).element_ty.as_ty()?;
             match ty.kind() {
                 TyKind::Adt(def, args)
-                    if crate::verify::api_classify::is_maybe_uninit_type(def.did())
+                    if type_ids::is_maybe_uninit_type(def.did())
                         && path.is_empty()
                         && prov.offset.simplify().as_u64() == Some(0)
                         && value.facts.init =>
@@ -1366,7 +1366,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 && value.facts.init
                 && matches!(mir_utils::pointee_ty(pointer.ty).map(|ty| ty.kind()),
                     Some(TyKind::Adt(def, args))
-                        if crate::verify::api_classify::is_maybe_uninit_type(def.did())
+                        if type_ids::is_maybe_uninit_type(def.did())
                             && args.first().and_then(|arg| arg.as_type()) == Some(value.ty))
                 && let Some(offset) = prov.offset.simplify().as_u64()
             {
