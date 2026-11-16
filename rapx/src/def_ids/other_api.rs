@@ -63,6 +63,7 @@ pub fn is_manually_drop(tcx: TyCtxt<'_>, did: DefId) -> bool {
         && tcx.item_name(did).as_str() == "drop"
 }
 
+/// Whether this is the standard `MaybeUninit::assume_init_read` method.
 pub fn is_assume_init_read(tcx: TyCtxt<'_>, did: DefId) -> bool {
     let Some(impl_id) = tcx.inherent_impl_of_assoc(did) else {
         return false;
