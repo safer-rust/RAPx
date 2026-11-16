@@ -1,27 +1,38 @@
-//! Source and destination arguments of standard raw-pointer copy methods.
+//! Source and destination arguments of pointer-copy calls.
 
-use rustc_hir::{def::DefKind, def_id::DefId};
+use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{Body, Operand, StatementKind, TerminatorKind},
     ty::{Mutability, TyCtxt, TyKind},
 };
 
-use crate::def_ids::{diagnostic_api, intrinsic_api};
+use crate::def_ids::{intrinsic_api, other_api};
 use crate::helpers::mir_utils::dep_callee_def_id;
 
-/// Derive `(source, destination)` from the copy operation in a standard
-/// raw-pointer method's optimized MIR. The indices refer to method arguments,
-/// including `self` at index zero.
-pub(crate) fn std_raw_ptr_copy_args(tcx: TyCtxt<'_>, callee: DefId) -> Option<(usize, usize)> {
-    if !matches!(tcx.crate_name(callee.krate).as_str(), "core" | "std")
-        || !matches!(tcx.def_kind(callee), DefKind::AssocFn)
-        || !tcx.is_mir_available(callee)
-    {
-        return None;
-    }
-    let impl_id = tcx.inherent_impl_of_assoc(callee)?;
-    let self_ty = tcx.type_of(impl_id).instantiate_identity().skip_norm_wip();
-    if !matches!(self_ty.kind(), TyKind::RawPtr(..)) {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct CopyFlow {
+    pub source_arg: usize,
+    pub destination_arg: usize,
+}
+
+/// The fixed argument flow of compiler and standard-library copy functions.
+pub(crate) fn direct_copy_flow(tcx: TyCtxt<'_>, callee: DefId) -> Option<CopyFlow> {
+    let intrinsic = intrinsic_api::intrinsic_name(tcx, Some(callee))
+        .is_some_and(|name| matches!(name.as_str(), "copy" | "copy_nonoverlapping"));
+    (intrinsic || other_api::is_std_ptr_copy_function(tcx, callee)).then_some(CopyFlow {
+        source_arg: 0,
+        destination_arg: 1,
+    })
+}
+
+/// Copy flow at this callee, including standard raw-pointer methods whose
+/// source and destination are recovered from optimized MIR.
+pub(crate) fn copy_flow(tcx: TyCtxt<'_>, callee: DefId) -> Option<CopyFlow> {
+    direct_copy_flow(tcx, callee).or_else(|| std_raw_ptr_method_copy_flow(tcx, callee))
+}
+
+fn std_raw_ptr_method_copy_flow(tcx: TyCtxt<'_>, callee: DefId) -> Option<CopyFlow> {
+    if !other_api::is_std_raw_ptr_method(tcx, callee) || !tcx.is_mir_available(callee) {
         return None;
     }
     let sig = tcx.fn_sig(callee).skip_binder();
@@ -54,21 +65,19 @@ pub(crate) fn std_raw_ptr_copy_args(tcx: TyCtxt<'_>, callee: DefId) -> Option<(u
         if let TerminatorKind::Call { func, args, .. } | TerminatorKind::TailCall { func, args, .. } =
             &block.terminator().kind
             && let Some(id) = dep_callee_def_id(func)
-            && (diagnostic_api::is_ptr_copy(tcx, id)
-                || intrinsic_api::intrinsic_name(tcx, Some(id))
-                    .is_some_and(|name| matches!(name.as_str(), "copy" | "copy_nonoverlapping")))
+            && direct_copy_flow(tcx, id).is_some()
             && let [src, dst, count] = &args[..]
         {
             record_copy_args(body, &src.node, &dst.node, &count.node, &mut copy_args)?;
         }
     }
-    let (source, destination) = copy_args?;
+    let flow: CopyFlow = copy_args?;
     let inputs = [first, second];
     matches!(
-        inputs[destination].kind(),
+        inputs[flow.destination_arg].kind(),
         TyKind::RawPtr(_, Mutability::Mut)
     )
-    .then_some((source, destination))
+    .then_some(flow)
 }
 
 fn record_copy_args(
@@ -76,7 +85,7 @@ fn record_copy_args(
     src: &Operand<'_>,
     dst: &Operand<'_>,
     count: &Operand<'_>,
-    result: &mut Option<(usize, usize)>,
+    result: &mut Option<CopyFlow>,
 ) -> Option<()> {
     let source = argument_index(body, src)?;
     let destination = argument_index(body, dst)?;
@@ -84,7 +93,10 @@ fn record_copy_args(
     {
         return None;
     }
-    let candidate = (source, destination);
+    let candidate = CopyFlow {
+        source_arg: source,
+        destination_arg: destination,
+    };
     if result.is_some_and(|previous| previous != candidate) {
         return None;
     }

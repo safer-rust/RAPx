@@ -9,7 +9,7 @@ use rustc_middle::{
 use crate::analysis::dataflow::{
     call::{CallDependencies, CallSemantics},
     call_write::WriteSemantics,
-    pointer_flow, pointer_offset,
+    pointer_copy, pointer_flow, pointer_offset,
 };
 use crate::compat::Spanned;
 use crate::def_ids::{intrinsic_api, other_api};
@@ -62,8 +62,8 @@ impl WriteSemantics for VerifierCallSemantics {
         let callee = helpers::dep_callee_def_id(func);
         if api_classify::is_ptr_write(tcx, callee) {
             Some(0)
-        } else if api_classify::is_ptr_copy_function(tcx, callee) {
-            Some(1)
+        } else if let Some(flow) = callee.and_then(|id| pointer_copy::copy_flow(tcx, id)) {
+            Some(flow.destination_arg)
         } else {
             None
         }

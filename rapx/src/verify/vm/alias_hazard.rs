@@ -76,11 +76,8 @@ pub(super) fn alias_producer(tcx: TyCtxt<'_>, callee: DefId) -> Option<AliasProd
     if let Some(source_arg) = share_transfer_source_arg(tcx, callee) {
         return Some(AliasProducer::OwnershipTransfer(source_arg));
     }
-    if let Some((source_arg, _)) = pointer_copy::std_raw_ptr_copy_args(tcx, callee) {
-        return Some(AliasProducer::CopyMemory(source_arg));
-    }
-    if crate::verify::api_classify::is_memory_copy(tcx, Some(callee)) {
-        return Some(AliasProducer::CopyMemory(0));
+    if let Some(flow) = pointer_copy::copy_flow(tcx, callee) {
+        return Some(AliasProducer::CopyMemory(flow.source_arg));
     }
     if crate::verify::api_classify::is_ptr_read(tcx, Some(callee)) {
         return Some(AliasProducer::ReadMemory);

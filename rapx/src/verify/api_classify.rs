@@ -27,10 +27,6 @@ pub fn is_manually_drop_drop(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
     callee.is_some_and(|c| other_api::is_manually_drop(tcx, c))
 }
 
-fn is_intrinsic_copy(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
-    is_intrinsic(tcx, callee, &["copy", "copy_nonoverlapping"])
-}
-
 pub fn is_intrinsic_ptr_offset_from(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
     is_intrinsic(tcx, callee, &["ptr_offset_from", "ptr_offset_from_unsigned"])
 }
@@ -43,14 +39,12 @@ pub fn is_ptr_write(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
 
 /// `copy(src, dst, count)` functions with the destination at argument 1.
 pub fn is_ptr_copy_function(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
-    is_intrinsic_copy(tcx, callee)
-        || callee.is_some_and(|did| other_api::is_std_ptr_copy_function(tcx, did))
+    callee.is_some_and(|did| pointer_copy::direct_copy_flow(tcx, did).is_some())
 }
 
-/// Copy calls, including standard raw-pointer methods whose operands are found in MIR.
+/// Compiler and standard-library pointer copies at this call site.
 pub fn is_memory_copy(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
-    is_ptr_copy_function(tcx, callee)
-        || callee.is_some_and(|did| pointer_copy::std_raw_ptr_copy_args(tcx, did).is_some())
+    callee.is_some_and(|did| pointer_copy::copy_flow(tcx, did).is_some())
 }
 
 /// Whether `callee` reads through a raw pointer or copies memory

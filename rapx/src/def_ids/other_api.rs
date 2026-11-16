@@ -96,6 +96,19 @@ pub fn is_std_ptr_copy_function(tcx: TyCtxt<'_>, did: DefId) -> bool {
             ))
 }
 
+/// Whether this is a standard-library inherent method on a raw pointer.
+pub fn is_std_raw_ptr_method(tcx: TyCtxt<'_>, did: DefId) -> bool {
+    if !matches!(tcx.crate_name(did.krate).as_str(), "core" | "std")
+        || !matches!(tcx.def_kind(did), DefKind::AssocFn)
+    {
+        return false;
+    }
+    tcx.inherent_impl_of_assoc(did).is_some_and(|impl_id| {
+        let self_ty = tcx.type_of(impl_id).instantiate_identity().skip_norm_wip();
+        matches!(self_ty.kind(), TyKind::RawPtr(..))
+    })
+}
+
 pub fn is_gcd(tcx: TyCtxt<'_>, did: DefId) -> bool {
     is_std_api(tcx, did) && tcx.def_path_str(did).ends_with("::gcd")
 }
