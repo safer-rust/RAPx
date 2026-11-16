@@ -3,11 +3,10 @@ use rustc_middle::{
     mir::{ProjectionElem, StatementKind},
     ty::{self, AssocKind, Mutability, TyCtxt, TyKind},
 };
+use rustc_public::{CrateDef, rustc_internal};
 use rustc_span::{kw, sym};
 use std::{collections::HashSet, fmt::Debug, hash::Hash};
 use syn::Expr;
-
-use crate::def_ids::other_api;
 
 pub use super::mir_scan::get_fn_safety;
 pub use super::name::get_cleaned_def_path_name;
@@ -221,7 +220,7 @@ pub fn get_all_std_fns_by_rustc_public(tcx: TyCtxt) -> Vec<DefId> {
     all_std_fn_def.append(&mut alloc_fn_def);
 
     for fn_def in &all_std_fn_def {
-        let def_id = other_api::to_internal(fn_def, tcx);
+        let def_id = rustc_internal::internal(tcx, fn_def.def_id());
         results.push(def_id);
     }
     results
