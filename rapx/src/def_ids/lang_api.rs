@@ -1,4 +1,9 @@
 //! Compiler lang-item identities used across RAPx.
+//!
+//! # Agent Policy
+//!
+//! Keep this module limited to identifying rustc lang items and their trait
+//! methods by `DefId`. Do not depend on other RAPx modules.
 
 #[cfg(rapx_has_attr_ir)]
 pub(crate) use rustc_attr_ir::LangItem;
@@ -29,12 +34,11 @@ pub(crate) fn is_call_mut(tcx: TyCtxt<'_>, did: DefId) -> bool {
         && tcx.item_name(did).as_str() == "call_mut"
 }
 
-/// Whether `did` is the `Clone::clone` trait method.
+/// Whether `did` is a method of the `Clone` trait.
 pub(crate) fn is_clone(tcx: TyCtxt<'_>, did: DefId) -> bool {
     tcx.opt_associated_item(did)
         .and_then(|item| item.trait_container(tcx))
         .is_some_and(|trait_id| matches(tcx, trait_id, LangItem::Clone))
-        && tcx.item_name(did).as_str() == "clone"
 }
 
 /// The plain `panic!` entry point, which only consumes a static message.
