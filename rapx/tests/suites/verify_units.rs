@@ -220,6 +220,7 @@ sound_tests! {
     nonnull_sound_05: "verify_units/nonnull_sound_05" => "sound_raw_arg_guarded",
     nonnull_sound_06: "verify_units/nonnull_sound_06" => "sound_nonnull_wrapper_from_ref",
     nonnull_sound_07: "verify_units/nonnull_sound_07" => "sound_ref_cast_copy_chain",
+    nonnull_sound_08: "verify_units/nonnull_sound_08" => "sound_nonnull_identity_result",
 }
 
 unsound_tests! {
@@ -231,6 +232,13 @@ unsound_tests! {
     nonnull_unsound_06: "verify_units/nonnull_unsound_06" => "unsound_nonnull_wrapper_from_null" => "NonNull",
 }
 
+#[test]
+#[ignore = "TODO: a nullable helper result is incorrectly proved NonNull"]
+fn nonnull_unsound_07() {
+    let output = run_with_args("verify_units/nonnull_unsound_07", CMD_VERIFY_TARGETED);
+    assert_unproved(&output, "unsound_nullable_identity_result", "NonNull");
+}
+
 // ValidPtr
 sound_tests! {
     validptr_sound_01: "verify_units/validptr_sound_01" => "sound_zst_dangling_valid_for_any_len",
@@ -238,6 +246,14 @@ sound_tests! {
     validptr_sound_03: "verify_units/validptr_sound_03" => "sound_slice_suffix_guarded",
     validptr_sound_04: "verify_units/validptr_sound_04" => "sound_scc_each_slice_element",
     validptr_sound_05: "verify_units/validptr_sound_05" => "sound_signed_suffix_guarded",
+    validptr_sound_06: "verify_units/validptr_sound_06" => "sound_signed_division_selects_in_bounds_read",
+}
+
+#[test]
+#[ignore = "TODO: unsigned bitwise not rejects the safe u8 branch"]
+fn validptr_sound_07() {
+    let output = run_with_args("verify_units/validptr_sound_07", CMD_VERIFY_TARGETED);
+    assert_function_result(&output, "sound_unsigned_not_selects_in_bounds_read", "SOUND");
 }
 
 unsound_tests! {
@@ -268,6 +284,27 @@ fn validptr_unsound_06() {
 
 unsound_weak_tests! {
     validptr_unsound_07: "verify_units/validptr_unsound_07" => "unsound_vec_one_past_read" => "ValidPtr",
+}
+
+#[test]
+#[ignore = "TODO: signed division prunes a feasible out-of-bounds read"]
+fn validptr_unsound_08() {
+    let output = run_with_args("verify_units/validptr_unsound_08", CMD_VERIFY_TARGETED);
+    assert_unproved(&output, "unsound_signed_division_selects_out_of_bounds_read", "ValidPtr");
+}
+
+#[test]
+#[ignore = "TODO: unsigned bitwise not prunes a feasible out-of-bounds read"]
+fn validptr_unsound_09() {
+    let output = run_with_args("verify_units/validptr_unsound_09", CMD_VERIFY_TARGETED);
+    assert_unproved(&output, "unsound_unsigned_not_selects_out_of_bounds_read", "ValidPtr");
+}
+
+#[test]
+#[ignore = "TODO: an unresolved callback preserves a stale pointer value"]
+fn validptr_unsound_10() {
+    let output = run_with_args("verify_units/validptr_unsound_10", CMD_VERIFY_TARGETED);
+    assert_unproved(&output, "unsound_callback_write_invalidates_pointer", "ValidPtr");
 }
 
 // Deref
@@ -385,6 +422,13 @@ sound_tests_multi! {
     ],
 }
 
+#[test]
+#[ignore = "TODO: sparse raw writes reject a read of an initialized byte"]
+fn init_std_sound_07() {
+    let output = run_with_args("verify_units/init_std_sound_07", CMD_VERIFY_TARGETED);
+    assert_function_result(&output, "sound_raw_odd_three", "SOUND");
+}
+
 unsound_tests! {
     init_std_unsound_01: "verify_units/init_std_unsound_01" => "unsound_assume_init_read_without_write" => "Init",
     init_std_unsound_02: "verify_units/init_std_unsound_02" => "unsound_assume_init_without_write" => "Init",
@@ -417,6 +461,29 @@ unsound_weak_tests! {
     init_std_unsound_10: "verify_units/init_std_unsound_10" => "unsound_partial_write_then_read_two" => "Init",
     init_std_unsound_12: "verify_units/init_std_unsound_12" => "unsound_raw_write_leaves_second_element_uninitialized" => "Init",
     init_std_unsound_13: "verify_units/init_std_unsound_13" => "unsound_symbolic_write_leaves_other_element_uninitialized" => "Init",
+    init_std_unsound_15: "verify_units/init_std_unsound_15" => "unsound_raw_even_two" => "Init",
+    init_std_unsound_16: "verify_units/init_std_unsound_16" => "unsound_projected_even_zero" => "Init",
+}
+
+#[test]
+#[ignore = "TODO: sparse raw writes prove Init for untouched byte zero"]
+fn init_std_unsound_14() {
+    let output = run_with_args("verify_units/init_std_unsound_14", CMD_VERIFY_TARGETED);
+    assert_unproved(&output, "unsound_raw_even_zero", "Init");
+}
+
+#[test]
+#[ignore = "TODO: a symbolic odd-offset write proves Init for untouched byte zero"]
+fn init_std_unsound_17() {
+    let output = run_with_args("verify_units/init_std_unsound_17", CMD_VERIFY_TARGETED);
+    assert_unproved(&output, "unsound_symbolic_odd_even_zero", "Init");
+}
+
+#[test]
+#[ignore = "TODO: odd-byte loop writes prove Init for untouched byte zero"]
+fn init_std_unsound_18() {
+    let output = run_with_args("verify_units/init_std_unsound_18", CMD_VERIFY_TARGETED);
+    assert_unproved(&output, "unsound_loop_odd_even_zero", "Init");
 }
 
 // ValidNum
