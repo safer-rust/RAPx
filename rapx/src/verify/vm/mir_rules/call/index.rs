@@ -3,7 +3,7 @@ use z3::ast::Int;
 
 use crate::def_ids::lang_api::{self, LangItem};
 
-use super::super::super::state::{ValueSource, VmState, VmValue};
+use super::super::super::state::{VmState, VmValue};
 
 pub(super) struct BuiltinIndexPlan<'z3, 'tcx> {
     base: VmValue<'z3, 'tcx>,
@@ -93,10 +93,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 .assertions
                 .push((&start + &len).le(&base_len));
             self.apply_slice_offset(dest, &base, &index, index_local);
-            if let Some(mut value) = self.local_value(dest).cloned() {
-                value.source = ValueSource::SliceLen(len);
-                self.set_local(dest, value);
-            }
             self.materialize_slice_ref_return(dest);
         } else {
             self.constraints.assertions.push(start.lt(&base_len));

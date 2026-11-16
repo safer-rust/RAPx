@@ -270,8 +270,10 @@ pub(crate) struct AllocFacts<'z3, 'tcx> {
     pub liveness: Option<Region<'tcx>>,
     /// Facts shared by all pointer elements of this allocation.
     pub for_each: ForEachFacts<'z3, 'tcx>,
-    /// `(address, type)` spans licensed by `InBound` contracts.
-    pub bounded_spans: Vec<(Int<'z3>, Ty<'tcx>)>,
+    /// `(address, type, length)` spans licensed by `InBound` contracts. The
+    /// length is the pointer's length for a slice or `str`, whose size depends
+    /// on it, and `None` for other types.
+    pub bounded_spans: Vec<(Int<'z3>, Ty<'tcx>, Option<Int<'z3>>)>,
     /// Byte ranges established by explicit allocation/bounds contracts.
     /// Each entry is (start address, byte count), not a whole-allocation extent.
     pub bounded_ranges: Vec<(Int<'z3>, Int<'z3>)>,

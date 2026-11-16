@@ -442,7 +442,7 @@ impl PropertyChecker {
                 .get(2)
                 .and_then(|arg| self.resolve_arg_term(vm_state, checkpoint, arg))
                 .is_none_or(|count| count.simplify().as_u64() == Some(1))
-            && vm_state.has_bounded_object_span(alloc_id, &value.z3_term, required_ty)
+            && vm_state.has_bounded_object_span(alloc_id, &value, required_ty)
         {
             return CheckResult::ProvedByRule;
         }

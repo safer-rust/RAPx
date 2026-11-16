@@ -29,16 +29,30 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
     }
 
+    /// The key of a bounded span. A slice or `str` also needs its length, since
+    /// the length decides the size of the object; without a known length there
+    /// is no span.
+    pub(crate) fn bounded_span(
+        &self,
+        value: &VmValue<'z3, 'tcx>,
+        ty: Ty<'tcx>,
+    ) -> Option<(Int<'z3>, Ty<'tcx>, Option<Int<'z3>>)> {
+        let len = if matches!(ty.kind(), TyKind::Slice(_) | TyKind::Str) {
+            Some(self.slice_len_from_value(value)?)
+        } else {
+            None
+        };
+        Some((value.z3_term.clone(), ty, len))
+    }
+
     pub(crate) fn has_bounded_object_span(
         &self,
         alloc_id: AllocId,
-        address: &Int<'z3>,
+        value: &VmValue<'z3, 'tcx>,
         ty: Ty<'tcx>,
     ) -> bool {
-        self.alloc(alloc_id)
-            .facts
-            .bounded_spans
-            .contains(&(address.clone(), ty))
+        self.bounded_span(value, ty)
+            .is_some_and(|span| self.alloc(alloc_id).facts.bounded_spans.contains(&span))
     }
 
     pub(crate) fn has_bounded_range(
