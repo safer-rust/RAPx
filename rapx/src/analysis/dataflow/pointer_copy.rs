@@ -6,7 +6,7 @@ use rustc_middle::{
     ty::{Mutability, TyCtxt, TyKind},
 };
 
-use crate::def_ids::{intrinsic_api, other_api};
+use crate::def_ids::{diagnostic_api, intrinsic_api};
 use crate::helpers::mir_utils::dep_callee_def_id;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -19,7 +19,7 @@ pub(crate) struct CopyFlow {
 pub(crate) fn direct_copy_flow(tcx: TyCtxt<'_>, callee: DefId) -> Option<CopyFlow> {
     let intrinsic = intrinsic_api::intrinsic_name(tcx, Some(callee))
         .is_some_and(|name| matches!(name.as_str(), "copy" | "copy_nonoverlapping"));
-    (intrinsic || other_api::is_std_ptr_copy_function(tcx, callee)).then_some(CopyFlow {
+    (intrinsic || diagnostic_api::is_ptr_copy(tcx, callee)).then_some(CopyFlow {
         source_arg: 0,
         destination_arg: 1,
     })

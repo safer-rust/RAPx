@@ -1,6 +1,6 @@
 //! Known `core`/`std`/`alloc` API identities, regardless of MIR availability.
 
-use rustc_hir::{def::DefKind, def_id::DefId};
+use rustc_hir::def_id::DefId;
 use rustc_middle::ty::{TyCtxt, TyKind, UintTy};
 use rustc_public::{CrateDef, rustc_internal};
 
@@ -66,16 +66,6 @@ pub fn is_align_offset(tcx: TyCtxt<'_>, did: DefId) -> bool {
         && matches!(inputs[0].kind(), TyKind::RawPtr(..))
         && matches!(inputs[1].kind(), TyKind::Uint(UintTy::Usize))
         && matches!(sig.output().skip_binder().kind(), TyKind::Uint(UintTy::Usize))
-}
-
-/// Whether a standard `ptr::copy` function copies between raw pointers.
-pub fn is_std_ptr_copy_function(tcx: TyCtxt<'_>, did: DefId) -> bool {
-    diagnostic_api::is_ptr_copy(tcx, did)
-        || (matches!(tcx.def_kind(did), DefKind::Fn)
-            && matches!(
-                tcx.def_path_str(did).as_str(),
-                "std::ptr::copy" | "std::ptr::copy_nonoverlapping"
-            ))
 }
 
 pub fn is_gcd(tcx: TyCtxt<'_>, did: DefId) -> bool {
