@@ -196,6 +196,23 @@ unsound_tests! {
     allocated_unsound_11: "verify_units/allocated_unsound_11" => "unsound_adjacent_stack_objects_do_not_merge" => "Allocated",
 }
 
+// A slice pointer with the start of one in-bounds result and the length of
+// another. `--trait-impl-limit 64` covers the impls whose `Output` is `[T]`.
+#[test]
+fn allocated_unsound_12() {
+    let output = run_with_args(
+        "verify_units/allocated_unsound_12",
+        &["verify", "--mode", "targeted", "--trait-impl-limit", "64"],
+    );
+    let block = extract_block_after(&output, "function: unsound_mixed_span");
+    assert_property_failed(block, "Allocated", "unsound_mixed_span");
+    assert!(
+        block.contains("result: UNSOUND") || block.contains("result: UNKNOWN"),
+        "Expected the mixed span to remain unproved\n{block}"
+    );
+    assert_function_result(&output, "sound_same_span", "SOUND");
+}
+
 #[test]
 fn allocated_unsound_07() {
     let output = run_with_args("verify_units/allocated_unsound_07", CMD_VERIFY_TARGETED);

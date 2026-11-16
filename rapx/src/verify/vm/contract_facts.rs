@@ -194,12 +194,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 {
                     if let (Some(alloc_id), Some(ty)) =
                         (val.provenance_alloc_id(), property.ty_arg(1))
+                        && let Some(span) = self.bounded_span(&val, ty)
                     {
-                        let address = val.z3_term.clone();
-                        self.alloc_mut(alloc_id)
-                            .facts
-                            .bounded_spans
-                            .push((address, ty));
+                        self.alloc_mut(alloc_id).facts.bounded_spans.push(span);
                     }
                     self.set_in_bounds_for_value(property, val);
                 }
@@ -315,12 +312,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         if let Some(result) = self.local_value(destination)
             && let Some(alloc_id) = result.provenance_alloc_id()
             && let Some(pointee) = mir_utils::pointee_ty(result.ty)
+            && let Some(span) = self.bounded_span(result, pointee)
         {
-            let address = result.z3_term.clone();
-            self.alloc_mut(alloc_id)
-                .facts
-                .bounded_spans
-                .push((address, pointee));
+            self.alloc_mut(alloc_id).facts.bounded_spans.push(span);
         }
     }
 

@@ -5,7 +5,7 @@ use crate::def_ids::type_ids;
 use crate::def_ids::lang_api::{self, LangItem};
 use crate::helpers::mir_utils;
 
-use super::state::{VmState, VmValue};
+use super::state::{ValueSource, VmState, VmValue};
 
 impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     pub(crate) fn apply_slice_offset(
@@ -15,6 +15,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         index: &VmValue<'z3, 'tcx>,
         index_local: Local,
     ) -> bool {
+        let dest_ty = self.body().local_decls[dest].ty;
+        let is_slice = mir_utils::pointee_ty(dest_ty)
+            .is_some_and(|ty| matches!(ty.kind(), TyKind::Slice(_) | TyKind::Str));
         let start = if let Some(start) = self.slice_index_start(index, index_local) {
             start
         } else {
@@ -24,9 +27,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             let start = self.fresh_int("slice_offset_index");
             let zero = Int::from_u64(self.z3_ctx, 0);
             self.constraints.assertions.push(start.ge(&zero));
-            let dest_ty = self.body().local_decls[dest].ty;
-            let is_slice = mir_utils::pointee_ty(dest_ty)
-                .is_some_and(|ty| matches!(ty.kind(), TyKind::Slice(_) | TyKind::Str));
             self.constraints.assertions.push(if is_slice {
                 start.le(&len)
             } else {
@@ -36,6 +36,15 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         };
         let offset = VmValue::new(start, self.tcx.types.usize);
         self.apply_pointer_add(dest, base, &offset, None, base.facts.in_bounds);
+        // A sub-slice has its own length. When it cannot be computed, it is
+        // unknown; it is never the length of the whole base slice.
+        if is_slice && let Some(mut value) = self.local_value(dest).cloned() {
+            let len = self
+                .slice_index_output_len(base, index, index_local)
+                .unwrap_or_else(|| self.fresh_int("slice_offset_len"));
+            value.source = ValueSource::SliceLen(len);
+            self.set_local(dest, value);
+        }
         true
     }
 
