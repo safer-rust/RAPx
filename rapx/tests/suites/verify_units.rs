@@ -361,6 +361,13 @@ fn inbound_unsound_14() {
     }
 }
 
+unsound_tests_multi! {
+    inbound_unsound_15: "verify_units/inbound_unsound_15" => [
+        "unsound_index_into_shorter_view" => "InBound",
+        "unsound_range_into_shorter_view" => "InBound",
+    ],
+}
+
 // Init
 sound_tests! {
     init_std_sound_01: "verify_units/init_std_sound_01" => "sound_assume_init_read_after_write",
