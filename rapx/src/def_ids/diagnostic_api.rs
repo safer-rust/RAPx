@@ -1,4 +1,14 @@
 //! Standard-library API identities registered as rustc diagnostic items.
+//!
+//! A diagnostic item is a definition marked with `#[rustc_diagnostic_item = "..."]`
+//! in the standard library. rustc records its marker name and `DefId`, allowing
+//! callers to recognize the definition without matching its module path.
+//!
+//! # Agent Policy
+//!
+//! Keep this module limited to identifying diagnostic items by `DefId`.
+//! Depend only on rustc APIs, not on other RAPx modules. Do not infer MIR
+//! behavior here.
 
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
