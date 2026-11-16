@@ -1,5 +1,6 @@
 //! Identify `core`, `alloc`, and `std` APIs without depending on MIR availability.
-//! Callers use these identities to select verification and analysis behavior.
+//! Callers use these identities to avoid costly MIR expansion where a summary
+//! exists, and to preserve facts needed by verification and slicing.
 //!
 //! # Agent Policy
 //!
@@ -14,8 +15,8 @@ use crate::def_ids::lang_api;
 
 use super::{diagnostic_api, is_std_api, type_ids};
 
-/// Identify standard-library UB and precondition checks so verification can
-/// handle their calls without expanding the check implementation.
+/// Identify standard-library UB and precondition checks. The path builder
+/// skips their costly MIR, while the VM handles them as check calls.
 pub fn is_ub_check(tcx: TyCtxt<'_>, callee: DefId) -> bool {
     if !is_std_api(tcx, callee) {
         return false;
@@ -29,8 +30,9 @@ pub fn is_ub_check(tcx: TyCtxt<'_>, callee: DefId) -> bool {
         || path.contains("ub_checks::maybe_is_nonoverlapping")
 }
 
-/// Identify standard `Box::new` and `Box::new_in` for constructor and pointer
-/// dependency handling.
+/// Identify standard `Box::new` and `Box::new_in`. Dependency slicing keeps
+/// all inputs, and constructor modeling avoids treating the input as a
+/// pre-existing raw owner pointer.
 pub fn is_box_new(tcx: TyCtxt<'_>, did: DefId) -> bool {
     if !matches!(tcx.item_name(did).as_str(), "new" | "new_in") {
         return false;
@@ -42,8 +44,8 @@ pub fn is_box_new(tcx: TyCtxt<'_>, did: DefId) -> bool {
     matches!(self_ty.kind(), TyKind::Adt(adt, _) if type_ids::is_std_box(adt.did()))
 }
 
-/// Identify `NonNull::dangling` so constructor modeling can record its aligned,
-/// allocation-free pointer result.
+/// Identify `NonNull::dangling` so constructor modeling records an aligned,
+/// allocation-free pointer result that the type invariant alone cannot express.
 pub fn is_nonnull_dangling(tcx: TyCtxt<'_>, did: DefId) -> bool {
     if tcx.item_name(did).as_str() != "dangling" {
         return false;
@@ -57,8 +59,8 @@ pub fn is_nonnull_dangling(tcx: TyCtxt<'_>, did: DefId) -> bool {
         && tcx.fn_sig(did).skip_binder().inputs().skip_binder().is_empty()
 }
 
-/// Identify `ManuallyDrop::drop` for explicit-drop verification and lifetime
-/// tracking.
+/// Identify `ManuallyDrop::drop` so verification and slicing preserve its
+/// explicit lifetime-ending effect.
 pub fn is_manually_drop(tcx: TyCtxt<'_>, did: DefId) -> bool {
     let Some(impl_id) = tcx.inherent_impl_of_assoc(did) else {
         return false;
@@ -70,8 +72,20 @@ pub fn is_manually_drop(tcx: TyCtxt<'_>, did: DefId) -> bool {
         && tcx.item_name(did).as_str() == "drop"
 }
 
-/// Identify the standard raw-pointer `align_offset` method for its registered
-/// call effect.
+/// Identify `drop`, `drop_in_place`, and `ManuallyDrop::drop`. Slicing keeps
+/// these calls because they can end a value's lifetime.
+pub fn is_drop_fn(tcx: TyCtxt<'_>, target: DefId) -> bool {
+    diagnostic_api::is_drop(tcx, target)
+        || diagnostic_api::is_drop_in_place(tcx, target)
+        || is_manually_drop(tcx, target)
+}
+
+/// Identify `*const T::align_offset` and `*mut T::align_offset` for their call
+/// effect, which takes priority over expanding their available MIR. Their
+/// internal helper has costly branches and symbolic bitwise arithmetic:
+/// expanding it is much slower, and the VM loses the guarantee that a result
+/// other than `usize::MAX` aligns `ptr + offset * size_of::<T>()`. Modeling the
+/// bitwise operations exactly also makes branch solving time out.
 pub fn is_align_offset(tcx: TyCtxt<'_>, did: DefId) -> bool {
     if !is_std_api(tcx, did) || tcx.item_name(did).as_str() != "align_offset" {
         return false;
@@ -84,15 +98,9 @@ pub fn is_align_offset(tcx: TyCtxt<'_>, did: DefId) -> bool {
         && matches!(sig.output().skip_binder().kind(), TyKind::Uint(UintTy::Usize))
 }
 
-/// Identify a standard-library `gcd` call used when folding layout constants.
+/// Identify the standard gcd called by slice alignment's generic const block.
+/// Recursive expansion is costly, and CTFE leaves generic sizes symbolic;
+/// the VM uses this identity to retain the divisibility facts needed for proof.
 pub fn is_gcd(tcx: TyCtxt<'_>, did: DefId) -> bool {
     is_std_api(tcx, did) && tcx.def_path_str(did).ends_with("::gcd")
-}
-
-/// Identify `drop`, `drop_in_place`, and `ManuallyDrop::drop` so slicing keeps
-/// calls that can end a value's lifetime.
-pub fn is_drop_fn(tcx: TyCtxt<'_>, target: DefId) -> bool {
-    diagnostic_api::is_drop(tcx, target)
-        || diagnostic_api::is_drop_in_place(tcx, target)
-        || is_manually_drop(tcx, target)
 }

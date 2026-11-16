@@ -319,7 +319,10 @@ impl<'tcx> CallSiteIndex<'tcx> {
                         && (callee == base_callee
                             || self.tcx.fn_sig(base_callee).skip_binder().safety()
                                 != rustc_hir::Safety::Unsafe);
-                let range_next = self.tcx.item_name(callee).as_str() == "next"
+                let range_next = self
+                    .tcx
+                    .opt_item_name(callee)
+                    .is_some_and(|name| name.as_str() == "next")
                     && get_adt_self_ty(self.tcx, callee).is_some_and(|ty| {
                         matches!(ty.kind(), TyKind::Adt(adt, _)
                             if matches!(

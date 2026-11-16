@@ -27,17 +27,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
     }
 
-    /// HACK: `slice::align_to_offsets` computes its element split via
-    /// `const { gcd(size_of::<T>(), size_of::<U>()) }`. The recursive `gcd`
-    /// const fn cannot be inlined, so the VM would otherwise model the result as
-    /// a fresh, unconstrained constant and lose the one fact that makes the
-    /// proof go through: the gcd *divides* both sizes. That divisibility is
-    /// what turns `us = sizeof_T / gcd` / `ts = sizeof_U / gcd` into exact
-    /// divisions, giving `us * sizeof_U == ts * sizeof_T` (both the lcm) and
-    /// hence `us_len * sizeof_U <= len * sizeof_T`. Detect the `gcd` const
-    /// block and re-establish `gcd`'s key consequences as path conditions. This
-    /// is a targeted workaround for a missing general property of recursive
-    /// const fns, not an `align_to`-specific effect.
+    /// Preserve the divisibility relation of the recursive gcd const
+    /// expression used by slice::align_to_offsets. CTFE leaves its result
+    /// symbolic for generic element sizes.
     pub(crate) fn try_emit_gcd_divisibility(
         &mut self,
         operand: &Operand<'tcx>,
@@ -50,12 +42,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return;
         };
         let def_name = self.tcx.def_path_str(uneval.def);
-        if !def_name.contains("::{constant") || !mir_utils::ctfe_mir_available(self.tcx, uneval.def)
+        if !def_name.contains("align_to_offsets::{constant")
+            || !mir_utils::ctfe_mir_available(self.tcx, uneval.def)
         {
             return;
         }
         let body = self.tcx.mir_for_ctfe(uneval.def);
-        let is_gcd = body.basic_blocks.iter().any(|bb| {
+        let calls_gcd = body.basic_blocks.iter().any(|bb| {
             if let rustc_middle::mir::TerminatorKind::Call { func, .. } = &bb.terminator().kind
                 && let Some(did) = mir_utils::dep_callee_def_id(func)
             {
@@ -63,22 +56,17 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             }
             false
         });
-        if !is_gcd || uneval.args.len() < 2 {
+        if !calls_gcd || uneval.args.len() < 2 {
             return;
         }
         let a = self.size_sym(uneval.args.type_at(0));
         let b = self.size_sym(uneval.args.type_at(1));
         let g = &val.z3_term;
         let zero = Int::from_u64(self.z3_ctx, 0);
-        // `g = gcd(a, b)`:
-        // 1. g divides both a and b.
         self.constraints.assertions.push(a.rem(g)._eq(&zero));
         self.constraints.assertions.push(b.rem(g)._eq(&zero));
-        // 2. the lcm identity `(a / g) * b == (b / g) * a`. Emitting it directly
-        //    (rather than letting Z3 derive it from the divisibility, which its
-        //    incomplete nonlinear-integer solver cannot do reliably) is what
-        //    makes `us * sizeof_U == ts * sizeof_T` — and hence
-        //    `us_len * sizeof_U <= len * sizeof_T` — provable.
+        // State the lcm identity directly because Z3 may not infer it from
+        // divisibility in nonlinear integer arithmetic.
         let a_div_g = a.div(g);
         let b_div_g = b.div(g);
         let lhs = Int::mul(self.z3_ctx, &[&a_div_g, &b]);
@@ -265,15 +253,21 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         self.constraints.assertions.push(result.rem(&divisor)._eq(&zero));
                     }
                 }
-                // BitAnd only clears bits, so it never increases a non-negative
-                // value: result <= lhs.
-                self.constraints.assertions.push(result.le(lhs));
-                // When the mask (rhs) is a non-negative constant, the result is
-                // also bounded by it: `x & c <= c` (e.g. `rhs & 31 <= 31`).
+                // `x & y` lies in `[0, x]` only when `x >= 0`. For example,
+                // `-1 & 1 == 1`; asserting `result <= x` would make a reachable
+                // branch unsatisfiable and could hide an unsafe call.
+                let zero = Int::from_u64(self.z3_ctx, 0);
+                self.constraints.assertions.push(
+                    lhs.ge(&zero)
+                        .implies(&Bool::and(self.z3_ctx, &[&result.ge(&zero), &result.le(lhs)])),
+                );
+                // A non-negative constant mask also bounds the result in
+                // `[0, mask]`, even when `lhs` is negative.
                 // This lets `(rhs & (BITS - 1)) < BITS` be discharged. The
                 // mask may be a folded expression (`SubWithOverflow(BITS, 1)`),
                 // so `simplify()` is used to recover its constant value.
                 if rhs.simplify().as_u64().is_some() {
+                    self.constraints.assertions.push(result.ge(&zero));
                     self.constraints.assertions.push(result.le(rhs));
                 }
                 if self.constraints.term_caches.not_mask_terms.contains(rhs) {
