@@ -4,7 +4,7 @@
 //! in the standard library. rustc records its marker name and `DefId`, allowing
 //! callers to recognize the definition without matching its module path.
 //!
-//! # Agent Policy
+//! # Agent Rules
 //!
 //! Keep this module limited to identifying diagnostic items by `DefId`.
 //! Do not depend on other RAPx modules.

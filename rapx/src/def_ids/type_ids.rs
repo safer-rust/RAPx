@@ -1,6 +1,6 @@
 //! Resolved `DefId`s of standard-library types used by verification.
 //!
-//! # Agent Policy
+//! # Agent Rules
 //!
 //! Keep this module limited to resolving standard-library type identities
 //! from rustc lang items, diagnostic items, and definition paths. Do not

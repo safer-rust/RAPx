@@ -1,6 +1,6 @@
 //! Known API and type identities.
 //!
-//! # Agent Policy
+//! # Agent Rules
 //!
 //! Keep this module limited to identity submodules and shared identity helpers.
 //! Do not depend on other RAPx modules.

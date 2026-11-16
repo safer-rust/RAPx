@@ -3,7 +3,7 @@
 //! API classifiers recognize specific intrinsics, diagnostic items, or
 //! inherent methods by `DefId`. Type classifiers use identities from `def_ids`.
 //!
-//! # Agent Policy
+//! # Agent Rules
 //!
 //! Keep this module a thin wrapper around API and type identities from
 //! [`crate::def_ids`]. Do not depend on other RAPx modules.

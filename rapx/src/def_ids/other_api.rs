@@ -2,7 +2,7 @@
 //! Callers use these identities to avoid costly MIR expansion where a summary
 //! exists, and to preserve facts needed by verification and slicing.
 //!
-//! # Agent Policy
+//! # Agent Rules
 //!
 //! Keep this module limited to API identity checks based on compiler metadata,
 //! types, signatures, or standard-library paths. Do not depend on RAPx modules

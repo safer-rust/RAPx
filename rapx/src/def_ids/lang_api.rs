@@ -1,6 +1,6 @@
 //! Compiler lang-item identities used across RAPx.
 //!
-//! # Agent Policy
+//! # Agent Rules
 //!
 //! Keep this module limited to identifying rustc lang items and their trait
 //! methods by `DefId`. Do not depend on other RAPx modules.

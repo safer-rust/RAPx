@@ -1,6 +1,6 @@
 //! Known standard-library APIs without MIR.
 //!
-//! # Agent Policy
+//! # Agent Rules
 //!
 //! Keep this module limited to identifying standard-library APIs when their
 //! MIR is unavailable. Do not depend on other RAPx modules.
