@@ -6,6 +6,7 @@ use rustc_middle::{
 use z3::ast::Int;
 
 use crate::{compat::FxHashMap, def_ids::diagnostic_api, helpers::mir_utils, verify::api_classify};
+use crate::verify::call_summary::pointer_semantics;
 
 use super::state::{AllocId, VmState, VmValue};
 
@@ -293,7 +294,7 @@ fn stable_rvalue(rvalue: &Rvalue<'_>) -> bool {
 
 fn stable_query(tcx: TyCtxt<'_>, callee: DefId) -> bool {
     if diagnostic_api::is_mem_size_or_align_of(tcx, callee)
-        || api_classify::is_benign_origin_use(tcx, Some(callee))
+        || pointer_semantics::is_benign_origin_use(tcx, Some(callee))
         || api_classify::is_intrinsic_ptr_offset_from(tcx, Some(callee))
     {
         return true;

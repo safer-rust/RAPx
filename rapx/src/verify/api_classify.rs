@@ -11,10 +11,8 @@
 //! from [`crate::def_ids::intrinsic_api`],
 //! [`crate::def_ids::other_api`] and [`crate::def_ids::type_ids`].
 
-use crate::analysis::dataflow::{pointer_copy, pointer_flow};
 use crate::def_ids::{diagnostic_api, intrinsic_api, other_api, type_ids};
-use crate::verify::call_summary::pointer_semantics;
-use rustc_hir::{def::DefKind, def_id::DefId};
+use rustc_hir::def_id::DefId;
 use rustc_middle::ty::{Ty, TyCtxt, TyKind};
 
 /// Whether `callee` is an intrinsic with one of the given names.
@@ -35,73 +33,6 @@ pub fn is_intrinsic_ptr_offset_from(tcx: TyCtxt<'_>, callee: Option<DefId>) -> b
 /// (`ptr::write`, `write_bytes`, `write_unaligned`, `write_volatile`).
 pub fn is_ptr_write(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
     callee.is_some_and(|did| diagnostic_api::is_ptr_write(tcx, did))
-}
-
-/// `copy(src, dst, count)` functions with the destination at argument 1.
-pub fn is_ptr_copy_function(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
-    callee.is_some_and(|did| pointer_copy::direct_copy_flow(tcx, did).is_some())
-}
-
-/// Compiler and standard-library pointer copies at this call site.
-pub fn is_memory_copy(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
-    callee.is_some_and(|did| pointer_copy::copy_flow(tcx, did).is_some())
-}
-
-/// Whether `callee` reads through a raw pointer or copies memory
-/// (`ptr::read`/`read_unaligned`/`read_volatile`, standard pointer copy APIs,
-/// `MaybeUninit::assume_init_read`, and intrinsics `copy`/`copy_nonoverlapping`).
-pub fn is_ptr_read(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
-    is_memory_copy(tcx, callee)
-        || callee.is_some_and(|did| diagnostic_api::is_ptr_read(tcx, did))
-        || callee.is_some_and(|did| other_api::is_assume_init_read(tcx, did))
-}
-
-/// Copy/write operations that do not require initialized destination bytes:
-/// Intrinsic copies, standard pointer copy APIs, `write`, and `write_bytes` do not
-/// require initialized destination bytes for `Init`/`Typed` obligations.
-pub fn is_mem_copy_or_write(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
-    is_memory_copy(tcx, callee)
-        || callee.is_some_and(|did| diagnostic_api::is_ptr_write_to_uninit(tcx, did))
-}
-
-// ── Alias-hazard classification ───────────────────────────────────
-// Ref-counted reconstruction retains a dedicated rule until the alias model
-// accounts for shared ownership and clone counts.
-/// Mutability of a reference returned from a `NonNull<T>` receiver.
-pub fn nonnull_ref_return(tcx: TyCtxt<'_>, callee: DefId) -> Option<rustc_middle::mir::Mutability> {
-    if !matches!(tcx.def_kind(callee), DefKind::Fn | DefKind::AssocFn)
-        || !tcx.is_mir_available(callee)
-    {
-        return None;
-    }
-    let sig = tcx.fn_sig(callee).skip_binder();
-    let [receiver] = sig.inputs().skip_binder() else {
-        return None;
-    };
-    let TyKind::Ref(_, inner, _) = receiver.kind() else {
-        return None;
-    };
-    let TyKind::Adt(adt, args) = inner.kind() else {
-        return None;
-    };
-    if !is_std_nonnull(adt.did()) {
-        return None;
-    }
-    let pointee = args.first().and_then(|arg| arg.as_type())?;
-    let output = sig.output().skip_binder();
-    let TyKind::Ref(_, returned, mutability) = output.kind() else {
-        return None;
-    };
-    (*returned == pointee && pointer_flow::return_reference_source_arg(tcx, callee) == Some(0))
-        .then_some(*mutability)
-}
-
-/// Whether MIR shows a read-only pointer view of the first argument.
-pub fn is_benign_origin_use(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
-    callee.is_some_and(|did| {
-        pointer_semantics::is_read_only_return(tcx, did)
-            || pointer_semantics::is_read_only_nonnull_view(tcx, did)
-    })
 }
 
 // ── ADT type-name classifiers ─────────────────────────────────────

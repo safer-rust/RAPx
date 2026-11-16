@@ -1,6 +1,6 @@
 //! MIR-level alias hazard analysis independent of VM state and Z3 terms.
 
-use crate::analysis::dataflow::{call_write, pointer_copy};
+use crate::analysis::dataflow::{call_read, call_write, pointer_copy};
 use crate::analysis::dataflow::pointer_flow::{self, trace_source_arg};
 use crate::helpers::mir_utils;
 use crate::verify::call_summary::VerifierCallSemantics;
@@ -42,7 +42,7 @@ pub(super) enum HazardKind {
 pub(super) enum AliasProducer {
     View(HazardKind, usize),
     OwnershipTransfer(usize),
-    ReadMemory,
+    ReadMemory(usize),
     CopyMemory(usize),
 }
 
@@ -79,8 +79,8 @@ pub(super) fn alias_producer(tcx: TyCtxt<'_>, callee: DefId) -> Option<AliasProd
     if let Some(flow) = pointer_copy::copy_flow(tcx, callee) {
         return Some(AliasProducer::CopyMemory(flow.source_arg));
     }
-    if crate::verify::api_classify::is_ptr_read(tcx, Some(callee)) {
-        return Some(AliasProducer::ReadMemory);
+    if let Some(source_arg) = call_read::read_source_arg(tcx, callee) {
+        return Some(AliasProducer::ReadMemory(source_arg));
     }
     raw_pointer_view_from_mir(tcx, callee)
         .map(|(kind, source_arg)| AliasProducer::View(kind, source_arg))
@@ -1533,7 +1533,7 @@ fn terminator_is_benign_origin_use<'tcx>(
     let TerminatorKind::Call { func, .. } = terminator else {
         return true;
     };
-    crate::verify::api_classify::is_benign_origin_use(tcx, mir_utils::dep_callee_def_id(
+    pointer_semantics::is_benign_origin_use(tcx, mir_utils::dep_callee_def_id(
         func,
     ))
 }
@@ -2067,7 +2067,7 @@ fn pre_existing_view_on_origin(
         if let TerminatorKind::Call { func, args, .. } = &terminator.kind {
             let callee_name = mir_utils::call_name(tcx, func);
             if mir_utils::dep_callee_def_id(func)
-                .and_then(|callee| crate::verify::api_classify::nonnull_ref_return(tcx, callee))
+                .and_then(|callee| pointer_flow::nonnull_ref_return(tcx, callee))
                 .is_some()
                 && let Some(arg) = args.first()
                     && let Some(place) = operand_mir_place(&arg.node)

@@ -95,7 +95,7 @@ fn intrinsic_dependency_summary<'tcx>(
     func: &Operand<'tcx>,
     arg_count: usize,
 ) -> Option<CallDependencies> {
-    let is_ptr_copy = api_classify::is_ptr_copy_function(tcx, Some(callee));
+    let is_ptr_copy = pointer_copy::direct_copy_flow(tcx, callee).is_some();
     if !intrinsic_api::is_intrinsic(tcx, callee) && !is_ptr_copy {
         return None;
     }

@@ -11,6 +11,11 @@ use rustc_middle::{
 use crate::analysis::dataflow::pointer_flow::{is_nonnull_view, return_source_arg};
 use crate::helpers::mir_utils;
 
+/// Whether MIR shows a read-only pointer view of the first argument.
+pub(crate) fn is_benign_origin_use(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
+    callee.is_some_and(|did| is_read_only_return(tcx, did) || is_read_only_nonnull_view(tcx, did))
+}
+
 /// A `NonNull` view that leaves its input allocation unchanged.
 pub(crate) fn is_read_only_nonnull_view(tcx: TyCtxt<'_>, callee: DefId) -> bool {
     is_nonnull_view(tcx, callee) && single_block_without_effects(tcx.optimized_mir(callee))

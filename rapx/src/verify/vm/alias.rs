@@ -9,6 +9,7 @@ use crate::helpers::mir_utils;
 use crate::compat::GenericArgsRef;
 use super::alias_hazard::{self, AliasProducer, HazardKind};
 use crate::analysis::alias::FieldOrigin;
+use crate::analysis::dataflow::pointer_flow;
 use crate::verify::checkpoint::Checkpoint;
 use crate::verify::api_classify;
 use crate::helpers::def_use::PlaceKey;
@@ -482,7 +483,7 @@ pub(crate) fn check_alias_vm<'z3, 'tcx>(
     // exclusive view is derived from a raw pointer with no borrow information,
     // so it cannot be exclusive while the enclosing `&mut self` is still live.
     // An escaping `&` (as_ref) is only a *possible* hazard → Unknown.
-    if let Some(mutability) = api_classify::nonnull_ref_return(vm_state.tcx, callee) {
+    if let Some(mutability) = pointer_flow::nonnull_ref_return(vm_state.tcx, callee) {
         let ret_ty = vm_state.body().local_decls[rustc_middle::mir::RETURN_PLACE].ty;
         if mir_utils::type_contains_reference(ret_ty) {
             if mutability == rustc_middle::mir::Mutability::Mut {
@@ -507,7 +508,9 @@ pub(crate) fn check_alias_vm<'z3, 'tcx>(
         AliasProducer::OwnershipTransfer(source_arg) => {
             check_ownership_transfer_alias(vm_state, checkpoint, source_arg)
         }
-        AliasProducer::ReadMemory => check_read_memory_alias(vm_state, checkpoint),
+        AliasProducer::ReadMemory(source_arg) => {
+            check_read_memory_alias(vm_state, checkpoint, source_arg)
+        }
         AliasProducer::CopyMemory(source_arg) => {
             check_copy_memory_alias(vm_state, checkpoint, source_arg)
         }
@@ -968,8 +971,9 @@ fn check_ownership_transfer_alias<'z3, 'tcx>(
 fn check_read_memory_alias<'z3, 'tcx>(
     vm_state: &VmState<'z3, 'tcx>,
     checkpoint: &Checkpoint<'tcx>,
+    source_arg: usize,
 ) -> VmAliasResult {
-    let Some(origin_arg) = checkpoint.args.first() else {
+    let Some(origin_arg) = checkpoint.args.get(source_arg) else {
         return VmAliasResult::Unknown;
     };
 

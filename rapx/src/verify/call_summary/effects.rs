@@ -13,6 +13,7 @@ use super::{
     BoundedArithmeticOp, CallEffect, CallEffectSummary, OverflowOp, SimdArithOp, SimdCmpOp,
 };
 use crate::{
+    analysis::dataflow::pointer_copy,
     def_ids::{
         intrinsic_api,
         lang_api::{self, LangItem},
@@ -205,7 +206,9 @@ pub(crate) fn lookup_effect<'tcx>(
         };
         return Some(builder(&ctx));
     }
-    if callee.is_some_and(|id| api_classify::is_ptr_copy_function(tcx, Some(id)) && !tcx.is_mir_available(id)) {
+    if callee.is_some_and(|id| {
+        pointer_copy::direct_copy_flow(tcx, id).is_some() && !tcx.is_mir_available(id)
+    }) {
         return Some(eff_copy_memory(&EffCtx {
             tcx,
             caller,

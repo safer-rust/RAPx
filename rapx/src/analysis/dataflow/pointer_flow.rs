@@ -42,6 +42,38 @@ pub(crate) fn return_reference_source_arg(tcx: TyCtxt<'_>, callee: DefId) -> Opt
     trace_source_arg(tcx, body, result, &mut HashSet::new(), 5)
 }
 
+/// Mutability of a reference returned from a standard `NonNull<T>` receiver.
+pub(crate) fn nonnull_ref_return(
+    tcx: TyCtxt<'_>,
+    callee: DefId,
+) -> Option<rustc_middle::mir::Mutability> {
+    if !matches!(tcx.def_kind(callee), DefKind::Fn | DefKind::AssocFn)
+        || !tcx.is_mir_available(callee)
+    {
+        return None;
+    }
+    let sig = tcx.fn_sig(callee).skip_binder();
+    let [receiver] = sig.inputs().skip_binder() else {
+        return None;
+    };
+    let TyKind::Ref(_, inner, _) = receiver.kind() else {
+        return None;
+    };
+    let TyKind::Adt(adt, args) = inner.kind() else {
+        return None;
+    };
+    if !crate::def_ids::type_ids::nonnull_types().contains(&adt.did()) {
+        return None;
+    }
+    let pointee = args.first().and_then(|arg| arg.as_type())?;
+    let output = sig.output().skip_binder();
+    let TyKind::Ref(_, returned, mutability) = output.kind() else {
+        return None;
+    };
+    (*returned == pointee && return_reference_source_arg(tcx, callee) == Some(0))
+        .then_some(*mutability)
+}
+
 /// A `NonNull` result that still points into its sole `NonNull` argument.
 pub(crate) fn is_nonnull_view(tcx: TyCtxt<'_>, callee: DefId) -> bool {
     if !matches!(tcx.def_kind(callee), DefKind::Fn | DefKind::AssocFn)

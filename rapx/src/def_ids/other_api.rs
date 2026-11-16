@@ -63,18 +63,6 @@ pub fn is_manually_drop(tcx: TyCtxt<'_>, did: DefId) -> bool {
         && tcx.item_name(did).as_str() == "drop"
 }
 
-/// Whether this is the standard `MaybeUninit::assume_init_read` method.
-pub fn is_assume_init_read(tcx: TyCtxt<'_>, did: DefId) -> bool {
-    let Some(impl_id) = tcx.inherent_impl_of_assoc(did) else {
-        return false;
-    };
-    let self_ty = tcx.type_of(impl_id).instantiate_identity();
-    let self_ty = self_ty.skip_norm_wip();
-    matches!(self_ty.kind(), TyKind::Adt(adt, _)
-        if tcx.is_lang_item(adt.did(), crate::def_ids::lang_api::LangItem::MaybeUninit))
-        && tcx.item_name(did).as_str() == "assume_init_read"
-}
-
 pub fn is_align_offset(tcx: TyCtxt<'_>, did: DefId) -> bool {
     if !is_std_api(tcx, did) || tcx.item_name(did).as_str() != "align_offset" {
         return false;
@@ -95,19 +83,6 @@ pub fn is_std_ptr_copy_function(tcx: TyCtxt<'_>, did: DefId) -> bool {
                 tcx.def_path_str(did).as_str(),
                 "std::ptr::copy" | "std::ptr::copy_nonoverlapping"
             ))
-}
-
-/// Whether this is a standard-library inherent method on a raw pointer.
-pub fn is_std_raw_ptr_method(tcx: TyCtxt<'_>, did: DefId) -> bool {
-    if !matches!(tcx.crate_name(did.krate).as_str(), "core" | "std")
-        || !matches!(tcx.def_kind(did), DefKind::AssocFn)
-    {
-        return false;
-    }
-    tcx.inherent_impl_of_assoc(did).is_some_and(|impl_id| {
-        let self_ty = tcx.type_of(impl_id).instantiate_identity().skip_norm_wip();
-        matches!(self_ty.kind(), TyKind::RawPtr(..))
-    })
 }
 
 pub fn is_gcd(tcx: TyCtxt<'_>, did: DefId) -> bool {

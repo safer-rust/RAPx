@@ -1,6 +1,6 @@
 //! Source and destination arguments of pointer-copy calls.
 
-use rustc_hir::def_id::DefId;
+use rustc_hir::{def::DefKind, def_id::DefId};
 use rustc_middle::{
     mir::{Body, Operand, StatementKind, TerminatorKind},
     ty::{Mutability, TyCtxt, TyKind},
@@ -25,14 +25,16 @@ pub(crate) fn direct_copy_flow(tcx: TyCtxt<'_>, callee: DefId) -> Option<CopyFlo
     })
 }
 
-/// Copy flow at this callee, including standard raw-pointer methods whose
-/// source and destination are recovered from optimized MIR.
+/// Copy flow at this callee, including wrappers whose source and destination
+/// are recovered from optimized MIR.
 pub(crate) fn copy_flow(tcx: TyCtxt<'_>, callee: DefId) -> Option<CopyFlow> {
-    direct_copy_flow(tcx, callee).or_else(|| std_raw_ptr_method_copy_flow(tcx, callee))
+    direct_copy_flow(tcx, callee).or_else(|| mir_copy_flow(tcx, callee))
 }
 
-fn std_raw_ptr_method_copy_flow(tcx: TyCtxt<'_>, callee: DefId) -> Option<CopyFlow> {
-    if !other_api::is_std_raw_ptr_method(tcx, callee) || !tcx.is_mir_available(callee) {
+fn mir_copy_flow(tcx: TyCtxt<'_>, callee: DefId) -> Option<CopyFlow> {
+    if !matches!(tcx.def_kind(callee), DefKind::Fn | DefKind::AssocFn)
+        || !tcx.is_mir_available(callee)
+    {
         return None;
     }
     let sig = tcx.fn_sig(callee).skip_binder();
