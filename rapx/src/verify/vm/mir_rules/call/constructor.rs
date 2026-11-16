@@ -25,8 +25,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             && let Some(pointee) = substs.first().and_then(|arg| arg.as_type())
             && let Some(field_ty) = self.field_type_at(destination, &[0])
         {
-            // `dangling()` returns an aligned address without allocation
-            // provenance. NonNull's type invariant alone only proves non-null.
+            // A NonNull type invariant cannot imply alignment or absence of
+            // allocation provenance for every NonNull value. The dangling()
+            // constructor guarantees both, even when its MIR is not expanded.
             let align = self.align_sym(pointee);
             let mut result = VmValue::new(align.clone(), ty);
             result.facts.non_null = true;

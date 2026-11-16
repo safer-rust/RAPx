@@ -44,8 +44,9 @@ pub fn is_box_new(tcx: TyCtxt<'_>, did: DefId) -> bool {
     matches!(self_ty.kind(), TyKind::Adt(adt, _) if type_ids::is_std_box(adt.did()))
 }
 
-/// Identify `NonNull::dangling` so constructor modeling records an aligned,
-/// allocation-free pointer result that the type invariant alone cannot express.
+/// Identify `NonNull::dangling` for its constructor summary when MIR expansion
+/// is disabled. Unlike an arbitrary `NonNull<T>`, its result is aligned for `T`
+/// and has no allocation provenance; the type invariant only guarantees non-nullness.
 pub fn is_nonnull_dangling(tcx: TyCtxt<'_>, did: DefId) -> bool {
     if tcx.item_name(did).as_str() != "dangling" {
         return false;
