@@ -631,6 +631,8 @@ unsound_hazard_tests! {
     // claims a region longer than the source's: the returned region outlives
     // the source reference's region, so the escape is a lifetime violation.
     lifetime_escape_unsound_01: "verify_units/lifetime_escape_unsound_01" => "return_shorter_as_longer" => "Alias",
+    // The same escape when the raw pointer is the return value of a call.
+    lifetime_escape_unsound_02: "verify_units/lifetime_escape_unsound_02" => "extend_via_call" => "Alias",
 }
 
 // An *independent* `*mut T` must be assumed to alias the shared `&[T]`
