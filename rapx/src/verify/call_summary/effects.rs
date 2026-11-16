@@ -58,7 +58,7 @@ static REGISTRY: &[Entry] = &[
     ED!(nomir_api::is_global_alloc_shim, eff_nullable_allocation),
     ED!(nomir_api::is_global_alloc_zeroed_shim, eff_nullable_zeroed_allocation),
     ED!(nomir_api::is_alloc_shim_marker, eff_no_effect),
-    ED!(nomir_api::is_slice_to_vec, eff_vec_from_slice),
+    ED!(nomir_api::is_convert_vec_to_vec, eff_vec_from_slice),
 ];
 
 #[derive(Deserialize)]

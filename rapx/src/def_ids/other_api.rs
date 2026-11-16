@@ -4,13 +4,10 @@ use rustc_hir::{def::DefKind, def_id::DefId};
 use rustc_middle::ty::{TyCtxt, TyKind, UintTy};
 use rustc_public::{CrateDef, rustc_internal};
 
-use super::{diagnostic_api, type_ids};
+use super::{diagnostic_api, is_std_api, type_ids};
 
 pub fn is_ub_check(tcx: TyCtxt<'_>, callee: DefId) -> bool {
-    if !matches!(
-        tcx.crate_name(callee.krate).as_str(),
-        "core" | "alloc" | "std"
-    ) {
+    if !is_std_api(tcx, callee) {
         return false;
     }
     let path = tcx.def_path_str(callee);
@@ -20,10 +17,6 @@ pub fn is_ub_check(tcx: TyCtxt<'_>, callee: DefId) -> bool {
         || path.contains("ub_checks::maybe_is_aligned")
         || path.contains("ub_checks::is_valid_allocation_size")
         || path.contains("ub_checks::maybe_is_nonoverlapping")
-}
-
-fn is_std_api(tcx: TyCtxt<'_>, did: DefId) -> bool {
-    matches!(tcx.crate_name(did.krate).as_str(), "core" | "alloc" | "std")
 }
 
 /// Whether `did` names `Box::new` or `Box::new_in` on the standard Box type.

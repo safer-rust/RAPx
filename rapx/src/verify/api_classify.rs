@@ -6,8 +6,7 @@
 //! # Agent Policy
 //!
 //! Keep this module a thin wrapper around API and type identities from
-//! [`crate::def_ids`]. Do not depend on other RAPx modules or interpret MIR
-//! semantics here.
+//! [`crate::def_ids`]. Do not depend on other RAPx modules.
 
 use crate::def_ids::{diagnostic_api, intrinsic_api, other_api, type_ids};
 use rustc_hir::def_id::DefId;

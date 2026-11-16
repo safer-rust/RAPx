@@ -1,13 +1,14 @@
 //! Known standard-library APIs without MIR.
+//!
+//! # Agent Policy
+//!
+//! Keep this module limited to identifying standard-library APIs when their
+//! MIR is unavailable. Do not depend on other RAPx modules.
 
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 
-use super::intrinsic_api;
-
-fn is_std_api(tcx: TyCtxt<'_>, did: DefId) -> bool {
-    matches!(tcx.crate_name(did.krate).as_str(), "core" | "alloc" | "std")
-}
+use super::is_std_api;
 
 fn matches_path(tcx: TyCtxt<'_>, did: DefId, paths: &[&str]) -> bool {
     if !is_std_api(tcx, did) {
@@ -22,13 +23,13 @@ fn matches_path(tcx: TyCtxt<'_>, did: DefId, paths: &[&str]) -> bool {
     })
 }
 
-fn is_no_mir(tcx: TyCtxt<'_>, did: DefId) -> bool {
-    !tcx.is_mir_available(did) && !intrinsic_api::is_intrinsic(tcx, did)
+fn has_no_mir(tcx: TyCtxt<'_>, did: DefId) -> bool {
+    !tcx.is_mir_available(did)
 }
 
-pub fn is_slice_to_vec(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
+pub fn is_convert_vec_to_vec(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
     callee.is_some_and(|did| {
-        is_no_mir(tcx, did)
+        has_no_mir(tcx, did)
             && matches_path(
                 tcx,
                 did,
@@ -42,7 +43,7 @@ pub fn is_slice_to_vec(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
 
 pub fn is_global_alloc_shim(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
     callee.is_some_and(|did| {
-        is_no_mir(tcx, did)
+        has_no_mir(tcx, did)
             && matches_path(
                 tcx,
                 did,
@@ -53,7 +54,7 @@ pub fn is_global_alloc_shim(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
 
 pub fn is_alloc_shim_marker(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
     callee.is_some_and(|did| {
-        is_no_mir(tcx, did)
+        has_no_mir(tcx, did)
             && matches_path(
                 tcx,
                 did,
@@ -67,7 +68,7 @@ pub fn is_alloc_shim_marker(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
 
 pub fn is_global_alloc_zeroed_shim(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
     callee.is_some_and(|did| {
-        is_no_mir(tcx, did)
+        has_no_mir(tcx, did)
             && matches_path(
                 tcx,
                 did,

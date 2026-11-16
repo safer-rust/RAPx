@@ -7,8 +7,7 @@
 //! # Agent Policy
 //!
 //! Keep this module limited to identifying diagnostic items by `DefId`.
-//! Depend only on rustc APIs, not on other RAPx modules. Do not infer MIR
-//! behavior here.
+//! Do not depend on other RAPx modules.
 
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
