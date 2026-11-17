@@ -46,6 +46,6 @@ pub unsafe fn unsound_direct_intrinsic_copy(pointer: *mut u32) {
 }
 
 #[rapx::verify]
-pub unsafe fn unknown_direct_assume() {
+pub unsafe fn unsound_direct_assume() {
     unsafe { std::intrinsics::assume(false) };
 }

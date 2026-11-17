@@ -129,7 +129,8 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
 
         for view in self.iter_callsite_checks() {
             let unresolved_call = view.checkpoint.kind == CheckpointKind::UnsafeCall
-                && view.checkpoint.callee.is_none();
+                && view.checkpoint.callee.is_none()
+                && view.checkpoint.requires.is_empty();
             let unmodeled_intrinsic = crate::verify::call_summary::effects::is_unmodeled_intrinsic(
                 self.tcx,
                 view.checkpoint.callee,

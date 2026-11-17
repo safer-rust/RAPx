@@ -6579,7 +6579,7 @@
     {
       "tag": "ValidNum",
       "args": [
-        "cond != 0"
+        "arg:0 != 0"
       ]
     }
   ],

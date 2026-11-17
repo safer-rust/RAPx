@@ -846,10 +846,10 @@ fn invariant_unknown_01() {
 #[test]
 fn unsupported_mir_01() {
     let output = run_with_args("verify_units/unsupported_mir_01", CMD_VERIFY_TARGETED);
-    assert_result_counts(&output, [0, 2, 4]);
+    assert_result_counts(&output, [0, 3, 3]);
     assert_unproved(&output, "unsound_direct_intrinsic_copy", "NonOverlap");
+    assert_unproved(&output, "unsound_direct_assume", "ValidNum");
     assert_contain(&output, "Unknown (unsupported MIR)");
-    assert_contain(&output, "Unknown (unresolved unsafe call)");
     let block = extract_block_after(&output, "function: unknown_inline_asm_write");
     assert_contain(block, "  unsupported operations:");
     assert_contain(block, "TerminatorKind::InlineAsm");

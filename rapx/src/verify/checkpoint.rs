@@ -109,21 +109,21 @@ impl<'tcx> Checkpoint<'tcx> {
             None => match self.kind {
                 CheckpointKind::RawPtrDeref => "raw-ptr-deref".to_string(),
                 CheckpointKind::StaticMutAccess => "static-mut-access".to_string(),
-                _ => "unknown-callee".to_string(),
+                CheckpointKind::UnsafeCall => {
+                    let body = tcx.optimized_mir(self.caller);
+                    match body.basic_blocks[self.block]
+                        .statements
+                        .get(self.statement_index)
+                        .map(|statement| &statement.kind)
+                    {
+                        Some(StatementKind::Intrinsic(intrinsic)) => {
+                            crate::def_ids::intrinsic_api::lowered_mir_path(intrinsic).to_string()
+                        }
+                        _ => "unknown-callee".to_string(),
+                    }
+                }
             },
         }
-    }
-
-    /// Whether this call was lowered to a MIR copy statement.
-    pub(crate) fn is_copy_nonoverlapping_statement(&self, tcx: TyCtxt<'tcx>) -> bool {
-        let body = tcx.optimized_mir(self.caller);
-        body.basic_blocks[self.block]
-            .statements
-            .get(self.statement_index)
-            .is_some_and(|statement| {
-                matches!(&statement.kind, StatementKind::Intrinsic(intrinsic)
-                    if matches!(&**intrinsic, NonDivergingIntrinsic::CopyNonOverlapping(_)))
-            })
     }
 }
 
@@ -218,16 +218,15 @@ pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<C
     for (bb, data) in body.basic_blocks.iter_enumerated() {
         for (statement_index, statement) in data.statements.iter().enumerate() {
             if let StatementKind::Intrinsic(intrinsic) = &statement.kind {
-                let (callee, args) = match &**intrinsic {
-                    NonDivergingIntrinsic::CopyNonOverlapping(copy) => (
-                        tcx.get_diagnostic_item(rustc_span::sym::ptr_copy_nonoverlapping),
-                        vec![copy.src.clone(), copy.dst.clone(), copy.count.clone()],
-                    ),
-                    _ => (None, Vec::new()),
+                let args = match &**intrinsic {
+                    NonDivergingIntrinsic::CopyNonOverlapping(copy) => {
+                        vec![copy.src.clone(), copy.dst.clone(), copy.count.clone()]
+                    }
+                    NonDivergingIntrinsic::Assume(condition) => vec![condition.clone()],
                 };
                 checkpoints.push(Checkpoint {
                     caller: def_id,
-                    callee,
+                    callee: crate::def_ids::intrinsic_api::lowered_mir_def_id(tcx, intrinsic),
                     block: bb,
                     args,
                     kind: CheckpointKind::UnsafeCall,

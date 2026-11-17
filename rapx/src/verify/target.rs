@@ -10,7 +10,10 @@ use crate::analysis::safety_flow::root::{
 };
 use crate::cli::VerifyMode;
 use crate::compat::FxHashMap;
-use crate::def_ids::lang_api::{self, LangItem};
+use crate::def_ids::{
+    intrinsic_api,
+    lang_api::{self, LangItem},
+};
 use crate::helpers::name::short_fn_name;
 use crate::verify::checkpoint::{collect_raw_ptr_deref_info, collect_static_mut_access_info};
 #[cfg(rapx_has_attr_ir)]
@@ -24,7 +27,7 @@ use rustc_hir::{
 };
 use rustc_middle::{
     hir::nested_filter,
-    mir::{Body, TerminatorKind},
+    mir::{Body, NonDivergingIntrinsic, StatementKind, TerminatorKind},
     ty::{self, EarlyBinder, Instance, InstanceKind, Ty, TyCtxt, TypingEnv},
 };
 use rustc_span::{Span, Symbol};
@@ -691,19 +694,24 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
             }
         }
         let mut checkpoints = collect_unsafe_callsites(self.tcx, def_id);
-        for checkpoint in checkpoints
-            .iter_mut()
-            .filter(|checkpoint| checkpoint.is_copy_nonoverlapping_statement(self.tcx))
-        {
-            checkpoint.requires = checkpoint
-                .callee
-                .map(|callee| {
-                    super::contract::json::query_json_contracts_at_path(
-                        self.tcx,
-                        callee,
-                        "core::intrinsics::copy_nonoverlapping",
-                    )
-                })
+        for checkpoint in &mut checkpoints {
+            let mir = self.tcx.optimized_mir(def_id);
+            let Some(statement) = mir.basic_blocks[checkpoint.block]
+                .statements
+                .get(checkpoint.statement_index)
+            else {
+                continue;
+            };
+            let StatementKind::Intrinsic(intrinsic) = &statement.kind else {
+                continue;
+            };
+            let path = intrinsic_api::lowered_mir_path(intrinsic);
+            let signature_def_id = match &**intrinsic {
+                NonDivergingIntrinsic::Assume(_) => Some(def_id),
+                NonDivergingIntrinsic::CopyNonOverlapping(_) => checkpoint.callee,
+            };
+            checkpoint.requires = signature_def_id
+                .map(|did| super::contract::json::query_json_contracts_at_path(self.tcx, did, path))
                 .filter(|requires| !requires.is_empty())
                 .unwrap_or_else(|| vec![Property::new_atom(PropertyKind::Unknown, Vec::new())]);
         }
