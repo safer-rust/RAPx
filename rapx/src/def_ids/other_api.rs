@@ -34,7 +34,10 @@ pub fn is_ub_check(tcx: TyCtxt<'_>, callee: DefId) -> bool {
 /// all inputs, and constructor modeling avoids treating the input as a
 /// pre-existing raw owner pointer.
 pub fn is_box_new(tcx: TyCtxt<'_>, did: DefId) -> bool {
-    if !matches!(tcx.item_name(did).as_str(), "new" | "new_in") {
+    if !tcx
+        .opt_item_name(did)
+        .is_some_and(|name| matches!(name.as_str(), "new" | "new_in"))
+    {
         return false;
     }
     let Some(impl_id) = tcx.inherent_impl_of_assoc(did) else {
@@ -48,7 +51,10 @@ pub fn is_box_new(tcx: TyCtxt<'_>, did: DefId) -> bool {
 /// is disabled. Unlike an arbitrary `NonNull<T>`, its result is aligned for `T`
 /// and has no allocation provenance; the type invariant only guarantees non-nullness.
 pub fn is_nonnull_dangling(tcx: TyCtxt<'_>, did: DefId) -> bool {
-    if tcx.item_name(did).as_str() != "dangling" {
+    if !tcx
+        .opt_item_name(did)
+        .is_some_and(|name| name.as_str() == "dangling")
+    {
         return false;
     }
     let Some(impl_id) = tcx.inherent_impl_of_assoc(did) else {
@@ -88,7 +94,11 @@ pub fn is_drop_fn(tcx: TyCtxt<'_>, target: DefId) -> bool {
 /// other than `usize::MAX` aligns `ptr + offset * size_of::<T>()`. Modeling the
 /// bitwise operations exactly also makes branch solving time out.
 pub fn is_align_offset(tcx: TyCtxt<'_>, did: DefId) -> bool {
-    if !is_std_api(tcx, did) || tcx.item_name(did).as_str() != "align_offset" {
+    if !is_std_api(tcx, did)
+        || !tcx
+            .opt_item_name(did)
+            .is_some_and(|name| name.as_str() == "align_offset")
+    {
         return false;
     }
     let sig = tcx.fn_sig(did).skip_binder();

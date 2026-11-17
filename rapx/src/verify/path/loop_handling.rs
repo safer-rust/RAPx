@@ -712,7 +712,8 @@ fn exact_range_repeat<'tcx>(
             )
             .unwrap_or(false);
         let is_next = mir_utils::resolve_callee_def_id(tcx, def_id, func)
-            .is_some_and(|callee| tcx.item_name(callee).as_str() == "next");
+            .and_then(|callee| tcx.opt_item_name(callee))
+            .is_some_and(|name| name.as_str() == "next");
         if !receiver_is_range || !is_next {
             continue;
         }
