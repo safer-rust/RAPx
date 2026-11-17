@@ -1,5 +1,16 @@
 use super::need_nonzero;
 use core::intrinsics;
+#[cfg(rapx_generic_float_minmax)]
+use intrinsics::{
+    copysign as copysign_f32, maximum as maximum_f32,
+    maximum_number_nsz as maximum_number_nsz_f32, minimum as minimum_f32,
+    minimum_number_nsz as minimum_number_nsz_f32,
+};
+#[cfg(not(rapx_generic_float_minmax))]
+use intrinsics::{
+    copysignf32 as copysign_f32, maximum_number_nsz_f32, maximumf32 as maximum_f32,
+    minimum_number_nsz_f32, minimumf32 as minimum_f32,
+};
 
 #[cfg(rapx_generic_float_intrinsics)]
 #[rapx::verify]
@@ -22,9 +33,9 @@ pub fn scalar_float_intrinsics(value: f32) {
         intrinsics::trunc(input),
         intrinsics::round_ties_even(input),
         intrinsics::round(input),
-        intrinsics::minimumf32(input, 2.0),
-        intrinsics::maximumf32(input, 2.0),
-        intrinsics::copysignf32(input, -1.0),
+        minimum_f32(input, 2.0),
+        maximum_f32(input, 2.0),
+        copysign_f32(input, -1.0),
     ];
     let mut bits = 0_u32;
     for value in values {
@@ -40,9 +51,9 @@ pub fn scalar_float_intrinsics(value: f32) {
     let values = [
         intrinsics::sqrtf32(input),
         intrinsics::powif32(input, 2),
-        intrinsics::minimumf32(input, 2.0),
-        intrinsics::maximumf32(input, 2.0),
-        intrinsics::copysignf32(input, -1.0),
+        minimum_f32(input, 2.0),
+        maximum_f32(input, 2.0),
+        copysign_f32(input, -1.0),
     ];
     let mut bits = 0_u32;
     for value in values {
@@ -77,8 +88,8 @@ pub fn scalar_float_arithmetic_intrinsics() {
         unsafe { intrinsics::fmul_fast(a, b) },
         unsafe { intrinsics::fdiv_fast(a, b) },
         unsafe { intrinsics::frem_fast(a, b) },
-        intrinsics::minimum_number_nsz_f32(a, b),
-        intrinsics::maximum_number_nsz_f32(a, b),
+        minimum_number_nsz_f32(a, b),
+        maximum_number_nsz_f32(a, b),
     ];
     let mut bits = 0_u32;
     for value in values {

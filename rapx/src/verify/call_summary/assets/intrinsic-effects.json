@@ -2,6 +2,9 @@
   "ceil": {
     "effect": "eff_opaque_return"
   },
+  "copysign": {
+    "effect": "eff_opaque_return"
+  },
   "copysignf32": {
     "effect": "eff_opaque_return"
   },
@@ -65,10 +68,22 @@
   "log2": {
     "effect": "eff_opaque_return"
   },
+  "maximum": {
+    "effect": "eff_opaque_return"
+  },
+  "maximum_number_nsz": {
+    "effect": "eff_opaque_return"
+  },
   "maximum_number_nsz_f32": {
     "effect": "eff_opaque_return"
   },
   "maximumf32": {
+    "effect": "eff_opaque_return"
+  },
+  "minimum": {
+    "effect": "eff_opaque_return"
+  },
+  "minimum_number_nsz": {
     "effect": "eff_opaque_return"
   },
   "minimum_number_nsz_f32": {

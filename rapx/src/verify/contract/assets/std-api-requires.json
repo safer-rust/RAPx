@@ -1567,6 +1567,12 @@
       "args": ["0 == 0"]
     }
   ],
+  "core::intrinsics::copysign": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
   "core::intrinsics::copysignf32": [
     {
       "tag": "ValidNum",
@@ -1663,6 +1669,18 @@
       "args": ["0 == 0"]
     }
   ],
+  "core::intrinsics::maximum": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::maximum_number_nsz": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
   "core::intrinsics::maximum_number_nsz_f32": [
     {
       "tag": "ValidNum",
@@ -1670,6 +1688,18 @@
     }
   ],
   "core::intrinsics::maximumf32": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::minimum": [
+    {
+      "tag": "ValidNum",
+      "args": ["0 == 0"]
+    }
+  ],
+  "core::intrinsics::minimum_number_nsz": [
     {
       "tag": "ValidNum",
       "args": ["0 == 0"]
