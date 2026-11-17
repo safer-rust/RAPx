@@ -7,11 +7,13 @@
 
 #[cfg(not(rapx_box_deref_transmute))]
 use crate::def_ids::lang_api::{self, LangItem};
-use rustc_hir::{Safety, def_id::DefId};
-#[cfg(rapx_box_deref_transmute)]
-use rustc_middle::mir::CastKind;
-#[cfg(not(rapx_box_deref_transmute))]
-use rustc_middle::ty::TyKind;
+use crate::helpers::{
+    mir_scan::{get_fn_safety, place_has_raw_deref},
+    mir_utils::{dep_callee_def_id, pointee_ty, resolve_callee_impl},
+    name::get_cleaned_def_path_name,
+};
+
+use rustc_hir::{def_id::DefId, Safety};
 use rustc_middle::{
     mir::{
         BasicBlock, Body, Local, NonDivergingIntrinsic, Operand, Place, ProjectionElem, Rvalue,
@@ -19,16 +21,18 @@ use rustc_middle::{
     },
     ty::{self, List, Ty, TyCtxt},
 };
+#[cfg(rapx_box_deref_transmute)]
+use rustc_middle::mir::CastKind;
+#[cfg(not(rapx_box_deref_transmute))]
+use rustc_middle::ty::TyKind;
 use std::collections::HashSet;
 
-use crate::helpers::{
-    mir_scan::{get_fn_safety, place_has_raw_deref},
-    mir_utils::{dep_callee_def_id, pointee_ty, resolve_callee_impl},
-    name::get_cleaned_def_path_name,
-};
 use super::contract::Property;
 
 /// MIR block containing a verification checkpoint.
+///
+/// # Agent Rules
+/// Do not add new fields to this struct.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct CheckpointLocation {
     /// Function containing the operation.
@@ -54,24 +58,24 @@ pub enum CheckpointKind {
 /// accesses under a single type so they all flow through the same path
 /// extraction and SMT verification pipeline.
 #[derive(Clone, Debug)]
-pub struct Checkpoint<'tcx> {
-    pub caller: DefId,
-    pub callee: Option<DefId>,
-    pub block: BasicBlock,
-    pub args: Vec<Operand<'tcx>>,
-    pub kind: CheckpointKind,
+pub(crate) struct Checkpoint<'tcx> {
+    pub(super) caller: DefId,
+    pub(super) callee: Option<DefId>,
+    pub(super) block: BasicBlock,
+    pub(super) args: Vec<Operand<'tcx>>,
+    pub(super) kind: CheckpointKind,
     /// Requirements attached directly to this MIR operation.
-    pub(crate) requires: Vec<Property<'tcx>>,
-    pub destination: Option<Local>,
+    pub(super) requires: Vec<Property<'tcx>>,
+    pub(super) destination: Option<Local>,
     /// For `RawPtrDeref` checkpoints: whether the deref produces a mutable
     /// reference (`&mut *ptr`) rather than a shared one (`&*ptr`).
-    pub is_mut_ref: bool,
+    pub(super) is_mut_ref: bool,
     /// MIR position within `block`: the statement index, or the number of
     /// statements for a call terminator. Slicing stops at this operation.
-    pub statement_index: usize,
+    pub(super) statement_index: usize,
     /// Distinguishes multiple accesses at one MIR location (for example,
     /// separate static pointers passed as arguments to the same call).
-    pub site_ordinal: usize,
+    pub(super) site_ordinal: usize,
 }
 
 impl<'tcx> Checkpoint<'tcx> {

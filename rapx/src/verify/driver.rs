@@ -40,10 +40,8 @@ use super::{
         CheckResult, PATH_LIMIT_DESCRIPTION, PropertyCheckResult, UnknownReason, VerificationReport,
     },
     slicer::RelevantItem,
-    target::{
-        FunctionTarget, MarkerTraitKind, TraitEnsurance, TraitEnsuranceKind, VerifyTargetCollector,
-        get_contract_from_annotation,
-    },
+    target::{FunctionTarget, VerifyTargetCollector, get_contract_from_annotation},
+    trait_ensurance::{MarkerTraitKind, TraitEnsurance, TraitEnsuranceKind},
 };
 
 use crate::helpers::mir_utils::{collect_return_block_indices, is_return_block};
