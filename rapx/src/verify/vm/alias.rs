@@ -531,7 +531,7 @@ fn check_view_alias<'z3, 'tcx>(
     let tcx = vm_state.tcx;
     let caller = checkpoint.caller;
     let call_block = checkpoint.block;
-    let destination = alias_hazard::call_destination(tcx, checkpoint);
+    let destination = checkpoint.destination;
 
     // Tree-based shared-XOR-mutable: producing a view must not conflict with a
     // *live* opposite-mutability view of the same allocation. This runs before
@@ -948,7 +948,7 @@ fn check_ownership_transfer_alias<'z3, 'tcx>(
     let tcx = vm_state.tcx;
     let caller = checkpoint.caller;
     let call_block = checkpoint.block;
-    let destination = alias_hazard::call_destination(tcx, checkpoint);
+    let destination = checkpoint.destination;
 
     let origin_place = alias_hazard::operand_place(origin_arg);
     let Some(origin_place) = origin_place else {
@@ -999,7 +999,7 @@ fn check_read_memory_alias<'z3, 'tcx>(
     }
 
     let tcx = vm_state.tcx;
-    let destination = alias_hazard::call_destination(tcx, checkpoint);
+    let destination = checkpoint.destination;
     if !alias_hazard::destination_flows_to_return(tcx, checkpoint.caller, destination) {
         return VmAliasResult::Proved;
     }

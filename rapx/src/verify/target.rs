@@ -1690,7 +1690,7 @@ fn build_raw_ptr_deref_checks<'tcx>(
                     args: vec![info.ptr_operand],
                     kind: crate::verify::checkpoint::CheckpointKind::RawPtrDeref,
                     requires: Vec::new(),
-                    destination: Some(info.destination),
+                    destination: info.destination,
                     is_mut_ref: info.is_mut_ref,
                     statement_index: info.statement_index,
                     static_access_index: 0,

@@ -170,15 +170,7 @@ impl PropertyChecker {
         // owner whose buffer aliases `alloc_id` means a second owner will drop the
         // same allocation — a double free. The reconstructed owner (the call's
         // destination) is not a violation, so exclude it.
-        let dest_local = checkpoint.destination.or_else(|| {
-            let body = vm_state.tcx.optimized_mir(checkpoint.caller);
-            match &body.basic_blocks[checkpoint.block].terminator().kind {
-                rustc_middle::mir::TerminatorKind::Call { destination, .. } => {
-                    Some(destination.local)
-                }
-                _ => None,
-            }
-        });
+        let dest_local = checkpoint.destination;
         let live = crate::verify::vm::alias_hazard::live_locals_at(
             vm_state.tcx,
             checkpoint.caller,

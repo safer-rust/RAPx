@@ -69,6 +69,7 @@ pub(crate) struct Checkpoint<'tcx> {
     pub(super) caller: DefId,
     pub(super) callee: Option<DefId>,
     pub(super) args: Vec<Operand<'tcx>>,
+    /// Local produced by this operation, if any.
     pub(super) destination: Option<Local>,
 
     // Position in the caller's MIR.
@@ -234,7 +235,8 @@ pub struct RawPtrDerefInfo<'tcx> {
     pub is_ptr2ref: bool,
     /// Whether the Ptr2Ref produces a mutable reference (`&mut *raw_ptr`).
     pub is_mut_ref: bool,
-    pub destination: Local,
+    /// Result local for a read or reference creation; writes have no result.
+    pub destination: Option<Local>,
     /// Statement index within `block` (for reverse liveness at the deref point).
     pub statement_index: usize,
 }
@@ -398,7 +400,7 @@ pub fn collect_raw_ptr_deref_info<'tcx>(
                 is_read,
                 is_ptr2ref,
                 is_mut_ref,
-                destination: lhs.local,
+                destination: (!is_write).then_some(lhs.local),
                 statement_index: stmt_index,
             });
         }
@@ -499,17 +501,4 @@ pub fn collect_static_mut_access_info<'tcx>(
     }
 
     infos
-}
-
-/// Return the destination local for a checkpoint's call or deref.
-pub fn call_destination<'tcx>(tcx: TyCtxt<'tcx>, checkpoint: &Checkpoint<'tcx>) -> Option<Local> {
-    if checkpoint.kind == CheckpointKind::RawPtrDeref {
-        return checkpoint.destination;
-    }
-    let body = tcx.optimized_mir(checkpoint.caller);
-    let terminator = body.basic_blocks[checkpoint.block].terminator();
-    let TerminatorKind::Call { destination, .. } = &terminator.kind else {
-        return None;
-    };
-    Some(destination.local)
 }
