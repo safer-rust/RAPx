@@ -42,6 +42,9 @@ pub struct CheckpointLocation {
 }
 
 /// Kind of an unsafe verification checkpoint inside a function body.
+///
+/// # Agent Rules
+/// Do not add new variants to this enum.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum CheckpointKind {
     /// An unsafe call, including one lowered to a MIR intrinsic statement.
@@ -52,30 +55,42 @@ pub enum CheckpointKind {
     StaticMutAccess,
 }
 
-/// A verification checkpoint in one MIR body.
+/// A point in a function's MIR whose safety requirements are checked.
 ///
-/// Unifies unsafe calls, MIR intrinsics, raw-pointer dereferences, and mutable static
-/// accesses under a single type so they all flow through the same path
-/// extraction and SMT verification pipeline.
+/// Most checkpoints are unsafe function calls. Calls lowered to MIR intrinsics,
+/// raw-pointer dereferences, and `static mut` accesses use the same representation
+/// and follow the same path extraction and verification pipeline.
+///
+/// # Agent Rules
+/// Do not add new fields to this struct.
 #[derive(Clone, Debug)]
 pub(crate) struct Checkpoint<'tcx> {
+    // Function and operation data.
     pub(super) caller: DefId,
     pub(super) callee: Option<DefId>,
-    pub(super) block: BasicBlock,
     pub(super) args: Vec<Operand<'tcx>>,
+    pub(super) destination: Option<Local>,
+
+    // Position in the caller's MIR.
+    pub(super) block: BasicBlock,
+    /// Statement position within `block`; for a call terminator, the number of
+    /// statements in the block. The slicer uses this boundary to select the
+    /// preceding statements; alias checks also include the deref statement.
+    pub(super) statement_index: usize,
+
+    // Verification semantics.
     pub(super) kind: CheckpointKind,
     /// Requirements attached directly to this MIR operation.
     pub(super) requires: Vec<Property<'tcx>>,
-    pub(super) destination: Option<Local>,
+
+    // Variant-specific metadata.
+    /// Index in the function's collected `static mut` accesses. This distinguishes
+    /// accesses at the same MIR position, such as separate call arguments.
+    /// Other checkpoint kinds use zero.
+    pub(super) static_access_index: usize,
     /// For `RawPtrDeref` checkpoints: whether the deref produces a mutable
     /// reference (`&mut *ptr`) rather than a shared one (`&*ptr`).
     pub(super) is_mut_ref: bool,
-    /// MIR position within `block`: the statement index, or the number of
-    /// statements for a call terminator. Slicing stops at this operation.
-    pub(super) statement_index: usize,
-    /// Distinguishes multiple accesses at one MIR location (for example,
-    /// separate static pointers passed as arguments to the same call).
-    pub(super) site_ordinal: usize,
 }
 
 impl<'tcx> Checkpoint<'tcx> {
@@ -220,7 +235,7 @@ pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<C
                     destination: None,
                     is_mut_ref: false,
                     statement_index,
-                    site_ordinal: 0,
+                    static_access_index: 0,
                 });
             }
         }
@@ -255,7 +270,7 @@ pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<C
                     destination,
                     is_mut_ref: false,
                     statement_index: data.statements.len(),
-                    site_ordinal: 0,
+                    static_access_index: 0,
                 });
             }
             continue;
@@ -282,7 +297,7 @@ pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<C
             destination,
             is_mut_ref: false,
             statement_index: data.statements.len(),
-            site_ordinal: 0,
+            static_access_index: 0,
         });
     }
 
@@ -420,11 +435,15 @@ pub fn collect_raw_ptr_deref_info<'tcx>(
                 Rvalue::Use(Operand::Copy(place) | Operand::Move(place), ..) => {
                     (place_has_raw_deref(body, place), false, false)
                 }
-                Rvalue::Ref(_, borrow_kind, place) => (
-                    place_has_raw_deref(body, place),
-                    true,
-                    matches!(borrow_kind, rustc_middle::mir::BorrowKind::Mut { .. }),
-                ),
+                Rvalue::Ref(_, borrow_kind, place) => {
+                    let reads_raw_ptr = place_has_raw_deref(body, place);
+                    (
+                        reads_raw_ptr,
+                        reads_raw_ptr,
+                        reads_raw_ptr
+                            && matches!(borrow_kind, rustc_middle::mir::BorrowKind::Mut { .. }),
+                    )
+                }
                 _ => (false, false, false),
             };
 
@@ -501,8 +520,8 @@ pub struct StaticMutAccessInfo<'tcx> {
     pub ptr_operand: Operand<'tcx>,
     /// Statement position, or the statement count for a terminator argument.
     pub statement_index: usize,
-    /// Unique access number within this function.
-    pub site_ordinal: usize,
+    /// Index in the function's collected `static mut` accesses.
+    pub static_access_index: usize,
 }
 
 /// Collect all basic blocks that reference mutable statics in `def_id`.
@@ -534,7 +553,7 @@ pub fn collect_static_mut_access_info<'tcx>(
                         ty,
                         ptr_operand: op.clone(),
                         statement_index,
-                        site_ordinal: infos.len(),
+                        static_access_index: infos.len(),
                     });
                 }
             }
@@ -555,7 +574,7 @@ pub fn collect_static_mut_access_info<'tcx>(
                         ty,
                         ptr_operand: op.clone(),
                         statement_index: data.statements.len(),
-                        site_ordinal: infos.len(),
+                        static_access_index: infos.len(),
                     });
                 }
             }
