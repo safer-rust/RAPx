@@ -217,16 +217,11 @@ impl<'tcx> BackwardSlicer<'tcx> {
                 bind_callsite_roots(visitor.tcx, &mut relevant, cs);
             }
             let mut items = Vec::new();
-            let skip_terminator = matches!(
-                bind_checkpoint.map(|c| c.kind),
-                Some(CheckpointKind::RawPtrDeref)
-                    | Some(CheckpointKind::StaticMutAccess)
-                    | Some(CheckpointKind::CopyNonOverlapping)
-                    | Some(CheckpointKind::UnsafeCall)
-            ) || crate::verify::api_classify::is_manually_drop_drop(
-                visitor.tcx,
-                bind_checkpoint.and_then(|c| c.callee),
-            );
+            let skip_terminator = bind_checkpoint.is_some()
+                || crate::verify::api_classify::is_manually_drop_drop(
+                    visitor.tcx,
+                    bind_checkpoint.and_then(|c| c.callee),
+                );
             if !skip_terminator {
                 items.push(RelevantItem::Terminator {
                     def_id: caller,
@@ -236,24 +231,18 @@ impl<'tcx> BackwardSlicer<'tcx> {
                 });
             }
             let statement_end = bind_checkpoint
-                .filter(|checkpoint| {
-                    matches!(
-                        checkpoint.kind,
-                        CheckpointKind::RawPtrDeref
-                            | CheckpointKind::StaticMutAccess
-                            | CheckpointKind::CopyNonOverlapping
-                    )
-                })
                 .map(|checkpoint| {
                     // Alias checks need the reference created by the deref itself;
                     // memory-shape checks must inspect the state before it.
+                    // Terminator calls use the index after the last statement.
                     checkpoint.statement_index
                         + usize::from(
                             checkpoint.kind == CheckpointKind::RawPtrDeref
                                 && property.kind() == Some(contract::PropertyKind::Alias),
                         )
                 })
-                .unwrap_or(block_data.statements.len());
+                .unwrap_or(block_data.statements.len())
+                .min(block_data.statements.len());
             for (si, stmt) in block_data.statements[..statement_end].iter().enumerate().rev() {
                 visitor.visit_statement(
                     def_id,

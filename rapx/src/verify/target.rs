@@ -146,12 +146,17 @@ impl<'tcx> FunctionTarget<'tcx> {
                 })
                 .map(|(_, properties)| properties.as_slice())
                 .unwrap_or(&[]),
-            crate::verify::checkpoint::CheckpointKind::UnsafeCall => checkpoint
-                .callee
-                .and_then(|callee| self.callee_requires.get(&callee))
-                .map(Vec::as_slice)
-                .unwrap_or(&[]),
-            crate::verify::checkpoint::CheckpointKind::CopyNonOverlapping => &checkpoint.requires,
+            crate::verify::checkpoint::CheckpointKind::UnsafeCall => {
+                if !checkpoint.requires.is_empty() {
+                    &checkpoint.requires
+                } else {
+                    checkpoint
+                        .callee
+                        .and_then(|callee| self.callee_requires.get(&callee))
+                        .map(Vec::as_slice)
+                        .unwrap_or(&[])
+                }
+            }
         }
     }
 }
@@ -719,7 +724,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
         let mut checkpoints = collect_unsafe_callsites(self.tcx, def_id);
         for checkpoint in checkpoints
             .iter_mut()
-            .filter(|checkpoint| checkpoint.kind == CheckpointKind::CopyNonOverlapping)
+            .filter(|checkpoint| checkpoint.is_copy_nonoverlapping_statement(self.tcx))
         {
             checkpoint.requires = checkpoint
                 .callee
@@ -736,6 +741,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
         let unsafe_callees: HashSet<_> = checkpoints
             .iter()
             .filter(|checkpoint| checkpoint.kind == CheckpointKind::UnsafeCall)
+            .filter(|checkpoint| checkpoint.requires.is_empty())
             .filter_map(|checkpoint| checkpoint.callee)
             .collect();
         let callee_requires = unsafe_callees

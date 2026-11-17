@@ -28,22 +28,20 @@ use crate::helpers::{
 };
 use super::contract::Property;
 
-/// Stable MIR location for a call terminator inside one function body.
+/// MIR block containing a verification checkpoint.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct CheckpointLocation {
-    /// Function containing the call terminator.
+    /// Function containing the operation.
     pub caller: DefId,
-    /// Basic block whose terminator is the call.
+    /// Basic block containing the operation.
     pub block: BasicBlock,
 }
 
 /// Kind of an unsafe verification checkpoint inside a function body.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum CheckpointKind {
-    /// A real unsafe function call.
+    /// An unsafe call, including one lowered to a MIR intrinsic statement.
     UnsafeCall,
-    /// A MIR `CopyNonOverlapping` statement.
-    CopyNonOverlapping,
     /// A raw pointer dereference.
     RawPtrDeref,
     /// A mutable static variable access.
@@ -68,8 +66,8 @@ pub struct Checkpoint<'tcx> {
     /// For `RawPtrDeref` checkpoints: whether the deref produces a mutable
     /// reference (`&mut *ptr`) rather than a shared one (`&*ptr`).
     pub is_mut_ref: bool,
-    /// Statement index within `block` for statement checkpoints; used to stop
-    /// slicing at the operation and for reverse liveness at raw dereferences.
+    /// MIR position within `block`: the statement index, or the number of
+    /// statements for a call terminator. Slicing stops at this operation.
     pub statement_index: usize,
     /// Distinguishes multiple accesses at one MIR location (for example,
     /// separate static pointers passed as arguments to the same call).
@@ -87,9 +85,6 @@ impl<'tcx> Checkpoint<'tcx> {
 
     /// Return a human-readable label for diagnostics.
     pub fn callee_name(&self, tcx: TyCtxt<'tcx>) -> String {
-        if self.kind == CheckpointKind::CopyNonOverlapping {
-            return "copy_nonoverlapping".to_string();
-        }
         match self.callee {
             Some(def_id) => get_cleaned_def_path_name(tcx, def_id),
             None => match self.kind {
@@ -98,6 +93,18 @@ impl<'tcx> Checkpoint<'tcx> {
                 _ => "unknown-callee".to_string(),
             },
         }
+    }
+
+    /// Whether this call was lowered to a MIR copy statement.
+    pub(crate) fn is_copy_nonoverlapping_statement(&self, tcx: TyCtxt<'tcx>) -> bool {
+        let body = tcx.optimized_mir(self.caller);
+        body.basic_blocks[self.block]
+            .statements
+            .get(self.statement_index)
+            .is_some_and(|statement| {
+                matches!(&statement.kind, StatementKind::Intrinsic(intrinsic)
+                    if matches!(&**intrinsic, NonDivergingIntrinsic::CopyNonOverlapping(_)))
+            })
     }
 }
 
@@ -192,20 +199,19 @@ pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<C
     for (bb, data) in body.basic_blocks.iter_enumerated() {
         for (statement_index, statement) in data.statements.iter().enumerate() {
             if let StatementKind::Intrinsic(intrinsic) = &statement.kind {
-                let (kind, callee, args) = match &**intrinsic {
+                let (callee, args) = match &**intrinsic {
                     NonDivergingIntrinsic::CopyNonOverlapping(copy) => (
-                        CheckpointKind::CopyNonOverlapping,
                         tcx.get_diagnostic_item(rustc_span::sym::ptr_copy_nonoverlapping),
                         vec![copy.src.clone(), copy.dst.clone(), copy.count.clone()],
                     ),
-                    _ => (CheckpointKind::UnsafeCall, None, Vec::new()),
+                    _ => (None, Vec::new()),
                 };
                 checkpoints.push(Checkpoint {
                     caller: def_id,
                     callee,
                     block: bb,
                     args,
-                    kind,
+                    kind: CheckpointKind::UnsafeCall,
                     requires: Vec::new(),
                     destination: None,
                     is_mut_ref: false,
@@ -244,7 +250,7 @@ pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<C
                     requires: Vec::new(),
                     destination,
                     is_mut_ref: false,
-                    statement_index: 0,
+                    statement_index: data.statements.len(),
                     site_ordinal: 0,
                 });
             }
@@ -271,7 +277,7 @@ pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<C
             requires: Vec::new(),
             destination,
             is_mut_ref: false,
-            statement_index: 0,
+            statement_index: data.statements.len(),
             site_ordinal: 0,
         });
     }
