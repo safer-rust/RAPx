@@ -15,7 +15,9 @@ use crate::def_ids::{
     lang_api::{self, LangItem},
 };
 use crate::helpers::name::short_fn_name;
-use crate::verify::checkpoint::{collect_raw_ptr_deref_info, collect_static_mut_access_info};
+use crate::verify::checkpoint::{
+    collect_raw_ptr_deref_checkpoints, collect_static_mut_checkpoints,
+};
 #[cfg(rapx_has_attr_ir)]
 use rustc_attr_ir::Attribute;
 #[cfg(not(rapx_has_attr_ir))]
@@ -96,14 +98,14 @@ pub(crate) struct FunctionTarget<'tcx> {
     /// They also contribute to `caller_requires` at function entry.
     pub type_invariants: Vec<Property<'tcx>>,
 
-    /// Synthetic checkpoints and obligations for raw pointer dereferences.
+    /// Checkpoints and obligations for raw pointer dereferences.
     /// Obligations include `Allocated`, `InBound`, and `Align`, plus `Typed`
     /// for reads and extra checks when creating a reference from a pointer.
-    pub raw_ptr_deref_checks: Vec<(Checkpoint<'tcx>, Vec<Property<'tcx>>)>,
+    pub raw_ptr_deref_checks: Vec<Checkpoint<'tcx>>,
 
-    /// Synthetic checkpoints and obligations for static mut accesses.
+    /// Checkpoints and obligations for static mut accesses.
     /// Each requires `Allocated`, `InBound`, `Align`, and `Init`.
-    pub static_mut_checks: Vec<(Checkpoint<'tcx>, Vec<Property<'tcx>>)>,
+    pub static_mut_checks: Vec<Checkpoint<'tcx>>,
 }
 
 impl<'tcx> FunctionTarget<'tcx> {
@@ -118,53 +120,22 @@ impl<'tcx> FunctionTarget<'tcx> {
     pub(crate) fn all_checkpoints(&self) -> impl Iterator<Item = &Checkpoint<'tcx>> + '_ {
         self.checkpoints
             .iter()
-            .chain(
-                self.raw_ptr_deref_checks
-                    .iter()
-                    .map(|(checkpoint, _)| checkpoint),
-            )
-            .chain(
-                self.static_mut_checks
-                    .iter()
-                    .map(|(checkpoint, _)| checkpoint),
-            )
+            .chain(self.raw_ptr_deref_checks.iter())
+            .chain(self.static_mut_checks.iter())
     }
 
     pub(crate) fn properties_for_callsite<'a>(
         &'a self,
         checkpoint: &'a Checkpoint<'tcx>,
     ) -> &'a [Property<'tcx>] {
-        let loc = checkpoint.location();
-        match checkpoint.kind {
-            crate::verify::checkpoint::CheckpointKind::RawPtrDeref => self
-                .raw_ptr_deref_checks
-                .iter()
-                .find(|(candidate, _)| {
-                    candidate.location() == loc
-                        && candidate.statement_index == checkpoint.statement_index
-                })
-                .map(|(_, properties)| properties.as_slice())
-                .unwrap_or(&[]),
-            crate::verify::checkpoint::CheckpointKind::StaticMutAccess => self
-                .static_mut_checks
-                .iter()
-                .find(|(candidate, _)| {
-                    candidate.location() == loc
-                        && candidate.static_access_index == checkpoint.static_access_index
-                })
-                .map(|(_, properties)| properties.as_slice())
-                .unwrap_or(&[]),
-            crate::verify::checkpoint::CheckpointKind::UnsafeCall => {
-                if !checkpoint.requires.is_empty() {
-                    &checkpoint.requires
-                } else {
-                    checkpoint
-                        .callee
-                        .and_then(|callee| self.callee_requires.get(&callee))
-                        .map(Vec::as_slice)
-                        .unwrap_or(&[])
-                }
-            }
+        if !checkpoint.requires.is_empty() {
+            &checkpoint.requires
+        } else {
+            checkpoint
+                .callee
+                .and_then(|callee| self.callee_requires.get(&callee))
+                .map(Vec::as_slice)
+                .unwrap_or(&[])
         }
     }
 }
@@ -735,8 +706,8 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
             bind_alive_regions(self.tcx, def_id, contract);
         }
 
-        let raw_ptr_deref_checks = build_raw_ptr_deref_checks(self.tcx, def_id);
-        let static_mut_checks = build_static_mut_checks(self.tcx, def_id);
+        let raw_ptr_deref_checks = collect_raw_ptr_deref_checkpoints(self.tcx, def_id);
+        let static_mut_checks = collect_static_mut_checkpoints(self.tcx, def_id);
 
         let owner_struct_def_id = get_adt_def_id_by_adt_method(self.tcx, def_id);
         let mut struct_invariants = owner_struct_def_id
@@ -1619,139 +1590,6 @@ pub(crate) fn has_slice_offset_ensures(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
     get_trait_method_ensures(tcx, def_id)
         .iter()
         .any(|property| property.kind() == Some(crate::verify::contract::PropertyKind::SliceOffset))
-}
-
-/// Build (pseudo-checkpoint, properties) pairs for every raw pointer dereference
-/// in the target function.
-fn build_raw_ptr_deref_checks<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    def_id: DefId,
-) -> Vec<(Checkpoint<'tcx>, Vec<Property<'tcx>>)> {
-    let infos = collect_raw_ptr_deref_info(tcx, def_id);
-    if infos.is_empty() {
-        return Vec::new();
-    }
-
-    infos
-        .into_iter()
-        .map(|info| {
-            let target = PropertyArg::Expr(ContractExpr::Place(ContractPlace {
-                base: PlaceBase::Arg(0),
-                projections: vec![],
-            }));
-            let ty = PropertyArg::Ty(info.pointee_ty);
-            let count = PropertyArg::Expr(ContractExpr::Const(1));
-
-            let mut properties = if info.is_ptr2ref {
-                vec![
-                    Property::new_atom(
-                        PropertyKind::Init,
-                        vec![target.clone(), ty.clone(), count.clone()],
-                    ),
-                    Property::new_atom(PropertyKind::NonNull, vec![target.clone()]),
-                    Property::new_atom(
-                        PropertyKind::Allocated,
-                        vec![target.clone(), ty.clone(), count.clone()],
-                    ),
-                    Property::new_atom(
-                        PropertyKind::InBound,
-                        vec![target.clone(), ty.clone(), count.clone()],
-                    ),
-                    Property::new_atom(PropertyKind::Align, vec![target.clone(), ty.clone()]),
-                    {
-                        let mut p = Property::new_atom(PropertyKind::Alias, vec![target.clone()]);
-                        p.set_contract_kind(crate::verify::contract::ContractKind::Hazard);
-                        p
-                    },
-                ]
-            } else {
-                vec![
-                    Property::new_atom(
-                        PropertyKind::Allocated,
-                        vec![target.clone(), ty.clone(), count.clone()],
-                    ),
-                    Property::new_atom(
-                        PropertyKind::InBound,
-                        vec![target.clone(), ty.clone(), count.clone()],
-                    ),
-                    Property::new_atom(PropertyKind::Align, vec![target.clone(), ty.clone()]),
-                ]
-            };
-
-            if info.is_read && !info.is_ptr2ref {
-                properties.push(Property::new_atom(PropertyKind::Typed, vec![target, ty]));
-            }
-
-            (
-                Checkpoint {
-                    caller: def_id,
-                    callee: None,
-                    block: info.block,
-                    args: vec![info.ptr_operand],
-                    kind: crate::verify::checkpoint::CheckpointKind::RawPtrDeref,
-                    requires: Vec::new(),
-                    destination: info.destination,
-                    is_mut_ref: info.is_mut_ref,
-                    statement_index: info.statement_index,
-                    static_access_index: 0,
-                },
-                properties,
-            )
-        })
-        .collect()
-}
-
-/// Build (pseudo-checkpoint, properties) pairs for every static mut access
-/// in the target function.
-fn build_static_mut_checks<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    def_id: DefId,
-) -> Vec<(Checkpoint<'tcx>, Vec<Property<'tcx>>)> {
-    let infos = collect_static_mut_access_info(tcx, def_id);
-    if infos.is_empty() {
-        return Vec::new();
-    }
-
-    infos
-        .into_iter()
-        .map(|info| {
-            let target = PropertyArg::Expr(ContractExpr::Place(ContractPlace {
-                base: PlaceBase::Arg(0),
-                projections: vec![],
-            }));
-            let ty = PropertyArg::Ty(info.ty);
-            let count = PropertyArg::Expr(ContractExpr::Const(1));
-
-            let properties = vec![
-                Property::new_atom(
-                    PropertyKind::Allocated,
-                    vec![target.clone(), ty.clone(), count.clone()],
-                ),
-                Property::new_atom(
-                    PropertyKind::InBound,
-                    vec![target.clone(), ty.clone(), count.clone()],
-                ),
-                Property::new_atom(PropertyKind::Align, vec![target.clone(), ty.clone()]),
-                Property::new_atom(PropertyKind::Init, vec![target, ty, count]),
-            ];
-
-            (
-                Checkpoint {
-                    caller: def_id,
-                    callee: None,
-                    block: info.block,
-                    args: vec![info.ptr_operand],
-                    kind: crate::verify::checkpoint::CheckpointKind::StaticMutAccess,
-                    requires: Vec::new(),
-                    destination: None,
-                    is_mut_ref: false,
-                    statement_index: info.statement_index,
-                    static_access_index: info.static_access_index,
-                },
-                properties,
-            )
-        })
-        .collect()
 }
 
 fn is_drop_impl(tcx: TyCtxt<'_>, fn_did: DefId) -> bool {

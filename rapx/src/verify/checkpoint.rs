@@ -2,8 +2,8 @@
 //!
 //! A [`Checkpoint`] is a point in a function body that must be verified: an
 //! unsafe call, a MIR intrinsic, a raw-pointer dereference, or a `static mut` access.  The
-//! `collect_*` functions scan MIR for them; the rest of the verifier consumes
-//! the resulting records.
+//! `collect_*` functions scan MIR and attach safety requirements; the rest of
+//! the verifier consumes the resulting records.
 
 #[cfg(not(rapx_box_deref_transmute))]
 use crate::def_ids::lang_api::{self, LangItem};
@@ -27,7 +27,9 @@ use rustc_middle::mir::CastKind;
 use rustc_middle::ty::TyKind;
 use std::collections::HashSet;
 
-use super::contract::Property;
+use super::contract::{
+    ContractExpr, ContractKind, ContractPlace, PlaceBase, Property, PropertyArg, PropertyKind,
+};
 
 /// MIR block containing a verification checkpoint.
 ///
@@ -83,10 +85,6 @@ pub(crate) struct Checkpoint<'tcx> {
     pub(super) requires: Vec<Property<'tcx>>,
 
     // Variant-specific metadata.
-    /// Index in the function's collected `static mut` accesses. This distinguishes
-    /// accesses at the same MIR position, such as separate call arguments.
-    /// Other checkpoint kinds use zero.
-    pub(super) static_access_index: usize,
     /// For `RawPtrDeref` checkpoints: whether the deref produces a mutable
     /// reference (`&mut *ptr`) rather than a shared one (`&*ptr`).
     pub(super) is_mut_ref: bool,
@@ -153,7 +151,6 @@ pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<C
                     destination: None,
                     is_mut_ref: false,
                     statement_index,
-                    static_access_index: 0,
                 });
             }
         }
@@ -188,7 +185,6 @@ pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<C
                     destination,
                     is_mut_ref: false,
                     statement_index: data.statements.len(),
-                    static_access_index: 0,
                 });
             }
             continue;
@@ -215,30 +211,10 @@ pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<C
             destination,
             is_mut_ref: false,
             statement_index: data.statements.len(),
-            static_access_index: 0,
         });
     }
 
     checkpoints
-}
-
-/// Metadata for a single raw pointer dereference operation found in MIR.
-#[derive(Clone, Debug)]
-pub struct RawPtrDerefInfo<'tcx> {
-    pub block: BasicBlock,
-    pub ptr_operand: Operand<'tcx>,
-    pub pointee_ty: Ty<'tcx>,
-    pub is_read: bool,
-    /// Whether the statement is a reference creation from a raw pointer
-    /// (`&*raw_ptr` / `&mut *raw_ptr`), i.e. an `Rvalue::Ref` whose place has a
-    /// raw-pointer deref projection. This is the `Ptr2Ref` operation.
-    pub is_ptr2ref: bool,
-    /// Whether the Ptr2Ref produces a mutable reference (`&mut *raw_ptr`).
-    pub is_mut_ref: bool,
-    /// Result local for a read or reference creation; writes have no result.
-    pub destination: Option<Local>,
-    /// Statement index within `block` (for reverse liveness at the deref point).
-    pub statement_index: usize,
 }
 
 /// Locals that hold the result of the compiler's safe `*box` deref lowering
@@ -310,15 +286,14 @@ fn is_box_deref_cast(tcx: TyCtxt<'_>, body: &Body<'_>, rvalue: &Rvalue<'_>) -> b
     }
 }
 
-/// Collect all raw pointer dereference operations in `def_id` as
-/// metadata records (block, pointer operand, pointee type, read-vs-write).
-pub fn collect_raw_ptr_deref_info<'tcx>(
+/// Collect raw pointer dereferences and their safety requirements.
+pub fn collect_raw_ptr_deref_checkpoints<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
-) -> Vec<RawPtrDerefInfo<'tcx>> {
-    let mut infos = Vec::new();
+) -> Vec<Checkpoint<'tcx>> {
+    let mut checkpoints = Vec::new();
     if !tcx.is_mir_available(def_id) {
-        return infos;
+        return checkpoints;
     }
 
     let body = tcx.optimized_mir(def_id);
@@ -393,12 +368,13 @@ pub fn collect_raw_ptr_deref_info<'tcx>(
                 continue;
             };
 
-            infos.push(RawPtrDerefInfo {
+            checkpoints.push(Checkpoint {
+                caller: def_id,
+                callee: None,
                 block: bb,
-                ptr_operand,
-                pointee_ty: pointee,
-                is_read,
-                is_ptr2ref,
+                args: vec![ptr_operand],
+                kind: CheckpointKind::RawPtrDeref,
+                requires: raw_ptr_deref_requirements(pointee, is_read, is_ptr2ref),
                 is_mut_ref,
                 destination: (!is_write).then_some(lhs.local),
                 statement_index: stmt_index,
@@ -406,7 +382,60 @@ pub fn collect_raw_ptr_deref_info<'tcx>(
         }
     }
 
-    infos
+    checkpoints
+}
+
+fn raw_ptr_deref_requirements<'tcx>(
+    pointee: Ty<'tcx>,
+    is_read: bool,
+    is_ptr2ref: bool,
+) -> Vec<Property<'tcx>> {
+    let target = PropertyArg::Expr(ContractExpr::Place(ContractPlace {
+        base: PlaceBase::Arg(0),
+        projections: vec![],
+    }));
+    let ty = PropertyArg::Ty(pointee);
+    let count = PropertyArg::Expr(ContractExpr::Const(1));
+
+    let mut properties = if is_ptr2ref {
+        vec![
+            Property::new_atom(
+                PropertyKind::Init,
+                vec![target.clone(), ty.clone(), count.clone()],
+            ),
+            Property::new_atom(PropertyKind::NonNull, vec![target.clone()]),
+            Property::new_atom(
+                PropertyKind::Allocated,
+                vec![target.clone(), ty.clone(), count.clone()],
+            ),
+            Property::new_atom(
+                PropertyKind::InBound,
+                vec![target.clone(), ty.clone(), count.clone()],
+            ),
+            Property::new_atom(PropertyKind::Align, vec![target.clone(), ty.clone()]),
+            {
+                let mut property = Property::new_atom(PropertyKind::Alias, vec![target.clone()]);
+                property.set_contract_kind(ContractKind::Hazard);
+                property
+            },
+        ]
+    } else {
+        vec![
+            Property::new_atom(
+                PropertyKind::Allocated,
+                vec![target.clone(), ty.clone(), count.clone()],
+            ),
+            Property::new_atom(
+                PropertyKind::InBound,
+                vec![target.clone(), ty.clone(), count.clone()],
+            ),
+            Property::new_atom(PropertyKind::Align, vec![target.clone(), ty.clone()]),
+        ]
+    };
+    if is_read && !is_ptr2ref {
+        properties.push(Property::new_atom(PropertyKind::Typed, vec![target, ty]));
+    }
+    properties
 }
 
 /// Extract the pointer operand from a dereference place.
@@ -428,33 +457,18 @@ fn ptr_operand_for_deref_place<'tcx>(place: &Place<'tcx>) -> Option<Operand<'tcx
     }))
 }
 
-/// Metadata for a `static mut` access found in MIR.
-#[derive(Clone, Debug)]
-pub struct StaticMutAccessInfo<'tcx> {
-    /// Basic block containing the access.
-    pub block: BasicBlock,
-    /// The pointee type (i.e. the type of the static itself, `T` in `static mut X: T`).
-    pub ty: Ty<'tcx>,
-    /// The MIR operand holding the pointer to the static.
-    pub ptr_operand: Operand<'tcx>,
-    /// Statement position, or the statement count for a terminator argument.
-    pub statement_index: usize,
-    /// Index in the function's collected `static mut` accesses.
-    pub static_access_index: usize,
-}
-
-/// Collect all basic blocks that reference mutable statics in `def_id`.
+/// Collect checkpoints for mutable static accesses in `def_id`.
 ///
 /// Mutable statics appear as `Constant` operands whose `check_static_ptr` points
 /// to a `static mut` item.  Both reads and writes are detected here; the
 /// conservative `Init` property will be checked regardless of direction.
-pub fn collect_static_mut_access_info<'tcx>(
+pub fn collect_static_mut_checkpoints<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
-) -> Vec<StaticMutAccessInfo<'tcx>> {
-    let mut infos = Vec::new();
+) -> Vec<Checkpoint<'tcx>> {
+    let mut checkpoints = Vec::new();
     if !tcx.is_mir_available(def_id) {
-        return infos;
+        return checkpoints;
     }
 
     let body = tcx.optimized_mir(def_id);
@@ -466,14 +480,9 @@ pub fn collect_static_mut_access_info<'tcx>(
                     && let Some(static_id) = c.check_static_ptr(tcx)
                     && matches!(tcx.static_mutability(static_id), Some(m) if m.is_mut())
                 {
-                    let ty = tcx.type_of(static_id).skip_binder();
-                    infos.push(StaticMutAccessInfo {
-                        block: bb,
-                        ty,
-                        ptr_operand: op.clone(),
-                        statement_index,
-                        static_access_index: infos.len(),
-                    });
+                    checkpoints.push(static_mut_checkpoint(
+                        tcx, def_id, bb, statement_index, op.clone(), static_id,
+                    ));
                 }
             }
         }
@@ -487,18 +496,51 @@ pub fn collect_static_mut_access_info<'tcx>(
                     && let Some(static_id) = c.check_static_ptr(tcx)
                     && matches!(tcx.static_mutability(static_id), Some(m) if m.is_mut())
                 {
-                    let ty = tcx.type_of(static_id).skip_binder();
-                    infos.push(StaticMutAccessInfo {
-                        block: bb,
-                        ty,
-                        ptr_operand: op.clone(),
-                        statement_index: data.statements.len(),
-                        static_access_index: infos.len(),
-                    });
+                    checkpoints.push(static_mut_checkpoint(
+                        tcx, def_id, bb, data.statements.len(), op.clone(), static_id,
+                    ));
                 }
             }
         }
     }
 
-    infos
+    checkpoints
+}
+
+fn static_mut_checkpoint<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    caller: DefId,
+    block: BasicBlock,
+    statement_index: usize,
+    operand: Operand<'tcx>,
+    static_id: DefId,
+) -> Checkpoint<'tcx> {
+    let ty = PropertyArg::Ty(tcx.type_of(static_id).skip_binder());
+    let target = PropertyArg::Expr(ContractExpr::Place(ContractPlace {
+        base: PlaceBase::Arg(0),
+        projections: vec![],
+    }));
+    let count = PropertyArg::Expr(ContractExpr::Const(1));
+    Checkpoint {
+        caller,
+        callee: None,
+        args: vec![operand],
+        destination: None,
+        block,
+        statement_index,
+        kind: CheckpointKind::StaticMutAccess,
+        requires: vec![
+            Property::new_atom(
+                PropertyKind::Allocated,
+                vec![target.clone(), ty.clone(), count.clone()],
+            ),
+            Property::new_atom(
+                PropertyKind::InBound,
+                vec![target.clone(), ty.clone(), count.clone()],
+            ),
+            Property::new_atom(PropertyKind::Align, vec![target.clone(), ty.clone()]),
+            Property::new_atom(PropertyKind::Init, vec![target, ty, count]),
+        ],
+        is_mut_ref: false,
+    }
 }
