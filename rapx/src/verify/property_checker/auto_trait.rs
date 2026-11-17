@@ -14,15 +14,23 @@
 //! `std-trait.json` + `std-compound-properties.rs`; this module only
 //! implements the primitive type-level checks.
 
+use crate::analysis::dataflow::pointer_flow::trace_source_arg;
 use crate::def_ids::lang_api::{self, LangItem};
 use crate::def_ids::type_ids::{self, StdAdtType};
-use crate::helpers::mir_utils;
+use crate::helpers::{
+    mir_scan::place_has_raw_deref,
+    mir_utils::{self, dep_callee_def_id},
+};
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
-use rustc_middle::ty::{ClauseKind, GenericArgKind, ParamTy, Ty, TyCtxt, TyKind};
+use rustc_middle::{
+    mir::{Body, Local, Operand, ProjectionElem, Rvalue, StatementKind, TerminatorKind},
+    ty::{ClauseKind, GenericArgKind, ParamTy, Ty, TyCtxt, TyKind},
+};
+use std::collections::HashSet;
 
 use crate::compat::FxHashMap;
-use crate::verify::checkpoint::{Checkpoint, has_atomic_call, has_raw_ptr_write};
+use crate::verify::checkpoint::Checkpoint;
 use crate::verify::vm::state::VmState;
 use crate::verify::{
     contract::{Property, PropertyArg, PropertyKind},
@@ -352,7 +360,7 @@ fn param_bound_is_satisfied(
     false
 }
 
-/// Whether any inherent method of `ty` writes through a raw pointer.
+/// Whether any inherent function of `ty` may write through its first parameter.
 fn has_raw_ptr_writes<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> bool {
     let TyKind::Adt(adt_def, _) = ty.kind() else {
         return false;
@@ -363,6 +371,132 @@ fn has_raw_ptr_writes<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> bool {
             matches!(tcx.def_kind(*item), DefKind::Fn | DefKind::AssocFn)
                 && has_raw_ptr_write(tcx, *item)
         })
+    })
+}
+
+/// Whether a function may write through a raw pointer derived from its first
+/// parameter. Exclude writes to local storage or through later parameters;
+/// unresolved origins remain possible writes.
+fn has_raw_ptr_write(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
+    if !tcx.is_mir_available(def_id) {
+        return false;
+    }
+    let body = tcx.optimized_mir(def_id);
+    body.basic_blocks.iter().any(|bb| {
+        bb.statements.iter().any(|stmt| {
+            let StatementKind::Assign(assign) = &stmt.kind else {
+                return false;
+            };
+            let (lhs, _) = &**assign;
+            if !place_has_raw_deref(body, lhs) {
+                return false;
+            }
+            match trace_source_arg(tcx, body, lhs.local, &mut HashSet::new(), 3) {
+                Some(0) => true,
+                Some(_) => false,
+                None => !points_to_local_storage(body, lhs.local, &mut HashSet::new()),
+            }
+        })
+    })
+}
+
+/// Prove that every definition of `pointer` takes the address of local storage.
+fn points_to_local_storage(body: &Body<'_>, pointer: Local, seen: &mut HashSet<Local>) -> bool {
+    if pointer.as_usize() <= body.arg_count || !seen.insert(pointer) {
+        return false;
+    }
+    let mut found = false;
+    for block in body.basic_blocks.iter() {
+        for statement in &block.statements {
+            let StatementKind::Assign(assign) = &statement.kind else {
+                continue;
+            };
+            let (dest, value) = &**assign;
+            if dest.local != pointer || !dest.projection.is_empty() {
+                continue;
+            }
+            found = true;
+            let local_address = match value {
+                Rvalue::RawPtr(_, place) | Rvalue::Ref(_, _, place) => {
+                    place.local.as_usize() > body.arg_count
+                        && !place
+                            .projection
+                            .iter()
+                            .any(|elem| matches!(elem, ProjectionElem::Deref))
+                }
+                Rvalue::Use(Operand::Copy(place) | Operand::Move(place), ..)
+                | Rvalue::Cast(_, Operand::Copy(place) | Operand::Move(place), _) => {
+                    place.projection.is_empty()
+                        && points_to_local_storage(body, place.local, &mut seen.clone())
+                }
+                _ => false,
+            };
+            if !local_address {
+                return false;
+            }
+        }
+    }
+    found
+}
+
+/// Detect an atomic update in a method's MIR. Reads and fences do not count.
+fn has_atomic_call(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
+    if !tcx.is_mir_available(def_id) {
+        return false;
+    }
+    let body = tcx.optimized_mir(def_id);
+    body.basic_blocks.iter().any(|bb| {
+        if let TerminatorKind::Call { func, .. } | TerminatorKind::TailCall { func, .. } =
+            &bb.terminator().kind
+        {
+            let Some(callee) = dep_callee_def_id(func) else {
+                return false;
+            };
+            if tcx.intrinsic(callee).is_some_and(|i| {
+                i.name.as_str().strip_prefix("atomic_").is_some_and(|op| {
+                    [
+                        "store", "xchg", "cxchg", "xadd", "xsub", "and", "or", "xor", "nand",
+                        "min", "max", "umin", "umax",
+                    ]
+                    .iter()
+                    .any(|prefix| op.starts_with(prefix))
+                })
+            }) {
+                return true;
+            }
+            let Some(impl_id) = tcx.inherent_impl_of_assoc(callee) else {
+                return false;
+            };
+            let Some(adt) = tcx.type_of(impl_id).skip_binder().ty_adt_def() else {
+                return false;
+            };
+            let owner = tcx.def_path_str(adt.did());
+            (owner.starts_with("core::sync::atomic::Atomic")
+                || owner.starts_with("std::sync::atomic::Atomic"))
+                && matches!(
+                    tcx.item_name(callee).as_str(),
+                    "store"
+                        | "swap"
+                        | "compare_exchange"
+                        | "compare_exchange_weak"
+                        | "fetch_add"
+                        | "fetch_sub"
+                        | "fetch_and"
+                        | "fetch_nand"
+                        | "fetch_or"
+                        | "fetch_xor"
+                        | "fetch_not"
+                        | "fetch_update"
+                        | "fetch_max"
+                        | "fetch_min"
+                        | "fetch_ptr_add"
+                        | "fetch_ptr_sub"
+                        | "fetch_byte_add"
+                        | "fetch_byte_sub"
+                )
+        } else {
+            false
+        }
     })
 }
 

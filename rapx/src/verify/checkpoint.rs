@@ -9,7 +9,7 @@
 use crate::def_ids::lang_api::{self, LangItem};
 use crate::helpers::{
     mir_scan::{get_fn_safety, place_has_raw_deref},
-    mir_utils::{dep_callee_def_id, pointee_ty, resolve_callee_impl},
+    mir_utils::{pointee_ty, resolve_callee_impl},
     name::get_cleaned_def_path_name,
 };
 
@@ -73,9 +73,7 @@ pub(crate) struct Checkpoint<'tcx> {
 
     // Position in the caller's MIR.
     pub(super) block: BasicBlock,
-    /// Statement position within `block`; for a call terminator, the number of
-    /// statements in the block. The slicer uses this boundary to select the
-    /// preceding statements; alias checks also include the deref statement.
+    /// Position of this checkpoint within the MIR block.
     pub(super) statement_index: usize,
 
     // Verification semantics.
@@ -125,86 +123,6 @@ impl<'tcx> Checkpoint<'tcx> {
             },
         }
     }
-}
-
-/// Detect whether a function writes through a raw pointer (`*ptr = ...`).
-///
-/// Used by the marker-trait (`Send`/`Sync`) checker to decide whether a type's
-/// methods mutate through a raw-pointer field (interior mutation).
-pub fn has_raw_ptr_write(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
-    if !tcx.is_mir_available(def_id) {
-        return false;
-    }
-    let body = tcx.optimized_mir(def_id);
-    body.basic_blocks.iter().any(|bb| {
-        bb.statements.iter().any(|stmt| {
-            if let StatementKind::Assign(assign) = &stmt.kind {
-                let (lhs, _) = &**assign;
-                place_has_raw_deref(body, lhs)
-            } else {
-                false
-            }
-        })
-    })
-}
-
-/// Detect whether a function performs an atomic update, either through a
-/// compiler intrinsic (`atomic_store`/`atomic_xadd`/...) or through an
-/// `Atomic*` method (`fetch_add`/`store`/...). Reads and fences do not count.
-///
-/// Used by the marker-trait (`Send`/`Sync`) checker to recognize raw-pointer
-/// updates that are performed atomically rather than through a plain
-/// `*ptr = ...` write.  `AtomicUsize::fetch_add` and friends lower to intrinsic
-/// calls only when inlined; rapx disables inlining (`-Zmir-opt-level=0`), so the
-/// `Atomic*` method-call form must be recognized too.
-pub fn has_atomic_call(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
-    if !tcx.is_mir_available(def_id) {
-        return false;
-    }
-    let body = tcx.optimized_mir(def_id);
-    body.basic_blocks.iter().any(|bb| {
-        if let TerminatorKind::Call { func, .. } | TerminatorKind::TailCall { func, .. } =
-            &bb.terminator().kind
-        {
-            let Some(callee) = dep_callee_def_id(func) else {
-                return false;
-            };
-            if tcx
-                .intrinsic(callee)
-                .is_some_and(|i| {
-                    i.name.as_str().strip_prefix("atomic_").is_some_and(|op| {
-                        [
-                            "store", "xchg", "cxchg", "xadd", "xsub", "and", "or", "xor",
-                            "nand", "min", "max", "umin", "umax",
-                        ]
-                            .iter()
-                            .any(|prefix| op.starts_with(prefix))
-                    })
-                })
-            {
-                return true;
-            }
-            let Some(impl_id) = tcx.inherent_impl_of_assoc(callee) else {
-                return false;
-            };
-            let Some(adt) = tcx.type_of(impl_id).skip_binder().ty_adt_def() else {
-                return false;
-            };
-            let owner = tcx.def_path_str(adt.did());
-            (owner.starts_with("core::sync::atomic::Atomic")
-                || owner.starts_with("std::sync::atomic::Atomic"))
-                && matches!(
-                    tcx.item_name(callee).as_str(),
-                    "store" | "swap" | "compare_exchange" | "compare_exchange_weak"
-                        | "fetch_add" | "fetch_sub" | "fetch_and" | "fetch_nand"
-                        | "fetch_or" | "fetch_xor" | "fetch_not" | "fetch_update"
-                        | "fetch_max" | "fetch_min" | "fetch_ptr_add" | "fetch_ptr_sub"
-                        | "fetch_byte_add" | "fetch_byte_sub"
-                )
-        } else {
-            false
-        }
-    })
 }
 
 /// Collect all unsafe MIR checkpoints in `def_id` with full per-checkpoint metadata.
