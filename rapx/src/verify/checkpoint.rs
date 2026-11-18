@@ -134,6 +134,9 @@ impl<'tcx> Checkpoint<'tcx> {
 /// for later contract lookup and path analysis. Functions without MIR yield no
 /// checkpoints. Raw-pointer dereferences and `static mut` accesses are collected
 /// separately.
+///
+/// # Agent Rules
+/// Do not modify this function without human permission.
 pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<Checkpoint<'tcx>> {
     let mut checkpoints = Vec::new();
     if !tcx.is_mir_available(def_id) {
