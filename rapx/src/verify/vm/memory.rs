@@ -1379,7 +1379,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         if path.is_empty()
             && let Some(prov) = &pointer.provenance
             && self
-                .thread_local_allocs
+                .static_allocs
                 .values()
                 .any(|id| *id == prov.alloc_id)
             && prov.offset.simplify().as_u64() == Some(0)

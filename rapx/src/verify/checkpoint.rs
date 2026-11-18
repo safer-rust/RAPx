@@ -402,20 +402,20 @@ fn raw_ptr_deref_requirements<'tcx>(
     }));
     let ty = PropertyArg::Ty(pointee);
     let count = PropertyArg::Expr(ContractExpr::Const(1));
-    let extent_args = || vec![target.clone(), ty.clone(), count.clone()];
+    let range_args = || vec![target.clone(), ty.clone(), count.clone()];
 
     let is_ref = matches!(access, RawPtrAccess::SharedRef | RawPtrAccess::MutRef);
     let mut properties = Vec::new();
     if is_ref {
-        properties.push(Property::new_atom(PropertyKind::Init, extent_args()));
+        properties.push(Property::new_atom(PropertyKind::Init, range_args()));
         properties.push(Property::new_atom(
             PropertyKind::NonNull,
             vec![target.clone()],
         ));
     }
     properties.extend([
-        Property::new_atom(PropertyKind::Allocated, extent_args()),
-        Property::new_atom(PropertyKind::InBound, extent_args()),
+        Property::new_atom(PropertyKind::Allocated, range_args()),
+        Property::new_atom(PropertyKind::InBound, range_args()),
         Property::new_atom(PropertyKind::Align, vec![target.clone(), ty.clone()]),
     ]);
     if is_ref {

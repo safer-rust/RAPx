@@ -19,6 +19,12 @@ pub(crate) fn eval_use<'z3, 'tcx>(
     place: &Place<'tcx>,
     operand: &Operand<'tcx>,
 ) -> VmValue<'z3, 'tcx> {
+    if let Operand::Constant(constant) = operand
+        && let Some(static_id) = constant.check_static_ptr(state.tcx)
+        && state.tcx.is_mutable_static(static_id)
+    {
+        return eval_global_static_ptr(state, place, static_id);
+    }
     let mut val = state.value_of_operand(operand);
     if let Some(local) = operand.place().map(|place| place.local)
         && let Some(alloc_id) = val.provenance_alloc_id()
@@ -883,6 +889,43 @@ pub(crate) fn eval_fresh_value<'z3, 'tcx>(
     VmValue::new(term, dest_ty)
 }
 
+/// Give each mutable static a stable allocation without assuming its current value.
+fn eval_global_static_ptr<'z3, 'tcx>(
+    state: &mut VmState<'z3, 'tcx>,
+    dest_place: &Place<'tcx>,
+    def_id: DefId,
+) -> VmValue<'z3, 'tcx> {
+    let pointer_ty = dest_place.ty(state.body(), state.tcx).ty;
+    let object_ty = state.tcx.type_of(def_id).skip_binder();
+    let (alloc_id, base) = if let Some(&alloc_id) = state.static_allocs.get(&def_id) {
+        (alloc_id, state.alloc(alloc_id).base.clone())
+    } else {
+        let size = state.size_of_ty(object_ty);
+        let align = state.align_sym(object_ty);
+        let (alloc_id, base) =
+            state.allocate(Int::from_u64(state.z3_ctx, size), align, Some(object_ty));
+        state.static_allocs.insert(def_id, alloc_id);
+        state.content_mut(alloc_id).facts.initialized = true;
+        (alloc_id, base)
+    };
+    VmValue {
+        z3_term: base,
+        ty: pointer_ty,
+        provenance: Some(Provenance {
+            alloc_id,
+            offset: Int::from_u64(state.z3_ctx, 0),
+            offset_kind: None,
+        }),
+        facts: ValueFacts {
+            non_null: true,
+            init: true,
+            in_bounds: true,
+            ..Default::default()
+        },
+        source: ValueSource::None,
+    }
+}
+
 pub(crate) fn eval_thread_local_ref<'z3, 'tcx>(
     state: &mut VmState<'z3, 'tcx>,
     dest_place: &Place<'tcx>,
@@ -940,13 +983,13 @@ pub(crate) fn eval_thread_local_ref<'z3, 'tcx>(
         state.record_unsupported("ThreadLocalRef initializer");
         return eval_fresh_value(state, dest_place, "thread_local");
     };
-    let (alloc_id, base) = if let Some(&alloc_id) = state.thread_local_allocs.get(&def_id) {
+    let (alloc_id, base) = if let Some(&alloc_id) = state.static_allocs.get(&def_id) {
         (alloc_id, state.alloc(alloc_id).base.clone())
     } else {
         let align = state.align_sym(static_ty);
         let (alloc_id, base) =
             state.allocate(Int::from_u64(state.z3_ctx, size), align, Some(static_ty));
-        state.thread_local_allocs.insert(def_id, alloc_id);
+        state.static_allocs.insert(def_id, alloc_id);
         state.content_mut(alloc_id).facts.initialized = true;
         state.store_value(
             alloc_id,

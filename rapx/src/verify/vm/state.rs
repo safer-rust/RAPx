@@ -673,8 +673,8 @@ pub(crate) struct VmState<'z3, 'tcx> {
     pub(super) units: Vec<MemoryUnit<'z3, 'tcx>>,
     /// Ownership transfers shared by copies of the same raw pointer.
     ownership_transfers: Vec<OwnershipTransfer>,
-    /// Stable allocation for each thread-local static across MIR locals and frames.
-    pub(super) thread_local_allocs: FxHashMap<DefId, AllocId>,
+    /// Stable allocation for each static across MIR locals and frames.
+    pub(super) static_allocs: FxHashMap<DefId, AllocId>,
     /// Path conditions and term caches.
     pub(crate) constraints: Constraints<'z3, 'tcx>,
     /// Scratch state for recursive inlining.
@@ -884,7 +884,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             caller_frames: Vec::default(),
             units: Vec::default(),
             ownership_transfers: Vec::new(),
-            thread_local_allocs: FxHashMap::default(),
+            static_allocs: FxHashMap::default(),
             constraints,
             inline: InlineCtx::default(),
             method_result_cache: Vec::default(),
