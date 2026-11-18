@@ -5,11 +5,12 @@
 //! `collect_*` functions scan MIR and attach safety requirements; the rest of
 //! the verifier consumes the resulting records.
 
+use crate::def_ids::intrinsic_api;
 #[cfg(not(rapx_box_deref_transmute))]
 use crate::def_ids::lang_api::{self, LangItem};
 use crate::helpers::{
     mir_scan::{get_fn_safety, place_has_raw_deref},
-    mir_utils::{pointee_ty, resolve_callee_impl},
+    mir_utils::pointee_ty,
     name::get_cleaned_def_path_name,
 };
 
@@ -114,7 +115,7 @@ impl<'tcx> Checkpoint<'tcx> {
                         .map(|statement| &statement.kind)
                     {
                         Some(StatementKind::Intrinsic(intrinsic)) => {
-                            crate::def_ids::intrinsic_api::lowered_mir_path(intrinsic).to_string()
+                            intrinsic_api::lowered_mir_path(intrinsic).to_string()
                         }
                         _ => "unknown-callee".to_string(),
                     }
@@ -124,7 +125,15 @@ impl<'tcx> Checkpoint<'tcx> {
     }
 }
 
-/// Collect all unsafe MIR checkpoints in `def_id` with full per-checkpoint metadata.
+/// Collect unsafe calls in `def_id`'s optimized MIR as verification checkpoints.
+///
+/// This includes unsafe `Call` and `TailCall` terminators and calls to `assume`
+/// or `copy_nonoverlapping` that rustc lowered to intrinsic statements. A direct
+/// call records its `DefId`; an unsafe function-pointer call has no known callee
+/// and records `None`. Each checkpoint retains the call arguments and MIR position
+/// for later contract lookup and path analysis. Functions without MIR yield no
+/// checkpoints. Raw-pointer dereferences and `static mut` accesses are collected
+/// separately.
 pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<Checkpoint<'tcx>> {
     let mut checkpoints = Vec::new();
     if !tcx.is_mir_available(def_id) {
@@ -143,7 +152,7 @@ pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<C
                 };
                 checkpoints.push(Checkpoint {
                     caller: def_id,
-                    callee: crate::def_ids::intrinsic_api::lowered_mir_def_id(tcx, intrinsic),
+                    callee: intrinsic_api::lowered_mir_def_id(tcx, intrinsic),
                     block: bb,
                     args,
                     kind: CheckpointKind::UnsafeCall,
@@ -171,7 +180,7 @@ pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<C
             Operand::Copy(place) | Operand::Move(place) => place.ty(body, tcx).ty,
             Operand::RuntimeChecks(_) => continue,
         };
-        let ty::FnDef(callee_def_id, callee_args) = func_ty.kind() else {
+        let ty::FnDef(callee_def_id, _) = func_ty.kind() else {
             if let ty::FnPtr(_, header) = func_ty.kind()
                 && header.safety() == Safety::Unsafe
             {
@@ -189,21 +198,13 @@ pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<C
             }
             continue;
         };
-        let callee_args = callee_args.skip_binder();
-
         if get_fn_safety(tcx, *callee_def_id) != Safety::Unsafe {
             continue;
         }
 
-        // Normalize a trait-method callee to the concrete impl method so that
-        // inline `#[rapx::requires]` contracts (which live on the impl, not the
-        // trait declaration) are found during contract lookup.
-        let resolved_callee =
-            resolve_callee_impl(tcx, def_id, *callee_def_id, callee_args).unwrap_or(*callee_def_id);
-
         checkpoints.push(Checkpoint {
             caller: def_id,
-            callee: Some(resolved_callee),
+            callee: Some(*callee_def_id),
             block: bb,
             args: args.iter().map(|arg| arg.node.clone()).collect(),
             kind: CheckpointKind::UnsafeCall,

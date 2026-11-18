@@ -485,9 +485,11 @@ fn has_callback_effect(tcx: TyCtxt<'_>, callee: DefId, result_ty: Ty<'_>) -> boo
         && crate::verify::call_summary::callback::supports_result(result_ty)
 }
 
-/// Resolve a trait-method callee to its concrete impl `DefId`. Returns `None`
-/// when it is not a trait method or has no distinct concrete target (e.g. still
-/// generic/virtual).
+/// Return the impl method `DefId` selected for a trait-method call.
+///
+/// This does not return a monomorphized method instance. Returns `None` for
+/// non-trait methods, unresolved or virtual calls, and calls that resolve
+/// back to the original trait method.
 pub(crate) fn resolve_callee_impl<'tcx>(
     tcx: TyCtxt<'tcx>,
     caller_def_id: DefId,
@@ -524,8 +526,8 @@ pub(crate) fn resolve_callee_instance<'tcx>(
     resolve_instance(tcx, caller, *def_id, callee_args)
 }
 
-/// Return the call's `DefId`, resolving trait methods to a concrete impl when
-/// possible. Fall back to the operand's `DefId` if resolution fails.
+/// Return the call's `DefId`, using the selected impl method's `DefId` when
+/// available. Otherwise return the `DefId` from the operand.
 pub(crate) fn resolve_callee_def_id<'tcx>(
     tcx: TyCtxt<'tcx>,
     caller: DefId,

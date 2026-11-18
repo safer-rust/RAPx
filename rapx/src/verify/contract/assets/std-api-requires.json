@@ -331,7 +331,7 @@
     {
       "tag": "ValidNum",
       "args": [
-        "start <= end"
+        "Arg_0 + Arg_1 <= Self::MAX"
       ]
     }
   ],
@@ -339,7 +339,7 @@
     {
       "tag": "ValidNum",
       "args": [
-        "start <= end"
+        "Arg_0 - Arg_1 >= Self::MIN"
       ]
     }
   ],
