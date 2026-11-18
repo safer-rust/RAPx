@@ -277,7 +277,7 @@ pub(crate) fn check_alias_vm<'z3, 'tcx>(
                         vm_state,
                         checkpoint,
                         checkpoint.is_mut_ref,
-                        checkpoint.statement_index,
+                        checkpoint.stmt_index,
                     )
                 {
                     return VmAliasResult::Failed(reason);

@@ -669,7 +669,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
             let mir = self.tcx.optimized_mir(def_id);
             let Some(statement) = mir.basic_blocks[checkpoint.block]
                 .statements
-                .get(checkpoint.statement_index)
+                .get(checkpoint.stmt_index)
             else {
                 continue;
             };

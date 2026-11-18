@@ -235,7 +235,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
                     // Alias checks need the reference created by the deref itself;
                     // memory-shape checks must inspect the state before it.
                     // Terminator calls use the index after the last statement.
-                    checkpoint.statement_index
+                    checkpoint.stmt_index
                         + usize::from(
                             checkpoint.kind == CheckpointKind::RawPtrDeref
                                 && property.kind() == Some(contract::PropertyKind::Alias),

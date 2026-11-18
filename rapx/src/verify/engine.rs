@@ -836,7 +836,7 @@ impl<'tcx> VerifyEngine<'tcx> {
             requires: Vec::new(),
             destination: None,
             is_mut_ref: false,
-            statement_index: 0,
+            stmt_index: 0,
         };
         self.check_goals(
             cache,

@@ -78,7 +78,7 @@ pub(crate) struct Checkpoint<'tcx> {
     // Position in the caller's MIR.
     pub(super) block: BasicBlock,
     /// Position of this checkpoint within the MIR block.
-    pub(super) statement_index: usize,
+    pub(super) stmt_index: usize,
 
     // Verification semantics.
     pub(super) kind: CheckpointKind,
@@ -111,7 +111,7 @@ impl<'tcx> Checkpoint<'tcx> {
                     let body = tcx.optimized_mir(self.caller);
                     match body.basic_blocks[self.block]
                         .statements
-                        .get(self.statement_index)
+                        .get(self.stmt_index)
                         .map(|statement| &statement.kind)
                     {
                         Some(StatementKind::Intrinsic(intrinsic)) => {
@@ -162,7 +162,7 @@ pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<C
                     requires: Vec::new(),
                     destination: None,
                     is_mut_ref: false,
-                    statement_index,
+                    stmt_index: statement_index,
                 });
             }
         }
@@ -196,7 +196,7 @@ pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<C
                     requires: Vec::new(),
                     destination,
                     is_mut_ref: false,
-                    statement_index: data.statements.len(),
+                    stmt_index: data.statements.len(),
                 });
             }
             continue;
@@ -214,7 +214,7 @@ pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<C
             requires: Vec::new(),
             destination,
             is_mut_ref: false,
-            statement_index: data.statements.len(),
+            stmt_index: data.statements.len(),
         });
     }
 
@@ -290,6 +290,14 @@ fn is_box_deref_cast(tcx: TyCtxt<'_>, body: &Body<'_>, rvalue: &Rvalue<'_>) -> b
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RawPtrAccess {
+    Write,
+    Read,
+    SharedRef,
+    MutRef,
+}
+
 /// Collect raw pointer dereferences and their safety requirements.
 pub fn collect_raw_ptr_deref_checkpoints<'tcx>(
     tcx: TyCtxt<'tcx>,
@@ -308,43 +316,35 @@ pub fn collect_raw_ptr_deref_checkpoints<'tcx>(
     // Filter out inlined library code, but keep macro expansions invoked from
     // this function's source file.
     let fn_span = tcx.def_span(def_id);
-    let local_file = tcx.sess.source_map().lookup_char_pos(fn_span.lo()).file;
+    let source_map = tcx.sess.source_map();
+    let local_file = source_map.lookup_char_pos(fn_span.lo()).file;
     let in_fn_file = |span: rustc_span::Span| {
-        let file = tcx
-            .sess
-            .source_map()
-            .lookup_char_pos(span.source_callsite().lo())
-            .file;
+        let file = source_map.lookup_char_pos(span.source_callsite().lo()).file;
         std::sync::Arc::ptr_eq(&file, &local_file)
     };
 
     for (bb, data) in body.basic_blocks.iter_enumerated() {
-        let mut push_deref = |place: &Place<'tcx>,
-                              statement_index,
-                              is_read,
-                              is_ptr2ref,
-                              is_mut_ref,
-                              destination| {
+        let mut push_deref = |place: &Place<'tcx>, stmt_index, access, destination| {
             // Skip safe `*box` derefs (see `box_deref_transmute_locals`).
             if !place_has_raw_deref(body, place) || box_derefs.contains(&place.local) {
                 return;
             }
-            let Some(ptr_operand) = ptr_operand_for_deref_place(place) else {
+            let Some(ptr) = ptr_operand_for_deref_place(place) else {
                 return;
             };
-            let Some(pointee) = pointee_ty(body.local_decls[place.local].ty) else {
+            let Some(pointee_ty) = pointee_ty(body.local_decls[place.local].ty) else {
                 return;
             };
             checkpoints.push(Checkpoint {
                 caller: def_id,
                 callee: None,
                 block: bb,
-                args: vec![ptr_operand],
+                args: vec![ptr],
                 kind: CheckpointKind::RawPtrDeref,
-                requires: raw_ptr_deref_requirements(pointee, is_read, is_ptr2ref),
-                is_mut_ref,
+                requires: raw_ptr_deref_requirements(pointee_ty, access),
+                is_mut_ref: access == RawPtrAccess::MutRef,
                 destination,
-                statement_index,
+                stmt_index,
             });
         };
 
@@ -359,31 +359,21 @@ pub fn collect_raw_ptr_deref_checkpoints<'tcx>(
 
             let is_write = place_has_raw_deref(body, lhs);
             if is_write {
-                push_deref(lhs, stmt_index, false, false, false, None);
+                push_deref(lhs, stmt_index, RawPtrAccess::Write, None);
             }
+            let destination = (!is_write).then_some(lhs.local);
             match rhs {
                 Rvalue::Use(Operand::Copy(place) | Operand::Move(place), ..)
                 | Rvalue::Discriminant(place) => {
-                    push_deref(
-                        place,
-                        stmt_index,
-                        true,
-                        false,
-                        false,
-                        (!is_write).then_some(lhs.local),
-                    );
+                    push_deref(place, stmt_index, RawPtrAccess::Read, destination);
                 }
                 Rvalue::Ref(_, borrow_kind, place) => {
-                    let is_mut_ref =
-                        matches!(borrow_kind, rustc_middle::mir::BorrowKind::Mut { .. });
-                    push_deref(
-                        place,
-                        stmt_index,
-                        true,
-                        true,
-                        is_mut_ref,
-                        (!is_write).then_some(lhs.local),
-                    );
+                    let access = if matches!(borrow_kind, rustc_middle::mir::BorrowKind::Mut { .. }) {
+                        RawPtrAccess::MutRef
+                    } else {
+                        RawPtrAccess::SharedRef
+                    };
+                    push_deref(place, stmt_index, access, destination);
                 }
                 _ => {}
             }
@@ -396,7 +386,7 @@ pub fn collect_raw_ptr_deref_checkpoints<'tcx>(
         let TerminatorKind::Drop { place, .. } = &terminator.kind else {
             continue;
         };
-        push_deref(place, data.statements.len(), true, false, false, None);
+        push_deref(place, data.statements.len(), RawPtrAccess::Read, None);
     }
 
     checkpoints
@@ -404,8 +394,7 @@ pub fn collect_raw_ptr_deref_checkpoints<'tcx>(
 
 fn raw_ptr_deref_requirements<'tcx>(
     pointee: Ty<'tcx>,
-    is_read: bool,
-    is_ptr2ref: bool,
+    access: RawPtrAccess,
 ) -> Vec<Property<'tcx>> {
     let target = PropertyArg::Expr(ContractExpr::Place(ContractPlace {
         base: PlaceBase::Arg(0),
@@ -413,43 +402,28 @@ fn raw_ptr_deref_requirements<'tcx>(
     }));
     let ty = PropertyArg::Ty(pointee);
     let count = PropertyArg::Expr(ContractExpr::Const(1));
+    let extent_args = || vec![target.clone(), ty.clone(), count.clone()];
 
-    let mut properties = if is_ptr2ref {
-        vec![
-            Property::new_atom(
-                PropertyKind::Init,
-                vec![target.clone(), ty.clone(), count.clone()],
-            ),
-            Property::new_atom(PropertyKind::NonNull, vec![target.clone()]),
-            Property::new_atom(
-                PropertyKind::Allocated,
-                vec![target.clone(), ty.clone(), count.clone()],
-            ),
-            Property::new_atom(
-                PropertyKind::InBound,
-                vec![target.clone(), ty.clone(), count.clone()],
-            ),
-            Property::new_atom(PropertyKind::Align, vec![target.clone(), ty.clone()]),
-            {
-                let mut property = Property::new_atom(PropertyKind::Alias, vec![target.clone()]);
-                property.set_contract_kind(ContractKind::Hazard);
-                property
-            },
-        ]
-    } else {
-        vec![
-            Property::new_atom(
-                PropertyKind::Allocated,
-                vec![target.clone(), ty.clone(), count.clone()],
-            ),
-            Property::new_atom(
-                PropertyKind::InBound,
-                vec![target.clone(), ty.clone(), count.clone()],
-            ),
-            Property::new_atom(PropertyKind::Align, vec![target.clone(), ty.clone()]),
-        ]
-    };
-    if is_read && !is_ptr2ref {
+    let is_ref = matches!(access, RawPtrAccess::SharedRef | RawPtrAccess::MutRef);
+    let mut properties = Vec::new();
+    if is_ref {
+        properties.push(Property::new_atom(PropertyKind::Init, extent_args()));
+        properties.push(Property::new_atom(
+            PropertyKind::NonNull,
+            vec![target.clone()],
+        ));
+    }
+    properties.extend([
+        Property::new_atom(PropertyKind::Allocated, extent_args()),
+        Property::new_atom(PropertyKind::InBound, extent_args()),
+        Property::new_atom(PropertyKind::Align, vec![target.clone(), ty.clone()]),
+    ]);
+    if is_ref {
+        let mut alias = Property::new_atom(PropertyKind::Alias, vec![target.clone()]);
+        alias.set_contract_kind(ContractKind::Hazard);
+        properties.push(alias);
+    }
+    if access == RawPtrAccess::Read {
         properties.push(Property::new_atom(PropertyKind::Typed, vec![target, ty]));
     }
     properties
@@ -544,7 +518,7 @@ fn static_mut_checkpoint<'tcx>(
         args: vec![operand],
         destination: None,
         block,
-        statement_index,
+        stmt_index: statement_index,
         kind: CheckpointKind::StaticMutAccess,
         requires: vec![
             Property::new_atom(
