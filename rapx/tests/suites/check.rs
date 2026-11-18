@@ -49,3 +49,6 @@ check_not_contain_test!(check_uaf_false_20, "check/uaf_false_20", CMD_CHECK_UAF,
 check_contain_test!(check_memleak_01, "check/memleak_1", CMD_CHECK_MEMLEAK, "Memory Leak detected in function main");
 check_contain_test!(check_memleak_02, "check/memleak_2", CMD_CHECK_MEMLEAK, "Memory Leak detected in function main");
 check_contain_test!(check_memleak_03, "check/memleak_3", CMD_CHECK_MEMLEAK, "Memory Leak detected in function main");
+
+// Analysis completes on a crate whose calls resolve to closures
+check_not_contain_test!(check_closure_callee_01, "check/closure_callee_1", CMD_CHECK_UAF, "panicked");
