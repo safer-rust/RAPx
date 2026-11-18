@@ -485,31 +485,6 @@ fn has_callback_effect(tcx: TyCtxt<'_>, callee: DefId, result_ty: Ty<'_>) -> boo
         && crate::verify::call_summary::callback::supports_result(result_ty)
 }
 
-/// Return the impl method `DefId` selected for a trait-method call.
-///
-/// This does not return a monomorphized method instance. Returns `None` for
-/// non-trait methods, unresolved or virtual calls, and calls that resolve
-/// back to the original trait method.
-pub(crate) fn resolve_callee_impl<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    caller_def_id: DefId,
-    callee_def_id: DefId,
-    callee_args: GenericArgsRef<'tcx>,
-) -> Option<DefId> {
-    let assoc = tcx.opt_associated_item(callee_def_id)?;
-    assoc.trait_container(tcx)?;
-    let instance = resolve_instance(tcx, caller_def_id, callee_def_id, callee_args)?;
-    let resolved = match instance.def {
-        InstanceKind::Item(def_id) => def_id,
-        _ => return None,
-    };
-    if resolved == callee_def_id {
-        None
-    } else {
-        Some(resolved)
-    }
-}
-
 /// Resolve a call `func` operand to its monomorphized [`Instance`].
 pub(crate) fn resolve_callee_instance<'tcx>(
     tcx: TyCtxt<'tcx>,
@@ -541,7 +516,15 @@ pub(crate) fn resolve_callee_def_id<'tcx>(
     };
     let callee_def_id = *def_id;
     let callee_args = callee_args.skip_binder();
-    resolve_callee_impl(tcx, caller, callee_def_id, callee_args).or(Some(callee_def_id))
+    let resolved = tcx
+        .opt_associated_item(callee_def_id)
+        .and_then(|item| item.trait_container(tcx))
+        .and_then(|_| resolve_instance(tcx, caller, callee_def_id, callee_args))
+        .and_then(|instance| match instance.def {
+            InstanceKind::Item(def_id) => Some(def_id),
+            _ => None,
+        });
+    Some(resolved.unwrap_or(callee_def_id))
 }
 
 /// Collect all return basic block indices for a function body.
