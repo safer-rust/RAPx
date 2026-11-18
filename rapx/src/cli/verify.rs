@@ -64,8 +64,9 @@ pub struct VerifyArgs {
     /// Works with both `scan` and `targeted` modes.
     #[arg(long = "no-invariant-target")]
     pub skip_invariant: bool,
-    /// Constructor expansion: true forces available MIR instead of call models;
-    /// false never expands constructor MIR; default uses result invariants when available.
+    /// Constructor MIR: true prioritizes available MIR over call models;
+    /// false skips MIR; default skips MIR if the direct result has an invariant,
+    /// otherwise tries call models before MIR.
     #[arg(long = "expand-ctor", value_name = "MODE", default_value = "default")]
     pub constructor_mir: ConstructorMirMode,
     /// Filter verification targets to only those within the specified crate

@@ -1,7 +1,9 @@
 use super::super::target::CalleeBodies;
 use crate::analysis::path::{CallArg, CallBinding, PathTree};
+use crate::cli::ConstructorMirMode;
 use crate::compat::{FxHashMap, FxHashSet};
 use crate::def_ids::lang_api::{self, LangItem};
+use crate::helpers::fn_info::{self, FnKind};
 use crate::helpers::{mir_utils, name::get_adt_self_ty};
 use crate::limit::{HINTED_CALLEE_BLOCK_LIMIT, LOCAL_CALLEE_BLOCK_LIMIT};
 use crate::verify::constructor_policy;
@@ -205,7 +207,12 @@ impl<'tcx> CallSiteIndex<'tcx> {
                 } else {
                     base_callee
                 };
-                if !constructor_policy::allows_mir_expansion(self.tcx, callee) {
+                if fn_info::get_type(self.tcx, callee) == FnKind::Constructor
+                    && matches!(
+                        constructor_policy::effective_mir_mode(self.tcx, callee),
+                        ConstructorMirMode::False
+                    )
+                {
                     continue;
                 }
                 // An instantiated root can resolve Clone at this callsite.
@@ -330,11 +337,14 @@ impl<'tcx> CallSiteIndex<'tcx> {
                                 mir_utils::RangeKind::Range | mir_utils::RangeKind::RangeInclusive
                             ))
                     });
+                let ctor_mode =
+                    (fn_info::get_type(self.tcx, callee) == FnKind::Constructor)
+                        .then(|| constructor_policy::effective_mir_mode(self.tcx, callee));
                 if crate::def_ids::intrinsic_api::is_intrinsic(self.tcx, callee)
                     || !self.tcx.is_mir_available(callee)
                     || expanded.contains(&callee)
                     || (crate::verify::call_summary::effects::has_registered_effect(self.tcx, Some(callee))
-                        && !constructor_policy::forces_constructor_mir(self.tcx, callee))
+                        && !matches!(ctor_mode, Some(ConstructorMirMode::True)))
                     || crate::verify::target::has_slice_offset_ensures(self.tcx, callee)
                     || crate::def_ids::other_api::is_ub_check(self.tcx, callee)
                     || (range_next

@@ -15,9 +15,11 @@ use super::super::state::{VmState, VmValue};
 use super::RuleFlow;
 use self::comparison::ComparisonPlan;
 use self::index::BuiltinIndexPlan;
+use crate::cli::ConstructorMirMode;
 use crate::def_ids::type_ids;
 use crate::compat::Spanned;
 use crate::def_ids::diagnostic_api;
+use crate::helpers::fn_info::{self, FnKind};
 use crate::helpers::mir_utils;
 use crate::verify::call_summary::CallEffect;
 use crate::verify::{api_classify, call_summary, constructor_policy};
@@ -231,10 +233,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         if call_summary::effects::is_unmodeled_intrinsic(self.tcx, callee) {
             return CallModel::UnsupportedIntrinsic;
         }
-        let force_constructor_mir = callee.is_some_and(|id| {
-            constructor_policy::forces_constructor_mir(self.tcx, id)
-                && self.tcx.is_mir_available(id)
-        });
+        let ctor_mode = callee
+            .filter(|id| fn_info::get_type(self.tcx, *id) == FnKind::Constructor)
+            .map(|id| constructor_policy::effective_mir_mode(self.tcx, id));
+        let force_constructor_mir = matches!(ctor_mode, Some(ConstructorMirMode::True))
+            && callee.is_some_and(|id| self.tcx.is_mir_available(id));
         if !force_constructor_mir {
             if let Some(plan) = self.prepare_builtin_index(callee, args, arg_locals, destination) {
                 return CallModel::BuiltinIndex(plan);
@@ -261,7 +264,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             }
         }
         if let Some(callee) = callee
-            && !constructor_policy::allows_mir_expansion(self.tcx, callee)
+            && matches!(ctor_mode, Some(ConstructorMirMode::False))
         {
             CallModel::Constructor(callee)
         } else if let Some(callee) = callee

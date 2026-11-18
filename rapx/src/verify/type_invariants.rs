@@ -75,7 +75,7 @@ pub(crate) fn build_type_invariants_for_ty<'tcx>(
     results
 }
 
-pub(crate) fn has_type_invariants_for_ty<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> bool {
+pub(crate) fn has_json_type_invariants<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> bool {
     let db = crate::verify::contract::json::get_std_type_invariants();
     let (key, _) = type_path_key(tcx, ty);
     db.contains_key(&key)

@@ -6,7 +6,7 @@
 
 use crate::analysis::Analysis;
 use crate::analysis::safety_flow::root::{
-    function_has_struct_invariant, function_has_trait_ensurance, hir_contains_unsafe,
+    function_has_rapx_struct_invariant, function_has_trait_ensurance, hir_contains_unsafe,
 };
 use crate::cli::VerifyMode;
 use crate::compat::FxHashMap;
@@ -965,7 +965,7 @@ impl<'tcx> Visitor<'tcx> for VerifyTargetCollector<'tcx> {
 
         if !matches!(self.mode, VerifyMode::Targeted)
             && !hir_contains_unsafe(self.tcx, body_id)
-            && !function_has_struct_invariant(self.tcx, def_id)
+            && !function_has_rapx_struct_invariant(self.tcx, def_id)
             && !function_has_trait_ensurance(self.tcx, def_id)
         {
             return;

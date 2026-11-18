@@ -43,7 +43,7 @@ pub fn hir_contains_unsafe(tcx: TyCtxt<'_>, body_id: BodyId) -> bool {
 ///
 /// This is a cheap HIR attribute scan — it only checks for the presence of
 /// the attribute path, without parsing the annotation arguments.
-pub fn has_struct_invariant(tcx: TyCtxt<'_>, struct_def_id: DefId) -> bool {
+pub fn has_rapx_struct_invariant(tcx: TyCtxt<'_>, struct_def_id: DefId) -> bool {
     let Some(local_def_id) = struct_def_id.as_local() else {
         return false;
     };
@@ -51,15 +51,15 @@ pub fn has_struct_invariant(tcx: TyCtxt<'_>, struct_def_id: DefId) -> bool {
 }
 
 /// Quick check: does this function's owning struct have invariants?
-pub fn function_has_struct_invariant(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
+pub fn function_has_rapx_struct_invariant(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
     get_adt_def_id_by_adt_method(tcx, def_id)
-        .map(|struct_def_id| has_struct_invariant(tcx, struct_def_id))
+        .map(|struct_def_id| has_rapx_struct_invariant(tcx, struct_def_id))
         .unwrap_or(false)
 }
 
 /// Quick check: does this function's containing impl implement an `unsafe trait`?
 ///
-/// This is a fast HIR-level pre-filter similar to [`function_has_struct_invariant`].
+/// This is a fast HIR-level pre-filter similar to [`function_has_rapx_struct_invariant`].
 pub fn function_has_trait_ensurance(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
     let Some(assoc_item) = tcx.opt_associated_item(def_id) else {
         return false;
