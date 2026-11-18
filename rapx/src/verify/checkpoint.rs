@@ -305,73 +305,36 @@ pub fn collect_raw_ptr_deref_checkpoints<'tcx>(
     // by casting the box's inner field to a raw pointer; that deref is safe by
     // the `Box` invariant, so it is not a raw-pointer-deref checkpoint.
     let box_derefs = box_deref_transmute_locals(tcx, body);
-    // Filter: only check statements from the function's own source file,
-    // not from inlined library code (Vec, Box, etc.).
+    // Filter out inlined library code, but keep macro expansions invoked from
+    // this function's source file.
     let fn_span = tcx.def_span(def_id);
     let local_file = tcx.sess.source_map().lookup_char_pos(fn_span.lo()).file;
+    let in_fn_file = |span: rustc_span::Span| {
+        let file = tcx
+            .sess
+            .source_map()
+            .lookup_char_pos(span.source_callsite().lo())
+            .file;
+        std::sync::Arc::ptr_eq(&file, &local_file)
+    };
 
     for (bb, data) in body.basic_blocks.iter_enumerated() {
-        for (stmt_index, stmt) in data.statements.iter().enumerate() {
-            let stmt_file = tcx
-                .sess
-                .source_map()
-                .lookup_char_pos(stmt.source_info.span.lo())
-                .file;
-            if !std::ptr::addr_eq(
-                std::sync::Arc::as_ptr(&stmt_file),
-                std::sync::Arc::as_ptr(&local_file),
-            ) {
-                continue;
-            }
-            let StatementKind::Assign(assign) = &stmt.kind else {
-                continue;
-            };
-            let (lhs, rhs) = &**assign;
-
-            let is_write = place_has_raw_deref(body, lhs);
-            let (is_read, is_ptr2ref, is_mut_ref) = match rhs {
-                Rvalue::Use(Operand::Copy(place) | Operand::Move(place), ..) => {
-                    (place_has_raw_deref(body, place), false, false)
-                }
-                Rvalue::Ref(_, borrow_kind, place) => {
-                    let reads_raw_ptr = place_has_raw_deref(body, place);
-                    (
-                        reads_raw_ptr,
-                        reads_raw_ptr,
-                        reads_raw_ptr
-                            && matches!(borrow_kind, rustc_middle::mir::BorrowKind::Mut { .. }),
-                    )
-                }
-                _ => (false, false, false),
-            };
-
-            if !is_write && !is_read {
-                continue;
-            }
-
-            let deref_place = if is_write {
-                lhs
-            } else {
-                match rhs {
-                    Rvalue::Use(Operand::Copy(place) | Operand::Move(place), ..)
-                    | Rvalue::Ref(_, _, place) => place,
-                    _ => continue,
-                }
-            };
-
+        let mut push_deref = |place: &Place<'tcx>,
+                              statement_index,
+                              is_read,
+                              is_ptr2ref,
+                              is_mut_ref,
+                              destination| {
             // Skip safe `*box` derefs (see `box_deref_transmute_locals`).
-            if box_derefs.contains(&deref_place.local) {
-                continue;
+            if !place_has_raw_deref(body, place) || box_derefs.contains(&place.local) {
+                return;
             }
-
-            let Some(ptr_operand) = ptr_operand_for_deref_place(deref_place) else {
-                continue;
+            let Some(ptr_operand) = ptr_operand_for_deref_place(place) else {
+                return;
             };
-
-            let Some(pointee) = pointee_ty(body.local_decls[deref_place.local].ty) else {
-                continue;
+            let Some(pointee) = pointee_ty(body.local_decls[place.local].ty) else {
+                return;
             };
-
             checkpoints.push(Checkpoint {
                 caller: def_id,
                 callee: None,
@@ -380,10 +343,60 @@ pub fn collect_raw_ptr_deref_checkpoints<'tcx>(
                 kind: CheckpointKind::RawPtrDeref,
                 requires: raw_ptr_deref_requirements(pointee, is_read, is_ptr2ref),
                 is_mut_ref,
-                destination: (!is_write).then_some(lhs.local),
-                statement_index: stmt_index,
+                destination,
+                statement_index,
             });
+        };
+
+        for (stmt_index, stmt) in data.statements.iter().enumerate() {
+            if !in_fn_file(stmt.source_info.span) {
+                continue;
+            }
+            let StatementKind::Assign(assign) = &stmt.kind else {
+                continue;
+            };
+            let (lhs, rhs) = &**assign;
+
+            let is_write = place_has_raw_deref(body, lhs);
+            if is_write {
+                push_deref(lhs, stmt_index, false, false, false, None);
+            }
+            match rhs {
+                Rvalue::Use(Operand::Copy(place) | Operand::Move(place), ..)
+                | Rvalue::Discriminant(place) => {
+                    push_deref(
+                        place,
+                        stmt_index,
+                        true,
+                        false,
+                        false,
+                        (!is_write).then_some(lhs.local),
+                    );
+                }
+                Rvalue::Ref(_, borrow_kind, place) => {
+                    let is_mut_ref =
+                        matches!(borrow_kind, rustc_middle::mir::BorrowKind::Mut { .. });
+                    push_deref(
+                        place,
+                        stmt_index,
+                        true,
+                        true,
+                        is_mut_ref,
+                        (!is_write).then_some(lhs.local),
+                    );
+                }
+                _ => {}
+            }
         }
+
+        let terminator = data.terminator();
+        if !in_fn_file(terminator.source_info.span) {
+            continue;
+        }
+        let TerminatorKind::Drop { place, .. } = &terminator.kind else {
+            continue;
+        };
+        push_deref(place, data.statements.len(), true, false, false, None);
     }
 
     checkpoints
