@@ -4,6 +4,7 @@
 
 mod proof;
 
+use indexmap::IndexMap;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{BasicBlock, Local, Operand, Rvalue, StatementKind, TerminatorKind},
@@ -130,25 +131,27 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
         }
         let mut conjunct_results = self.check_checkpoint_conjuncts(cache, checkpoint, &conjuncts);
         let mut next_conjunct = 0;
-        let mut by_property: Vec<_> = properties.iter().map(|property| {
+        let mut by_path: IndexMap<String, Vec<(usize, usize, CheckResult)>> = IndexMap::new();
+        let mut path_counts = Vec::with_capacity(properties.len());
+        for (property_index, property) in properties.iter().enumerate() {
             let bulk = Self::combine_conjunct_results(property, &mut conjunct_results, &mut next_conjunct);
-            (bulk.len(), bulk.into_iter())
-        }).collect();
-        let max_paths = by_property.iter().map(|(count, _)| *count).max().unwrap_or(0);
-        for path_index in 0..max_paths {
-            for (property_index, (property, (_, paths))) in properties.iter().zip(&mut by_property).enumerate() {
-                let Some((result, path_desc)) = paths.next() else {
-                    continue;
-                };
+            path_counts.push(bulk.len());
+            for (path_index, (result, path_description)) in bulk.into_iter().enumerate() {
+                by_path.entry(path_description).or_default().push((property_index, path_index, result));
+            }
+        }
+        for (path_description, mut path_properties) in by_path {
+            path_properties.sort_by_key(|(property_index, _, _)| *property_index);
+            for (property_index, path_index, result) in path_properties {
                 report.results.push(PropertyCheckResult {
                     checkpoint: checkpoint.location(),
                     checkpoint_index,
                     path_index,
                     property_index,
-                    property: property.clone(),
+                    property: properties[property_index].clone(),
                     diagnostics: Some(format!("vm-check: {result:?}")),
                     result,
-                    path_description: path_desc,
+                    path_description: path_description.clone(),
                     callee_name: checkpoint.callee_name(self.tcx),
                 });
             }
@@ -156,11 +159,11 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
         // The path limit bounds precision. Mark omitted paths as proved
         // so only results from enumerated paths affect the verdict.
         if self.path_tree.is_truncated() {
-            for (property_index, (property, (path_count, _))) in properties.iter().zip(&by_property).enumerate() {
+            for (property_index, (property, path_count)) in properties.iter().zip(path_counts).enumerate() {
                 report.results.push(PropertyCheckResult {
                     checkpoint: checkpoint.location(),
                     checkpoint_index,
-                    path_index: *path_count,
+                    path_index: path_count,
                     property_index,
                     property: property.clone(),
                     result: CheckResult::ProvedByRule,
@@ -357,8 +360,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
             VmCache::new(&z3_ctx)
         };
         for (checkpoint, tree) in self.build_exit_trees(check_unwind) {
-            let mut per_property: Vec<Vec<PropertyCheckResult<'tcx>>> =
-                std::iter::repeat_with(Vec::new).take(invariants.len()).collect();
+            let mut by_path: IndexMap<String, Vec<PropertyCheckResult<'tcx>>> = IndexMap::new();
             // Return-value properties apply only to normal returns. Other
             // exits can still carry obligations on the receiver or arguments.
             let is_return = is_return_block(self.tcx, self.target.def_id, checkpoint.block);
@@ -401,42 +403,33 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
                     .filter(|&index| !stable(&invariants[index]))
                     .collect();
                 let properties: Vec<_> = selected.iter().map(|&index| &invariants[index]).collect();
-                let mut checked: FxHashMap<usize, Vec<CheckResult>> = FxHashMap::default();
+                let mut checked: FxHashMap<usize, std::vec::IntoIter<CheckResult>> = FxHashMap::default();
                 if !properties.is_empty() {
                     for (&index, result) in selected.iter().zip(
                         self.check_exit_group(&mut cache, check_tree, checkpoint, &properties, entry_facts)
                     ) {
-                        checked.insert(index, result);
+                        checked.insert(index, result.into_iter());
                     }
                 }
-                let check_paths = check_tree.to_vecs();
-                for property_index in indices {
-                    let invariant = &invariants[property_index];
-                    let check_results = checked.remove(&property_index)
-                        .unwrap_or_else(|| vec![CheckResult::ProvedByRule; check_tree.len()]);
-                    for (path_index, result) in check_results.into_iter().enumerate() {
-                        let path_description = check_paths
-                            .get(path_index)
-                            .map(|path| {
-                                format!(
-                                    "{:?}",
-                                    super::path::caller_blocks(
-                                        check_tree,
-                                        self.target.def_id,
-                                        path.iter().copied(),
-                                    )
-                                )
-                            })
-                            .unwrap_or_default();
-                        per_property[property_index].push(PropertyCheckResult {
+                for (path_index, path) in check_tree.to_vecs().iter().enumerate() {
+                    let path_description = format!(
+                        "{:?}",
+                        super::path::caller_blocks(check_tree, self.target.def_id, path.iter().copied())
+                    );
+                    for &property_index in &indices {
+                        let result = match checked.get_mut(&property_index) {
+                            Some(paths) => match paths.next() { Some(result) => result, None => continue },
+                            None => CheckResult::ProvedByRule,
+                        };
+                        by_path.entry(path_description.clone()).or_default().push(PropertyCheckResult {
                             checkpoint,
                             checkpoint_index: checkpoint.block.as_usize(),
                             path_index,
                             property_index,
-                            property: invariant.clone(),
+                            property: invariants[property_index].clone(),
                             diagnostics: Some(format!("vm-{label}-invariant: {result:?}")),
                             result,
-                            path_description,
+                            path_description: path_description.clone(),
                             callee_name: format!(
                                 "{label}-invariant(bb{})",
                                 checkpoint.block.as_usize()
@@ -445,7 +438,10 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
                     }
                 }
             }
-            results.extend(per_property.into_iter().flatten());
+            for (_, mut path_results) in by_path {
+                path_results.sort_by_key(|result| result.property_index);
+                results.extend(path_results);
+            }
         }
         results
     }
