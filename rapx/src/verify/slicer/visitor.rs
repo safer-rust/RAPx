@@ -7,7 +7,7 @@
 use rustc_hir::def_id::DefId;
 use rustc_middle::{mir::{BasicBlock, Body, Local}, ty::TyCtxt};
 
-use std::collections::{HashMap, HashSet};
+use std::{cell::RefCell, collections::{HashMap, HashSet}, rc::Rc};
 
 use crate::analysis::dataflow::graph::build_dataflow_graph_from_body;
 use crate::analysis::dataflow::types::DataflowGraph;
@@ -29,6 +29,34 @@ type LeafItem<'tcx> = (
     Vec<(DefId, Vec<CallArg>, RelevantPlaces)>,
 );
 
+#[derive(Clone, Copy)]
+struct SliceOptions {
+    keep_invalidation: bool,
+    keep_owner: bool,
+    include_deref_statement: bool,
+}
+
+impl SliceOptions {
+    fn for_property(property: &contract::Property<'_>) -> Self {
+        Self {
+            keep_invalidation: property.kind().is_some_and(|kind| needs_invalidation_tracking(&kind)),
+            keep_owner: matches!(property.kind(), Some(contract::PropertyKind::Owning | contract::PropertyKind::Allocated)),
+            include_deref_statement: property.kind() == Some(contract::PropertyKind::Alias),
+        }
+    }
+
+    fn for_properties(properties: &[&contract::Property<'_>]) -> Self {
+        properties.iter().map(|property| Self::for_property(property)).fold(
+            Self { keep_invalidation: false, keep_owner: false, include_deref_statement: false },
+            |acc, next| Self {
+                keep_invalidation: acc.keep_invalidation || next.keep_invalidation,
+                keep_owner: acc.keep_owner || next.keep_owner,
+                include_deref_statement: acc.include_deref_statement || next.include_deref_statement,
+            },
+        )
+    }
+}
+
 /// Entry point for backward path visiting.
 pub(crate) struct BackwardSlicer<'tcx> {
     pub(in crate::verify::slicer) tcx: TyCtxt<'tcx>,
@@ -36,6 +64,7 @@ pub(crate) struct BackwardSlicer<'tcx> {
     instance_body: Option<&'tcx Body<'tcx>>,
     callee_bodies: CalleeBodies<'tcx>,
     entry_bodies: EntryBodies<'tcx>,
+    flow_cache: RefCell<HashMap<(DefId, usize), Rc<DataflowGraph>>>,
 }
 
 impl<'tcx> BackwardSlicer<'tcx> {
@@ -53,6 +82,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
             instance_body,
             callee_bodies,
             entry_bodies,
+            flow_cache: RefCell::new(HashMap::new()),
         }
     }
 
@@ -76,46 +106,45 @@ impl<'tcx> BackwardSlicer<'tcx> {
             .or_else(|| self.callee_bodies.get(&callee).copied())
     }
 
-    /// Visit a path tree in post-order, sharing backward analysis across
-    /// common prefixes. Merges child-relevance sets at branch nodes (the
-    /// union is a sound over-approximation). Returns per-leaf results.
-    ///
-    /// Callee parameter roots are bound at checkpoint nodes.
-    pub(crate) fn visit_path_tree(
+    /// Visit the path tree once for the union of checkpoint requirements.
+    pub(crate) fn visit_path_tree_batch(
         &self,
         tree: &PathTree,
-        target_block: usize,
         checkpoint: &Checkpoint<'tcx>,
-        property: &contract::Property<'tcx>,
+        properties: &[&contract::Property<'tcx>],
     ) -> Vec<ProofGoal<'tcx>> {
+        let combined = contract::Property::new_and(properties.iter().map(|property| (*property).clone()).collect());
+        let options = SliceOptions::for_properties(properties);
         self.visit_path_tree_impl(
             tree,
-            target_block,
+            checkpoint.block.as_usize(),
             checkpoint.caller,
             checkpoint.block,
             Some(checkpoint),
-            property,
+            &combined,
+            options,
         )
     }
 
-    /// Like [`visit_path_tree`] but without callee-root binding (used for
-    /// struct-invariant checks where property places are already in the
-    /// caller's local namespace).
-    pub(crate) fn visit_path_tree_for_checkpoint(
+    /// Slice a checkpoint without callee-root binding, for properties already
+    /// expressed in the caller's local namespace.
+    pub(crate) fn visit_exit_properties(
         &self,
         tree: &PathTree,
         target_block: usize,
         caller: DefId,
         checkpoint_loc: CheckpointLocation,
-        property: &contract::Property<'tcx>,
+        properties: &[&contract::Property<'tcx>],
     ) -> Vec<ProofGoal<'tcx>> {
+        let combined = contract::Property::new_and(properties.iter().map(|property| (*property).clone()).collect());
         self.visit_path_tree_impl(
             tree,
             target_block,
             caller,
             checkpoint_loc.block,
             None,
-            property,
+            &combined,
+            SliceOptions::for_properties(properties),
         )
     }
 
@@ -129,6 +158,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
         checkpoint_block: BasicBlock,
         bind_checkpoint: Option<&Checkpoint<'tcx>>,
         property: &contract::Property<'tcx>,
+        options: SliceOptions,
     ) -> Vec<ProofGoal<'tcx>> {
         let Some(root) = tree.root() else {
             return Vec::new();
@@ -142,7 +172,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
         // through this tree (caller + inlined callees), so inlined blocks resolve
         // to the correct body/flow.
         let mut bodies: HashMap<usize, &'tcx Body<'tcx>> = HashMap::new();
-        let mut flows: HashMap<usize, DataflowGraph> = HashMap::new();
+        let mut flows: HashMap<usize, Rc<DataflowGraph>> = HashMap::new();
         for (global, &(def_id, local)) in tree.block_fns().iter().enumerate() {
             let entry = global - local;
             if bodies.contains_key(&entry) {
@@ -153,7 +183,11 @@ impl<'tcx> BackwardSlicer<'tcx> {
                 .get(&entry)
                 .copied()
                 .unwrap_or_else(|| self.body_for(def_id));
-            flows.insert(entry, build_dataflow_graph_from_body(def_id, body));
+            let key = (def_id, body as *const Body<'tcx> as usize);
+            let flow = self.flow_cache.borrow_mut().entry(key)
+                .or_insert_with(|| Rc::new(build_dataflow_graph_from_body(def_id, body)))
+                .clone();
+            flows.insert(entry, flow);
             bodies.insert(entry, body);
         }
 
@@ -165,6 +199,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
             checkpoint_block,
             bind_checkpoint,
             property,
+            options,
             caller,
             &bodies,
             &flows,
@@ -197,24 +232,20 @@ impl<'tcx> BackwardSlicer<'tcx> {
         checkpoint_block: BasicBlock,
         bind_checkpoint: Option<&Checkpoint<'tcx>>,
         property: &contract::Property<'tcx>,
+        options: SliceOptions,
         caller: DefId,
         bodies: &HashMap<usize, &'tcx Body<'tcx>>,
-        flows: &HashMap<usize, DataflowGraph>,
+        flows: &HashMap<usize, Rc<DataflowGraph>>,
     ) -> Vec<LeafItem<'tcx>> {
         let (def_id, local_index) = tree.block_fn_of(node.block).unwrap_or((caller, node.block));
         let entry = node.block - local_index;
         let body = &bodies[&entry];
         let flow = &flows[&entry];
         let block = BasicBlock::from(local_index);
-        let keep_inv = property
-            .kind()
-            .is_some_and(|k| needs_invalidation_tracking(&k));
+        let keep_inv = options.keep_invalidation;
         // `Allocated` also needs the construction chain of owners that may be
         // dropped before the checkpoint.
-        let keep_owner = matches!(
-            property.kind(),
-            Some(contract::PropertyKind::Owning | contract::PropertyKind::Allocated)
-        );
+        let keep_owner = options.keep_owner;
         let block_data = &body.basic_blocks[block];
         let mut results = Vec::new();
 
@@ -245,7 +276,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
                     checkpoint.stmt_index
                         + usize::from(
                             checkpoint.kind == CheckpointKind::RawPtrDeref
-                                && property.kind() == Some(contract::PropertyKind::Alias),
+                                && options.include_deref_statement,
                         )
                 })
                 .unwrap_or(block_data.statements.len())
@@ -295,6 +326,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
                 checkpoint_block,
                 bind_checkpoint,
                 property,
+                options,
                 caller,
                 bodies,
                 flows,

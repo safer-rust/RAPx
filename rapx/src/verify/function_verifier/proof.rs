@@ -12,7 +12,8 @@ use std::cell::Cell;
 use crate::analysis::path::PathTree;
 use crate::helpers::mir_utils;
 use crate::verify::{
-    checkpoint::{Checkpoint, CheckpointLocation},
+    api_classify,
+    checkpoint::{Checkpoint, CheckpointKind, CheckpointLocation},
     contract::{self, AndProperty, AtomProperty, OrProperty, Property, PropertyKind},
     property_checker::PropertyChecker,
     proof_cache::VmCache,
@@ -30,42 +31,89 @@ enum LocalAccess {
 }
 
 impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
-    /// Verify a property against every path reaching `checkpoint`, one result
-    /// per path. Each path is sliced backward from the checkpoint, replayed
-    /// symbolically by the VM, and finally discharged by the property checker.
-    ///
-    /// Returns `(result, path_description)` pairs in forward MIR order.
-    pub(super) fn check_callsite(
+    /// Check the flattened conjuncts of a checkpoint through one replay per group.
+    pub(super) fn check_checkpoint_conjuncts(
         &self,
         cache: &mut VmCache<'_, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
-        property: &Property<'tcx>,
+        properties: &[&Property<'tcx>],
+    ) -> Vec<Vec<(CheckResult, String)>> {
+        let manual_drop = api_classify::is_manually_drop_drop(self.tcx, checkpoint.callee);
+        let mut results = vec![None; properties.len()];
+        for (index, property) in properties.iter().enumerate() {
+            if manual_drop && property.kind() == Some(PropertyKind::Alias) {
+                results[index] = Some(self.check_drop(checkpoint));
+            }
+        }
+        for index in 0..properties.len() {
+            if results[index].is_some() {
+                continue;
+            }
+            let forward_alias = manual_drop && Self::property_contains_alias(properties[index]);
+            let deref_alias = checkpoint.kind == CheckpointKind::RawPtrDeref
+                && properties[index].kind() == Some(PropertyKind::Alias);
+            let group: Vec<_> = (index..properties.len())
+                .filter(|&other| {
+                    results[other].is_none()
+                        && forward_alias == (manual_drop && Self::property_contains_alias(properties[other]))
+                        && deref_alias == (checkpoint.kind == CheckpointKind::RawPtrDeref
+                            && properties[other].kind() == Some(PropertyKind::Alias))
+                })
+                .collect();
+            let selected: Vec<_> = group.iter().map(|&other| properties[other]).collect();
+            for (&other, result) in group.iter().zip(self.check_checkpoint_group(cache, checkpoint, &selected, forward_alias)) {
+                results[other] = Some(result);
+            }
+        }
+        results.into_iter().map(|result| result.expect("unchecked property group")).collect()
+    }
+
+    /// Re-slice smaller groups only when a combined replay reaches unsupported MIR.
+    fn check_checkpoint_group(
+        &self,
+        cache: &mut VmCache<'_, 'tcx>,
+        checkpoint: &Checkpoint<'tcx>,
+        properties: &[&Property<'tcx>],
         forward_drop_alias: bool,
-    ) -> Vec<(CheckResult, String)> {
+    ) -> Vec<Vec<(CheckResult, String)>> {
         let tree = &self.path_tree;
-        let target_block = checkpoint.block.as_usize();
-        let goals = self
-            .slicer
-            .visit_path_tree(tree, target_block, checkpoint, property);
-        let bound_property = Self::bind_property_to_checkpoint(property, checkpoint);
-        let entry_facts: Vec<_> = self
-            .target
-            .caller_requires
-            .iter()
-            .filter(|c| !matches!(c.kind(), Some(PropertyKind::Unknown)))
-            .map(|c| RelevantItem::ContractFact {
-                property: c.clone(),
-            })
+        let combined = self.slicer.visit_path_tree_batch(tree, checkpoint, properties);
+        let entry_facts: Vec<_> = self.target.caller_requires.iter()
+            .filter(|property| property.kind() != Some(PropertyKind::Unknown))
+            .map(|property| RelevantItem::ContractFact { property: property.clone() })
             .collect();
-        self.check_goals(
-            cache,
-            tree,
-            goals.into_iter().rev(),
-            checkpoint,
-            &bound_property,
-            &entry_facts,
-            forward_drop_alias,
-        )
+        let bound: Vec<_> = properties.iter().map(|property| {
+            Self::bind_property_to_checkpoint(property, checkpoint)
+        }).collect();
+        let mut results = vec![Vec::with_capacity(combined.len()); properties.len()];
+        for goal in combined.into_iter().rev() {
+            let description = goal.path.describe_caller_indices(tree);
+            let alias_result = forward_drop_alias.then(|| {
+                let slot = self.drop_referent_local(tree, checkpoint, &goal.path.blocks);
+                self.drop_alias_for_prefix(tree, checkpoint, &goal.path.blocks, slot)
+            });
+            let combined_goal = self.prepare_goal(tree, goal, &entry_facts);
+            let cached = cache.states_for(self.tcx, self.target.def_id, self.target.body, combined_goal);
+            if properties.len() > 1 && cached.states.iter().any(|state| state.diagnostics.is_unsupported()) {
+                let mid = properties.len() / 2;
+                let mut left = self.check_checkpoint_group(cache, checkpoint, &properties[..mid], forward_drop_alias);
+                left.extend(self.check_checkpoint_group(cache, checkpoint, &properties[mid..], forward_drop_alias));
+                return left;
+            }
+            for (slot, result_paths) in results.iter_mut().enumerate() {
+                let result = cached.states.iter().zip(&cached.reachability)
+                    .map(|(state, reachability)| {
+                        if let Some(alias_result) = &alias_result {
+                            Self::check_with_forward_alias(state, checkpoint, &bound[slot], tree.is_structural(), reachability, alias_result)
+                        } else {
+                            PropertyChecker.check(state, checkpoint, &bound[slot], tree.is_structural(), reachability)
+                        }
+                    })
+                    .fold(CheckResult::ProvedByRule, CheckResult::and);
+                result_paths.push((result, description.clone()));
+            }
+        }
+        results
     }
 
     /// Path-sensitive forward scan for the `Drop` hazard.
@@ -596,28 +644,23 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
         }
     }
 
-    /// Verify an invariant against every path reaching `checkpoint`.
-    ///
-    /// Unlike [`Self::check_callsite`], there is no callsite to bind
-    /// against, so `entry_facts` are prepended to each sliced path and the
-    /// checker runs directly against the invariant. Returns
-    /// `(result, path_description)` pairs.
-    pub(super) fn check_invariant_from_tree(
+    /// Replay each exit path once for properties sharing the same path tree.
+    pub(super) fn check_exit_group(
         &self,
         cache: &mut VmCache<'_, 'tcx>,
         tree: &PathTree,
         checkpoint: CheckpointLocation,
-        invariant: &Property<'tcx>,
+        properties: &[&Property<'tcx>],
         entry_facts: &[RelevantItem<'tcx>],
-    ) -> Vec<(CheckResult, String)> {
+    ) -> Vec<Vec<CheckResult>> {
         let def_id = self.target.def_id;
         let target_block = checkpoint.block.as_usize();
-        let goals = self.slicer.visit_path_tree_for_checkpoint(
+        let goals = self.slicer.visit_exit_properties(
             tree,
             target_block,
             def_id,
             checkpoint,
-            invariant,
+            properties,
         );
         let fake_checkpoint = Checkpoint {
             caller: def_id,
@@ -630,70 +673,41 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
             is_mut_ref: false,
             stmt_index: 0,
         };
-        self.check_goals(
-            cache,
-            tree,
-            goals,
-            &fake_checkpoint,
-            invariant,
-            entry_facts,
-            false,
-        )
-    }
-
-    /// Replay sliced paths and check one property, shared by callsite and invariant checks.
-    fn check_goals(
-        &self,
-        cache: &mut VmCache<'_, 'tcx>,
-        tree: &PathTree,
-        goals: impl IntoIterator<Item = ProofGoal<'tcx>>,
-        checkpoint: &Checkpoint<'tcx>,
-        property: &Property<'tcx>,
-        entry_facts: &[RelevantItem<'tcx>],
-        forward_drop_alias: bool,
-    ) -> Vec<(CheckResult, String)> {
-        goals
-            .into_iter()
-            .map(|mut goal| {
-                let path_desc = goal.path.describe_caller_indices(tree);
-                let alias_result = forward_drop_alias.then(|| {
-                    let slot = self.drop_referent_local(tree, checkpoint, &goal.path.blocks);
-                    self.drop_alias_for_prefix(tree, checkpoint, &goal.path.blocks, slot)
-                });
-                if !entry_facts.is_empty() {
-                    let mut items = entry_facts.to_vec();
-                    items.append(&mut goal.items);
-                    goal.items = items;
-                }
-                goal.items = self.inject_inline_boundaries(goal.items, tree);
-                let cached = cache.states_for(self.tcx, self.target.def_id, self.target.body, goal);
-                let result = cached
-                    .states
-                    .iter()
-                    .zip(&cached.reachability)
-                    .map(|(vm_state, reachability)| {
-                        if let Some(alias_result) = &alias_result {
-                            Self::check_with_forward_alias(
-                                vm_state,
-                                checkpoint,
-                                property,
-                                tree.is_structural(),
-                                reachability,
-                                alias_result,
-                            )
-                        } else {
-                            PropertyChecker.check(
-                                vm_state,
-                                checkpoint,
-                                property,
-                                tree.is_structural(),
-                                reachability,
-                            )
-                        }
+        let mut results = vec![Vec::with_capacity(goals.len()); properties.len()];
+        for goal in goals {
+            let goal = self.prepare_goal(tree, goal, entry_facts);
+            let cached = cache.states_for(self.tcx, self.target.def_id, self.target.body, goal);
+            if properties.len() > 1 && cached.states.iter().any(|state| state.diagnostics.is_unsupported()) {
+                let mid = properties.len() / 2;
+                let mut left = self.check_exit_group(cache, tree, checkpoint, &properties[..mid], entry_facts);
+                left.extend(self.check_exit_group(cache, tree, checkpoint, &properties[mid..], entry_facts));
+                return left;
+            }
+            for (property, paths) in properties.iter().zip(&mut results) {
+                let result = cached.states.iter().zip(&cached.reachability)
+                    .map(|(state, reachability)| {
+                        PropertyChecker.check(state, &fake_checkpoint, property, tree.is_structural(), reachability)
                     })
                     .fold(CheckResult::ProvedByRule, CheckResult::and);
-                (result, path_desc)
-            })
-            .collect()
+                paths.push(result);
+            }
+        }
+        results
     }
+
+    fn prepare_goal(
+        &self,
+        tree: &PathTree,
+        mut goal: ProofGoal<'tcx>,
+        entry_facts: &[RelevantItem<'tcx>],
+    ) -> ProofGoal<'tcx> {
+        if !entry_facts.is_empty() {
+            let mut items = entry_facts.to_vec();
+            items.append(&mut goal.items);
+            goal.items = items;
+        }
+        goal.items = self.inject_inline_boundaries(goal.items, tree);
+        goal
+    }
+
 }
