@@ -11,7 +11,7 @@
 //! `Opened` and `Unreachable` are parsed but the checker returns `Unknown`;
 //! `NonVolatile` is assumed satisfied (the VM does not model volatile access).
 
-use super::types::*;
+use super::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ArgKind {

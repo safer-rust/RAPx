@@ -16,7 +16,7 @@ use rustc_middle::ty::{GenericParamDefKind, IntTy, Ty, TyCtxt, TyKind, UintTy};
 use syn::{Expr, Lit};
 
 use super::place;
-use super::types::{ContractExpr, ContractPlace, NumericPredicate, PlaceBase, PropertyArg, RelOp};
+use super::{ContractExpr, ContractPlace, NumericPredicate, PlaceBase, PropertyArg, RelOp};
 
 pub(crate) fn parse_contract_expr<'tcx>(
     tcx: TyCtxt<'tcx>,

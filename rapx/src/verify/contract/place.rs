@@ -17,7 +17,7 @@ use syn::Expr;
 use crate::helpers::fn_info::{FnKind, get_type};
 use crate::helpers::name::{access_ident_recursive, get_adt_self_ty, parse_signature};
 
-use super::types::{ContractExpr, ContractPlace, ContractProjection, PlaceBase, PropertyArg};
+use super::{ContractExpr, ContractPlace, ContractProjection, PlaceBase, PropertyArg};
 
 type PlacePath<'tcx> = (usize, Vec<(usize, Ty<'tcx>)>, Ty<'tcx>);
 
@@ -209,8 +209,7 @@ fn resolve_projection_from_struct_ident<'tcx>(
     struct_ty: Ty<'tcx>,
 ) -> Option<PlacePath<'tcx>> {
     let (field_idx, field_ty) = resolve_next_field(tcx, struct_ty, &base_ident)?;
-    let (mut field_indices, current_ty) =
-        walk_fields(tcx, field_ty, vec![(field_idx, field_ty)], &fields)?;
+    let (mut field_indices, current_ty) = walk_fields(tcx, field_ty, vec![(field_idx, field_ty)], &fields)?;
 
     let base_local = if get_type(tcx, def_id) == FnKind::Constructor {
         0

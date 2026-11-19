@@ -21,7 +21,6 @@ pub enum HeapOwnership {
     Unknown = 2,
 }
 
-
 impl HeapOwnership {
     pub fn is_onheap(&self) -> bool {
         matches!(self, HeapOwnership::True)
@@ -54,11 +53,7 @@ impl Display for HeapOwnershipResultMapWrapper {
         writeln!(f, "=== Print heap ownership analysis results ===")?;
         for (def_id, units) in &self.0 {
             let fn_name = get_fn_name_byid(def_id);
-            let owning = units
-                .iter()
-                .map(Self::format_heap_unit)
-                .collect::<Vec<_>>()
-                .join(", ");
+            let owning = units.iter().map(Self::format_heap_unit).collect::<Vec<_>>().join(", ");
             writeln!(f, "Type: {:?}: {}", fn_name, owning)?;
         }
         Ok(())
@@ -67,11 +62,7 @@ impl Display for HeapOwnershipResultMapWrapper {
 
 impl HeapOwnershipResultMapWrapper {
     fn format_heap_unit((heap, bits): &(HeapOwnership, Vec<bool>)) -> String {
-        let bit_str = bits
-            .iter()
-            .map(|b| if *b { "1" } else { "0" })
-            .collect::<Vec<_>>()
-            .join(",");
+        let bit_str = bits.iter().map(|b| if *b { "1" } else { "0" }).collect::<Vec<_>>().join(",");
         format!("{:?}, <{}>", heap, bit_str)
     }
 }

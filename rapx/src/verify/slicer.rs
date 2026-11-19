@@ -1,26 +1,87 @@
-//! Backward path visitor — walks a finite path backward from a checkpoint and
-//! keeps only MIR items that can affect the required property.
+//! Backward data-dependency slicer.
 //!
-//! MIR relevance decisions live in `rules`; this module traverses path trees
-//! and carries the backward relevance frontier between blocks.
+//! Given a path tree, a checkpoint, and a property, it walks each path backward
+//! to keep only the MIR items that are data-relevant to the property, producing
+//! one [`ProofGoal`] per path for the symbolic VM to execute forward.
+
+mod relevance;
+mod rules;
+
+pub(crate) use relevance::bind_callsite_roots;
+
+use std::{cell::RefCell, collections::{HashMap, HashSet}, rc::Rc};
 
 use rustc_hir::def_id::DefId;
 use rustc_middle::{mir::{BasicBlock, Body, Local}, ty::TyCtxt};
 
-use std::{cell::RefCell, collections::{HashMap, HashSet}, rc::Rc};
-
 use crate::analysis::dataflow::graph::build_dataflow_graph_from_body;
 use crate::analysis::dataflow::types::DataflowGraph;
-
-use super::super::{contract, path::Path};
-use super::bind_callsite_roots;
+use crate::analysis::path::{CallArg, PathNode, PathTree};
 use crate::helpers::def_use::RelevantPlaces;
 use crate::verify::checkpoint::{Checkpoint, CheckpointKind, CheckpointLocation};
 use crate::verify::path::{CalleeBodies, EntryBodies};
 
-use crate::analysis::path::{CallArg, PathNode, PathTree};
+use super::{contract, path::Path};
 
-use super::types::{ProofGoal, RelevantItem};
+/// A proof goal for one `(checkpoint, path)` item: the set of relevant items
+/// plus the path context needed to verify the target property.
+#[derive(Clone, Debug)]
+pub(crate) struct ProofGoal<'tcx> {
+    /// Path being visited; `path.target` identifies the checkpoint.
+    pub path: Path,
+    /// Items kept from the path.
+    pub items: Vec<RelevantItem<'tcx>>,
+}
+
+/// One relevant item kept from the backward slice.
+#[derive(Clone, Debug)]
+pub(crate) enum RelevantItem<'tcx> {
+    /// A MIR statement retained from a basic block. `def_id` identifies the
+    /// function owning `block` (differs from the caller for inlined callees).
+    Statement {
+        def_id: DefId,
+        block: BasicBlock,
+        global_block: Option<usize>,
+        statement_index: usize,
+    },
+    /// A MIR terminator retained from a basic block.  For a `SwitchInt`, `block`
+    /// is the switch block and `switch_succ` is the successor taken along this
+    /// path (so the VM need not re-resolve it from the path); for any other
+    /// terminator — or when the path ends at the checkpoint — `switch_succ` is
+    /// `None`.
+    Terminator {
+        def_id: DefId,
+        block: BasicBlock,
+        global_block: Option<usize>,
+        switch_succ: Option<BasicBlock>,
+    },
+    /// Enter an inlined callee: bind each argument to its parameter position.
+    CalleeEntry {
+        callee: DefId,
+        body: Option<&'tcx Body<'tcx>>,
+        args: Vec<crate::analysis::path::CallArg>,
+    },
+    /// Return from an inlined callee: write the callee's `_0` to the caller's
+    /// destination local.
+    CalleeExit { dest: usize },
+    /// A contract fact injected by the function verifier before VM execution.
+    /// Never produced by the backward visitor itself.
+    ContractFact { property: contract::Property<'tcx> },
+}
+
+impl RelevantItem<'_> {
+    pub(crate) fn set_global_block(&mut self, global_block: usize) {
+        match self {
+            Self::Statement {
+                global_block: slot, ..
+            }
+            | Self::Terminator {
+                global_block: slot, ..
+            } => *slot = Some(global_block),
+            _ => {}
+        }
+    }
+}
 
 type LeafItem<'tcx> = (
     Vec<usize>,
@@ -178,11 +239,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
             if bodies.contains_key(&entry) {
                 continue;
             }
-            let body = self
-                .entry_bodies
-                .get(&entry)
-                .copied()
-                .unwrap_or_else(|| self.body_for(def_id));
+            let body = self.entry_bodies.get(&entry).copied().unwrap_or_else(|| self.body_for(def_id));
             let key = (def_id, body as *const Body<'tcx> as usize);
             let flow = self.flow_cache.borrow_mut().entry(key)
                 .or_insert_with(|| Rc::new(build_dataflow_graph_from_body(def_id, body)))

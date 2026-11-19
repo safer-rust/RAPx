@@ -1,11 +1,40 @@
+//! Unified points-to and value-flow graph.
+//!
+//! The [`PtsGraph`] provides a path-sensitive points-to representation
+//! used by both the MoP alias analysis, SafeDrop, and the verify/SMT pipeline.
+//! It records pointer-to-source relationships together with value-copy tracking
+//! and union-find alias partitions.
+//!
+//! # Slot registration
+//! [`builder::from_body`] pre-registers all MIR locals and their type-determined
+//! field slots up to configurable depth limits.
+//!
+//! # PlaceKey adapters
+//! `PtsGraph` exposes PlaceKey-oriented methods (`insert_place_edge`,
+//! `get_place_source`, `resolve_place`, `place_edges`) for consumers in the
+//! verify pipeline that work with `crate::helpers::def_use::PlaceKey` rather
+//! than [`slot::Slot`].
+//!
+//! # Edge sources
+//! * `Rvalue::Ref`     — `&_x`  / `&mut _x`   → `_x`
+//! * `Rvalue::RawPtr`  — `&raw const/mut _x`  → `_x`
+//! * `ptr::add/sub/offset` / `as_ptr` / `into_raw` / `cast` / `from_raw_parts`
+//!   / NonNull constructors / ownership reconstruction — return → arg 0
+
+pub mod builder;
+// Preserve the public `points_to::graph` path.
+pub mod graph {
+    pub use super::PtsGraph;
+}
+pub mod slot;
+
 use std::collections::VecDeque;
 
-use crate::compat::{FxHashMap, FxHashSet};
-use crate::helpers::def_use::{PlaceBaseKey, PlaceKey};
-
-use super::slot::{AbstractLoc, Slot};
+use self::slot::{AbstractLoc, Slot};
 
 use crate::analysis::alias::default::types::ValueKind;
+use crate::compat::{FxHashMap, FxHashSet};
+use crate::helpers::def_use::{PlaceBaseKey, PlaceKey};
 use crate::limit::MAX_VALUES_PER_PATH;
 
 /// Unified points-to and value-flow graph.
@@ -207,8 +236,8 @@ impl PtsGraph {
 
     fn propagate_to_father(&mut self, a_idx: usize, b_idx: usize) {
         // A pointer value does not alias the value behind its dereference.
-        if self.slots[a_idx].fields.last() == Some(&super::slot::DEREF_PROJECTION)
-            || self.slots[b_idx].fields.last() == Some(&super::slot::DEREF_PROJECTION)
+        if self.slots[a_idx].fields.last() == Some(&slot::DEREF_PROJECTION)
+            || self.slots[b_idx].fields.last() == Some(&slot::DEREF_PROJECTION)
         {
             return;
         }
@@ -441,8 +470,7 @@ impl PtsGraph {
                     continue;
                 }
                 if self.may_alias(*idx_a, *idx_b) {
-                    let mut pair =
-                        crate::analysis::alias::AliasPair::new(slot_a.local, slot_b.local);
+                    let mut pair = crate::analysis::alias::AliasPair::new(slot_a.local, slot_b.local);
                     pair.lhs_fields = fields_a.clone();
                     pair.rhs_fields = fields_b.clone();
                     pairs.add_alias(pair);
@@ -523,7 +551,7 @@ impl PtsGraph {
         // Keep aliases of the old pointee separate when a write replaces it.
         if self.slots[slot_idx]
             .fields
-            .contains(&super::slot::DEREF_PROJECTION)
+            .contains(&slot::DEREF_PROJECTION)
             && self.alias_find(slot_idx) != target_root
         {
             let old_root = self.alias_find(slot_idx);

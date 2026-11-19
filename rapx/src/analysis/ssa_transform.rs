@@ -207,7 +207,7 @@ impl<'tcx> PassRunner<'tcx> {
         let mut buffer2 = Cursor::new(Vec::new());
         let writer = pretty::MirWriter::new(self.tcx);
         writer.write_mir_fn(body, &mut buffer2).unwrap();
-        
+
         String::from_utf8(buffer2.into_inner()).unwrap()
     }
 

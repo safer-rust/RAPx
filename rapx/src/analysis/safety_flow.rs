@@ -162,8 +162,7 @@ impl<'tcx> SafetyFlowAnalysis<'tcx> {
                 }
 
                 if !unit.raw_ptrs.is_empty() {
-                    let locals: Vec<String> =
-                        unit.raw_ptrs.iter().map(|l| format!("{:?}", l)).collect();
+                    let locals: Vec<String> = unit.raw_ptrs.iter().map(|l| format!("{:?}", l)).collect();
                     rap_info!("    *raw* ptr deref: {}", locals.join(", "));
                     total_rawptrs += 1;
                 }
@@ -207,9 +206,7 @@ impl<'tcx> SafetyFlowAnalysis<'tcx> {
             let module_name = get_module_name(self.tcx, caller_id);
             rap_info!("module name: {:?}", module_name);
 
-            let module_data = modules_data
-                .entry(module_name)
-                .or_default();
+            let module_data = modules_data.entry(module_name).or_default();
 
             module_data.add_node(self.tcx, unit.caller, None);
 
@@ -270,17 +267,11 @@ impl<'tcx> SafetyFlowAnalysis<'tcx> {
 
             rap_debug!("raw ptrs: {:?}", unit.raw_ptrs);
             if !unit.raw_ptrs.is_empty() {
-                let all_raw_ptrs = unit
-                    .raw_ptrs
-                    .iter()
-                    .map(|p| format!("{:?}", p))
-                    .collect::<Vec<_>>()
-                    .join(", ");
+                let all_raw_ptrs = unit.raw_ptrs.iter().map(|p| format!("{:?}", p)).collect::<Vec<_>>().join(", ");
 
                 match get_ptr_deref_dummy_def_id(self.tcx) {
                     Some(dummy_fn_def_id) => {
-                        let rawptr_deref_fn =
-                            FnInfo::new(dummy_fn_def_id, Safety::Unsafe, FnKind::Intrinsic);
+                        let rawptr_deref_fn = FnInfo::new(dummy_fn_def_id, Safety::Unsafe, FnKind::Intrinsic);
                         module_data.add_node(
                             self.tcx,
                             rawptr_deref_fn,

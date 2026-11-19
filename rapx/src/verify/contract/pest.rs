@@ -17,7 +17,7 @@ use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 
 use super::compound::{CompoundArg, CompoundBody};
-use super::types::{ContractExpr, NumericBinOp, NumericPredicate, NumericUnaryOp, RelOp};
+use super::{ContractExpr, NumericBinOp, NumericPredicate, NumericUnaryOp, RelOp};
 use crate::helpers::name::match_ty_with_ident;
 
 /// Parser derived from `grammar.pest`.

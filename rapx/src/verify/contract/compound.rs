@@ -39,7 +39,7 @@ use syn::{
 };
 
 use super::spec::ArgKind;
-use super::types::{AtomProperty, ContractExpr, ContractKind, Property, PropertyArg, PropertyKind};
+use super::{AtomProperty, ContractExpr, ContractKind, Property, PropertyArg, PropertyKind};
 
 /// A single argument in a compound body: a reference to a formal parameter, or a
 /// literal (kept as source text, re-parsed as `syn::Expr` at expansion time).

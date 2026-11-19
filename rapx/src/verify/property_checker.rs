@@ -229,19 +229,9 @@ impl PropertyChecker {
         reachability_cache: &std::cell::Cell<Option<z3::SatResult>>,
     ) -> CheckResult {
         if vm_state.diagnostics.is_unsupported() {
-            let mut details: Vec<_> = vm_state
-                .diagnostics
-                .unsupported_details()
-                .iter()
-                .cloned()
-                .collect();
+            let mut details: Vec<_> = vm_state.diagnostics.unsupported_details().iter().cloned().collect();
             details.sort();
-            let mut effect_details: Vec<_> = vm_state
-                .diagnostics
-                .unsupported_effects()
-                .iter()
-                .cloned()
-                .collect();
+            let mut effect_details: Vec<_> = vm_state.diagnostics.unsupported_effects().iter().cloned().collect();
             effect_details.sort();
             let mut missing_mir: Vec<_> = vm_state.diagnostics.missing_mir().iter().cloned().collect();
             missing_mir.sort();
@@ -404,10 +394,7 @@ impl PropertyChecker {
                 {
                     return CheckResult::Unknown(UnknownReason::IncompleteInlineBranch);
                 }
-                let rule = PROPERTY_RULES
-                    .iter()
-                    .find(|r| r.kind == atom.kind)
-                    .unwrap_or(&UNKNOWN_RULE);
+                let rule = PROPERTY_RULES.iter().find(|r| r.kind == atom.kind).unwrap_or(&UNKNOWN_RULE);
                 crate::rap_debug!("property rule: {}", rule.name);
                 let result = (rule.apply)(self, vm_state, checkpoint, property);
                 if vm_state.diagnostics.has_incomplete_inline_branch() && result == CheckResult::Failed {

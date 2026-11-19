@@ -41,8 +41,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 }
             }
             CallEffect::ReturnLayoutSymbolic { is_size } => {
-                let ty = mir_utils::fn_def_first_type_arg(func)
-                    .expect("layout effect built from a FnDef");
+                let ty = mir_utils::fn_def_first_type_arg(func).expect("layout effect built from a FnDef");
                 let term = if *is_size {
                     self.size_sym(ty)
                 } else {
@@ -223,9 +222,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     let dest_ty = self.body().local_decls[dest].ty;
                     let eq1 = term._eq(&args[1].z3_term);
                     let eq2 = term._eq(&args[2].z3_term);
-                    self.constraints
-                        .assertions
-                        .push(Bool::or(self.z3_ctx, &[&eq1, &eq2]));
+                    self.constraints.assertions.push(Bool::or(self.z3_ctx, &[&eq1, &eq2]));
                     let prov = args[1]
                         .provenance
                         .clone()
@@ -444,8 +441,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 if let Some(box_alloc) = args.first().and_then(|v| v.provenance_alloc_id()) {
                     self.copy_byte_tracking(box_alloc, 0, alloc_id);
                 }
-                if let Some(ptr_field) =
-                    self.set_external_container_result(dest, alloc_id, base, elem_ty)
+                if let Some(ptr_field) = self.set_external_container_result(dest, alloc_id, base, elem_ty)
                 {
                     let len_term = known_len
                         .clone()

@@ -32,7 +32,7 @@ use checking::encoding_checking::EncodingCheck;
 use data_collection::initialization::InitializationCheck;
 use data_collection::reallocation::ReservationCheck;
 use data_collection::suboptimal::SuboptimalCheck;
-use memory_cloning::used_as_immutable::UsedAsImmutableCheck;
+use memory_cloning::UsedAsImmutableCheck;
 
 use lazy_static::lazy_static;
 use std::sync::Mutex;

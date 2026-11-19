@@ -6,8 +6,7 @@ use crate::compat::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_middle::{mir::{Operand, TerminatorKind}, ty::{self, TyCtxt}};
 use rustc_mir_dataflow::Analysis;
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::{cell::RefCell, collections::HashSet, rc::Rc};
 
 use super::{AliasAnalysis, FnAliasMap, FnAliasPairs};
 use crate::analysis::Analysis as RapxAnalysis;
@@ -74,9 +73,7 @@ impl<'tcx> MfpAliasAnalyzer<'tcx> {
         let analyzer = FnAliasAnalyzer::new(self.tcx, def_id, body, fn_summaries.clone());
 
         // Run the dataflow analysis
-        let mut results = analyzer
-            .iterate_to_fixpoint(self.tcx, body, None)
-            .into_results_cursor(body);
+        let mut results = analyzer.iterate_to_fixpoint(self.tcx, body, None).into_results_cursor(body);
 
         // (Debug)
         let iter_cnt = *results.analysis().bb_iter_cnt.borrow();
@@ -188,10 +185,8 @@ impl<'tcx> RapxAnalysis for MfpAliasAnalyzer<'tcx> {
                 // Check if summary changed
                 if let Some(new_summary) = self.fn_map.get(def_id) {
                     // Compare by checking if alias sets are equal
-                    let old_aliases: std::collections::HashSet<_> =
-                        old_summary.aliases().iter().cloned().collect();
-                    let new_aliases: std::collections::HashSet<_> =
-                        new_summary.aliases().iter().cloned().collect();
+                    let old_aliases: HashSet<_> = old_summary.aliases().iter().cloned().collect();
+                    let new_aliases: HashSet<_> = new_summary.aliases().iter().cloned().collect();
 
                     if old_aliases != new_aliases {
                         changed = true;

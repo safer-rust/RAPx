@@ -212,10 +212,7 @@ impl<'g, 'tcx> PathComposer<'g, 'tcx> {
             if path.get(position + 1).copied() != self.call_index.normal_successor(block) {
                 continue;
             }
-            let choices = entries
-                .into_iter()
-                .map(|entry| self.callee_paths(entry))
-                .collect::<Vec<_>>();
+            let choices = entries.into_iter().map(|entry| self.callee_paths(entry)).collect::<Vec<_>>();
             let mut next_paths = Vec::new();
             for prefix in &paths {
                 for group in &choices {
@@ -250,8 +247,7 @@ impl<'g, 'tcx> PathComposer<'g, 'tcx> {
             PathGraph::new(self.call_index.tcx(), callee)
         };
         local_graph.find_scc();
-        let local_paths =
-            PathEnumerator::new(&local_graph).enumerate_paths_repeat(self.allow_repeat);
+        let local_paths = PathEnumerator::new(&local_graph).enumerate_paths_repeat(self.allow_repeat);
         self.truncated |= local_paths.is_truncated();
         let mut result = Vec::new();
         for path in local_paths.to_vecs() {

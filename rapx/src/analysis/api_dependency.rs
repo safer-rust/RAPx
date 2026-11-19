@@ -115,8 +115,7 @@ impl<'tcx> Analysis for ApiDependencyAnalyzer<'tcx> {
 
         // dump adg stats
         let stats_file = std::fs::File::create("adg_stats.json").unwrap();
-        serde_json::to_writer(stats_file, &stats_with_coverage)
-            .expect("failed to dump stats to JSON");
+        serde_json::to_writer(stats_file, &stats_with_coverage).expect("failed to dump stats to JSON");
 
         // dump API graph, determine the format base on extension name
         if let Some(dump_path) = &self.config.dump {

@@ -1,7 +1,28 @@
-//! Crate-level target scheduling and verification reporting.
+//! The staged verification pipeline and crate-level verification driver.
 //!
-//! `VerifyDriver` collects targets and runs [`FunctionVerifier`] for each
-//! function and path expansion depth.
+//! Contract-based, path-sensitive verification of safety properties: collect
+//! targets and contracts, extract SCC-aware paths, slice them backward, execute
+//! the relevant MIR symbolically, and discharge each property with Z3.
+
+mod api_classify;
+mod auto_trait;
+pub(crate) mod call_summary;
+mod checkpoint;
+pub(crate) mod constructor_policy;
+mod contract;
+mod display;
+mod function_verifier;
+pub(crate) mod loop_handling;
+mod marker_trait;
+mod path;
+mod proof_cache;
+mod property_checker;
+mod report;
+pub(crate) mod slicer;
+pub(crate) mod target;
+mod trait_ensurance;
+mod type_invariants;
+pub(crate) mod vm;
 
 use std::time::Instant;
 
@@ -17,7 +38,7 @@ use crate::helpers::{
     name::short_fn_name,
 };
 
-use super::{
+use self::{
     contract::{
         ContractExpr, ContractPlace, ContractProjection, PlaceBase, Property, PropertyArg,
         PropertyKind, compound::register_compound_properties,
@@ -108,8 +129,7 @@ impl<'tcx> VerifyDriver<'tcx> {
                 self.verify_and_emit_sequence(read_def_id, &con_target, con_id, &[]);
 
                 for &mut_id in &muts {
-                    let con_target =
-                        self.build_virtual_target(target, read_def_id, con_id, &[mut_id]);
+                    let con_target = self.build_virtual_target(target, read_def_id, con_id, &[mut_id]);
                     self.verify_and_emit_sequence(read_def_id, &con_target, con_id, &[mut_id]);
                 }
             }
@@ -387,8 +407,7 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
         let mut ordered: Vec<DefId> = by_fn.keys().copied().collect();
         ordered.sort_by_key(|d| self.tcx.def_path_str(*d));
         for def_id in ordered {
-            let (all_results, fn_crashed, no_checkpoints, mono_limited) =
-                by_fn.remove(&def_id).unwrap();
+            let (all_results, fn_crashed, no_checkpoints, mono_limited) = by_fn.remove(&def_id).unwrap();
             let target_path = fmt_fn_path_with_bounds(self.tcx, def_id);
 
             if let Some(msg) = &fn_crashed {
@@ -569,8 +588,7 @@ impl<'tcx> VerifyDriver<'tcx> {
         rap_info!("{:=<1$}", "", 76);
         rap_info!("");
 
-        let mut struct_groups: FxHashMap<DefId, Vec<&FunctionTarget<'tcx>>> =
-            FxHashMap::default();
+        let mut struct_groups: FxHashMap<DefId, Vec<&FunctionTarget<'tcx>>> = FxHashMap::default();
         let mut free_targets: Vec<&FunctionTarget<'tcx>> = Vec::new();
 
         for target in targets {
@@ -802,8 +820,7 @@ impl<'tcx> VerifyDriver<'tcx> {
                 for (pi, property) in props.iter().enumerate() {
                     let is_last_prop = pi + 1 == props.len();
                     let pbranch = if is_last_prop { "`-" } else { "|-" };
-                    let (call, meaning) =
-                        fmt_contract_expanded(self.tcx, property, None, Some(callee_id));
+                    let (call, meaning) = fmt_contract_expanded(self.tcx, property, None, Some(callee_id));
                     self.print_contract_lines(
                         &format!("{cont}  {ccont}"),
                         pbranch,

@@ -7,8 +7,8 @@ use crate::analysis::dataflow::types::DataflowGraph;
 use crate::helpers::def_use::{RelevantPlaces, operand_uses};
 use crate::helpers::mir_utils;
 
-use super::super::types::RelevantItem;
-use super::super::visitor::BackwardSlicer;
+use super::super::RelevantItem;
+use super::super::BackwardSlicer;
 
 impl<'tcx> BackwardSlicer<'tcx> {
     #[allow(clippy::too_many_arguments)]

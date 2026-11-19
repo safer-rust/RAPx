@@ -1,38 +1,136 @@
 pub mod avail;
-pub mod dep_edge;
-pub mod dep_node;
+// Preserve the public paths for the graph's node and edge types.
+pub mod dep_edge {
+    pub use super::DepEdge;
+}
+pub mod dep_node {
+    pub use super::DepNode;
+}
 mod dump;
 mod resolve;
 mod std_tys;
 pub mod transform;
 mod ty_wrapper;
 
+pub use transform::TransformKind;
+pub use ty_wrapper::TyWrapper;
+
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    fmt::Display,
+    hash::Hash,
+    io::Write,
+    path::Path,
+};
+
+use bit_set::BitSet;
+use petgraph::{Direction, Graph, dot, graph::NodeIndex, visit::EdgeRef};
+use rustc_hir::def_id::DefId;
+use rustc_middle::ty::{self, Binder, Ty, TyCtxt};
+use serde::Serialize;
+
 use super::Config;
 use super::utils;
 use super::visit::{self, FnVisitor};
 use crate::analysis::api_dependency::is_fuzzable_ty;
+use crate::compat::GenericArgsRef;
 use crate::helpers::def_path::path_str_def_id;
 use crate::rap_debug;
 use crate::rap_trace;
 use crate::utils::fs::rap_create_file;
-use bit_set::BitSet;
-pub use dep_edge::DepEdge;
-pub use dep_node::DepNode;
-use petgraph::Direction;
-use petgraph::Graph;
-use petgraph::dot;
-use petgraph::graph::NodeIndex;
-use petgraph::visit::EdgeRef;
-use rustc_hir::def_id::DefId;
-use rustc_middle::ty::{self, Binder, Ty, TyCtxt};
-use std::collections::HashMap;
-use std::collections::HashSet;
-use std::collections::VecDeque;
-use std::hash::Hash;
-use std::io::Write;
-use std::path::Path;
-pub use transform::TransformKind;
-pub use ty_wrapper::TyWrapper;
+
+#[derive(Clone, Copy, Eq, PartialEq, Debug, Serialize)]
+#[serde(tag = "type")]
+pub enum DepEdge {
+    Arg {
+        no: usize,
+    },
+    Ret,
+    Transform {
+        #[serde(rename = "transform_kind")]
+        kind: TransformKind,
+    },
+}
+
+impl Display for DepEdge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DepEdge::Arg { no } => write!(f, "{}", no),
+            DepEdge::Ret => write!(f, "r"),
+            DepEdge::Transform { kind } => write!(f, "Transform({})", kind),
+        }
+    }
+}
+
+impl DepEdge {
+    pub fn arg(no: usize) -> DepEdge {
+        DepEdge::Arg { no }
+    }
+    pub fn ret() -> DepEdge {
+        DepEdge::Ret
+    }
+
+    pub fn transform(kind: TransformKind) -> DepEdge {
+        DepEdge::Transform { kind }
+    }
+    pub fn as_transform_kind(self) -> Option<TransformKind> {
+        match self {
+            DepEdge::Transform { kind } => Some(kind),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+pub enum DepNode<'tcx> {
+    Api(DefId, GenericArgsRef<'tcx>),
+    Ty(TyWrapper<'tcx>),
+}
+
+impl<'tcx> DepNode<'tcx> {
+    pub fn api(id: DefId, args: GenericArgsRef<'tcx>) -> DepNode<'tcx> {
+        DepNode::Api(id, args)
+    }
+    pub fn ty(ty: Ty<'tcx>) -> DepNode<'tcx> {
+        DepNode::Ty(TyWrapper::from(ty))
+    }
+    pub fn is_ty(&self) -> bool {
+        matches!(self, DepNode::Ty(_))
+    }
+    pub fn is_api(&self) -> bool {
+        matches!(self, DepNode::Api(..))
+    }
+
+    pub fn as_ty(&self) -> Option<TyWrapper<'tcx>> {
+        match self {
+            DepNode::Ty(ty) => Some(*ty),
+            _ => None,
+        }
+    }
+
+    pub fn expect_ty(&self) -> TyWrapper<'tcx> {
+        match self {
+            DepNode::Ty(ty) => *ty,
+            _ => panic!("{self:?} is not a ty"),
+        }
+    }
+
+    pub fn expect_api(&self) -> (DefId, GenericArgsRef<'tcx>) {
+        match self {
+            DepNode::Api(did, args) => (*did, *args),
+            _ => {
+                panic!("{self:?} is not an api")
+            }
+        }
+    }
+
+    pub fn desc_str(&self, tcx: TyCtxt<'tcx>) -> String {
+        match self {
+            DepNode::Api(def_id, args) => tcx.def_path_str_with_args(*def_id, *args),
+            DepNode::Ty(ty) => ty.desc_str(tcx),
+        }
+    }
+}
 
 type InnerGraph<'tcx> = Graph<DepNode<'tcx>, DepEdge>;
 

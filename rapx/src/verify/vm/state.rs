@@ -1,8 +1,7 @@
-//! Symbolic VM state types.
+//! Supporting symbolic VM state types and operations.
 //!
-//! The data structures that represent the symbolic execution state: symbolic
-//! values and their invariants, memory allocations, and the full execution
-//! state at a program point.
+//! Symbolic values, memory allocations, and operations on [`VmState`] live
+//! here; the core state and its constructor are defined in the parent module.
 
 use crate::def_ids::type_ids;
 use crate::helpers::mir_utils;
@@ -12,20 +11,18 @@ use rustc_hir::def_id::DefId;
 use rustc_middle::ty::consts::ConstExt;
 use rustc_middle::{
     mir::{Body, ConstValue, Local, Operand, Place, ProjectionElem},
-    ty::{Region, Ty, TyCtxt, TyKind, TypingEnv},
+    ty::{Region, Ty, TyKind, TypingEnv},
 };
 use rustc_span::Span;
 use std::cell::RefCell;
 use z3::{
-    Context, SatResult, Solver,
+    SatResult, Solver,
     ast::{Array, Ast, Bool, Dynamic, Int},
 };
 
 use crate::compat::{FxHashMap, FxHashSet};
-use super::{
-    diagnostics::Diagnostics,
-    method_cache::{CachedMethodResult, MethodSnapshot},
-};
+use super::method_cache::MethodSnapshot;
+pub(crate) use super::VmState;
 use crate::helpers::def_use::PlaceKey;
 
 pub(crate) const REPEATED_ARRAY_ELEMENT: usize = usize::MAX;
@@ -648,50 +645,6 @@ pub(crate) struct OwnershipTransfer {
     available: usize,
 }
 
-/// The full symbolic execution state at a program point.
-///
-/// Accumulates the name → allocation bindings, allocations, and solver
-/// constraints as the VM steps through retained MIR items. The Z3 context is
-/// borrowed so a single context can be reused across property checks.
-#[derive(Clone)]
-pub(crate) struct VmState<'z3, 'tcx> {
-    /// Function being verified, retained while inlined callee frames execute.
-    target_def_id: DefId,
-    /// Target MIR instantiated with a selected trait-bound implementor when an
-    /// unresolved, unmodeled generic trait call needs a concrete method target.
-    /// `None` uses the original optimized MIR, even for generic functions.
-    instantiated_target_body: Option<&'tcx Body<'tcx>>,
-    /// Shared Z3 context.
-    pub(crate) z3_ctx: &'z3 Context,
-    /// Compiler type context.
-    pub(crate) tcx: TyCtxt<'tcx>,
-    /// Currently executing MIR frame and its local allocation bindings.
-    pub(crate) current_frame: FrameState<'tcx>,
-    /// Caller frames saved by path-replay inlining.
-    pub(super) caller_frames: Vec<SavedCallerFrame<'z3, 'tcx>>,
-    /// Allocation units indexed by `AllocId`.
-    pub(super) units: Vec<MemoryUnit<'z3, 'tcx>>,
-    /// Ownership transfers shared by copies of the same raw pointer.
-    ownership_transfers: Vec<OwnershipTransfer>,
-    /// Stable allocation for each static across MIR locals and frames.
-    pub(super) static_allocs: FxHashMap<DefId, AllocId>,
-    /// Path conditions and term caches.
-    pub(crate) constraints: Constraints<'z3, 'tcx>,
-    /// Scratch state for recursive inlining.
-    pub(crate) inline: InlineCtx<'z3, 'tcx>,
-    /// Stable `&self` results reused by contracts only when the method, caller,
-    /// receiver allocation and offset, fields, and slice length still match.
-    pub(super) method_result_cache: Vec<CachedMethodResult<'z3, 'tcx>>,
-    /// Allocation roots licensed by declared `Alias` contract sources.
-    pub(super) alias_hazard_allocs: FxHashSet<AllocId>,
-    /// Slice and index terms with their originating MIR locals.
-    pub(crate) index_access_facts: Vec<(Int<'z3>, Int<'z3>, Local, Local)>,
-    /// Optional SafeDrop log of drops, use-after-free, and dangling pointers.
-    pub(crate) safedrop_events: SafeDropEventLog,
-    /// Path diagnostics and the MIR location used to attribute new records.
-    pub(crate) diagnostics: Diagnostics,
-}
-
 impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     pub(crate) fn ownership_share(&self, value: &VmValue<'z3, 'tcx>, owner: DefId) -> Option<usize> {
         let transfer = self.ownership_transfers.get(value.facts.ownership_transfer?)?;
@@ -854,47 +807,6 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         self.scalar_bits_term(discr.ty, discr.val)
     }
 
-    /// Create a fresh VM state for executing a path.
-    pub(crate) fn new(
-        z3_ctx: &'z3 Context,
-        tcx: TyCtxt<'tcx>,
-        target_def_id: DefId,
-        instantiated_target_body: Option<&'tcx Body<'tcx>>,
-    ) -> Self {
-        // The `UNINIT` sentinel is created once and shared by every byte array:
-        // an unwritten offset reads it back, so `select != UNINIT` decides
-        // whether a byte was written.
-        let mut constraints = Constraints::default();
-        let uninit = Int::fresh_const(z3_ctx, "uninit_byte");
-        constraints.term_caches.uninit_byte = Some(uninit.clone());
-        constraints
-            .assertions
-            .push(uninit.ge(&Int::from_u64(z3_ctx, 256)));
-        Self {
-            target_def_id,
-            instantiated_target_body,
-            z3_ctx,
-            tcx,
-            current_frame: FrameState {
-                current_def_id: target_def_id,
-                instantiated_body: instantiated_target_body,
-                local_alloc: FxHashMap::default(),
-                pending_enum_fields: FxHashMap::default(),
-            },
-            caller_frames: Vec::default(),
-            units: Vec::default(),
-            ownership_transfers: Vec::new(),
-            static_allocs: FxHashMap::default(),
-            constraints,
-            inline: InlineCtx::default(),
-            method_result_cache: Vec::default(),
-            alias_hazard_allocs: FxHashSet::default(),
-            index_access_facts: Vec::new(),
-            safedrop_events: SafeDropEventLog::default(),
-            diagnostics: Diagnostics::default(),
-        }
-    }
-
     /// MIR for the current frame, preferring its selected generic instantiation.
     pub(crate) fn body(&self) -> &'tcx Body<'tcx> {
         self.body_for(self.current_frame.current_def_id)
@@ -1045,8 +957,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
         if is_array && let Some(&alloc_id) = self.current_frame.local_alloc.get(&local) {
             let content = self.content_mut(alloc_id);
-            let was_tracked =
-                content.indexed_elements_modified || !content.indexed_elements.is_empty();
+            let was_tracked = content.indexed_elements_modified || !content.indexed_elements.is_empty();
             content.indexed_elements.clear();
             content.indexed_elements_modified = was_tracked;
             content

@@ -4,7 +4,7 @@ use rustc_middle::ty::{self, Ty, TyCtxt, TypingEnv};
 
 use crate::analysis::alias::default::types::{is_not_drop, kind};
 
-use super::graph::PtsGraph;
+use super::PtsGraph;
 use super::slot::Slot;
 
 use crate::limit::{MAX_DEREF_DEPTH, MAX_FIELD_DEPTH};

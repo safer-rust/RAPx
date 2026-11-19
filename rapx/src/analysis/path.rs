@@ -278,11 +278,7 @@ impl PathTree {
     /// Enumerate all paths as owned `Vec<usize>`.
     pub fn iter(&self) -> PathTreeIter<'_> {
         PathTreeIter {
-            stack: self
-                .root
-                .as_ref()
-                .map(|r| vec![(r, vec![r.block])])
-                .unwrap_or_default(),
+            stack: self.root.as_ref().map(|r| vec![(r, vec![r.block])]).unwrap_or_default(),
         }
     }
 

@@ -1,13 +1,22 @@
-pub mod debug;
-pub mod graph;
-pub mod solver;
+//! Range domain and its constraint graph.
 
-use crate::helpers::mir_utils;
-use crate::analysis::range::Range;
-use crate::analysis::range::domain::core::*;
+pub mod constraint_graph {
+    pub mod debug;
+    pub mod graph;
+    pub mod solver;
 
-use crate::analysis::path::PathTree;
-use crate::analysis::range::domain::symbolic_expr::*;
+    pub use super::ConstraintGraph;
+}
+pub mod core;
+pub mod interproc;
+pub mod range;
+pub mod symbolic_expr;
+
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    fmt::Debug,
+};
+
 use rustc_abi::FieldIdx;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
@@ -15,13 +24,12 @@ use rustc_middle::{
     ty::{self, TyCtxt},
 };
 
-use std::{
-    collections::{HashMap, HashSet, VecDeque},
-    fmt::Debug,
-};
+use crate::analysis::{path::PathTree, range::Range};
+use crate::helpers::mir_utils;
+
+use self::{core::*, symbolic_expr::*};
 
 #[derive(Clone)]
-
 pub struct ConstraintGraph<'tcx, T: IntervalArithmetic + ConstConvert + Debug> {
     pub tcx: TyCtxt<'tcx>,
     pub body: &'tcx Body<'tcx>,
@@ -201,7 +209,6 @@ where
         let mut new_projection = adt_place.projection.to_vec();
         new_projection.push(ProjectionElem::Field(field_index, field_ty));
 
-        
         Place {
             local: adt_place.local,
             projection: self.tcx.mk_place_elems(&new_projection),
@@ -214,7 +221,7 @@ where
         tree: &PathTree,
     ) -> HashMap<Vec<usize>, Vec<(Place<'tcx>, Place<'tcx>, BinOp)>> {
         self.build_value_maps(body);
-        
+
         self.analyze_path_constraints(body, tree)
     }
 

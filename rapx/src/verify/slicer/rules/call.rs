@@ -19,7 +19,7 @@ use crate::analysis::dataflow::types::DataflowGraph;
 use crate::helpers::def_use::{RelevantPlaces, call_args_uses_at};
 use crate::verify::call_summary;
 
-use super::super::types::RelevantItem;
+use super::super::RelevantItem;
 
 /// Visit a call terminator using a dependency summary.
 #[allow(clippy::too_many_arguments)]

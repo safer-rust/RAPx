@@ -14,7 +14,7 @@ use syn::Expr;
 
 use crate::helpers::name::public_def_path;
 
-use super::types::{Property, PropertyKind};
+use super::{Property, PropertyKind};
 
 /// Structure of JSON entries.
 ///
@@ -193,7 +193,7 @@ pub(crate) fn query_trait_method_ensures<'tcx>(
         .iter()
         .flat_map(|entry| entry_to_property(tcx, def_id, entry, &param_names, has_names))
         .map(|mut property| {
-            property.set_contract_kind(super::types::ContractKind::Postcond);
+            property.set_contract_kind(super::ContractKind::Postcond);
             property
         })
         .collect()

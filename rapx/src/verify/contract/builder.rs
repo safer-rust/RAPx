@@ -12,7 +12,7 @@ use syn::Expr;
 use crate::helpers::name::access_ident_recursive;
 
 use super::spec;
-use super::types::*;
+use super::*;
 
 impl<'tcx> Property<'tcx> {
     /// Parse a property from the declaration table, dispatching on the tag's
@@ -109,7 +109,6 @@ impl<'tcx> Property<'tcx> {
             None => Self::new_simple(PropertyKind::Unknown),
         }
     }
-
 
     fn build_size(tcx: TyCtxt<'tcx>, def_id: DefId, exprs: &[Expr]) -> Self {
         match exprs {

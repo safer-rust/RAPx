@@ -9,8 +9,8 @@ use rustc_middle::mir::{
 use crate::analysis::dataflow::types::DataflowGraph;
 use crate::helpers::def_use::{RelevantPlaces, operand_uses};
 
-use super::super::types::RelevantItem;
-use super::super::visitor::BackwardSlicer;
+use super::super::RelevantItem;
+use super::super::BackwardSlicer;
 use super::{statement, terminator};
 
 pub(super) struct StatementContext<'a, 'tcx> {

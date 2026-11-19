@@ -4,7 +4,7 @@ use crate::{
         PathTree,
         graph::{PathEnumerator, PathGraph},
     },
-    analysis::points_to::graph::PtsGraph,
+    analysis::points_to::PtsGraph,
     compat::FxHashMap,
     graphs::cfg::CfgBlock,
     utils::source::get_fn_name,

@@ -8,7 +8,7 @@
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 
-use super::types::{
+use super::{
     ContractExpr, ContractPlace, ContractProjection, NumericBinOp, NumericPredicate,
     NumericUnaryOp, PlaceBase, Property, PropertyArg, PropertyKind, RelOp,
 };
@@ -76,8 +76,7 @@ impl<'tcx> ContractPlace<'tcx> {
         for projection in &self.projections {
             match projection {
                 ContractProjection::Field { index, ty: _ } => {
-                    let field_name =
-                        crate::helpers::name::resolve_field_name(tcx, index, struct_def_id);
+                    let field_name = crate::helpers::name::resolve_field_name(tcx, index, struct_def_id);
                     if result.is_empty() {
                         result = field_name;
                     } else {

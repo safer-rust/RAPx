@@ -3,7 +3,7 @@ use annotate_snippets::Level;
 
 use crate::check::opt::report::OptReport;
 
-use super::super::LEVEL;
+use super::LEVEL;
 use rustc_middle::{
     mir::Local,
     ty::{Mutability, TyCtxt, TyKind},
@@ -128,4 +128,9 @@ fn report_used_as_immutable(graph: &Graph, clone_span: Span, use_span: Span) {
         .annotate(Level::Error, use_span, "Used here")
         .footer("Use borrowings instead.")
         .emit();
+}
+
+// Keep the former public path after moving the implementation into this module.
+pub mod used_as_immutable {
+    pub use super::UsedAsImmutableCheck;
 }

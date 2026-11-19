@@ -8,8 +8,8 @@ use crate::compat::Spanned;
 use crate::helpers::def_use::{RelevantPlaces, call_args_uses_at, terminator_use_def};
 use crate::helpers::mir_utils;
 
-use super::super::types::RelevantItem;
-use super::super::visitor::BackwardSlicer;
+use super::super::RelevantItem;
+use super::super::BackwardSlicer;
 use super::call;
 
 impl<'tcx> BackwardSlicer<'tcx> {

@@ -4,8 +4,8 @@ use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{BasicBlock, Body, Statement, Terminator};
 use rustc_middle::ty::{Ty, TyCtxt, TypeFlags, TypeVisitableExt, TypingEnv};
 
-use super::types::RelevantItem;
-use super::visitor::BackwardSlicer;
+use super::RelevantItem;
+use super::BackwardSlicer;
 use crate::analysis::dataflow::types::DataflowGraph;
 use crate::helpers::def_use::RelevantPlaces;
 

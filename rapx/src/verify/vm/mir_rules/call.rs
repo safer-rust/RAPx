@@ -86,9 +86,7 @@ pub(super) fn exec_call<'z3, 'tcx>(
     destination: Local,
     caller_def_id: DefId,
 ) -> RuleFlow {
-    let prior_result = state
-        .local_value(destination)
-        .map(|value| value.z3_term.clone());
+    let prior_result = state.local_value(destination).map(|value| value.z3_term.clone());
     let arg_values: Vec<VmValue<'z3, 'tcx>> = args
         .iter()
         .map(|arg| state.value_of_operand(&arg.node))
@@ -347,8 +345,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 RuleFlow::Continue
             }
             CallModel::Constructor(callee) => {
-                let has_invariant =
-                    constructor_policy::constructor_result_has_invariant(self.tcx, callee);
+                let has_invariant = constructor_policy::constructor_result_has_invariant(self.tcx, callee);
                 self.materialize_constructor_result(
                     destination,
                     arg_values,
