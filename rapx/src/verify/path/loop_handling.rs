@@ -8,7 +8,7 @@
 //! # Pipeline role
 //!
 //! ```text
-//! VerifyTargetCollector ──► LoopSensitivityAnalyzer ──► VerifyDriver
+//! VerifyTargetCollector ──► LoopSensitivityAnalyzer ──► FunctionVerifier
 //!        (sinks)                 (repeat plan)             (paths + checks)
 //! ```
 //!
@@ -337,9 +337,9 @@ impl<'tcx> LoopSensitivityAnalyzer<'tcx> {
 
     /// Collect caller-side sinks from all checkpoint kinds in a target.
     ///
-    /// This mirrors `VerifyDriver::properties_for_callsite` so the planner and
+    /// This mirrors `FunctionTarget::properties_for_callsite` so the planner and
     /// verifier operate on the same obligations.  Keeping it here avoids
-    /// constructing a `VerifyDriver` only to learn whether a deeper repeat is
+    /// constructing a `FunctionVerifier` only to learn whether a deeper repeat is
     /// needed before path extraction.
     fn collect_sinks<'target>(
         &self,

@@ -82,7 +82,7 @@ impl<'z3, 'tcx> VmCache<'z3, 'tcx> {
 
     fn states_for(
         &mut self,
-        engine: &VerifyEngine<'tcx>,
+        engine: &FunctionVerifyEngine<'tcx>,
         goal: ProofGoal<'tcx>,
     ) -> &CachedGoal<'z3, 'tcx> {
         let key = goal_key(&goal.items);
@@ -187,9 +187,13 @@ fn goal_key<'tcx>(items: &[RelevantItem<'tcx>]) -> Vec<GoalItemKey<'tcx>> {
         .collect()
 }
 
-/// The three verification stages: a backward [`BackwardSlicer`], symbolic MIR
-/// execution, and a [`PropertyChecker`].
-pub(crate) struct VerifyEngine<'tcx> {
+/// Checks a function's properties by backward slicing, symbolic MIR execution,
+/// and a [`PropertyChecker`].
+///
+/// `FunctionVerifier` creates one engine per function and path-expansion round, then
+/// reuses it for multiple checkpoints, properties, paths, and invariants. Each
+/// check method receives the specific checkpoint or invariant to evaluate.
+pub(crate) struct FunctionVerifyEngine<'tcx> {
     tcx: TyCtxt<'tcx>,
     slicer: BackwardSlicer<'tcx>,
     caller_def_id: DefId,
@@ -198,8 +202,8 @@ pub(crate) struct VerifyEngine<'tcx> {
     entry_bodies: EntryBodies<'tcx>,
 }
 
-impl<'tcx> VerifyEngine<'tcx> {
-    /// Construct a fresh engine wired to `tcx`.
+impl<'tcx> FunctionVerifyEngine<'tcx> {
+    /// Construct the checking context for `caller_def_id`.
     pub(crate) fn new(
         tcx: TyCtxt<'tcx>,
         caller_def_id: DefId,

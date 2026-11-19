@@ -8,7 +8,7 @@
 //!
 //! The results feed the `type_invariants` field of a [`FunctionTarget`]
 //! (see `super::target`), whose entry facts are synthesized by the VM's
-//! `init_parameters` and re-proved at return by `VerifyDriver::verify_type_invariants`.
+//! `init_parameters` and re-proved at return by `FunctionVerifier::verify_type_invariants`.
 
 use crate::def_ids::type_ids;
 use rustc_hir::def_id::DefId;

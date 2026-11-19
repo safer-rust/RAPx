@@ -1,10 +1,8 @@
-//! Driver utilities for the staged verifier pipeline.
+//! Coordination for the staged verifier pipeline.
 //!
-//! The target collector owns selected functions and their callee requirements.
-//! The path extractor upgrades a function CFG into SCC-aware path metadata.
-//! `VerifyDriver` prepares paths for two kinds of checks (unsafe checkpoints and
-//! struct invariants) and delegates the actual backward/forward/SMT work to
-//! the shared `VerifyEngine`.
+//! `VerifyDriver` collects and schedules all targets. For each function and
+//! path expansion depth, `FunctionVerifier` extracts paths and coordinates
+//! checkpoint and invariant checks through its `FunctionVerifyEngine`.
 
 use std::time::Instant;
 
@@ -35,7 +33,7 @@ use super::{
         dedup_compound_props, emit_results_and_verdict, emit_verify_summary, fmt_contract_expanded,
         fmt_fn_path_with_bounds, fmt_fn_path_with_generics, fmt_fn_with_params,
     },
-    engine::{VerifyEngine, VmCache},
+    engine::{FunctionVerifyEngine, VmCache},
     marker_trait::MarkerTraitVerifier,
     path::{LoopSensitivityAnalyzer, PathExtractor, RepeatStrategy},
     report::{
@@ -49,21 +47,22 @@ use super::{
     trait_ensurance::{MarkerTraitKind, TraitEnsurance, TraitEnsuranceKind},
 };
 
-/// Coordinates checkpoint and struct-invariant verification for one function.
+/// Coordinates checkpoint and invariant checks for one function at one path
+/// expansion depth.
 ///
 /// The target owns the unsafe-call, raw-pointer-dereference, and static-mut
 /// checkpoints, along with their contracts and entry assumptions. The path
 /// tree supplies paths to those checkpoints and to function exits; the engine
 /// checks the required properties along those paths.
-pub(crate) struct VerifyDriver<'target, 'tcx> {
+pub(crate) struct FunctionVerifier<'target, 'tcx> {
     /// Compiler context for type and MIR queries.
     tcx: TyCtxt<'tcx>,
     /// Collected checkpoints, contracts, and invariants for this function.
     target: &'target FunctionTarget<'tcx>,
     /// Paths through the function and expanded callees used by both checks.
     path_tree: PathTree,
-    /// Runs slicing, symbolic execution, and property checks on those paths.
-    engine: VerifyEngine<'tcx>,
+    /// Shared by this function's checkpoint and invariant checks.
+    engine: FunctionVerifyEngine<'tcx>,
 }
 
 fn property_contains_alias(property: &Property<'_>) -> bool {
@@ -74,16 +73,13 @@ fn property_contains_alias(property: &Property<'_>) -> bool {
     }
 }
 
-impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
+impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
     pub(crate) fn new_with_repeat(
         tcx: TyCtxt<'tcx>,
         target: &'target FunctionTarget<'tcx>,
         allow_repeat: usize,
     ) -> Self {
-        let locations = target
-            .all_checkpoints()
-            .map(Checkpoint::location)
-            .collect::<Vec<_>>();
+        let locations = target.all_checkpoints().map(Checkpoint::location).collect::<Vec<_>>();
         let (path_tree, callee_bodies, entry_bodies) =
             PathExtractor::new_with_body(tcx, target.def_id, allow_repeat, target.body)
                 .with_callee_bodies(target.callee_bodies.clone())
@@ -93,7 +89,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
             tcx,
             target,
             path_tree,
-            engine: VerifyEngine::new(
+            engine: FunctionVerifyEngine::new(
                 tcx,
                 target.def_id,
                 target.body,
@@ -391,7 +387,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
         label: &str,
     ) -> Vec<PropertyCheckResult<'tcx>> {
         let mut results = Vec::new();
-        let z3_ctx = VerifyEngine::new_z3_context();
+        let z3_ctx = FunctionVerifyEngine::new_z3_context();
         let mut cache = if label == "type" {
             VmCache::new_with_capacity(&z3_ctx, 512)
         } else {
@@ -570,21 +566,20 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
     }
 }
 
-/// Returns whether a function returns the owning struct type (i.e. is a constructor).
-/// Borrowed view of all verification inputs for one unsafe checkpoint.
+/// Borrowed verification inputs for one checkpoint with checkable properties.
 pub(crate) struct CheckpointCheckView<'view, 'tcx> {
     /// Position among checkpoints that have properties to verify.
     pub checkpoint_index: usize,
-    /// The concrete unsafe checkpoint in the caller MIR body.
+    /// The checkpoint in the caller MIR body.
     pub checkpoint: &'view Checkpoint<'tcx>,
     /// Per-checkpoint prefix tree of all verification paths to this checkpoint.
     pub tree: &'view PathTree,
-    /// Required safety properties for the unsafe callee.
+    /// Properties to check at this checkpoint.
     pub properties: &'view [Property<'tcx>],
 }
 
-/// Analysis pass that runs verification and emits function-level summaries.
-pub(crate) struct VerifyRun<'tcx> {
+/// Crate-level analysis pass that schedules targets and emits their summaries.
+pub(crate) struct VerifyDriver<'tcx> {
     tcx: TyCtxt<'tcx>,
     repeat_strategy: RepeatStrategy,
     mode: VerifyMode,
@@ -597,7 +592,7 @@ pub(crate) struct VerifyRun<'tcx> {
     struct_invariant_results: FxHashMap<DefId, CheckResult>,
 }
 
-impl<'tcx> VerifyRun<'tcx> {
+impl<'tcx> VerifyDriver<'tcx> {
     /// Create the default verify pass for the current compiler type context.
     pub(crate) fn new(
         tcx: TyCtxt<'tcx>,
@@ -721,12 +716,12 @@ impl<'tcx> VerifyRun<'tcx> {
         all_results: &mut Vec<PropertyCheckResult<'tcx>>,
         trait_impl_limited: &mut bool,
     ) -> Option<String> {
-        let z3_ctx = VerifyEngine::new_z3_context();
+        let z3_ctx = FunctionVerifyEngine::new_z3_context();
         let mut cache = VmCache::new(&z3_ctx);
         for &repeat in repeat_rounds {
             let enumeration_started = Instant::now();
-            let driver = VerifyDriver::new_with_repeat(self.tcx, target, repeat);
-            *trait_impl_limited |= driver.path_tree.is_trait_impl_limited();
+            let verifier = FunctionVerifier::new_with_repeat(self.tcx, target, repeat);
+            *trait_impl_limited |= verifier.path_tree.is_trait_impl_limited();
             rap_debug!(
                 "built path tree for {} repeat {} in {:?}",
                 skip_label,
@@ -734,7 +729,7 @@ impl<'tcx> VerifyRun<'tcx> {
                 enumeration_started.elapsed()
             );
             let verification_started = Instant::now();
-            match mir_utils::catch_panic(|| driver.verify_function(&mut cache)) {
+            match mir_utils::catch_panic(|| verifier.verify_function(&mut cache)) {
                 Ok(report) => {
                     rap_debug!(
                         "checked {} repeat {} in {:?}",
@@ -798,8 +793,8 @@ impl<'tcx> VerifyRun<'tcx> {
     }
 }
 
-impl<'tcx> Analysis for VerifyRun<'tcx> {
-    /// Collect verify targets, run the staged driver, and emit a compact summary.
+impl<'tcx> Analysis for VerifyDriver<'tcx> {
+    /// Collect targets, run each function verifier, and emit a compact summary.
     ///
     /// For each target, extracts paths with increasing `postfix-repeat`
     /// levels from 0 to the configured maximum, running verification at each
@@ -859,13 +854,13 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
             );
 
             if !target.struct_invariants.is_empty() && !self.skip_invariant {
-                let driver = VerifyDriver::new_with_repeat(
+                let verifier = FunctionVerifier::new_with_repeat(
                     self.tcx,
                     target,
                     planned_repeat,
                 );
-                trait_impl_limited |= driver.path_tree.is_trait_impl_limited();
-                match mir_utils::catch_panic(|| driver.verify_struct_invariants()) {
+                trait_impl_limited |= verifier.path_tree.is_trait_impl_limited();
+                match mir_utils::catch_panic(|| verifier.verify_struct_invariants()) {
                     Ok(struct_report) => {
                         rap_debug!("{}", struct_report.describe());
                         if let Some(struct_id) = target.owner_struct_def_id {
@@ -891,13 +886,13 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
             }
 
             if !target.type_invariants.is_empty() && !self.skip_invariant {
-                let driver = VerifyDriver::new_with_repeat(
+                let verifier = FunctionVerifier::new_with_repeat(
                     self.tcx,
                     target,
                     planned_repeat,
                 );
-                trait_impl_limited |= driver.path_tree.is_trait_impl_limited();
-                match mir_utils::catch_panic(|| driver.verify_type_invariants()) {
+                trait_impl_limited |= verifier.path_tree.is_trait_impl_limited();
+                match mir_utils::catch_panic(|| verifier.verify_type_invariants()) {
                     Ok(type_report) => {
                         rap_debug!("{}", type_report.describe());
                         all_results.extend(type_report.results);
@@ -1054,13 +1049,13 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                     let mut results = Vec::new();
                     let mut crashed = None;
                     for repeat in repeats {
-                        let driver = VerifyDriver::new_with_repeat(
+                        let verifier = FunctionVerifier::new_with_repeat(
                             self.tcx,
                             &target,
                             repeat,
                         );
                         match mir_utils::catch_panic(|| {
-                            driver.verify_postconditions(&postconditions)
+                            verifier.verify_postconditions(&postconditions)
                         }) {
                             Ok(report) => results.extend(report.results),
                             Err(message) => {
@@ -1111,7 +1106,7 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
     }
 }
 
-impl<'tcx> VerifyRun<'tcx> {
+impl<'tcx> VerifyDriver<'tcx> {
     fn print_contracts_debug(
         &self,
         targets: &[FunctionTarget<'tcx>],

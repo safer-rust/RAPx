@@ -41,7 +41,7 @@ use crate::{
     cli::{
         AliasStrategyKind, AnalysisKind, CheckArgs, Commands, PostfixRepeat, RapxArgs, VerifyArgs,
     },
-    verify::{driver::VerifyRun, path::RepeatStrategy, target::PrepareTargets},
+    verify::{driver::VerifyDriver, path::RepeatStrategy, target::PrepareTargets},
 };
 use analysis::{
     Analysis,
@@ -311,7 +311,7 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
                     PostfixRepeat::Auto => RepeatStrategy::Auto,
                     PostfixRepeat::Fixed(n) => RepeatStrategy::Fixed(*n),
                 };
-                VerifyRun::new(
+                VerifyDriver::new(
                     tcx,
                     repeat_strategy,
                     *mode,
