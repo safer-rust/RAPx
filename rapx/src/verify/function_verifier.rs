@@ -19,7 +19,6 @@ use crate::helpers::{
 
 use super::{
     api_classify,
-    call_summary::effects,
     checkpoint::{Checkpoint, CheckpointKind, CheckpointLocation},
     contract::{
         ContractExpr, PlaceBase, Property, PropertyArg, PropertyKind,
@@ -82,78 +81,57 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
         }
     }
 
-    /// Check unsafe-operation requirements and report unresolved calls or unmodeled intrinsics.
+    /// Check unsafe-operation requirements and report unresolved calls.
     pub(crate) fn verify_checkpoints(
         &self,
         cache: &mut VmCache<'_, 'tcx>,
     ) -> VerificationReport<'tcx> {
         let mut report = VerificationReport::new(self.target.def_id);
-        let mut checkpoint_index = 0;
-        for checkpoint in self.target.all_checkpoints() {
-            self.verify_checkpoint(cache, checkpoint, &mut checkpoint_index, &mut report);
+        for (checkpoint_index, checkpoint) in self.target.all_checkpoints().enumerate() {
+            self.verify_checkpoint(cache, checkpoint, checkpoint_index, &mut report);
         }
         report
     }
 
-    /// Append results for one checkable checkpoint and advance its report index.
+    /// Append a checkpoint's property results or an unresolved-call UNKNOWN.
     fn verify_checkpoint(
         &self,
         cache: &mut VmCache<'_, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
-        checkpoint_index: &mut usize,
+        checkpoint_index: usize,
         report: &mut VerificationReport<'tcx>,
     ) {
         let properties = self.target.properties_for_callsite(checkpoint);
         let unresolved_call = checkpoint.kind == CheckpointKind::UnsafeCall
             && checkpoint.callee.is_none()
             && properties.is_empty();
-        if properties.is_empty() && !unresolved_call {
-            return;
-        }
-        let current_index = *checkpoint_index;
-        *checkpoint_index += 1;
-        let unmodeled_intrinsic = effects::is_unmodeled_intrinsic(self.tcx, checkpoint.callee);
-        if unresolved_call || unmodeled_intrinsic {
+        if unresolved_call {
             report.results.push(PropertyCheckResult {
                 checkpoint: checkpoint.location(),
-                checkpoint_index: current_index,
+                checkpoint_index,
                 path_index: 0,
                 property_index: 0,
                 property: Property::new(self.tcx, self.target.def_id, "Unknown", &[]),
-                result: CheckResult::Unknown(if unmodeled_intrinsic {
-                    UnknownReason::UnmodeledIntrinsic(
-                        checkpoint
-                            .callee
-                            .map(|id| self.tcx.def_path_str(id))
-                            .unwrap_or_else(|| "<unresolved>".to_string()),
-                    )
-                } else {
-                    UnknownReason::UnresolvedUnsafeCall
-                }),
-                diagnostics: Some(if unmodeled_intrinsic {
-                    "intrinsic effect is not modeled".to_string()
-                } else {
-                    "unsafe operation has no resolvable contract".to_string()
-                }),
+                result: CheckResult::Unknown(UnknownReason::UnresolvedUnsafeCall),
+                diagnostics: Some("unsafe operation has no resolvable contract".to_string()),
                 path_description: String::new(),
                 callee_name: checkpoint.callee_name(self.tcx),
             });
-            if unresolved_call {
-                return;
-            }
+            return;
+        }
+        // A resolved unsafe callee with empty requirements needs no check;
+        // missing contracts already have an Unknown property.
+        if properties.is_empty() {
+            return;
         }
 
         for (property_index, property) in properties.iter().enumerate() {
-            // The synthetic result already supplies UNKNOWN for this intrinsic.
-            if unmodeled_intrinsic && matches!(property.kind(), Some(PropertyKind::Unknown)) {
-                continue;
-            }
             let bulk = self.check_property_paths(cache, checkpoint, property);
             let path_count = bulk.len();
             for (path_index, (result, path_desc)) in bulk.into_iter().enumerate() {
                 report.results.push(PropertyCheckResult {
                     checkpoint: checkpoint.location(),
-                    checkpoint_index: current_index,
+                    checkpoint_index,
                     path_index,
                     property_index,
                     property: property.clone(),
@@ -168,7 +146,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
             if self.path_tree.is_truncated() {
                 report.results.push(PropertyCheckResult {
                     checkpoint: checkpoint.location(),
-                    checkpoint_index: current_index,
+                    checkpoint_index,
                     path_index: path_count,
                     property_index,
                     property: property.clone(),
