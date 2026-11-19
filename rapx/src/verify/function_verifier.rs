@@ -125,10 +125,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
             return;
         }
 
-        let mut conjuncts = Vec::new();
-        for property in properties {
-            Self::collect_conjuncts(property, &mut conjuncts);
-        }
+        let conjuncts = Self::collect_conjuncts(properties);
         let mut conjunct_results = self.check_checkpoint_conjuncts(cache, checkpoint, &conjuncts);
         let mut next_conjunct = 0;
         let mut by_path: IndexMap<String, Vec<(usize, usize, CheckResult)>> = IndexMap::new();
@@ -184,17 +181,22 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
     }
 
     /// Flatten conjunctions so each child can use the shared path replay.
-    fn collect_conjuncts<'a>(
-        property: &'a Property<'tcx>,
-        conjuncts: &mut Vec<&'a Property<'tcx>>,
-    ) {
-        if let Property::And(and) = property {
-            for child in &and.conjuncts {
-                Self::collect_conjuncts(child, conjuncts);
+    fn collect_conjuncts<'a>(properties: &'a [Property<'tcx>]) -> Vec<&'a Property<'tcx>> {
+        fn append<'a, 'tcx>(property: &'a Property<'tcx>, conjuncts: &mut Vec<&'a Property<'tcx>>) {
+            if let Property::And(and) = property {
+                for child in &and.conjuncts {
+                    append(child, conjuncts);
+                }
+            } else {
+                conjuncts.push(property);
             }
-        } else {
-            conjuncts.push(property);
         }
+
+        let mut conjuncts = Vec::new();
+        for property in properties {
+            append(property, &mut conjuncts);
+        }
+        conjuncts
     }
 
     fn combine_conjunct_results(
