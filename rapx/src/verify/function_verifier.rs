@@ -1,6 +1,6 @@
 //! Path-sensitive verification for one function.
 //!
-//! Extract paths, slice retained MIR, and check checkpoints and invariants.
+//! Extract paths, slice retained MIR, and check checkpoints, invariants, and postconditions.
 
 mod proof;
 
@@ -82,95 +82,103 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
         }
     }
 
-    /// Run unsafe-checkpoint verification for the managed function target.
-    pub(crate) fn verify_function(
+    /// Check unsafe-operation requirements and report unresolved calls or unmodeled intrinsics.
+    pub(crate) fn verify_checkpoints(
         &self,
         cache: &mut VmCache<'_, 'tcx>,
     ) -> VerificationReport<'tcx> {
         let mut report = VerificationReport::new(self.target.def_id);
-
         let mut checkpoint_index = 0;
         for checkpoint in self.target.all_checkpoints() {
-            let properties = self.target.properties_for_callsite(checkpoint);
-            if properties.is_empty()
-                && !(checkpoint.kind == CheckpointKind::UnsafeCall && checkpoint.callee.is_none())
-            {
-                continue;
-            }
-            let current_index = checkpoint_index;
-            checkpoint_index += 1;
-            let unresolved_call = checkpoint.kind == CheckpointKind::UnsafeCall
-                && checkpoint.callee.is_none()
-                && checkpoint.requires.is_empty();
-            let unmodeled_intrinsic =
-                effects::is_unmodeled_intrinsic(self.tcx, checkpoint.callee);
-            if unresolved_call || unmodeled_intrinsic {
-                report.results.push(PropertyCheckResult {
-                    checkpoint: checkpoint.location(),
-                    checkpoint_index: current_index,
-                    path_index: 0,
-                    property_index: 0,
-                    property: Property::new(self.tcx, self.target.def_id, "Unknown", &[]),
-                    result: CheckResult::Unknown(if unmodeled_intrinsic {
-                        UnknownReason::UnmodeledIntrinsic(
-                            checkpoint
-                                .callee
-                                .map(|id| self.tcx.def_path_str(id))
-                                .unwrap_or_else(|| "<unresolved>".to_string()),
-                        )
-                    } else {
-                        UnknownReason::UnresolvedUnsafeCall
-                    }),
-                    diagnostics: Some(if unmodeled_intrinsic {
-                        "intrinsic effect is not modeled".to_string()
-                    } else {
-                        "unsafe operation has no resolvable contract".to_string()
-                    }),
-                    path_description: String::new(),
-                    callee_name: checkpoint.callee_name(self.tcx),
-                });
-                if unresolved_call {
-                    continue;
-                }
-            }
+            self.verify_checkpoint(cache, checkpoint, &mut checkpoint_index, &mut report);
+        }
+        report
+    }
 
-            for (property_index, property) in properties.iter().enumerate() {
-                let bulk = self.check_property_paths(cache, checkpoint, property);
-                let path_count = bulk.len();
-                for (path_index, (result, path_desc)) in bulk.into_iter().enumerate() {
-                    report.results.push(PropertyCheckResult {
-                        checkpoint: checkpoint.location(),
-                        checkpoint_index: current_index,
-                        path_index,
-                        property_index,
-                        property: property.clone(),
-                        diagnostics: Some(format!("vm-check: {result:?}")),
-                        result,
-                        path_description: path_desc,
-                        callee_name: checkpoint.callee_name(self.tcx),
-                    });
-                }
-                // Paths past the enumeration limit were never checked.  Treat
-                // them as proved rather than unknown: hitting the enumeration
-                // limit is a *precision* bound (a false negative), and the
-                // enumerated paths already discharged the obligation.
-                if self.path_tree.is_truncated() {
-                    report.results.push(PropertyCheckResult {
-                        checkpoint: checkpoint.location(),
-                        checkpoint_index: current_index,
-                        path_index: path_count,
-                        property_index,
-                        property: property.clone(),
-                        result: CheckResult::ProvedByRule,
-                        diagnostics: Some("path enumeration stopped at its limit".to_string()),
-                        path_description: PATH_LIMIT_DESCRIPTION.to_string(),
-                        callee_name: checkpoint.callee_name(self.tcx),
-                    });
-                }
+    /// Append results for one checkable checkpoint and advance its report index.
+    fn verify_checkpoint(
+        &self,
+        cache: &mut VmCache<'_, 'tcx>,
+        checkpoint: &Checkpoint<'tcx>,
+        checkpoint_index: &mut usize,
+        report: &mut VerificationReport<'tcx>,
+    ) {
+        let properties = self.target.properties_for_callsite(checkpoint);
+        let unresolved_call = checkpoint.kind == CheckpointKind::UnsafeCall
+            && checkpoint.callee.is_none()
+            && properties.is_empty();
+        if properties.is_empty() && !unresolved_call {
+            return;
+        }
+        let current_index = *checkpoint_index;
+        *checkpoint_index += 1;
+        let unmodeled_intrinsic = effects::is_unmodeled_intrinsic(self.tcx, checkpoint.callee);
+        if unresolved_call || unmodeled_intrinsic {
+            report.results.push(PropertyCheckResult {
+                checkpoint: checkpoint.location(),
+                checkpoint_index: current_index,
+                path_index: 0,
+                property_index: 0,
+                property: Property::new(self.tcx, self.target.def_id, "Unknown", &[]),
+                result: CheckResult::Unknown(if unmodeled_intrinsic {
+                    UnknownReason::UnmodeledIntrinsic(
+                        checkpoint
+                            .callee
+                            .map(|id| self.tcx.def_path_str(id))
+                            .unwrap_or_else(|| "<unresolved>".to_string()),
+                    )
+                } else {
+                    UnknownReason::UnresolvedUnsafeCall
+                }),
+                diagnostics: Some(if unmodeled_intrinsic {
+                    "intrinsic effect is not modeled".to_string()
+                } else {
+                    "unsafe operation has no resolvable contract".to_string()
+                }),
+                path_description: String::new(),
+                callee_name: checkpoint.callee_name(self.tcx),
+            });
+            if unresolved_call {
+                return;
             }
         }
 
-        report
+        for (property_index, property) in properties.iter().enumerate() {
+            // The synthetic result already supplies UNKNOWN for this intrinsic.
+            if unmodeled_intrinsic && matches!(property.kind(), Some(PropertyKind::Unknown)) {
+                continue;
+            }
+            let bulk = self.check_property_paths(cache, checkpoint, property);
+            let path_count = bulk.len();
+            for (path_index, (result, path_desc)) in bulk.into_iter().enumerate() {
+                report.results.push(PropertyCheckResult {
+                    checkpoint: checkpoint.location(),
+                    checkpoint_index: current_index,
+                    path_index,
+                    property_index,
+                    property: property.clone(),
+                    diagnostics: Some(format!("vm-check: {result:?}")),
+                    result,
+                    path_description: path_desc,
+                    callee_name: checkpoint.callee_name(self.tcx),
+                });
+            }
+            // The path limit bounds precision. Mark omitted paths as proved
+            // so only results from enumerated paths affect the verdict.
+            if self.path_tree.is_truncated() {
+                report.results.push(PropertyCheckResult {
+                    checkpoint: checkpoint.location(),
+                    checkpoint_index: current_index,
+                    path_index: path_count,
+                    property_index,
+                    property: property.clone(),
+                    result: CheckResult::ProvedByRule,
+                    diagnostics: Some("path enumeration stopped at its limit".to_string()),
+                    path_description: PATH_LIMIT_DESCRIPTION.to_string(),
+                    callee_name: checkpoint.callee_name(self.tcx),
+                });
+            }
+        }
     }
 
     fn property_contains_alias(property: &Property<'_>) -> bool {
@@ -254,7 +262,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
         per_path
     }
 
-    /// Run struct invariant verification for the managed function target.
+    /// Recheck the target's struct invariants at its exits.
     ///
     /// For constructors (functions returning `Self`), paths are filtered to
     /// return blocks to avoid unwinding paths where the struct may not be
@@ -283,10 +291,9 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
             })
             .collect();
 
-        report.results.extend(self.run_invariant_checks(
+        report.results.extend(self.check_exit_properties(
             invariants,
             &entry_facts,
-            is_constructor,
             !is_constructor,
             "struct",
         ));
@@ -294,9 +301,8 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
         report
     }
 
-    /// Verify built-in type invariants for targets with checkable unsafe
-    /// operations. Safe-only bodies rely on the soundness of safe callees.
-    /// Moved or dropped parameters have no exit-state invariant to check.
+    /// Recheck built-in type invariants at exits when unsafe operations are
+    /// present. Skip paths where the subject was moved or dropped.
     pub(crate) fn verify_type_invariants(&self) -> VerificationReport<'tcx> {
         let mut report = VerificationReport::new(self.target.def_id);
         let invariants = &self.target.type_invariants;
@@ -311,10 +317,9 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
             })
             .collect();
 
-        report.results.extend(self.run_invariant_checks(
+        report.results.extend(self.check_exit_properties(
             invariants,
             &entry_facts,
-            false,
             false,
             "type",
         ));
@@ -322,6 +327,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
         report
     }
 
+    /// Check postconditions at normal return blocks using entry requirements.
     pub(crate) fn verify_postconditions(
         &self,
         postconditions: &[Property<'tcx>],
@@ -336,25 +342,21 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
                 property: property.clone(),
             })
             .collect();
-        report.results.extend(self.run_invariant_checks(
+        report.results.extend(self.check_exit_properties(
             postconditions,
             &entry_facts,
-            false,
             false,
             "postcond",
         ));
         report
     }
 
-    /// Shared core for `verify_struct_invariants` / `verify_type_invariants`:
-    /// enumerate the paths to each invariant checkpoint (`build_invariant_trees`)
-    /// and check every invariant against every path, producing one
-    /// `PropertyCheckResult` per (checkpoint, invariant, path) triple.
-    fn run_invariant_checks(
+    /// Check eligible struct invariants, type invariants, or postconditions
+    /// on each path to the selected exits.
+    fn check_exit_properties(
         &self,
         invariants: &[Property<'tcx>],
         entry_facts: &[RelevantItem<'tcx>],
-        is_constructor: bool,
         check_unwind: bool,
         label: &str,
     ) -> Vec<PropertyCheckResult<'tcx>> {
@@ -365,19 +367,11 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
         } else {
             VmCache::new(&z3_ctx)
         };
-        for (checkpoint, tree) in self.build_invariant_trees(is_constructor, check_unwind) {
-            rap_debug!(
-                "[rapx::verify] {label} invariant checkpoint bb{}: {} tree node(s)",
-                checkpoint.block.as_usize(),
-                tree.len()
-            );
-
+        for (checkpoint, tree) in self.build_exit_trees(check_unwind) {
             let paths = tree.to_vecs();
 
-            // On a non-`Return` exit (a panic-unwind exit), the return place is
-            // never initialized, so an invariant on the *return value* would
-            // spuriously fail — skip it.  Invariants on the receiver/arguments
-            // are still checked there (the owner drops them on unwind).
+            // Return-value properties apply only to normal returns. Other
+            // exits can still carry obligations on the receiver or arguments.
             let is_return = is_return_block(self.tcx, self.target.def_id, checkpoint.block);
 
             for (property_index, invariant) in invariants.iter().enumerate() {
@@ -400,15 +394,6 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
                     None
                 };
                 let check_tree = filtered_tree.as_ref().unwrap_or(&tree);
-                if let Some(filtered_tree) = &filtered_tree {
-                    rap_debug!(
-                        "type invariant bb{} property {}: {} of {} paths remain live",
-                        checkpoint.block.as_usize(),
-                        property_index,
-                        filtered_tree.len(),
-                        tree.len()
-                    );
-                }
                 if check_tree.is_empty() {
                     continue;
                 }
@@ -420,11 +405,6 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
                     })
                     && stable_reference_metadata(self.tcx, self.target.def_id, invariant)
                 {
-                    rap_debug!(
-                        "reusing stable reference metadata for type invariant bb{} property {}",
-                        checkpoint.block.as_usize(),
-                        property_index
-                    );
                     vec![(CheckResult::ProvedByRule, String::new()); check_tree.len()]
                 } else {
                     self.check_invariant_from_tree(
@@ -470,22 +450,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
         results
     }
 
-    fn build_invariant_trees(
-        &self,
-        is_constructor: bool,
-        check_unwind: bool,
-    ) -> FxHashMap<CheckpointLocation, PathTree> {
-        let kind_label = if is_constructor {
-            "constructor"
-        } else {
-            "method"
-        };
-        rap_debug!(
-            "[rapx::verify] struct invariant ({kind_label}): {} whole-cfg path(s) for {}",
-            self.path_tree.len(),
-            self.tcx.def_path_str(self.target.def_id),
-        );
-
+    fn build_exit_trees(&self, check_unwind: bool) -> FxHashMap<CheckpointLocation, PathTree> {
         let mut trees_by_checkpoint: FxHashMap<CheckpointLocation, PathTree> = FxHashMap::default();
 
         if !check_unwind {
@@ -508,14 +473,9 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
                 }
             }
             for exit_block in exit_blocks {
-                // Only the *caller's* own exit blocks terminate the method.
-                // Inlined callees' diverging blocks (e.g. an `UnwindResume`
-                // whose caller unwind is `Terminate`) also end whole-CFG paths,
-                // but the struct invariant is re-proved at the method's exits,
-                // not deep inside an inlined callee. The caller is the root of
-                // the inlined CFG, so its global block index equals its local
-                // MIR block index and the checkpoint location stays in the
-                // caller's local namespace.
+                // An inlined callee can end a whole-CFG path. Check exit
+                // properties only at the caller's own blocks; its global and
+                // local block indices coincide because it is the CFG root.
                 let Some((def_id, local)) = self.path_tree.block_fn_of(exit_block) else {
                     continue;
                 };

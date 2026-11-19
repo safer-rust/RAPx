@@ -166,7 +166,7 @@ impl<'tcx> VerifyDriver<'tcx> {
         }
     }
 
-    /// Run `verify_function` across `repeat_rounds`, collecting results and
+    /// Run `verify_checkpoints` across `repeat_rounds`, collecting results and
     /// returning the crash message (if any round panicked).
     fn run_repeat_rounds(
         &self,
@@ -189,7 +189,7 @@ impl<'tcx> VerifyDriver<'tcx> {
                 enumeration_started.elapsed()
             );
             let verification_started = Instant::now();
-            match mir_utils::catch_panic(|| verifier.verify_function(&mut cache)) {
+            match mir_utils::catch_panic(|| verifier.verify_checkpoints(&mut cache)) {
                 Ok(report) => {
                     rap_debug!(
                         "checked {} repeat {} in {:?}",
