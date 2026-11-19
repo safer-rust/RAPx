@@ -1,30 +1,27 @@
-//! Symbolic-VM-based verification engine.
+//! Proof checking methods for [`FunctionVerifier`].
 //!
-//! Uses a semantic MIR executor to build symbolic state,
-//! then checks safety properties with a unified property checker.
-
-use crate::helpers::mir_utils;
-use std::{cell::Cell, sync::Arc};
-use z3::Config;
+//! Slice paths, replay retained MIR through the symbolic VM, and check properties.
 
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
-    mir::{BasicBlock, Body, Local, Operand, Rvalue, StatementKind, TerminatorKind},
+    mir::{BasicBlock, Local, Operand, Rvalue, StatementKind, TerminatorKind},
     ty::TyCtxt,
 };
+use std::cell::Cell;
 
-use crate::analysis::path::{CallArg, PathTree};
-use crate::compat::FxHashMap;
-
-use super::{
+use crate::analysis::path::PathTree;
+use crate::helpers::mir_utils;
+use crate::verify::{
     checkpoint::{Checkpoint, CheckpointLocation},
-    contract::{AndProperty, AtomProperty, OrProperty, Property, PropertyKind},
-    path::{CalleeBodies, EntryBodies},
+    contract::{self, AndProperty, AtomProperty, OrProperty, Property, PropertyKind},
     property_checker::PropertyChecker,
+    proof_cache::VmCache,
     report::{CheckResult, UnknownReason},
-    slicer::{BackwardSlicer, ProofGoal, RelevantItem},
+    slicer::{ProofGoal, RelevantItem},
     vm::VmState,
 };
+
+use super::FunctionVerifier;
 
 enum LocalAccess {
     None,
@@ -32,231 +29,30 @@ enum LocalAccess {
     Reinitialized,
 }
 
-#[derive(Clone, Hash, PartialEq, Eq)]
-enum GoalItemKey<'tcx> {
-    Statement(DefId, BasicBlock, Option<usize>, usize),
-    Terminator(DefId, BasicBlock, Option<usize>, Option<BasicBlock>),
-    CalleeEntry(DefId, Option<usize>, Vec<CallArg>),
-    CalleeExit(usize),
-    ContractFact(Property<'tcx>),
-}
-
-#[derive(Hash, PartialEq, Eq)]
-struct PrefixEdge<'tcx> {
-    parent: usize,
-    chunk: Vec<GoalItemKey<'tcx>>,
-}
-
-/// Symbolic states shared by properties that retain the same MIR and entry facts.
-pub(crate) struct VmCache<'z3, 'tcx> {
-    context: &'z3 z3::Context,
-    states: FxHashMap<Vec<GoalItemKey<'tcx>>, CachedGoal<'z3, 'tcx>>,
-    prefix_edges: FxHashMap<PrefixEdge<'tcx>, usize>,
-    prefix_states: Vec<Arc<Vec<VmState<'z3, 'tcx>>>>,
-    max_entries: usize,
-}
-
-struct CachedGoal<'z3, 'tcx> {
-    states: Arc<Vec<VmState<'z3, 'tcx>>>,
-    reachability: Vec<Cell<Option<z3::SatResult>>>,
-}
-
-const VM_CACHE_MAX_ENTRIES: usize = 128;
-const VM_PREFIX_STRIDE: usize = 16;
-
-impl<'z3, 'tcx> VmCache<'z3, 'tcx> {
-    pub(crate) fn new(context: &'z3 z3::Context) -> Self {
-        Self::new_with_capacity(context, VM_CACHE_MAX_ENTRIES)
-    }
-
-    pub(crate) fn new_with_capacity(context: &'z3 z3::Context, max_entries: usize) -> Self {
-        Self {
-            context,
-            states: FxHashMap::default(),
-            prefix_edges: FxHashMap::default(),
-            prefix_states: Vec::new(),
-            max_entries,
-        }
-    }
-
-    fn states_for(
-        &mut self,
-        engine: &FunctionVerifyEngine<'tcx>,
-        goal: ProofGoal<'tcx>,
-    ) -> &CachedGoal<'z3, 'tcx> {
-        let key = goal_key(&goal.items);
-        if self.states.contains_key(&key) {
-            return self.states.get(&key).unwrap();
-        }
-        if self.states.len() >= self.max_entries {
-            self.states.clear();
-        }
-        if self.prefix_states.len() >= self.max_entries.saturating_mul(4).max(1) {
-            self.prefix_edges.clear();
-            self.prefix_states.clear();
-        }
-        let mut prefix_len = 0;
-        let mut parent = 0;
-        while prefix_len + VM_PREFIX_STRIDE < key.len() {
-            let edge = PrefixEdge {
-                parent,
-                chunk: key[prefix_len..prefix_len + VM_PREFIX_STRIDE].to_vec(),
-            };
-            let Some(&next) = self.prefix_edges.get(&edge) else {
-                break;
-            };
-            parent = next;
-            prefix_len += VM_PREFIX_STRIDE;
-        }
-        let mut states = if prefix_len > 0 {
-            Arc::clone(&self.prefix_states[parent - 1])
-        } else {
-            Arc::new(
-                VmState::new(
-                    self.context,
-                    engine.tcx,
-                    engine.caller_def_id,
-                    engine.instance_body,
-                )
-                .execute_items(&[]),
-            )
-        };
-        while prefix_len < key.len() {
-            let end = ((prefix_len / VM_PREFIX_STRIDE) + 1)
-                .saturating_mul(VM_PREFIX_STRIDE)
-                .min(key.len());
-            if states
-                .iter()
-                .any(|state| !state.diagnostics.is_unsupported())
-            {
-                let owned =
-                    Arc::try_unwrap(states).unwrap_or_else(|shared| shared.as_ref().clone());
-                states = Arc::new(VmState::execute_items_after(
-                    owned,
-                    &goal.items[prefix_len..end],
-                ));
-            }
-            if end < key.len() {
-                let edge = PrefixEdge {
-                    parent,
-                    chunk: key[prefix_len..end].to_vec(),
-                };
-                parent = self.prefix_states.len() + 1;
-                self.prefix_edges.insert(edge, parent);
-                self.prefix_states.push(Arc::clone(&states));
-            }
-            prefix_len = end;
-        }
-        let reachability = states.iter().map(|_| Cell::new(None)).collect();
-        self.states.insert(
-            key.clone(),
-            CachedGoal {
-                states,
-                reachability,
-            },
-        );
-        self.states.get(&key).unwrap()
-    }
-}
-
-fn goal_key<'tcx>(items: &[RelevantItem<'tcx>]) -> Vec<GoalItemKey<'tcx>> {
-    items
-        .iter()
-        .map(|item| match item {
-            RelevantItem::Statement {
-                def_id,
-                block,
-                global_block,
-                statement_index,
-            } => GoalItemKey::Statement(*def_id, *block, *global_block, *statement_index),
-            RelevantItem::Terminator {
-                def_id,
-                block,
-                global_block,
-                switch_succ,
-            } => GoalItemKey::Terminator(*def_id, *block, *global_block, *switch_succ),
-            RelevantItem::CalleeEntry { callee, body, args } => GoalItemKey::CalleeEntry(
-                *callee,
-                body.map(|body| body as *const _ as usize),
-                args.clone(),
-            ),
-            RelevantItem::CalleeExit { dest } => GoalItemKey::CalleeExit(*dest),
-            RelevantItem::ContractFact { property } => GoalItemKey::ContractFact(property.clone()),
-        })
-        .collect()
-}
-
-/// Checks a function's properties by backward slicing, symbolic MIR execution,
-/// and a [`PropertyChecker`].
-///
-/// One instance serves multiple checkpoints, properties, paths, and invariants
-/// of a function. Each check method receives the specific checkpoint or
-/// invariant to evaluate.
-pub(crate) struct FunctionVerifyEngine<'tcx> {
-    tcx: TyCtxt<'tcx>,
-    slicer: BackwardSlicer<'tcx>,
-    caller_def_id: DefId,
-    instance_body: Option<&'tcx Body<'tcx>>,
-    callee_bodies: CalleeBodies<'tcx>,
-    entry_bodies: EntryBodies<'tcx>,
-}
-
-impl<'tcx> FunctionVerifyEngine<'tcx> {
-    /// Construct the checking context for `caller_def_id`.
-    pub(crate) fn new(
-        tcx: TyCtxt<'tcx>,
-        caller_def_id: DefId,
-        instance_body: Option<&'tcx Body<'tcx>>,
-        callee_bodies: CalleeBodies<'tcx>,
-        entry_bodies: EntryBodies<'tcx>,
-    ) -> Self {
-        Self {
-            tcx,
-            slicer: BackwardSlicer::new(
-                tcx,
-                caller_def_id,
-                instance_body,
-                callee_bodies.clone(),
-                entry_bodies.clone(),
-            ),
-            caller_def_id,
-            instance_body,
-            callee_bodies,
-            entry_bodies,
-        }
-    }
-
-    /// Create a fresh Z3 context with a fixed 10s solver timeout.
-    ///
-    /// A new context is created per verification phase.
-    pub(crate) fn new_z3_context() -> z3::Context {
-        let mut cfg = Config::new();
-        cfg.set_timeout_msec(10000);
-        z3::Context::new(&cfg)
-    }
-
+impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
     /// Verify a property against every path reaching `checkpoint`, one result
     /// per path. Each path is sliced backward from the checkpoint, replayed
     /// symbolically by the VM, and finally discharged by the property checker.
     ///
     /// Returns `(result, path_description)` pairs in forward MIR order.
-    pub(crate) fn check_callsite_from_tree(
+    pub(super) fn check_callsite(
         &self,
         cache: &mut VmCache<'_, 'tcx>,
-        tree: &PathTree,
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
-        caller_contracts: &[Property<'tcx>],
         forward_drop_alias: bool,
     ) -> Vec<(CheckResult, String)> {
+        let tree = &self.path_tree;
         let target_block = checkpoint.block.as_usize();
         let goals = self
             .slicer
             .visit_path_tree(tree, target_block, checkpoint, property);
         let bound_property = Self::bind_property_to_checkpoint(property, checkpoint);
-        let entry_facts: Vec<_> = caller_contracts
+        let entry_facts: Vec<_> = self
+            .target
+            .caller_requires
             .iter()
-            .filter(|c| !matches!(c.kind(), Some(super::contract::PropertyKind::Unknown)))
+            .filter(|c| !matches!(c.kind(), Some(PropertyKind::Unknown)))
             .map(|c| RelevantItem::ContractFact {
                 property: c.clone(),
             })
@@ -280,11 +76,8 @@ impl<'tcx> FunctionVerifyEngine<'tcx> {
     /// properties (checked at the checkpoint by the VM over a backward-sliced
     /// path), this is a *forward* obligation, so it walks the complete paths of
     /// the shared [`PathTree`] and checks the suffix after the drop call.
-    pub(crate) fn check_drop_from_tree(
-        &self,
-        tree: &PathTree,
-        checkpoint: &Checkpoint<'tcx>,
-    ) -> Vec<(CheckResult, String)> {
+    pub(super) fn check_drop(&self, checkpoint: &Checkpoint<'tcx>) -> Vec<(CheckResult, String)> {
+        let tree = &self.path_tree;
         let caller = checkpoint.caller;
         let target = checkpoint.block.as_usize();
 
@@ -521,7 +314,7 @@ impl<'tcx> FunctionVerifyEngine<'tcx> {
         alias_result: &CheckResult,
     ) -> CheckResult {
         match property {
-            Property::Atom(atom) if atom.kind == super::contract::PropertyKind::Alias => {
+            Property::Atom(atom) if atom.kind == contract::PropertyKind::Alias => {
                 alias_result.clone()
             }
             Property::Atom(_) => {
@@ -563,8 +356,7 @@ impl<'tcx> FunctionVerifyEngine<'tcx> {
 
     /// Insert callee boundaries from each retained item's callsite ancestry.
     fn inject_inline_boundaries(
-        callee_bodies: &CalleeBodies<'tcx>,
-        entry_bodies: &EntryBodies<'tcx>,
+        &self,
         items: Vec<RelevantItem<'tcx>>,
         tree: &PathTree,
     ) -> Vec<RelevantItem<'tcx>> {
@@ -624,10 +416,7 @@ impl<'tcx> FunctionVerifyEngine<'tcx> {
                         .expect("inlined callee entry has no call binding");
                     out.push(RelevantItem::CalleeEntry {
                         callee,
-                        body: entry_bodies
-                            .get(&entry)
-                            .copied()
-                            .or_else(|| callee_bodies.get(&callee).copied()),
+                        body: self.slicer.body_for_entry(entry, callee),
                         args: binding.args.clone(),
                     });
                     active.push((entry, binding.dest_local));
@@ -652,25 +441,25 @@ impl<'tcx> FunctionVerifyEngine<'tcx> {
     ) -> Property<'tcx> {
         match property {
             Property::Atom(atom) => {
-                let new_args: Vec<super::contract::PropertyArg<'tcx>> = atom
+                let new_args: Vec<contract::PropertyArg<'tcx>> = atom
                     .args
                     .iter()
                     .map(|a| match a {
-                        super::contract::PropertyArg::Expr(expr) => {
-                            super::contract::PropertyArg::Expr(Self::rebind_contract_expr(
+                        contract::PropertyArg::Expr(expr) => {
+                            contract::PropertyArg::Expr(Self::rebind_contract_expr(
                                 expr, checkpoint,
                             ))
                         }
-                        super::contract::PropertyArg::Predicates(predicates) => {
+                        contract::PropertyArg::Predicates(predicates) => {
                             let rebound: Vec<_> = predicates
                                 .iter()
                                 .map(|p| {
                                     let lhs = Self::rebind_contract_expr(&p.lhs, checkpoint);
                                     let rhs = Self::rebind_contract_expr(&p.rhs, checkpoint);
-                                    super::contract::NumericPredicate::new(lhs, p.op, rhs)
+                                    contract::NumericPredicate::new(lhs, p.op, rhs)
                                 })
                                 .collect();
-                            super::contract::PropertyArg::Predicates(rebound)
+                            contract::PropertyArg::Predicates(rebound)
                         }
                         _ => a.clone(),
                     })
@@ -713,21 +502,21 @@ impl<'tcx> FunctionVerifyEngine<'tcx> {
     /// the checkpoint's argument range is remapped to `Arg(n - 1)` (locals
     /// 1..=k correspond to the callee's arguments in order).
     fn rebind_place(
-        place: &super::contract::ContractPlace<'tcx>,
+        place: &contract::ContractPlace<'tcx>,
         checkpoint: &Checkpoint<'tcx>,
-    ) -> super::contract::ContractPlace<'tcx> {
+    ) -> contract::ContractPlace<'tcx> {
         let new_base = match place.base {
-            super::contract::PlaceBase::Return => super::contract::PlaceBase::Return,
-            super::contract::PlaceBase::Arg(n) => super::contract::PlaceBase::Arg(n),
-            super::contract::PlaceBase::Local(n) => {
+            contract::PlaceBase::Return => contract::PlaceBase::Return,
+            contract::PlaceBase::Arg(n) => contract::PlaceBase::Arg(n),
+            contract::PlaceBase::Local(n) => {
                 if n > 0 && n <= checkpoint.args.len() {
-                    super::contract::PlaceBase::Arg(n - 1)
+                    contract::PlaceBase::Arg(n - 1)
                 } else {
-                    super::contract::PlaceBase::Local(n)
+                    contract::PlaceBase::Local(n)
                 }
             }
         };
-        super::contract::ContractPlace {
+        contract::ContractPlace {
             base: new_base,
             projections: place.projections.clone(),
         }
@@ -736,24 +525,24 @@ impl<'tcx> FunctionVerifyEngine<'tcx> {
     /// Recursively rewrite every place embedded in a contract expression,
     /// rebinding `Local` bases to argument positions via [`Self::rebind_place`].
     fn rebind_contract_expr(
-        expr: &super::contract::ContractExpr<'tcx>,
+        expr: &contract::ContractExpr<'tcx>,
         checkpoint: &Checkpoint<'tcx>,
-    ) -> super::contract::ContractExpr<'tcx> {
+    ) -> contract::ContractExpr<'tcx> {
         match expr {
-            super::contract::ContractExpr::Place(place) => {
-                super::contract::ContractExpr::Place(Self::rebind_place(place, checkpoint))
+            contract::ContractExpr::Place(place) => {
+                contract::ContractExpr::Place(Self::rebind_place(place, checkpoint))
             }
-            super::contract::ContractExpr::Len(inner, method) => {
-                super::contract::ContractExpr::Len(
+            contract::ContractExpr::Len(inner, method) => {
+                contract::ContractExpr::Len(
                     Box::new(Self::rebind_contract_expr(inner, checkpoint)),
                     *method,
                 )
             }
-            super::contract::ContractExpr::MethodCall {
+            contract::ContractExpr::MethodCall {
                 receiver,
                 method,
                 args,
-            } => super::contract::ContractExpr::MethodCall {
+            } => contract::ContractExpr::MethodCall {
                 receiver: Box::new(Self::rebind_contract_expr(receiver, checkpoint)),
                 method: *method,
                 args: args
@@ -761,42 +550,42 @@ impl<'tcx> FunctionVerifyEngine<'tcx> {
                     .map(|arg| Self::rebind_contract_expr(arg, checkpoint))
                     .collect(),
             },
-            super::contract::ContractExpr::IsEmpty(inner, method) => {
-                super::contract::ContractExpr::IsEmpty(
+            contract::ContractExpr::IsEmpty(inner, method) => {
+                contract::ContractExpr::IsEmpty(
                     Box::new(Self::rebind_contract_expr(inner, checkpoint)),
                     *method,
                 )
             }
-            super::contract::ContractExpr::SizeOf(_)
-            | super::contract::ContractExpr::AlignOf(_)
-            | super::contract::ContractExpr::Const(_)
-            | super::contract::ContractExpr::ConstParam { .. }
-            | super::contract::ContractExpr::Unknown => expr.clone(),
-            super::contract::ContractExpr::IndexAccess { slice, index } => {
-                super::contract::ContractExpr::IndexAccess {
+            contract::ContractExpr::SizeOf(_)
+            | contract::ContractExpr::AlignOf(_)
+            | contract::ContractExpr::Const(_)
+            | contract::ContractExpr::ConstParam { .. }
+            | contract::ContractExpr::Unknown => expr.clone(),
+            contract::ContractExpr::IndexAccess { slice, index } => {
+                contract::ContractExpr::IndexAccess {
                     slice: Box::new(Self::rebind_contract_expr(slice, checkpoint)),
                     index: Box::new(Self::rebind_contract_expr(index, checkpoint)),
                 }
             }
-            super::contract::ContractExpr::Binary { op, lhs, rhs } => {
-                super::contract::ContractExpr::Binary {
+            contract::ContractExpr::Binary { op, lhs, rhs } => {
+                contract::ContractExpr::Binary {
                     op: *op,
                     lhs: Box::new(Self::rebind_contract_expr(lhs, checkpoint)),
                     rhs: Box::new(Self::rebind_contract_expr(rhs, checkpoint)),
                 }
             }
-            super::contract::ContractExpr::Unary { op, expr: inner } => {
-                super::contract::ContractExpr::Unary {
+            contract::ContractExpr::Unary { op, expr: inner } => {
+                contract::ContractExpr::Unary {
                     op: *op,
                     expr: Box::new(Self::rebind_contract_expr(inner, checkpoint)),
                 }
             }
-            super::contract::ContractExpr::If {
+            contract::ContractExpr::If {
                 cond,
                 then_expr,
                 else_expr,
-            } => super::contract::ContractExpr::If {
-                cond: Box::new(super::contract::NumericPredicate::new(
+            } => contract::ContractExpr::If {
+                cond: Box::new(contract::NumericPredicate::new(
                     Self::rebind_contract_expr(&cond.lhs, checkpoint),
                     cond.op,
                     Self::rebind_contract_expr(&cond.rhs, checkpoint),
@@ -809,19 +598,19 @@ impl<'tcx> FunctionVerifyEngine<'tcx> {
 
     /// Verify an invariant against every path reaching `checkpoint`.
     ///
-    /// Unlike [`Self::check_callsite_from_tree`], there is no callsite to bind
+    /// Unlike [`Self::check_callsite`], there is no callsite to bind
     /// against, so `entry_facts` are prepended to each sliced path and the
     /// checker runs directly against the invariant. Returns
     /// `(result, path_description)` pairs.
-    pub(crate) fn check_invariant_from_tree(
+    pub(super) fn check_invariant_from_tree(
         &self,
         cache: &mut VmCache<'_, 'tcx>,
-        def_id: DefId,
         tree: &PathTree,
         checkpoint: CheckpointLocation,
         invariant: &Property<'tcx>,
         entry_facts: &[RelevantItem<'tcx>],
     ) -> Vec<(CheckResult, String)> {
+        let def_id = self.target.def_id;
         let target_block = checkpoint.block.as_usize();
         let goals = self.slicer.visit_path_tree_for_checkpoint(
             tree,
@@ -876,13 +665,8 @@ impl<'tcx> FunctionVerifyEngine<'tcx> {
                     items.append(&mut goal.items);
                     goal.items = items;
                 }
-                goal.items = Self::inject_inline_boundaries(
-                    &self.callee_bodies,
-                    &self.entry_bodies,
-                    goal.items,
-                    tree,
-                );
-                let cached = cache.states_for(self, goal);
+                goal.items = self.inject_inline_boundaries(goal.items, tree);
+                let cached = cache.states_for(self.tcx, self.target.def_id, self.target.body, goal);
                 let result = cached
                     .states
                     .iter()

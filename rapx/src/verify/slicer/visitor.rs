@@ -68,6 +68,14 @@ impl<'tcx> BackwardSlicer<'tcx> {
         }
     }
 
+    /// Return the selected MIR body for an inlined call entry, if available.
+    pub(crate) fn body_for_entry(&self, entry: usize, callee: DefId) -> Option<&'tcx Body<'tcx>> {
+        self.entry_bodies
+            .get(&entry)
+            .copied()
+            .or_else(|| self.callee_bodies.get(&callee).copied())
+    }
+
     /// Visit a path tree in post-order, sharing backward analysis across
     /// common prefixes. Merges child-relevance sets at branch nodes (the
     /// union is a sound over-approximation). Returns per-leaf results.

@@ -1,9 +1,7 @@
 //! Data types for the path-refinement layer.
 //!
-//! These structures are produced by the backward visitor and consumed by the
-//! forward visitor, engine, and diagnostic formatting.  `ContractFact` is the
-//! only variant never produced by the backward visitor itself — it is injected
-//! by the engine before the forward visit.
+//! The backward visitor produces these items; the function verifier prepares
+//! them for symbolic VM execution. `ContractFact` is injected by the verifier.
 
 use crate::verify::{contract, path::Path};
 use rustc_hir::def_id::DefId;
@@ -50,7 +48,7 @@ pub(crate) enum RelevantItem<'tcx> {
     /// Return from an inlined callee: write the callee's `_0` to the caller's
     /// destination local.
     CalleeExit { dest: usize },
-    /// A contract fact injected by the engine before the forward visit.
+    /// A contract fact injected by the function verifier before VM execution.
     /// Never produced by the backward visitor itself.
     ContractFact { property: contract::Property<'tcx> },
 }

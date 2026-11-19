@@ -11,10 +11,11 @@ pub(crate) mod checkpoint;
 pub(crate) mod contract;
 pub(crate) mod display;
 pub(crate) mod driver;
-pub(crate) mod engine;
+mod function_verifier;
 pub(crate) mod loop_handling;
 mod marker_trait;
 pub(crate) mod path;
+mod proof_cache;
 
 pub(crate) mod property_checker;
 pub(crate) mod report;
