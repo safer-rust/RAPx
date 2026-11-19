@@ -20,9 +20,7 @@ use crate::helpers::{
 
 use super::{
     checkpoint::{Checkpoint, CheckpointKind, CheckpointLocation},
-    contract::{
-        ContractExpr, PlaceBase, Property, PropertyArg, PropertyKind,
-    },
+    contract::{ContractExpr, PlaceBase, Property, PropertyArg, PropertyKind},
     path::PathExtractor,
     proof_cache::{VmCache, new_z3_context},
     report::{
@@ -44,7 +42,7 @@ pub(crate) struct FunctionVerifier<'target, 'tcx> {
     tcx: TyCtxt<'tcx>,
     /// Collected checkpoints, contracts, and invariants for this function.
     target: &'target FunctionTarget<'tcx>,
-    /// Paths through the function and expanded callees used by all checks.
+    /// Paths through the function and expanded callees for this verification run.
     path_tree: PathTree,
     /// Backward slicer shared by all property checks.
     slicer: BackwardSlicer<'tcx>,
@@ -56,41 +54,51 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
         self.path_tree.is_trait_impl_limited()
     }
 
-    pub(crate) fn new_with_repeat(
-        tcx: TyCtxt<'tcx>,
-        target: &'target FunctionTarget<'tcx>,
-        allow_repeat: usize,
-    ) -> Self {
-        let locations = target.all_checkpoints().map(Checkpoint::location).collect::<Vec<_>>();
+    pub(crate) fn new_with_repeat(tcx: TyCtxt<'tcx>, target: &'target FunctionTarget<'tcx>, allow_repeat: usize) -> Self {
+        Self::new_with_repeat_checkpoint(tcx, target, allow_repeat, None)
+    }
+
+    /// Build paths for one checkpoint; Alias checks retain the path suffix.
+    fn new_for_checkpoint(tcx: TyCtxt<'tcx>, target: &'target FunctionTarget<'tcx>, allow_repeat: usize, checkpoint: &Checkpoint<'tcx>) -> Self {
+        Self::new_with_repeat_checkpoint(tcx, target, allow_repeat, Some(checkpoint))
+    }
+
+    fn new_with_repeat_checkpoint(tcx: TyCtxt<'tcx>, target: &'target FunctionTarget<'tcx>, allow_repeat: usize, checkpoint: Option<&Checkpoint<'tcx>>) -> Self {
+        let locations = checkpoint.map_or_else(
+            || target.all_checkpoints().map(Checkpoint::location).collect::<Vec<_>>(),
+            |checkpoint| vec![checkpoint.location()],
+        );
+        let terminal_target = checkpoint
+            .filter(|checkpoint| !target.properties_for_callsite(checkpoint).iter().any(Self::property_contains_alias))
+            .map(|checkpoint| checkpoint.block.as_usize());
         let (path_tree, callee_bodies, entry_bodies) =
             PathExtractor::new_with_body(tcx, target.def_id, allow_repeat, target.body)
                 .with_callee_bodies(target.callee_bodies.clone())
                 .with_checkpoints(&locations)
+                .with_terminal_target(terminal_target)
                 .run_with_bodies();
         Self {
             tcx,
             target,
             path_tree,
-            slicer: BackwardSlicer::new(
-                tcx,
-                target.def_id,
-                target.body,
-                callee_bodies,
-                entry_bodies,
-            ),
+            slicer: BackwardSlicer::new(tcx, target.def_id, target.body, callee_bodies, entry_bodies),
         }
     }
 
-    /// Check unsafe-operation requirements and report unresolved calls.
-    pub(crate) fn verify_checkpoints(
-        &self,
-        cache: &mut VmCache<'_, 'tcx>,
-    ) -> VerificationReport<'tcx> {
-        let mut report = VerificationReport::new(self.target.def_id);
-        for (checkpoint_index, checkpoint) in self.target.all_checkpoints().enumerate() {
-            self.verify_checkpoint(cache, checkpoint, checkpoint_index, &mut report);
+    /// Enumerate and check paths independently for each unsafe operation.
+    pub(crate) fn verify_checkpoints(tcx: TyCtxt<'tcx>, target: &'target FunctionTarget<'tcx>, allow_repeat: usize, cache: &mut VmCache<'_, 'tcx>) -> (VerificationReport<'tcx>, bool) {
+        let mut report = VerificationReport::new(target.def_id);
+        let mut trait_impl_limited = false;
+        for (checkpoint_index, checkpoint) in target.all_checkpoints().enumerate() {
+            if target.properties_for_callsite(checkpoint).is_empty()
+                && !(checkpoint.kind == CheckpointKind::UnsafeCall && checkpoint.callee.is_none()) {
+                continue;
+            }
+            let verifier = Self::new_for_checkpoint(tcx, target, allow_repeat, checkpoint);
+            trait_impl_limited |= verifier.is_trait_impl_limited();
+            verifier.verify_checkpoint(cache, checkpoint, checkpoint_index, &mut report);
         }
-        report
+        (report, trait_impl_limited)
     }
 
     /// Append a checkpoint's property results or an unresolved-call UNKNOWN.
@@ -119,39 +127,19 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
             });
             return;
         }
-        // A resolved unsafe callee with empty requirements needs no check;
-        // missing contracts already have an Unknown property.
-        if properties.is_empty() {
-            return;
-        }
-
-        let conjuncts = Self::collect_conjuncts(properties);
-        let mut conjunct_results = self.check_checkpoint_conjuncts(cache, checkpoint, &conjuncts);
-        let mut next_conjunct = 0;
-        let mut by_path: IndexMap<String, Vec<(usize, usize, CheckResult)>> = IndexMap::new();
-        let mut path_counts = Vec::with_capacity(properties.len());
-        for (property_index, property) in properties.iter().enumerate() {
-            let bulk = Self::combine_conjunct_results(property, &mut conjunct_results, &mut next_conjunct);
-            path_counts.push(bulk.len());
-            for (path_index, (result, path_description)) in bulk.into_iter().enumerate() {
-                by_path.entry(path_description).or_default().push((property_index, path_index, result));
-            }
-        }
-        for (path_description, mut path_properties) in by_path {
-            path_properties.sort_by_key(|(property_index, _, _)| *property_index);
-            for (property_index, path_index, result) in path_properties {
-                report.results.push(PropertyCheckResult {
-                    checkpoint: checkpoint.location(),
-                    checkpoint_index,
-                    path_index,
-                    property_index,
-                    property: properties[property_index].clone(),
-                    diagnostics: Some(format!("vm-check: {result:?}")),
-                    result,
-                    path_description: path_description.clone(),
-                    callee_name: checkpoint.callee_name(self.tcx),
-                });
-            }
+        let (path_results, path_counts) = self.check_checkpoint_properties(cache, checkpoint, properties);
+        for (path_description, property_index, path_index, result) in path_results {
+            report.results.push(PropertyCheckResult {
+                checkpoint: checkpoint.location(),
+                checkpoint_index,
+                path_index,
+                property_index,
+                property: properties[property_index].clone(),
+                diagnostics: Some(format!("vm-check: {result:?}")),
+                result,
+                path_description,
+                callee_name: checkpoint.callee_name(self.tcx),
+            });
         }
         // The path limit bounds precision. Mark omitted paths as proved
         // so only results from enumerated paths affect the verdict.
@@ -172,91 +160,6 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
         }
     }
 
-    fn property_contains_alias(property: &Property<'_>) -> bool {
-        match property {
-            Property::Atom(atom) => atom.kind == PropertyKind::Alias,
-            Property::And(and) => and.conjuncts.iter().any(Self::property_contains_alias),
-            Property::Or(or) => or.disjuncts.iter().any(Self::property_contains_alias),
-        }
-    }
-
-    /// Flatten conjunctions so each child can use the shared path replay.
-    fn collect_conjuncts<'a>(properties: &'a [Property<'tcx>]) -> Vec<&'a Property<'tcx>> {
-        fn append<'a, 'tcx>(property: &'a Property<'tcx>, conjuncts: &mut Vec<&'a Property<'tcx>>) {
-            if let Property::And(and) = property {
-                for child in &and.conjuncts {
-                    append(child, conjuncts);
-                }
-            } else {
-                conjuncts.push(property);
-            }
-        }
-
-        let mut conjuncts = Vec::new();
-        for property in properties {
-            append(property, &mut conjuncts);
-        }
-        conjuncts
-    }
-
-    fn combine_conjunct_results(
-        property: &Property<'tcx>,
-        conjunct_results: &mut [Vec<(CheckResult, String)>],
-        next_conjunct: &mut usize,
-    ) -> Vec<(CheckResult, String)> {
-        if let Property::And(and) = property {
-            return Self::combine_path_results(and.conjuncts.iter().map(|child| {
-                Self::combine_conjunct_results(child, conjunct_results, next_conjunct)
-            }));
-        }
-        let result = std::mem::take(&mut conjunct_results[*next_conjunct]);
-        *next_conjunct += 1;
-        result
-    }
-
-    /// Combine conjunct results after aligning structural paths.
-    fn combine_path_results(
-        children: impl IntoIterator<Item = Vec<(CheckResult, String)>>,
-    ) -> Vec<(CheckResult, String)> {
-        let mut children = children.into_iter();
-        let Some(first) = children.next() else {
-            return Vec::new();
-        };
-        let mut per_path = first;
-        for bulk in children {
-            if per_path.len() != bulk.len()
-                || per_path
-                    .iter()
-                    .zip(&bulk)
-                    .any(|(left, right)| left.1 != right.1)
-            {
-                let descriptions = if bulk.len() > per_path.len() {
-                    bulk.into_iter()
-                        .map(|(_, description)| description)
-                        .collect::<Vec<_>>()
-                } else {
-                    per_path
-                        .into_iter()
-                        .map(|(_, description)| description)
-                        .collect::<Vec<_>>()
-                };
-                return descriptions
-                    .into_iter()
-                    .map(|description| {
-                        (
-                            CheckResult::Unknown(UnknownReason::InconsistentPathResults),
-                            description,
-                        )
-                    })
-                    .collect();
-            }
-            for (slot, (result, _)) in per_path.iter_mut().zip(bulk) {
-                slot.0 = slot.0.clone().and(result);
-            }
-        }
-        per_path
-    }
-
     /// Recheck the target's struct invariants at its exits.
     ///
     /// For constructors (functions returning `Self`), paths are filtered to
@@ -274,25 +177,15 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
         let caller_contracts = &self.target.caller_requires;
 
         // Entry facts: the full `caller_requires` (explicit `#[rapx::requires]`
-        // preconditions + the implicit struct invariants).  The preconditions
+        // preconditions + the implicit struct invariants). The preconditions
         // are needed to re-prove the invariant after a field mutation — e.g.
         // `set_len` sets `self.len = new_len`, so `len <= cap` only follows
         // from the `new_len <= self.cap` precondition.
-        let entry_facts: Vec<RelevantItem<'tcx>> = caller_contracts
-            .iter()
+        let entry_facts: Vec<RelevantItem<'tcx>> = caller_contracts.iter()
             .filter(|c| !matches!(c.kind(), Some(PropertyKind::Unknown)))
-            .map(|c| RelevantItem::ContractFact {
-                property: c.clone(),
-            })
+            .map(|c| RelevantItem::ContractFact { property: c.clone() })
             .collect();
-
-        report.results.extend(self.check_exit_properties(
-            invariants,
-            &entry_facts,
-            !is_constructor,
-            "struct",
-        ));
-
+        report.results.extend(self.check_exit_properties(invariants, &entry_facts, !is_constructor, "struct"));
         report
     }
 
@@ -305,44 +198,21 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
             return report;
         }
 
-        let entry_facts: Vec<RelevantItem<'tcx>> = invariants
-            .iter()
-            .map(|inv| RelevantItem::ContractFact {
-                property: inv.clone(),
-            })
+        let entry_facts: Vec<RelevantItem<'tcx>> = invariants.iter()
+            .map(|inv| RelevantItem::ContractFact { property: inv.clone() })
             .collect();
-
-        report.results.extend(self.check_exit_properties(
-            invariants,
-            &entry_facts,
-            false,
-            "type",
-        ));
-
+        report.results.extend(self.check_exit_properties(invariants, &entry_facts, false, "type"));
         report
     }
 
     /// Check postconditions at normal return blocks using entry requirements.
-    pub(crate) fn verify_postconditions(
-        &self,
-        postconditions: &[Property<'tcx>],
-    ) -> VerificationReport<'tcx> {
+    pub(crate) fn verify_postconditions(&self, postconditions: &[Property<'tcx>]) -> VerificationReport<'tcx> {
         let mut report = VerificationReport::new(self.target.def_id);
-        let entry_facts: Vec<RelevantItem<'tcx>> = self
-            .target
-            .caller_requires
-            .iter()
+        let entry_facts: Vec<RelevantItem<'tcx>> = self.target.caller_requires.iter()
             .filter(|property| !matches!(property.kind(), Some(PropertyKind::Unknown)))
-            .map(|property| RelevantItem::ContractFact {
-                property: property.clone(),
-            })
+            .map(|property| RelevantItem::ContractFact { property: property.clone() })
             .collect();
-        report.results.extend(self.check_exit_properties(
-            postconditions,
-            &entry_facts,
-            false,
-            "postcond",
-        ));
+        report.results.extend(self.check_exit_properties(postconditions, &entry_facts, false, "postcond"));
         report
     }
 
@@ -362,87 +232,79 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
             VmCache::new(&z3_ctx)
         };
         for (checkpoint, tree) in self.build_exit_trees(check_unwind) {
-            let mut by_path: IndexMap<String, Vec<PropertyCheckResult<'tcx>>> = IndexMap::new();
+            let all_paths = tree.to_vecs();
+            let path_indices: FxHashMap<_, _> = all_paths.iter().cloned().enumerate().map(|(index, path)| (path, index)).collect();
+            let mut goals_by_path = vec![None; all_paths.len()];
+            let mut properties_by_path = Vec::with_capacity(all_paths.len());
             // Return-value properties apply only to normal returns. Other
             // exits can still carry obligations on the receiver or arguments.
             let is_return = is_return_block(self.tcx, self.target.def_id, checkpoint.block);
-            let mut groups: FxHashMap<Option<Local>, Vec<usize>> = FxHashMap::default();
-            for (property_index, invariant) in invariants.iter().enumerate() {
-                if !is_return && targets_return_value(invariant) {
-                    continue;
-                }
-                let subject = (label == "type").then(|| type_invariant_subject(invariant)).flatten();
-                groups.entry(subject).or_default().push(property_index);
-            }
-            for (subject, indices) in groups {
-                let filtered_tree = if label == "type" {
-                    subject.map(|local| {
-                        tree.filter_paths(|path| {
-                            type_invariant_subject_live(
-                                self.tcx,
-                                self.target.def_id,
-                                &tree,
-                                path,
-                                local,
-                            )
-                        })
+            let eligible: Vec<_> = invariants.iter().enumerate()
+                .filter_map(|(index, invariant)| (is_return || !targets_return_value(invariant)).then_some(index))
+                .collect();
+            let stable: Vec<_> = invariants.iter().map(|invariant| {
+                label == "type"
+                    && entry_facts.iter().any(|item| {
+                        matches!(item, RelevantItem::ContractFact { property } if property == invariant)
                     })
-                } else {
-                    None
-                };
-                let check_tree = filtered_tree.as_ref().unwrap_or(&tree);
-                if check_tree.is_empty() {
+                    && stable_reference_metadata(self.tcx, self.target.def_id, invariant)
+            }).collect();
+            let mut groups: IndexMap<Vec<usize>, FxHashSet<Vec<usize>>> = IndexMap::new();
+            for path in &all_paths {
+                let indices: Vec<_> = eligible.iter().copied().filter(|&index| {
+                    label != "type" || type_invariant_subject(&invariants[index]).is_none_or(|local| {
+                        type_invariant_subject_live(self.tcx, self.target.def_id, &tree, path, local)
+                    })
+                }).collect();
+                if !indices.is_empty() {
+                    groups.entry(indices.clone()).or_default().insert(path.clone());
+                }
+                properties_by_path.push(indices);
+            }
+            for (indices, paths) in groups {
+                let selected: Vec<_> = indices.iter().copied()
+                    .filter(|&index| !stable[index])
+                    .collect();
+                if selected.is_empty() {
                     continue;
                 }
-                let stable = |invariant: &Property<'tcx>| {
-                    label == "type"
-                        && entry_facts.iter().any(|item| {
-                            matches!(item, RelevantItem::ContractFact { property } if property == invariant)
-                        })
-                        && stable_reference_metadata(self.tcx, self.target.def_id, invariant)
-                };
-                let selected: Vec<_> = indices.iter().copied()
-                    .filter(|&index| !stable(&invariants[index]))
-                    .collect();
+                let check_tree = tree.filter_paths(|path| paths.contains(path));
                 let properties: Vec<_> = selected.iter().map(|&index| &invariants[index]).collect();
-                let mut checked: FxHashMap<usize, std::vec::IntoIter<CheckResult>> = FxHashMap::default();
-                if !properties.is_empty() {
-                    for (&index, result) in selected.iter().zip(
-                        self.check_exit_group(&mut cache, check_tree, checkpoint, &properties, entry_facts)
-                    ) {
-                        checked.insert(index, result.into_iter());
-                    }
-                }
-                for (path_index, path) in check_tree.to_vecs().iter().enumerate() {
-                    let path_description = format!(
-                        "{:?}",
-                        super::path::caller_blocks(check_tree, self.target.def_id, path.iter().copied())
-                    );
-                    for &property_index in &indices {
-                        let result = match checked.get_mut(&property_index) {
-                            Some(paths) => match paths.next() { Some(result) => result, None => continue },
-                            None => CheckResult::ProvedByRule,
-                        };
-                        by_path.entry(path_description.clone()).or_default().push(PropertyCheckResult {
-                            checkpoint,
-                            checkpoint_index: checkpoint.block.as_usize(),
-                            path_index,
-                            property_index,
-                            property: invariants[property_index].clone(),
-                            diagnostics: Some(format!("vm-{label}-invariant: {result:?}")),
-                            result,
-                            path_description: path_description.clone(),
-                            callee_name: format!(
-                                "{label}-invariant(bb{})",
-                                checkpoint.block.as_usize()
-                            ),
-                        });
-                    }
+                let goals = self.slicer.visit_exit_properties(&check_tree, checkpoint.block.as_usize(), self.target.def_id, checkpoint, &properties);
+                for (path, goal) in check_tree.to_vecs().into_iter().zip(goals) {
+                    goals_by_path[path_indices[&path]] = Some(goal);
                 }
             }
-            for (_, mut path_results) in by_path {
-                path_results.sort_by_key(|result| result.property_index);
-                results.extend(path_results);
+            for (path_index, path) in all_paths.iter().enumerate() {
+                let indices = &properties_by_path[path_index];
+                let selected: Vec<_> = indices.iter().copied().filter(|&index| !stable[index]).collect();
+                let properties: Vec<_> = selected.iter().map(|&index| &invariants[index]).collect();
+                let checked = goals_by_path[path_index].take().map(|goal| {
+                    self.check_exit_goal(&mut cache, &tree, checkpoint, &properties, entry_facts, goal)
+                });
+                let path_description = format!("{:?}", super::path::caller_blocks(&tree, self.target.def_id, path.iter().copied()));
+                let mut slot = 0;
+                for &property_index in indices {
+                    let result = if stable[property_index] {
+                        CheckResult::ProvedByRule
+                    } else {
+                        let result = checked.as_ref().and_then(|results| results.get(slot)).cloned();
+                        slot += 1;
+                        let Some(result) = result else { continue };
+                        result
+                    };
+                    results.push(PropertyCheckResult {
+                        checkpoint,
+                        checkpoint_index: checkpoint.block.as_usize(),
+                        path_index,
+                        property_index,
+                        property: invariants[property_index].clone(),
+                        diagnostics: Some(format!("vm-{label}-invariant: {result:?}")),
+                        result,
+                        path_description: path_description.clone(),
+                        callee_name: format!("{label}-invariant(bb{})", checkpoint.block.as_usize()),
+                    });
+                }
             }
         }
         results
@@ -505,10 +367,7 @@ fn stable_reference_metadata(tcx: TyCtxt<'_>, def_id: DefId, property: &Property
     let Some(kind) = property.kind() else {
         return false;
     };
-    if !matches!(
-        kind,
-        PropertyKind::NonNull | PropertyKind::Align | PropertyKind::ValidNum
-    ) {
+    if !matches!(kind, PropertyKind::NonNull | PropertyKind::Align | PropertyKind::ValidNum) {
         return false;
     }
     let Some(local) = type_invariant_subject(property) else {
@@ -601,22 +460,13 @@ fn type_invariant_subject(property: &Property<'_>) -> Option<Local> {
         }
     }
     if roots.len() == 1 {
-        roots
-            .into_iter()
-            .next()
-            .filter(|local| local.as_usize() > 0)
+        roots.into_iter().next().filter(|local| local.as_usize() > 0)
     } else {
         None
     }
 }
 
-fn type_invariant_subject_live(
-    tcx: TyCtxt<'_>,
-    def_id: DefId,
-    tree: &PathTree,
-    path: &[usize],
-    local: Local,
-) -> bool {
+fn type_invariant_subject_live(tcx: TyCtxt<'_>, def_id: DefId, tree: &PathTree, path: &[usize], local: Local) -> bool {
     let body = tcx.optimized_mir(def_id);
     let mut live = true;
     for &global_block in path {

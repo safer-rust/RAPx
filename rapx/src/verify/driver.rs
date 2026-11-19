@@ -179,20 +179,12 @@ impl<'tcx> VerifyDriver<'tcx> {
         let z3_ctx = new_z3_context();
         let mut cache = VmCache::new(&z3_ctx);
         for &repeat in repeat_rounds {
-            let enumeration_started = Instant::now();
-            let verifier = FunctionVerifier::new_with_repeat(self.tcx, target, repeat);
-            *trait_impl_limited |= verifier.is_trait_impl_limited();
-            rap_debug!(
-                "built path tree for {} repeat {} in {:?}",
-                skip_label,
-                repeat,
-                enumeration_started.elapsed()
-            );
             let verification_started = Instant::now();
-            match mir_utils::catch_panic(|| verifier.verify_checkpoints(&mut cache)) {
-                Ok(report) => {
+            match mir_utils::catch_panic(|| FunctionVerifier::verify_checkpoints(self.tcx, target, repeat, &mut cache)) {
+                Ok((report, limited)) => {
+                    *trait_impl_limited |= limited;
                     rap_debug!(
-                        "checked {} repeat {} in {:?}",
+                        "checked checkpoint paths for {} repeat {} in {:?}",
                         skip_label,
                         repeat,
                         verification_started.elapsed()

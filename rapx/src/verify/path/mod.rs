@@ -37,12 +37,12 @@ use crate::verify::checkpoint::CheckpointLocation;
 /// Instantiated MIR bodies for direct generic callees.
 pub(crate) type CalleeBodies<'tcx> = FxHashMap<DefId, &'tcx Body<'tcx>>;
 
-/// Enumerates finite, acyclic verification paths from function entry to each
-/// unsafe checkpoint in one function body.
+/// Enumerates finite verification paths from function entry for selected
+/// checkpoints or function exits.
 ///
 /// `run` enumerates each function independently, then composes selected callee
-/// paths at callsites. Checkpoints and struct invariants slice prefixes from
-/// the resulting [`PathTree`] via `walk_prefixes`/`subtree_to`.
+/// paths at callsites. Checkpoint checks use prefixes of the resulting
+/// [`PathTree`]; exit checks use its paths to return or unwind blocks.
 ///
 /// Enumeration is capped at [`crate::limit::path_limit`] to avoid exponential
 /// blow-up.
@@ -57,6 +57,8 @@ pub(crate) struct PathExtractor<'tcx> {
     body: Option<&'tcx rustc_middle::mir::Body<'tcx>>,
     callee_bodies: CalleeBodies<'tcx>,
     coverage_targets: FxHashSet<usize>,
+    /// Selected checkpoint whose path may end before the function exit.
+    terminal_target: Option<usize>,
 }
 impl<'tcx> PathExtractor<'tcx> {
     /// Create a path extractor that verifies `def_id`, optionally against a
@@ -80,6 +82,7 @@ impl<'tcx> PathExtractor<'tcx> {
             body,
             callee_bodies: CalleeBodies::default(),
             coverage_targets: FxHashSet::default(),
+            terminal_target: None,
         }
     }
 
@@ -96,6 +99,12 @@ impl<'tcx> PathExtractor<'tcx> {
         self
     }
 
+    /// Allow early termination at a checkpoint that needs no path suffix.
+    pub(crate) fn with_terminal_target(mut self, target: Option<usize>) -> Self {
+        self.terminal_target = target;
+        self
+    }
+
     /// Run path extraction, consuming the extractor.
     ///
     /// Returns a composed [`PathTree`] with block-function metadata attached.
@@ -103,9 +112,7 @@ impl<'tcx> PathExtractor<'tcx> {
         self.run_with_bodies().0
     }
 
-    pub(crate) fn run_with_bodies(
-        self,
-    ) -> (PathTree, CalleeBodies<'tcx>, EntryBodies<'tcx>) {
+    pub(crate) fn run_with_bodies(self) -> (PathTree, CalleeBodies<'tcx>, EntryBodies<'tcx>) {
         let mut caller_graph = match self.body {
             Some(body) => PathGraph::new_with_body(self.tcx, self.def_id, body),
             None => PathGraph::new(self.tcx, self.def_id),
@@ -113,6 +120,7 @@ impl<'tcx> PathExtractor<'tcx> {
         caller_graph.find_scc();
         let caller_paths = PathEnumerator::new(&caller_graph)
             .with_coverage_targets(self.coverage_targets)
+            .with_terminal_target(self.terminal_target)
             .enumerate_paths_repeat(self.allow_repeat);
         let mut call_index = CallSiteIndex::new(
             self.tcx,
@@ -267,7 +275,7 @@ impl<'g, 'tcx> PathComposer<'g, 'tcx> {
     }
 }
 
-/// One finite, acyclic execution trace from function entry to a checkpoint,
+/// One bounded execution trace from function entry to a checkpoint,
 /// represented as an ordered sequence of MIR basic blocks.
 ///
 /// Built by the [`BackwardSlicer`](super::slicer::BackwardSlicer) from the

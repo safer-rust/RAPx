@@ -47,8 +47,7 @@ fn extract_segment(path: &[usize], enter: usize) -> Vec<usize> {
     path[prev_pos + 1..path.len() - 1].to_vec()
 }
 
-#[derive(Clone, Debug)]
-/// A single enumerated acyclic path through an SCC region.
+/// A bounded path through an SCC region, possibly repeating a postfix segment.
 ///
 /// `blocks` is the ordered sequence of MIR block indices from the SCC entry
 /// to the last block before exiting. The last block may have multiple CFG
@@ -57,7 +56,8 @@ fn extract_segment(path: &[usize], enter: usize) -> Vec<usize> {
 ///
 /// For example, in a loop with `switch x { A => loop_body, B => done1, C => done2 }`,
 /// the corresponding `SccPath` would have `exit_successors = [done1, done2]`
-/// — the DFS forks recursively into each of these when constructing whole-CFG paths.
+/// — the DFS forks recursively into each of these when constructing paths.
+#[derive(Clone, Debug)]
 pub struct SccPath {
     pub blocks: Vec<usize>,
     pub exit_successors: Vec<usize>,
@@ -1774,7 +1774,8 @@ impl ConstraintHash {
     }
 }
 
-/// Builds a [`PathTree`] by depth-first enumeration of whole-CFG paths.
+/// Builds a [`PathTree`] by depth-first path enumeration.
+/// A selected checkpoint may terminate a path before the CFG exit.
 ///
 /// The enumerator holds a `&PathGraph` (which must have `find_scc()` called
 /// beforehand) and two caches:
@@ -1786,7 +1787,7 @@ impl ConstraintHash {
 /// constraint states (e.g. a loop variable changing from `true` to
 /// `false`) produce different hashes.
 ///
-/// 1. `scc_paths` — maps `(entry, repeat)` to a list of acyclic paths through
+/// 1. `scc_paths` — maps `(entry, repeat)` to bounded paths through
 ///    that SCC.  Reused across repeated enumerations of the same function
 ///    with different repeat counts.
 ///
@@ -1802,6 +1803,8 @@ pub struct PathEnumerator<'g, 'tcx> {
     scc_paths: FxHashMap<(usize, usize), Rc<Vec<SccPath>>>,
     visited_sccs: FxHashSet<(usize, ConstraintHash)>,
     coverage_targets: FxHashSet<usize>,
+    /// Checkpoint where this enumeration may stop without an Alias suffix.
+    terminal_target: Option<usize>,
     covered_prefixes: FxHashSet<Vec<usize>>,
 }
 
@@ -1812,12 +1815,19 @@ impl<'g, 'tcx> PathEnumerator<'g, 'tcx> {
             scc_paths: FxHashMap::default(),
             visited_sccs: FxHashSet::default(),
             coverage_targets: FxHashSet::default(),
+            terminal_target: None,
             covered_prefixes: FxHashSet::default(),
         }
     }
 
     pub fn with_coverage_targets(mut self, targets: impl IntoIterator<Item = usize>) -> Self {
         self.coverage_targets.extend(targets);
+        self
+    }
+
+    /// Allow early termination at a checkpoint that needs no path suffix.
+    pub fn with_terminal_target(mut self, target: Option<usize>) -> Self {
+        self.terminal_target = target;
         self
     }
 
@@ -1841,19 +1851,19 @@ impl<'g, 'tcx> PathEnumerator<'g, 'tcx> {
         }
     }
 
-    /// Enumerate whole-CFG paths, optionally filtering infeasible transitions.
+    /// Enumerate paths, optionally filtering infeasible transitions.
     ///
-    /// SCC regions are flattened into a bounded set of acyclic paths.
+    /// SCC regions are flattened into a bounded set of finite paths.
     pub fn enumerate_paths(&mut self) -> PathTree {
         self.enumerate_paths_repeat(0)
     }
 
-    /// Enumerate whole-CFG paths allowing each SCC postfix segment to repeat
+    /// Enumerate paths allowing each SCC postfix segment to repeat
     /// up to `postfix_repeat` additional times. `postfix_repeat = 0` gives
     /// the same result as `enumerate_paths`.
     ///
-    /// Enumeration stops once `crate::limit::path_limit` paths are
-    /// collected and the tree is marked truncated.
+    /// Enumeration uses `crate::limit::path_limit` to bound the result and
+    /// marks the tree truncated when that bound is reached.
     pub fn enumerate_paths_repeat(&mut self, postfix_repeat: usize) -> PathTree {
         let mut tree = PathTree::new();
 
@@ -1873,7 +1883,7 @@ impl<'g, 'tcx> PathEnumerator<'g, 'tcx> {
         tree
     }
 
-    /// Enumerate all acyclic paths through `scc` starting at `start`,
+    /// Enumerate bounded paths through `scc` starting at `start`,
     /// allowing each postfix segment to repeat up to `postfix_repeat`
     /// additional times.
     ///
@@ -2081,9 +2091,12 @@ impl<'g, 'tcx> PathEnumerator<'g, 'tcx> {
             tree.mark_truncated();
             return;
         }
-
         let scc_info = self.graph.cfg_block(current).scc.clone();
         let is_scc = current == scc_info.enter && !scc_info.nodes.is_empty();
+        if self.terminal_target == Some(current) && !is_scc {
+            self.record_path(tree, path);
+            return;
+        }
         if is_scc {
             let scc = self.sort_scc_tree(&scc_info);
             let segments = self.find_scc_paths_repeat(current, &scc, postfix_repeat);
@@ -2123,6 +2136,12 @@ impl<'g, 'tcx> PathEnumerator<'g, 'tcx> {
                     }
                 }
                 if !reachable {
+                    continue;
+                }
+
+                if self.terminal_target.is_some_and(|target| path.last() == Some(&target)) {
+                    self.record_path(tree, path);
+                    path.truncate(orig_len);
                     continue;
                 }
 
