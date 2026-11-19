@@ -20,9 +20,7 @@ static CONSTRUCTOR_MIR_MODE: OnceLock<ConstructorMirMode> = OnceLock::new();
 
 /// Set the CLI mode once before path collection and VM execution.
 pub(crate) fn set_constructor_mir_mode(mode: ConstructorMirMode) {
-    CONSTRUCTOR_MIR_MODE
-        .set(mode)
-        .expect("constructor MIR mode must be set once before verification");
+    CONSTRUCTOR_MIR_MODE.set(mode).expect("set twice");
 }
 
 /// Resolve `default` to `false` when the direct result has an invariant.

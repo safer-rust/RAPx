@@ -6,29 +6,34 @@
 //! struct invariants) and delegates the actual backward/forward/SMT work to
 //! the shared `VerifyEngine`.
 
+use std::time::Instant;
+
+use rustc_hir::def_id::DefId;
+use rustc_middle::{
+    mir::{BasicBlock, Local, Operand, Rvalue, StatementKind, TerminatorKind},
+    ty::{Ty, TyCtxt, TyKind},
+};
+
 use crate::analysis::{Analysis, path::PathTree};
 use crate::cli::VerifyMode;
+use crate::compat::{FxHashMap, FxHashSet};
 use crate::helpers::{
     fn_info::{FnKind, get_cons, get_mutated_fields, get_muts, get_type},
-    mir_utils,
+    mir_utils::{self, collect_return_block_indices, is_return_block},
+    name::short_fn_name,
 };
 use crate::verify::property_checker::{
     atomic_update_check, contain_no_type_check, field_invariant_check, no_internal_mut_check,
     no_raw_ptr_check, ref_send_check, uni_internal_mut_check,
 };
 
-use crate::compat::{FxHashMap, FxHashSet};
-use rustc_hir::def_id::DefId;
-use rustc_middle::{
-    mir::{BasicBlock, Operand, Rvalue, StatementKind, TerminatorKind},
-    ty::{TyCtxt, TyKind},
-};
-use std::time::Instant;
-
 use super::{
+    api_classify,
+    call_summary::effects,
+    checkpoint::{Checkpoint, CheckpointKind, CheckpointLocation},
     contract::{
         ContractExpr, ContractPlace, ContractProjection, PlaceBase, Property, PropertyArg,
-        PropertyKind,
+        PropertyKind, compound::register_compound_properties, place::field_name_from_arg,
     },
     display::{
         dedup_compound_props, emit_results_and_verdict, emit_verify_summary, fmt_contract_expanded,
@@ -40,44 +45,27 @@ use super::{
         CheckResult, PATH_LIMIT_DESCRIPTION, PropertyCheckResult, UnknownReason, VerificationReport,
     },
     slicer::RelevantItem,
-    target::{FunctionTarget, VerifyTargetCollector, get_contract_from_annotation},
+    target::{
+        FunctionTarget, VerifyTargetCollector, get_contract_from_annotation,
+        get_trait_method_ensures,
+    },
     trait_ensurance::{MarkerTraitKind, TraitEnsurance, TraitEnsuranceKind},
 };
 
-use crate::helpers::mir_utils::{collect_return_block_indices, is_return_block};
-
-use crate::verify::checkpoint::{Checkpoint, CheckpointKind, CheckpointLocation};
-
-/// Orchestrates the three-stage verification pipeline (backward data-dependency
-/// analysis → forward state simulation → SMT checking) for a single function
-/// under analysis.
+/// Coordinates checkpoint and struct-invariant verification for one function.
 ///
-/// Each `VerifyDriver` instance bundles together:
-///
-/// 1. The **problem statement** (`target`) — which unsafe checkpoints and
-///    raw-pointer dereferences exist, what safety contracts they demand, and
-///    what entry assumptions (from `#[rapx::requires]`) and struct invariants
-///    apply.
-///
-/// 2. The **reachability model** (`path_tree`) — SCC-aware acyclic whole-CFG
-///    paths from function entry (with inlined callees), produced by flattening
-///    the MIR control-flow graph with bounded loop unrolling.  Checkpoints and
-///    struct invariants slice their own prefixes from it.
-///
-/// 3. The **verification engine** (`engine`) — a stateless pipeline shared
-///    across all (checkpoint, path, property) triples.
-///
-/// Verification proceeds in two phases per driver instance:
-/// - [`verify_function`](Self::verify_function): checks safety properties at
-///   each unsafe checkpoint (callee `#[rapx::requires]` contracts).
-/// - [`verify_struct_invariants`](Self::verify_struct_invariants): checks
-///   struct invariants at return-block checkpoints (constructors) or at all
-///   path endpoints (non-constructor methods).
+/// The target owns the unsafe-call, raw-pointer-dereference, and static-mut
+/// checkpoints, along with their contracts and entry assumptions. The path
+/// tree supplies paths to those checkpoints and to function exits; the engine
+/// checks the required properties along those paths.
 pub(crate) struct VerifyDriver<'target, 'tcx> {
+    /// Compiler context for type and MIR queries.
     tcx: TyCtxt<'tcx>,
+    /// Collected checkpoints, contracts, and invariants for this function.
     target: &'target FunctionTarget<'tcx>,
+    /// Paths through the function and expanded callees used by both checks.
     path_tree: PathTree,
-    checkpoints: Vec<Checkpoint<'tcx>>,
+    /// Runs slicing, symbolic execution, and property checks on those paths.
     engine: VerifyEngine<'tcx>,
 }
 
@@ -95,9 +83,8 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
         target: &'target FunctionTarget<'tcx>,
         allow_repeat: usize,
     ) -> Self {
-        let checkpoints: Vec<_> = target.all_checkpoints().cloned().collect();
-        let locations = checkpoints
-            .iter()
+        let locations = target
+            .all_checkpoints()
             .map(Checkpoint::location)
             .collect::<Vec<_>>();
         let (path_tree, callee_bodies, entry_bodies) =
@@ -109,7 +96,6 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
             tcx,
             target,
             path_tree,
-            checkpoints,
             engine: VerifyEngine::new(
                 tcx,
                 target.def_id,
@@ -131,10 +117,8 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
             let unresolved_call = view.checkpoint.kind == CheckpointKind::UnsafeCall
                 && view.checkpoint.callee.is_none()
                 && view.checkpoint.requires.is_empty();
-            let unmodeled_intrinsic = crate::verify::call_summary::effects::is_unmodeled_intrinsic(
-                self.tcx,
-                view.checkpoint.callee,
-            );
+            let unmodeled_intrinsic =
+                effects::is_unmodeled_intrinsic(self.tcx, view.checkpoint.callee);
             if unresolved_call || unmodeled_intrinsic {
                 report.results.push(PropertyCheckResult {
                     checkpoint: view.checkpoint.location(),
@@ -215,7 +199,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
         match property {
             Property::Atom(atom)
                 if atom.kind == PropertyKind::Alias
-                    && crate::verify::api_classify::is_manually_drop_drop(
+                    && api_classify::is_manually_drop_drop(
                         self.tcx,
                         view.checkpoint.callee,
                     ) =>
@@ -228,7 +212,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
                 view.checkpoint,
                 property,
                 &self.target.caller_requires,
-                crate::verify::api_classify::is_manually_drop_drop(self.tcx, view.checkpoint.callee)
+                api_classify::is_manually_drop_drop(self.tcx, view.checkpoint.callee)
                     && property_contains_alias(property),
             ),
             Property::And(and) => self.combine_check_paths(cache, view, &and.conjuncts),
@@ -287,7 +271,7 @@ impl<'target, 'tcx> VerifyDriver<'target, 'tcx> {
         &self,
     ) -> impl Iterator<Item = CheckpointCheckView<'_, 'tcx>> + '_ {
         let mut checkpoint_index = 0usize;
-        self.checkpoints.iter().filter_map(move |checkpoint| {
+        self.target.all_checkpoints().filter_map(move |checkpoint| {
             let properties = self.target.properties_for_callsite(checkpoint);
             if properties.is_empty()
                 && !(checkpoint.kind == CheckpointKind::UnsafeCall && checkpoint.callee.is_none())
@@ -613,7 +597,7 @@ pub(crate) struct VerifyRun<'tcx> {
     debug_contracts: bool,
     /// Per-struct verdict of the struct-invariant verification, consumed by the
     /// type-level `Allocated`/`Owning` checks to discharge the field invariants.
-    struct_invariant_results: FxHashMap<rustc_hir::def_id::DefId, CheckResult>,
+    struct_invariant_results: FxHashMap<DefId, CheckResult>,
 }
 
 impl<'tcx> VerifyRun<'tcx> {
@@ -683,9 +667,9 @@ impl<'tcx> VerifyRun<'tcx> {
     fn build_virtual_target(
         &self,
         read_target: &FunctionTarget<'tcx>,
-        read_def_id: rustc_hir::def_id::DefId,
-        con_id: rustc_hir::def_id::DefId,
-        mut_ids: &[rustc_hir::def_id::DefId],
+        read_def_id: DefId,
+        con_id: DefId,
+        mut_ids: &[DefId],
     ) -> FunctionTarget<'tcx> {
         let mut accumulated_requires: Vec<Property<'tcx>> = Vec::new();
 
@@ -776,10 +760,10 @@ impl<'tcx> VerifyRun<'tcx> {
 
     fn verify_and_emit_sequence(
         &self,
-        read_def_id: rustc_hir::def_id::DefId,
+        read_def_id: DefId,
         con_target: &FunctionTarget<'tcx>,
-        con_id: rustc_hir::def_id::DefId,
-        mut_ids: &[rustc_hir::def_id::DefId],
+        con_id: DefId,
+        mut_ids: &[DefId],
     ) {
         let mut all_results: Vec<PropertyCheckResult<'_>> = Vec::new();
         let mut trait_impl_limited = false;
@@ -825,7 +809,7 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
     /// level. Earlier rounds use fewer loop unrollings; later rounds incrementally
     /// add deeper paths.
     fn run(&mut self) {
-        crate::verify::contract::compound::register_compound_properties(self.tcx);
+        register_compound_properties(self.tcx);
 
         let collection_started = Instant::now();
         rap_debug!("collecting verification targets");
@@ -1053,8 +1037,7 @@ impl<'tcx> Analysis for VerifyRun<'tcx> {
                         continue;
                     }
                     checked_methods.insert(self.tcx.def_path_str(trait_method));
-                    let postconditions =
-                        crate::verify::target::get_trait_method_ensures(self.tcx, item.def_id);
+                    let postconditions = get_trait_method_ensures(self.tcx, item.def_id);
                     rap_info!("    fn {}:", item.name());
                     for property in dedup_compound_props(postconditions.iter()) {
                         let (call, _) = fmt_contract_expanded(
@@ -1197,8 +1180,8 @@ impl<'tcx> VerifyRun<'tcx> {
     fn check_type_obligation(
         &self,
         property: &Property<'tcx>,
-        impl_def_id: rustc_hir::def_id::DefId,
-        self_ty: rustc_middle::ty::Ty<'tcx>,
+        impl_def_id: DefId,
+        self_ty: Ty<'tcx>,
         is_sync: bool,
     ) -> CheckResult {
         match property {
@@ -1252,11 +1235,11 @@ impl<'tcx> VerifyRun<'tcx> {
                     // a matching `#[rapx::invariant(...)]` (optionally restricted to
                     // the field named in the property) and that it verified.
                     let adt_def_id = match self_ty.kind() {
-                        rustc_middle::ty::TyKind::Adt(adt_def, _) => adt_def.did(),
+                        TyKind::Adt(adt_def, _) => adt_def.did(),
                         _ => return CheckResult::Unknown(UnknownReason::Unimplemented),
                     };
                     let field = atom.args.first().and_then(|a| {
-                        crate::verify::contract::place::field_name_from_arg(self.tcx, adt_def_id, a)
+                        field_name_from_arg(self.tcx, adt_def_id, a)
                     });
                     field_invariant_check(
                         self.tcx,
@@ -1319,7 +1302,7 @@ impl<'tcx> VerifyRun<'tcx> {
         rap_info!("{:=<1$}", "", 76);
         rap_info!("");
 
-        let mut struct_groups: FxHashMap<rustc_hir::def_id::DefId, Vec<&FunctionTarget<'tcx>>> =
+        let mut struct_groups: FxHashMap<DefId, Vec<&FunctionTarget<'tcx>>> =
             FxHashMap::default();
         let mut free_targets: Vec<&FunctionTarget<'tcx>> = Vec::new();
 
@@ -1443,7 +1426,7 @@ impl<'tcx> VerifyRun<'tcx> {
         }
     }
 
-    fn is_unsafe_fn(&self, def_id: rustc_hir::def_id::DefId) -> bool {
+    fn is_unsafe_fn(&self, def_id: DefId) -> bool {
         self.tcx.fn_sig(def_id).skip_binder().safety() == rustc_hir::Safety::Unsafe
     }
 
@@ -1570,7 +1553,7 @@ impl<'tcx> VerifyRun<'tcx> {
 
     fn resolve_arg_names_with_types(
         &self,
-        def_id: rustc_hir::def_id::DefId,
+        def_id: DefId,
     ) -> (Vec<String>, Option<String>) {
         if !self.tcx.is_mir_available(def_id) {
             return (Vec::new(), None);
@@ -1605,13 +1588,11 @@ impl<'tcx> VerifyRun<'tcx> {
     }
 }
 
-use crate::helpers::name::short_fn_name;
-
 /// Collect struct field indices referenced by a property's contract places.
 ///
 /// Used to determine which invariants are invalidated when a mutator writes
 /// to specific struct fields.
-fn property_field_indices(property: &crate::verify::contract::Property<'_>) -> Vec<usize> {
+fn property_field_indices(property: &Property<'_>) -> Vec<usize> {
     let mut indices = Vec::new();
     for arg in property.args() {
         let place = match arg {
@@ -1621,14 +1602,14 @@ fn property_field_indices(property: &crate::verify::contract::Property<'_>) -> V
         if let Some(place) = place {
             for proj in &place.projections {
                 match proj {
-                    crate::verify::contract::ContractProjection::Field { index, .. } => {
+                    ContractProjection::Field { index, .. } => {
                         let idx = *index;
                         if !indices.contains(&idx) {
                             indices.push(idx);
                         }
                     }
-                    crate::verify::contract::ContractProjection::Downcast { .. } => {}
-                    crate::verify::contract::ContractProjection::ForEach => {}
+                    ContractProjection::Downcast { .. } => {}
+                    ContractProjection::ForEach => {}
                 }
             }
         }
@@ -1700,8 +1681,8 @@ fn stable_reference_metadata(tcx: TyCtxt<'_>, def_id: DefId, property: &Property
     true
 }
 
-fn type_invariant_subject(property: &Property<'_>) -> Option<rustc_middle::mir::Local> {
-    fn collect_expr(expr: &ContractExpr<'_>, roots: &mut FxHashSet<rustc_middle::mir::Local>) {
+fn type_invariant_subject(property: &Property<'_>) -> Option<Local> {
+    fn collect_expr(expr: &ContractExpr<'_>, roots: &mut FxHashSet<Local>) {
         match expr {
             ContractExpr::Place(place) => {
                 roots.insert(place.base.to_local());
@@ -1760,7 +1741,7 @@ fn type_invariant_subject_live(
     def_id: DefId,
     tree: &PathTree,
     path: &[usize],
-    local: rustc_middle::mir::Local,
+    local: Local,
 ) -> bool {
     let body = tcx.optimized_mir(def_id);
     let mut live = true;
@@ -1825,8 +1806,8 @@ fn type_invariant_subject_live(
 }
 
 fn remap_constructor_contract<'tcx>(
-    property: crate::verify::contract::Property<'tcx>,
-) -> crate::verify::contract::Property<'tcx> {
+    property: Property<'tcx>,
+) -> Property<'tcx> {
 
     fn remap_place_arg<'tcx>(arg: &PropertyArg<'tcx>) -> PropertyArg<'tcx> {
         let place = match arg {
@@ -1857,11 +1838,11 @@ fn remap_constructor_contract<'tcx>(
         .collect();
 
     match property {
-        crate::verify::contract::Property::Atom(mut atom) => {
+        Property::Atom(mut atom) => {
             atom.args = new_args;
-            crate::verify::contract::Property::Atom(atom)
+            Property::Atom(atom)
         }
-        crate::verify::contract::Property::And(and) => crate::verify::contract::Property::And(and),
-        crate::verify::contract::Property::Or(or) => crate::verify::contract::Property::Or(or),
+        Property::And(and) => Property::And(and),
+        Property::Or(or) => Property::Or(or),
     }
 }
