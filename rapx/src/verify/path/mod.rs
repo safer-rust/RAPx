@@ -1,6 +1,6 @@
-//! Loop-repeat planning and path extraction for verification targets.
+//! Path extraction for verification targets.
 //!
-//! `loop_handling` chooses an SCC repeat budget, then this module builds
+//! The loop planner chooses an SCC repeat budget; this module then builds
 //! finite paths from a function CFG to each unsafe checkpoint.
 //!
 //! # Path reachability
@@ -14,19 +14,16 @@
 //! The tree is marked truncated when the budget is exhausted.
 
 mod call_index;
-mod loop_handling;
 
 pub(crate) use call_index::EntryBodies;
-pub(crate) use loop_handling::{LoopSensitivityAnalyzer, RepeatStrategy};
 
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
-    mir::{BasicBlock, TerminatorKind},
+    mir::{BasicBlock, Body, TerminatorKind},
     ty::TyCtxt,
 };
 
 use self::call_index::CallSiteIndex;
-use super::target::CalleeBodies;
 use crate::analysis::path::{
     PathTree,
     graph::{PathEnumerator, PathGraph},
@@ -36,6 +33,9 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 
 use crate::verify::checkpoint::CheckpointLocation;
+
+/// Instantiated MIR bodies for direct generic callees.
+pub(crate) type CalleeBodies<'tcx> = FxHashMap<DefId, &'tcx Body<'tcx>>;
 
 /// Enumerates finite, acyclic verification paths from function entry to each
 /// unsafe checkpoint in one function body.

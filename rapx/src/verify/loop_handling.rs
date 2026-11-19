@@ -47,7 +47,7 @@ use rustc_middle::{
     ty::{TyCtxt, TyKind, TypingEnv},
 };
 
-use super::super::{
+use super::{
     contract::{ContractExpr, NumericPredicate, Property, PropertyArg, PropertyKind, RelOp},
     slicer::bind_callsite_roots,
     target::FunctionTarget,

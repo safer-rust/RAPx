@@ -20,6 +20,7 @@ fn main() {
     emit_check_cfg("rapx_has_boxraw");
     emit_check_cfg("rapx_layout_align_abi");
     emit_check_cfg("rapx_caller_bounds_accessor");
+    emit_check_cfg("rapx_intrinsic_enum");
 
     emit_cfg("rapx_ge_100", minor >= 100);
     emit_cfg(
@@ -125,6 +126,13 @@ fn main() {
         rustc_src_contains_path(
             "compiler/rustc_type_ir/src/param_env.rs",
             "pub struct CallerBoundsAccessor",
+        ),
+    );
+    emit_cfg(
+        "rapx_intrinsic_enum",
+        rustc_src_contains_path(
+            "compiler/rustc_middle/src/ty/intrinsic.rs",
+            "pub enum Intrinsic {",
         ),
     );
 }

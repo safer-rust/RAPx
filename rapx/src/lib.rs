@@ -41,7 +41,7 @@ use crate::{
     cli::{
         AliasStrategyKind, AnalysisKind, CheckArgs, Commands, PostfixRepeat, RapxArgs, VerifyArgs,
     },
-    verify::{driver::VerifyDriver, path::RepeatStrategy, target::PrepareTargets},
+    verify::{driver::VerifyDriver, loop_handling::RepeatStrategy, target::PrepareTargets},
 };
 use analysis::{
     Analysis,

@@ -19,11 +19,10 @@ use crate::compat::FxHashMap;
 use super::{
     checkpoint::{Checkpoint, CheckpointLocation},
     contract::{AndProperty, AtomProperty, OrProperty, Property, PropertyKind},
-    path::EntryBodies,
+    path::{CalleeBodies, EntryBodies},
     property_checker::PropertyChecker,
     report::{CheckResult, UnknownReason},
     slicer::{BackwardSlicer, ProofGoal, RelevantItem},
-    target::CalleeBodies,
     vm::VmState,
 };
 
@@ -190,9 +189,9 @@ fn goal_key<'tcx>(items: &[RelevantItem<'tcx>]) -> Vec<GoalItemKey<'tcx>> {
 /// Checks a function's properties by backward slicing, symbolic MIR execution,
 /// and a [`PropertyChecker`].
 ///
-/// `FunctionVerifier` creates one engine per function and path-expansion round, then
-/// reuses it for multiple checkpoints, properties, paths, and invariants. Each
-/// check method receives the specific checkpoint or invariant to evaluate.
+/// One instance serves multiple checkpoints, properties, paths, and invariants
+/// of a function. Each check method receives the specific checkpoint or
+/// invariant to evaluate.
 pub(crate) struct FunctionVerifyEngine<'tcx> {
     tcx: TyCtxt<'tcx>,
     slicer: BackwardSlicer<'tcx>,

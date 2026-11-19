@@ -18,10 +18,6 @@ use crate::helpers::name::short_fn_name;
 use crate::verify::checkpoint::{
     collect_raw_ptr_deref_checkpoints, collect_static_mut_checkpoints,
 };
-#[cfg(rapx_has_attr_ir)]
-use rustc_attr_ir::Attribute;
-#[cfg(not(rapx_has_attr_ir))]
-use rustc_hir::Attribute;
 use rustc_hir::{
     BodyId, FnDecl, ItemKind,
     def_id::{DefId, LocalDefId},
@@ -32,15 +28,16 @@ use rustc_middle::{
     mir::{Body, NonDivergingIntrinsic, StatementKind, TerminatorKind},
     ty::{self, EarlyBinder, Instance, InstanceKind, Ty, TyCtxt, TypingEnv},
 };
-use rustc_span::{Span, Symbol};
+use rustc_span::Span;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::{
     contract::{
         ContractExpr, ContractPlace, PlaceBase, Property, PropertyArg, PropertyKind,
-        attr::parse_rapx_attr,
+        attr::{collect_properties_from_named_attrs, is_rapx_named_attr, parse_rapx_attr},
+        ensures::get_trait_method_ensures,
     },
-    path::PathExtractor,
+    path::{CalleeBodies, PathExtractor},
     trait_ensurance::{
         MarkerTraitKind, TraitEnsurance, TraitEnsuranceKind, build_marker_trait_obligations,
         marker_trait_kind,
@@ -59,8 +56,6 @@ pub(crate) type FnContracts<'tcx> = Vec<Property<'tcx>>;
 
 /// Invariants declared on a struct.
 pub(crate) type StructInvariants<'tcx> = Vec<Property<'tcx>>;
-/// Instantiated MIR bodies for direct generic callees.
-pub(crate) type CalleeBodies<'tcx> = FxHashMap<DefId, &'tcx Body<'tcx>>;
 
 /// Checkpoints, contracts, and invariants for one function.
 ///
@@ -1337,55 +1332,6 @@ impl<'tcx> PrepareTargets<'tcx> {
     }
 }
 
-fn is_rapx_named_attr(tcx: TyCtxt<'_>, attr: &Attribute, name: &str) -> bool {
-    let name = Symbol::intern(name);
-    crate::compat::attribute_path_matches(tcx, attr, &[Symbol::intern("rapx"), name])
-        || crate::compat::attribute_path_matches(tcx, attr, &[name])
-}
-
-
-fn collect_properties_from_named_attrs<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    attrs: impl IntoIterator<Item = &'tcx Attribute>,
-    property_def_id: DefId,
-    parse_error_label: &str,
-    attr_name: &str,
-) -> Vec<Property<'tcx>> {
-    let mut results = Vec::new();
-
-    for attr in attrs {
-        if !is_rapx_named_attr(tcx, attr, attr_name) {
-            continue;
-        }
-
-        let attr_str = crate::compat::attribute_to_string(tcx, attr);
-        let parsed = match parse_rapx_attr(attr_str.as_str(), attr_name) {
-            Ok(parsed) => parsed,
-            Err(err) => {
-                rap_error!(
-                    "Failed to parse RAPx {} attr '{}': {}",
-                    parse_error_label,
-                    attr_str,
-                    err
-                );
-                continue;
-            }
-        };
-
-        let Some(property) = parsed else { continue };
-        results.extend(
-            Property::parse_list(tcx, property_def_id, property.tag.as_str(), &property.args)
-                .into_iter()
-                .map(move |mut p| {
-                    p.apply_kind(property.kind.as_deref());
-                    p
-                }),
-        );
-    }
-
-    results
-}
-
 /// Parses `requires` contracts from source-level RAPx annotations attached to a definition.
 pub(crate) fn get_contract_from_annotation<'tcx>(
     tcx: TyCtxt<'tcx>,
@@ -1536,60 +1482,6 @@ fn get_trait_contracts_from_annotation<'tcx>(
     }
 
     ensures
-}
-
-pub(crate) fn get_trait_method_ensures<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    def_id: DefId,
-) -> FnContracts<'tcx> {
-    let trait_item_def_id = tcx
-        .opt_associated_item(def_id)
-        .and_then(|item| item.trait_item_def_id())
-        .unwrap_or(def_id);
-    if tcx.trait_of_assoc(trait_item_def_id).is_none() {
-        return Vec::new();
-    }
-    let mut ensures = if trait_item_def_id.is_local() {
-        collect_properties_from_named_attrs(
-            tcx,
-            crate::compat::get_all_attrs(tcx, trait_item_def_id),
-            trait_item_def_id,
-            "trait ensures",
-            "ensures",
-        )
-    } else {
-        Vec::new()
-    };
-    if ensures.is_empty() {
-        ensures = super::contract::json::query_trait_method_ensures(tcx, def_id);
-    }
-    for property in &mut ensures {
-        property.set_contract_kind(crate::verify::contract::ContractKind::Postcond);
-    }
-    ensures
-}
-
-pub(crate) fn get_call_ensures<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> FnContracts<'tcx> {
-    if !tcx.is_foreign_item(def_id) {
-        return get_trait_method_ensures(tcx, def_id);
-    }
-    let mut ensures = collect_properties_from_named_attrs(
-        tcx,
-        crate::compat::get_all_attrs(tcx, def_id),
-        def_id,
-        "foreign function ensures",
-        "ensures",
-    );
-    for property in &mut ensures {
-        property.set_contract_kind(crate::verify::contract::ContractKind::Postcond);
-    }
-    ensures
-}
-
-pub(crate) fn has_slice_offset_ensures(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
-    get_trait_method_ensures(tcx, def_id)
-        .iter()
-        .any(|property| property.kind() == Some(crate::verify::contract::PropertyKind::SliceOffset))
 }
 
 fn is_drop_impl(tcx: TyCtxt<'_>, fn_did: DefId) -> bool {

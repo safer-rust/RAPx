@@ -28,21 +28,22 @@ use super::{
     contract::{
         ContractExpr, ContractPlace, ContractProjection, PlaceBase, Property, PropertyArg,
         PropertyKind, compound::register_compound_properties,
+        ensures::get_trait_method_ensures,
     },
     display::{
         dedup_compound_props, emit_results_and_verdict, emit_verify_summary, fmt_contract_expanded,
         fmt_fn_path_with_bounds, fmt_fn_path_with_generics, fmt_fn_with_params,
     },
     engine::{FunctionVerifyEngine, VmCache},
+    loop_handling::{LoopSensitivityAnalyzer, RepeatStrategy},
     marker_trait::MarkerTraitVerifier,
-    path::{LoopSensitivityAnalyzer, PathExtractor, RepeatStrategy},
+    path::PathExtractor,
     report::{
         CheckResult, PATH_LIMIT_DESCRIPTION, PropertyCheckResult, UnknownReason, VerificationReport,
     },
     slicer::RelevantItem,
     target::{
         FunctionTarget, VerifyTargetCollector, get_contract_from_annotation,
-        get_trait_method_ensures,
     },
     trait_ensurance::{MarkerTraitKind, TraitEnsurance, TraitEnsuranceKind},
 };

@@ -1,8 +1,7 @@
 //! Parsing utilities for RAPx contract attributes.
 //!
-//! Converts a raw `#[rapx::<name>(...)]` attribute (`requires` / `invariant` /
-//! `ensures`) into a structured representation that the verification analysis
-//! can consume without depending on `syn` expression details in later stages.
+//! Parses raw `#[rapx::<name>(...)]` attributes (`requires` / `invariant` /
+//! `ensures`) and resolves their properties for verification.
 //!
 //! The supported shape is:
 //!
@@ -19,6 +18,16 @@ use syn::{
 };
 
 use quote::ToTokens;
+
+#[cfg(rapx_has_attr_ir)]
+use rustc_attr_ir::Attribute;
+#[cfg(not(rapx_has_attr_ir))]
+use rustc_hir::Attribute;
+use rustc_hir::def_id::DefId;
+use rustc_middle::ty::TyCtxt;
+use rustc_span::Symbol;
+
+use super::Property;
 
 /// The raw syntactic form of a property call `tag(arg0, arg1, ...)` parsed
 /// from an attribute — the *unevaluated* stage, before semantic resolution
@@ -256,4 +265,52 @@ fn strip_lifetime_ticks(s: &str) -> String {
         }
     }
     out
+}
+
+pub(crate) fn is_rapx_named_attr(tcx: TyCtxt<'_>, attr: &Attribute, name: &str) -> bool {
+    let name = Symbol::intern(name);
+    crate::compat::attribute_path_matches(tcx, attr, &[Symbol::intern("rapx"), name])
+        || crate::compat::attribute_path_matches(tcx, attr, &[name])
+}
+
+pub(crate) fn collect_properties_from_named_attrs<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    attrs: impl IntoIterator<Item = &'tcx Attribute>,
+    property_def_id: DefId,
+    parse_error_label: &str,
+    attr_name: &str,
+) -> Vec<Property<'tcx>> {
+    let mut results = Vec::new();
+
+    for attr in attrs {
+        if !is_rapx_named_attr(tcx, attr, attr_name) {
+            continue;
+        }
+
+        let attr_str = crate::compat::attribute_to_string(tcx, attr);
+        let parsed = match parse_rapx_attr(attr_str.as_str(), attr_name) {
+            Ok(parsed) => parsed,
+            Err(err) => {
+                rap_error!(
+                    "Failed to parse RAPx {} attr '{}': {}",
+                    parse_error_label,
+                    attr_str,
+                    err
+                );
+                continue;
+            }
+        };
+
+        let Some(property) = parsed else { continue };
+        results.extend(
+            Property::parse_list(tcx, property_def_id, property.tag.as_str(), &property.args)
+                .into_iter()
+                .map(move |mut p| {
+                    p.apply_kind(property.kind.as_deref());
+                    p
+                }),
+        );
+    }
+
+    results
 }

@@ -1,4 +1,4 @@
-//! Contract parsing, resolution, and rendering.
+//! Contract parsing, resolution, lookup, and rendering.
 //!
 //! Three front-ends — inline attributes, embedded JSON, and `pred!`-style
 //! compound-property macros — funnel into `Property::parse_list`, producing a
@@ -27,6 +27,7 @@
 pub(crate) mod attr;
 pub(crate) mod builder;
 pub(crate) mod compound;
+pub(crate) mod ensures;
 pub(crate) mod json;
 pub(crate) mod pest;
 pub(crate) mod place;

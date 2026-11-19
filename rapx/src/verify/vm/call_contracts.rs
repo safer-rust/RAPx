@@ -56,7 +56,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         args: &[Option<Local>],
         destination: Local,
     ) {
-        let ensures = crate::verify::target::get_call_ensures(self.tcx, callee);
+        let ensures = crate::verify::contract::ensures::get_call_ensures(self.tcx, callee);
         if ensures.is_empty() {
             return;
         }

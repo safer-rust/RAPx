@@ -1,4 +1,4 @@
-use super::super::target::CalleeBodies;
+use super::CalleeBodies;
 use crate::analysis::path::{CallArg, CallBinding, PathTree};
 use crate::cli::ConstructorMirMode;
 use crate::compat::{FxHashMap, FxHashSet};
@@ -6,7 +6,7 @@ use crate::def_ids::lang_api::{self, LangItem};
 use crate::helpers::fn_info::{self, FnKind};
 use crate::helpers::{mir_utils, name::get_adt_self_ty};
 use crate::limit::{HINTED_CALLEE_BLOCK_LIMIT, LOCAL_CALLEE_BLOCK_LIMIT};
-use crate::verify::constructor_policy;
+use crate::verify::{constructor_policy, contract::ensures::has_slice_offset_ensures};
 #[cfg(rapx_has_attr_ir)]
 use rustc_attr_ir::InlineAttr;
 #[cfg(not(rapx_has_attr_ir))]
@@ -196,7 +196,7 @@ impl<'tcx> CallSiteIndex<'tcx> {
                 let effect_modeled = crate::verify::call_summary::effects::has_registered_effect(
                     self.tcx,
                     Some(base_callee),
-                ) || crate::verify::target::has_slice_offset_ensures(self.tcx, base_callee);
+                ) || has_slice_offset_ensures(self.tcx, base_callee);
                 let resolve_to_impl = !cross_crate || !is_trait_method || !effect_modeled;
                 if caller.as_local().is_none() && !(is_trait_method && resolve_to_impl) {
                     continue;
@@ -345,7 +345,7 @@ impl<'tcx> CallSiteIndex<'tcx> {
                     || expanded.contains(&callee)
                     || (crate::verify::call_summary::effects::has_registered_effect(self.tcx, Some(callee))
                         && !matches!(ctor_mode, Some(ConstructorMirMode::True)))
-                    || crate::verify::target::has_slice_offset_ensures(self.tcx, callee)
+                    || has_slice_offset_ensures(self.tcx, callee)
                     || crate::def_ids::other_api::is_ub_check(self.tcx, callee)
                     || (range_next
                         && mir_utils::blocks_reachable_after_call(

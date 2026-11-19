@@ -12,6 +12,7 @@ pub(crate) mod contract;
 pub(crate) mod display;
 pub(crate) mod driver;
 pub(crate) mod engine;
+pub(crate) mod loop_handling;
 mod marker_trait;
 pub(crate) mod path;
 

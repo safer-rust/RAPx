@@ -16,8 +16,7 @@ use super::super::{contract, path::Path};
 use super::bind_callsite_roots;
 use crate::helpers::def_use::RelevantPlaces;
 use crate::verify::checkpoint::{Checkpoint, CheckpointKind, CheckpointLocation};
-use crate::verify::path::EntryBodies;
-use crate::verify::target::CalleeBodies;
+use crate::verify::path::{CalleeBodies, EntryBodies};
 
 use crate::analysis::path::{CallArg, PathNode, PathTree};
 

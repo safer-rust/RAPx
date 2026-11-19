@@ -243,7 +243,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 return CallModel::BuiltinIndex(plan);
             }
             if callee
-                .is_some_and(|id| crate::verify::target::has_slice_offset_ensures(self.tcx, id))
+                .is_some_and(|id| crate::verify::contract::ensures::has_slice_offset_ensures(self.tcx, id))
             {
                 return CallModel::PostconditionsOnly;
             }
