@@ -159,10 +159,10 @@ fn validate_model_effects() {
 
 fn lookup_builder(tcx: TyCtxt<'_>, callee: Option<DefId>) -> Option<EffectBuilder> {
     let id = callee?;
-    if let Some(intrinsic) = tcx.intrinsic(id) {
+    if let Some(name) = intrinsic_api::intrinsic_name(tcx, Some(id)) {
         validate_model_effects();
         return intrinsic_effects()
-            .get(intrinsic.name.as_str())
+            .get(name.as_str())
             .map(model_builder);
     }
     if tcx.is_foreign_item(id) {

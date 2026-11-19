@@ -5,7 +5,7 @@ use rustc_middle::{
 };
 use z3::ast::Int;
 
-use crate::{compat::FxHashMap, def_ids::diagnostic_api, helpers::mir_utils, verify::api_classify};
+use crate::{compat::FxHashMap, def_ids::{diagnostic_api, intrinsic_api}, helpers::mir_utils, verify::api_classify};
 use crate::verify::call_summary::pointer_semantics;
 
 use super::state::{AllocId, VmState, VmValue};
@@ -299,9 +299,8 @@ fn stable_query(tcx: TyCtxt<'_>, callee: DefId) -> bool {
     {
         return true;
     }
-    if tcx
-        .intrinsic(callee)
-        .is_some_and(|intrinsic| intrinsic.name.as_str() == "transmute")
+    if intrinsic_api::intrinsic_name(tcx, Some(callee))
+        .is_some_and(|name| name.as_str() == "transmute")
     {
         return true;
     }

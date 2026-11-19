@@ -1,6 +1,6 @@
 use crate::compat::{FxHashMap, GenericArgsRef};
 use crate::def_ids::{
-    diagnostic_api,
+    diagnostic_api, intrinsic_api,
     lang_api::{self, LangItem},
     type_ids,
 };
@@ -65,8 +65,8 @@ pub(crate) fn is_drop_in_place(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
 /// `unreachable`/`abort` intrinsics.
 fn is_diverging_call(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
     crate::def_ids::lang_api::is_panic_family(tcx, def_id)
-        || tcx.intrinsic(def_id).is_some_and(|i| {
-            i.name == rustc_span::sym::unreachable || i.name == rustc_span::sym::abort
+        || intrinsic_api::intrinsic_name(tcx, Some(def_id)).is_some_and(|name| {
+            name == rustc_span::sym::unreachable || name == rustc_span::sym::abort
         })
 }
 

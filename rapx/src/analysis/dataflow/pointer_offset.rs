@@ -8,7 +8,7 @@ use rustc_middle::{
     ty::{TyCtxt, TypingEnv},
 };
 
-use crate::helpers::mir_utils;
+use crate::{def_ids::intrinsic_api, helpers::mir_utils};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PointerOffsetDirection {
@@ -158,10 +158,8 @@ fn trace_pointer_offset<'tcx>(
             continue;
         }
         let callee = mir_utils::dep_callee_def_id(func)?;
-        let intrinsic = tcx
-            .intrinsic(callee)
-            .map(|i| i.name.as_str() == "arith_offset")
-            .unwrap_or(false);
+        let intrinsic = intrinsic_api::intrinsic_name(tcx, Some(callee))
+            .is_some_and(|name| name.as_str() == "arith_offset");
         let nested = if intrinsic {
             PointerOffset {
                 base: 0,

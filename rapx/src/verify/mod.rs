@@ -5,12 +5,14 @@
 //! the relevant MIR symbolically, and discharge each property with Z3.
 
 pub(crate) mod api_classify;
+mod auto_trait;
 pub(crate) mod call_summary;
 pub(crate) mod checkpoint;
 pub(crate) mod contract;
 pub(crate) mod display;
 pub(crate) mod driver;
 pub(crate) mod engine;
+mod marker_trait;
 pub(crate) mod path;
 
 pub(crate) mod property_checker;

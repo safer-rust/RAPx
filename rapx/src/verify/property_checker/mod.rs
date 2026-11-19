@@ -30,11 +30,6 @@ mod transmute;
 mod typed;
 mod util;
 
-pub(crate) use auto_trait::{
-    atomic_update_check, contain_no_type_check, field_invariant_check, no_internal_mut_check,
-    no_raw_ptr_check, ref_send_check, uni_internal_mut_check,
-};
-
 pub(crate) struct PropertyChecker;
 
 /// Dispatch entry for a [`PropertyKind`].
