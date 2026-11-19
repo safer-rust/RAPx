@@ -130,10 +130,16 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
         }
         let mut conjunct_results = self.check_checkpoint_conjuncts(cache, checkpoint, &conjuncts);
         let mut next_conjunct = 0;
-        for (property_index, property) in properties.iter().enumerate() {
+        let mut by_property: Vec<_> = properties.iter().map(|property| {
             let bulk = Self::combine_conjunct_results(property, &mut conjunct_results, &mut next_conjunct);
-            let path_count = bulk.len();
-            for (path_index, (result, path_desc)) in bulk.into_iter().enumerate() {
+            (bulk.len(), bulk.into_iter())
+        }).collect();
+        let max_paths = by_property.iter().map(|(count, _)| *count).max().unwrap_or(0);
+        for path_index in 0..max_paths {
+            for (property_index, (property, (_, paths))) in properties.iter().zip(&mut by_property).enumerate() {
+                let Some((result, path_desc)) = paths.next() else {
+                    continue;
+                };
                 report.results.push(PropertyCheckResult {
                     checkpoint: checkpoint.location(),
                     checkpoint_index,
@@ -146,13 +152,15 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
                     callee_name: checkpoint.callee_name(self.tcx),
                 });
             }
-            // The path limit bounds precision. Mark omitted paths as proved
-            // so only results from enumerated paths affect the verdict.
-            if self.path_tree.is_truncated() {
+        }
+        // The path limit bounds precision. Mark omitted paths as proved
+        // so only results from enumerated paths affect the verdict.
+        if self.path_tree.is_truncated() {
+            for (property_index, (property, (path_count, _))) in properties.iter().zip(&by_property).enumerate() {
                 report.results.push(PropertyCheckResult {
                     checkpoint: checkpoint.location(),
                     checkpoint_index,
-                    path_index: path_count,
+                    path_index: *path_count,
                     property_index,
                     property: property.clone(),
                     result: CheckResult::ProvedByRule,
