@@ -173,7 +173,7 @@ impl<'tcx> CallGraph<'tcx> {
         post_order_ids.push(func_def_id);
     }
 
-    /// Get a reversed (callee -> Vec<Caller>) call map.
+    /// Get a reversed (callee -> `Vec<Caller>`) call map.
     pub fn get_callers_map(&self) -> CallMap<'tcx> {
         let mut callers_map: CallMap<'tcx> = HashMap::new();
 

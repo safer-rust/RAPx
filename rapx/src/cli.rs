@@ -33,7 +33,7 @@ pub enum Commands {
     Check(CheckArgs),
     /// detect code optimization opportunities
     Opt,
-    /// verify annotated functions in the crate, e.g., identify #[rapx::verify] targets
+    /// verify annotated functions in the crate, e.g., identify `#[rapx::verify]` targets
     Verify(VerifyArgs),
 }
 

@@ -151,7 +151,7 @@ fn first_field_projection(place: &rustc_middle::mir::Place<'_>) -> Option<usize>
     None
 }
 
-/// Enum discriminant metadata used by [`check_switch_transition`].
+/// Enum discriminant metadata used by `check_switch_transition`.
 ///
 /// `source_of` maps a discriminant local to the ADT local it was read from
 /// (via `Rvalue::Discriminant`).  `variant_count_of` tracks the number of
@@ -178,7 +178,7 @@ pub(crate) struct ConstraintSet {
 ///
 /// `PathGraph` wraps a `ControlFlowGraph` and adds block-indexed data
 /// that track assignments, constants, and copy chains.  These are used by
-/// [`check_transition`](PathGraph::check_transition) to update a set of
+/// `check_transition` to update a set of
 /// discriminant constraints while traversing the CFG, enabling early
 /// pruning of infeasible `SwitchInt` branches during path enumeration.
 #[derive(Clone)]
@@ -1734,7 +1734,7 @@ impl<'tcx> PathGraph<'tcx> {
 ///
 /// Computed by walking the prefix, collecting `(local → constant_value)`
 /// bindings from each block's [`BlockFacts`], sorting them, and
-/// hashing the result.  Used by [`PathEnumerator::visited_sccs`] to
+/// hashing the result. Used by `PathEnumerator::visited_sccs` to
 /// skip redundant re-entries into the same SCC with the same state.
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Default)]
 pub struct ConstraintHash(u64);
@@ -1795,7 +1795,7 @@ impl ConstraintHash {
 ///    sub-paths are identical, so the re-entry is skipped.
 ///
 /// Enumeration filters single-function paths with
-/// [`PathGraph::check_transition`]. The symbolic VM checks feasibility after
+/// `PathGraph::check_transition`. The symbolic VM checks feasibility after
 /// verification composes paths across calls.
 pub struct PathEnumerator<'g, 'tcx> {
     graph: &'g PathGraph<'tcx>,
@@ -1852,7 +1852,7 @@ impl<'g, 'tcx> PathEnumerator<'g, 'tcx> {
     /// up to `postfix_repeat` additional times. `postfix_repeat = 0` gives
     /// the same result as `enumerate_paths`.
     ///
-    /// Enumeration stops once [`crate::limit::path_limit`] paths are
+    /// Enumeration stops once `crate::limit::path_limit` paths are
     /// collected and the tree is marked truncated.
     pub fn enumerate_paths_repeat(&mut self, postfix_repeat: usize) -> PathTree {
         let mut tree = PathTree::new();

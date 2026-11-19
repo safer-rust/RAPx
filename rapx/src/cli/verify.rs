@@ -49,7 +49,7 @@ impl std::str::FromStr for PostfixRepeat {
 /// Arguments for the `verify` command.
 #[derive(Debug, Clone, Args)]
 pub struct VerifyArgs {
-    /// Identify all functions annotated with #[rapx::verify] and print each target, its unsafe callees, and their safety contracts.
+    /// Identify all functions annotated with `#[rapx::verify]` and print each target, its unsafe callees, and their safety contracts.
     #[arg(long)]
     pub prepare_targets: bool,
     /// Number of extra SCC postfix repetitions allowed during path enumeration.
@@ -57,7 +57,7 @@ pub struct VerifyArgs {
     /// A number ≥ 0 sets a fixed repeat count.
     #[arg(long, default_value = "auto", value_parser = clap::value_parser!(PostfixRepeat))]
     pub postfix_repeat: PostfixRepeat,
-    /// Verification mode: `scan` auto-detects unannotated unsafe targets (default), `targeted` verifies #[rapx::verify] functions.
+    /// Verification mode: `scan` auto-detects unannotated unsafe targets (default), `targeted` verifies `#[rapx::verify]` functions.
     #[arg(long, default_value = "scan")]
     pub mode: VerifyMode,
     /// Skip struct invariant checks and derive safety via constructor-mutator-method chains.

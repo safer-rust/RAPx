@@ -33,30 +33,22 @@ use super::{
     target::FunctionTarget,
 };
 
-/// Coordinates checkpoint and invariant checks for one function at one path
-/// expansion depth.
+/// Verifies one function at a selected path repetition limit.
 ///
-/// The target owns the unsafe-call, raw-pointer-dereference, and static-mut
-/// checkpoints, along with their contracts and entry assumptions. The path
-/// tree supplies paths to those checkpoints and to function exits. The verifier
-/// slices and checks properties on those paths with the symbolic VM.
+/// Borrows the collected target and owns the extracted paths and backward
+/// slicer. Checks unsafe checkpoints, struct/type invariants, and postconditions.
+///
+/// # Agent Rules
+/// Do not add new fields without human approval.
 pub(crate) struct FunctionVerifier<'target, 'tcx> {
     /// Compiler context for type and MIR queries.
     tcx: TyCtxt<'tcx>,
     /// Collected checkpoints, contracts, and invariants for this function.
     target: &'target FunctionTarget<'tcx>,
-    /// Paths through the function and expanded callees used by both checks.
+    /// Paths through the function and expanded callees used by all checks.
     path_tree: PathTree,
-    /// Backward slicer shared by checkpoint and invariant checks.
+    /// Backward slicer shared by all property checks.
     slicer: BackwardSlicer<'tcx>,
-}
-
-fn property_contains_alias(property: &Property<'_>) -> bool {
-    match property {
-        Property::Atom(atom) => atom.kind == PropertyKind::Alias,
-        Property::And(and) => and.conjuncts.iter().any(property_contains_alias),
-        Property::Or(or) => or.disjuncts.iter().any(property_contains_alias),
-    }
 }
 
 impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
@@ -181,6 +173,14 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
         report
     }
 
+    fn property_contains_alias(property: &Property<'_>) -> bool {
+        match property {
+            Property::Atom(atom) => atom.kind == PropertyKind::Alias,
+            Property::And(and) => and.conjuncts.iter().any(Self::property_contains_alias),
+            Property::Or(or) => or.disjuncts.iter().any(Self::property_contains_alias),
+        }
+    }
+
     /// Check one property across all paths. `Or` evaluates its disjuncts on the
     /// same VM states; `And` keeps per-child slicing.
     fn check_property_paths(
@@ -202,7 +202,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
                 cache,
                 checkpoint,
                 property,
-                is_manual_drop && property_contains_alias(property),
+                is_manual_drop && Self::property_contains_alias(property),
             )
         }
     }

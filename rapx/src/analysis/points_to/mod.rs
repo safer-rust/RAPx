@@ -12,7 +12,7 @@
 //! # PlaceKey adapters
 //! `PtsGraph` exposes PlaceKey-oriented methods (`insert_place_edge`,
 //! `get_place_source`, `resolve_place`, `place_edges`) for consumers in the
-//! verify pipeline that work with [`crate::helpers::def_use::PlaceKey`] rather
+//! verify pipeline that work with `crate::helpers::def_use::PlaceKey` rather
 //! than [`slot::Slot`].
 //!
 //! # Edge sources

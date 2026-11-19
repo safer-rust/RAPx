@@ -328,7 +328,7 @@ impl PathTree {
         sub
     }
 
-    /// Like [`walk_prefixes`] but continues past the target block into
+    /// Like [`Self::walk_prefixes`] but continues past the target block into
     /// children, finding ALL occurrences (e.g. multiple iterations of the
     /// same checkpoint block in a loop).
     pub fn walk_all_prefixes<F>(&self, target_block: usize, f: &mut F) -> Option<()>
