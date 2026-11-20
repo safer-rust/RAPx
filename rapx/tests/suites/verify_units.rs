@@ -38,6 +38,31 @@ fn vm_state_precision_01() {
 }
 
 #[test]
+fn vm_integer_domain_01() {
+    let modes: [&[&str]; 2] = [
+        CMD_VERIFY_TARGETED,
+        &["verify", "--mode", "targeted", "--", "--release"],
+    ];
+    for mode in modes {
+        let output = run_with_args("verify_units/vm_integer_domain_01", mode);
+        assert_result_counts(&output, [5, 2, 0]);
+        for case in [
+            "sound_unsigned_parameter",
+            "sound_signed_parameter",
+            "sound_struct_field",
+            "sound_reference_parameter",
+            "sound_overwritten_parameter",
+        ] {
+            assert_function_result(&output, case, "SOUND");
+        }
+        for case in ["unsound_unsigned_maximum", "unsound_signed_negative"] {
+            assert_function_result(&output, case, "UNSOUND");
+            assert_unproved(&output, case, "ValidNum");
+        }
+    }
+}
+
+#[test]
 fn pointer_slot_origin_cases() {
     let output = run_with_args("verify_units/pointer_slot_origin_01", CMD_VERIFY_TARGETED);
     assert_result_counts(&output, [27, 19, 6]);

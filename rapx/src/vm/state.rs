@@ -1044,6 +1044,22 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         Int::fresh_const(self.z3_ctx, prefix)
     }
 
+    /// Constrain an incoming machine integer at its introduction. The original
+    /// symbol keeps this domain after its parameter local is overwritten.
+    pub(crate) fn fresh_integer_input(&mut self, prefix: &str, ty: Ty<'tcx>) -> Int<'z3> {
+        let term = self.fresh_int(prefix);
+        self.constrain_integer_input(&term, ty);
+        term
+    }
+
+    pub(crate) fn constrain_integer_input(&mut self, term: &Int<'z3>, ty: Ty<'tcx>) {
+        if let Some(layout) = self.integer_layout(ty) {
+            self.constraints
+                .assertions
+                .push(layout.in_domain(self.z3_ctx, term));
+        }
+    }
+
     /// Get the value of a specific field within an aggregate local.
     ///
     /// Field values live in the allocation backing the local (the

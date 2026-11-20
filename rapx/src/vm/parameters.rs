@@ -113,14 +113,23 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         // Vec/CString can hold many elements — use an external allocation so
         // Allocated checks can pass for arbitrary capacity queries.
         let (heap_alloc_id, heap_base) = if let Some(elem) = slice_elem {
-            let len = self.fresh_int(&format!("slice_len_{}", local_idx));
+            let len = self.fresh_integer_input(
+                &format!("slice_len_{}", local_idx),
+                self.tcx.types.usize,
+            );
             let zero = Int::from_u64(self.z3_ctx, 0);
             self.path_state.constraints.assertions.push(len.ge(&zero));
             let elem_size = self.size_sym(elem);
             self.allocate_slice(len, elem_size, heap_align, Some(elem))
         } else if is_vec || is_string {
-            let cap = self.fresh_int(&format!("vec_cap_{}", local_idx));
-            let len = self.fresh_int(&format!("vec_len_{}", local_idx));
+            let cap = self.fresh_integer_input(
+                &format!("vec_cap_{}", local_idx),
+                self.tcx.types.usize,
+            );
+            let len = self.fresh_integer_input(
+                &format!("vec_len_{}", local_idx),
+                self.tcx.types.usize,
+            );
             self.materialize_vec_len_cap(cap.clone(), len.clone(), heap_size);
             let elem_size = self.size_sym(heap_ty);
             let bytes = Int::mul(self.z3_ctx, &[&cap, &elem_size]);
@@ -270,7 +279,10 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
 
         if let rustc_middle::ty::TyKind::Slice(elem_ty) = pointee_ty.kind() {
             let elem_size = self.size_of_ty(*elem_ty);
-            let len = self.fresh_int(&format!("slice_len_{}", local_idx));
+            let len = self.fresh_integer_input(
+                &format!("slice_len_{}", local_idx),
+                self.tcx.types.usize,
+            );
             let zero = Int::from_u64(self.z3_ctx, 0);
             self.path_state.constraints.assertions.push(len.ge(&zero));
             let isize_max = Int::from_i64(self.z3_ctx, i64::MAX);
@@ -376,7 +388,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         if matches!(ty.kind(), TyKind::Ref(_, _, rustc_middle::ty::Mutability::Not))
             && matches!(pointee_ty.kind(), TyKind::Uint(_) | TyKind::Int(_) | TyKind::Bool | TyKind::Char)
         {
-            let scalar = self.fresh_int(&format!("ref_arg_{local_idx}_value"));
+            let scalar = self.fresh_integer_input(&format!("ref_arg_{local_idx}_value"), pointee_ty);
             let mut value = VmValue::new(scalar, pointee_ty);
             value.source = ValueSource::SharedScalarReferent;
             self.store_value(
@@ -635,6 +647,26 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     source: ValueSource::None,
                 },
             );
+        }
+
+        // Parameter values are valid inhabitants of their Rust types. Store
+        // these constraints once at entry, rather than reconstructing them only
+        // from whichever local happens to still contain the input at a query.
+        // Include decomposed scalar fields of by-value and referenced structs.
+        for local_idx in 1..=arg_count {
+            let local = Local::from_usize(local_idx);
+            let mut values = Vec::new();
+            if let Some(value) = self.local_value(local) {
+                values.push((value.z3_term.clone(), value.ty));
+            }
+            for path in self.field_paths(local) {
+                if let Some(value) = self.field_value(local, &path) {
+                    values.push((value.z3_term.clone(), value.ty));
+                }
+            }
+            for (term, ty) in values {
+                self.constrain_integer_input(&term, ty);
+            }
         }
 
         self.propagate_entry_block_provenance();
