@@ -5,32 +5,21 @@
 
 mod debug_contracts;
 mod result;
-
 pub(super) use debug_contracts::print_contracts_debug;
 
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::{self, ClauseKind, TyCtxt};
-
-use crate::compat::FxHashMap;
-use crate::helpers::fn_info::get_cons;
 use indexmap::IndexMap;
 
-use super::report::{CheckResult, PropertyCheckResult, Soundness};
-use crate::verify::{
+use crate::{compat::FxHashMap, helpers::fn_info::get_cons};
+
+use super::{
     checkpoint::CheckpointLocation,
-    contract::{
-        ContractExpr, ContractKind, PropertyArg, PropertyKind, render::display_expr_user_friendly,
-    },
+    contract::{ContractExpr, ContractKind, Property, PropertyArg, PropertyKind, render::display_expr_user_friendly},
+    report::{CheckResult, PropertyCheckResult, Soundness},
 };
 
-type CountEntry = (
-    Option<crate::verify::contract::PropertyKind>,
-    Option<(String, Vec<String>)>,
-    bool,
-    bool,
-    super::report::CheckResult,
-    usize,
-);
+type CountEntry = (Option<PropertyKind>, Option<(String, Vec<String>)>, bool, bool, CheckResult, usize);
 
 /// Format a function name with its argument names and optional return type.
 pub(crate) fn fmt_fn_with_params(path: &str, arg_names: &[String], ret_ty: Option<&str>) -> String {
@@ -43,17 +32,10 @@ pub(crate) fn fmt_fn_with_params(path: &str, arg_names: &[String], ret_ty: Optio
 }
 
 /// Append the function's own generic parameter names to its path.
-pub(crate) fn fmt_fn_path_with_generics(
-    tcx: rustc_middle::ty::TyCtxt<'_>,
-    def_id: rustc_hir::def_id::DefId,
-) -> String {
+pub(crate) fn fmt_fn_path_with_generics(tcx: TyCtxt<'_>, def_id: DefId) -> String {
     let path = tcx.def_path_str(def_id);
     let generics = tcx.generics_of(def_id);
-    let params: Vec<_> = generics
-        .own_params
-        .iter()
-        .map(|p| p.name.to_string())
-        .collect();
+    let params: Vec<_> = generics.own_params.iter().map(|p| p.name.to_string()).collect();
     if params.is_empty() {
         path
     } else {
@@ -65,9 +47,7 @@ pub(crate) fn fmt_fn_path_with_generics(
 pub(crate) fn fmt_fn_path_with_bounds(tcx: TyCtxt<'_>, def_id: DefId) -> String {
     let path = tcx.def_path_str(def_id);
     let predicates = crate::compat::predicates_of(tcx, def_id);
-
     let mut param_bounds: FxHashMap<String, Vec<String>> = FxHashMap::default();
-
     macro_rules! collect_bounds {
         ($iter:expr) => {
             for (predicate, _span) in $iter {
@@ -117,12 +97,10 @@ fn insert_bounds_into_path(path: &str, param_bounds: &FxHashMap<String, Vec<Stri
     while let Some(pos) = remaining.find("::<") {
         result.push_str(&remaining[..pos + 3]);
         remaining = &remaining[pos + 3..];
-
         let Some(end) = remaining.find('>') else {
             result.push_str(remaining);
             return result;
         };
-
         let params_str = &remaining[..end];
         let params: Vec<&str> = params_str.split(',').map(|s| s.trim()).collect();
         let mut new_params = Vec::new();
@@ -135,7 +113,6 @@ fn insert_bounds_into_path(path: &str, param_bounds: &FxHashMap<String, Vec<Stri
                 new_params.push(p.to_string());
             }
         }
-
         if has_bounds {
             result.push_str(&new_params.join(", "));
         } else {
@@ -144,13 +121,12 @@ fn insert_bounds_into_path(path: &str, param_bounds: &FxHashMap<String, Vec<Stri
         result.push('>');
         remaining = &remaining[end + 1..];
     }
-
     result.push_str(remaining);
     result
 }
 
 /// Prefix a rendered contract according to its role.
-fn contract_kind_prefix(kind: crate::verify::contract::ContractKind) -> &'static str {
+fn contract_kind_prefix(kind: ContractKind) -> &'static str {
     match kind {
         ContractKind::Precond => "",
         ContractKind::Hazard => "[hazard] ",
@@ -161,10 +137,10 @@ fn contract_kind_prefix(kind: crate::verify::contract::ContractKind) -> &'static
 
 /// Render a property as a contract call and its human-readable meaning.
 pub(crate) fn fmt_contract_expanded<'tcx>(
-    tcx: rustc_middle::ty::TyCtxt<'tcx>,
-    property: &crate::verify::contract::Property<'tcx>,
-    struct_def_id: Option<rustc_hir::def_id::DefId>,
-    fn_def_id: Option<rustc_hir::def_id::DefId>,
+    tcx: TyCtxt<'tcx>,
+    property: &Property<'tcx>,
+    struct_def_id: Option<DefId>,
+    fn_def_id: Option<DefId>,
 ) -> (String, String) {
     // Compound `def` (e.g. `Ptr2Ref`, `Deref`, user `pred!`): show it
     // as a single `name(args)` entry with its doc-derived meaning, instead of
@@ -181,7 +157,7 @@ pub(crate) fn fmt_contract_expanded<'tcx>(
             meaning.to_string(),
         );
     }
-    if let crate::verify::contract::Property::Or(or) = property {
+    if let Property::Or(or) = property {
         let disjunct_count = or.disjuncts.len();
         let mut call_parts = Vec::new();
         let mut meaning = format!("any of {disjunct_count} alternative(s):\n");
@@ -197,7 +173,7 @@ pub(crate) fn fmt_contract_expanded<'tcx>(
             meaning.trim_end().to_string(),
         );
     }
-    if let crate::verify::contract::Property::And(and) = property {
+    if let Property::And(and) = property {
         let mut call_parts = Vec::new();
         let mut meanings = Vec::new();
         for conjunct in and.conjuncts.iter() {
@@ -211,51 +187,29 @@ pub(crate) fn fmt_contract_expanded<'tcx>(
         );
     }
     let kind = property.kind().expect("atom property");
-    let args: Vec<String> = property
-        .args()
-        .iter()
-        .map(|a| a.display_for_report(tcx, struct_def_id, fn_def_id))
-        .collect();
-    let tag = property
-        .origin()
-        .map(|o| o.name.clone())
-        .unwrap_or_else(|| format!("{:?}", kind));
-    let tag = format!("{}{}", contract_kind_prefix(property.contract_kind()), tag);
-    let call = if matches!(kind, PropertyKind::SplitTransmute) {
-        let wrapped: Vec<String> = args.iter().map(|a| format!("[{a}]")).collect();
-        format!("{tag}({})", wrapped.join(", "))
-    } else if matches!(kind, PropertyKind::InBound)
-        && matches!(
-            property.args().first().and_then(PropertyArg::expr),
-            Some(ContractExpr::IndexAccess { .. })
-        )
-    {
-        if let Some(ContractExpr::IndexAccess { slice, index }) = property.args().first().and_then(PropertyArg::expr)
-        {
-            let (s, i) = fmt_index_access(slice, index, tcx, struct_def_id, fn_def_id);
-            format!("{tag}({s}, {i})")
-        } else {
-            unreachable!()
+    let args: Vec<String> = property.args().iter().map(|a| a.display_for_report(tcx, struct_def_id, fn_def_id)).collect();
+    let tag = format!("{}{kind:?}", contract_kind_prefix(property.contract_kind()));
+    let call = match kind {
+        PropertyKind::SplitTransmute => {
+            let wrapped: Vec<_> = args.iter().map(|a| format!("[{a}]")).collect();
+            format!("{tag}({})", wrapped.join(", "))
         }
-    } else {
-        if matches!(kind, PropertyKind::Alive) && args.len() >= 2 {
-            format!("{tag}({}, '{})", args[0], args[1])
-        } else {
-            format!("{tag}({})", args.join(", "))
-        }
-    };
-    let call = if matches!(kind, PropertyKind::ValidNum)
-        && let Some(crate::verify::contract::PropertyArg::Predicates(preds)) =
-            property.args().first()
-    {
-        let inner = preds
-            .iter()
-            .map(|p| p.display_user_friendly(tcx, struct_def_id, fn_def_id))
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!("{tag}({inner})")
-    } else {
-        call
+        PropertyKind::InBound => match property.args().first().and_then(PropertyArg::expr) {
+            Some(ContractExpr::IndexAccess { slice, index }) => {
+                let (s, i) = fmt_index_access(slice, index, tcx, struct_def_id, fn_def_id);
+                format!("{tag}({s}, {i})")
+            }
+            _ => format!("{tag}({})", args.join(", ")),
+        },
+        PropertyKind::Alive if args.len() >= 2 => format!("{tag}({}, '{})", args[0], args[1]),
+        PropertyKind::ValidNum => match property.args().first() {
+            Some(PropertyArg::Predicates(preds)) => {
+                let inner = preds.iter().map(|p| p.display_user_friendly(tcx, struct_def_id, fn_def_id)).collect::<Vec<_>>().join(", ");
+                format!("{tag}({inner})")
+            }
+            _ => format!("{tag}({})", args.join(", ")),
+        },
+        _ => format!("{tag}({})", args.join(", ")),
     };
     let meaning = match kind {
         PropertyKind::InBound => {
@@ -347,8 +301,8 @@ fn fmt_meaning_template(template: &str, args: &[String]) -> String {
 /// primitives sharing the same origin name and arguments, which should render as
 /// a single `name(args)` line.
 pub(crate) fn dedup_compound_props<'a, 'tcx>(
-    props: impl Iterator<Item = &'a crate::verify::contract::Property<'tcx>>,
-) -> Vec<&'a crate::verify::contract::Property<'tcx>> {
+    props: impl Iterator<Item = &'a Property<'tcx>>,
+) -> Vec<&'a Property<'tcx>> {
     let mut out = Vec::new();
     let mut prev: Option<(String, Vec<String>)> = None;
     for p in props {
@@ -368,27 +322,12 @@ pub(crate) fn dedup_compound_props<'a, 'tcx>(
 
 /// Print checkpoint results and return the non-optional failed and unknown counts.
 pub(crate) fn emit_results_counts_and_checkpoints<'tcx>(all_results: &[PropertyCheckResult<'tcx>]) -> (usize, usize) {
-    let failed = all_results
-        .iter()
-        .filter(|r| {
-            r.property.contract_kind() != ContractKind::Option_ && r.result == CheckResult::Failed
-        })
-        .count();
-    let unknown = all_results
-        .iter()
-        .filter(|r| {
-            r.property.contract_kind() != ContractKind::Option_
-                && matches!(r.result, CheckResult::Unknown(_))
-        })
-        .count();
+    let failed = all_results.iter().filter(|r| r.property.contract_kind() != ContractKind::Option_ && r.result == CheckResult::Failed).count();
+    let unknown = all_results.iter().filter(|r| r.property.contract_kind() != ContractKind::Option_ && matches!(r.result, CheckResult::Unknown(_))).count();
 
-    let mut groups: IndexMap<(usize, CheckpointLocation, String), Vec<&PropertyCheckResult<'_>>> =
-        IndexMap::new();
+    let mut groups: IndexMap<(usize, CheckpointLocation, String), Vec<&PropertyCheckResult<'_>>> = IndexMap::new();
     for r in all_results {
-        groups
-            .entry((r.checkpoint_index, r.checkpoint, r.callee_name.clone()))
-            .or_default()
-            .push(r);
+        groups.entry((r.checkpoint_index, r.checkpoint, r.callee_name.clone())).or_default().push(r);
     }
 
     let exit_sections = [
@@ -430,7 +369,7 @@ pub(crate) fn emit_results_counts_and_checkpoints<'tcx>(all_results: &[PropertyC
 pub(crate) fn emit_verify_summary<'tcx>(
     tcx: TyCtxt<'tcx>,
     target_path: &str,
-    def_id: rustc_hir::def_id::DefId,
+    def_id: DefId,
     all_results: &[PropertyCheckResult<'tcx>],
     skip_invariant: bool,
     mono_limited: bool,
@@ -438,14 +377,12 @@ pub(crate) fn emit_verify_summary<'tcx>(
     rap_info!("============================================================");
     rap_info!("[rapx::verify] function: {target_path}");
     rap_info!("============================================================");
-
     if skip_invariant {
         let cons = get_cons(tcx, def_id);
         for con in &cons {
             rap_info!("  + constructor: {}", tcx.def_path_str(*con));
         }
     }
-
     emit_results_and_verdict(all_results, mono_limited);
     rap_info!("");
 }
@@ -453,11 +390,8 @@ pub(crate) fn emit_verify_summary<'tcx>(
 /// Print checkpoint results, the overall verdict, and any unknown diagnostics.
 pub(crate) fn emit_results_and_verdict<'tcx>(all_results: &[PropertyCheckResult<'tcx>], mono_limited: bool) {
     let (failed, unknown) = emit_results_counts_and_checkpoints(all_results);
-
     if failed == 0 && unknown == 0 {
-        let path_limited = all_results
-            .iter()
-            .any(|result| result.path_desc == super::report::PATH_LIMIT_DESCRIPTION);
+        let path_limited = all_results.iter().any(|result| result.path_desc == super::report::PATH_LIMIT_DESCRIPTION);
         let mut limits = Vec::new();
         if path_limited {
             limits.push("path limit");
@@ -525,11 +459,7 @@ pub(crate) fn emit_property_rows<'tcx>(results: &[&PropertyCheckResult<'tcx>]) {
         if *path_desc == super::report::PATH_LIMIT_DESCRIPTION {
             continue;
         }
-        let verdict = props
-            .iter()
-            .filter(|r| {
-                r.property.contract_kind() != crate::verify::contract::ContractKind::Option_
-            })
+        let verdict = props.iter().filter(|r| r.property.contract_kind() != ContractKind::Option_)
             .fold(Soundness::Sound, |acc, r| acc.join(r.result.soundness()));
         rap_info!("        path {path_desc} | {}:", verdict.label());
         let mut counts: Vec<CountEntry> = Vec::new();
@@ -560,14 +490,7 @@ pub(crate) fn emit_property_rows<'tcx>(results: &[&PropertyCheckResult<'tcx>]) {
                 }) {
                     entry.5 += 1;
                 } else {
-                    counts.push((
-                        r.property.kind(),
-                        None,
-                        is_hazard,
-                        is_option,
-                        result,
-                        1usize,
-                    ));
+                    counts.push((r.property.kind(), None, is_hazard, is_option, result, 1usize));
                 }
             }
         }
@@ -619,8 +542,8 @@ pub(crate) fn emit_property_rows<'tcx>(results: &[&PropertyCheckResult<'tcx>]) {
 /// Render an `IndexAccess { slice, index }` into `(slice_str, index_str)`,
 /// stripping leading `&mut `/`&` from the slice display.
 fn fmt_index_access<'tcx>(
-    slice: &crate::verify::contract::ContractExpr<'tcx>,
-    index: &crate::verify::contract::ContractExpr<'tcx>,
+    slice: &ContractExpr<'tcx>,
+    index: &ContractExpr<'tcx>,
     tcx: TyCtxt<'tcx>,
     struct_def_id: Option<DefId>,
     fn_def_id: Option<DefId>,
