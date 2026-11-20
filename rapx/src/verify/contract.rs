@@ -1,27 +1,26 @@
 //! Contract parsing, resolution, lookup, and rendering.
 //!
-//! Three front-ends — inline attributes, embedded JSON, and `pred!`-style
-//! compound-property macros — funnel into `Property::parse_list`, producing a
-//! single contract IR defined here; the three share the pest DSL for expressions.
+//! Inline attributes, embedded JSON, and `pred!`-style compound properties
+//! produce the contract IR defined here. Attribute and JSON arguments are parsed
+//! as `syn` expressions; compound bodies use the pest grammar.
 //!
 //! ## Layering
 //!
 //! Contracts go through two stages, each with its own type:
 //!
 //! ```text
-//! #[rapx::requires(...)] text        std-*.json            pred!(...) / def_property
-//!    └─ attr.rs ──▶ AttrProperty      └─ json.rs ──▶ JsonProperty   └─ compound.rs ──▶ CompoundSpec
-//!                      └────────────────── builder.rs ──────────────────▶ Property   (Atom | Or)
+//! attribute ──▶ AttrProperty ─┐
+//! JSON ───────▶ JsonProperty ─┴──▶ builder.rs ──▶ Property (Atom | And | Or)
+//! pred! ──────▶ CompoundSpec ─────▶ compound.rs ─▶ Property
 //! ```
 //!
-//! Compound tags are the exception: `parse_list` dispatches them to
-//! `compound::expand_compound`, which expands `CompoundSpec` into `Property`
-//! directly (builder never sees the `CompoundSpec`).
+//! `Property::parse_list` dispatches compound tags to `compound::expand_compound`;
+//! their `CompoundSpec` bypasses the primitive property builder.
 //!
 //! Within the resolved IR, the naming follows granularity rather than stage:
 //! `Property*` names the formula level (`Property`, `PropertyKind`,
-//! `PropertyArg`), while `Contract*` names the expression sub-language that
-//! fills `PropertyArg::Expr` (`ContractPlace`, `ContractExpr`,
+//! `PropertyArg`), while `Contract*` names the expression sub-language used by
+//! `PropertyArg::Expr` and `PropertyArg::ForEach` (`ContractPlace`, `ContractExpr`,
 //! `ContractProjection`).
 
 pub(crate) mod attr;
@@ -96,11 +95,7 @@ pub(crate) struct ContractPlace {
 impl ContractPlace {
     pub(crate) fn local(base: usize, fields: Vec<usize>) -> Self {
         Self {
-            base: if base == 0 {
-                PlaceBase::Return
-            } else {
-                PlaceBase::Local(base)
-            },
+            base: if base == 0 { PlaceBase::Return } else { PlaceBase::Local(base) },
             projections: fields.into_iter().map(|index| ContractProjection::Field { index }).collect(),
         }
     }
@@ -251,7 +246,7 @@ pub(crate) enum PropertyArg<'tcx> {
     Expr(ContractExpr<'tcx>),
     /// An expression checked for each element of its container.
     ForEach(ContractExpr<'tcx>),
-    /// An interval of comparisons, used by `ValidNum`.
+    /// Numeric comparisons used by `ValidNum`.
     Predicates(Vec<NumericPredicate<'tcx>>),
     /// A name: lifetime, allocator, trait (e.g. `Copy`), or `sized`/`unsized`.
     Ident(String),
@@ -291,8 +286,8 @@ pub(crate) struct ContractOrigin {
 ///
 /// The formula is a tree of three node kinds — `Atom` (a single predicate),
 /// `And` (conjunction: all members hold), and `Or` (disjunction: at least one
-/// member holds).  `Box` breaks the recursion; the top level of a contract is
-/// simply a `Vec<Property>` (an implicit conjunction of requirements).
+/// member holds). Vectors provide the indirection; the top-level `Vec<Property>`
+/// is an implicit conjunction of requirements.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Property<'tcx> {
     Atom(AtomProperty<'tcx>),
@@ -338,18 +333,12 @@ impl<'tcx> Property<'tcx> {
 
     /// Build a conjunction (`And`) of already-expanded conjuncts.
     pub(crate) fn new_and(conjuncts: Vec<Property<'tcx>>) -> Self {
-        Self::And(AndProperty {
-            conjuncts,
-            origin: None,
-        })
+        Self::And(AndProperty { conjuncts, origin: None })
     }
 
     /// Build a disjunction (`Or`) of already-expanded disjuncts.
     pub(crate) fn new_or(disjuncts: Vec<Property<'tcx>>) -> Self {
-        Self::Or(OrProperty {
-            disjuncts,
-            origin: None,
-        })
+        Self::Or(OrProperty { disjuncts, origin: None })
     }
 
     /// Normalize a list of conjuncts into a single `Property`: a singleton is
@@ -418,8 +407,8 @@ impl<'tcx> Property<'tcx> {
     pub(crate) fn contract_kind(&self) -> ContractKind {
         match self {
             Property::Atom(a) => a.contract_kind,
-            Property::And(AndProperty { conjuncts: children, .. })
-            | Property::Or(OrProperty { disjuncts: children, .. }) => Self::shared_contract_kind(children),
+            Property::And(and) => Self::shared_contract_kind(&and.conjuncts),
+            Property::Or(or) => Self::shared_contract_kind(&or.disjuncts),
         }
     }
 
@@ -430,9 +419,8 @@ impl<'tcx> Property<'tcx> {
     }
 
     /// Defer `ContractKind::Hazard` properties to the use point. A hazard
-    /// (e.g. `Alias`) is *marked* in a
-    /// struct invariant to document the exclusive-ownership intent, but it is
-    /// not a standing fact: it is enforced at the operation that consumes the
+    /// (e.g. `Alias`) marks exclusive ownership in a struct invariant, but
+    /// is not a standing fact: it is enforced at the operation that consumes the
     /// pointer (whose `requires` names it), not verified at construction nor
     /// carried as an entry fact (where `assert_contract_fact` would treat
     /// `Alias` as an *accepted* structural-alias hazard via `alias_hazard_allocs`).
@@ -486,9 +474,9 @@ impl<'tcx> Property<'tcx> {
     /// Display metadata when this property was expanded from a compound property.
     pub(crate) fn origin(&self) -> Option<&ContractOrigin> {
         match self {
-            Property::Atom(AtomProperty { origin, .. })
-            | Property::And(AndProperty { origin, .. })
-            | Property::Or(OrProperty { origin, .. }) => origin.as_ref(),
+            Property::Atom(atom) => atom.origin.as_ref(),
+            Property::And(and) => and.origin.as_ref(),
+            Property::Or(or) => or.origin.as_ref(),
         }
     }
 
@@ -526,10 +514,8 @@ impl<'tcx> Property<'tcx> {
     pub(crate) fn set_contract_kind(&mut self, k: ContractKind) {
         match self {
             Property::Atom(a) => a.contract_kind = k,
-            Property::And(AndProperty { conjuncts: children, .. })
-            | Property::Or(OrProperty { disjuncts: children, .. }) => {
-                children.iter_mut().for_each(|child| child.set_contract_kind(k));
-            }
+            Property::And(and) => and.conjuncts.iter_mut().for_each(|child| child.set_contract_kind(k)),
+            Property::Or(or) => or.disjuncts.iter_mut().for_each(|child| child.set_contract_kind(k)),
         }
     }
 }
