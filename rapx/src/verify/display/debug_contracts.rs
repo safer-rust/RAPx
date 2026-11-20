@@ -3,14 +3,15 @@
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 
-use crate::compat::FxHashMap;
-use crate::helpers::name::short_fn_name;
-
 use super::{dedup_compound_props, fmt_contract_expanded, fmt_fn_path_with_generics, fmt_fn_with_params};
-use crate::verify::{
-    contract::PropertyKind,
-    target::FunctionTarget,
-    trait_ensurance::{MarkerTraitKind, TraitEnsurance, TraitEnsuranceKind},
+use crate::{
+    compat::FxHashMap,
+    helpers::name::short_fn_name,
+    verify::{
+        contract::PropertyKind,
+        target::FunctionTarget,
+        trait_ensurance::{MarkerTraitKind, TraitEnsurance, TraitEnsuranceKind},
+    },
 };
 
 pub(in crate::verify) fn print_contracts_debug<'tcx>(
@@ -26,11 +27,7 @@ struct ContractDebugPrinter<'tcx> {
 }
 
 impl<'tcx> ContractDebugPrinter<'tcx> {
-    fn print(
-        &self,
-        targets: &[FunctionTarget<'tcx>],
-        trait_targets: &[TraitEnsurance<'tcx>],
-    ) {
+    fn print(&self, targets: &[FunctionTarget<'tcx>], trait_targets: &[TraitEnsurance<'tcx>]) {
         rap_info!("{:=<1$}", "", 76);
         rap_info!("[rapx::debug-contracts] Expanded Contract Assertions");
         rap_info!("{:=<1$}", "", 76);
@@ -69,12 +66,7 @@ impl<'tcx> ContractDebugPrinter<'tcx> {
                 let inv_count = invariants.len();
                 for (ii, property) in invariants.iter().enumerate() {
                     let ibranch = if ii + 1 == inv_count { "`-" } else { "|-" };
-                    let (call, meaning) = fmt_contract_expanded(
-                        self.tcx,
-                        property,
-                        tgt.owner_struct_def_id,
-                        Some(tgt.def_id),
-                    );
+                    let (call, meaning) = fmt_contract_expanded(self.tcx, property, tgt.owner_struct_def_id, Some(tgt.def_id));
                     self.print_contract_lines("  ", ibranch, &call, &meaning);
                 }
                 rap_info!("");
@@ -117,12 +109,7 @@ impl<'tcx> ContractDebugPrinter<'tcx> {
                         for (method_name, contracts) in ensures {
                             rap_info!("  fn {method_name}:");
                             for property in dedup_compound_props(contracts.iter()) {
-                                let (call, meaning) = fmt_contract_expanded(
-                                    self.tcx,
-                                    property,
-                                    trait_target.self_ty_def_id,
-                                    Some(trait_target.def_id),
-                                );
+                                let (call, meaning) = fmt_contract_expanded(self.tcx, property, trait_target.self_ty_def_id, Some(trait_target.def_id));
                                 self.print_contract_lines("  ", "|-", &call, &meaning);
                             }
                         }
@@ -144,12 +131,7 @@ impl<'tcx> ContractDebugPrinter<'tcx> {
                         rap_info!("  obligations: <none>");
                     } else {
                         for property in obligations {
-                            let (call, meaning) = fmt_contract_expanded(
-                                self.tcx,
-                                property,
-                                trait_target.self_ty_def_id,
-                                None,
-                            );
+                            let (call, meaning) = fmt_contract_expanded(self.tcx, property, trait_target.self_ty_def_id, None);
                             self.print_contract_lines("  ", "|-", &call, &meaning);
                         }
                     }
@@ -164,20 +146,13 @@ impl<'tcx> ContractDebugPrinter<'tcx> {
     }
 
     fn has_caller_contracts(&self, target: &FunctionTarget<'tcx>, is_unsafe_fn: bool) -> bool {
-        is_unsafe_fn
-            && target
-                .caller_requires
-                .iter()
-                .any(|p| p.kind() != Some(PropertyKind::Unknown))
+        is_unsafe_fn && target.caller_requires.iter().any(|p| p.kind() != Some(PropertyKind::Unknown))
     }
 
     fn has_printable_contracts(&self, target: &FunctionTarget<'tcx>) -> bool {
         let is_unsafe_fn = self.is_unsafe_fn(target.def_id);
         self.has_caller_contracts(target, is_unsafe_fn)
-            || target
-                .callee_requires
-                .values()
-                .any(|c| c.iter().any(|p| p.kind() != Some(PropertyKind::Unknown)))
+            || target.callee_requires.values().any(|c| c.iter().any(|p| p.kind() != Some(PropertyKind::Unknown)))
     }
 
     fn print_contract_lines(&self, prefix: &str, branch: &str, call: &str, meaning: &str) {
@@ -188,12 +163,7 @@ impl<'tcx> ContractDebugPrinter<'tcx> {
         }
     }
 
-    fn print_target_contracts(
-        &self,
-        target: &FunctionTarget<'tcx>,
-        branch: &str,
-        cont: &str,
-    ) -> bool {
+    fn print_target_contracts(&self, target: &FunctionTarget<'tcx>, branch: &str, cont: &str) -> bool {
         let (arg_names_typed, ret_ty) = self.resolve_arg_names_with_types(target.def_id);
         let is_unsafe_fn = self.is_unsafe_fn(target.def_id);
 
@@ -202,12 +172,7 @@ impl<'tcx> ContractDebugPrinter<'tcx> {
 
         let has_caller = self.has_caller_contracts(target, is_unsafe_fn);
         let mut callee_ids: Vec<_> = target.callee_requires.keys().copied().collect();
-        callee_ids.retain(|did| {
-            target
-                .callee_requires
-                .get(did)
-                .is_some_and(|c| c.iter().any(|p| p.kind() != Some(PropertyKind::Unknown)))
-        });
+        callee_ids.retain(|did| target.callee_requires.get(did).is_some_and(|c| c.iter().any(|p| p.kind() != Some(PropertyKind::Unknown))));
         callee_ids.sort_by_key(|did| self.tcx.def_path_str(*did));
         let has_callees = !callee_ids.is_empty();
 
@@ -224,18 +189,11 @@ impl<'tcx> ContractDebugPrinter<'tcx> {
         // Caller Contracts (only for unsafe functions)
         if has_caller {
             rap_info!("{cont}  [Caller Contracts]:");
-            let caller_props = dedup_compound_props(
-                target.caller_requires.iter().filter(|p| p.kind() != Some(PropertyKind::Unknown)),
-            );
+            let caller_props = dedup_compound_props(target.caller_requires.iter().filter(|p| p.kind() != Some(PropertyKind::Unknown)));
             for (pi, property) in caller_props.iter().enumerate() {
                 let is_last = pi + 1 == caller_props.len();
                 let pbranch = if is_last { "`-" } else { "|-" };
-                let (call, meaning) = fmt_contract_expanded(
-                    self.tcx,
-                    property,
-                    target.owner_struct_def_id,
-                    Some(target.def_id),
-                );
+                let (call, meaning) = fmt_contract_expanded(self.tcx, property, target.owner_struct_def_id, Some(target.def_id));
                 self.print_contract_lines(&format!("{cont}  "), pbranch, &call, &meaning);
             }
             if !has_callees {
@@ -253,23 +211,13 @@ impl<'tcx> ContractDebugPrinter<'tcx> {
                 let contracts = target.callee_requires.get(&callee_id).unwrap();
                 let (callee_typed, callee_ret) = self.resolve_arg_names_with_types(callee_id);
                 let callee_path = fmt_fn_path_with_generics(self.tcx, callee_id);
-                rap_info!(
-                    "{cont}  {cbranch} {}",
-                    fmt_fn_with_params(&callee_path, &callee_typed, callee_ret.as_deref())
-                );
-                let props = dedup_compound_props(
-                    contracts.iter().filter(|p| p.kind() != Some(PropertyKind::Unknown)),
-                );
+                rap_info!("{cont}  {cbranch} {}", fmt_fn_with_params(&callee_path, &callee_typed, callee_ret.as_deref()));
+                let props = dedup_compound_props(contracts.iter().filter(|p| p.kind() != Some(PropertyKind::Unknown)));
                 for (pi, property) in props.iter().enumerate() {
                     let is_last_prop = pi + 1 == props.len();
                     let pbranch = if is_last_prop { "`-" } else { "|-" };
                     let (call, meaning) = fmt_contract_expanded(self.tcx, property, None, Some(callee_id));
-                    self.print_contract_lines(
-                        &format!("{cont}  {ccont}"),
-                        pbranch,
-                        &call,
-                        &meaning,
-                    );
+                    self.print_contract_lines(&format!("{cont}  {ccont}"), pbranch, &call, &meaning);
                 }
             }
         }
@@ -290,24 +238,14 @@ impl<'tcx> ContractDebugPrinter<'tcx> {
             .skip(1)
             .take(body.arg_count)
             .map(|(i, decl)| {
-                let name = {
-                    let span = decl.source_info.span;
-                    self.tcx
-                        .sess
-                        .source_map()
-                        .span_to_snippet(span)
-                        .unwrap_or_else(|_| format!("_{}", i))
-                };
+                let span = decl.source_info.span;
+                let name = self.tcx.sess.source_map().span_to_snippet(span).unwrap_or_else(|_| format!("_{i}"));
                 let ty = decl.ty.to_string();
                 format!("{name}: {ty}")
             })
             .collect();
         let ret_ty = self.tcx.fn_sig(def_id).skip_binder().output().skip_binder();
-        let ret_ty = if ret_ty.is_unit() {
-            None
-        } else {
-            Some(ret_ty.to_string())
-        };
+        let ret_ty = if ret_ty.is_unit() { None } else { Some(ret_ty.to_string()) };
         (args, ret_ty)
     }
 }
