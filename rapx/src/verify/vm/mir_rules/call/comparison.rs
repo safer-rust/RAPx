@@ -10,7 +10,7 @@ use rustc_middle::{
 };
 use z3::ast::{Ast, Bool, Int};
 
-use super::super::super::state::{AllocKind, ValueSource, VmState, VmValue};
+use super::super::super::state::{AllocKind, ValueSource, VmExecutor, VmValue};
 use crate::def_ids::lang_api::{self, LangItem};
 use crate::helpers::mir_utils;
 
@@ -77,7 +77,7 @@ pub(super) struct ComparisonPlan<'z3> {
     condition: Bool<'z3>,
 }
 
-impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     pub(super) fn prepare_comparison(
         &self,
         callee: Option<DefId>,
@@ -213,10 +213,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         // Recover it only by matching that exact symbolic constant to its MIR
         // operand in a live caller frame.
         let bodies = std::iter::once(self.target_body()).chain(
-            self.caller_frames
+            self.path_state.caller_frames
                 .iter()
                 .map(|saved| &saved.frame)
-                .chain(std::iter::once(&self.current_frame))
+                .chain(std::iter::once(&self.path_state.current_frame))
                 .filter_map(|frame| {
                     frame.instantiated_body.or_else(|| {
                         self.tcx

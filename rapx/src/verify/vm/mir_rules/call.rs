@@ -11,7 +11,7 @@ use rustc_middle::{
 };
 use z3::ast::Int;
 
-use super::super::state::{VmState, VmValue};
+use super::super::state::{VmExecutor, VmValue};
 use super::RuleFlow;
 use self::comparison::ComparisonPlan;
 use self::index::BuiltinIndexPlan;
@@ -80,7 +80,7 @@ impl CallModel<'_, '_> {
 }
 
 pub(super) fn exec_call<'z3, 'tcx>(
-    state: &mut VmState<'z3, 'tcx>,
+    state: &mut VmExecutor<'z3, 'tcx>,
     func: &Operand<'tcx>,
     args: &[Spanned<Operand<'tcx>>],
     destination: Local,
@@ -159,8 +159,8 @@ pub(super) fn exec_call<'z3, 'tcx>(
     let model = state.select_call_model(&site, drop_call);
     let finish_policy = model.finish_policy();
     let diagnostics_before_call = (finish_policy == CallFinish::Full
-        && state.safedrop_events.is_enabled())
-    .then(|| state.diagnostics.clone());
+        && state.path_state.safedrop_events.is_enabled())
+    .then(|| state.path_state.diagnostics.clone());
     let summary_used = model.uses_summary_invariants();
     if state.execute_call_model(model, &site) == RuleFlow::Pruned {
         return RuleFlow::Pruned;
@@ -174,7 +174,7 @@ pub(super) fn exec_call<'z3, 'tcx>(
         return RuleFlow::Continue;
     }
     if let Some(before) = diagnostics_before_call.as_ref()
-        && state
+        && state.path_state
             .diagnostics
             .only_copy_memory_target_unavailable_since(before)
         && matches!(state.body().local_decls[destination].ty.kind(), TyKind::Adt(def, _) if type_ids::is_std_string(def.did()))
@@ -182,11 +182,11 @@ pub(super) fn exec_call<'z3, 'tcx>(
         let ty = state.body().local_decls[destination].ty;
         let mut facts = Default::default();
         if state.init_box_vec_param(destination, ty, destination.as_usize(), &mut facts) {
-            state.diagnostics.recover_copy_memory_target(before);
+            state.path_state.diagnostics.recover_copy_memory_target(before);
         }
     }
     if let Some(before) = diagnostics_before_call.as_ref()
-        && state.diagnostics.only_missing_mir_since(before)
+        && state.path_state.diagnostics.only_missing_mir_since(before)
         && arg_values.iter().all(|value| {
             value.provenance.is_none()
                 && !matches!(value.ty.kind(), TyKind::Ref(..) | TyKind::RawPtr(..))
@@ -198,13 +198,13 @@ pub(super) fn exec_call<'z3, 'tcx>(
             let term = state.fresh_int("safedrop_opaque_result");
             state.set_local(destination, VmValue::new(term, ty));
         }
-        state.diagnostics.recover_missing_mir(before);
+        state.path_state.diagnostics.recover_missing_mir(before);
     }
     state.finish_call(&site, prior_result.as_ref(), summary_used, method_call);
     RuleFlow::Continue
 }
 
-impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     fn select_call_model(
         &self,
         site: &CallSite<'_, 'z3, 'tcx>,
@@ -305,13 +305,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 RuleFlow::Continue
             }
             CallModel::Drop(DropCall::Pointee) => {
-                let event_count = self.safedrop_events.len();
+                let event_count = self.path_state.safedrop_events.len();
                 if let Some(pointer) = arg_values.first()
                     && let Some(local) = self.find_local_by_address(&pointer.z3_term)
                 {
                     super::terminator::exec_drop(self, &rustc_middle::mir::Place::from(local));
                 }
-                if self.safedrop_events.len() == event_count
+                if self.path_state.safedrop_events.len() == event_count
                     && let Some(pointer) = arg_values.first()
                     && let Some(alloc_id) = pointer.provenance_alloc_id()
                 {
@@ -380,7 +380,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                                 .args
                                 .types()
                                 .all(|ty| !mir_utils::ty_has_type_param(ty))
-                                || self.inline.symbolic_generic_const_inline
+                                || self.path_state.inline.symbolic_generic_const_inline
                                 || mir_utils::has_generic_const_call_argument(self.tcx, callee))
                     });
                 if self.exec_inline_call(
@@ -419,11 +419,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         method_call: Option<super::super::method_cache::MethodSnapshot<'z3, 'tcx>>,
     ) {
         self.finish_call_state(site, prior_result, summary_used, method_call.clone());
-        let mut alternatives = std::mem::take(&mut self.inline.pending_states);
+        let mut alternatives = std::mem::take(&mut self.path_state.inline.pending_states);
         for state in &mut alternatives {
             state.finish_call_state(site, prior_result, summary_used, method_call.clone());
         }
-        self.inline.pending_states = alternatives;
+        self.path_state.inline.pending_states = alternatives;
     }
 
     fn finish_call_state(

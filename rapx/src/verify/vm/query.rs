@@ -12,7 +12,7 @@ use rustc_middle::{
 };
 use z3::ast::{Ast, Int};
 
-use super::state::{AllocId, OffsetKind, VmState, VmValue};
+use super::state::{AllocId, OffsetKind, VmExecutor, VmValue};
 
 #[derive(Clone, Copy)]
 pub(crate) enum ContractTargetContext<'a, 'tcx> {
@@ -20,7 +20,7 @@ pub(crate) enum ContractTargetContext<'a, 'tcx> {
     Callsite(&'a Checkpoint<'tcx>),
 }
 
-impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     fn bound_field_value(&self, local: Local, path: &[usize]) -> Option<VmValue<'z3, 'tcx>> {
         if path.is_empty() {
             self.local_value(local).cloned()
@@ -464,14 +464,14 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         terms: &rustc_hash::FxHashSet<Int<'z3>>,
         value: &VmValue<'z3, 'tcx>,
     ) -> bool {
-        if VmState::term_involves(terms, &value.z3_term) {
+        if VmExecutor::term_involves(terms, &value.z3_term) {
             return true;
         }
         value.provenance.as_ref().is_some_and(|p| {
-            VmState::term_involves(terms, &p.offset)
+            VmExecutor::term_involves(terms, &p.offset)
                 || matches!(
                     &p.offset_kind,
-                    Some(OffsetKind::Element { index, .. }) if VmState::term_involves(terms, index)
+                    Some(OffsetKind::Element { index, .. }) if VmExecutor::term_involves(terms, index)
                 )
         })
     }

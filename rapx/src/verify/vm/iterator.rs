@@ -4,9 +4,9 @@ use z3::ast::{Ast, Int};
 use crate::def_ids::type_ids;
 use crate::helpers::mir_utils;
 
-use super::state::{AllocId, OffsetKind, Provenance, VmState, VmValue};
+use super::state::{AllocId, OffsetKind, Provenance, VmExecutor, VmValue};
 
-impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     /// The two pointer fields of an Iter/IterMut local (`[0]` = ptr, `[1]` =
     /// end_or_len), which share the same allocation.  Returns `None` when
     /// either field is missing or the two point into different allocations.
@@ -112,7 +112,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 self.tcx,
                 rustc_middle::ty::TypingEnv::post_analysis(
                     self.tcx,
-                    self.current_frame.current_def_id,
+                    self.path_state.current_frame.current_def_id,
                 ),
             )
         {
@@ -145,10 +145,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         if let Some(stride) = stride
             && let Some((left, right)) = element(lp).zip(element(rp))
         {
-            let positive = self.constraints.term_caches.non_zst.contains(&stride)
+            let positive = self.path_state.constraints.term_caches.non_zst.contains(&stride)
                 || self.path_implies(&stride.gt(&Int::from_u64(self.z3_ctx, 0)));
             if positive {
-                self.constraints.term_caches.non_zst.insert(stride);
+                self.path_state.constraints.term_caches.non_zst.insert(stride);
                 let eq = left._eq(&right);
                 return Some(if matches!(op, rustc_middle::mir::BinOp::Eq) {
                     eq
@@ -157,7 +157,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 });
             }
         }
-        let is_std_iter_comparison = self.current_frame.local_alloc.keys().any(|local| {
+        let is_std_iter_comparison = self.path_state.current_frame.local_alloc.keys().any(|local| {
             let Some(value) = self.local_value(*local) else {
                 return false;
             };
@@ -182,7 +182,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return None;
         }
         let eq = {
-            let mut candidates = self
+            let mut candidates = self.path_state
                 .constraints
                 .term_caches
                 .iter_ptr_offset
@@ -225,7 +225,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         };
         let one = Int::from_u64(self.z3_ctx, 1);
         let (new_offset, base_len) =
-            match self.constraints.term_caches.iter_ptr_offset.get(&iter_key) {
+            match self.path_state.constraints.term_caches.iter_ptr_offset.get(&iter_key) {
                 Some((_, prev, base)) => (Int::add(self.z3_ctx, &[prev, &one]), base.clone()),
                 None => {
                     let base = self
@@ -239,9 +239,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 }
             };
         if let Some(e) = &base_len {
-            self.constraints.assertions.push(new_offset.le(e));
+            self.path_state.constraints.assertions.push(new_offset.le(e));
         }
-        self.constraints
+        self.path_state.constraints
             .term_caches
             .iter_ptr_offset
             .insert(iter_key, (buffer, new_offset, base_len));

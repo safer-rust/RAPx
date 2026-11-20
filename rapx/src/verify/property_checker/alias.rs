@@ -5,7 +5,7 @@ use crate::helpers::mir_utils;
 use crate::verify::checkpoint::Checkpoint;
 use crate::verify::contract::Property;
 use crate::verify::report::{CheckResult, UnknownReason};
-use crate::verify::vm::state::VmState;
+use crate::verify::vm::state::VmExecutor;
 use rustc_middle::{
     mir::{Operand, ProjectionElem, Rvalue, StatementKind},
     ty::TyKind,
@@ -16,7 +16,7 @@ use super::PropertyChecker;
 impl PropertyChecker {
     pub(super) fn check_ref_count_share<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
@@ -48,7 +48,7 @@ impl PropertyChecker {
 
     pub(super) fn check_alias<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
         _property: &Property<'tcx>,
     ) -> CheckResult {
@@ -63,7 +63,7 @@ impl PropertyChecker {
 
     pub(super) fn check_owning<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
@@ -148,7 +148,7 @@ impl PropertyChecker {
             })
         });
         let internal_alloc = !vm_state.alloc(alloc_id).is_external();
-        let local_alloc = vm_state
+        let local_alloc = vm_state.path_state
             .current_frame
             .local_alloc
             .values()
@@ -184,7 +184,7 @@ impl PropertyChecker {
         );
         let typing_env =
             rustc_middle::ty::TypingEnv::non_body_analysis(vm_state.tcx, checkpoint.caller);
-        for local in vm_state.current_frame.local_alloc.keys() {
+        for local in vm_state.path_state.current_frame.local_alloc.keys() {
             if Some(*local) == dest_local {
                 continue;
             }

@@ -1,6 +1,6 @@
 use super::*;
 
-impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     pub(super) fn apply_simd_effect(
         &mut self,
         effect: &CallEffect,
@@ -260,7 +260,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         })
                     });
                 if !mask_is_zero {
-                    for index in 0..self.units.len() {
+                    for index in 0..self.path_state.units.len() {
                         self.forget_memory_values(AllocId(index));
                     }
                 }

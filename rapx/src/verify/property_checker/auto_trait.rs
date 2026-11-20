@@ -7,7 +7,7 @@ use crate::verify::auto_trait::{
 use crate::verify::checkpoint::Checkpoint;
 use crate::verify::contract::{Property, PropertyArg};
 use crate::verify::report::{CheckResult, UnknownReason};
-use crate::verify::vm::state::VmState;
+use crate::verify::vm::state::VmExecutor;
 
 use super::PropertyChecker;
 
@@ -16,7 +16,7 @@ impl PropertyChecker {
     /// the named negative types.
     pub(super) fn check_contain_no_type<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
@@ -39,7 +39,7 @@ impl PropertyChecker {
     /// `NoRawPtr(T)`: `T` must have no raw pointers.
     pub(super) fn check_no_raw_ptr<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
@@ -52,7 +52,7 @@ impl PropertyChecker {
     /// `NoInternalMut(T)`: `T` must have no interior mutation through raw pointers.
     pub(super) fn check_no_internal_mut<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         _checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
@@ -66,7 +66,7 @@ impl PropertyChecker {
     /// owner, no aliasing `Clone`).
     pub(super) fn check_uni_internal_mut<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         _checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
@@ -81,7 +81,7 @@ impl PropertyChecker {
     /// (`Atomic*`).
     pub(super) fn check_atomic_update<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
@@ -95,7 +95,7 @@ impl PropertyChecker {
     /// field of `T` must be guarded by a synchronization primitive.
     pub(super) fn check_ref_send<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {

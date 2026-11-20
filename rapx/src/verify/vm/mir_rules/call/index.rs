@@ -3,7 +3,7 @@ use z3::ast::Int;
 
 use crate::def_ids::lang_api::{self, LangItem};
 
-use super::super::super::state::{VmState, VmValue};
+use super::super::super::state::{VmExecutor, VmValue};
 
 pub(super) struct BuiltinIndexPlan<'z3, 'tcx> {
     base: VmValue<'z3, 'tcx>,
@@ -14,7 +14,7 @@ pub(super) struct BuiltinIndexPlan<'z3, 'tcx> {
     output_len: Option<Int<'z3>>,
 }
 
-impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     pub(super) fn prepare_builtin_index(
         &self,
         callee: Option<rustc_hir::def_id::DefId>,
@@ -86,16 +86,16 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             output_len,
         } = plan;
         let zero = Int::from_u64(self.z3_ctx, 0);
-        self.constraints.assertions.push(start.ge(&zero));
+        self.path_state.constraints.assertions.push(start.ge(&zero));
         if let Some(len) = output_len {
-            self.constraints.assertions.push(len.ge(&zero));
-            self.constraints
+            self.path_state.constraints.assertions.push(len.ge(&zero));
+            self.path_state.constraints
                 .assertions
                 .push((&start + &len).le(&base_len));
             self.apply_slice_offset(dest, &base, &index, index_local);
             self.materialize_slice_ref_return(dest);
         } else {
-            self.constraints.assertions.push(start.lt(&base_len));
+            self.path_state.constraints.assertions.push(start.lt(&base_len));
             self.apply_slice_offset(dest, &base, &index, index_local);
         }
     }

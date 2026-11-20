@@ -16,10 +16,10 @@ use crate::{
 use super::contracts::{index_access_locals, rebind_property_place, slice_offset_locals};
 use super::query::ContractTargetContext;
 use super::state::{
-    AllocId, ElementTy, Provenance, ValueFacts, ValueSource, VmState, VmValue,
+    AllocId, ElementTy, Provenance, ValueFacts, ValueSource, VmExecutor, VmValue,
 };
 
-impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     pub(crate) fn assert_contract_fact(&mut self, property: &Property<'tcx>) {
         if property.contract_kind() == ContractKind::Postcond {
             return;
@@ -29,7 +29,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         // so the alias checker discharges only those — not every alias.
         let mut allocs = FxHashSet::default();
         self.collect_alias_hazard_allocs(property, &mut allocs);
-        self.alias_hazard_allocs.extend(allocs);
+        self.path_state.alias_hazard_allocs.extend(allocs);
         match property {
             Property::Atom(atom) => {
                 if atom.contract_kind == ContractKind::Hazard {
@@ -131,11 +131,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     if self.apply_slice_offset(dest, &base, &index, index_local) {
                         if let (Some(previous), Some(expected)) = (previous, self.local_value(dest))
                         {
-                            self.constraints
+                            self.path_state.constraints
                                 .assertions
                                 .push(previous.z3_term._eq(&expected.z3_term));
                         }
-                        let indexed_in_bounds = self.index_access_facts.iter().any(
+                        let indexed_in_bounds = self.path_state.index_access_facts.iter().any(
                             |(slice, index_term, slice_local, indexed_local)| {
                                 *slice_local == base_local
                                     && *indexed_local == index_local
@@ -299,7 +299,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 if let Some(PropertyArg::Predicates(predicates)) = property.args().first() {
                     for pred in predicates {
                         if let Some(condition) = self.eval_predicate_as_bool(pred) {
-                            self.constraints.assertions.push(condition);
+                            self.path_state.constraints.assertions.push(condition);
                         }
                     }
                 }
@@ -335,7 +335,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             let ty = if local.as_usize() > 0 && local.as_usize() <= self.body().arg_count {
                 super::region::fn_arg_ty(
                     self.tcx,
-                    self.current_frame.current_def_id,
+                    self.path_state.current_frame.current_def_id,
                     local.as_usize() - 1,
                 )
             } else {
@@ -356,14 +356,14 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         // A valid C string includes at least its terminating byte, even when
         // the explicit length expression could not be resolved.
         let one = Int::from_u64(self.z3_ctx, 1);
-        self.constraints.assertions.push(self.alloc(id).size.ge(&one));
+        self.path_state.constraints.assertions.push(self.alloc(id).size.ge(&one));
         if let Some(n) = property.args().get(1).and_then(|a| match a {
             PropertyArg::Expr(ContractExpr::Const(_)) | PropertyArg::ForEach(ContractExpr::Const(_)) => None,
             a => self.resolve_contract_count(a),
         }) {
             let one = Int::from_u64(self.z3_ctx, 1);
-            self.constraints.assertions.push(n.ge(&one));
-            self.constraints.assertions.push(self.alloc(id).size.ge(&n));
+            self.path_state.constraints.assertions.push(n.ge(&one));
+            self.path_state.constraints.assertions.push(self.alloc(id).size.ge(&n));
             let zero = Int::from_u64(self.z3_ctx, 0);
             let terminal = Int::sub(self.z3_ctx, &[&n, &one]);
             self.byte_write(id, &terminal, &zero);
@@ -709,8 +709,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             .unwrap_or_else(|| data_size.div(&elem_sz_term));
         let zero = Int::from_u64(self.z3_ctx, 0);
         for (_, term) in &byte_vals {
-            self.constraints.assertions.push(term.ge(&zero));
-            self.constraints.assertions.push(term.lt(&len));
+            self.path_state.constraints.assertions.push(term.ge(&zero));
+            self.path_state.constraints.assertions.push(term.lt(&len));
         }
     }
 
@@ -753,7 +753,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let Some(index_term) = self.eval_contract_expr_simple(index) else {
             return;
         };
-        self.constraints.assertions.push(index_term.lt(&len));
+        self.path_state.constraints.assertions.push(index_term.lt(&len));
     }
 
     fn record_index_access_fact(&mut self, property: &Property<'tcx>) {
@@ -763,7 +763,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         if let (Some(slice), Some(index)) =
             (self.local_value(slice_local), self.local_value(index_local))
         {
-            self.index_access_facts.push((
+            self.path_state.index_access_facts.push((
                 slice.z3_term.clone(),
                 index.z3_term.clone(),
                 slice_local,
@@ -834,7 +834,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             for pred in preds {
                 if let Some(cond) = self.eval_pointee_predicate_as_bool(alloc_id, pointee_ty, pred)
                 {
-                    self.constraints.assertions.push(cond);
+                    self.path_state.constraints.assertions.push(cond);
                 }
             }
         }
@@ -867,7 +867,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             ContractExpr::AlignOf(ty) => Some(self.align_sym_read(*ty)),
             ContractExpr::Place(cp) => {
                 let path = cp.plain_field_path()?;
-                self.units[alloc_id.0]
+                self.path_state.units[alloc_id.0]
                     .content
                     .values
                     .get(&(view_ty, path))
@@ -898,7 +898,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return None;
         };
         let path = cp.plain_field_path()?;
-        self.units[alloc_id.0]
+        self.path_state.units[alloc_id.0]
             .content
             .values
             .get(&(view_ty, path))
@@ -921,7 +921,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 // non-linear `% align_T` is not decidable, so `align_n` alone is
                 // used for that case.)
                 if align_u64.is_some() {
-                    self.constraints
+                    self.path_state.constraints
                         .assertions
                         .push(val.z3_term.rem(&align)._eq(&Int::from_u64(self.z3_ctx, 0)));
                 }

@@ -28,7 +28,7 @@ pub(crate) use self::{
     call_summary::{effects::has_registered_effect, function_var::supports_result as supports_function_var_result},
     slicer::RelevantItem,
     target::PrepareTargets,
-    vm::{VmState, state::{AllocId, SafeDropEvent, SafeDropEventKind}},
+    vm::{VmExecutor, state::{AllocId, SafeDropEvent, SafeDropEventKind}},
 };
 
 use std::{sync::Arc, time::Instant};

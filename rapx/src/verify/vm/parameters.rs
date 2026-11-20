@@ -8,9 +8,9 @@ use crate::def_ids::type_ids;
 use crate::compat::FxHashMap;
 use crate::helpers::mir_utils;
 
-use super::state::{AllocId, Provenance, ValueFacts, ValueSource, VmState, VmValue};
+use super::state::{AllocId, Provenance, ValueFacts, ValueSource, VmExecutor, VmValue};
 
-impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     /// Initialize a struct/tuple/enum parameter (a non-`Box`/`Vec` ADT):
     /// decompose it into per-field symbolic values for field-level checking.
     pub(super) fn init_struct_param(
@@ -115,7 +115,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let (heap_alloc_id, heap_base) = if let Some(elem) = slice_elem {
             let len = self.fresh_int(&format!("slice_len_{}", local_idx));
             let zero = Int::from_u64(self.z3_ctx, 0);
-            self.constraints.assertions.push(len.ge(&zero));
+            self.path_state.constraints.assertions.push(len.ge(&zero));
             let elem_size = self.size_sym(elem);
             self.allocate_slice(len, elem_size, heap_align, Some(elem))
         } else if is_vec || is_string {
@@ -200,7 +200,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let n_term = self.const_len_term(const_len);
         let (alloc_id, base) = self.allocate_slice(n_term, elem_sym, align, Some(*elem_ty));
         self.content_mut(alloc_id).facts.initialized = true;
-        self.current_frame.local_alloc.insert(local, alloc_id);
+        self.path_state.current_frame.local_alloc.insert(local, alloc_id);
         invariants.init = true;
         for i in 0..n.unwrap_or(16) {
             let off = i * step;
@@ -239,7 +239,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         };
         let precise_pointee = crate::verify::vm::region::fn_arg_ty(
             self.tcx,
-            self.current_frame.current_def_id,
+            self.path_state.current_frame.current_def_id,
             local_idx - 1,
         )
         .and_then(|precise_ty| match precise_ty.kind() {
@@ -272,28 +272,28 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             let elem_size = self.size_of_ty(*elem_ty);
             let len = self.fresh_int(&format!("slice_len_{}", local_idx));
             let zero = Int::from_u64(self.z3_ctx, 0);
-            self.constraints.assertions.push(len.ge(&zero));
+            self.path_state.constraints.assertions.push(len.ge(&zero));
             let isize_max = Int::from_i64(self.z3_ctx, i64::MAX);
             let elem_sz = if elem_size > 0 {
                 elem_size
             } else {
                 mir_utils::size_of_generic_param(
                     self.tcx,
-                    self.current_frame.current_def_id,
+                    self.path_state.current_frame.current_def_id,
                     *elem_ty,
                 )
                 .max(1)
             };
             let elem_sz_term = Int::from_u64(self.z3_ctx, elem_sz);
-            self.constraints
+            self.path_state.constraints
                 .assertions
                 .push(Int::mul(self.z3_ctx, &[&len, &elem_sz_term]).le(&isize_max));
             if let TyKind::Array(inner_ty, count) = elem_ty.kind() {
                 let inner_size = self.size_sym(*inner_ty);
                 let count = self.const_len_term(count);
-                self.constraints.assertions.push(count.ge(&zero));
+                self.path_state.constraints.assertions.push(count.ge(&zero));
                 let flat_len = Int::mul(self.z3_ctx, &[&len, &count]);
-                self.constraints
+                self.path_state.constraints
                     .assertions
                     .push(inner_size.gt(&zero).implies(&flat_len.le(&isize_max)));
             }
@@ -534,14 +534,14 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
 }
 
-impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     pub(crate) fn init_parameters(&mut self) {
         let arg_count = self.body().arg_count;
         let local_count = self.body().local_decls.len();
 
         for local_idx in 1..local_count {
             let local = Local::from_usize(local_idx);
-            if self.current_frame.local_alloc.contains_key(&local) {
+            if self.path_state.current_frame.local_alloc.contains_key(&local) {
                 continue;
             }
             let decl = &self.body().local_decls[local];

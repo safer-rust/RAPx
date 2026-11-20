@@ -9,14 +9,14 @@ use z3::ast::Int;
 use crate::compat::{FxHashMap, FxHashSet};
 use crate::helpers::mir_utils;
 
-use super::state::{AllocId, OffsetKind, Provenance, ValueFacts, ValueSource, VmState, VmValue};
+use super::state::{AllocId, OffsetKind, Provenance, ValueFacts, ValueSource, VmExecutor, VmValue};
 
-impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     /// Pre-warm a shared symbolic `sizeof_T` / `align_T` for every generic type
     /// parameter of the caller, so the read-only `*_sym_read` fallback is dead.
     pub(crate) fn prewarm_generic_size_align(&mut self) {
         let mut warmed: FxHashSet<Ty<'tcx>> = FxHashSet::default();
-        for param in self.tcx.generics_of(self.current_frame.current_def_id).own_params.iter() {
+        for param in self.tcx.generics_of(self.path_state.current_frame.current_def_id).own_params.iter() {
             if let rustc_middle::ty::GenericParamDefKind::Type { .. } = param.kind {
                 warmed.insert(rustc_middle::ty::Ty::new_param(
                     self.tcx,
@@ -72,14 +72,14 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             let len = self.fresh_int("field_slice_len");
             let elem_size = self.size_sym(elem_ty);
             let bytes = Int::mul(self.z3_ctx, &[&len, &elem_size]);
-            self.constraints
+            self.path_state.constraints
                 .assertions
                 .push(len.ge(&Int::from_u64(self.z3_ctx, 0)));
             if let Some((_, max_len, _, _)) = self.integer_limits(self.tcx.types.usize) {
-                self.constraints.assertions.push(len.le(&max_len));
+                self.path_state.constraints.assertions.push(len.le(&max_len));
             }
             if let Some((_, max_bytes, _, _)) = self.integer_limits(self.tcx.types.isize) {
-                self.constraints.assertions.push(bytes.le(&max_bytes));
+                self.path_state.constraints.assertions.push(bytes.le(&max_bytes));
             }
             let result = self.allocate_external(bytes, align, Some(elem_ty));
             self.alloc_mut(result.0).set_slice_len(len);
@@ -161,7 +161,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             let elem_align = self.align_sym(pointee);
             let elem_size = self.size_sym(pointee);
             let len_term = self.fresh_int(&format!("field_len_{}_{}", local_idx, idx));
-            self.constraints.assertions
+            self.path_state.constraints.assertions
                 .push(len_term.ge(&Int::from_u64(self.z3_ctx, 0)));
             let prost_offset = Int::mul(self.z3_ctx, &[&len_term, &elem_size]);
             let field_term = Int::add(self.z3_ctx, &[base, &prost_offset]);
@@ -199,10 +199,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             let tail_len = tail.map(|_| self.fresh_int(&format!("field_len_{}_{}", local_idx, idx)));
             let max_size = if is_raw_ptr {
                 let s = self.fresh_int("raw_target_size");
-                self.constraints.assertions.push(s.ge(&Int::from_u64(self.z3_ctx, 0)));
+                self.path_state.constraints.assertions.push(s.ge(&Int::from_u64(self.z3_ctx, 0)));
                 s
             } else if let (Some((elem, offset)), Some(len)) = (tail, tail_len.as_ref()) {
-                self.constraints.assertions.push(len.ge(&Int::from_u64(self.z3_ctx, 0)));
+                self.path_state.constraints.assertions.push(len.ge(&Int::from_u64(self.z3_ctx, 0)));
                 let data_size = Int::mul(self.z3_ctx, &[len, &self.size_sym(elem)]);
                 Int::add(self.z3_ctx, &[&Int::from_u64(self.z3_ctx, offset), &data_size])
             } else {
@@ -274,7 +274,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         };
         let offset = mir_utils::field_offset_in_bytes(
             self.tcx,
-            self.current_frame.current_def_id,
+            self.path_state.current_frame.current_def_id,
             ty,
             index,
         );
@@ -461,7 +461,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 let (fa, _fb) = self.allocate_external(max_size, field_align, Some(pointee));
                 self.content_mut(fa).facts.initialized = true;
                 let term = self.fresh_int(&format!("pointee_nn_{}_{}", local_idx, idx));
-                self.units[alloc_id.0].content.values.insert(
+                self.path_state.units[alloc_id.0].content.values.insert(
                     (root_ty, path.clone()),
                     VmValue {
                         z3_term: term,
@@ -509,7 +509,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 let field_term = self
                     .field_term_from_bytes(alloc_id, field_off, field_size)
                     .unwrap_or_else(|| self.fresh_int(&format!("pointee_field_{}_{}", local_idx, idx)));
-                self.units[alloc_id.0].content.values.insert(
+                self.path_state.units[alloc_id.0].content.values.insert(
                     (root_ty, path.clone()),
                     VmValue {
                         z3_term: field_term,
@@ -537,7 +537,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     Some(*elem_ty),
                 );
                 self.content_mut(fa).facts.initialized = true;
-                self.units[alloc_id.0].content.values.insert(
+                self.path_state.units[alloc_id.0].content.values.insert(
                     (root_ty, path.clone()),
                     VmValue {
                         z3_term: fb,
@@ -731,7 +731,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         source_place: &Place<'tcx>,
         ref_val: &VmValue<'z3, 'tcx>,
     ) {
-        let Some(src_alloc_id) = self.current_frame.local_alloc.get(&source_place.local).copied() else {
+        let Some(src_alloc_id) = self.path_state.current_frame.local_alloc.get(&source_place.local).copied() else {
             return;
         };
         let Some(ref_alloc_id) = ref_val.provenance_alloc_id() else {
@@ -799,16 +799,16 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         elem_size: u64,
     ) {
         let zero = Int::from_u64(self.z3_ctx, 0);
-        self.constraints.assertions.push(len.ge(&zero));
-        self.constraints.assertions.push(len.le(&cap));
-        self.constraints.assertions.push(cap.ge(&zero));
+        self.path_state.constraints.assertions.push(len.ge(&zero));
+        self.path_state.constraints.assertions.push(len.le(&cap));
+        self.path_state.constraints.assertions.push(cap.ge(&zero));
         // Language invariant: a Vec's byte length fits in `isize::MAX`, so the
         // `from_raw_parts`/`from_raw_parts_mut` precondition
         // `size_of(T) * len <= isize::MAX` is provable from the materialized
         // fields (`len <= cap` and `cap * elem_size <= isize::MAX`).
         let isize_max = Int::from_u64(self.z3_ctx, isize::MAX as u64);
         let elem_term = Int::from_u64(self.z3_ctx, elem_size.max(1));
-        self.constraints.assertions
+        self.path_state.constraints.assertions
             .push(Int::mul(self.z3_ctx, &[&cap, &elem_term]).le(&isize_max));
     }
 }

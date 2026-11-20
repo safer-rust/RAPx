@@ -1,6 +1,6 @@
 use super::*;
 
-impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     fn apply_binary_num(
         &mut self,
         dest: Local,
@@ -102,7 +102,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     let dest_ty = self.body().local_decls[dest].ty;
                     let zero = Int::from_u64(self.z3_ctx, 0);
                     let term = self.fresh_int(&format!("ret_nz_iff_{}", dest.as_usize()));
-                    self.constraints
+                    self.path_state.constraints
                         .assertions
                         .push(term._eq(&zero)._eq(&a.z3_term._eq(&zero)));
                     self.set_local(dest, VmValue::new(term, dest_ty));
@@ -125,18 +125,18 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             Int::mul(self.z3_ctx, &[&acc, &two]).simplify()
                         });
                         let term = self.fresh_int(&format!("ctlz_{}", dest.as_usize()));
-                        self.constraints.assertions.push(term.ge(&zero));
-                        self.constraints.assertions.push(term.le(&width_term));
-                        self.constraints
+                        self.path_state.constraints.assertions.push(term.ge(&zero));
+                        self.path_state.constraints.assertions.push(term.le(&width_term));
+                        self.path_state.constraints
                             .assertions
                             .push(value.z3_term._eq(&zero).implies(&term._eq(&width_term)));
-                        self.constraints
+                        self.path_state.constraints
                             .assertions
                             .push(value.z3_term.lt(&high_bit).implies(&term.ge(&one)));
-                        self.constraints
+                        self.path_state.constraints
                             .assertions
                             .push(value.z3_term.ge(&high_bit).implies(&term._eq(&zero)));
-                        self.constraints
+                        self.path_state.constraints
                             .assertions
                             .push(value.z3_term.lt(&zero).implies(&term._eq(&zero)));
                         let dest_ty = self.body().local_decls[dest].ty;
@@ -158,19 +158,19 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         let two = Int::from_u64(self.z3_ctx, 2);
                         let width_term = Int::from_u64(self.z3_ctx, width);
                         let term = self.fresh_int(&format!("cttz_{}", dest.as_usize()));
-                        self.constraints.assertions.push(term.ge(&zero));
-                        self.constraints.assertions.push(term.le(&width_term));
-                        self.constraints
+                        self.path_state.constraints.assertions.push(term.ge(&zero));
+                        self.path_state.constraints.assertions.push(term.le(&width_term));
+                        self.path_state.constraints
                             .assertions
                             .push(value.z3_term._eq(&zero).implies(&term._eq(&width_term)));
-                        self.constraints.assertions.push(
+                        self.path_state.constraints.assertions.push(
                             value
                                 .z3_term
                                 .modulo(&two)
                                 ._eq(&one)
                                 .implies(&term._eq(&zero)),
                         );
-                        self.constraints.assertions.push(
+                        self.path_state.constraints.assertions.push(
                             Bool::and(
                                 self.z3_ctx,
                                 &[

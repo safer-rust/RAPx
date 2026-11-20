@@ -8,14 +8,14 @@ use rustc_middle::{
 use z3::ast::{Ast, Int};
 
 use super::super::state::{
-    AllocId, Provenance, REPEATED_ARRAY_ELEMENT, ValueFacts, ValueSource, VmState, VmValue,
+    AllocId, Provenance, REPEATED_ARRAY_ELEMENT, ValueFacts, ValueSource, VmExecutor, VmValue,
 };
 
 use crate::def_ids::type_ids;
 use crate::helpers::mir_utils;
 
 pub(crate) fn eval_use<'z3, 'tcx>(
-    state: &mut VmState<'z3, 'tcx>,
+    state: &mut VmExecutor<'z3, 'tcx>,
     place: &Place<'tcx>,
     operand: &Operand<'tcx>,
 ) -> VmValue<'z3, 'tcx> {
@@ -48,13 +48,13 @@ pub(crate) fn eval_use<'z3, 'tcx>(
 }
 
 pub(crate) fn eval_ref<'z3, 'tcx>(
-    state: &mut VmState<'z3, 'tcx>,
+    state: &mut VmExecutor<'z3, 'tcx>,
     dest_place: &Place<'tcx>,
     place: &Place<'tcx>,
 ) -> VmValue<'z3, 'tcx> {
     let dest_ty = dest_place.ty(state.body(), state.tcx).ty;
     if let Some(addr) = state.address_of_place(place) {
-        if state.safedrop_events.is_enabled()
+        if state.path_state.safedrop_events.is_enabled()
             && place.projection.iter().any(|projection| {
                 matches!(
                     projection.kind(),
@@ -190,7 +190,7 @@ pub(crate) fn eval_ref<'z3, 'tcx>(
 }
 
 pub(crate) fn eval_raw_ptr<'z3, 'tcx>(
-    state: &mut VmState<'z3, 'tcx>,
+    state: &mut VmExecutor<'z3, 'tcx>,
     dest_place: &Place<'tcx>,
     place: &Place<'tcx>,
 ) -> VmValue<'z3, 'tcx> {
@@ -228,7 +228,7 @@ pub(crate) fn eval_raw_ptr<'z3, 'tcx>(
 }
 
 pub(crate) fn eval_binary_op<'z3, 'tcx>(
-    state: &mut VmState<'z3, 'tcx>,
+    state: &mut VmExecutor<'z3, 'tcx>,
     dest_place: &Place<'tcx>,
     op: BinOp,
     pair: &(Operand<'tcx>, Operand<'tcx>),
@@ -257,7 +257,7 @@ pub(crate) fn eval_binary_op<'z3, 'tcx>(
             {
                 return Some(state.size_of_ty(element));
             }
-            let (_, s) = mir_utils::type_layout(state.tcx, state.current_frame.current_def_id, p)?;
+            let (_, s) = mir_utils::type_layout(state.tcx, state.path_state.current_frame.current_def_id, p)?;
             if s == 0 && mir_utils::ty_has_type_param(p) {
                 None
             } else {
@@ -295,7 +295,7 @@ pub(crate) fn eval_binary_op<'z3, 'tcx>(
         && matches!(lhs.ty.kind(), TyKind::Uint(_) | TyKind::Int(_))
     {
         let zero = Int::from_u64(state.z3_ctx, 0);
-        state.constraints.assertions.push(raw_term._eq(&zero).not());
+        state.path_state.constraints.assertions.push(raw_term._eq(&zero).not());
     }
     let term = if matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul) {
         state.wrap_integer_term(lhs.ty, &raw_term)
@@ -383,7 +383,7 @@ pub(crate) fn eval_binary_op<'z3, 'tcx>(
 }
 
 pub(crate) fn eval_unary_op<'z3, 'tcx>(
-    state: &mut VmState<'z3, 'tcx>,
+    state: &mut VmExecutor<'z3, 'tcx>,
     dest_place: &Place<'tcx>,
     op: UnOp,
     operand: &Operand<'tcx>,
@@ -403,7 +403,7 @@ pub(crate) fn eval_unary_op<'z3, 'tcx>(
                 state.tcx,
                 rustc_middle::ty::TypingEnv::post_analysis(
                     state.tcx,
-                    state.current_frame.current_def_id,
+                    state.path_state.current_frame.current_def_id,
                 ),
             )
         });
@@ -431,7 +431,7 @@ pub(crate) fn eval_unary_op<'z3, 'tcx>(
     }
 }
 
-fn pointer_free_bits<'z3, 'tcx>(state: &VmState<'z3, 'tcx>, ty: Ty<'tcx>, depth: usize) -> bool {
+fn pointer_free_bits<'z3, 'tcx>(state: &VmExecutor<'z3, 'tcx>, ty: Ty<'tcx>, depth: usize) -> bool {
     if depth > 8 {
         return false;
     }
@@ -449,7 +449,7 @@ fn pointer_free_bits<'z3, 'tcx>(state: &VmState<'z3, 'tcx>, ty: Ty<'tcx>, depth:
 }
 
 pub(crate) fn eval_cast<'z3, 'tcx>(
-    state: &mut VmState<'z3, 'tcx>,
+    state: &mut VmExecutor<'z3, 'tcx>,
     kind: CastKind,
     operand: &Operand<'tcx>,
     cast_ty: Ty<'tcx>,
@@ -469,7 +469,7 @@ pub(crate) fn eval_cast<'z3, 'tcx>(
         && matches!(cast_ty.kind(), TyKind::RawPtr(..))
         && matches!(src_ty.kind(), TyKind::Adt(adt, _) if type_ids::is_std_nonnull(adt.did()));
     let numeric_transmute = matches!(kind, CastKind::Transmute)
-        && mir_utils::is_std_crate_def_id(state.tcx, state.current_frame.current_def_id)
+        && mir_utils::is_std_crate_def_id(state.tcx, state.path_state.current_frame.current_def_id)
         && src_val.provenance.is_none()
         && (pointer_free_bits(state, src_ty, 0)
             || matches!(src_val.source, ValueSource::KnownDiscriminant(_)))
@@ -510,9 +510,9 @@ pub(crate) fn eval_cast<'z3, 'tcx>(
     );
     if src_is_ptr && dest_is_int {
         let zero = Int::from_u64(state.z3_ctx, 0);
-        state.constraints.assertions.push(term.ge(&zero));
+        state.path_state.constraints.assertions.push(term.ge(&zero));
         if src_val.facts.non_null {
-            state.constraints.assertions.push(term._eq(&zero).not());
+            state.path_state.constraints.assertions.push(term._eq(&zero).not());
         }
     }
     VmValue {
@@ -545,7 +545,7 @@ pub(crate) fn eval_cast<'z3, 'tcx>(
 }
 
 pub(crate) fn eval_aggregate<'z3, 'tcx>(
-    state: &mut VmState<'z3, 'tcx>,
+    state: &mut VmExecutor<'z3, 'tcx>,
     dest_place: &Place<'tcx>,
     kind: &AggregateKind<'tcx>,
     operands: &IndexVec<FieldIdx, Operand<'tcx>>,
@@ -565,7 +565,7 @@ pub(crate) fn eval_aggregate<'z3, 'tcx>(
                 state.tcx,
                 rustc_middle::ty::TypingEnv::post_analysis(
                     state.tcx,
-                    state.current_frame.current_def_id,
+                    state.path_state.current_frame.current_def_id,
                 ),
             ))
             || operands
@@ -642,7 +642,7 @@ pub(crate) fn eval_aggregate<'z3, 'tcx>(
                 state.set_field_value(dest_local, dest_path, value);
             }
         }
-        if let Some(alloc_id) = state.current_frame.local_alloc.get(&dest_local).copied() {
+        if let Some(alloc_id) = state.path_state.current_frame.local_alloc.get(&dest_local).copied() {
             state.content_mut(alloc_id).facts.initialized = true;
         }
         return VmValue {
@@ -679,7 +679,7 @@ pub(crate) fn eval_aggregate<'z3, 'tcx>(
     let dest_alloc_id = state
         .local_value(dest_local)
         .and_then(|v| v.provenance_alloc_id())
-        .or_else(|| state.current_frame.local_alloc.get(&dest_local).copied());
+        .or_else(|| state.path_state.current_frame.local_alloc.get(&dest_local).copied());
     let is_byte_array = mir_utils::is_u8_array_or_slice(dest_ty);
     let field_types: Vec<_> = state.aggregate_field_tys(dest_ty);
     let mut byte_offset = 0usize;
@@ -820,7 +820,7 @@ pub(crate) fn eval_aggregate<'z3, 'tcx>(
 }
 
 pub(crate) fn eval_discriminant<'z3, 'tcx>(
-    state: &mut VmState<'z3, 'tcx>,
+    state: &mut VmExecutor<'z3, 'tcx>,
     dest_place: &Place<'tcx>,
     place: &Place<'tcx>,
 ) -> VmValue<'z3, 'tcx> {
@@ -848,14 +848,14 @@ pub(crate) fn eval_discriminant<'z3, 'tcx>(
     {
         let one = Int::from_u64(state.z3_ctx, 1);
         let discr_minus_one = Int::sub(state.z3_ctx, &[&term, &one]);
-        state
+        state.path_state
             .constraints
             .assertions
             .push(pv.z3_term._eq(&discr_minus_one));
         let zero = Int::from_u64(state.z3_ctx, 0);
         let two = Int::from_u64(state.z3_ctx, 2);
-        state.constraints.assertions.push(term.ge(&zero));
-        state.constraints.assertions.push(term.le(&two));
+        state.path_state.constraints.assertions.push(term.ge(&zero));
+        state.path_state.constraints.assertions.push(term.le(&two));
     }
     let mut value = VmValue::new(term, dest_ty);
     if place_val.is_some_and(|value| matches!(value.source, ValueSource::KnownDiscriminant(_))) {
@@ -866,7 +866,7 @@ pub(crate) fn eval_discriminant<'z3, 'tcx>(
 
 
 pub(crate) fn eval_copy_for_deref<'z3, 'tcx>(
-    state: &mut VmState<'z3, 'tcx>,
+    state: &mut VmExecutor<'z3, 'tcx>,
     dest_place: &Place<'tcx>,
     place: &Place<'tcx>,
 ) -> VmValue<'z3, 'tcx> {
@@ -880,7 +880,7 @@ pub(crate) fn eval_copy_for_deref<'z3, 'tcx>(
 }
 
 pub(crate) fn eval_fresh_value<'z3, 'tcx>(
-    state: &mut VmState<'z3, 'tcx>,
+    state: &mut VmExecutor<'z3, 'tcx>,
     dest_place: &Place<'tcx>,
     name: &str,
 ) -> VmValue<'z3, 'tcx> {
@@ -891,20 +891,20 @@ pub(crate) fn eval_fresh_value<'z3, 'tcx>(
 
 /// Give each mutable static a stable allocation without assuming its current value.
 fn eval_global_static_ptr<'z3, 'tcx>(
-    state: &mut VmState<'z3, 'tcx>,
+    state: &mut VmExecutor<'z3, 'tcx>,
     dest_place: &Place<'tcx>,
     def_id: DefId,
 ) -> VmValue<'z3, 'tcx> {
     let pointer_ty = dest_place.ty(state.body(), state.tcx).ty;
     let object_ty = state.tcx.type_of(def_id).skip_binder();
-    let (alloc_id, base) = if let Some(&alloc_id) = state.static_allocs.get(&def_id) {
+    let (alloc_id, base) = if let Some(&alloc_id) = state.path_state.static_allocs.get(&def_id) {
         (alloc_id, state.alloc(alloc_id).base.clone())
     } else {
         let size = state.size_of_ty(object_ty);
         let align = state.align_sym(object_ty);
         let (alloc_id, base) =
             state.allocate(Int::from_u64(state.z3_ctx, size), align, Some(object_ty));
-        state.static_allocs.insert(def_id, alloc_id);
+        state.path_state.static_allocs.insert(def_id, alloc_id);
         state.content_mut(alloc_id).facts.initialized = true;
         (alloc_id, base)
     };
@@ -927,13 +927,13 @@ fn eval_global_static_ptr<'z3, 'tcx>(
 }
 
 pub(crate) fn eval_thread_local_ref<'z3, 'tcx>(
-    state: &mut VmState<'z3, 'tcx>,
+    state: &mut VmExecutor<'z3, 'tcx>,
     dest_place: &Place<'tcx>,
     def_id: DefId,
 ) -> VmValue<'z3, 'tcx> {
     let dest_ty = dest_place.ty(state.body(), state.tcx).ty;
     let Some(static_ty) = mir_utils::pointee_ty(dest_ty) else {
-        state.diagnostics.mark_unsupported();
+        state.path_state.diagnostics.mark_unsupported();
         return eval_fresh_value(state, dest_place, "thread_local");
     };
     let scalar = matches!(
@@ -983,13 +983,13 @@ pub(crate) fn eval_thread_local_ref<'z3, 'tcx>(
         state.record_unsupported("ThreadLocalRef initializer");
         return eval_fresh_value(state, dest_place, "thread_local");
     };
-    let (alloc_id, base) = if let Some(&alloc_id) = state.static_allocs.get(&def_id) {
+    let (alloc_id, base) = if let Some(&alloc_id) = state.path_state.static_allocs.get(&def_id) {
         (alloc_id, state.alloc(alloc_id).base.clone())
     } else {
         let align = state.align_sym(static_ty);
         let (alloc_id, base) =
             state.allocate(Int::from_u64(state.z3_ctx, size), align, Some(static_ty));
-        state.static_allocs.insert(def_id, alloc_id);
+        state.path_state.static_allocs.insert(def_id, alloc_id);
         state.content_mut(alloc_id).facts.initialized = true;
         state.store_value(
             alloc_id,
@@ -1018,13 +1018,13 @@ pub(crate) fn eval_thread_local_ref<'z3, 'tcx>(
 }
 
 pub(crate) fn eval_repeat<'z3, 'tcx>(
-    state: &mut VmState<'z3, 'tcx>,
+    state: &mut VmExecutor<'z3, 'tcx>,
     dest_place: &Place<'tcx>,
     operand: &Operand<'tcx>,
 ) -> VmValue<'z3, 'tcx> {
     let dest_ty = dest_place.ty(state.body(), state.tcx).ty;
     let TyKind::Array(..) = dest_ty.kind() else {
-        state.diagnostics.mark_unsupported();
+        state.path_state.diagnostics.mark_unsupported();
         return eval_fresh_value(state, dest_place, "repeat");
     };
     let value = state.value_of_operand(operand);
@@ -1043,7 +1043,7 @@ pub(crate) fn eval_repeat<'z3, 'tcx>(
                     .and_then(|value| value.z3_term.simplify().as_u64())
                     .and_then(|index| usize::try_from(index).ok())
                 else {
-                    state.diagnostics.mark_unsupported();
+                    state.path_state.diagnostics.mark_unsupported();
                     return eval_fresh_value(state, dest_place, "repeat");
                 };
                 index
@@ -1054,13 +1054,13 @@ pub(crate) fn eval_repeat<'z3, 'tcx>(
                 ..
             } => offset as usize,
             _ => {
-                state.diagnostics.mark_unsupported();
+                state.path_state.diagnostics.mark_unsupported();
                 return eval_fresh_value(state, dest_place, "repeat");
             }
         };
         field_path.push(index);
     }
-    if let Some(alloc_id) = state
+    if let Some(alloc_id) = state.path_state
         .current_frame
         .local_alloc
         .get(&dest_place.local)
@@ -1096,7 +1096,7 @@ pub(crate) fn eval_repeat<'z3, 'tcx>(
 }
 
 pub(crate) fn symbolic_repeat_target<'z3, 'tcx>(
-    state: &VmState<'z3, 'tcx>,
+    state: &VmExecutor<'z3, 'tcx>,
     place: &Place<'tcx>,
 ) -> Option<(AllocId, Int<'z3>, u64)> {
     let TyKind::Array(element_ty, length) = place.ty(state.body(), state.tcx).ty.kind() else {
@@ -1129,12 +1129,12 @@ pub(crate) fn symbolic_repeat_target<'z3, 'tcx>(
     if index.simplify().as_u64().is_some() {
         return None;
     }
-    let alloc_id = *state.current_frame.local_alloc.get(&place.local)?;
+    let alloc_id = *state.path_state.current_frame.local_alloc.get(&place.local)?;
     Some((alloc_id, index, count))
 }
 
 pub(crate) fn eval_wrap_unsafe_binder<'z3, 'tcx>(
-    state: &mut VmState<'z3, 'tcx>,
+    state: &mut VmExecutor<'z3, 'tcx>,
     dest_place: &Place<'tcx>,
     operand: &Operand<'tcx>,
 ) -> VmValue<'z3, 'tcx> {
@@ -1146,7 +1146,7 @@ pub(crate) fn eval_wrap_unsafe_binder<'z3, 'tcx>(
 
 
 pub(crate) fn eval_reborrow<'z3, 'tcx>(
-    state: &mut VmState<'z3, 'tcx>,
+    state: &mut VmExecutor<'z3, 'tcx>,
     dest_place: &Place<'tcx>,
     source_place: &Place<'tcx>,
     mutability: rustc_middle::ty::Mutability,
@@ -1199,7 +1199,7 @@ pub(crate) fn eval_reborrow<'z3, 'tcx>(
     #[cfg(not(rapx_has_phantom_deref))]
     let has_phantom_deref = false;
     if (!same_adt && !compatible_shared) || has_phantom_deref {
-        state.diagnostics.mark_unsupported();
+        state.path_state.diagnostics.mark_unsupported();
         return eval_fresh_value(state, dest_place, "reborrow");
     }
     let mut value = state
@@ -1209,7 +1209,7 @@ pub(crate) fn eval_reborrow<'z3, 'tcx>(
     value
 }
 
-impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     /// Compute provenance for a binary operation on pointer values.
     /// Propagates provenance with adjusted offset for pointer arithmetic
     /// (`ptr + offset`, `ptr - offset`, `Offset`).

@@ -1,6 +1,6 @@
 //! Supporting symbolic VM state types and operations.
 //!
-//! Symbolic values, memory allocations, and operations on [`VmState`] live
+//! Symbolic values, memory allocations, and operations on [`VmExecutor`] live
 //! here; the core state and its constructor are defined in the parent module.
 
 use crate::def_ids::type_ids;
@@ -22,7 +22,7 @@ use z3::{
 
 use crate::compat::{FxHashMap, FxHashSet};
 use super::method_cache::MethodSnapshot;
-pub(crate) use super::VmState;
+pub(crate) use super::VmExecutor;
 use crate::helpers::def_use::PlaceKey;
 
 pub(crate) const REPEATED_ARRAY_ELEMENT: usize = usize::MAX;
@@ -84,7 +84,7 @@ pub(crate) struct Provenance<'z3> {
 /// [`VmValue`] leaves its allocation when passed as an operand or stashed in
 /// `InlineCtx::deferred_field_writes` — so they live on the value, not the
 /// allocation.  The allocation-level counterpart to `init` is
-/// [`ContentFacts::initialized`], kept in sync by [`VmState::mark_initialized`].
+/// [`ContentFacts::initialized`], kept in sync by [`VmExecutor::mark_initialized`].
 ///
 /// `PartialEq`/`Eq` are deliberately *not* derived: `align_n` is a Z3 AST
 /// whose equality is structural (`Z3_is_eq_ast`), not semantic, so comparing
@@ -416,7 +416,7 @@ pub(crate) struct InlineCtx<'z3, 'tcx> {
     /// Terms from depth-limited calls; dependent checks become `Unknown`.
     pub inline_truncated_terms: FxHashSet<Int<'z3>>,
     pub inline_branch_terms: FxHashSet<Int<'z3>>,
-    pub pending_states: Vec<Box<VmState<'z3, 'tcx>>>,
+    pub pending_states: Vec<Box<VmExecutor<'z3, 'tcx>>>,
     pub opaque_intrinsic_terms: FxHashSet<Int<'z3>>,
     /// Caller referent local for each inlined callee argument.
     pub arg_referents: Vec<Option<Local>>,
@@ -577,7 +577,7 @@ pub(crate) struct TermCaches<'z3, 'tcx> {
     pub(crate) uninit_byte: Option<Int<'z3>>,
 }
 
-/// The frame-scoped subset of [`VmState`]: the name → allocation binding keyed
+/// The frame-scoped subset of [`VmExecutor`]: the name → allocation binding keyed
 /// by MIR `Local`, which the callee reuses, so it must be swapped out for the
 /// duration of an inlined callee and swapped back afterwards.
 #[derive(Clone)]
@@ -645,9 +645,9 @@ pub(crate) struct OwnershipTransfer {
     available: usize,
 }
 
-impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     pub(crate) fn ownership_share(&self, value: &VmValue<'z3, 'tcx>, owner: DefId) -> Option<usize> {
-        let transfer = self.ownership_transfers.get(value.facts.ownership_transfer?)?;
+        let transfer = self.path_state.ownership_transfers.get(value.facts.ownership_transfer?)?;
         (transfer.owner == owner
             && value
                 .provenance_alloc_id()
@@ -657,7 +657,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
     pub(crate) fn has_available_transfer(&self, alloc_id: AllocId) -> bool {
         let root = self.root_alloc(alloc_id);
-        self.ownership_transfers
+        self.path_state.ownership_transfers
             .iter()
             .any(|transfer| transfer.alloc_id == root && transfer.available > 0)
     }
@@ -666,8 +666,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let Some(alloc_id) = self.local_value(local).and_then(|value| value.provenance_alloc_id()) else {
             return;
         };
-        let id = self.ownership_transfers.len();
-        self.ownership_transfers.push(OwnershipTransfer {
+        let id = self.path_state.ownership_transfers.len();
+        self.path_state.ownership_transfers.push(OwnershipTransfer {
             alloc_id: self.root_alloc(alloc_id),
             owner,
             available: 1,
@@ -682,7 +682,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         if self.ownership_share(value, owner).is_some()
             && let Some(id) = value.facts.ownership_transfer
         {
-            self.ownership_transfers[id].available += 1;
+            self.path_state.ownership_transfers[id].available += 1;
         }
     }
 
@@ -695,8 +695,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         if self.ownership_share(value, owner).is_some()
             && let Some(id) = value.facts.ownership_transfer
         {
-            self.ownership_transfers[id].available =
-                self.ownership_transfers[id].available.saturating_sub(1);
+            self.path_state.ownership_transfers[id].available =
+                self.path_state.ownership_transfers[id].available.saturating_sub(1);
         }
         if may_free && let Some(alloc_id) = value.provenance_alloc_id() {
             self.alloc_mut(self.root_alloc(alloc_id)).facts.drop_may_free = true;
@@ -704,17 +704,17 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     }
 
     pub(crate) fn record_memory_drop(&mut self, alloc_id: AllocId, local: Local) {
-        if self.safedrop_events.is_enabled() {
-            self.safedrop_events.push(SafeDropEvent {
+        if self.path_state.safedrop_events.is_enabled() {
+            self.path_state.safedrop_events.push(SafeDropEvent {
                 alloc_id,
                 kind: if self.alloc(alloc_id).facts.dead {
                     SafeDropEventKind::DoubleFree
                 } else {
                     SafeDropEventKind::Drop
                 },
-                block: self.diagnostics.active_mir.as_ref().map(|location| location.block),
+                block: self.path_state.diagnostics.active_mir.as_ref().map(|location| location.block),
                 local: local.as_usize(),
-                span: self
+                span: self.path_state
                     .diagnostics.active_mir
                     .as_ref()
                     .map(|location| location.span)
@@ -725,13 +725,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     }
 
     pub(crate) fn record_memory_use(&self, alloc_id: AllocId, local: Local) {
-        if self.safedrop_events.is_enabled() && self.alloc(alloc_id).facts.dead {
-            self.safedrop_events.push(SafeDropEvent {
+        if self.path_state.safedrop_events.is_enabled() && self.alloc(alloc_id).facts.dead {
+            self.path_state.safedrop_events.push(SafeDropEvent {
                 alloc_id,
                 kind: SafeDropEventKind::UseAfterFree,
-                block: self.diagnostics.active_mir.as_ref().map(|location| location.block),
+                block: self.path_state.diagnostics.active_mir.as_ref().map(|location| location.block),
                 local: local.as_usize(),
-                span: self
+                span: self.path_state
                     .diagnostics.active_mir
                     .as_ref()
                     .map(|location| location.span)
@@ -809,12 +809,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
     /// MIR for the current frame, preferring its selected generic instantiation.
     pub(crate) fn body(&self) -> &'tcx Body<'tcx> {
-        self.body_for(self.current_frame.current_def_id)
+        self.body_for(self.path_state.current_frame.current_def_id)
     }
 
     pub(crate) fn body_for(&self, def_id: DefId) -> &'tcx Body<'tcx> {
-        if def_id == self.current_frame.current_def_id
-            && let Some(body) = self.current_frame.instantiated_body
+        if def_id == self.path_state.current_frame.current_def_id
+            && let Some(body) = self.path_state.current_frame.instantiated_body
         {
             body
         } else if def_id == self.target_def_id
@@ -833,32 +833,32 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     }
 
     pub(crate) fn record_unsupported(&mut self, operation: &str) {
-        let location = self.diagnostics.location_label(self.tcx);
-        self.diagnostics.record_unsupported(
+        let location = self.path_state.diagnostics.location_label(self.tcx);
+        self.path_state.diagnostics.record_unsupported(
             location.as_deref(),
             operation,
         );
     }
 
     pub(crate) fn record_unsupported_effect(&mut self, effect: &str) {
-        let location = self.diagnostics.location_label(self.tcx);
-        self.diagnostics.record_unsupported_effect(
+        let location = self.path_state.diagnostics.location_label(self.tcx);
+        self.path_state.diagnostics.record_unsupported_effect(
             location.as_deref(),
             effect,
         );
     }
 
     pub(crate) fn record_missing_mir(&mut self, callee: DefId) {
-        let location = self.diagnostics.location_label(self.tcx);
-        self.diagnostics.record_missing_mir(
+        let location = self.path_state.diagnostics.location_label(self.tcx);
+        self.path_state.diagnostics.record_missing_mir(
             location.as_deref(),
             &self.tcx.def_path_str(callee),
         );
     }
 
     pub(crate) fn record_opaque_control_flow(&mut self, operation: &str) {
-        let location = self.diagnostics.location_label(self.tcx);
-        self.diagnostics.record_opaque_control_flow(
+        let location = self.path_state.diagnostics.location_label(self.tcx);
+        self.path_state.diagnostics.record_opaque_control_flow(
             location.as_deref(),
             operation,
         );
@@ -876,7 +876,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         body: Option<&'tcx Body<'tcx>>,
     ) -> FrameState<'tcx> {
         std::mem::replace(
-            &mut self.current_frame,
+            &mut self.path_state.current_frame,
             FrameState {
                 current_def_id: callee,
                 instantiated_body: body,
@@ -888,13 +888,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
     /// Restore the frame-scoped state after an inlined callee returns.
     pub(crate) fn restore_frame(&mut self, frame: FrameState<'tcx>) {
-        self.current_frame = frame;
+        self.path_state.current_frame = frame;
     }
 
     /// Look up the whole value bound to a MIR local (its `path == []` slot in
     /// the allocation backing the local).
     pub(crate) fn local_value(&self, local: Local) -> Option<&VmValue<'z3, 'tcx>> {
-        let alloc_id = *self.current_frame.local_alloc.get(&local)?;
+        let alloc_id = *self.path_state.current_frame.local_alloc.get(&local)?;
         let view_ty = self.body().local_decls[local].ty;
         self.load_value(alloc_id, view_ty, &[])
     }
@@ -917,9 +917,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// Bind a whole value to a MIR local (store it at `path == []` in the
     /// allocation backing the local, allocating that stack slot on demand).
     pub(crate) fn set_local(&mut self, local: Local, mut value: VmValue<'z3, 'tcx>) {
-        self.current_frame.pending_enum_fields.remove(&local);
+        self.path_state.current_frame.pending_enum_fields.remove(&local);
         self.ensure_local_allocation(local);
-        let alloc_id = self.current_frame.local_alloc[&local];
+        let alloc_id = self.path_state.current_frame.local_alloc[&local];
         self.content_mut(alloc_id).facts.may_be_uninit = false;
         let view_ty = self.body().local_decls[local].ty;
         if matches!(view_ty.kind(), TyKind::Adt(def, _)
@@ -955,7 +955,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             element_ty = *inner;
             is_array = true;
         }
-        if is_array && let Some(&alloc_id) = self.current_frame.local_alloc.get(&local) {
+        if is_array && let Some(&alloc_id) = self.path_state.current_frame.local_alloc.get(&local) {
             let content = self.content_mut(alloc_id);
             let was_tracked = content.indexed_elements_modified || !content.indexed_elements.is_empty();
             content.indexed_elements.clear();
@@ -983,8 +983,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// Get the symbolic address of a MIR local (its stack allocation's base).
     pub(crate) fn local_address(&mut self, local: Local) -> Int<'z3> {
         self.ensure_local_allocation(local);
-        let id = self.current_frame.local_alloc[&local];
-        self.units[id.0].allocation.base.clone()
+        let id = self.path_state.current_frame.local_alloc[&local];
+        self.path_state.units[id.0].allocation.base.clone()
     }
 
     /// Allocate a fresh symbolic object and return its ID and base address.
@@ -1033,7 +1033,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         element_ty: Option<Ty<'tcx>>,
         kind: AllocKind<'z3>,
     ) -> (AllocId, Int<'z3>) {
-        let id = AllocId(self.units.len());
+        let id = AllocId(self.path_state.units.len());
         let base = {
             let name = format!(
                 "{}_{}",
@@ -1047,7 +1047,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             Int::new_const(self.z3_ctx, name.as_str())
         };
         let alloc = Allocation::new(base.clone(), size, align, element_ty, kind);
-        self.units.push(MemoryUnit {
+        self.path_state.units.push(MemoryUnit {
             allocation: alloc,
             content: MemoryContent::default(),
         });
@@ -1056,22 +1056,22 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
     /// Indexed access to an allocation by its `AllocId` (the id is the index).
     pub(crate) fn alloc(&self, id: AllocId) -> &Allocation<'z3, 'tcx> {
-        &self.units[id.0].allocation
+        &self.path_state.units[id.0].allocation
     }
 
     /// Mutable indexed access to an allocation by its `AllocId`.
     pub(crate) fn alloc_mut(&mut self, id: AllocId) -> &mut Allocation<'z3, 'tcx> {
-        &mut self.units[id.0].allocation
+        &mut self.path_state.units[id.0].allocation
     }
 
     /// Indexed access to an allocation's contents by its `AllocId`.
     pub(crate) fn content(&self, id: AllocId) -> &MemoryContent<'z3, 'tcx> {
-        &self.units[id.0].content
+        &self.path_state.units[id.0].content
     }
 
     /// Mutable indexed access to an allocation's contents by its `AllocId`.
     pub(crate) fn content_mut(&mut self, id: AllocId) -> &mut MemoryContent<'z3, 'tcx> {
-        &mut self.units[id.0].content
+        &mut self.path_state.units[id.0].content
     }
 
     /// Whether `id` was asserted a valid C string via a `ValidCStr` contract
@@ -1096,7 +1096,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             guard += 1;
             // A parent chain as long as the total allocation count means a
             // cycle; stop rather than loop forever.
-            if guard >= self.units.len() {
+            if guard >= self.path_state.units.len() {
                 break;
             }
         }
@@ -1116,7 +1116,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// type as the view type.  Returns `None` if the local has no allocation
     /// (the field was never materialized).
     pub(crate) fn field_value(&self, local: Local, path: &[usize]) -> Option<&VmValue<'z3, 'tcx>> {
-        let alloc_id = *self.current_frame.local_alloc.get(&local)?;
+        let alloc_id = *self.path_state.current_frame.local_alloc.get(&local)?;
         let view_ty = self.body().local_decls[local].ty;
         self.load_value(alloc_id, view_ty, path).or_else(|| {
             let mut candidates = vec![path.to_vec()];
@@ -1144,11 +1144,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// [`Self::local_value`], not as a "field", so callers iterating fields do
     /// not accidentally treat the whole value as a field projection.
     pub(crate) fn field_paths(&self, local: Local) -> Vec<Vec<usize>> {
-        let Some(&alloc_id) = self.current_frame.local_alloc.get(&local) else {
+        let Some(&alloc_id) = self.path_state.current_frame.local_alloc.get(&local) else {
             return Vec::new();
         };
         let view_ty = self.body().local_decls[local].ty;
-        self.units[alloc_id.0]
+        self.path_state.units[alloc_id.0]
             .content
             .values
             .keys()
@@ -1182,7 +1182,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return Vec::new();
         };
         let view_ty = self.frame_local_ty(frame, local);
-        self.units[alloc_id.0]
+        self.path_state.units[alloc_id.0]
             .content
             .values
             .keys()
@@ -1220,7 +1220,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// whole value (its `path == []` slot). This is the whole-value counterpart
     /// to [`Self::field_paths`], used where code used to iterate `locals`.
     pub(crate) fn all_local_values(&self) -> Vec<(Local, &VmValue<'z3, 'tcx>)> {
-        self.current_frame
+        self.path_state.current_frame
             .local_alloc
             .keys()
             .copied()
@@ -1278,7 +1278,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     ) {
         let view_ty = self.body().local_decls[local].ty;
         self.ensure_local_allocation(local);
-        let alloc_id = self.current_frame.local_alloc[&local];
+        let alloc_id = self.path_state.current_frame.local_alloc[&local];
         self.store_value(alloc_id, view_ty, path, value);
     }
 
@@ -1298,7 +1298,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let prior_term = self
             .local_value(local)
             .map(|value| value.z3_term.to_string());
-        self.index_access_facts
+        self.path_state.index_access_facts
             .retain(|(slice_term, index_term, slice, index)| {
                 *slice != local
                     && *index != local
@@ -1313,14 +1313,14 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         } else {
             self.invalidate_field_descendants(local, &path);
             self.set_field_value(local, path, value);
-            if written_inner && let Some(&alloc_id) = self.current_frame.local_alloc.get(&local) {
+            if written_inner && let Some(&alloc_id) = self.path_state.current_frame.local_alloc.get(&local) {
                 self.content_mut(alloc_id).facts.written_pointee_ty = Some(written_ty);
             }
         }
     }
 
     pub(crate) fn invalidate_field_descendants(&mut self, local: Local, path: &[usize]) {
-        if let Some(&alloc_id) = self.current_frame.local_alloc.get(&local) {
+        if let Some(&alloc_id) = self.path_state.current_frame.local_alloc.get(&local) {
             let view_ty = self.body().local_decls[local].ty;
             self.content_mut(alloc_id)
                 .values
@@ -1336,7 +1336,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     pub(crate) fn assert_all(&self, solver: &z3::Solver<'z3>) {
         self.assert_path_constraints(solver);
         let zero = Int::from_u64(self.z3_ctx, 0);
-        for unit in &self.units {
+        for unit in &self.path_state.units {
             let alloc = &unit.allocation;
             if !alloc.is_external() {
                 solver.assert(&alloc.base._eq(&zero).not());
@@ -1351,7 +1351,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         // live in the memory-contents layer.  Field paths exclude the whole
         // value (see [`Self::field_paths`]), so assert the whole value and the
         // fields separately.
-        let local_ids: Vec<Local> = self.current_frame.local_alloc.keys().copied().collect();
+        let local_ids: Vec<Local> = self.path_state.current_frame.local_alloc.keys().copied().collect();
         for local in local_ids {
             if let Some(value) = self.local_value(local) {
                 self.assert_value_constraints(solver, value);
@@ -1365,7 +1365,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     }
 
     pub(crate) fn assert_path_constraints(&self, solver: &z3::Solver<'z3>) {
-        for cond in &self.constraints.assertions {
+        for cond in &self.path_state.constraints.assertions {
             solver.assert(cond);
         }
     }
@@ -1409,19 +1409,19 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     }
 }
 
-impl std::fmt::Debug for VmState<'_, '_> {
+impl std::fmt::Debug for VmExecutor<'_, '_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("VmState")
-            .field("locals_count", &self.current_frame.local_alloc.len())
-            .field("allocations_count", &self.units.len())
-            .field("assertions", &self.constraints.assertions.len())
+        f.debug_struct("VmExecutor")
+            .field("locals_count", &self.path_state.current_frame.local_alloc.len())
+            .field("allocations_count", &self.path_state.units.len())
+            .field("assertions", &self.path_state.constraints.assertions.len())
             .finish()
     }
 }
 
 // ── Shared value extraction ──────────────────────────────────────
 
-impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     pub(crate) fn indexed_element_target(
         &self,
         place: &Place<'tcx>,
@@ -1516,11 +1516,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let alloc_id = if fields.is_empty() {
             let local_ty = self.body().local_decls[place.local].ty;
             if matches!(local_ty.kind(), rustc_middle::ty::TyKind::Array(..)) {
-                self.current_frame.local_alloc.get(&place.local).copied()?
+                self.path_state.current_frame.local_alloc.get(&place.local).copied()?
             } else {
                 self.local_value(place.local)
                     .and_then(|value| value.provenance_alloc_id())
-                    .or_else(|| self.current_frame.local_alloc.get(&place.local).copied())?
+                    .or_else(|| self.path_state.current_frame.local_alloc.get(&place.local).copied())?
             }
         } else {
             self.field_value(place.local, &fields)?
@@ -1586,7 +1586,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return true;
         }
         let solver = Solver::new(self.z3_ctx);
-        for assertion in &self.constraints.assertions {
+        for assertion in &self.path_state.constraints.assertions {
             solver.assert(assertion);
         }
         solver.assert(&condition.not());
@@ -1624,7 +1624,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     }
 
     pub(crate) fn const_param_term(&self, index: u32) -> Option<Int<'z3>> {
-        let generics = self.tcx.generics_of(self.current_frame.current_def_id);
+        let generics = self.tcx.generics_of(self.path_state.current_frame.current_def_id);
         if index as usize >= generics.count() {
             return None;
         }
@@ -1883,7 +1883,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             if indexed_target_modified {
                 return Some(self.unknown_value_for_place(place));
             }
-            if let Some(&alloc_id) = self.current_frame.local_alloc.get(&place.local)
+            if let Some(&alloc_id) = self.path_state.current_frame.local_alloc.get(&place.local)
                 && !self.content(alloc_id).indexed_elements_modified
             {
                 let mut path = Vec::new();
@@ -1947,7 +1947,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             && size != 0
             && offset % size == 0
         {
-            let value = self.units[provenance.alloc_id.0]
+            let value = self.path_state.units[provenance.alloc_id.0]
                 .content
                 .values
                 .iter()
@@ -2232,7 +2232,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     // `UNINIT` (e.g. a struct whose fields were written in
                     // the value layer only), so also fall through to the
                     // field→byte materialization in that case.
-                    if self.units[alloc_id.0].content.byte_array.is_some() {
+                    if self.path_state.units[alloc_id.0].content.byte_array.is_some() {
                         let term = self.byte_read(alloc_id, &offset);
                         let is_uninit = offset
                             .simplify()

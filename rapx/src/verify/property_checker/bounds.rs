@@ -11,7 +11,7 @@ use crate::verify::contract::{
     ContractExpr, ContractKind, BinOp, PlaceBase, Property, PropertyArg, RelOp,
 };
 use crate::verify::report::{CheckResult, UnknownReason};
-use crate::verify::vm::state::{OffsetKind, VmState, VmValue};
+use crate::verify::vm::state::{OffsetKind, VmExecutor, VmValue};
 use rustc_middle::{
     mir::{Local, Operand, Rvalue, StatementKind},
     ty::{Ty, TyKind},
@@ -26,7 +26,7 @@ use super::PropertyChecker;
 impl PropertyChecker {
     pub(super) fn check_slice_offset<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         _checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
@@ -100,7 +100,7 @@ impl PropertyChecker {
 
     pub(super) fn check_in_bound<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
@@ -316,7 +316,7 @@ impl PropertyChecker {
 
     pub(super) fn count_is_offset_of<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
         value: &VmValue<'z3, 'tcx>,
@@ -379,7 +379,7 @@ impl PropertyChecker {
 
     pub(super) fn check_in_bound_slice<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         solver: &Solver<'z3>,
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
@@ -396,7 +396,7 @@ impl PropertyChecker {
             // slice has the same address. So a fact must also match the length.
             let slice_len = vm_state.slice_len_from_value(&slice_val);
             if slice_len.is_some()
-                && vm_state.index_access_facts.iter().any(|(slice, index, slice_local, _)| {
+                && vm_state.path_state.index_access_facts.iter().any(|(slice, index, slice_local, _)| {
                     slice.to_string() == slice_val.z3_term.to_string()
                         && index.to_string() == index_val.z3_term.to_string()
                         && vm_state
@@ -522,7 +522,7 @@ impl PropertyChecker {
 
     pub(super) fn extract_range_end<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         op: &Operand<'tcx>,
     ) -> Option<VmValue<'z3, 'tcx>> {
         let place = match op {
@@ -566,7 +566,7 @@ impl PropertyChecker {
 
     fn extract_range_field<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         op: &Operand<'tcx>,
         field_idx: usize,
     ) -> Option<VmValue<'z3, 'tcx>> {
@@ -595,7 +595,7 @@ impl PropertyChecker {
 
     pub(super) fn check_non_overlap<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
@@ -685,7 +685,7 @@ impl PropertyChecker {
 
     fn check_non_overlap_indices<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
@@ -811,7 +811,7 @@ impl PropertyChecker {
 
     pub(super) fn all_predicates_are_slice_size_invariant<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
         predicates: &[crate::verify::contract::NumericPredicate<'tcx>],
     ) -> bool {
@@ -823,7 +823,7 @@ impl PropertyChecker {
 
     pub(super) fn predicate_is_slice_size_invariant<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
         pred: &crate::verify::contract::NumericPredicate<'tcx>,
     ) -> bool {
@@ -855,7 +855,7 @@ impl PropertyChecker {
 
     pub(super) fn count_derives_from_slice_param<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
         count_expr: &ContractExpr<'tcx>,
         elem_ty: Ty<'tcx>,
@@ -904,7 +904,7 @@ impl PropertyChecker {
         &self,
         ty: Ty<'tcx>,
         elem_ty: Ty<'tcx>,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
     ) -> bool {
         let rustc_middle::ty::TyKind::Ref(_, inner, _) = ty.kind() else {
@@ -921,7 +921,7 @@ impl PropertyChecker {
 
     pub(super) fn same_erased_ty<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         a: Ty<'tcx>,
         b: Ty<'tcx>,
     ) -> bool {

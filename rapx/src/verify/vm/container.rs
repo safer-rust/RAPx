@@ -11,9 +11,9 @@ use crate::compat::GenericArgsRef;
 use crate::helpers::mir_utils;
 use crate::verify::contract::{ContractExpr, ContractProjection, PropertyKind, place::projected_field_ty};
 
-use super::state::{AllocId, Provenance, ValueFacts, ValueSource, VmState, VmValue};
+use super::state::{AllocId, Provenance, ValueFacts, ValueSource, VmExecutor, VmValue};
 
-impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     pub(crate) fn materialize_slice_ref_return(&mut self, dest: Local) {
         let Some(mut value) = self.local_value(dest).cloned() else {
             return;
@@ -125,7 +125,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         {
             let mut path = prefix.to_vec();
             path.push(len_idx);
-            return self.units[alloc_id.0].content.values
+            return self.path_state.units[alloc_id.0].content.values
                 .get(&(root_ty, path))
                 .map(|v| v.z3_term.clone());
         }
@@ -155,12 +155,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
         let alloc_id = val.provenance_alloc_id()?;
         let view_ty = mir_utils::pointee_ty(val.ty).unwrap_or(val.ty);
-        let start = self
+        let start = self.path_state
             .units[alloc_id.0].content.values
             .get(&(view_ty, vec![0]))?
             .z3_term
             .clone();
-        let end = self
+        let end = self.path_state
             .units[alloc_id.0].content.values
             .get(&(view_ty, vec![1]))?
             .z3_term
@@ -253,7 +253,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             .fields
             .iter()
             .position(|f| f.ident(self.tcx).name.to_string() == "len")?;
-        self.units[alloc_id.0].content.values
+        self.path_state.units[alloc_id.0].content.values
             .get(&(pointee, vec![len_idx]))
             .map(|v| v.z3_term.clone())
     }
@@ -488,7 +488,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// `head`/`tail`) is ambiguous, so fall back to `None` rather than guess.
     fn header_data_alloc(&self, header: AllocId) -> Option<AllocId> {
         let mut result = None;
-        for ((_, p), v) in self.units[header.0].content.values.iter() {
+        for ((_, p), v) in self.path_state.units[header.0].content.values.iter() {
             if p.is_empty() {
                 continue;
             }
@@ -531,7 +531,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let borrowed = value.z3_term.simplify();
         let mut targets = Vec::new();
         let mut backing = None;
-        for (index, unit) in self.units.iter().enumerate() {
+        for (index, unit) in self.path_state.units.iter().enumerate() {
             for ((view_ty, path), field) in &unit.content.values {
                 if path != fields
                     || field.ty != *inner
@@ -587,9 +587,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let elem_size = self.size_sym(elem_ty);
         let size = Int::mul(self.z3_ctx, &[&capacity, &elem_size]);
         let zero = Int::from_u64(self.z3_ctx, 0);
-        self.constraints.assertions.push(capacity.ge(&zero));
+        self.path_state.constraints.assertions.push(capacity.ge(&zero));
         if let Some((_, max_size, _, _)) = self.integer_limits(self.tcx.types.isize) {
-            self.constraints.assertions.push(size.le(&max_size));
+            self.path_state.constraints.assertions.push(size.le(&max_size));
         }
         let align = self.align_sym(elem_ty);
         let (new_data, base) = self.allocate_external(size, align, Some(elem_ty));

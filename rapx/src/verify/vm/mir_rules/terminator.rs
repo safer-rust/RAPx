@@ -3,7 +3,7 @@ use rustc_middle::mir::{
 };
 use z3::ast::{Ast, Int};
 
-use super::super::state::{ValueSource, VmState};
+use super::super::state::{ValueSource, VmExecutor};
 use super::RuleFlow;
 use crate::helpers::def_use::PlaceKey;
 use crate::helpers::mir_utils;
@@ -11,7 +11,7 @@ use crate::verify::contract::PropertyKind;
 
 /// The `IS_ZST` fold selects an equivalent path without asserting its guard.
 pub(crate) fn forced_inline_switch_target<'z3, 'tcx>(
-    state: &VmState<'z3, 'tcx>,
+    state: &VmExecutor<'z3, 'tcx>,
     body: &Body<'tcx>,
     discr: &Operand<'tcx>,
     targets: &SwitchTargets,
@@ -27,7 +27,7 @@ pub(crate) fn forced_inline_switch_target<'z3, 'tcx>(
 }
 
 fn inline_switch_discr_const<'z3, 'tcx>(
-    state: &VmState<'z3, 'tcx>,
+    state: &VmExecutor<'z3, 'tcx>,
     body: &Body<'tcx>,
     discr: &Operand<'tcx>,
 ) -> Option<u64> {
@@ -92,7 +92,7 @@ fn inline_switch_discr_const<'z3, 'tcx>(
 }
 
 pub(crate) fn exec_switch_int<'z3, 'tcx>(
-    state: &mut VmState<'z3, 'tcx>,
+    state: &mut VmExecutor<'z3, 'tcx>,
     discr: &Operand<'tcx>,
     targets: &SwitchTargets,
     switch_succ: Option<BasicBlock>,
@@ -106,8 +106,8 @@ pub(crate) fn exec_switch_int<'z3, 'tcx>(
         }
         _ => None,
     };
-    if !state.diagnostics.is_unsupported()
-        && !state.diagnostics.has_incomplete_inline_branch()
+    if !state.path_state.diagnostics.is_unsupported()
+        && !state.path_state.diagnostics.has_incomplete_inline_branch()
         && let Some(value) = known_value
         && let Some(chosen) = switch_succ
     {
@@ -120,7 +120,7 @@ pub(crate) fn exec_switch_int<'z3, 'tcx>(
             return RuleFlow::Pruned;
         }
     }
-    if VmState::term_involves(&state.inline.opaque_intrinsic_terms, &discr_val.z3_term) {
+    if VmExecutor::term_involves(&state.path_state.inline.opaque_intrinsic_terms, &discr_val.z3_term) {
         state.record_opaque_control_flow("SwitchInt");
     }
 
@@ -136,17 +136,17 @@ pub(crate) fn exec_switch_int<'z3, 'tcx>(
                     state.record_unsupported("SwitchInt target width");
                     return RuleFlow::Continue;
                 };
-                state
+                state.path_state
                     .constraints
                     .assertions
                     .push(discr_val.z3_term._eq(&val_term));
                 if value != 0 {
                     if let Some(ref cond) = cmp_cond {
-                        state.constraints.assertions.push(cond.clone());
+                        state.path_state.constraints.assertions.push(cond.clone());
                     }
                     state.infer_switch_guard(discr);
                 } else if let Some(ref cond) = cmp_cond {
-                    state.constraints.assertions.push(cond.not());
+                    state.path_state.constraints.assertions.push(cond.not());
                 }
                 return RuleFlow::Continue;
             }
@@ -157,7 +157,7 @@ pub(crate) fn exec_switch_int<'z3, 'tcx>(
                     state.record_unsupported("SwitchInt target width");
                     return RuleFlow::Continue;
                 };
-                state
+                state.path_state
                     .constraints
                     .assertions
                     .push(discr_val.z3_term._eq(&val_term).not());
@@ -168,9 +168,9 @@ pub(crate) fn exec_switch_int<'z3, 'tcx>(
                 //   - targets include 0 → `discr != 0` → comparison true;
                 //   - targets include 1 → `discr != 1` → comparison false.
                 if targets.iter().any(|(v, _)| v == 0) {
-                    state.constraints.assertions.push(cond.clone());
+                    state.path_state.constraints.assertions.push(cond.clone());
                 } else if targets.iter().any(|(v, _)| v == 1) {
-                    state.constraints.assertions.push(cond.not());
+                    state.path_state.constraints.assertions.push(cond.not());
                 }
             }
         }
@@ -179,12 +179,12 @@ pub(crate) fn exec_switch_int<'z3, 'tcx>(
 }
 
 pub(crate) fn exec_assert<'z3, 'tcx>(
-    state: &mut VmState<'z3, 'tcx>,
+    state: &mut VmExecutor<'z3, 'tcx>,
     cond: &Operand<'tcx>,
     expected: bool,
 ) {
     let cond_val = state.value_of_operand(cond);
-    if VmState::term_involves(&state.inline.opaque_intrinsic_terms, &cond_val.z3_term) {
+    if VmExecutor::term_involves(&state.path_state.inline.opaque_intrinsic_terms, &cond_val.z3_term) {
         state.record_opaque_control_flow("Assert");
     }
     // If the asserted operand is a comparison result, record the direct boolean
@@ -193,20 +193,20 @@ pub(crate) fn exec_assert<'z3, 'tcx>(
     let cmp_cond = cond_val.bool_cond().cloned();
     let zero = Int::from_u64(state.z3_ctx, 0);
     if expected {
-        state
+        state.path_state
             .constraints
             .assertions
             .push(cond_val.z3_term._eq(&zero).not());
         if let Some(c) = &cmp_cond {
-            state.constraints.assertions.push(c.clone());
+            state.path_state.constraints.assertions.push(c.clone());
         }
     } else {
-        state
+        state.path_state
             .constraints
             .assertions
             .push(cond_val.z3_term._eq(&zero));
         if let Some(c) = &cmp_cond {
-            state.constraints.assertions.push(c.not());
+            state.path_state.constraints.assertions.push(c.not());
         }
     }
 
@@ -215,11 +215,11 @@ pub(crate) fn exec_assert<'z3, 'tcx>(
     state.infer_guard_align(cond, expected);
 }
 
-pub(crate) fn exec_drop<'z3, 'tcx>(state: &mut VmState<'z3, 'tcx>, place: &Place<'tcx>) {
-    if let Some(alloc_id) = state.current_frame.local_alloc.get(&place.local).copied() {
+pub(crate) fn exec_drop<'z3, 'tcx>(state: &mut VmExecutor<'z3, 'tcx>, place: &Place<'tcx>) {
+    if let Some(alloc_id) = state.path_state.current_frame.local_alloc.get(&place.local).copied() {
         let is_param = place.local.as_usize() <= state.body().arg_count;
         let owner = if is_param {
-            state.caller_frames.last().and_then(|saved| {
+            state.path_state.caller_frames.last().and_then(|saved| {
                 let source = saved
                     .postcondition_args
                     .get(place.local.as_usize().checked_sub(1)?)?
@@ -256,7 +256,7 @@ pub(crate) fn exec_drop<'z3, 'tcx>(state: &mut VmState<'z3, 'tcx>, place: &Place
     }
 }
 
-impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     /// The `(lhs, rhs, op)` of the binary-op/comparison source recorded on the
     /// value bound to `pk`'s local, if any.
     fn op_source_of(
@@ -379,7 +379,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
 fn resolve_u64_from_place_key<'z3, 'tcx>(
     pk: &Option<PlaceKey>,
-    state: &VmState<'z3, 'tcx>,
+    state: &VmExecutor<'z3, 'tcx>,
 ) -> Option<u64> {
     let pk = pk.as_ref()?;
     let local = pk.local()?;

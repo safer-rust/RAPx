@@ -9,12 +9,12 @@ use rustc_middle::{
 use z3::ast::{Bool, Int};
 use z3::{SatResult, Solver};
 
-use super::state::{AllocId, MemoryContent, VmState, VmValue};
+use super::state::{AllocId, MemoryContent, VmExecutor, VmValue};
 use crate::compat::{FxHashSet, Spanned};
 use crate::helpers::mir_utils;
 use crate::limit::MAX_INLINE_DEPTH;
 
-type InlineWorkItem<'z3, 'tcx> = (VmState<'z3, 'tcx>, BasicBlock, FxHashSet<BasicBlock>);
+type InlineWorkItem<'z3, 'tcx> = (VmExecutor<'z3, 'tcx>, BasicBlock, FxHashSet<BasicBlock>);
 
 enum InlineStep<'z3, 'tcx> {
     Complete(bool),
@@ -22,7 +22,7 @@ enum InlineStep<'z3, 'tcx> {
     Incomplete,
 }
 
-impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     pub(crate) fn eval_contract_method(
         &self,
         method: DefId,
@@ -67,7 +67,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 }
             }
         }
-        let baseline = state.constraints.assertions.len();
+        let baseline = state.path_state.constraints.assertions.len();
         let body = self.tcx.optimized_mir(method);
         let mut pending = vec![(state, BasicBlock::from_usize(0), FxHashSet::default())];
         let mut returns = Vec::new();
@@ -84,11 +84,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             let terminator = data.terminator();
             match &terminator.kind {
                 TerminatorKind::Return => {
-                    if state.diagnostics.is_unsupported() || state.diagnostics.has_incomplete_inline_branch() {
+                    if state.path_state.diagnostics.is_unsupported() || state.path_state.diagnostics.has_incomplete_inline_branch() {
                         return None;
                     }
                     let term = state.local_value(Local::from_usize(0))?.z3_term.clone();
-                    let constraints = &state.constraints.assertions[baseline..];
+                    let constraints = &state.path_state.constraints.assertions[baseline..];
                     let guard = Bool::and(self.z3_ctx, &constraints.iter().collect::<Vec<_>>());
                     returns.push((guard, term));
                 }
@@ -144,20 +144,20 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         caller_arg_locals: &[Option<Local>],
         dest: Local,
     ) -> bool {
-        if self.inline.inline_depth >= MAX_INLINE_DEPTH {
+        if self.path_state.inline.inline_depth >= MAX_INLINE_DEPTH {
             // Leave a distinguishable symbolic value in `dest` so the checker
             // can detect that this result depends on a truncated inline and
             // report `Unknown` instead of failing on an unconstrained term.
             let dest_ty = self.body().local_decls[dest].ty;
             let truncated_term = self.fresh_int("inline_truncated");
-            self.inline
+            self.path_state.inline
                 .inline_truncated_terms
                 .insert(truncated_term.clone());
             self.set_local(dest, VmValue::new(truncated_term, dest_ty));
             return true;
         }
         let instantiated_body = if let Some(instance) = instance {
-            let caller_def_id = self.current_frame.current_def_id;
+            let caller_def_id = self.path_state.current_frame.current_def_id;
             if mir_utils::has_unresolved_const_args(self.tcx, caller_def_id, instance.args) {
                 self.record_missing_mir(callee_def_id);
                 return true;
@@ -176,8 +176,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             None
         };
         let before_inline = self.clone();
-        self.inline.inline_depth += 1;
-        self.inline.symbolic_generic_const_inline |= instance.as_ref().is_some_and(|instance| {
+        self.path_state.inline.inline_depth += 1;
+        self.path_state.inline.symbolic_generic_const_inline |= instance.as_ref().is_some_and(|instance| {
             instance.args.types().any(mir_utils::ty_has_type_param)
                 && mir_utils::has_generic_const_call_argument(self.tcx, callee_def_id)
         });
@@ -208,7 +208,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     local
                         .as_usize()
                         .checked_sub(1)
-                        .and_then(|index| self.inline.arg_referents.get(index))
+                        .and_then(|index| self.path_state.inline.arg_referents.get(index))
                         .copied()
                         .flatten()?;
                     let provenance = value.provenance_alloc_id()?;
@@ -225,7 +225,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             .flatten()
             .any(|local| local.as_usize() >= caller_local_count)
         {
-            self.diagnostics.mark_unsupported();
+            self.path_state.diagnostics.mark_unsupported();
         }
         let inline_arg_referents: Vec<Option<Local>> = resolved_arg_referents
             .into_iter()
@@ -242,14 +242,14 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let arg_inner_uninit: Vec<bool> = caller_arg_locals
             .iter()
             .map(|arg| {
-                arg.and_then(|local| self.current_frame.local_alloc.get(&local))
+                arg.and_then(|local| self.path_state.current_frame.local_alloc.get(&local))
                     .is_some_and(|id| self.content(*id).facts.inner_uninit)
             })
             .collect();
         let frame = self.enter_frame(callee_def_id, instantiated_body);
         let saved_inline_arg_referents =
-            std::mem::replace(&mut self.inline.arg_referents, inline_arg_referents);
-        let saved_deferred_field_writes = std::mem::take(&mut self.inline.deferred_field_writes);
+            std::mem::replace(&mut self.path_state.inline.arg_referents, inline_arg_referents);
+        let saved_deferred_field_writes = std::mem::take(&mut self.path_state.inline.deferred_field_writes);
 
         for (i, arg_val) in arg_values.iter().enumerate() {
             let callee_local = Local::from_usize(i + 1);
@@ -260,7 +260,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             }
             self.set_local(callee_local, arg_val);
             if arg_inner_uninit.get(i) == Some(&true)
-                && let Some(&id) = self.current_frame.local_alloc.get(&callee_local)
+                && let Some(&id) = self.path_state.current_frame.local_alloc.get(&callee_local)
             {
                 self.content_mut(id).facts.inner_uninit = true;
             }
@@ -303,7 +303,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             .filter(|local| {
                 crate::verify::api_classify::strips_to_maybe_uninit(before_inline.body().local_decls[**local].ty)
             })
-            .filter_map(|local| before_inline.current_frame.local_alloc.get(local).copied())
+            .filter_map(|local| before_inline.path_state.current_frame.local_alloc.get(local).copied())
             .filter(|id| before_inline.allocation_needs_write(*id))
             .collect();
         let may_recurse = self.body().basic_blocks.iter().any(|block| {
@@ -331,7 +331,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 .iter()
                 .any(|state| state.local_value(Local::from_usize(0)).is_none())
         }) {
-            let witnessed: Vec<_> = self
+            let witnessed: Vec<_> = self.path_state
                 .units
                 .iter()
                 .enumerate()
@@ -339,19 +339,19 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     unit.content.facts.may_be_uninit.then_some(AllocId(index))
                 })
                 .collect();
-            let explored_diagnostics = self.diagnostics.clone();
+            let explored_diagnostics = self.path_state.diagnostics.clone();
             *self = before_inline;
             for id in witnessed {
-                if let Some(unit) = self.units.get_mut(id.0) {
+                if let Some(unit) = self.path_state.units.get_mut(id.0) {
                     unit.content.facts.may_be_uninit = true;
                 }
             }
-            self.diagnostics.merge_inline_fallback(&explored_diagnostics);
+            self.path_state.diagnostics.merge_inline_fallback(&explored_diagnostics);
             let dest_ty = self.body().local_decls[dest].ty;
             let unknown_term = self.fresh_int("inline_branch_unknown");
-            self.inline.inline_branch_terms.insert(unknown_term.clone());
+            self.path_state.inline.inline_branch_terms.insert(unknown_term.clone());
             if may_recurse {
-                self.inline
+                self.path_state.inline
                     .inline_truncated_terms
                     .insert(unknown_term.clone());
             }
@@ -378,14 +378,14 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     _ => unknown_effect = true,
                 }
             }
-            self.diagnostics.mark_unsupported_if(unknown_effect);
+            self.path_state.diagnostics.mark_unsupported_if(unknown_effect);
             return true;
         }
         let mut completed = Vec::new();
         for mut state in returns.unwrap() {
             state.recover_leaked_owner_shares(callee_def_id);
             let return_val = state.local_value(Local::from_usize(0)).cloned();
-            let return_inner_uninit = state
+            let return_inner_uninit = state.path_state
                 .current_frame
                 .local_alloc
                 .get(&Local::from_usize(0))
@@ -401,9 +401,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 })
                 .collect();
             state.restore_frame(frame.clone());
-            let writes = std::mem::take(&mut state.inline.deferred_field_writes);
-            state.inline.arg_referents = saved_inline_arg_referents.clone();
-            state.inline.deferred_field_writes = saved_deferred_field_writes.clone();
+            let writes = std::mem::take(&mut state.path_state.inline.deferred_field_writes);
+            state.path_state.inline.arg_referents = saved_inline_arg_referents.clone();
+            state.path_state.inline.deferred_field_writes = saved_deferred_field_writes.clone();
             state.replay_deferred_writes(writes);
             let mut val = return_val.unwrap();
             let dest_ty = state.body().local_decls[dest].ty;
@@ -417,7 +417,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             }
             state.set_local(dest, val);
             if return_inner_uninit
-                && let Some(&dest_id) = state.current_frame.local_alloc.get(&dest)
+                && let Some(&dest_id) = state.path_state.current_frame.local_alloc.get(&dest)
             {
                 state.content_mut(dest_id).facts.inner_uninit = true;
             }
@@ -425,12 +425,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 state.set_field_value(dest, path, fv);
             }
             state.materialize_slice_ref_return(dest);
-            if let Some(dest_alloc_id) = state.current_frame.local_alloc.get(&dest).copied() {
+            if let Some(dest_alloc_id) = state.path_state.current_frame.local_alloc.get(&dest).copied() {
                 state.content_mut(dest_alloc_id).facts.initialized = true;
             }
-            state.inline.inline_depth -= 1;
-            state.inline.symbolic_generic_const_inline =
-                before_inline.inline.symbolic_generic_const_inline;
+            state.path_state.inline.inline_depth -= 1;
+            state.path_state.inline.symbolic_generic_const_inline =
+                before_inline.path_state.inline.symbolic_generic_const_inline;
             completed.push(state);
         }
         if completed.is_empty() {
@@ -438,15 +438,15 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return false;
         }
         *self = completed.remove(0);
-        self.inline
+        self.path_state.inline
             .pending_states
             .extend(completed.into_iter().map(Box::new));
         true
     }
 
     fn forget_inline_referent(&mut self, local: Local) {
-        let Some(alloc_id) = self.current_frame.local_alloc.get(&local).copied() else {
-            self.diagnostics.mark_unsupported();
+        let Some(alloc_id) = self.path_state.current_frame.local_alloc.get(&local).copied() else {
+            self.path_state.diagnostics.mark_unsupported();
             return;
         };
         if self.content(alloc_id).facts.may_be_uninit {
@@ -456,7 +456,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         *self.content_mut(alloc_id) = MemoryContent::default();
         let ty = self.body().local_decls[local].ty;
         let unknown_term = self.fresh_int("inline_write_unknown");
-        self.inline.inline_branch_terms.insert(unknown_term.clone());
+        self.path_state.inline.inline_branch_terms.insert(unknown_term.clone());
         let mut unknown = VmValue::new(unknown_term, ty);
         if let Some(prior) = prior
             && prior.provenance_alloc_id() == Some(alloc_id)
@@ -521,7 +521,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             continue;
                         }
                         let solver = Solver::new(self.z3_ctx);
-                        if candidate.inline.symbolic_generic_const_inline {
+                        if candidate.path_state.inline.symbolic_generic_const_inline {
                             candidate.assert_path_constraints(&solver);
                         } else {
                             candidate.assert_all(&solver);
@@ -549,11 +549,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 }
                 TerminatorKind::Call { target, .. } => {
                     let viable = crate::verify::vm::mir_rules::exec_terminator(self, terminator, None).continues();
-                    if !self.inline.pending_states.is_empty() {
+                    if !self.path_state.inline.pending_states.is_empty() {
                         let Some(target) = target else {
                             return InlineStep::Complete(false);
                         };
-                        let mut states = std::mem::take(&mut self.inline.pending_states)
+                        let mut states = std::mem::take(&mut self.path_state.inline.pending_states)
                             .into_iter()
                             .map(|state| (*state, *target, visited.clone()))
                             .collect::<Vec<_>>();
@@ -603,7 +603,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 TerminatorKind::Goto { target, .. } => pending.push((state, *target, visited)),
                 TerminatorKind::Return => {
                     let solver = Solver::new(self.z3_ctx);
-                    if state.inline.symbolic_generic_const_inline {
+                    if state.path_state.inline.symbolic_generic_const_inline {
                         state.assert_path_constraints(&solver);
                     } else {
                         state.assert_all(&solver);
@@ -643,7 +643,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             continue;
                         }
                         let solver = Solver::new(self.z3_ctx);
-                        if candidate.inline.symbolic_generic_const_inline {
+                        if candidate.path_state.inline.symbolic_generic_const_inline {
                             candidate.assert_path_constraints(&solver);
                         } else {
                             candidate.assert_all(&solver);
@@ -671,7 +671,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     let viable =
                         crate::verify::vm::mir_rules::exec_terminator(&mut state, terminator, None).continues();
                     if let Some(target) = target {
-                        for alternative in std::mem::take(&mut state.inline.pending_states) {
+                        for alternative in std::mem::take(&mut state.path_state.inline.pending_states) {
                             pending.push((*alternative, *target, visited.clone()));
                         }
                         if viable {
@@ -762,18 +762,18 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 } => {
                     let callee = mir_utils::resolve_callee_def_id(
                         state.tcx,
-                        state.current_frame.current_def_id,
+                        state.path_state.current_frame.current_def_id,
                         func,
                     );
                     if callee.is_some_and(|def_id| state.tcx.is_mir_available(def_id)) {
-                        let incomplete = state.diagnostics.has_incomplete_inline_branch();
-                        let truncated = state.inline.inline_truncated_terms.len();
+                        let incomplete = state.path_state.diagnostics.has_incomplete_inline_branch();
+                        let truncated = state.path_state.inline.inline_truncated_terms.len();
                         let viable =
                             crate::verify::vm::mir_rules::exec_terminator(&mut state, terminator, None).continues();
                         if viable
-                            && !state.diagnostics.is_unsupported()
-                            && state.diagnostics.has_incomplete_inline_branch() == incomplete
-                            && state.inline.inline_truncated_terms.len() == truncated
+                            && !state.path_state.diagnostics.is_unsupported()
+                            && state.path_state.diagnostics.has_incomplete_inline_branch() == incomplete
+                            && state.path_state.inline.inline_truncated_terms.len() == truncated
                         {
                             stack.push((state, *target, visited));
                         }
@@ -797,7 +797,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         for (local, path, value) in writes {
             let arg_idx = local.as_usize().checked_sub(1);
             let outer_referent = arg_idx
-                .and_then(|i| self.inline.arg_referents.get(i).copied().flatten())
+                .and_then(|i| self.path_state.inline.arg_referents.get(i).copied().flatten())
                 .filter(|_| {
                     matches!(
                         self.body().local_decls[local].ty.kind(),
@@ -805,7 +805,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     )
                 });
             if let Some(referent) = outer_referent {
-                self.inline
+                self.path_state.inline
                     .deferred_field_writes
                     .push((referent, path, value));
             } else {

@@ -3,7 +3,7 @@ use rustc_middle::mir::{
     TerminatorKind,
 };
 
-use super::super::state::{VmState, VmValue};
+use super::super::state::{VmExecutor, VmValue};
 use super::{RuleFlow, call, rvalue, statement, terminator};
 
 fn mir_variant(rendered: &str) -> &str {
@@ -14,7 +14,7 @@ fn mir_variant(rendered: &str) -> &str {
 struct RvalueEntry {
     name: &'static str,
     eval: for<'z3, 'tcx> fn(
-        &mut VmState<'z3, 'tcx>,
+        &mut VmExecutor<'z3, 'tcx>,
         &Place<'tcx>,
         &Rvalue<'tcx>,
     ) -> Option<VmValue<'z3, 'tcx>>,
@@ -28,7 +28,7 @@ macro_rules! rvalue_registry {
             $(#[$meta])*
             #[allow(unused_variables)]
             fn $handler<'z3, 'tcx>(
-                $state: &mut VmState<'z3, 'tcx>,
+                $state: &mut VmExecutor<'z3, 'tcx>,
                 $place: &Place<'tcx>,
                 $rv: &Rvalue<'tcx>,
             ) -> Option<VmValue<'z3, 'tcx>> {
@@ -62,7 +62,7 @@ rvalue_registry!(state, place, rv;
 );
 
 fn unsupported_statement<'z3, 'tcx>(
-    state: &mut VmState<'z3, 'tcx>,
+    state: &mut VmExecutor<'z3, 'tcx>,
     stmt: &Statement<'tcx>,
 ) -> &'static str {
     let rendered = format!("{:?}", stmt.kind);
@@ -75,7 +75,7 @@ fn unsupported_statement<'z3, 'tcx>(
 
 struct StatementEntry {
     name: &'static str,
-    apply: for<'z3, 'tcx> fn(&mut VmState<'z3, 'tcx>, &Statement<'tcx>) -> bool,
+    apply: for<'z3, 'tcx> fn(&mut VmExecutor<'z3, 'tcx>, &Statement<'tcx>) -> bool,
 }
 
 macro_rules! statement_registry {
@@ -87,7 +87,7 @@ macro_rules! statement_registry {
         ; NoOp => $noop:ident
     ) => {
         $(
-            fn $handler<'z3, 'tcx>($state: &mut VmState<'z3, 'tcx>, $stmt: &Statement<'tcx>) -> bool {
+            fn $handler<'z3, 'tcx>($state: &mut VmExecutor<'z3, 'tcx>, $stmt: &Statement<'tcx>) -> bool {
                 if let StatementKind::$variant $args = &$stmt.kind {
                     $exec;
                     true
@@ -97,7 +97,7 @@ macro_rules! statement_registry {
             }
         )*
         $(
-            fn $inner_handler<'z3, 'tcx>($state: &mut VmState<'z3, 'tcx>, $stmt: &Statement<'tcx>) -> bool {
+            fn $inner_handler<'z3, 'tcx>($state: &mut VmExecutor<'z3, 'tcx>, $stmt: &Statement<'tcx>) -> bool {
                 if let StatementKind::Intrinsic($intrinsic) = &$stmt.kind
                     && let NonDivergingIntrinsic::$inner_variant($inner_arg) = &**$intrinsic
                 {
@@ -116,7 +116,7 @@ macro_rules! statement_registry {
     };
 }
 
-fn noop_statement_rule<'z3, 'tcx>(_state: &mut VmState<'z3, 'tcx>, stmt: &Statement<'tcx>) -> bool {
+fn noop_statement_rule<'z3, 'tcx>(_state: &mut VmExecutor<'z3, 'tcx>, stmt: &Statement<'tcx>) -> bool {
     matches!(
         stmt.kind,
         StatementKind::FakeRead(..)
@@ -142,7 +142,7 @@ statement_registry!(state, stmt;
 );
 
 fn unsupported_terminator<'z3, 'tcx>(
-    state: &mut VmState<'z3, 'tcx>,
+    state: &mut VmExecutor<'z3, 'tcx>,
     term: &Terminator<'tcx>,
 ) -> &'static str {
     let rendered = format!("{:?}", term.kind);
@@ -156,7 +156,7 @@ fn unsupported_terminator<'z3, 'tcx>(
 struct TerminatorEntry {
     name: &'static str,
     apply: for<'z3, 'tcx> fn(
-        &mut VmState<'z3, 'tcx>,
+        &mut VmExecutor<'z3, 'tcx>,
         &Terminator<'tcx>,
         Option<BasicBlock>,
     ) -> Option<RuleFlow>,
@@ -169,7 +169,7 @@ macro_rules! terminator_registry {
         $(
             #[allow(unused_variables)]
             fn $handler<'z3, 'tcx>(
-                $state: &mut VmState<'z3, 'tcx>,
+                $state: &mut VmExecutor<'z3, 'tcx>,
                 $term: &Terminator<'tcx>,
                 $successor: Option<BasicBlock>,
             ) -> Option<RuleFlow> {
@@ -188,7 +188,7 @@ macro_rules! terminator_registry {
 }
 
 fn control_only_terminator_rule<'z3, 'tcx>(
-    _state: &mut VmState<'z3, 'tcx>,
+    _state: &mut VmExecutor<'z3, 'tcx>,
     term: &Terminator<'tcx>,
     _successor: Option<BasicBlock>,
 ) -> Option<RuleFlow> {
@@ -207,11 +207,11 @@ fn control_only_terminator_rule<'z3, 'tcx>(
 
 terminator_registry!(state, term, successor;
     rule_call: Call { func, args, destination, .. } => {
-        let caller_id = state.current_frame.current_def_id;
+        let caller_id = state.path_state.current_frame.current_def_id;
         call::exec_call(state, func, args, destination.local, caller_id)
     },
     rule_tail_call: TailCall { func, args, .. } => {
-        let caller_id = state.current_frame.current_def_id;
+        let caller_id = state.path_state.current_frame.current_def_id;
         call::exec_call(state, func, args, Local::from_usize(0), caller_id)
     },
     rule_switch_int: SwitchInt { discr, targets } => terminator::exec_switch_int(state, discr, targets, successor),
@@ -225,14 +225,14 @@ terminator_registry!(state, term, successor;
     },
 );
 
-pub(super) fn exec_statement<'z3, 'tcx>(state: &mut VmState<'z3, 'tcx>, stmt: &Statement<'tcx>) {
-    let was_unsupported = state.diagnostics.is_unsupported();
+pub(super) fn exec_statement<'z3, 'tcx>(state: &mut VmExecutor<'z3, 'tcx>, stmt: &Statement<'tcx>) {
+    let was_unsupported = state.path_state.diagnostics.is_unsupported();
     let name = STATEMENT_REGISTRY
         .iter()
         .find(|rule| (rule.apply)(state, stmt))
         .map(|rule| rule.name)
         .unwrap_or_else(|| unsupported_statement(state, stmt));
-    if state.diagnostics.needs_statement_fallback(was_unsupported) {
+    if state.path_state.diagnostics.needs_statement_fallback(was_unsupported) {
         state.record_unsupported(&format!(
             "StatementKind::{name} (model incomplete): {:?}",
             stmt.kind
@@ -242,12 +242,12 @@ pub(super) fn exec_statement<'z3, 'tcx>(state: &mut VmState<'z3, 'tcx>, stmt: &S
 }
 
 pub(super) fn exec_terminator<'z3, 'tcx>(
-    state: &mut VmState<'z3, 'tcx>,
+    state: &mut VmExecutor<'z3, 'tcx>,
     term: &Terminator<'tcx>,
     successor: Option<BasicBlock>,
 ) -> RuleFlow {
-    let was_unsupported = state.diagnostics.is_unsupported();
-    let previous_missing_mir = state.diagnostics.missing_mir_count();
+    let was_unsupported = state.path_state.diagnostics.is_unsupported();
+    let previous_missing_mir = state.path_state.diagnostics.missing_mir_count();
     let (name, flow) = TERMINATOR_REGISTRY
         .iter()
         .find_map(|rule| (rule.apply)(state, term, successor).map(|flow| (rule.name, flow)))
@@ -255,7 +255,7 @@ pub(super) fn exec_terminator<'z3, 'tcx>(
     if flow == RuleFlow::Pruned {
         return flow;
     }
-    if state
+    if state.path_state
         .diagnostics
         .needs_terminator_fallback(was_unsupported, previous_missing_mir)
     {
@@ -269,11 +269,11 @@ pub(super) fn exec_terminator<'z3, 'tcx>(
 }
 
 pub(super) fn eval_rvalue<'z3, 'tcx>(
-    state: &mut VmState<'z3, 'tcx>,
+    state: &mut VmExecutor<'z3, 'tcx>,
     place: &Place<'tcx>,
     rv: &Rvalue<'tcx>,
 ) -> VmValue<'z3, 'tcx> {
-    let was_unsupported = state.diagnostics.is_unsupported();
+    let was_unsupported = state.path_state.diagnostics.is_unsupported();
     let (name, value) = RVALUE_REGISTRY
         .iter()
         .find_map(|rule| (rule.eval)(state, place, rv).map(|value| (rule.name, value)))
@@ -285,7 +285,7 @@ pub(super) fn eval_rvalue<'z3, 'tcx>(
                 rvalue::eval_fresh_value(state, place, "unsupported_rvalue"),
             )
         });
-    if state.diagnostics.needs_statement_fallback(was_unsupported) {
+    if state.path_state.diagnostics.needs_statement_fallback(was_unsupported) {
         state.record_unsupported(&format!("Rvalue::{name} (model incomplete): {rv:?}"));
     }
     log::trace!("vm rvalue rule: {name}");

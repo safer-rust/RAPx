@@ -8,9 +8,9 @@ use z3::ast::Int;
 use crate::{analysis::path::CallArg, compat::FxHashSet, verify::slicer::RelevantItem};
 
 use super::diagnostics::{ActiveMirItem, ActiveMirLocation};
-use super::state::{ValueSource, VmState, VmValue};
+use super::state::{ValueSource, VmExecutor, VmValue};
 
-impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     /// Execute all retained MIR items in path order.
     pub(crate) fn execute_items(mut self, items: &[RelevantItem<'tcx>]) -> Vec<Self> {
         self.init_parameters();
@@ -24,12 +24,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         for item in items {
             let mut next = Vec::new();
             for mut state in states {
-                let viable = if state.diagnostics.is_unsupported() {
+                let viable = if state.path_state.diagnostics.is_unsupported() {
                     true
                 } else {
                     let viable = state.execute_item(item);
                     next.extend(
-                        std::mem::take(&mut state.inline.pending_states)
+                        std::mem::take(&mut state.path_state.inline.pending_states)
                             .into_iter()
                             .map(|state| *state),
                     );
@@ -54,7 +54,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             } => {
                 let body = self.body_for(*def_id);
                 let statement = &body.basic_blocks[*block].statements[*stmt_index];
-                self.diagnostics.active_mir = Some(ActiveMirLocation {
+                self.path_state.diagnostics.active_mir = Some(ActiveMirLocation {
                     def_id: *def_id,
                     block: block.as_usize(),
                     item: ActiveMirItem::Statement(*stmt_index),
@@ -71,7 +71,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             } => {
                 let body = self.body_for(*def_id);
                 let terminator = body.basic_blocks[*block].terminator();
-                self.diagnostics.active_mir = Some(ActiveMirLocation {
+                self.path_state.diagnostics.active_mir = Some(ActiveMirLocation {
                     def_id: *def_id,
                     block: block.as_usize(),
                     item: ActiveMirItem::Terminator,
@@ -79,22 +79,22 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 });
                 let viable =
                     crate::verify::vm::mir_rules::exec_terminator(self, terminator, *switch_succ).continues();
-                viable || (self.safedrop_events.is_enabled()
+                viable || (self.path_state.safedrop_events.is_enabled()
                     && matches!(&terminator.kind, TerminatorKind::Call { unwind: UnwindAction::Cleanup(target), .. } if Some(*target) == *switch_succ)
                 )
             }
             RelevantItem::CalleeEntry { callee, body, args } => {
-                self.diagnostics.active_mir = None;
+                self.path_state.diagnostics.active_mir = None;
                 self.handle_callee_entry(*callee, *body, args);
                 true
             }
             RelevantItem::CalleeExit { dest } => {
-                self.diagnostics.active_mir = None;
+                self.path_state.diagnostics.active_mir = None;
                 self.handle_callee_exit(*dest);
                 true
             }
             RelevantItem::ContractFact { property } => {
-                self.diagnostics.active_mir = None;
+                self.path_state.diagnostics.active_mir = None;
                 self.assert_contract_fact(property);
                 true
             }
@@ -154,19 +154,19 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             let outer = arg_local
                                 .as_usize()
                                 .checked_sub(1)
-                                .and_then(|index| self.inline.arg_referents.get(index))
+                                .and_then(|index| self.path_state.inline.arg_referents.get(index))
                                 .copied()
                                 .flatten()?;
                             let parent_alloc =
-                                self.caller_frames.last()?.frame.local_alloc.get(&outer)?;
+                                self.path_state.caller_frames.last()?.frame.local_alloc.get(&outer)?;
                             (value.provenance_alloc_id() == Some(*parent_alloc))
                                 .then_some(arg_local)
                         })
                 })
             })
             .collect();
-        let saved_referents = std::mem::replace(&mut self.inline.arg_referents, arg_referents);
-        let saved_writes = std::mem::take(&mut self.inline.deferred_field_writes);
+        let saved_referents = std::mem::replace(&mut self.path_state.inline.arg_referents, arg_referents);
+        let saved_writes = std::mem::take(&mut self.path_state.inline.deferred_field_writes);
         let frame = self.enter_frame(callee, body);
 
         // Collect the caller argument fields from the saved map, so the callee's
@@ -238,7 +238,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     .is_some_and(|id| self.content(*id).facts.inner_uninit);
                 let param = Local::from_usize(i + 1);
                 self.set_local(param, v);
-                if inner_uninit && let Some(&id) = self.current_frame.local_alloc.get(&param) {
+                if inner_uninit && let Some(&id) = self.path_state.current_frame.local_alloc.get(&param) {
                     self.content_mut(id).facts.inner_uninit = true;
                 }
             }
@@ -276,7 +276,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         for (callee_param, fields, fv) in arg_fields {
             self.set_field_value(Local::from_usize(callee_param), fields, fv);
         }
-        self.caller_frames.push(super::state::SavedCallerFrame {
+        self.path_state.caller_frames.push(super::state::SavedCallerFrame {
             frame,
             method_call,
             postcondition_args: param_sources,
@@ -288,10 +288,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// Exit an inlined callee: capture the callee's return value, restore the
     /// caller context, and write the return value to the caller's destination.
     fn handle_callee_exit(&mut self, dest: usize) {
-        let callee = self.current_frame.current_def_id;
+        let callee = self.path_state.current_frame.current_def_id;
         self.recover_leaked_owner_shares(callee);
         let ret = self.local_value(Local::from_usize(0)).cloned();
-        let ret_inner_uninit = self
+        let ret_inner_uninit = self.path_state
             .current_frame
             .local_alloc
             .get(&Local::from_usize(0))
@@ -305,16 +305,16 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     .map(|v| (f, v))
             })
             .collect();
-        let writes = std::mem::take(&mut self.inline.deferred_field_writes);
-        let (method_call, postcondition_args) = match self.caller_frames.pop() {
+        let writes = std::mem::take(&mut self.path_state.inline.deferred_field_writes);
+        let (method_call, postcondition_args) = match self.path_state.caller_frames.pop() {
             Some(saved) => {
                 self.restore_frame(saved.frame);
-                self.inline.arg_referents = saved.arg_referents;
-                self.inline.deferred_field_writes = saved.deferred_writes;
+                self.path_state.inline.arg_referents = saved.arg_referents;
+                self.path_state.inline.deferred_field_writes = saved.deferred_writes;
                 (saved.method_call, Some(saved.postcondition_args))
             }
             None => {
-                self.inline.arg_referents.clear();
+                self.path_state.inline.arg_referents.clear();
                 (None, None)
             }
         };
@@ -336,11 +336,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 self.begin_ownership_transfer(Local::from_usize(dest), owner);
             }
             if ret_inner_uninit
-                && let Some(&dest_id) = self.current_frame.local_alloc.get(&Local::from_usize(dest))
+                && let Some(&dest_id) = self.path_state.current_frame.local_alloc.get(&Local::from_usize(dest))
             {
                 self.content_mut(dest_id).facts.inner_uninit = true;
             }
-            if let Some(dest_alloc_id) = self
+            if let Some(dest_alloc_id) = self.path_state
                 .current_frame
                 .local_alloc
                 .get(&Local::from_usize(dest))

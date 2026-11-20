@@ -9,7 +9,7 @@ use rustc_middle::{
 use z3::ast::{Ast, Bool, Int};
 
 use super::super::super::state::{
-    AllocId, Provenance, ValueFacts, ValueSource, VmState, VmValue,
+    AllocId, Provenance, ValueFacts, ValueSource, VmExecutor, VmValue,
 };
 use crate::def_ids::type_ids;
 use crate::compat::Spanned;
@@ -18,7 +18,7 @@ use crate::verify::call_summary::{
     BoundedArithmeticOp, CallEffect, OverflowOp, SimdArithOp, SimdCmpOp,
 };
 
-impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     fn set_dest_as_heap_ptr(&mut self, arg_val: &VmValue<'z3, 'tcx>, dest: Local) {
         let mut val = arg_val.clone();
         val.ty = self.body().local_decls[dest].ty;
@@ -137,8 +137,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 } else {
                     let result = self.fresh_int("compare_bytes_result");
                     if let Some((min, max, _, _)) = self.integer_limits(ty) {
-                        self.constraints.assertions.push(result.ge(&min));
-                        self.constraints.assertions.push(result.le(&max));
+                        self.path_state.constraints.assertions.push(result.ge(&min));
+                        self.path_state.constraints.assertions.push(result.le(&max));
                     }
                     result
                 };
@@ -213,7 +213,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     self.set_local(dest, VmValue::new(term, ty));
                 } else {
                     let term = self.fresh_int("raw_eq_result");
-                    self.inline.opaque_intrinsic_terms.insert(term.clone());
+                    self.path_state.inline.opaque_intrinsic_terms.insert(term.clone());
                     self.set_local(dest, VmValue::new(term, ty));
                 }
             }
@@ -235,7 +235,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     let dest_ty = self.body().local_decls[dest].ty;
                     let eq1 = term._eq(&args[1].z3_term);
                     let eq2 = term._eq(&args[2].z3_term);
-                    self.constraints.assertions.push(Bool::or(self.z3_ctx, &[&eq1, &eq2]));
+                    self.path_state.constraints.assertions.push(Bool::or(self.z3_ctx, &[&eq1, &eq2]));
                     let prov = args[1]
                         .provenance
                         .clone()
@@ -276,7 +276,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     let stride = mir_utils::pointee_ty(base.ty).and_then(|pointee| {
                         let (_, size) = mir_utils::type_layout(
                             self.tcx,
-                            self.current_frame.current_def_id,
+                            self.path_state.current_frame.current_def_id,
                             pointee,
                         )?;
                         if size == 0 && mir_utils::ty_has_type_param(pointee) {
@@ -337,7 +337,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     let nonnegative = offset.ge(&zero);
                     let bounded = offset.lt(&align_val.z3_term);
                     let success = Bool::and(self.z3_ctx, &[&aligned, &nonnegative, &bounded]);
-                    self.constraints
+                    self.path_state.constraints
                         .assertions
                         .push(Bool::or(self.z3_ctx, &[&offset._eq(&max), &success]));
                 }
@@ -490,8 +490,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         for index in 0..len {
             let term = self.fresh_int("simd_lane");
             if let Some((min, max, _, _)) = &limits {
-                self.constraints.assertions.push(term.ge(min));
-                self.constraints.assertions.push(term.le(max));
+                self.path_state.constraints.assertions.push(term.ge(min));
+                self.path_state.constraints.assertions.push(term.le(max));
             }
             let mut value = VmValue::new(term, elem_ty);
             value.facts.init = true;
@@ -519,7 +519,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     fn set_opaque_intrinsic_result(&mut self, dest: Local) {
         let ty = self.body().local_decls[dest].ty;
         let term = self.fresh_int("intrinsic_result");
-        self.inline.opaque_intrinsic_terms.insert(term.clone());
+        self.path_state.inline.opaque_intrinsic_terms.insert(term.clone());
         self.set_local(dest, VmValue::new(term, ty));
     }
 
@@ -531,7 +531,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         elem_ty: Option<Ty<'tcx>>,
     ) -> Option<VmValue<'z3, 'tcx>> {
         let dest_ty = self.body().local_decls[dest].ty;
-        let dest_alloc_id = self.current_frame.local_alloc.get(&dest).copied();
+        let dest_alloc_id = self.path_state.current_frame.local_alloc.get(&dest).copied();
         self.alloc_mut(alloc_id).facts.owning = Some(base.clone());
         self.content_mut(alloc_id).facts.initialized = true;
         self.set_local(

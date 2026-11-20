@@ -1,6 +1,6 @@
 use super::*;
 
-impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     pub(super) fn apply_memory_effect(
         &mut self,
         effect: &CallEffect,
@@ -103,7 +103,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     .find_local_by_address(&pointer.z3_term)
                     .filter(|local| self.body().local_decls[*local].ty == ty);
                 let inline_target =
-                    self.inline
+                    self.path_state.inline
                         .arg_referents
                         .iter()
                         .enumerate()
@@ -155,7 +155,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 value.facts.init = true;
                 self.write_through_pointer(pointer, Vec::new(), value);
                 if let Some(local) = local
-                    && let Some(alloc_id) = self.current_frame.local_alloc.get(&local).copied()
+                    && let Some(alloc_id) = self.path_state.current_frame.local_alloc.get(&local).copied()
                 {
                     self.content_mut(alloc_id).facts.initialized = true;
                 }

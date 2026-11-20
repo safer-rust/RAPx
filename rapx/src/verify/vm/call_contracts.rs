@@ -3,15 +3,15 @@ use rustc_middle::mir::Local;
 use super::contracts::{
     bind_call_property, index_access_locals, rebind_property_place, slice_offset_locals,
 };
-use super::state::{VmState, VmValue};
+use super::state::{VmExecutor, VmValue};
 use crate::verify::contract::{ContractKind, PropertyKind};
 
-impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     pub(crate) fn assert_call_result_invariants(&mut self, destination: Local) {
         let Some(result) = self.local_value(destination) else {
             return;
         };
-        if self.inline.inline_truncated_terms.contains(&result.z3_term) {
+        if self.path_state.inline.inline_truncated_terms.contains(&result.z3_term) {
             return;
         }
         let ty = result.ty;
@@ -38,7 +38,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let Some(result) = self.local_value(destination) else {
             return;
         };
-        if self.inline.inline_truncated_terms.contains(&result.z3_term) {
+        if self.path_state.inline.inline_truncated_terms.contains(&result.z3_term) {
             return;
         }
         let ty = result.ty;

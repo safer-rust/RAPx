@@ -13,7 +13,7 @@ use crate::verify::contract::{
 use crate::verify::report::{CheckResult, UnknownReason};
 use crate::verify::vm::contract_eval::ContractEvalContext;
 use crate::verify::vm::query::ContractTargetContext;
-use crate::verify::vm::state::{VmState, VmValue};
+use crate::verify::vm::state::{VmExecutor, VmValue};
 use rustc_middle::{
     mir::{Local, Operand, Rvalue, StatementKind},
     ty::{GenericArg, GenericArgKind, Ty, TyKind},
@@ -28,7 +28,7 @@ use super::PropertyChecker;
 impl PropertyChecker {
     pub(super) fn target_value<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> Option<VmValue<'z3, 'tcx>> {
@@ -45,7 +45,7 @@ impl PropertyChecker {
     /// writes via `any(Null(p), …)`.
     pub(super) fn is_vacuously_true_for_nullable<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> bool {
@@ -77,7 +77,7 @@ impl PropertyChecker {
     /// guard.
     pub(super) fn is_null<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
         place: &ContractPlace,
     ) -> bool {
@@ -146,7 +146,7 @@ impl PropertyChecker {
     /// (`S ≥ 1`, where the `S` factor cancels).  Both branches must be UNSAT.
     /// `on_sat` is the result when either branch is satisfiable.
     pub(super) fn smt_check_size_split<'z3, 'tcx>(
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         elem_size: &Int<'z3>,
         goal_negated: &Bool<'z3>,
         on_sat: CheckResult,
@@ -185,7 +185,7 @@ impl PropertyChecker {
 
     pub(super) fn resolve_arg_term<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
         arg: &PropertyArg<'tcx>,
     ) -> Option<Int<'z3>> {
@@ -208,7 +208,7 @@ impl PropertyChecker {
     /// overrides the index for two-argument forms like `Init(self, n)`.
     pub(super) fn count_is_zero<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
         count_arg: usize,
@@ -223,7 +223,7 @@ impl PropertyChecker {
 
     pub(super) fn access_bytes<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         property: &Property<'tcx>,
         ty_arg: usize,
         count_arg: usize,
@@ -241,7 +241,7 @@ impl PropertyChecker {
 
     pub(super) fn zst_guard<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> bool {
@@ -251,7 +251,7 @@ impl PropertyChecker {
 
     pub(super) fn is_zst_type<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
         ty: Option<Ty<'tcx>>,
     ) -> bool {
@@ -271,7 +271,7 @@ impl PropertyChecker {
 
     pub(super) fn is_concrete_zst<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         ty: Ty<'tcx>,
     ) -> bool {
         !self.is_generic_ty(ty) && vm_state.size_of_ty(ty) == 0
@@ -286,7 +286,7 @@ impl PropertyChecker {
 
     pub(super) fn resolve_ty_params<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
         ty: Ty<'tcx>,
     ) -> Ty<'tcx> {
@@ -325,7 +325,7 @@ impl PropertyChecker {
 
     pub(super) fn eval_contract_expr<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         checkpoint: Option<&Checkpoint<'tcx>>,
         expr: &ContractExpr<'tcx>,
     ) -> Option<Int<'z3>> {
@@ -334,7 +334,7 @@ impl PropertyChecker {
 
     pub(super) fn trace_value<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         op: &Operand<'tcx>,
     ) -> VmValue<'z3, 'tcx> {
         let place = match op {

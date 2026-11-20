@@ -25,31 +25,23 @@ pub(crate) mod region;
 pub(crate) mod state;
 
 use rustc_hir::def_id::DefId;
-use rustc_middle::{
-    mir::{Body, Local},
-    ty::TyCtxt,
-};
+use rustc_middle::{mir::{Body, Local}, ty::TyCtxt};
 use z3::{Context, ast::Int};
 
-use crate::compat::{FxHashMap, FxHashSet};
-use crate::verify::config::ConstructorMirMode;
+use crate::{compat::{FxHashMap, FxHashSet}, verify::config::ConstructorMirMode};
 
 use self::{
     diagnostics::Diagnostics,
     method_cache::CachedMethodResult,
-    state::{
-        AllocId, Constraints, FrameState, InlineCtx, MemoryUnit, OwnershipTransfer,
-        SafeDropEventLog, SavedCallerFrame,
-    },
+    state::{AllocId, Constraints, FrameState, InlineCtx, MemoryUnit, OwnershipTransfer, SafeDropEventLog, SavedCallerFrame},
 };
 
-/// The full symbolic execution state at a program point.
+/// Executes MIR using an immutable context and a path-local symbolic state.
 ///
-/// Accumulates the name → allocation bindings, allocations, and solver
-/// constraints as the VM steps through retained MIR items. The Z3 context is
-/// borrowed so a single context can be reused across property checks.
+/// # Agent Rules
+/// Do not add new fields without human approval.
 #[derive(Clone)]
-pub(crate) struct VmState<'z3, 'tcx> {
+pub(crate) struct VmExecutor<'z3, 'tcx> {
     /// Function being verified, retained while inlined callee frames execute.
     target_def_id: DefId,
     /// Target MIR instantiated with a selected trait-bound implementor when an
@@ -62,6 +54,16 @@ pub(crate) struct VmState<'z3, 'tcx> {
     pub(crate) tcx: TyCtxt<'tcx>,
     /// Constructor MIR mode selected for this verification run.
     constructor_mir_mode: ConstructorMirMode,
+    /// Mutable state cloned when execution branches into separate paths.
+    pub(crate) path_state: VmState<'z3, 'tcx>,
+}
+
+/// Path-local memory, constraints, frames, and diagnostics.
+///
+/// # Agent Rules
+/// Do not add new fields without human approval.
+#[derive(Clone)]
+pub(crate) struct VmState<'z3, 'tcx> {
     /// Currently executing MIR frame and its local allocation bindings.
     pub(crate) current_frame: FrameState<'tcx>,
     /// Caller frames saved by path-replay inlining.
@@ -89,8 +91,8 @@ pub(crate) struct VmState<'z3, 'tcx> {
     pub(crate) diagnostics: Diagnostics,
 }
 
-impl<'z3, 'tcx> VmState<'z3, 'tcx> {
-    /// Create a fresh VM state for executing a path.
+impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
+    /// Create an executor with fresh state for one path.
     pub(crate) fn new(
         z3_ctx: &'z3 Context,
         tcx: TyCtxt<'tcx>,
@@ -111,23 +113,25 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             z3_ctx,
             tcx,
             constructor_mir_mode,
-            current_frame: FrameState {
-                current_def_id: target_def_id,
-                instantiated_body: instantiated_target_body,
-                local_alloc: FxHashMap::default(),
-                pending_enum_fields: FxHashMap::default(),
+            path_state: VmState {
+                current_frame: FrameState {
+                    current_def_id: target_def_id,
+                    instantiated_body: instantiated_target_body,
+                    local_alloc: FxHashMap::default(),
+                    pending_enum_fields: FxHashMap::default(),
+                },
+                caller_frames: Vec::default(),
+                units: Vec::default(),
+                ownership_transfers: Vec::new(),
+                static_allocs: FxHashMap::default(),
+                constraints,
+                inline: InlineCtx::default(),
+                method_result_cache: Vec::default(),
+                alias_hazard_allocs: FxHashSet::default(),
+                index_access_facts: Vec::new(),
+                safedrop_events: SafeDropEventLog::default(),
+                diagnostics: Diagnostics::default(),
             },
-            caller_frames: Vec::default(),
-            units: Vec::default(),
-            ownership_transfers: Vec::new(),
-            static_allocs: FxHashMap::default(),
-            constraints,
-            inline: InlineCtx::default(),
-            method_result_cache: Vec::default(),
-            alias_hazard_allocs: FxHashSet::default(),
-            index_access_facts: Vec::new(),
-            safedrop_events: SafeDropEventLog::default(),
-            diagnostics: Diagnostics::default(),
         }
     }
 }

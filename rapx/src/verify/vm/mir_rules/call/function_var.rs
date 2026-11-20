@@ -2,10 +2,10 @@ use rustc_hir::def_id::DefId;
 use rustc_middle::{mir::Local, ty::TyKind};
 use z3::ast::Int;
 
-use super::super::super::state::{AllocId, VmState, VmValue};
+use super::super::super::state::{AllocId, VmExecutor, VmValue};
 use crate::compat::FxHashSet;
 
-impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     /// Abstract a safe `Fn*` call when only a scalar boolean or `Ordering`
     /// result is required. The closure body is unavailable at a generic call
     /// site, so every allocation outside the active frame may have been
@@ -33,7 +33,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 .and_then(VmValue::provenance_alloc_id)
                 .is_some_and(|id| {
                     (1..=self.body().arg_count).any(|index| {
-                        self.current_frame
+                        self.path_state.current_frame
                             .local_alloc
                             .get(&Local::from_usize(index))
                             == Some(&id)
@@ -57,7 +57,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             .get(index)
                             .copied()
                             .flatten()
-                            .and_then(|local| self.current_frame.local_alloc.get(&local))
+                            .and_then(|local| self.path_state.current_frame.local_alloc.get(&local))
                             .and_then(|id| self.load_value(*id, arg.ty, &[field]))
                             .and_then(VmValue::provenance_alloc_id)
                             .is_some(),
@@ -77,8 +77,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             }
         }
 
-        let private: FxHashSet<_> = self.current_frame.local_alloc.values().copied().collect();
-        let borrowed: FxHashSet<_> = self
+        let private: FxHashSet<_> = self.path_state.current_frame.local_alloc.values().copied().collect();
+        let borrowed: FxHashSet<_> = self.path_state
             .current_frame
             .local_alloc
             .iter()
@@ -91,13 +91,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     .map(|id| self.root_alloc(id))
             })
             .collect();
-        let mut affected: Vec<_> = (0..self.units.len())
+        let mut affected: Vec<_> = (0..self.path_state.units.len())
             .map(AllocId)
             .filter(|id| !private.contains(id))
             .collect();
         affected.extend(args.iter().filter_map(VmValue::provenance_alloc_id));
         for local in caller_arg_locals.iter().flatten() {
-            if let Some(id) = self.current_frame.local_alloc.get(local) {
+            if let Some(id) = self.path_state.current_frame.local_alloc.get(local) {
                 affected.extend(
                     self.content(*id)
                         .values
@@ -115,7 +115,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 self.alloc_mut(id).facts.function_var_may_drop = true;
             }
             self.forget_memory_values(id);
-            for alias in 0..self.units.len() {
+            for alias in 0..self.path_state.units.len() {
                 let alias = AllocId(alias);
                 if self.root_alloc(alias) == id {
                     let facts = &mut self.alloc_mut(alias).facts;
@@ -131,8 +131,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         if matches!(ty.kind(), TyKind::Bool) {
             let zero = Int::from_u64(self.z3_ctx, 0);
             let one = Int::from_u64(self.z3_ctx, 1);
-            self.constraints.assertions.push(term.ge(&zero));
-            self.constraints.assertions.push(term.le(&one));
+            self.path_state.constraints.assertions.push(term.ge(&zero));
+            self.path_state.constraints.assertions.push(term.le(&one));
         }
         let mut result = VmValue::new(term, ty);
         result.facts.init = true;

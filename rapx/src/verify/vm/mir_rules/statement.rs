@@ -10,22 +10,22 @@ use rustc_middle::{
 };
 use z3::ast::{Ast, Bool, Int};
 
-use super::super::state::{AllocKind, Provenance, ValueSource, VmState, VmValue};
+use super::super::state::{AllocKind, Provenance, ValueSource, VmExecutor, VmValue};
 use super::eval_rvalue;
 use crate::def_ids::type_ids;
 use crate::helpers::mir_utils;
 
-pub(crate) fn exec_assume<'z3, 'tcx>(state: &mut VmState<'z3, 'tcx>, operand: &Operand<'tcx>) {
+pub(crate) fn exec_assume<'z3, 'tcx>(state: &mut VmExecutor<'z3, 'tcx>, operand: &Operand<'tcx>) {
     let value = state.value_of_operand(operand);
     let zero = Int::from_u64(state.z3_ctx, 0);
-    state
+    state.path_state
         .constraints
         .assertions
         .push(value.z3_term._eq(&zero).not());
 }
 
 pub(crate) fn refine_contract_method_const<'z3, 'tcx>(
-    state: &mut VmState<'z3, 'tcx>,
+    state: &mut VmExecutor<'z3, 'tcx>,
     statement: &Statement<'tcx>,
 ) {
     let StatementKind::Assign(assign) = &statement.kind else {
@@ -58,7 +58,7 @@ pub(crate) fn refine_contract_method_const<'z3, 'tcx>(
 }
 
 pub(crate) fn exec_copy_nonoverlapping<'z3, 'tcx>(
-    state: &mut VmState<'z3, 'tcx>,
+    state: &mut VmExecutor<'z3, 'tcx>,
     copy: &CopyNonOverlapping<'tcx>,
 ) {
     let source = state.value_of_operand(&copy.src);
@@ -68,7 +68,7 @@ pub(crate) fn exec_copy_nonoverlapping<'z3, 'tcx>(
 }
 
 pub(crate) fn exec_set_discriminant<'z3, 'tcx>(
-    state: &mut VmState<'z3, 'tcx>,
+    state: &mut VmExecutor<'z3, 'tcx>,
     place: &Place<'tcx>,
     variant_index: VariantIdx,
 ) {
@@ -85,7 +85,7 @@ pub(crate) fn exec_set_discriminant<'z3, 'tcx>(
     }
     let fields = &adt.variants()[variant_index].fields;
     let payload_complete = fields.is_empty()
-        || state
+        || state.path_state
             .current_frame
             .pending_enum_fields
             .get(&place.local)
@@ -135,13 +135,13 @@ pub(crate) fn exec_set_discriminant<'z3, 'tcx>(
                 state.clear_write_evidence(alloc_id);
                 state.store_value(alloc_id, ty, Vec::new(), value);
                 state.content_mut(alloc_id).facts.initialized = true;
-                let aliases = state
+                let aliases = state.path_state
                     .current_frame
                     .pending_enum_fields
                     .keys()
                     .copied()
                     .filter(|local| {
-                        state.current_frame.local_alloc.get(local).copied() == Some(alloc_id)
+                        state.path_state.current_frame.local_alloc.get(local).copied() == Some(alloc_id)
                             || state
                                 .local_value(*local)
                                 .and_then(|value| value.provenance_alloc_id())
@@ -149,19 +149,19 @@ pub(crate) fn exec_set_discriminant<'z3, 'tcx>(
                     })
                     .collect::<Vec<_>>();
                 for local in aliases {
-                    state.current_frame.pending_enum_fields.remove(&local);
+                    state.path_state.current_frame.pending_enum_fields.remove(&local);
                 }
                 return;
             }
             state.record_unsupported("SetDiscriminant pointer target");
             return;
         }
-        let deferred_before = state.inline.deferred_field_writes.len();
+        let deferred_before = state.path_state.inline.deferred_field_writes.len();
         let referent = state.find_local_by_address(&pointer.z3_term);
         let written = state.write_through_pointer(&pointer, Vec::new(), value.clone());
-        if written || state.inline.deferred_field_writes.len() != deferred_before {
+        if written || state.path_state.inline.deferred_field_writes.len() != deferred_before {
             if let Some(local) = referent
-                && let Some(&alloc_id) = state.current_frame.local_alloc.get(&local)
+                && let Some(&alloc_id) = state.path_state.current_frame.local_alloc.get(&local)
             {
                 state.content_mut(alloc_id).facts.initialized = true;
             }
@@ -190,7 +190,7 @@ pub(crate) fn exec_set_discriminant<'z3, 'tcx>(
         state.invalidate_field_descendants(place.local, &[]);
     }
     state.set_local(place.local, value);
-    let alloc_id = state.current_frame.local_alloc[&place.local];
+    let alloc_id = state.path_state.current_frame.local_alloc[&place.local];
     state.content_mut(alloc_id).facts.initialized = payload_complete;
     if !payload_complete {
         state.content_mut(alloc_id).facts.may_be_uninit = true;
@@ -198,7 +198,7 @@ pub(crate) fn exec_set_discriminant<'z3, 'tcx>(
 }
 
 fn record_enum_field_write<'z3, 'tcx>(
-    state: &mut VmState<'z3, 'tcx>,
+    state: &mut VmExecutor<'z3, 'tcx>,
     place: &Place<'tcx>,
     rvalue: &Rvalue<'tcx>,
 ) {
@@ -231,14 +231,14 @@ fn record_enum_field_write<'z3, 'tcx>(
             .local_value(place.local)
             .and_then(|value| value.provenance_alloc_id())
     {
-        let aliases = state
+        let aliases = state.path_state
             .current_frame
             .pending_enum_fields
             .keys()
             .copied()
             .filter(|local| {
                 *local != place.local
-                    && (state.current_frame.local_alloc.get(local).copied() == Some(alloc_id)
+                    && (state.path_state.current_frame.local_alloc.get(local).copied() == Some(alloc_id)
                         || state
                             .local_value(*local)
                             .and_then(|value| value.provenance_alloc_id())
@@ -246,10 +246,10 @@ fn record_enum_field_write<'z3, 'tcx>(
             })
             .collect::<Vec<_>>();
         for local in aliases {
-            state.current_frame.pending_enum_fields.remove(&local);
+            state.path_state.current_frame.pending_enum_fields.remove(&local);
         }
     }
-    let pending = state.current_frame.pending_enum_fields.get(&place.local);
+    let pending = state.path_state.current_frame.pending_enum_fields.get(&place.local);
     let new_variant = pending.is_none_or(|(current, _)| *current != variant);
     if new_variant {
         let same_active = state
@@ -274,7 +274,7 @@ fn record_enum_field_write<'z3, 'tcx>(
                     .retain(|(view_ty, path), _| *view_ty != ty || path.is_empty());
             }
         }
-        state
+        state.path_state
             .current_frame
             .pending_enum_fields
             .insert(place.local, (variant, Default::default()));
@@ -290,7 +290,7 @@ fn record_enum_field_write<'z3, 'tcx>(
         }
         _ => false,
     };
-    if let Some((_, fields)) = state
+    if let Some((_, fields)) = state.path_state
         .current_frame
         .pending_enum_fields
         .get_mut(&place.local)
@@ -304,7 +304,7 @@ fn record_enum_field_write<'z3, 'tcx>(
 }
 
 pub(crate) fn exec_assign<'z3, 'tcx>(
-    state: &mut VmState<'z3, 'tcx>,
+    state: &mut VmExecutor<'z3, 'tcx>,
     place: &Place<'tcx>,
     rvalue: &Rvalue<'tcx>,
 ) {
@@ -321,10 +321,10 @@ pub(crate) fn exec_assign<'z3, 'tcx>(
         _ => None,
     };
     let uninit_source = source_place
-        .and_then(|source| state.current_frame.local_alloc.get(&source.local))
+        .and_then(|source| state.path_state.current_frame.local_alloc.get(&source.local))
         .is_some_and(|id| state.content(*id).facts.may_be_uninit);
     let inner_uninit_source = source_place
-        .and_then(|source| state.current_frame.local_alloc.get(&source.local))
+        .and_then(|source| state.path_state.current_frame.local_alloc.get(&source.local))
         .is_some_and(|id| state.content(*id).facts.inner_uninit);
     let inner_uninit_aggregate = matches!(rvalue, Rvalue::Aggregate(kind, _)
         if matches!(kind.as_ref(), AggregateKind::Adt(did, _, _, _, Some(field))
@@ -417,15 +417,15 @@ pub(crate) fn exec_assign<'z3, 'tcx>(
         if !uninit_source
             && !inner_uninit_source
             && !inner_uninit_aggregate
-            && let Some(&id) = state.current_frame.local_alloc.get(&place.local)
+            && let Some(&id) = state.path_state.current_frame.local_alloc.get(&place.local)
         {
             state.content_mut(id).facts.initialized = true;
         }
-        if uninit_source && let Some(id) = state.current_frame.local_alloc.get(&place.local) {
+        if uninit_source && let Some(id) = state.path_state.current_frame.local_alloc.get(&place.local) {
             state.content_mut(*id).facts.may_be_uninit = true;
         }
         if (inner_uninit_source || inner_uninit_aggregate)
-            && let Some(&id) = state.current_frame.local_alloc.get(&place.local)
+            && let Some(&id) = state.path_state.current_frame.local_alloc.get(&place.local)
         {
             state.content_mut(id).facts.inner_uninit = true;
         }
@@ -442,14 +442,14 @@ pub(crate) fn exec_assign<'z3, 'tcx>(
             _ => None,
         };
         if let Some(src) = moved_from
-            && let Some(&src_alloc) = state.current_frame.local_alloc.get(&src)
+            && let Some(&src_alloc) = state.path_state.current_frame.local_alloc.get(&src)
             && let Some(mut wv) = state.local_value(place.local).cloned()
             && wv
                 .provenance
                 .as_ref()
                 .is_some_and(|p| p.alloc_id == src_alloc)
         {
-            let dest_alloc = state.current_frame.local_alloc[&place.local];
+            let dest_alloc = state.path_state.current_frame.local_alloc[&place.local];
             wv.provenance = Some(Provenance {
                 alloc_id: dest_alloc,
                 offset: Int::from_u64(state.z3_ctx, 0),
@@ -590,21 +590,21 @@ pub(crate) fn exec_assign<'z3, 'tcx>(
     }
 }
 
-pub(crate) fn exec_storage_live<'z3, 'tcx>(state: &mut VmState<'z3, 'tcx>, local: Local) {
-    state.current_frame.pending_enum_fields.remove(&local);
+pub(crate) fn exec_storage_live<'z3, 'tcx>(state: &mut VmExecutor<'z3, 'tcx>, local: Local) {
+    state.path_state.current_frame.pending_enum_fields.remove(&local);
     state.ensure_local_allocation(local);
-    let alloc_id = state.current_frame.local_alloc[&local];
+    let alloc_id = state.path_state.current_frame.local_alloc[&local];
     state.alloc_mut(alloc_id).facts.dead = false;
 }
 
-pub(crate) fn exec_storage_dead<'z3, 'tcx>(state: &mut VmState<'z3, 'tcx>, local: Local) {
-    state.current_frame.pending_enum_fields.remove(&local);
-    if let Some(alloc_id) = state.current_frame.local_alloc.get(&local).copied() {
+pub(crate) fn exec_storage_dead<'z3, 'tcx>(state: &mut VmExecutor<'z3, 'tcx>, local: Local) {
+    state.path_state.current_frame.pending_enum_fields.remove(&local);
+    if let Some(alloc_id) = state.path_state.current_frame.local_alloc.get(&local).copied() {
         state.alloc_mut(alloc_id).facts.dead = true;
     }
 }
 
-impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     /// Record byte-level values when assigning to a place with projections.
     /// This handles patterns like `buf[i] = 0u8` (nul-store) and `arr[i] = val`.
     fn record_projected_store(&mut self, place: &Place<'tcx>, value: &VmValue<'z3, 'tcx>) {
@@ -613,7 +613,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let Some(alloc_id) = self
             .local_value(place.local)
             .and_then(|v| v.provenance_alloc_id())
-            .or_else(|| self.current_frame.local_alloc.get(&place.local).copied())
+            .or_else(|| self.path_state.current_frame.local_alloc.get(&place.local).copied())
         else {
             return;
         };
@@ -763,7 +763,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 .and_then(|v| v.z3_term.simplify().as_u64())
                 .and_then(|v| usize::try_from(v).ok());
             if let Some(index) = index {
-                if let Some(alloc_id) = self.current_frame.local_alloc.get(&place.local).copied() {
+                if let Some(alloc_id) = self.path_state.current_frame.local_alloc.get(&place.local).copied() {
                     self.content_mut(alloc_id)
                         .values
                         .retain(|(ty, path), _| *ty != array_ty || path.first() != Some(&index));
@@ -806,9 +806,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         self.set_field_value(place.local, vec![element], updated);
                     }
                 } else {
-                    self.diagnostics.mark_unsupported();
+                    self.path_state.diagnostics.mark_unsupported();
                     if let Some(alloc_id) =
-                        self.current_frame.local_alloc.get(&place.local).copied()
+                        self.path_state.current_frame.local_alloc.get(&place.local).copied()
                     {
                         self.content_mut(alloc_id)
                             .values

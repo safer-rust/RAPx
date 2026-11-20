@@ -13,7 +13,7 @@ use rustc_middle::{
 use z3::ast::{Ast, Bool, Int};
 
 use super::query::ContractTargetContext;
-use super::state::{VmState, VmValue};
+use super::state::{VmExecutor, VmValue};
 
 #[derive(Clone, Copy)]
 pub(crate) enum ContractEvalContext<'a, 'tcx> {
@@ -27,7 +27,7 @@ impl ContractEvalContext<'_, '_> {
     }
 }
 
-impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     pub(crate) fn eval_contract_tree(
         &self,
         expr: &ContractExpr<'tcx>,
@@ -176,7 +176,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let rustc_middle::ty::TyKind::Param(param_ty) = ty.kind() else {
             return false;
         };
-        let generics = self.tcx.generics_of(self.current_frame.current_def_id);
+        let generics = self.tcx.generics_of(self.path_state.current_frame.current_def_id);
         generics.own_params.iter().any(|p| {
             matches!(p.kind, rustc_middle::ty::GenericParamDefKind::Type { .. })
                 && p.name == param_ty.name
@@ -230,7 +230,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 if size == 0 && matches!(ty.kind(), rustc_middle::ty::TyKind::Param(_)) {
                     size = mir_utils::size_of_generic_param(
                         self.tcx,
-                        self.current_frame.current_def_id,
+                        self.path_state.current_frame.current_def_id,
                         *ty,
                     );
                     if size == 0
@@ -507,7 +507,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 let base_val = self.local_value(local)?;
                 let alloc_id = base_val.provenance_alloc_id()?;
                 let view_ty = mir_utils::pointee_ty(base_val.ty).unwrap_or(base_val.ty);
-                self.units[alloc_id.0]
+                self.path_state.units[alloc_id.0]
                     .content
                     .values
                     .get(&(view_ty, path))

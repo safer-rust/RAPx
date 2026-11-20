@@ -1,6 +1,6 @@
 //! VM-specific alias origin tracing.
 //!
-//! Bridges `VmState` provenance tracking with the shared `alias_hazard`
+//! Bridges `VmExecutor` provenance tracking with the shared `alias_hazard`
 //! MIR scanning infrastructure. The VM already tracks which `AllocId`
 //! each local's value points to; this module traces that provenance
 //! back to the originating parameter/local.
@@ -16,7 +16,7 @@ use crate::helpers::def_use::PlaceKey;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{Local, Operand, ProjectionElem, Rvalue, StatementKind};
 
-use super::state::{VmState, VmValue};
+use super::state::{VmExecutor, VmValue};
 
 /// Information about a value's ultimate origin.
 #[derive(Clone, Debug)]
@@ -57,7 +57,7 @@ impl VmOrigin {
     }
 }
 
-impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     /// Trace the origin of a pointer value through VM provenance.
     ///
     /// Given a VmValue (extracted from a checkpoint argument), follows
@@ -144,12 +144,12 @@ pub(crate) enum VmAliasResult {
 }
 
 fn origin_alias_hazard_accepted<'z3, 'tcx>(
-    vm_state: &VmState<'z3, 'tcx>,
+    vm_state: &VmExecutor<'z3, 'tcx>,
     origin_val: &VmValue<'z3, 'tcx>,
 ) -> bool {
     origin_val
         .provenance_alloc_id()
-        .map(|alloc_id| vm_state.alias_hazard_allocs.contains(&vm_state.root_alloc(alloc_id)))
+        .map(|alloc_id| vm_state.path_state.alias_hazard_allocs.contains(&vm_state.root_alloc(alloc_id)))
         .unwrap_or(false)
 }
 
@@ -159,7 +159,7 @@ fn origin_alias_hazard_accepted<'z3, 'tcx>(
 /// sub-allocation of it (`root_alloc` — `from_raw_parts`/`split_at` keep a
 /// `parent` edge), with the opposite mutability.
 fn flow_xor_violation<'z3, 'tcx>(
-    vm_state: &VmState<'z3, 'tcx>,
+    vm_state: &VmExecutor<'z3, 'tcx>,
     checkpoint: &Checkpoint<'tcx>,
     unique: bool,
     stmt_index: usize,
@@ -213,7 +213,7 @@ fn flow_xor_violation<'z3, 'tcx>(
 }
 
 fn escaped_parameter_origin<'z3, 'tcx>(
-    vm_state: &VmState<'z3, 'tcx>,
+    vm_state: &VmExecutor<'z3, 'tcx>,
     checkpoint: &Checkpoint<'tcx>,
     origin_arg: &Operand<'tcx>,
 ) -> Option<(usize, Vec<usize>)> {
@@ -237,7 +237,7 @@ fn escaped_parameter_origin<'z3, 'tcx>(
 ///
 /// This is the function the `PropertyChecker::check_alias` delegates to.
 pub(crate) fn check_alias_vm<'z3, 'tcx>(
-    vm_state: &VmState<'z3, 'tcx>,
+    vm_state: &VmExecutor<'z3, 'tcx>,
     checkpoint: &Checkpoint<'tcx>,
 ) -> VmAliasResult {
     let callee = match checkpoint.callee {
@@ -518,7 +518,7 @@ pub(crate) fn check_alias_vm<'z3, 'tcx>(
 }
 
 fn check_view_alias<'z3, 'tcx>(
-    vm_state: &VmState<'z3, 'tcx>,
+    vm_state: &VmExecutor<'z3, 'tcx>,
     checkpoint: &Checkpoint<'tcx>,
     kind: HazardKind,
     source_arg: usize,
@@ -937,7 +937,7 @@ fn self_adt<'tcx>(
 }
 
 fn check_ownership_transfer_alias<'z3, 'tcx>(
-    vm_state: &VmState<'z3, 'tcx>,
+    vm_state: &VmExecutor<'z3, 'tcx>,
     checkpoint: &Checkpoint<'tcx>,
     source_arg: usize,
 ) -> VmAliasResult {
@@ -969,7 +969,7 @@ fn check_ownership_transfer_alias<'z3, 'tcx>(
 }
 
 fn check_read_memory_alias<'z3, 'tcx>(
-    vm_state: &VmState<'z3, 'tcx>,
+    vm_state: &VmExecutor<'z3, 'tcx>,
     checkpoint: &Checkpoint<'tcx>,
     source_arg: usize,
 ) -> VmAliasResult {
@@ -983,7 +983,7 @@ fn check_read_memory_alias<'z3, 'tcx>(
     // origin's allocation (via `Alias(self, ret)` in its contract), the read is
     // the accepted hazard rather than a violation.
     if let Some(alloc_id) = origin_val.provenance_alloc_id()
-        && vm_state
+        && vm_state.path_state
             .alias_hazard_allocs
             .contains(&vm_state.root_alloc(alloc_id))
     {
@@ -1010,7 +1010,7 @@ fn check_read_memory_alias<'z3, 'tcx>(
 }
 
 fn check_copy_memory_alias<'z3, 'tcx>(
-    vm_state: &VmState<'z3, 'tcx>,
+    vm_state: &VmExecutor<'z3, 'tcx>,
     checkpoint: &Checkpoint<'tcx>,
     source_arg: usize,
 ) -> VmAliasResult {
@@ -1019,7 +1019,7 @@ fn check_copy_memory_alias<'z3, 'tcx>(
     };
     let origin_val = vm_state.value_of_operand(origin_arg);
     if let Some(alloc_id) = origin_val.provenance_alloc_id()
-        && vm_state
+        && vm_state.path_state
             .alias_hazard_allocs
             .contains(&vm_state.root_alloc(alloc_id))
     {

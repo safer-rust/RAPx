@@ -15,7 +15,7 @@ use super::{
     config::VerifyConfig,
     contract::Property,
     slicer::{ProofGoal, RelevantItem},
-    vm::VmState,
+    vm::VmExecutor,
 };
 
 #[derive(Clone, Hash, PartialEq, Eq)]
@@ -39,12 +39,12 @@ pub(crate) struct VmCache<'z3, 'tcx> {
     config: Arc<VerifyConfig>,
     states: FxHashMap<Vec<GoalItemKey<'tcx>>, CachedGoal<'z3, 'tcx>>,
     prefix_edges: FxHashMap<PrefixEdge<'tcx>, usize>,
-    prefix_states: Vec<Arc<Vec<VmState<'z3, 'tcx>>>>,
+    prefix_states: Vec<Arc<Vec<VmExecutor<'z3, 'tcx>>>>,
     max_entries: usize,
 }
 
 pub(crate) struct CachedGoal<'z3, 'tcx> {
-    pub(crate) states: Arc<Vec<VmState<'z3, 'tcx>>>,
+    pub(crate) states: Arc<Vec<VmExecutor<'z3, 'tcx>>>,
     pub(crate) reachability: Vec<Cell<Option<z3::SatResult>>>,
 }
 
@@ -102,7 +102,7 @@ impl<'z3, 'tcx> VmCache<'z3, 'tcx> {
             Arc::clone(&self.prefix_states[parent - 1])
         } else {
             Arc::new(
-                VmState::new(
+                VmExecutor::new(
                     self.context,
                     tcx,
                     caller_def_id,
@@ -118,11 +118,11 @@ impl<'z3, 'tcx> VmCache<'z3, 'tcx> {
                 .min(key.len());
             if states
                 .iter()
-                .any(|state| !state.diagnostics.is_unsupported())
+                .any(|state| !state.path_state.diagnostics.is_unsupported())
             {
                 let owned =
                     Arc::try_unwrap(states).unwrap_or_else(|shared| shared.as_ref().clone());
-                states = Arc::new(VmState::execute_items_after(
+                states = Arc::new(VmExecutor::execute_items_after(
                     owned,
                     &goal.items[prefix_len..end],
                 ));

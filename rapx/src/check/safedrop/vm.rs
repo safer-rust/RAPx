@@ -3,7 +3,7 @@ use crate::check::safedrop::bug_records::{BugRecords, BugType, LocalSpot, TyBug}
 use crate::compat::FxHashMap;
 use crate::verify::config::ConstructorMirMode;
 use crate::utils::source::{get_filename, get_name};
-use crate::verify::{AllocId, RelevantItem, SafeDropEvent, SafeDropEventKind, VmState};
+use crate::verify::{AllocId, RelevantItem, SafeDropEvent, SafeDropEventKind, VmExecutor};
 use rustc_hir::def_id::DefId;
 use rustc_middle::{mir::{BasicBlock, Local, TerminatorKind}, ty::TyCtxt};
 use rustc_span::Symbol;
@@ -15,8 +15,8 @@ pub(crate) fn analyze<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, paths: &PathTree) 
     let body = tcx.optimized_mir(def_id);
     let mut bugs = BugRecords::new();
     for path in paths.to_vecs() {
-        let mut state = VmState::new(&context, tcx, def_id, None, ConstructorMirMode::Default);
-        state.safedrop_events.enable();
+        let mut state = VmExecutor::new(&context, tcx, def_id, None, ConstructorMirMode::Default);
+        state.path_state.safedrop_events.enable();
         let mut states = state.execute_items(&[]);
         for (position, &bb_idx) in path.iter().enumerate() {
             let block = BasicBlock::from_usize(bb_idx);
@@ -28,7 +28,7 @@ pub(crate) fn analyze<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, paths: &PathTree) 
                     global_block: None,
                     stmt_index,
                 };
-                states = VmState::execute_items_after(states, &[item]);
+                states = VmExecutor::execute_items_after(states, &[item]);
             }
             let item = RelevantItem::Terminator {
                 def_id,
@@ -36,20 +36,20 @@ pub(crate) fn analyze<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, paths: &PathTree) 
                 global_block: None,
                 switch_succ: path.get(position + 1).copied().map(BasicBlock::from_usize),
             };
-            states = VmState::execute_items_after(states, &[item]);
+            states = VmExecutor::execute_items_after(states, &[item]);
         }
         for state in &states {
             if let Some(&last) = path.last() {
                 record_dangling_exit(state, body, last);
             }
-            collect_events(&state.safedrop_events.events(), body, &mut bugs);
+            collect_events(&state.path_state.safedrop_events.events(), body, &mut bugs);
         }
     }
     report(tcx, def_id, body, &bugs);
 }
 
 fn record_dangling_exit<'z3, 'tcx>(
-    state: &VmState<'z3, 'tcx>,
+    state: &VmExecutor<'z3, 'tcx>,
     body: &rustc_middle::mir::Body<'tcx>,
     last: usize,
 ) {
@@ -74,7 +74,7 @@ fn record_dangling_exit<'z3, 'tcx>(
             .and_then(|v| v.provenance_alloc_id())
             && state.alloc(alloc_id).facts.dead
         {
-            state.safedrop_events.push(SafeDropEvent {
+            state.path_state.safedrop_events.push(SafeDropEvent {
                 alloc_id,
                 kind: SafeDropEventKind::DanglingPointer,
                 block: Some(last),

@@ -8,9 +8,9 @@ use crate::def_ids::type_ids;
 use crate::def_ids::other_api;
 use crate::helpers::mir_utils;
 
-use super::super::super::state::{Provenance, ValueFacts, ValueSource, VmState, VmValue};
+use super::super::super::state::{Provenance, ValueFacts, ValueSource, VmExecutor, VmValue};
 
-impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     pub(crate) fn materialize_constructor_result(
         &mut self,
         destination: Local,

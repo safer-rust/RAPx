@@ -12,7 +12,7 @@ use crate::verify::contract::{
     ContractExpr, BinOp, PlaceBase, Property, PropertyArg, PropertyKind, RelOp,
 };
 use crate::verify::report::{CheckResult, UnknownReason};
-use crate::verify::vm::state::VmState;
+use crate::verify::vm::state::VmExecutor;
 use rustc_hash::FxHashSet;
 use rustc_middle::{mir::Operand, ty::TyKind};
 use z3::{
@@ -26,7 +26,7 @@ impl PropertyChecker {
     /// Check all numeric disjuncts against one shared counterexample.
     pub(super) fn check_valid_num_disjunction<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> Option<CheckResult> {
@@ -85,7 +85,7 @@ impl PropertyChecker {
 
     pub(super) fn check_valid_num<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
@@ -164,7 +164,7 @@ impl PropertyChecker {
     /// the opaque range value).
     fn range_end_of_lhs<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         checkpoint: Option<&Checkpoint<'tcx>>,
         expr: &ContractExpr<'tcx>,
     ) -> Option<Int<'z3>> {
@@ -188,7 +188,7 @@ impl PropertyChecker {
 
     pub(super) fn eval_numeric_predicate<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         solver: &Solver<'z3>,
         checkpoint: Option<&Checkpoint<'tcx>>,
         pred: &crate::verify::contract::NumericPredicate<'tcx>,
@@ -312,7 +312,7 @@ impl PropertyChecker {
     /// for `unchecked_sub`) become provable from the operands' types alone.
     fn inject_int_range_axioms<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         solver: &Solver<'z3>,
         checkpoint: Option<&Checkpoint<'tcx>>,
         expr: &ContractExpr<'tcx>,
@@ -378,7 +378,7 @@ impl PropertyChecker {
 
     pub(super) fn inject_nia_axioms<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         solver: &Solver<'z3>,
         checkpoint: Option<&Checkpoint<'tcx>>,
         expr: &ContractExpr<'tcx>,
@@ -422,7 +422,7 @@ impl PropertyChecker {
 
     pub(super) fn inject_vm_div_axioms<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         solver: &Solver<'z3>,
         expr: &ContractExpr<'tcx>,
     ) {
@@ -434,7 +434,7 @@ impl PropertyChecker {
 
     pub(super) fn inject_div_axioms_for_term<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         solver: &Solver<'z3>,
         target: &Int<'z3>,
         depth: usize,

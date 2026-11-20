@@ -8,7 +8,7 @@ use z3::ast::Int;
 use crate::{compat::FxHashMap, def_ids::{diagnostic_api, intrinsic_api}, helpers::mir_utils, verify::api_classify};
 use crate::verify::call_summary::pointer_semantics;
 
-use super::state::{AllocId, VmState, VmValue};
+use super::state::{AllocId, VmExecutor, VmValue};
 
 #[derive(Clone)]
 pub(crate) struct MethodSnapshot<'z3, 'tcx> {
@@ -34,7 +34,7 @@ pub(crate) struct CachedMethodResult<'z3, 'tcx> {
     result: Int<'z3>,
 }
 
-impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     pub(crate) fn begin_method_call(
         &self,
         method: DefId,
@@ -72,7 +72,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
         Some(MethodSnapshot {
             method,
-            caller: self.current_frame.current_def_id,
+            caller: self.path_state.current_frame.current_def_id,
             receiver_alloc,
             receiver_offset: provenance.offset.clone(),
             receiver_slice_len: self.alloc(receiver_alloc).slice_len().cloned(),
@@ -90,7 +90,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return;
         };
         if self.method_snapshot_matches(&snapshot) {
-            self.method_result_cache.push(CachedMethodResult {
+            self.path_state.method_result_cache.push(CachedMethodResult {
                 snapshot,
                 result: result.z3_term.clone(),
             });
@@ -103,9 +103,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         receiver: &VmValue<'z3, 'tcx>,
     ) -> Option<Int<'z3>> {
         let provenance = receiver.provenance.as_ref()?;
-        self.method_result_cache.iter().rev().find_map(|entry| {
+        self.path_state.method_result_cache.iter().rev().find_map(|entry| {
             (entry.snapshot.method == method
-                && entry.snapshot.caller == self.current_frame.current_def_id
+                && entry.snapshot.caller == self.path_state.current_frame.current_def_id
                 && entry.snapshot.receiver_alloc == provenance.alloc_id
                 && entry.snapshot.receiver_offset == provenance.offset
                 && self.method_snapshot_matches(&entry.snapshot))
@@ -114,7 +114,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     }
 
     fn method_snapshot_matches(&self, snapshot: &MethodSnapshot<'z3, 'tcx>) -> bool {
-        if snapshot.caller != self.current_frame.current_def_id {
+        if snapshot.caller != self.path_state.current_frame.current_def_id {
             return false;
         }
         let Some(owner) = self.local_value(snapshot.owner) else {
@@ -161,7 +161,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
     fn method_owner_local(&self, receiver: &VmValue<'z3, 'tcx>) -> Option<Local> {
         let alloc = receiver.provenance_alloc_id()?;
-        self.current_frame
+        self.path_state.current_frame
             .local_alloc
             .keys()
             .copied()

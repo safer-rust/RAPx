@@ -10,7 +10,7 @@ use crate::helpers::mir_utils;
 use crate::verify::checkpoint::Checkpoint;
 use crate::verify::contract::{ContractExpr, Property, PropertyArg};
 use crate::verify::report::{CheckResult, UnknownReason};
-use crate::verify::vm::state::VmState;
+use crate::verify::vm::state::VmExecutor;
 use rustc_middle::ty::{Ty, TyKind};
 use z3::{
     SatResult, Solver,
@@ -22,7 +22,7 @@ use super::PropertyChecker;
 impl PropertyChecker {
     pub(super) fn check_typed<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
@@ -255,7 +255,7 @@ impl PropertyChecker {
 
     pub(super) fn check_size<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
@@ -291,7 +291,7 @@ impl PropertyChecker {
             Some(PropertyArg::Expr(ContractExpr::Const(c))) | Some(PropertyArg::ForEach(ContractExpr::Const(c))) => {
                 let ty = resolved_ty;
                 if self.is_generic_ty(ty) {
-                    let Some(size) = vm_state.constraints.term_caches.sizes.get(&ty) else {
+                    let Some(size) = vm_state.path_state.constraints.term_caches.sizes.get(&ty) else {
                         return CheckResult::Unknown(UnknownReason::Unimplemented);
                     };
                     let Ok(expected) = u64::try_from(*c) else {
@@ -328,7 +328,7 @@ impl PropertyChecker {
 
     pub(super) fn check_no_padding<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
@@ -348,7 +348,7 @@ impl PropertyChecker {
     /// cannot be determined (generic / enum / union / opaque).
     fn type_has_no_padding<'tcx>(
         &self,
-        vm_state: &VmState<'_, 'tcx>,
+        vm_state: &VmExecutor<'_, 'tcx>,
         ty: Ty<'tcx>,
     ) -> Option<bool> {
         let tcx = vm_state.tcx;

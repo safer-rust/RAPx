@@ -13,7 +13,7 @@ use crate::analysis::dataflow::pointer_flow::return_traces_first_arg;
 use crate::compat::FxHashMap;
 use crate::helpers::mir_utils::{self, dep_callee_def_id};
 use crate::verify::checkpoint::Checkpoint;
-use crate::verify::vm::state::{AllocId, VmState};
+use crate::verify::vm::state::{AllocId, VmExecutor};
 use crate::verify::{
     contract::{ContractExpr, Property, PropertyArg},
     report::{CheckResult, UnknownReason},
@@ -82,7 +82,7 @@ impl PropertyChecker {
 
     pub(super) fn check_valid_cstr<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
@@ -165,7 +165,7 @@ impl PropertyChecker {
     /// (non-zero when pointer arithmetic like `.add(n)` is used).
     fn check_valid_cstr_from_known_nul<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         alloc_id: AllocId,
         start_offset: usize,
     ) -> Option<CheckResult> {
@@ -224,7 +224,7 @@ impl PropertyChecker {
     /// Uses the SMT solver to verify that a NUL-terminated byte sequence is possible.
     fn check_valid_cstr_from_byte_values<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         solver: &Solver<'z3>,
         alloc_id: AllocId,
         alloc_size: &Int<'z3>,
@@ -353,7 +353,7 @@ impl PropertyChecker {
 
     /// Prove `ValidCStr` from a unique NUL store in MIR when byte tracking is absent.
     fn check_valid_cstr_nul_store<'tcx>(
-        vm_state: &VmState<'_, 'tcx>,
+        vm_state: &VmExecutor<'_, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
     ) -> Option<CheckResult> {
         let target_local = first_arg_local(checkpoint)?;
@@ -435,7 +435,7 @@ impl PropertyChecker {
     /// and branches), falling back to simple local chain for Aggregate cases.
     fn check_valid_cstr_from_mir_constants<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
     ) -> Option<CheckResult> {
         let target_local = first_arg_local(checkpoint)?;

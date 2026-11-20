@@ -3,7 +3,7 @@
 use crate::verify::checkpoint::Checkpoint;
 use crate::verify::contract::Property;
 use crate::verify::report::{CheckResult, UnknownReason};
-use crate::verify::vm::state::VmState;
+use crate::verify::vm::state::VmExecutor;
 use z3::{SatResult, Solver};
 
 use super::PropertyChecker;
@@ -13,7 +13,7 @@ impl PropertyChecker {
     /// invalidity, and unresolved symbolic contents.
     fn check_utf8_alloc<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         solver: &Solver<'z3>,
         alloc_id: crate::verify::vm::state::AllocId,
     ) -> CheckResult {
@@ -52,7 +52,7 @@ impl PropertyChecker {
 
     pub(super) fn check_valid_string<'z3, 'tcx>(
         &self,
-        vm_state: &VmState<'z3, 'tcx>,
+        vm_state: &VmExecutor<'z3, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {

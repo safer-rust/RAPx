@@ -5,9 +5,9 @@ use crate::def_ids::type_ids;
 use crate::def_ids::lang_api::{self, LangItem};
 use crate::helpers::mir_utils;
 
-use super::state::{ValueSource, VmState, VmValue};
+use super::state::{ValueSource, VmExecutor, VmValue};
 
-impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     pub(crate) fn apply_slice_offset(
         &mut self,
         dest: Local,
@@ -26,8 +26,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             };
             let start = self.fresh_int("slice_offset_index");
             let zero = Int::from_u64(self.z3_ctx, 0);
-            self.constraints.assertions.push(start.ge(&zero));
-            self.constraints.assertions.push(if is_slice {
+            self.path_state.constraints.assertions.push(start.ge(&zero));
+            self.path_state.constraints.assertions.push(if is_slice {
                 start.le(&len)
             } else {
                 start.lt(&len)

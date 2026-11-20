@@ -19,7 +19,7 @@ use crate::verify::{
     proof_cache::VmCache,
     report::{CheckResult, UnknownReason},
     slicer::{ProofGoal, RelevantItem},
-    vm::VmState,
+    vm::VmExecutor,
 };
 
 use super::FunctionVerifier;
@@ -148,7 +148,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
                 let split = deref_position.unwrap_or(goal.items.len());
                 let pre_goal = ProofGoal { path: goal.path.clone(), items: goal.items[..split].to_vec() };
                 let cached = cache.states_for(self.tcx, self.target.def_id, self.target.body, pre_goal);
-                let post_states = deref_position.map(|_| VmState::execute_items_after(cached.states.as_ref().clone(), &goal.items[split..]));
+                let post_states = deref_position.map(|_| VmExecutor::execute_items_after(cached.states.as_ref().clone(), &goal.items[split..]));
                 let post_reachability = post_states.as_ref().map(|states| states.iter().map(|_| Cell::new(None)).collect::<Vec<_>>());
                 for ((index, property), bound_property) in selected.iter().zip(&bound) {
                     let post_deref = needs_post_deref && property.kind() == Some(PropertyKind::Alias);

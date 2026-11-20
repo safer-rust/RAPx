@@ -10,9 +10,9 @@ use rustc_middle::{
 };
 use z3::{Context, Sort, ast::{Array, Ast, Bool, Int}};
 
-use super::state::{AllocId, AllocKind, Allocation, ElementTy, MemoryContent, MemoryUnit, Provenance, ValueFacts, ValueSource, VmState, VmValue};
+use super::state::{AllocId, AllocKind, Allocation, ElementTy, MemoryContent, MemoryUnit, Provenance, ValueFacts, ValueSource, VmExecutor, VmValue};
 
-impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     pub(crate) fn copy_memory_values(
         &mut self,
         source: &VmValue<'z3, 'tcx>,
@@ -30,7 +30,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let local_target = self
             .find_local_by_address(&target.z3_term)
             .is_some_and(|local| self.body().local_decls[local].ty == pointee_ty);
-        let inline_target = self
+        let inline_target = self.path_state
             .inline
             .arg_referents
             .iter()
@@ -135,7 +135,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     pub(crate) fn forget_memory_values(&mut self, alloc_id: AllocId) {
         let root = self.root_alloc(alloc_id);
         self.clear_write_evidence(root);
-        let aliases: Vec<_> = (0..self.units.len())
+        let aliases: Vec<_> = (0..self.path_state.units.len())
             .map(AllocId)
             .filter(|id| self.root_alloc(*id) == root)
             .collect();
@@ -203,14 +203,14 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
     pub(crate) fn clear_write_evidence(&mut self, alloc_id: AllocId) {
         let root = self.root_alloc(alloc_id);
-        let aliases: crate::compat::FxHashSet<_> = (0..self.units.len())
+        let aliases: crate::compat::FxHashSet<_> = (0..self.path_state.units.len())
             .map(AllocId)
             .filter(|id| self.root_alloc(*id) == root)
             .collect();
         for id in aliases {
-            self.units[id.0].content.typed_facts.clear();
-            self.units[id.0].content.copied_prefix = None;
-            self.units[id.0].content.facts.written_pointee_ty = None;
+            self.path_state.units[id.0].content.typed_facts.clear();
+            self.path_state.units[id.0].content.copied_prefix = None;
+            self.path_state.units[id.0].content.facts.written_pointee_ty = None;
         }
     }
 
@@ -274,7 +274,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return;
         };
         let alloc_id = provenance.alloc_id;
-        if !self.current_frame.local_alloc.values().any(|id| *id == alloc_id) {
+        if !self.path_state.current_frame.local_alloc.values().any(|id| *id == alloc_id) {
             return;
         }
         self.clear_write_evidence(alloc_id);
@@ -303,7 +303,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         if value.ty != pointee_ty {
             return false;
         }
-        let local = self.current_frame.local_alloc.iter().find_map(|(local, alloc_id)| {
+        let local = self.path_state.current_frame.local_alloc.iter().find_map(|(local, alloc_id)| {
             (*alloc_id == provenance.alloc_id).then_some(*local)
         });
         let Some(root_ty) = local
@@ -326,7 +326,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             let content = self.content_mut(provenance.alloc_id);
             content.clear_byte_writes();
         }
-        let aliases = self.current_frame.local_alloc.keys().copied().filter(|local| {
+        let aliases = self.path_state.current_frame.local_alloc.keys().copied().filter(|local| {
             let local_ty = self.body().local_decls[*local].ty;
             matches!(local_ty.kind(), TyKind::Ref(..) | TyKind::RawPtr(..))
                 && mir_utils::pointee_ty(local_ty) == Some(root_ty)
@@ -347,7 +347,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     ) -> Option<VmValue<'z3, 'tcx>> {
         let provenance = pointer.provenance.as_ref()?;
         let offset = provenance.offset.simplify().as_u64()?;
-        let root_ty = self
+        let root_ty = self.path_state
             .current_frame
             .local_alloc
             .iter()
@@ -517,7 +517,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 .then(|| self.local_value(place.local).and_then(|v| v.provenance.clone()))
                 .flatten()
                 .or_else(|| {
-                    self.current_frame.local_alloc
+                    self.path_state.current_frame.local_alloc
                         .get(&place.local)
                         .copied()
                         .map(|alloc_id| Provenance {
@@ -536,7 +536,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
 
         let mut term = self.local_address(place.local);
-        let mut provenance: Option<Provenance<'z3>> = self
+        let mut provenance: Option<Provenance<'z3>> = self.path_state
             .current_frame.local_alloc
             .get(&place.local)
             .copied()
@@ -604,7 +604,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             // `&(*leaf).keys` keeps `len = N` for downstream InBound.
                             let alloc = provenance.as_ref().map(|p| p.alloc_id);
                             alloc.and_then(|a| {
-                                self.units[a.0].content.values
+                                self.path_state.units[a.0].content.values
                                     .get(&(view_ty, field_path.clone()))
                                     .and_then(|fv| {
                                         fv.provenance.clone().map(|p| (fv.z3_term.clone(), p))
@@ -661,14 +661,14 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
     /// Lazily create a stack allocation for a MIR local if one doesn't exist.
     pub(crate) fn ensure_local_allocation(&mut self, local: Local) {
-        if self.current_frame.local_alloc.contains_key(&local) {
+        if self.path_state.current_frame.local_alloc.contains_key(&local) {
             return;
         }
         let ty = self.body().local_decls[local].ty;
         let align = self.align_sym(ty);
         let name = format!("addr__{}", local.as_usize());
         let base = Int::new_const(self.z3_ctx, name.as_str());
-        let id = AllocId(self.units.len());
+        let id = AllocId(self.path_state.units.len());
         // For arrays, track the element type (not the array type) so that
         // len() computes `size / elem_size` correctly.  When the element size
         // is unknown (a generic `T`), `size_of::<[T; N]>()` collapses to 0, so
@@ -704,30 +704,30 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         if let Some(len) = slice_len {
             alloc.set_slice_len(len);
         }
-        self.units.push(MemoryUnit {
+        self.path_state.units.push(MemoryUnit {
             allocation: alloc,
             content: MemoryContent::default(),
         });
-        self.current_frame.local_alloc.insert(local, id);
+        self.path_state.current_frame.local_alloc.insert(local, id);
     }
 
     pub(crate) fn field_offset_in_bytes(&self, ty: Ty<'tcx>, field_idx: usize) -> u64 {
         mir_utils::field_offset_in_bytes(
             self.tcx,
-            self.current_frame.current_def_id,
+            self.path_state.current_frame.current_def_id,
             ty,
             field_idx,
         )
     }
 
     pub(crate) fn size_of_ty(&self, ty: Ty<'tcx>) -> u64 {
-        mir_utils::layout_of_ty(self.tcx, self.current_frame.current_def_id, ty)
+        mir_utils::layout_of_ty(self.tcx, self.path_state.current_frame.current_def_id, ty)
             .map(|l| l.size.bytes())
             .unwrap_or(0)
     }
 
     pub(crate) fn align_of_ty(&self, ty: Ty<'tcx>) -> u64 {
-        mir_utils::layout_of_ty(self.tcx, self.current_frame.current_def_id, ty)
+        mir_utils::layout_of_ty(self.tcx, self.path_state.current_frame.current_def_id, ty)
             .map(|l| mir_utils::layout_align_bytes(&l))
             .unwrap_or(1)
     }
@@ -764,7 +764,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         if let TyKind::Array(elem, count) = ty.kind() {
             let count = self.const_len_term(count);
             let zero = Int::from_u64(self.z3_ctx, 0);
-            self.constraints.assertions.push(count.ge(&zero));
+            self.path_state.constraints.assertions.push(count.ge(&zero));
             let elem_size = self.size_sym(*elem);
             return Int::mul(self.z3_ctx, &[&count, &elem_size]);
         }
@@ -772,13 +772,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         if size > 0 || !mir_utils::ty_has_type_param(ty) {
             return Int::from_u64(self.z3_ctx, size);
         }
-        if let Some(s) = self.constraints.term_caches.sizes.get(&ty) {
+        if let Some(s) = self.path_state.constraints.term_caches.sizes.get(&ty) {
             return s.clone();
         }
         let s = self.fresh_int(&format!("sizeof_{ty}"));
-        self.constraints.term_caches.sizes.insert(ty, s.clone());
+        self.path_state.constraints.term_caches.sizes.insert(ty, s.clone());
         let zero = Int::from_u64(self.z3_ctx, 0);
-        self.constraints.assertions.push(s.ge(&zero));
+        self.path_state.constraints.assertions.push(s.ge(&zero));
         if let TyKind::Adt(def, args) = ty.kind()
             && (def.is_struct() || def.is_union())
         {
@@ -790,7 +790,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 .max()
                 .unwrap_or(0);
             if min_size > 0 {
-                self.constraints
+                self.path_state.constraints
                     .assertions
                     .push(s.ge(&Int::from_u64(self.z3_ctx, min_size)));
             }
@@ -828,7 +828,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         if size > 0 {
             return Int::from_u64(self.z3_ctx, size);
         }
-        self.constraints.term_caches.sizes
+        self.path_state.constraints.term_caches.sizes
             .get(&ty)
             .cloned()
             .unwrap_or_else(|| Int::from_u64(self.z3_ctx, 1))
@@ -867,29 +867,29 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         if align > 1 || !mir_utils::ty_has_type_param(ty) {
             return Int::from_u64(self.z3_ctx, align);
         }
-        if let Some(a) = self.constraints.term_caches.aligns.get(&ty) {
+        if let Some(a) = self.path_state.constraints.term_caches.aligns.get(&ty) {
             return a.clone();
         }
         let a = self.fresh_int(&format!("align_{ty}"));
-        self.constraints.term_caches.aligns.insert(ty, a.clone());
+        self.path_state.constraints.term_caches.aligns.insert(ty, a.clone());
         let one = Int::from_u64(self.z3_ctx, 1);
         let zero = Int::from_u64(self.z3_ctx, 0);
-        self.constraints.assertions.push(a.ge(&one));
+        self.path_state.constraints.assertions.push(a.ge(&one));
         // Lower bound from the trait bounds (0 for an unconstrained `T`): any
         // implementor is at least this aligned.
         let min_a =
-            mir_utils::min_align_of_generic_param(self.tcx, self.current_frame.current_def_id, ty);
+            mir_utils::min_align_of_generic_param(self.tcx, self.path_state.current_frame.current_def_id, ty);
         if min_a > 1 {
-            self.constraints.assertions
+            self.path_state.constraints.assertions
                 .push(a.ge(&Int::from_u64(self.z3_ctx, min_a)));
         }
         // Upper bound from the trait bounds (0 for an unconstrained `T`): any
         // implementor is at most this aligned, which is what lets a cross-cast
         // from a *more* aligned source (`&[U]` -> `*const T`) be discharged.
         let max_a =
-            mir_utils::max_align_of_generic_param(self.tcx, self.current_frame.current_def_id, ty);
+            mir_utils::max_align_of_generic_param(self.tcx, self.path_state.current_frame.current_def_id, ty);
         if max_a > 0 {
-            self.constraints.assertions
+            self.path_state.constraints.assertions
                 .push(a.le(&Int::from_u64(self.z3_ctx, max_a)));
         }
         // A struct's alignment is a multiple of each field's alignment (both
@@ -901,13 +901,13 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 for field in variant.fields.iter() {
                     let field_ty = mir_utils::field_ty(self.tcx, field, substs);
                     let field_align = self.align_sym(field_ty);
-                    self.constraints.assertions.push(a.rem(&field_align)._eq(&zero));
+                    self.path_state.constraints.assertions.push(a.rem(&field_align)._eq(&zero));
                     // Linear lower bound: a struct/union's alignment is at least
                     // each field's alignment (both powers of two), so Z3 can
                     // decide `align_struct >= align_field` without chaining the
                     // nonlinear `% == 0` (e.g. `align_of(MaybeUninit<T>) >=
                     // align_of(T)` for `swap`'s scratch slot).
-                    self.constraints.assertions.push(a.ge(&field_align));
+                    self.path_state.constraints.assertions.push(a.ge(&field_align));
                 }
                 // A struct's size is at least the sum of its fields (padding may
                 // add more).  This relates the symbolic `sizeof_Struct` constant
@@ -917,11 +917,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 // allocation size.
                 if let Some(sum) = self.struct_size_sym(ty) {
                     let size = self.size_sym(ty);
-                    self.constraints.assertions.push(size.ge(&sum));
+                    self.path_state.constraints.assertions.push(size.ge(&sum));
                 }
             }
         let size = self.size_sym(ty);
-        self.constraints.assertions.push(size.rem(&a)._eq(&zero));
+        self.path_state.constraints.assertions.push(size.rem(&a)._eq(&zero));
         a
     }
 
@@ -939,11 +939,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         if align > 1 {
             return Int::from_u64(self.z3_ctx, align);
         }
-        if let Some(a) = self.constraints.term_caches.aligns.get(&ty) {
+        if let Some(a) = self.path_state.constraints.term_caches.aligns.get(&ty) {
             return a.clone();
         }
         let min_a =
-            mir_utils::min_align_of_generic_param(self.tcx, self.current_frame.current_def_id, ty);
+            mir_utils::min_align_of_generic_param(self.tcx, self.path_state.current_frame.current_def_id, ty);
         Int::from_u64(self.z3_ctx, min_a.max(1))
     }
 
@@ -978,11 +978,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
     /// The shared `UNINIT` sentinel (≥ 256, outside the `u8` range).
     fn uninit_byte(&self) -> Int<'z3> {
-        self.constraints
+        self.path_state.constraints
             .term_caches
             .uninit_byte
             .clone()
-            .expect("uninit_byte is initialized in VmState::new")
+            .expect("uninit_byte is initialized in VmExecutor::new")
     }
 
     /// A fresh `Array<Int, Int>` whose every offset reads `UNINIT`.
@@ -999,7 +999,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// byte value when `i` is concrete, rather than leaking the nested
     /// `select`/`store` expression into downstream SMT obligations.
     pub(crate) fn byte_read(&self, alloc_id: AllocId, i: &Int<'z3>) -> Int<'z3> {
-        match &self.units[alloc_id.0].content.byte_array {
+        match &self.path_state.units[alloc_id.0].content.byte_array {
             Some(arr) => arr.select(i).as_int().expect("byte array range is Int").simplify(),
             None => self.uninit_byte(),
         }
@@ -1040,7 +1040,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return false;
         }
         let alloc_id = provenance.alloc_id;
-        let local_path = self.current_frame.local_alloc.iter().find_map(|(local, id)| {
+        let local_path = self.path_state.current_frame.local_alloc.iter().find_map(|(local, id)| {
             if *id != alloc_id {
                 return None;
             }
@@ -1083,12 +1083,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     pub(crate) fn byte_write(&mut self, alloc_id: AllocId, i: &Int<'z3>, v: &Int<'z3>) {
         self.clear_write_evidence(alloc_id);
         let offset = i.simplify();
-        let arr = self.units[alloc_id.0].content.byte_array.clone();
+        let arr = self.path_state.units[alloc_id.0].content.byte_array.clone();
         let updated = match arr {
             Some(a) => a.store(&offset, v),
             None => self.fresh_byte_array().store(&offset, v),
         };
-        let unit = &mut self.units[alloc_id.0];
+        let unit = &mut self.path_state.units[alloc_id.0];
         unit.content.byte_array = Some(updated);
         if let Some(off) = offset.as_u64() {
             unit.content.byte_written.insert(off as usize);
@@ -1131,7 +1131,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// Enumerate `(offset, term)` pairs for the *written* bytes of an allocation,
     /// in ascending offset order.
     pub(crate) fn alloc_byte_values(&self, alloc_id: AllocId) -> Vec<(usize, Int<'z3>)> {
-        let mut offs: Vec<usize> = self.units[alloc_id.0]
+        let mut offs: Vec<usize> = self.path_state.units[alloc_id.0]
             .content
             .byte_written
             .iter()
@@ -1145,7 +1145,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
     /// Offsets known to be NUL.
     pub(crate) fn alloc_nul_offsets(&self, alloc_id: AllocId) -> Vec<usize> {
-        let mut offs: Vec<usize> = self.units[alloc_id.0]
+        let mut offs: Vec<usize> = self.path_state.units[alloc_id.0]
             .content
             .byte_written
             .iter()
@@ -1158,7 +1158,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
     /// Offsets known to be non-NUL.
     pub(crate) fn alloc_non_nul_offsets(&self, alloc_id: AllocId) -> Vec<usize> {
-        let mut offs: Vec<usize> = self.units[alloc_id.0]
+        let mut offs: Vec<usize> = self.path_state.units[alloc_id.0]
             .content
             .byte_written
             .iter()
@@ -1172,7 +1172,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// Copy the per-byte state (values + written-offset bound) of one allocation
     /// to another, shifting by `src_offset` so `dst[i] = src[i + src_offset]`.
     pub(crate) fn copy_byte_tracking(&mut self, src: AllocId, src_offset: usize, dst: AllocId) {
-        let written: Vec<usize> = self.units[src.0]
+        let written: Vec<usize> = self.path_state.units[src.0]
             .content
             .byte_written
             .iter()
@@ -1200,7 +1200,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         view_ty: Ty<'tcx>,
         path: &[usize],
     ) -> Option<&VmValue<'z3, 'tcx>> {
-        self.units[alloc_id.0]
+        self.path_state.units[alloc_id.0]
             .content
             .values
             .get(&(view_ty, path.to_vec()))
@@ -1218,7 +1218,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         path: Vec<usize>,
         value: VmValue<'z3, 'tcx>,
     ) {
-        self.units[alloc_id.0]
+        self.path_state.units[alloc_id.0]
             .content
             .values
             .insert((view_ty, path), value);
@@ -1322,14 +1322,14 @@ fn peel_slice_elem(ty: Ty<'_>) -> Ty<'_> {
     }
 }
 
-impl<'z3, 'tcx> VmState<'z3, 'tcx> {
+impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     /// Find the local whose symbolic address matches `term` (the address a
     /// reference value points at). Used to resolve a `&self`/`&mut self`
     /// receiver (often a reborrow temp) back to the referent local that carries
     /// the materialized field values.
     pub(crate) fn find_local_by_address(&self, term: &Int<'z3>) -> Option<Local> {
-        for (local, id) in &self.current_frame.local_alloc {
-            if self.units[id.0].allocation.base == *term {
+        for (local, id) in &self.path_state.current_frame.local_alloc {
+            if self.path_state.units[id.0].allocation.base == *term {
                 return Some(*local);
             }
         }
@@ -1378,7 +1378,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
         if path.is_empty()
             && let Some(prov) = &pointer.provenance
-            && self
+            && self.path_state
                 .static_allocs
                 .values()
                 .any(|id| *id == prov.alloc_id)
@@ -1391,7 +1391,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return true;
         }
         let caller_referent =
-            self.inline
+            self.path_state.inline
                 .arg_referents
                 .iter()
                 .enumerate()
@@ -1416,7 +1416,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         && self.alloc(prov.alloc_id).element_ty.as_ty() != Some(value.ty)
                 })
                 && self.write_provenance_allocation(pointer, value.clone());
-            self.inline.deferred_field_writes.push((local, path, value));
+            self.path_state.inline.deferred_field_writes.push((local, path, value));
             if let Some((id, ty)) = full_inner_write {
                 self.content_mut(id).facts.written_pointee_ty = Some(ty);
             }
